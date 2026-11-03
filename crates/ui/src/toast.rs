@@ -527,6 +527,15 @@ impl Shell {
         }
         self.work.borrow_mut().sync_stopped(&self.app);
         self.work.borrow_mut().settle(&self.app);
+        // What joined is shown and announced as its time comes, the window
+        // woken then (ADR-114, amended 2026-11-03).
+        let next = self
+            .work
+            .borrow_mut()
+            .watch(&self.app, std::time::Instant::now());
+        if let Some(at) = next {
+            self.strip_wake_at(at, cx);
+        }
         if any {
             cx.notify();
         }
@@ -1040,6 +1049,7 @@ mod tests {
             let (what, why) = waiting_words(&Waiting {
                 asked: 7,
                 named: named.into(),
+                plan: None,
                 waits_for,
                 steps: Some(1),
                 heavy: false,

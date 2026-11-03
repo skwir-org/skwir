@@ -92,6 +92,31 @@ and macOS otherwise compiled only.
    executor keeps for it, with no footprint compared and no title built,
    not in the core as the proposal said: the agents' `running` is
    unchanged.
+
+   Amended again 2026-11-03 (the user's choice, from a page comparing
+   the strip alone with a sign where copied files arrive; the sign was
+   left out): the strip is **never silent** and **announces** what
+   joins. Users kept wondering whether an action asked had started.
+   - An action still under way 0.3 s after it joined, waiting or
+     started, is shown and counted even when it would not count by its
+     steps (a single rename on a slow server), so nothing quick flashes
+     and nothing slow is silent (`Work::watch`, `SHOWN_AFTER`). Before
+     its first step or byte it says "getting ready…", in the strip and on
+     its card; while only something waits, the strip says what waits
+     first and what for.
+   - Then it is announced once: for 2 s (`ANNOUNCED_FOR`) the strip
+     shows that action's own sentence on the selection's tint ("Copy
+     “a” · getting ready…", "Copy “b” · waits for copy to Backup", or,
+     where that does not fit, "Copy “b” · waits its turn"), its buttons
+     hidden while it names another than the one they act on; a screen
+     reader hears it once, polite ("Copy “a” started", "Copy “b” waits
+     for …"). The latest of several joining takes the tint.
+   - The window is woken once for each change the strip makes by itself
+     (an action's 0.3 s, a tint's end): one timer at a time, never a
+     loop. Without a window, the same rule counts, with no tint.
+   - What waits is followed by plan ids alone (`Executor::waiting_plans`,
+     no footprint compared); what an action waits for is read only while
+     it is announced, or while nothing runs.
 2. **Activity opens above the strip** on a click or `ui.activity`
    (Ctrl+Shift+J, Chrome's key for its downloads; Ctrl+J is Jump's): each
    action's card as it was (its bar, items and bytes, speed and time

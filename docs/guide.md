@@ -31,14 +31,17 @@ work where the keyboard is, by topic.
   hidden.
 - **More** (the sidebar's button, or the pane's row when the sidebar is
   hidden) holds what has no button, and Layout: where the split and the
-  preview go, or Automatic, which follows the window's shape. About
-  Skwir, at its end, shows the version, system, display and graphics,
-  and copies them for a report.
+  preview go, or Automatic, which follows the window's shape. Undo and
+  Redo there say what they would take back, beside the Undo history.
+  About Skwir shows the version, system, display and graphics, and
+  copies them for a report; Quit comes last.
 - **Footer.** Each pane's footer shows how many items it lists, what is
   selected and what it weighs. The last pane's footer also shows Undo,
   what waits for a paste, the shelf, plans waiting for review, the
   player, and what runs: how far the whole queue has come ("2 of 3 · 47 %
-  · 1 waiting"), each action counting one.
+  · 1 waiting"), each action counting one. An action you ask for is
+  said there at once, on a tint for a moment: getting ready, or waiting
+  its turn and for what.
 - **Toasts** say what was done ("Moved “a.txt” to Trash"), with Undo. A
   long plan shows its progress with Pause and Cancel: how much of how
   much, and under the bar how fast it goes and how long it has left

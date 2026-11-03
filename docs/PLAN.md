@@ -522,6 +522,28 @@ each of nine). Three steps:
 Checks in `docs/STATUS-LOG.md` (2026-11-03, "Queue progress and the
 History").
 
+## The start made plain, Undo and Quit in More (2026-11-03)
+
+Asked by the user: they kept wondering whether an action asked had
+started. A page compared the strip alone with a sign where copied files
+arrive (ghost rows in place, or an "Arriving" band); the user chose the
+strip alone, and Undo, Redo, the History and Quit in More.
+
+- **Never silent** (ADR-114, amended again): an action still under way
+  0.3 s after it joined is shown and counted whatever its steps; before
+  its first step or byte it says "getting ready…"; while only something
+  waits, the strip says what for.
+- **Announced**: once, its own sentence on the selection's tint for 2 s
+  ("… waits its turn" where the whole does not fit), heard once by a
+  screen reader; one timer at a time wakes the window for it.
+- **More**: Undo and Redo named by what they take back (off with
+  nothing), Undo history…, and Quit last, two icons drawn for them.
+
+Left: the tint is the selection's, pale on some looks; a local copy's
+"getting ready…" lasts less than the 0.3 s before anything shows (seen
+only on large trees and servers, not timed on a server here). Checks in
+`docs/STATUS-LOG.md` (2026-11-03, "The start made plain").
+
 ## What is left
 
 Gathered on 2026-10-20 from the notes of this plan and of

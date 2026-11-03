@@ -235,6 +235,9 @@ pub(crate) struct Under {
     pub tasks: Vec<skwir_core::task::Running>,
     pub ended: usize,
     pub waiting: usize,
+    /// The first action waiting, what it is and what it waits for
+    /// (`toast::waiting_words`): what the strip says while only that waits.
+    pub next: Option<(String, String)>,
 }
 
 impl Under {
@@ -277,6 +280,15 @@ pub(crate) struct Summary {
     pub paused: bool,
     /// Every one running was cancelled and is stopping.
     pub stopping: bool,
+    /// Every one running is getting ready: its checks, before its first
+    /// step or byte (ADR-114, amended 2026-11-03).
+    pub ready: bool,
+}
+
+/// Whether `running` is getting ready (`Summary::ready`): no step made,
+/// nothing moved, nothing ended yet.
+pub(crate) fn getting_ready(running: &Running, t: &Transfer) -> bool {
+    running.first().is_none() && t.done == 0 && t.ended == 0 && t.finished == 0
 }
 
 /// `under` summed up, `None` when nothing runs or waits.
@@ -306,6 +318,9 @@ pub(crate) fn summary(under: &Under) -> Option<Summary> {
     let stopping = running > 0
         && under.plans.iter().all(|(r, _)| r.cancelling)
         && under.tasks.iter().all(|task| task.cancelling);
+    let ready = running > 0
+        && under.tasks.is_empty()
+        && under.plans.iter().all(|(r, t)| getting_ready(r, t));
     Some(Summary {
         fraction,
         shares,
@@ -316,6 +331,7 @@ pub(crate) fn summary(under: &Under) -> Option<Summary> {
         left,
         paused,
         stopping,
+        ready,
     })
 }
 
@@ -341,6 +357,57 @@ fn segments(summary: &Summary) -> Option<Vec<f32>> {
     })
 }
 
+/// `text` with its first letter lowered, as the strip says a sentence
+/// after a title ("waits for the disk").
+fn lowered(text: &str) -> String {
+    let mut chars = text.chars();
+    chars.next().map_or_else(String::new, |first| {
+        first.to_lowercase().chain(chars).collect()
+    })
+}
+
+/// What the strip announces of an action that joined (ADR-114, amended
+/// 2026-11-03): its sentence, a shorter one where that does not fit (a
+/// waiting one's title, without what it waits for), and what a screen
+/// reader hears of it, once.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Announced {
+    pub sentence: String,
+    pub short: String,
+    pub heard: String,
+}
+
+/// What the strip announces of the action `plan`, as `under` and
+/// `waiting` hold it; `None` once it is no longer under way.
+pub(crate) fn announced(
+    under: &Under,
+    waiting: &[skwir_core::op::Waiting],
+    plan: PlanId,
+) -> Option<Announced> {
+    if let Some((running, t)) = under.plans.iter().find(|(r, _)| r.plan == plan) {
+        let title = capitalized(&running.title);
+        let doing = if getting_ready(running, t) {
+            "getting ready…".to_owned()
+        } else {
+            percent(share(running.total, t))
+        };
+        let sentence = format!("{title} · {doing}");
+        return Some(Announced {
+            short: sentence.clone(),
+            sentence,
+            heard: format!("{title} started"),
+        });
+    }
+    let waits = waiting.iter().find(|w| w.plan == Some(plan))?;
+    let (what, why) = waiting_words(waits);
+    let why = lowered(&why);
+    Some(Announced {
+        sentence: format!("{what} · {why}"),
+        short: format!("{what} · waits its turn"),
+        heard: format!("{what} {why}"),
+    })
+}
+
 /// `fraction` as the strip says it: "42 %", never 100 before the end.
 fn percent(fraction: f32) -> String {
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
@@ -359,6 +426,9 @@ fn how(summary: &Summary, sending_files: Option<usize>) -> String {
     }
     let said = if summary.shares.is_empty() {
         (summary.ended > 0).then_some(at)
+    } else if summary.ready && !summary.paused {
+        // Never silent: what it does before its first step or byte.
+        Some("getting ready…".to_owned())
     } else if summary.paused {
         Some(format!("paused at {at}"))
     } else if let Some(files) = sending_files {
@@ -392,7 +462,11 @@ pub(crate) fn words(under: &Under, summary: &Summary) -> [String; 3] {
     let what = match (under.plans.as_slice(), under.tasks.as_slice()) {
         ([(running, _)], []) => Some(capitalized(&running.title)),
         ([], [task]) => Some(capitalized(&task.title)),
-        ([], []) => None,
+        // Only waiting: what waits first, and what for (never silent).
+        ([], []) => under
+            .next
+            .as_ref()
+            .map(|(what, why)| format!("{what} · {}", lowered(why))),
         _ => Some(format::count(under.count(), "action")),
     };
     let least = if summary.stopping {
@@ -421,6 +495,34 @@ impl Shell {
     /// What runs and is shown as a card (`Work::under_way`).
     pub(crate) fn under_way(&self) -> Under {
         self.work.borrow().under_way(&self.app)
+    }
+
+    /// Wake the window once at `at`, when the strip changes by itself (an
+    /// action joined to show, a tint to end), unless a wake at or before
+    /// it is set already: one timer, never a loop. The wake's sync asks
+    /// `Work::watch` again, which gives the next.
+    pub(crate) fn strip_wake_at(&mut self, at: std::time::Instant, cx: &mut Context<Self>) {
+        {
+            let mut work = self.work.borrow_mut();
+            if work.wake_at.is_some_and(|set| set <= at) {
+                return;
+            }
+            work.wake_at = Some(at);
+        }
+        let wait = at.saturating_duration_since(std::time::Instant::now());
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(wait).await;
+            this.update(cx, |shell, cx| {
+                let mut work = shell.work.borrow_mut();
+                if work.wake_at == Some(at) {
+                    work.wake_at = None;
+                }
+                drop(work);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// Whether Activity's popup is open.
@@ -887,6 +989,43 @@ pub fn strip(
             ),
         },
     };
+    // An action that joined, announced on a tint for a moment: its own
+    // sentence first, and once to a screen reader (ADR-114, amended).
+    let joined = shell
+        .work
+        .borrow()
+        .announce
+        .filter(|a| std::time::Instant::now() < a.until)
+        .map(|a| a.plan);
+    // What a waiting one waits for is read only while it is announced.
+    let announce = joined.and_then(|plan| {
+        let runs = under.plans.iter().any(|(r, _)| r.plan == plan);
+        let waiting = if runs {
+            Vec::new()
+        } else {
+            shell.app.executor.waiting()
+        };
+        announced(under, &waiting, plan)
+    });
+    // Its buttons act on the one running: while another is named, none.
+    let offers = match (announce.as_ref().and(joined), offers) {
+        (Some(named), Offers::One { plan, .. }) if named != plan => Offers::Nothing,
+        (Some(_), Offers::Task { .. }) => Offers::Nothing,
+        (_, offers) => offers,
+    };
+    // Its own words first, richest first, then the strip's as ever.
+    let said: Vec<String> = match &announce {
+        Some(a) => {
+            let mut said: Vec<String> = [&a.sentence, &a.short, &said[1], &said[2]]
+                .into_iter()
+                .cloned()
+                .collect();
+            said.dedup();
+            said
+        }
+        None => said.to_vec(),
+    };
+    let tinted = announce.is_some() && !matches!(offers, Offers::Stopped { .. });
     // Several actions in the spell: Activity says each.
     let several = under.ended + under.count() + under.waiting > 1;
     let error = matches!(offers, Offers::Stopped { .. });
@@ -915,6 +1054,9 @@ pub fn strip(
             .border_color(gpui::transparent_black())
             .cursor_pointer()
             .text_color(if error { theme.error } else { theme.text })
+            .when(tinted, |d| {
+                d.bg(theme.selection_bg).text_color(theme.selection_text)
+            })
             .hover({
                 let hover = theme.hover;
                 move |s| s.bg(hover)
@@ -969,10 +1111,21 @@ pub fn strip(
         );
     }
     let popup = popover(shell, under, theme, cx);
+    // Said once, as a toast is: polite, while it is announced (its words
+    // stay the same meanwhile, so it is not said again).
+    let heard = announce.filter(|_| a11y).map(|Announced { heard, .. }| {
+        div()
+            .id("activity-joined")
+            .aria_live(gpui::Live::Polite)
+            .aria_label(heard)
+            .size_0()
+            .into_any_element()
+    });
     Some(
         div()
             .flex()
             .min_w_0()
+            .children(heard)
             // The last version is the least it takes: cut narrower, its
             // buttons, which cannot be, would be drawn over Undo.
             .child(Fit {
@@ -1561,6 +1714,8 @@ fn progress_card(
     let state = match (paused, running.going_on, transfer.sending) {
         _ if stopping => "stopping at ".to_owned(),
         (true, ..) => "paused at ".to_owned(),
+        // Its checks, before its first step or byte (ADR-114, amended).
+        _ if getting_ready(running, transfer) => "getting ready, ".to_owned(),
         // Copied onto a mount that sends to its server after: what the
         // server still has to take before the copy is done (ADR-102).
         (false, _, Some(files)) => format!("{}, ", sending(files)),
@@ -1863,15 +2018,82 @@ impl Shell {
 #[cfg(test)]
 mod tests {
     use super::{
-        EARLIER, Ended, Summary, Under, how, keep, percent, segments, showing, summary,
+        EARLIER, Ended, Summary, Under, announced, how, keep, percent, segments, showing, summary,
         waiting_said, words,
     };
-    use crate::toast::Running;
+    use crate::toast::{Running, waiting_words};
     use skwir_core::op::{PlanId, RunKind, Transfer};
     use std::time::Duration;
 
     fn running(plan: u64, title: &str, total: usize) -> Running {
         Running::for_test(PlanId(plan), title, RunKind::Apply, total)
+    }
+
+    /// Never silent (ADR-114, amended 2026-11-03): an action before its
+    /// first step or byte says it is getting ready, in the strip and on
+    /// its card's words; one only waiting says what it waits for; an
+    /// action that joined is announced by its own sentence, and heard as
+    /// started, or as what it waits for.
+    #[test]
+    fn the_strip_says_an_action_gets_ready_or_what_it_waits_for() {
+        let ready = Under {
+            plans: vec![(
+                running(1, "copy “it's a” to Backup", 1),
+                Transfer::default(),
+            )],
+            tasks: Vec::new(),
+            ended: 0,
+            waiting: 0,
+            next: None,
+        };
+        let s = summary(&ready).unwrap();
+        assert!(s.ready);
+        assert_eq!(
+            words(&ready, &s)[0],
+            "Copy “it's a” to Backup · getting ready…"
+        );
+        let said = announced(&ready, &[], PlanId(1)).unwrap();
+        assert_eq!(said.sentence, "Copy “it's a” to Backup · getting ready…");
+        assert_eq!(said.heard, "Copy “it's a” to Backup started");
+        let waits = skwir_core::op::Waiting {
+            asked: 9,
+            named: "copy “interview.mkv” to Backup".into(),
+            plan: Some(PlanId(2)),
+            waits_for: skwir_core::op::WaitsFor::Action("copy 3 items to Backup".into()),
+            steps: Some(1),
+            heavy: true,
+            counts: true,
+        };
+        let only = Under {
+            plans: Vec::new(),
+            tasks: Vec::new(),
+            ended: 0,
+            waiting: 1,
+            next: Some(waiting_words(&waits)),
+        };
+        let s = summary(&only).unwrap();
+        assert_eq!(
+            words(&only, &s)[0],
+            "Copy “interview.mkv” to Backup · waits for copy 3 items to Backup · 1 waiting"
+        );
+        let said = announced(&only, std::slice::from_ref(&waits), PlanId(2)).unwrap();
+        assert_eq!(
+            said.sentence,
+            "Copy “interview.mkv” to Backup · waits for copy 3 items to Backup"
+        );
+        assert_eq!(
+            said.short,
+            "Copy “interview.mkv” to Backup · waits its turn"
+        );
+        assert_eq!(
+            said.heard,
+            "Copy “interview.mkv” to Backup waits for copy 3 items to Backup"
+        );
+        assert_eq!(
+            announced(&only, &[], PlanId(3)),
+            None,
+            "no longer under way"
+        );
     }
 
     /// Every answer is kept in Earlier, a plan's or not, newest first and
@@ -1952,6 +2174,7 @@ mod tests {
             tasks: Vec::new(),
             ended,
             waiting,
+            next: None,
         };
         let a = (running(1, "copy a", 3), sized(1 << 30, 3 << 30, 120));
         let b = (running(2, "copy b", 2), sized(0, 1 << 30, 300));
@@ -1996,6 +2219,7 @@ mod tests {
             tasks: Vec::new(),
             ended,
             waiting,
+            next: None,
         };
         let half = (
             running(1, "copy a", 2),
@@ -2026,6 +2250,7 @@ mod tests {
             tasks: Vec::new(),
             ended,
             waiting,
+            next: None,
         };
         let between = waiting(1, 1);
         let s = summary(&between).expect("shown between two");
@@ -2071,6 +2296,7 @@ mod tests {
             tasks: Vec::new(),
             ended: 0,
             waiting: 0,
+            next: None,
         };
         let s = summary(&one).unwrap();
         assert_eq!(
@@ -2098,6 +2324,7 @@ mod tests {
             tasks: Vec::new(),
             ended: 0,
             waiting: 0,
+            next: None,
         };
         let s = summary(&two).unwrap();
         assert!(
@@ -2112,6 +2339,7 @@ mod tests {
             tasks: Vec::new(),
             ended: 1,
             waiting: 1,
+            next: None,
         };
         let s = summary(&queued).unwrap();
         assert_eq!(

@@ -303,6 +303,9 @@ fn sync(cx: &mut App) {
             work.take(&app, event, watched);
         }
         work.settle(&app);
+        // What joined counts as its time comes; nothing is tinted here, and
+        // the next sync, at the next event, takes it in.
+        work.watch(&app, std::time::Instant::now());
         let under = work.under_way(&app);
         work.card(&under);
         work.sync_stopped(&app);
@@ -631,6 +634,7 @@ mod tests {
             tasks: Vec::new(),
             ended: 0,
             waiting: 0,
+            next: None,
         };
         let shown = presence(&work, &one, false);
         assert_eq!(shown.title, "Finishing 1 action");
@@ -651,6 +655,7 @@ mod tests {
             tasks: Vec::new(),
             ended: 0,
             waiting: 0,
+            next: None,
         };
         let shown = presence(&work, &paused, false);
         assert_eq!(shown.title, "Finishing 2 actions");
@@ -670,6 +675,7 @@ mod tests {
             tasks: Vec::new(),
             ended: 0,
             waiting: 2,
+            next: None,
         };
         let shown = presence(&work, &first, false);
         assert_eq!(shown.title, "Finishing 2 actions");
@@ -682,6 +688,7 @@ mod tests {
         let between = Under {
             ended: 1,
             waiting: 1,
+            next: None,
             ..first
         };
         let shown = presence(&work, &between, false);
@@ -701,6 +708,7 @@ mod tests {
             tasks: Vec::new(),
             ended: 0,
             waiting: 0,
+            next: None,
         };
         work.stopped = Some(Stopped::new(PlanId(5), "copy 3 items to Backup", true));
         let shown = presence(&work, &nothing, false);

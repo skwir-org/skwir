@@ -10178,3 +10178,53 @@ Checked:
   the request closed and the descriptor open. The descriptor goes first
   now (553dfaec); the desktop tests passed 8 runs in a row.
 - Not run: release-check, a11y-check, any real desktop session.
+
+## The start made plain, Undo and Quit in More (2026-11-03)
+
+The user kept wondering whether an action asked had started. A page of
+mock-ups (the strip alone; ghost rows where copied files arrive; an
+"Arriving" band) was played through; the user chose the strip alone,
+never silent and announcing what joins, and Undo, Redo, the History and
+Quit in More.
+
+Found while planning: the strip showed a plan only once it counted as
+an action, so a light action that takes long (one rename on a slow
+server) said nothing. The review round just before (c320290f) had
+already given a single heavy step its card from its start.
+
+Built: `Work::watch` notes each action as it joins, waiting
+(`Executor::waiting_plans`, plan ids alone, new) or started; one still
+under way 0.3 s later counts (a light one waiting then counts among
+what waits) and is announced once, the latest of several, for 2 s; it
+returns the strip's next change, for which `Shell::strip_wake_at` arms
+one timer at a time. The strip and the card say "getting ready…" before
+an action's first step or byte; while only something waits, the strip
+says what waits first and what for, `Executor::waiting` read then only
+(and while a waiting action is announced). The announcement shows the
+action's sentence on the selection's tint ("… waits its turn" where
+the whole did not fit: the first window check showed only the queue's
+summary, the sentence holding the destination's path twice), hides the
+strip's buttons while it names another than the one they act on (found
+in the window: Resume and Cancel stood beside the waiting copy's name,
+acting on the paused one), and gives a screen reader one polite line.
+More gains Undo and Redo named by what they take back, off with
+nothing, Undo history… and Quit, with two icons drawn for them (redo,
+power).
+
+Checked: `cargo nextest run -p skwir-ui -p skwir-core`, 1128 passed,
+among them `what_joined_is_shown_and_announced_once_it_lasted` (a clock
+passed in: shown at 0.3 s, the latest announced, one that ended sooner
+never, each once, the next wake each time), the strip's
+`the_strip_says_an_action_gets_ready_or_what_it_waits_for`,
+`what_waits_is_listed_by_its_plans` (a single heavy step counting once
+measured) and the More menu's words; clippy on both. In a test window
+on Xvfb :93 (debug build, scratch XDG folders): a folder of 250,000
+files pasted, the strip tinted from 0.45 s to about 2 s with its own
+Pause and Cancel; it paused from Activity, a second folder pasted behind
+it: "Copy to …/Archive · waits its turn" tinted with no buttons, then
+"1 of 2 · paused at 12 % · 1 waiting"; More with the copy paused: "Undo
+copy to …ive (once it ends)" Ctrl+Z, Redo off Ctrl+Shift+Z, "Undo
+history…" Ctrl+Alt+Z, Quit Ctrl+Q. Not seen: "getting ready…" in the
+window (a local copy's checks end before 0.3 s; tested in units), a
+light action slow enough to show by time alone, a real screen reader
+(`just a11y-check` not run), release-check.

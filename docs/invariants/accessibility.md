@@ -77,7 +77,10 @@ like `AGENTS.md`.
   announced with it. A running plan's card in Activity is a progress
   indicator, never live: it would speak at every step; Activity's strip
   is a button named by what it says ("Activity: 42 % · about 3 min
-  left"), read when asked. A status that changes with
+  left"), read when asked; an action that joined is said once, polite,
+  by a live region of its own beside it while the strip announces it
+  ("Copy “a” started", "Copy “b” waits for …"), whose words do not
+  change meanwhile (ADR-114, amended again 2026-11-03). A status that changes with
   every key (the footer) is a status line read when asked, never live.
 
 ## Previews and the terminal

@@ -10,7 +10,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
 use skwir_core::App;
@@ -69,6 +69,35 @@ pub(crate) struct Work {
     /// What the desktop asked (a notice or the presence clicked, its
     /// menu), kept for the next sync.
     asked: Arc<Mutex<Vec<Asked>>>,
+    /// When each action under way joined, waiting or started, as first
+    /// seen (`Work::watch`): one still under way `SHOWN_AFTER` later is
+    /// shown, and announced once.
+    joined: HashMap<PlanId, Instant>,
+    /// Those announced, while under way.
+    announced: HashSet<PlanId>,
+    /// The light actions waiting since `SHOWN_AFTER` or more: counted
+    /// among what waits, as they will be once they start.
+    late_waiting: usize,
+    /// What the strip announces, until when (ADR-114, amended 2026-11-03).
+    pub(crate) announce: Option<Announce>,
+    /// When the window is to be woken for the strip's next change (an
+    /// action to show, a tint to end): one timer at a time.
+    pub(crate) wake_at: Option<Instant>,
+}
+
+/// After how long an action still under way is shown and announced, if
+/// not before (`Started::counts`): an instant rename never flashes.
+pub(crate) const SHOWN_AFTER: Duration = Duration::from_millis(300);
+
+/// How long the strip announces an action that joined, on its tint.
+pub(crate) const ANNOUNCED_FOR: Duration = Duration::from_secs(2);
+
+/// An action the strip announces: its own sentence on a tint, said once to
+/// a screen reader, until `until`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Announce {
+    pub plan: PlanId,
+    pub until: Instant,
 }
 
 /// What ended of the spell of work the strip counts (ADR-114, amended
@@ -238,12 +267,75 @@ impl Work {
         let tasks = app.tasks.running();
         let now: HashSet<u64> = tasks.iter().map(|task| task.id).collect();
         ended += self.spell.tasks_gone(&now);
+        let waiting = app.executor.waiting_count() + self.late_waiting;
+        // What waits first is read only while nothing runs, the strip
+        // then saying what it waits for (never silent).
+        let next = (plans.is_empty() && tasks.is_empty() && waiting > 0)
+            .then(|| app.executor.waiting().first().map(toast::waiting_words))
+            .flatten();
         Under {
             plans,
             tasks,
             ended,
-            waiting: app.executor.waiting_count(),
+            waiting,
+            next,
         }
+    }
+
+    /// Follow what joined (ADR-114, amended 2026-11-03): each action
+    /// waiting or started is noted as first seen; one still under way
+    /// `SHOWN_AFTER` after it joined is shown (counted, as one of several
+    /// steps is at once) and announced once, the latest of them on the
+    /// strip's tint for `ANNOUNCED_FOR`. What is no longer under way is let
+    /// go of. Returns when the strip changes next by itself, to wake the
+    /// window then. `now` is the caller's, a test's own.
+    pub(crate) fn watch(&mut self, app: &App, now: Instant) -> Option<Instant> {
+        let running: HashSet<PlanId> = self.running.iter().map(|r| r.plan).collect();
+        // Not yet told started: the plans waiting, as ids alone.
+        let waits: HashMap<PlanId, bool> = app
+            .executor
+            .waiting_plans()
+            .into_iter()
+            .filter(|(plan, _)| !running.contains(plan))
+            .collect();
+        for plan in running.iter().chain(waits.keys()) {
+            self.joined.entry(*plan).or_insert(now);
+        }
+        let under = |plan: &PlanId| running.contains(plan) || waits.contains_key(plan);
+        self.joined.retain(|plan, _| under(plan));
+        self.announced.retain(|plan| under(plan));
+        let mut next: Option<Instant> = None;
+        let mut sooner = |at: Instant| next = Some(next.map_or(at, |next| next.min(at)));
+        let mut newest: Option<(Instant, PlanId)> = None;
+        self.late_waiting = 0;
+        for (&plan, &at) in &self.joined {
+            let due = at + SHOWN_AFTER;
+            if now < due {
+                sooner(due);
+                continue;
+            }
+            if running.contains(&plan) {
+                self.counting.insert(plan);
+            } else if waits.get(&plan) == Some(&false) {
+                self.late_waiting += 1;
+            }
+            if self.announced.insert(plan) && newest.is_none_or(|(when, _)| at > when) {
+                newest = Some((at, plan));
+            }
+        }
+        if let Some((_, plan)) = newest {
+            self.announce = Some(Announce {
+                plan,
+                until: now + ANNOUNCED_FOR,
+            });
+        }
+        match self.announce {
+            Some(announce) if now < announce.until && under(&announce.plan) => {
+                sooner(announce.until);
+            }
+            _ => self.announce = None,
+        }
+        next
     }
 
     /// The actions of this spell of work that ended (`Spell`).
@@ -740,6 +832,61 @@ mod tests {
     /// steps, or a heavy one), and begins again once nothing runs or
     /// waits (ADR-114, amended 2026-11-03): a single rename between two is
     /// no action of its own.
+    /// What joined is shown and announced once it lasted (ADR-114,
+    /// amended 2026-11-03): a single rename still going 0.3 s after it
+    /// started counts and is announced for 2 s, the latest of several
+    /// taking the tint; one that ended sooner never is. Each step says when
+    /// the strip changes next by itself.
+    #[test]
+    fn what_joined_is_shown_and_announced_once_it_lasted() {
+        use std::time::Instant;
+
+        use super::{ANNOUNCED_FOR, Announce, SHOWN_AFTER};
+        let (_tmp, app) = app();
+        let mut work = Work::default();
+        let t0 = Instant::now();
+        let ms = |n: u64| Duration::from_millis(n);
+        let (slow, later, quick) = (PlanId(21), PlanId(22), PlanId(23));
+        work.take(
+            &app,
+            counted(slow, "rename it's a.txt", 1, false),
+            LOOKED_AT,
+        );
+        assert_eq!(work.watch(&app, t0), Some(t0 + SHOWN_AFTER));
+        assert_eq!(work.watch(&app, t0 + ms(100)), Some(t0 + SHOWN_AFTER));
+        assert!(!work.counting.contains(&slow) && work.announce.is_none());
+        let at = t0 + SHOWN_AFTER;
+        assert_eq!(work.watch(&app, at), Some(at + ANNOUNCED_FOR));
+        assert!(work.counting.contains(&slow), "shown once it lasted");
+        assert_eq!(
+            work.announce,
+            Some(Announce {
+                plan: slow,
+                until: at + ANNOUNCED_FOR
+            })
+        );
+        // Another joins meanwhile: its time comes before the tint ends.
+        work.take(&app, counted(later, "rename b.txt", 1, false), LOOKED_AT);
+        let second = t0 + ms(1000);
+        assert_eq!(work.watch(&app, second), Some(second + SHOWN_AFTER));
+        let due = second + SHOWN_AFTER;
+        assert_eq!(work.watch(&app, due), Some(due + ANNOUNCED_FOR));
+        assert_eq!(work.announce.map(|a| a.plan), Some(later), "the latest");
+        // One that ends before its time is never shown nor announced.
+        work.take(&app, counted(quick, "rename c.txt", 1, false), LOOKED_AT);
+        work.watch(&app, due + ms(10));
+        work.take(&app, finished(quick, 1, None), LOOKED_AT);
+        work.watch(&app, due + ms(500));
+        assert!(!work.counting.contains(&quick));
+        assert_eq!(work.announce.map(|a| a.plan), Some(later));
+        // The tint ends; nothing more to wake for.
+        assert_eq!(work.watch(&app, due + ANNOUNCED_FOR), None);
+        assert!(work.announce.is_none());
+        // Each announced once: still running, neither is announced again.
+        assert_eq!(work.watch(&app, due + ANNOUNCED_FOR + ms(500)), None);
+        assert!(work.announce.is_none());
+    }
+
     #[test]
     fn the_spell_counts_what_ended_until_nothing_is_under_way() {
         let (_tmp, app) = app();

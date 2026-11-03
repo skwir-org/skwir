@@ -658,12 +658,25 @@ of bars, split or not.
   The time left is what runs, never a guess at what waits; what waits
   is a count the executor keeps cheap (`Executor::waiting_count`),
   never a look at what each waits for, which only Activity's list
-  reads. "N waiting" counts those that count; Activity's Waiting
+  reads, and the strip only while it announces a waiting action or
+  nothing else runs (below). "N waiting" counts those that count; Activity's Waiting
   heading says how many quick ones it lists beside them. Activity's
   header says the same over a bar of one segment an action, one bar
   past twelve; the taskbar and the presence follow it, with no share
   while only something waits and nothing ended, and no Pause with
-  nothing to pause. A click, or `ui.activity` (Ctrl+Shift+J),
+  nothing to pause. **The strip is never silent** (ADR-114, amended
+  again 2026-11-03): an action still under way 0.3 s after it joined,
+  waiting or started, is shown and counted whatever its steps
+  (`Work::watch`, `SHOWN_AFTER`: nothing quick flashes, nothing slow is
+  silent); before its first step or byte it says "getting ready…"
+  (`activity::getting_ready`), in the strip and on its card; while
+  only something waits, the strip says what waits first and what for.
+  **It announces** each action once at that moment: its own sentence
+  on the selection's tint for 2 s (`ANNOUNCED_FOR`, the latest of
+  several), then the strip's words as ever; its buttons hidden while
+  it names another than the one they act on. The window is woken for
+  the strip's own changes by one timer at a time
+  (`Shell::strip_wake_at`), never a loop. A click, or `ui.activity` (Ctrl+Shift+J),
   opens Activity above it (one popup at a time, `toggle_popup`): each
   action's card, what waits (each with its Cancel, Cancel all for
   several), and Earlier, this session's answers with

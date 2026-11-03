@@ -1198,6 +1198,10 @@ pub struct Waiting {
     pub asked: u64,
     /// Its title: a plan's, or "undo …" and "redo …".
     pub named: String,
+    /// A plan's id, as its `ExecEvent::Started` will name it: what tells
+    /// the window an action waiting from the same action started (the
+    /// strip announces each once, ADR-114); `None` for an undo or a redo.
+    pub plan: Option<PlanId>,
     pub waits_for: WaitsFor,
     /// A plan's steps; `None` for an undo or a redo.
     pub steps: Option<usize>,
@@ -2543,6 +2547,29 @@ impl Executor {
         self.lane.lock().waiting_count()
     }
 
+    /// The plans waiting their turn, those admitted and not yet told
+    /// started too, each with whether it counts as an action
+    /// ([`counts_as_action`]): what the window follows of what joined, to
+    /// show and announce each once (ADR-114, amended 2026-11-03), without
+    /// working out what each waits for ([`Executor::waiting`]).
+    pub fn waiting_plans(&self) -> Vec<(PlanId, bool)> {
+        let lane = self.lane.lock();
+        let queued = lane
+            .queue
+            .iter()
+            .filter(|job| !job.cancel.is_cancelled())
+            .filter_map(|job| match &job.work {
+                Work::Execute { plan, .. } => Some((plan.id, job.counts())),
+                Work::Replay(..) => None,
+            });
+        let starting = lane
+            .started
+            .iter()
+            .filter(|b| !b.told && !b.cancel.is_cancelled())
+            .filter_map(|b| Some((b.plan?, b.counts)));
+        queued.chain(starting).collect()
+    }
+
     /// [`Executor::waiting`] worked out now, under the lane's lock.
     fn waiting_now(&self, lane: &Lane) -> Vec<Waiting> {
         let mut out = Vec::new();
@@ -2604,6 +2631,10 @@ impl Executor {
             out.push(Waiting {
                 asked: job.seq,
                 named: self.named(job),
+                plan: match &job.work {
+                    Work::Execute { plan, .. } => Some(plan.id),
+                    Work::Replay(..) => None,
+                },
                 waits_for,
                 steps: match &job.work {
                     Work::Execute { plan, .. } => Some(plan.steps.len()),
@@ -5359,6 +5390,36 @@ mod tests {
         assert_eq!(h[3].can, Can::Now, "the copy shares nothing with it");
         inside.opened();
         assert!(logged(&log, "ended /disk/notes/later"));
+    }
+
+    /// What waits is listed as plan ids alone, each with whether it
+    /// counts (ADR-114): one waiting behind another that writes where it
+    /// writes is listed, a single heavy step counting once what it touches
+    /// is worked out, a single rename never; neither once it started.
+    #[test]
+    fn what_waits_is_listed_by_its_plans() {
+        let executor = Executor::new(Scheduler::new(2));
+        let log = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let first = Gate::new("/disk/a", true, false, &log);
+        executor.execute(first.plan(), CancelToken::new());
+        assert!(logged(&log, "began /disk/a"));
+        let heavy = Gate::new("/disk/a/it’s b", true, true, &log).plan();
+        let light = Gate::new("/disk/a/c", false, true, &log).plan();
+        let (heavy_id, light_id) = (heavy.id, light.id);
+        executor.execute(heavy, CancelToken::new());
+        executor.execute(light, CancelToken::new());
+        let deadline = Instant::now() + Duration::from_secs(5);
+        // A single heavy step counts once what it touches is worked out.
+        let mut plans = executor.waiting_plans();
+        while !plans.contains(&(heavy_id, true)) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+            plans = executor.waiting_plans();
+        }
+        assert!(plans.contains(&(heavy_id, true)), "{plans:?}");
+        assert!(plans.contains(&(light_id, false)), "{plans:?}");
+        first.opened();
+        assert!(logged(&log, "ended /disk/a/c"));
+        assert!(executor.waiting_plans().is_empty());
     }
 
     /// An entry joins the history having been compared with each other
