@@ -6,10 +6,41 @@ error, never permission to use a new build. Update downloads.json deliberately.
 """
 
 import hashlib
+import http.client
 import json
 import pathlib
 import sys
+import time
+import urllib.error
 import urllib.request
+
+ATTEMPTS = 4
+
+
+def download(url, partial):
+    """Fetch url into partial, trying again when the connection fails.
+
+    A server that resets a connection or stalls once (musl's cgit did, on
+    0.3.0's build) is no reason to stop a release. A refusal is: a
+    missing or forbidden file stays so however often it is asked.
+    """
+    for attempt in range(1, ATTEMPTS + 1):
+        try:
+            with urllib.request.urlopen(url, timeout=60) as source, partial.open("wb") as out:
+                while chunk := source.read(1024 * 1024):
+                    out.write(chunk)
+            return
+        except urllib.error.HTTPError as error:
+            if error.code < 500 and error.code != 429:
+                sys.exit(f"{url}: {error}")
+            failure = error
+        except (OSError, http.client.HTTPException) as error:
+            failure = error
+        if attempt == ATTEMPTS:
+            sys.exit(f"{url}: {failure} ({ATTEMPTS} attempts)")
+        wait = 5 * attempt
+        print(f"  {failure}; trying again in {wait} s", flush=True)
+        time.sleep(wait)
 
 
 def digest(path):
@@ -29,9 +60,7 @@ def main():
         if not path.exists():
             partial = path.with_suffix(path.suffix + ".part")
             print(f"Downloading {name}", flush=True)
-            with urllib.request.urlopen(spec["url"], timeout=60) as source, partial.open("wb") as out:
-                while chunk := source.read(1024 * 1024):
-                    out.write(chunk)
+            download(spec["url"], partial)
             if digest(partial) != spec["sha256"]:
                 partial.unlink()
                 sys.exit(f"{name}: checksum differs from downloads.json")
