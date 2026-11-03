@@ -537,7 +537,10 @@ server and network. Undo history is cleared when Skwir exits.
   The 3D model helper is built with ogeom 0.14, under the LGPL 2.1, its source
   published beside every build (ADR-042, amended). The packages suggest the
   tools remote folders use (sshfs, rclone, GVfs's backends, kio-fuse, rsync,
-  FUSE, Avahi, wsdd).
+  FUSE, Avahi, wsdd). The AppImage, the tarball and the macOS build carry
+  their own SQLite, as Windows' does: the newest rusqlite needs one newer than
+  older systems have (ADR-022, amended). Distributions' packages still use the
+  system's.
 
 ## 0.2.0 (2026-10-20)
 

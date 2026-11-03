@@ -17,7 +17,8 @@ csv = "1"
 # (`skwir_platform::package`) to bound what calamine reads whole.
 calamine = { version = "0.38", default-features = false }
 # SQLite databases, read by the system's libsqlite3 (ADR-022), not a
-# bundled copy; built in on Windows alone, which has none to link.
+# bundled copy; built in on Windows, which has none to link, and where
+# `bundled-sqlite` asks.
 rusqlite = { version = "0.41", default-features = false, features = ["hooks", "bundled-windows"] }
 # A line's keys in the order it writes them.
 indexmap = { workspace = true, features = ["serde"] }
@@ -26,6 +27,11 @@ indexmap = { workspace = true, features = ["serde"] }
 # The tests write workbooks.
 zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 tempfile.workspace = true
+
+[features]
+# SQLite built in, for a build that cannot count on the system's being
+# as new as rusqlite needs (ADR-022, 2026-11-03).
+bundled-sqlite = ["rusqlite/bundled"]
 
 [lints]
 workspace = true

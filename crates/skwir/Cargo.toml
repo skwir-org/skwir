@@ -19,6 +19,14 @@ path = "src/main.rs"
 default = ["mimalloc"]
 # The tuned mimalloc of ADR-011; build without it to profile with heaptrack.
 mimalloc = ["skwir-alloc/mimalloc"]
+# SQLite built in (ADR-022, 2026-11-03), for the builds that cannot count
+# on the system's being as new as rusqlite needs: the AppImage and the
+# tarball, made on Ubuntu 22.04, and macOS's. Distributions' packages keep
+# the system's.
+bundled-sqlite = [
+    "skwir-plugin-map-tiles/bundled-sqlite",
+    "skwir-plugin-tables/bundled-sqlite",
+]
 
 [dependencies]
 skwir-alloc.workspace = true

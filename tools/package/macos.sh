@@ -55,8 +55,7 @@ export AR_aarch64_apple_darwin
 # GStreamer's own build, cut down (tools/package/gstreamer.py), which the
 # media helper is linked against. pkg-config is asked for macOS of its
 # files alone, not the dev shell's, which would answer with Linux's
-# libraries: a library it has none of is the SDK's (SQLite's), found by
-# the linker.
+# libraries: a library it has none of is the SDK's, found by the linker.
 gstreamer="$(tools/package/gstreamer.py "$target")"
 export PKG_CONFIG_ALLOW_CROSS=1
 export PKG_CONFIG_PATH_aarch64_apple_darwin="$gstreamer/link/lib/pkgconfig"
@@ -66,8 +65,10 @@ export PKG_CONFIG_LIBDIR_aarch64_apple_darwin="$gstreamer/link/lib/pkgconfig"
 # version.
 SKWIR_LIBARCHIVE_STATIC="$(tools/package/libarchive.sh "$target")"
 export SKWIR_LIBARCHIVE_STATIC
+# SQLite built in: macOS 12 to 14 have one older than rusqlite needs, and
+# the SDK's, newer, would link symbols they lack (ADR-022).
 # shellcheck disable=SC2046,SC2086 # one `-p name` per program
-cargo build --profile dist --target "$target" $(printf -- '-p %s ' $programs)
+cargo build --profile dist --target "$target" --features skwir/bundled-sqlite $(printf -- '-p %s ' $programs)
 
 out="$root/target/package/macos"
 name="skwir-$version-macos-arm64"

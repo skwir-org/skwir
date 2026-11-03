@@ -3,7 +3,8 @@
 Status: parts 1 to 3 accepted and built, 2026-09-27 (the "Decided"
 paragraphs below). Part 4: tile archives previewed, 2026-10-05; using them
 as backgrounds is proposed, not built (checked in `crates/plugins/map-tiles`
-on 2026-10-11). Amended 2026-10-05 (SQLite on Windows).
+on 2026-10-11). Amended 2026-10-05 (SQLite on Windows) and 2026-11-03
+(SQLite in the portable builds and on macOS).
 
 ## Context
 
@@ -199,3 +200,24 @@ proposed.
 
 Windows has no system `libsqlite3`, so SQLite is built in there
 (`rusqlite`'s `bundled-windows`); Linux and macOS keep the system's.
+
+### 2026-11-03: SQLite in the portable builds and on macOS
+
+The system's proved too old where nothing holds it current. rusqlite 0.41
+(2026-11-02) needs SQLite 3.45.3, and calls what 3.38 and 3.44 added
+(`sqlite3_error_offset`, `sqlite3_set_clientdata`) whatever features
+are asked. The AppImage and the tarball are made on Ubuntu 22.04 (3.37.2,
+ADR-052) to run on systems as old, and failed to link with 0.3.0's
+build; macOS 12 to 14 have 3.43 or older, while the SDK's newer
+`libsqlite3` links the app, which would then not start there.
+
+So SQLite is built in where the build cannot count on the system's: the
+binary's `bundled-sqlite` feature turns on `rusqlite`'s `bundled` in the
+two plugins that read databases (`map-tiles`, `tables`), and the AppImage
+(with the tarball made from its tree) and macOS's build ask for it.
+Distributions' packages keep the system's, which they depend on: Debian
+13, Ubuntu 24.04, Fedora 44 and Arch have 3.45 or newer, with every
+function rusqlite calls (their installations are tried by
+`release-build`). Windows still builds it in by `bundled-windows`. A
+distribution older than rusqlite needs takes the AppImage. SQLite is in
+the public domain, so the notices name nothing more.

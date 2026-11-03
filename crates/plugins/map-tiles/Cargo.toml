@@ -22,7 +22,7 @@ tracing.workspace = true
 # Tile archives: PMTiles' gzipped directories, the version and backend
 # already in the tree; MBTiles read by the system's libsqlite3 (ADR-022),
 # as the tables preview reads a database: built in on Windows, which has
-# none to link.
+# none to link, and where `bundled-sqlite` asks.
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 rusqlite = { version = "0.41", default-features = false, features = ["hooks", "bundled-windows"] }
 # Rasterizes the offline outline; the version resvg already brings.
@@ -51,6 +51,11 @@ hyper = { version = "1", features = ["server"] }
 hyper-util = { version = "0.1", features = ["server-auto"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
 
+
+[features]
+# SQLite built in, for a build that cannot count on the system's being
+# as new as rusqlite needs (ADR-022, 2026-11-03).
+bundled-sqlite = ["rusqlite/bundled"]
 
 [lints]
 workspace = true
