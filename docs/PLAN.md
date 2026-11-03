@@ -34,8 +34,8 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
 ## Current status (2026-11-03)
 
 - **Where:** named Skwir (skwir.org, application id `org.skwir.skwir`),
-  version 0.3.0, dated 2026-11-03; 0.2.0 was released 2026-10-20 on
-  GitHub and the AUR's three bases, 0.1.0 [released](#release-01-linux)
+  version 0.3.0, released 2026-11-03 on GitHub and the AUR's three
+  bases; 0.2.0 was released 2026-10-20, 0.1.0 [released](#release-01-linux)
   2026-10-13. Phases 0 to 4, 5a and 6 pass their gates. Maps and Notes
   everywhere are built, their gates not closed, as is much that no phase
   planned ([Built beyond the plan](#built-beyond-the-plan)).
@@ -44,7 +44,8 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
   were built on 2026-10-21 (ADR-077): what they leave is in their
   section. [What is left](#what-is-left) gathers
   the rest. From 0.3 a release's page is its changelog section above
-  `### All changes` (docs/RELEASING.md).
+  `### All changes` (docs/RELEASING.md), kept as short as 0.2.0's page
+  (0.3.0's ran to 8 KB and its draft was shortened by hand).
 - **Blocked:** Phase 5b needs a Mac and a Windows machine
   (`docs/HELP-WANTED.md`). A Windows build to try is made on Linux
   (ADR-074, `just package-windows`, 2026-10-20): a zip and a per-user
@@ -54,17 +55,20 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
   archive helper, libarchive built on Linux and linked in statically
   (2026-10-20, `tools/package/libarchive.sh`), and the media helper with
   GStreamer's own build beside it (ADR-076, `tools/package/gstreamer.py`). Both were added
-  to 0.2.0's release page (built from 5a0bb2b); from the next release,
-  `release-build` makes them with the Linux packages. The user reports
+  to 0.2.0's release page (built from 5a0bb2b); 0.3.0's `release-build`
+  made them with the Linux packages. The user reports
   hosted CI is too slow; routine CI is reduced to essentials, with full
   checks and package builds kept as manual fallbacks. The manual full
   workflow, whose `native` job tests on macOS and Windows runners, has
   never run (no run on 2026-10-20).
-- **Budgets:** idle own share 92.5 MiB of 100 on Zed's gpui (session
-  display, quiet, 2026-10-18; 92.3 for gpui 0.2.2, ADR-064). First frame
-  of 150 ms: a median of 119 ms on Zed's gpui and 109 on 0.2.2, the least
-  110 and 100 (ten starts each, alternated). `just bench-check` meets all
-  44 budgets (2026-10-18, quiet).
+- **Budgets:** idle own share **103.7 MiB of 100, over**: 0.3.0's
+  tarball on the session's display (quiet, 2026-11-03), where 0.2.0's
+  read 91.3. Its code grew by a quarter and most of it is resident at
+  idle; the user released 0.3.0 so, and the work is under [What is
+  left](#what-is-left). First frame of 150 ms: the least 137 ms for
+  0.3.0's tarball and 113 for 0.2.0's (nine starts each, alternated),
+  both medians near 160. `just bench-check` meets all 51 budgets
+  (2026-11-03, quiet).
 - **Latest work (2026-10-21 to 11-03), in 0.3.0:** remote folders
   (ADR-077 to ADR-088): servers mounted by sshfs, GVfs, KIO or rclone,
   configured from Skwir, found nearby, copies in batches retried from
@@ -599,6 +603,21 @@ printing](#grammars-and-printing) (2026-10-31); skwird's steps (ADR-050); the de
 on the machines (`docs/HELP-WANTED.md`, `docs/PORTING.md`, which lists
 what is still Linux's); Phase 8; what [Remote folders](#remote-folders)
 leave (ADR-077).
+
+**From the release of 0.3.0** (2026-11-03, `docs/STATUS-LOG.md`):
+- Idle memory misses ADR-000's budget: 103.7 MiB of own share against
+  0.2.0's 91.3, on the session's display. Most of it is the binary: its
+  code grew from 54 to 68 MiB and in both releases about 86 % of it is
+  resident at idle, so idle memory follows code size. Find why so much
+  of it is resident (more than an idle program runs), or make it
+  smaller, until `just idle-pss` is green again.
+- `just idle-pss` measures the dev build (`target/release`), whose first
+  frame read 177 to 184 ms while the shipped tarballs read 137 to 170
+  the same evening: why it starts slower is not known.
+- Text drawn without a font family: gpui fell back from
+  `.SystemUIFont` once in the AppImage, the place not found.
+- A window opened again from the tray logs its first frame counted from
+  the process's start ("first frame 82397.7 ms after start").
 
 **From the review of 2026-11-03** (the History and the queue's
 progress, fixed the same night):

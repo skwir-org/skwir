@@ -10398,3 +10398,97 @@ column dragged 100 px left moved 99 px. `cargo clippy -p skwir-ui
 `a_dragged_width_stays_with_its_header`). Not checked: a workbook's next
 sheet or a CSV's next rows with dragged widths (unit test only), the
 sideways bar after widening, Wayland, release-check.
+
+## Release 0.3.0 (2026-11-03)
+
+Released on GitHub and the AUR's three bases: the annotated tag
+`v0.3.0` on b80ceb64, the Release commit f8f3a594 followed by the fixes
+the release build called for and the changes the user added before the
+bundle was made (6a98c044 to 0c1ffbf4, 42daac5c, bb7b0fab). Nothing had
+been pushed, so the local tag moved onto each.
+
+- **What the release build found**, each fixed in a commit:
+  - musl's cgit answered slowly and reset about one request in three,
+    and the AppImage's inputs were fetched once: four tries now, after
+    5, 10 and 15 s, a 4xx other than 429 stopping at once (4bc7b3ad).
+  - `emptying_the_trash_deletes_its_files_and_what_it_said_of_them`
+    raced the plugin's own read: `trash.empty` refused until the trash
+    was held. It reads the trash for whoever asks, off the window
+    thread; the new test failed without it (6fc25baa).
+  - rusqlite 0.41 (the update of 11-02) needs SQLite 3.45.3 or later
+    and calls what Ubuntu 22.04's 3.37.2 and macOS 12 to 14 lack, so the
+    AppImage's link failed. SQLite is built into the AppImage, the
+    tarball and macOS's build; the distributions' packages keep the
+    system's (cbc5398b, ADR-022 amended). The AppImage's `skwir` needs
+    no `libsqlite3` and macOS's imports no `libsqlite3.dylib`: both carry
+    SQLite 3.54.1.
+  - On Arch, the build root's update brought a systemd whose tmpfiles
+    hook applied its `z / 555` to the root, and the tree's files could
+    no longer be put in it: its owner writes it again after the update
+    (d27094d8).
+  - mirrors.kernel.org, the only server Arch's image names, stalled
+    mid-download: geo.mirror.pkgbuild.com and fastly's are asked first,
+    kernel.org after, in a new root and in the one kept (b80ceb64).
+  - Reviewing the changes added before the bundle: Cancel all read the
+    window's list of what runs, which lags the executor's, so an action
+    just started from the queue escaped it (42daac5c).
+- **Eight runs of `release-build`.** The first three and the seventh
+  stopped on the above; the user stopped the fourth and sixth to add
+  changes; the fifth's bench-check missed six budgets by a little while
+  the machine played a video (2.5 to 3.5 times the morning's times, the
+  same code), and the runs after it kept the machine quiet. A run has
+  no resume and takes about 1¾ hours, so Arch's packages, Windows' and
+  macOS's builds were tried alone before the eighth.
+- **The eighth (19:16 to 21:02) passed whole:** release-check (2985
+  tests passed, 30 skipped; smoke, a11y, the Poppler, MuPDF and DjVu
+  checks, all 51 bench budgets met), the AppImage and tarball, Debian's,
+  Ubuntu's, Fedora's and Arch's packages built and installed in fresh
+  roots, Windows' zip and installer tried under Wine, macOS's zip and
+  disk image looked over. `release-verify` passed.
+- **Personal data:** what the 108 commits since 0.2.0's push add, and
+  their messages, scanned: only example addresses, a specification's
+  section numbers, a dependency's copyright line and synthetic paths; no
+  binary file added.
+- **Idle memory and the first frame**, on the session's display
+  (NVIDIA, quiet): the two releases' tarballs alternated, three rounds
+  of three starts each, run on NixOS through Nix's glibc loader with
+  their own Vulkan loader pointed at the system's drivers.
+
+  | Median | 0.2.0 | 0.3.0 |
+  | --- | --- | --- |
+  | own share | 91.3 MiB | 103.7 MiB |
+  | the binary | 48.0 MiB | 58.3 MiB |
+  | anonymous | 28.7 MiB | 31.1 MiB |
+  | GPU buffers | 11.6 MiB | 11.6 MiB |
+  | first frame, least and median | 113 and 161 ms | 137 and 157 ms |
+
+  0.3.0 misses ADR-000's idle budget by 3.7 MiB; its first frame is
+  0.2.0's. Its code grew from 54.4 to 68.5 MiB, spread over many crates
+  (generic code instantiated, the remote plugin, SQLite in the tarball,
+  the platform, the shell, core, zvariant, crossbeam-channel), and in
+  both releases about 86 % of it is resident at idle, so idle memory
+  follows code size. The user chose to release 0.3.0 so and record it;
+  the work is in PLAN.md's "What is left". `just idle-pss`, which runs
+  the dev build, read 102.5 MiB and a first frame of 177 to 184 ms. On a
+  headless sway (pixman, lavapipe) the tarballs read 118.8 and 135.5 MiB:
+  lavapipe's GPU buffers grew (14.0 to 18.2 MiB) where NVIDIA's did not,
+  and 0.2.0 had read 109.4 MiB there on 10-20, before Mesa moved.
+- **The AppImage tried by the user** on the session, through
+  appimage-run: the tray, a notification at a copy's end, sleep held
+  off, Print… through GTK's portal, all good. Its log showed gpui
+  falling back once from `.SystemUIFont`, and a window opened again from
+  the tray logging its first frame from the process's start: both in
+  "What is left".
+- **The release page:** the changelog section's part above
+  `### All changes` came to 8 KB. The draft's notes were rewritten by
+  hand to 2.5 KB, as 0.2.0's page was (the bundle's `notes.md` keeps the
+  long one, which a new `release-upload` would put back).
+- **The AUR:** `skwir`, `skwir-bin` and `skwir-git` at 0.3.0
+  (`0.3.0.r0.gb80ceb6`), their PDFium at chromium/8125, `LGPL-2.1-only`
+  among their licences, and the thirteen new optional dependencies
+  (sshfs, rclone, GVfs and its backends, kio-fuse, rsync, fuse3, Avahi,
+  wsdd), all in Arch's extra.
+
+Not checked: the Windows and macOS builds on their systems; the manual
+`packages` workflow (the AppImage and tarball on hosted Ubuntu 24.04 and
+Fedora 44); the AppImage on GNOME or Plasma.
