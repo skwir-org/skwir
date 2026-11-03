@@ -10039,3 +10039,30 @@ Redo then held by the older; a right click on Undo and Ctrl+Alt+Z opened
 the History; six Tabs from the list never reached the footer.
 `cargo nextest run -p skwir-ui`: 465 passed; clippy on skwir-ui and
 skwir-core.
+
+**3. The queue's progress** (ADR-114, amended). `Work::spell_ended`
+counts the actions of the spell that ended (several steps, or bytes
+moved), settled after each sync's events (`Work::settle`: nothing runs,
+waits or goes on by itself); `activity::summary` counts each action one,
+ended whole, running by its share, waiting nothing, and those waiting
+only when they weigh (`Waiting::weighs`: several steps, heavy, or an
+undo or a redo), so single renames waiting behind a copy do not hold
+the bar low. The strip says "2 of 3 · 47 % · … · 1 waiting"; Activity's
+header a segment an action (one bar past twelve); the taskbar and the
+presence follow. Counted in the window's `Work` rather than the core
+(`Executor::spell()` in the proposal): the cards are decided there, and
+the taskbar and Quit read it there.
+
+Checked in the test window: three copies of folders of small files into
+one folder (250,000, 12,000 and 12,000 files of 64 B; at 60,000 the
+first ended within 3 s, too soon to watch); the first paused from
+Activity by the keyboard (Ctrl+Shift+J, Tab, Tab, Enter: the strip's
+Pause moved under the pointer as its words changed), the other two
+pasted behind it: the strip said "1 of 3 · paused at 11 % · 2 waiting"
+(the first at 34 %), Activity's header "1 of 3 · 11 %", "2 waiting" over
+three segments, muted while paused, and the History the running copy
+and the two waiting, each "Taken back once it ends". Resumed, sampled
+every 0.7 s: 15, 19, 22, 26, 30 %, then "2 of 3 · 45 % · 1 waiting" as
+the first ended (no return to nothing), then all done. `cargo nextest
+run -p skwir-ui`: the two strip tests rewritten for the spell and
+`the_spell_counts_what_ended_until_nothing_is_under_way` added.

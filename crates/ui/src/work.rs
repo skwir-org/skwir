@@ -44,6 +44,12 @@ pub(crate) struct Work {
     pub(crate) stopped: Option<Stopped>,
     /// The plans shown as a card: one an error stops stays in the strip.
     pub(crate) carded: HashSet<PlanId>,
+    /// The actions of this spell of work that ended, each as one the strip
+    /// counts (ADR-114, amended 2026-11-03): from an action started with
+    /// nothing under way until nothing runs, waits or goes on by itself
+    /// (`Work::settle`). Counted whole, so the bar never goes back as one
+    /// ends.
+    pub(crate) spell_ended: usize,
     /// The plans a server stopped, which go on by themselves once it
     /// answers again (ADR-080, 9).
     servers: HashSet<PlanId>,
@@ -189,6 +195,22 @@ impl Work {
         Under {
             plans,
             tasks: app.tasks.running(),
+            ended: self.spell_ended,
+            waiting: app.executor.waiting().iter().filter(|w| w.weighs()).count(),
+        }
+    }
+
+    /// The spell of work ends once nothing runs, waits or goes on by
+    /// itself, its plans' ends taken in: what the strip counts begins
+    /// again (`spell_ended`). Asked after each sync's events, as the
+    /// executor wakes the window once it is idle.
+    pub(crate) fn settle(&mut self, app: &App) {
+        if self.spell_ended > 0
+            && self.running.is_empty()
+            && app.tasks.running().is_empty()
+            && !app.executor.busy_or_waiting()
+        {
+            self.spell_ended = 0;
         }
     }
 
@@ -259,6 +281,11 @@ impl Work {
                 };
                 let made = items.clone();
                 let running = self.running.remove(index);
+                // Counted as the strip counts it while it ran or waited:
+                // several steps, or bytes moved (`Waiting::weighs`).
+                if running.total > 1 || moved > 0 {
+                    self.spell_ended += 1;
+                }
                 let run = running.run;
                 let title = running.title.clone();
                 let stopped_by_error = error.is_some() && !cancelled;
@@ -481,7 +508,7 @@ impl Work {
             return;
         };
         let summary = summary(under);
-        let progress = match summary {
+        let progress = match &summary {
             Some(summary) => Some(Progress {
                 fraction: summary.fraction,
                 state: if summary.paused {
@@ -606,6 +633,63 @@ mod tests {
             moved: 0,
             ran: Duration::from_millis(30),
         }
+    }
+
+    /// The strip's spell of work counts each action that ended as the
+    /// strip counted it while it ran (several steps, or bytes moved), and
+    /// begins again once nothing runs or waits (ADR-114, amended
+    /// 2026-11-03): a single rename between two is no action of its own.
+    #[test]
+    fn the_spell_counts_what_ended_until_nothing_is_under_way() {
+        let (_tmp, app) = app();
+        let mut work = Work::default();
+        let (first, quick, copy) = (PlanId(11), PlanId(12), PlanId(13));
+        work.take(&app, started(first, "rename 2 items", 2), LOOKED_AT);
+        work.take(&app, finished(first, 2, None), LOOKED_AT);
+        assert_eq!(work.spell_ended, 1);
+        work.take(&app, started(quick, "rename it's a.txt", 1), LOOKED_AT);
+        work.take(&app, finished(quick, 1, None), LOOKED_AT);
+        assert_eq!(work.spell_ended, 1, "a single rename counts for nothing");
+        work.take(
+            &app,
+            started(copy, "copy it's a.txt to Backup", 1),
+            LOOKED_AT,
+        );
+        let moved = match finished(copy, 1, None) {
+            ExecEvent::Finished {
+                plan,
+                applied,
+                skipped,
+                error,
+                cancelled,
+                undoable,
+                items,
+                said,
+                ran,
+                ..
+            } => ExecEvent::Finished {
+                plan,
+                applied,
+                skipped,
+                error,
+                cancelled,
+                undoable,
+                items,
+                said,
+                moved: 4096,
+                ran,
+            },
+            other => other,
+        };
+        // Still running: the spell goes on.
+        work.settle(&app);
+        assert_eq!(work.spell_ended, 1);
+        work.take(&app, moved, LOOKED_AT);
+        assert_eq!(work.spell_ended, 2, "one file copied, its bytes moved");
+        assert_eq!(work.under_way(&app).ended, 2);
+        // Nothing runs, waits or goes on by itself: it begins again.
+        work.settle(&app);
+        assert_eq!(work.spell_ended, 0);
     }
 
     /// What runs is followed from its start to its answer, which `Earlier`

@@ -226,78 +226,88 @@ impl Reveal {
     }
 }
 
-/// What runs and is shown: the plans worth a card, then the tasks (a print).
+/// What runs and is shown: the plans worth a card, then the tasks (a print);
+/// and what the strip counts beside them in this spell of work (ADR-114,
+/// amended 2026-11-03): the actions that ended, and those waiting that
+/// will count (`Waiting::weighs`).
 pub(crate) struct Under {
     pub plans: Vec<(Running, Transfer)>,
     pub tasks: Vec<skwir_core::task::Running>,
+    pub ended: usize,
+    pub waiting: usize,
 }
 
 impl Under {
+    /// Nothing runs (what waits aside).
     pub(crate) fn is_empty(&self) -> bool {
         self.plans.is_empty() && self.tasks.is_empty()
     }
 
+    /// What runs.
     pub(crate) fn count(&self) -> usize {
         self.plans.len() + self.tasks.len()
     }
 }
 
-/// How far all of it went together.
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// How far the spell of work went (ADR-114, amended 2026-11-03).
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Summary {
-    /// From 0 to 1: their bytes together when each was sized before it
-    /// began, else each one's share alike.
+    /// From 0 to 1: each action of the spell counting one, those ended
+    /// whole, those running by their own share (bytes or items, as their
+    /// cards say), those waiting nothing: so it never goes back as one
+    /// ends, only as more is asked.
     pub fraction: f32,
-    /// The longest time left of those that can tell it: they run at once
-    /// (ADR-079).
+    /// The share of each running one, plans then tasks, as `under` holds
+    /// them: what Activity's header draws.
+    pub shares: Vec<f32>,
+    /// How far the queue has started, the ended and the running…
+    pub at: usize,
+    /// …of every action of the spell, those waiting too.
+    pub of: usize,
+    /// Those waiting.
+    pub waiting: usize,
+    /// The longest time left of those running that can tell it: they run
+    /// at once (ADR-079). Nothing is said of what waits.
     pub left: Option<Duration>,
-    /// Every one is paused.
+    /// Every one running is paused.
     pub paused: bool,
-    /// Every one was cancelled and is stopping.
+    /// Every one running was cancelled and is stopping.
     pub stopping: bool,
 }
 
-/// `under` summed up, `None` when nothing runs.
+/// `under` summed up, `None` when nothing runs or waits.
 pub(crate) fn summary(under: &Under) -> Option<Summary> {
-    if under.is_empty() {
+    let running = under.count();
+    if running == 0 && under.waiting == 0 {
         return None;
     }
-    let sized: Option<(u64, u64)> = (under.tasks.is_empty())
-        .then(|| {
+    #[allow(clippy::cast_possible_truncation)] // A share for a bar.
+    let shares: Vec<f32> = under
+        .plans
+        .iter()
+        .map(|(running, t)| share(running.total, t))
+        .chain(
             under
-                .plans
+                .tasks
                 .iter()
-                .try_fold((0u64, 0u64), |(done, whole), (_, t)| {
-                    let planned = t.planned.filter(|&planned| planned > 0)?;
-                    Some((done + t.done, whole + planned.max(t.done)))
-                })
-        })
-        .flatten();
-    // Each one's share alike, where one was not sized.
-    #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)] // Shares for a bar.
-    let alike = || {
-        let shares = under
-            .plans
-            .iter()
-            .map(|(running, t)| share(running.total, t))
-            .chain(
-                under
-                    .tasks
-                    .iter()
-                    .map(|task| task.went.unwrap_or(0.) as f32),
-            );
-        shares.sum::<f32>() / under.count() as f32
-    };
-    #[allow(clippy::cast_precision_loss)] // A share for a bar.
-    let fraction = sized.map_or_else(alike, |(done, whole)| {
-        (done as f32 / whole.max(1) as f32).clamp(0., 1.)
-    });
+                .map(|task| task.went.unwrap_or(0.) as f32),
+        )
+        .collect();
+    let at = under.ended + running;
+    let of = at + under.waiting;
+    #[allow(clippy::cast_precision_loss)] // Shares for a bar.
+    let fraction = ((under.ended as f32 + shares.iter().sum::<f32>()) / of as f32).clamp(0., 1.);
     let left = under.plans.iter().filter_map(|(_, t)| t.left).max();
-    let paused = under.tasks.is_empty() && under.plans.iter().all(|(r, _)| r.paused);
-    let stopping = under.plans.iter().all(|(r, _)| r.cancelling)
+    let paused = running > 0 && under.tasks.is_empty() && under.plans.iter().all(|(r, _)| r.paused);
+    let stopping = running > 0
+        && under.plans.iter().all(|(r, _)| r.cancelling)
         && under.tasks.iter().all(|task| task.cancelling);
     Some(Summary {
         fraction,
+        shares,
+        at,
+        of,
+        waiting: under.waiting,
         left,
         paused,
         stopping,
@@ -311,27 +321,32 @@ fn percent(fraction: f32) -> String {
     format!("{percent} %")
 }
 
-/// What the strip says of how it goes: the share done and the time left;
-/// paused, stopping, or sending to its server instead.
+/// What the strip says of how it goes: the share done and the time left
+/// of what runs, then how many wait; paused, stopping, or sending to its
+/// server instead.
 fn how(summary: &Summary, sending_files: Option<usize>) -> String {
     let at = percent(summary.fraction);
     if summary.stopping {
         return "stopping…".to_owned();
     }
-    if summary.paused {
-        return format!("paused at {at}");
-    }
-    if let Some(files) = sending_files {
-        return sending(files);
-    }
-    match summary.left {
-        Some(left) => format!("{at} · {}", format::time_left(left)),
-        None => at,
+    let said = if summary.paused {
+        format!("paused at {at}")
+    } else if let Some(files) = sending_files {
+        sending(files)
+    } else {
+        match summary.left {
+            Some(left) => format!("{at} · {}", format::time_left(left)),
+            None => at,
+        }
+    };
+    match summary.waiting {
+        0 => said,
+        waiting => format!("{said} · {waiting} waiting"),
     }
 }
 
-/// The strip's words, richest first: what runs and how, how alone, the
-/// share alone.
+/// The strip's words, richest first: what runs, how far the queue started
+/// and how; that without what runs; the share alone.
 pub(crate) fn words(under: &Under, summary: &Summary) -> [String; 3] {
     let sending_files = if let [(_, t)] = under.plans.as_slice()
         && under.tasks.is_empty()
@@ -344,6 +359,7 @@ pub(crate) fn words(under: &Under, summary: &Summary) -> [String; 3] {
     let what = match (under.plans.as_slice(), under.tasks.as_slice()) {
         ([(running, _)], []) => capitalized(&running.title),
         ([], [task]) => capitalized(&task.title),
+        ([], []) => "Waiting".to_owned(),
         _ => format::count(under.count(), "action"),
     };
     let least = if summary.stopping {
@@ -351,6 +367,14 @@ pub(crate) fn words(under: &Under, summary: &Summary) -> [String; 3] {
     } else {
         percent(summary.fraction)
     };
+    if summary.of > 1 {
+        let queue = format!("{} of {}", summary.at, summary.of);
+        return [
+            format!("{what} · {queue} · {how}"),
+            format!("{queue} · {how}"),
+            least,
+        ];
+    }
     [format!("{what} · {how}"), capitalized(&how), least]
 }
 
@@ -515,6 +539,77 @@ impl Press for gpui::Stateful<gpui::Div> {
 /// element tracking a handle of its own takes its stop from the handle.
 pub(crate) fn stop(cx: &mut Context<Shell>) -> FocusHandle {
     cx.focus_handle().tab_index(0).tab_stop(true)
+}
+
+/// The most actions Activity's header draws a segment for: past it, one
+/// bar, the segments too thin to tell apart.
+const SEGMENTS: usize = 12;
+
+/// Over the cards, while several actions make the spell of work (ADR-114,
+/// amended 2026-11-03): how far the queue started and its share, what is
+/// left of what runs and how many wait, over a bar of one segment each,
+/// full for the `ended`, as far as each running one went, empty for those
+/// waiting; one bar past `SEGMENTS`.
+fn spell_header(summary: &Summary, ended: usize, a11y: bool, theme: &Theme) -> AnyElement {
+    let said = format!(
+        "{} of {} · {}",
+        summary.at,
+        summary.of,
+        percent(summary.fraction)
+    );
+    let after = [
+        summary.left.map(format::time_left),
+        (summary.waiting > 0).then(|| format!("{} waiting", summary.waiting)),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join(" · ");
+    let color = if summary.paused || summary.stopping {
+        theme.text_muted
+    } else {
+        theme.accent
+    };
+    let bar = if summary.of <= SEGMENTS {
+        let fills = std::iter::repeat_n(1., ended)
+            .chain(summary.shares.iter().copied())
+            .chain(std::iter::repeat_n(0., summary.waiting));
+        div()
+            .flex()
+            .gap(px(3.))
+            .children(fills.map(|fill| div().flex_1().child(small_bar_full(fill, color, theme))))
+    } else {
+        div().child(small_bar_full(summary.fraction, color, theme))
+    };
+    div()
+        .id("activity-spell")
+        .role(gpui::Role::ProgressIndicator)
+        .when(a11y, |d| {
+            d.aria_label(format!("{} of {} actions", summary.at, summary.of))
+                .aria_numeric_value(f64::from(summary.fraction) * 100.)
+                .aria_min_numeric_value(0.)
+                .aria_max_numeric_value(100.)
+        })
+        .flex()
+        .flex_col()
+        .flex_none()
+        .gap_1()
+        .px_3()
+        .pt_1()
+        .pb_2()
+        .border_b_1()
+        .border_color(theme.border)
+        .child(
+            div()
+                .flex()
+                .justify_between()
+                .gap_2()
+                .text_xs()
+                .child(div().text_color(theme.text).child(said))
+                .child(div().text_color(theme.text_muted).child(after)),
+        )
+        .child(bar)
+        .into_any_element()
 }
 
 /// A small bar: `fraction` of `width` in `color`.
@@ -745,7 +840,8 @@ pub fn strip(
             ),
         },
     };
-    let several = under.count() > 1;
+    // Several actions in the spell: Activity says each.
+    let several = under.ended + under.count() + under.waiting > 1;
     let error = matches!(offers, Offers::Stopped { .. });
     let anchor = shell.activity.anchor.clone();
     let a11y = shell.a11y;
@@ -977,6 +1073,10 @@ fn body(
             )
             .into_any_element(),
     );
+    // The spell of work as a whole, where it holds several actions.
+    if let Some(summary) = summary(under).filter(|s| s.of > 1) {
+        parts.push(spell_header(&summary, under.ended, a11y, theme));
+    }
     let cards = under.count();
     for (running, transfer) in &under.plans {
         let focus = shell.activity.cards[&running.plan].clone();
@@ -1750,72 +1850,71 @@ mod tests {
         assert_eq!(percent(1.0), "100 %");
     }
 
-    /// Plans sized before they began count their bytes together; one that
-    /// was not makes each count alike. The time left is the longest.
+    /// The spell of work counts each action once (ADR-114, amended
+    /// 2026-11-03): those ended whole, those running by their own share,
+    /// those waiting nothing; an action ending never takes the bar back.
+    /// The time left is the longest of what runs.
     #[test]
-    fn several_actions_add_up_by_their_bytes_when_each_was_sized() {
+    fn the_spell_counts_each_action_once_ended_running_or_waiting() {
         let sized = |done: u64, planned: u64, left: u64| Transfer {
             done,
             planned: Some(planned),
             left: Some(Duration::from_secs(left)),
             ..Transfer::default()
         };
-        let under = Under {
-            plans: vec![
-                (running(1, "copy a", 3), sized(1 << 30, 3 << 30, 120)),
-                (running(2, "copy b", 2), sized(0, 1 << 30, 300)),
-            ],
+        let under = |plans: Vec<(Running, Transfer)>, ended: usize, waiting: usize| Under {
+            plans,
             tasks: Vec::new(),
+            ended,
+            waiting,
         };
-        let s = summary(&under).unwrap();
-        assert!((s.fraction - 0.25).abs() < 1e-6, "{}", s.fraction);
+        let a = (running(1, "copy a", 3), sized(1 << 30, 3 << 30, 120));
+        let b = (running(2, "copy b", 2), sized(0, 1 << 30, 300));
+        // Two at once, each alike whatever its bytes.
+        let s = summary(&under(vec![a.clone(), b.clone()], 0, 0)).unwrap();
+        assert!((s.fraction - 1. / 6.).abs() < 1e-6, "{}", s.fraction);
+        assert_eq!((s.at, s.of, s.waiting), (2, 2, 0));
         assert_eq!(s.left, Some(Duration::from_secs(300)));
         assert!(!s.paused && !s.stopping);
-
-        let unequal = Under {
-            plans: vec![
-                (running(1, "copy a", 3), sized(1 << 30, 3 << 30, 120)),
-                (
-                    running(2, "rename b", 4),
-                    Transfer {
-                        ended: 2,
-                        ..Transfer::default()
-                    },
-                ),
-            ],
-            tasks: Vec::new(),
-        };
-        let s = summary(&unequal).unwrap();
-        // A third and a half, alike.
+        // A third of the one running, one ended before it, two waiting.
+        let s = summary(&under(vec![a], 1, 2)).unwrap();
+        assert!((s.fraction - 1. / 3.).abs() < 1e-6, "{}", s.fraction);
+        assert_eq!((s.at, s.of), (2, 4));
+        // It ends, the next starts: the bar does not go back.
+        let next = summary(&under(vec![b], 2, 1)).unwrap();
         assert!(
-            (s.fraction - f32::midpoint(1. / 3., 0.5)).abs() < 1e-3,
-            "{}",
+            next.fraction >= s.fraction,
+            "{} < {}",
+            next.fraction,
             s.fraction
         );
-        assert!(
-            summary(&Under {
-                plans: Vec::new(),
-                tasks: Vec::new()
-            })
-            .is_none()
-        );
+        assert!((next.fraction - 0.5).abs() < 1e-6);
+        // Between two, what waits is said, nothing stops.
+        let between = summary(&under(Vec::new(), 2, 1)).unwrap();
+        assert!((between.fraction - 2. / 3.).abs() < 1e-6);
+        assert!(!between.stopping && !between.paused);
+        assert!(summary(&under(Vec::new(), 3, 0)).is_none());
     }
 
-    /// One action is said by its title; several by how many; the least
-    /// the footer can hold is the share alone.
+    /// One action is said by its title; several by how many; a queue by
+    /// how far it started and how many wait; the least the footer can
+    /// hold is the share alone.
     #[test]
     fn the_strip_says_what_runs_as_room_allows() {
+        let copy = (
+            running(1, "copy 3 items to Backup", 3),
+            Transfer {
+                done: 42,
+                planned: Some(100),
+                left: Some(Duration::from_secs(170)),
+                ..Transfer::default()
+            },
+        );
         let one = Under {
-            plans: vec![(
-                running(1, "copy 3 items to Backup", 3),
-                Transfer {
-                    done: 42,
-                    planned: Some(100),
-                    left: Some(Duration::from_secs(170)),
-                    ..Transfer::default()
-                },
-            )],
+            plans: vec![copy.clone()],
             tasks: Vec::new(),
+            ended: 0,
+            waiting: 0,
         };
         let s = summary(&one).unwrap();
         assert_eq!(
@@ -1826,27 +1925,48 @@ mod tests {
                 "42 %".to_owned(),
             ]
         );
-        let paused = Summary { paused: true, ..s };
+        let paused = Summary {
+            paused: true,
+            ..s.clone()
+        };
         assert_eq!(how(&paused, None), "paused at 42 %");
         let stopping = Summary {
             stopping: true,
-            ..s
+            ..s.clone()
         };
         assert_eq!(words(&one, &stopping)[2], "Stopping…");
         assert_eq!(how(&s, Some(3)), "sending 3 files to the server");
 
         let two = Under {
-            plans: vec![
-                one.plans[0].clone(),
-                (running(2, "move b", 2), Transfer::default()),
-            ],
+            plans: vec![copy.clone(), (running(2, "move b", 2), Transfer::default())],
             tasks: Vec::new(),
+            ended: 0,
+            waiting: 0,
         };
         let s = summary(&two).unwrap();
         assert!(
-            words(&two, &s)[0].starts_with("2 actions · "),
+            words(&two, &s)[0].starts_with("2 actions · 2 of 2 · "),
             "{:?}",
             words(&two, &s)
         );
+
+        // One ended before it, one waiting after it.
+        let queued = Under {
+            plans: vec![copy],
+            tasks: Vec::new(),
+            ended: 1,
+            waiting: 1,
+        };
+        let s = summary(&queued).unwrap();
+        assert_eq!(
+            words(&queued, &s),
+            [
+                "Copy 3 items to Backup · 2 of 3 · 47 % · about 3 min left · 1 waiting".to_owned(),
+                "2 of 3 · 47 % · about 3 min left · 1 waiting".to_owned(),
+                "47 %".to_owned(),
+            ]
+        );
+        let paused = Summary { paused: true, ..s };
+        assert_eq!(how(&paused, None), "paused at 47 % · 1 waiting");
     }
 }

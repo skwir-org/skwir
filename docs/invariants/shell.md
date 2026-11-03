@@ -639,9 +639,17 @@ of bars, split or not.
   ADR-114). Work under way is the window's state: a strip at the end of
   the last pane's footer, before Undo, says how far it has gone in as
   many words as the footer has room for (`Fit`: what and how, how, the
-  share alone), with Pause and Cancel for a single action; several are
-  summed (their bytes where each was sized, else each one's share alike;
-  the longest time left). A click, or `ui.activity` (Ctrl+Shift+J),
+  share alone), with Pause and Cancel for a single action. It counts the
+  spell of work (ADR-114, amended 2026-11-03): from an action started
+  with nothing under way until nothing runs, waits or goes on by itself
+  (`Work::settle`), each action counting one, those ended whole
+  (`Work::spell_ended`), those running by their own share, those
+  waiting nothing ("2 of 3 · 47 % · about 3 min left · 1 waiting"); an
+  action counts as a card does (`Waiting::weighs`). The bar goes back
+  only as more is asked, never as one ends; the time left is what runs,
+  never a guess at what waits. Activity's header says the same over a
+  bar of one segment an action, one bar past twelve; the taskbar and the
+  presence follow it. A click, or `ui.activity` (Ctrl+Shift+J),
   opens Activity above it (one popup at a time, `toggle_popup`): each
   action's card, what waits (each with its Cancel, Cancel all for
   several), and Earlier, this session's answers with

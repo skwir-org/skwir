@@ -504,7 +504,14 @@ each of nine). Three steps:
    way. The Menu key on the footer's Undo was left out: the footer is
    no stop of the Tab order. Rules in `docs/invariants/shell.md` ("The
    History").
-3. **The queue's progress** in the strip and Activity: next.
+3. **The queue's progress** (ADR-114, amended). Built: the strip, the
+   taskbar and the presence count the spell of work, each action one
+   (ended whole, running by its share, waiting nothing), "2 of 3 · 47 %
+   · … · 1 waiting"; Activity's header draws a segment an action.
+   Counted in the window's `Work`, where cards are decided, not in the
+   core as proposed (`running` for agents unchanged). Left: a print
+   (a task) that ends is not counted as ended; an action asked and
+   cancelled while it waits leaves the count, so the bar moves on.
 
 Checks in `docs/STATUS-LOG.md` (2026-11-03, "Queue progress and the
 History").

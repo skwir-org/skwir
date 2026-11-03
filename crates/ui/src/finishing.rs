@@ -302,6 +302,7 @@ fn sync(cx: &mut App) {
         while let Ok(event) = events.try_recv() {
             work.take(&app, event, watched);
         }
+        work.settle(&app);
         let under = work.under_way(&app);
         work.card(&under);
         work.sync_stopped(&app);
@@ -377,7 +378,7 @@ fn presence(work: &Work, under: &Under, asks: bool) -> Presence {
     let stopped = work.stopped.as_ref().map(|s| capitalized(&s.title));
     let (standing, about) = if asks {
         (Standing::Asks, "Open Skwir to answer".to_owned())
-    } else if let Some(summary) = summary {
+    } else if let Some(summary) = &summary {
         if summary.paused {
             (Standing::Paused, format!("{what}: paused"))
         } else {
@@ -397,10 +398,10 @@ fn presence(work: &Work, under: &Under, asks: bool) -> Presence {
         Standing::Stopped => "An action stopped".to_owned(),
         _ => "Finishing".to_owned(),
     };
-    let said = summary.map_or_else(
+    let said = summary.as_ref().map_or_else(
         || about.clone(),
         |summary| {
-            let [said, _, _] = words(under, &summary);
+            let [said, _, _] = words(under, summary);
             said
         },
     );
@@ -408,7 +409,7 @@ fn presence(work: &Work, under: &Under, asks: bool) -> Presence {
         title,
         said,
         about,
-        fraction: summary.map(|summary| summary.fraction),
+        fraction: summary.as_ref().map(|summary| summary.fraction),
         standing,
         pause: summary
             .filter(|summary| !summary.stopping)
@@ -617,6 +618,8 @@ mod tests {
         let one = Under {
             plans: vec![copying(1, "copy 3 items to Backup", false)],
             tasks: Vec::new(),
+            ended: 0,
+            waiting: 0,
         };
         let shown = presence(&work, &one, false);
         assert_eq!(shown.title, "Finishing 1 action");
@@ -635,6 +638,8 @@ mod tests {
                 copying(2, "copy 1 item to Stick", true),
             ],
             tasks: Vec::new(),
+            ended: 0,
+            waiting: 0,
         };
         let shown = presence(&work, &paused, false);
         assert_eq!(shown.title, "Finishing 2 actions");
@@ -651,6 +656,8 @@ mod tests {
         let nothing = Under {
             plans: Vec::new(),
             tasks: Vec::new(),
+            ended: 0,
+            waiting: 0,
         };
         work.stopped = Some(Stopped::new(PlanId(5), "copy 3 items to Backup", true));
         let shown = presence(&work, &nothing, false);

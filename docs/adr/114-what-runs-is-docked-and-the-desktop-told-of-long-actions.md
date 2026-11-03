@@ -49,6 +49,24 @@ and macOS otherwise compiled only.
    bytes together where each was sized, else each one's share alike, and
    the longest time left. One action keeps its Pause and Cancel there.
    Paused or stopping, its bar is muted and it says so.
+
+   Amended 2026-11-03 (the user's choice of the recommended options):
+   the strip counts the **spell of work**, from an action started with
+   nothing under way until nothing runs, waits or goes on by itself.
+   Each action of it counts one, whatever its bytes: those ended whole,
+   those running by their own share, those waiting nothing ("Copy “a” ·
+   2 of 3 · 47 % · about 3 min left · 1 waiting", then "2 of 3 · 47 % ·
+   … · 1 waiting", then "47 %"). So the bar never goes back to nothing
+   between two actions waiting their turn, and goes back only when more
+   is asked, which "2 of 4" says. An action counts as a running one gets
+   a card: several steps, bytes moved, or a tree walked; a single rename
+   counts for nothing (`Waiting::weighs`). Nothing is read ahead to size
+   what waits: the time left is what runs, and the strip says how many
+   wait. Activity's header says the same over a bar of one segment each
+   (one bar past twelve); the taskbar's progress and the presence follow
+   it. Counted where the cards are decided (`Work::spell_ended`, settled
+   after each sync's events), not in the core as the proposal said: the
+   agents' `running` is unchanged.
 2. **Activity opens above the strip** on a click or `ui.activity`
    (Ctrl+Shift+J, Chrome's key for its downloads; Ctrl+J is Jump's): each
    action's card as it was (its bar, items and bytes, speed and time

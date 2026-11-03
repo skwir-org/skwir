@@ -944,6 +944,21 @@ pub struct Waiting {
     /// Its title: a plan's, or "undo …" and "redo …".
     pub named: String,
     pub waits_for: WaitsFor,
+    /// A plan's steps; `None` for an undo or a redo.
+    pub steps: Option<usize>,
+    /// It moves bytes or walks a tree, once what it touches is known.
+    pub heavy: bool,
+}
+
+impl Waiting {
+    /// Whether it counts as an action of its own while things run one
+    /// after another (ADR-114, the strip's spell of work): as a running
+    /// one gets a card, one of several steps, one that moves bytes or
+    /// walks a tree, or an undo or a redo; never a single rename, which
+    /// ends as soon as it starts.
+    pub fn weighs(&self) -> bool {
+        self.heavy || self.steps.is_none_or(|steps| steps > 1)
+    }
 }
 
 /// What an action waiting its turn waits for.
@@ -2181,6 +2196,11 @@ impl Executor {
                 asked: job.seq,
                 named: self.named(job),
                 waits_for,
+                steps: match &job.work {
+                    Work::Execute { plan, .. } => Some(plan.steps.len()),
+                    Work::Replay(..) => None,
+                },
+                heavy: job.footprint.as_deref().is_some_and(Footprint::is_heavy),
             });
         }
         out

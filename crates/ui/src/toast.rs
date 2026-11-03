@@ -483,6 +483,7 @@ impl Shell {
             }
         }
         self.work.borrow_mut().sync_stopped(&self.app);
+        self.work.borrow_mut().settle(&self.app);
         if any {
             cx.notify();
         }
@@ -948,6 +949,8 @@ mod tests {
                 asked: 7,
                 named: named.into(),
                 waits_for,
+                steps: Some(1),
+                heavy: false,
             });
             format!("{what} / {why}")
         };
