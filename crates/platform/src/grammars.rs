@@ -5,15 +5,18 @@
 //! A grammar is a library (a shared library, or a WebAssembly module Zed
 //! builds) and queries (`highlights.scm` and its kind). Sources come in
 //! this order: Skwir's own folder, the CLI's, Zed's, Helix's, Neovim's,
-//! the system's, Emacs's. Each source's grammar of a language is kept
-//! (`all`); the one used (`found`) is the source the Reading page chose
-//! for the language (`choose`), else the first usable. A library without
-//! queries borrows those another source holds
-//! for its language, the grammar's own repository's first (Skwir's, the
-//! CLI's, the system's), then Helix's, Zed's, Neovim's. What files a
-//! language colors is said by `languages.toml` in Skwir's folder first,
-//! then its own source, another source, bat's grammar of that name, and
-//! last its name taken as an extension.
+//! the system's (its parser folders, and `libtree-sitter-<lang>` in its
+//! library folders), Emacs's (its own folders). A source is named by the
+//! folder a grammar was found in, never by how its library is named.
+//! Each source's grammar of a language is kept (`all`); the one used
+//! (`found`) is the source the Reading page chose for the language
+//! (`choose`), else the first usable. A library without queries borrows
+//! those another source holds for its language, the grammar's own
+//! repository's first (Skwir's, the CLI's, the system's), then Helix's,
+//! Zed's, Neovim's. What files a language colors is said by
+//! `languages.toml` in Skwir's folder first, then its own source, another
+//! source, bat's grammar of that name, and last its name taken as an
+//! extension.
 //!
 //! Finding reads folders and small files: a worker's work, at start and
 //! when the settings open, as bat's themes are.
@@ -143,8 +146,13 @@ pub struct Roots {
     /// (`<lang>/highlights.scm`).
     pub system_parsers: Vec<PathBuf>,
     pub system_queries: Vec<PathBuf>,
-    /// Folders holding `libtree-sitter-<lang>` libraries: Emacs's own,
-    /// then the system's library folders.
+    /// The system's library folders, holding `libtree-sitter-<lang>`
+    /// libraries a package installed: the system's grammars, its queries
+    /// those of `system_queries` (Emacs looks there too, but did not put
+    /// them there).
+    pub system_libraries: Vec<PathBuf>,
+    /// Emacs's own folders of `libtree-sitter-<lang>` libraries, where it
+    /// builds them (`treesit-install-language-grammar`).
     pub emacs: Vec<PathBuf>,
 }
 
@@ -508,22 +516,21 @@ impl Roots {
         ]
         .map(PathBuf::from)
         .into();
+        roots.system_libraries = [
+            "/usr/lib",
+            "/usr/lib64",
+            "/usr/local/lib",
+            "/usr/lib/x86_64-linux-gnu",
+            "/usr/lib/aarch64-linux-gnu",
+            "/opt/homebrew/lib",
+        ]
+        .map(PathBuf::from)
+        .into();
         roots.emacs = home
             .iter()
             .map(|home| home.join(".emacs.d/tree-sitter"))
             .chain(legacy_config().map(|dir| dir.join(".emacs.d/tree-sitter")))
             .chain(config.iter().map(|dir| dir.join("emacs/tree-sitter")))
-            .chain(
-                [
-                    "/usr/lib",
-                    "/usr/lib64",
-                    "/usr/local/lib",
-                    "/usr/lib/x86_64-linux-gnu",
-                    "/usr/lib/aarch64-linux-gnu",
-                    "/opt/homebrew/lib",
-                ]
-                .map(PathBuf::from),
-            )
             .collect();
         roots
     }
@@ -723,7 +730,16 @@ fn find_in(roots: &Roots, bat: &HashMap<String, Vec<String>>) -> (Vec<Found>, Ve
         Kept::Listed,
     ));
     candidates.extend(confined.keep(
-        emacs_grammars(&roots.emacs),
+        library_folder_grammars(
+            Source::System,
+            &roots.system_libraries,
+            &roots.system_queries,
+        ),
+        &listed(&[&roots.system_libraries, &roots.system_queries]),
+        Kept::Listed,
+    ));
+    candidates.extend(confined.keep(
+        library_folder_grammars(Source::Emacs, &roots.emacs, &[]),
         &listed(&[&roots.emacs]),
         Kept::Listed,
     ));
@@ -1403,8 +1419,15 @@ fn parser_folder_grammars(
     candidates
 }
 
-/// Emacs's grammars: `libtree-sitter-<lang>` libraries, no queries.
-fn emacs_grammars(folders: &[PathBuf]) -> Vec<Candidate> {
+/// `libtree-sitter-<lang>` libraries in `folders`, as Emacs builds them
+/// in its own (no queries: its modes color in Lisp) and as a package puts
+/// them in the system's library folders (their queries those `queries`
+/// holds of their language, the system's).
+fn library_folder_grammars(
+    source: Source,
+    folders: &[PathBuf],
+    queries: &[PathBuf],
+) -> Vec<Candidate> {
     let mut candidates = Vec::new();
     let mut seen = HashSet::new();
     for dir in folders {
@@ -1429,9 +1452,10 @@ fn emacs_grammars(folders: &[PathBuf]) -> Vec<Candidate> {
                 continue;
             }
             candidates.push(Candidate {
-                source: Some(Source::Emacs),
+                source: Some(source),
                 name: name.to_owned(),
                 library: Some(path.clone()),
+                queries: inherited_queries(queries, name),
                 ..Candidate::default()
             });
         }
@@ -1631,6 +1655,15 @@ mod tests {
             &root.join("helix/queries/lua/highlights.scm"),
             "(comment) @comment.helix",
         );
+        // The system's library folders: a package's library, with the
+        // system's queries of it, and one without; the system's either way,
+        // named as Emacs names its own.
+        write(&root.join("system-lib/libtree-sitter-json.so"), "");
+        write(
+            &root.join("system-queries/json/highlights.scm"),
+            "(string) @string",
+        );
+        write(&root.join("system-lib/libtree-sitter-yaml.so"), "");
         // Emacs's: a library alone, and the runtime itself, never a grammar.
         write(&root.join("emacs/libtree-sitter-zig.so"), "");
         // An Emacs library whose grammar's repository, never built, is in
@@ -1657,6 +1690,7 @@ mod tests {
             neovim_queries: vec![root.join("nvim-queries")],
             system_parsers: vec![root.join("system-parsers")],
             system_queries: vec![root.join("system-queries")],
+            system_libraries: vec![root.join("system-lib")],
             emacs: vec![root.join("emacs")],
         };
         let bat = HashMap::from([("zig".to_owned(), vec!["zig".to_owned(), "zon".to_owned()])]);
@@ -1689,11 +1723,13 @@ mod tests {
                 ("c", Source::Neovim, None),
                 ("gleam", Source::Skwir, None),
                 ("heex", Source::Emacs, Some(Source::Skwir)),
+                ("json", Source::System, None),
                 ("lua", Source::Neovim, Some(Source::System)),
                 ("markup", Source::Helix, None),
                 ("nix", Source::Zed, None),
                 ("odin", Source::TreeSitter, None),
                 ("typst", Source::Helix, None),
+                ("yaml", Source::System, None),
                 ("zig", Source::Emacs, None),
             ]
         );
@@ -1754,6 +1790,26 @@ mod tests {
                 .contains("library")
         );
         assert!(get("c").problem.is_some(), "Neovim's queries, no library");
+        // A library in the system's folders is the system's, its queries
+        // the system's of it.
+        let json = get("json");
+        assert!(json.problem.is_none(), "{:?}", json.problem);
+        assert_eq!(
+            json.grammar.library,
+            root.join("system-lib/libtree-sitter-json.so")
+        );
+        assert_eq!(
+            json.grammar.highlights,
+            [root.join("system-queries/json/highlights.scm")]
+        );
+        assert!(
+            get("yaml")
+                .problem
+                .as_deref()
+                .unwrap()
+                .starts_with("no highlights query found"),
+            "the system's, not Emacs's"
+        );
         assert!(get("gleam").problem.is_none());
         // Files to grammars.
         assert_eq!(
