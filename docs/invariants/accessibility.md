@@ -141,7 +141,7 @@ like `AGENTS.md`.
 | settings | dialog; its pages a tab list; its controls | "Settings"; each control its setting's title |
 | toolbars, tabs | buttons; a tab list of tabs | their titles; each tab its location |
 | toasts | status (alert for a failure), live; its buttons not, an Undo that cannot act disabled, described by why | the message |
-| Activity | its strip a button; a group of progress indicators, a list of what waits, a list of what ended (Earlier) | what runs and how far; each card its plan's title |
+| Activity | its strip a button; a group of progress indicators, a list of what waits, a list of what ended that the History does not hold (Earlier); pinned, Earlier behind a button that says whether it is unfolded | what runs and how far; each card its plan's title; the fold "Earlier" |
 | the History | the footer's Undo and its chevron buttons (the chevron says whether it is open); a group: a list of what Undo can take back, built in view only (the count on the list, each row its place), each row's buttons, one said and not offered disabled, and a link to the action that holds it | "Undo history"; each row its title, how it stands and why its Undo waits; a link "Go to ‹action›" |
 | preview panel | landmark (complementary) | "Preview", described by the file and its facts |
 | Peek, the whole screen | modal dialog | the file; its facts and keys |

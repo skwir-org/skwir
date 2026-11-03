@@ -560,6 +560,7 @@ const SHOWS: &[&str] = &[
     "ui.toolbar_menu",
     "ui.activity",
     "ui.activity_pin",
+    "ui.activity_earlier",
     "ui.undo_history",
     "ui.toolbar_close",
     "ui.toolbar_next",
@@ -1821,13 +1822,19 @@ pub fn declare_all(app: &App) {
         Topic::Window,
         "ui.activity",
         "Activity",
-        "Open or close Activity, above its strip in the footer: what runs, with Pause and Cancel, what waits, and what ended this session, with Undo or Retry (ADR-114). Pinned and shown, it takes the keyboard",
+        "Open or close Activity, above its strip in the footer: what runs, with Pause and Cancel, what waits, and what ended this session that the Undo history does not hold (what failed, was cancelled or cannot be undone, and answers that are no action's), with Retry or Undo (ADR-114). Pinned and shown, it takes the keyboard",
     );
     none(
         Topic::Window,
         "ui.activity_pin",
         "Keep Activity open",
         "Keep Activity open above the footer while something runs, taking room rather than covering the files; again to let it close",
+    );
+    none(
+        Topic::Window,
+        "ui.activity_earlier",
+        "Show Earlier in Activity",
+        "Unfold Earlier at the foot of Activity kept open above the footer, or fold it again: what ended this session that the Undo history does not hold",
     );
     declare::<Toggle>(
         app,

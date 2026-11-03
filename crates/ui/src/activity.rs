@@ -5,11 +5,13 @@
 //! as many words as the footer has room for (`Fit`), with Pause and Cancel
 //! for a single action. A click on it opens Activity above it: each
 //! action's card (its bar, speed and time left, Pause and Cancel), what
-//! waits its turn, and what ended this session (`Earlier`), with its Undo
-//! or Retry, kept in memory only. Pinned, Activity stands above the
-//! footer instead, taking room rather than covering the files, while there
-//! is something under way to show. Nothing floats over the files but the
-//! latest answer (`toast.rs`).
+//! waits its turn, and what ended this session that the History does not
+//! hold (`Earlier`: what failed, was cancelled or cannot be undone, and
+//! the answers that are no action's), with its Retry or Undo, kept in
+//! memory only. Pinned, Activity stands above the footer instead, taking
+//! room rather than covering the files, while there is something under
+//! way to show. Nothing floats over the files but the latest answer
+//! (`toast.rs`).
 //!
 //! An action an error stopped stays in the strip, in the error's colour,
 //! until it is retried, Activity is opened, or it is dismissed.
@@ -41,8 +43,13 @@ use crate::work::{Seen, Watched};
 /// Activity's popup, as `Shell::toggle_popup` and `toolbar_menu` know it.
 pub const POPUP: &str = "activity";
 
-/// What `Earlier` keeps: the answers of this session, newest first.
+/// What `Earlier` keeps: the answers of this session the History does not
+/// hold, newest first.
 pub(crate) const EARLIER: usize = 20;
+
+/// The most Activity pinned takes above the footer, its heading included:
+/// about three running actions' cards; what it holds beyond scrolls.
+const TRAY_MOST: f32 = 260.;
 
 /// The key of the next answer kept in `Earlier`.
 static NEXT_ENDED: AtomicU64 = AtomicU64::new(1);
@@ -52,9 +59,10 @@ static NEXT_ENDED: AtomicU64 = AtomicU64::new(1);
 const BAR_WIDE: f32 = 54.;
 const BAR_NARROW: f32 = 24.;
 
-/// What ended this session, as its answer said it: a plan's, or any other
-/// answer a toast said (a print's, a message), so that none is lost while
-/// Activity is open and no toast is drawn.
+/// What ended this session, as its answer said it: a plan's the History
+/// does not hold (`Work::ended`: failed, cancelled, or kept by no
+/// journal), or any other answer a toast said (a print's, a message),
+/// found again once the toast has gone.
 #[derive(Clone, Debug)]
 pub struct Ended {
     /// What tells it apart in `Earlier`: its row's and its buttons' ids.
@@ -169,6 +177,10 @@ pub struct ActivityState {
     cancel_waiting: Option<FocusHandle>,
     strip: Option<StripFocus>,
     pin: Option<FocusHandle>,
+    /// Earlier unfolded at the foot of Activity pinned
+    /// (`ui.activity_earlier`), and the button that folds it.
+    earlier_unfolded: bool,
+    fold: Option<FocusHandle>,
     /// What `ui.activity` gives the keyboard to while pinned and shown.
     tray: Option<FocusHandle>,
     /// What brings the button the keyboard reaches into view: in the
@@ -178,9 +190,10 @@ pub struct ActivityState {
 }
 
 /// What brings the button the keyboard reaches into view in Activity's
-/// rows, which scroll: the popup's, at most 520 px, and the pinned tray's,
-/// at most half the pane. Toolbar popups do it by their rows' key context
-/// (`toolbar::RevealRow`); Activity's buttons are its own.
+/// rows, which scroll under its heading: the popup's, at most 520 px, and
+/// the pinned tray's, at most `TRAY_MOST`. Toolbar popups do it by their
+/// rows' key context (`toolbar::RevealRow`); Activity's buttons are its
+/// own.
 #[derive(Clone, Default)]
 pub(crate) struct Reveal {
     pub(crate) scroll: ScrollHandle,
@@ -579,6 +592,13 @@ impl Shell {
         cx.notify();
     }
 
+    /// `ui.activity_earlier`: unfold Earlier at the foot of Activity
+    /// pinned, or fold it again.
+    pub(crate) fn toggle_activity_earlier(&mut self, cx: &mut Context<Self>) {
+        self.activity.earlier_unfolded = !self.activity.earlier_unfolded;
+        cx.notify();
+    }
+
     /// `Earlier`'s rows' buttons, kept for the answers it still holds.
     pub(crate) fn forget_earlier_rows(&mut self) {
         let kept: HashSet<u64> = self.work.borrow().earlier.iter().map(|e| e.key).collect();
@@ -955,7 +975,7 @@ pub fn strip(
                     },
                 )
             }
-            // Opened with nothing under way: what ended, in Earlier.
+            // Opened with nothing under way: what Earlier keeps.
             None => (
                 [
                     "Activity".to_owned(),
@@ -1117,7 +1137,8 @@ pub fn strip(
     )
 }
 
-/// Activity, opened above its strip: what `body` holds.
+/// Activity, opened above its strip: its heading, and what `body` holds
+/// beneath, scrolled.
 fn popover(
     shell: &mut Shell,
     under: &Under,
@@ -1128,7 +1149,8 @@ fn popover(
         return None;
     }
     let reveal = shell.activity.popup_reveal.clone();
-    let body = body(shell, under, &reveal, theme, cx);
+    let heading = heading(shell, theme, cx);
+    let body = body(shell, under, Shows::All, &reveal, theme, cx);
     let popup = shell.toolbar_menu.as_ref()?;
     let panel = crate::toolbar::popup_panel(popup, "ui.activity", theme, cx)
         .role(gpui::Role::Group)
@@ -1139,6 +1161,7 @@ fn popover(
         .max_h(px(520.))
         .p_0()
         .gap_0()
+        .child(heading)
         .child(scrolled("activity-popup", body, &reveal));
     Some(shell.activity.anchor.popup_above_for(
         &crate::elements::adaptive::Chosen::default(),
@@ -1147,8 +1170,9 @@ fn popover(
 }
 
 /// Activity pinned, above the last pane's footer while something is under
-/// way (`under`): what the popup holds, taking room rather than covering
-/// the files.
+/// way (`under`): what runs and waits, taking room rather than covering
+/// the files, `TRAY_MOST` high at most (half the pane, in a low one),
+/// scrolled beyond.
 pub fn tray(
     shell: &mut Shell,
     under: &Under,
@@ -1164,7 +1188,8 @@ pub fn tray(
         .get_or_insert_with(|| cx.focus_handle().tab_stop(false))
         .clone();
     let reveal = shell.activity.tray_reveal.clone();
-    let body = body(shell, under, &reveal, theme, cx);
+    let heading = heading(shell, theme, cx);
+    let body = body(shell, under, Shows::Pinned, &reveal, theme, cx);
     Some(
         div()
             .id("activity-tray")
@@ -1189,7 +1214,15 @@ pub fn tray(
             .border_color(theme.border)
             .bg(theme.bg)
             .text_color(theme.text)
-            .child(scrolled("activity-tray", body, &reveal))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .min_h_0()
+                    .max_h(px(TRAY_MOST))
+                    .child(heading)
+                    .child(scrolled("activity-tray", body, &reveal)),
+            )
             .into_any_element(),
     )
 }
@@ -1220,19 +1253,19 @@ fn scrolled(id: &'static str, body: Vec<AnyElement>, reveal: &Reveal) -> AnyElem
         .into_any_element()
 }
 
-/// What Activity holds, in the popup or pinned, as `under` runs: its name
-/// and pin, the cards of what runs, what waits, and what ended this
-/// session; `reveal` brings the button the keyboard reaches into view.
-fn body(
-    shell: &mut Shell,
-    under: &Under,
-    reveal: &Reveal,
-    theme: &Theme,
-    cx: &mut Context<Shell>,
-) -> Vec<AnyElement> {
-    shell.card_focus(under, cx);
-    let a11y = shell.a11y;
-    let mut parts = Vec::new();
+/// How Activity shows `Earlier` (ADR-114, amended 2026-11-03).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Shows {
+    /// All it keeps: in the popup.
+    All,
+    /// Pinned: the action an error stopped, which the tray stands for
+    /// while its Retry waits (`Work::stopped`), and the rest folded at its
+    /// foot, a line until unfolded (`ui.activity_earlier`).
+    Pinned,
+}
+
+/// Activity's name and its pin, above its rows, which scroll beneath it.
+fn heading(shell: &mut Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
     let pinned = shell.activity.pinned;
     let pin = shell.activity.pin.get_or_insert_with(|| stop(cx)).clone();
     let pin_tip: SharedString = if pinned {
@@ -1241,41 +1274,54 @@ fn body(
         "Keep Activity open above the footer while something runs"
     }
     .into();
-    parts.push(
-        div()
-            .flex()
-            .flex_none()
-            .items_center()
-            .justify_between()
-            .pl_3()
-            .pr_1()
-            .pt_1()
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(theme.text_muted)
-                    .child("Activity"),
-            )
-            .child(
-                controls::icon_button("activity-pin", "pin", "Keep open", &pin, theme)
-                    .size(px(24.))
-                    .aria_toggled(if pinned {
-                        gpui::Toggled::True
-                    } else {
-                        gpui::Toggled::False
-                    })
-                    .when(pinned, |d| d.bg(theme.selection_bg))
-                    .tooltip(move |_, cx| crate::toolbar::tooltip(pin_tip.clone(), cx))
-                    .child(reveal.marker(&pin))
-                    .press(
-                        |this, window, cx| {
-                            this.run("ui.activity_pin", serde_json::json!({}), window, cx);
-                        },
-                        cx,
-                    ),
-            )
-            .into_any_element(),
-    );
+    div()
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_between()
+        .pl_3()
+        .pr_1()
+        .pt_1()
+        .child(
+            div()
+                .text_xs()
+                .text_color(theme.text_muted)
+                .child("Activity"),
+        )
+        .child(
+            controls::icon_button("activity-pin", "pin", "Keep open", &pin, theme)
+                .size(px(24.))
+                .aria_toggled(if pinned {
+                    gpui::Toggled::True
+                } else {
+                    gpui::Toggled::False
+                })
+                .when(pinned, |d| d.bg(theme.selection_bg))
+                .tooltip(move |_, cx| crate::toolbar::tooltip(pin_tip.clone(), cx))
+                .press(
+                    |this, window, cx| {
+                        this.run("ui.activity_pin", serde_json::json!({}), window, cx);
+                    },
+                    cx,
+                ),
+        )
+        .into_any_element()
+}
+
+/// What Activity holds under its heading, in the popup or pinned, as
+/// `under` runs: the cards of what runs, what waits, and what of `Earlier`
+/// it `shows`; `reveal` brings the button the keyboard reaches into view.
+fn body(
+    shell: &mut Shell,
+    under: &Under,
+    shows: Shows,
+    reveal: &Reveal,
+    theme: &Theme,
+    cx: &mut Context<Shell>,
+) -> Vec<AnyElement> {
+    shell.card_focus(under, cx);
+    let a11y = shell.a11y;
+    let mut parts = Vec::new();
     // The spell of work as a whole, where it holds several actions.
     if let Some(summary) = summary(under).filter(|s| s.of > 1) {
         parts.push(spell_header(&summary, a11y, theme));
@@ -1345,15 +1391,46 @@ fn body(
                 .or_insert_with(|| stop(cx));
         }
     }
+    // Pinned, the action an error stopped is said; the rest is folded.
+    let stopped = shell.work.borrow().stopped.as_ref().map(|s| s.plan);
+    let (said, folded): (Vec<Ended>, Vec<Ended>) = match shows {
+        Shows::All => (
+            shell.work.borrow().earlier.iter().cloned().collect(),
+            Vec::new(),
+        ),
+        Shows::Pinned => shell
+            .work
+            .borrow()
+            .earlier
+            .iter()
+            .cloned()
+            .partition(|ended| stopped.is_some() && ended.plan == stopped),
+    };
+    let unfolded = shell.activity.earlier_unfolded;
+    let fold =
+        (!folded.is_empty()).then(|| shell.activity.fold.get_or_insert_with(|| stop(cx)).clone());
     // What each answer's Undo can do now, as the History says it.
-    let by_plan = if shell.work.borrow().earlier.is_empty() {
+    let by_plan = if said.is_empty() && !(unfolded && fold.is_some()) {
         Rc::default()
     } else {
         shell.history_by_plan()
     };
     let shell: &Shell = shell;
-    let work = shell.work.borrow();
-    if !work.earlier.is_empty() {
+    let list = |id: &'static str, rows: &[Ended], cx: &mut Context<Shell>| {
+        let rows: Vec<AnyElement> = rows
+            .iter()
+            .map(|ended| earlier_row(shell, ended, &by_plan, reveal, theme, cx))
+            .collect();
+        div()
+            .id(id)
+            .role(gpui::Role::List)
+            .when(a11y, |d| d.aria_label("Earlier"))
+            .flex()
+            .flex_col()
+            .children(rows)
+            .into_any_element()
+    };
+    if !said.is_empty() {
         parts.push(
             div()
                 .mt_1()
@@ -1364,37 +1441,90 @@ fn body(
                 .border_color(theme.border)
                 .text_xs()
                 .text_color(theme.text_muted)
-                .child("Earlier")
+                .child(match shows {
+                    Shows::All => "Earlier",
+                    Shows::Pinned => "Stopped",
+                })
                 .into_any_element(),
         );
-        let rows: Vec<AnyElement> = work
-            .earlier
-            .iter()
-            .map(|ended| earlier_row(shell, ended, &by_plan, reveal, theme, cx))
-            .collect();
-        parts.push(
-            div()
-                .id("activity-earlier")
-                .role(gpui::Role::List)
-                .when(a11y, |d| d.aria_label("Earlier"))
-                .flex()
-                .flex_col()
-                .children(rows)
-                .into_any_element(),
-        );
-    } else if cards == 0 && waiting.is_empty() {
+        parts.push(list("activity-earlier", &said, cx));
+    }
+    if let Some(fold) = fold {
+        parts.push(earlier_fold(
+            folded.len(),
+            unfolded,
+            &fold,
+            reveal,
+            theme,
+            cx,
+        ));
+        if unfolded {
+            parts.push(list("activity-earlier-folded", &folded, cx));
+        }
+    } else if said.is_empty() && cards == 0 && waiting.is_empty() {
+        // What was done is the History's (`ui.undo_history`).
         parts.push(
             div()
                 .px_3()
                 .py_2()
                 .text_xs()
                 .text_color(theme.text_muted)
-                .child("Nothing has run yet")
+                .child("Nothing under way. What was done is in the Undo history.")
                 .into_any_element(),
         );
     }
     parts.push(div().flex_none().h(px(6.)).into_any_element());
     parts
+}
+
+/// Earlier folded at the foot of Activity pinned, `count` answers: a line
+/// that unfolds them (`ui.activity_earlier`), its chevron a disclosure's,
+/// as a sidebar group's: right while folded, down unfolded.
+fn earlier_fold(
+    count: usize,
+    unfolded: bool,
+    focus: &FocusHandle,
+    reveal: &Reveal,
+    theme: &Theme,
+    cx: &mut Context<Shell>,
+) -> AnyElement {
+    let hover = theme.hover;
+    let accent = theme.accent;
+    div()
+        .id("activity-earlier-fold")
+        .role(gpui::Role::Button)
+        .aria_label("Earlier")
+        .aria_expanded(unfolded)
+        .track_focus(focus)
+        .relative()
+        .flex()
+        .flex_none()
+        .items_center()
+        .gap_1()
+        .mt_1()
+        .px_3()
+        .py_1()
+        .border_t_1()
+        .border_color(theme.border)
+        .text_xs()
+        .text_color(theme.text_muted)
+        .cursor_pointer()
+        .hover(move |s| s.bg(hover))
+        .focus(move |s| s.text_color(accent))
+        .child(controls::glyph(
+            if unfolded { "chevron" } else { "chevron-right" },
+            theme.text_muted,
+            11.,
+        ))
+        .child(format!("Earlier ({count})"))
+        .child(reveal.marker(focus))
+        .press(
+            |this, window, cx| {
+                this.run("ui.activity_earlier", serde_json::json!({}), window, cx);
+            },
+            cx,
+        )
+        .into_any_element()
 }
 
 /// What Activity's Waiting heading says of the actions it lists, `quick`

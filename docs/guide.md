@@ -47,8 +47,11 @@ work where the keyboard is, by topic.
   action's card: how much of how much, and under the bar how fast it
   goes and how long it has left (`2.0 MB/s · about 3 min left`), once a
   few seconds of it tell, with Pause and Cancel; what waits its turn,
-  each with Cancel; and Earlier, what was done this session, with Undo
-  or Retry. Its pin keeps it above the footer while something runs. Onto
+  each with Cancel; and Earlier, what failed, was cancelled or cannot be
+  undone this session, with Retry, and the messages toasts gave (what was
+  done is in the Undo history). Its pin keeps it above the footer while
+  something runs, three cards high at most, Earlier folded to a line at
+  its foot. Onto
   a server that takes what is copied after (rclone's caches), a copy
   first says "then sent to the server", then the sending's own speed and
   time left. Cancel stops an action within a second or two, even in the

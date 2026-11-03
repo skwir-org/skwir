@@ -531,13 +531,15 @@ impl Work {
                 // Without a window every action is as a card: one started
                 // and stopped between two syncs keeps its Retry too.
                 let carded = watched.seen == Seen::NoWindow;
+                // Done, and kept by the journal: the History holds it, with
+                // its Undo, and Earlier does not say it again.
+                let in_history = done && undoable && applied > 0;
                 self.ended(
                     app,
                     plan,
                     &title,
                     (&text, tone, &actions),
-                    stopped_by_error,
-                    carded,
+                    (stopped_by_error, carded, in_history),
                 );
                 self.tell_ended(plan, &text, stopped_by_error, cancelled, ran, watched);
                 Taken::Ended {
@@ -555,20 +557,23 @@ impl Work {
     }
 
     /// An action ended, as its answer says it (`text`, `tone`, `actions`):
-    /// kept in `Earlier`; one an error stopped stays in the strip, if it
-    /// was shown there (or `carded`, as every one is without a window).
+    /// kept in `Earlier`, unless the History holds it (`in_history`: done,
+    /// and kept by the journal); one an error stopped stays in the strip,
+    /// if it was shown there (or `carded`, as every one is without a
+    /// window).
     fn ended(
         &mut self,
         app: &App,
         plan: PlanId,
         title: &str,
         answer: (&str, Tone, &[Action]),
-        stopped_by_error: bool,
-        carded: bool,
+        (stopped_by_error, carded, in_history): (bool, bool, bool),
     ) {
         let (text, tone, actions) = answer;
         let carded = self.carded.remove(&plan) || carded;
-        crate::activity::keep(&mut self.earlier, Ended::of_plan(plan, text, tone, actions));
+        if !in_history {
+            crate::activity::keep(&mut self.earlier, Ended::of_plan(plan, text, tone, actions));
+        }
         if stopped_by_error && carded {
             self.stopped = Some(Stopped::new(plan, title, app.executor.can_retry(plan)));
         }
@@ -1108,10 +1113,11 @@ mod tests {
         assert_eq!(work.spell_ended(), 1);
     }
 
-    /// What runs is followed from its start to its answer, which `Earlier`
-    /// keeps: the window's and the program's alike, whoever takes it in.
+    /// What runs is followed from its start to its answer: the window's
+    /// and the program's alike, whoever takes it in. Done and kept by the
+    /// journal, the History holds it, and `Earlier` does not.
     #[test]
-    fn a_plan_is_followed_to_its_answer_kept_in_earlier() {
+    fn a_plan_is_followed_to_its_answer() {
         let (_tmp, app) = app();
         let mut work = Work::default();
         let plan = PlanId(7);
@@ -1135,9 +1141,9 @@ mod tests {
         };
         assert_eq!(ended, plan);
         assert!(done);
+        assert!(!answer.text.is_empty());
         assert!(work.running.is_empty());
-        assert_eq!(work.earlier.len(), 1);
-        assert_eq!(work.earlier[0].text, answer.text);
+        assert!(work.earlier.is_empty(), "the History holds it");
         assert!(work.stopped.is_none(), "it went through");
 
         // One it never saw start still says what it made.
@@ -1145,6 +1151,34 @@ mod tests {
             work.take(&app, finished(PlanId(8), 1, None), LOOKED_AT),
             Taken::Ended { answer: None, .. }
         ));
+    }
+
+    /// `Earlier` keeps what the History does not hold: an action an error
+    /// stopped, one cancelled, one done that nothing undoes; one done and
+    /// undone by the journal is the History's alone.
+    #[test]
+    fn earlier_keeps_what_the_history_does_not_hold() {
+        let (_tmp, app) = app();
+        let mut work = Work::default();
+        let (failed, halted, for_good, undoable) = (PlanId(31), PlanId(32), PlanId(33), PlanId(34));
+        for (plan, title) in [
+            (failed, "copy it's a.txt to Backup"),
+            (halted, "copy it's b.txt to Backup"),
+            (for_good, "delete it's c.txt for good"),
+            (undoable, "rename it's d.txt"),
+        ] {
+            work.take(&app, started(plan, title, 1), LOOKED_AT);
+        }
+        work.take(&app, finished(failed, 0, Some("No space left")), LOOKED_AT);
+        work.take(&app, cancelled(halted, 1, 4), LOOKED_AT);
+        let mut gone = finished(for_good, 1, None);
+        if let ExecEvent::Finished { undoable, .. } = &mut gone {
+            *undoable = false;
+        }
+        work.take(&app, gone, LOOKED_AT);
+        work.take(&app, finished(undoable, 1, None), LOOKED_AT);
+        let kept: Vec<Option<PlanId>> = work.earlier.iter().map(|e| e.plan).collect();
+        assert_eq!(kept, [Some(for_good), Some(halted), Some(failed)]);
     }
 
     /// An action an error stopped stays in the strip only if it was shown

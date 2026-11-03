@@ -679,16 +679,21 @@ of bars, split or not.
   the window (`work::wake_after`), never a loop. A click, or `ui.activity` (Ctrl+Shift+J),
   opens Activity above it (one popup at a time, `toggle_popup`): each
   action's card, what waits (each with its Cancel, Cancel all for
-  several), and Earlier, this session's answers with
-  their Undo and Retry, twenty at most, in memory only: every answer a
-  toast says, a plan's or another's (a print's, a message), so that none
-  is lost while Activity is open and no toast is drawn; a message said
-  again as the last one was is that one, moved to now
-  (`activity::keep`). Pinned
+  several), and Earlier, this session's answers the Undo history does
+  not hold, with their Retry and Undo, twenty at most, in memory only:
+  an action that failed, was cancelled or that no journal keeps, and
+  every answer a toast says that is no action's (a print's, a message);
+  an action done and kept by the journal is the History's alone
+  (`Work::ended`); a message said again as the last one was is that one,
+  moved to now (`activity::keep`). Its heading (name and pin) stays
+  while its rows scroll beneath it, beside a scrollbar. Pinned
   (`ui.activity_pin`, remembered with the window's shape), Activity
   stands above the last pane's footer while something is under way,
-  waits or stopped, at most half the pane's height, and the strip steps
-  aside; open as a popup, it stays where it opened until closed. Pinned,
+  waits or stopped, at most `TRAY_MOST` (260 px, about three cards; half
+  a low pane) and scrolled beyond, and the strip steps aside; it shows
+  the action an error stopped and folds the rest of Earlier at its foot,
+  a line until unfolded (`ui.activity_earlier`). Open as a popup, it
+  stays where it opened until closed. Pinned,
   it is a place of its own (`keymap::ACTIVITY`): `ui.activity` gives it
   the keyboard, Escape gives it back to the files. A click on the strip
   or on Activity pinned leaves the keyboard where it was, so the keys go
@@ -736,13 +741,13 @@ of bars, split or not.
   only those in view are built (a `gpui::list`); the keys walk the rows
   read, so one out of view is reached too and comes into view. Undo,
   Redo and "Undo both" from it leave it open, its rows saying what each
-  became; no toast is drawn while it is open (Earlier keeps them), and
-  one said meanwhile keeps its time, which begins once it is drawn.
+  became; no toast is drawn while it is open, and one said meanwhile
+  keeps its time, which begins once it is drawn.
 - **One answer at a time** (`toast.rs`), over the files at the last
   pane's lower right, above the strip or Activity pinned, where the list
   shows sizes and dates rather than names; over the preview on the whole
-  screen. Not while Activity or the History is open: Earlier holds it,
-  and one the History held back is drawn once it closes, for its time.
+  screen. Not while Activity or the History is open: one said meanwhile
+  is held back and drawn once it closes, for its time.
   A plan that ran
   5 s or more and moved bytes says them in its toast, and how long it
   ran ("4.8 GB in 3 min 20 s"). A toast stays at least as long as its

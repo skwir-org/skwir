@@ -132,7 +132,8 @@ pub struct ToastState {
     pub current: Option<Toast>,
     generation: u64,
     /// Whether the time of the current one runs: from when it is said, or,
-    /// held back while the History is open, from when it is first drawn.
+    /// held back while Activity or the History is open, from when it is
+    /// first drawn.
     timed: bool,
     close: Option<gpui::FocusHandle>,
     /// Kept across frames, so Tab can reach the toast's buttons.
@@ -141,9 +142,9 @@ pub struct ToastState {
 
 impl ToastState {
     /// `toast` is said, replacing the current one: its generation, and how
-    /// many seconds it stays from now, unless `held` (the History is open,
-    /// and draws none): its time then begins as it is first drawn
-    /// (`drawn`).
+    /// many seconds it stays from now, unless `held` (Activity or the
+    /// History is open, and none is drawn): its time then begins as it is
+    /// first drawn (`drawn`).
     fn say(&mut self, toast: Toast, held: bool) -> (u64, Option<u64>) {
         let seconds = shown_for(&toast);
         self.current = Some(toast);
@@ -437,9 +438,8 @@ fn shown_for(toast: &Toast) -> u64 {
 
 impl Shell {
     /// Show `toast` (`show_toast`), and keep it in Activity's Earlier: what
-    /// a toast said is found there again, though Activity was open when it
-    /// came and no toast was drawn. A plan's answer is kept by `Work` as
-    /// the plan ends.
+    /// a toast said is found there again once it has gone. A plan's answer
+    /// is kept by `Work` as the plan ends, unless the History holds it.
     pub fn toast(&mut self, toast: Toast, cx: &mut Context<Self>) {
         crate::activity::keep(
             &mut self.work.borrow_mut().earlier,
@@ -452,10 +452,10 @@ impl Shell {
     /// Show `toast`, replacing the current one, for a time that fits its
     /// weight: errors and anything with a button stay longer, and a long
     /// one (what a plan's steps said after what it did) as long as it
-    /// takes to read. Held back while the History is open, it keeps its
-    /// time: that begins as it is first drawn (`render_answer`).
+    /// takes to read. Held back while Activity or the History is open, it
+    /// keeps its time: that begins as it is first drawn (`render_answer`).
     fn show_toast(&mut self, toast: Toast, cx: &mut Context<Self>) {
-        let held = self.undo_history_open();
+        let held = self.activity_open() || self.undo_history_open();
         if let (generation, Some(seconds)) = self.toasts.say(toast, held) {
             self.time_toast(generation, seconds, cx);
         }
@@ -717,15 +717,16 @@ pub fn pace(t: &Transfer) -> Option<String> {
 /// The answer said last, as a card: what it says, its buttons, and Close.
 /// Its caller places it: over the files at the last pane's lower right,
 /// above Activity's strip, or over the preview on the whole screen. Not
-/// while Activity is open, which holds it in `Earlier`, nor the History,
-/// whose rows say what each action came to: one said meanwhile keeps its
-/// time, which begins once it is drawn (`ToastState::drawn`).
+/// while Activity or the History is open, where it would cover them: one
+/// said meanwhile keeps its time, which begins once it is drawn
+/// (`ToastState::drawn`).
 pub fn render_answer(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     if shell.activity_open() || shell.undo_history_open() {
         return None;
     }
     let toast = shell.toasts.current.clone()?;
-    // Held back while the History was open, its time begins now.
+    // Held back while Activity or the History was open, its time begins
+    // now.
     if let Some((generation, seconds)) = shell.toasts.drawn() {
         shell.time_toast(generation, seconds, cx);
     }
@@ -1408,10 +1409,10 @@ mod tests {
         );
     }
 
-    /// A toast held back while the History is open keeps its time: it
-    /// begins as the toast is first drawn, once; one said with nothing
-    /// holding it back begins at once. A time over goes only with the
-    /// toast it was for.
+    /// A toast held back while Activity or the History is open keeps its
+    /// time: it begins as the toast is first drawn, once; one said with
+    /// nothing holding it back begins at once. A time over goes only with
+    /// the toast it was for.
     #[test]
     fn a_toast_held_back_keeps_its_time_until_drawn() {
         let said = |text: &str| Toast {

@@ -31,7 +31,7 @@ offers builds to try on Windows and macOS.
 - **What runs** stands at the end of the footer, saying how fast it goes and
   how long it has left, and how far the whole queue has come ("2 of 3 · 47 % ·
   1 waiting"); `Ctrl+Shift+J` opens Activity, with each action, what waits its
-  turn and what was done this session. An action that lasts more than a moment
+  turn and what failed this session. An action that lasts more than a moment
   says as it starts that it gets ready, goes, or waits its turn, on a tint.
   Closing the window stops nothing: Skwir finishes without it, an icon in the
   tray, and the desktop is told when a long action ends.
@@ -216,8 +216,10 @@ server and network. Undo history is cleared when Skwir exits.
   to Backup · 42 % · about 3 min left"), with Pause and Cancel for one action,
   several summed. A click or `Ctrl+Shift+J` opens Activity above it: each
   action's card, what waits its turn (each with Cancel, or Cancel all), and
-  Earlier, this session's answers with Undo or Retry. Pinned, it stands above
-  the footer while something runs, taking room rather than covering the files.
+  Earlier, this session's answers the Undo history does not hold (what failed,
+  with Retry, and messages). Pinned, it stands above the footer while something
+  runs, taking room rather than covering the files, three cards high at most,
+  Earlier folded to a line.
   An action an error stopped stays in the strip, in red, until it is retried,
   seen or dismissed. Toasts say one answer at a time, at the last pane's lower
   right.

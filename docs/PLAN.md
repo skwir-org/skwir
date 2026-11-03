@@ -543,6 +543,23 @@ Left: the tint is the selection's, pale on some looks; a local copy's
 only on large trees and servers, not timed on a server here). Checks in
 `docs/STATUS-LOG.md` (2026-11-03, "The start made plain").
 
+## The History's scroll, Earlier trimmed (2026-11-03)
+
+Asked by the user: scrolling in the History did not seem to work, and
+was Activity's Earlier not redundant with it, and too tall pinned?
+
+- **The History opens at its newest**, its first time too: it opened at
+  its oldest, so a wheel turned down did nothing. The footer's chevron
+  points up, where the History opens (down while open).
+- **Activity scrolls beside a scrollbar**, its heading staying.
+- **Earlier keeps what the History does not hold** (ADR-114, amended):
+  what failed (with Retry), was cancelled or cannot be undone, and
+  messages. Pinned, Activity is 260 px high at most, about three cards,
+  Earlier folded to a line at its foot (`ui.activity_earlier`). A toast
+  said while Activity is open is drawn once it closes.
+
+Checks in `docs/STATUS-LOG.md` (2026-11-03, "The History's scroll").
+
 ## What is left
 
 Gathered on 2026-10-20 from the notes of this plan and of

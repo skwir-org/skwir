@@ -10270,3 +10270,48 @@ Checked: `just lint` clean; `just test` 2953 passed, 30 skipped (one new:
 skwir-core and skwir-ui clean. Not checked: the timer across a window
 closed and opened again in a window (skwir-ui has no gpui test harness),
 a screen reader on the announcement, release-check.
+
+## The History's scroll, Earlier trimmed (2026-11-03)
+
+Asked by the user: scrolling in the Undo history did not seem to work,
+was the same true of Activity, and was Activity's Earlier not redundant
+with the History, and too tall pinned? They chose, from two questions,
+Earlier trimmed to what the History does not hold and the pinned tray
+about three cards high; then asked whether Earlier could still be
+reached pinned (it could not, Ctrl+Shift+J giving the tray the
+keyboard): it is folded at the tray's foot.
+
+- **The History opened at its oldest the first time** (6a98c044 had
+  pointed its chevron up, where it opens; down while open). Its rows
+  were put in an empty list after its top was asked for: gpui's
+  `splice_focusable` moves the top down past rows put in before it, so
+  the top went to the end, and a wheel turned down did nothing (turned
+  up, it scrolled). Opened again, the rows replaced others and the top
+  stayed: only the first opening, the one most seen, was wrong. Where
+  the list stands is said after the splice (`history::relist`); a test
+  of a list with no window failed without it.
+- **Activity scrolled with no scrollbar**: its popup was a scroll area
+  without one, the tray too. Its rows now scroll beside a scrollbar
+  under a heading that stays (name and pin).
+- **Earlier trimmed** (ADR-114, amended): an action done and kept by
+  the journal is not kept in Earlier (`Work::ended`); what failed, was
+  cancelled, or that no journal keeps, and messages, are. Pinned,
+  Activity is `TRAY_MOST` (260 px) high at most, half a low pane, and
+  shows the action an error stopped and the rest of Earlier folded to a
+  line (`ui.activity_earlier`, a disclosure's chevron). A toast said
+  while Activity is open is held back and drawn once it closes, as the
+  History did. Opened with nothing under way and nothing in Earlier, it
+  says what was done is in the Undo history.
+
+Checked on Xvfb (:93, lavapipe): thirty folders made, the History's
+first opening at "folder 30", the wheel down to "folder 03"; Activity's
+popup with a scrollbar, scrolled down; pinned, a copy of 250,000 files
+paused from the tray, its first copy that went through absent from
+Earlier, "Earlier (1)" ("Nothing to paste") unfolded in place, three
+copies waiting behind the paused one: the tray stopped at 260 px, its
+heading fixed, and scrolled to the fold. `just lint` clean; `just test`
+2956 passed, 30 skipped (new: `the_history_opens_at_its_newest_and_keeps_its_top_row`,
+`earlier_keeps_what_the_history_does_not_hold`). Not checked: a screen
+reader on the fold, the keyboard reaching it (Tab, as the tray's other
+buttons), a toast held back by Activity in a window, Wayland's wheel
+(X11's only), release-check.
