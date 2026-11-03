@@ -122,6 +122,10 @@ if [ ! -f "$builder/.skwir-prepared" ]; then
     touch "$builder/.skwir-prepared"
 fi
 enter "$builder" 0 /tools/package/linux/prepare.sh "$distribution"
+# Its owner may write the root again: an update can make it read-only
+# (on Arch, systemd's tmpfiles hook applies its root.conf, `z / 555`),
+# and the tree's files are put in it below.
+chmod u+rwx "$builder" "$builder/root"
 
 # The tree's files, fresh; the build's target kept between tries.
 if [ -d "$builder/src" ]; then
