@@ -71,6 +71,8 @@ pub fn asset(path: &str) -> Option<&'static [u8]> {
         "muted",
         "fullscreen",
         "revert",
+        "redo",
+        "power",
         "check",
         "warning",
         "link",

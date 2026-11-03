@@ -668,8 +668,51 @@ fn titled(groups: Vec<(&'static str, Vec<Button>)>) -> Vec<MenuPart> {
         .collect()
 }
 
-/// The More menu: the panels without a button, the window's layout, New
-/// tab, the palette, Settings and About.
+/// What the More menu's Undo and Redo say: each names what it takes back
+/// (`Executor::undo_target`: its title, and whether it has not ended, Undo
+/// waiting for it then; `last_redo_title`), as the footer's Undo does.
+fn undo_words(undo: Option<&(String, bool)>, redo: Option<&str>) -> (String, String) {
+    let undo = match undo {
+        Some((title, true)) => format!("Undo {title} (once it ends)"),
+        Some((title, false)) => format!("Undo {title}"),
+        None => "Undo".to_owned(),
+    };
+    let redo = redo.map_or_else(|| "Redo".to_owned(), |title| format!("Redo {title}"));
+    (undo, redo)
+}
+
+/// The More menu's Undo and Redo, each named by what it takes back and off
+/// when there is nothing to, and the History (ADR-079, 13).
+fn undo_rows(shell: &Shell) -> Vec<MenuPart> {
+    let undo = shell.app.executor.undo_target();
+    let redo = shell.app.executor.last_redo_title();
+    let (undo_said, redo_said) = undo_words(undo.as_ref(), redo.as_deref());
+    [
+        menu_item(
+            Button::new("menu-undo", "revert", "Undo", "undo"),
+            undo_said,
+        )
+        .enabled(undo.is_some()),
+        menu_item(Button::new("menu-redo", "redo", "Redo", "redo"), redo_said)
+            .enabled(redo.is_some()),
+        menu_item(
+            Button::new(
+                "menu-undo-history",
+                "recent",
+                "Undo history",
+                "ui.undo_history",
+            ),
+            "Undo history…",
+        ),
+    ]
+    .into_iter()
+    .map(MenuPart::Row)
+    .collect()
+}
+
+/// The More menu: the panels without a button, the window's layout, Undo,
+/// Redo and the History, New tab, the palette, Settings and About, then
+/// Quit.
 fn more_panel(
     shell: &Shell,
     popup: &toolbar::Popup,
@@ -678,6 +721,8 @@ fn more_panel(
 ) -> AnyElement {
     let panel = toolbar::menu_panel(popup, "ui.toolbar_menu", theme, cx);
     let mut parts = layout_parts(shell);
+    parts.push(MenuPart::Line);
+    parts.extend(undo_rows(shell));
     parts.push(MenuPart::Line);
     parts.extend(
         [
@@ -710,6 +755,13 @@ fn more_panel(
         .into_iter()
         .map(|(button, label)| MenuPart::Row(menu_item(button, label))),
     );
+    // Quit, last: it asks while something runs; closing the window stops
+    // nothing (ADR-115).
+    parts.push(MenuPart::Line);
+    parts.push(MenuPart::Row(menu_item(
+        Button::new("menu-quit", "power", "Quit skwir", "ui.quit"),
+        "Quit",
+    )));
     toolbar::menu_parts(panel, parts, shell, theme, cx).into_any_element()
 }
 
@@ -1710,12 +1762,36 @@ fn breadcrumbs(
 
 #[cfg(test)]
 mod tests {
-    use super::{ViewButtons, ViewSpec, crumbs, tool_pane, toolbar_views};
+    use super::{ViewButtons, ViewSpec, crumbs, tool_pane, toolbar_views, undo_words};
     use crate::sidebar::Root;
     use skwir_core::location::{Location, ToolPane};
     use skwir_core::workspace::PaneId;
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
+
+    /// The More menu's Undo and Redo name what each takes back, Undo of
+    /// what has not ended saying it waits for it; with nothing to, the
+    /// bare verb (the row is off).
+    #[test]
+    fn the_more_menu_s_undo_and_redo_say_what_they_take_back() {
+        let running = ("copy it's a.txt to Backup".to_owned(), true);
+        let ended = ("rename to final.txt".to_owned(), false);
+        assert_eq!(
+            undo_words(Some(&ended), Some("new folder Reports")),
+            (
+                "Undo rename to final.txt".to_owned(),
+                "Redo new folder Reports".to_owned()
+            )
+        );
+        assert_eq!(
+            undo_words(Some(&running), None).0,
+            "Undo copy it's a.txt to Backup (once it ends)"
+        );
+        assert_eq!(
+            undo_words(None, None),
+            ("Undo".to_owned(), "Redo".to_owned())
+        );
+    }
 
     /// The shelf's Move and Copy go to the other pane's folder: not
     /// without a split, nor when the other pane shows the shelf too; the
