@@ -71,8 +71,20 @@ unpack() {
         ;;
     arch)
         sed -i 's/^CheckSpace/#CheckSpace/; s/^DownloadUser/#DownloadUser/; s/^#\(DisableSandbox\)/\1/' "$1/etc/pacman.conf"
+        arch_mirrors "$1"
         ;;
     esac
+}
+
+# Arch's packages from more than one server: the image names one
+# (mirrors.kernel.org), and pacman goes on to the next only when there
+# is one (that one stalled mid-download, 2026-11-03).
+arch_mirrors() {
+    # shellcheck disable=SC2016 # pacman expands $repo and $arch
+    printf 'Server = %s/$repo/os/$arch\n' \
+        https://geo.mirror.pkgbuild.com \
+        https://fastly.mirror.pkgbuild.com \
+        http://mirrors.kernel.org/archlinux > "$1/etc/pacman.d/mirrorlist"
 }
 
 # Run "$@" in the root $1 as its root user (uid 0) or as `builder`
@@ -120,6 +132,10 @@ if [ ! -f "$builder/.skwir-prepared" ]; then
     fi
     rootless "$builder"
     touch "$builder/.skwir-prepared"
+fi
+# A root kept from before asks the servers a new one is given.
+if [ "$distribution" = arch ]; then
+    arch_mirrors "$builder"
 fi
 enter "$builder" 0 /tools/package/linux/prepare.sh "$distribution"
 # Its owner may write the root again: an update can make it read-only
