@@ -44,11 +44,14 @@ Windows and macOS, made on Linux and never run on either system: see
 - **Previews of almost anything**: code, Markdown, tables, PDFs, DjVu, office
   documents, books, pictures, audio and video, fonts, 3D models, maps,
   archives ([the list](docs/previews.md)).
+- **Print and shrink**: print what a preview shows, booklets included, or make
+  a PDF of it; make smaller copies of pictures and PDFs.
 - **Every change undoable**: copies, moves and renames are plans with
   inverses; changes to many files are reviewed first; a name already taken is
   asked about once.
 - **Copies you can trust**: pause and cancel, a USB drive's pace, room checked
-  before starting.
+  before starting, speed and time left in the footer, and going on when the
+  window closes.
 - **Views of data**: disk usage, a timeline of changes, a map of where
   pictures were taken.
 - **Properties** of anything selected: what a folder holds, the room a file
@@ -64,8 +67,8 @@ Windows and macOS, made on Linux and never run on either system: see
 
 Each [release](https://github.com/skwir-org/skwir/releases) has packages for
 x86-64 Linux. `skwir` holds the program and its helpers for PDFs, DjVu,
-archives, 3D models, WebAssembly plugins and the phones KDE holds; the rest is
-optional:
+archives, 3D models, code's grammars, printing, WebAssembly plugins and the
+phones KDE holds; the rest is optional:
 
 | Package           | Adds                                                  |
 | ----------------- | ----------------------------------------------------- |
