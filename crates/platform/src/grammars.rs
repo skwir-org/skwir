@@ -101,6 +101,20 @@ impl Source {
         }
     }
 
+    /// Its library, as a combined grammar names it after its queries'
+    /// source ("tree-sitter CLI, with Emacs's library", ADR-110).
+    pub fn library(self) -> &'static str {
+        match self {
+            Source::Skwir => "a library in Skwir's folder",
+            Source::TreeSitter => "the tree-sitter CLI's library",
+            Source::Zed => "Zed's library",
+            Source::Helix => "Helix's library",
+            Source::Neovim => "Neovim's library",
+            Source::System => "the system's library",
+            Source::Emacs => "Emacs's library",
+        }
+    }
+
     /// Whose queries come from the grammar's own repository, so are
     /// borrowed first.
     fn upstream(self) -> bool {
@@ -114,8 +128,10 @@ impl Source {
 pub struct Found {
     pub grammar: Grammar,
     pub source: Source,
-    /// Where its queries came from, when another source than its own.
+    /// Where its queries came from, when another source than its own,
+    /// and the folder they lie in (the grammar's repository).
     pub queries_from: Option<Source>,
+    pub queries_at: Option<PathBuf>,
     /// Extensions (without their dot) and whole names it colors.
     pub file_types: Vec<String>,
     /// What a file's first line says when its name says nothing.
@@ -629,6 +645,9 @@ fn program(name: &str) -> Option<PathBuf> {
 struct Candidate {
     source: Option<Source>,
     name: String,
+    /// The folder it was found as: a repository's own, a language's
+    /// queries folder; what a grammar its queries color names them by.
+    home: Option<PathBuf>,
     library: Option<PathBuf>,
     symbol: Option<String>,
     queries: Queries,
@@ -943,27 +962,33 @@ fn alternative(own: &Candidate, candidates: &[Candidate], file_types: &[String])
         let source = c.source.unwrap_or(Source::Skwir);
         (!source.upstream(), lender_rank(source))
     });
-    let mut sets = std::iter::once((&own.queries, own.source))
-        .filter(|(queries, _)| !queries.is_empty())
-        .chain(
-            lenders
-                .iter()
-                .map(|lender| (&lender.queries, lender.source)),
-        );
-    let (queries, queries_from) = sets
-        .next()
-        .map_or((Queries::default(), None), |(queries, from)| {
-            (queries.clone(), from)
-        });
+    let mut sets = std::iter::once(own)
+        .filter(|own| !own.queries.is_empty())
+        .chain(lenders.iter().copied());
+    let first = sets.next();
+    let queries = first.map(|set| set.queries.clone()).unwrap_or_default();
     let mut seen = vec![queries.clone()];
     let lent: Vec<syntax::Queries> = sets
-        .filter(|(queries, _)| {
-            let new = !seen.contains(*queries);
-            seen.push((*queries).clone());
+        .filter(|set| {
+            let new = !seen.contains(&set.queries);
+            seen.push(set.queries.clone());
             new
         })
-        .map(|(queries, _)| queries.clone().into())
+        .map(|set| set.queries.clone().into())
         .collect();
+    // Lent: by whom, and from which folder (its home, else the folder of
+    // its highlights).
+    let lender = first.filter(|set| !std::ptr::eq(*set, own));
+    let queries_from = lender.and_then(|lender| lender.source);
+    let queries_at = lender.and_then(|lender| {
+        lender.home.clone().or_else(|| {
+            lender
+                .queries
+                .highlights
+                .last()
+                .and_then(|file| file.parent().map(Path::to_owned))
+        })
+    });
     let first_line = own
         .first_line
         .clone()
@@ -998,6 +1023,7 @@ fn alternative(own: &Candidate, candidates: &[Candidate], file_types: &[String])
         },
         source,
         queries_from: queries_from.filter(|&from| from != source),
+        queries_at: queries_at.filter(|_| queries_from.is_some_and(|from| from != source)),
         file_types: file_types.to_vec(),
         first_line,
         problem,
@@ -1118,6 +1144,7 @@ fn repository_grammars(
             Some(Candidate {
                 source: Some(source),
                 name: name.clone(),
+                home: Some(repository.to_owned()),
                 library,
                 symbol: None,
                 queries: Queries {
@@ -1234,6 +1261,7 @@ fn zed_grammars(extension: &Path) -> Vec<Candidate> {
         candidates.push(Candidate {
             source: Some(Source::Zed),
             name: grammar.clone(),
+            home: Some(language.clone()),
             library,
             symbol: None,
             queries: Queries {
@@ -1317,6 +1345,7 @@ fn helix_grammars(roots: &Roots) -> Vec<Candidate> {
             Candidate {
                 source: Some(Source::Helix),
                 name: grammar.unwrap_or_else(|| name.clone()),
+                home: None,
                 library,
                 symbol: None,
                 queries: inherited_queries(&query_folders, &name),
@@ -1411,6 +1440,7 @@ fn parser_folder_grammars(
                     source: Some(source),
                     queries: inherited_queries(queries, &name),
                     name,
+                    home: Some(path),
                     ..Candidate::default()
                 });
             }
@@ -1776,6 +1806,11 @@ mod tests {
         );
         assert_eq!(heex.file_types, ["heex"], "its repository says");
         assert_eq!(
+            heex.queries_at.as_deref(),
+            Some(root.join("skwir/tree-sitter-heex").as_path()),
+            "named by its repository"
+        );
+        assert_eq!(
             all.iter()
                 .filter(|found| found.grammar.name == "heex")
                 .count(),
@@ -2030,6 +2065,7 @@ mod tests {
             },
             source,
             queries_from: None,
+            queries_at: None,
             file_types: vec!["nix".into()],
             first_line: None,
             problem: None,
@@ -2068,6 +2104,7 @@ mod tests {
             },
             source: Source::Skwir,
             queries_from: None,
+            queries_at: None,
             file_types: vec!["fish".into()],
             first_line: Some("^#!.*\\bfish\\b".into()),
             problem: None,

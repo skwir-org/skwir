@@ -628,8 +628,8 @@ by one rule, said and checked. Built in this order:
   never lent; a combined grammar checked by the helper when Languages is
   first shown, offered as being checked until answered.
 
-**Status:** accepted 2026-11-04; W1 built (checks in `docs/STATUS-LOG.md` once W4 is).
-
+**Status:** accepted 2026-11-04; W1 and W2 built (checks in
+`docs/STATUS-LOG.md` once W4 is).
 
 ## What is left
 

@@ -334,13 +334,34 @@ fn languages() -> std::sync::Arc<[skwir_platform::highlight::tree::Language]> {
     skwir_platform::highlight::tree::listed_languages()
 }
 
-/// A tree-sitter grammar as a choice says it: "Zed (tree-sitter)".
+/// A tree-sitter grammar as a choice says it: by its source, "Zed
+/// (tree-sitter)"; combined from two, by its queries' source first, as
+/// the user put its repository there, "tree-sitter CLI, with Emacs's
+/// library" (ADR-110, amended).
 fn tree_label(found: &skwir_platform::grammars::Found) -> String {
     use skwir_platform::grammars::Source;
-    match found.source {
-        Source::TreeSitter => "tree-sitter CLI".to_owned(),
-        source => format!("{} (tree-sitter)", source.short()),
+    match (found.source, found.queries_from) {
+        (source, Some(from)) => format!("{}, with {}", from.short(), source.library()),
+        (Source::TreeSitter, None) => "tree-sitter CLI".to_owned(),
+        (source, None) => format!("{} (tree-sitter)", source.short()),
     }
+}
+
+/// Where a combined grammar's colors come from, under its choice: the
+/// repository its queries are in, by its folder's name, or the system's
+/// queries.
+fn colors_from(found: &skwir_platform::grammars::Found) -> Option<String> {
+    use skwir_platform::grammars::Source;
+    let from = found.queries_from?;
+    let folder = found
+        .queries_at
+        .as_deref()
+        .and_then(std::path::Path::file_name)
+        .map(|name| name.to_string_lossy().into_owned());
+    Some(match (from, folder) {
+        (Source::System, _) | (_, None) => format!("its colors from {}'s queries", from.label()),
+        (_, Some(folder)) => format!("its colors from {folder}"),
+    })
 }
 
 /// The languages as the Reading page lists them (`ui.languages`): each a
@@ -381,10 +402,9 @@ pub(crate) fn language_records(app: &App) -> serde_json::Value {
                 offered.push(serde_json::json!({ "value": "bat", "label": bat }));
             }
             for found in &language.tree {
-                let detail = match (&found.problem, found.queries_from) {
-                    (Some(problem), _) => problem.clone(),
-                    (None, Some(from)) => format!("its colors from {}", from.short()),
-                    (None, None) => String::new(),
+                let detail = match &found.problem {
+                    Some(problem) => problem.clone(),
+                    None => colors_from(found).unwrap_or_default(),
                 };
                 offered.push(serde_json::json!({
                     "value": found.source.key(),
@@ -2711,6 +2731,50 @@ mod tests {
         icon_theme_spec, page_order,
     };
     use skwir_platform::icons::Theme;
+
+    /// A grammar is named by its source; one combined from two by its
+    /// queries' source first, its detail naming their repository.
+    #[test]
+    fn a_combined_grammar_is_named_by_both_its_parts() {
+        use skwir_platform::grammars::{Found, Source};
+        let found = |source, queries_from, queries_at: Option<&str>| Found {
+            grammar: skwir_core::syntax::Grammar::default(),
+            source,
+            queries_from,
+            queries_at: queries_at.map(std::path::PathBuf::from),
+            file_types: Vec::new(),
+            first_line: None,
+            problem: None,
+        };
+        let whole = found(Source::Zed, None, None);
+        assert_eq!(super::tree_label(&whole), "Zed (tree-sitter)");
+        assert_eq!(super::colors_from(&whole), None);
+        let cli = found(Source::TreeSitter, None, None);
+        assert_eq!(super::tree_label(&cli), "tree-sitter CLI");
+        let combined = found(
+            Source::Emacs,
+            Some(Source::TreeSitter),
+            Some("/src/tree-sitter-heex"),
+        );
+        assert_eq!(
+            super::tree_label(&combined),
+            "tree-sitter CLI, with Emacs's library"
+        );
+        assert_eq!(
+            super::colors_from(&combined).as_deref(),
+            Some("its colors from tree-sitter-heex")
+        );
+        let system = found(
+            Source::Neovim,
+            Some(Source::System),
+            Some("/usr/share/tree-sitter/queries/lua"),
+        );
+        assert_eq!(super::tree_label(&system), "System, with Neovim's library");
+        assert_eq!(
+            super::colors_from(&system).as_deref(),
+            Some("its colors from the system's queries")
+        );
+    }
 
     #[test]
     fn a_font_is_automatic_or_a_family_the_text_system_draws() {

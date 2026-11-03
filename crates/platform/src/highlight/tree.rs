@@ -824,6 +824,7 @@ mod tests {
             },
             source: Source::Helix,
             queries_from: None,
+            queries_at: None,
             file_types: file_types.iter().map(|&t| t.to_owned()).collect(),
             first_line: None,
             problem: problem.map(str::to_owned),
