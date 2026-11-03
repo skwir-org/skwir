@@ -777,11 +777,14 @@ impl Backend {
         }
     }
 
+    /// logind's descriptor goes first: closing the portal's request waits
+    /// for its answer, and once the portal has it the session is held by
+    /// nothing of Skwir's.
     fn let_session_go(&self, hold: SessionHold) {
+        drop(hold.logind);
         if let Some(request) = &hold.portal {
             self.close_request(hold.on.as_deref(), request);
         }
-        drop(hold.logind);
     }
 
     /// Close the portal's `request`, asked on the connection named `on`:
