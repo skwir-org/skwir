@@ -1634,6 +1634,14 @@ pub fn declare_all(app: &App) {
         "The languages a grammar was found or added for, as last found: each one's files and what colors it, Automatic or chosen, with what may be chosen",
         |_, app| Ok(Outcome::Value(crate::settings::language_records(app))),
     );
+    app.commands.register_raw::<NoArgs, _>(
+        OWNER,
+        Topic::Skwir,
+        "ui.grammar_folders",
+        "Where grammars were looked for",
+        "Where tree-sitter grammars were looked for when last found: what was nearly found, each saying what to do, then each folder read and the languages it held",
+        |_, _| Ok(Outcome::Value(crate::settings::grammar_folder_records())),
+    );
     app.commands.register::<GrammarArgs, _>(
         OWNER,
         Topic::Skwir,

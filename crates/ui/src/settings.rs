@@ -315,6 +315,97 @@ pub(crate) static LANGUAGES: std::sync::LazyLock<skwir_core::settings::RecordSou
         skwir_core::settings::RecordSource::new("ui.languages", "", "", "")
     });
 
+/// Where tree-sitter grammars were looked for, listed under Languages
+/// (`ui.grammar_folders`, ADR-110 amended): what was nearly found first,
+/// then each folder read. Only shown.
+pub const GRAMMAR_FOLDERS_KEY: &str = "reading.grammar_folders";
+
+/// What lists them, said changed once the grammars were found again.
+pub(crate) static GRAMMAR_FOLDERS: std::sync::LazyLock<skwir_core::settings::RecordSource> =
+    std::sync::LazyLock::new(|| {
+        skwir_core::settings::RecordSource::new("ui.grammar_folders", "", "", "")
+    });
+
+/// The list of where grammars were looked for, its title counting what
+/// was nearly found (declared again each time they are found): folded
+/// as long lists are, what was nearly found is first, so it shows.
+pub(crate) fn grammar_folders_spec(nearly: usize) -> SettingSpec {
+    let title = match nearly {
+        0 => "Where grammars were looked for".to_owned(),
+        n => format!("Where grammars were looked for: {n} nearly found"),
+    };
+    SettingSpec::records(
+        GRAMMAR_FOLDERS_KEY,
+        &title,
+        "Each folder Skwir read for tree-sitter grammars, and the languages it held. What was nearly found comes first, each saying what to do: a repository a folder too deep, a library with no queries to color with, a folder the tree-sitter CLI's configuration names that is not there.",
+        "Folder",
+        vec![
+            skwir_core::settings::RecordField::text("name", "Folder", "", ""),
+            skwir_core::settings::RecordField::text("detail", "What it held", "", ""),
+        ],
+    )
+    .records_kept_by(GRAMMAR_FOLDERS.clone())
+    .section("Grammars")
+}
+
+/// Where grammars were looked for, as the Reading page lists it
+/// (`ui.grammar_folders`): what was nearly found, each with what to do;
+/// then each folder there with the languages it held; then each source
+/// none of whose folders is there.
+pub(crate) fn grammar_folder_records() -> serde_json::Value {
+    use skwir_platform::grammars::Source;
+    let Some(report) = skwir_platform::grammars::report() else {
+        return serde_json::json!({ "records": [] });
+    };
+    let mut records: Vec<serde_json::Value> = Vec::new();
+    for (n, nearly) in report.nearly.iter().enumerate() {
+        records.push(serde_json::json!({
+            "id": format!("nearly-{n}"),
+            "name": home_shown(&nearly.what),
+            "detail": format!("{}: {}", nearly.source.short(), nearly.said),
+            "wraps": true,
+            "fixed": true,
+        }));
+    }
+    for looked in report.looked.iter().filter(|looked| looked.there) {
+        const NAMED: usize = 8;
+        let held = match looked.languages.len() {
+            0 => "nothing".to_owned(),
+            n if n <= NAMED => looked.languages.join(", "),
+            n => format!(
+                "{n} languages: {} and {} more",
+                looked.languages[..NAMED].join(", "),
+                n - NAMED
+            ),
+        };
+        records.push(serde_json::json!({
+            "id": format!("folder-{}-{}", looked.source.key(), looked.folder.display()),
+            "name": home_shown(&looked.folder),
+            "detail": format!("{}: {held}", looked.source.short()),
+            "fixed": true,
+        }));
+    }
+    for source in Source::ALL {
+        let mut folders = report
+            .looked
+            .iter()
+            .filter(|looked| looked.source == source)
+            .peekable();
+        if folders.peek().is_none() || report.looked.iter().any(|l| l.source == source && l.there) {
+            continue;
+        }
+        let names: Vec<String> = folders.map(|looked| home_shown(&looked.folder)).collect();
+        records.push(serde_json::json!({
+            "id": format!("source-{}", source.key()),
+            "name": source.short(),
+            "detail": format!("none of its folders is there: {}", names.join(", ")),
+            "wraps": true,
+            "fixed": true,
+        }));
+    }
+    serde_json::json!({ "records": records })
+}
+
 /// The languages a tree-sitter grammar was found or a grammar added for,
 /// as listed and as their choices are kept (`highlight::tree::languages`):
 /// the key the engine finds a text's choice by is theirs.
@@ -574,6 +665,10 @@ pub(crate) fn list_code_themes(app: &Arc<App>) {
             );
             skwir_platform::grammars::find();
             LANGUAGES.changed();
+            app.settings.declare(grammar_folders_spec(
+                skwir_platform::grammars::report().map_or(0, |report| report.nearly.len()),
+            ));
+            GRAMMAR_FOLDERS.changed();
             for (dark, key) in [(false, CODE_LIGHT_KEY), (true, CODE_DARK_KEY)] {
                 let chosen = app
                     .settings
@@ -864,6 +959,9 @@ pub fn declare(app: &App) {
         .records_kept_by(LANGUAGES.clone())
         .section("Grammars"),
     );
+    app.settings.declare(grammar_folders_spec(
+        skwir_platform::grammars::report().map_or(0, |report| report.nearly.len()),
+    ));
     // Each language's own choice, by its name in lower case: chosen in the
     // list above (`ui.grammar_choose`), kept with the preferences.
     let mut chosen = SettingSpec::data(
@@ -2981,14 +3079,15 @@ mod tests {
                 CODE_FONT_KEY
             ]
         );
-        // Grammars: the rule Automatic follows, then each language's choice.
+        // Grammars: the rule Automatic follows, then each language's choice,
+        // then where grammars were looked for.
         assert_eq!(
             page(&specs, &Page::Reading)
                 .into_iter()
                 .filter(|(section, _)| section == "Grammars")
                 .map(|(_, key)| key)
                 .collect::<Vec<_>>(),
-            [CODE_ENGINE_KEY, LANGUAGES_KEY]
+            [CODE_ENGINE_KEY, LANGUAGES_KEY, super::GRAMMAR_FOLDERS_KEY]
         );
         // The fonts stand by their subjects (ADR-073): the interface's on
         // Appearance, the reading font first of what text reads in.

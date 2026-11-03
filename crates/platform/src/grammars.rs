@@ -189,6 +189,8 @@ struct State {
     found: Option<Arc<[Found]>>,
     /// Counts the picks that changed `found` (`generation`).
     generation: u64,
+    /// Where they were looked for, as last found.
+    report: Option<Arc<Report>>,
 }
 
 static STATE: RwLock<State> = RwLock::new(State {
@@ -197,6 +199,7 @@ static STATE: RwLock<State> = RwLock::new(State {
     chosen: BTreeMap::new(),
     found: None,
     generation: 0,
+    report: None,
 });
 
 /// The grammar used for each language, as last found and chosen. Finding
@@ -222,11 +225,18 @@ pub fn generation() -> u64 {
 /// `all`, and pick each language's with the choices last given to `sync`:
 /// a choice made while they are found is the one used. The grammars used.
 pub fn find() -> Arc<[Found]> {
-    let (all, folders) = find_in(&Roots::here(), &bat_file_types());
+    let (all, folders, report) = find_all(&Roots::here(), &bat_file_types());
     let mut state = STATE.write();
     state.all = Some(all.into());
     state.folders = folders;
+    state.report = Some(Arc::new(report));
     repick(&mut state)
+}
+
+/// Where the grammars were looked for when last found, and what was
+/// nearly found: the Reading page's list under Languages.
+pub fn report() -> Option<Arc<Report>> {
+    STATE.read().report.clone()
 }
 
 /// The grammars used for these choices, by language in lower case (a
@@ -697,7 +707,17 @@ impl From<Queries> for syntax::Queries {
 /// The grammars found in `roots`, merged by language, in the order of
 /// their names, and the folders their files lie in, as they really are
 /// (`confine`). `bat` names what bat's grammars color, by language.
+#[cfg(test)]
 fn find_in(roots: &Roots, bat: &HashMap<String, Vec<String>>) -> (Vec<Found>, Vec<PathBuf>) {
+    let (all, folders, _) = find_all(roots, bat);
+    (all, folders)
+}
+
+/// `find_in`, and the report of where they were looked for.
+fn find_all(
+    roots: &Roots,
+    bat: &HashMap<String, Vec<String>>,
+) -> (Vec<Found>, Vec<PathBuf>, Report) {
     let mut confined = Confined::default();
     let mut candidates = Vec::new();
     if let Some(dir) = &roots.skwir {
@@ -768,7 +788,214 @@ fn find_in(roots: &Roots, bat: &HashMap<String, Vec<String>>) -> (Vec<Found>, Ve
         .as_ref()
         .map(|dir| languages_toml(&dir.join("languages.toml")))
         .unwrap_or_default();
-    (merge(candidates, &mapped, bat), confined.folders)
+    let all = merge(candidates, &mapped, bat);
+    let report = report_of(roots, &confined.held, &all);
+    (all, confined.folders, report)
+}
+
+/// Where grammars were looked for (ADR-110, amended): what was nearly
+/// found, with what to do, and each folder read with what it held.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Report {
+    pub nearly: Vec<Nearly>,
+    pub looked: Vec<Looked>,
+}
+
+/// A folder read for grammars, and the languages it held a part or the
+/// whole of; one that is not there held nothing.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Looked {
+    pub source: Source,
+    pub folder: PathBuf,
+    pub there: bool,
+    pub languages: Vec<String>,
+}
+
+/// What was nearly found: the file or folder it is about, and what is
+/// wrong with it and what to do, said.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Nearly {
+    pub source: Source,
+    pub what: PathBuf,
+    pub said: String,
+}
+
+/// Every folder each source is read in, in the sources' order: the CLI's
+/// parser directories its configuration names and its library cache.
+fn folders_looked(roots: &Roots) -> Vec<(Source, PathBuf)> {
+    let mut looked: Vec<(Source, PathBuf)> = Vec::new();
+    let mut add = |source: Source, folders: &[PathBuf]| {
+        for folder in folders {
+            if !looked.iter().any(|(s, f)| *s == source && f == folder) {
+                looked.push((source, folder.clone()));
+            }
+        }
+    };
+    add(Source::Skwir, roots.skwir.as_slice());
+    if let Some(config) = &roots.tree_sitter_config {
+        add(Source::TreeSitter, &parser_directories(config));
+        add(Source::TreeSitter, roots.tree_sitter_libraries.as_slice());
+    }
+    add(Source::Zed, &roots.zed);
+    add(Source::Helix, &roots.helix);
+    add(Source::Neovim, &roots.neovim_parsers);
+    add(Source::Neovim, &roots.neovim_queries);
+    add(Source::System, &roots.system_parsers);
+    add(Source::System, &roots.system_queries);
+    add(Source::System, &roots.system_libraries);
+    add(Source::Emacs, &roots.emacs);
+    looked
+}
+
+/// The report of where grammars were looked for in `roots`, of the
+/// candidates `held` as found and the grammars they made, `all`.
+fn report_of(roots: &Roots, held: &[Held], all: &[Found]) -> Report {
+    let mut nearly = Vec::new();
+    // The CLI's configuration, the folders it names, and a repository a
+    // folder too deep in one (or in Skwir's folder).
+    if let Some(config) = &roots.tree_sitter_config
+        && config.is_file()
+        && let Err(error) = read_text(config)
+            .ok_or_else(|| "cannot be read".to_owned())
+            .and_then(|text| {
+                serde_json::from_str::<serde_json::Value>(&text).map_err(|e| e.to_string())
+            })
+    {
+        nearly.push(Nearly {
+            source: Source::TreeSitter,
+            what: config.clone(),
+            said: format!(
+                "the tree-sitter CLI's configuration does not read ({error}): no parser directory of it is read"
+            ),
+        });
+    }
+    let parser_dirs = roots
+        .tree_sitter_config
+        .as_deref()
+        .map(parser_directories)
+        .unwrap_or_default();
+    for dir in &parser_dirs {
+        if !dir.is_dir() {
+            nearly.push(Nearly {
+                source: Source::TreeSitter,
+                what: dir.clone(),
+                said: "a parser directory the tree-sitter CLI's configuration names, not there"
+                    .to_owned(),
+            });
+        }
+    }
+    let nested = parser_dirs
+        .iter()
+        .map(|dir| (Source::TreeSitter, dir))
+        .chain(roots.skwir.iter().map(|dir| (Source::Skwir, dir)));
+    for (source, dir) in nested {
+        for (folder, repository) in nested_repositories(dir) {
+            let said = match source {
+                Source::Skwir => format!(
+                    "one folder too deep: Skwir reads only the folders directly in its grammars folder ({}); move or link the repository there",
+                    shown(dir)
+                ),
+                _ => format!(
+                    "one folder too deep: the tree-sitter CLI reads only the folders directly in {}; add {} to its parser-directories, or link the repository into Skwir's grammars folder",
+                    shown(dir),
+                    shown(&folder)
+                ),
+            };
+            nearly.push(Nearly {
+                source,
+                what: repository,
+                said,
+            });
+        }
+    }
+    // A grammar found that cannot be used: a library with nothing to
+    // color with, a repository put in Skwir's or the CLI's folders with
+    // no library anywhere, a file outside its folder. An editor's queries
+    // of a language it has no parser of (Helix's `markup`, Neovim's
+    // queries of parsers not installed) are its own business.
+    let nearly_found = |found: &&Found| {
+        found.problem.is_some()
+            && (!found.grammar.library.as_os_str().is_empty()
+                || matches!(found.source, Source::Skwir | Source::TreeSitter))
+    };
+    for found in all.iter().filter(nearly_found) {
+        let what = Some(found.grammar.library.clone())
+            .filter(|library| !library.as_os_str().is_empty())
+            .or_else(|| {
+                held.iter()
+                    .find(|held| held.source == found.source && held.name == found.grammar.name)
+                    .and_then(|held| held.home.clone().or_else(|| held.at.first().cloned()))
+            })
+            .unwrap_or_default();
+        nearly.push(Nearly {
+            source: found.source,
+            what,
+            said: found.problem.clone().unwrap_or_default(),
+        });
+    }
+    let looked = folders_looked(roots)
+        .into_iter()
+        .map(|(source, folder)| {
+            let mut languages: Vec<String> = held
+                .iter()
+                .filter(|held| {
+                    held.source == source && held.at.iter().any(|at| at.starts_with(&folder))
+                })
+                .map(|held| held.name.clone())
+                .collect();
+            languages.sort();
+            languages.dedup();
+            Looked {
+                source,
+                there: folder.is_dir(),
+                folder,
+                languages,
+            }
+        })
+        .collect();
+    Report { nearly, looked }
+}
+
+/// The repositories one folder too deep in `dir`: in a folder of it that
+/// is not one itself, named `tree-sitter-*` as grammars' repositories are,
+/// each with that folder. Bounded, as finding is.
+fn nested_repositories(dir: &Path) -> Vec<(PathBuf, PathBuf)> {
+    let mut nested = Vec::new();
+    for folder in sorted(dir).into_iter().take(MOST) {
+        if !folder.is_dir() || is_repository(&folder) {
+            continue;
+        }
+        for inner in sorted(&folder) {
+            let named = inner
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with("tree-sitter-"));
+            if named && is_repository(&inner) {
+                nested.push((folder.clone(), inner));
+            }
+        }
+        if nested.len() >= 64 {
+            break;
+        }
+    }
+    nested
+}
+
+/// Whether `dir` is a grammar's repository: what `tree-sitter init` makes
+/// (`tree-sitter.json`), else a grammar's source (`grammar.js`).
+fn is_repository(dir: &Path) -> bool {
+    dir.join("tree-sitter.json").is_file() || dir.join("grammar.js").is_file()
+}
+
+/// `path` as a reason says it: from `~/` where it is under the home
+/// folder.
+fn shown(path: &Path) -> String {
+    home()
+        .and_then(|home| {
+            path.strip_prefix(&home)
+                .ok()
+                .map(|rest| format!("~/{}", rest.display()))
+        })
+        .unwrap_or_else(|| path.display().to_string())
 }
 
 /// Every folder of `folders`, as one list.
@@ -794,10 +1021,23 @@ enum Kept {
 }
 
 /// The folders grammars were found in, as they really are: what a helper
-/// told them reads, and nothing else (`tree_sitter::Helper`, ADR-110).
+/// told them reads, and nothing else (`tree_sitter::Helper`, ADR-110);
+/// and what each candidate was, as found, before its files are named by
+/// their real paths: what the folders looked in held (`Report`).
 #[derive(Default)]
 struct Confined {
     folders: Vec<PathBuf>,
+    held: Vec<Held>,
+}
+
+/// A candidate as found: its source, its language, its files where it was
+/// found (a link an editor's folder holds, not where it leads), and the
+/// folder it was found as.
+struct Held {
+    source: Source,
+    name: String,
+    at: Vec<PathBuf>,
+    home: Option<PathBuf>,
 }
 
 impl Confined {
@@ -814,6 +1054,20 @@ impl Confined {
         if candidates.is_empty() {
             return candidates;
         }
+        self.held.extend(candidates.iter().map(|candidate| {
+            Held {
+                source: candidate.source.unwrap_or(Source::Skwir),
+                name: candidate.name.clone(),
+                at: candidate
+                    .library
+                    .iter()
+                    .chain(&candidate.home)
+                    .chain(candidate.queries.highlights.last())
+                    .cloned()
+                    .collect(),
+                home: candidate.home.clone(),
+            }
+        }));
         let home = home().and_then(|home| canonical(&home));
         let roots: Vec<(&Path, PathBuf)> = folders
             .iter()
@@ -2051,6 +2305,104 @@ mod tests {
                 .grammar
                 .library
                 .starts_with(root.join("skwir/b-built"))
+        );
+    }
+
+    /// Where grammars were looked for: each folder with what it held, and
+    /// first what was nearly found, with what to do; an editor's queries
+    /// of a language it has no parser of are not.
+    #[test]
+    fn the_folders_looked_in_say_what_was_nearly_found() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = &canonical(tmp.path()).unwrap();
+        // A repository a folder too deep in Skwir's folder.
+        write(
+            &root.join("skwir/old/tree-sitter-foo/tree-sitter.json"),
+            r#"{"grammars":[{"name":"foo"}]}"#,
+        );
+        // The CLI's parser directories: one there, one not; a repository
+        // a folder too deep in the first, one not built beside it.
+        let projects = root.join("projects");
+        write(
+            &root.join("ts-config/config.json"),
+            &serde_json::json!({
+                "parser-directories": [projects, root.join("gone")]
+            })
+            .to_string(),
+        );
+        write(
+            &projects.join("gleam-mode/tree-sitter-gleam/grammar.js"),
+            "",
+        );
+        write(
+            &projects.join("tree-sitter-elm/tree-sitter.json"),
+            r#"{"grammars":[{"name":"elm"}]}"#,
+        );
+        write(
+            &projects.join("tree-sitter-elm/queries/highlights.scm"),
+            "(comment) @comment",
+        );
+        // Emacs's library with nothing to color with; Helix's queries of a
+        // language no parser is of.
+        write(&root.join("emacs/libtree-sitter-quint.so"), "");
+        write(
+            &root.join("helix/queries/markup/highlights.scm"),
+            "(heading) @markup.heading",
+        );
+        let roots = Roots {
+            skwir: Some(root.join("skwir")),
+            tree_sitter_config: Some(root.join("ts-config/config.json")),
+            tree_sitter_libraries: Some(root.join("ts-lib")),
+            helix: vec![root.join("helix")],
+            system_libraries: vec![root.join("system-lib")],
+            emacs: vec![root.join("emacs")],
+            ..Roots::default()
+        };
+        let (_, _, report) = find_all(&roots, &HashMap::new());
+        let nearly: Vec<(Source, &Path, &str)> = report
+            .nearly
+            .iter()
+            .map(|n| (n.source, n.what.as_path(), n.said.as_str()))
+            .collect();
+        let said = |what: &Path| {
+            let Some((_, _, said)) = nearly.iter().find(|(_, at, _)| *at == what) else {
+                panic!("{} not said: {nearly:#?}", what.display())
+            };
+            *said
+        };
+        assert!(said(&root.join("gone")).contains("not there"));
+        assert!(said(&projects.join("gleam-mode/tree-sitter-gleam")).contains("add "));
+        assert!(said(&root.join("skwir/old/tree-sitter-foo")).starts_with("one folder too deep"));
+        assert!(said(&projects.join("tree-sitter-elm")).starts_with("no library"));
+        assert!(
+            said(&root.join("emacs/libtree-sitter-quint.so")).starts_with("Emacs keeps no colors")
+        );
+        assert_eq!(nearly.len(), 5, "Helix's markup is not: {nearly:#?}");
+        // Each folder, with what it held; one not there held nothing.
+        let held = |folder: &Path| {
+            report
+                .looked
+                .iter()
+                .find(|looked| looked.folder == folder)
+                .map(|looked| (looked.there, looked.languages.clone()))
+                .unwrap()
+        };
+        assert_eq!(held(&projects), (true, vec!["elm".to_owned()]));
+        assert_eq!(held(&root.join("gone")), (false, Vec::new()));
+        assert_eq!(held(&root.join("emacs")), (true, vec!["quint".to_owned()]));
+        assert_eq!(held(&root.join("helix")), (true, vec!["markup".to_owned()]));
+        assert_eq!(held(&root.join("system-lib")), (false, Vec::new()));
+        // A configuration that does not read says so.
+        write(&root.join("ts-config/config.json"), "{ not json");
+        let (_, _, report) = find_all(&roots, &HashMap::new());
+        assert!(
+            report
+                .nearly
+                .iter()
+                .any(|n| n.what == root.join("ts-config/config.json")
+                    && n.said.contains("does not read")),
+            "{:#?}",
+            report.nearly
         );
     }
 

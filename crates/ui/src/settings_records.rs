@@ -5,7 +5,8 @@
 //! and shows its first rows until unfolded. Each record is a row with its
 //! actions (the owner's own, such as Test; Edit; Remove; a choice of its
 //! own); one at a time is edited in place, a draft kept apart from the
-//! rows, which are rebuilt whenever a setting changes.
+//! rows, which are rebuilt whenever a setting changes. A record kept
+//! elsewhere whose detail says what to do (`wraps`) shows it whole.
 //!
 //! A secret field's value goes to the desktop's keyring and never to the
 //! settings (`skwir_platform::secrets`): saving a draft that holds a new
@@ -1034,6 +1035,7 @@ impl SettingsView {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let fixed = record.get("fixed").and_then(serde_json::Value::as_bool) == Some(true);
+        let wraps = record.get("wraps").and_then(serde_json::Value::as_bool) == Some(true);
         let verbs = [
             ("Edit", source.edit.clone(), ButtonStyle::Plain),
             ("Remove", source.remove.clone(), ButtonStyle::Danger),
@@ -1126,7 +1128,7 @@ impl SettingsView {
                             .truncate(),
                         title,
                     ))
-                    .when(!detail.is_empty(), |d| {
+                    .when(!detail.is_empty() && !wraps, |d| {
                         d.child(crate::elements::clip::clipped(
                             div()
                                 .id(gpui::SharedString::from(format!(
@@ -1135,8 +1137,18 @@ impl SettingsView {
                                 .text_xs()
                                 .text_color(theme.text_muted)
                                 .truncate(),
-                            detail,
+                            detail.clone(),
                         ))
+                    })
+                    // What to do (a folder too deep, a library with
+                    // nothing to color with) is read whole.
+                    .when(!detail.is_empty() && wraps, |d| {
+                        d.child(
+                            div()
+                                .text_xs()
+                                .text_color(theme.text_muted)
+                                .child(detail.clone()),
+                        )
                     })
                     .when(owns, |d| d.child(own)),
             )

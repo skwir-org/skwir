@@ -159,7 +159,12 @@ The player, in the panel or pinned at its foot:
   used greyed with why), or Plain text. Automatic always colors a
   language bat does not know, such as Svelte, with its tree-sitter
   grammar. Both are drawn in Skwir's theme or one of bat's, themes you
-  added to bat included, light or dark whatever Skwir is.
+  added to bat included, light or dark whatever Skwir is. Below the
+  languages, "Where grammars were looked for" lists each folder read
+  and the languages it held, and first what was nearly found, with what
+  to do: a repository a folder too deep in a parser directory, a
+  library with nothing to color with, a parser directory the tree-sitter
+  CLI's configuration names that is not there. Its title counts them.
 - With bat, colors follow what is read: after a jump into the middle of
   a long file, a string or comment open across the jump can be colored
   wrongly until it ends. With a tree-sitter grammar the file is parsed
