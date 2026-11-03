@@ -10228,3 +10228,45 @@ history…" Ctrl+Alt+Z, Quit Ctrl+Q. Not seen: "getting ready…" in the
 window (a local copy's checks end before 0.3 s; tested in units), a
 light action slow enough to show by time alone, a real screen reader
 (`just a11y-check` not run), release-check.
+
+## Review of the strip's announcements and the More menu (2026-11-03)
+
+Asked by the user once skwir-cb's batch was in: a review, fixes where
+needed, of a948cf4d (Undo, Redo, the History and Quit in the More menu)
+and f76d1376 (the strip never silent, each action announced as it
+joins). Read by the integrator, not by reviewers: about 470 lines of
+code. Sound: the More menu's rows (commands and icons there, Undo and
+Redo off with nothing to take back); `Executor::waiting_plans` and
+`waiting_count` count apart (a light plan late in `late_waiting`, one
+that counts in the core's count, never both); a light action shown at
+0.3 s is counted as ended once it ends; what an action waits for is
+read only while nothing counted runs, or while a waiting one is
+announced, and that read is kept per lane version; the announcement's
+live region is made as a toast's is.
+
+Fixed:
+- The strip's timer was the window's: `wake_at` lives in `Work`, which
+  outlives a window, and a window closed with a wake still to come left
+  it set for good, its task gone with the window, so every later
+  `strip_wake_at` found a wake "set already" and set none: once the
+  window opened again, a light action that lasted was shown, and a tint
+  ended, only at some other event. The timer now holds `Work` and the
+  `App`, clears its time as it fires, and wakes through `App::wake`
+  (`work::wake_after`), the window's sync or the windowless one asking
+  `watch` again.
+- Without a window, `watch`'s next time was dropped: a lone light action
+  lasting was not counted in the presence until another event. The
+  windowless sync now sets the same timer.
+- The new test's doc comment had taken the place of the one before it.
+- The guide still described toasts as before Activity (a long plan's
+  progress in its toast, Quit undoing what was half done): it now says
+  what Activity holds, what toasts say, and what closing the window and
+  Quit do (ADR-114, ADR-115). The CHANGELOG's lines are wrapped again,
+  and both say an action is told as it starts once it lasts more than a
+  moment, not at once.
+
+Checked: `just lint` clean; `just test` 2953 passed, 30 skipped (one new:
+`one_wake_at_a_time_is_set_for_the_strip`); the Windows clippy of
+skwir-core and skwir-ui clean. Not checked: the timer across a window
+closed and opened again in a window (skwir-ui has no gpui test harness),
+a screen reader on the announcement, release-check.

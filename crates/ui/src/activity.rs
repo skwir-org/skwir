@@ -497,32 +497,11 @@ impl Shell {
         self.work.borrow().under_way(&self.app)
     }
 
-    /// Wake the window once at `at`, when the strip changes by itself (an
-    /// action joined to show, a tint to end), unless a wake at or before
-    /// it is set already: one timer, never a loop. The wake's sync asks
-    /// `Work::watch` again, which gives the next.
+    /// Wake once at `at`, when the strip changes by itself (an action
+    /// joined to show, a tint to end): `work::wake_after`, whose wake's
+    /// sync asks `Work::watch` again, which gives the next.
     pub(crate) fn strip_wake_at(&mut self, at: std::time::Instant, cx: &mut Context<Self>) {
-        {
-            let mut work = self.work.borrow_mut();
-            if work.wake_at.is_some_and(|set| set <= at) {
-                return;
-            }
-            work.wake_at = Some(at);
-        }
-        let wait = at.saturating_duration_since(std::time::Instant::now());
-        cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(wait).await;
-            this.update(cx, |shell, cx| {
-                let mut work = shell.work.borrow_mut();
-                if work.wake_at == Some(at) {
-                    work.wake_at = None;
-                }
-                drop(work);
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
+        crate::work::wake_after(&self.work, &self.app, at, cx);
     }
 
     /// Whether Activity's popup is open.

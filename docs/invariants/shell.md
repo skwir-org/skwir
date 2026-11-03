@@ -674,9 +674,9 @@ of bars, split or not.
   **It announces** each action once at that moment: its own sentence
   on the selection's tint for 2 s (`ANNOUNCED_FOR`, the latest of
   several), then the strip's words as ever; its buttons hidden while
-  it names another than the one they act on. The window is woken for
-  the strip's own changes by one timer at a time
-  (`Shell::strip_wake_at`), never a loop. A click, or `ui.activity` (Ctrl+Shift+J),
+  it names another than the one they act on. The program is woken for
+  the strip's own changes by one timer at a time, holding `Work`, not
+  the window (`work::wake_after`), never a loop. A click, or `ui.activity` (Ctrl+Shift+J),
   opens Activity above it (one popup at a time, `toggle_popup`): each
   action's card, what waits (each with its Cancel, Cancel all for
   several), and Earlier, this session's answers with

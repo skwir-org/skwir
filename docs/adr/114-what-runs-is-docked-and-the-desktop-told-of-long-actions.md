@@ -111,9 +111,13 @@ and macOS otherwise compiled only.
      hidden while it names another than the one they act on; a screen
      reader hears it once, polite ("Copy “a” started", "Copy “b” waits
      for …"). The latest of several joining takes the tint.
-   - The window is woken once for each change the strip makes by itself
+   - The program is woken once for each change the strip makes by itself
      (an action's 0.3 s, a tint's end): one timer at a time, never a
-     loop. Without a window, the same rule counts, with no tint.
+     loop (`work::wake_after`). The timer holds the shared `Work`, not
+     the window, and wakes through `App::wake`: it clears its time as it
+     fires even after the window that set it closed, so it never holds
+     off a later wake. Without a window, the same rule counts, with no
+     tint.
    - What waits is followed by plan ids alone (`Executor::waiting_plans`,
      no footprint compared); what an action waits for is read only while
      it is announced, or while nothing runs.

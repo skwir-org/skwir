@@ -295,7 +295,8 @@ fn stop_taking_over(state: &Finishing) {
 fn sync(cx: &mut App) {
     let state = cx.global_mut::<Finishing>();
     let app = Arc::clone(&state.app);
-    let (keeps, asked) = {
+    let shared = Rc::clone(&state.work);
+    let (keeps, asked, wake) = {
         let mut work = state.work.borrow_mut();
         let watched = Watched::windowless(&app);
         let events = app.executor.events().clone();
@@ -303,9 +304,9 @@ fn sync(cx: &mut App) {
             work.take(&app, event, watched);
         }
         work.settle(&app);
-        // What joined counts as its time comes; nothing is tinted here, and
-        // the next sync, at the next event, takes it in.
-        work.watch(&app, std::time::Instant::now());
+        // What joined counts as its time comes, the program woken then
+        // (`work::wake_after`); nothing is tinted here.
+        let wake = work.watch(&app, std::time::Instant::now());
         let under = work.under_way(&app);
         work.card(&under);
         work.sync_stopped(&app);
@@ -324,8 +325,11 @@ fn sync(cx: &mut App) {
             work.present(presence.clone());
             state.shown = presence;
         }
-        (keeps, asked)
+        (keeps, asked, wake)
     };
+    if let Some(at) = wake.filter(|_| keeps) {
+        crate::work::wake_after(&shared, &app, at, cx);
+    }
     if asked.iter().any(|asked| matches!(asked, Asked::StopAll)) {
         quit(cx);
         return;

@@ -80,9 +80,54 @@ pub(crate) struct Work {
     late_waiting: usize,
     /// What the strip announces, until when (ADR-114, amended 2026-11-03).
     pub(crate) announce: Option<Announce>,
-    /// When the window is to be woken for the strip's next change (an
-    /// action to show, a tint to end): one timer at a time.
+    /// When the program is to be woken for the strip's next change (an
+    /// action to show, a tint to end): one timer at a time, which clears it
+    /// as it fires, whether a window is up then or not (`wake_after`).
     pub(crate) wake_at: Option<Instant>,
+}
+
+/// Wake the program at `at` for what `watch` said changes then, unless a
+/// wake at or before it is set already: one timer, never a loop. The timer
+/// holds `Work` itself, not the window: it clears its time as it fires
+/// even when the window that set it has closed, and wakes the core's
+/// listener (`App::wake`), whose sync, the window's or the windowless
+/// one, asks `watch` again.
+pub(crate) fn wake_after(
+    work: &std::rc::Rc<std::cell::RefCell<Work>>,
+    app: &Arc<App>,
+    at: Instant,
+    cx: &mut gpui::App,
+) {
+    if !work.borrow_mut().wake_for(at) {
+        return;
+    }
+    let (work, app) = (std::rc::Rc::clone(work), Arc::clone(app));
+    let wait = at.saturating_duration_since(Instant::now());
+    cx.spawn(async move |cx| {
+        cx.background_executor().timer(wait).await;
+        work.borrow_mut().woken_at(at);
+        app.wake();
+    })
+    .detach();
+}
+
+impl Work {
+    /// Whether a timer is to be set for `at`, noting it: not when one at
+    /// or before it is set already.
+    fn wake_for(&mut self, at: Instant) -> bool {
+        if self.wake_at.is_some_and(|set| set <= at) {
+            return false;
+        }
+        self.wake_at = Some(at);
+        true
+    }
+
+    /// The timer set for `at` fired: a later one may be set again.
+    fn woken_at(&mut self, at: Instant) {
+        if self.wake_at == Some(at) {
+            self.wake_at = None;
+        }
+    }
 }
 
 /// After how long an action still under way is shown and announced, if
@@ -827,11 +872,6 @@ mod tests {
         }
     }
 
-    /// The strip's spell of work counts each action that ended as the
-    /// core counted it while it waited and ran (`Started::counts`: several
-    /// steps, or a heavy one), and begins again once nothing runs or
-    /// waits (ADR-114, amended 2026-11-03): a single rename between two is
-    /// no action of its own.
     /// What joined is shown and announced once it lasted (ADR-114,
     /// amended 2026-11-03): a single rename still going 0.3 s after it
     /// started counts and is announced for 2 s, the latest of several
@@ -887,6 +927,31 @@ mod tests {
         assert!(work.announce.is_none());
     }
 
+    /// One timer at a time wakes the program for the strip (ADR-114): a
+    /// sooner time takes the place of a later one, a later one waits for
+    /// the sooner to fire, and once it fired a wake may be set again, so a
+    /// time set by a window that closed is cleared by its own timer, never
+    /// left to hold off every later wake.
+    #[test]
+    fn one_wake_at_a_time_is_set_for_the_strip() {
+        let mut work = Work::default();
+        let t0 = std::time::Instant::now();
+        let ms = |n: u64| Duration::from_millis(n);
+        assert!(work.wake_for(t0 + ms(300)));
+        assert!(!work.wake_for(t0 + ms(2300)), "the sooner one wakes first");
+        assert!(work.wake_for(t0 + ms(100)), "a sooner one is set");
+        work.woken_at(t0 + ms(300));
+        assert_eq!(work.wake_at, Some(t0 + ms(100)), "not the one that fired");
+        work.woken_at(t0 + ms(100));
+        assert_eq!(work.wake_at, None);
+        assert!(work.wake_for(t0 + ms(2300)), "set again once fired");
+    }
+
+    /// The strip's spell of work counts each action that ended as the
+    /// core counted it while it waited and ran (`Started::counts`: several
+    /// steps, or a heavy one), and begins again once nothing runs or
+    /// waits (ADR-114, amended 2026-11-03): a single rename between two is
+    /// no action of its own.
     #[test]
     fn the_spell_counts_what_ended_until_nothing_is_under_way() {
         let (_tmp, app) = app();
