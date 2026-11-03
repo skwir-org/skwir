@@ -39,21 +39,33 @@ work where the keyboard is, by topic.
   selected and what it weighs. The last pane's footer also shows Undo,
   what waits for a paste, the shelf, plans waiting for review, the
   player, and what runs: how far the whole queue has come ("2 of 3 · 47 %
-  · 1 waiting"), each action counting one. An action you ask for is
-  said there at once, on a tint for a moment: getting ready, or waiting
-  its turn and for what.
-- **Toasts** say what was done ("Moved “a.txt” to Trash"), with Undo. A
-  long plan shows its progress with Pause and Cancel: how much of how
-  much, and under the bar how fast it goes and how long it has left
-  (`2.0 MB/s · about 3 min left`), once a few seconds of it tell. Onto a
-  server that takes what is copied after (rclone's caches), it first says
-  "then sent to the server", then the sending's own speed and time left.
-  Cancel stops it within a second or two, even in the middle of a large
-  file from a slow server; meanwhile its card says "Stopping…" while it
-  takes back what it left half done.
-  A long one says in its toast how much it moved in how long ("30.0 MB
-  in 17 s"). `skwir cmd running` says the same of what runs. Quitting
-  while one runs asks first, then undoes what it left half done.
+  · 1 waiting"), each action counting one. An action that lasts more
+  than a moment is said there as it starts, on a tint for two seconds:
+  getting ready, how far it went, or waiting its turn and for what. One
+  an error stopped stays there in red until it is retried or dismissed.
+- **Activity** (a click on what runs, or `Ctrl+Shift+J`) shows each
+  action's card: how much of how much, and under the bar how fast it
+  goes and how long it has left (`2.0 MB/s · about 3 min left`), once a
+  few seconds of it tell, with Pause and Cancel; what waits its turn,
+  each with Cancel; and Earlier, what was done this session, with Undo
+  or Retry. Its pin keeps it above the footer while something runs. Onto
+  a server that takes what is copied after (rclone's caches), a copy
+  first says "then sent to the server", then the sending's own speed and
+  time left. Cancel stops an action within a second or two, even in the
+  middle of a large file from a slow server; meanwhile its card says
+  "Stopping…" while it takes back what it left half done.
+  `skwir cmd running` says the same of what runs.
+- **Toasts** say what was done ("Moved “a.txt” to Trash"), one at a
+  time, with Undo; a long action says how much it moved in how long
+  ("30.0 MB in 17 s").
+- **Closing the window** stops nothing: Skwir finishes what runs without
+  it, an icon in the tray (or a notification that stays) showing how far
+  it went, then ends by itself; starting Skwir again opens its window on
+  what runs. Quit (`Ctrl+Q`) asks while something runs: Finish in the
+  background, Stop and quit, or Keep the window. A long action that ends
+  while you are in another window is a desktop notification, and the
+  computer stays awake while something runs (Settings › General ›
+  Actions).
 
 ## Moving around
 

@@ -31,14 +31,14 @@ offers builds to try on Windows and macOS.
 - **What runs** stands at the end of the footer, saying how fast it goes and
   how long it has left, and how far the whole queue has come ("2 of 3 · 47 % ·
   1 waiting"); `Ctrl+Shift+J` opens Activity, with each action, what waits its
-  turn and what was done this session. An action asked says at once that it
-  started, gets ready or waits its turn, on a tint for a moment. Closing the window stops nothing: Skwir
-  finishes without it, an icon in the tray, and the desktop is told when a long
-  action ends.
+  turn and what was done this session. An action that lasts more than a moment
+  says as it starts that it gets ready, goes, or waits its turn, on a tint.
+  Closing the window stops nothing: Skwir finishes without it, an icon in the
+  tray, and the desktop is told when a long action ends.
 - **Undo history**: the arrow beside Undo in the footer (or `Ctrl+Alt+Z`, or
-  More › Undo history…) lists what you did, each with its own Undo. An action can be undone on its
-  own unless a later one touched the same files: then it says which, and offers
-  to undo them together.
+  More › Undo history…) lists what you did, each with its own Undo. An action
+  can be undone on its own unless a later one touched the same files: then it
+  says which, and offers to undo them together.
 - **The address field**: `Ctrl+Shift+F` filters this folder and `Ctrl+F`
   searches it and its subfolders, both as you type, one switch between them.
   The field offers places, tags, tabs, history and commands; `#tag` finds a
