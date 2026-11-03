@@ -335,33 +335,10 @@ pub(crate) fn render(
     if let Some(strip) = crate::activity::strip(shell, under, &theme, cx) {
         bar = bar.child(strip);
     }
-    // What Undo takes: the last thing asked, once it ends (ADR-079).
-    if let Some((title, running)) = shell.app.executor.undo_target() {
-        let keys = shell
-            .keys_for("undo", &serde_json::Value::Null)
-            .map_or_else(String::new, |keys| format!(" ({keys})"));
-        let once = if running { " (once it ends)" } else { "" };
-        let tip: gpui::SharedString = format!("Undo {title}{once}{keys}").into();
-        bar = bar.child(
-            div()
-                .id("status-undo")
-                .role(gpui::Role::Button)
-                .aria_label(tip.clone())
-                .flex()
-                .flex_none()
-                .items_center()
-                .gap_1()
-                .px_2()
-                .rounded_md()
-                .cursor_pointer()
-                .hover(|s| s.bg(theme.hover).text_color(theme.text))
-                .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), cx))
-                .on_click(cx.listener(|this, _, window, cx| {
-                    this.run("undo", serde_json::json!({}), window, cx);
-                }))
-                .child(crate::controls::glyph("revert", theme.text_muted, 13.))
-                .child("Undo"),
-        );
+    // What Undo takes: the last thing asked, once it ends (ADR-079); its
+    // chevron, the History (ADR-079, 13).
+    if let Some(undo) = crate::history::undo_control(shell, &theme, cx) {
+        bar = bar.child(undo);
     }
     bar.into_any_element()
 }

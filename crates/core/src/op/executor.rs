@@ -676,6 +676,9 @@ pub struct HistoryRow {
     /// names ([`Executor::undo_entry`], [`Executor::redo_entry`]).
     pub entry: u64,
     pub title: String,
+    /// The runs that made it, as their events named them (a plan, its
+    /// retries, a redo of it): what a toast's Undo names.
+    pub plans: Vec<PlanId>,
     /// When it was applied, or undone; now, for what has not ended.
     #[serde(serialize_with = "unix_seconds")]
     pub at: SystemTime,
@@ -745,6 +748,7 @@ fn unix_seconds<S: serde::Serializer>(at: &SystemTime, s: S) -> Result<S::Ok, S:
 /// A plan asked that has not ended, as the history reads it.
 struct Ahead {
     seq: u64,
+    plan: Option<PlanId>,
     /// The entry it joins, a retry.
     joins: Option<u64>,
     title: String,
@@ -757,6 +761,7 @@ struct Read {
     seq: u64,
     stacked: u64,
     title: String,
+    asked: Vec<PlanId>,
     at: SystemTime,
     undone: bool,
     /// It holds something to take back.
@@ -771,6 +776,7 @@ impl Read {
             seq: e.seq,
             stacked: e.stacked,
             title: e.title.clone(),
+            asked: e.asked.clone(),
             at: e.applied_at,
             undone,
             holds: e.plan.is_some(),
@@ -860,6 +866,7 @@ fn rows_of(rows: &[Read], ahead: &[Ahead], targeted: &HashSet<(bool, u64)>) -> V
         out.push(HistoryRow {
             entry: row.seq,
             title: row.title.clone(),
+            plans: row.asked.clone(),
             at: row.at,
             state,
             can,
@@ -913,6 +920,7 @@ fn rows_of(rows: &[Read], ahead: &[Ahead], targeted: &HashSet<(bool, u64)>) -> V
         out.push(HistoryRow {
             entry: a.joins.unwrap_or(a.seq),
             title: a.title.clone(),
+            plans: a.plan.into_iter().collect(),
             at: SystemTime::now(),
             state: if a.running {
                 Done::Running
@@ -1956,6 +1964,7 @@ impl Executor {
             let started = lane.started.iter().filter_map(|b| {
                 Some(Ahead {
                     seq: b.seq,
+                    plan: b.plan,
                     joins: b.joins,
                     title: b.title.clone()?,
                     kept: b.kept.clone(),
@@ -1967,6 +1976,7 @@ impl Executor {
                     plan, continues, ..
                 } if !job.cancel.is_cancelled() => Some(Ahead {
                     seq: job.seq,
+                    plan: Some(plan.id),
                     joins: continues.as_ref().map(|c| c.seq),
                     title: plan.title.clone(),
                     kept: job.kept.clone(),

@@ -496,8 +496,14 @@ each of nine). Three steps:
    Redo of an entry by its place, Undo with what came after (newest
    first, each once the one before ended), and `history` for agents.
    Rules in `docs/invariants/operations.md` ("At once").
-2. **The History panel**, opened from the footer's Undo split in two:
-   next.
+2. **The History panel** (`crates/ui/src/history.rs`). Built: the
+   footer's Undo split in two (Undo of the latest; the chevron, a right
+   click and Ctrl+Alt+Z open the History), each row's Undo or Redo, the
+   reason it waits or cannot on its second line, the action that holds
+   it a link to its row, "Undo both"; Earlier's Undo answers the same
+   way. The Menu key on the footer's Undo was left out: the footer is
+   no stop of the Tab order. Rules in `docs/invariants/shell.md` ("The
+   History").
 3. **The queue's progress** in the strip and Activity: next.
 
 Checks in `docs/STATUS-LOG.md` (2026-11-03, "Queue progress and the

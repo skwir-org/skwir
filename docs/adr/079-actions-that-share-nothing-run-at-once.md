@@ -205,6 +205,15 @@ one lane (`op::executor`) and operations.md's "Running".
       for good, until Undo, reaching it, lets go of it.
     - Agents and scripts have the same surface: `history`, and
       `undo`'s `entry` and `with_after`, `redo`'s `entry`.
+    - In the window, the footer's Undo is split in two: its left part
+      takes back the latest, as before; its chevron, a right click on
+      Undo and `ui.undo_history` (Ctrl+Alt+Z) open the History above
+      it. A button that cannot act now says why on the row's second line,
+      naming the action that holds it, a link to that one's row.
+      Earlier's Undo in Activity answers the same way. Deviation from
+      the proposal: the Menu key and Shift+F10 on the footer's Undo were
+      left out, since the footer is no stop of the Tab order (its keys
+      are the commands'); Ctrl+Alt+Z is the key of the right click.
 
 ### What the window shows
 

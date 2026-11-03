@@ -439,6 +439,8 @@ pub struct Shell {
     pub toasts: crate::toast::ToastState,
     /// What runs, docked at the window's foot, and what ended (ADR-114).
     pub activity: crate::activity::ActivityState,
+    /// The History, opened from the footer's Undo (ADR-079, 13).
+    pub undo_history: crate::history::HistoryState,
     /// What runs and what was said of it, the desktop told (ADR-114): the
     /// program's for its life, shared with the window while it is up
     /// (ADR-115, `finishing.rs`). Never borrowed across a call that may
@@ -745,6 +747,7 @@ impl Shell {
             layout: crate::layout::Layout::default(),
             toasts: crate::toast::ToastState::default(),
             activity: crate::activity::ActivityState::default(),
+            undo_history: crate::history::HistoryState::default(),
             work,
             left: false,
             window_active: window.is_window_active(),
@@ -2329,6 +2332,7 @@ impl Shell {
             "toolbar_menu" => self.toggle_toolbar_menu(args, window, cx),
             "activity" => self.toggle_activity(args, window, cx),
             "activity_pin" => self.toggle_activity_pin(window, cx),
+            "undo_history" => self.toggle_undo_history(args, window, cx),
             "history_menu" => self.toggle_history_menu(args, window, cx),
             "subfolder_menu" => self.toggle_subfolder_menu(args, window, cx),
             "parents_menu" => self.toggle_parents_menu(args, window, cx),

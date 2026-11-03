@@ -10013,3 +10013,29 @@ or with what came after, taken back first, then the rest, gives the
 tree back; redone all, the last state); clippy on skwir-core and
 skwir-bench; `skwir-bench list --only history_put_us`.
 
+
+**2. The History panel** (`crates/ui/src/history.rs`). The footer's Undo
+split in two; the History above it lists the core's rows, read again
+only when `Executor::history_version` moves; a row's reason sits on a
+line of its own under its title (first drawn in the title's column, it
+broke into two ragged lines at 420 px); a button that cannot act is
+inert and unframed (framed, it looked like the others). Earlier's Undo
+in Activity answers by the plan it reports (`HistoryRow::plans`): its
+first window check showed "Undone already" in the tooltip of a button
+drawn like an enabled one, unframed since. Left out of the proposal: the
+Menu key and Shift+F10 on the footer's Undo, which no Tab reaches (the
+footer is no stop of the Tab order); Ctrl+Alt+Z is the key.
+
+Checked in a test window on Xvfb :93 (debug build, scratch XDG folders,
+a fixture folder of five files): two renames of one file and a new
+folder made through F2 and Ctrl+Shift+N; the chevron opened the History
+with the first rename held ("Undo “Rename to final.txt” first: it
+touched what this did") and "Undo both"; the holder's link lit its row
+and gave its Undo the keyboard; Enter undid that middle entry alone
+(`final.txt` back to `draft 2.txt`, `Reports` kept), its row "undone"
+with Redo; Enter on Redo put it back; "Undo both" took both renames back
+newest first (`draft.txt` again, `Reports` kept), the newer rename's
+Redo then held by the older; a right click on Undo and Ctrl+Alt+Z opened
+the History; six Tabs from the list never reached the footer.
+`cargo nextest run -p skwir-ui`: 465 passed; clippy on skwir-ui and
+skwir-core.

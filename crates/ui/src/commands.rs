@@ -560,6 +560,7 @@ const SHOWS: &[&str] = &[
     "ui.toolbar_menu",
     "ui.activity",
     "ui.activity_pin",
+    "ui.undo_history",
     "ui.toolbar_close",
     "ui.toolbar_next",
     "ui.toolbar_prev",
@@ -1827,6 +1828,13 @@ pub fn declare_all(app: &App) {
         "ui.activity_pin",
         "Keep Activity open",
         "Keep Activity open above the footer while something runs, taking room rather than covering the files; again to let it close",
+    );
+    declare::<Toggle>(
+        app,
+        Topic::Files,
+        "ui.undo_history",
+        "Undo history",
+        "Open or close the history of what Undo can take back, above the footer's Undo: each action with its own Undo, an undone one's Redo, which take it back alone when nothing after it touched what it did, else name the action that did, and Undo with what came after (ADR-079, 13)",
     );
     none(
         Topic::Window,

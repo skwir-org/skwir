@@ -41,6 +41,7 @@ pub mod form;
 pub mod format;
 mod fullscreen;
 mod held_before;
+mod history;
 pub mod icons;
 pub mod input;
 mod inspector;

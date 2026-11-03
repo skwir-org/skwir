@@ -677,10 +677,29 @@ of bars, split or not.
   (`App::tasks`, `task::Task`): its card is drawn beside the plans', its
   title, how far it went and Cancel, gone when the task is dropped; a
   task cancelled from its card says it was not done, as no error.
+- **The History** (`history.rs`, ADR-079, 13): the footer's Undo is
+  split in two, its left part taking back the latest at once (as
+  Ctrl+Z, off when there is nothing to undo), its chevron, a right click
+  on Undo and `ui.undo_history` (Ctrl+Alt+Z) opening the History above
+  it (one popup at a time). Like the rest of the footer, the two are no
+  stops of the Tab order: their keys are the commands'. The History
+  lists the core's rows (`Executor::history`), newest first, each with
+  its own Undo, an undone one's Redo, and "Undo both" ("Undo with N
+  after it") when the actions after it that block it can be undone with
+  it. A button that cannot act now is said, not offered
+  (`controls::inert_button`, no frame but the keyboard's), and the line
+  under its title says why: the action that holds it is named by a link
+  that lights that one's row and gives its Undo the keyboard. Earlier's
+  Undo buttons in Activity answer the same way, by the plan they report.
+  The rows are read again only when `Executor::history_version` moves
+  (`Shell::history`): nothing is compared as they are drawn. Undo,
+  Redo and "Undo both" from it leave it open, its rows saying what each
+  became; no toast is drawn while it is open (Earlier keeps them).
 - **One answer at a time** (`toast.rs`), over the files at the last
   pane's lower right, above the strip or Activity pinned, where the list
   shows sizes and dates rather than names; over the preview on the whole
-  screen. Not while Activity is open: Earlier holds it. A plan that ran
+  screen. Not while Activity or the History is open: Earlier holds it.
+  A plan that ran
   5 s or more and moved bytes says them in its toast, and how long it
   ran ("4.8 GB in 3 min 20 s"). A toast stays at least as long as its
   words take to read. It names the file a step acts on as the user knows

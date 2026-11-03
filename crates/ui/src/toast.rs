@@ -664,9 +664,10 @@ pub fn pace(t: &Transfer) -> Option<String> {
 /// The answer said last, as a card: what it says, its buttons, and Close.
 /// Its caller places it: over the files at the last pane's lower right,
 /// above Activity's strip, or over the preview on the whole screen. Not
-/// while Activity is open, which holds it in `Earlier`.
+/// while Activity is open, which holds it in `Earlier`, nor the History.
 pub fn render_answer(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
-    if shell.activity_open() {
+    // Nor while the History is: its rows say what each action came to.
+    if shell.activity_open() || shell.undo_history_open() {
         return None;
     }
     let toast = shell.toasts.current.clone()?;

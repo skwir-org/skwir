@@ -182,8 +182,8 @@ pub struct ActivityState {
 /// at most half the pane. Toolbar popups do it by their rows' key context
 /// (`toolbar::RevealRow`); Activity's buttons are its own.
 #[derive(Clone, Default)]
-struct Reveal {
-    scroll: ScrollHandle,
+pub(crate) struct Reveal {
+    pub(crate) scroll: ScrollHandle,
     /// The button last brought into view: once, as the keyboard reaches
     /// it, so that the wheel may take it out of view again.
     shown: Rc<RefCell<Option<FocusHandle>>>,
@@ -194,7 +194,7 @@ impl Reveal {
     /// are real, the first frame it has the keyboard the rows scroll the
     /// least that shows it whole, and the frame that draws them there is
     /// asked for (a refresh asked while drawing is dropped).
-    fn marker(&self, focus: &FocusHandle) -> AnyElement {
+    pub(crate) fn marker(&self, focus: &FocusHandle) -> AnyElement {
         let (scroll, shown, focus) = (self.scroll.clone(), Rc::clone(&self.shown), focus.clone());
         gpui::canvas(
             move |bounds, window, _| {
@@ -493,7 +493,7 @@ fn showing(
 /// A control pressed as every one is (`modal::pressed`): by a click, and by
 /// Enter and Space while it has the keyboard, never by gpui's own click on
 /// a key's release, which a binding of the key would stop.
-trait Press {
+pub(crate) trait Press {
     fn press(
         self,
         press: impl Fn(&mut Shell, &mut Window, &mut Context<Shell>) + 'static,
@@ -513,7 +513,7 @@ impl Press for gpui::Stateful<gpui::Div> {
 
 /// The focus of a button of Activity's, a stop of its Tab order: an
 /// element tracking a handle of its own takes its stop from the handle.
-fn stop(cx: &mut Context<Shell>) -> FocusHandle {
+pub(crate) fn stop(cx: &mut Context<Shell>) -> FocusHandle {
     cx.focus_handle().tab_index(0).tab_stop(true)
 }
 
@@ -1032,6 +1032,12 @@ fn body(
                 .or_insert_with(|| stop(cx));
         }
     }
+    // What each answer's Undo can do now, as the History says it.
+    let by_plan = if shell.work.borrow().earlier.is_empty() {
+        HashMap::new()
+    } else {
+        shell.history_by_plan()
+    };
     let shell: &Shell = shell;
     let work = shell.work.borrow();
     if !work.earlier.is_empty() {
@@ -1051,7 +1057,7 @@ fn body(
         let rows: Vec<AnyElement> = work
             .earlier
             .iter()
-            .map(|ended| earlier_row(shell, ended, reveal, theme, cx))
+            .map(|ended| earlier_row(shell, ended, &by_plan, reveal, theme, cx))
             .collect();
         parts.push(
             div()
@@ -1225,6 +1231,7 @@ fn waiting_row(
 fn earlier_row(
     shell: &Shell,
     ended: &Ended,
+    by_plan: &HashMap<PlanId, skwir_core::op::HistoryRow>,
     reveal: &Reveal,
     theme: &Theme,
     cx: &mut Context<Shell>,
@@ -1280,6 +1287,30 @@ fn earlier_row(
         let Some(focus) = shell.activity.rows.get(&(key, n)) else {
             continue;
         };
+        // An Undo that cannot take its action back now says why, as the
+        // History does (ADR-079, 13), rather than being refused pressed.
+        if let Some(why) = undo_held(&action, by_plan) {
+            let why: SharedString = why.into();
+            row = row.child(
+                controls::inert_button(
+                    SharedString::from(format!("activity-earlier-{key}-{n}")),
+                    action.label.clone(),
+                    focus,
+                    theme,
+                )
+                .h(px(22.))
+                .px_2()
+                // No frame but the keyboard's, as in the History.
+                .border_color(gpui::transparent_black())
+                .focus({
+                    let accent = theme.accent;
+                    move |s| s.border_color(accent)
+                })
+                .child(reveal.marker(focus))
+                .tooltip(move |_, cx| crate::toolbar::tooltip(why.clone(), cx)),
+            );
+            continue;
+        }
         row = row.child(
             controls::button(
                 SharedString::from(format!("activity-earlier-{key}-{n}")),
@@ -1304,6 +1335,25 @@ fn earlier_row(
         );
     }
     row.into_any_element()
+}
+
+/// Why `action`, an answer's Undo, cannot take its plan back now, as the
+/// History says it (`by_plan`); `None` for another action, or one it takes
+/// back.
+fn undo_held(
+    action: &Action,
+    by_plan: &HashMap<PlanId, skwir_core::op::HistoryRow>,
+) -> Option<String> {
+    if action.command != "undo" {
+        return None;
+    }
+    let plan: PlanId = serde_json::from_value(action.args.get("plan")?.clone()).ok()?;
+    match by_plan.get(&plan) {
+        Some(row) if row.state == skwir_core::op::Done::Undone => Some("Undone already".to_owned()),
+        Some(row) if crate::history::can_now(row) => None,
+        Some(row) => crate::history::why(row),
+        None => Some("No longer in the history".to_owned()),
+    }
 }
 
 /// The card of the running plan `running` in Activity: its title, how far
