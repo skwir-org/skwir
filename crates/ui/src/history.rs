@@ -474,8 +474,10 @@ pub fn undo_control(
         .focus(move |s| s.border_color(accent))
         .when(open, |d| d.bg(theme.selection_bg))
         .tooltip(move |_, cx| crate::toolbar::tooltip(history_tip.clone(), cx))
+        // A chevron points where its menu opens: up to the History,
+        // down to fold it back.
         .child(controls::glyph(
-            if open { "up" } else { "chevron" },
+            if open { "chevron" } else { "chevron-up" },
             theme.text_muted,
             11.,
         ))

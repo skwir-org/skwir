@@ -716,7 +716,9 @@ of bars, split or not.
   split in two, its left part taking back the latest at once (as
   Ctrl+Z, off when there is nothing to undo), its chevron, a right click
   on Undo and `ui.undo_history` (Ctrl+Alt+Z) opening the History above
-  it (one popup at a time). Like the rest of the footer, the two are no
+  it (one popup at a time). A chevron points where its menu opens: the
+  toolbars' down, the footer's up (down while the History is open, to
+  fold it back). Like the rest of the footer, the two are no
   stops of the Tab order: their keys are the commands', and a click on
   them leaves the keyboard where it was, as on the strip (Enter or Space
   would press Undo again); the History closed gives it back there. The

@@ -62,6 +62,7 @@ pub fn asset(path: &str) -> Option<&'static [u8]> {
         "open",
         "close",
         "chevron",
+        "chevron-up",
         "eye",
         "move",
         "refresh",
