@@ -90,6 +90,21 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
     ("ui.zoom", r#"{"dir":"in"}"#, "Zoom in"),
     ("ui.zoom", r#"{"dir":"out"}"#, "Zoom out"),
     ("ui.zoom", r#"{"dir":"reset"}"#, "Zoom reset"),
+    (
+        "ui.text_size",
+        r#"{"part":"files","dir":"in"}"#,
+        "Files text: larger",
+    ),
+    (
+        "ui.text_size",
+        r#"{"part":"files","dir":"out"}"#,
+        "Files text: smaller",
+    ),
+    (
+        "ui.text_size",
+        r#"{"part":"files","dir":"reset"}"#,
+        "Files text: 100 %",
+    ),
     ("ui.map_view_fit", "{}", "Map: fit to its files"),
     (
         "ui.map_view_search_area",

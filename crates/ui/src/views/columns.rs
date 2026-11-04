@@ -37,9 +37,10 @@ use crate::list::Step;
 use crate::shell::Shell;
 use crate::theme::Theme;
 use crate::view::{Nav, PaneView};
-use crate::views::list::{row_elements, row_height};
+use crate::views::list::{files_scale, row_elements, row_height};
 
 const MAX_ANCESTORS: usize = 3;
+/// A column's width at 100 %, drawn at the files' scale (ADR-117).
 const COLUMN_W: f32 = 240.0;
 /// How long the cursor rests on a folder before its column is listed: a
 /// key held down the column (a repeat every 30 to 40 ms) lists none of the
@@ -284,7 +285,7 @@ fn side_column(
         cx.processor(move |this: &mut Shell, range: Range<usize>, _window, cx| {
             let theme = cx.global::<Theme>().clone();
             let icon_px = u16::try_from(this.row_zoom).unwrap_or(u16::MAX);
-            let height = row_height(this.row_zoom);
+            let height = row_height(this.row_zoom, files_scale(&theme));
             // Only the rows drawn are read from the kept listing. An entry
             // gone meanwhile is a blank, as `list::row_elements` keeps one:
             // the rows after it keep their places and their numbers.
@@ -475,7 +476,7 @@ fn side_column(
             d.aria_label(title).aria_size_of_set(count)
         })
         .relative()
-        .w(px(COLUMN_W))
+        .w(files_scale(theme).px(COLUMN_W))
         .h_full()
         .flex_none()
         .border_r_1()
@@ -648,7 +649,7 @@ impl PaneView for ColumnsView {
                     .aria_size_of_set(count)
             })
             .relative()
-            .w(px(COLUMN_W * 1.25))
+            .w(files_scale(&theme).px(COLUMN_W * 1.25))
             .h_full()
             .flex_none()
             .border_r_1()
@@ -677,7 +678,7 @@ impl PaneView for ColumnsView {
                 side_column(self, Side::Next(next), ids, pane, named, &theme, cx)
             }
             None => div()
-                .w(px(COLUMN_W))
+                .w(files_scale(&theme).px(COLUMN_W))
                 .h_full()
                 .flex_none()
                 .into_any_element(),

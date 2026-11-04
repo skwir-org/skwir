@@ -686,6 +686,22 @@ halved below the folder shown, a quarter inside a folder of 100,000
 files, the map a second behind at most, its last count half a second
 after the copy); Windows and macOS not built.
 
+## Text sizes (2026-11-04)
+
+GitHub issue #5: the grid's names were drawn a size smaller than any
+other view's (12 px against 14), and no setting changed a size. ADR-117,
+taken with the user: four parts with a size each (interface, files,
+reading, code), percentages in steps, 100 % the system's body text (the
+desktop's size times its text scaling, else 10 pt on Linux, 13 px on
+macOS, 14 px on Windows), each part drawn in a rem of its own and what
+holds text growing with it, sizes named in the theme, "Fonts from"
+Automatic, GTK or Qt. Four steps, a commit each, for 0.3.1.
+
+**Status:** step 1, the files' size (`ui.files_text_size`, `ui.text_size`,
+grid names as large as the list's), built 2026-11-04 and checked on
+Linux (`docs/STATUS-LOG.md`); steps 2 to 4 under way. Windows and macOS
+not built.
+
 ## What is left
 
 Gathered on 2026-10-20 from the notes of this plan and of

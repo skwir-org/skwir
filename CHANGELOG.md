@@ -1,5 +1,12 @@
 # Changes
 
+## Unreleased
+
+- **Text sizes**: the file views' text has a size of its own, from 80 to
+  200 % (Settings › Appearance › Files text size, or "Files text: larger" in
+  the palette), and rows, labels and columns grow with it while icons and
+  pictures keep their zoom. Names in the grid are now as large as in the list.
+
 ## 0.3.0 (2026-11-03)
 
 Skwir 0.3 reaches servers, phones and cameras: type an address and it mounts

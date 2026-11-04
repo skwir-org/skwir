@@ -55,6 +55,12 @@ pub const CODE_FONT_KEY: &str = "ui.code_font";
 pub const FONT_KEYS: [&str; 3] = [FONT_KEY, READING_FONT_KEY, CODE_FONT_KEY];
 /// The fonts' Automatic.
 pub const FONT_AUTO: &str = "auto";
+/// The text sizes, by part of the window (ADR-117, `sizes.rs`): a step of
+/// `sizes::STEPS`, a percentage of the part's 100 %.
+pub const TEXT_SIZE_KEY: &str = "ui.text_size";
+pub const FILES_TEXT_SIZE_KEY: &str = "ui.files_text_size";
+pub const READING_TEXT_SIZE_KEY: &str = "reading.text_size";
+pub const CODE_TEXT_SIZE_KEY: &str = "ui.code_text_size";
 /// The icon theme skwir draws with, by its folder's name; Automatic is the
 /// desktop's (`icons::IconCache::set_theme`). The free desktops' only:
 /// macOS and Windows draw the system's own icons.
@@ -239,6 +245,51 @@ pub fn font_spec(
             "Font",
             "The font of skwir's menus, lists, bars and dialogs. Automatic is your desktop's while Desktop colors is on, else skwir's own: Inter where it is installed.",
         ),
+    }
+}
+
+/// A part's text size (ADR-117, `sizes.rs`): a step of `sizes::STEPS`,
+/// 100 % its own size.
+pub fn text_size_spec(part: crate::sizes::Part) -> SettingSpec {
+    use crate::sizes::{DEFAULT_STEP, Part, STEPS, step_label};
+    let values: Vec<(String, String)> = STEPS
+        .iter()
+        .map(|step| (step.to_string(), step_label(*step)))
+        .collect();
+    let pairs: Vec<(&str, &str)> = values
+        .iter()
+        .map(|(value, label)| (value.as_str(), label.as_str()))
+        .collect();
+    let spec = |title: &str, description: &str| {
+        SettingSpec::choice(
+            part.key(),
+            title,
+            description,
+            &DEFAULT_STEP.to_string(),
+            &pairs,
+        )
+    };
+    match part {
+        Part::Files => spec(
+            "Files text size",
+            "How large names and details are written in the list, the grid, the columns and the board. At 100 % they are the interface's size; rows and labels grow with the text, while icons and pictures keep the zoom's size.",
+        ),
+        Part::Interface => spec(
+            "Text size",
+            "How large skwir writes its menus, bars, the sidebar and dialogs, its file views with them. Bars and rows grow with the text.",
+        ),
+        Part::Reading => spec(
+            "Reading text size",
+            "The size books, Markdown and HTML files, documents and mail open at. The preview's own size buttons still change only the file shown.",
+        )
+        .page(page::READING)
+        .section("Text"),
+        Part::Code => spec(
+            "Code text size",
+            "The size of source and text files, the byte view and the terminal. The preview's own size buttons still change only the file shown.",
+        )
+        .page(page::READING)
+        .section("Code"),
     }
 }
 
@@ -772,6 +823,8 @@ pub fn declare(app: &App) {
     }
     app.settings
         .declare(font_spec(FONT_KEY, &font_chosen(app, FONT_KEY), None));
+    app.settings
+        .declare(text_size_spec(crate::sizes::Part::Files));
     if !skwir_platform::system_icons::AVAILABLE {
         let chosen = app
             .settings

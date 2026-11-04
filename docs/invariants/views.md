@@ -239,7 +239,7 @@ around the views is in [shell.md](shell.md).
 - `GridView::measure` counts each name's lines with the text system's
   line wrapper when the order drawn changes (its identity: arrivals count
   once placed in it, and a name changed in place sorts again), or the
-  zoom or the font; never per frame, per batch of arrivals or per batch
+  zoom, the font or the files' text size; never per frame, per batch of arrivals or per batch
   of metadata. The label is clamped to that count, so a disagreement
   costs an ellipsis, not an overlap.
 - A tile's height is its name's and the captions chosen, never what its
@@ -273,6 +273,24 @@ around the views is in [shell.md](shell.md).
 - A wheel listener asks `Hitbox::should_handle_scroll`, not `is_hovered`.
 - An absolute overlay states its `top` and `left`, or it is laid out after
   its siblings, below the area it should cover.
+
+## Text size (ADR-117)
+
+- A pane's view is drawn in the files' rem (`elements::rem`, from
+  `Theme::sizes`, the Files text size): `text_sm` is a name's size there
+  in every view (the list's rows, the grid's labels, the board's cards),
+  `text_xs` a detail's, a header's, a caption's. A grid label is a name:
+  never smaller than the list's.
+- A length that holds text is written at 100 % and drawn at the files'
+  scale, in whole pixels (`sizes::Scale`): a row (`list::row_height`),
+  a grid label's line and least width, a caption's line, a column's and
+  a card's size, the gaps between details. Read from the theme in
+  `render` (`list::files_scale`), from the rem in an element.
+- Pictures and icons keep the zoom's size: a row is its text's height or
+  its icon's and margin, whichever is taller; a grid label is the
+  picture's width or the least a name needs at its size.
+- A column's width is kept at 100 % (`Session::column_widths`), dragged
+  at any size: a width dragged is divided by the scale.
 
 ## List columns
 

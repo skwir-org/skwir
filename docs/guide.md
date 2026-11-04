@@ -147,7 +147,10 @@ work where the keyboard is, by topic.
 `Ctrl+1`, `Ctrl+2` and `Ctrl+3` show the folder as a list, a grid or
 columns. The View menu, at the end of the pane's row, has every view, the
 sort, hidden files (`Ctrl+H` or `Alt+.`) and the zoom (`Ctrl++`,
-`Ctrl+-`, `Ctrl+0`, or `Ctrl+wheel`).
+`Ctrl+-`, `Ctrl+0`, or `Ctrl+wheel`). The zoom sizes pictures and icons;
+names and details have a text size of their own, from 80 to 200 %
+(Settings › Appearance › Files text size, or "Files text: larger" and
+"smaller" in the palette), and rows and labels grow with it.
 
 - **List.** The header's menu chooses the columns; click a header to sort
   by it. Where files from many folders are listed (a search, a tag, the
@@ -642,7 +645,7 @@ Settings are grouped by subject, whichever plugin brings them:
 | Page | What it sets |
 | --- | --- |
 | General | What Skwir does at startup, with tabs, the split and the path above the files, and with what you drag and drop |
-| Appearance | How it looks: theme, your desktop's colors and font, icons, dates |
+| Appearance | How it looks: theme, your desktop's colors and font, text sizes, icons, dates |
 | Folders and views | Quick filters, the grid, the list's columns, thumbnails |
 | Tags and notes | The tags the sidebar suggests, tags kept when copying, companion files, and where tags, ratings and comments are read and written |
 | Reading | How documents, books, comics, Markdown, text and code read, and the engine that reads each kind |

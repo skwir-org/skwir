@@ -34,9 +34,17 @@ use crate::view::{Nav, PaneView};
 
 /// The most columns opened: a folder of hundreds of folders is no board.
 pub const MAX_COLUMNS: usize = 12;
+/// A column's width and a card's height at 100 %, drawn at the files'
+/// scale (ADR-117); a card is never shorter than its picture needs, which
+/// keeps its size.
 const COLUMN_W: f32 = 240.0;
 const CARD_H: f32 = 48.0;
 const PICTURE: f32 = 36.0;
+
+/// A card's height at `scale`.
+fn card_height(scale: crate::sizes::Scale) -> f32 {
+    scale.f(CARD_H).max(CARD_H)
+}
 
 /// One column: what it lists, where it leads, and its cards.
 #[derive(Clone)]
@@ -87,6 +95,8 @@ pub struct BoardView {
     /// listing as it was, the folders opened, the sort, the filter, the
     /// settings for tags' colors): every frame walked the whole place.
     columns_of: Option<(ColumnsOf, Vec<Column>, Vec<EntryId>, Against)>,
+    /// The files' scale when last drawn, for a page of cards.
+    scale: crate::sizes::Scale,
 }
 
 type ColumnsOf = (u64, u64, u64, skwir_core::SortSpec, u64, u64);
@@ -287,6 +297,7 @@ fn column(
     cx: &mut Context<Shell>,
 ) -> AnyElement {
     let pane = shell.pane;
+    let scale = crate::views::list::files_scale(theme);
     let scroll = view.scrolls.get(&c.location).cloned().unwrap_or_default();
     let ids = Arc::clone(&c.ids);
     let shown = Arc::clone(&c.shown);
@@ -323,7 +334,7 @@ fn column(
     let tone = c.color.map(|color| theme.tag(color));
     let header = div()
         .flex_none()
-        .h(px(32.))
+        .h(scale.px(32.))
         .px_2()
         .flex()
         .items_center()
@@ -345,7 +356,7 @@ fn column(
             d.aria_label(c.title.clone()).aria_size_of_set(c.ids.len())
         })
         .relative()
-        .w(px(COLUMN_W))
+        .w(scale.px(COLUMN_W))
         .h_full()
         .flex_none()
         .flex()
@@ -417,6 +428,8 @@ fn card_element(
     cx: &mut Context<Shell>,
 ) -> AnyElement {
     let look = &card.look;
+    let scale = crate::views::list::files_scale(theme);
+    let height = card_height(scale);
     let thumb = if look.is_dir {
         ThumbView::Unavailable
     } else {
@@ -456,7 +469,7 @@ fn card_element(
         // Two names of one file are two cards (ADR-049).
         .id(crate::elements::known_by("card", look.id))
         .relative()
-        .h(px(CARD_H))
+        .h(px(height))
         .flex_1()
         .min_w_0()
         .px_2()
@@ -491,16 +504,20 @@ fn card_element(
                 // A strip of tags takes what its row leaves: under the
                 // name, a row of its own.
                 .when(!look.tags.is_empty(), |d| {
-                    d.child(div().flex().w_full().h(px(crate::tags::CHIP_HEIGHT)).child(
-                        crate::views::entry::tags(
-                            look,
-                            crate::tags::StripOn::Row {
-                                selected: look.selected,
-                            },
-                            theme,
-                            act,
-                        ),
-                    ))
+                    d.child(
+                        div()
+                            .flex()
+                            .w_full()
+                            .h(scale.px(crate::tags::CHIP_HEIGHT))
+                            .child(crate::views::entry::tags(
+                                look,
+                                crate::tags::StripOn::Row {
+                                    selected: look.selected,
+                                },
+                                theme,
+                                act,
+                            )),
+                    )
                 }),
         );
     let el = if card.ix.is_some() {
@@ -519,7 +536,7 @@ fn card_element(
     // A gutter around each card, the card as wide as its column.
     div()
         .w_full()
-        .h(px(CARD_H + 4.))
+        .h(px(height + 4.))
         .px_1()
         .py(px(2.))
         .flex()
@@ -538,6 +555,7 @@ impl PaneView for BoardView {
 
     fn render(&mut self, shell: &mut Shell, _: &mut Window, cx: &mut Context<Shell>) -> AnyElement {
         let theme = cx.global::<Theme>().clone();
+        self.scale = crate::views::list::files_scale(&theme);
         let (columns, missing, against) = self.columns(shell);
         // Each column is opened in place once while it stays open: its
         // cards are the pane's.
@@ -623,7 +641,9 @@ impl PaneView for BoardView {
         // A page is what the column shows, read from its last layout.
         let page = self.scrolls.get(location).map_or(1, |scroll| {
             let height = f32::from(scroll.0.borrow().base_handle.bounds().size.height);
-            ((height / CARD_H) as usize).saturating_sub(1).max(1)
+            ((height / (card_height(self.scale) + 4.)) as usize)
+                .saturating_sub(1)
+                .max(1)
         });
         let along = |by: isize| {
             let to = match card {

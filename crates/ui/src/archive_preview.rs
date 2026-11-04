@@ -33,7 +33,7 @@ pub fn header(theme: &Theme) -> Div {
         .border_b_1()
         .border_color(theme.border)
         .child(
-            line(name, NAME_MIN, HEADER_HEIGHT).child(
+            line(name, NAME_MIN, HEADER_HEIGHT, crate::sizes::Scale::ONE).child(
                 column(SIZE_WIDTH, theme.text_muted, HEADER_HEIGHT)
                     .text_right()
                     .child("Size"),
@@ -128,5 +128,5 @@ pub fn row(
         .text_sm()
         .when(!selected, |d| d.hover(|d| d.bg(theme.hover)))
         .when(selected, |d| d.text_color(theme.selection_text))
-        .child(line(name, NAME_MIN, ROW_HEIGHT).child(size))
+        .child(line(name, NAME_MIN, ROW_HEIGHT, crate::sizes::Scale::ONE).child(size))
 }

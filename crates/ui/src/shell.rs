@@ -1965,6 +1965,19 @@ impl Shell {
             .map_or(view::Zooms::Nothing, |v| v.zooms())
     }
 
+    /// `ui.text_size`: a part's text a step larger or smaller, or back at
+    /// 100 % (ADR-117), saved as its setting is.
+    fn text_size_step(&mut self, part: crate::sizes::Part, dir: &str, cx: &mut Context<Self>) {
+        let now = crate::sizes::step_of(crate::settings::preference(self, part.key()).as_deref());
+        let next = crate::sizes::stepped(now, dir);
+        if next != now {
+            crate::settings::remember(self, part.key(), next.to_string(), cx);
+        }
+        let label = crate::sizes::step_label(next);
+        self.set_status(format!("{}: {label}", part.title()), false, cx);
+        cx.notify();
+    }
+
     fn zoom_step(&mut self, dir: &str, cx: &mut Context<Self>) {
         if !self.zoom_to(dir, cx) {
             return;
@@ -2726,6 +2739,20 @@ impl Shell {
                 let dir = arg("dir").unwrap_or_else(|| "reset".into());
                 self.zoom_step(&dir, cx);
             }
+            "text_size" => {
+                let part = arg("part").unwrap_or_else(|| "files".into());
+                let dir = arg("dir").unwrap_or_else(|| "reset".into());
+                match crate::sizes::Part::named(&part) {
+                    Some(part) => self.text_size_step(part, &dir, cx),
+                    None => {
+                        self.set_status(
+                            format!("No part of the window is called {part}"),
+                            true,
+                            cx,
+                        );
+                    }
+                }
+            }
             "inspect" => self.inspect_command(args, window, cx),
             "media_control" => self.media_control(args, cx),
             "media_pin" => self.media_pin(cx),
@@ -2960,16 +2987,23 @@ impl Shell {
     /// `render`, for what the user did since; a second call finds nothing
     /// new to apply.
     /// The look again, from the settings and the desktop's style: what
-    /// was measured in a font that changed is measured again (the
-    /// preview's rows, as a text size change does, `inspector.rs`); the
-    /// rest is laid out in the theme's fonts as it is drawn.
+    /// was measured in a font or at a text size that changed is measured
+    /// again (the preview's rows, as its own text size change does,
+    /// `inspector.rs`); the rest is laid out in the theme's fonts and
+    /// sizes as it is drawn.
     fn resolve_theme(&mut self, window: &Window, cx: &mut Context<Self>) {
-        let was = cx.global::<Theme>().families();
+        let was = (cx.global::<Theme>().families(), cx.global::<Theme>().sizes);
         let theme = Theme::resolve(&self.app, window.appearance(), cx.text_system());
-        let now = theme.families();
+        let now = (theme.families(), theme.sizes);
         cx.set_global(theme);
+        if now.0 != was.0 {
+            let fonts = &now.0;
+            tracing::info!(ui = %fonts.ui, reading = %fonts.reading, code = %fonts.code, "fonts");
+        }
+        if now.1 != was.1 {
+            tracing::info!(sizes = ?now.1, "text sizes");
+        }
         if now != was {
-            tracing::info!(ui = %now.ui, reading = %now.reading, code = %now.code, "fonts");
             self.preview.remeasure();
             cx.refresh_windows();
         }
@@ -3358,7 +3392,9 @@ impl Shell {
                 Some(mut v) => {
                     let el = v.render(self, window, cx);
                     self.put_view(v);
-                    el
+                    // The view's text at the files' size (ADR-117).
+                    let rem = cx.global::<Theme>().sizes.rem(crate::sizes::Part::Files);
+                    crate::elements::rem::rem(rem, el).into_any_element()
                 }
                 None => div()
                     .flex_1()

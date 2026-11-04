@@ -52,8 +52,14 @@
 //!   (`fonts.rs`, ADR-073), resolved with the look; what is drawn names
 //!   one of them, never a family, and keeps no copy: a tooltip or a
 //!   window of its own reads the theme too.
+//! - text sizes: each part of the window (the interface, the files,
+//!   reading, code) is written at a size of its own, `sizes` (ADR-117,
+//!   `sizes.rs`), and drawn in a rem of its own (`elements::rem`): there
+//!   `text_sm` is its body text and `text_xs` its small text.
 //! - spacing: multiples of 4 px; rows are 26 px, controls 28 px, bars 42 px
-//!   (a pane's row, the sidebar's header, the tab strip: their edges meet).
+//!   (a pane's row, the sidebar's header, the tab strip: their edges meet),
+//!   at 100 %: a length that holds text is scaled with its part
+//!   (`sizes::Scale`).
 //!
 //! A look is derived (`Theme::derive`, ADR-071) from a few colors, its
 //! `Base`: what the desktop's scheme names for that look (Plasma's, a
@@ -202,6 +208,9 @@ pub struct Theme {
     pub font: SharedString,
     pub reading_font: SharedString,
     pub code_font: SharedString,
+    /// The text size of each part of the window (`sizes.rs`, ADR-117):
+    /// read where it is drawn, as the fonts are.
+    pub sizes: crate::sizes::Sizes,
 }
 
 fn palette(hex: [u32; 16]) -> [Hsla; 16] {
@@ -740,6 +749,7 @@ impl Theme {
             font: crate::fonts::Families::default().ui,
             reading_font: crate::fonts::Families::default().reading,
             code_font: crate::fonts::Families::default().code,
+            sizes: crate::sizes::Sizes::default(),
         }
     }
 
@@ -939,6 +949,7 @@ impl Theme {
         let mut theme = Theme::of(dark, desktop);
         theme.code = crate::code_preview::CodeTheme::chosen(app, theme.is_dark);
         theme.set_fonts(crate::fonts::resolve(app, text));
+        theme.sizes = crate::sizes::Sizes::resolve(app);
         theme
     }
 }

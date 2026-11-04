@@ -10763,3 +10763,32 @@ release build on Xvfb (:93, lavapipe), fixtures as before:
   its events (one per file written).
 
 Not checked: a window on a real GPU, Windows and macOS, release-check.
+
+## Text sizes, step 1: the files' size (2026-11-04)
+
+ADR-117, GitHub issue #5. `sizes.rs` holds the parts and their sizes
+(`Theme::sizes`, resolved with the look); `elements::rem` draws a child
+in a rem of its own, and a pane's view is drawn in the files' rem. The
+list's rows (`row_height`: the text's row or the icon's, whichever is
+taller), header, gaps, least name width and columns, the columns view's
+columns, the grid's labels (`text_sm`, their line 18 px at 100 %, their
+least width), captions, and the board's columns and cards are drawn at
+the files' scale; the list's dragged widths are kept at 100 %. The
+grid's names are counted again when the size changes (keyed by it).
+`ui.files_text_size` (Appearance, folded, after Font) and `ui.text_size`
+(part, dir), with three palette entries.
+
+Checked: skwir-ui's 494 tests (new: `sizes` steps and scales, rows
+growing with their text while icons keep the zoom), the app's settings
+tests (titles, sentences, essentials), clippy clean on skwir-ui. The
+debug build on Xvfb (:91, lavapipe, the machine's GTK settings, a
+private bus): at 100 % the grid's names as large as the sidebar's
+(14 px), wrapping to their lines; `files_text_size = "150"` written to
+the settings file was taken in live: the grid's names at 21 px in
+taller labels, the list's rows 39 px with 18 px icons, its header and
+columns wider, the columns view's columns 360 px; the palette's "Files
+text: smaller" saved 125 % and said so in a toast.
+
+Not checked: the board (compiled; its cards follow the same scale),
+Windows and macOS, release-check.
+

@@ -39,10 +39,11 @@ use crate::elements::uniform_grid::{TileHeights, UniformGridScrollHandle, unifor
 use crate::elements::zoom_wheel::{self, Zoomed};
 use crate::icons;
 use crate::shell::Shell;
+use crate::sizes::{Part, Scale};
 use crate::theme::Theme;
 use crate::thumbs::ThumbView;
 use crate::view::{Nav, PaneView};
-use crate::views::list::{COLUMNS, Detail, PerColumn, RowData};
+use crate::views::list::{COLUMNS, Detail, PerColumn, RowData, files_scale};
 
 /// Zoom steps for `ui.zoom`: the side of a tile's box.
 pub const ZOOMS: [u32; 5] = [64, 96, 128, 192, 256];
@@ -164,10 +165,10 @@ pub struct GridView {
     /// Lines each name needs, in sorted order.
     lines: Rc<[u8]>,
     /// Lines per entry, with a hash of the name they were counted for, at
-    /// `wrapped_at` (zoom and font). A listing streaming in, or re-sorted,
-    /// wraps only the names it has not seen.
+    /// `wrapped_at` (zoom, font and text size). A listing streaming in, or
+    /// re-sorted, wraps only the names it has not seen.
     wrapped: HashMap<EntryId, (u64, u8)>,
-    wrapped_at: Option<(u32, gpui::SharedString)>,
+    wrapped_at: Option<(u32, gpui::SharedString, u32)>,
     /// What `lines` was counted for: the order drawn and the zoom. Not the
     /// listing's versions: hydration advances one with every batch, and
     /// arrivals the names' with every batch while a folder streams in,
@@ -200,46 +201,54 @@ fn stale(
 const FRAME: f32 = 5.;
 /// Between the picture and the name.
 const LABEL_GAP: f32 = 2.;
-/// A tile's height is counted in lines of name, so the line height is fixed.
-const LABEL_LINE: f32 = 15.;
+/// A tile's height is counted in lines of name, so the line height is
+/// fixed: at 100 %, for names in the body text as the list writes them,
+/// drawn at the files' scale (ADR-117).
+const LABEL_LINE: f32 = 18.;
 /// A name takes what it needs up to this, then ends with an ellipsis.
 const MAX_LINES: u8 = 3;
-/// A caption's line, as tall as a tag's chip.
+/// A caption's line, as tall as a tag's chip, at 100 %.
 const CAPTION_LINE: f32 = crate::tags::CHIP_HEIGHT;
 /// The least space between tiles. Spare width widens the gutters between
 /// columns up to `MAX_GUTTER`; the rest becomes the margins.
 const GUTTER: (f32, f32) = (12., 8.);
 const MAX_GUTTER: f32 = 24.;
 
-/// A label is as wide as the box, but never narrower than this: at the small
-/// steps a box-wide label would break most names in the middle of a word.
+/// A label is as wide as the box, but never narrower than this at 100 %:
+/// at the small steps a box-wide label would break most names in the
+/// middle of a word.
 const MIN_LABEL: f32 = 90.;
 
 impl GridView {
-    fn label_width(zoom: u32) -> f32 {
-        (zoom as f32 + 2.).max(MIN_LABEL)
+    /// A name's width: the picture's, or the least a name needs at its
+    /// size. The picture keeps the zoom's size whatever the text's.
+    fn label_width(zoom: u32, scale: Scale) -> f32 {
+        (zoom as f32 + 2.).max(scale.f(MIN_LABEL))
     }
 
-    fn tile_width(zoom: u32) -> f32 {
-        Self::label_width(zoom) + 2. * FRAME
+    fn tile_width(zoom: u32, scale: Scale) -> f32 {
+        Self::label_width(zoom, scale) + 2. * FRAME
     }
 
-    fn tile_height(zoom: u32, lines: u8, captions: usize) -> f32 {
+    fn tile_height(zoom: u32, lines: u8, captions: usize, scale: Scale) -> f32 {
         let captions = if captions == 0 {
             0.
         } else {
-            LABEL_GAP + captions as f32 * CAPTION_LINE
+            LABEL_GAP + captions as f32 * scale.f(CAPTION_LINE)
         };
-        zoom as f32 + 2. * FRAME + LABEL_GAP + f32::from(lines) * LABEL_LINE + captions
+        zoom as f32 + 2. * FRAME + LABEL_GAP + f32::from(lines) * scale.f(LABEL_LINE) + captions
     }
 
     /// Count the lines every name wraps to, when what they depend on changed.
-    fn measure(&mut self, shell: &Shell, window: &Window, cx: &gpui::App) {
+    fn measure(&mut self, shell: &Shell, cx: &gpui::App) {
         let list = &shell.ui().list;
-        // Names wrap in the interface font, which may change while shown
-        // (ADR-073).
-        let font = cx.global::<crate::theme::Theme>().font.clone();
-        let at = (shell.zoom, font.clone());
+        // Names wrap in the interface font at the files' size, which may
+        // change while shown (ADR-073, ADR-117).
+        let theme = cx.global::<crate::theme::Theme>();
+        let font = theme.font.clone();
+        let font_size = theme.sizes.body(Part::Files);
+        let scale = files_scale(theme);
+        let at = (shell.zoom, font.clone(), f32::from(font_size).to_bits());
         if self.wrapped_at.as_ref() == Some(&at)
             && !stale(self.lines_for.as_ref(), &list.sorted, shell.zoom)
         {
@@ -252,9 +261,8 @@ impl GridView {
             self.wrapped.clear();
             self.wrapped_at = Some(at);
         }
-        let font_size = window.rem_size() * 0.75; // text_xs
         let mut wrapper = cx.text_system().line_wrapper(gpui::font(font), font_size);
-        let width = px(Self::label_width(shell.zoom));
+        let width = px(Self::label_width(shell.zoom, scale));
         let mut wrapped_now = 0usize;
         let counted = &mut self.wrapped;
         self.lines = list
@@ -337,6 +345,7 @@ fn cell(
     cx: &mut Context<Shell>,
 ) -> AnyElement {
     let zoom = shell.zoom;
+    let scale = files_scale(theme);
     let (ix, look, id) = (row.ix, &row.look, row.look.id);
     let act = Shell::tag_act(shell.pane, Some(id), false, cx);
     let pictures = shell
@@ -462,8 +471,9 @@ fn cell(
         div()
             .id(("label", ix))
             .w_full()
-            .text_xs()
-            .line_height(px(LABEL_LINE))
+            // Names are the body text, as in the list (ADR-117).
+            .text_sm()
+            .line_height(scale.px(LABEL_LINE))
             .text_center()
             .overflow_hidden()
             .text_ellipsis_middle()
@@ -471,7 +481,7 @@ fn cell(
         look.name.clone(),
     ))
     .when(!captions.is_empty(), |d| {
-        d.child(caption_lines(row, captions, theme, act.clone()))
+        d.child(caption_lines(row, captions, scale, theme, act.clone()))
     });
     let seat = crate::views::entry::Seat {
         index: ix,
@@ -484,6 +494,7 @@ fn cell(
 fn caption_lines(
     row: &RowData,
     captions: &[Caption],
+    scale: Scale,
     theme: &Theme,
     act: crate::tags::TagAct,
 ) -> gpui::Div {
@@ -499,7 +510,7 @@ fn caption_lines(
         .flex_col()
         .children(captions.iter().enumerate().map(|(k, caption)| {
             let line = div()
-                .h(px(CAPTION_LINE))
+                .h(scale.px(CAPTION_LINE))
                 .w_full()
                 .min_w_0()
                 .flex()
@@ -680,13 +691,8 @@ impl PaneView for GridView {
         crate::view::GRID
     }
 
-    fn render(
-        &mut self,
-        shell: &mut Shell,
-        window: &mut Window,
-        cx: &mut Context<Shell>,
-    ) -> AnyElement {
-        self.measure(shell, window, cx);
+    fn render(&mut self, shell: &mut Shell, _: &mut Window, cx: &mut Context<Shell>) -> AnyElement {
+        self.measure(shell, cx);
         let captions: Rc<[Caption]> = shell.grid_captions().into();
         if captions.len() != self.captions {
             self.captions = captions.len();
@@ -695,6 +701,7 @@ impl PaneView for GridView {
         let lines = self.lines.clone();
         let count = shell.ui().list.sorted.len();
         let zoom = shell.zoom;
+        let scale = files_scale(cx.global::<Theme>());
         let pane = shell.pane;
         let said = Rc::clone(&captions);
         let render = cx.processor(
@@ -738,14 +745,19 @@ impl PaneView for GridView {
         let grid = uniform_grid(
             ("grid", pane.0 as usize),
             count,
-            px(GridView::tile_width(zoom)),
+            px(GridView::tile_width(zoom, scale)),
             TileHeights {
                 revision: self.revision,
                 of: {
                     let lines = self.lines.clone();
                     let captions = captions.len();
                     Rc::new(move |ix| {
-                        GridView::tile_height(zoom, lines.get(ix).copied().unwrap_or(1), captions)
+                        GridView::tile_height(
+                            zoom,
+                            lines.get(ix).copied().unwrap_or(1),
+                            captions,
+                            scale,
+                        )
                     })
                 },
             },

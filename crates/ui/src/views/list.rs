@@ -17,26 +17,36 @@ use crate::elements::zoom_wheel::{self, Zoomed};
 use crate::format;
 use crate::list::Step;
 use crate::shell::Shell;
+use crate::sizes::{Part, Scale};
 use crate::theme::Theme;
 use crate::view::{Nav, PaneView};
 
-/// Height of a row at the default size: the archive preview's rows too.
+/// Height of a row at the default size and 100 %: the archive preview's
+/// rows too.
 pub const ROW_HEIGHT: f32 = 26.0;
 /// The icon sizes the list and the columns zoom through (`ui.zoom`); a
 /// row is its icon and a margin, so Ctrl+wheel makes rows taller.
 pub const ROW_ZOOMS: [u32; 5] = [16, 18, 24, 32, 48];
 pub const DEFAULT_ROW_ZOOM: u32 = 18;
 
-/// Height of a row whose icon is `icon` px.
-pub fn row_height(icon: u32) -> f32 {
-    icon_px(icon) + ROW_HEIGHT - icon_px(DEFAULT_ROW_ZOOM)
+/// Height of a row whose icon is `icon` px, its text at `scale`: the
+/// text's row, or taller where the icon needs it (ADR-117). The icon
+/// keeps the zoom's size whatever the text's.
+pub fn row_height(icon: u32, scale: Scale) -> f32 {
+    (icon_px(icon) + ROW_HEIGHT - icon_px(DEFAULT_ROW_ZOOM)).max(scale.f(ROW_HEIGHT))
+}
+
+/// The scale the file views draw at: the files' text size (ADR-117).
+pub fn files_scale(theme: &Theme) -> Scale {
+    theme.sizes.scale(Part::Files)
 }
 
 /// A row zoom as the icon's side in pixels.
 pub fn icon_px(zoom: u32) -> f32 {
     f32::from(u16::try_from(zoom).unwrap_or(u16::MAX))
 }
-/// The name never gets narrower than this; detail columns give way first.
+/// The name never gets narrower than this, at 100 %; detail columns give
+/// way first.
 const NAME_MIN: f32 = 150.0;
 /// The tree's disclosure triangle, and how far each level is indented: a
 /// child's triangle stands under its parent's icon.
@@ -61,6 +71,8 @@ pub struct Column {
     pub shown: bool,
     /// What a click on its header sorts by, if anything.
     pub sort: Option<SortKey>,
+    /// Its width at 100 % (ADR-117): drawn at the files' scale, as a
+    /// width dragged is remembered.
     pub width: f32,
     /// A number, set against the right.
     pub right: bool,
@@ -199,10 +211,12 @@ impl Shell {
     ) {
         let x = f32::from(ev.event.position.x);
         let detail = ev.drag(cx).0;
+        let scale = files_scale(cx.global::<Theme>());
         let (start_x, start_width) = *self
             .edge_start
             .get_or_insert((self.edge_pressed, self.column_widths[detail]));
-        self.column_widths[detail] = clamp_width(start_width + (start_x - x));
+        // Widths are kept at 100 %, whatever the size they are dragged at.
+        self.column_widths[detail] = clamp_width(start_width + scale.at_100(start_x - x));
         cx.notify();
     }
 
@@ -282,7 +296,7 @@ impl Shell {
 /// The draggable left edge of a header cell, in the gap before it (inside
 /// the line, which clips what leaves it), so it never covers the label. A
 /// double click gives the column back its own width.
-fn resize_edge(detail: Detail, cx: &mut Context<Shell>) -> Stateful<Div> {
+fn resize_edge(detail: Detail, scale: Scale, cx: &mut Context<Shell>) -> Stateful<Div> {
     crate::elements::edge::edge(
         ("column-edge", detail as usize),
         crate::elements::edge::Side::Left,
@@ -290,7 +304,9 @@ fn resize_edge(detail: Detail, cx: &mut Context<Shell>) -> Stateful<Div> {
         move |shell| shell.column_widths[detail] = detail.column().width,
         cx,
     )
-    .left(px(-(DETAIL_GAP + crate::elements::edge::THICKNESS) / 2.))
+    .left(px(-(scale.f(DETAIL_GAP)
+        + crate::elements::edge::THICKNESS)
+        / 2.))
 }
 
 /// The row at the top of rows `height` tall scrolled to `offset_y`, and how
@@ -516,8 +532,12 @@ impl Shell {
 
 /// The triangle that opens or closes folder `r` in place, pointing right
 /// while it is closed. Pressing it does only that: the row is not selected.
-fn disclosure(r: &RowData, color: gpui::Hsla, cx: &mut Context<Shell>) -> Div {
-    let slot = div().w(px(DISCLOSURE)).flex_none().flex().items_center();
+fn disclosure(r: &RowData, color: gpui::Hsla, scale: Scale, cx: &mut Context<Shell>) -> Div {
+    let slot = div()
+        .w(scale.px(DISCLOSURE))
+        .flex_none()
+        .flex()
+        .items_center();
     if !r.look.is_dir {
         return slot;
     }
@@ -546,7 +566,7 @@ fn disclosure(r: &RowData, color: gpui::Hsla, cx: &mut Context<Shell>) -> Div {
                     } else {
                         "toolbar/right.svg"
                     })
-                    .size(px(DISCLOSURE))
+                    .size(scale.px(DISCLOSURE))
                     .text_color(color),
             ),
     )
@@ -567,7 +587,7 @@ pub(crate) fn row_elements(
     (compact, tree): (bool, bool),
     cx: &mut Context<Shell>,
 ) -> Vec<Stateful<Div>> {
-    let height = row_height(shell.row_zoom);
+    let height = row_height(shell.row_zoom, files_scale(theme));
     let mut rows = rows.iter().peekable();
     range
         .map(|ix| match rows.next_if(|r| r.ix == ix) {
@@ -592,7 +612,8 @@ pub fn row(
     } else {
         theme.text_muted
     };
-    let height = row_height(shell.row_zoom);
+    let scale = files_scale(theme);
+    let height = row_height(shell.row_zoom, scale);
     let icon = look.picture(icon_px(shell.row_zoom), theme);
     // Known by its entry: what is inside it, by its place in it.
     let el = crate::views::entry::highlight(
@@ -621,8 +642,8 @@ pub fn row(
         .items_center()
         .gap_1()
         .when_some(icon, |d, icon| {
-            d.pl(px(r.depth as f32 * INDENT))
-                .child(disclosure(r, muted, cx))
+            d.pl(px(r.depth as f32 * scale.f(INDENT)))
+                .child(disclosure(r, muted, scale, cx))
                 .child(div().flex_none().child(icon))
         })
         // A name keeps its end: the extension tells files apart.
@@ -640,12 +661,13 @@ pub fn row(
                 Some(Shell::tag_act(shell.pane, Some(look.id), false, cx)),
             ))
         });
-    let mut line = line(name, if compact { 0. } else { NAME_MIN }, height);
+    let name_min = if compact { 0. } else { NAME_MIN };
+    let mut line = line(name, name_min, height, scale);
     if !compact {
         let shown = shell.shown_columns();
         for column in COLUMNS.iter().filter(|column| shown[column.detail]) {
-            let cell = cell(shell, column.detail, muted, height);
-            line = line.child(detail(r, column.detail, cell, theme));
+            let cell = cell(shell, column.detail, muted, height, scale);
+            line = line.child(detail(r, column.detail, cell, scale, theme));
         }
     }
     let seat = crate::views::entry::Seat {
@@ -662,8 +684,9 @@ pub fn row(
 /// never sits at `NAME_MIN` beside the blank of a column that went. Pure
 /// layout: nothing is measured, the header and every row agree by
 /// construction, and a pane of any width is laid out correctly in the frame
-/// it gets that width.
-pub(crate) fn line(name: Div, name_min: f32, height: f32) -> Div {
+/// it gets that width. `height` is the row's, drawn; `name_min` is at
+/// 100 %, drawn at `scale`.
+pub(crate) fn line(name: Div, name_min: f32, height: f32, scale: Scale) -> Div {
     div()
         .h(px(height - 2.))
         .flex_1()
@@ -673,13 +696,13 @@ pub(crate) fn line(name: Div, name_min: f32, height: f32) -> Div {
         .flex_row()
         .flex_wrap()
         .content_start()
-        .gap_x(px(DETAIL_GAP))
+        .gap_x(scale.px(DETAIL_GAP))
         .child(
             name.h(px(height - 2.))
                 .flex()
                 .items_center()
                 .flex_1()
-                .min_w(px(name_min)),
+                .min_w(scale.px(name_min)),
         )
 }
 
@@ -694,21 +717,24 @@ pub(crate) fn column(width: f32, color: gpui::Hsla, height: f32) -> Div {
 
 /// A detail column's cell, of a row or the header: its width, and set
 /// against the right when it holds a number.
-fn cell(shell: &Shell, detail: Detail, color: gpui::Hsla, height: f32) -> Div {
-    column(shell.column_widths[detail], color, height)
+fn cell(shell: &Shell, detail: Detail, color: gpui::Hsla, height: f32, scale: Scale) -> Div {
+    column(scale.f(shell.column_widths[detail]), color, height)
         .when(detail.column().right, gpui::Styled::text_right)
 }
 
 /// What row `r` shows in its `detail` column. A text cut to fit says itself
 /// whole when pointed at, before what the column adds (a folder's path, the
 /// exact time).
-fn detail(r: &RowData, detail: Detail, cell: Div, theme: &Theme) -> AnyElement {
+fn detail(r: &RowData, detail: Detail, cell: Div, scale: Scale, theme: &Theme) -> AnyElement {
     let (name, text, also) = match detail {
         Detail::Rating => {
             return cell
                 .flex()
                 .items_center()
-                .children(r.rating.map(|stars| crate::tags::stars(stars, 12., theme)))
+                .children(
+                    r.rating
+                        .map(|stars| crate::tags::stars(stars, scale.f(12.), theme)),
+                )
                 .into_any_element();
         }
         Detail::Folder => {
@@ -756,12 +782,14 @@ fn header_cell(
 
 fn header(shell: &Shell, theme: &Theme, tree: bool, cx: &mut Context<Shell>) -> Div {
     let icon = icon_px(shell.row_zoom);
+    let scale = files_scale(theme);
+    let height = scale.f(ROW_HEIGHT);
     let shown = shell.shown_columns();
     let mut line = line(
         // In the tree, Name stands over the names, past the triangle and
         // the icon a row begins with.
         div()
-            .when(tree, |d| d.pl(px(DISCLOSURE + icon + 8.)))
+            .when(tree, |d| d.pl(px(scale.f(DISCLOSURE + 8.) + icon)))
             .child(header_cell(
                 "h-name",
                 "Name",
@@ -771,11 +799,12 @@ fn header(shell: &Shell, theme: &Theme, tree: bool, cx: &mut Context<Shell>) -> 
                 cx,
             )),
         NAME_MIN,
-        ROW_HEIGHT,
+        height,
+        scale,
     );
     for column in COLUMNS.iter().filter(|column| shown[column.detail]) {
         line = line.child(
-            cell(shell, column.detail, theme.text_muted, ROW_HEIGHT)
+            cell(shell, column.detail, theme.text_muted, height, scale)
                 .relative()
                 .child(header_cell(
                     ("h", column.detail as usize),
@@ -785,11 +814,11 @@ fn header(shell: &Shell, theme: &Theme, tree: bool, cx: &mut Context<Shell>) -> 
                     theme,
                     cx,
                 ))
-                .child(resize_edge(column.detail, cx)),
+                .child(resize_edge(column.detail, scale, cx)),
         );
     }
     div()
-        .h(px(24.))
+        .h(scale.px(24.))
         .w_full()
         .flex()
         .flex_row()
@@ -859,10 +888,11 @@ impl PaneView for ListView {
         let count = shell.ui().list.sorted.len();
         let pane = shell.pane;
         let tree = self.tree;
-        let height = row_height(shell.row_zoom);
+        let height = row_height(shell.row_zoom, files_scale(&theme));
         let icon_px = u16::try_from(shell.row_zoom).unwrap_or(u16::MAX);
         if (height - self.height).abs() > f32::EPSILON {
-            // Zoomed: the row at the top stays at the top, as far into it.
+            // Zoomed, or the text resized: the row at the top stays at the
+            // top, as far into it.
             let before = self.height;
             let (row, within) = row_anchor(
                 f32::from(self.scroll.0.borrow().base_handle.offset().y),
@@ -1009,10 +1039,11 @@ impl PaneView for ListView {
 #[cfg(test)]
 mod tests {
     use super::{DEFAULT_ROW_ZOOM, ROW_HEIGHT, ROW_ZOOMS, row_anchor, row_height, row_offset};
+    use crate::sizes::Scale;
 
     #[test]
     fn a_scroll_position_comes_back_to_the_pixel() {
-        for h in ROW_ZOOMS.map(row_height) {
+        for h in ROW_ZOOMS.map(|zoom| row_height(zoom, Scale::ONE)) {
             for offset in [0., -1., -13., -h, -(40. * h + 11.5)] {
                 let anchor = row_anchor(offset, h);
                 assert!((row_offset(anchor, h) - offset).abs() < 1e-3, "{offset}");
@@ -1031,7 +1062,17 @@ mod tests {
 
     #[test]
     fn the_default_size_is_the_row_the_list_always_had() {
-        assert!((row_height(DEFAULT_ROW_ZOOM) - ROW_HEIGHT).abs() < f32::EPSILON);
+        assert!((row_height(DEFAULT_ROW_ZOOM, Scale::ONE) - ROW_HEIGHT).abs() < f32::EPSILON);
         assert!(ROW_ZOOMS.contains(&DEFAULT_ROW_ZOOM));
+    }
+
+    #[test]
+    fn rows_grow_with_their_text_and_icons_keep_their_zoom() {
+        // Text at 150 %: the row holds it, the icon as it was.
+        assert!((row_height(DEFAULT_ROW_ZOOM, Scale(1.5)) - 39.).abs() < f32::EPSILON);
+        // The largest icon still needs more than the text.
+        assert!((row_height(48, Scale(1.5)) - 56.).abs() < f32::EPSILON);
+        // Smaller text never makes a row shorter than its icon needs.
+        assert!((row_height(DEFAULT_ROW_ZOOM, Scale(0.8)) - ROW_HEIGHT).abs() < f32::EPSILON);
     }
 }

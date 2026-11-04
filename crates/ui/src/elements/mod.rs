@@ -19,6 +19,7 @@ pub mod picture;
 pub mod pill;
 pub mod popover;
 pub mod profile;
+pub mod rem;
 pub mod rows;
 pub mod scrollbar;
 pub mod terminal;

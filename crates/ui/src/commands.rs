@@ -73,6 +73,17 @@ mod args {
         dir: Option<String>,
     }
 
+    /// A part of the window's text size (ADR-117): `interface`, `files`,
+    /// `reading` or `code` (`files` when absent), and which way: `in`
+    /// larger, `out` smaller, `reset` back to 100 %.
+    #[derive(Deserialize, JsonSchema)]
+    pub(super) struct TextSize {
+        #[serde(default)]
+        part: Option<String>,
+        #[serde(default)]
+        dir: Option<String>,
+    }
+
     /// What the Usage map's blocks say.
     #[derive(Deserialize, JsonSchema)]
     pub(super) struct UsageMode {
@@ -499,7 +510,7 @@ use args::{
     Amount, Ask, Bucket, Close, Continue, CopyText, Count, Cursor, Delta, Dir, Find, Fold, Folders,
     History, Key, Layout, ListMoveArgs, Object, On, Pace, Page, PageLink, Pages, Pan, Pick, Player,
     Pointer, Popup, PreviewScroll, Scrub, Settings, Split, Submit, TagsPrompt, TerminalPaste, Text,
-    TimelineCursor, TimelineDate, Toggle, Toward, Url, UsageMode, View, ViewButton,
+    TextSize, TimelineCursor, TimelineDate, Toggle, Toward, Url, UsageMode, View, ViewButton,
 };
 
 /// The window's commands an agent may run (ADR-044): they change only
@@ -518,6 +529,7 @@ const SHOWS: &[&str] = &[
     "ui.view_button",
     "ui.view_buttons_reset",
     "ui.zoom",
+    "ui.text_size",
     "ui.grid_fill",
     "ui.quick_filters",
     "ui.peek",
@@ -1082,6 +1094,7 @@ fn repeats_of(name: &str) -> Option<Repeats> {
         "ui.cursor"
         | "ui.find_next"
         | "ui.zoom"
+        | "ui.text_size"
         | "ui.list_move"
         | "ui.review_choose"
         | "ui.rename_bulk_next"
@@ -1253,6 +1266,7 @@ fn forms_of(name: &str) -> Vec<Form> {
 /// its name: what differs is only which way they go.
 const FAMILIES: &[(&str, &str)] = &[
     ("ui.zoom", "Zoom"),
+    ("ui.text_size", "Text size"),
     ("ui.preview_zoom", "Preview: zoom"),
     ("ui.preview_page", "Preview: turn the page"),
 ];
@@ -1434,6 +1448,13 @@ pub fn declare_all(app: &App) {
         "ui.zoom",
         "Zoom",
         "Size what the view sizes (tiles, rows, a map's scale): in, out or back",
+    );
+    declare::<TextSize>(
+        app,
+        Topic::View,
+        "ui.text_size",
+        "Text size",
+        "Write a part of the window larger or smaller, a step at a time, or back at 100 %: the file views by default, else the interface, reading or code, as its setting does",
     );
     none(
         Topic::View,

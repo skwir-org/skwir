@@ -93,6 +93,7 @@ mod settings_view;
 pub mod shell;
 pub mod shortcuts;
 pub mod sidebar;
+pub mod sizes;
 pub mod status;
 pub mod suggestions;
 pub mod tabs;
