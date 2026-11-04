@@ -359,10 +359,18 @@ pub(crate) fn grammar_folder_records() -> serde_json::Value {
     };
     let mut records: Vec<serde_json::Value> = Vec::new();
     for (n, nearly) in report.nearly.iter().enumerate() {
+        // Whose it is, unless what is said names it already ("Emacs
+        // keeps no colors…").
+        let short = nearly.source.short();
+        let detail = if nearly.said.starts_with(short) {
+            nearly.said.clone()
+        } else {
+            format!("{short}: {}", nearly.said)
+        };
         records.push(serde_json::json!({
             "id": format!("nearly-{n}"),
             "name": home_shown(&nearly.what),
-            "detail": format!("{}: {}", nearly.source.short(), nearly.said),
+            "detail": detail,
             "wraps": true,
             "fixed": true,
         }));
@@ -479,7 +487,11 @@ pub(crate) fn language_records(app: &App) -> serde_json::Value {
                 Some(added) => format!("{}: {}", added.source.label(), added.name),
                 None => "bat".to_owned(),
             });
-            let usable_tree = language.tree.iter().find(|found| found.problem.is_none());
+            // A combined grammar is offered once checked (ADR-110, amended).
+            let usable_tree = language
+                .tree
+                .iter()
+                .find(|found| found.problem.is_none() && !found.checking);
             let automatic = match (choices.first, &bat, usable_tree) {
                 (First::Bat, Some(bat), _) | (First::TreeSitter, Some(bat), None) => bat.clone(),
                 (_, _, Some(found)) => tree_label(found),
@@ -495,13 +507,14 @@ pub(crate) fn language_records(app: &App) -> serde_json::Value {
             for found in &language.tree {
                 let detail = match &found.problem {
                     Some(problem) => problem.clone(),
+                    None if found.checking => "Checking…".to_owned(),
                     None => colors_from(found).unwrap_or_default(),
                 };
                 offered.push(serde_json::json!({
                     "value": found.source.key(),
                     "label": tree_label(found),
                     "detail": detail,
-                    "disabled": found.problem.is_some(),
+                    "disabled": found.problem.is_some() || found.checking,
                 }));
             }
             offered.push(serde_json::json!({ "value": "plain", "label": "Plain text" }));
@@ -576,7 +589,7 @@ static GRAMMARS_CHOSEN: parking_lot::Mutex<Vec<(String, String)>> =
 /// again finds it as it then stands (`highlight::engine`).
 pub(crate) fn choose_grammar(app: &App, language: &str, grammar: &str) -> anyhow::Result<()> {
     use skwir_platform::highlight::Choice;
-    let language = language.trim().to_lowercase();
+    let language = skwir_platform::grammars::key_of(language.trim());
     anyhow::ensure!(!language.is_empty(), "No language is named");
     anyhow::ensure!(
         grammar == "auto" || Choice::of_key(grammar).is_some(),
@@ -621,7 +634,7 @@ fn keep_grammars_chosen(app: &App) -> anyhow::Result<()> {
     let mut table: std::collections::BTreeMap<String, String> =
         app.settings.get(CHOSEN_KEY).unwrap_or_default();
     for (language, grammar) in chosen {
-        table.retain(|key, _| key.to_lowercase() != language);
+        table.retain(|key, _| skwir_platform::grammars::key_of(key) != language);
         if grammar != "auto" {
             table.insert(language, grammar);
         }
@@ -642,6 +655,32 @@ fn keep_grammars_chosen(app: &App) -> anyhow::Result<()> {
     LANGUAGES.changed();
     app.wake();
     app.settings.save()
+}
+
+/// Check the combined grammars waiting on a worker, once Languages is
+/// shown (ADR-110, amended): a row's Automatic label depends on the
+/// answer, so it is asked then, not when a picker opens, and only when
+/// one waits and no check runs (`grammars::take_waiting`). What answers
+/// is listed again.
+pub(crate) fn check_grammars(app: &Arc<App>) {
+    if !skwir_platform::grammars::take_waiting() {
+        return;
+    }
+    let weak = app.weak();
+    let token = app.lifetime().child();
+    app.scheduler.spawn(
+        skwir_core::scheduler::Priority::Normal,
+        "grammar-checks",
+        token.clone(),
+        move || {
+            if skwir_platform::grammars::check_combined(&token) {
+                LANGUAGES.changed();
+                if let Some(app) = weak.upgrade() {
+                    app.wake();
+                }
+            }
+        },
+    );
 }
 
 /// Read the themes the user added to bat on a worker and declare the code
@@ -2843,6 +2882,7 @@ mod tests {
             file_types: Vec::new(),
             first_line: None,
             problem: None,
+            checking: false,
         };
         let whole = found(Source::Zed, None, None);
         assert_eq!(super::tree_label(&whole), "Zed (tree-sitter)");

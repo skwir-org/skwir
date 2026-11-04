@@ -628,8 +628,18 @@ by one rule, said and checked. Built in this order:
   never lent; a combined grammar checked by the helper when Languages is
   first shown, offered as being checked until answered.
 
-**Status:** accepted 2026-11-04; W1 to W3 built (checks in
-`docs/STATUS-LOG.md` once W4 is).
+**Status:** accepted and built 2026-11-04, W1 to W4, checked on Linux
+(tests, and a window on a display of its own with real libraries);
+Windows and macOS compiled only. Deviations: the folders looked in fold
+as every long list does (its first eight rows, what was nearly found
+first) rather than shut whole; the check's helper is told its grammars
+afresh at each check (`Helper::set_grammars_afresh`), since one told the
+same answered from what it had loaded before a query was written again,
+found in the window; the helper's check answer says apart why a grammar
+colors nothing (`Reply::Checked::colorless`); queries alone of an editor
+are no longer listed at all (Neovim's of parsers not installed were
+greyed rows). Checks in `docs/STATUS-LOG.md` (2026-11-04, "Grammars
+whole or combined"); what it leaves under "What is left".
 
 ## What is left
 
@@ -791,6 +801,14 @@ progress, fixed the same night):
   are plain where bat colors them.
 - A grammar's file types taken from its name can name no real file
   (Neovim's `markdown_inline`, `query`, `vimdoc`).
+- From grammars whole or combined (2026-11-04, ADR-110 amended): a
+  combined grammar that fails while coloring (before Languages was shown)
+  falls back to bat as before, but the failure is not kept for the
+  Reading page, which checks it itself; "Checking…" was not seen in a
+  window (the check answered before a picker opened; unit tests only);
+  an injected language named the other way (`c-sharp` for `c_sharp`) is
+  matched by the helper's own names, not by `grammars::key_of`; the new
+  list was not heard with a screen reader (`just a11y-check` not run).
 - Emacs's grammars come without queries: its modes color in Lisp
   (`treesit-font-lock-rules`, often built from `defconst`s, `rx` and
   `regexp-opt`, some captures naming a function). Since 2026-11-03 the

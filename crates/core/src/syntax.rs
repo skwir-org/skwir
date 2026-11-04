@@ -199,10 +199,14 @@ pub enum Reply {
         wasm: bool,
     },
     /// `Check`: the grammar's ABI, and what is wrong with it or a query
-    /// (the query left out, the grammar used without it).
+    /// (the query left out, the grammar used without it); why it colors
+    /// nothing, when none of its highlights queries compiles (also the
+    /// last of `problems`).
     Checked {
         abi: u32,
         problems: Vec<String>,
+        #[serde(default)]
+        colorless: Option<String>,
     },
     /// `Open`: how many lines the text holds, and the capture names its
     /// colors index (`Span::capture`): the grammar's highlights and those

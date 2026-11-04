@@ -680,6 +680,10 @@ impl SettingsView {
             return;
         };
         debug_assert_eq!(spec.kind, SettingKind::Records);
+        // The languages shown: their combined grammars are checked.
+        if key == crate::settings::LANGUAGES_KEY {
+            crate::settings::check_grammars(&self.app);
+        }
         let editing = self.drafts.get(key).map(|d| (d.id.clone(), d.new));
         let all = self.parsed_records(key, value);
         // A long list: its filter, and its first rows until unfolded.

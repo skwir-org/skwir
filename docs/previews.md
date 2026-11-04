@@ -146,12 +146,16 @@ The player, in the panel or pinned at its foot:
   repository as `tree-sitter build` leaves it), or one an editor or the
   system installed (Zed's extensions, Helix, Neovim, Emacs, the
   tree-sitter CLI, `/usr/lib/tree_sitter`). A grammar is a library and
-  the queries that color with it; a library found without queries
-  borrows those of its language from another place. Emacs keeps none
-  (its modes color in Lisp), so an Emacs grammar colors only once its
-  repository is in Skwir's grammars folder, built or not: clone it there
-  at the revision Emacs built, or its queries may name what the library
-  lacks and be refused. Reading › Grammars lists
+  the queries that color with it. A library found without queries takes
+  those of its grammar's own repository (in Skwir's grammars folder or
+  a tree-sitter CLI parser directory, built or not) or the system's,
+  never another editor's, which are written for their own copy of the
+  grammar: the choice names both ("tree-sitter CLI, with Emacs's
+  library"), and is offered once the two are checked to fit, when the
+  languages are first shown. Emacs keeps no queries (its modes color in
+  Lisp), so an Emacs grammar colors only once its repository is there:
+  clone it at the revision Emacs built, or its queries may name what the
+  library lacks and be refused, with why. Reading › Grammars lists
   the languages a grammar was found or added for, with the files each
   colors and a choice of what colors it: Automatic (bat first by
   default, as "Automatic uses" says), bat's grammar, the tree-sitter

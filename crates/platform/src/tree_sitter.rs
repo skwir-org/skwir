@@ -83,6 +83,15 @@ pub fn shared() -> &'static Helper {
     &SHARED
 }
 
+/// The helper the Reading page's checks run in (ADR-110, amended): told
+/// the combined grammars waiting, each under a name of its own, never
+/// those that color, so a check never lets go of a helper a text is open
+/// in. Let go of when unused, as the shared one.
+pub fn checking() -> &'static Helper {
+    static CHECKING: LazyLock<Helper> = LazyLock::new(|| Helper::new(None, true, KEPT));
+    &CHECKING
+}
+
 /// A helper of its own running `executable`, isolated as the shared one,
 /// told no grammar until `set_grammars` is: tests, and a tool that ships
 /// the program elsewhere.
@@ -143,12 +152,14 @@ pub struct Opened {
     pub captures: Vec<String>,
 }
 
-/// A grammar checked: the ABI it was generated for, and what is wrong with
-/// it or a query (the query left out, the grammar used without it).
+/// A grammar checked: the ABI it was generated for, what is wrong with it
+/// or a query (the query left out, the grammar used without it), and why
+/// it colors nothing, when none of its highlights queries compiles.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Checked {
     pub abi: u32,
     pub problems: Vec<String>,
+    pub colorless: Option<String>,
 }
 
 /// A text open in a helper, and what opens it again: its grammar's name,
@@ -257,6 +268,19 @@ impl Helper {
         if *state.grammars == told {
             return;
         }
+        state.grammars = Arc::new(told);
+        let before = state.current.take();
+        drop(state);
+        drop(before);
+    }
+
+    /// `set_grammars_reading`, told afresh even where the grammars are the
+    /// same: the next call starts a helper that reads their files as they
+    /// are then. One told the same keeps what it loaded, so a check after a
+    /// grammar's query was written again needs this (`grammars::check_combined`).
+    pub fn set_grammars_afresh(&self, grammars: Vec<Grammar>, folders: Vec<PathBuf>) {
+        let told = Told { grammars, folders };
+        let mut state = self.inner.state.lock();
         state.grammars = Arc::new(told);
         let before = state.current.take();
         drop(state);
@@ -409,7 +433,15 @@ impl Helper {
         );
         self.used(&process);
         match answer? {
-            Reply::Checked { abi, problems } => Ok(Checked { abi, problems }),
+            Reply::Checked {
+                abi,
+                problems,
+                colorless,
+            } => Ok(Checked {
+                abi,
+                problems,
+                colorless,
+            }),
             reply => Err(unexpected(&reply)),
         }
     }
@@ -1104,6 +1136,51 @@ mod tests {
         large
     }
 
+    /// A check after a query was written again reads it as it is, the
+    /// grammars told afresh: told the same, a helper keeps what it loaded.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_check_told_afresh_reads_the_queries_as_they_are() {
+        let Some(program) = built_helper() else {
+            return;
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let highlights = tmp.path().join("highlights.scm");
+        std::fs::copy(&json().highlights[0], &highlights).unwrap();
+        let grammar = Grammar {
+            highlights: vec![highlights.clone()],
+            ..json()
+        };
+        let helper = Helper::new(Some(program), true, KEPT);
+        let told = || {
+            (
+                vec![grammar.clone()],
+                files_folders(std::slice::from_ref(&grammar)),
+            )
+        };
+        let (grammars, folders) = told();
+        helper.set_grammars_afresh(grammars, folders);
+        let cancel = CancelToken::new();
+        assert_eq!(helper.check("json", &cancel).unwrap().colorless, None);
+        std::fs::write(&highlights, "(no_such_node) @keyword\n").unwrap();
+        let (grammars, folders) = told();
+        helper.set_grammars_reading(grammars, folders);
+        assert_eq!(
+            helper.check("json", &cancel).unwrap().colorless,
+            None,
+            "told the same: what it loaded"
+        );
+        let (grammars, folders) = told();
+        helper.set_grammars_afresh(grammars, folders);
+        let checked = helper.check("json", &cancel).unwrap();
+        assert!(checked.colorless.is_some(), "{checked:?}");
+        assert!(
+            checked.problems[0].contains("no_such_node"),
+            "{:?}",
+            checked.problems
+        );
+    }
+
     /// A text opened in the helper, its grammar's folder read where it runs
     /// isolated, colored line by line, checked, closed.
     #[cfg(target_os = "linux")]
@@ -1137,7 +1214,8 @@ mod tests {
             helper.check("json", &cancel).unwrap(),
             Checked {
                 abi: 14,
-                problems: Vec::new()
+                problems: Vec::new(),
+                colorless: None
             }
         );
         let error = helper.check("yaml", &cancel).unwrap_err().to_string();

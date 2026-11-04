@@ -145,11 +145,12 @@ impl GrammarChoices {
     }
 }
 
-/// The choices a table says, by language in lower case.
+/// The choices a table says, by language key (`grammars::key_of`: one
+/// kept as `c-sharp` is `c_sharp`'s).
 pub fn chosen_in(table: &BTreeMap<String, String>) -> BTreeMap<String, Choice> {
     table
         .iter()
-        .filter_map(|(language, key)| Some((language.to_lowercase(), Choice::of_key(key)?)))
+        .filter_map(|(language, key)| Some((grammars::key_of(language), Choice::of_key(key)?)))
         .collect()
 }
 
@@ -159,7 +160,7 @@ pub fn chosen_in(table: &BTreeMap<String, String>) -> BTreeMap<String, Choice> {
 /// color its files.
 #[derive(Clone, Debug)]
 pub struct Language {
-    /// Its name in lower case: what its choice is kept by.
+    /// Its key (`grammars::key_of`): what its choice is kept by.
     pub key: String,
     pub title: String,
     pub file_types: Vec<String>,
@@ -175,7 +176,7 @@ pub struct Language {
 pub fn languages(all: &[Found], added: &[Added]) -> Vec<Language> {
     let mut languages: Vec<Language> = Vec::new();
     for found in all {
-        let key = found.grammar.name.to_lowercase();
+        let key = grammars::key_of(&found.grammar.name);
         match languages.last_mut() {
             Some(language) if language.key == key => language.tree.push(found.clone()),
             _ => languages.push(Language {
@@ -200,7 +201,7 @@ pub fn languages(all: &[Found], added: &[Added]) -> Vec<Language> {
     let mut alone: Vec<Language> = Vec::new();
     let mut alone_by_key: HashMap<String, usize> = HashMap::new();
     for added in added {
-        let key = added.name.to_lowercase();
+        let key = grammars::key_of(&added.name);
         let home = by_key.get(&key).copied().or_else(|| {
             types_of(&added.file_types)
                 .iter()
@@ -273,10 +274,10 @@ pub fn language_key(
         .or_else(|| grammars::for_file_any(all, name, first_line))
         .or_else(|| language.and_then(|language| grammars::named(all, language)));
     if let Some(tree) = tree {
-        return Some(tree.grammar.name.to_lowercase());
+        return Some(grammars::key_of(&tree.grammar.name));
     }
     let named = language.and_then(|language| bat.grammar_of(language))?;
-    let key = named.name.to_lowercase();
+    let key = grammars::key_of(&named.name);
     let types = types_of(&named.file_types);
     let home = languages
         .iter()
@@ -828,6 +829,7 @@ mod tests {
             file_types: file_types.iter().map(|&t| t.to_owned()).collect(),
             first_line: None,
             problem: problem.map(str::to_owned),
+            checking: false,
         }
     }
 

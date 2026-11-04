@@ -476,12 +476,21 @@ fn a_grammar_that_fails_is_said_and_the_helper_goes_on() {
     // A query that does not compile is passed over, where it is said; a
     // grammar no highlights query of compiles colors no text (bat's
     // grammar does).
-    let Reply::Checked { abi, problems } = helper.ask(&Request::Check {
+    let Reply::Checked {
+        abi,
+        problems,
+        colorless,
+    } = helper.ask(&Request::Check {
         name: "broken".into(),
-    }) else {
+    })
+    else {
         panic!("not checked");
     };
     assert_eq!(abi, 14);
+    assert!(
+        colorless.is_some_and(|why| why.contains("none of its highlights")),
+        "said apart"
+    );
     assert_eq!(problems.len(), 2, "{problems:?}");
     assert!(
         problems[0].starts_with(&format!("highlights: {}, line 2", broken.display())),
@@ -513,12 +522,18 @@ fn a_grammar_that_fails_is_said_and_the_helper_goes_on() {
         "its own and the first lent: {problems:?}"
     );
     // And the next works.
-    let Reply::Checked { problems, .. } = helper.ask(&Request::Check {
+    let Reply::Checked {
+        problems,
+        colorless,
+        ..
+    } = helper.ask(&Request::Check {
         name: "JSON".into(),
-    }) else {
+    })
+    else {
         panic!("not checked");
     };
     assert!(problems.is_empty(), "{problems:?}");
+    assert_eq!(colorless, None);
     assert!(matches!(
         helper.open(2, "json", &text),
         Reply::Opened { .. }

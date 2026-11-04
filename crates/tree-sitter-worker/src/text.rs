@@ -112,6 +112,7 @@ impl Worker {
                         .chain(&loaded.colorless)
                         .cloned()
                         .collect(),
+                    colorless: loaded.colorless.clone(),
                 })
             }
             Request::Open { doc, name, text } => {

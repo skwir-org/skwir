@@ -1557,10 +1557,25 @@ is still to come are in `docs/preview-frame.md`.
   extension's `config.toml`) and a clone's links never leave its
   repository or extension; a link a package manager left in an editor's
   or the system's folder is followed. The helper is told those folders
-  and reads nothing else of the user's. Each source's queries of a
-  language are told (`Grammar::lent`) and tried in turn where one does
-  not compile; a grammar none of whose highlights compile colors no
-  text, which bat's grammar then colors.
+  and reads nothing else of the user's.
+- **A grammar is whole, or combined by one rule** (ADR-110, amended
+  2026-11-04): one source's library and its own queries; else a library
+  and the queries of its grammar's own repository (Skwir's folder, the
+  CLI's) or the system's (`Source::lends`), never an editor's, which are
+  written for its revision and its conditions. Those that lend are told
+  (`Grammar::lent`) and tried in turn where one does not compile; a
+  grammar none of whose highlights compile colors no text, which bat's
+  grammar then colors. A part is never listed alone. A language is
+  known by its key (`grammars::key_of`: lower case, `-` read as `_`, as
+  its library's symbol says), choices too. A source is named by the
+  folder a grammar was found in, never by its library's name; a combined
+  grammar by its queries' source first. A combined grammar is checked in
+  a helper of its own (`tree_sitter::checking`, `check_combined`) when
+  Languages is first drawn, kept for the run by its files' identity and
+  change time, offered once it fits (`Found::checking`); it colors
+  meanwhile. Where grammars were looked for, and what was nearly found,
+  is kept beside them (`grammars::report`): never an editor's queries of
+  a language it has no parser of.
 - **The tree-sitter helper is let go of a minute after its last use**,
   whatever is open in it (`tree_sitter::KEPT`): a `Doc` keeps its text
   (`tree_sitter::Text`, shared with the preview's bytes), not the

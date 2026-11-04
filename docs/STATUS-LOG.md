@@ -10544,3 +10544,91 @@ settings file still from `~/`. The popup of the lowest rows, one line
 taller, scrolls to its last choice. Not checked: a real Emacs grammar
 colored through a lent repository (the libraries were empty files),
 macOS and Windows, release-check.
+
+## Grammars whole or combined (2026-11-04)
+
+The report of 2026-11-03 followed further by an agent on the user's
+machine: a grammar's row said "Emacs" though its colors and file types
+came from a repository in a CLI parser directory (not built, the CLI's
+library cache emptied); a repository two folders below a parser
+directory was not found and nothing said so; a library in `/usr/lib`
+named as Emacs names its own was called Emacs's. ADR-110's decision 3
+amended with the user from a page of samples and four questions, all
+answered as recommended (74a6aaf9), then built in four commits.
+
+- **W1, sources named by their folder** (1e4a4c13): Emacs's grammars
+  are its own folders' (`~/.emacs.d/tree-sitter`, `<config>/emacs/
+  tree-sitter`); a `libtree-sitter-<lang>` library in the system's
+  library folders is the system's, with the system's queries of it
+  (`Roots::system_libraries`, `library_folder_grammars`).
+- **W2, a combined grammar named by both parts** (a3a5eb36): its
+  queries' source first, "tree-sitter CLI, with Emacs's library", in the
+  picker and Automatic's label, its detail naming the repository by its
+  folder ("its colors from tree-sitter-heex"; `Found::queries_at`).
+- **W3, where grammars were looked for** (fdc2f19e): a list under
+  Languages (`reading.grammar_folders`, `ui.grammar_folders`), what was
+  nearly found first with what to do, read whole (`wraps`), then each
+  folder there with the languages it held, then each source none of
+  whose folders is there; its title counts what was nearly found. Nearly
+  found: a parser directory the CLI's configuration names that is not
+  there, a configuration that does not read, a repository named
+  `tree-sitter-*` one folder too deep in a parser directory or Skwir's
+  folder, and a grammar that cannot be used whose library was found or
+  whose repository the user put there; never an editor's queries of a
+  language it has no parser of (Helix's `markup`).
+- **W4, one rule of combining, checked**: a library takes the queries of
+  its grammar's own repository (Skwir's folder, the CLI's) or the
+  system's (`Source::lends`), never an editor's; Neovim's `nix` parser
+  is no longer colored by Zed's queries, and says so ("no queries
+  installed with it, and Zed's are not lent to another's library: put
+  the grammar's repository…"). A language is known by its key
+  (`grammars::key_of`, `-` read as `_`, as its library's symbol says):
+  Emacs's `c-sharp` and Neovim's `c_sharp` are one language, choices
+  kept under the old name read under the new. Queries alone are never
+  listed, but for a repository of Skwir's or the CLI's with no library
+  anywhere. A combined grammar waits for its check (`Found::checking`):
+  colors meanwhile, offered on the Reading page once it fits. The check
+  runs when Languages is drawn and one waits (`take_waiting`, one at a
+  time), in a helper of its own (`tree_sitter::checking`), each grammar
+  under a name of its own; its answer is kept for the run by the files'
+  path, identity and change time (`fit_key`), so finding them again
+  checks only what changed. A refusal greys the choice with the helper's
+  reason, paths from `~/`. The helper's check answer gained `colorless`.
+- **Found in the window, fixed:** a check after the repository's query
+  was written again answered "fits": the check's helper, told the same
+  grammars, kept running and answered from what it had loaded. It is now
+  told them afresh at each check (`Helper::set_grammars_afresh`), a new
+  helper reading the files as they are; a test against the real helper
+  shows both (`a_check_told_afresh_reads_the_queries_as_they_are`).
+
+Checked: tests of the sources (a package's library with and without the
+system's queries; Neovim's `nix` not lent Zed's; Neovim's `typst` chosen
+beside Helix's; Neovim's queries without a parser and Helix's `markup`
+not listed; Emacs's `heex` and Neovim's `lua` waiting for their check,
+Helix's `lua` queries not lent), `one_grammar_named_two_ways_is_one_
+language`, `a_check_is_kept_by_the_files_it_checked` (fits, refused, a
+query written again checked again), `the_folders_looked_in_say_what_was_
+nearly_found`, `a_combined_grammar_is_named_by_both_its_parts`, the
+page order, the helper's own check tests (`colorless`). `cargo clippy -D
+warnings` on skwir-core, skwir-platform, skwir-ui and
+skwir-tree-sitter-worker clean; skwir-platform, skwir-ui and the helper's
+tests all pass. On Xvfb (:93, lavapipe), the debug build with fixture
+XDG folders: the JSON grammar the helper's tests build, as Emacs's
+`libtree-sitter-json.so` and as Neovim's `json.so` with its queries,
+tree-sitter-json's repository (not built) in Skwir's folder, an empty
+Emacs `libtree-sitter-quint.so`, a CLI configuration naming a folder
+holding `gleam-mode/tree-sitter-gleam` and a folder not there. Languages
+shown started a sandboxed helper with no file open; json offered "Neovim
+(tree-sitter)" and "Skwir's folder, with Emacs's library", "its colors
+from tree-sitter-json"; with the repository's query written as
+`(as_clause) @keyword` and the window started again, that choice was
+greyed with "its queries do not fit this library (highlights:
+~/…/queries/highlights.scm, line 1: invalid node type "as_clause"): put
+the repository at the revision its library was built from"; the query
+put back and Settings opened again, it was offered again. "Where grammars
+were looked for: 3 nearly found" listed the missing parser directory,
+the repository a folder too deep (with what to add to
+parser-directories), quint's library with nothing to color with, then
+each folder with what it held. Not checked: "Checking…" in a window (it
+answered first), a real Emacs grammar, the list with a screen reader,
+macOS and Windows, release-check.
