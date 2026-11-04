@@ -76,7 +76,9 @@ pub trait PaneView {
     ) -> AnyElement;
     /// Bring index `ix` of the sorted order into view, scrolling the least
     /// (nothing when it is wholly in view): a key stepping past an edge
-    /// moves the view by that step, not by a page.
+    /// moves the view by that step, not by a page. It may be asked before
+    /// the view draws (the view just chosen): a view that finds `ix` among
+    /// what it drew keeps the request until it draws again.
     fn scroll_to(&mut self, ix: usize);
     /// Bring index `ix` into the middle of the view, unless it is wholly
     /// in view already (then nothing moves): a jump, such as a name typed,

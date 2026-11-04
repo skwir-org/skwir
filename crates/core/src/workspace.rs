@@ -2005,6 +2005,13 @@ impl Pane {
         self.expanded.iter().any(|o| o.at == at)
     }
 
+    /// Changes whenever a folder is opened in place or closed, not as
+    /// their listings fill: what a view that asks for folders to be opened
+    /// keys its asking on, so it asks again once they were closed.
+    pub fn expanded_version(&self) -> u64 {
+        self.expanded_version
+    }
+
     /// Changes whenever the entries or the order the opened folders add may
     /// have: a view keys what it drew on it beside the listing's version.
     pub fn tree_version(&self) -> u64 {
@@ -3503,6 +3510,48 @@ mod tests {
         assert_ne!(p.tree_members_version(), members);
         assert!(p.entry(file(20_000).id).is_some());
         assert_eq!(built(), before + 2);
+    }
+
+    /// What is open in place moves `expanded_version` when a folder opens
+    /// or closes, not as its listing fills: the board asks for its columns
+    /// once for each, and again once another view closed them.
+    #[test]
+    fn what_is_open_in_place_changes_when_folders_open_or_close() {
+        use crate::location::ListingEvent;
+        let mut folder = file(0);
+        folder.kind = crate::entry::EntryKind::Directory;
+        let at = folder.id;
+        let (mut p, _tx) = pane_with("/", vec![folder]);
+        let inside = Location::new("search", "/f0");
+        let opened = p.expanded_version();
+        assert!(p.expand(inside.clone(), at));
+        assert_ne!(p.expanded_version(), opened, "opened");
+        let (tx, events) = crossbeam_channel::unbounded();
+        p.add_kept(
+            Arc::new(Searched {
+                location: inside.clone(),
+                events,
+                paths: crate::hashing::Map::default(),
+            }),
+            Listing::default(),
+        );
+        let open = p.expanded_version();
+        tx.send(ListingEvent::Added((1..=10).map(file).collect()))
+            .unwrap();
+        let tree = p.tree_version();
+        p.pump(std::time::Duration::from_secs(10));
+        assert_ne!(p.tree_version(), tree, "its entries came");
+        assert_eq!(p.expanded_version(), open, "nothing opened or closed");
+        assert!(!p.expand(inside.clone(), at), "open already");
+        assert_eq!(p.expanded_version(), open);
+
+        assert!(p.collapse_all());
+        assert_ne!(p.expanded_version(), open, "closed");
+        let closed = p.expanded_version();
+        assert!(!p.collapse_all(), "nothing open");
+        assert_eq!(p.expanded_version(), closed);
+        assert!(p.expand(inside, at), "opened again");
+        assert_ne!(p.expanded_version(), closed);
     }
 
     /// A sweep over the order it was drawn over changes only what each step

@@ -187,6 +187,9 @@ around the views is in [shell.md](shell.md).
   (`Shell::drop_on_place`, told where it came from, so a tag's drop takes
   the old tag). An emptied column stays, to take cards back. Its keys move
   in the pane's order (`PaneView::nav_delta`), so Shift extends.
+  It asks for its columns once for each state of what is open
+  (`Pane::expanded_version`): another view closes them (`Shell::sync`,
+  the tree's Left), and coming back the board asks again.
 
 ## Rubber band
 

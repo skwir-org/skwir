@@ -57,8 +57,17 @@ struct Column {
 
 #[derive(Default)]
 pub struct BoardView {
-    /// The listing and the columns asked to open, so each is asked once.
-    asked: Option<(u64, Vec<EntryId>)>,
+    /// The columns asked to open, and what they were missing from, so each
+    /// is asked once while nothing closes them. Leaving for a view that
+    /// does not open folders in place closes them all (`Shell::sync`), as
+    /// the tree closes some: coming back, the board asks again, or its
+    /// columns stayed empty.
+    asked: Option<(Against, Vec<EntryId>)>,
+    /// The card at an index of the pane's order to bring into view, and
+    /// how: found once the columns are drawn as they are now. Asked before
+    /// a draw (the view chosen with a cursor), the columns and the order
+    /// were those drawn last, a visit before, or none.
+    wanted: Option<(usize, ScrollStrategy)>,
     scrolls: HashMap<Location, UniformListScrollHandle>,
     /// The row of columns, scrolled sideways.
     row: ScrollHandle,
@@ -77,10 +86,15 @@ pub struct BoardView {
     /// The columns worked out last, and what they were worked out of (the
     /// listing as it was, the folders opened, the sort, the filter, the
     /// settings for tags' colors): every frame walked the whole place.
-    columns_of: Option<(ColumnsOf, Vec<Column>, Vec<EntryId>, u64)>,
+    columns_of: Option<(ColumnsOf, Vec<Column>, Vec<EntryId>, Against)>,
 }
 
 type ColumnsOf = (u64, u64, u64, skwir_core::SortSpec, u64, u64);
+
+/// What the columns not open yet were missing from: the listing
+/// (`Listing::id`) and the folders opened in place
+/// (`Pane::expanded_version`).
+type Against = (u64, u64);
 
 /// A column drawn: its entry, where it leads, its cards.
 type Drawn = (Option<EntryId>, Location, Arc<[EntryId]>);
@@ -129,11 +143,13 @@ impl BoardView {
 
     /// The columns of the place `shell` shows, and those not open yet;
     /// those it showed and that went, empty.
-    fn columns(&mut self, shell: &Shell) -> (Vec<Column>, Vec<EntryId>, u64) {
+    fn columns(&mut self, shell: &Shell) -> (Vec<Column>, Vec<EntryId>, Against) {
+        // The folders opened or closed move `tree_version`: the columns
+        // worked out keep what they were missing from.
         let of = {
             let ws = shell.app.workspace.read();
             let Some(pane) = ws.pane(shell.pane) else {
-                return (Vec::new(), Vec::new(), 0);
+                return (Vec::new(), Vec::new(), (0, 0));
             };
             (
                 pane.listing.id(),
@@ -144,20 +160,20 @@ impl BoardView {
                 shell.app.settings.revision(),
             )
         };
-        if let Some((at, columns, missing, listing)) = &self.columns_of
+        if let Some((at, columns, missing, against)) = &self.columns_of
             && *at == of
         {
-            return (columns.clone(), missing.clone(), *listing);
+            return (columns.clone(), missing.clone(), *against);
         }
         let worked = self.work_out_columns(shell);
         self.columns_of = Some((of, worked.0.clone(), worked.1.clone(), worked.2));
         worked
     }
 
-    fn work_out_columns(&mut self, shell: &Shell) -> (Vec<Column>, Vec<EntryId>, u64) {
+    fn work_out_columns(&mut self, shell: &Shell) -> (Vec<Column>, Vec<EntryId>, Against) {
         let ws = shell.app.workspace.read();
         let Some(pane) = ws.pane(shell.pane) else {
-            return (Vec::new(), Vec::new(), 0);
+            return (Vec::new(), Vec::new(), (0, 0));
         };
         let spec = pane.sort;
         let top = pane.listing.sorted(spec);
@@ -244,7 +260,11 @@ impl BoardView {
                 },
             );
         }
-        (columns, missing, pane.listing.id())
+        (
+            columns,
+            missing,
+            (pane.listing.id(), pane.expanded_version()),
+        )
     }
 }
 
@@ -518,10 +538,11 @@ impl PaneView for BoardView {
 
     fn render(&mut self, shell: &mut Shell, _: &mut Window, cx: &mut Context<Shell>) -> AnyElement {
         let theme = cx.global::<Theme>().clone();
-        let (columns, missing, listing) = self.columns(shell);
-        // Each column is opened in place once: its cards are the pane's.
-        if !missing.is_empty() && self.asked.as_ref() != Some(&(listing, missing.clone())) {
-            self.asked = Some((listing, missing.clone()));
+        let (columns, missing, against) = self.columns(shell);
+        // Each column is opened in place once while it stays open: its
+        // cards are the pane's.
+        if !missing.is_empty() && self.asked.as_ref() != Some(&(against, missing.clone())) {
+            self.asked = Some((against, missing.clone()));
             let pane = shell.pane;
             if let Err(error) = shell.app.dispatch(&Invocation::with_args(
                 "expand",
@@ -547,6 +568,9 @@ impl PaneView for BoardView {
         self.order = Arc::clone(&shell.ui().list.sorted);
         for c in &columns {
             self.scrolls.entry(c.location.clone()).or_default();
+        }
+        if let Some((ix, strategy)) = self.wanted.take() {
+            self.scroll_card(ix, strategy);
         }
         let mut row = div()
             .id(("board", shell.pane.0 as usize))
@@ -576,13 +600,14 @@ impl PaneView for BoardView {
             .into_any_element()
     }
 
-    /// The card at `ix` of the pane's order, in its column and across.
+    /// The card at `ix` of the pane's order, in its column and across,
+    /// once drawn (`wanted`), as the list's handle scrolls at its layout.
     fn scroll_to(&mut self, ix: usize) {
-        self.scroll_card(ix, ScrollStrategy::Nearest);
+        self.wanted = Some((ix, ScrollStrategy::Nearest));
     }
 
     fn scroll_to_middle(&mut self, ix: usize) {
-        self.scroll_card(ix, ScrollStrategy::Center);
+        self.wanted = Some((ix, ScrollStrategy::Center));
     }
 
     /// Every key is a move in the pane's order to the card it reaches: up
@@ -642,6 +667,7 @@ impl PaneView for BoardView {
 
     fn reset(&mut self) {
         self.asked = None;
+        self.wanted = None;
         self.drawn.clear();
         self.drawn_index = std::cell::OnceCell::new();
         self.seen.clear();
