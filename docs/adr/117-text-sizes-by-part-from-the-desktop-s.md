@@ -118,3 +118,12 @@ apart, and changes how gpui maps the pointer.
   name and columns, the columns view's columns, the grid's labels (now
   Body, their line 18 px at 100 %), captions and least width, the
   board's columns and cards at the files' scale; `ui.text_size`.
+- Step 2 (2026-11-04): `reading.text_size` (Reading, Text, after the
+  reading font) and `ui.code_text_size` (Reading, Code, after the code
+  font). A preview is drawn at its part's setting until a size is
+  chosen for it (`inspector::State::percent`), the picker showing the
+  setting's percentages, stepping in the preview's own (60 to 250), As
+  in Settings going back; tables (their cells, header and columns) and
+  the byte view (its rows, header and columns) follow it, no longer
+  greyed; a book laid out by an engine starts at Reading's size; the
+  terminal at the code's scale.

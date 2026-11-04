@@ -466,6 +466,10 @@ archives, and the bytes of any file.
   column when you click its header. Drag the edge at a header's right to
   widen or narrow its column, and double-click it to fit the column to
   its content again; the widths stay while the file is shown.
+- Text, tables and bytes open at the size Settings › Reading says, one
+  for what is read and one for code (Reading text size, Code text size).
+  The bar's − and + (or `Ctrl+=` and `Ctrl+-` in the preview) change the
+  file shown only; its menu goes back to the size Settings says.
 - A file shown other than as written (Markdown, a table, a map, JSON
   formatted) has **Source** in the bar: lit, it shows the file's own
   text; pressed again, the rendered view.

@@ -27,8 +27,11 @@ use crate::keymap;
 use crate::shell::Shell;
 use crate::theme::Theme;
 
-/// The text size a book is read at before the reader changes it, in pixels.
-pub(crate) const TEXT_SIZE: f32 = 16.;
+/// The size a book is laid out at before the reader changes it: Reading's
+/// (ADR-117), in pixels.
+fn reading_size(sizes: &crate::sizes::Sizes) -> f32 {
+    sizes.of(crate::sizes::Part::Reading)
+}
 /// The zoom range of a picture or a page, as a share of its pixels. The
 /// floor is low enough that Zoom out from Fit always shrinks: a large page in
 /// a narrow panel is shown well under a quarter of its size.
@@ -2047,7 +2050,8 @@ impl Shell {
             return;
         }
         if !self.take_ahead(&key, &version, window, cx) {
-            self.preview_request(&key, &version, &entry);
+            let reading = reading_size(&cx.global::<Theme>().sizes);
+            self.preview_request(&key, &version, &entry, reading);
         }
     }
 
@@ -2523,7 +2527,15 @@ impl Shell {
     }
 
     /// Ask a worker for the preview of what the panel shows now.
-    fn preview_request(&mut self, key: &PreviewKey, version: &Version, entry: &skwir_core::Entry) {
+    /// `reading`: the size a book laid out into pages is at, unless one
+    /// was chosen for it.
+    fn preview_request(
+        &mut self,
+        key: &PreviewKey,
+        version: &Version,
+        entry: &skwir_core::Entry,
+        reading: f32,
+    ) {
         let cancel = self.app.lifetime().child();
         self.preview.cancel = Some(cancel.clone());
         self.preview.phase = PreviewPhase::Loading;
@@ -2567,7 +2579,9 @@ impl Shell {
             page: self.preview.page,
             seconds: self.preview.seconds,
             max_side: IMAGE_MAX_SIDE,
-            text_size: self.preview.text_size,
+            // A book laid out into pages is at the size chosen for it, else
+            // at Reading's (ADR-117).
+            text_size: Some(self.preview.text_size.unwrap_or(reading)),
             fit: None,
             held,
         };
@@ -4539,11 +4553,21 @@ impl Shell {
             return;
         }
         if matches!(direction, "in" | "out" | "reset") && self.reader_reflows() {
-            let size = self.preview.text_size.unwrap_or(TEXT_SIZE);
+            // In the preview's steps, of reading's 100 % (ADR-117); back to
+            // the size Reading's setting says.
+            let sizes = cx.global::<Theme>().sizes;
+            let hundred = sizes.hundred(crate::sizes::Part::Reading);
+            let size = self
+                .preview
+                .text_size
+                .unwrap_or_else(|| reading_size(&sizes));
+            let percent = (size / hundred * 100.).round() as u32;
             let next = match direction {
-                "in" => (size + 2.).min(40.),
-                "out" => (size - 2.).max(10.),
-                _ => TEXT_SIZE,
+                "in" | "out" => {
+                    hundred * crate::sizes::preview_stepped(percent, direction == "in") as f32
+                        / 100.
+                }
+                _ => reading_size(&sizes),
             };
             if (next - size).abs() > f32::EPSILON {
                 self.relayout(next, window, cx);

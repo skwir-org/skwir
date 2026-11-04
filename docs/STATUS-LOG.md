@@ -10792,3 +10792,36 @@ text: smaller" saved 125 % and said so in a toast.
 Not checked: the board (compiled; its cards follow the same scale),
 Windows and macOS, release-check.
 
+## Text sizes, step 2: reading and code (2026-11-04)
+
+ADR-117. `Sizes` now keeps each part's 100 % and the step its setting
+chose. A preview is read as code (a code view, a text read where shown,
+bytes) or as reading (`inspector::part_of`), and drawn at that part's
+setting until a size is chosen for it (`State::percent`); the size drawn
+is read in `content` (`State::font_size`, kept for the estimates made
+before a draw), which measures the rows again when it moves, so a
+setting changed while a file is shown is followed. The picker's
+percentages are the setting's (`sizes::step_label`), Smaller and Larger
+step through `sizes::PREVIEW_STEPS` (60 to 250), As in Settings goes back.
+Tables (cells, header, columns counted and dragged at 100 %) and the
+byte view (rows, header, columns) follow the size and are no longer
+greyed. A book laid out by an engine starts at Reading's size and steps
+in the preview's steps. The terminal is drawn at the code's scale.
+`reading.text_size` (Reading, Text) and `ui.code_text_size` (Reading,
+Code), each after its font.
+
+Checked: skwir-ui's 497 tests (new: the preview's steps, a file drawn at
+its part's size or the one chosen for it, the settings standing after
+their fonts), the app's settings tests, clippy clean. The debug build on
+Xvfb (:91): Reading at 150 % written to the settings file was followed
+by a Markdown file shown (its label 150%); a CSV at 150 % with its size
+buttons, header and columns wider; a Rust file at Code's 125 %; the
+byte view at 125 %, its columns wide enough, then 150 and 175 % by its
+Larger button; the terminal at the code's scale.
+
+Not checked: a book laid out by MuPDF (compiled; it starts at Reading's
+size and is laid out again by its own steps, but a Reading setting
+changed while one is shown waits until it is opened again), the archive
+preview's member list (still at the interface's size), Windows and
+macOS, release-check.
+

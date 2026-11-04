@@ -524,12 +524,41 @@ fn page_step(
     }
 }
 
-/// The text size reading starts at, and Default size returns to.
+/// The size a preview's body text is drawn at before its sizes are read.
 pub(crate) const TEXT_SIZE: f32 = 16.;
+/// Code is written a step smaller than the body text it is read beside
+/// (`code_preview`, `markdown::MarkdownStyle::code_size`): a code view's
+/// body is its code's size and this.
+const CODE_STEP: f32 = 2.;
 
-/// The text size as a share of the default, for the size picker.
-pub(crate) fn text_size_label(size: f32) -> String {
-    format!("{:.0}%", size / TEXT_SIZE * 100.)
+/// Bytes are written a little smaller than code (13 px beside 14), a
+/// table's cells than the reading text they stand in (13 px beside 16):
+/// their sizes from the body's (`State::font_size`).
+fn bytes_size(font_size: f32) -> f32 {
+    (font_size - CODE_STEP) * 13. / 14.
+}
+
+fn table_size(font_size: f32) -> f32 {
+    font_size * TABLE_TEXT / 16.
+}
+
+/// A table's cells' size at 100 %, which its columns' widths are counted
+/// and dragged at (`inspector_rows::shape`, `Dragged`).
+const TABLE_TEXT: f32 = 13.;
+
+/// A line of bytes, a little taller than its text.
+fn bytes_line(size: f32) -> f32 {
+    (size * 18. / 13.).round()
+}
+
+/// The part of the window a file is read as (ADR-117): code (a code view,
+/// a text read where it is shown, bytes), else reading.
+pub(crate) fn part_of(data: &Inspection) -> crate::sizes::Part {
+    if matches!(data.kind, InspectionKind::Code | InspectionKind::Hex) || data.text.is_some() {
+        crate::sizes::Part::Code
+    } else {
+        crate::sizes::Part::Reading
+    }
 }
 
 /// The rows that are content, drawn after the blocks: a table's, an
@@ -652,7 +681,12 @@ pub struct State {
     pub(crate) selected: Option<usize>,
     pub(crate) selection: Option<crate::inspector_text::Selection>,
     dragging: bool,
-    font_size: f32,
+    /// The body text's size the file was drawn at last (`font_size`), for
+    /// what is estimated before it is drawn.
+    font_size: std::cell::Cell<f32>,
+    /// The size chosen for the file shown, a percentage of its part's
+    /// 100 % (ADR-117): none, its part's setting.
+    percent: Option<u32>,
     /// The contents are open: kept from section to section of a file (a
     /// book's chapters), and to the next file while pinned
     /// (`Shell::keep_contents`).
@@ -729,7 +763,8 @@ impl Offered {
         }
         self.contents |= display.contents.is_some() || display.outlined();
         self.folds |= folds(data);
-        self.sized |= !data.blocks.is_empty();
+        self.sized |= !data.blocks.is_empty()
+            || matches!(data.kind, InspectionKind::Table | InspectionKind::Hex);
         self.whole |= data.whole_available;
     }
 }
@@ -794,7 +829,8 @@ impl Default for State {
             selected: None,
             selection: None,
             dragging: false,
-            font_size: TEXT_SIZE,
+            font_size: std::cell::Cell::new(TEXT_SIZE),
+            percent: None,
             outline: false,
             contents: crate::outline::Follow::default(),
             find: None,
@@ -889,6 +925,30 @@ impl State {
     /// place.
     pub fn remeasure(&self) {
         self.list.remeasure_items(0..self.list.item_count());
+    }
+
+    /// The percentage the file is drawn at: the one chosen for it, else
+    /// its part's setting.
+    pub(crate) fn percent(&self, data: &Inspection, sizes: &crate::sizes::Sizes) -> u32 {
+        self.percent.unwrap_or_else(|| sizes.step(part_of(data)))
+    }
+
+    /// The size the file's body text is drawn at, in pixels: its part's
+    /// 100 % at `percent`, a code view's a step above its code
+    /// (`CODE_STEP`). What was measured at another size is measured again.
+    pub(crate) fn font_size(&self, data: &Inspection, sizes: &crate::sizes::Sizes) -> f32 {
+        let part = part_of(data);
+        let size = sizes.hundred(part) * self.percent(data, sizes) as f32 / 100.;
+        let body = if part == crate::sizes::Part::Code {
+            size + CODE_STEP
+        } else {
+            size
+        };
+        if (body - self.font_size.get()).abs() > 0.01 {
+            self.font_size.set(body);
+            self.remeasure();
+        }
+        body
     }
 
     /// Another section of the file came (a book's next chapter): what was
@@ -1386,11 +1446,11 @@ impl State {
     /// rows replace the estimate as they are drawn.
     fn row_estimate(&self, data: &Inspection) -> gpui::Pixels {
         px(match data.kind {
-            InspectionKind::Code => self.font_size + 4.,
+            InspectionKind::Code => self.font_size.get() + 4.,
             InspectionKind::Hex | InspectionKind::Archive | InspectionKind::Table => 24.,
             // Prose wraps: call it two and a half lines and the space around
             // them, between a heading and a long paragraph.
-            _ => self.font_size * 1.5 * 2.5 + 16.,
+            _ => self.font_size.get() * 1.5 * 2.5 + 16.,
         })
     }
     /// The visible rows changed under the reader (a fold, a sort): rebuild
@@ -1934,10 +1994,15 @@ impl Shell {
                     return self.inspect_here(&args, window, cx);
                 }
                 "reset" | "text_size" => {
-                    let size = args["value"].as_f64().map_or(TEXT_SIZE, |v| v as f32);
+                    let (low, high) = (
+                        crate::sizes::PREVIEW_STEPS[0],
+                        crate::sizes::PREVIEW_STEPS[crate::sizes::PREVIEW_STEPS.len() - 1],
+                    );
                     let state = &mut self.preview.inspection;
-                    state.font_size = size.clamp(10., 40.);
-                    state.remeasure();
+                    // Reset: back to the size its part's setting says.
+                    state.percent = args["percent"]
+                        .as_u64()
+                        .map(|percent| u32::try_from(percent).unwrap_or(high).clamp(low, high));
                     // The size picker closes on its choice.
                     if let Some(popup) = self.preview.menu.take_if(|popup| popup.kind == "text") {
                         popup.restore(window, cx);
@@ -1946,10 +2011,10 @@ impl Shell {
                     return;
                 }
                 "larger" | "smaller" => {
+                    let sizes = cx.global::<Theme>().sizes;
                     let state = &mut self.preview.inspection;
-                    state.font_size = (state.font_size + if action == "larger" { 2. } else { -2. })
-                        .clamp(10., 40.);
-                    state.remeasure();
+                    let now = state.percent(&display.data, &sizes);
+                    state.percent = Some(crate::sizes::preview_stepped(now, action == "larger"));
                     cx.notify();
                     return;
                 }
@@ -2832,8 +2897,10 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
         ));
     }
     // Text size, as a document's zoom: smaller, the size as a picker,
-    // larger; the same keeps, so both rows give way alike.
-    let sized = !data.blocks.is_empty();
+    // larger; the same keeps, so both rows give way alike. Whatever holds
+    // text is sized: blocks, a table's rows, bytes (ADR-117).
+    let sized =
+        !data.blocks.is_empty() || matches!(data.kind, InspectionKind::Table | InspectionKind::Hex);
     if offered.sized {
         bar.push(Item::button(
             Slot::View,
@@ -2851,7 +2918,7 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
                     "ui.preview_menu",
                 )
                 .args(serde_json::json!({"kind":"text"}))
-                .label(text_size_label(state.font_size))
+                .label(crate::sizes::step_label(state.percent(data, &theme.sizes)))
                 .enabled(sized),
             )
             .opens("text"),
@@ -3008,8 +3075,9 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
         cx,
     )
 }
-/// The text size picker, as a document's zoom picker is: the default size,
-/// then the sizes to choose from, as shares of it.
+/// The text size picker, as a document's zoom picker is: the size its
+/// part's setting says, then the sizes to choose from, as percentages of
+/// its part's 100 % as the setting writes them (ADR-117).
 fn text_size_panel(
     shell: &Shell,
     parked: bool,
@@ -3017,28 +3085,28 @@ fn text_size_panel(
     cx: &mut Context<Shell>,
 ) -> Option<AnyElement> {
     let popup = shell.preview.menu.as_ref()?;
-    let size = view(shell, parked)?.state.font_size;
+    let view = view(shell, parked)?;
+    let percent = view.state.percent(&view.display.data, &theme.sizes);
     let mut presets = div().flex().flex_wrap().gap_1();
-    for (id, percent) in [
-        ("text75", 75.),
-        ("text100", 100.),
-        ("text125", 125.),
-        ("text150", 150.),
-        ("text200", 200.),
+    for (id, step) in [
+        ("text80", 80),
+        ("text100", 100),
+        ("text125", 125),
+        ("text150", 150),
+        ("text200", 200),
     ] {
-        let value = TEXT_SIZE * percent / 100.;
         presets = presets.child(
             Button::new(id, "", "Text size", "ui.inspect")
-                .label(text_size_label(value))
-                .args(serde_json::json!({"action":"text_size","value":value}))
-                .active((size - value).abs() < 0.5)
+                .label(crate::sizes::step_label(step))
+                .args(serde_json::json!({"action":"text_size","percent":step}))
+                .active(percent == step)
                 .render(shell, cx),
         );
     }
-    let default = Button::new("text-default", "revert", "Default size", "ui.inspect")
-        .label("Default size")
+    let default = Button::new("text-default", "revert", "As in Settings", "ui.inspect")
+        .label("As in Settings")
         .args(serde_json::json!({"action":"reset"}))
-        .active((size - TEXT_SIZE).abs() < 0.5)
+        .active(view.state.percent.is_none())
         .menu()
         .render(shell, cx);
     Some(
@@ -3489,12 +3557,20 @@ pub fn content(
         return crate::model_preview::content(shell, display, theme);
     }
     let data = display.data.clone();
+    let font_size = state.font_size(&data, &theme.sizes);
     let shape = display.table.clone();
     // A table's columns as wide as their content, or as the user dragged
-    // them (`State::dragged`): the rows and the header draw the same.
-    let widths: Option<Arc<[f32]>> = shape
-        .as_deref()
-        .map(|shape| state.dragged.widths(shape).into());
+    // them (`State::dragged`): the rows and the header draw the same, at
+    // the size the table is written at.
+    let table_scale = table_size(font_size) / TABLE_TEXT;
+    let widths: Option<Arc<[f32]>> = shape.as_deref().map(|shape| {
+        state
+            .dragged
+            .widths(shape)
+            .into_iter()
+            .map(|width| (width * table_scale).round())
+            .collect()
+    });
     let header_widths = widths.clone();
     let images = display.images.clone();
     // The blocks the rows draw, reported after layout so the pictures they
@@ -3526,7 +3602,6 @@ pub fn content(
     let grammar_folds = state.colors.folds().cloned();
     let selected = state.selected;
     let selection = state.selection;
-    let font_size = state.font_size;
     let mono = theme.code_font.clone();
     let mut hex_font = gpui::font(mono.clone());
     // A byte viewer must preserve individual ASCII characters, even in coding fonts.
@@ -3614,7 +3689,7 @@ pub fn content(
         crate::bytes_view::element(
             view,
             list_theme.clone(),
-            hex_font.clone(),
+            (hex_font.clone(), bytes_size(font_size)),
             selected,
             pane,
             entity.clone(),
@@ -3738,7 +3813,7 @@ pub fn content(
                     &data.rows[ri],
                     index,
                     chosen,
-                    &hex_font,
+                    (&hex_font, bytes_size(font_size)),
                     theme,
                     pane,
                     entity.clone(),
@@ -3780,7 +3855,7 @@ pub fn content(
                         d.p_0()
                             .gap_0()
                             .when_some(grid, |d, width| d.w(px(width)))
-                            .text_size(px(13.))
+                            .text_size(px(table_size(font_size)))
                             .when(position % 2 == 1, |d| d.bg(theme.zebra))
                             .when(selected != Some(data.blocks.len() + ri), |d| {
                                 d.hover(|d| d.bg(theme.hover))
@@ -3815,7 +3890,12 @@ pub fn content(
                     div()
                         .id(("cell", column))
                         .optional_tooltip(clip.tooltip(None))
-                        .w(px(column_width(widths.as_deref(), data.kind, column)))
+                        .w(px(column_width(
+                            widths.as_deref(),
+                            data.kind,
+                            column,
+                            bytes_size(font_size),
+                        )))
                         .flex_none()
                         .when(data.kind == InspectionKind::Table, |d| {
                             d.px_2()
@@ -3945,8 +4025,8 @@ pub fn content(
             display.data.kind == InspectionKind::Hex,
             |d| {
                 d.font(header_font)
-                    .text_size(px(13.))
-                    .line_height(px(18.))
+                    .text_size(px(bytes_size(font_size)))
+                    .line_height(px(bytes_line(bytes_size(font_size))))
                     .py_1()
                     .text_color(theme.text_muted)
                     .bg(theme.surface)
@@ -3958,6 +4038,8 @@ pub fn content(
         let sort = state.sort;
         if table {
             header = header
+                // Its titles a step smaller than its cells.
+                .text_size(px(table_size(font_size) * 12. / TABLE_TEXT))
                 .p_0()
                 .gap_0()
                 .when_some(grid, |d, width| d.w(px(width)))
@@ -3992,6 +4074,7 @@ pub fn content(
                         header_widths.as_deref(),
                         display.data.kind,
                         index,
+                        bytes_size(font_size),
                     )))
                     .flex_none()
                     .when(table, |d| {
@@ -4158,7 +4241,7 @@ pub fn content(
     if wide {
         let width = grid.unwrap_or_else(|| {
             (0..display.data.columns.len())
-                .map(|i| column_width(None, display.data.kind, i) + 12.)
+                .map(|i| column_width(None, display.data.kind, i, bytes_size(font_size)) + 12.)
                 .sum()
         }) + 16.;
         // The strip is about the panel, not the table: it stays put while
@@ -4239,19 +4322,24 @@ impl Shell {
         let Some(shape) = display.table.as_deref() else {
             return;
         };
+        // Widths are kept at 100 %, whatever the size they are dragged at.
+        let scale = table_size(preview.inspection.font_size.get()) / TABLE_TEXT;
         let dragged = &mut preview.inspection.dragged;
         let pressed = self.edge_pressed;
         let (start_x, start_width) = *self
             .edge_start
             .get_or_insert_with(|| (pressed, dragged.width(shape, column).unwrap_or(140.)));
-        dragged.set(column, start_width + (x - start_x));
+        dragged.set(column, start_width + (x - start_x) / scale);
         cx.notify();
     }
 }
 
-fn column_width(widths: Option<&[f32]>, kind: InspectionKind, index: usize) -> f32 {
+/// A column's width: a table's from `widths`, the byte view's its own,
+/// at the size its bytes are written (`bytes`, 13 px at 100 %).
+fn column_width(widths: Option<&[f32]>, kind: InspectionKind, index: usize, bytes: f32) -> f32 {
     if kind == InspectionKind::Hex {
-        [140., 400., 148.].get(index).copied().unwrap_or(140.)
+        let width = [140., 400., 148.].get(index).copied().unwrap_or(140.);
+        (width * bytes / TABLE_TEXT).round()
     } else {
         widths
             .and_then(|widths| widths.get(index).copied())
@@ -4267,7 +4355,7 @@ pub(crate) fn hex_row(
     row: &skwir_core::inspection::Row,
     index: usize,
     selected: bool,
-    font: &gpui::Font,
+    (font, size): (&gpui::Font, f32),
     theme: &Theme,
     pane: skwir_core::workspace::PaneId,
     entity: gpui::WeakEntity<Shell>,
@@ -4280,8 +4368,8 @@ pub(crate) fn hex_row(
         .flex()
         .gap_3()
         .font(font.clone())
-        .text_size(px(13.))
-        .line_height(px(18.))
+        .text_size(px(size))
+        .line_height(px(bytes_line(size)))
         .py(px(1.))
         .whitespace_nowrap()
         .when(index % 2 == 1, |d| d.bg(theme.zebra))
@@ -4291,7 +4379,7 @@ pub(crate) fn hex_row(
         line = line.child(
             div()
                 .id(("cell", column))
-                .w(px(column_width(None, InspectionKind::Hex, column)))
+                .w(px(column_width(None, InspectionKind::Hex, column, size)))
                 .flex_none()
                 .when(column < 2, |d| d.border_r_1().border_color(theme.border))
                 .child(hex_cell(cell, column, theme)),
@@ -5114,6 +5202,31 @@ mod tests {
         assert_eq!(step(0, true), None);
         // Before any page, Next is this chapter's first.
         assert_eq!(page_step(&data, &starts, None, false), Some(1));
+    }
+
+    #[test]
+    fn a_file_is_drawn_at_its_part_s_size_unless_one_is_chosen_for_it() {
+        use crate::sizes::{Part, Sizes};
+        let sizes = Sizes::default()
+            .with_step(Part::Reading, 125)
+            .with_step(Part::Code, 150);
+        let mut state = State::default();
+        let prose = Inspection {
+            kind: InspectionKind::Markdown,
+            ..Inspection::default()
+        };
+        assert!((state.font_size(&prose, &sizes) - 20.).abs() < 1e-3);
+        // Code at 21 px, its body a step above; bytes and tables a little
+        // smaller than what they stand beside.
+        let code = code(&["{}"], Vec::new());
+        assert!((state.font_size(&code.data, &sizes) - 23.).abs() < 1e-3);
+        assert_eq!(state.percent(&code.data, &sizes), 150);
+        assert!((bytes_size(16.) - 13.).abs() < 1e-3);
+        assert!((table_size(16.) - 13.).abs() < 1e-3);
+        // Chosen for the file shown: whatever its part's setting says.
+        state.percent = Some(200);
+        assert!((state.font_size(&prose, &sizes) - 32.).abs() < 1e-3);
+        assert_eq!(state.percent(&code.data, &sizes), 200);
     }
 
     fn code(lines: &[&str], folds: Vec<std::ops::Range<usize>>) -> Display {

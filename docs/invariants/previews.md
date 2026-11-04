@@ -1036,6 +1036,19 @@ is still to come are in `docs/preview-frame.md`.
 - `zoom_tools` is the one zoom group, for a picture and a page alike;
   text's twin is the inspector's text size picker (`text_size_panel`, a
   popup of kind `text`).
+- **Text sizes (ADR-117).** A file is read as code (a code view, a text
+  read where it is shown, bytes) or as reading (`inspector::part_of`),
+  and drawn at that part's setting (`reading.text_size`,
+  `ui.code_text_size`) until a size is chosen for it: the picker's
+  percentages are the setting's, of the part's 100 %
+  (`State::percent`), its smaller and larger the preview's steps
+  (`sizes::PREVIEW_STEPS`), As in Settings back to the setting's, which
+  is followed while shown. Whatever holds text is sized: blocks, a
+  table's cells and header (`table_size`, its columns' widths counted
+  and dragged at 100 %), bytes and their columns (`bytes_size`). A book
+  an engine lays out into pages starts at Reading's size. The size
+  drawn is read in `content` (`State::font_size`), which measures the
+  rows again when it moves.
 - Shared actions take their words from `preview_bar::label`.
 - A button's label names what it does or shows, never the state it
   leaves: Source is Source in both states, lit while on. A provider

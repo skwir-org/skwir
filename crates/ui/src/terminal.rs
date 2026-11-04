@@ -40,7 +40,8 @@ use crate::theme::Theme;
 /// The panel's height until its edge is dragged, and the least it keeps.
 const DEFAULT_HEIGHT: f32 = 240.;
 const MIN_HEIGHT: f32 = 90.;
-/// The terminal's text size.
+/// The terminal's text at 100 %: a little smaller than code (14 px), drawn
+/// at the code's scale (ADR-117).
 const FONT_SIZE: f32 = 13.;
 
 pub struct TerminalState {
@@ -656,7 +657,7 @@ impl Shell {
                 screen: Arc::clone(&self.terminal.screen),
                 focus: self.terminal.focus.clone(),
                 font,
-                font_size: px(FONT_SIZE),
+                font_size: px(FONT_SIZE * theme.sizes.scale(crate::sizes::Part::Code).0),
                 colors: Colors {
                     fg: theme.text,
                     bg: theme.bg,

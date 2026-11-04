@@ -23,6 +23,9 @@ use skwir_core::App;
 
 /// The steps a part's size is chosen in, as percentages of its 100 %.
 pub const STEPS: [u32; 8] = [80, 90, 100, 110, 125, 150, 175, 200];
+/// The steps of the preview's own size buttons, which go further, for the
+/// file shown (`inspector.rs`).
+pub const PREVIEW_STEPS: [u32; 11] = [60, 70, 80, 90, 100, 110, 125, 150, 175, 200, 250];
 /// A part at its own size.
 pub const DEFAULT_STEP: u32 = 100;
 
@@ -48,6 +51,12 @@ pub enum Part {
 }
 
 impl Part {
+    pub const ALL: [Part; 4] = [Part::Interface, Part::Files, Part::Reading, Part::Code];
+
+    fn ix(self) -> usize {
+        self as usize
+    }
+
     /// The setting choosing its size.
     pub fn key(self) -> &'static str {
         match self {
@@ -108,28 +117,45 @@ pub fn stepped(step: u32, dir: &str) -> u32 {
     }
 }
 
-/// How the setting's choices are written: `110 %`.
-pub fn step_label(step: u32) -> String {
-    format!("{step} %")
+/// The preview's step after `percent` going larger or smaller: the next
+/// of `PREVIEW_STEPS` past it, staying at the ends. A size between two
+/// steps goes to the one beside it.
+pub fn preview_stepped(percent: u32, larger: bool) -> u32 {
+    if larger {
+        PREVIEW_STEPS
+            .iter()
+            .copied()
+            .find(|step| *step > percent)
+            .unwrap_or(PREVIEW_STEPS[PREVIEW_STEPS.len() - 1])
+    } else {
+        PREVIEW_STEPS
+            .iter()
+            .rev()
+            .copied()
+            .find(|step| *step < percent)
+            .unwrap_or(PREVIEW_STEPS[0])
+    }
 }
 
-/// The parts' body text, in pixels, as the settings choose it.
+/// How a size is written, in the settings and the preview: `110%`.
+pub fn step_label(step: u32) -> String {
+    format!("{step}%")
+}
+
+/// The parts' sizes: each one's 100 %, in pixels, and the step its
+/// setting chose. The files' 100 % is the interface's size.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Sizes {
-    pub interface: f32,
-    pub files: f32,
-    pub reading: f32,
-    pub code: f32,
+    hundred: [f32; 4],
+    step: [u32; 4],
 }
 
 impl Default for Sizes {
-    /// Every part at 100 %.
+    /// Every part at its own 100 %.
     fn default() -> Self {
         Sizes {
-            interface: Part::Interface.base(),
-            files: Part::Files.base(),
-            reading: Part::Reading.base(),
-            code: Part::Code.base(),
+            hundred: Part::ALL.map(Part::base),
+            step: [DEFAULT_STEP; 4],
         }
     }
 }
@@ -137,15 +163,17 @@ impl Default for Sizes {
 impl Sizes {
     /// The sizes the settings of `app` choose.
     pub fn resolve(app: &App) -> Self {
-        let step = |part: Part| step_of(app.settings.get::<String>(part.key()).as_deref());
-        let at = |base: f32, part: Part| base * step(part) as f32 / 100.;
-        let interface = Part::Interface.base();
         Sizes {
-            interface,
-            files: at(interface, Part::Files),
-            reading: Part::Reading.base(),
-            code: Part::Code.base(),
+            step: Part::ALL.map(|part| step_of(app.settings.get::<String>(part.key()).as_deref())),
+            ..Sizes::default()
         }
+    }
+
+    /// The sizes with `part` at `step`: what a test or a sample draws.
+    #[must_use]
+    pub fn with_step(mut self, part: Part, step: u32) -> Self {
+        self.step[part.ix()] = step;
+        self
     }
 
     /// A part's body text.
@@ -153,13 +181,22 @@ impl Sizes {
         px(self.of(part))
     }
 
-    fn of(&self, part: Part) -> f32 {
+    /// A part's body text, in pixels.
+    pub fn of(&self, part: Part) -> f32 {
+        self.hundred(part) * self.step(part) as f32 / 100.
+    }
+
+    /// A part's body text at 100 %, in pixels.
+    pub fn hundred(&self, part: Part) -> f32 {
         match part {
-            Part::Interface => self.interface,
-            Part::Files => self.files,
-            Part::Reading => self.reading,
-            Part::Code => self.code,
+            Part::Files => self.of(Part::Interface),
+            _ => self.hundred[part.ix()],
         }
+    }
+
+    /// The step a part's setting chose.
+    pub fn step(&self, part: Part) -> u32 {
+        self.step[part.ix()]
     }
 
     /// The rem a part is drawn in: its body text is `text_sm` there.
@@ -245,11 +282,28 @@ mod tests {
     }
 
     #[test]
+    fn the_preview_steps_past_the_size_it_is_at() {
+        assert_eq!(preview_stepped(100, true), 110);
+        assert_eq!(preview_stepped(100, false), 90);
+        assert_eq!(preview_stepped(117, true), 125);
+        assert_eq!(preview_stepped(117, false), 110);
+        assert_eq!(preview_stepped(250, true), 250);
+        assert_eq!(preview_stepped(60, false), 60);
+    }
+
+    #[test]
+    fn the_files_100_is_the_interface_s_size() {
+        let sizes = Sizes::default()
+            .with_step(Part::Interface, 125)
+            .with_step(Part::Files, 80);
+        assert!((sizes.hundred(Part::Files) - 17.5).abs() < 1e-3);
+        assert!((sizes.of(Part::Files) - 14.).abs() < 1e-3);
+        assert!((sizes.of(Part::Reading) - 16.).abs() < 1e-3);
+    }
+
+    #[test]
     fn a_length_scales_in_whole_pixels() {
-        let sizes = Sizes {
-            files: 14. * 1.25,
-            ..Sizes::default()
-        };
+        let sizes = Sizes::default().with_step(Part::Files, 125);
         let scale = sizes.scale(Part::Files);
         assert_eq!(scale.px(26.), px(33.));
         assert_eq!(sizes.rem(Part::Files), px(20.));

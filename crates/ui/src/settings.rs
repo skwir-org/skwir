@@ -953,6 +953,8 @@ pub fn declare(app: &App) {
         &font_chosen(app, READING_FONT_KEY),
         None,
     ));
+    app.settings
+        .declare(text_size_spec(crate::sizes::Part::Reading));
     app.settings.declare(
         SettingSpec::choice(
             READING_WIDTH_KEY,
@@ -1020,6 +1022,8 @@ pub fn declare(app: &App) {
         &font_chosen(app, CODE_FONT_KEY),
         None,
     ));
+    app.settings
+        .declare(text_size_spec(crate::sizes::Part::Code));
     app.settings.declare(
         SettingSpec::choice(
             CODE_ENGINE_KEY,
@@ -2916,9 +2920,9 @@ impl crate::shell::Shell {
 mod tests {
     use super::{
         App, BUILTIN, CODE_APPEARANCE_KEY, CODE_DARK_KEY, CODE_ENGINE_KEY, CODE_FONT_KEY,
-        CODE_LIGHT_KEY, FONT_KEY, ICON_THEME_AUTO, LANGUAGES_KEY, Page, READING_FONT_KEY,
-        SINGLE_TAB_KEY, SettingSpec, TABS_AT_KEY, THEME_KEY, code_theme_spec, declare, font_spec,
-        icon_theme_spec, page_order,
+        CODE_LIGHT_KEY, CODE_TEXT_SIZE_KEY, FONT_KEY, ICON_THEME_AUTO, LANGUAGES_KEY, Page,
+        READING_FONT_KEY, SINGLE_TAB_KEY, SettingSpec, TABS_AT_KEY, THEME_KEY, code_theme_spec,
+        declare, font_spec, icon_theme_spec, page_order,
     };
     use skwir_platform::icons::Theme;
 
@@ -3169,7 +3173,8 @@ mod tests {
                 CODE_APPEARANCE_KEY,
                 CODE_LIGHT_KEY,
                 CODE_DARK_KEY,
-                CODE_FONT_KEY
+                CODE_FONT_KEY,
+                CODE_TEXT_SIZE_KEY
             ]
         );
         // Grammars: the rule Automatic follows, then each language's choice,
@@ -3196,6 +3201,23 @@ mod tests {
                 .map(|(_, key)| key)
                 .as_deref(),
             Some(READING_FONT_KEY)
+        );
+        // Each size stands after its font (ADR-117).
+        let after = |page_of: Page, font: &str| {
+            let keys: Vec<String> = page(&specs, &page_of)
+                .into_iter()
+                .map(|(_, key)| key)
+                .collect();
+            let at = keys.iter().position(|key| key == font).expect("its font");
+            keys.get(at + 1).cloned()
+        };
+        assert_eq!(
+            after(Page::Appearance, FONT_KEY).as_deref(),
+            Some(super::FILES_TEXT_SIZE_KEY)
+        );
+        assert_eq!(
+            after(Page::Reading, READING_FONT_KEY).as_deref(),
+            Some(super::READING_TEXT_SIZE_KEY)
         );
         assert_eq!(sections(&specs, &Page::Media), ["Pictures", "3D models"]);
         assert_eq!(sections(&specs, &Page::Notes), ["Tags"]);

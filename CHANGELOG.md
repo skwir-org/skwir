@@ -6,6 +6,9 @@
   200 % (Settings › Appearance › Files text size, or "Files text: larger" in
   the palette), and rows, labels and columns grow with it while icons and
   pictures keep their zoom. Names in the grid are now as large as in the list.
+  Reading and code have sizes of their own too (Settings › Reading): each file
+  opens at its size, the preview's − and + changing only the file shown, and
+  tables and the byte view, which could not be enlarged, now follow them.
 
 ## 0.3.0 (2026-11-03)
 

@@ -218,7 +218,7 @@ impl BytesView {
 pub(crate) fn element(
     view: &BytesView,
     theme: crate::theme::Theme,
-    font: gpui::Font,
+    (font, size): (gpui::Font, f32),
     selected: Option<usize>,
     pane: skwir_core::workspace::PaneId,
     entity: gpui::WeakEntity<Shell>,
@@ -253,7 +253,7 @@ pub(crate) fn element(
                     shown,
                     index,
                     chosen,
-                    &font,
+                    (&font, size),
                     &theme,
                     pane,
                     entity.clone(),

@@ -698,9 +698,11 @@ holds text growing with it, sizes named in the theme, "Fonts from"
 Automatic, GTK or Qt. Four steps, a commit each, for 0.3.1.
 
 **Status:** step 1, the files' size (`ui.files_text_size`, `ui.text_size`,
-grid names as large as the list's), built 2026-11-04 and checked on
-Linux (`docs/STATUS-LOG.md`); steps 2 to 4 under way. Windows and macOS
-not built.
+grid names as large as the list's), and step 2, reading and code
+(`reading.text_size`, `ui.code_text_size`; tables and bytes follow the
+preview's size), built 2026-11-04 and checked on Linux
+(`docs/STATUS-LOG.md`); steps 3 and 4 under way. Windows and macOS not
+built.
 
 ## What is left
 
