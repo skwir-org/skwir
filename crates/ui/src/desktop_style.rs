@@ -180,24 +180,32 @@ pub fn fonts(settings: &Settings) -> Fonts {
         .unwrap_or_default()
 }
 
-/// Where the fonts are read (`ui.fonts_from`, ADR-117): Automatic (the
-/// desktop's own, then GTK's, then Qt's), or GTK's or Qt's alone.
+/// Where the fonts a font setting's Automatic writes in, and their sizes,
+/// are read (`ui.fonts_from`, ADR-117): Automatic (the desktop's own, then
+/// GTK's, then Qt's), skwir's own, or GTK's or Qt's alone. Apart from
+/// Desktop colors, which is the colors alone.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FontsFrom {
     Automatic,
+    Own,
     Gtk,
     Qt,
 }
 
 impl FontsFrom {
-    pub const CHOICES: [(&'static str, &'static str); 3] =
-        [("auto", "Automatic"), ("gtk", "GTK"), ("qt", "Qt")];
+    pub const CHOICES: [(&'static str, &'static str); 4] = [
+        ("auto", "Automatic"),
+        (OWN, "Skwir's own"),
+        ("gtk", "GTK"),
+        ("qt", "Qt"),
+    ];
 
     pub fn chosen(settings: &Settings) -> Self {
         match settings
             .get::<String>(crate::settings::FONTS_FROM_KEY)
             .as_deref()
         {
+            Some(OWN) => FontsFrom::Own,
             Some("gtk") => FontsFrom::Gtk,
             Some("qt") => FontsFrom::Qt,
             _ => FontsFrom::Automatic,
@@ -205,14 +213,29 @@ impl FontsFrom {
     }
 }
 
-/// The fonts the desktop names as the settings choose to read them, with
-/// their sizes and where they were read: none while Desktop colors is off.
-fn chosen(settings: &Settings) -> Option<skwir_platform::desktop_style::Fonts> {
-    if !on(settings, DESKTOP_COLORS_KEY) {
-        return None;
+/// `ui.fonts_from`'s value for skwir's own fonts.
+pub const OWN: &str = "skwir";
+
+/// Before `ui.fonts_from` stood apart, Desktop colors turned off gave
+/// skwir's own fonts too: someone who turned it off keeps them, as
+/// `Settings::rename` moves a value (the file says it at the next save;
+/// until then this is done again at each start, to the same effect).
+/// Called before `ui.fonts_from` is declared, so only a value stored
+/// counts.
+pub fn keep_own_fonts(settings: &Settings) {
+    if settings.get::<bool>(DESKTOP_COLORS_KEY) == Some(false)
+        && settings.text(crate::settings::FONTS_FROM_KEY).is_none()
+    {
+        settings.set(crate::settings::FONTS_FROM_KEY, OWN.into());
     }
+}
+
+/// The fonts the desktop names as the settings choose to read them, with
+/// their sizes and where they were read: none for skwir's own.
+fn chosen(settings: &Settings) -> Option<skwir_platform::desktop_style::Fonts> {
     let said = said()?;
     match FontsFrom::chosen(settings) {
+        FontsFrom::Own => None,
         FontsFrom::Automatic => Some(skwir_platform::desktop_style::Fonts {
             from: said.fonts_from.unwrap_or_default(),
             interface: said.font,
@@ -227,15 +250,18 @@ fn chosen(settings: &Settings) -> Option<skwir_platform::desktop_style::Fonts> {
 }
 
 /// What the desktop says of text sizes (ADR-117): the interface font's
-/// size and the monospace font's, in pixels, while its fonts are worn,
-/// where they were read; and its text scaling factor, followed whatever
-/// Desktop colors says, as more contrast is: a need, not a style.
+/// size and the monospace font's, in pixels, unless skwir's own fonts are
+/// chosen, and where they were read; and its text scaling factor,
+/// followed whatever is chosen, as more contrast is: a need, not a style.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Sizes {
     pub interface: Option<f32>,
     pub monospace: Option<f32>,
     pub from: Option<String>,
     pub scaling: Option<f32>,
+    /// Skwir's own fonts are chosen: at skwir's own size, whatever the
+    /// system says when nothing names one.
+    pub own: bool,
 }
 
 pub fn sizes(settings: &Settings) -> Sizes {
@@ -250,6 +276,7 @@ pub fn sizes(settings: &Settings) -> Sizes {
             .map(|fonts| fonts.from)
             .filter(|from| !from.is_empty()),
         scaling,
+        own: FontsFrom::chosen(settings) == FontsFrom::Own,
     }
 }
 
@@ -459,20 +486,22 @@ mod tests {
     }
 
     #[test]
-    fn the_desktop_s_fonts_are_lent_while_desktop_colors_is_on() {
+    fn the_desktop_s_fonts_are_lent_unless_skwir_s_own_are_chosen() {
         let (_tmp, app) = app();
         assert_eq!(fonts(&app.settings), Fonts::default(), "nothing said yet");
         set(teal());
-        assert_eq!(
-            fonts(&app.settings),
-            Fonts {
-                interface: Some("Noto Sans".into()),
-                document: Some("Noto Serif".into()),
-                monospace: None,
-            }
-        );
+        let lent = Fonts {
+            interface: Some("Noto Sans".into()),
+            document: Some("Noto Serif".into()),
+            monospace: None,
+        };
+        assert_eq!(fonts(&app.settings), lent);
+        // Desktop colors is the colors alone (ADR-117).
         app.settings
             .set(DESKTOP_COLORS_KEY, toml::Value::Boolean(false));
+        assert_eq!(fonts(&app.settings), lent);
+        app.settings
+            .set(crate::settings::FONTS_FROM_KEY, OWN.into());
         assert_eq!(fonts(&app.settings), Fonts::default(), "skwir's own");
     }
 
@@ -545,13 +574,41 @@ mod tests {
         let qt = sizes(&app.settings);
         assert_eq!((qt.interface, qt.monospace), (Some(px(9.)), Some(px(10.))));
         assert_eq!(qt.from.as_deref(), Some("Qt (qt6ct)"));
-        // Desktop colors off: skwir's own fonts and sizes, the scaling a
-        // need still followed.
+        // Desktop colors off is the colors alone: the fonts stay Qt's.
         app.settings
             .set(DESKTOP_COLORS_KEY, toml::Value::Boolean(false));
+        assert_eq!(
+            fonts(&app.settings).interface.as_deref(),
+            Some("DejaVu Sans")
+        );
+        // Skwir's own: its fonts and sizes, the scaling a need still
+        // followed.
+        choose(OWN);
         assert_eq!(fonts(&app.settings).interface, None);
-        let off = sizes(&app.settings);
-        assert_eq!((off.interface, off.from), (None, None));
-        assert_eq!(off.scaling, Some(1.25));
+        let own = sizes(&app.settings);
+        assert_eq!((own.interface, own.from), (None, None));
+        assert!(own.own);
+        assert_eq!(own.scaling, Some(1.25));
+    }
+
+    #[test]
+    fn desktop_colors_turned_off_before_keeps_skwir_s_fonts() {
+        use crate::settings::FONTS_FROM_KEY;
+        // As a file of 0.3.0 says it, before the settings are declared.
+        let tmp = tempfile::tempdir().unwrap();
+        let app = App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        app.settings
+            .set(DESKTOP_COLORS_KEY, toml::Value::Boolean(false));
+        keep_own_fonts(&app.settings);
+        assert_eq!(FontsFrom::chosen(&app.settings), FontsFrom::Own);
+        // Chosen since, it is never moved again.
+        app.settings.set(FONTS_FROM_KEY, "gtk".into());
+        keep_own_fonts(&app.settings);
+        assert_eq!(FontsFrom::chosen(&app.settings), FontsFrom::Gtk);
+        // Desktop colors left on: nothing moves.
+        let tmp = tempfile::tempdir().unwrap();
+        let app = App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        keep_own_fonts(&app.settings);
+        assert_eq!(app.settings.text(FONTS_FROM_KEY), None);
     }
 }

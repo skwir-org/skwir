@@ -99,8 +99,8 @@ fn graphics(specs: &gpui::GpuSpecs) -> String {
 }
 
 /// The interface's font and size, where they were read, and each part's
-/// step (ADR-117): `Noto Sans 13.3 px from GTK, text scaling 1.25; sizes:
-/// interface 100%, files 110%, reading 100%, code 100%`.
+/// step (ADR-117): `Noto Sans 13.3 px (10 pt) from GTK, text scaling 1.25;
+/// sizes: interface 100%, files 110%, reading 100%, code 100%`.
 fn text_fact(theme: &crate::theme::Theme, desktop: &crate::desktop_style::Sizes) -> String {
     use crate::sizes::Part;
     let body = theme.sizes.of(Part::Interface);
@@ -127,8 +127,9 @@ fn text_fact(theme: &crate::theme::Theme, desktop: &crate::desktop_style::Sizes)
     })
     .join(", ");
     format!(
-        "{} {body:.1} px {from}{scaling}; sizes: {steps}",
-        theme.font
+        "{} {body:.1} px ({} pt) {from}{scaling}; sizes: {steps}",
+        theme.font,
+        crate::settings::points(body)
     )
 }
 

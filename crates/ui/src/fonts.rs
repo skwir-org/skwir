@@ -3,8 +3,8 @@
 //! mail); the code font of what is read a character at a time (the code
 //! view, code in documents, the byte view, the terminal). Each is
 //! Automatic or a family the user chose (`ui.font`, `reading.font`,
-//! `ui.code_font`). Automatic is the desktop's while Desktop colors is on
-//! (`desktop_style::fonts`), else skwir's own.
+//! `ui.code_font`). Automatic is the desktop's as Fonts from reads it
+//! (`desktop_style::fonts`, ADR-117), else skwir's own.
 //!
 //! They are tokens of the theme (`Theme::font`, `reading_font`,
 //! `code_font`), resolved with the rest of the look (`Theme::resolve`)
@@ -104,7 +104,33 @@ pub(crate) fn choose(
     loads: impl Fn(&str) -> bool,
     any: impl FnOnce() -> Option<String>,
 ) -> Families {
-    let chosen = |key: &str| chosen(settings, key);
+    choose_with(|key| chosen(settings, key), desktop, loads, any)
+}
+
+/// What each role's Automatic comes to, against `text`: what the settings
+/// say beside it (`settings::show_resolved`).
+pub fn automatic(app: &App, text: &gpui::TextSystem) -> Families {
+    let loads = |family: &str| text.font_id(&gpui::font(family.to_owned())).is_ok();
+    let any = || {
+        text.all_font_names()
+            .into_iter()
+            .find(|family| !family.starts_with('.') && loads(family))
+    };
+    choose_with(
+        |_| None,
+        &crate::desktop_style::fonts(&app.settings),
+        loads,
+        any,
+    )
+}
+
+/// `choose`, a role's family chosen as `chosen` says.
+fn choose_with(
+    chosen: impl Fn(&str) -> Option<String>,
+    desktop: &Desktop,
+    loads: impl Fn(&str) -> bool,
+    any: impl FnOnce() -> Option<String>,
+) -> Families {
     let first = |chosen: Option<String>, desktop: &Option<String>, own: &[&str]| {
         chosen
             .iter()

@@ -152,7 +152,8 @@ laid over).
    their own (ADR-073): `ui.font`, "Font", for the interface, and the
    reading and code fonts, each Automatic or a family installed.
    Automatic is the desktop's font while Desktop colors is on, else
-   Skwir's; a family chosen is kept either way. `ui.theme` (Automatic,
+   Skwir's (since ADR-117, as `ui.fonts_from` says, Desktop colors being
+   the colors alone); a family chosen is kept either way. `ui.theme` (Automatic,
    Light, Dark) chooses the look either way. A scheme is one look's:
    when `ui.theme` forces the other look, that look is Skwir's palette
    with the desktop's accent.

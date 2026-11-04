@@ -53,7 +53,9 @@ window, the desktop's size read with its family.
    - **None of them:** what is drawn in a document's own fonts (PDF,
      DjVu, fixed-layout pages, books MuPDF lays out) and a font file's
      specimen.
-2. **Automatic is the desktop's while Desktop colors is on.** Each role
+2. **Automatic is the desktop's while Desktop colors is on** (amended
+   by ADR-117: as `ui.fonts_from` says, Automatic, Skwir's own, GTK's or
+   Qt's; Desktop colors is the colors alone). Each role
    is Automatic by default: the interface takes the desktop's interface
    font, reading its document font (else the interface's), code its
    monospace font. With Desktop colors off, or where the desktop names

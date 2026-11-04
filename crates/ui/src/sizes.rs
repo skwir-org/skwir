@@ -251,16 +251,22 @@ pub const SYSTEM_BODY: f32 = if cfg!(target_os = "macos") {
 };
 
 /// Each part's 100 % from what the desktop says (ADR-117): the interface
-/// its font's size, else the system's own; reading 16 px, as a browser
-/// keeps a page's text; code its monospace font's size, else 14 px; each
-/// times its text scaling factor. Sizes no one would read at are left.
+/// its font's size, else the system's own, or skwir's own 14 px with its
+/// own fonts; reading 16 px, as a browser keeps a page's text; code its
+/// monospace font's size, else 14 px; each times its text scaling
+/// factor. Sizes no one would read at are left.
 fn hundreds(desktop: &crate::desktop_style::Sizes) -> [f32; 4] {
     let sane = |px: Option<f32>| px.filter(|px| (6.0..=48.).contains(px));
     let scaling = desktop
         .scaling
         .filter(|factor| (0.5..=4.).contains(factor))
         .unwrap_or(1.);
-    let interface = sane(desktop.interface).unwrap_or(SYSTEM_BODY) * scaling;
+    let unsaid = if desktop.own {
+        Part::Interface.base()
+    } else {
+        SYSTEM_BODY
+    };
+    let interface = sane(desktop.interface).unwrap_or(unsaid) * scaling;
     let code = sane(desktop.monospace).unwrap_or(Part::Code.base()) * scaling;
     // The files' 100 % is the interface's size (`Sizes::hundred`).
     [interface, interface, Part::Reading.base() * scaling, code]
@@ -449,6 +455,7 @@ mod tests {
             monospace: Some(11. * 96. / 72.),
             from: Some("GNOME".into()),
             scaling: Some(1.25),
+            own: false,
         });
         assert!(close(gnome[0], 18.333));
         assert!(close(gnome[2], 20.) && close(gnome[3], 18.333));
@@ -459,6 +466,13 @@ mod tests {
             ..Desktop::default()
         });
         assert!(close(odd[0], SYSTEM_BODY));
+        // Skwir's own fonts: its own 14 px, still scaled.
+        let own = hundreds(&Desktop {
+            own: true,
+            scaling: Some(1.25),
+            ..Desktop::default()
+        });
+        assert!(close(own[0], 17.5));
     }
 
     #[test]

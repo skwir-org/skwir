@@ -582,6 +582,7 @@ impl Shell {
         // The window is written at the interface's size (ADR-117).
         window.set_rem_size(theme.sizes.rem(crate::sizes::Part::Interface));
         cx.set_global(theme);
+        show_resolved(&app, cx);
         let mut subs = Vec::new();
         subs.push(cx.observe_window_appearance(window, |this, window, cx| {
             this.resolve_theme(window, cx);
@@ -3002,6 +3003,7 @@ impl Shell {
         // The window is written at the interface's size (ADR-117).
         window.set_rem_size(now.1.rem(crate::sizes::Part::Interface));
         cx.set_global(theme);
+        show_resolved(&self.app, cx);
         if now.0 != was.0 {
             let fonts = &now.0;
             tracing::info!(ui = %fonts.ui, reading = %fonts.reading, code = %fonts.code, "fonts");
@@ -3805,6 +3807,19 @@ fn compared(text: &str, copied: &str, what: &str) -> (String, bool) {
     } else {
         (format!("No {what} is copied to compare with"), true)
     }
+}
+
+/// Say beside the font and size settings what they come to as just
+/// resolved (`settings::show_resolved`, ADR-117).
+fn show_resolved(app: &Arc<App>, cx: &gpui::App) {
+    let theme = cx.global::<Theme>();
+    let hundreds = crate::sizes::Part::ALL.map(|part| theme.sizes.hundred(part));
+    let shown = crate::settings::Shown {
+        automatic: crate::fonts::automatic(app, cx.text_system()),
+        hundreds,
+        from: crate::desktop_style::sizes(&app.settings).from,
+    };
+    crate::settings::show_resolved(app, shown);
 }
 
 #[cfg(test)]

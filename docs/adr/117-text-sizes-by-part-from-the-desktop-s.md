@@ -65,7 +65,7 @@ Qt's settings (4).
    as browsers keep a page's text whatever the desktop says; code
    follows the desktop's monospace size, as terminals and editors do,
    else 14 px. The text scaling factor applies to every part, and is
-   followed with Desktop colors off, as more contrast is.
+   followed whatever the fonts are read from, as more contrast is.
 3. **A part is drawn in a rem of its own** (`elements::rem`, gpui's
    `with_rem_size` in each phase): the rem is the part's body text over
    0.875, so `text_sm` is its body text, `text_xs` its small text, and
@@ -91,7 +91,9 @@ Qt's settings (4).
    settings are where each file starts, and the picker shows the same
    percentages. Tables and the byte view follow it (step 2).
 7. **Where the fonts are read: "Fonts from"** (`ui.fonts_from`, Linux
-   only): Automatic, GTK or Qt (step 4). Automatic reads the running
+   only): Automatic, Skwir's own, GTK or Qt (step 4; Skwir's own and
+   its standing apart from Desktop colors, which is then the colors
+   alone, 2026-11-05). Automatic reads the running
    desktop's own settings (GSettings, `kdeglobals`, xfconf, LXQt's
    `lxqt.conf`), else GTK's (`settings.ini`, then the settings portal),
    else Qt's (qt6ct or qt5ct, as `QT_QPA_PLATFORMTHEME` names), else the
@@ -175,4 +177,17 @@ apart, and changes how gpui maps the pointer.
   tenths of the body (12 px at 10 pt, as in 0.3.0); grid lines 17 px at
   100 %. Fonts from gains "Skwir's own" and leaves Desktop colors (the
   next commit).
+- Settings, 2026-11-05 (the user's choices): Fonts from (Automatic,
+  Skwir's own, GTK, Qt) stands on its own after Desktop colors, which
+  is the colors alone again, so its name fits without a new key; someone
+  who had turned Desktop colors off keeps Skwir's own fonts
+  (`desktop_style::keep_own_fonts`, as `Settings::rename` moves a
+  value). Each font setting's Automatic says the family it comes to
+  ("Automatic (Noto Sans)"); each size step the size it comes to, in
+  points as the desktops' font settings say them ("110% (11 pt)");
+  Fonts from says what it reads now ("Now Noto Sans at 10 pt, from
+  GTK."), all declared again when what they come to changes
+  (`settings::show_resolved`). Percentages stay over points: three of
+  the four sizes are relative by nature, and a percentage keeps
+  following the desktop's size where a size in points would stop.
 

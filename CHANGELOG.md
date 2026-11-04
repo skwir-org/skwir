@@ -11,9 +11,13 @@
   writes at your desktop's font size, times its text scaling, as its other
   applications do: on a desktop at 10 pt, text is 13.3 px rather than 14, a
   little smaller than before, while tooltips, settings' descriptions and
-  messages are written at that size rather than smaller. Where GTK and Qt are set up apart, **Fonts from**
-  (Settings › Appearance) chooses whose fonts Skwir follows, and About's Copy
-  details says the display's scale and the text's sizes.
+  messages are written at that size rather than smaller. **Fonts from**
+  (Settings › Appearance) chooses whose fonts and sizes Skwir follows: your
+  desktop's, Skwir's own (at 14 px), or GTK's or Qt's where they are set up
+  apart. Desktop colors is now the colors alone; if you had turned it off,
+  Skwir keeps its own fonts. A font's Automatic says the family it comes to,
+  each size the points it comes to, and About's Copy details says the
+  display's scale and the text's sizes.
   Reading and code have sizes of their own too (Settings › Reading): each file
   opens at its size, the preview's − and + changing only the file shown, and
   tables and the byte view, which could not be enlarged, now follow them.

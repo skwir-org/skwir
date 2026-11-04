@@ -10924,3 +10924,32 @@ Checked: skwir-ui's 500 tests, clippy clean; the debug build beside
 toolbar labels), tooltips and descriptions at 13.3, the settings'
 choice fitting its row, grid lines 16 px for 13.3 px names.
 
+## Fonts from stands apart, what Automatic comes to is said (2026-11-05)
+
+ADR-117, the user's choices of the day. `ui.fonts_from` (Automatic,
+Skwir's own, GTK, Qt) is declared on its own after Desktop colors,
+which is the colors alone again; its description says what it reads
+now ("Now Noto Sans at 10 pt, from GTK."). Skwir's own fonts are drawn
+at skwir's own 14 px (`desktop_style::Sizes::own`), the desktop's text
+scaling still followed. A 0.3.0 settings file with Desktop colors off
+is given Fonts from: Skwir's own (`desktop_style::keep_own_fonts`,
+before the setting is declared, as `Settings::rename` moves a value).
+Each font setting's Automatic says its family ("Automatic (Noto
+Sans)", `fonts::automatic`), each size step its size in points ("100%
+(10 pt)"); `settings::show_resolved` declares them again when what they
+come to changes, keeping the families listed last. Copy details says
+the body's points beside its pixels.
+
+Checked: skwir-ui's 501 tests (new: Desktop colors off keeps the fonts
+lent, Skwir's own takes them back; a 0.3.0 file with Desktop colors off
+moved to Skwir's own once, a choice made since kept, nothing moved with
+Desktop colors on; Skwir's own at 14 px scaled), the app's settings
+tests, clippy clean. The debug build on Xvfb (:91) with a settings file
+saying only `desktop_colors = false`: the window opened in skwir's own
+fonts (DejaVu Sans, Inter not installed) at 14 px; Appearance showed
+Desktop colors off, Fonts from on Skwir's own, Font "Automatic (DejaVu
+Sans)", Text size and Files text size "100% (10.5 pt)"; choosing
+Automatic changed them at once to "Automatic (Noto Sans)" and "100%
+(10 pt)" and saved `fonts_from = "auto"` beside `desktop_colors =
+false`.
+

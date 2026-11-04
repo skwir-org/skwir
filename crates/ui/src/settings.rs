@@ -43,8 +43,8 @@ pub const NOTES_OWNER: &str = skwir_core::notes::SETTINGS;
 pub const PRIVACY_OWNER: &str = skwir_core::permissions::SETTINGS;
 
 pub const THEME_KEY: &str = "ui.theme";
-/// Whether skwir wears the accent the desktop's settings name (ADR-071,
-/// `desktop_style`), and its fonts where a font says Automatic.
+/// Whether skwir wears the colors and the accent the desktop's settings
+/// name (ADR-071, `desktop_style`); the fonts are `FONTS_FROM_KEY`'s.
 pub const DESKTOP_COLORS_KEY: &str = "ui.desktop_colors";
 /// The fonts skwir writes in, by role (ADR-073, `fonts.rs`): the
 /// interface's, what is read, code. Each is Automatic or a family.
@@ -55,8 +55,9 @@ pub const CODE_FONT_KEY: &str = "ui.code_font";
 pub const FONT_KEYS: [&str; 3] = [FONT_KEY, READING_FONT_KEY, CODE_FONT_KEY];
 /// The fonts' Automatic.
 pub const FONT_AUTO: &str = "auto";
-/// Where the desktop's fonts and their sizes are read (ADR-117,
-/// `desktop_style::FontsFrom`): Automatic, GTK's or Qt's. Linux only.
+/// Where the fonts a font setting's Automatic writes in, and their sizes,
+/// are read (ADR-117, `desktop_style::FontsFrom`): Automatic, skwir's
+/// own, GTK's or Qt's. Linux only.
 pub const FONTS_FROM_KEY: &str = "ui.fonts_from";
 /// The text sizes, by part of the window (ADR-117, `sizes.rs`): a step of
 /// `sizes::STEPS`, a percentage of the part's 100 %.
@@ -207,7 +208,18 @@ pub fn font_spec(
     chosen: &str,
     installed: Option<&crate::fonts::Installed>,
 ) -> SettingSpec {
-    let mut choices = vec![(FONT_AUTO.to_owned(), "Automatic".to_owned())];
+    // Automatic says what it comes to, once the window resolved it.
+    let automatic = shown()
+        .map(|shown| match key {
+            READING_FONT_KEY => shown.automatic.reading,
+            CODE_FONT_KEY => shown.automatic.code,
+            _ => shown.automatic.ui,
+        })
+        .map_or_else(
+            || "Automatic".to_owned(),
+            |family| format!("Automatic ({family})"),
+        );
+    let mut choices = vec![(FONT_AUTO.to_owned(), automatic)];
     if let Some(installed) = installed {
         choices.extend(
             installed
@@ -234,19 +246,19 @@ pub fn font_spec(
     match key {
         READING_FONT_KEY => spec(
             "Reading font",
-            "The font books, Markdown and HTML files, documents and mail are read in. Automatic is your desktop's document font while Desktop colors is on, else the interface's.",
+            "The font books, Markdown and HTML files, documents and mail are read in. Automatic is your desktop's document font, as Fonts from reads it, else the interface's.",
         )
         .section("Text")
         .essential(),
         CODE_FONT_KEY => spec(
             "Code font",
-            "The font of source and text files, code in documents, the byte view and the terminal, where each letter takes the same width. Automatic is your desktop's monospace font while Desktop colors is on, else skwir's own.",
+            "The font of source and text files, code in documents, the byte view and the terminal, where each letter takes the same width. Automatic is your desktop's monospace font, as Fonts from reads it, else skwir's own.",
         )
         .page(page::READING)
         .section("Code"),
         _ => spec(
             "Font",
-            "The font of skwir's menus, lists, bars and dialogs. Automatic is your desktop's while Desktop colors is on, else skwir's own: Inter where it is installed.",
+            "The font of skwir's menus, lists, bars and dialogs. Automatic is your desktop's, as Fonts from reads it, else skwir's own: Inter where it is installed.",
         ),
     }
 }
@@ -255,9 +267,22 @@ pub fn font_spec(
 /// 100 % its own size.
 pub fn text_size_spec(part: crate::sizes::Part) -> SettingSpec {
     use crate::sizes::{DEFAULT_STEP, Part, STEPS, step_label};
+    // Each step says the size it comes to, in points as the desktops'
+    // font settings say them, once the window resolved its 100 %.
+    let hundred = shown().map(|shown| shown.hundreds[part as usize]);
     let values: Vec<(String, String)> = STEPS
         .iter()
-        .map(|step| (step.to_string(), step_label(*step)))
+        .map(|step| {
+            let label = match hundred {
+                Some(hundred) => format!(
+                    "{} ({} pt)",
+                    step_label(*step),
+                    points(hundred * *step as f32 / 100.)
+                ),
+                None => step_label(*step),
+            };
+            (step.to_string(), label)
+        })
         .collect();
     let pairs: Vec<(&str, &str)> = values
         .iter()
@@ -296,6 +321,100 @@ pub fn text_size_spec(part: crate::sizes::Part) -> SettingSpec {
     }
 }
 
+/// `ui.fonts_from`, saying what its Automatic comes to once the window
+/// resolved it.
+fn fonts_from_spec() -> SettingSpec {
+    use std::fmt::Write;
+    let pairs = crate::desktop_style::FontsFrom::CHOICES;
+    let mut description = "Where skwir reads the fonts a font setting's Automatic writes in, and their sizes. Automatic reads your desktop's own settings, else GTK's, else Qt's; Skwir's own is skwir's fonts at its own size; GTK or Qt reads that toolkit's settings alone, as when they name different fonts.".to_owned();
+    if let Some(shown) = shown() {
+        let from = shown
+            .from
+            .as_deref()
+            .map_or_else(|| "skwir's own".to_owned(), |from| format!("from {from}"));
+        let _ = write!(
+            description,
+            " Now {} at {} pt, {from}.",
+            shown.automatic.ui,
+            points(shown.hundreds[crate::sizes::Part::Interface as usize])
+        );
+    }
+    SettingSpec::choice(
+        FONTS_FROM_KEY,
+        "Fonts from",
+        &description,
+        pairs[0].0,
+        &pairs,
+    )
+}
+
+/// A size in pixels as a desktop's font settings say it: in points, to
+/// the half.
+pub(crate) fn points(px: f32) -> String {
+    let points = (px * 0.75 * 2.).round() / 2.;
+    if points.fract() == 0. {
+        format!("{points:.0}")
+    } else {
+        format!("{points:.1}")
+    }
+}
+
+/// What a font setting's Automatic comes to and each part's 100 %, as the
+/// window resolved them last (ADR-117): said beside their choices.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Shown {
+    pub automatic: crate::fonts::Families,
+    /// By `sizes::Part`, in pixels.
+    pub hundreds: [f32; 4],
+    /// Where the fonts were read, none for skwir's own.
+    pub from: Option<String>,
+}
+
+static SHOWN: std::sync::RwLock<Option<Shown>> = std::sync::RwLock::new(None);
+/// The families listed last (`list_fonts`), which a font setting declared
+/// again keeps offering.
+static LISTED: std::sync::RwLock<Option<Arc<crate::fonts::Installed>>> =
+    std::sync::RwLock::new(None);
+
+fn shown() -> Option<Shown> {
+    SHOWN
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+}
+
+fn listed() -> Option<Arc<crate::fonts::Installed>> {
+    LISTED
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+}
+
+/// Say beside the font and size settings what they come to, when that
+/// changed: a font's Automatic, each step's size, where Fonts from read.
+pub(crate) fn show_resolved(app: &App, now: Shown) {
+    {
+        let mut shown = SHOWN
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if shown.as_ref() == Some(&now) {
+            return;
+        }
+        *shown = Some(now);
+    }
+    let listed = listed();
+    for key in FONT_KEYS {
+        app.settings
+            .declare(font_spec(key, &font_chosen(app, key), listed.as_deref()));
+    }
+    for part in crate::sizes::Part::ALL {
+        app.settings.declare(text_size_spec(part));
+    }
+    if skwir_platform::desktop_style::READ {
+        app.settings.declare(fonts_from_spec());
+    }
+}
+
 /// What a font setting says, Automatic when nothing.
 fn font_chosen(app: &App, key: &str) -> String {
     app.settings
@@ -314,11 +433,14 @@ pub(crate) fn list_fonts(app: &Arc<App>, text: Arc<gpui::TextSystem>) {
         "fonts",
         app.lifetime().child(),
         move || {
-            let installed = crate::fonts::Installed::read(&text);
+            let installed = Arc::new(crate::fonts::Installed::read(&text));
+            *LISTED
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Arc::clone(&installed));
             let Some(app) = weak.upgrade() else { return };
             for key in FONT_KEYS {
                 app.settings
-                    .declare(font_spec(key, &font_chosen(&app, key), Some(&installed)));
+                    .declare(font_spec(key, &font_chosen(&app, key), Some(&*installed)));
             }
             app.wake();
         },
@@ -819,21 +941,12 @@ pub fn declare(app: &App) {
         app.settings.declare(SettingSpec::toggle(
             DESKTOP_COLORS_KEY,
             "Desktop colors",
-            "Draw with the colors chosen in your desktop's settings, and write in its fonts where a font says Automatic. The colors are Plasma's color scheme, or your GTK theme's, with your desktop's accent. Off, skwir keeps its own colors and fonts. More contrast, when your desktop asks for it, is followed either way.",
+            "Draw with the colors chosen in your desktop's settings: Plasma's color scheme, or your GTK theme's, with your desktop's accent. Off, skwir keeps its own colors. More contrast, when your desktop asks for it, is followed either way.",
             true,
         )
         .essential());
-        let pairs = crate::desktop_style::FontsFrom::CHOICES;
-        app.settings.declare(
-            SettingSpec::choice(
-                FONTS_FROM_KEY,
-                "Fonts from",
-                "Where skwir reads your desktop's fonts and their sizes. Automatic reads your desktop's own settings, else GTK's, else Qt's; GTK or Qt reads that toolkit's settings alone, as when GTK and Qt name different fonts.",
-                pairs[0].0,
-                &pairs,
-            )
-            .under(DESKTOP_COLORS_KEY),
-        );
+        crate::desktop_style::keep_own_fonts(&app.settings);
+        app.settings.declare(fonts_from_spec());
     }
     app.settings
         .declare(font_spec(FONT_KEY, &font_chosen(app, FONT_KEY), None));

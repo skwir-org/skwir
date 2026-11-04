@@ -684,8 +684,9 @@ and dialogs; **Reading font** on Reading, for books, Markdown and HTML,
 documents and mail; **Code font**, beside it, for source and text files,
 code in documents, the byte view and the terminal, which offers the fonts
 whose letters are all one width. Automatic is the font your desktop's
-settings name for each (its interface, document and monospace fonts)
-while Desktop colors is on, else Skwir's own. A change shows at once. A
+settings name for each (its interface, document and monospace fonts),
+read where **Fonts from** says, else Skwir's own; a font's list says
+which family Automatic is now. A change shows at once. A
 long list of choices, and a font's, opens with a field that narrows it
 as you type, and a font's list writes the one you point at in itself.
 
