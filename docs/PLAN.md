@@ -668,6 +668,24 @@ that does it in a list never came). Checks in `docs/STATUS-LOG.md`
 (2026-11-04, "Usage selects at any depth"); what it leaves under "What
 is left".
 
+## Usage paces its recounts (2026-11-04)
+
+Measured with the user after ADR-116 (`docs/STATUS-LOG.md`, 2026-11-04,
+"Usage: a reading loop, and how fast changes show"): a change shows in
+40 to 240 ms, so the map is not drawn ahead of its count; but a folder
+written into without pause was recounted back to back. A change is
+still counted at once; changes that keep coming now wait four times the
+last recount a change asked for, as revalidations do (`REVALIDATE_DUTY`,
+`Active::counts_changes_at`), a request's first scan holding nothing
+back. Decided with the user: nothing is selected after an entry inside a
+folder goes (ADR-116).
+
+**Status:** built 2026-11-04, checked on Linux (the plugin's tests, and
+the release build on a display of its own: the worker's CPU over a copy
+halved below the folder shown, a quarter inside a folder of 100,000
+files, the map a second behind at most, its last count half a second
+after the copy); Windows and macOS not built.
+
 ## What is left
 
 Gathered on 2026-10-20 from the notes of this plan and of
@@ -820,14 +838,9 @@ progress, fixed the same night):
   measured with `just idle-pss`.
 
 **From Usage selecting at any depth (2026-11-04, ADR-116)**:
-- Change-driven recounts are not bounded (measured 2026-11-04, release
-  build): while 40,000 files are written below the folder shown, 2,000 a
-  second, Usage's worker recounts back to back, 37 % of a core, 80 %
-  when they land inside a folder of 100,000 files (its every entry
-  stat-ed again each time), and the window redraws at each answer.
-  Revalidations already wait 4 times the last scan's duration; changes
-  do not. Proposed: the same wait for changes that keep coming, a
-  single change still counted at once.
+- A file written into a folder Usage counted still costs the worker its
+  events (about 3.9 s over a copy of 40,000 files in 21 s, with recounts
+  paced): what the pacing leaves.
 - A lent link has no target until it is read, so no preview for the
   moment that takes, and the preview is not asked again when it is read.
 - Not tried: a link or a pipe selected inside a folder in a window (unit

@@ -50,7 +50,10 @@ const MAX_WATCH_ROOTS: usize = 4;
 /// Minimum interval between revalidations of a request without full coverage.
 pub(super) const REVALIDATE: Duration = Duration::from_secs(2);
 /// A revalidation waits at least this many times the previous scan's duration,
-/// so polling a large tree never becomes a full-duty-cycle loop.
+/// so polling a large tree never becomes a full-duty-cycle loop; and so does
+/// a change that comes this soon after a recount a change asked for, so a
+/// folder that keeps changing (a copy into it) is counted again at most a
+/// fifth of the time. A change after a while is counted at once.
 const REVALIDATE_DUTY: u32 = 4;
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(200);
 /// After the watch budget is exhausted, registrations are not retried before this.
@@ -1165,6 +1168,22 @@ struct Active {
     last_duration: Duration,
     /// The last scan yielded to a newer request and resumes at the next update.
     pending: bool,
+    /// A change came that no scan counted yet: counted once
+    /// `counts_changes_at` allows.
+    changed: bool,
+    /// When the last recount a change asked for ended, and how long it
+    /// took. The first scan of a request is not one: it reads the whole
+    /// tree, where a change reads its folder and those above it again.
+    recounted: Option<(Instant, Duration)>,
+}
+
+impl Active {
+    /// When a change may be counted: at once, unless a recount a change
+    /// asked for ended less than `REVALIDATE_DUTY` times its duration ago.
+    fn counts_changes_at(&self) -> Option<Instant> {
+        self.recounted
+            .map(|(ended, took)| ended + took * REVALIDATE_DUTY)
+    }
 }
 
 #[derive(Default)]
@@ -1302,17 +1321,25 @@ impl Worker {
                 if state.pending {
                     return Duration::ZERO;
                 }
+                // A change waiting for its recount wakes the worker then.
+                let change = state.changed.then(|| {
+                    state
+                        .counts_changes_at()
+                        .map_or(Duration::ZERO, |at| at.saturating_duration_since(now))
+                });
                 let covered = self
                     .roots
                     .iter()
                     .any(|root| state.target.path.starts_with(root));
-                if covered && state.coverage == Coverage::Full {
-                    return REVALIDATE;
-                }
-                let interval = REVALIDATE.max(state.last_duration * REVALIDATE_DUTY);
-                (state.last_scan + interval)
-                    .saturating_duration_since(now)
-                    .min(REVALIDATE)
+                let revalidate = if covered && state.coverage == Coverage::Full {
+                    REVALIDATE
+                } else {
+                    let interval = REVALIDATE.max(state.last_duration * REVALIDATE_DUTY);
+                    (state.last_scan + interval)
+                        .saturating_duration_since(now)
+                        .min(REVALIDATE)
+                };
+                change.map_or(revalidate, |change| change.min(revalidate))
             })
             .min()
     }
@@ -1353,6 +1380,8 @@ impl Worker {
             last_scan: Instant::now(),
             last_duration: Duration::ZERO,
             pending: false,
+            changed: false,
+            recounted: None,
         };
         self.acquire_aliases(&mut state);
         self.set_cache_roots(Some(&state.target.path));
@@ -1702,11 +1731,17 @@ impl Worker {
     }
 
     fn update(&mut self, dirty: &HashSet<PaneId>, now: Instant) {
+        // A change is remembered until a scan counts it.
+        for pane in dirty {
+            if let Some(state) = self.active.get_mut(pane) {
+                state.changed = true;
+            }
+        }
         // Yielded scans resume first, then changed panes, then due revalidations.
         let mut panes: Vec<PaneId> = self.active.keys().copied().collect();
         panes.sort_by_key(|pane| {
             let state = &self.active[pane];
-            (!state.pending, !dirty.contains(pane), pane.0)
+            (!state.pending, !state.changed, pane.0)
         });
         for pane in panes {
             let Some(state) = self.active.get(&pane) else {
@@ -1729,7 +1764,10 @@ impl Worker {
             };
             let interval = REVALIDATE.max(state.last_duration * REVALIDATE_DUTY);
             let due = coverage != Coverage::Full && now.duration_since(state.last_scan) >= interval;
-            if !(state.pending || dirty.contains(&pane) || due) {
+            // Changes that keep coming wait for the recount the last one
+            // asked for to rest (`REVALIDATE_DUTY`).
+            let changed = state.changed && state.counts_changes_at().is_none_or(|at| now >= at);
+            if !(state.pending || changed || due) {
                 continue;
             }
             let mut state = self.active.remove(&pane).expect("active pane");
@@ -1747,7 +1785,16 @@ impl Worker {
                 self.cache.invalidate(&state.target.path, true);
             }
             let coverage = self.cover(&state, now);
+            let counted = state.changed;
             self.run_scan(&mut state, coverage);
+            if !state.pending {
+                // What changed before it began is counted; what changes
+                // while it runs comes as another change.
+                state.changed = false;
+                if counted {
+                    state.recounted = Some((state.last_scan, state.last_duration));
+                }
+            }
             let yielded = state.pending;
             self.active.insert(pane, state);
             if yielded {
@@ -2972,7 +3019,8 @@ mod tests {
         });
         assert_eq!(scan_registrations(&worker).len(), 4);
         assert_eq!(recording.unwatched.load(Ordering::SeqCst), 1);
-        worker.update(&dirty, Instant::now());
+        // Once the first recount has rested (`REVALIDATE_DUTY`).
+        worker.update(&dirty, Instant::now() + Duration::from_secs(1));
         assert_eq!(shared.statuses.lock()[&PaneId(0)].size, 4);
         assert_eq!(scan_registrations(&worker).len(), 4);
     }
@@ -3071,6 +3119,58 @@ mod tests {
         worker.update(&HashSet::new(), started + WATCH_BACKOFF + REVALIDATE);
         assert!(recording.watched.load(Ordering::SeqCst) > watched);
         assert!(worker.backoff.until.unwrap() > started + WATCH_BACKOFF);
+    }
+
+    /// A change is counted at once, however long the first scan took;
+    /// changes that keep coming wait until the recount the last one asked
+    /// for has rested four times its own duration, remembered meanwhile,
+    /// and the worker wakes for them then.
+    #[test]
+    fn changes_that_keep_coming_wait_for_their_recount_to_rest() {
+        let tmp = tempfile::tempdir().unwrap();
+        let folder = tmp.path().join("l'été");
+        std::fs::create_dir(&folder).unwrap();
+        let request = request(0, tmp.path().into());
+        let shared = shared();
+        register_status(&shared, &request);
+        let recording = Recording::default();
+        let mut worker = worker(Arc::clone(&shared), Some(self::recording(&recording)));
+        worker.admit(request);
+        assert_eq!(worker.active[&PaneId(0)].coverage, Coverage::Full);
+        // A file of 4 bytes written, and its change told.
+        let write = |worker: &mut Worker, name: &str| {
+            std::fs::write(folder.join(name), b"data").unwrap();
+            worker.changes(Changes {
+                paths: HashMap::from([(folder.join(name), Change::Content)]),
+                ..Changes::default()
+            })
+        };
+        let size = || shared.statuses.lock()[&PaneId(0)].size;
+
+        // A first scan of a minute does not hold the first change back.
+        worker.active.get_mut(&PaneId(0)).unwrap().last_duration = Duration::from_secs(60);
+        let dirty = write(&mut worker, "first");
+        worker.update(&dirty, Instant::now());
+        assert_eq!(size(), 4, "counted at once");
+
+        // Its recount took a second (as a folder of 100,000 files may):
+        // the next change waits four.
+        let ended = Instant::now();
+        worker.active.get_mut(&PaneId(0)).unwrap().recounted =
+            Some((ended, Duration::from_secs(1)));
+        let dirty = write(&mut worker, "second");
+        worker.update(&dirty, ended + Duration::from_secs(1));
+        assert_eq!(size(), 4, "held back");
+        let wake = worker.next_wake(ended + Duration::from_secs(1));
+        assert!(
+            wake.is_some_and(|wake| wake <= Duration::from_secs(3)),
+            "{wake:?}"
+        );
+        worker.update(&HashSet::new(), ended + Duration::from_secs(3));
+        assert_eq!(size(), 4, "remembered, still held back");
+        worker.update(&HashSet::new(), ended + Duration::from_secs(4));
+        assert_eq!(size(), 8, "counted once rested");
+        assert!(!worker.active[&PaneId(0)].changed);
     }
 
     #[test]

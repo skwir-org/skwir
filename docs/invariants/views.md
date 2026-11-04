@@ -376,6 +376,14 @@ around the views is in [shell.md](shell.md).
   reliable watch coverage. Scope invalidation and deadlines to the
   affected subscriptions: eviction is not a content change, and an
   unrelated event never rescans every pane.
+- **A change is counted at once; changes that keep coming wait.** A
+  change that comes within `REVALIDATE_DUTY` (4) times the duration of
+  the last recount a change asked for waits until then, remembered
+  (`Active::changed`, `counts_changes_at`), and the worker wakes for it:
+  a folder written into without pause (a copy) is counted again at most
+  a fifth of the time, as a revalidation is. A request's first scan
+  holds nothing back: it reads the whole tree, a change only its folder
+  and those above it.
 - Keep queued/running state apart from visible progress, so a quick cache
   hit never flashes a busy indicator.
 - Progressive snapshots are lower bounds, marked incomplete, kept out of

@@ -10727,3 +10727,39 @@ screen reader, `just check-cross`, Windows and macOS, release-check.
   - Usage on a folder of 100,000 files: the shown listing dropped the
     deleted file and gave its cursor to the next file at 100 ms, the
     count followed at 220 ms.
+
+## Usage paces its recounts (2026-11-04)
+
+A change that comes within `REVALIDATE_DUTY` (4) times the last recount
+a change asked for waits until then, remembered (`Active::changed`), the
+worker waking for it (`next_wake`); a first scan holds nothing back, and
+a change after a while is counted at once. `just prune` first gave the
+disk back (0.4 GB free before, 50.9 GB after).
+
+Checked: `changes_that_keep_coming_wait_for_their_recount_to_rest` (a
+first scan of a minute holds nothing back; after a recount of a second,
+the next change waits four, remembered, the worker waking within them),
+`attribute_events_keep_watches_and_reread_only_the_changed_chain` given
+a second between its two changes; the plugin's 42 tests, skwir-ui's and
+the app's 678, skwir-core's 653; clippy clean on the four crates. The
+release build on Xvfb (:93, lavapipe), fixtures as before:
+
+- The reading loop fixed: with `b.bin` selected inside a folder, 2 ticks
+  of CPU in 5 s (4,435 before); Properties showed it read.
+- A single change, a file moved away from a shell: drawn again in 60 to
+  80 ms in the small tree (40 to 100 before), 180 to 200 ms with the
+  folder of 100,000 files below the one shown (160 to 180).
+- 40,000 files of 1 KB written 2,000 a second (22 s), CPU by thread,
+  before and after:
+
+  | Written into | usage worker | window's thread | llvmpipe |
+  | --- | --- | --- | --- |
+  | a new folder below the one shown | 7.7 s, now 3.9 s | 1.3 s, now 1.1 s | 31.9 s, now 24.4 s |
+  | a folder inside the folder of 100,000 files | 16.8 s, now 4.6 s | 0.4 s, now 0.2 s | 10.5 s, now 3.4 s |
+
+  The summary, recorded at 10 frames a second during the second copy,
+  changed every 0.6 to 0.8 s (34 times), the last half a second after the
+  last file; 140,003 files counted. What is left of the worker's time is
+  its events (one per file written).
+
+Not checked: a window on a real GPU, Windows and macOS, release-check.
