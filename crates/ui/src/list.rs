@@ -238,6 +238,9 @@ pub struct ListState {
     /// What `sync_selection_hydration` last asked for: the listing and the
     /// selection's revision.
     selection_hydrated: Option<(u64, u64)>,
+    /// What `sync_lent_hydration` last looked at: the selection's revision
+    /// and what was lent (`Pane::lent_version`).
+    lent_hydrated: Option<(u64, u64)>,
     pub visible_rows: usize,
     /// How many entries the view laid out: what a tab shown again shows
     /// first.
@@ -276,6 +279,7 @@ impl Default for ListState {
             removed: 0,
             sort_hydrated: None,
             selection_hydrated: None,
+            lent_hydrated: None,
             visible_rows: 20,
             visible_items: 0,
             typed: None,
@@ -333,6 +337,7 @@ impl ListState {
         self.pending_hydrate.clear();
         self.sort_hydrated = None;
         self.selection_hydrated = None;
+        self.lent_hydrated = None;
         self.selection.set(None);
     }
 
@@ -629,6 +634,49 @@ impl Shell {
         self.request_hydrate_off_screen(unknown);
     }
 
+    /// Ask for what a listing would know of the selected entries a view
+    /// lent the pane (ADR-116), read by their paths, and read again once
+    /// lent again (what drew them again may have seen them change): what
+    /// drew them (a scan) read no more than their kind. On screen: they
+    /// are the selection, which the preview and Properties show. Asked
+    /// again only when the selection or what is lent changes, which a
+    /// reading does.
+    pub(crate) fn sync_lent_hydration(&mut self) {
+        let pane = self.pane;
+        let app = std::sync::Arc::clone(&self.app);
+        let (key, unread) = {
+            let ws = app.workspace.read();
+            let Some(p) = ws.pane(pane) else { return };
+            if !p.has_lent() {
+                return;
+            }
+            let key = (p.selection.revision(), p.lent_version());
+            if self.ui().list.lent_hydrated == Some(key) {
+                return;
+            }
+            let unread: Vec<EntryId> = p
+                .selection
+                .iter()
+                .filter(|id| p.lent_to_read(*id))
+                .collect();
+            (key, unread)
+        };
+        self.ui_mut().list.lent_hydrated = Some(key);
+        if unread.is_empty() {
+            return;
+        }
+        if let Err(e) = self.app.dispatch_args(
+            "hydrate",
+            HydrateArgs {
+                ids: unread,
+                pane: Some(pane),
+                off_screen: false,
+            },
+        ) {
+            tracing::warn!("hydrate: {e:#}");
+        }
+    }
+
     /// Under a sort by size, date or rating, ask for the metadata of every
     /// entry the pane shows: until it comes, an entry sorts after the rest
     /// (`SortKey::needs_metadata`). Asked again only when the entries or
@@ -708,6 +756,33 @@ impl Shell {
         ws.pane(self.pane)
             .and_then(|p| p.selection.cursor)
             .and_then(|c| self.ui().list.index_of(c))
+    }
+
+    /// Whether `id` is an entry a view lent the pane (ADR-116).
+    pub fn is_lent(&self, id: EntryId) -> bool {
+        let ws = self.app.workspace.read();
+        ws.pane(self.pane).is_some_and(|p| p.is_lent(id))
+    }
+
+    /// Move the cursor to `id` as `step` says, where the pane's order
+    /// does not say where it is (an entry a view lent, ADR-116, or a view
+    /// that moves by what it draws): a range to it adds it.
+    pub fn select_entry(
+        &mut self,
+        id: EntryId,
+        step: Step,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let (mode, _) = step.select();
+        let args = SelectArgs {
+            ids: vec![id],
+            mode,
+            pane: Some(self.pane),
+            ..SelectArgs::default()
+        };
+        self.run_args("select", args, window, cx);
+        cx.notify();
     }
 
     pub fn cursor_id(&self) -> Option<EntryId> {
@@ -868,7 +943,7 @@ impl Shell {
         let Some(mut view) = self.take_view() else {
             return;
         };
-        let handled = view.nav(nav, self, window, cx);
+        let handled = view.nav(nav, step, self, window, cx);
         let delta = view.nav_delta(nav, self);
         self.put_view(view);
         if handled {
@@ -898,8 +973,10 @@ impl Shell {
         self.activate_pane(pane, cx);
         window.focus(&self.ui().focus, cx);
         self.press_collapse = None;
-        // Gone since it was drawn: the press is on nothing.
-        if self.ui().list.index_of(id).is_none() {
+        // Gone since it was drawn: the press is on nothing. An entry a
+        // view lent (ADR-116) is in no order: the pane says whether it is
+        // still shown.
+        if self.ui().list.index_of(id).is_none() && !self.is_lent(id) {
             return;
         }
         if ev.button == MouseButton::Middle {

@@ -62,8 +62,9 @@ pub struct TreemapStyle {
 type HoverFn = Rc<dyn Fn(Option<usize>, &mut Window, &mut App)>;
 type ClickFn = Rc<dyn Fn(usize, &MouseDownEvent, &mut Window, &mut App)>;
 
-/// Where the top level's blocks were last laid out, by key: what a view
-/// reads for keyboard navigation, the one later read of prepaint allowed.
+/// Where the blocks were last laid out, by key, at every depth drawn (a
+/// block too small to open draws none of its own): what a view reads for
+/// keyboard navigation, the one later read of prepaint allowed.
 pub type Laidout = Rc<RefCell<Vec<(usize, Rect)>>>;
 
 pub struct Treemap {
@@ -468,7 +469,6 @@ impl Element for Treemap {
         if let Some(record) = &self.record {
             *record.borrow_mut() = blocks
                 .iter()
-                .filter(|b| b.block.depth == 0)
                 .map(|b| {
                     let o = b.block.bounds.origin;
                     let s = b.block.bounds.size;

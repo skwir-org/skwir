@@ -685,6 +685,13 @@ pub struct Pane {
     expanded: Vec<Opened>,
     /// Changes with the set of folders opened.
     expanded_version: u64,
+    /// Entries a view draws beside what the pane lists (Usage's blocks
+    /// inside the folder's own entries, ADR-116), lent by the view while
+    /// it draws them: shown, so selected and acted on as the listing's,
+    /// found by [`Pane::entry`] and [`Pane::path_of`], but in no order:
+    /// Select all, a range, the filter and the counts are the listing's.
+    /// Navigation and dormancy let them go; the view lends them again.
+    lent: Lent,
     /// Changes whenever what the opened folders show may have changed: the
     /// set, or one of their listings.
     tree_version: u64,
@@ -794,6 +801,8 @@ struct RetainKey {
     show_hidden: bool,
     /// The selection as it was looked over.
     selection: u64,
+    /// What a view lent (`Lent::version`).
+    lent: u64,
 }
 
 /// The selection as last looked over (`Pane::retain_changed`): what decided
@@ -951,6 +960,7 @@ fn shows<'a>(
     listing: &'a Listing,
     kept: &'a [Kept],
     expanded: &'a [Opened],
+    lent: &'a Lent,
     filter: Option<&'a str>,
     read: Option<&'a ReadFilter>,
     sort: SortSpec,
@@ -970,8 +980,38 @@ fn shows<'a>(
             .find_map(|(l, shows)| l.get(id).map(|e| (e, shows(id))));
         match found {
             Some((e, true)) => filter.as_ref().is_none_or(|f| f.keeps(e)),
-            _ => false,
+            // What a view draws is shown while it lends it, whatever
+            // filters the listing: the view drew it.
+            Some((_, false)) => false,
+            None => lent.entries.contains_key(&id),
         }
+    }
+}
+
+/// Entries a view draws beside what the pane lists, lent while it draws
+/// them (ADR-116): each by its id, with where it is.
+#[derive(Default)]
+struct Lent {
+    entries: crate::hashing::Map<EntryId, Loan>,
+    /// Changes at each lending, as what is lent is read, and as the pane
+    /// lets go of it: never back to a version a view was told.
+    version: u64,
+}
+
+/// An entry lent, where it is, and whether it was read since it was last
+/// lent: one lent again keeps what was read of it, read again once
+/// selected (what drew it again may have seen it change).
+struct Loan {
+    entry: Entry,
+    path: PathBuf,
+    read: bool,
+}
+
+impl Lent {
+    /// Nothing lent any more: another location shown, the pane dormant.
+    fn let_go(&mut self) {
+        self.entries.clear();
+        self.version += 1;
     }
 }
 
@@ -1069,6 +1109,7 @@ impl Pane {
             restore: None,
             expanded: Vec::new(),
             expanded_version: 0,
+            lent: Lent::default(),
             tree_version: 0,
             tree_members_version: 0,
             retained: None,
@@ -1271,6 +1312,7 @@ impl Pane {
             self.expanded.clear();
             self.expanded_changed();
         }
+        self.lent.let_go();
         // The words that found names go; the lens stays, as a filter or
         // in the location's own terms.
         self.take_lens(lensed);
@@ -1446,6 +1488,7 @@ impl Pane {
         self.kept.clear();
         self.opened_moved();
         self.left = None;
+        self.lent.let_go();
     }
 
     /// The selection to give back once the listing is complete.
@@ -1827,6 +1870,7 @@ impl Pane {
             &self.listing,
             &self.kept,
             &self.expanded,
+            &self.lent,
             self.filter.as_deref(),
             self.read.as_deref(),
             self.sort,
@@ -1866,6 +1910,7 @@ impl Pane {
             &self.listing,
             &self.kept,
             &self.expanded,
+            &self.lent,
             self.filter.as_deref(),
             self.read.as_deref(),
             self.sort,
@@ -1888,6 +1933,7 @@ impl Pane {
             filter: self.filter_version,
             show_hidden: self.sort.show_hidden,
             selection: self.selection.revision(),
+            lent: self.lent.version,
         }
     }
 
@@ -1958,6 +2004,7 @@ impl Pane {
             &self.listing,
             &self.kept,
             &self.expanded,
+            &self.lent,
             self.filter.as_deref(),
             self.read.as_deref(),
             self.sort,
@@ -1989,6 +2036,114 @@ impl Pane {
             .0
             .get(&id)?;
         Some((self.expanded.get(e)?, self.kept.get(k)?))
+    }
+
+    /// Lend the pane `entries`, each with where it is: what a view draws
+    /// beside what the pane lists (Usage's blocks inside the folder's own
+    /// entries, ADR-116), in place of what it lent before. Shown while
+    /// lent, so selected and acted on as the listing's, but in no order.
+    /// An entry lent again at the same path keeps what was read of it,
+    /// to be read again ([`Pane::lent_to_read`]); what is no longer lent
+    /// leaves the selection. Says the version lent,
+    /// which [`Pane::lent_version`] gives until the view lends again, the
+    /// pane lets go of them (another location, dormancy) or they are read.
+    pub fn lend(&mut self, entries: impl IntoIterator<Item = (Entry, PathBuf)>) -> u64 {
+        let mut before = std::mem::take(&mut self.lent.entries);
+        self.lent.entries = entries
+            .into_iter()
+            .map(|(entry, path)| {
+                let id = entry.id;
+                let entry = match before.remove(&id) {
+                    Some(known) if known.path == path => known.entry,
+                    _ => entry,
+                };
+                let read = false;
+                (id, Loan { entry, path, read })
+            })
+            .collect();
+        self.lent.version += 1;
+        self.retain_shown();
+        self.lent.version
+    }
+
+    /// Changes as a view lends entries, the pane lets go of them, or what
+    /// is lent is read: a view lends again when it is not the version its
+    /// lending said.
+    pub fn lent_version(&self) -> u64 {
+        self.lent.version
+    }
+
+    /// Whether a view lent the pane anything.
+    pub fn has_lent(&self) -> bool {
+        !self.lent.entries.is_empty()
+    }
+
+    /// Whether `id` is an entry a view lent, which no listing holds.
+    pub fn is_lent(&self, id: EntryId) -> bool {
+        self.lent.entries.contains_key(&id)
+            && self.listing.get(id).is_none()
+            && self.opened_of(id).is_none()
+    }
+
+    /// Whether `id` is lent and not read since it was last lent: what a
+    /// view asks to be read once it is selected.
+    pub fn lent_to_read(&self, id: EntryId) -> bool {
+        self.is_lent(id) && self.lent.entries.get(&id).is_some_and(|loan| !loan.read)
+    }
+
+    /// Those of `ids` lent and not read since, with where each is: what
+    /// a hydration reads by path (`fs::read_paths`).
+    pub(crate) fn lent_paths(&self, ids: &[EntryId]) -> Vec<(EntryId, PathBuf)> {
+        ids.iter()
+            .filter(|id| self.lent_to_read(**id))
+            .filter_map(|id| Some((*id, self.lent.entries.get(id)?.path.clone())))
+            .collect()
+    }
+
+    /// What was read of lent entries (`lent_paths`): `found` read, `gone`
+    /// no longer there, `unread` there and unreadable (marked
+    /// `keys::UNREAD`, so nothing waits for them). An entry no longer lent
+    /// is left alone. Whether anything changed.
+    pub(crate) fn lent_read(
+        &mut self,
+        found: Vec<Entry>,
+        gone: &[EntryId],
+        unread: &[EntryId],
+    ) -> bool {
+        use crate::entry::{Provenance, Value, keys};
+        let mut changed = false;
+        for entry in found {
+            if let Some(loan) = self.lent.entries.get_mut(&entry.id) {
+                loan.entry = entry;
+                loan.read = true;
+                changed = true;
+            }
+        }
+        for id in unread {
+            if let Some(loan) = self.lent.entries.get_mut(id) {
+                // What was known of it stands.
+                if !loan.entry.metadata.is_hydrated() {
+                    loan.entry.metadata.set(
+                        keys::UNREAD,
+                        Value::Bool(true),
+                        Provenance::Filesystem,
+                    );
+                }
+                loan.read = true;
+                changed = true;
+            }
+        }
+        let went = gone
+            .iter()
+            .filter(|id| self.lent.entries.remove(id).is_some())
+            .count();
+        if changed || went > 0 {
+            self.lent.version += 1;
+        }
+        if went > 0 {
+            self.retain_shown();
+        }
+        changed || went > 0
     }
 
     /// The folders opened in place under the one shown.
@@ -2165,6 +2320,7 @@ impl Pane {
         self.listing
             .get(id)
             .or_else(|| self.opened_of(id).and_then(|(_, k)| k.listing.get(id)))
+            .or_else(|| self.lent.entries.get(&id).map(|loan| &loan.entry))
     }
 
     /// The entry the pane shows of the file `file` at `path`: of a file
@@ -2216,8 +2372,15 @@ impl Pane {
     /// Where an entry the pane shows lives on disk. Asks the location for
     /// its own entries: plugin code, called under the caller's lock.
     pub fn path_of(&self, id: EntryId) -> Option<PathBuf> {
-        self.opened_path(id)
-            .or_else(|| self.open.as_ref()?.path_of(id))
+        self.opened_path(id).or_else(|| {
+            // A lent entry is no listing's: the location never knew it.
+            if self.listing.get(id).is_none()
+                && let Some(loan) = self.lent.entries.get(&id)
+            {
+                return Some(loan.path.clone());
+            }
+            self.open.as_ref()?.path_of(id)
+        })
     }
 
     /// Where a place the pane shows leads, or a folder that does not open
@@ -2288,6 +2451,11 @@ impl Pane {
     ) -> Vec<(Arc<dyn OpenLocation>, Vec<EntryId>)> {
         let mut out: Vec<(Arc<dyn OpenLocation>, Vec<EntryId>)> = Vec::new();
         for &id in ids {
+            // No location knows a lent entry: it is read by its path
+            // (`lent_paths`).
+            if self.is_lent(id) {
+                continue;
+            }
             let open = if self.listing.get(id).is_some() {
                 self.open.as_ref()
             } else {

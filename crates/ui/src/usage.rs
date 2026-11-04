@@ -2,9 +2,12 @@
 //!
 //! The map draws the folder's own entries, and inside each folder what it
 //! holds, as many levels as the zoom asks and the blocks have room for
-//! (`elements::treemap`). The folder's own entries are the pane's: a
-//! block inside one stands for its outer entry, which a click selects and
-//! the menu acts on, and a double click goes to the block itself. Every
+//! (`elements::treemap`). The folder's own entries are the pane's; the
+//! entries drawn inside them are lent to the pane while they are drawn
+//! (`Pane::lend`, ADR-116), so a block at any depth is selected by a click
+//! and acted on by the menu as a row is, and a double click on one inside
+//! goes there. The arrows move among the blocks beside the cursor's in its
+//! folder, out to the folder's own neighbours at its edge. Every
 //! level draws its whole folder: the entries too small to draw and, while
 //! hidden files are not shown, the hidden ones each take a block of their
 //! own, so no block looks larger than it is.
@@ -22,6 +25,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use gpui::{AnyElement, Context, MouseButton, Window, div, prelude::*, px};
 use serde::{Deserialize, Serialize};
+use skwir_core::entry::{Entry, EntryKind};
 use skwir_core::{EntryId, command::Invocation, os_path::PathArg};
 use skwir_platform::mime::Kind;
 
@@ -127,6 +131,10 @@ pub struct Node {
     /// A file's kind.
     #[serde(default)]
     pub kind: Option<Kind>,
+    /// What an entry that is no folder is itself (a file, a link, a
+    /// pipe): what it is lent to the pane as. `None` for a folder.
+    #[serde(default)]
+    pub entry_kind: Option<EntryKind>,
     /// A folder's bytes by the kinds' names (`other`: of no kind).
     #[serde(default)]
     pub kinds: BTreeMap<String, u64>,
@@ -155,6 +163,20 @@ pub struct Node {
 }
 
 impl Node {
+    /// The entry it is, as it is lent to the pane: `None` for what the
+    /// scan could not say the kind of, which is not lent rather than
+    /// taken for a file to read.
+    fn entry(&self, path: PathBuf) -> Option<(Entry, PathBuf)> {
+        let id = self.id?;
+        let kind = if self.is_dir {
+            EntryKind::Directory
+        } else {
+            self.entry_kind.filter(|kind| *kind != EntryKind::Unknown)?
+        };
+        let name = path.file_name()?.to_os_string();
+        Some((Entry::new(id, name, kind), path))
+    }
+
     /// What its block weighs in `mode`.
     fn measure(&self, mode: Mode) -> u64 {
         match mode {
@@ -213,6 +235,17 @@ impl Shell {
                     &serde_json::json!({"pane":self.pane}),
                 ));
                 self.ui_mut().usage = UsageState::default();
+            }
+            // What the map drew is drawn no more: what was selected of it
+            // leaves the selection (ADR-116).
+            let lent = self
+                .app
+                .workspace
+                .read()
+                .pane(self.pane)
+                .is_some_and(skwir_core::workspace::Pane::has_lent);
+            if lent && let Some(p) = self.app.workspace.write().pane_mut(self.pane) {
+                p.lend(Vec::new());
             }
             return;
         }
@@ -313,9 +346,15 @@ struct Block {
     part: Part,
     /// Folders inside the one shown: 0 for its own entries.
     depth: usize,
-    /// The folder's own entry it lies in, itself at the top: what a click
-    /// selects.
+    /// The entry it is: one of the folder's own, or one lent to the pane
+    /// (ADR-116). What a click selects; `None` for a block standing for
+    /// several, or one the scan could not say the kind of.
     entry: Option<EntryId>,
+    /// The block it is drawn in, by key.
+    parent: Option<usize>,
+    /// Its bytes, and whether it is a folder: what the footer weighs.
+    size: u64,
+    is_dir: bool,
     /// Where a double click goes, as the pane names it: the entry, or the
     /// folder holding the entries a block stands for.
     path: PathBuf,
@@ -566,11 +605,15 @@ struct Build<'a> {
     /// The hues of the folder shown's entries, kept between builds.
     hues: &'a mut Hues,
     blocks: Vec<Block>,
+    /// The entries drawn inside the folder's own, as they are lent to the
+    /// pane.
+    lent: Vec<(Entry, PathBuf)>,
 }
 
-/// What a level inherits from the entry of the folder shown it lies in.
+/// What a level inherits from the folder it is drawn in.
 struct Outer {
-    entry: Option<EntryId>,
+    /// That folder's block.
+    key: usize,
     hue: usize,
     trail: String,
     /// The cache or the trash it lies in.
@@ -714,25 +757,35 @@ impl Build<'_> {
                 hidden.add(child);
                 continue;
             }
-            let (entry, hue, trail) = match outer {
-                Some(outer) => (
-                    outer.entry,
-                    outer.hue,
-                    format!("{} › {}", outer.trail, child.name),
-                ),
-                None => (child.id, hues[index], child.name.clone()),
+            let (hue, trail) = match outer {
+                Some(outer) => (outer.hue, format!("{} › {}", outer.trail, child.name)),
+                None => (hues[index], child.name.clone()),
+            };
+            let path = self.shown(&child.path);
+            // The folder's own entries are the pane's; one drawn inside
+            // them is lent to it while it is drawn.
+            let entry = match outer {
+                None => child.id,
+                Some(_) => child.entry(path.clone()).map(|lent| {
+                    let id = lent.0.id;
+                    self.lent.push(lent);
+                    id
+                }),
             };
             let key = self.blocks.len();
             self.blocks.push(Block {
                 part: Part::Entry(child.path.clone()),
                 depth,
                 entry,
-                path: self.shown(&child.path),
+                parent: outer.map(|o| o.key),
+                size: child.size,
+                is_dir: child.is_dir,
+                path,
                 hint: self.hint(child, &trail, node, outer),
             });
             let children = if child.is_dir && depth + 1 < self.levels {
                 let outer = Outer {
-                    entry,
+                    key,
                     hue,
                     trail,
                     within: child.reclaim.or(outer.and_then(|o| o.within)),
@@ -752,7 +805,7 @@ impl Build<'_> {
                 text: self.theme.block_text,
                 hatched: child.incomplete,
                 dashed: child.reclaim.is_some(),
-                selected: depth == 0 && entry.is_some_and(|id| (self.selected)(id)),
+                selected: entry.is_some_and(|id| (self.selected)(id)),
                 children,
             });
         }
@@ -763,6 +816,9 @@ impl Build<'_> {
                 part: Part::Hidden(node.path.clone()),
                 depth,
                 entry: None,
+                parent: outer.map(|o| o.key),
+                size: hidden.size,
+                is_dir: false,
                 path: self.shown(&node.path),
                 hint: format!(
                     "{} · {} · double-click to show hidden files",
@@ -783,6 +839,9 @@ impl Build<'_> {
                 part: Part::Rest(node.path.clone()),
                 depth,
                 entry: None,
+                parent: outer.map(|o| o.key),
+                size: node.other_size,
+                is_dir: false,
                 path: self.shown(&node.path),
                 hint: format!(
                     "{} · {} · {}",
@@ -849,6 +908,54 @@ impl Build<'_> {
     }
 }
 
+/// The blocks of the map as `from` says, each entry drawn inside the
+/// folder's own with what it is lent to the pane as.
+fn build_map(
+    shell: &Shell,
+    from: BuiltFrom,
+    theme: &Theme,
+    zoned: &jiff::Zoned,
+    hues: &mut Hues,
+) -> Built {
+    let state = &shell.ui().usage;
+    let status = state.status.as_ref();
+    let mut items = Vec::new();
+    let mut blocks = Vec::new();
+    let mut lent = Vec::new();
+    if let (Some(node), Some(root)) = (status.and_then(|s| s.tree.as_ref()), state.root.as_deref())
+    {
+        let ws = shell.app.workspace.read();
+        let p = ws.pane(shell.pane);
+        let selected = |id| p.is_some_and(|p| p.selection.contains(id));
+        let mut build = Build {
+            theme,
+            show_hidden: from.show_hidden,
+            levels: from.levels as usize,
+            scanning: status.is_some_and(|s| s.scanning),
+            mode: from.mode,
+            ages: age_limits(zoned),
+            zoned,
+            root,
+            tree: &node.path,
+            selected: &selected,
+            hues,
+            blocks: Vec::new(),
+            lent: Vec::new(),
+        };
+        items = build.level(node, 0, None);
+        blocks = build.blocks;
+        lent = build.lent;
+    }
+    let keys = keys_of(&blocks);
+    Built {
+        from,
+        items: Rc::new(items),
+        blocks: Rc::new(blocks),
+        keys,
+        lent,
+    }
+}
+
 #[derive(Default)]
 pub struct UsageView {
     /// Where the folder's own entries were drawn, by key, and the entry of
@@ -861,6 +968,89 @@ pub struct UsageView {
     built: Option<Built>,
     /// The hues the folder shown's entries wear, kept as it is built again.
     hues: Hues,
+    /// What was last lent to the pane, and the version it said
+    /// (`Pane::lend`): lent again when either moves.
+    lent: Option<(LentFrom, u64)>,
+}
+
+/// What the entries of `selection` weigh, each by the block it is drawn
+/// as (`Built::keys`), at any depth: a file of several names selected
+/// under each counts once; two folders sharing one each count it, as each
+/// holds it; what lies in a folder selected counts with it, not again.
+/// `None` when one is not drawn (folded into the rest): its weight is not
+/// known.
+fn weigh(built: &Built, selection: &skwir_core::workspace::Selection) -> Option<u64> {
+    let mut files = std::collections::HashSet::new();
+    selection.iter().try_fold(0, |sum, id| {
+        let block = &built.blocks[*built.keys.get(&id)?];
+        let within = std::iter::successors(block.parent, |k| built.blocks[*k].parent)
+            .any(|k| built.blocks[k].entry.is_some_and(|e| selection.contains(e)));
+        let once = !within && (block.is_dir || files.insert(id.file));
+        Some(sum + if once { block.size } else { 0 })
+    })
+}
+
+/// The block of each entry drawn, by its id.
+fn keys_of(blocks: &[Block]) -> std::collections::HashMap<EntryId, usize> {
+    blocks
+        .iter()
+        .enumerate()
+        .filter_map(|(key, block)| Some((block.entry?, key)))
+        .collect()
+}
+
+/// Where an arrow goes from the cursor's block (`UsageView::beside`).
+enum Beside {
+    /// The cursor is on one of the folder's own entries, or none: the
+    /// pane's order says (`nav_delta`).
+    Own,
+    /// At the map's edge: the cursor stays.
+    Edge,
+    To(EntryId),
+}
+
+impl UsageView {
+    /// The entry beside the cursor's block toward `toward`, where it was
+    /// last laid out, when the cursor is on a block drawn inside the
+    /// folder's own: among the blocks beside it in its folder, else beside
+    /// that folder, and so out to the folder's own entries.
+    fn beside(&self, cursor: Option<EntryId>, toward: Toward) -> Beside {
+        let Some(built) = self.built.as_ref() else {
+            return Beside::Own;
+        };
+        let Some(mut at) = cursor.and_then(|cursor| built.keys.get(&cursor).copied()) else {
+            return Beside::Own;
+        };
+        if built.blocks.get(at).is_none_or(|b| b.depth == 0) {
+            return Beside::Own;
+        }
+        let laid = self.laid.borrow();
+        loop {
+            let parent = built.blocks[at].parent;
+            let (keys, rects): (Vec<usize>, Vec<crate::treemap::Rect>) = laid
+                .iter()
+                .filter(|(key, _)| {
+                    built
+                        .blocks
+                        .get(*key)
+                        .is_some_and(|b| b.parent == parent && b.entry.is_some())
+                })
+                .copied()
+                .unzip();
+            let Some(from) = keys.iter().position(|key| *key == at) else {
+                return Beside::Edge;
+            };
+            if let Some(to) = neighbour(&rects, from, toward)
+                && let Some(id) = built.blocks[keys[to]].entry
+            {
+                return Beside::To(id);
+            }
+            let Some(outer) = parent else {
+                return Beside::Edge;
+            };
+            at = outer;
+        }
+    }
 }
 
 /// The blocks of the map, built from `from`.
@@ -868,6 +1058,21 @@ struct Built {
     from: BuiltFrom,
     items: Rc<Vec<TreemapItem>>,
     blocks: Rc<Vec<Block>>,
+    /// The block of each entry drawn, by its id.
+    keys: std::collections::HashMap<EntryId, usize>,
+    /// The entries drawn inside the folder's own, as they are lent.
+    lent: Vec<(Entry, PathBuf)>,
+}
+
+/// What decides which entries are drawn inside the folder's own: the
+/// plugin's answer, the levels and whether hidden files are shown. Not
+/// the mode, the selection nor the minute, which change only how.
+#[derive(Clone, PartialEq)]
+struct LentFrom {
+    root: Option<PathBuf>,
+    revision: Option<u64>,
+    levels: u32,
+    show_hidden: bool,
 }
 
 /// What the blocks depend on: the plugin's answer, how it is shown, what
@@ -920,25 +1125,50 @@ impl PaneView for UsageView {
         let current = shell.cursor_index().map_or(-1, |i| i as isize);
         Some(target - current)
     }
+    /// On a block drawn inside the folder's own, the arrows go to the one
+    /// beside it in its folder, else beside that folder, out to the
+    /// folder's own entries (`UsageView::beside`), with the key's step: a
+    /// lent entry is in no order for `nav_delta` to count in.
+    fn nav(
+        &mut self,
+        nav: Nav,
+        step: crate::list::Step,
+        shell: &mut Shell,
+        window: &mut Window,
+        cx: &mut Context<Shell>,
+    ) -> bool {
+        let toward = match nav {
+            Nav::Up => Toward::Up,
+            Nav::Down => Toward::Down,
+            Nav::Left => Toward::Left,
+            Nav::Right => Toward::Right,
+            _ => return false,
+        };
+        match self.beside(shell.cursor_id(), toward) {
+            Beside::Own => false,
+            Beside::Edge => true,
+            Beside::To(id) => {
+                shell.select_entry(id, step, window, cx);
+                true
+            }
+        }
+    }
     fn zooms(&self) -> Zooms {
         Zooms::Levels
     }
     /// Its folders measured: the footer weighs them too, once counted.
     fn weighs(&self, shell: &Shell) -> Option<Weighs> {
         let status = shell.ui().usage.status.as_ref()?;
-        let Some(tree) = status.tree.as_ref().filter(|tree| !tree.incomplete) else {
+        if status.tree.as_ref().is_none_or(|tree| tree.incomplete) {
             return Some(Weighs::default());
-        };
-        // A file of several names selected under each counts once; two
-        // folders sharing one each count it, as each holds it.
-        let selected = shell.app.workspace.read().pane(shell.pane).and_then(|p| {
-            let mut files = std::collections::HashSet::new();
-            p.selection.iter().try_fold(0, |sum, id| {
-                let child = tree.children.iter().find(|c| c.id == Some(id))?;
-                let once = child.is_dir || files.insert(id.file);
-                Some(sum + if once { child.size } else { 0 })
-            })
-        });
+        }
+        let built = self.built.as_ref();
+        let selected = shell
+            .app
+            .workspace
+            .read()
+            .pane(shell.pane)
+            .and_then(|p| weigh(built?, &p.selection));
         Some(Weighs {
             shown: Some(status.size),
             selected,
@@ -967,10 +1197,9 @@ fn render(view: &mut UsageView, shell: &mut Shell, cx: &mut Context<Shell>) -> A
     // Read before the lock below: a second read waits behind a writer.
     let show_hidden = shell.sort_spec().show_hidden;
     let zoned = jiff::Zoned::now();
-    let state = &shell.ui().usage;
-    let from = BuiltFrom {
-        root: state.root.clone(),
-        revision: state.revision,
+    let built_from = |shell: &Shell| BuiltFrom {
+        root: shell.ui().usage.root.clone(),
+        revision: shell.ui().usage.revision,
         mode,
         levels: shell.levels,
         show_hidden,
@@ -983,39 +1212,43 @@ fn render(view: &mut UsageView, shell: &mut Shell, cx: &mut Context<Shell>) -> A
         minute: zoned.timestamp().as_second().div_euclid(60),
         theme: theme.clone(),
     };
+    let from = built_from(shell);
     if view.built.as_ref().is_none_or(|built| built.from != from) {
-        let status = state.status.as_ref();
-        let mut items = Vec::new();
-        let mut blocks = Vec::new();
-        if let (Some(node), Some(root)) =
-            (status.and_then(|s| s.tree.as_ref()), state.root.as_deref())
-        {
-            let ws = shell.app.workspace.read();
-            let p = ws.pane(pane);
-            let selected = |id| p.is_some_and(|p| p.selection.contains(id));
-            let mut build = Build {
-                theme: &theme,
-                show_hidden,
-                levels: shell.levels as usize,
-                scanning: status.is_some_and(|s| s.scanning),
-                mode,
-                ages: age_limits(&zoned),
-                zoned: &zoned,
-                root,
-                tree: &node.path,
-                selected: &selected,
-                hues: &mut view.hues,
-                blocks: Vec::new(),
-            };
-            items = build.level(node, 0, None);
-            blocks = build.blocks;
-        }
-        view.built = Some(Built {
-            from,
-            items: Rc::new(items),
-            blocks: Rc::new(blocks),
-        });
+        view.built = Some(build_map(shell, from, &theme, &zoned, &mut view.hues));
     }
+    // What is drawn inside the folder's own entries is lent to the pane
+    // (ADR-116) when it is not what the pane holds: drawn otherwise
+    // (another folder, scan, level), or let go of by the pane.
+    let lent_from = LentFrom {
+        root: shell.ui().usage.root.clone(),
+        revision: shell.ui().usage.revision,
+        levels: shell.levels,
+        show_hidden,
+    };
+    let holds = shell
+        .app
+        .workspace
+        .read()
+        .pane(pane)
+        .map(skwir_core::workspace::Pane::lent_version);
+    if let (Some(holds), Some(built)) = (holds, view.built.as_ref())
+        && view.lent.as_ref() != Some(&(lent_from.clone(), holds))
+    {
+        let lent = built.lent.clone();
+        let version = shell
+            .app
+            .workspace
+            .write()
+            .pane_mut(pane)
+            .map(|p| p.lend(lent));
+        view.lent = version.map(|version| (lent_from, version));
+        // What is no longer drawn left the selection: rings drawn again.
+        let from = built_from(shell);
+        if view.built.as_ref().is_none_or(|built| built.from != from) {
+            view.built = Some(build_map(shell, from, &theme, &zoned, &mut view.hues));
+        }
+    }
+    let state = &shell.ui().usage;
     let (items, blocks) = view.built.as_ref().map_or_else(
         || (Rc::default(), Rc::default()),
         |built| (Rc::clone(&built.items), Rc::clone(&built.blocks)),
@@ -1354,10 +1587,11 @@ fn legend(shell: &Shell, theme: &Theme, mode: Mode) -> Option<gpui::Div> {
     )
 }
 
-/// A press on a block. One of the folder's own entries is pressed as a
-/// row is; a block inside one presses its outer entry (selects it, opens
-/// its menu), and a double click or the middle button goes to the block
-/// itself. A block standing for several entries shows them.
+/// A press on a block. An entry, the folder's own or one drawn inside
+/// them (lent to the pane, ADR-116), is pressed as a row is: selected,
+/// Ctrl adding or taking it out, its menu opened; a double click or the
+/// middle button on one drawn inside goes there. A block standing for
+/// several entries shows them.
 fn click(
     shell: &mut Shell,
     block: &Block,
@@ -1386,6 +1620,10 @@ fn click(
         Part::Entry(_) => {
             if let Some(id) = block.entry {
                 shell.on_entry_mouse_down(pane, id, event, window, cx);
+                // Nothing on the map is dragged: a press on an entry of a
+                // selection of several is its click, which makes the
+                // selection that entry (`on_entry_mouse_up`).
+                shell.on_entry_mouse_up(pane, id, window, cx);
             }
         }
         Part::Hidden(_) if double => {
@@ -1534,6 +1772,7 @@ mod tests {
             selected: &|_| false,
             hues: &mut Hues::default(),
             blocks: Vec::new(),
+            lent: Vec::new(),
         };
         let items = build.level(tree, 0, None);
         (items, build.blocks)
@@ -1541,6 +1780,215 @@ mod tests {
 
     fn labels(items: &[TreemapItem]) -> Vec<&str> {
         items.iter().map(|i| i.label.as_ref()).collect()
+    }
+
+    /// A folder holding two pictures, a link and an entry the scan could
+    /// not say the kind of, beside a file: the map of a folder shown.
+    fn holding() -> Node {
+        let file = |path: &str, alloc: u64, kind: Option<EntryKind>| Node {
+            entry_kind: kind,
+            ..node(path, alloc, false, Vec::new())
+        };
+        node(
+            "/tree",
+            920,
+            true,
+            vec![
+                node(
+                    "/tree/l'été photos",
+                    610,
+                    true,
+                    vec![
+                        file("/tree/l'été photos/a.jpg", 400, Some(EntryKind::File)),
+                        file("/tree/l'été photos/b.jpg", 150, Some(EntryKind::File)),
+                        file(
+                            "/tree/l'été photos/it's a link",
+                            50,
+                            Some(EntryKind::Symlink),
+                        ),
+                        file("/tree/l'été photos/odd", 10, None),
+                    ],
+                ),
+                file("/tree/notes.txt", 300, Some(EntryKind::File)),
+            ],
+        )
+    }
+
+    /// The map of `tree` with `levels`, as the view keeps it.
+    fn built(tree: &Node, levels: u32) -> Built {
+        let theme = Theme::light();
+        let zoned = now();
+        let mut hues = Hues::default();
+        let mut build = Build {
+            theme: &theme,
+            show_hidden: false,
+            levels: levels as usize,
+            scanning: false,
+            mode: Mode::Size,
+            ages: age_limits(&zoned),
+            zoned: &zoned,
+            root: Path::new("/shown"),
+            tree: &tree.path,
+            selected: &|_| false,
+            hues: &mut hues,
+            blocks: Vec::new(),
+            lent: Vec::new(),
+        };
+        let items = build.level(tree, 0, None);
+        let (blocks, lent) = (build.blocks, build.lent);
+        Built {
+            from: BuiltFrom {
+                root: None,
+                revision: None,
+                mode: Mode::Size,
+                levels,
+                show_hidden: false,
+                selection: None,
+                minute: 0,
+                theme,
+            },
+            items: Rc::new(items),
+            keys: keys_of(&blocks),
+            blocks: Rc::new(blocks),
+            lent,
+        }
+    }
+
+    fn id_of(tree: &Node, path: &str) -> EntryId {
+        fn find<'a>(node: &'a Node, path: &str) -> Option<&'a Node> {
+            if node.path == Path::new(path) {
+                return Some(node);
+            }
+            node.children.iter().find_map(|c| find(c, path))
+        }
+        find(tree, path).and_then(|n| n.id).expect("in the tree")
+    }
+
+    /// A block drawn inside the folder's own entries is its own entry,
+    /// lent to the pane as what the scan says it is, by the path the pane
+    /// names it by; what the scan could not type is not lent, and what is
+    /// not drawn (fewer levels) is not either.
+    #[test]
+    fn entries_drawn_inside_are_their_own_and_lent() {
+        let tree = holding();
+        let map = built(&tree, 2);
+        let photos = map.keys[&id_of(&tree, "/tree/l'été photos")];
+        let a = map.keys[&id_of(&tree, "/tree/l'été photos/a.jpg")];
+        assert_eq!(map.blocks[a].parent, Some(photos));
+        assert_eq!(map.blocks[photos].parent, None);
+        let lent: Vec<(String, EntryKind, PathBuf)> = map
+            .lent
+            .iter()
+            .map(|(e, path)| (e.name.to_string_lossy().into_owned(), e.kind, path.clone()))
+            .collect();
+        assert_eq!(
+            lent,
+            [
+                (
+                    "a.jpg".into(),
+                    EntryKind::File,
+                    PathBuf::from("/shown/l'été photos/a.jpg")
+                ),
+                (
+                    "b.jpg".into(),
+                    EntryKind::File,
+                    PathBuf::from("/shown/l'été photos/b.jpg")
+                ),
+                (
+                    "it's a link".into(),
+                    EntryKind::Symlink,
+                    PathBuf::from("/shown/l'été photos/it's a link")
+                ),
+            ]
+        );
+        assert!(
+            !map.keys
+                .contains_key(&id_of(&tree, "/tree/l'été photos/odd"))
+        );
+        assert!(built(&tree, 1).lent.is_empty(), "nothing drawn inside");
+    }
+
+    /// The footer weighs a selection at any depth: what lies in a folder
+    /// selected counts with it, not again; an entry not drawn leaves the
+    /// weight unknown.
+    #[test]
+    fn a_selection_inside_folders_is_weighed_once() {
+        let tree = holding();
+        let map = built(&tree, 2);
+        let mut selection = skwir_core::workspace::Selection::default();
+        let id = |path: &str| id_of(&tree, path);
+        selection.set([
+            id("/tree/l'été photos/a.jpg"),
+            id("/tree/l'été photos/b.jpg"),
+        ]);
+        assert_eq!(weigh(&map, &selection), Some(550));
+        selection.set([id("/tree/l'été photos"), id("/tree/l'été photos/a.jpg")]);
+        assert_eq!(weigh(&map, &selection), Some(610));
+        selection.set([id("/tree/notes.txt"), id("/tree/l'été photos/odd")]);
+        assert_eq!(weigh(&map, &selection), None);
+    }
+
+    /// The arrows go among the blocks beside the cursor's in its folder,
+    /// past those that are no entry, then beside that folder; at the map's
+    /// edge the cursor stays; on the folder's own entries the pane's order
+    /// says.
+    #[test]
+    fn the_arrows_go_beside_inside_a_folder_then_out_of_it() {
+        let tree = holding();
+        let map = built(&tree, 2);
+        let id = |path: &str| id_of(&tree, path);
+        let key = |path| map.keys[&id(path)];
+        let odd = map
+            .blocks
+            .iter()
+            .position(|b| b.part == Part::Entry(PathBuf::from("/tree/l'été photos/odd")))
+            .unwrap();
+        let laid = vec![
+            (
+                key("/tree/l'été photos"),
+                crate::treemap::Rect::new(0., 0., 100., 100.),
+            ),
+            (
+                key("/tree/l'été photos/a.jpg"),
+                crate::treemap::Rect::new(0., 22., 40., 78.),
+            ),
+            (odd, crate::treemap::Rect::new(40., 22., 10., 78.)),
+            (
+                key("/tree/l'été photos/b.jpg"),
+                crate::treemap::Rect::new(50., 22., 25., 78.),
+            ),
+            (
+                key("/tree/l'été photos/it's a link"),
+                crate::treemap::Rect::new(75., 22., 25., 78.),
+            ),
+            (
+                key("/tree/notes.txt"),
+                crate::treemap::Rect::new(100., 0., 100., 100.),
+            ),
+        ];
+        let view = UsageView {
+            laid: Rc::new(std::cell::RefCell::new(laid)),
+            built: Some(map),
+            ..UsageView::default()
+        };
+        let to = |from: &str, toward| match view.beside(Some(id(from)), toward) {
+            Beside::To(id) => Some(id),
+            Beside::Edge => None,
+            Beside::Own => panic!("{from} is the folder's own"),
+        };
+        assert_eq!(
+            to("/tree/l'été photos/a.jpg", Toward::Right),
+            Some(id("/tree/l'été photos/b.jpg"))
+        );
+        assert_eq!(
+            to("/tree/l'été photos/it's a link", Toward::Right),
+            Some(id("/tree/notes.txt"))
+        );
+        assert_eq!(to("/tree/l'été photos/a.jpg", Toward::Left), None);
+        assert!(matches!(
+            view.beside(Some(id("/tree/notes.txt")), Toward::Left),
+            Beside::Own
+        ));
     }
 
     #[test]
@@ -1559,7 +2007,10 @@ mod tests {
                         500,
                         true,
                         vec![
-                            node("/r/Videos/a.mkv", 400, false, vec![]),
+                            Node {
+                                entry_kind: Some(EntryKind::File),
+                                ..node("/r/Videos/a.mkv", 400, false, vec![])
+                            },
                             node("/r/Videos/.thumbs", 100, true, vec![]),
                         ],
                     ),
@@ -1580,12 +2031,13 @@ mod tests {
             .iter()
             .find(|b| b.part == Part::Entry("/r/Videos/a.mkv".into()))
             .unwrap();
-        // Named as the pane names the folder, and standing for its outer entry.
+        // Named as the pane names the folder, and its own entry (lent to
+        // the pane while drawn, ADR-116).
         assert_eq!(mkv.path, Path::new("/shown/Videos/a.mkv"));
         assert_eq!(
             mkv.entry,
             Some(EntryId {
-                file: skwir_core::FileId::new(1, 500),
+                file: skwir_core::FileId::new(1, 400),
                 at: 0
             })
         );

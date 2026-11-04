@@ -641,6 +641,33 @@ are no longer listed at all (Neovim's of parsers not installed were
 greyed rows). Checks in `docs/STATUS-LOG.md` (2026-11-04, "Grammars
 whole or combined"); what it leaves under "What is left".
 
+## Usage selects at any depth (2026-11-04)
+
+Asked by the user: select files in subfolders in Usage, as the Board
+does. Opening the folders in place, as the Board does, was weighed and
+left with the user (ADR-116): a click would have listed a whole folder
+for one entry, and its entries would have joined the pane's order, under
+Select all, the counts and the filter. Instead:
+
+- **A view lends the pane what it draws** (`Pane::lend`): shown, so
+  selected and acted on as any entry, but in no order; what is no longer
+  drawn, another view or location, leaves the selection; read by its
+  path when selected (`hydrate`, `App::read_lent`).
+- **Usage lends every entry drawn inside the folder's own**, with its
+  kind from the scan (`Node::entry_kind`): a click selects the block
+  under the pointer at any depth, Ctrl adds, the arrows move among the
+  blocks beside the cursor's and out of its folder at its edge, the
+  footer weighs a selection at any depth once.
+
+**Status:** accepted and built 2026-11-04, checked on Linux (tests, and
+a window on a display of its own); Windows and macOS not built in this
+change (nothing in it is one system's). Deviation: a plain click on an
+entry of a selection of several in Usage now makes the selection that
+entry, at the top level too (the map drags nothing, and the release
+that does it in a list never came). Checks in `docs/STATUS-LOG.md`
+(2026-11-04, "Usage selects at any depth"); what it leaves under "What
+is left".
+
 ## What is left
 
 Gathered on 2026-10-20 from the notes of this plan and of
@@ -791,6 +818,16 @@ progress, fixed the same night):
   folds kept through a refresh, bat taking over from a grammar that
   fails. The startup that no longer loads bat's grammars was not
   measured with `just idle-pss`.
+
+**From Usage selecting at any depth (2026-11-04, ADR-116)**:
+- An entry drawn inside a folder that is trashed or deleted gives the
+  cursor to no neighbour (the order that says what follows it is the
+  listing's); the selection empties.
+- A lent link has no target until it is read, so no preview for the
+  moment that takes, and the preview is not asked again when it is read.
+- Not tried: a link or a pipe selected inside a folder in a window (unit
+  tests only), a remote folder, a screen reader (`just a11y-check` not
+  run), `just check-cross`, Windows and macOS.
 
 **From grammars and printing (2026-10-31, ADR-110, ADR-111)**:
 - The text view, where code files open, does not fold: a grammar's folds

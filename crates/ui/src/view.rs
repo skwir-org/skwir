@@ -104,10 +104,13 @@ pub trait PaneView {
     /// handles it in `nav` or ignores it, and Home and End go to the
     /// order's ends).
     fn nav_delta(&self, nav: Nav, shell: &Shell) -> Option<isize>;
-    /// A chance to handle navigation the view's own way. Returns true if handled.
+    /// A chance to handle navigation the view's own way, with the key's
+    /// step (Shift extends, Ctrl moves the cursor alone). Returns true if
+    /// handled.
     fn nav(
         &mut self,
         _nav: Nav,
+        _step: crate::list::Step,
         _shell: &mut Shell,
         _window: &mut Window,
         _cx: &mut Context<Shell>,

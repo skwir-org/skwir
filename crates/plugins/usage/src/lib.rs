@@ -51,6 +51,12 @@ pub struct Node {
     #[serde(default)]
     #[schemars(with = "Option<String>")]
     pub kind: Option<skwir_platform::mime::Kind>,
+    /// What an entry that is no folder is itself, as its stat says (a
+    /// file, a link, a pipe): what the view lends the pane it as
+    /// (ADR-116), so a pipe is never taken for a file to read. `None` for
+    /// a folder.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry_kind: Option<skwir_core::entry::EntryKind>,
     /// A folder's allocated bytes by the kinds of the files in it.
     #[serde(default)]
     #[schemars(with = "std::collections::BTreeMap<String, u64>")]

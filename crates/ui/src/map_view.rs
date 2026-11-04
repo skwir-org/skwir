@@ -287,6 +287,7 @@ impl PaneView for MapView {
     fn nav(
         &mut self,
         nav: Nav,
+        _: crate::list::Step,
         shell: &mut Shell,
         window: &mut Window,
         cx: &mut Context<Shell>,

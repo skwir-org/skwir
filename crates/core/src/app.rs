@@ -2121,6 +2121,58 @@ impl App {
         Self::unwithheld(typed, |(r, _)| &r.path)
     }
 
+    /// Read the entries a view lent `pane` (`Pane::lend`, ADR-116) as a
+    /// listing reads its own, by their paths, a job for each lane (a
+    /// server that stopped answering holds its own alone), and give the
+    /// pane what was read. Lent entries are no location's, so the pane
+    /// is their listing; ended with the pane's location.
+    fn read_lent(&self, pane: PaneId, items: Vec<(EntryId, PathBuf)>, priority: Priority) {
+        if items.is_empty() {
+            return;
+        }
+        let Some(cancel) = self
+            .workspace
+            .read()
+            .pane(pane)
+            .map(crate::workspace::Pane::location_lifetime)
+        else {
+            return;
+        };
+        for (lane, items) in crate::fs::reach::by_lane(items, |(_, path)| path.as_path()) {
+            let app = self.weak();
+            let metadata = Arc::clone(&self.metadata);
+            let token = cancel.clone();
+            self.scheduler
+                .spawn_in(lane, priority, "read-lent", cancel.clone(), move || {
+                    let mut answered = crate::hashing::Set::default();
+                    let mut found_all = Vec::new();
+                    let mut gone_all = Vec::new();
+                    let read = crate::fs::read_paths(&items, &metadata, &token, |found, gone| {
+                        answered.extend(found.iter().map(|e| e.id).chain(gone.iter().copied()));
+                        found_all.extend(found);
+                        gone_all.extend(gone);
+                    });
+                    let Some(app) = app.upgrade() else { return };
+                    if !read || token.is_cancelled() {
+                        return;
+                    }
+                    let unread: Vec<EntryId> = items
+                        .iter()
+                        .map(|(id, _)| *id)
+                        .filter(|id| !answered.contains(id))
+                        .collect();
+                    let changed = app
+                        .workspace
+                        .write()
+                        .pane_mut(pane)
+                        .is_some_and(|p| p.lent_read(found_all, &gone_all, &unread));
+                    if changed {
+                        app.wake();
+                    }
+                });
+        }
+    }
+
     /// Open the listings of the folders `pane` opened in place that are not
     /// open yet. Opening only enqueues, like `open_location`.
     pub fn open_expanded(&self, pane: PaneId) {
@@ -3255,11 +3307,11 @@ mod builtin {
             "Request metadata for entries (views call this for visible rows)",
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
-                let groups = app
+                let (groups, lent) = app
                     .workspace
                     .read()
                     .pane(pane)
-                    .map(|p| p.by_location(&a.ids))
+                    .map(|p| (p.by_location(&a.ids), p.lent_paths(&a.ids)))
                     .unwrap_or_default();
                 let priority = if a.off_screen {
                     Priority::Normal
@@ -3269,6 +3321,7 @@ mod builtin {
                 for (open, ids) in groups {
                     open.hydrate(&ids, priority);
                 }
+                app.read_lent(pane, lent, priority);
                 Ok(Outcome::Done)
             },
         )

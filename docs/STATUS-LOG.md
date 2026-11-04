@@ -10632,3 +10632,68 @@ parser-directories), quint's library with nothing to color with, then
 each folder with what it held. Not checked: "Checking…" in a window (it
 answered first), a real Emacs grammar, the list with a screen reader,
 macOS and Windows, release-check.
+
+## Usage selects at any depth (2026-11-04)
+
+ADR-116 accepted with the user, who asked that Usage select files in
+subfolders as the Board does; opening folders in place (the Board's way)
+was weighed and left: a click would list a whole folder (Usage is where
+folders of 100,000 files are found) and wait for it, and its entries
+would join the pane's order under Select all, the counts and the filter.
+
+- **Core:** `Pane::lend` takes the entries a view draws beside the
+  listing, each with its path: `is_shown`, `entry` and `path_of` answer
+  for them, `order` does not hold them; an entry lent again at the same
+  path keeps what was read of it, read again once selected
+  (`Pane::lent_to_read`: the scan that drew it again may have seen it
+  change, found reviewing the diff); navigation and dormancy let go of
+  them (`Lent::let_go`, the version never going back). `hydrate` reads
+  the selected lent entries by their paths, a job per lane
+  (`App::read_lent`, `fs::read_paths`), gone ones leaving the selection,
+  unreadable ones marked `UNREAD`.
+- **Usage's scan** gives each entry that is no folder its own kind
+  (`Node::entry_kind`, from its `symlink_metadata`), so a link or a pipe
+  is lent as what it is; what it could not type is not lent.
+- **The view** builds the lent entries with its blocks and lends them
+  when what is drawn changes (`LentFrom`: the answer, the levels, hidden
+  files) or the pane let go (`Pane::lent_version`); leaving the view
+  lends nothing. A block is its own entry at every depth; a press is its
+  click (`on_entry_mouse_up` called at once: the map drags nothing, so a
+  plain click on an entry of a selection of several makes it that one,
+  the top level included). The arrows on a block inside a folder move
+  among the blocks beside it there, then beside that folder
+  (`UsageView::beside`, the treemap now recording where every block was
+  laid, not only the top level's), with the key's step
+  (`PaneView::nav` is given it); the footer weighs the selection by its
+  blocks, what lies in a folder selected counted with it once
+  (`usage::weigh`, a lookup where it searched the top level once per
+  entry). The shell asks the selected lent entries' metadata
+  (`sync_lent_hydration`).
+
+Checked: `crates/core/tests/lent.rs` (shown, selected, refs, a range
+adds, Select all leaves them out, unlent and navigation let go; read by
+path, a gone one leaving the selection; read metadata kept when lent
+again, then read again as the file now is), the scan's `an_entry_says_what_it_is_itself` (a file and a link
+at two levels), the view's `entries_drawn_inside_are_their_own_and_lent`,
+`a_selection_inside_folders_is_weighed_once`,
+`the_arrows_go_beside_inside_a_folder_then_out_of_it`, and
+`every_level_draws_its_whole_folder` changed (a block inside is its own
+entry). `cargo clippy -D warnings` on skwir-core, skwir-plugin-usage and
+skwir-ui clean; their tests pass. On Xvfb (:93, lavapipe), the debug
+build with fixture XDG folders and a synthetic tree (`l'été photos`
+holding two files, a link and `deeper/c.bin`; `music`; `notes
+ünïcode.txt`): a click on a file inside a folder ringed it ("1 selected ·
+2.9 MB"); Ctrl+click on a file two levels down added it ("2 selected ·
+4.8 MB"), on the folder's header added it counted once ("3 selected ·
+5.9 MB"); a plain click on one of them made it the selection; Right from
+`deeper/c.bin` went to `b.bin` beside `deeper`, Up to `a.bin`,
+Shift+Right out to `music`, added; the right button opened the file's
+menu; Properties showed `c.bin`'s size, owner, permissions and times,
+and the preview its bytes; Delete moved `b.bin` to the fixture's Trash
+with Undo, the map drawing it gone and the selection empty, and Ctrl+Z
+put it back; one level fewer let go of `c.bin`; Select all took the
+three top-level entries; List (Ctrl+1) found nothing selected, after a
+fix (leaving the view let go of nothing at first). Idle CPU in Usage
+with an entry inside selected: 0 to 1.5 % in `top` over 6 s, as in List.
+Not checked: a link or a pipe selected in a window, a remote folder, a
+screen reader, `just check-cross`, Windows and macOS, release-check.

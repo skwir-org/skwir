@@ -3371,6 +3371,7 @@ impl Shell {
             .map(|banner| crate::loading::render(banner, self, cx));
         self.sync_sort_hydration();
         self.sync_selection_hydration();
+        self.sync_lent_hydration();
         let narrow = crate::quick_filters::render(self, cx);
         let file_area = self.pane_container(body, said, cx);
         let strip = if active {

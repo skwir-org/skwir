@@ -22,6 +22,7 @@ use crossbeam_channel::{Receiver, Sender};
 use notify::{ErrorKind, EventKind, RecursiveMode, Watcher, event::ModifyKind};
 use parking_lot::Mutex;
 use skwir_core::cancel::CancelToken;
+use skwir_core::entry::EntryKind;
 use skwir_core::workspace::PaneId;
 use skwir_core::{EntryId, FileId};
 
@@ -619,6 +620,7 @@ fn entry_node(
             files: u64::from(!is_dir),
             nlink: if is_dir { 0 } else { meta::links(&metadata) },
             modified: meta::modified(&metadata),
+            entry_kind: (!is_dir).then(|| EntryKind::from(metadata.file_type())),
             ..Node::default()
         },
         descend,
@@ -933,6 +935,7 @@ impl<'a> Scanner<'a> {
                     nlink: meta::links(&metadata),
                     modified,
                     kind: self.types.of(&file_name),
+                    entry_kind: Some(EntryKind::from(metadata.file_type())),
                     ..Node::default()
                 }
             } else if !descend(&path, &metadata, self.dev) {
@@ -2138,6 +2141,37 @@ mod tests {
             .filter(|(_, r)| r.scan)
             .map(|(p, _)| p.clone())
             .collect()
+    }
+
+    /// An entry that is no folder says what it is itself, as its stat
+    /// does, at every level: what the view lends the pane it as
+    /// (ADR-116), so a link or a pipe is never taken for a file.
+    #[cfg(unix)]
+    #[test]
+    fn an_entry_says_what_it_is_itself() {
+        let tmp = tempfile::tempdir().unwrap();
+        let folder = tmp.path().join("a folder");
+        std::fs::create_dir(&folder).unwrap();
+        std::fs::write(tmp.path().join("notes.txt"), b"x").unwrap();
+        std::os::unix::fs::symlink("notes.txt", tmp.path().join("it's a link")).unwrap();
+        std::fs::write(folder.join("inner.txt"), b"x").unwrap();
+        std::os::unix::fs::symlink("inner.txt", folder.join("inner link")).unwrap();
+        let request = request(0, tmp.path().into());
+        let shared = shared();
+        let mut cache = Cache::default();
+        let tree = scanner(&mut cache, &request, &shared).root().unwrap();
+        let kind = |node: &Node, name: &str| {
+            node.children
+                .iter()
+                .find(|c| c.name == name)
+                .map(|c| c.entry_kind)
+        };
+        assert_eq!(kind(&tree, "notes.txt"), Some(Some(EntryKind::File)));
+        assert_eq!(kind(&tree, "it's a link"), Some(Some(EntryKind::Symlink)));
+        assert_eq!(kind(&tree, "a folder"), Some(None));
+        let inside = cache.get(&folder).expect("counted");
+        assert_eq!(kind(&inside, "inner.txt"), Some(Some(EntryKind::File)));
+        assert_eq!(kind(&inside, "inner link"), Some(Some(EntryKind::Symlink)));
     }
 
     #[test]

@@ -164,8 +164,12 @@ sort, hidden files (`Ctrl+H` or `Alt+.`) and the zoom (`Ctrl++`,
 - **Usage** (`Ctrl+4`) draws what takes the room in a folder, counted as
   you look; its − and + (or the zoom: `Ctrl` and the wheel, `Ctrl+=`,
   `Ctrl+-`) draw more or fewer levels.
-  - Click a block to select it, double-click one inside a folder to go
-    there, arrows to move between blocks; `F5` or `Ctrl+R` counts again.
+  - Click a block to select it, a file or folder inside a folder too
+    (an open folder by its name at the top), `Ctrl`+click to add or take
+    one out; act on what is selected as anywhere (Delete, the menu,
+    Properties). Double-click one inside a folder to go there. The
+    arrows move between the blocks beside the selected one, out of its
+    folder at its edge; `F5` or `Ctrl+R` counts again.
   - Its buttons size blocks by room or by number of files, and color them
     by age or by kind of file.
   - A dashed outline marks a cache or a trash: room you can reclaim
