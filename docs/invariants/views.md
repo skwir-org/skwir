@@ -102,7 +102,10 @@ around the views is in [shell.md](shell.md).
   lent again (`Pane::lent_to_read`, `Shell::sync_lent_hydration`,
   `App::read_lent`), never by a listing, what was read shown meanwhile;
   until then it is what the view knew of it, its kind exact (a pipe is
-  never lent as a file) or not lent at all.
+  never lent as a file) or not lent at all. A reading never moves
+  `Pane::lent_version`: a view lends again when it moves, and lending
+  again asks for a reading. After a lent entry goes, nothing is
+  selected in its place (ADR-116: the map reflows).
 - **What the user puts somewhere is selected there.** What a plan the
   user asked puts in a folder a pane shows is selected there once it is
   done and listed, as Nautilus and Dolphin do: a new folder or file (and

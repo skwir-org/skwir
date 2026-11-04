@@ -10697,3 +10697,33 @@ fix (leaving the view let go of nothing at first). Idle CPU in Usage
 with an entry inside selected: 0 to 1.5 % in `top` over 6 s, as in List.
 Not checked: a link or a pipe selected in a window, a remote folder, a
 screen reader, `just check-cross`, Windows and macOS, release-check.
+
+## Usage: a reading loop, and how fast changes show (2026-11-04)
+
+- **Found and fixed:** with an entry inside a folder selected in Usage,
+  the window read it again and again, forever: 4,435 ticks of CPU in 5 s
+  (nine cores busy) in the release build, 1 with nothing selected. A
+  reading moved `Pane::lent_version`, Usage lent again when it moved,
+  and lending again marked the entry to be read (the change made the
+  same day, "an entry lent again is read again"). A reading, and an
+  entry found gone, no longer move it;
+  `reading_a_lent_entry_never_asks_the_view_to_lend_again`. Checked by
+  the core's tests only: the disk had 0.9 GB free, too little to link
+  the app again, so not seen in a window.
+- **Measured, the release build of 07b5acbb** on Xvfb (:93, lavapipe),
+  fixture folders under `~/.cache/skwir-tests`, warm caches, recorded at
+  50 frames a second, the time read from the frames (20 ms steps):
+  - From Delete (or a file moved away from a shell) to the map drawn
+    again: 40 to 100 ms in a small tree (the toast at 40 to 80 ms); 160
+    to 240 ms with Usage on a folder of 100,001 files, or on the folder
+    holding it with the file inside it. Not worth drawing the map ahead
+    of the count: proposed, left.
+  - While 40,000 files of 1 KB were written 2,000 a second (21 s) into a
+    new folder below the one shown: the usage worker 7.7 s of CPU, the
+    window's thread 1.3 s, software rendering 31.9 s (llvmpipe: a GPU
+    draws it); written inside the folder of 100,000 files: the worker
+    16.8 s, the window 0.4 s, rendering 10.5 s. With List shown, 0.2 s
+    in all. The map settled within 0.5 s after the last file.
+  - Usage on a folder of 100,000 files: the shown listing dropped the
+    deleted file and gave its cursor to the next file at 100 ms, the
+    count followed at 220 ms.

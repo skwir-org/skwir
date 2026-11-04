@@ -820,9 +820,14 @@ progress, fixed the same night):
   measured with `just idle-pss`.
 
 **From Usage selecting at any depth (2026-11-04, ADR-116)**:
-- An entry drawn inside a folder that is trashed or deleted gives the
-  cursor to no neighbour (the order that says what follows it is the
-  listing's); the selection empties.
+- Change-driven recounts are not bounded (measured 2026-11-04, release
+  build): while 40,000 files are written below the folder shown, 2,000 a
+  second, Usage's worker recounts back to back, 37 % of a core, 80 %
+  when they land inside a folder of 100,000 files (its every entry
+  stat-ed again each time), and the window redraws at each answer.
+  Revalidations already wait 4 times the last scan's duration; changes
+  do not. Proposed: the same wait for changes that keep coming, a
+  single change still counted at once.
 - A lent link has no target until it is read, so no preview for the
   moment that takes, and the preview is not asked again when it is read.
 - Not tried: a link or a pipe selected inside a folder in a window (unit

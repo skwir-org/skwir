@@ -993,8 +993,9 @@ fn shows<'a>(
 #[derive(Default)]
 struct Lent {
     entries: crate::hashing::Map<EntryId, Loan>,
-    /// Changes at each lending, as what is lent is read, and as the pane
-    /// lets go of it: never back to a version a view was told.
+    /// Changes at each lending and as the pane lets go of it, never as
+    /// what is lent is read (`Pane::lent_version`): never back to a
+    /// version a view was told.
     version: u64,
 }
 
@@ -2066,9 +2067,11 @@ impl Pane {
         self.lent.version
     }
 
-    /// Changes as a view lends entries, the pane lets go of them, or what
-    /// is lent is read: a view lends again when it is not the version its
-    /// lending said.
+    /// Changes as a view lends entries and as the pane lets go of them,
+    /// never as what is lent is read or found gone: a view lends again
+    /// when it is not the version its lending said, and lending again
+    /// asks for a reading (`lent_to_read`), so a reading that moved it
+    /// read the selection again and again, forever.
     pub fn lent_version(&self) -> u64 {
         self.lent.version
     }
@@ -2137,9 +2140,8 @@ impl Pane {
             .iter()
             .filter(|id| self.lent.entries.remove(id).is_some())
             .count();
-        if changed || went > 0 {
-            self.lent.version += 1;
-        }
+        // The version stays: what the view lent is what it drew, and it
+        // draws again once what drew it (a scan) sees the change.
         if went > 0 {
             self.retain_shown();
         }

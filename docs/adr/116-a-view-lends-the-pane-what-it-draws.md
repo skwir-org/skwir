@@ -87,9 +87,11 @@ system's).
 - A lent entry has no listing: no watcher of the pane's sees it. What
   changes on disk reaches it through the view (Usage's scan watches each
   folder it counted, and draws again) or through a reading.
-- Moving the cursor off a lent entry that went (trashed, deleted) gives
-  it to no neighbour: the order that says what comes after it is the
-  listing's.
+- A lent entry that went (trashed, deleted) leaves nothing selected
+  after it, by choice (2026-11-04, with the user): the map reflows once
+  counted again, so no block is where the eye was, and selecting one
+  for the user risks a second Delete taking what was not looked at. A
+  list's next row stays where it was.
 - A lent link has no target until read, and so no preview for the
   moment its reading takes.
 - Switching to a view that draws less (List, from Usage) lets go of what

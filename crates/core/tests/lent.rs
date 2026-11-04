@@ -209,3 +209,37 @@ fn an_entry_lent_again_keeps_what_was_read_of_it_and_is_read_again() {
         .and_then(skwir_core::entry::Value::as_u64);
     assert_eq!(size, Some(6), "read again as it is now");
 }
+
+/// Reading what was lent never moves the version a view lends again by:
+/// a view lends again when it moves, and lending again asks for a
+/// reading, so a reading that moved it read the selection forever (nine
+/// cores busy while an entry inside a folder was selected in Usage).
+#[test]
+fn reading_a_lent_entry_never_asks_the_view_to_lend_again() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("root");
+    let folder = root.join("a folder");
+    std::fs::create_dir_all(&folder).unwrap();
+    let file = folder.join("file.txt");
+    let gone = folder.join("gone.txt");
+    std::fs::write(&file, b"abc").unwrap();
+    std::fs::write(&gone, b"x").unwrap();
+    let app = app(tmp.path());
+    let pane = active(&app);
+    navigate(&app, &root);
+
+    let (entry, path) = lent(&file, EntryKind::File);
+    let (gone_entry, gone_path) = lent(&gone, EntryKind::File);
+    let (id, gone_id) = (entry.id, gone_entry.id);
+    let version = lend(&app, pane, vec![(entry, path), (gone_entry, gone_path)]);
+    std::fs::remove_file(&gone).unwrap();
+    app.dispatch(&Invocation::with_args(
+        "hydrate",
+        &serde_json::json!({ "ids": [id, gone_id] }),
+    ))
+    .expect("hydrate");
+    wait(&app, pane, |p| !p.lent_to_read(id) && !p.is_lent(gone_id));
+    let ws = app.workspace.read();
+    let p = ws.pane(pane).unwrap();
+    assert_eq!(p.lent_version(), version, "read, and one found gone");
+}
