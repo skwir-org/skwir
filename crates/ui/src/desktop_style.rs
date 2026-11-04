@@ -171,15 +171,86 @@ pub struct Fonts {
 /// What a font that says Automatic takes from the desktop (`fonts.rs`):
 /// its fonts while `ui.desktop_colors` is on, else nothing.
 pub fn fonts(settings: &Settings) -> Fonts {
-    on(settings, DESKTOP_COLORS_KEY)
-        .then(said)
-        .flatten()
-        .map(|said| Fonts {
+    chosen(settings)
+        .map(|chosen| Fonts {
+            interface: chosen.interface,
+            document: chosen.document,
+            monospace: chosen.monospace,
+        })
+        .unwrap_or_default()
+}
+
+/// Where the fonts are read (`ui.fonts_from`, ADR-117): Automatic (the
+/// desktop's own, then GTK's, then Qt's), or GTK's or Qt's alone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FontsFrom {
+    Automatic,
+    Gtk,
+    Qt,
+}
+
+impl FontsFrom {
+    pub const CHOICES: [(&'static str, &'static str); 3] =
+        [("auto", "Automatic"), ("gtk", "GTK"), ("qt", "Qt")];
+
+    pub fn chosen(settings: &Settings) -> Self {
+        match settings
+            .get::<String>(crate::settings::FONTS_FROM_KEY)
+            .as_deref()
+        {
+            Some("gtk") => FontsFrom::Gtk,
+            Some("qt") => FontsFrom::Qt,
+            _ => FontsFrom::Automatic,
+        }
+    }
+}
+
+/// The fonts the desktop names as the settings choose to read them, with
+/// their sizes and where they were read: none while Desktop colors is off.
+fn chosen(settings: &Settings) -> Option<skwir_platform::desktop_style::Fonts> {
+    if !on(settings, DESKTOP_COLORS_KEY) {
+        return None;
+    }
+    let said = said()?;
+    match FontsFrom::chosen(settings) {
+        FontsFrom::Automatic => Some(skwir_platform::desktop_style::Fonts {
+            from: said.fonts_from.unwrap_or_default(),
             interface: said.font,
             document: said.document_font,
             monospace: said.monospace_font,
-        })
-        .unwrap_or_default()
+            interface_px: said.font_px,
+            monospace_px: said.monospace_px,
+        }),
+        FontsFrom::Gtk => said.gtk,
+        FontsFrom::Qt => said.qt,
+    }
+}
+
+/// What the desktop says of text sizes (ADR-117): the interface font's
+/// size and the monospace font's, in pixels, while its fonts are worn,
+/// where they were read; and its text scaling factor, followed whatever
+/// Desktop colors says, as more contrast is: a need, not a style.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Sizes {
+    pub interface: Option<f32>,
+    pub monospace: Option<f32>,
+    pub from: Option<String>,
+    pub scaling: Option<f32>,
+}
+
+pub fn sizes(settings: &Settings) -> Sizes {
+    let scaling = said()
+        .and_then(|said| said.text_scaling)
+        .map(|factor| factor as f32);
+    let fonts = chosen(settings);
+    Sizes {
+        interface: fonts.as_ref().and_then(|fonts| fonts.interface_px),
+        monospace: fonts.as_ref().and_then(|fonts| fonts.monospace_px),
+        from: fonts
+            .map(|fonts| fonts.from)
+            .filter(|from| !from.is_empty()),
+        scaling,
+    }
 }
 
 #[cfg(test)]
@@ -202,6 +273,7 @@ mod tests {
             document_font: Some("Noto Serif".into()),
             monospace_font: None,
             schemes: skwir_platform::desktop_style::Schemes::default(),
+            ..DesktopStyle::default()
         }
     }
 
@@ -425,5 +497,61 @@ mod tests {
                 toml::Value::String(crate::settings::FONT_AUTO.into())
             );
         }
+    }
+
+    #[test]
+    fn fonts_and_their_sizes_are_read_where_the_user_chose() {
+        use skwir_platform::desktop_style::Fonts as Said;
+        let (_tmp, app) = app();
+        let px = |points: f32| points * 96. / 72.;
+        set(DesktopStyle {
+            font: Some("Noto Sans".into()),
+            font_px: Some(px(10.)),
+            fonts_from: Some("GTK".into()),
+            gtk: Some(Said {
+                from: "GTK".into(),
+                interface: Some("Noto Sans".into()),
+                interface_px: Some(px(10.)),
+                ..Said::default()
+            }),
+            qt: Some(Said {
+                from: "Qt (qt6ct)".into(),
+                interface: Some("DejaVu Sans".into()),
+                interface_px: Some(px(9.)),
+                monospace: Some("Hack".into()),
+                monospace_px: Some(px(10.)),
+                ..Said::default()
+            }),
+            text_scaling: Some(1.25),
+            ..DesktopStyle::default()
+        });
+        let choose = |value: &str| {
+            app.settings
+                .set(crate::settings::FONTS_FROM_KEY, value.into());
+        };
+        // Automatic: what the desktop's settings name first.
+        assert_eq!(fonts(&app.settings).interface.as_deref(), Some("Noto Sans"));
+        let automatic = sizes(&app.settings);
+        assert_eq!(automatic.interface, Some(px(10.)));
+        assert_eq!(automatic.from.as_deref(), Some("GTK"));
+        assert_eq!(automatic.scaling, Some(1.25));
+        // Qt's alone, families and sizes.
+        choose("qt");
+        assert_eq!(
+            fonts(&app.settings).interface.as_deref(),
+            Some("DejaVu Sans")
+        );
+        assert_eq!(fonts(&app.settings).monospace.as_deref(), Some("Hack"));
+        let qt = sizes(&app.settings);
+        assert_eq!((qt.interface, qt.monospace), (Some(px(9.)), Some(px(10.))));
+        assert_eq!(qt.from.as_deref(), Some("Qt (qt6ct)"));
+        // Desktop colors off: skwir's own fonts and sizes, the scaling a
+        // need still followed.
+        app.settings
+            .set(DESKTOP_COLORS_KEY, toml::Value::Boolean(false));
+        assert_eq!(fonts(&app.settings).interface, None);
+        let off = sizes(&app.settings);
+        assert_eq!((off.interface, off.from), (None, None));
+        assert_eq!(off.scaling, Some(1.25));
     }
 }

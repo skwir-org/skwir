@@ -98,6 +98,40 @@ fn graphics(specs: &gpui::GpuSpecs) -> String {
     }
 }
 
+/// The interface's font and size, where they were read, and each part's
+/// step (ADR-117): `Noto Sans 13.3 px from GTK, text scaling 1.25; sizes:
+/// interface 100%, files 110%, reading 100%, code 100%`.
+fn text_fact(theme: &crate::theme::Theme, desktop: &crate::desktop_style::Sizes) -> String {
+    use crate::sizes::Part;
+    let body = theme.sizes.of(Part::Interface);
+    let from = desktop.from.as_deref().map_or_else(
+        || "skwir's own size".to_owned(),
+        |from| format!("from {from}"),
+    );
+    let scaling = desktop
+        .scaling
+        .filter(|factor| (factor - 1.).abs() > f32::EPSILON)
+        .map(|factor| format!(", text scaling {factor}"))
+        .unwrap_or_default();
+    let steps = [
+        ("interface", Part::Interface),
+        ("files", Part::Files),
+        ("reading", Part::Reading),
+        ("code", Part::Code),
+    ]
+    .map(|(name, part)| {
+        format!(
+            "{name} {}",
+            crate::sizes::step_label(theme.sizes.step(part))
+        )
+    })
+    .join(", ");
+    format!(
+        "{} {body:.1} px {from}{scaling}; sizes: {steps}",
+        theme.font
+    )
+}
+
 /// What Copy details puts on the clipboard: the version as `skwir
 /// --version` says it, then each fact on a line.
 fn details(facts: &[(&str, String)]) -> String {
@@ -138,8 +172,18 @@ impl Shell {
                 let mut facts = vec![("System", format!("{system} ({arch})"))];
                 let display = cx.compositor_name();
                 if !display.is_empty() {
-                    facts.push(("Display", display.to_owned()));
+                    // Its scale, which gpui follows (ADR-117): for a report
+                    // of text too small or too large.
+                    let scale = window.scale_factor();
+                    let forced = std::env::var("GPUI_X11_SCALE_FACTOR")
+                        .ok()
+                        .map(|said| format!(", GPUI_X11_SCALE_FACTOR={said}"))
+                        .unwrap_or_default();
+                    facts.push(("Display", format!("{display}, scale {scale}{forced}")));
                 }
+                let theme = cx.global::<crate::theme::Theme>();
+                let desktop = crate::desktop_style::sizes(&this.app.settings);
+                facts.push(("Text", text_fact(theme, &desktop)));
                 if let Some(specs) = window.gpu_specs() {
                     facts.push(("Graphics", graphics(&specs)));
                 }

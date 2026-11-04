@@ -689,6 +689,27 @@ while Desktop colors is on, else Skwir's own. A change shows at once. A
 long list of choices, and a font's, opens with a field that narrows it
 as you type, and a font's list writes the one you point at in itself.
 
+**Text sizes** (ADR-117) are percentages, from 80 to 200: **Text size**
+on Appearance for the whole window, **Files text size** for the file
+views alone, **Reading text size** and **Code text size** on Reading for
+what previews open at. At 100 % Skwir writes at your desktop's font
+size, times its text scaling (GNOME's Large Text), as its other
+applications do; where the desktop names no size, at 10 pt on Linux,
+13 px on macOS and 14 px on Windows. Bars, rows and menus grow with the
+text; icons and pictures keep their size. On a desktop that sets GTK
+and Qt up apart (Hyprland, Sway, labwc, niri, with nwg-look, qt5ct or
+qt6ct), **Fonts from** chooses whose fonts and sizes Skwir reads:
+Automatic (your desktop's own settings, else GTK's, else Qt's), GTK or
+Qt. About › Copy details says which it read.
+
+The window's scale is the display's: on Wayland the compositor's, a
+fractional one included. On X11 it is `GPUI_X11_SCALE_FACTOR` (a number,
+or `randr`), else `Xft.dpi` divided by 96, else the screen's own density;
+the variables GTK and Qt read (`GDK_SCALE`, `QT_SCALE_FACTOR`) are not
+followed. If everything is drawn too small on an X11 desktop that scales
+GTK and Qt by those, set `Xft.dpi: 192` in `~/.Xresources` (twice the
+size), or start Skwir with `GPUI_X11_SCALE_FACTOR=2`.
+
 If the settings file cannot be read (edited by hand into something that
 is no longer TOML), Skwir starts with its defaults, keeps the file aside
 as `settings.toml.unreadable-…`, and says so. Edited while Skwir runs (by

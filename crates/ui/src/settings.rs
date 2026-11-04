@@ -55,6 +55,9 @@ pub const CODE_FONT_KEY: &str = "ui.code_font";
 pub const FONT_KEYS: [&str; 3] = [FONT_KEY, READING_FONT_KEY, CODE_FONT_KEY];
 /// The fonts' Automatic.
 pub const FONT_AUTO: &str = "auto";
+/// Where the desktop's fonts and their sizes are read (ADR-117,
+/// `desktop_style::FontsFrom`): Automatic, GTK's or Qt's. Linux only.
+pub const FONTS_FROM_KEY: &str = "ui.fonts_from";
 /// The text sizes, by part of the window (ADR-117, `sizes.rs`): a step of
 /// `sizes::STEPS`, a percentage of the part's 100 %.
 pub const TEXT_SIZE_KEY: &str = "ui.text_size";
@@ -820,6 +823,17 @@ pub fn declare(app: &App) {
             true,
         )
         .essential());
+        let pairs = crate::desktop_style::FontsFrom::CHOICES;
+        app.settings.declare(
+            SettingSpec::choice(
+                FONTS_FROM_KEY,
+                "Fonts from",
+                "Where skwir reads your desktop's fonts and their sizes. Automatic reads your desktop's own settings, else GTK's, else Qt's; GTK or Qt reads that toolkit's settings alone, as when GTK and Qt name different fonts.",
+                pairs[0].0,
+                &pairs,
+            )
+            .under(DESKTOP_COLORS_KEY),
+        );
     }
     app.settings
         .declare(font_spec(FONT_KEY, &font_chosen(app, FONT_KEY), None));

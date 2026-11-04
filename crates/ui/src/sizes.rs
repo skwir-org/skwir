@@ -234,12 +234,39 @@ impl Default for Sizes {
     }
 }
 
+/// The interface's body text where no desktop names a size (ADR-117):
+/// GTK's own 10 pt on Linux and the other free systems, 13 px on macOS,
+/// `WinUI`'s 14 px on Windows.
+pub const SYSTEM_BODY: f32 = if cfg!(target_os = "macos") {
+    13.
+} else if cfg!(windows) {
+    14.
+} else {
+    10. * 96. / 72.
+};
+
+/// Each part's 100 % from what the desktop says (ADR-117): the interface
+/// its font's size, else the system's own; reading 16 px, as a browser
+/// keeps a page's text; code its monospace font's size, else 14 px; each
+/// times its text scaling factor. Sizes no one would read at are left.
+fn hundreds(desktop: &crate::desktop_style::Sizes) -> [f32; 4] {
+    let sane = |px: Option<f32>| px.filter(|px| (6.0..=48.).contains(px));
+    let scaling = desktop
+        .scaling
+        .filter(|factor| (0.5..=4.).contains(factor))
+        .unwrap_or(1.);
+    let interface = sane(desktop.interface).unwrap_or(SYSTEM_BODY) * scaling;
+    let code = sane(desktop.monospace).unwrap_or(Part::Code.base()) * scaling;
+    // The files' 100 % is the interface's size (`Sizes::hundred`).
+    [interface, interface, Part::Reading.base() * scaling, code]
+}
+
 impl Sizes {
-    /// The sizes the settings of `app` choose.
+    /// The sizes the settings of `app` choose, from what the desktop says.
     pub fn resolve(app: &App) -> Self {
         Sizes {
+            hundred: hundreds(&crate::desktop_style::sizes(&app.settings)),
             step: Part::ALL.map(|part| step_of(app.settings.get::<String>(part.key()).as_deref())),
-            ..Sizes::default()
         }
     }
 
@@ -401,6 +428,32 @@ mod tests {
         assert_eq!(sizes.rem(Part::Files), px(REM));
         assert_eq!(sizes.scale(Part::Files).px(26.), px(26.));
         assert_eq!(sizes.scale(Part::Reading), Scale::ONE);
+    }
+
+    #[test]
+    fn a_hundred_is_the_desktop_s_size_else_the_system_s() {
+        use crate::desktop_style::Sizes as Desktop;
+        let close = |a: f32, b: f32| (a - b).abs() < 1e-3;
+        // Nothing said: the system's own, reading and code Skwir's.
+        let none = hundreds(&Desktop::default());
+        assert!(close(none[0], SYSTEM_BODY));
+        assert!(close(none[2], 16.) && close(none[3], 14.));
+        // GNOME's 11 pt with Large Text: every part scaled.
+        let gnome = hundreds(&Desktop {
+            interface: Some(11. * 96. / 72.),
+            monospace: Some(11. * 96. / 72.),
+            from: Some("GNOME".into()),
+            scaling: Some(1.25),
+        });
+        assert!(close(gnome[0], 18.333));
+        assert!(close(gnome[2], 20.) && close(gnome[3], 18.333));
+        // A size no one reads at is left; a factor out of reason too.
+        let odd = hundreds(&Desktop {
+            interface: Some(2.),
+            scaling: Some(40.),
+            ..Desktop::default()
+        });
+        assert!(close(odd[0], SYSTEM_BODY));
     }
 
     #[test]

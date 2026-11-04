@@ -18,6 +18,8 @@ pub(crate) enum Chosen {
     Kde,
     /// xfconf's `xsettings` channel.
     Xfce,
+    /// LXQt's `lxqt.conf`.
+    Lxqt,
 }
 
 /// The settings of the first desktop `desktops` (`XDG_CURRENT_DESKTOP`)
@@ -34,6 +36,7 @@ pub(crate) fn chosen_in(desktops: &str) -> Option<Chosen> {
             "mate" => Some(Chosen::GSettings("org.mate.interface")),
             "kde" => Some(Chosen::Kde),
             "xfce" => Some(Chosen::Xfce),
+            "lxqt" => Some(Chosen::Lxqt),
             _ => None,
         })
 }
@@ -85,6 +88,36 @@ pub(crate) fn xfconf(property: &str) -> Option<String> {
     .filter(|s| !s.is_empty())
 }
 
+/// A configuration file of `relative` in the user's configuration folder,
+/// as text.
+fn config_text(relative: &str) -> Option<String> {
+    crate::file::read_regular_text(
+        &crate::xdg::config_home()?.join(relative),
+        crate::file::DESKTOP_FILE,
+    )
+    .ok()
+}
+
+/// LXQt's `lxqt.conf`, as text.
+pub(crate) fn lxqt_conf() -> Option<String> {
+    config_text("lxqt/lxqt.conf")
+}
+
+/// The file Qt's applications take their fonts from outside Plasma and
+/// LXQt, as `QT_QPA_PLATFORMTHEME` names its program (`qt5ct`, `qt6ct`),
+/// the other's when it has none: the program's name and the file's text.
+pub(crate) fn qt_ct() -> Option<(&'static str, String)> {
+    let named = std::env::var("QT_QPA_PLATFORMTHEME").ok()?;
+    let order: [&'static str; 2] = match named.trim().to_ascii_lowercase().as_str() {
+        "qt6ct" => ["qt6ct", "qt5ct"],
+        "qt5ct" => ["qt5ct", "qt6ct"],
+        _ => return None,
+    };
+    order
+        .into_iter()
+        .find_map(|program| Some((program, config_text(&format!("{program}/{program}.conf"))?)))
+}
+
 /// Plasma's `kdeglobals`, as text.
 pub(crate) fn kdeglobals() -> Option<String> {
     crate::file::read_regular_text(
@@ -106,7 +139,7 @@ pub(crate) fn gtk_theme() -> Option<String> {
     match chosen() {
         Some(Chosen::GSettings(schema)) => gsettings(schema, "gtk-theme"),
         Some(Chosen::Xfce) => xfconf("/Net/ThemeName"),
-        Some(Chosen::Kde) | None => None,
+        Some(Chosen::Kde | Chosen::Lxqt) | None => None,
     }
     .or_else(|| gtk_settings("gtk-theme-name").pop())
 }
@@ -151,6 +184,7 @@ mod tests {
         );
         assert_eq!(chosen_in("KDE"), Some(Chosen::Kde));
         assert_eq!(chosen_in("XFCE"), Some(Chosen::Xfce));
+        assert_eq!(chosen_in("LXQt"), Some(Chosen::Lxqt));
         // GTK's settings.ini, or the portal, decides for the others.
         assert_eq!(chosen_in("Hyprland"), None);
         assert_eq!(chosen_in(""), None);

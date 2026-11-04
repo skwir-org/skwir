@@ -10,12 +10,15 @@
 //! on Plasma, elsewhere the GTK3 theme the desktop names (`gtk_theme`),
 //! read again when it names another. The fonts are read where the
 //! desktop keeps them (`desktop_settings`: `GSettings`, `kdeglobals`,
-//! xfconf), the interface's then in GTK's `settings.ini`, then from the
-//! portal (`org.gnome.desktop.interface`, which it answers outside GNOME
-//! too); a fontconfig alias among them (`Monospace`) is the family
-//! fontconfig matches it to (`fonts::unalias`). macOS and Windows say
-//! nothing yet: skwir's own colors and fonts there, until they are read
-//! (ADR-071, step 5).
+//! xfconf, LXQt's `lxqt.conf`), then GTK's (`settings.ini`, then the
+//! portal's `org.gnome.desktop.interface`, which it answers outside GNOME
+//! too), then Qt's (qt6ct's or qt5ct's, as `QT_QPA_PLATFORMTHEME` names
+//! it); a fontconfig alias among them (`Monospace`) is the family
+//! fontconfig matches it to (`fonts::unalias`). Each font's size is read
+//! with its family, from the same settings, and GTK's and Qt's fonts are
+//! also said apart, for the user to choose (ADR-117). macOS and Windows
+//! say nothing yet: skwir's own colors and fonts there, until they are
+//! read (ADR-071, step 5).
 
 use skwir_core::CancelToken;
 
@@ -47,6 +50,43 @@ pub struct DesktopStyle {
     /// The colors of the scheme the user chose, a look's each.
     #[serde(default)]
     pub schemes: Schemes,
+    /// The interface font's size and the monospace font's, in pixels, as
+    /// the settings that name `font` and `monospace_font` say them, and
+    /// which settings those are (ADR-117).
+    #[serde(default)]
+    pub font_px: Option<f32>,
+    #[serde(default)]
+    pub monospace_px: Option<f32>,
+    #[serde(default)]
+    pub fonts_from: Option<String>,
+    /// The fonts GTK's settings name, and Qt's, each apart: what the user
+    /// may choose to follow instead (`Fonts from`, ADR-117).
+    #[serde(default)]
+    pub gtk: Option<Fonts>,
+    #[serde(default)]
+    pub qt: Option<Fonts>,
+    /// The desktop's text scaling factor (GNOME's Large Text), where it
+    /// names one.
+    #[serde(default)]
+    pub text_scaling: Option<f64>,
+}
+
+/// The fonts one source names: their families, the interface's and the
+/// monospace font's sizes in pixels, and which source it is (`GTK`,
+/// `the portal`, `Qt (qt6ct)`).
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Fonts {
+    pub from: String,
+    #[serde(default)]
+    pub interface: Option<String>,
+    #[serde(default)]
+    pub document: Option<String>,
+    #[serde(default)]
+    pub monospace: Option<String>,
+    #[serde(default)]
+    pub interface_px: Option<f32>,
+    #[serde(default)]
+    pub monospace_px: Option<f32>,
 }
 
 /// The colors a desktop's scheme names for the base of a look (ADR-071,
@@ -220,11 +260,41 @@ pub fn pango_family(description: &str) -> Option<String> {
     (!first.is_empty()).then(|| first.to_owned())
 }
 
+/// The size of a font as Pango describes it, in pixels: its last word,
+/// in points (`Noto Sans 10`: 13.3 px at 96 dpi) or pixels (`Sans 12px`).
+pub fn pango_size(description: &str) -> Option<f32> {
+    let last = description.split_whitespace().last()?;
+    let (number, pixels) = match last.strip_suffix("px") {
+        Some(number) => (number, true),
+        None => (last, false),
+    };
+    let size: f32 = number.parse().ok()?;
+    (size > 0. && size.is_finite()).then(|| if pixels { size } else { points(size) })
+}
+
+/// A size in points, in pixels at 96 dpi: as the desktops draw it, before
+/// the display's scale.
+fn points(size: f32) -> f32 {
+    size * 96. / 72.
+}
+
 /// The family of a font as Qt writes it in `kdeglobals` (`Noto
-/// Sans,10,-1,5,400,0,0,0,0,0`).
+/// Sans,10,-1,5,400,0,0,0,0,0`), quoted or not.
 pub fn qt_family(font: &str) -> Option<String> {
-    let family = font.split(',').next()?.trim();
+    let family = font.trim().trim_matches('"').split(',').next()?.trim();
     (!family.is_empty()).then(|| family.to_owned())
+}
+
+/// The size of a font as Qt writes it, in pixels: its points (the second
+/// field), else its pixels (the third) where the points say -1.
+pub fn qt_size(font: &str) -> Option<f32> {
+    let mut fields = font.trim().trim_matches('"').split(',').skip(1);
+    let points_said: f32 = fields.next()?.trim().parse().ok()?;
+    if points_said > 0. {
+        return Some(points(points_said));
+    }
+    let pixels: f32 = fields.next()?.trim().parse().ok()?;
+    (pixels > 0.).then_some(pixels)
 }
 
 #[cfg(target_os = "linux")]
@@ -264,12 +334,54 @@ mod imp {
         }
     }
 
-    /// The fonts a desktop's own settings name, each a family.
-    #[derive(Debug, Default)]
+    /// The fonts a source names, each a family, the interface's and the
+    /// monospace font's with their sizes in pixels, and the source.
+    #[derive(Clone, Debug, Default)]
     pub(super) struct Named {
         pub(super) interface: Option<String>,
         pub(super) document: Option<String>,
         pub(super) monospace: Option<String>,
+        pub(super) interface_px: Option<f32>,
+        pub(super) monospace_px: Option<f32>,
+        pub(super) from: Option<&'static str>,
+    }
+
+    impl Named {
+        /// Each font as this names it, else as `other` does, a size with
+        /// its family; the source the interface's.
+        pub(super) fn or(self, other: Named) -> Named {
+            let mut named = self;
+            if named.interface.is_none() {
+                named.interface = other.interface;
+                named.interface_px = other.interface_px;
+                named.from = other.from;
+            }
+            if named.document.is_none() {
+                named.document = other.document;
+            }
+            if named.monospace.is_none() {
+                named.monospace = other.monospace;
+                named.monospace_px = other.monospace_px;
+            }
+            named
+        }
+
+        fn names_any(&self) -> bool {
+            self.interface.is_some() || self.document.is_some() || self.monospace.is_some()
+        }
+
+        /// Apart, as the user may choose it: its families as fontconfig
+        /// matches them.
+        fn apart(&self) -> Option<super::Fonts> {
+            self.names_any().then(|| super::Fonts {
+                from: self.from.unwrap_or_default().to_owned(),
+                interface: self.interface.as_deref().map(crate::fonts::unalias),
+                document: self.document.as_deref().map(crate::fonts::unalias),
+                monospace: self.monospace.as_deref().map(crate::fonts::unalias),
+                interface_px: self.interface_px,
+                monospace_px: self.monospace_px,
+            })
+        }
     }
 
     /// What the desktop's own settings and files say beside the portal,
@@ -277,6 +389,15 @@ mod imp {
     pub(super) trait Own: Send + Sync + 'static {
         /// The fonts its settings name.
         fn fonts(&self) -> Named;
+        /// The fonts GTK's `settings.ini` names.
+        fn gtk_fonts(&self) -> Named {
+            Named::default()
+        }
+        /// The fonts Qt's applications are given: Plasma's, LXQt's,
+        /// qt6ct's or qt5ct's.
+        fn qt_fonts(&self) -> Named {
+            Named::default()
+        }
         /// Its color scheme: Plasma's, or the GTK3 theme its settings name,
         /// else `portal_theme`, the theme the portal names.
         fn schemes(&self, portal_theme: &dyn Fn() -> Option<String>) -> Schemes;
@@ -291,6 +412,21 @@ mod imp {
     impl Own for TheDesktop {
         fn fonts(&self) -> Named {
             own_fonts()
+        }
+
+        fn gtk_fonts(&self) -> Named {
+            let named = desktop::gtk_settings("gtk-font-name");
+            let named = named.first();
+            Named {
+                interface: named.and_then(|name| super::pango_family(name)),
+                interface_px: named.and_then(|name| super::pango_size(name)),
+                from: Some("GTK"),
+                ..Named::default()
+            }
+        }
+
+        fn qt_fonts(&self) -> Named {
+            qt_fonts()
         }
 
         fn schemes(&self, portal_theme: &dyn Fn() -> Option<String>) -> Schemes {
@@ -326,22 +462,42 @@ mod imp {
         let portal_string = |namespace: &str, key: &str| {
             portal(namespace, key).and_then(|value| String::try_from(value).ok())
         };
-        let font = |own: Option<String>, key: &str| {
-            own.or_else(|| {
-                portal_string(INTERFACE, key).and_then(|name| super::pango_family(&name))
-            })
-            .map(|family| crate::fonts::unalias(&family))
-        };
-        let named = own.fonts();
         let [interface, document, monospace] = FONT_KEYS;
+        // What the portal answers, which GTK reads where `settings.ini`
+        // names nothing.
+        let said = |key: &str| portal_string(INTERFACE, key);
+        let (font_name, monospace_name) = (said(interface), said(monospace));
+        let portal_named = Named {
+            interface: font_name.as_deref().and_then(super::pango_family),
+            interface_px: font_name.as_deref().and_then(super::pango_size),
+            document: said(document).as_deref().and_then(super::pango_family),
+            monospace: monospace_name.as_deref().and_then(super::pango_family),
+            monospace_px: monospace_name.as_deref().and_then(super::pango_size),
+            from: Some("the portal"),
+        };
+        let gtk = own.gtk_fonts().or(portal_named);
+        let qt = own.qt_fonts();
+        // The desktop's own, then GTK's, then Qt's (ADR-117).
+        let named = own.fonts().or(gtk.clone()).or(qt.clone());
+        let unaliased =
+            |family: Option<String>| family.map(|family| crate::fonts::unalias(&family));
+        let text_scaling = portal(INTERFACE, "text-scaling-factor")
+            .and_then(|value| f64::try_from(value).ok())
+            .filter(|factor| *factor > 0. && factor.is_finite());
         DesktopStyle {
             accent: portal(APPEARANCE, "accent-color").and_then(accent),
             more_contrast: portal(APPEARANCE, "contrast")
                 .and_then(|value| u32::try_from(value).ok())
                 == Some(1),
-            font: font(named.interface, interface),
-            document_font: font(named.document, document),
-            monospace_font: font(named.monospace, monospace),
+            font_px: named.interface_px,
+            monospace_px: named.monospace_px,
+            fonts_from: named.from.map(str::to_owned),
+            gtk: gtk.apart(),
+            qt: qt.apart(),
+            text_scaling,
+            font: unaliased(named.interface),
+            document_font: unaliased(named.document),
+            monospace_font: unaliased(named.monospace),
             schemes: own.schemes(&|| {
                 portal_string(INTERFACE, "gtk-theme").filter(|theme| !theme.is_empty())
             }),
@@ -565,55 +721,103 @@ mod imp {
             .then(|| channels.map(|c| c as f32))
     }
 
-    /// The fonts the desktop's own settings name; the interface's, when
-    /// they name none, as GTK's `settings.ini` does.
+    /// The fonts the desktop's own settings name, with their sizes.
     fn own_fonts() -> Named {
-        let pango = |described: Option<String>| described.as_deref().and_then(super::pango_family);
-        let mut named = match desktop::chosen() {
+        let pango = |described: &Option<String>| described.as_deref().and_then(super::pango_family);
+        let size = |described: &Option<String>| described.as_deref().and_then(super::pango_size);
+        match desktop::chosen() {
             // GNOME's and MATE's schemas name the three; Cinnamon's its
             // interface font alone, the others kept in GNOME's.
             Some(Chosen::GSettings(schema)) => {
                 let other = |key| {
-                    pango(desktop::gsettings(schema, key)).or_else(|| {
-                        (schema != INTERFACE)
-                            .then(|| pango(desktop::gsettings(INTERFACE, key)))
-                            .flatten()
-                    })
+                    desktop::gsettings(schema, key)
+                        .filter(|named| super::pango_family(named).is_some())
+                        .or_else(|| {
+                            (schema != INTERFACE)
+                                .then(|| desktop::gsettings(INTERFACE, key))
+                                .flatten()
+                        })
                 };
+                let interface = desktop::gsettings(schema, "font-name");
+                let monospace = other("monospace-font-name");
                 Named {
-                    interface: pango(desktop::gsettings(schema, "font-name")),
-                    document: other("document-font-name"),
-                    monospace: other("monospace-font-name"),
+                    interface: pango(&interface),
+                    interface_px: size(&interface),
+                    document: pango(&other("document-font-name")),
+                    monospace: pango(&monospace),
+                    monospace_px: size(&monospace),
+                    from: Some(match schema {
+                        "org.cinnamon.desktop.interface" => "Cinnamon",
+                        "org.mate.interface" => "MATE",
+                        _ => "GNOME",
+                    }),
                 }
             }
             Some(Chosen::Kde) => {
                 let kdeglobals = desktop::kdeglobals();
-                let qt = |key| {
-                    kdeglobals
-                        .as_deref()
-                        .and_then(|text| desktop::keyfile_value(text, "General", key))
-                        .as_deref()
-                        .and_then(super::qt_family)
-                };
+                qt_named(
+                    kdeglobals.as_deref(),
+                    "General",
+                    ("font", "fixed"),
+                    "Plasma",
+                )
+            }
+            Some(Chosen::Lxqt) => {
+                let conf = desktop::lxqt_conf();
+                qt_named(conf.as_deref(), "Qt", ("font", "fixed"), "LXQt")
+            }
+            Some(Chosen::Xfce) => {
+                let interface = desktop::xfconf("/Gtk/FontName");
+                let monospace = desktop::xfconf("/Gtk/MonospaceFontName");
                 Named {
-                    interface: qt("font"),
-                    document: None,
-                    monospace: qt("fixed"),
+                    interface: pango(&interface),
+                    interface_px: size(&interface),
+                    monospace: pango(&monospace),
+                    monospace_px: size(&monospace),
+                    from: Some("Xfce"),
+                    ..Named::default()
                 }
             }
-            Some(Chosen::Xfce) => Named {
-                interface: pango(desktop::xfconf("/Gtk/FontName")),
-                document: None,
-                monospace: pango(desktop::xfconf("/Gtk/MonospaceFontName")),
-            },
             None => Named::default(),
-        };
-        if named.interface.is_none() {
-            named.interface = desktop::gtk_settings("gtk-font-name")
-                .first()
-                .and_then(|name| super::pango_family(name));
         }
-        named
+    }
+
+    /// The fonts a Qt settings file names (`text`), its interface font and
+    /// its fixed one under `keys` in `group`, as Qt writes them.
+    pub(super) fn qt_named(
+        text: Option<&str>,
+        group: &str,
+        (interface, fixed): (&str, &str),
+        from: &'static str,
+    ) -> Named {
+        let value = |key| text.and_then(|text| desktop::keyfile_value(text, group, key));
+        let (interface, fixed) = (value(interface), value(fixed));
+        Named {
+            interface: interface.as_deref().and_then(super::qt_family),
+            interface_px: interface.as_deref().and_then(super::qt_size),
+            monospace: fixed.as_deref().and_then(super::qt_family),
+            monospace_px: fixed.as_deref().and_then(super::qt_size),
+            from: Some(from),
+            ..Named::default()
+        }
+    }
+
+    /// The fonts Qt's applications are given: Plasma's and LXQt's own on
+    /// those desktops, elsewhere qt6ct's or qt5ct's, as
+    /// `QT_QPA_PLATFORMTHEME` names it.
+    fn qt_fonts() -> Named {
+        match desktop::chosen() {
+            Some(Chosen::Kde | Chosen::Lxqt) => own_fonts(),
+            _ => match desktop::qt_ct() {
+                Some(("qt6ct", text)) => {
+                    qt_named(Some(&text), "Fonts", ("general", "fixed"), "Qt (qt6ct)")
+                }
+                Some((_, text)) => {
+                    qt_named(Some(&text), "Fonts", ("general", "fixed"), "Qt (qt5ct)")
+                }
+                None => Named::default(),
+            },
+        }
     }
 }
 
@@ -638,6 +842,27 @@ mod imp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_font_s_size_is_read_in_points_or_pixels() {
+        let close = |a: Option<f32>, b: f32| a.is_some_and(|a| (a - b).abs() < 1e-3);
+        assert!(close(pango_size("Noto Sans  10"), 13.333));
+        assert!(close(pango_size("Cantarell 11"), 14.667));
+        assert!(close(pango_size("Sans 12px"), 12.));
+        assert_eq!(pango_size("Noto Sans"), None);
+        assert_eq!(pango_size("Sans 0"), None);
+        assert!(close(qt_size("Noto Sans,10,-1,5,400,0,0,0,0,0"), 13.333));
+        assert!(close(
+            qt_size("\"Sans Serif,10,-1,5,400,0,0,0,0,0,0,0,0,0,0,1\""),
+            13.333
+        ));
+        assert!(close(qt_size("Hack,-1,15,5,50,0,0,0,0,0"), 15.));
+        assert_eq!(
+            qt_family("\"Sans Serif,10,-1\"").as_deref(),
+            Some("Sans Serif")
+        );
+        assert_eq!(qt_size("Noto Sans"), None);
+    }
 
     #[test]
     fn a_pango_font_s_family_is_its_name_without_size_or_style() {
@@ -862,6 +1087,19 @@ mod tests {
                     document_font: Some("Noto Serif".into()),
                     monospace_font: Some("Hack".into()),
                     schemes: Schemes::default(),
+                    font_px: Some(10. * 96. / 72.),
+                    monospace_px: Some(10. * 96. / 72.),
+                    fonts_from: Some("the portal".into()),
+                    gtk: Some(super::super::Fonts {
+                        from: "the portal".into(),
+                        interface: Some("Noto Sans".into()),
+                        document: Some("Noto Serif".into()),
+                        monospace: Some("Hack".into()),
+                        interface_px: Some(10. * 96. / 72.),
+                        monospace_px: Some(10. * 96. / 72.),
+                    }),
+                    qt: None,
+                    text_scaling: None,
                 }
             );
             // The desktop's own settings name a font before the portal.
@@ -876,6 +1114,79 @@ mod tests {
             assert_eq!(own.font.as_deref(), Some("Cantarell"));
             assert_eq!(own.document_font.as_deref(), Some("Noto Serif"));
             assert_eq!(own.monospace_font.as_deref(), Some("Source Code Pro"));
+        }
+
+        /// A desktop whose only fonts are Qt's (qt6ct's file, as on a
+        /// compositor with no settings of its own).
+        struct QtOnly;
+
+        impl imp::Own for QtOnly {
+            fn fonts(&self) -> imp::Named {
+                imp::Named::default()
+            }
+
+            fn qt_fonts(&self) -> imp::Named {
+                imp::qt_named(
+                    Some(
+                        "[Appearance]\nstyle=Fusion\n\n[Fonts]\n\
+                         fixed=\"Hack,11,-1,5,400,0,0,0,0,0,0,0,0,0,0,1\"\n\
+                         general=\"Fira Sans,12,-1,5,400,0,0,0,0,0,0,0,0,0,0,1\"\n",
+                    ),
+                    "Fonts",
+                    ("general", "fixed"),
+                    "Qt (qt6ct)",
+                )
+            }
+
+            fn schemes(&self, _: &dyn Fn() -> Option<String>) -> Schemes {
+                Schemes::default()
+            }
+
+            fn followed(&self) -> Option<PathBuf> {
+                None
+            }
+        }
+
+        #[test]
+        fn qt_s_fonts_follow_gtk_s_and_are_said_apart() {
+            let close = |a: Option<f32>, b: f32| a.is_some_and(|a| (a - b).abs() < 1e-3);
+            // Nothing else names a font: Automatic takes Qt's, with sizes.
+            let alone = imp::read_from(None, &QtOnly);
+            assert_eq!(alone.font.as_deref(), Some("Fira Sans"));
+            assert!(close(alone.font_px, 16.));
+            assert_eq!(alone.monospace_font.as_deref(), Some("Hack"));
+            assert!(close(alone.monospace_px, 14.667));
+            assert_eq!(alone.fonts_from.as_deref(), Some("Qt (qt6ct)"));
+            assert_eq!(alone.gtk, None);
+            let qt = alone.qt.expect("Qt's fonts, apart");
+            assert_eq!(qt.interface.as_deref(), Some("Fira Sans"));
+            // The portal names the GTK side's: Automatic takes it, and Qt's
+            // stay apart for the user to choose; its scaling is read.
+            let values = Values::default();
+            set(
+                &values,
+                INTERFACE,
+                "font-name",
+                &Value::from("Noto Sans 10"),
+            );
+            set(
+                &values,
+                INTERFACE,
+                "text-scaling-factor",
+                &Value::from(1.25_f64),
+            );
+            let (bus, _server) = portal(&values);
+            let both = imp::read_from(Some(&bus), &QtOnly);
+            assert_eq!(both.font.as_deref(), Some("Noto Sans"));
+            assert!(close(both.font_px, 13.333));
+            assert_eq!(both.fonts_from.as_deref(), Some("the portal"));
+            // A role GTK's side leaves out is still Qt's.
+            assert_eq!(both.monospace_font.as_deref(), Some("Hack"));
+            assert_eq!(
+                both.qt.and_then(|qt| qt.interface).as_deref(),
+                Some("Fira Sans")
+            );
+            assert_eq!(both.text_scaling, Some(1.25));
         }
 
         #[test]

@@ -276,6 +276,9 @@ mod imp {
             Chosen::GSettings(schema) => desktop::gsettings(schema, "icon-theme"),
             Chosen::Kde => Some(kde_theme(desktop::kdeglobals().as_deref())),
             Chosen::Xfce => desktop::xfconf("/Net/IconThemeName"),
+            Chosen::Lxqt => desktop::lxqt_conf()
+                .as_deref()
+                .and_then(|text| desktop::keyfile_value(text, "General", "icon_theme")),
         }
     }
 

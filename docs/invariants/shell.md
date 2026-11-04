@@ -66,7 +66,13 @@ Views are in [views.md](views.md); what locations decide, in
   replaced (its folder watched, access dropped), never a timer. Toolkits
   are never loaded: a GTK theme is read as the colors its sheet names.
 - The fonts are the theme's tokens (`font`, `reading_font`,
-  `code_font`), resolved with it, read where they are drawn.
+  `code_font`), resolved with it, read where they are drawn. A font's
+  size is read with its family, from the same settings
+  (`DesktopStyle::font_px`, `monospace_px`); GTK's and Qt's fonts are
+  read apart too (`gtk`, `qt`), and `ui.fonts_from` chooses Automatic
+  (the desktop's own, then GTK's: `settings.ini`, the portal; then
+  Qt's: qt6ct's or qt5ct's) or one of them (`desktop_style::FontsFrom`).
+  The text scaling factor is followed whatever Desktop colors says.
 - **Text sizes (ADR-117).** The window's rem is the interface's size
   (`Window::set_rem_size`, from `Theme::sizes`, set where the theme is
   resolved), a pane's view the files' (`elements::rem`). Every place

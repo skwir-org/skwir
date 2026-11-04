@@ -1,6 +1,7 @@
 # ADR-117: Text sizes by part, from the desktop's
 
-Status: accepted, 2026-11-04 (GitHub issue #5). Amends ADR-073 (its "Not
+Status: accepted and built, 2026-11-04 (GitHub issue #5), on Linux;
+macOS and Windows compiled only, their sizes not read (`docs/PORTING.md`). Amends ADR-073 (its "Not
 done: a size per role") and ADR-071 (the desktop's font is read with its
 size). Built in four steps: the files' size (1), reading and code (2),
 the interface's named sizes and heights (3), the desktop's sizes and
@@ -139,4 +140,18 @@ apart, and changes how gpui maps the pointer.
   the preview panel's limit, a popup's scroll) is scaled; the
   sidebar's width is kept at 100 %. A choice's picture in a form
   (`form::drawn`) keeps its size.
+- Step 4 (2026-11-04): `skwir_platform::desktop_style` reads each font's
+  size with its family (Pango's points or pixels, Qt's points or pixels:
+  `pango_size`, `qt_size`) and the portal's `text-scaling-factor`; LXQt's
+  `lxqt.conf` is read as its own desktop's (its icon theme too), Qt's
+  fonts from qt6ct's or qt5ct's file as `QT_QPA_PLATFORMTHEME` names it,
+  after GTK's in Automatic; GTK's and Qt's fonts are said apart
+  (`DesktopStyle::gtk`, `qt`). `ui.fonts_from` (Linux, under Desktop
+  colors) chooses them. 100 % is the desktop's size times its scaling,
+  else `sizes::SYSTEM_BODY`; code the monospace size; reading 16 px
+  times the scaling. About's Copy details says the display's scale (and
+  `GPUI_X11_SCALE_FACTOR`) and the text's font, size, source and steps;
+  the guide says what is followed and the X11 workarounds. A change of
+  qt5ct's or qt6ct's file is taken in at the next change the desktop
+  says, or the next start: it is not watched.
 

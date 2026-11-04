@@ -10858,3 +10858,40 @@ Not checked: every dialog and popup (Activity, History, the bulk
 rename, the print dialog, the tag editor), a screen reader, Windows
 and macOS, release-check.
 
+## Text sizes, step 4: the desktop's sizes (2026-11-04)
+
+ADR-117. `skwir_platform::desktop_style` reads each font's size with its
+family from the same settings (`pango_size`: points or pixels;
+`qt_size`: points, else pixels), the portal's `text-scaling-factor`,
+LXQt's `lxqt.conf` as its own desktop's (and its icon theme), and Qt's
+fonts from qt6ct's or qt5ct's file as `QT_QPA_PLATFORMTHEME` names it.
+Automatic is the desktop's own, then GTK's (`settings.ini`, the
+portal), then Qt's, a size with its family; GTK's and Qt's fonts are
+said apart (`DesktopStyle::gtk`, `qt`) for `ui.fonts_from` (Linux,
+under Desktop colors). 100 % is the desktop's size times its scaling,
+else `sizes::SYSTEM_BODY` (13.3 px on Linux, 13 on macOS, 14 on
+Windows); code the monospace size, else 14 px; reading 16 px times the
+scaling; the scaling is followed with Desktop colors off. About's Copy
+details says the display's scale and the text's font, size, source
+and steps.
+
+Checked: the platform's desktop-style tests (new: sizes read in points
+or pixels from Pango and Qt, quoted or not; Qt's fonts taken where
+nothing else names one, said apart where GTK's do, the portal's
+scaling read), skwir-ui's 500 tests (new: 100 % from the desktop or the
+system, odd sizes and factors left; GTK's or Qt's fonts and sizes as
+chosen, Desktop colors off keeping the scaling), the app's settings
+tests, clippy clean on both crates. The debug build on Xvfb (:91, the
+machine's GTK `settings.ini` and qt5ct and qt6ct files copied, a
+private bus without a portal): the window opened at 13.3 px (Noto Sans
+from GTK's 10 pt; code 13.3 px from qt5ct's Monospace 10); "Fonts from:
+Qt" written to the settings file switched it to DejaVu Sans, qt5ct's
+Sans Serif as fontconfig matches it, Dolphin's font; Copy details said
+"Display: X11, scale 1" and "Text: DejaVu Sans 13.3 px from Qt (qt5ct);
+sizes: interface 100%, files 100%, reading 100%, code 100%".
+
+Not checked: GNOME, Plasma, Xfce and LXQt themselves (their settings are
+read as before, with sizes; LXQt's file by its documented keys only), a
+portal's text scaling on a real session, qt5ct's older `@Variant` form
+(not read), macOS and Windows, release-check.
+

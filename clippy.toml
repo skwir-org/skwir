@@ -1,4 +1,5 @@
 # Names clippy takes as words in doc comments, beside its own (`..`):
 # GVfs, the desktop's remote file systems, and WebDAV (ADR-077);
-# BitLocker, Windows' drive encryption (ADR-088).
-doc-valid-idents = ["GVfs", "WebDAV", "BitLocker", ".."]
+# BitLocker, Windows' drive encryption (ADR-088); LXQt, a desktop whose
+# fonts are read (ADR-117).
+doc-valid-idents = ["GVfs", "WebDAV", "BitLocker", "LXQt", ".."]

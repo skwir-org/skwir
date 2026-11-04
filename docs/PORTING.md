@@ -448,7 +448,9 @@ Left:
   and Windows (DirectWrite's `IsMonospacedFont`) say nothing yet, so a
   family that writes no Latin is offered and drawn as Automatic, and code
   is offered every family. Neither names a font of the desktop's
-  (ADR-071).
+  (ADR-071), nor a text size (ADR-117): a Mac writes at 13 px, Windows at
+  14 px, and Windows' Text size (`UISettings.TextScaleFactor`) is not
+  read yet.
 - `alloc/lib.rs` ELF constructor (Linux); `skwir/gpu.rs` sysfs **(c)**.
 - **Keys** (step J, done): the standard shortcuts are `secondary` (Cmd on a
   Mac, Ctrl elsewhere; Linux unchanged); bindings are compared as GPUI reads
