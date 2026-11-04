@@ -9,7 +9,7 @@
 //! the system's dialog (`skwir_platform::print`), with the paper, the
 //! copies and the sides; Skwir applies the pages, the sides and the order
 //! to the PDF it hands over, as an application printing through the portal
-//! does. Nothing selected in a folder, Print… prints its listing.
+//! does. Nothing selected in a folder, Print Listing… prints its listing.
 //!
 //! Printing waits for the user and for the helpers: it runs on a worker
 //! and says how it went in a notification. An agent's print asks first,
@@ -199,7 +199,7 @@ impl Plugin for PrintPlugin {
                 Ok(Outcome::Done)
             },
         );
-        // Ctrl+P and Print… on a folder with nothing selected.
+        // Ctrl+P and Print Listing… in a folder with nothing selected.
         print.forms([skwir_core::command::Form::new(
             serde_json::json!({ "layout": "listing" }),
             "Print Listing…",
@@ -262,24 +262,27 @@ impl Plugin for PrintPlugin {
 }
 
 /// Print… in the file menu's group of what is made from it (3xx), for
-/// files and for the folder's listing, and in the preview's menu.
+/// files and in the preview's menu; Print Listing… for the folder's
+/// listing, named as the palette names it, so what is printed is said.
 fn menus(app: &App) {
-    for (menu, when, invocation) in [
-        ("context", FILES, Invocation::new("print.print")),
+    for (menu, when, title, invocation) in [
+        ("context", FILES, "Print…", Invocation::new("print.print")),
         (
             "context",
             LISTS,
+            "Print Listing…",
             Invocation::new("print.print").with("layout", "listing"),
         ),
         (
             PREVIEW,
             "pages|picture|text",
+            "Print…",
             Invocation::new("ui.preview_invoke").with("command", "print.print"),
         ),
     ] {
         app.registry.menus.add(
             ID,
-            MenuItem::new(menu, "Print…", "printer", 340, invocation).when(when),
+            MenuItem::new(menu, title, "printer", 340, invocation).when(when),
         );
     }
 }
@@ -1343,6 +1346,29 @@ mod tests {
             pdf_name(Path::new("/example/report.PDF"), false),
             "report (printed).pdf"
         );
+    }
+
+    /// The folder's menu names its listing as the palette does; files and
+    /// the preview keep Print….
+    #[test]
+    fn the_listing_is_offered_by_its_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = App::new(skwir_core::app::AppConfig::ephemeral(
+            tmp.path().join("state"),
+        ))
+        .unwrap();
+        menus(&app);
+        let title = |when: &str| {
+            app.registry
+                .menus
+                .all()
+                .into_iter()
+                .find(|item| item.when.as_deref() == Some(when))
+                .map(|item| item.title)
+        };
+        assert_eq!(title(LISTS).as_deref(), Some("Print Listing…"));
+        assert_eq!(title(FILES).as_deref(), Some("Print…"));
+        assert_eq!(title("pages|picture|text").as_deref(), Some("Print…"));
     }
 
     /// A listing's PDF is named after its folder; the root's, which has no

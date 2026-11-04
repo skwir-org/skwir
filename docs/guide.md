@@ -515,9 +515,9 @@ archives, and the bytes of any file.
   nothing printable (a song) is left out and said. Saved, they make a PDF
   each or one of them all. With pictures among them, **Contact sheet**
   prints them several to a page, each named under it. With nothing
-  selected, Print… prints what the folder shows, in its order, as a table
-  of names, kinds, sizes and dates. From a script, with or without the
-  window open:
+  selected, **Print Listing…** (the folder's menu, `Ctrl+P`) prints what
+  the folder shows, in its order, as a table of names, kinds, sizes and
+  dates. From a script, with or without the window open:
   `skwir cmd --apply print.save_pdf '{"entries": ["/path/to/notes.md"]}'`
   (`"together": true` makes one PDF of several files; `"pages": "1-3"`;
   `"layout": "booklet"`, `"contact_sheet"` or `"listing"`; `"per_side":
