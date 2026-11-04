@@ -74,11 +74,14 @@ def main():
     copy(TOOLS / "linux/org.skwir.skwir.desktop", APP / "usr/share/applications/org.skwir.skwir.desktop")
     copy(TOOLS / "linux/org.skwir.skwir.metainfo.xml", APP / "usr/share/metainfo/org.skwir.skwir.metainfo.xml")
     copy(ROOT / "crates/ui/assets/org.skwir.skwir.svg", APP / "usr/share/icons/hicolor/scalable/apps/org.skwir.skwir.svg")
+    # Skwir's own fonts, read when they are drawn (ADR-118).
+    shutil.copytree(ROOT / "target/fonts/fonts", APP / "usr/share/skwir/fonts")
     # This marker identifies the private, read-only runtime to sandboxes.
     copy(TOOLS / "appimage/runtime", APP / "usr/share/skwir/appimage-runtime")
     licences = APP / "usr/share/licenses/skwir"
     copy(ROOT / "LICENSE", licences / "LICENSE")
     shutil.copytree(ROOT / "target/pdfium/licenses", licences, dirs_exist_ok=True)
+    shutil.copytree(ROOT / "target/fonts/licenses", licences, dirs_exist_ok=True)
     # The notices of Debian's packages, which together cover every program
     # here; arch/ holds Arch's own.
     shutil.copytree(TOOLS / "notices", licences / "crates", ignore=shutil.ignore_patterns("arch"))

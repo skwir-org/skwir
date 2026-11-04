@@ -586,7 +586,11 @@ just run [dir] / dist / flame [dir]   run the release build; build for packaging
   PKGBUILDs: `skwir-git`'s functions stay the release's, which
   `release-tools-check` compares), in `tools/package/macos/programs` and
   `tools/package/windows/programs` where it ships, and its notices are made
-  (`just notices`). It answers
+  (`just notices`). Data a package carries beside the programs (skwir's
+  own fonts, ADR-118, from `tools/package/fonts.py`) goes in
+  `share/skwir/` (above `bin` on Linux, beside the program on Windows, a
+  Mac's `Resources/share`), where skwir looks for it, and each package's
+  check looks for it too. A helper program answers
   `--probe` (ADR-040, ADR-041) and `--build` (its `build.rs` includes
   `tools/build/identity.rs`; see `docs/invariants/settings.md`).
 

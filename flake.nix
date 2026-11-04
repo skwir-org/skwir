@@ -213,6 +213,18 @@
           cargo = rustToolchain;
           rustc = rustToolchain;
         };
+        # Skwir's own fonts (ADR-118): the archives tools/package/fonts.lock
+        # pins, which fonts.py takes the static files from.
+        fontArchives = {
+          "Inter-4.1.zip" = pkgs.fetchurl {
+            url = "https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip";
+            sha256 = "9883fdd4a49d4fb66bd8177ba6625ef9a64aa45899767dde3d36aa425756b11e";
+          };
+          "JetBrainsMono-2.304.zip" = pkgs.fetchurl {
+            url = "https://github.com/JetBrains/JetBrainsMono/releases/download/v2.304/JetBrainsMono-2.304.zip";
+            sha256 = "6f6376c6ed2960ea8a963cd7387ec9d76e3f629125bc33d1fdcd7eb7012f7bbf";
+          };
+        };
       in
         rustPlatform.buildRustPackage {
           pname = "skwir";
@@ -233,7 +245,14 @@
           inherit buildInputs;
           nativeBuildInputs = [pkgs.pkg-config pkgs.cmake pkgs.clang pkgs.makeWrapper];
           LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
-          postInstall = lib.optionalString stdenv.hostPlatform.isLinux ''
+          postInstall = ''
+            mkdir -p fonts/.downloads
+            ${lib.concatStrings (lib.mapAttrsToList (name: archive: "cp ${archive} fonts/.downloads/${name}\n") fontArchives)}
+            ${pkgs.python3}/bin/python3 tools/package/fonts.py fonts
+            install -Dm644 fonts/fonts/* -t $out/share/skwir/fonts
+            mkdir -p $out/share/licenses/skwir
+            cp -R fonts/licenses/fonts $out/share/licenses/skwir/
+          '' + lib.optionalString stdenv.hostPlatform.isLinux ''
             install -Dm644 tools/package/linux/org.skwir.skwir.desktop -t $out/share/applications
             install -Dm644 tools/package/linux/org.skwir.skwir.metainfo.xml -t $out/share/metainfo
             install -Dm644 crates/ui/assets/org.skwir.skwir.svg -t $out/share/icons/hicolor/scalable/apps

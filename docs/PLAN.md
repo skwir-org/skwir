@@ -703,7 +703,12 @@ grid names as large as the list's), step 2, reading and code
 preview's size), step 3, the interface (`ui.text_size`, named sizes,
 heights in rems), and step 4, the desktop's sizes (Qt's and LXQt's
 settings read, `ui.fonts_from`, Copy details), built 2026-11-04 and
-checked on Linux (`docs/STATUS-LOG.md`). macOS and Windows compiled
+checked on Linux (`docs/STATUS-LOG.md`). Reviewed beside 0.3.0 on
+2026-11-05: sentences at the body size, Small nine tenths of it, Fonts
+from with Skwir's own apart from Desktop colors, the labels saying what
+Automatic and each size come to; and Skwir's own fonts, Inter and
+JetBrains Mono, carried by every package built here (ADR-118; the
+packages' scripts run at the next release). macOS and Windows compiled
 only, their sizes not read (`docs/PORTING.md`); qt5ct's and qt6ct's
 files are not watched.
 

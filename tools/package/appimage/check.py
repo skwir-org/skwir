@@ -177,6 +177,20 @@ def check_helpers(app, build):
             raise AssertionError(f"{program} --probe failed: {why}")
 
 
+def check_fonts(app):
+    """Skwir's own fonts where skwir finds them, with their licences
+    (ADR-118, tools/package/fonts.py)."""
+    fonts = app / "usr/share/skwir/fonts"
+    for name in ("Inter-Regular", "Inter-Italic", "Inter-Medium", "Inter-SemiBold",
+                 "Inter-Bold", "Inter-BoldItalic", "JetBrainsMono-Regular",
+                 "JetBrainsMono-Italic", "JetBrainsMono-Bold", "JetBrainsMono-BoldItalic"):
+        assert (fonts / f"{name}.ttf").is_file(), (name, "is not carried")
+    licences = app / "usr/share/licenses/skwir/fonts"
+    for licence in ("Inter/LICENSE.txt", "JetBrainsMono/OFL.txt"):
+        assert (licences / licence).is_file(), (licence, "is not carried")
+    print("ok: skwir's own fonts and their licences", flush=True)
+
+
 def check_window(app, work, launcher):
     # Reuse the real-window harness, then exercise a packaged helper
     # through its user-facing command and a host program through Skwir.
@@ -250,6 +264,7 @@ def main():
         print(said, flush=True)
         assert said.startswith("skwir "), said
         check_helpers(app, said.removeprefix("skwir "))
+        check_fonts(app)
         for engine in ("pdfium", "poppler", "mupdf"):
             worker = "skwir-pdf-worker" if engine == "pdfium" else f"skwir-{engine}-worker"
             run(["python3", ROOT / "tools/pdf/check.py", "--engine", engine,

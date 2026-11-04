@@ -450,7 +450,8 @@ Left:
   is offered every family. Neither names a font of the desktop's
   (ADR-071), nor a text size (ADR-117): a Mac writes at 13 px, Windows at
   14 px, and Windows' Text size (`UISettings.TextScaleFactor`) is not
-  read yet.
+  read yet. Automatic there is Skwir's own: Inter and JetBrains Mono,
+  which the bundles carry (ADR-118), not the system's interface font.
 - `alloc/lib.rs` ELF constructor (Linux); `skwir/gpu.rs` sysfs **(c)**.
 - **Keys** (step J, done): the standard shortcuts are `secondary` (Cmd on a
   Mac, Ctrl elsewhere; Linux unchanged); bindings are compared as GPUI reads

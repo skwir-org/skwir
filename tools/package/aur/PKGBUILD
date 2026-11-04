@@ -97,6 +97,8 @@ package_skwir() {
     'fuse3: rclone mounts, and phones KDE holds'
     'avahi: servers nearby, a NAS or a Mac'
     'wsdd: Windows PCs nearby'
+    "inter-font: skwir's own interface font, when chosen"
+    "ttf-jetbrains-mono: skwir's own code font, when chosen"
   )
   # skwir's own, PDFium's, and the Poppler and DjVuLibre readers': a
   # program linking Poppler (GPL v2 or v3) or DjVuLibre (GPL v2 or later)

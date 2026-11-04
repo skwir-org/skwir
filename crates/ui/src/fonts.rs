@@ -86,12 +86,42 @@ pub fn resolve(app: &App, text: &gpui::TextSystem) -> Families {
         tracing::warn!(?any, "none of skwir's fonts is installed");
         any
     };
-    choose(
-        &app.settings,
-        &crate::desktop_style::fonts(&app.settings),
-        loads,
-        any,
-    )
+    let desktop = crate::desktop_style::fonts(&app.settings);
+    // Skwir's own reached (nothing chosen or lent loads, for the interface
+    // or code) and not installed: the ones its packages carry, once.
+    let named = |key: &str, lent: &Option<String>| {
+        chosen(&app.settings, key)
+            .iter()
+            .chain(lent)
+            .any(|family| loads(family))
+    };
+    let reached = !named(FONT_KEY, &desktop.interface) || !named(CODE_FONT_KEY, &desktop.monospace);
+    if reached && !(loads(INTERFACE[0]) && loads(CODE[0])) {
+        carried(text);
+    }
+    choose(&app.settings, &desktop, loads, any)
+}
+
+/// Register the fonts skwir's packages carry (Inter, JetBrains Mono:
+/// `skwir_platform::fonts::bundled`, ADR-118) with `text`, once a run:
+/// read only when skwir's own fonts are drawn and not installed, so a
+/// window in the desktop's fonts reads and keeps none of them.
+fn carried(text: &gpui::TextSystem) {
+    static DONE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    DONE.get_or_init(|| {
+        let fonts: Vec<std::borrow::Cow<'static, [u8]>> = skwir_platform::fonts::bundled()
+            .into_iter()
+            .map(std::borrow::Cow::Owned)
+            .collect();
+        if fonts.is_empty() {
+            return;
+        }
+        let count = fonts.len();
+        match text.add_fonts(fonts) {
+            Ok(()) => tracing::info!(count, "fonts skwir carries"),
+            Err(error) => tracing::warn!(%error, "the fonts skwir carries did not load"),
+        }
+    });
 }
 
 /// Each role's family: the one chosen, else the desktop's, else skwir's

@@ -86,6 +86,17 @@ else
     echo "missing: skwir's licence, PDFium's notices or the crates' notices"
     failed=1
 fi
+# Skwir's own fonts where skwir finds them, and their licences (ADR-118).
+if [ -f /usr/share/skwir/fonts/Inter-Regular.ttf ] &&
+    [ -f /usr/share/skwir/fonts/Inter-Bold.ttf ] &&
+    [ -f /usr/share/skwir/fonts/JetBrainsMono-Regular.ttf ] &&
+    { [ -f /usr/share/doc/skwir/fonts/Inter/LICENSE.txt ] ||
+        [ -f /usr/share/licenses/skwir/fonts/Inter/LICENSE.txt ]; }; then
+    echo "ok: skwir's own fonts, in /usr/share/skwir/fonts"
+else
+    echo "missing: skwir's own fonts or their licences"
+    failed=1
+fi
 # The desktop entry and the icon it names, where the desktop finds them.
 for file in /usr/share/applications/org.skwir.skwir.desktop \
     /usr/share/icons/hicolor/scalable/apps/org.skwir.skwir.svg; do

@@ -1,8 +1,9 @@
 #!/bin/sh
 # The RPM packages (ADR-040, ADR-041), made on the distribution they are
 # for (Fedora, openSUSE…), whose libraries they depend on: the programs
-# shipped (tools/package/programs) built for shipping, PDFium fetched
-# (tools/package/pdfium.sh), then cargo-generate-rpm, from
+# shipped (tools/package/programs) built for shipping, PDFium and skwir's
+# own fonts fetched (tools/package/pdfium.sh, fonts.py), then
+# cargo-generate-rpm, from
 # crates/skwir/Cargo.toml's [package.metadata.generate-rpm]: skwir, and
 # skwir-media, skwir-poppler, skwir-djvulibre, skwir-mermaid and
 # skwir-mupdf (its variants).
@@ -28,6 +29,7 @@ esac
 # shellcheck disable=SC2046 # one `-p name` per program
 cargo build --locked --profile dist $(sed 's/^/-p /' tools/package/programs)
 tools/package/pdfium.sh "$platform" target/pdfium
+python3 tools/package/fonts.py target/fonts
 cargo generate-rpm -p crates/skwir --profile dist
 for variant in media poppler djvulibre mermaid mupdf; do
     cargo generate-rpm -p crates/skwir --profile dist --variant "$variant"

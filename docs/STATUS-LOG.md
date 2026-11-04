@@ -10953,3 +10953,31 @@ Automatic changed them at once to "Automatic (Noto Sans)" and "100%
 (10 pt)" and saved `fonts_from = "auto"` beside `desktop_colors =
 false`.
 
+## Skwir's own fonts come with it (2026-11-05)
+
+ADR-118. `tools/package/fonts.lock` pins Inter 4.1's and JetBrains Mono
+2.304's release archives (SHA-256); `tools/package/fonts.py` fetches and
+checks them, or takes them already in its downloads folder, and takes
+out the static files (Inter regular, italic, medium, semibold, bold,
+bold italic; JetBrains Mono regular, italic, bold, bold italic: 3.5 MB)
+and their OFL licences. The Debian and RPM metadata, the AppImage's and
+tarball's staging, the Mac's and Windows' bundles and the Nix package
+(fetching the same archives, `test_fonts.py` comparing) put them in
+`share/skwir/fonts`; the AUR's source PKGBUILDs list `inter-font` and
+`ttf-jetbrains-mono` as optional; each package's check looks for them.
+At run time `skwir_platform::fonts::bundled` finds the folder beside
+the program; `fonts::carried` registers them once, only when skwir's own
+fonts are reached and Inter or JetBrains Mono is not installed.
+
+Checked: `fonts.py` run (the ten files and two licences staged); the
+platform's test of where a package puts them; `test_fonts.py` and the
+PKGBUILD tests; clippy clean on the platform and the UI; the debug build
+on Xvfb with the files beside it and Fonts from on Skwir's own: "fonts
+skwir carries count=10", the window in Inter at 14 px and code in
+JetBrains Mono, a Markdown file's bold, italic, bold italic and semibold
+heading each in its own face.
+
+Not run: the packages' builds and their checks (deb, rpm, AppImage and
+tarball, Nix, macOS, Windows), which a release runs; macOS and Windows
+compiled only.
+

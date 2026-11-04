@@ -79,6 +79,8 @@ pkgname = skwir
 	optdepends = fuse3: rclone mounts, and phones KDE holds
 	optdepends = avahi: servers nearby, a NAS or a Mac
 	optdepends = wsdd: Windows PCs nearby
+	optdepends = inter-font: skwir's own interface font, when chosen
+	optdepends = ttf-jetbrains-mono: skwir's own code font, when chosen
 
 pkgname = skwir-mermaid
 	pkgdesc = Mermaid diagrams drawn in skwir's Markdown previews

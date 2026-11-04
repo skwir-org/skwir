@@ -75,6 +75,11 @@ done
 tools/package/pdfium.sh win-x64 "$out/work/pdfium"
 cp "$out/work/pdfium/pdfium.dll" "$folder/"
 cp -R "$out/work/pdfium/licenses/pdfium" "$folder/licenses/"
+# Skwir's own fonts, read when they are drawn (ADR-118).
+python3 tools/package/fonts.py "$out/work/fonts"
+mkdir -p "$folder/share/skwir"
+cp -R "$out/work/fonts/fonts" "$folder/share/skwir/"
+cp -R "$out/work/fonts/licenses/fonts" "$folder/licenses/"
 cp -R "$SKWIR_LIBARCHIVE_STATIC/licenses/." "$folder/licenses/"
 cp -R "$gstreamer/licenses/." "$folder/licenses/"
 cp LICENSE "$folder/licenses/"

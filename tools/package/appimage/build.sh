@@ -12,6 +12,7 @@ python3 tools/package/appimage/gstreamer.py
 # shellcheck disable=SC2046 # the shared list is one package per line
 cargo build --locked --profile dist --features skwir/bundled-sqlite $(sed 's/^/-p /' tools/package/programs)
 tools/package/pdfium.sh linux-x64 target/pdfium
+python3 tools/package/fonts.py target/fonts
 for tool in linuxdeploy appimagetool; do
     rm -rf "/opt/$tool"
     mkdir -p "/opt/$tool"

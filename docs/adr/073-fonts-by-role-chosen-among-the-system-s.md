@@ -4,7 +4,8 @@ Status: accepted, 2026-10-19, and built the same day on Linux; macOS and
 Windows compiled, their font registries not asked (`docs/PORTING.md`).
 Amends ADR-071 (its font switch becomes a choice, and the font follows
 while Skwir runs). Amended by ADR-117: a text size per part of the
-window, the desktop's size read with its family.
+window, the desktop's size read with its family; and by ADR-118: Skwir's
+own fonts, Inter and JetBrains Mono, come with its packages.
 
 ## Context
 

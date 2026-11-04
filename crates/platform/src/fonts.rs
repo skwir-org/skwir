@@ -4,9 +4,67 @@
 //! through its programs (`fc-list`, `fc-match`), as the `MuPDF` worker
 //! asks it; macOS and Windows say nothing yet, so every family the text
 //! system has is offered there, for code too, and a name is taken as it
-//! is.
+//! is. Skwir's own fonts, Inter and JetBrains Mono, come with its packages
+//! (`bundled`, ADR-118).
 
 use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+
+/// The largest font file a package carries is read whole up to this.
+const FONT_FILE: u64 = 8 << 20;
+
+/// The font files skwir's packages carry (`tools/package/fonts.py`,
+/// ADR-118), read whole: those in `skwir/fonts` of its data folder beside
+/// the program (`share` next to it on Windows, above it on Linux, a Mac's
+/// `Resources/share`). None for a build not packaged. Reads the disk:
+/// asked once, when skwir's own fonts are drawn and not installed.
+pub fn bundled() -> Vec<Vec<u8>> {
+    let Some(folder) = std::env::current_exe()
+        .ok()
+        .as_deref()
+        .and_then(Path::parent)
+        .and_then(bundled_beside)
+    else {
+        return Vec::new();
+    };
+    let Ok(entries) = std::fs::read_dir(&folder) else {
+        return Vec::new();
+    };
+    let mut files: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| {
+                    ext.eq_ignore_ascii_case("ttf") || ext.eq_ignore_ascii_case("otf")
+                })
+        })
+        .collect();
+    files.sort();
+    files
+        .iter()
+        .filter_map(|path| match crate::file::read_regular(path, FONT_FILE) {
+            Ok(bytes) => Some(bytes),
+            Err(error) => {
+                tracing::warn!(path = %path.display(), %error, "a font skwir carries is unread");
+                None
+            }
+        })
+        .collect()
+}
+
+/// The folder of the fonts a package put beside the program in `bin`.
+fn bundled_beside(bin: &Path) -> Option<PathBuf> {
+    [
+        bin.join("share"),
+        bin.join("../share"),
+        bin.join("../Resources/share"),
+    ]
+    .into_iter()
+    .map(|share| share.join("skwir").join("fonts"))
+    .find(|folder| folder.is_dir())
+}
 
 /// Whether `name` is one of fontconfig's generic families, which no text
 /// system but fontconfig resolves: GNOME named `Sans 11` and
@@ -125,6 +183,34 @@ mod imp {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_fonts_a_package_carries_are_found_beside_the_program() {
+        let root = tempfile::tempdir().unwrap();
+        let program = |layout: &str| {
+            let at = root.path().join(layout);
+            std::fs::create_dir_all(&at).unwrap();
+            at
+        };
+        // Linux's: share above bin.
+        let bin = program("linux/usr/bin");
+        std::fs::create_dir_all(root.path().join("linux/usr/share/skwir/fonts")).unwrap();
+        assert!(super::bundled_beside(&bin).is_some_and(|f| f.ends_with("share/skwir/fonts")));
+        // Windows': share beside the program.
+        let win = program("windows/skwir");
+        std::fs::create_dir_all(win.join("share/skwir/fonts")).unwrap();
+        assert!(super::bundled_beside(&win).is_some());
+        // A Mac's bundle: Resources/share beside MacOS.
+        let mac = program("mac/skwir.app/Contents/MacOS");
+        std::fs::create_dir_all(
+            root.path()
+                .join("mac/skwir.app/Contents/Resources/share/skwir/fonts"),
+        )
+        .unwrap();
+        assert!(super::bundled_beside(&mac).is_some());
+        // A build not packaged carries none.
+        assert_eq!(super::bundled_beside(&program("build/debug")), None);
+    }
+
     use super::*;
 
     #[test]

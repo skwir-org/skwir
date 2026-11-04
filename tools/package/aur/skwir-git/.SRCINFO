@@ -80,6 +80,8 @@ pkgname = skwir-git
 	optdepends = fuse3: rclone mounts, and phones KDE holds
 	optdepends = avahi: servers nearby, a NAS or a Mac
 	optdepends = wsdd: Windows PCs nearby
+	optdepends = inter-font: skwir's own interface font, when chosen
+	optdepends = ttf-jetbrains-mono: skwir's own code font, when chosen
 	provides = skwir=0.1.0.r0.g34a7b9b
 	conflicts = skwir
 

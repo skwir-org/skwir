@@ -18,6 +18,9 @@
   Skwir keeps its own fonts. A font's Automatic says the family it comes to,
   each size the points it comes to, and About's Copy details says the
   display's scale and the text's sizes.
+- **Skwir's own fonts**, Inter and JetBrains Mono for code, now come with its
+  packages, so choosing them looks the same everywhere, and macOS and Windows
+  draw in them by default. They are read only when drawn.
   Reading and code have sizes of their own too (Settings › Reading): each file
   opens at its size, the preview's − and + changing only the file shown, and
   tables and the byte view, which could not be enlarged, now follow them.

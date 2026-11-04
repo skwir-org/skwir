@@ -81,6 +81,11 @@ done
 tools/package/pdfium.sh mac-arm64 "$out/work/pdfium"
 cp "$out/work/pdfium/libpdfium.dylib" "$app/Contents/Frameworks/"
 cp -R "$out/work/pdfium/licenses/pdfium" "$app/Contents/Resources/licenses/"
+# Skwir's own fonts, read when they are drawn (ADR-118).
+python3 tools/package/fonts.py "$out/work/fonts"
+mkdir -p "$app/Contents/Resources/share/skwir"
+cp -R "$out/work/fonts/fonts" "$app/Contents/Resources/share/skwir/"
+cp -R "$out/work/fonts/licenses/fonts" "$app/Contents/Resources/licenses/"
 cp -R "$SKWIR_LIBARCHIVE_STATIC/licenses/." "$app/Contents/Resources/licenses/"
 cp -R "$gstreamer/runtime/GStreamer.framework" "$app/Contents/Frameworks/"
 cp -R "$gstreamer/licenses/." "$app/Contents/Resources/licenses/"
