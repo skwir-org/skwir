@@ -12,13 +12,22 @@
 //!   `elements::rem` element): gpui's `text_sm` is its body text there,
 //!   `text_xs` its small text, and every length written in rems (the
 //!   spacing scale, `p_1`, `gap_2`) follows it.
-//! - **Lengths written at 100 %** (a row's 26 px, a column's width) are
-//!   scaled where they are drawn, in whole pixels (`Scale::px`): by the
-//!   theme's scale for the part in `render` (`Sizes::scale`), by the rem
-//!   in force in an element's layout (`Scale::of`). Pictures and icons
-//!   keep the zoom's size: only what holds text grows with it.
+//! - **Named sizes** (`TextSizes`): every place writes at one of them,
+//!   never `text_xs` or a literal. A name or a value you read or choose
+//!   (a file, a place, a tab, a menu item, a property's value) is Body;
+//!   what labels or describes it (a heading, a count, a caption, a
+//!   button's label, a shortcut) is Small; a badge is Tiny; the title of
+//!   a dialog or a panel is Title. Text an element paints itself takes
+//!   the same sizes from the rem in force (`painted`).
+//! - **Lengths written at 100 %** (a row's 26 px, a column's width) grow
+//!   with the text of where they are drawn: in rems (`sized`, laid out
+//!   in the rem in force), or scaled in whole pixels (`Scale::px`) where
+//!   they are counted: by the theme's scale for the part in `render`
+//!   (`Sizes::scale`), by the rem in force in an element's layout
+//!   (`Scale::of`). Pictures and icons keep their size: only what holds
+//!   text grows with it.
 
-use gpui::{Pixels, Window, px};
+use gpui::{Pixels, Rems, Styled, Window, px, rems};
 use skwir_core::App;
 
 /// The steps a part's size is chosen in, as percentages of its 100 %.
@@ -34,6 +43,71 @@ pub const DEFAULT_STEP: u32 = 100;
 pub const REM: f32 = 16.;
 /// The share of a rem that is a part's body text (gpui's `text_sm`).
 const BODY_REMS: f32 = 0.875;
+
+/// The named text sizes, as shares of the rem in force: 14, 12, 10 and
+/// 18 px at 100 %.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Text {
+    /// A name or a value you read or choose.
+    Body,
+    /// What labels or describes it.
+    Small,
+    /// A badge.
+    Tiny,
+    /// A dialog's or a panel's title.
+    Title,
+}
+
+impl Text {
+    pub fn rems(self) -> f32 {
+        match self {
+            Text::Body => BODY_REMS,
+            Text::Small => 0.75,
+            Text::Tiny => 0.625,
+            Text::Title => 1.125,
+        }
+    }
+}
+
+/// The named sizes on anything styled, in the rem in force: the window's
+/// (the interface's), a pane's view's (the files'), ADR-117.
+pub trait TextSizes: Styled + Sized {
+    /// A name or a value you read or choose: a file, a place, a tab, a
+    /// menu item, a property's value.
+    fn text_body(self) -> Self {
+        self.text_size(rems(Text::Body.rems()))
+    }
+
+    /// What labels or describes it: a heading, a count, a caption, a
+    /// button's label, a shortcut.
+    fn text_small(self) -> Self {
+        self.text_size(rems(Text::Small.rems()))
+    }
+
+    /// A badge: a tag's chip, a count on an icon.
+    fn text_tiny(self) -> Self {
+        self.text_size(rems(Text::Tiny.rems()))
+    }
+
+    /// A dialog's or a panel's title.
+    fn text_title(self) -> Self {
+        self.text_size(rems(Text::Title.rems()))
+    }
+}
+
+impl<T: Styled> TextSizes for T {}
+
+/// A named size in pixels, for text an element paints itself, in the rem
+/// in force where it is laid out.
+pub fn painted(window: &Window, text: Text) -> Pixels {
+    window.rem_size() * text.rems()
+}
+
+/// A length written at 100 %, in rems: laid out, it grows with the text of
+/// where it is drawn (a bar's height, a row's, the padding around text).
+pub fn sized(at_100: f32) -> Rems {
+    rems(at_100 / REM)
+}
 
 /// A part of the window with a text size of its own.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -254,6 +328,54 @@ impl Scale {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every place names one of the named sizes (`TextSizes`), never
+    /// gpui's scale or a literal (ADR-117): a size written beside them
+    /// would not follow the text size. A preview's content, drawn at the
+    /// size its reader chose, is sized from it; a choice's picture
+    /// (`form::drawn`) is drawn at its own size, as a picture is.
+    #[test]
+    fn every_place_names_a_text_size() {
+        const GPUI: [&str; 6] = [
+            ".text_xs()",
+            ".text_sm()",
+            ".text_base()",
+            ".text_lg()",
+            ".text_xl()",
+            ".text_2xl()",
+        ];
+        let literal = |line: &str| {
+            line.split("text_size(").skip(1).any(|after| {
+                let after = after.trim_start_matches("gpui::").trim_start_matches("px(");
+                after.starts_with(|c: char| c.is_ascii_digit())
+            })
+        };
+        let drawn = ["form.rs"];
+        let mut found = Vec::new();
+        let mut folders = vec![std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src")];
+        while let Some(folder) = folders.pop() {
+            for entry in std::fs::read_dir(&folder).expect("the sources") {
+                let path = entry.expect("a source").path();
+                if path.is_dir() {
+                    folders.push(path);
+                    continue;
+                }
+                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                let source = path.extension().is_some_and(|ext| ext == "rs");
+                if !source || name == "sizes.rs" {
+                    continue;
+                }
+                let text = std::fs::read_to_string(&path).expect("a source");
+                for (n, line) in text.lines().enumerate() {
+                    let named = GPUI.iter().any(|gpui| line.contains(gpui));
+                    if named || (literal(line) && !drawn.contains(&name)) {
+                        found.push(format!("{name}:{}: {}", n + 1, line.trim()));
+                    }
+                }
+            }
+        }
+        assert!(found.is_empty(), "sizes not named:\n{}", found.join("\n"));
+    }
 
     #[test]
     fn a_step_is_read_whatever_is_written_around_it() {

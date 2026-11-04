@@ -4,12 +4,14 @@
 //! keys work and the keys; what it saves is a record of the user's, as a
 //! row's + saves one.
 
+use crate::sizes::TextSizes;
+use crate::sizes::sized;
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use gpui::{
     AnyElement, App, Context, Entity, Focusable, SharedString, Subscription, Window, div,
-    prelude::*, px,
+    prelude::*,
 };
 use serde_json::Value;
 use skwir_core::command::{CommandSpec, Invocation};
@@ -571,7 +573,7 @@ impl SettingsView {
             div()
                 .pt_4()
                 .pb_2()
-                .text_xs()
+                .text_small()
                 .text_color(theme.text_muted)
                 .child(title.to_owned())
         };
@@ -595,14 +597,14 @@ impl SettingsView {
                     Some("search"),
                     theme,
                 )));
-                let mut list = div().pt_2().flex().flex_col().gap(px(2.));
+                let mut list = div().pt_2().flex().flex_col().gap(sized(2.));
                 let hover = theme.hover;
                 for (n, (spec, args, title)) in self.matching_commands(cx).into_iter().enumerate() {
                     let name = spec.name.to_string();
                     list = list.child(
                         div()
                             .id(SharedString::from(format!("new-command-{n}")))
-                            .h(px(30.))
+                            .h(sized(30.))
                             .px_2()
                             .flex()
                             .items_center()
@@ -611,7 +613,7 @@ impl SettingsView {
                             .cursor_pointer()
                             .hover(move |s| s.bg(hover))
                             .child(div().flex_1().min_w_0().truncate().child(title.clone()))
-                            .child(div().text_xs().text_color(theme.text_muted).child(name))
+                            .child(div().text_small().text_color(theme.text_muted).child(name))
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.pick_command(&spec, args.clone(), title.clone(), window, cx);
                             })),
@@ -759,7 +761,7 @@ impl SettingsView {
                         page = page.child(
                             div()
                                 .pt_2()
-                                .text_xs()
+                                .text_small()
                                 .text_color(theme.text_muted)
                                 .child(why),
                         );
@@ -857,7 +859,7 @@ impl SettingsView {
             div()
                 .pt_4()
                 .pb_2()
-                .text_xs()
+                .text_small()
                 .text_color(theme.text_muted)
                 .child("Its arguments"),
         );
@@ -867,11 +869,11 @@ impl SettingsView {
                     .flex()
                     .items_center()
                     .gap_2()
-                    .child(div().text_sm().child(one.name))
+                    .child(div().text_body().child(one.name))
                     .when(!one.required, |d| {
                         d.child(
                             div()
-                                .text_xs()
+                                .text_small()
                                 .text_color(theme.text_muted)
                                 .child("optional"),
                         )
@@ -929,7 +931,7 @@ impl SettingsView {
             if !one.description.is_empty() {
                 row = row.child(
                     div()
-                        .text_xs()
+                        .text_small()
                         .text_color(theme.text_muted)
                         .child(one.description),
                 );

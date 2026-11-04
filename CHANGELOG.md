@@ -2,10 +2,12 @@
 
 ## Unreleased
 
-- **Text sizes**: the file views' text has a size of its own, from 80 to
-  200 % (Settings › Appearance › Files text size, or "Files text: larger" in
-  the palette), and rows, labels and columns grow with it while icons and
-  pictures keep their zoom. Names in the grid are now as large as in the list.
+- **Text sizes**: the whole window's text has a size, from 80 to 200 %
+  (Settings › Appearance › Text size), and the file views' a size of their own
+  (Files text size, or "Files text: larger" in the palette). Bars, rows,
+  menus, labels and columns grow with the text while icons and pictures keep
+  their size. Names in the grid are now as large as in the list, and tab titles
+  and Properties' values as large as the sidebar's places.
   Reading and code have sizes of their own too (Settings › Reading): each file
   opens at its size, the preview's − and + changing only the file shown, and
   tables and the byte view, which could not be enlarged, now follow them.

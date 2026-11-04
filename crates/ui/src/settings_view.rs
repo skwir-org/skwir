@@ -4,6 +4,8 @@
 //! keyboard stop can be brought into view by its child index. Cards are drawn
 //! by giving the first and last row of a group their rounded corners.
 
+use crate::sizes::TextSizes;
+use crate::sizes::sized;
 use gpui::{
     AnyElement, ClickEvent, Context, Entity, Focusable, MouseButton, SharedString, Window, div,
     prelude::*, px, relative,
@@ -203,7 +205,7 @@ impl SettingsView {
             .overflow_y_scroll()
             .flex()
             .flex_col()
-            .gap(px(2.))
+            .gap(sized(2.))
             .p_2();
         let nav_focused = self.nav.is_focused(window);
         let mut plugins_caption = false;
@@ -216,7 +218,7 @@ impl SettingsView {
                         .px_2()
                         .pt_3()
                         .pb_1()
-                        .text_xs()
+                        .text_small()
                         .text_color(theme.text_muted)
                         .child("Plugin settings"),
                 );
@@ -241,7 +243,7 @@ impl SettingsView {
                         d.aria_label(title.clone()).aria_selected(selected)
                     })
                     .when(selected, StatefulInteractiveElement::aria_active_descendant)
-                    .h(px(30.))
+                    .h(sized(30.))
                     .px_2()
                     .flex()
                     .flex_none()
@@ -277,7 +279,7 @@ impl SettingsView {
                     .when(modified > 0, |d| {
                         d.child(
                             div()
-                                .text_xs()
+                                .text_small()
                                 .text_color(if selected {
                                     theme.selection_text
                                 } else {
@@ -293,7 +295,7 @@ impl SettingsView {
             );
         }
         div()
-            .w(px(216.))
+            .w(sized(216.))
             .flex_none()
             .h_full()
             .flex()
@@ -322,7 +324,7 @@ impl SettingsView {
                 .flex_none()
                 .pt_5()
                 .pb_2()
-                .text_xs()
+                .text_small()
                 .text_color(theme.text_muted)
                 .child(text.into())
                 .into_any_element(),
@@ -348,10 +350,10 @@ impl SettingsView {
         let description: SharedString = description.into();
         div()
             .flex_1()
-            .min_w(px(TEXTS_MIN))
+            .min_w(sized(TEXTS_MIN))
             .flex()
             .flex_col()
-            .gap(px(3.))
+            .gap(sized(3.))
             .child(
                 div()
                     .flex()
@@ -364,7 +366,7 @@ impl SettingsView {
             .when(!description.is_empty(), |d| {
                 d.child(
                     div()
-                        .text_xs()
+                        .text_small()
                         .text_color(theme.text_muted)
                         .child(description),
                 )
@@ -494,11 +496,11 @@ impl SettingsView {
                 };
                 // A number keeps its width; a text field narrows to
                 // `FIELD_MIN` before the texts beside it give way.
-                let mut group = div().flex().items_center().gap(px(4.)).map(|d| {
+                let mut group = div().flex().items_center().gap(sized(4.)).map(|d| {
                     if numeric || kind == SettingKind::Number {
                         d.flex_none()
                     } else {
-                        d.w(px(width)).min_w(px(FIELD_MIN)).flex_shrink_1()
+                        d.w(sized(width)).min_w(sized(FIELD_MIN)).flex_shrink_1()
                     }
                 });
                 if numeric {
@@ -554,7 +556,7 @@ impl SettingsView {
                 if !row.spec.unit.is_empty() {
                     group = group.child(
                         div()
-                            .text_xs()
+                            .text_small()
                             .text_color(theme.text_muted)
                             .child(row.spec.unit.clone()),
                     );
@@ -654,7 +656,7 @@ impl SettingsView {
                     focus,
                     theme,
                 )
-                .when(in_table, |d| d.min_w(px(TABLE_CHOICE)))
+                .when(in_table, |d| d.min_w(sized(TABLE_CHOICE)))
                 .when_some(written_in, gpui::Styled::font_family),
                 row,
             )
@@ -682,7 +684,7 @@ impl SettingsView {
             // under the row; a long list narrows instead (`long_choices`).
             let mut panel = div()
                 .id(SharedString::from(format!("choices-{key}")))
-                .min_w(px(150.))
+                .min_w(sized(150.))
                 .min_h_0()
                 .overflow_y_scroll()
                 .p_1()
@@ -693,7 +695,7 @@ impl SettingsView {
                 .border_color(theme.border)
                 .bg(theme.bg)
                 .text_color(theme.text)
-                .text_xs()
+                .text_small()
                 .font_family(theme.font.clone())
                 .shadow_lg()
                 .occlude()
@@ -708,7 +710,7 @@ impl SettingsView {
                 panel = panel.child(
                     div()
                         .id(SharedString::from(format!("choice-{key}-{choice}")))
-                        .h(px(26.))
+                        .h(sized(26.))
                         .px_2()
                         .flex()
                         .items_center()
@@ -765,7 +767,7 @@ impl SettingsView {
                             Some(
                                 crate::modal::option(option, named, at, highlighted, &field)
                                     .w_full()
-                                    .h(px(CHOICE_ROW))
+                                    .h(sized(CHOICE_ROW))
                                     .px_2()
                                     .flex()
                                     .items_center()
@@ -815,7 +817,7 @@ impl SettingsView {
         // field nor the specimen, which would run past the window's foot.
         let list = crate::modal::options("choices-list", "Choices", count, a11y)
             .relative()
-            .h(px(CHOICE_ROW * count.clamp(1, LONG_ROWS) as f32))
+            .h(sized(CHOICE_ROW * count.clamp(1, LONG_ROWS) as f32))
             .min_h_0()
             .child(rows)
             .when(count == 0, |d| {
@@ -824,7 +826,7 @@ impl SettingsView {
                         .absolute()
                         .top_0()
                         .px_2()
-                        .h(px(CHOICE_ROW))
+                        .h(sized(CHOICE_ROW))
                         .flex()
                         .items_center()
                         .text_color(theme.text_muted)
@@ -861,7 +863,7 @@ impl SettingsView {
                 .gap_1()
                 .child(div().text_color(theme.text_muted).child(family.clone()))
                 .child(if loads {
-                    div().font_family(family).text_base().child(text)
+                    div().font_family(family).text_title().child(text)
                 } else {
                     div()
                         .text_color(theme.text_muted)
@@ -872,7 +874,7 @@ impl SettingsView {
             div()
                 .id(SharedString::from(format!("choices-{key}")))
                 .key_context("SettingChoices")
-                .w(px(300.))
+                .w(sized(300.))
                 .min_h_0()
                 .p_1()
                 .flex()
@@ -883,7 +885,7 @@ impl SettingsView {
                 .border_color(theme.border)
                 .bg(theme.bg)
                 .text_color(theme.text)
-                .text_xs()
+                .text_small()
                 .font_family(theme.font.clone())
                 .shadow_lg()
                 .occlude()
@@ -921,7 +923,7 @@ impl SettingsView {
         let mut texts = self
             .described(row.spec.title.clone(), &row.spec.description, &key, theme)
             // Beneath the switch it is under.
-            .when(!row.spec.under.is_empty(), |d| d.pl(px(24.)));
+            .when(!row.spec.under.is_empty(), |d| d.pl(sized(24.)));
         if row.spec.restart_required {
             texts = texts.child(div().flex().child(controls::badge(
                 "Applies after restart",
@@ -981,7 +983,7 @@ impl SettingsView {
             d.child(
                 div()
                     .id(SharedString::from(format!("description-{key}")))
-                    .text_xs()
+                    .text_small()
                     .text_color(theme.text_muted)
                     .child(shown.to_owned())
                     .when(more, |d| {
@@ -996,8 +998,8 @@ impl SettingsView {
         div()
             .flex()
             .items_center()
-            .gap(px(6.))
-            .text_xs()
+            .gap(sized(6.))
+            .text_small()
             .text_color(theme.error)
             .child(controls::glyph("warning", theme.error, 13.))
             .child(div().flex_1().min_w_0().child(error))
@@ -1044,14 +1046,14 @@ impl SettingsView {
             .px_4()
             .flex()
             .gap_4()
-            .text_xs()
+            .text_small()
             .text_color(theme.text_muted)
-            .child(div().flex_1().min_w(px(TEXTS_MIN)));
+            .child(div().flex_1().min_w(sized(TEXTS_MIN)));
         for (title, kind) in columns {
             header = header.child(
                 div()
                     .flex_none()
-                    .w(px(column_width(*kind)))
+                    .w(sized(column_width(*kind)))
                     .flex()
                     .justify_end()
                     .child(title.clone()),
@@ -1104,7 +1106,7 @@ impl SettingsView {
             line = line.child(
                 div()
                     .flex_none()
-                    .w(px(column_width(cell.spec.kind)))
+                    .w(sized(column_width(cell.spec.kind)))
                     .flex()
                     .items_center()
                     .justify_end()
@@ -1316,8 +1318,8 @@ impl SettingsView {
                     div()
                         .flex()
                         .items_center()
-                        .gap(px(6.))
-                        .text_xs()
+                        .gap(sized(6.))
+                        .text_small()
                         .text_color(theme.text_muted)
                         .child(controls::glyph(icon, theme.text_muted, 13.))
                         .child(text),
@@ -1343,8 +1345,8 @@ impl SettingsView {
                     div()
                         .flex()
                         .items_center()
-                        .gap(px(6.))
-                        .text_xs()
+                        .gap(sized(6.))
+                        .text_small()
                         .text_color(color)
                         .child(controls::glyph(icon, color, 13.))
                         .child(text),
@@ -1475,7 +1477,7 @@ impl SettingsView {
                 self.plugin_row(plugin, true, edge, items, theme, cx);
             }
         }
-        items.push(div().flex_none().h(px(24.)).into_any_element());
+        items.push(div().flex_none().h(sized(24.)).into_any_element());
         let item = items.len();
         let modified = self.rows.iter().filter(|row| row.modified()).count();
         let reset = self.handle("reset-all", cx);
@@ -1545,7 +1547,7 @@ impl SettingsView {
             Self::note(items, "Turn the plugin on to change its settings.", theme);
             return;
         }
-        items.push(div().flex_none().h(px(16.)).into_any_element());
+        items.push(div().flex_none().h(sized(16.)).into_any_element());
         self.page_rows(&Page::Plugin(id.to_owned()), items, theme, window, cx);
     }
 
@@ -1624,7 +1626,7 @@ impl Render for SettingsView {
                     .flex()
                     .items_center()
                     .gap_2()
-                    .text_sm()
+                    .text_body()
                     .text_color(theme.warning)
                     .child(controls::glyph("lock", theme.warning, 14.))
                     .child(div().flex_1().min_w_0().child(
@@ -1708,8 +1710,8 @@ impl Render for SettingsView {
                 .flex()
                 .flex_none()
                 .items_center()
-                .gap(px(5.))
-                .text_xs()
+                .gap(sized(5.))
+                .text_small()
                 .text_color(theme.text_muted)
                 .children(icon.map(|name| controls::glyph(name, theme.text_muted, 13.)))
                 .child(text)
@@ -1734,11 +1736,16 @@ impl Render for SettingsView {
                             .flex()
                             .items_center()
                             .gap_3()
-                            .child(div().text_lg().child(title))
+                            .child(div().text_title().child(title))
                             .children(status),
                     )
                     .when(!subtitle.is_empty(), |d| {
-                        d.child(div().text_xs().text_color(theme.text_muted).child(subtitle))
+                        d.child(
+                            div()
+                                .text_small()
+                                .text_color(theme.text_muted)
+                                .child(subtitle),
+                        )
                     }),
             )
             .child(
@@ -1787,9 +1794,9 @@ impl Render for SettingsView {
             .aria_modal()
             .aria_label("Settings")
             .w(relative(0.94))
-            .max_w(px(920.))
+            .max_w(sized(920.))
             .h(relative(0.9))
-            .max_h(px(680.))
+            .max_h(sized(680.))
             .flex()
             .overflow_hidden()
             .rounded_lg()
@@ -1799,7 +1806,7 @@ impl Render for SettingsView {
             .shadow_lg()
             // Whole-pixel line heights keep every row height integral, so the
             // one-pixel dividers between rows never fall between two pixels.
-            .line_height(px(20.))
+            .line_height(sized(20.))
             .track_focus(&self.root)
             .key_context("Settings")
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())

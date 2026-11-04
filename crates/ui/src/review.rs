@@ -4,6 +4,7 @@
 //! in the same queue and is answered the same way: Allow or Refuse; so do
 //! the names a copy, a move or a link found taken (ADR-054, `clashes.rs`).
 
+use crate::sizes::TextSizes;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
@@ -430,17 +431,17 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                 .flex()
                 .items_center()
                 .child(div().flex_1().child(title))
-                .child(div().text_xs().text_color(theme.text_muted).child(size)),
+                .child(div().text_small().text_color(theme.text_muted).child(size)),
         )
         // What the plan left out, and why; what a question means.
         .when_some(note, |d, note| {
-            d.child(div().text_xs().text_color(theme.text_muted).child(note))
+            d.child(div().text_small().text_color(theme.text_muted).child(note))
         })
         .when_some(within, |d, within| {
             d.child(clipped(
                 div()
                     .id("review-folder")
-                    .text_xs()
+                    .text_small()
                     .text_color(theme.text_muted)
                     .overflow_hidden()
                     .whitespace_nowrap()
@@ -448,7 +449,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                 within,
             ))
         })
-        .child(list.text_xs().font_family(theme.code_font.clone()))
+        .child(list.text_small().font_family(theme.code_font.clone()))
         .child(modal::footer(
             hint,
             [
@@ -548,7 +549,7 @@ fn step_rows(shell: &Shell, range: Range<usize>, cx: &mut Context<Shell>) -> Vec
                     .flex()
                     .items_center()
                     .gap_2()
-                    .text_xs()
+                    .text_small()
                     .font_family(font.clone())
                     .text_color(color)
                     // Cut in the middle: a line ends with what it comes

@@ -8,6 +8,8 @@
 //! The only animation is a short entrance that ends by itself; nothing here
 //! keeps the UI awake.
 
+use crate::sizes::TextSizes;
+use crate::sizes::sized;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -765,8 +767,8 @@ pub fn render_answer(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyEl
     };
     let mut card = div()
         .id(("toast-card", generation))
-        .max_w(px(480.))
-        .min_w(px(220.))
+        .max_w(sized(480.))
+        .min_w(sized(220.))
         .pl_3()
         .pr_1()
         .py_1()
@@ -805,7 +807,7 @@ pub fn render_answer(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyEl
                 // Why an Undo is held, under what was said.
                 .children(held.iter().flatten().map(|why| {
                     div()
-                        .text_xs()
+                        .text_small()
                         .text_color(theme.text_muted)
                         .child(why.clone())
                 })),

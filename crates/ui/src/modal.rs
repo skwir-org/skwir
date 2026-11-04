@@ -3,6 +3,7 @@
 //! its keys stay in it, the window of rows a long picker list shows, and
 //! the box of rows a dialog lists.
 
+use crate::sizes::TextSizes;
 use std::ops::Range;
 use std::rc::Rc;
 
@@ -267,7 +268,7 @@ pub fn footer(
             div()
                 .flex_1()
                 .min_w_0()
-                .text_xs()
+                .text_small()
                 .text_color(theme.text_muted)
                 .child(hint.into()),
         )

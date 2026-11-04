@@ -61,6 +61,8 @@
 //! (bound in the address bar's context), a click on a row runs it without
 //! taking the focus. The UI knows no query syntax.
 
+use crate::sizes::TextSizes;
+use crate::sizes::sized;
 use std::collections::HashMap;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -100,6 +102,14 @@ const CARD_PAD: f32 = 5.;
 const CARD_LEAST: f32 = 430.;
 /// A row of the card, and what a piece of its list counts as until built.
 const ROW_HEIGHT: f32 = 30.;
+
+/// A row's height at the interface's size (ADR-117).
+fn row_height(cx: &gpui::App) -> gpui::Pixels {
+    cx.global::<crate::theme::Theme>()
+        .sizes
+        .scale(crate::sizes::Part::Interface)
+        .px(ROW_HEIGHT)
+}
 /// How far beyond what the card shows its list builds rows, so that a
 /// screenful scrolled shows built rows.
 const LIST_OVERDRAW: f32 = 300.;
@@ -1587,7 +1597,7 @@ impl Shell {
             omni.pieces = pieces(&rows);
             omni.list
                 .0
-                .reset_with_uniform_height(omni.pieces.len(), px(ROW_HEIGHT));
+                .reset_with_uniform_height(omni.pieces.len(), row_height(cx));
             if let Some(top) = kept {
                 omni.list.0.scroll_to(top);
             }
@@ -2843,15 +2853,15 @@ pub fn scope_token(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement>
             .id(("scope-token", pane.0 as usize))
             .flex_none()
             .ml(px(3.))
-            .h(px(22.))
-            .pl(px(7.))
-            .pr(px(5.))
+            .h(sized(22.))
+            .pl(sized(7.))
+            .pr(sized(5.))
             .flex()
             .items_center()
-            .gap(px(4.))
+            .gap(sized(4.))
             .rounded_full()
             .bg(bg)
-            .text_xs()
+            .text_small()
             .text_color(fg)
             .cursor_pointer()
             .when(shell.a11y, |d| {
@@ -3150,11 +3160,11 @@ fn depth_line(shell: &Shell, typed: Typed, cx: &mut Context<Shell>) -> Option<An
         let hover = theme.hover;
         div()
             .id(("omnibox-depth", depth as usize))
-            .h(px(24.))
-            .px(px(8.))
+            .h(sized(24.))
+            .px(sized(8.))
             .flex()
             .items_center()
-            .gap(px(6.))
+            .gap(sized(6.))
             .rounded_md()
             .cursor_pointer()
             .when(on, |d| d.bg(theme.term).text_color(theme.accent_text))
@@ -3197,7 +3207,7 @@ fn depth_line(shell: &Shell, typed: Typed, cx: &mut Context<Shell>) -> Option<An
             .child(label.to_owned())
             .children(keys.map(|keys| {
                 div()
-                    .px(px(4.))
+                    .px(sized(4.))
                     .rounded_sm()
                     .border_1()
                     .border_color(theme.border)
@@ -3218,13 +3228,13 @@ fn depth_line(shell: &Shell, typed: Typed, cx: &mut Context<Shell>) -> Option<An
             .flex()
             .items_center()
             .gap_2()
-            .text_xs()
+            .text_small()
             .child(
                 div()
                     .flex_none()
                     .flex()
-                    .p(px(2.))
-                    .gap(px(2.))
+                    .p(sized(2.))
+                    .gap(sized(2.))
                     .rounded_lg()
                     .border_1()
                     .border_color(theme.border)
@@ -3274,13 +3284,13 @@ fn draw_piece(shell: &Shell, ix: usize, text: &str, cx: &mut Context<Shell>) -> 
             .px_2()
             .pt_2()
             .pb_1()
-            .text_xs()
+            .text_small()
             .text_color(theme.text_muted)
             .child(title)
     });
     let mut strip = piece
         .strip
-        .then(|| div().px_2().pb_1().flex().flex_wrap().gap(px(6.)));
+        .then(|| div().px_2().pb_1().flex().flex_wrap().gap(sized(6.)));
     let mut line: Option<AnyElement> = None;
     for i in piece.rows.clone() {
         let row = &rows[i];
@@ -3340,16 +3350,16 @@ fn draw_piece(shell: &Shell, ix: usize, text: &str, cx: &mut Context<Shell>) -> 
                 highlighted && omni.chosen,
                 &field,
             )
-            .h(px(26.))
-            .px(px(10.))
+            .h(sized(26.))
+            .px(sized(10.))
             .flex()
             .items_center()
-            .gap(px(6.))
+            .gap(sized(6.))
             .rounded_full()
             .border_1()
             .border_color(theme.border)
             .cursor_pointer()
-            .text_xs()
+            .text_small()
             .when(highlighted, |b| {
                 b.bg(theme.selection_bg)
                     .text_color(theme.selection_text)
@@ -3397,11 +3407,11 @@ fn draw_piece(shell: &Shell, ix: usize, text: &str, cx: &mut Context<Shell>) -> 
                 &field,
             )
             .w_full()
-            .h(px(ROW_HEIGHT))
+            .h(sized(ROW_HEIGHT))
             .px_2()
             .flex()
             .items_center()
-            .gap(px(10.))
+            .gap(sized(10.))
             .rounded_md()
             .cursor_pointer()
             .when(highlighted, |r| {
@@ -3432,12 +3442,12 @@ fn draw_piece(shell: &Shell, ix: usize, text: &str, cx: &mut Context<Shell>) -> 
                 crate::elements::clip::clipped(
                     div()
                         .id("omni-detail")
-                        .max_w(px(230.))
+                        .max_w(sized(230.))
                         .min_w_0()
                         .overflow_hidden()
                         .whitespace_nowrap()
                         .text_ellipsis_middle()
-                        .text_xs()
+                        .text_small()
                         .text_color(muted)
                         .when(d.detail_typed, |t| {
                             t.font_family(cx.global::<Theme>().code_font.clone())
@@ -3449,7 +3459,7 @@ fn draw_piece(shell: &Shell, ix: usize, text: &str, cx: &mut Context<Shell>) -> 
                 div()
                     .flex_none()
                     .pl_4()
-                    .text_xs()
+                    .text_small()
                     .text_color(muted)
                     .child(keys)
             }))
@@ -3544,7 +3554,7 @@ pub fn dropdown(
                 .flex_none()
                 .px_2()
                 .py_1()
-                .text_xs()
+                .text_small()
                 .text_color(theme.text_muted)
                 .child(reading)
         }))
@@ -3557,7 +3567,7 @@ pub fn dropdown(
                 .pb_1()
                 .border_t_1()
                 .border_color(theme.border)
-                .text_xs()
+                .text_small()
                 .text_color(theme.text_muted)
                 .child(footer(shell, typed, omni.scopes)),
         );
@@ -3576,10 +3586,16 @@ pub fn dropdown(
         .child(
             div()
                 .flex_none()
-                .h(px(CARD_PAD + crate::address::FIELD_HEIGHT - 1.)),
+                .h(sized(CARD_PAD + crate::address::FIELD_HEIGHT - 1.)),
         )
         .child(rows);
-    Some(anchor.popup_around(CARD_PRIORITY, px(CARD_PAD), px(CARD_LEAST), panel))
+    let scale = theme.sizes.scale(crate::sizes::Part::Interface);
+    Some(anchor.popup_around(
+        CARD_PRIORITY,
+        scale.px(CARD_PAD),
+        scale.px(CARD_LEAST),
+        panel,
+    ))
 }
 
 #[cfg(test)]

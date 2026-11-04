@@ -26,6 +26,8 @@
 //! which change it in place; "+ Filter" adds to them. A pill of the lens
 //! says in its tooltip that it stays as the pane goes elsewhere.
 
+use crate::sizes::TextSizes;
+use crate::sizes::sized;
 use gpui::{AnyElement, Context, SharedString, Window, div, prelude::*, px};
 use serde::Deserialize;
 use skwir_core::command::{Invocation, Outcome};
@@ -471,12 +473,12 @@ pub fn after_trail(
                         // its pills there.
                         div()
                             .w_full()
-                            .h(px(24.))
+                            .h(sized(24.))
                             .overflow_hidden()
                             .flex()
                             .items_center()
-                            .gap(px(4.))
-                            .px(px(3.))
+                            .gap(sized(4.))
+                            .px(sized(3.))
                             .children(pill_row(shell, anchor, fit, folder, cx))
                             .into_any_element()
                     })
@@ -534,7 +536,7 @@ fn pill_row(
             line.push(
                 div()
                     .flex_none()
-                    .text_xs()
+                    .text_small()
                     .text_color(theme.text_muted)
                     .child("+")
                     .into_any_element(),
@@ -606,10 +608,10 @@ fn pill_row(
             .tint(tint)
             .anchor_if(anchor, open == Some(Target::Chip(i)))
             .render(shell, cx)
-            .h(px(22.))
+            .h(sized(22.))
             .rounded_full()
             .when(chip.is_scope(), |d| d.border_color(theme.border))
-            .when(crossed, |d| d.pr(px(2.)))
+            .when(crossed, |d| d.pr(sized(2.)))
             // The last fit: cut short rather than gone, its label keeping
             // both ends; the later a pill, the sooner it gives way, so the
             // first facet (the words typed, usually) stays readable.
@@ -661,7 +663,7 @@ fn pill_row(
                 .anchor_if(anchor, from_filter)
                 .active(open == Some(Target::Facets))
                 .render(shell, cx)
-                .h(px(22.))
+                .h(sized(22.))
                 .rounded_full()
                 .border_color(theme.border)
                 .into_any_element(),

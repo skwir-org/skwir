@@ -276,7 +276,7 @@ pub fn text_size_spec(part: crate::sizes::Part) -> SettingSpec {
         ),
         Part::Interface => spec(
             "Text size",
-            "How large skwir writes its menus, bars, the sidebar and dialogs, its file views with them. Bars and rows grow with the text.",
+            "How large skwir writes its menus, bars, the sidebar and dialogs, and its file views with them. Bars, rows and menus grow with the text; icons keep their size.",
         ),
         Part::Reading => spec(
             "Reading text size",
@@ -823,6 +823,8 @@ pub fn declare(app: &App) {
     }
     app.settings
         .declare(font_spec(FONT_KEY, &font_chosen(app, FONT_KEY), None));
+    app.settings
+        .declare(text_size_spec(crate::sizes::Part::Interface));
     app.settings
         .declare(text_size_spec(crate::sizes::Part::Files));
     if !skwir_platform::system_icons::AVAILABLE {
@@ -3213,6 +3215,10 @@ mod tests {
         };
         assert_eq!(
             after(Page::Appearance, FONT_KEY).as_deref(),
+            Some(super::TEXT_SIZE_KEY)
+        );
+        assert_eq!(
+            after(Page::Appearance, super::TEXT_SIZE_KEY).as_deref(),
             Some(super::FILES_TEXT_SIZE_KEY)
         );
         assert_eq!(

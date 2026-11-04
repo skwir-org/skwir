@@ -7,6 +7,8 @@
 //! words of its name (a switch, a choice, a dropdown) is named by its caller
 //! (`aria_label`), from the label drawn beside it.
 
+use crate::sizes::TextSizes;
+use crate::sizes::sized;
 use gpui::{Div, Entity, FocusHandle, SharedString, Stateful, div, prelude::*, px, svg};
 
 use crate::input::TextInput;
@@ -37,7 +39,7 @@ pub fn switch(
         .aria_toggled(toggled(on))
         .track_focus(focus)
         .flex_none()
-        .p(px(2.))
+        .p(sized(2.))
         .rounded_full()
         .border_1()
         .border_color(gpui::transparent_black())
@@ -47,7 +49,7 @@ pub fn switch(
             div()
                 .relative()
                 .w(px(36.))
-                .h(px(20.))
+                .h(sized(20.))
                 .rounded_full()
                 .bg(if on { theme.accent } else { theme.border })
                 .child(
@@ -72,9 +74,9 @@ pub fn segmented(id: impl Into<SharedString>, focus: &FocusHandle, theme: &Theme
         .flex_none()
         .flex()
         .items_center()
-        .gap(px(2.))
-        .p(px(2.))
-        .h(px(HEIGHT))
+        .gap(sized(2.))
+        .p(sized(2.))
+        .h(sized(HEIGHT))
         .rounded_md()
         .bg(theme.bg)
         .border_1()
@@ -100,7 +102,7 @@ pub fn segment(
         .flex()
         .items_center()
         .rounded_sm()
-        .text_xs()
+        .text_small()
         .whitespace_nowrap()
         .cursor_pointer()
         .when(selected, |d| {
@@ -180,16 +182,16 @@ fn button_frame(
         .aria_label(label.clone())
         .track_focus(focus)
         .flex_none()
-        .h(px(HEIGHT))
+        .h(sized(HEIGHT))
         .px_3()
         .flex()
         .items_center()
-        .gap(px(6.))
+        .gap(sized(6.))
         .rounded_md()
         .border_1()
         .border_color(theme.border)
         .bg(theme.bg)
-        .text_xs()
+        .text_small()
         .whitespace_nowrap()
         .focus(move |s| s.border_color(accent))
 }
@@ -210,7 +212,7 @@ pub fn icon_button(
         .aria_label(label.into())
         .track_focus(focus)
         .flex_none()
-        .size(px(HEIGHT))
+        .size(sized(HEIGHT))
         .flex()
         .items_center()
         .justify_center()
@@ -233,7 +235,7 @@ pub fn field(
     theme: &Theme,
 ) -> Div {
     div()
-        .h(px(HEIGHT))
+        .h(sized(HEIGHT))
         .map(|d| match width {
             Some(width) => d.w(px(width)).flex_none(),
             None => d.flex_1().min_w_0(),
@@ -241,7 +243,7 @@ pub fn field(
         .px_2()
         .flex()
         .items_center()
-        .gap(px(6.))
+        .gap(sized(6.))
         .rounded_md()
         .bg(theme.bg)
         .border_1()
@@ -279,8 +281,8 @@ pub fn dropdown(
         .track_focus(focus)
         .relative()
         .flex_none()
-        .h(px(HEIGHT))
-        .min_w(px(150.))
+        .h(sized(HEIGHT))
+        .min_w(sized(150.))
         .pl_3()
         .pr_2()
         .flex()
@@ -291,7 +293,7 @@ pub fn dropdown(
         .border_1()
         .border_color(theme.border)
         .bg(theme.bg)
-        .text_xs()
+        .text_small()
         .cursor_pointer()
         .hover(move |s| s.bg(hover))
         .focus(move |s| s.border_color(accent))
@@ -304,8 +306,8 @@ pub fn keycap(label: impl Into<SharedString>, theme: &Theme) -> Div {
     div()
         .flex_none()
         .min_w(px(22.))
-        .h(px(20.))
-        .px(px(6.))
+        .h(sized(20.))
+        .px(sized(6.))
         .flex()
         .items_center()
         .justify_center()
@@ -313,7 +315,7 @@ pub fn keycap(label: impl Into<SharedString>, theme: &Theme) -> Div {
         .border_1()
         .border_color(theme.border)
         .bg(theme.bg)
-        .text_xs()
+        .text_small()
         .text_color(theme.text)
         .child(label.into())
 }
@@ -322,14 +324,14 @@ pub fn keycap(label: impl Into<SharedString>, theme: &Theme) -> Div {
 pub fn badge(label: impl Into<SharedString>, color: gpui::Hsla, theme: &Theme) -> Div {
     div()
         .flex_none()
-        .px(px(6.))
-        .h(px(18.))
+        .px(sized(6.))
+        .h(sized(18.))
         .flex()
         .items_center()
         .rounded_sm()
         .border_1()
         .border_color(theme.border)
-        .text_xs()
+        .text_small()
         .text_color(color)
         .whitespace_nowrap()
         .child(label.into())

@@ -10,6 +10,8 @@
 //! has every `count::REPORT_EVERY`. Only the rows on screen are drawn: an
 //! emptied trash lists thousands. Closing the question stops the worker.
 
+use crate::sizes::TextSizes;
+use crate::sizes::sized;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -646,8 +648,8 @@ pub fn render(
         }))
         .child(
             div()
-                .min_h(px(16.))
-                .text_xs()
+                .min_h(sized(16.))
+                .text_small()
                 .text_color(theme.text_muted)
                 .truncate()
                 .child(listed.summary()),
@@ -699,7 +701,7 @@ fn rows(shell: &Shell, range: Range<usize>, cx: &mut Context<Shell>) -> Vec<AnyE
                     .flex()
                     .items_center()
                     .gap_2()
-                    .text_sm()
+                    .text_body()
                     .text_color(if row.kind == Some(Kind::Gone) || row.other {
                         theme.text_muted
                     } else {
@@ -718,7 +720,7 @@ fn rows(shell: &Shell, range: Range<usize>, cx: &mut Context<Shell>) -> Vec<AnyE
                                 .id(("deleting-folder", at))
                                 .w(px(FOLDER))
                                 .flex_none()
-                                .text_xs()
+                                .text_small()
                                 .text_color(theme.text_muted)
                                 .overflow_hidden()
                                 .whitespace_nowrap()
@@ -728,9 +730,9 @@ fn rows(shell: &Shell, range: Range<usize>, cx: &mut Context<Shell>) -> Vec<AnyE
                     }))
                     .child(
                         div()
-                            .w(px(120.))
+                            .w(sized(120.))
                             .flex_none()
-                            .text_xs()
+                            .text_small()
                             .text_color(theme.text_muted)
                             .text_right()
                             .truncate()

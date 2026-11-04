@@ -16,10 +16,12 @@
 //! does (`ui.timeline_cursor`, `ui.timeline_list`). To a screen reader it
 //! is a list of its bars.
 
+use crate::sizes::TextSizes;
+use crate::sizes::sized;
 use std::fmt::Write as _;
 use std::rc::Rc;
 
-use gpui::{AnyElement, Context, FocusHandle, Window, div, prelude::*, px};
+use gpui::{AnyElement, Context, FocusHandle, Window, div, prelude::*};
 use serde::Deserialize;
 use skwir_core::cancel::CancelToken;
 use skwir_core::command::{Invocation, Outcome};
@@ -917,12 +919,12 @@ fn controls(
     let fits = t.histogram.as_ref().and_then(Histogram::fits);
     let windowed = t.histogram.as_ref().is_some_and(Histogram::windowed);
     let mut controls = div()
-        .h(px(26.))
+        .h(sized(26.))
         .px_2()
         .flex()
         .items_center()
         .gap_1()
-        .text_xs()
+        .text_small()
         .child(div().text_color(theme.text_muted).child("Timeline"));
     // The strip's own commands, through the shared button: a tooltip,
     // focus, and the keys a button answers. The width pressed is the one
@@ -941,7 +943,7 @@ fn controls(
                 .label(*bucket)
                 .active(shown == Some(i))
                 .render(shell, cx)
-                .h(px(22.)),
+                .h(sized(22.)),
         );
     }
     if windowed && let (Some(h), Some(shown)) = (&t.histogram, shown) {
@@ -960,7 +962,7 @@ fn controls(
                 .args(serde_json::json!({ "toward": toward }))
                 .enabled(more > 0)
                 .render(shell, cx)
-                .h(px(22.)),
+                .h(sized(22.)),
             );
         }
     }
@@ -975,7 +977,7 @@ fn controls(
         .active(t.subtree && folder)
         .enabled(folder)
         .render(shell, cx)
-        .h(px(22.)),
+        .h(sized(22.)),
     );
     for (by, measure, title) in [
         (
@@ -991,7 +993,7 @@ fn controls(
                 .label(by)
                 .active(t.measure == measure)
                 .render(shell, cx)
-                .h(px(22.)),
+                .h(sized(22.)),
         );
     }
     let open = shell
@@ -1011,7 +1013,7 @@ fn controls(
         .active(open)
         .dropdown()
         .render(shell, cx)
-        .h(px(22.)),
+        .h(sized(22.)),
     );
     controls
         .child(div().flex_1())
@@ -1079,7 +1081,7 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
         .role(gpui::Role::ListBox)
         .aria_label("Timeline")
         .relative()
-        .h(px(CHART_H))
+        .h(sized(CHART_H))
         .w_full()
         .key_context(crate::keymap::TIMELINE);
     if let Some(focus) = &focus {

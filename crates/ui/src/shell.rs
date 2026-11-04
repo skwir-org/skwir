@@ -1,6 +1,7 @@
 //! The shell entity: owns the window's UI state (per pane and global),
 //! routes every command, and wakes only when the core signals new events.
 
+use crate::sizes::TextSizes;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::Instant;
@@ -575,8 +576,11 @@ impl Shell {
             ui = %theme.font,
             reading = %theme.reading_font,
             code = %theme.code_font,
+            sizes = ?theme.sizes,
             "fonts"
         );
+        // The window is written at the interface's size (ADR-117).
+        window.set_rem_size(theme.sizes.rem(crate::sizes::Part::Interface));
         cx.set_global(theme);
         let mut subs = Vec::new();
         subs.push(cx.observe_window_appearance(window, |this, window, cx| {
@@ -2991,10 +2995,12 @@ impl Shell {
     /// again (the preview's rows, as its own text size change does,
     /// `inspector.rs`); the rest is laid out in the theme's fonts and
     /// sizes as it is drawn.
-    fn resolve_theme(&mut self, window: &Window, cx: &mut Context<Self>) {
+    fn resolve_theme(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let was = (cx.global::<Theme>().families(), cx.global::<Theme>().sizes);
         let theme = Theme::resolve(&self.app, window.appearance(), cx.text_system());
         let now = (theme.families(), theme.sizes);
+        // The window is written at the interface's size (ADR-117).
+        window.set_rem_size(now.1.rem(crate::sizes::Part::Interface));
         cx.set_global(theme);
         if now.0 != was.0 {
             let fonts = &now.0;
@@ -3716,7 +3722,7 @@ impl Render for Shell {
             .flex()
             .flex_col()
             .font_family(theme.font.clone())
-            .text_sm()
+            .text_body()
             .bg(theme.bg)
             .text_color(theme.text)
             .child(

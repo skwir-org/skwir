@@ -1,4 +1,5 @@
 //! Common preview controls; document-only tools remain in the reader.
+use crate::sizes::TextSizes;
 use crate::{
     preview::PreviewContent,
     preview_bar::{Bar, Item, Slot, label},
@@ -206,7 +207,7 @@ pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyEleme
         bar.push(Item::widget(Slot::Navigate, 1, move |_, _| {
             div()
                 .flex_none()
-                .text_xs()
+                .text_small()
                 .whitespace_nowrap()
                 .child(time.clone())
                 .into_any_element()
@@ -270,7 +271,7 @@ pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyEleme
         move |_, _| {
             div()
                 .min_w_0()
-                .text_xs()
+                .text_small()
                 .text_color(muted)
                 .truncate()
                 .child(text.clone())
@@ -366,7 +367,7 @@ fn pace_popup(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<A
     let mut rows = div().flex().flex_col().gap_1().child(
         div()
             .px_2()
-            .text_xs()
+            .text_small()
             .text_color(theme.text_muted)
             .child("Each picture for"),
     );

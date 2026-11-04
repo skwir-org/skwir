@@ -2,6 +2,7 @@
 //! bookkeeping, selection and cursor interaction, type-ahead, and the pane
 //! container (focus, key context, external drops).
 
+use crate::sizes::sized;
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -1234,12 +1235,12 @@ impl Shell {
             .id(("typed", self.pane.0 as usize))
             .role(gpui::Role::Status)
             .when_some(said, StatefulInteractiveElement::aria_label)
-            .h(px(28.))
+            .h(sized(28.))
             .max_w_full()
-            .px(px(12.))
+            .px(sized(12.))
             .flex()
             .items_center()
-            .gap(px(8.))
+            .gap(sized(8.))
             .overflow_hidden()
             .whitespace_nowrap()
             .rounded_full()
@@ -1253,7 +1254,7 @@ impl Shell {
                     .flex()
                     .items_center()
                     .child(sought)
-                    .child(div().flex_none().w(px(2.)).h(px(16.)).bg(theme.accent)),
+                    .child(div().flex_none().w(px(2.)).h(sized(16.)).bg(theme.accent)),
             )
             .when(typed.missed, |pill| {
                 pill.child(div().text_color(theme.text_muted).child("No match"))
@@ -1264,7 +1265,7 @@ impl Shell {
                 .bottom(px(12.))
                 .left_0()
                 .right_0()
-                .px(px(16.))
+                .px(sized(16.))
                 .flex()
                 .justify_center()
                 .child(pill)

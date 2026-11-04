@@ -148,7 +148,7 @@ pub struct TreemapPrepaint {
 /// frame drawn as the pointer moves over the map (its hover) squarifies
 /// nothing, and cuts no label to its block, again.
 struct Kept {
-    from: (usize, Bounds<Pixels>, SharedString, u32),
+    from: (usize, Bounds<Pixels>, SharedString, u32, u64),
     blocks: Rc<Vec<Laid>>,
     hits: Rc<Vec<Block>>,
 }
@@ -197,6 +197,8 @@ struct Weight {
 /// of a name tells files apart.
 struct Labels<'a> {
     window: &'a Window,
+    /// The labels' metrics at the size the map is drawn (ADR-117).
+    s: f64,
     tile: Weight,
     header: Weight,
     /// What a block weighs.
@@ -216,6 +218,11 @@ fn run(font: &Font, len: usize, color: Hsla) -> TextRun {
 }
 
 impl Labels<'_> {
+    /// A name's size.
+    fn font(&self) -> f32 {
+        FONT * self.s as f32
+    }
+
     /// `text` shaped to fit `width`, in a header's weight or a tile's,
     /// if enough of it does to say something.
     fn name(
@@ -225,7 +232,7 @@ impl Labels<'_> {
         width: f32,
         header: bool,
     ) -> Option<ShapedLine> {
-        if text.is_empty() || width < FONT {
+        if text.is_empty() || width < self.font() {
             return None;
         }
         let weight = if header {
@@ -249,7 +256,7 @@ impl Labels<'_> {
         Some(
             self.window
                 .text_system()
-                .shape_line(cut, px(FONT), &runs, None),
+                .shape_line(cut, px(self.font()), &runs, None),
         )
     }
 
@@ -260,7 +267,7 @@ impl Labels<'_> {
         }
         let line = self.window.text_system().shape_line(
             text.clone(),
-            px(SMALL),
+            px(SMALL * self.s as f32),
             &[run(&self.font, text.len(), color)],
             None,
         );
@@ -293,6 +300,7 @@ fn layout_level(
     labels: &mut Labels,
     out: &mut Vec<Laid>,
 ) {
+    let s = labels.s;
     let weights: Vec<f64> = items.iter().map(|i| i.weight).collect();
     for (item, cell) in items.iter().zip(squarify(&weights, area)) {
         // The tile: its cell, half a gap in on every side.
@@ -305,36 +313,42 @@ fn layout_level(
         if r.w <= 0.0 || r.h <= 0.0 {
             continue;
         }
-        let inner = Rect::new(r.x + GAP, r.y + HEADER, r.w - 2.0 * GAP, r.h - HEADER - GAP);
-        let open = !item.children.is_empty() && inner.w >= OPEN_MIN_W && inner.h >= OPEN_MIN_H;
-        let room = (r.w - 2.0 * INSET) as f32;
-        let left = px((r.x + INSET) as f32);
+        let inner = Rect::new(
+            r.x + GAP,
+            r.y + (HEADER * s),
+            r.w - 2.0 * GAP,
+            r.h - (HEADER * s) - GAP,
+        );
+        let open =
+            !item.children.is_empty() && inner.w >= (OPEN_MIN_W * s) && inner.h >= (OPEN_MIN_H * s);
+        let room = (r.w - 2.0 * (INSET * s)) as f32;
+        let left = px((r.x + (INSET * s)) as f32);
         let (mut name, mut detail) = (None, None);
-        if open && r.w >= LABEL_MIN_W {
+        if open && r.w >= (LABEL_MIN_W * s) {
             // The header: the name, and its size at the right where the
             // whole name leaves room for it: a name is worth more than its
             // size, which the line under the map says too.
-            let top = px((r.y + HEADER_TOP) as f32);
+            let top = px((r.y + (HEADER_TOP * s)) as f32);
             name = labels
                 .name(&item.label, item.text, room, true)
                 .map(|line| (line, point(left, top)));
             if let Some((line, _)) = &name {
-                let rest = room - f32::from(line.width) - BESIDE;
+                let rest = room - f32::from(line.width) - (BESIDE * s as f32);
                 detail = labels.whole(&item.detail, item.text, rest).map(|line| {
-                    let at = point(px((r.x + r.w - INSET) as f32) - line.width, top);
+                    let at = point(px((r.x + r.w - (INSET * s)) as f32) - line.width, top);
                     (line, at)
                 });
             }
-        } else if !open && r.w >= LABEL_MIN_W && r.h >= LABEL_MIN_H {
-            let top = px((r.y + TOP) as f32);
+        } else if !open && r.w >= (LABEL_MIN_W * s) && r.h >= (LABEL_MIN_H * s) {
+            let top = px((r.y + (TOP * s)) as f32);
             name = labels
                 .name(&item.label, item.text, room, false)
                 .map(|line| (line, point(left, top)));
-            if name.is_some() && r.h >= DETAIL_MIN_H {
+            if name.is_some() && r.h >= (DETAIL_MIN_H * s) {
                 // A size is said whole or not at all.
                 detail = labels
                     .whole(&item.detail, item.text, room)
-                    .map(|line| (line, point(left, top + px(LINE as f32))));
+                    .map(|line| (line, point(left, top + px((LINE * s) as f32))));
             }
         }
         let radius = RADII[depth.min(RADII.len() - 1)]
@@ -413,11 +427,14 @@ impl Element for Treemap {
         cx: &mut App,
     ) -> Self::PrepaintState {
         let font = window.text_style().font();
+        // Labels at the size of the text where the map is drawn (ADR-117).
+        let s = f64::from(crate::sizes::Scale::of(window).0);
         let from = (
             Rc::as_ptr(&self.items) as usize,
             bounds,
             font.family.clone(),
             window.scale_factor().to_bits(),
+            s.to_bits(),
         );
         let lay_out = |window: &mut Window, cx: &mut App| {
             // Squarify against the real bounds: nothing here was guessed
@@ -436,13 +453,16 @@ impl Element for Treemap {
                     ..font.clone()
                 };
                 Weight {
-                    wrapper: cx.text_system().line_wrapper(font.clone(), px(FONT)),
+                    wrapper: cx
+                        .text_system()
+                        .line_wrapper(font.clone(), px(FONT * s as f32)),
                     font,
                     least,
                 }
             };
             let mut labels = Labels {
                 window,
+                s,
                 tile: weight(FontWeight::MEDIUM, LEAST),
                 header: weight(FontWeight::SEMIBOLD, LEAST_HEADER),
                 font: font.clone(),
@@ -501,6 +521,7 @@ impl Element for Treemap {
         cx: &mut App,
     ) {
         let style = self.style;
+        let s = f64::from(crate::sizes::Scale::of(window).0);
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             for b in prepaint.blocks.iter() {
                 let (tile, corners) = (b.tile, Corners::all(b.radius));
@@ -545,7 +566,7 @@ impl Element for Treemap {
                     bounds: inset(tile, px(2.)),
                 };
                 window.with_content_mask(Some(mask), |window| {
-                    let line_height = px(LINE as f32);
+                    let line_height = px((LINE * s) as f32);
                     for (line, origin) in [&b.name, &b.detail].into_iter().flatten() {
                         if let Err(error) = line.paint(
                             *origin,

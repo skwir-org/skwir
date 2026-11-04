@@ -14,6 +14,8 @@
 //! says the keyring has it. Removing a record forgets its secrets. The
 //! whole list is validated before anything is kept, so a record the owner
 //! refuses leaves nothing in the keyring.
+use crate::sizes::TextSizes;
+use crate::sizes::sized;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -766,7 +768,7 @@ impl SettingsView {
             };
             rows = rows.child(
                 inset_row(theme, true)
-                    .text_sm()
+                    .text_body()
                     .text_color(theme.text_muted)
                     .child(said),
             );
@@ -799,7 +801,7 @@ impl SettingsView {
                     .child(
                         div()
                             .flex_none()
-                            .text_xs()
+                            .text_small()
                             .text_color(theme.text_muted)
                             .child(if query.is_empty() {
                                 format!("{found}")
@@ -886,7 +888,7 @@ impl SettingsView {
             .get(1)
             .map(|f| text_of(record, &f.key))
             .unwrap_or_default();
-        let mut actions = div().flex().flex_none().items_center().gap(px(6.));
+        let mut actions = div().flex().flex_none().items_center().gap(sized(6.));
         if let Some(action) = spec.constraints.record_action.clone() {
             let focus = self.handle(&format!("action:{key}:{id}"), cx);
             self.stop(&focus, Some(item), None);
@@ -991,11 +993,11 @@ impl SettingsView {
                     .min_w_0()
                     .flex()
                     .flex_col()
-                    .gap(px(2.))
+                    .gap(sized(2.))
                     .child(crate::elements::clip::clipped(
                         div()
                             .id(gpui::SharedString::from(format!("record-title-{key}-{id}")))
-                            .text_sm()
+                            .text_body()
                             .truncate(),
                         title,
                     ))
@@ -1006,7 +1008,7 @@ impl SettingsView {
                                 .id(gpui::SharedString::from(format!(
                                     "record-detail-{key}-{id}"
                                 )))
-                                .text_xs()
+                                .text_small()
                                 .text_color(theme.text_muted)
                                 .truncate(),
                             detail,
@@ -1075,7 +1077,7 @@ impl SettingsView {
         }
         // What else the line does, as the owner says, after Edit and
         // Remove for the keys: they stand above.
-        let mut own = div().flex().flex_wrap().gap(px(6.)).pt(px(4.));
+        let mut own = div().flex().flex_wrap().gap(sized(6.)).pt(sized(4.));
         let listed = record
             .get("actions")
             .and_then(serde_json::Value::as_array)
@@ -1124,11 +1126,11 @@ impl SettingsView {
                     .min_w_0()
                     .flex()
                     .flex_col()
-                    .gap(px(2.))
+                    .gap(sized(2.))
                     .child(crate::elements::clip::clipped(
                         div()
                             .id(gpui::SharedString::from(format!("record-title-{key}-{id}")))
-                            .text_sm()
+                            .text_body()
                             .truncate(),
                         title,
                     ))
@@ -1138,7 +1140,7 @@ impl SettingsView {
                                 .id(gpui::SharedString::from(format!(
                                     "record-detail-{key}-{id}"
                                 )))
-                                .text_xs()
+                                .text_small()
                                 .text_color(theme.text_muted)
                                 .truncate(),
                             detail.clone(),
@@ -1149,7 +1151,7 @@ impl SettingsView {
                     .when(!detail.is_empty() && wraps, |d| {
                         d.child(
                             div()
-                                .text_xs()
+                                .text_small()
                                 .text_color(theme.text_muted)
                                 .child(detail.clone()),
                         )
@@ -1230,7 +1232,7 @@ impl SettingsView {
         let (opened_key, opened_id, focused) = (key.to_owned(), id.to_owned(), focus.clone());
         let mut control = div().child(
             controls::dropdown(format!("pick-{key}-{id}"), label, &focus, theme)
-                .min_w(px(180.))
+                .min_w(sized(180.))
                 .aria_expanded(open)
                 // Left and Right step through it, as through a choice's.
                 .key_context("SettingControl")
@@ -1250,11 +1252,11 @@ impl SettingsView {
             let hover = theme.hover;
             let mut panel = div()
                 .id(gpui::SharedString::from(format!("picks-{key}-{id}")))
-                .min_w(px(220.))
+                .min_w(sized(220.))
                 // A choice's detail (why a grammar cannot be used, a path)
                 // wraps rather than widening the popup past the dialog.
-                .max_w(px(440.))
-                .max_h(px(360.))
+                .max_w(sized(440.))
+                .max_h(sized(360.))
                 .overflow_y_scroll()
                 .p_1()
                 .flex()
@@ -1264,7 +1266,7 @@ impl SettingsView {
                 .border_color(theme.border)
                 .bg(theme.bg)
                 .text_color(theme.text)
-                .text_xs()
+                .text_small()
                 .font_family(theme.font.clone())
                 .shadow_lg()
                 .occlude()
@@ -1387,9 +1389,9 @@ impl SettingsView {
                 }
             })
             .collect();
-        let mut form = div().flex_1().min_w_0().flex().flex_col().gap(px(12.));
+        let mut form = div().flex_1().min_w_0().flex().flex_col().gap(sized(12.));
         for (index, (field, inputs, secret)) in fields.into_iter().enumerate() {
-            let mut body = div().flex().flex_col().gap(px(6.));
+            let mut body = div().flex().flex_col().gap(sized(6.));
             let pairs = field.kind == FieldKind::Pairs;
             for (pair, (first, second)) in inputs.into_iter().enumerate() {
                 let focused = first.focus_handle(cx).is_focused(window);
@@ -1397,7 +1399,7 @@ impl SettingsView {
                 let mut line = div()
                     .flex()
                     .items_center()
-                    .gap(px(6.))
+                    .gap(sized(6.))
                     .child(controls::field(
                         &first,
                         pairs.then_some(180.),
@@ -1472,8 +1474,8 @@ impl SettingsView {
                 div()
                     .flex()
                     .flex_col()
-                    .gap(px(4.))
-                    .child(div().text_sm().child(format!(
+                    .gap(sized(4.))
+                    .child(div().text_body().child(format!(
                         "{}{}",
                         field.title,
                         if field.required { "" } else { " (optional)" }
@@ -1482,7 +1484,7 @@ impl SettingsView {
                     .when(!field.description.is_empty(), |d| {
                         d.child(
                             div()
-                                .text_xs()
+                                .text_small()
                                 .text_color(theme.text_muted)
                                 .child(field.description.clone()),
                         )
@@ -1499,12 +1501,12 @@ impl SettingsView {
         let footer = div()
             .flex()
             .items_center()
-            .gap(px(8.))
+            .gap(sized(8.))
             .child(
                 div()
                     .flex_1()
                     .min_w_0()
-                    .text_xs()
+                    .text_small()
                     .text_color(if error.is_some() {
                         theme.error
                     } else {

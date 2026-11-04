@@ -3,6 +3,8 @@
 //! with the reason and the way out. Shown in place of the view, inside the
 //! pane container, so drops and the folder's menu keep working on it.
 
+use crate::sizes::TextSizes;
+use crate::sizes::sized;
 use gpui::{AnyElement, Context, div, prelude::*, px};
 use skwir_core::location::EmptyState;
 use skwir_core::workspace::PaneId;
@@ -169,7 +171,7 @@ pub fn render(
         theme.text_muted
     };
     let mut card = div()
-        .max_w(px(420.))
+        .max_w(sized(420.))
         .flex()
         .flex_col()
         .items_center()
@@ -190,7 +192,7 @@ pub fn render(
         .when(!placeholder.detail.is_empty(), |d| {
             d.child(
                 div()
-                    .text_xs()
+                    .text_small()
                     .text_color(theme.text_muted)
                     .child(placeholder.detail),
             )

@@ -4,7 +4,9 @@
 //! confirmation of what Undo cannot take back, or of quitting while a plan
 //! runs.
 
-use gpui::{AnyElement, Context, Entity, FocusHandle, Subscription, Window, div, prelude::*, px};
+use crate::sizes::TextSizes;
+use crate::sizes::sized;
+use gpui::{AnyElement, Context, Entity, FocusHandle, Subscription, Window, div, prelude::*};
 use skwir_core::Plan;
 use skwir_core::command::{CommandSpec, Invocation};
 use skwir_core::op::{EntryArg, EntryRef};
@@ -563,7 +565,7 @@ pub fn render_prompt(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElemen
         .child(div().text_color(theme.text_muted).child(p.title.clone()))
         .child(
             div()
-                .h(px(30.))
+                .h(sized(30.))
                 .px_2()
                 .flex()
                 .items_center()
@@ -576,7 +578,7 @@ pub fn render_prompt(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElemen
         .children(
             p.note
                 .clone()
-                .map(|note| div().text_xs().text_color(theme.text_muted).child(note)),
+                .map(|note| div().text_small().text_color(theme.text_muted).child(note)),
         )
         .children(p.remember.as_ref().map(|remember| {
             let label = "Remember in the keyring";
@@ -612,7 +614,12 @@ pub fn render_prompt(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElemen
                 .keeping
                 .clone()
                 .filter(|_| remember.on)
-                .map(|keeping| div().text_xs().text_color(theme.text_muted).child(keeping));
+                .map(|keeping| {
+                    div()
+                        .text_small()
+                        .text_color(theme.text_muted)
+                        .child(keeping)
+                });
             div()
                 .flex()
                 .flex_col()

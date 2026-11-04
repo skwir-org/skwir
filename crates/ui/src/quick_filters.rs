@@ -27,6 +27,8 @@
 //! per change of the listing's names, and with the bar hidden it counts
 //! nothing else.
 
+use crate::sizes::TextSizes;
+use crate::sizes::sized;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
@@ -635,18 +637,18 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let label = |text: String| {
         div()
             .flex_none()
-            .text_xs()
+            .text_small()
             .text_color(theme.text_muted)
             .child(text)
     };
     let mut row = div()
         .id(("quick-filters", pane.0 as usize))
         .flex_none()
-        .h(px(30.))
+        .h(sized(30.))
         .px_2()
         .flex()
         .items_center()
-        .gap(px(6.))
+        .gap(sized(6.))
         .overflow_x_scroll()
         // A strip of one line, nothing scrolling around it: the wheel goes
         // along it too, not only with Shift.
@@ -676,13 +678,13 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
             // comes under the pointer is not given its tooltip.
             .id(crate::elements::known_by("quick-filter", (facet, &value)))
             .flex_none()
-            .h(px(22.))
-            .px(px(8.))
+            .h(sized(22.))
+            .px(sized(8.))
             .flex()
             .items_center()
-            .gap(px(5.))
+            .gap(sized(5.))
             .rounded(px(11.))
-            .text_xs()
+            .text_small()
             .text_color(theme.text)
             .when_some(tone, |d, tone| d.bg(theme.tag_fill(tone)))
             .when(tone.is_none(), |d| d.border_1().border_color(theme.border))

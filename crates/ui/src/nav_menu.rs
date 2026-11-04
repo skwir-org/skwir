@@ -15,6 +15,7 @@
 //! opens when the answer arrives, if it is still wanted. The folders above
 //! one are known from its path alone.
 
+use crate::sizes::sized;
 use std::path::{Path, PathBuf};
 
 use gpui::{
@@ -115,7 +116,9 @@ impl NavMenu {
 /// a menu row draws it, with what a row and the popup add around it,
 /// from 200 to 360 pixels as the menu was.
 fn width_of(rows: &[NavRow], font: &SharedString, window: &mut Window) -> Pixels {
-    let size = window.rem_size() * 0.75;
+    let size = crate::sizes::painted(window, crate::sizes::Text::Small);
+    // What a row adds around its label grows with the text (ADR-117).
+    let scale = crate::sizes::Scale::of(window);
     let font = gpui::font(font.clone());
     let widest = rows
         .iter()
@@ -133,7 +136,7 @@ fn width_of(rows: &[NavRow], font: &SharedString, window: &mut Window) -> Pixels
                 .text_system()
                 .shape_line(row.label.clone(), size, &[run], None)
                 .width;
-            label + px(12. * row.depth as f32)
+            label + scale.px(12. * row.depth as f32)
         })
         .fold(
             px(0.),
@@ -142,7 +145,7 @@ fn width_of(rows: &[NavRow], font: &SharedString, window: &mut Window) -> Pixels
     // The icon and the gap after it, the row's padding and edge, the
     // popup's padding and edge, and a pixel of slack.
     let around = 16. + 10. + 2. * 8. + 2. + 2. * toolbar::POPUP_PAD + 2. + 1.;
-    (widest + px(around)).clamp(px(200.), px(360.))
+    (widest + scale.px(around)).clamp(scale.px(200.), scale.px(360.))
 }
 
 impl Shell {
@@ -506,7 +509,10 @@ pub fn panel(shell: &Shell, pane: PaneId, cx: &mut Context<Shell>) -> Option<Any
     .min_h_0();
     // As tall as its rows, shrunk to the room the popover has below its
     // anchor: the list fills it, and draws the rows that fit.
-    let tall = ROW * menu.rows.len() as f32 + 2. * toolbar::POPUP_PAD + 2.;
+    let tall = theme
+        .sizes
+        .scale(crate::sizes::Part::Interface)
+        .f(ROW * menu.rows.len() as f32 + 2. * toolbar::POPUP_PAD + 2.);
     let panel = toolbar::menu_panel(&menu.popup, close, &theme, cx)
         .w(menu.width)
         .h(px(tall))
@@ -541,12 +547,12 @@ fn rows(shell: &Shell, range: std::ops::Range<usize>, cx: &mut Context<Shell>) -
             .enabled(row.enabled)
             .render(shell, cx)
             .track_focus(focus)
-            .when(row.depth > 0, |d| d.pl(px(8. + 12. * row.depth as f32)));
+            .when(row.depth > 0, |d| d.pl(sized(8. + 12. * row.depth as f32)));
             Some(
                 div()
                     .relative()
-                    .h(px(ROW))
-                    .pt(px(ROW - 30.))
+                    .h(sized(ROW))
+                    .pt(sized(ROW - 30.))
                     .when(row.rule, |d| {
                         d.child(
                             div()

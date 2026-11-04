@@ -67,6 +67,18 @@ Views are in [views.md](views.md); what locations decide, in
   are never loaded: a GTK theme is read as the colors its sheet names.
 - The fonts are the theme's tokens (`font`, `reading_font`,
   `code_font`), resolved with it, read where they are drawn.
+- **Text sizes (ADR-117).** The window's rem is the interface's size
+  (`Window::set_rem_size`, from `Theme::sizes`, set where the theme is
+  resolved), a pane's view the files' (`elements::rem`). Every place
+  names a size (`sizes::TextSizes`; `sizes::every_place_names_a_text_size`
+  fails on `text_xs` or a literal). A bar, a row, a control, a chip, a
+  menu's row and the padding around text are written at 100 % in rems
+  (`sizes::sized`), so they grow with the text; what is counted (a
+  popup's height before it is laid out, a list's uniform estimate, a
+  panel's limits, an element's own layout) is scaled
+  (`Sizes::scale`, `Scale::of`). A width the user drags (the sidebar,
+  the list's columns) is kept at 100 % and drawn at the size. Icons
+  keep their size.
 
 ## Popups and focus
 

@@ -13,12 +13,13 @@
 //! `playing::NowPlaying`, and what others ask of it (`PlayerRequest`: the
 //! desktop's media keys through a plugin, a script, an agent) is taken here
 //! when the shell wakes. Nothing calls into the UI from another thread.
+use crate::sizes::sized;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
-use gpui::{AnyElement, Context, RenderImage, Window, div, prelude::*, px};
+use gpui::{AnyElement, Context, RenderImage, Window, div, prelude::*};
 use skwir_core::media::{Control, MediaSession, Playback};
 use skwir_core::playing::{NowPlaying, PlayerRequest};
 use skwir_core::preview::PreviewRequest;
@@ -1146,7 +1147,7 @@ pub fn render_status(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> O
             .flex_none()
             .items_center()
             .gap_1()
-            .max_w(px(420.))
+            .max_w(sized(420.))
             .text_color(theme.text)
             .child(
                 request(

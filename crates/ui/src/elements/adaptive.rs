@@ -62,7 +62,8 @@ impl Element for AdaptiveRow {
     ) -> (LayoutId, ()) {
         let mut style = Style::default();
         style.size.width = relative(1.).into();
-        style.size.height = px(self.height).into();
+        // Written at 100 %, at the size of the text where it stands (ADR-117).
+        style.size.height = crate::sizes::Scale::of(window).px(self.height).into();
         style.flex_shrink = 0.;
         (window.request_layout(style, [], cx), ())
     }

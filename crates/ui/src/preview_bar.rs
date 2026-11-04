@@ -17,6 +17,8 @@
 //! something, last but for the ×, which stays at the end. Open externally and
 //! copy the path are the entry's: under a container's view they are in its
 //! More, not the member's (`Bar::always`).
+use crate::sizes::TextSizes;
+use crate::sizes::sized;
 use std::rc::Rc;
 
 use gpui::{AnyElement, Context, Div, div, prelude::*, px};
@@ -205,9 +207,9 @@ pub fn number_tool(
         2,
         move |shell, cx| match editor(shell) {
             Some(field) => div()
-                .w(px(44.))
+                .w(sized(44.))
                 .flex_none()
-                .h(px(28.))
+                .h(sized(28.))
                 .px_1()
                 .border_1()
                 .border_color(accent)
@@ -231,7 +233,7 @@ pub fn number_tool(
     bar.push(Item::widget(Slot::Navigate, 1, move |_, _| {
         div()
             .flex_none()
-            .text_xs()
+            .text_small()
             .text_color(muted)
             .whitespace_nowrap()
             .child(format!("/ {total}"))
@@ -289,7 +291,7 @@ pub fn close_tool(bar: &mut Bar, shell: &Shell, theme: &Theme) {
         Item::widget(Slot::Title, 0, move |_, _| {
             div()
                 .flex_1()
-                .min_w(px(64.))
+                .min_w(sized(64.))
                 .pl_1()
                 .flex()
                 .items_baseline()
@@ -302,13 +304,13 @@ pub fn close_tool(bar: &mut Bar, shell: &Shell, theme: &Theme) {
                         .min_w_0()
                         .overflow_hidden()
                         .text_ellipsis_middle()
-                        .text_sm()
+                        .text_body()
                         .text_color(text),
                     name.clone(),
                 ))
                 .children(
                     size.clone()
-                        .map(|size| div().flex_none().text_xs().text_color(muted).child(size)),
+                        .map(|size| div().flex_none().text_small().text_color(muted).child(size)),
                 )
                 .into_any_element()
         })
@@ -366,7 +368,7 @@ pub fn fullscreen_tool(bar: &mut Bar, shell: &Shell, theme: &Theme) {
         Item::widget(Slot::Title, 0, move |_, _| {
             div()
                 .flex_1()
-                .min_w(px(64.))
+                .min_w(sized(64.))
                 .pl_1()
                 .flex()
                 .items_center()
@@ -378,7 +380,7 @@ pub fn fullscreen_tool(bar: &mut Bar, shell: &Shell, theme: &Theme) {
                         .min_w_0()
                         .overflow_hidden()
                         .text_ellipsis_middle()
-                        .text_sm()
+                        .text_body()
                         .text_color(text),
                     name.clone(),
                 ))
@@ -533,7 +535,7 @@ pub fn render(
         let panels = (0..3)
             .map(|mode| {
                 let mut panel = toolbar::menu_panel(popup, "ui.preview_menu", theme, cx)
-                    .max_h(px(480.))
+                    .max_h(sized(480.))
                     .overflow_y_scroll();
                 let mut dropped = false;
                 for item in bar.items.iter().filter(|item| !item.shown(mode)) {
@@ -688,7 +690,7 @@ pub fn find_popup(
     div()
         .tab_group()
         .key_context(context)
-        .w(px(280.))
+        .w(sized(280.))
         .p_2()
         .flex()
         .flex_col()
@@ -713,7 +715,7 @@ pub fn find_popup(
                 .flex()
                 .items_center()
                 .gap_1()
-                .text_xs()
+                .text_small()
                 .child(line.flex_1().min_w_0())
                 .children(buttons.into_iter().map(|button| button.render(shell, cx))),
         )

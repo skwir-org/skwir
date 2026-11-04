@@ -85,7 +85,13 @@ working in an area, also read that area's rules (see
   look's `Base`, its contrast guarded, or kept as Skwir's (`Kept`) when no
   desktop's colors change what it means (ADR-071). A font is a role
   (`theme.font`, `reading_font`, `code_font`, ADR-073), read where it is
-  drawn and never copied: a change shows at once.
+  drawn and never copied: a change shows at once. A text size is a named
+  size (`sizes::TextSizes`: Body for a name or a value you read or
+  choose, Small for what labels or describes it, Tiny for a badge,
+  Title for a dialog's title; ADR-117), never `text_xs` or a literal;
+  a length that holds text is written at 100 % and grows with it
+  (`sizes::sized`, `sizes::Scale`), while pictures and icons keep
+  their size.
 - **Toolkit isolation.** gpui appears only in `skwir-ui` and the binary.
   Views implement `PaneView` in `skwir-ui`; a toolkit-independent
   `ui-api` crate waits until a third-party view exists.

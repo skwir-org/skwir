@@ -3,6 +3,8 @@
 //! directories, document pages and seekable video stills via preview plugins,
 //! and a generic card for everything else.
 
+use crate::sizes::TextSizes;
+use crate::sizes::sized;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -4886,8 +4888,9 @@ impl Shell {
     }
 
     pub fn preview_height_limit(&self, window: &Window) -> f32 {
+        let scale = crate::sizes::Scale::of(window);
         let window = f32::from(window.viewport_size().height);
-        max_height(window, self.panes_down())
+        max_height(window, self.panes_down(), scale)
     }
 
     /// How many panes share the window's width, and its height.
@@ -5252,7 +5255,7 @@ pub(crate) fn notice_strip(text: String, theme: &Theme) -> gpui::Div {
         .flex_none()
         .px_2()
         .py_1()
-        .text_xs()
+        .text_small()
         .text_color(theme.text_muted)
         .bg(theme.surface)
         .border_b_1()
@@ -5510,7 +5513,7 @@ fn failure(error: &str, color: gpui::Hsla) -> AnyElement {
         .flex_none()
         .px_3()
         .py_4()
-        .text_xs()
+        .text_small()
         .text_center()
         .text_color(color)
         .child(error.to_owned())
@@ -5667,7 +5670,7 @@ fn header(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
                         .flex_wrap()
                         .items_center()
                         .gap_x_1()
-                        .text_xs()
+                        .text_small()
                         .text_color(theme.text_muted)
                         .children(facts)
                         .children(notes_items(shell, theme, cx)),
@@ -5675,7 +5678,7 @@ fn header(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
         );
     div()
         .px_1()
-        .py(px(2.))
+        .py(sized(2.))
         .border_b_1()
         .border_color(theme.border)
         .flex()
@@ -6163,10 +6166,11 @@ pub fn max_width(window: f32, panes: usize, sidebar: f32) -> f32 {
 }
 
 /// The tallest the panel may be at the bottom, from the window's height the
-/// same way.
-pub fn max_height(window: f32, panes: usize) -> f32 {
+/// same way, the bars at the interface's `scale` (ADR-117).
+pub fn max_height(window: f32, panes: usize, scale: crate::sizes::Scale) -> f32 {
     // Each pane keeps its row, some entries and its footer.
-    let kept = (PANE_KEEP_HEIGHT + crate::status::HEIGHT) * panes.max(1) as f32 + TOOLBAR_HEIGHT;
+    let kept =
+        scale.f((PANE_KEEP_HEIGHT + crate::status::HEIGHT) * panes.max(1) as f32 + TOOLBAR_HEIGHT);
     (window - kept).max(MIN_HEIGHT)
 }
 
@@ -6229,7 +6233,7 @@ pub fn render_panel(
                     .size_full()
                     .flex()
                     .items_center()
-                    .gap(px(2.))
+                    .gap(sized(2.))
                     .child(div().flex_1())
                     .child(split)
                     .child(preview)
@@ -6242,7 +6246,7 @@ pub fn render_panel(
             .flex_none()
             .w_full()
             .h(px(crate::address::PANE_ROW_HEIGHT))
-            .px(px(6.))
+            .px(sized(6.))
             .border_b_1()
             .border_color(theme.border)
             .child(crate::elements::adaptive::AdaptiveRow {
@@ -6394,7 +6398,7 @@ pub fn render_peek(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement>
                         div()
                             .px_2()
                             .py_1()
-                            .text_xs()
+                            .text_small()
                             .text_color(theme.text_muted)
                             .border_t_1()
                             .border_color(theme.border)

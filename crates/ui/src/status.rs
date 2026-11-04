@@ -7,7 +7,9 @@
 //! the window's foot. Messages are toasts (`set_status`), never a
 //! footer's.
 
-use gpui::{AnyElement, Context, div, prelude::*, px};
+use crate::sizes::TextSizes;
+use crate::sizes::sized;
+use gpui::{AnyElement, Context, div, prelude::*};
 use skwir_core::location::AsOf;
 
 use crate::format;
@@ -187,7 +189,7 @@ pub(crate) fn render(
         .id(("pane-footer", shell.pane.0 as usize))
         .role(gpui::Role::Status)
         .flex_none()
-        .h(px(HEIGHT))
+        .h(sized(HEIGHT))
         .w_full()
         .min_w_0()
         .overflow_hidden()
@@ -196,7 +198,7 @@ pub(crate) fn render(
         .items_center()
         .gap_4()
         .px_2()
-        .text_xs()
+        .text_small()
         .border_t_1()
         .border_color(theme.border)
         .bg(theme.surface)

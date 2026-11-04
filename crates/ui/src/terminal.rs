@@ -607,8 +607,11 @@ impl Shell {
         } else {
             0.
         };
-        (crate::preview::max_height(f32::from(window.viewport_size().height), self.panes_down())
-            - preview)
+        (crate::preview::max_height(
+            f32::from(window.viewport_size().height),
+            self.panes_down(),
+            crate::sizes::Scale::of(window),
+        ) - preview)
             .max(MIN_HEIGHT)
     }
 

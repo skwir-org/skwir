@@ -1,6 +1,7 @@
 //! Archive contents use the file list's density and column alignment, and
 //! its way of giving way: the size drops whole when the name needs the room
 //! (`views::list::line`).
+use crate::sizes::TextSizes;
 use crate::{
     format, icons,
     theme::Theme,
@@ -27,7 +28,7 @@ pub fn header(theme: &Theme) -> Div {
         .flex()
         .items_center()
         .px_2()
-        .text_xs()
+        .text_small()
         .text_color(theme.text_muted)
         .bg(theme.surface)
         .border_b_1()
@@ -102,7 +103,7 @@ pub fn row(
                 .flex_none()
                 .px_1()
                 .rounded_sm()
-                .text_xs()
+                .text_small()
                 .text_color(theme.text_muted)
                 .bg(theme.code_bg)
                 .child(status.clone()),
@@ -125,7 +126,7 @@ pub fn row(
         .flex()
         .items_center()
         .px_2()
-        .text_sm()
+        .text_body()
         .when(!selected, |d| d.hover(|d| d.bg(theme.hover)))
         .when(selected, |d| d.text_color(theme.selection_text))
         .child(line(name, NAME_MIN, ROW_HEIGHT, crate::sizes::Scale::ONE).child(size))

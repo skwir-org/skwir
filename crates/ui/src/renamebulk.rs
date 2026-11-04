@@ -2,7 +2,9 @@
 //! preview from `rename_bulk.preview`; Enter or Rename applies
 //! `rename_bulk`.
 
-use gpui::{AnyElement, Context, Entity, Subscription, Window, div, prelude::*, px};
+use crate::sizes::TextSizes;
+use crate::sizes::sized;
+use gpui::{AnyElement, Context, Entity, Subscription, Window, div, prelude::*};
 use skwir_core::EntryId;
 use skwir_core::command::{Invocation, Outcome};
 use skwir_core::workspace::PaneId;
@@ -320,15 +322,15 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
                 .gap_2()
                 .child(
                     div()
-                        .w(px(100.))
-                        .text_xs()
+                        .w(sized(100.))
+                        .text_small()
                         .text_color(theme.text_muted)
                         .child(*label),
                 )
                 .child(
                     div()
                         .flex_1()
-                        .h(px(28.))
+                        .h(sized(28.))
                         .px_2()
                         .flex()
                         .items_center()
@@ -347,8 +349,8 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
             .gap_2()
             .child(
                 div()
-                    .w(px(100.))
-                    .text_xs()
+                    .w(sized(100.))
+                    .text_small()
                     .text_color(theme.text_muted)
                     .child("Case"),
             )
@@ -376,10 +378,10 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
         .id("rename-preview")
         .flex()
         .flex_col()
-        .max_h(px(260.))
+        .max_h(sized(260.))
         .track_scroll(&b.scroll)
         .overflow_y_scroll()
-        .text_xs()
+        .text_small()
         .font_family(theme.code_font.clone());
     for (i, (from, to)) in b.preview.iter().enumerate() {
         list = list.child(
@@ -420,7 +422,7 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
             ));
     let more = (b.renamed > b.preview.len()).then(|| {
         div()
-            .text_xs()
+            .text_small()
             .text_color(theme.text_muted)
             .child(format!("… {} more", b.renamed - b.preview.len()))
     });
@@ -434,7 +436,7 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
         .children(
             b.error
                 .clone()
-                .map(|e| div().text_xs().text_color(theme.error).child(e)),
+                .map(|e| div().text_small().text_color(theme.error).child(e)),
         )
         .child(list)
         .children(more)

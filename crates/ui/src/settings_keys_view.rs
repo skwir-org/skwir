@@ -5,6 +5,8 @@
 //! any binding sees them, and says what they would do before they are
 //! saved. The list walks with the keyboard (`ui.settings_key`).
 
+use crate::sizes::TextSizes;
+use crate::sizes::sized;
 use std::cell::RefCell;
 use std::ops::Range;
 use std::rc::Rc;
@@ -194,9 +196,9 @@ fn modifier_alone(key: &str) -> bool {
 
 /// Keys as key caps, a gap between strokes.
 pub(crate) fn caps(keys: &str, struck: bool, theme: &Theme) -> gpui::Div {
-    let mut all = div().flex().flex_none().items_center().gap(px(8.));
+    let mut all = div().flex().flex_none().items_center().gap(sized(8.));
     for stroke in keymap::key_caps(keys) {
-        let mut one = div().flex().items_center().gap(px(3.));
+        let mut one = div().flex().items_center().gap(sized(3.));
         for cap in stroke {
             one = one.child(
                 controls::keycap(cap, theme)
@@ -399,7 +401,7 @@ impl SettingsView {
                 .min_w_0()
                 .flex()
                 .items_center()
-                .gap(px(6.))
+                .gap(sized(6.))
                 .child(controls::glyph("plugin", theme.text_muted, 13.))
                 .child(if waiting == 1 {
                     "One of your shortcuts waits for a plugin that is off: it comes back with it."
@@ -456,7 +458,7 @@ impl SettingsView {
                     .flex()
                     .items_center()
                     .gap_2()
-                    .text_xs()
+                    .text_small()
                     .text_color(theme.text_muted)
                     .children(note)
                     .child(div().flex_1())
@@ -490,8 +492,8 @@ impl SettingsView {
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(6.))
-                    .text_xs()
+                    .gap(sized(6.))
+                    .text_small()
                     .text_color(theme.error)
                     .child(controls::glyph("warning", theme.error, 13.))
                     .child(div().flex_1().min_w_0().child(error.clone())),
@@ -538,11 +540,11 @@ impl SettingsView {
                     .filter_map(|n| {
                         let element = match rows.get(n)? {
                             Row::Place(place) => div()
-                                .h(px(ROW))
+                                .h(sized(ROW))
                                 .flex()
                                 .items_end()
                                 .pb_2()
-                                .text_xs()
+                                .text_small()
                                 .text_color(theme.text_muted)
                                 .child(place.clone())
                                 .into_any_element(),
@@ -551,7 +553,7 @@ impl SettingsView {
                                 .into_any_element(),
                             Row::Action(index) => this
                                 .action_row(*index, edge(&rows, n), focused, &theme, cx)
-                                .h(px(ROW))
+                                .h(sized(ROW))
                                 .into_any_element(),
                         };
                         Some(div().w_full().px_6().child(element).into_any_element())
@@ -597,7 +599,7 @@ impl SettingsView {
         // As high as every row: the list draws them all in one height.
         div()
             .id("keys-inside")
-            .h(px(ROW))
+            .h(sized(ROW))
             .px_2()
             .flex()
             .items_center()
@@ -605,7 +607,7 @@ impl SettingsView {
             .rounded_md()
             .cursor_pointer()
             .hover(move |s| s.bg(hover))
-            .text_xs()
+            .text_small()
             .text_color(theme.text_muted)
             .child(controls::glyph(
                 if open { "chevron" } else { "chevron-right" },
@@ -727,7 +729,7 @@ impl SettingsView {
         });
         let mut texts = div()
             .flex_1()
-            .min_w(px(160.))
+            .min_w(sized(160.))
             .flex()
             .items_baseline()
             .gap_2()
@@ -744,7 +746,7 @@ impl SettingsView {
                     .flex_shrink_1()
                     .min_w_0()
                     .truncate()
-                    .text_xs()
+                    .text_small()
                     .text_color(theme.text_muted)
                     .child(shared),
             );
@@ -818,7 +820,7 @@ impl SettingsView {
             .items_center()
             .gap_1()
             .px_1()
-            .py(px(2.))
+            .py(sized(2.))
             .rounded_md()
             .border_1()
             .border_color(if pointed {
@@ -838,9 +840,9 @@ impl SettingsView {
                     div()
                         .flex_shrink_1()
                         .min_w(px(24.))
-                        .max_w(px(150.))
+                        .max_w(sized(150.))
                         .truncate()
-                        .text_xs()
+                        .text_small()
                         .text_color(theme.text_muted)
                         .child(chip.conditions.clone()),
                 )
@@ -881,7 +883,7 @@ impl SettingsView {
                         .flex_none()
                         .pt_5()
                         .pb_2()
-                        .text_xs()
+                        .text_small()
                         .text_color(theme.text_muted)
                         .child(format!("Keyboard: {place}"))
                         .into_any_element(),
@@ -1318,8 +1320,8 @@ impl SettingsView {
             let mut pad = div()
                 .id("keys-pad")
                 .track_focus(&focus)
-                .h(px(36.))
-                .min_w(px(220.))
+                .h(sized(36.))
+                .min_w(sized(220.))
                 .px_3()
                 .flex()
                 .items_center()
@@ -1405,7 +1407,7 @@ impl SettingsView {
         if recording && !strokes.is_empty() {
             row = row.child(
                 div()
-                    .text_xs()
+                    .text_small()
                     .text_color(theme.text_muted)
                     .child("Esc is a key here too: Cancel is a click away."),
             );
@@ -1419,7 +1421,7 @@ impl SettingsView {
     pub(crate) fn key_notes(&self, theme: &Theme, cx: &App) -> gpui::Stateful<gpui::Div> {
         let mut notes = div()
             .id("keys-notes")
-            .max_h(px(112.))
+            .max_h(sized(112.))
             .overflow_y_scroll()
             .flex()
             .flex_col()
@@ -1428,8 +1430,8 @@ impl SettingsView {
             div()
                 .flex()
                 .items_start()
-                .gap(px(6.))
-                .text_xs()
+                .gap(sized(6.))
+                .text_small()
                 .text_color(color)
                 .child(controls::glyph(icon, color, 13.))
                 .child(div().flex_1().min_w_0().child(text))
@@ -1646,7 +1648,7 @@ impl SettingsView {
         match &target {
             Target::Restore(..) => {
                 bar = bar
-                    .child(div().text_xs().text_color(theme.text_muted).child(
+                    .child(div().text_small().text_color(theme.text_muted).child(
                         match self.hider_title() {
                             Some(title) => format!(
                                 "Your shortcut for “{title}” took these keys. Restoring removes it."
@@ -1658,7 +1660,7 @@ impl SettingsView {
             }
             Target::Reset(_) => {
                 bar = bar
-                    .child(div().text_xs().text_color(theme.text_muted).child(
+                    .child(div().text_small().text_color(theme.text_muted).child(
                         "Its keys go back to skwir's, and your shortcuts that took them go.",
                     ))
                     .child(self.key_notes(theme, cx));
@@ -1863,7 +1865,7 @@ impl UniformListDecoration for Sticky {
                     .items_end()
                     .pb_2()
                     .bg(self.theme.bg)
-                    .text_xs()
+                    .text_small()
                     .text_color(self.theme.text_muted)
                     .occlude()
                     .child(place),

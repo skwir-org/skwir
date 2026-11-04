@@ -13,6 +13,7 @@
 //! is typed: a choice unfolded, else the form's pick. A pick keeps its own
 //! highlight, its value, whatever a choice's list does meanwhile.
 
+use crate::sizes::TextSizes;
 use gpui::{
     AnyElement, Context, Entity, FocusHandle, SharedString, Subscription, Window, div, prelude::*,
     relative,
@@ -677,7 +678,7 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
     if !form.intro.is_empty() {
         body = body.child(
             div()
-                .text_xs()
+                .text_small()
                 .text_color(theme.text_muted)
                 .child(form.intro.clone()),
         );
@@ -790,7 +791,7 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
             div()
                 .id("form-refusal")
                 .role(gpui::Role::Alert)
-                .text_xs()
+                .text_small()
                 .text_color(theme.error)
                 .child(refusal)
         }))
@@ -811,7 +812,7 @@ fn field_row(
     cx: &mut Context<Shell>,
 ) -> AnyElement {
     let label = div()
-        .text_xs()
+        .text_small()
         .font_weight(gpui::FontWeight::MEDIUM)
         .child(if field.required {
             format!("{} *", field.title)
@@ -820,7 +821,7 @@ fn field_row(
         });
     let help = (!field.help.is_empty()).then(|| {
         div()
-            .text_xs()
+            .text_small()
             .text_color(theme.text_muted)
             .child(field.help.clone())
     });
@@ -854,7 +855,7 @@ fn field_row(
                         div()
                             .id(SharedString::from(format!("form-switch-label-{at}")))
                             .cursor_pointer()
-                            .text_xs()
+                            .text_small()
                             .on_click(cx.listener(move |this, _, _, cx| this.form_toggle(at, cx)))
                             .child(title),
                     ),
@@ -1060,14 +1061,14 @@ fn choice_row(
             .children(choice.picture.as_ref().map(|picture| drawn(picture, theme)))
             .child(
                 div()
-                    .text_sm()
+                    .text_body()
                     .text_center()
                     .child(choice.shown().to_owned()),
             )
             .when(!choice.detail.is_empty(), |d| {
                 d.child(
                     div()
-                        .text_xs()
+                        .text_small()
                         .text_center()
                         .when(!selected, |d| d.text_color(theme.text_muted))
                         .child(choice.detail.clone()),
@@ -1185,7 +1186,7 @@ fn choice_list(
             div()
                 .px_2()
                 .py_1()
-                .text_xs()
+                .text_small()
                 .text_color(theme.text_muted)
                 .child("Nothing matches"),
         );
@@ -1201,7 +1202,7 @@ fn choice_list(
                 div()
                     .px_2()
                     .pt_1()
-                    .text_xs()
+                    .text_small()
                     .text_color(theme.text_muted)
                     .child(choice.section.clone()),
             );
@@ -1224,11 +1225,11 @@ fn choice_list(
                 d.bg(theme.selection_bg).text_color(theme.selection_text)
             })
             .when(!highlighted, |d| d.hover(|s| s.bg(theme.hover)))
-            .child(div().text_sm().child(choice.shown().to_owned()))
+            .child(div().text_body().child(choice.shown().to_owned()))
             .when(!choice.detail.is_empty(), |d| {
                 d.child(
                     div()
-                        .text_xs()
+                        .text_small()
                         .when(!highlighted, |d| d.text_color(theme.text_muted))
                         .truncate()
                         .child(choice.detail.clone()),
@@ -1243,7 +1244,7 @@ fn choice_list(
         list = list.child(
             div()
                 .px_2()
-                .text_xs()
+                .text_small()
                 .text_color(theme.text_muted)
                 .child(format!(
                     "{}–{} of {}: the arrows move further",

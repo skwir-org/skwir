@@ -26,6 +26,7 @@
 //! the same lines, said or blank, so its height is still its name's and
 //! the captions', never what its metadata holds.
 
+use crate::sizes::TextSizes;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::ops::Range;
@@ -472,7 +473,7 @@ fn cell(
             .id(("label", ix))
             .w_full()
             // Names are the body text, as in the list (ADR-117).
-            .text_sm()
+            .text_body()
             .line_height(scale.px(LABEL_LINE))
             .text_center()
             .overflow_hidden()
@@ -523,7 +524,7 @@ fn caption_lines(
                         .id(("caption", row.ix * CAPTIONS.len() + k))
                         .min_w_0()
                         .truncate()
-                        .text_xs()
+                        .text_small()
                         .text_color(muted),
                     text.to_owned(),
                     (!whole.is_empty()).then(|| whole.to_owned().into()),

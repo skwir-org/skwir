@@ -6,6 +6,8 @@
 //! goes on, Escape cancels; the arrows walk its rows and change their
 //! choice.
 
+use crate::sizes::TextSizes;
+use crate::sizes::sized;
 use std::collections::HashMap;
 use std::ops::Range;
 
@@ -322,9 +324,9 @@ fn choices(
             .flex_none()
             .flex()
             .items_center()
-            .gap(px(2.))
-            .p(px(2.))
-            .h(px(controls::HEIGHT))
+            .gap(sized(2.))
+            .p(sized(2.))
+            .h(sized(controls::HEIGHT))
             .rounded_md()
             .bg(theme.bg)
             .border_1()
@@ -409,8 +411,8 @@ fn clash_rows(shell: &Shell, range: Range<usize>, cx: &mut Context<Shell>) -> Ve
                                 .items_center()
                                 .gap_1()
                                 .min_w_0()
-                                .text_sm()
-                                .line_height(px(20.))
+                                .text_body()
+                                .line_height(sized(20.))
                                 .when(clash.source.folder, |d| {
                                     d.child(controls::glyph("folder", theme.text_muted, 14.))
                                 })
@@ -418,8 +420,8 @@ fn clash_rows(shell: &Shell, range: Range<usize>, cx: &mut Context<Shell>) -> Ve
                         )
                         .child(
                             div()
-                                .text_xs()
-                                .line_height(px(16.))
+                                .text_small()
+                                .line_height(sized(16.))
                                 .text_color(theme.text_muted)
                                 .truncate()
                                 .child(detail),
@@ -479,7 +481,7 @@ pub fn render(
             .py_1()
             .rounded_md()
             .when(at_cursor(row), |d| d.bg(theme.hover))
-            .child(div().flex_1().text_sm().child(name.to_owned()))
+            .child(div().flex_1().text_body().child(name.to_owned()))
             .child(choices(
                 format!("clash-all-{row}").into(),
                 kind,
@@ -490,7 +492,7 @@ pub fn render(
             ))
     };
     let (first, second) = clashes.head_names();
-    let mut heads = div().flex().flex_col().gap(px(2.)).child(head(
+    let mut heads = div().flex().flex_col().gap(sized(2.)).child(head(
         0,
         first,
         Row::Files,
@@ -527,11 +529,11 @@ pub fn render(
                 .flex()
                 .items_center()
                 .child(div().flex_1().child(title))
-                .child(div().text_xs().text_color(theme.text_muted).child(more)),
+                .child(div().text_small().text_color(theme.text_muted).child(more)),
         )
         .child(
             div()
-                .text_xs()
+                .text_small()
                 .text_color(theme.text_muted)
                 .child(format!("Nothing is {done} until you choose.")),
         )
@@ -542,7 +544,7 @@ pub fn render(
                 .iter()
                 .any(skwir_core::op::clash::replaces_for_good),
             |d| {
-                d.child(div().text_xs().text_color(theme.warning).child(format!(
+                d.child(div().text_small().text_color(theme.warning).child(format!(
                     "“{dest}” is in a network folder, which keeps no trash: \
                      what is replaced there is deleted for good."
                 )))

@@ -1,9 +1,11 @@
 //! One delayed wake per listing, including listings waiting for a drive to wake,
 //! and the banner that says what a pane waits for, with the ways out of it.
 use crate::shell::Shell;
+use crate::sizes::TextSizes;
+use crate::sizes::sized;
 use crate::theme::Theme;
 use crate::toolbar::Button;
-use gpui::{AnyElement, Context, Task, div, prelude::*, px};
+use gpui::{AnyElement, Context, Task, div, prelude::*};
 use skwir_core::command::Invocation;
 use skwir_core::location::{Location, OpenLocation};
 use skwir_core::workspace::PaneId;
@@ -269,13 +271,13 @@ pub fn render(banner: Banner, shell: &Shell, cx: &mut Context<Shell>) -> AnyElem
     let pane = shell.pane;
     let mut row = div()
         .flex_none()
-        .min_h(px(38.))
+        .min_h(sized(38.))
         .px_3()
         .py_1()
         .flex()
         .items_center()
         .gap_2()
-        .text_sm()
+        .text_body()
         .text_color(theme.text_muted)
         .bg(theme.surface)
         .child(div().flex_1().min_w_0().child(banner.text));

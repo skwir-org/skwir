@@ -26,7 +26,8 @@ use gpui::{
     InspectorElementId, IntoElement, LayoutId, Pixels, Style, Window, point, px, size,
 };
 
-/// How a strip measures what it lays out, in pixels.
+/// How a strip measures what it lays out, in pixels, at 100 %: laid out
+/// at the size of the text where it stands (`Metrics::at`, ADR-117).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Metrics {
     /// The strip's height; every item is centered in it.
@@ -231,6 +232,20 @@ pub struct Placed {
     more: Option<AnyElement>,
 }
 
+impl Metrics {
+    /// These metrics at `scale`.
+    #[must_use]
+    pub fn at(self, scale: crate::sizes::Scale) -> Self {
+        Metrics {
+            height: scale.f(self.height),
+            gap: scale.f(self.gap),
+            dot: scale.f(self.dot),
+            dot_step: scale.f(self.dot_step),
+            ..self
+        }
+    }
+}
+
 impl Element for ChipStrip {
     type RequestLayoutState = ();
     type PrepaintState = Placed;
@@ -247,6 +262,9 @@ impl Element for ChipStrip {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, ()) {
+        // At the size of the text where it stands, once a frame: prepaint
+        // reads what this set.
+        self.metrics = self.metrics.at(crate::sizes::Scale::of(window));
         let height = px(self.metrics.height);
         if self.natural {
             let natural = size(AvailableSpace::MaxContent, AvailableSpace::Definite(height));

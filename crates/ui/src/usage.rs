@@ -17,6 +17,8 @@
 //! when it last changed, or the kind of files that fill it. A block whose
 //! room can be had back as a whole (a cache, a trash) is lined, in every
 //! mode.
+use crate::sizes::TextSizes;
+use crate::sizes::sized;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -1342,9 +1344,9 @@ fn render(view: &mut UsageView, shell: &mut Shell, cx: &mut Context<Shell>) -> A
         .child(crate::elements::clip::clipped(
             div()
                 .id("usage-hint")
-                .h(px(24.))
+                .h(sized(24.))
                 .px_2()
-                .text_xs()
+                .text_small()
                 .text_color(theme.text_muted)
                 .truncate(),
             hint,
@@ -1419,7 +1421,7 @@ fn tools(
                             .id("usage-summary")
                             .flex_1()
                             .min_w_0()
-                            .text_xs()
+                            .text_small()
                             .truncate(),
                         summary.to_owned(),
                     ),
@@ -1487,7 +1489,7 @@ fn levels(shell: &Shell, theme: &Theme, count: bool, cx: &mut Context<Shell>) ->
             d.child(
                 div()
                     .relative()
-                    .text_xs()
+                    .text_small()
                     .text_color(theme.text_muted)
                     .child(div().invisible().child(said(MAX_LEVELS)))
                     .child(
@@ -1556,17 +1558,17 @@ fn legend(shell: &Shell, theme: &Theme, mode: Mode) -> Option<gpui::Div> {
     let item = |color: gpui::Hsla, label: String| {
         div()
             .flex_none()
-            .h(px(24.))
+            .h(sized(24.))
             .flex()
             .items_center()
-            .gap(px(4.))
+            .gap(sized(4.))
             .child(div().size(px(10.)).rounded_sm().bg(color))
             .child(label)
     };
     let lead = (mode == Mode::Age).then(|| {
         div()
             .flex_none()
-            .h(px(24.))
+            .h(sized(24.))
             .flex()
             .items_center()
             .child("Changed within")
@@ -1574,13 +1576,13 @@ fn legend(shell: &Shell, theme: &Theme, mode: Mode) -> Option<gpui::Div> {
     Some(
         div()
             .w_full()
-            .h(px(24.))
+            .h(sized(24.))
             .px_2()
             .overflow_hidden()
             .flex()
             .flex_wrap()
-            .gap_x(px(12.))
-            .text_xs()
+            .gap_x(sized(12.))
+            .text_small()
             .text_color(theme.text_muted)
             .children(lead)
             .children(entries.into_iter().map(|(color, label)| item(color, label))),

@@ -1,4 +1,6 @@
 //! Embedded playback controls. Only the session manager touches media I/O.
+use crate::sizes::TextSizes;
+use crate::sizes::sized;
 use crate::{preview::PreviewContent, shell::Shell, theme::Theme, toolbar::Button};
 use gpui::{
     AnimationExt, AnyElement, Bounds, Context, FocusHandle, MouseButton, Pixels, RenderImage,
@@ -1028,8 +1030,8 @@ pub(crate) fn seek_bar_of(
         })
         .relative()
         .flex_1()
-        .min_w(px(40.))
-        .h(px(30.))
+        .min_w(sized(40.))
+        .h(sized(30.))
         .cursor_pointer()
         .child(
             gpui::canvas(move |b, _, _| measured.set(b), |_, (), _, _| {})
@@ -1155,7 +1157,7 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
     bar.push(Item::widget(Slot::Navigate, 1, |shell, _| {
         let media = &shell.preview.media;
         div()
-            .text_xs()
+            .text_small()
             .flex_none()
             .child(time(media.scrub.unwrap_or(media.state.position)))
             .into_any_element()
@@ -1170,7 +1172,7 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
     let muted = theme.text_muted;
     bar.push(Item::widget(Slot::Navigate, 0, move |shell, _| {
         div()
-            .text_xs()
+            .text_small()
             .flex_none()
             .text_color(muted)
             .child(duration(&shell.preview.media.state))
@@ -1239,7 +1241,7 @@ pub(crate) fn continue_rows(
     let mut rows = vec![
         div()
             .px_2()
-            .text_xs()
+            .text_small()
             .text_color(theme.text_muted)
             .child("When a track ends")
             .into_any_element(),
@@ -1298,7 +1300,7 @@ fn settings(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Vec<AnyEle
         ),
         crate::preview_bar::separator(theme).into_any_element(),
         div()
-            .text_xs()
+            .text_small()
             .child(format!("{} / {}", time(state.position), duration(state)))
             .into_any_element(),
     ];
@@ -1319,7 +1321,7 @@ pub(crate) fn playback_rows(
 ) -> Vec<AnyElement> {
     let heading = |title: &'static str| {
         div()
-            .text_xs()
+            .text_small()
             .text_color(theme.text_muted)
             .child(title)
             .into_any_element()
@@ -1430,6 +1432,7 @@ pub(crate) fn halo_square(
     div()
         .relative()
         .w_full()
+        // A picture: its size whatever the text's.
         .max_w(px(420.))
         .min_h_0()
         .flex_shrink_1()
@@ -1478,7 +1481,7 @@ pub(crate) fn audio_figure(
         .justify_center()
         .gap_1()
         .child(picture)
-        .child(line("figure-title", title).text_lg())
+        .child(line("figure-title", title).text_title())
         .child(line("figure-artist", state.artist.clone()).text_color(theme.text_muted))
         .child(line("figure-album", state.album.clone()).text_color(theme.text_muted))
 }

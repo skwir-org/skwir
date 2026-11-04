@@ -1,4 +1,5 @@
 //! Shared native viewers for optional structured preview plugins.
+use crate::sizes::TextSizes;
 use crate::{
     elements::zoom_wheel::{self, Zoomed},
     preview::{PreviewContent, PreviewPhase},
@@ -3037,7 +3038,7 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
                     .flex_1()
                     .w_0()
                     .min_w(px(64.))
-                    .text_xs()
+                    .text_small()
                     .truncate()
                     .text_color(muted)
                     .child(caption.clone())
@@ -3847,7 +3848,7 @@ pub fn content(
                     .w_full()
                     .flex()
                     .gap_3()
-                    .text_sm()
+                    .text_body()
                     .pl(px(8. + r.depth.min(32) as f32 * 14.))
                     .when(data.kind == InspectionKind::Table, |d| {
                         // A grid: cells touch, rules between them, numbers
@@ -4021,7 +4022,7 @@ pub fn content(
     if display.data.kind == InspectionKind::Archive {
         body = body.child(crate::archive_preview::header(theme));
     } else if !display.data.columns.is_empty() {
-        let mut header = div().p_2().flex().gap_3().text_xs().when(
+        let mut header = div().p_2().flex().gap_3().text_small().when(
             display.data.kind == InspectionKind::Hex,
             |d| {
                 d.font(header_font)
@@ -4223,7 +4224,7 @@ pub fn content(
             .flex()
             .flex_wrap()
             .gap_x_3()
-            .text_xs()
+            .text_small()
             .bg(theme.surface)
             .border_t_1()
             .border_color(theme.border);

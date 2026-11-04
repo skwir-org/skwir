@@ -1,9 +1,11 @@
 //! Command palette: fuzzy search over every command, run on Enter, prompt for
 //! required string arguments in sequence.
 
+use crate::sizes::TextSizes;
+use crate::sizes::sized;
 use std::sync::OnceLock;
 
-use gpui::{AnyElement, Context, Entity, Subscription, Window, div, prelude::*, px};
+use gpui::{AnyElement, Context, Entity, Subscription, Window, div, prelude::*};
 use skwir_core::SortKey;
 
 use crate::input::{InputEvent, TextInput};
@@ -593,7 +595,7 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
     };
     let mut panel = modal::panel("palette", 560., &theme)
         .aria_label("Command palette")
-        .max_h(px(420.))
+        .max_h(sized(420.))
         .key_context(keymap::PALETTE)
         .child(
             div()
@@ -603,7 +605,7 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                 .gap_2()
                 .border_b_1()
                 .border_color(theme.border)
-                .child(div().text_xs().text_color(theme.text_muted).child(label))
+                .child(div().text_small().text_color(theme.text_muted).child(label))
                 .child(div().flex_1().child(p.input.clone())),
         );
     if p.args.is_none() {
@@ -641,7 +643,7 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
             });
             list = list.child(
                 option
-                    .h(px(26.))
+                    .h(sized(26.))
                     .px_3()
                     .flex()
                     .items_center()
@@ -658,12 +660,12 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                         this.palette_submit(window, cx);
                     }))
                     .child(div().child(item.title.clone()))
-                    .child(div().text_xs().text_color(muted).child(name))
+                    .child(div().text_small().text_color(muted).child(name))
                     .child(div().flex_1())
                     .children(
                         item.keys
                             .clone()
-                            .map(|k| div().text_xs().text_color(muted).child(k)),
+                            .map(|k| div().text_small().text_color(muted).child(k)),
                     ),
             );
         }

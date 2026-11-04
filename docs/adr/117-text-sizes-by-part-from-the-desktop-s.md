@@ -127,3 +127,16 @@ apart, and changes how gpui maps the pointer.
   the byte view (its rows, header and columns) follow it, no longer
   greyed; a book laid out by an engine starts at Reading's size; the
   terminal at the code's scale.
+- Step 3 (2026-11-04): `ui.text_size` (Appearance, after Font) sets the
+  window's rem; every place names a size (`sizes::TextSizes`; about 190
+  places, `text_xs` Small, `text_sm` Body, gpui's larger sizes Title,
+  the badges' literals Tiny), checked by a test; tab titles and
+  Properties' values are Body. About 270 lengths that hold text (bars,
+  rows, controls, chips, menus' rows, paddings) are in rems
+  (`sizes::sized`); the chip strip, the adaptive rows, the map's,
+  Usage's and the charts' labels follow the rem in force; what is
+  counted (the menu of places, the address card's rows and padding,
+  the preview panel's limit, a popup's scroll) is scaled; the
+  sidebar's width is kept at 100 %. A choice's picture in a form
+  (`form::drawn`) keeps its size.
+

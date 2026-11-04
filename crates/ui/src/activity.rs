@@ -16,6 +16,8 @@
 //! An action an error stopped stays in the strip, in the error's colour,
 //! until it is retried, Activity is opened, or it is dismissed.
 
+use crate::sizes::TextSizes;
+use crate::sizes::sized;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
@@ -725,7 +727,7 @@ fn spell_header(
         theme.accent
     };
     let bar = match segments(summary) {
-        Some(fills) => div().flex().gap(px(3.)).children(
+        Some(fills) => div().flex().gap(sized(3.)).children(
             fills
                 .into_iter()
                 .map(|fill| div().flex_1().child(small_bar_full(fill, color, theme))),
@@ -756,8 +758,8 @@ fn spell_header(
                 .items_center()
                 .justify_between()
                 .gap_2()
-                .min_h(px(22.))
-                .text_xs()
+                .min_h(sized(22.))
+                .text_small()
                 .child(div().text_color(theme.text).child(said))
                 .child(
                     div()
@@ -795,9 +797,9 @@ fn cancel_all_button(
         &focus,
         theme,
     )
-    .h(px(22.))
+    .h(sized(22.))
     .px_2()
-    .text_xs()
+    .text_small()
     .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), cx))
     .child(reveal.marker(&focus))
     .press(
@@ -1011,7 +1013,7 @@ fn strip_buttons(
                         &focus.retry,
                         theme,
                     )
-                    .h(px(20.))
+                    .h(sized(20.))
                     .px_2()
                     .press(
                         move |this, window, cx| {
@@ -1175,7 +1177,7 @@ pub fn strip(
             .items_center()
             .gap_1()
             .min_w_0()
-            .h(px(20.))
+            .h(sized(20.))
             .px_1()
             .rounded_md()
             .border_1()
@@ -1286,8 +1288,8 @@ fn popover(
         .aria_label("Activity")
         // Its rows scroll, beside their scrollbar.
         .overflow_hidden()
-        .w(px(400.))
-        .max_h(px(520.))
+        .w(sized(400.))
+        .max_h(sized(520.))
         .p_0()
         .gap_0()
         .child(heading)
@@ -1413,7 +1415,7 @@ fn heading(shell: &mut Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
         .pt_1()
         .child(
             div()
-                .text_xs()
+                .text_small()
                 .text_color(theme.text_muted)
                 .child("Activity"),
         )
@@ -1573,7 +1575,7 @@ fn body(
                 .pb_1()
                 .border_t_1()
                 .border_color(theme.border)
-                .text_xs()
+                .text_small()
                 .text_color(theme.text_muted)
                 .child(match shows {
                     Shows::All => "Earlier",
@@ -1601,7 +1603,7 @@ fn body(
             div()
                 .px_3()
                 .py_2()
-                .text_xs()
+                .text_small()
                 .text_color(theme.text_muted)
                 .child("Nothing under way. What was done is in the Undo history.")
                 .into_any_element(),
@@ -1640,7 +1642,7 @@ fn earlier_fold(
         .py_1()
         .border_t_1()
         .border_color(theme.border)
-        .text_xs()
+        .text_small()
         .text_color(theme.text_muted)
         .cursor_pointer()
         .hover(move |s| s.bg(hover))
@@ -1705,9 +1707,9 @@ fn waiting_heading(
             &focus,
             theme,
         )
-        .h(px(22.))
+        .h(sized(22.))
         .px_2()
-        .text_xs()
+        .text_small()
         .child(reveal.marker(&focus))
         .press(
             |this, _, cx| {
@@ -1731,12 +1733,12 @@ fn waiting_heading(
         .flex_none()
         .items_center()
         .justify_between()
-        .min_h(px(26.))
+        .min_h(sized(26.))
         .pl_3()
         .pr_1()
         .child(
             div()
-                .text_xs()
+                .text_small()
                 .text_color(theme.text_muted)
                 .child(waiting_said(quick)),
         )
@@ -1769,7 +1771,7 @@ fn waiting_row(
         .flex_none()
         .items_center()
         .gap_2()
-        .min_h(px(26.))
+        .min_h(sized(26.))
         .pl_3()
         .pr_1()
         .py_1()
@@ -1779,7 +1781,7 @@ fn waiting_row(
                 .min_w_0()
                 .flex()
                 .flex_col()
-                .text_xs()
+                .text_small()
                 .child(crate::elements::clip::clipped(
                     div()
                         .id(("activity-waiting-what", asked))
@@ -1809,9 +1811,9 @@ fn waiting_row(
                 &focus,
                 theme,
             )
-            .h(px(22.))
+            .h(sized(22.))
             .px_2()
-            .text_xs()
+            .text_small()
             .child(reveal.marker(&focus))
             .press(
                 move |this, _, cx| {
@@ -1865,7 +1867,7 @@ fn earlier_row(
         .flex_none()
         .items_center()
         .gap_2()
-        .min_h(px(26.))
+        .min_h(sized(26.))
         .pl_3()
         .pr_1()
         .child(glyph)
@@ -1882,14 +1884,14 @@ fn earlier_row(
                         .overflow_hidden()
                         .whitespace_nowrap()
                         .text_ellipsis()
-                        .text_xs(),
+                        .text_small(),
                     ended.text.clone(),
                 ))
                 // Said whole, wrapped: the keyboard's user reads it here.
                 .children(held.clone().map(|why| {
                     div()
                         .min_w_0()
-                        .text_xs()
+                        .text_small()
                         .text_color(theme.text_muted)
                         .child(why)
                 })),
@@ -1897,7 +1899,7 @@ fn earlier_row(
         .child(
             div()
                 .flex_none()
-                .text_xs()
+                .text_small()
                 .text_color(theme.text_muted)
                 .child(format::clock(ended.at)),
         );
@@ -1919,7 +1921,7 @@ fn earlier_row(
                     focus,
                     theme,
                 )
-                .h(px(22.))
+                .h(sized(22.))
                 .px_2()
                 // No frame but the keyboard's, as in the History.
                 .border_color(gpui::transparent_black())
@@ -1942,7 +1944,7 @@ fn earlier_row(
                 focus,
                 theme,
             )
-            .h(px(22.))
+            .h(sized(22.))
             .px_2()
             .text_color(theme.accent_text)
             .child(reveal.marker(focus))
@@ -2026,7 +2028,7 @@ fn progress_card(
                 ))
                 .child(
                     div()
-                        .text_xs()
+                        .text_small()
                         .text_color(theme.text_muted)
                         .child(format!("{}{amount}", capitalized(&state))),
                 )
@@ -2043,7 +2045,7 @@ fn progress_card(
                 // is and how far (ADR-113).
                 .when_some(
                     pace(transfer).filter(|_| !paused && !stopping),
-                    |d, pace| d.child(div().text_xs().text_color(theme.text_muted).child(pace)),
+                    |d, pace| d.child(div().text_small().text_color(theme.text_muted).child(pace)),
                 ),
         )
         .when(!stopping, |card| {
@@ -2164,7 +2166,12 @@ fn task_card(
                     capitalized(&task.title),
                 ))
                 .when(!amount.is_empty(), |d| {
-                    d.child(div().text_xs().text_color(theme.text_muted).child(amount))
+                    d.child(
+                        div()
+                            .text_small()
+                            .text_color(theme.text_muted)
+                            .child(amount),
+                    )
                 })
                 .child(small_bar_full(fraction, theme.accent, theme)),
         )

@@ -29,6 +29,8 @@
 //! is chosen here in render, as the panel's width is. The dock steps aside
 //! while the panel shows the pinned session itself, and gives way to the
 //! last pane's footer's strip while the panel is closed.
+use crate::sizes::TextSizes;
+use crate::sizes::sized;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -277,7 +279,7 @@ pub fn render(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Option<AnyE
             .flex()
             .items_center()
             .gap_2()
-            .text_xs()
+            .text_small()
             .child(revealed(
                 div().id("caption-title").min_w_0().truncate(),
                 title.clone(),
@@ -390,7 +392,7 @@ fn transport(
     let time = |text: String, muted: bool| {
         div()
             .flex_none()
-            .text_xs()
+            .text_small()
             .when(muted, |d| d.text_color(theme.text_muted))
             .child(text)
     };
@@ -513,7 +515,7 @@ fn menu(
             let mut left = Vec::new();
             if !kept.steps {
                 let position = pinned.scrub.unwrap_or(state.position);
-                panel = panel.child(div().px_2().text_xs().child(format!(
+                panel = panel.child(div().px_2().text_small().child(format!(
                     "{} / {}",
                     crate::media::time(position),
                     crate::media::duration(state)
@@ -640,7 +642,7 @@ fn compact_row(
         revealed(
             div()
                 .id(if muted { "row-by" } else { "row-title" })
-                .when(muted, |d| d.text_xs().text_color(theme.text_muted))
+                .when(muted, |d| d.text_small().text_color(theme.text_muted))
                 .truncate(),
             text.to_owned(),
         )
@@ -650,7 +652,7 @@ fn compact_row(
         .overflow_hidden()
         .flex()
         .flex_col()
-        .gap(px(2.))
+        .gap(sized(2.))
         .child(line(title, false))
         .child(line(by, true));
     let meter = meter(&state.spectrum, state.playing(), tint);
@@ -690,7 +692,7 @@ fn compact_row(
             )
             .into_any_element(),
         Form::Stacked => row
-            .child(text.flex_1().child(div().h(px(14.)).child(meter)))
+            .child(text.flex_1().child(div().h(sized(14.)).child(meter)))
             .into_any_element(),
     }
 }

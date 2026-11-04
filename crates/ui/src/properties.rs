@@ -20,7 +20,9 @@
 //! by itself: what a folder holds in all is counted when asked
 //! (`ui.properties_count`, `Show::Count`).
 
-use gpui::{AnyElement, Context, SharedString, div, prelude::*, px};
+use crate::sizes::TextSizes;
+use crate::sizes::sized;
+use gpui::{AnyElement, Context, SharedString, div, prelude::*};
 use skwir_core::command::Invocation;
 use skwir_core::entry::{Entry, Provenance, Value, keys};
 use skwir_core::op::EntryRef;
@@ -1471,7 +1473,7 @@ fn star_picker(
     div()
         .flex()
         .items_center()
-        .gap(px(2.))
+        .gap(sized(2.))
         .children((1..=5u64).map(|n| {
             let stars = if current == n * 2 { 0 } else { n };
             let target = target.clone();
@@ -1679,7 +1681,9 @@ pub fn render(
         .min_h_0()
         .px_3()
         .pb_3()
-        .text_xs();
+        // What is read here is about the file: its values are the body
+        // text, their labels muted (ADR-117).
+        .text_body();
     for (g, group) in groups.into_iter().enumerate() {
         let folded = preview.properties_folds.folded(&group.title, group.folded);
         let chips = folded.then(|| group.tags()).flatten().map(|(tags, given)| {
@@ -1776,7 +1780,7 @@ fn heading(
                 .items_center()
                 .justify_between()
                 .gap_1()
-                .py(px(3.))
+                .py(sized(3.))
                 .rounded_sm()
                 .cursor_pointer()
                 .hover(|d| d.bg(theme.hover))
@@ -1896,7 +1900,7 @@ fn row_element(
         .flex()
         .items_start()
         .gap_2()
-        .py(px(3.))
+        .py(sized(3.))
         .rounded_sm()
         .cursor_pointer()
         .hover(|d| d.bg(theme.hover))
@@ -1913,7 +1917,7 @@ fn row_element(
         })
         .child(
             div()
-                .w(px(84.))
+                .w(sized(84.))
                 .flex_none()
                 .text_color(theme.text_muted)
                 .child(row.label),
@@ -1946,7 +1950,7 @@ fn row_element(
                 .absolute()
                 .bottom_0()
                 .right_0()
-                .py(px(3.))
+                .py(sized(3.))
                 .pl_3()
                 .rounded_sm()
                 // Over the row's words: opaque, as the row it covers is.

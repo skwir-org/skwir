@@ -13,6 +13,7 @@
 //! End) and across to the card at the same height (Left, Right), each a
 //! move in the pane's order, so Shift extends the selection as anywhere.
 
+use crate::sizes::TextSizes;
 use std::collections::HashMap;
 use std::ops::Range;
 use std::path::PathBuf;
@@ -345,7 +346,7 @@ fn column(
         .child(div().flex_1().min_w_0().truncate().child(c.title.clone()))
         .child(
             div()
-                .text_xs()
+                .text_small()
                 .text_color(theme.text_muted)
                 .child(crate::format::thousands(count)),
         );
@@ -498,7 +499,7 @@ fn card_element(
                 .flex()
                 .flex_col()
                 .child(crate::views::entry::name(
-                    div().id("card-name").text_sm(),
+                    div().id("card-name").text_body(),
                     look,
                 ))
                 // A strip of tags takes what its row leaves: under the

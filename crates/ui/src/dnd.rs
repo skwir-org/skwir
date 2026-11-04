@@ -11,6 +11,7 @@
 //! folder it came from as it was, and paths from another application are
 //! copied.
 
+use crate::sizes::TextSizes;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -251,7 +252,7 @@ impl Render for DragPreview {
             .rounded_md()
             .bg(theme.accent)
             .text_color(theme.on_accent)
-            .text_xs()
+            .text_small()
             .shadow_md()
             .child(text);
         let Some((image, hotspot)) = &self.icon else {

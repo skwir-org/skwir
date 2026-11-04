@@ -15,6 +15,7 @@
 //! arrows move the map and the zoom keys zoom it; Home fits it to its
 //! files again. The last button of its row chooses the background, as the
 //! map preview's does (`map_preview::background_rows`).
+use crate::sizes::TextSizes;
 use std::collections::HashSet;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -497,7 +498,7 @@ impl PaneView for MapView {
                     .when_some(said.clone(), StatefulInteractiveElement::aria_value)
                     .flex_1()
                     .min_w_0()
-                    .text_xs()
+                    .text_small()
                     .text_color(theme.text_muted)
                     .truncate(),
                 self.status(),

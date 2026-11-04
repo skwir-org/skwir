@@ -1290,8 +1290,11 @@ pub struct Prepaint {
     scale: (f64, Option<ShapedLine>),
 }
 
-const LABEL_SIZE: f32 = 11.;
-const LINE_HEIGHT: f32 = 14.;
+/// A label's line on the map: its text is the small size (ADR-117), in
+/// the rem in force where the map is drawn, a little taller than it.
+fn label_line(window: &Window) -> f32 {
+    (f32::from(crate::sizes::painted(window, crate::sizes::Text::Small)) * 14. / 11.).round()
+}
 
 pub(crate) fn shape(text: SharedString, color: Hsla, window: &mut Window) -> ShapedLine {
     let run = TextRun {
@@ -1303,9 +1306,12 @@ pub(crate) fn shape(text: SharedString, color: Hsla, window: &mut Window) -> Sha
         strikethrough: None,
         position: gpui::RunPosition::Baseline,
     };
-    window
-        .text_system()
-        .shape_line(text, px(LABEL_SIZE), &[run], None)
+    window.text_system().shape_line(
+        text,
+        crate::sizes::painted(window, crate::sizes::Text::Small),
+        &[run],
+        None,
+    )
 }
 
 /// A line of world points as runs of screen points: thinned to what the
@@ -1432,6 +1438,7 @@ impl Element for Map {
         window: &mut Window,
         cx: &mut App,
     ) -> Prepaint {
+        let line_h = label_line(window);
         let size = (
             f64::from(f32::from(bounds.size.width)),
             f64::from(f32::from(bounds.size.height)),
@@ -1502,17 +1509,17 @@ impl Element for Map {
         }
         // The attributions at the foot, right-aligned, the background's
         // lowest.
-        let mut row = bounds.size.height - px(LINE_HEIGHT + 6.);
+        let mut row = bounds.size.height - px(line_h + 6.);
         let attributions: Vec<(ShapedLine, Bounds<Pixels>, Option<String>)> = attributions
             .into_iter()
             .map(|(text, url)| {
                 let line = shape(text.into(), self.colors.text, window);
                 let width = line.width + px(8.);
                 let at = bounds.origin + point(bounds.size.width - width - px(4.), row);
-                row -= px(LINE_HEIGHT + 4.);
+                row -= px(line_h + 4.);
                 (
                     line,
-                    Bounds::new(at, gpui::size(width, px(LINE_HEIGHT + 2.))),
+                    Bounds::new(at, gpui::size(width, px(line_h + 2.))),
                     url,
                 )
             })
@@ -1545,7 +1552,7 @@ impl Element for Map {
             grid.push((edge(0., y), edge(size.0, y)));
             let text = math::degrees(lat, step, 'N', 'S');
             labels.push(Label {
-                origin: edge(3., y - f64::from(LINE_HEIGHT)),
+                origin: edge(3., y - f64::from(line_h)),
                 line: shape(text.into(), self.colors.grid_text, window),
                 card: false,
             });
@@ -1913,7 +1920,7 @@ impl Element for Map {
         if named.len() <= LABELS {
             for (p, label) in named {
                 labels.push(Label {
-                    origin: p + point(px(8.), px(-LINE_HEIGHT / 2.)),
+                    origin: p + point(px(8.), px(-line_h / 2.)),
                     line: shape(label, self.colors.text, window),
                     card: true,
                 });
@@ -1978,6 +1985,7 @@ impl Element for Map {
         cx: &mut App,
     ) {
         let colors = self.colors;
+        let line_h = label_line(window);
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             window.paint_quad(gpui::fill(bounds, colors.paper));
             for tile in &prepaint.tiles {
@@ -2072,15 +2080,11 @@ impl Element for Map {
                     },
                     BorderStyle::Solid,
                 ));
-                let text = cluster.at - point(cluster.count.width / 2., px(LINE_HEIGHT / 2.));
-                let _ = cluster.count.paint(
-                    text,
-                    px(LINE_HEIGHT),
-                    gpui::TextAlign::Left,
-                    None,
-                    window,
-                    cx,
-                );
+                let text = cluster.at - point(cluster.count.width / 2., px(line_h / 2.));
+                let _ =
+                    cluster
+                        .count
+                        .paint(text, px(line_h), gpui::TextAlign::Left, None, window, cx);
             }
             for dot in &prepaint.dots {
                 if let Some(picture) = &dot.picture {
@@ -2179,7 +2183,7 @@ impl Element for Map {
                 if label.card {
                     let card = Bounds::new(
                         label.origin - point(px(3.), px(0.)),
-                        size(label.line.width + px(6.), px(LINE_HEIGHT)),
+                        size(label.line.width + px(6.), px(line_h)),
                     );
                     window.paint_quad(quad(
                         card,
@@ -2192,7 +2196,7 @@ impl Element for Map {
                 }
                 if let Err(error) = label.line.paint(
                     label.origin,
-                    px(LINE_HEIGHT),
+                    px(line_h),
                     gpui::TextAlign::Left,
                     None,
                     window,
@@ -2214,8 +2218,8 @@ impl Element for Map {
             }
             if let Some(words) = words {
                 let _ = words.paint(
-                    foot - point(px(0.), px(LINE_HEIGHT + 4.)),
-                    px(LINE_HEIGHT),
+                    foot - point(px(0.), px(line_h + 4.)),
+                    px(line_h),
                     gpui::TextAlign::Left,
                     None,
                     window,
@@ -2234,7 +2238,7 @@ impl Element for Map {
                 ));
                 let _ = line.paint(
                     card.origin + point(px(4.), px(1.)),
-                    px(LINE_HEIGHT),
+                    px(line_h),
                     gpui::TextAlign::Left,
                     None,
                     window,

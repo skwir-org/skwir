@@ -17,6 +17,8 @@
 //! (`tags.edit`): each entry keeps the tags nobody touched, so a selection
 //! of files tagged differently never gains the others' tags.
 
+use crate::sizes::TextSizes;
+use crate::sizes::sized;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -212,14 +214,14 @@ pub fn chip_in_full(tag: &str, color: usize, theme: &Theme) -> Div {
 fn chip_frame(color: usize, theme: &Theme) -> Div {
     div()
         .flex_none()
-        .h(px(CHIP_HEIGHT))
+        .h(sized(CHIP_HEIGHT))
         .flex()
         .items_center()
         .whitespace_nowrap()
-        .pl(px(5.))
-        .pr(px(6.))
+        .pl(sized(5.))
+        .pr(sized(6.))
         .rounded_sm()
-        .text_xs()
+        .text_small()
         .bg(theme.tag_fill(color))
         .child(dot(color, theme).size(px(7.)).mr(px(4.)))
 }
@@ -232,14 +234,14 @@ fn chip_frame(color: usize, theme: &Theme) -> Div {
 pub fn place_chip(color: usize, kept: bool, theme: &Theme) -> Div {
     div()
         .flex_none()
-        .h(px(PLACE_CHIP_HEIGHT))
+        .h(sized(PLACE_CHIP_HEIGHT))
         .flex()
         .items_center()
         .whitespace_nowrap()
-        .pl(px(7.))
-        .pr(px(8.))
+        .pl(sized(7.))
+        .pr(sized(8.))
         .rounded_sm()
-        .text_sm()
+        .text_body()
         .when(kept, |d| d.bg(theme.tag_fill(color)))
         .child(dot(color, theme).size(px(8.)).mr(px(6.)))
 }
@@ -251,12 +253,12 @@ pub const PLACE_CHIP_HEIGHT: f32 = 22.;
 pub fn more_chip(n: usize, color: gpui::Hsla) -> Div {
     div()
         .flex_none()
-        .h(px(CHIP_HEIGHT))
+        .h(sized(CHIP_HEIGHT))
         .flex()
         .items_center()
         .whitespace_nowrap()
-        .px(px(3.))
-        .text_xs()
+        .px(sized(3.))
+        .text_small()
         .text_color(color)
         .child(format!("+{n}"))
 }
@@ -381,11 +383,11 @@ pub fn strip_acting(
             StripOn::Row { .. } => more_chip(n, muted),
             StripOn::Picture { .. } => div()
                 .flex_none()
-                .px(px(3.))
+                .px(sized(3.))
                 .rounded_sm()
                 .bg(theme_more.bg)
                 .text_color(theme_more.text_muted)
-                .text_size(px(10.))
+                .text_tiny()
                 .line_height(px(metrics.dot))
                 .whitespace_nowrap()
                 .child(format!("+{n}")),
@@ -412,14 +414,15 @@ fn picture_chip(tag: &str, color: usize, zoom: f32, theme: &Theme) -> Div {
         .flex()
         .items_center()
         .whitespace_nowrap()
-        .pl(px(4.))
-        .pr(px(5.))
+        .pl(sized(4.))
+        .pr(sized(5.))
         .rounded_sm()
         .border_1()
         .border_color(theme.bg)
         .bg(theme.tag_solid(color))
         .text_color(theme.text)
-        .text_size(px(if zoom >= 192. { 11. } else { 10. }))
+        // A badge, a step larger on the largest pictures.
+        .text_size(crate::sizes::sized(if zoom >= 192. { 11. } else { 10. }))
         .child(dot(color, theme).size(px(6.)).mr(px(3.)))
         .child(tag_leaf(tag).to_owned())
 }
@@ -1148,7 +1151,7 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                 marked.filter(|_| a11y),
                 StatefulInteractiveElement::aria_toggled,
             )
-            .h(px(28.))
+            .h(sized(28.))
             .px_3()
             .flex()
             .items_center()
@@ -1232,13 +1235,19 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                                         .id("tag-category")
                                         .min_w_0()
                                         .truncate()
-                                        .text_xs()
+                                        .text_small()
                                         .text_color(muted),
                                     category.to_owned(),
                                 ))
                             }),
                     )
-                    .child(div().flex_none().text_xs().text_color(muted).child(detail))
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_small()
+                            .text_color(muted)
+                            .child(detail),
+                    )
             }
         };
         list = list.child(line);
@@ -1315,7 +1324,7 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                         .whitespace_nowrap()
                         .overflow_hidden()
                         .text_ellipsis_middle()
-                        .text_xs()
+                        .text_small()
                         .text_color(theme.text_muted),
                     e.title.clone(),
                 ))
@@ -1345,7 +1354,7 @@ fn color_strip(
     let current = colors.of_or(tag, given);
     let chosen = colors.chosen(tag);
     let mut strip = div()
-        .pl(px(52.))
+        .pl(sized(52.))
         .pr_3()
         .pb_1()
         .flex()
@@ -1356,7 +1365,7 @@ fn color_strip(
         strip = strip.child(
             div()
                 .id(("tag-color", index))
-                .p(px(3.))
+                .p(sized(3.))
                 .rounded_full()
                 .border_1()
                 .border_color(if chosen && index == current {
@@ -1387,7 +1396,7 @@ fn color_strip(
             .ml_2()
             .px_2()
             .rounded_sm()
-            .text_xs()
+            .text_small()
             .text_color(if chosen {
                 theme.accent
             } else {

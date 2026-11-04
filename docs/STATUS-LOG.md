@@ -10825,3 +10825,36 @@ changed while one is shown waits until it is opened again), the archive
 preview's member list (still at the interface's size), Windows and
 macOS, release-check.
 
+## Text sizes, step 3: the interface (2026-11-04)
+
+ADR-117. `ui.text_size` (Appearance, after Font) sets the window's rem
+(`Window::set_rem_size` where the theme is resolved). Every place names
+a size (`sizes::TextSizes`: `text_body`, `text_small`, `text_tiny`,
+`text_title`): 170 `text_xs` became Small, 22 `text_sm` Body, five of
+gpui's larger sizes Title, three literal badge sizes Tiny; tab titles
+and Properties' values became Body. About 270 lengths that hold text
+(bars' and rows' heights, controls, chips, menus' rows, paddings and
+gaps, text boxes' widths) are written in rems at 100 % (`sizes::sized`),
+pictures and icons left at their size (a cover's square kept). The
+chip strip and the adaptive rows lay out at the rem in force; the map's
+labels, Usage's treemap (its layout keyed by the scale) and the bar
+chart follow it; the menu of places' width and height, the address
+card's rows and padding, the preview panel's height limit and a popup's
+scroll padding are scaled. The sidebar's width is kept at 100 %.
+
+Checked: skwir-ui's tests (new: `every_place_names_a_text_size`, which
+fails on `text_xs` or a literal), clippy clean. The debug build on Xvfb
+(:91): at 100 % the window as before but for tab titles and Properties'
+values (Body); `text_size = "150"` written to the settings file was
+taken in live: the top row 63 px, the sidebar's places 21 px in a
+sidebar 300 px wide, the footer, the list (its files at the
+interface's 150 %), the file menu, the palette, Properties (its labels
+muted beside values at Body), two tabs and the address card all
+larger, nothing cut or overlapping; the Settings dialog, at 150 % in a
+1280 px window, has its controls cut at its right edge as a window
+850 px wide would at 100 %.
+
+Not checked: every dialog and popup (Activity, History, the bulk
+rename, the print dialog, the tag editor), a screen reader, Windows
+and macOS, release-check.
+

@@ -4,6 +4,8 @@
 //! the foot of the window lists what can follow: the hints that apply
 //! where the focus is and begin with what was typed.
 
+use crate::sizes::TextSizes;
+use crate::sizes::sized;
 use gpui::{AnyElement, Context, Keystroke, Window, div, prelude::*, px};
 
 use crate::controls;
@@ -83,9 +85,9 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let sequence = shell.sequence.as_ref()?;
     let theme = cx.global::<Theme>().clone();
     let caps = |keys: &str, theme: &Theme| {
-        let mut row = div().flex().flex_none().items_center().gap(px(6.));
+        let mut row = div().flex().flex_none().items_center().gap(sized(6.));
         for stroke in keymap::key_caps(keys) {
-            let mut caps = div().flex().items_center().gap(px(3.));
+            let mut caps = div().flex().items_center().gap(sized(3.));
             for cap in stroke {
                 caps = caps.child(controls::keycap(cap, theme));
             }
@@ -98,7 +100,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     for (i, (keys, title)) in sequence.next.iter().enumerate() {
         list = list.child(
             div()
-                .w(px(240.))
+                .w(sized(240.))
                 .flex()
                 .items_center()
                 .gap_2()
@@ -115,7 +117,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         );
     }
     let card = div()
-        .max_w(px(820.))
+        .max_w(sized(820.))
         .p_3()
         .flex()
         .flex_col()
@@ -125,7 +127,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         .border_color(theme.border)
         .bg(theme.bg)
         .shadow_lg()
-        .text_xs()
+        .text_small()
         .child(
             div()
                 .flex()

@@ -30,6 +30,8 @@
 //! reorder, and closes with its × (on the tab shown and the one under the
 //! pointer), a middle click or Ctrl+W.
 
+use crate::sizes::TextSizes;
+use crate::sizes::sized;
 use std::collections::HashMap;
 
 use gpui::{
@@ -535,7 +537,7 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
     Some(
         div()
             .flex_none()
-            .h(px(STRIP_HEIGHT))
+            .h(sized(STRIP_HEIGHT))
             .w_full()
             .bg(theme.surface)
             .border_b_1()
@@ -573,8 +575,8 @@ fn row(
         .overflow_hidden()
         .flex()
         .items_center()
-        .gap(px(4.))
-        .px(px(6.))
+        .gap(sized(4.))
+        .px(sized(6.))
         // A double click beside the tabs opens one, as in a browser.
         .on_click(cx.listener(|this, event: &gpui::ClickEvent, window, cx| {
             if event.click_count() == 2 {
@@ -629,8 +631,8 @@ fn row(
             .h_full()
             .flex()
             .items_center()
-            .gap(px(2.))
-            .px(px(6.))
+            .gap(sized(2.))
+            .px(sized(6.))
             .child(split)
             .child(preview)
     });
@@ -643,8 +645,8 @@ fn row(
             .h_full()
             .flex()
             .items_center()
-            .gap(px(2.))
-            .px(px(6.))
+            .gap(sized(2.))
+            .px(sized(6.))
             .child(toggle)
             .child(more)
     });
@@ -653,7 +655,7 @@ fn row(
         Some(toggles) => line.size_full().child(toggles),
         None => line
             .flex_none()
-            .h(px(STRIP_HEIGHT))
+            .h(sized(STRIP_HEIGHT))
             .w_full()
             .bg(theme.surface)
             .border_b_1()
@@ -698,15 +700,16 @@ fn tab(
         .flex_1()
         .min_w(px(if widest { TAB_MAX } else { 56. }))
         .max_w(px(TAB_MAX))
-        .h(px(30.))
+        .h(sized(30.))
         .flex()
         .items_center()
-        .gap(px(6.))
-        .pl(px(10.))
-        .pr(px(4.))
+        .gap(sized(6.))
+        .pl(sized(10.))
+        .pr(sized(4.))
         .rounded_md()
         .border_1()
-        .text_xs()
+        // A tab names a folder, as a place in the sidebar does (ADR-117).
+        .text_body()
         .text_color(color)
         .cursor_pointer()
         .when(shown, |d| d.bg(theme.bg).border_color(theme.border))
@@ -834,10 +837,10 @@ fn title(label: &Label, (ink, other): (gpui::Hsla, gpui::Hsla), theme: &Theme) -
         .overflow_hidden()
         .flex()
         .items_center()
-        .gap(px(6.));
+        .gap(sized(6.));
     for (index, each) in label.names.iter().enumerate() {
         if index > 0 {
-            row = row.child(div().flex_none().w(px(1.)).h(px(12.)).bg(theme.border));
+            row = row.child(div().flex_none().w(px(1.)).h(sized(12.)).bg(theme.border));
         }
         let each = name(each).text_color(if index == label.active { ink } else { other });
         row = row.child(if index == gives {
@@ -923,8 +926,8 @@ fn sidebar_row(
         )
         .relative()
         .flex_none()
-        .min_h(px(26.))
-        .py(px(3.))
+        .min_h(sized(26.))
+        .py(sized(3.))
         .mx_1()
         .px_2()
         .flex()
@@ -994,8 +997,8 @@ pub fn sidebar_new_tab(shell: &Shell, at_cursor: bool, cx: &mut Context<Shell>) 
             StatefulInteractiveElement::aria_active_descendant,
         )
         .flex_none()
-        .min_h(px(26.))
-        .py(px(3.))
+        .min_h(sized(26.))
+        .py(sized(3.))
         .mx_1()
         .px_2()
         .flex()

@@ -4,6 +4,7 @@
 //! their entries follow them, indented, and are the pane's like any other,
 //! so selection, commands and drags need nothing of their own.
 
+use crate::sizes::TextSizes;
 use std::ops::Range;
 
 use gpui::{
@@ -825,7 +826,7 @@ fn header(shell: &Shell, theme: &Theme, tree: bool, cx: &mut Context<Shell>) -> 
         .items_center()
         .gap_2()
         .px_2()
-        .text_xs()
+        .text_small()
         .text_color(theme.text_muted)
         .border_b_1()
         .border_color(theme.border)

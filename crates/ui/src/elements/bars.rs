@@ -243,7 +243,7 @@ struct Laid {
 /// one freed, another can be made at it.
 struct Kept {
     bars: Rc<Vec<Bar>>,
-    from: (BarColors, Bounds<Pixels>, SharedString, u32),
+    from: (BarColors, Bounds<Pixels>, SharedString, u32, u32),
     laid: Rc<Laid>,
     /// Wheel turned by less than a bar, kept for the next turn.
     wheel: Rc<Cell<f32>>,
@@ -276,14 +276,18 @@ fn shape(
                 strikethrough: None,
                 position: gpui::RunPosition::Baseline,
             };
+            // At the size of the text where the chart is drawn (ADR-117).
+            let size = px(FONT * crate::sizes::Scale::of(window).0);
             window
                 .text_system()
-                .shape_line(text.clone(), px(FONT), &[run], None)
+                .shape_line(text.clone(), size, &[run], None)
         })
         .clone()
 }
 
 fn lay_out(bars: &[Bar], colors: BarColors, bounds: Bounds<Pixels>, window: &Window) -> Laid {
+    // The labels' lines at the size of the text where it is drawn.
+    let s = crate::sizes::Scale::of(window).0;
     let n = bars.len().max(1);
     let left = bounds.origin.x + px(SIDE);
     let width = (f32::from(bounds.size.width) - 2. * SIDE).max(1.);
@@ -303,8 +307,8 @@ fn lay_out(bars: &[Bar], colors: BarColors, bounds: Bounds<Pixels>, window: &Win
         .iter()
         .flatten()
         .all(|t| f32::from(t.width) + SPACE <= pitch);
-    let top = bounds.origin.y + px(if say_tallies { TALLY } else { 4. });
-    let floor = bounds.origin.y + bounds.size.height - px(AXIS);
+    let top = bounds.origin.y + px(if say_tallies { TALLY * s } else { 4. });
+    let floor = bounds.origin.y + bounds.size.height - px(AXIS * s);
     let high = f32::from(floor - top).max(1.);
     let heights = bar_heights(bars.iter().map(|b| b.value), high);
     let mut slots = Vec::with_capacity(bars.len());
@@ -330,7 +334,7 @@ fn lay_out(bars: &[Bar], colors: BarColors, bounds: Bounds<Pixels>, window: &Win
         if say_tallies && let Some(tally) = &tallies[i] {
             let at = point(
                 bar.origin.x + (bar.size.width - tally.width) / 2.,
-                bar.origin.y - px(TALLY),
+                bar.origin.y - px(TALLY * s),
             );
             said.push((at, tally.clone()));
         }
@@ -418,6 +422,7 @@ impl Element for BarChart {
             bounds,
             window.text_style().font().family,
             window.scale_factor().to_bits(),
+            f32::from(window.rem_size()).to_bits(),
         );
         let (bars, colors) = (Rc::clone(&self.bars), self.colors);
         let (laid, wheel, pressed) = match id {
@@ -510,8 +515,9 @@ impl Element for BarChart {
                     gpui::BorderStyle::Solid,
                 ));
             }
-            let lines = (laid.labels.iter().map(|l| (l, AXIS - 2.)))
-                .chain(laid.tallies.iter().map(|t| (t, TALLY)));
+            let s = crate::sizes::Scale::of(window).0;
+            let lines = (laid.labels.iter().map(|l| (l, (AXIS - 2.) * s)))
+                .chain(laid.tallies.iter().map(|t| (t, TALLY * s)));
             for ((at, text), height) in lines {
                 if let Err(error) =
                     text.paint(*at, px(height), gpui::TextAlign::Left, None, window, cx)

@@ -14,6 +14,8 @@
 //! `section` are shown under its name. Until the source answers the list is
 //! blank, never "nothing found", so a quick answer does not flash.
 
+use crate::sizes::TextSizes;
+use crate::sizes::sized;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use gpui::{AnyElement, Context, Entity, Subscription, Window, div, prelude::*, px};
@@ -302,7 +304,7 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                     .px_3()
                     .pt_2()
                     .pb_1()
-                    .text_xs()
+                    .text_small()
                     .text_color(theme.text_muted)
                     .children(section.map(str::to_owned)),
             );
@@ -322,7 +324,7 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                 hl,
                 &typing,
             )
-            .h(px(28.))
+            .h(sized(28.))
             .px_3()
             .flex()
             .items_center()
@@ -346,7 +348,7 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                 div()
                     .id("choice-title")
                     .flex_none()
-                    .max_w(px(260.))
+                    .max_w(sized(260.))
                     .truncate(),
                 choice.title.clone(),
             ))
@@ -356,7 +358,7 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                     .flex_1()
                     .min_w_0()
                     .truncate()
-                    .text_xs()
+                    .text_small()
                     .text_color(muted),
                 choice.detail.clone().unwrap_or_default(),
             )),
@@ -419,7 +421,7 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                         .whitespace_nowrap()
                         .overflow_hidden()
                         .text_ellipsis_middle()
-                        .text_xs()
+                        .text_small()
                         .text_color(theme.text_muted),
                     c.title.clone(),
                 ))

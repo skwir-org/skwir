@@ -1,6 +1,7 @@
 //! Each pane's row (navigation, the address, how the pane shows its
 //! folder), the sidebar's header, and where the window's own tools go
 //! among them (see `corner`).
+use crate::sizes::sized;
 use crate::{
     elements::{adaptive::AdaptiveRow, popover::PopoverAnchor},
     keymap,
@@ -181,7 +182,7 @@ fn view_control(
         .flex()
         .flex_none()
         .gap(px(1.))
-        .p(px(2.))
+        .p(sized(2.))
         .rounded_lg()
         .border_1()
         .border_color(theme.border)
@@ -210,14 +211,14 @@ fn view_control(
         group = group.child(
             view_button(shell, &spec, "view")
                 .render(shell, cx)
-                .h(px(24.)),
+                .h(sized(24.)),
         );
     }
     div()
         .flex()
         .flex_none()
         .items_center()
-        .gap(px(2.))
+        .gap(sized(2.))
         .child(group)
         .child(
             menu(
@@ -835,11 +836,11 @@ pub fn sidebar_header(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
         .id("sidebar-header")
         .tab_group()
         .flex_none()
-        .h(px(PANE_ROW_HEIGHT))
+        .h(sized(PANE_ROW_HEIGHT))
         .flex()
         .items_center()
-        .gap(px(2.))
-        .px(px(6.))
+        .gap(sized(2.))
+        .px(sized(6.))
         .bg(theme.surface)
         .border_b_1()
         .border_r_1()
@@ -1013,7 +1014,7 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
         .id(("pane-address", shell.pane.0 as usize))
         .tab_group()
         .relative()
-        .px(px(6.))
+        .px(sized(6.))
         .w_full()
         .flex_none()
         .border_b_1()
@@ -1156,7 +1157,7 @@ fn pane_row(
                     .h_full()
                     .flex()
                     .items_center()
-                    .px(px(3.))
+                    .px(sized(3.))
                     .cursor_text()
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.activate_pane(pane, cx);
@@ -1213,7 +1214,7 @@ fn pane_row(
         .id(("address-field", pane.0 as usize))
         .flex_1()
         .min_w(px(FIELD_MIN))
-        .h(px(FIELD_HEIGHT))
+        .h(sized(FIELD_HEIGHT))
         .flex()
         .items_center()
         .rounded_md()
@@ -1241,9 +1242,9 @@ fn pane_row(
         field = field.child(
             Button::new(format!("search-{}", pane.0), "search", title, "ui.search")
                 .render(shell, cx)
-                .h(px(24.))
+                .h(sized(24.))
                 .min_w(px(24.))
-                .px(px(4.))
+                .px(sized(4.))
                 .mr(px(2.)),
         );
     }
@@ -1282,9 +1283,9 @@ fn pane_row(
             field = field.child(
                 button
                     .render(shell, cx)
-                    .h(px(24.))
+                    .h(sized(24.))
                     .min_w(px(24.))
-                    .px(px(4.))
+                    .px(sized(4.))
                     .mr(px(2.)),
             );
         }
@@ -1311,15 +1312,15 @@ fn pane_row(
             field = field.child(
                 button
                     .render(shell, cx)
-                    .h(px(24.))
+                    .h(sized(24.))
                     .min_w(px(24.))
-                    .px(px(4.))
+                    .px(sized(4.))
                     .mr(px(2.)),
             );
         }
     }
     let theme = cx.global::<Theme>().clone();
-    let mut line = div().size_full().flex().items_center().gap(px(3.));
+    let mut line = div().size_full().flex().items_center().gap(sized(3.));
     if row.ends.corner {
         let [toggle, more] = corner(shell, cx);
         line = line
@@ -1493,7 +1494,7 @@ fn breadcrumbs(
         .id(("trail", pane.0 as usize))
         .role(gpui::Role::Navigation)
         .aria_label("Path")
-        .h(px(24.))
+        .h(sized(24.))
         .flex_1()
         .min_w_0()
         .overflow_hidden()
@@ -1503,7 +1504,7 @@ fn breadcrumbs(
         // `Start` is the left edge whatever the row's direction (taffy's
         // `Start`/`End` follow the writing mode, not the flex direction).
         .justify_start()
-        .line_height(px(24.));
+        .line_height(sized(24.));
     // `index` names it among the row's: the segment it stands before, and
     // one past the last for the chevron after it.
     // `above`, for a segment's own chevron: what it lists instead while
@@ -1535,7 +1536,7 @@ fn breadcrumbs(
             .when(shell.a11y, |d| d.aria_label(tip.clone()))
             .relative()
             .flex_none()
-            .h(px(24.))
+            .h(sized(24.))
             .w(px(16.))
             .flex()
             .items_center()
@@ -1635,11 +1636,11 @@ fn breadcrumbs(
                     .when(index == last, |d| d.aria_selected(true))
             })
             .optional_tooltip(clip.tooltip(None))
-            .max_w(px(260.))
-            .px(px(6.))
+            .max_w(sized(260.))
+            .px(sized(6.))
             .flex()
             .items_center()
-            .gap(px(4.))
+            .gap(sized(4.))
             .rounded_sm()
             .cursor_pointer()
             .text_color(ink)
@@ -1652,8 +1653,8 @@ fn breadcrumbs(
                     let color = shell.tag_colors.of(tag);
                     let tone = theme.tag(color);
                     d.child(crate::tags::dot(color, theme).size(px(7.)))
-                        .h(px(20.))
-                        .line_height(px(20.))
+                        .h(sized(20.))
+                        .line_height(sized(20.))
                         .border_1()
                         .border_color(gpui::transparent_black())
                         .bg(if index == last {
@@ -1664,7 +1665,7 @@ fn breadcrumbs(
                         .text_color(theme.text)
                         .hover(move |s| s.border_color(tone))
                 }
-                None => d.h(px(24.)).hover(move |s| s.bg(hover)),
+                None => d.h(sized(24.)).hover(move |s| s.bg(hover)),
             })
             .children(icon.map(|icon| {
                 gpui::svg()

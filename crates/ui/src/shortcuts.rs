@@ -12,6 +12,8 @@
 //!   earns one toast naming it. Once per command, ever: the commands already
 //!   hinted are kept with the settings.
 
+use crate::sizes::TextSizes;
+use crate::sizes::sized;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -504,7 +506,7 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
     let filtering = overview.filter.read(cx).is_focused(window);
     // The lists scroll under the title, which keeps its buttons in sight.
     let panel = div()
-        .w(px(1320.))
+        .w(sized(1320.))
         .max_w(gpui::relative(0.94))
         .max_h(gpui::relative(0.9))
         .p_6()
@@ -516,7 +518,7 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
         .border_color(theme.border)
         .bg(theme.bg)
         .shadow_lg()
-        .line_height(px(20.))
+        .line_height(sized(20.))
         .track_focus(&overview.focus)
         .key_context("Shortcuts")
         .on_action(cx.listener(|this, action: &RunCommand, window, cx| {
@@ -541,7 +543,7 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
                 .flex()
                 .items_center()
                 .gap_4()
-                .child(div().flex_none().text_lg().child("Shortcuts here"))
+                .child(div().flex_none().text_title().child("Shortcuts here"))
                 .child(controls::field(
                     &overview.filter,
                     Some(300.),
@@ -658,8 +660,8 @@ fn columns(groups: &[(&str, Vec<&Row>)], part: &'static str, theme: &Theme) -> C
         metrics: METRICS,
         heading: Rc::new(move |heading, continued| {
             div()
-                .pt(px(2.))
-                .text_xs()
+                .pt(sized(2.))
+                .text_small()
                 .font_weight(gpui::FontWeight::MEDIUM)
                 .text_color(muted)
                 .truncate()
@@ -678,14 +680,14 @@ fn columns(groups: &[(&str, Vec<&Row>)], part: &'static str, theme: &Theme) -> C
 fn row_element(row: &Row, id: &gpui::ElementId, theme: &Theme) -> columns::Row {
     let shown = row.shown();
     let caps = |stroke: &[String]| {
-        let mut caps = div().flex().flex_none().items_center().gap(px(3.));
+        let mut caps = div().flex().flex_none().items_center().gap(sized(3.));
         for cap in stroke {
             caps = caps.child(controls::keycap(cap.clone(), theme));
         }
         caps
     };
     let keys = || {
-        let mut keys = div().flex().flex_none().items_center().gap(px(8.));
+        let mut keys = div().flex().flex_none().items_center().gap(sized(8.));
         match &shown {
             Shown::Chords(chords) => {
                 for (n, chord) in chords.iter().enumerate() {
@@ -693,13 +695,13 @@ fn row_element(row: &Row, id: &gpui::ElementId, theme: &Theme) -> columns::Row {
                         keys = keys.child(
                             div()
                                 .flex_none()
-                                .text_xs()
+                                .text_small()
                                 .text_color(theme.text_muted)
                                 .child("/"),
                         );
                     }
                     // A sequence's strokes, apart.
-                    let mut strokes = div().flex().flex_none().items_center().gap(px(8.));
+                    let mut strokes = div().flex().flex_none().items_center().gap(sized(8.));
                     for stroke in keymap::key_caps(chord) {
                         strokes = strokes.child(caps(&stroke));
                     }
@@ -707,12 +709,12 @@ fn row_element(row: &Row, id: &gpui::ElementId, theme: &Theme) -> columns::Row {
                 }
             }
             Shown::Held { held, keys: each } => {
-                let mut line = div().flex().flex_none().items_center().gap(px(3.));
+                let mut line = div().flex().flex_none().items_center().gap(sized(3.));
                 if !held.is_empty() {
                     line = line.child(caps(held)).child(
                         div()
-                            .px(px(2.))
-                            .text_xs()
+                            .px(sized(2.))
+                            .text_small()
                             .text_color(theme.text_muted)
                             .child("+"),
                     );

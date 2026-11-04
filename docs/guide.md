@@ -649,7 +649,7 @@ Settings are grouped by subject, whichever plugin brings them:
 | Page | What it sets |
 | --- | --- |
 | General | What Skwir does at startup, with tabs, the split and the path above the files, and with what you drag and drop |
-| Appearance | How it looks: theme, your desktop's colors and font, text sizes, icons, dates |
+| Appearance | How it looks: theme, your desktop's colors and font, the text's size (the whole window's, and the file views' of their own), icons, dates |
 | Folders and views | Quick filters, the grid, the list's columns, thumbnails |
 | Tags and notes | The tags the sidebar suggests, tags kept when copying, companion files, and where tags, ratings and comments are read and written |
 | Reading | How documents, books, comics, Markdown, text and code read, and the engine that reads each kind |

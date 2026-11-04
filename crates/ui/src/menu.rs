@@ -1,6 +1,8 @@
 //! Context menu from the registry's `context` menu contributions, filtered by
 //! `when` tokens evaluated against the selection.
 
+use crate::sizes::TextSizes;
+use crate::sizes::sized;
 use std::collections::HashMap;
 use std::ffi::OsStr;
 
@@ -1491,7 +1493,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         .id("context-menu")
         .role(gpui::Role::Menu)
         .aria_label("Context menu")
-        .min_w(px(220.))
+        .min_w(sized(220.))
         .p_1()
         .flex()
         .flex_col()
@@ -1597,7 +1599,7 @@ fn sub_panel(
         .role(gpui::Role::Menu)
         .aria_label(name.to_owned())
         .relative()
-        .min_w(px(180.))
+        .min_w(sized(180.))
         .p_1()
         .flex()
         .flex_col()
@@ -1743,7 +1745,7 @@ fn row_element(
             d.aria_active_descendant_for(&menu.focus)
         })
         .relative()
-        .h(px(crate::toolbar::MENU_ROW))
+        .h(sized(crate::toolbar::MENU_ROW))
         .flex_none()
         .px_2()
         .flex()
@@ -1803,7 +1805,7 @@ fn row_element(
             div()
                 .flex_none()
                 .pl_6()
-                .text_xs()
+                .text_small()
                 .text_color(muted)
                 .child(keys)
         }))
@@ -1893,8 +1895,8 @@ fn choice_element(
     let shown = match choice.look {
         ChoiceLook::Icons => div()
             .flex()
-            .gap(px(2.))
-            .p(px(2.))
+            .gap(sized(2.))
+            .p(sized(2.))
             .rounded_md()
             .border_1()
             .border_color(theme.border)
@@ -1903,9 +1905,9 @@ fn choice_element(
                 let on = menu.items[v].is_on();
                 let icon = menu.items[v].icon.clone().unwrap_or_default();
                 value(v, "choice", cx)
-                    .h(px(20.))
+                    .h(sized(20.))
                     .min_w(px(26.))
-                    .px(px(5.))
+                    .px(sized(5.))
                     .flex()
                     .items_center()
                     .justify_center()
@@ -1933,7 +1935,7 @@ fn choice_element(
         ChoiceLook::Colors => div()
             .flex()
             .items_center()
-            .gap(px(5.))
+            .gap(sized(5.))
             .children(values.iter().map(|&v| {
                 let item = &menu.items[v];
                 let on = item.is_on();
@@ -2022,7 +2024,7 @@ fn choice_element(
         .role(gpui::Role::RadioGroup)
         .when(shell.a11y, |d| d.aria_label(choice.name.clone()))
         .relative()
-        .h(px(crate::toolbar::MENU_ROW + 4.))
+        .h(sized(crate::toolbar::MENU_ROW + 4.))
         .flex_none()
         .px_2()
         .flex()

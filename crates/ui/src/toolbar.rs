@@ -1,4 +1,6 @@
 //! Shared command-backed toolbar buttons, bundled symbolic icons and popovers.
+use crate::sizes::TextSizes;
+use crate::sizes::sized;
 use crate::{keymap::RunCommand, shell::Shell, theme::Theme};
 use gpui::{
     AnyView, App, Context, Div, FocusHandle, Render, ScrollHandle, SharedString, Stateful, Window,
@@ -130,7 +132,7 @@ impl Render for Tip {
         let theme = cx.global::<Theme>();
         div()
             .font_family(theme.font.clone())
-            .text_xs()
+            .text_small()
             .text_color(theme.text)
             .bg(theme.surface)
             .border_1()
@@ -398,18 +400,18 @@ impl Button {
                     .when(dropdown, |d| d.aria_expanded(open))
             })
             .relative()
-            .h(px(if menu { MENU_ROW } else { 30. }))
+            .h(sized(if menu { MENU_ROW } else { 30. }))
             .min_w(px(30.))
             .flex_none()
-            .px(px(6.))
+            .px(sized(6.))
             .flex()
             .items_center()
             .when(!menu, gpui::Styled::justify_center)
-            .gap(px(6.))
+            .gap(sized(6.))
             .rounded_md()
             .border_1()
             .border_color(gpui::transparent_black())
-            .text_xs()
+            .text_small()
             .whitespace_nowrap()
             .text_color(theme.text_muted)
             // A popup's row, as a context menu's (`menu::render`): the
@@ -420,15 +422,15 @@ impl Button {
                     .w_full()
                     .px_2()
                     .gap_2()
-                    .text_sm()
+                    .text_body()
                     .text_color(theme.text)
             })
-            .when(segment, |d| d.h(px(22.)).min_w(px(26.)).gap(px(4.)))
+            .when(segment, |d| d.h(sized(22.)).min_w(px(26.)).gap(sized(4.)))
             .when(tiled, |d| {
-                d.h(px(52.))
+                d.h(sized(52.))
                     .w_full()
                     .flex_col()
-                    .gap(px(5.))
+                    .gap(sized(5.))
                     .text_color(theme.text)
             })
             // Keep the handle alive when navigation disables this button.
@@ -515,7 +517,7 @@ impl Button {
                 div()
                     .flex_none()
                     .pl_6()
-                    .text_xs()
+                    .text_small()
                     .text_color(theme.text_muted)
                     .group_hover(group.clone(), |s| s.text_color(theme.selection_text))
                     .child(keys)
@@ -526,7 +528,7 @@ impl Button {
                 |d| d.child(menu_glyph("check", &group, &theme).size(px(14.))),
             )
             .when(self.shape == Shape::Dropdown, |d| {
-                d.gap(px(2.)).child(
+                d.gap(sized(2.)).child(
                     svg()
                         .path("toolbar/chevron.svg")
                         .text_color(theme.text_muted)
@@ -797,7 +799,7 @@ impl Shell {
 pub fn separator(theme: &Theme) -> Div {
     div()
         .w(px(1.))
-        .h(px(18.))
+        .h(sized(18.))
         .mx(px(5.))
         .flex_none()
         .bg(theme.border)
@@ -810,11 +812,11 @@ pub fn row(theme: &Theme) -> Div {
         .tab_group()
         .relative()
         .w_full()
-        .h(px(HEIGHT))
+        .h(sized(HEIGHT))
         .flex()
         .items_center()
-        .gap(px(2.))
-        .px(px(6.))
+        .gap(sized(2.))
+        .px(sized(6.))
         .bg(theme.surface)
         .border_b_1()
         .border_color(theme.border)
@@ -865,11 +867,11 @@ pub fn popup_panel(
         .role(gpui::Role::Menu)
         .tab_group()
         .tab_index(1)
-        .w(px(264.))
+        .w(sized(264.))
         .min_h_0()
         .overflow_y_scroll()
         .track_scroll(&popup.scroll)
-        .p(px(POPUP_PAD))
+        .p(sized(POPUP_PAD))
         .flex()
         .flex_col()
         .gap_1()
@@ -915,8 +917,8 @@ pub fn menu_panel(
     // path keeps both its ends (`Button::label`).
     popup_panel(popup, close, theme, cx)
         .w_auto()
-        .min_w(px(240.))
-        .max_w(px(460.))
+        .min_w(sized(240.))
+        .max_w(sized(460.))
         .p_1()
         .gap_0()
         .bg(theme.surface)
@@ -951,13 +953,13 @@ pub fn menu_parts(
                 .flex_none()
                 .items_center()
                 .justify_between()
-                .h(px(26.))
+                .h(sized(26.))
                 .pl_2()
                 .pt_1()
-                .text_xs()
+                .text_small()
                 .text_color(theme.text_muted)
                 .child(title)
-                .children(button.map(|button| button.render(shell, cx).h(px(22.))))
+                .children(button.map(|button| button.render(shell, cx).h(sized(22.))))
                 .into_any_element(),
             MenuPart::Line => div()
                 .flex_none()
@@ -971,14 +973,14 @@ pub fn menu_parts(
                 .flex_none()
                 .items_center()
                 .gap_2()
-                .h(px(MENU_ROW + 4.))
+                .h(sized(MENU_ROW + 4.))
                 .px_2()
                 .child(div().size(px(16.)).flex_none())
                 .child(
                     div()
                         .flex_1()
                         .pr_4()
-                        .text_sm()
+                        .text_body()
                         .text_color(theme.text)
                         .child(name.clone()),
                 )
@@ -992,8 +994,8 @@ pub fn menu_parts(
                         .when(shell.a11y, |d| d.aria_label(name))
                         .flex()
                         .flex_none()
-                        .gap(px(2.))
-                        .p(px(2.))
+                        .gap(sized(2.))
+                        .p(sized(2.))
                         .rounded_md()
                         .border_1()
                         .border_color(theme.border)
@@ -1006,7 +1008,7 @@ pub fn menu_parts(
                 .role(gpui::Role::RadioGroup)
                 .grid()
                 .grid_cols(4)
-                .gap(px(2.))
+                .gap(sized(2.))
                 .pb_1()
                 .children(values.into_iter().map(|value| value.render(shell, cx)))
                 .into_any_element(),
@@ -1055,7 +1057,8 @@ fn reveal_marker() -> gpui::AnyElement {
             if row.left() < area.left() || row.right() > area.right() {
                 return;
             }
-            let (top, bottom) = (area.top() + px(POPUP_PAD), area.bottom() - px(POPUP_PAD));
+            let pad = crate::sizes::Scale::of(window).px(POPUP_PAD);
+            let (top, bottom) = (area.top() + pad, area.bottom() - pad);
             let mut offset = scroll.offset();
             if row.top() < top {
                 offset.y += top - row.top();

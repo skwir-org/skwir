@@ -15,6 +15,8 @@
 //! are built; the keys walk the rows read, so one out of view is reached
 //! too, and comes into view.
 
+use crate::sizes::TextSizes;
+use crate::sizes::sized;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
@@ -436,7 +438,7 @@ pub fn undo_control(
         .flex_none()
         .items_center()
         .gap_1()
-        .h(px(20.))
+        .h(sized(20.))
         .px_2()
         .rounded_l_md()
         .border_1()
@@ -474,7 +476,7 @@ pub fn undo_control(
         .flex_none()
         .items_center()
         .justify_center()
-        .h(px(20.))
+        .h(sized(20.))
         .w(px(18.))
         .rounded_r_md()
         .border_1()
@@ -506,7 +508,7 @@ pub fn undo_control(
             .items_center()
             .child(shell.undo_history.anchor.marker())
             .child(left)
-            .child(div().w(px(1.)).h(px(12.)).bg(theme.border))
+            .child(div().w(px(1.)).h(sized(12.)).bg(theme.border))
             .child(chevron)
             .children(popup)
             .into_any_element(),
@@ -527,7 +529,7 @@ fn popover(shell: &mut Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<
         .px_3()
         .pt_2()
         .pb_1()
-        .text_xs()
+        .text_small()
         .text_color(theme.text_muted)
         .child("Undo history");
     let rows = if count == 0 {
@@ -535,7 +537,7 @@ fn popover(shell: &mut Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<
             .flex_none()
             .px_3()
             .py_2()
-            .text_xs()
+            .text_small()
             .text_color(theme.text_muted)
             .child("Nothing to undo yet")
             .into_any_element()
@@ -577,8 +579,8 @@ fn popover(shell: &mut Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<
         .aria_label("Undo history")
         // Its rows scroll, in their list.
         .overflow_hidden()
-        .w(px(420.))
-        .max_h(px(520.))
+        .w(sized(420.))
+        .max_h(sized(520.))
         .p_0()
         .gap_0()
         // The keys walk the rows read, not only those drawn.
@@ -655,7 +657,7 @@ fn history_row(
                     .rounded_sm()
                     .bg(theme.hover)
                     .text_color(theme.text_muted)
-                    .text_size(px(10.))
+                    .text_tiny()
                     .child(pill)
             }))
             .child(crate::elements::clip::clipped(
@@ -666,7 +668,7 @@ fn history_row(
                     .overflow_hidden()
                     .whitespace_nowrap()
                     .text_ellipsis()
-                    .text_xs()
+                    .text_small()
                     .when(undone, |d| d.text_color(theme.text_muted)),
                 title,
             )),
@@ -686,7 +688,7 @@ fn history_row(
                 .flex()
                 .flex_wrap()
                 .items_center()
-                .text_xs()
+                .text_small()
                 .text_color(theme.text_muted)
                 .child(before)
                 .child(
@@ -727,7 +729,7 @@ fn history_row(
                 )
                 .child(after)
         }),
-        _ => why_said.map(|why| div().text_xs().text_color(theme.text_muted).child(why)),
+        _ => why_said.map(|why| div().text_small().text_color(theme.text_muted).child(why)),
     };
     let mut buttons = div().flex().flex_none().items_center().gap_1();
     if !row.with.is_empty()
@@ -746,7 +748,7 @@ fn history_row(
                 &with,
                 theme,
             )
-            .h(px(22.))
+            .h(sized(22.))
             .px_2()
             .text_color(theme.accent_text)
             .press(
@@ -771,7 +773,7 @@ fn history_row(
         let id = SharedString::from(format!("undo-history-main-{entry}"));
         let button = if can_now(row) {
             controls::button(id, word, None, ButtonStyle::Plain, &main, theme)
-                .h(px(22.))
+                .h(sized(22.))
                 .px_2()
                 .text_color(theme.accent_text)
                 .press(
@@ -787,7 +789,7 @@ fn history_row(
             // the keyboard's, unlike what can be pressed.
             let accent = theme.accent;
             controls::inert_button(id, word, &main, theme)
-                .h(px(22.))
+                .h(sized(22.))
                 .px_2()
                 .border_color(gpui::transparent_black())
                 .focus(move |s| s.border_color(accent))
@@ -799,13 +801,13 @@ fn history_row(
         .flex()
         .items_center()
         .gap_2()
-        .min_h(px(26.))
+        .min_h(sized(26.))
         .child(glyph)
         .child(what)
         .child(
             div()
                 .flex_none()
-                .text_xs()
+                .text_small()
                 .text_color(theme.text_muted)
                 .when(!matches!(row.state, Done::Running | Done::Waiting), |d| {
                     d.child(format::clock(row.at))
@@ -836,7 +838,7 @@ fn history_row(
         .when(lit, |d| d.bg(theme.hover))
         .child(line)
         // Under the title, past the glyph.
-        .children(reason.map(|reason| reason.pl(px(21.)).pb_1()))
+        .children(reason.map(|reason| reason.pl(sized(21.)).pb_1()))
         .into_any_element()
 }
 

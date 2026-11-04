@@ -19,6 +19,8 @@
 //! where a place the user keeps is its owner's to arrange (`Role`). F6
 //! gives the sidebar the keyboard (`Keys`, `Shell::sidebar_key`).
 
+use crate::sizes::TextSizes;
+use crate::sizes::sized;
 use std::collections::{BTreeMap, HashMap};
 
 use gpui::{AnyElement, Context, ExternalPaths, MouseButton, SharedString, div, prelude::*, px};
@@ -933,13 +935,13 @@ pub fn render(
             .min_w_0()
             .flex()
             .flex_col()
-            .gap(px(3.))
+            .gap(sized(3.))
             .child(div().truncate().child(title));
         let mut tip: Option<SharedString> = None;
         if let Some(busy) = &busy {
             texts = texts.child(
                 div()
-                    .text_xs()
+                    .text_small()
                     .truncate()
                     .text_color(if is_current {
                         theme.selection_text
@@ -970,8 +972,8 @@ pub fn render(
         let mut row = div()
             .id(crate::elements::known_by("place", i))
             .flex_none()
-            .min_h(px(26.))
-            .py(px(3.))
+            .min_h(sized(26.))
+            .py(sized(3.))
             .mx_1()
             .px_2()
             .flex()
@@ -1193,7 +1195,7 @@ fn group_header(
         .mx_1()
         .mt_2()
         .px_2()
-        .h(px(22.))
+        .h(sized(22.))
         .flex()
         .items_center()
         .justify_between()
@@ -1204,7 +1206,7 @@ fn group_header(
         } else {
             gpui::transparent_black()
         })
-        .text_xs()
+        .text_small()
         .text_color(theme.text_muted)
         .cursor_pointer()
         .hover(move |s| s.bg(hover))
@@ -1298,7 +1300,7 @@ fn wrap_pills(
             .py_1()
             .flex()
             .flex_wrap()
-            .gap(px(4.))
+            .gap(sized(4.))
             .children(pills.drain(..)),
     )
 }
@@ -1532,14 +1534,17 @@ impl Shell {
         !self.sidebar_hidden && self.sidebar_fits(f32::from(window.viewport_size().width))
     }
 
-    /// How wide the sidebar is drawn: as dragged, narrower while the window
-    /// is too small for that (the remembered width stays as the user left
-    /// it), and 0 when it is not drawn.
+    /// How wide the sidebar is drawn: as dragged, at the interface's text
+    /// size (the width is kept at 100 %, ADR-117), narrower while the
+    /// window is too small for that (the remembered width stays as the
+    /// user left it), and 0 when it is not drawn.
     pub fn sidebar_drawn_width(&self, window: &gpui::Window) -> f32 {
         if !self.sidebar_shown(window) {
             return 0.;
         }
-        self.sidebar_width.min(self.sidebar_width_limit(window))
+        crate::sizes::Scale::of(window)
+            .f(self.sidebar_width)
+            .min(self.sidebar_width_limit(window))
     }
 
     fn sidebar_width_limit(&self, window: &gpui::Window) -> f32 {
@@ -1560,7 +1565,8 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         let x = f32::from(ev.event.position.x);
-        self.sidebar_width = x.clamp(MIN_WIDTH, self.sidebar_width_limit(window));
+        let drawn = x.clamp(MIN_WIDTH, self.sidebar_width_limit(window));
+        self.sidebar_width = crate::sizes::Scale::of(window).at_100(drawn);
         cx.notify();
     }
 

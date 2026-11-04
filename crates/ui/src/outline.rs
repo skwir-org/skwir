@@ -4,6 +4,8 @@
 //! (`reading.contents_pinned`), a column beside the content, which narrows
 //! to make room, open until closed. The part shown is highlighted either
 //! way, and kept in view as the reader moves.
+use crate::sizes::TextSizes;
+use crate::sizes::sized;
 use std::cell::Cell;
 use std::sync::Arc;
 
@@ -113,7 +115,7 @@ pub fn contents(
         .flex()
         .flex_col()
         .size_full()
-        .text_xs()
+        .text_small()
         .child(
             div()
                 .flex()
@@ -162,7 +164,7 @@ pub fn around(
             .child(
                 div()
                     .flex_none()
-                    .w(px(WIDTH))
+                    .w(sized(WIDTH))
                     .max_w(relative(PINNED_SHARE))
                     .h_full()
                     .bg(theme.bg)
@@ -195,7 +197,7 @@ pub fn around(
                     .top_0()
                     .bottom_0()
                     .left_0()
-                    .w(px(WIDTH))
+                    .w(sized(WIDTH))
                     .max_w_full()
                     .bg(theme.bg)
                     .border_r_1()

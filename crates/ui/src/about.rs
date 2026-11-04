@@ -15,11 +15,13 @@
 //! overview is: a key meant for the window behind it closes it
 //! (`Shell::run`), and Tab walks its buttons.
 
+use crate::sizes::TextSizes;
+use crate::sizes::sized;
 use std::path::PathBuf;
 
 use gpui::{
     AnyElement, ClipboardItem, Context, FocusHandle, MouseButton, SharedString, Window, div,
-    prelude::*, px,
+    prelude::*,
 };
 
 use crate::controls::{self, ButtonStyle};
@@ -211,7 +213,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                 .gap_3()
                 .child(
                     div()
-                        .w(px(64.))
+                        .w(sized(64.))
                         .flex_none()
                         .text_color(theme.text_muted)
                         .child(*label),
@@ -280,7 +282,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         .aria_label("About skwir")
         .p_5()
         .gap_4()
-        .line_height(px(20.))
+        .line_height(sized(20.))
         .track_focus(&about.focus)
         .key_context("About")
         .on_action(cx.listener(
@@ -306,7 +308,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                             div()
                                 .flex()
                                 .flex_col()
-                                .child(div().text_xl().child("skwir"))
+                                .child(div().text_title().child("skwir"))
                                 .child(div().text_color(theme.text_muted).child(
                                     SharedString::from(format!(
                                         "Version {} · {LICENCE}",
