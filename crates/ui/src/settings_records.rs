@@ -1151,7 +1151,7 @@ impl SettingsView {
                     .when(!detail.is_empty() && wraps, |d| {
                         d.child(
                             div()
-                                .text_small()
+                                .text_body()
                                 .text_color(theme.text_muted)
                                 .child(detail.clone()),
                         )
@@ -1266,7 +1266,7 @@ impl SettingsView {
                 .border_color(theme.border)
                 .bg(theme.bg)
                 .text_color(theme.text)
-                .text_small()
+                .text_body()
                 .font_family(theme.font.clone())
                 .shadow_lg()
                 .occlude()
@@ -1484,7 +1484,7 @@ impl SettingsView {
                     .when(!field.description.is_empty(), |d| {
                         d.child(
                             div()
-                                .text_small()
+                                .text_body()
                                 .text_color(theme.text_muted)
                                 .child(field.description.clone()),
                         )
@@ -1506,7 +1506,7 @@ impl SettingsView {
                 div()
                     .flex_1()
                     .min_w_0()
-                    .text_small()
+                    .text_body()
                     .text_color(if error.is_some() {
                         theme.error
                     } else {

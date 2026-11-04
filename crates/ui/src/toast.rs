@@ -807,7 +807,7 @@ pub fn render_answer(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyEl
                 // Why an Undo is held, under what was said.
                 .children(held.iter().flatten().map(|why| {
                     div()
-                        .text_small()
+                        .text_body()
                         .text_color(theme.text_muted)
                         .child(why.clone())
                 })),

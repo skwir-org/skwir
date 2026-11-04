@@ -493,7 +493,7 @@ impl SettingsView {
                     .flex()
                     .items_center()
                     .gap(sized(6.))
-                    .text_small()
+                    .text_body()
                     .text_color(theme.error)
                     .child(controls::glyph("warning", theme.error, 13.))
                     .child(div().flex_1().min_w_0().child(error.clone())),
@@ -1407,7 +1407,7 @@ impl SettingsView {
         if recording && !strokes.is_empty() {
             row = row.child(
                 div()
-                    .text_small()
+                    .text_body()
                     .text_color(theme.text_muted)
                     .child("Esc is a key here too: Cancel is a click away."),
             );
@@ -1431,7 +1431,7 @@ impl SettingsView {
                 .flex()
                 .items_start()
                 .gap(sized(6.))
-                .text_small()
+                .text_body()
                 .text_color(color)
                 .child(controls::glyph(icon, color, 13.))
                 .child(div().flex_1().min_w_0().child(text))
@@ -1648,7 +1648,7 @@ impl SettingsView {
         match &target {
             Target::Restore(..) => {
                 bar = bar
-                    .child(div().text_small().text_color(theme.text_muted).child(
+                    .child(div().text_body().text_color(theme.text_muted).child(
                         match self.hider_title() {
                             Some(title) => format!(
                                 "Your shortcut for “{title}” took these keys. Restoring removes it."
@@ -1660,7 +1660,7 @@ impl SettingsView {
             }
             Target::Reset(_) => {
                 bar = bar
-                    .child(div().text_small().text_color(theme.text_muted).child(
+                    .child(div().text_body().text_color(theme.text_muted).child(
                         "Its keys go back to skwir's, and your shortcuts that took them go.",
                     ))
                     .child(self.key_notes(theme, cx));

@@ -204,8 +204,9 @@ const FRAME: f32 = 5.;
 const LABEL_GAP: f32 = 2.;
 /// A tile's height is counted in lines of name, so the line height is
 /// fixed: at 100 %, for names in the body text as the list writes them,
-/// drawn at the files' scale (ADR-117).
-const LABEL_LINE: f32 = 18.;
+/// drawn at the files' scale (ADR-117), as close as 0.3.0's small names
+/// were (1.2 times the text).
+const LABEL_LINE: f32 = 17.;
 /// A name takes what it needs up to this, then ends with an ellipsis.
 const MAX_LINES: u8 = 3;
 /// A caption's line, as tall as a tag's chip, at 100 %.

@@ -10895,3 +10895,32 @@ read as before, with sizes; LXQt's file by its documented keys only), a
 portal's text scaling on a real session, qt5ct's older `@Variant` form
 (not read), macOS and Windows, release-check.
 
+## Text sizes beside 0.3.0: sentences at Body, Small 9/10 (2026-11-05)
+
+ADR-117, reviewed with the user beside 0.3.0. Compared on Xvfb (:91,
+lavapipe), one folder of 20 synthetic files and the reference machine's
+GTK, qt5ct and qt6ct settings, each build with XDG folders of its own:
+0.3.0's release AppImage (through `appimage-run`, under a parent shell
+that stays: its sandbox ends with its parent) and the build of step 4.
+Body 14 to 13.3 px, Small 12 to 11.4 px, grid names 12 to 13.3 px in the
+same 130 px label (the long Markdown name's first line 21 characters,
+then 16), their lines 15 to 17 px; list rows 26 px in both (the icon
+sets them). A trial with every Small as Body (`Text::Small` as Body)
+read better and overflowed the settings' segmented choice ("A chosen
+folder | The folders and tabs left open").
+
+Changed: 40 places written as sentences, or a value chosen in a list,
+from Small to Body (tooltips, the settings' descriptions, page
+subtitle, errors, notes, choice lists, the records' descriptions, the
+keyboard page's notes; toasts' reasons; prompts' notes; modal hints;
+the empty folder's detail; the preview's notice strip, error and line
+of facts; the address card's reading and footer; the clash and review
+notes; forms' intros and refusals; Activity's and History's actions,
+reasons and empty states). `Text::Small` is nine tenths of the body
+(was six sevenths). Grid name lines 17 px at 100 % (was 18).
+
+Checked: skwir-ui's 500 tests, clippy clean; the debug build beside
+0.3.0 on the same screens: Small labels at 12.0 px (footer, headers,
+toolbar labels), tooltips and descriptions at 13.3, the settings'
+choice fitting its row, grid lines 16 px for 13.3 px names.
+

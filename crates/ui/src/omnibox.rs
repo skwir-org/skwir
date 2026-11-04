@@ -3554,7 +3554,7 @@ pub fn dropdown(
                 .flex_none()
                 .px_2()
                 .py_1()
-                .text_small()
+                .text_body()
                 .text_color(theme.text_muted)
                 .child(reading)
         }))
@@ -3567,7 +3567,7 @@ pub fn dropdown(
                 .pb_1()
                 .border_t_1()
                 .border_color(theme.border)
-                .text_small()
+                .text_body()
                 .text_color(theme.text_muted)
                 .child(footer(shell, typed, omni.scopes)),
         );

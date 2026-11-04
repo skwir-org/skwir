@@ -578,7 +578,7 @@ pub fn render_prompt(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElemen
         .children(
             p.note
                 .clone()
-                .map(|note| div().text_small().text_color(theme.text_muted).child(note)),
+                .map(|note| div().text_body().text_color(theme.text_muted).child(note)),
         )
         .children(p.remember.as_ref().map(|remember| {
             let label = "Remember in the keyring";
@@ -616,7 +616,7 @@ pub fn render_prompt(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElemen
                 .filter(|_| remember.on)
                 .map(|keeping| {
                     div()
-                        .text_small()
+                        .text_body()
                         .text_color(theme.text_muted)
                         .child(keeping)
                 });

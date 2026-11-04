@@ -678,7 +678,7 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
     if !form.intro.is_empty() {
         body = body.child(
             div()
-                .text_small()
+                .text_body()
                 .text_color(theme.text_muted)
                 .child(form.intro.clone()),
         );
@@ -791,7 +791,7 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
             div()
                 .id("form-refusal")
                 .role(gpui::Role::Alert)
-                .text_small()
+                .text_body()
                 .text_color(theme.error)
                 .child(refusal)
         }))

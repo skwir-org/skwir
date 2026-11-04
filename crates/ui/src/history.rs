@@ -537,7 +537,7 @@ fn popover(shell: &mut Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<
             .flex_none()
             .px_3()
             .py_2()
-            .text_small()
+            .text_body()
             .text_color(theme.text_muted)
             .child("Nothing to undo yet")
             .into_any_element()
@@ -668,7 +668,7 @@ fn history_row(
                     .overflow_hidden()
                     .whitespace_nowrap()
                     .text_ellipsis()
-                    .text_small()
+                    .text_body()
                     .when(undone, |d| d.text_color(theme.text_muted)),
                 title,
             )),
@@ -729,7 +729,7 @@ fn history_row(
                 )
                 .child(after)
         }),
-        _ => why_said.map(|why| div().text_small().text_color(theme.text_muted).child(why)),
+        _ => why_said.map(|why| div().text_body().text_color(theme.text_muted).child(why)),
     };
     let mut buttons = div().flex().flex_none().items_center().gap_1();
     if !row.with.is_empty()

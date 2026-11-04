@@ -366,7 +366,7 @@ impl SettingsView {
             .when(!description.is_empty(), |d| {
                 d.child(
                     div()
-                        .text_small()
+                        .text_body()
                         .text_color(theme.text_muted)
                         .child(description),
                 )
@@ -695,7 +695,7 @@ impl SettingsView {
                 .border_color(theme.border)
                 .bg(theme.bg)
                 .text_color(theme.text)
-                .text_small()
+                .text_body()
                 .font_family(theme.font.clone())
                 .shadow_lg()
                 .occlude()
@@ -885,7 +885,7 @@ impl SettingsView {
                 .border_color(theme.border)
                 .bg(theme.bg)
                 .text_color(theme.text)
-                .text_small()
+                .text_body()
                 .font_family(theme.font.clone())
                 .shadow_lg()
                 .occlude()
@@ -983,7 +983,7 @@ impl SettingsView {
             d.child(
                 div()
                     .id(SharedString::from(format!("description-{key}")))
-                    .text_small()
+                    .text_body()
                     .text_color(theme.text_muted)
                     .child(shown.to_owned())
                     .when(more, |d| {
@@ -999,7 +999,7 @@ impl SettingsView {
             .flex()
             .items_center()
             .gap(sized(6.))
-            .text_small()
+            .text_body()
             .text_color(theme.error)
             .child(controls::glyph("warning", theme.error, 13.))
             .child(div().flex_1().min_w_0().child(error))
@@ -1319,7 +1319,7 @@ impl SettingsView {
                         .flex()
                         .items_center()
                         .gap(sized(6.))
-                        .text_small()
+                        .text_body()
                         .text_color(theme.text_muted)
                         .child(controls::glyph(icon, theme.text_muted, 13.))
                         .child(text),
@@ -1346,7 +1346,7 @@ impl SettingsView {
                         .flex()
                         .items_center()
                         .gap(sized(6.))
-                        .text_small()
+                        .text_body()
                         .text_color(color)
                         .child(controls::glyph(icon, color, 13.))
                         .child(text),
@@ -1742,7 +1742,7 @@ impl Render for SettingsView {
                     .when(!subtitle.is_empty(), |d| {
                         d.child(
                             div()
-                                .text_small()
+                                .text_body()
                                 .text_color(theme.text_muted)
                                 .child(subtitle),
                         )

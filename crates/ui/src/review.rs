@@ -435,7 +435,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         )
         // What the plan left out, and why; what a question means.
         .when_some(note, |d, note| {
-            d.child(div().text_small().text_color(theme.text_muted).child(note))
+            d.child(div().text_body().text_color(theme.text_muted).child(note))
         })
         .when_some(within, |d, within| {
             d.child(clipped(

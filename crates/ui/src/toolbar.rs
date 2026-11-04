@@ -132,7 +132,7 @@ impl Render for Tip {
         let theme = cx.global::<Theme>();
         div()
             .font_family(theme.font.clone())
-            .text_small()
+            .text_body()
             .text_color(theme.text)
             .bg(theme.surface)
             .border_1()

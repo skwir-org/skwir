@@ -87,8 +87,9 @@ working in an area, also read that area's rules (see
   (`theme.font`, `reading_font`, `code_font`, ADR-073), read where it is
   drawn and never copied: a change shows at once. A text size is a named
   size (`sizes::TextSizes`: Body for a name or a value you read or
-  choose, Small for what labels or describes it, Tiny for a badge,
-  Title for a dialog's title; ADR-117), never `text_xs` or a literal;
+  choose and for anything written as a sentence, Small for a short
+  label in a tight place, Tiny for a badge, Title for a dialog's title;
+  ADR-117), never `text_xs` or a literal;
   a length that holds text is written at 100 % and grows with it
   (`sizes::sized`, `sizes::Scale`), while pictures and icons keep
   their size.

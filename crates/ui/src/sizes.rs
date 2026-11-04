@@ -14,10 +14,12 @@
 //!   spacing scale, `p_1`, `gap_2`) follows it.
 //! - **Named sizes** (`TextSizes`): every place writes at one of them,
 //!   never `text_xs` or a literal. A name or a value you read or choose
-//!   (a file, a place, a tab, a menu item, a property's value) is Body;
-//!   what labels or describes it (a heading, a count, a caption, a
-//!   button's label, a shortcut) is Small; a badge is Tiny; the title of
-//!   a dialog or a panel is Title. Text an element paints itself takes
+//!   (a file, a place, a tab, a menu item, a property's value, a choice
+//!   in a list) and anything written as a sentence (a tooltip, a
+//!   setting's description, a message, a hint) is Body; a short label in
+//!   a tight place (a heading, a count, a caption, a button's label, a
+//!   column's header, a shortcut) is Small, nine tenths of the body; a
+//!   badge is Tiny; the title of a dialog or a panel is Title. Text an element paints itself takes
 //!   the same sizes from the rem in force (`painted`).
 //! - **Lengths written at 100 %** (a row's 26 px, a column's width) grow
 //!   with the text of where they are drawn: in rems (`sized`, laid out
@@ -44,8 +46,10 @@ pub const REM: f32 = 16.;
 /// The share of a rem that is a part's body text (gpui's `text_sm`).
 const BODY_REMS: f32 = 0.875;
 
-/// The named text sizes, as shares of the rem in force: 14, 12, 10 and
-/// 18 px at 100 %.
+/// The named text sizes, as shares of the rem in force: 14, 12.6, 10 and
+/// 18 px where the body is 14 px; Small is nine tenths of the body, a
+/// step the eye sees that never falls far below it (12 px at a desktop's
+/// 10 pt).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Text {
     /// A name or a value you read or choose.
@@ -62,7 +66,7 @@ impl Text {
     pub fn rems(self) -> f32 {
         match self {
             Text::Body => BODY_REMS,
-            Text::Small => 0.75,
+            Text::Small => BODY_REMS * 0.9,
             Text::Tiny => 0.625,
             Text::Title => 1.125,
         }
@@ -72,14 +76,15 @@ impl Text {
 /// The named sizes on anything styled, in the rem in force: the window's
 /// (the interface's), a pane's view's (the files'), ADR-117.
 pub trait TextSizes: Styled + Sized {
-    /// A name or a value you read or choose: a file, a place, a tab, a
-    /// menu item, a property's value.
+    /// A name or a value you read or choose (a file, a place, a tab, a
+    /// menu item, a property's value), and anything written as a
+    /// sentence (a tooltip, a description, a message, a hint).
     fn text_body(self) -> Self {
         self.text_size(rems(Text::Body.rems()))
     }
 
-    /// What labels or describes it: a heading, a count, a caption, a
-    /// button's label, a shortcut.
+    /// A short label in a tight place: a heading, a count, a caption, a
+    /// button's label, a column's header, a shortcut. Never a sentence.
     fn text_small(self) -> Self {
         self.text_size(rems(Text::Small.rems()))
     }

@@ -533,7 +533,7 @@ pub fn render(
         )
         .child(
             div()
-                .text_small()
+                .text_body()
                 .text_color(theme.text_muted)
                 .child(format!("Nothing is {done} until you choose.")),
         )
@@ -544,7 +544,7 @@ pub fn render(
                 .iter()
                 .any(skwir_core::op::clash::replaces_for_good),
             |d| {
-                d.child(div().text_small().text_color(theme.warning).child(format!(
+                d.child(div().text_body().text_color(theme.warning).child(format!(
                     "“{dest}” is in a network folder, which keeps no trash: \
                      what is replaced there is deleted for good."
                 )))

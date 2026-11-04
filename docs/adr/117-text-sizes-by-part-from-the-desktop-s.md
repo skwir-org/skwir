@@ -80,9 +80,13 @@ Qt's settings (4).
 5. **Sizes are tokens, as colours are.** The theme names a few sizes,
    Body, Small and Tiny (step 3), and every place names one of them
    rather than `text_xs` or a literal: a name or value you read or
-   choose is Body, what labels or describes it is Small, badges Tiny.
-   Grid names are Body (step 1), as are tab titles and Properties'
-   values, their labels muted (step 3).
+   choose, and anything written as a sentence (a tooltip, a setting's
+   description, a message, a hint), is Body; a short label in a tight
+   place (a button's, a column's header, a count, a caption, a
+   shortcut) is Small, nine tenths of the body (amended 2026-11-05: it
+   was six sevenths, 11.4 px at a desktop's 10 pt); badges Tiny. Grid
+   names are Body (step 1), their lines 1.2 times the text, as are tab
+   titles and Properties' values, their labels muted (step 3).
 6. **The preview's picker changes the file shown;** Reading's and Code's
    settings are where each file starts, and the picker shows the same
    percentages. Tables and the byte view follow it (step 2).
@@ -154,4 +158,21 @@ apart, and changes how gpui maps the pointer.
   the guide says what is followed and the X11 workarounds. A change of
   qt5ct's or qt6ct's file is taken in at the next change the desktop
   says, or the next start: it is not watched.
+- Reviewed beside 0.3.0, 2026-11-05 (the release's AppImage and the
+  build of step 4 on one display, one folder, the reference machine's
+  settings): body text 14 to 13.3 px at the desktop's 10 pt, as GTK's
+  applications there draw it (Dolphin looked as large as 0.3.0 because
+  qt5ct names DejaVu Sans, about 6 % wider than Noto Sans); Small text
+  12 to 11.4 px, below anything a native application there draws, in
+  about 170 places; grid names in the same label, about 10 % fewer
+  characters a line, their lines looser (17 px for 13.3 px). A trial
+  with every Small as Body read better but overflowed the settings'
+  choices. The user chose: Automatic keeps following the desktop's
+  size exactly (a desktop at 10.5 pt gives 0.3.0's 14 px); sentences
+  become Body (40 places: tooltips, settings' descriptions and
+  choices, toasts' reasons, messages, notes and hints, the preview's
+  line of facts, History's and Activity's actions); Small becomes nine
+  tenths of the body (12 px at 10 pt, as in 0.3.0); grid lines 17 px at
+  100 %. Fonts from gains "Skwir's own" and leaves Desktop colors (the
+  next commit).
 

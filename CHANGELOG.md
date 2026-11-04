@@ -10,7 +10,8 @@
   and Properties' values as large as the sidebar's places. At 100 % Skwir now
   writes at your desktop's font size, times its text scaling, as its other
   applications do: on a desktop at 10 pt, text is 13.3 px rather than 14, a
-  little smaller than before. Where GTK and Qt are set up apart, **Fonts from**
+  little smaller than before, while tooltips, settings' descriptions and
+  messages are written at that size rather than smaller. Where GTK and Qt are set up apart, **Fonts from**
   (Settings › Appearance) chooses whose fonts Skwir follows, and About's Copy
   details says the display's scale and the text's sizes.
   Reading and code have sizes of their own too (Settings › Reading): each file

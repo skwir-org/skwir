@@ -192,7 +192,7 @@ pub fn render(
         .when(!placeholder.detail.is_empty(), |d| {
             d.child(
                 div()
-                    .text_small()
+                    .text_body()
                     .text_color(theme.text_muted)
                     .child(placeholder.detail),
             )

@@ -268,7 +268,7 @@ pub fn footer(
             div()
                 .flex_1()
                 .min_w_0()
-                .text_small()
+                .text_body()
                 .text_color(theme.text_muted)
                 .child(hint.into()),
         )

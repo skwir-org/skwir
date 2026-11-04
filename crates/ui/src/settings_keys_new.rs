@@ -761,7 +761,7 @@ impl SettingsView {
                         page = page.child(
                             div()
                                 .pt_2()
-                                .text_small()
+                                .text_body()
                                 .text_color(theme.text_muted)
                                 .child(why),
                         );
@@ -931,7 +931,7 @@ impl SettingsView {
             if !one.description.is_empty() {
                 row = row.child(
                     div()
-                        .text_small()
+                        .text_body()
                         .text_color(theme.text_muted)
                         .child(one.description),
                 );

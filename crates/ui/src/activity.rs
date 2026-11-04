@@ -1603,7 +1603,7 @@ fn body(
             div()
                 .px_3()
                 .py_2()
-                .text_small()
+                .text_body()
                 .text_color(theme.text_muted)
                 .child("Nothing under way. What was done is in the Undo history.")
                 .into_any_element(),
@@ -1884,14 +1884,14 @@ fn earlier_row(
                         .overflow_hidden()
                         .whitespace_nowrap()
                         .text_ellipsis()
-                        .text_small(),
+                        .text_body(),
                     ended.text.clone(),
                 ))
                 // Said whole, wrapped: the keyboard's user reads it here.
                 .children(held.clone().map(|why| {
                     div()
                         .min_w_0()
-                        .text_small()
+                        .text_body()
                         .text_color(theme.text_muted)
                         .child(why)
                 })),
