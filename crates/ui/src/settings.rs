@@ -3344,7 +3344,26 @@ impl SettingsView {
         if narrowed.kept.is_empty() {
             return;
         }
-        narrowed.highlighted = mv.from(narrowed.highlighted, narrowed.kept.len());
+        let len = narrowed.kept.len();
+        narrowed.highlighted = match mv {
+            // A page is the rows in sight, as the list was last laid out
+            // (its prepaint's sizes, read again for paging alone): fewer
+            // where the popover gave way, or where rows hold pictures.
+            crate::modal::ListMove::Page(pages) => {
+                let laid = narrowed.scroll.0.borrow().last_item_size;
+                let page = laid
+                    .and_then(|laid| {
+                        // Its rows are one height: what they all take over
+                        // how many there are.
+                        let row = f32::from(laid.contents.height) / len as f32;
+                        (row > 0.).then(|| (f32::from(laid.item.height) / row).floor())
+                    })
+                    .map_or(crate::modal::PICKER_ROWS, |rows| (rows as usize).max(1));
+                let to = narrowed.highlighted.cast_signed() + pages * page.cast_signed();
+                to.clamp(0, len.cast_signed() - 1).cast_unsigned()
+            }
+            mv => mv.from(narrowed.highlighted, len),
+        };
         narrowed
             .scroll
             .scroll_to_item(narrowed.highlighted, gpui::ScrollStrategy::Nearest);

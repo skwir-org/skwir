@@ -146,6 +146,16 @@ const SWATCH_ROW: f32 = 24.;
 const SWATCH_CONTROL: f32 = 18.;
 /// How much taller a list's row is when its choices have pictures.
 const PICTURED_ROW: f32 = 32.;
+/// What a row or a control holds around a picture, above and below it.
+const AROUND_PICTURE: f32 = 2.;
+
+/// A row's height in pixels: `at_100` at the interface's text size, or its
+/// picture's with room around it where that is taller, as a list's row is
+/// its text's height or its icon's (ADR-117).
+fn row_px(at_100: f32, picture: Option<f32>, theme: &Theme) -> f32 {
+    let text = theme.sizes.scale(crate::sizes::Part::Interface).f(at_100);
+    picture.map_or(text, |picture| text.max(picture + 2. * AROUND_PICTURE))
+}
 
 /// A window in miniature, `height` tall, drawn in a choice's colors
 /// (`SettingConstraints::swatches`): its top bar and sidebar in the
@@ -791,6 +801,7 @@ impl SettingsView {
             .spec
             .swatch_of(&row.value)
             .map(|chosen| swatch(&chosen, SWATCH_CONTROL).into_any_element());
+        let pictured = picture.is_some();
         let mut element = div().child(
             self.named(
                 controls::dropdown_with(
@@ -800,6 +811,10 @@ impl SettingsView {
                     focus,
                     theme,
                 )
+                // Never lower than its picture, at a small text size.
+                .when(pictured, |d| {
+                    d.min_h(px(SWATCH_CONTROL + 2. * AROUND_PICTURE))
+                })
                 .when(in_table, |d| d.min_w(sized(TABLE_CHOICE)))
                 .when_some(written_in, gpui::Styled::font_family),
                 row,
@@ -909,17 +924,32 @@ impl SettingsView {
         let count = narrowed.kept.len();
         let field = narrowed.field.focus_handle(cx);
         let (value, a11y) = (row.value.clone(), self.a11y);
-        // Each choice's picture, where its owner draws them, in the order
-        // of `choices`; its rows taller to hold them.
-        let pictures: std::rc::Rc<[Option<skwir_core::settings::Swatch>]> = narrowed
-            .choices
-            .iter()
-            .map(|(choice, _)| row.spec.swatch_of(choice))
-            .collect();
+        // Each choice's picture, where its owner draws them: `choices` are
+        // the spec's, in its order, so its swatches are read by place (a
+        // place whose value moved, until the list is made again, has none),
+        // and nothing is asked of a list without any (a font's families).
+        let constraints = &row.spec.constraints;
+        let pictures: std::rc::Rc<[Option<skwir_core::settings::Swatch>]> =
+            if constraints.swatches.is_empty() {
+                std::rc::Rc::from([])
+            } else {
+                narrowed
+                    .choices
+                    .iter()
+                    .enumerate()
+                    .map(|(at, (choice, _))| {
+                        (constraints.choices.get(at) == Some(choice))
+                            .then(|| constraints.swatches.get(at).copied().flatten())
+                            .flatten()
+                    })
+                    .collect()
+            };
+        // In pixels, as the list is counted: its rows' text's height, or
+        // their pictures' where taller.
         let row_height = if pictures.iter().any(Option::is_some) {
-            PICTURED_ROW
+            row_px(PICTURED_ROW, Some(SWATCH_ROW), theme)
         } else {
-            CHOICE_ROW
+            row_px(CHOICE_ROW, None, theme)
         };
         let rows = gpui::uniform_list(
             SharedString::from(format!("choices-{key}-rows")),
@@ -940,7 +970,7 @@ impl SettingsView {
                             Some(
                                 crate::modal::option(option, named, at, highlighted, &field)
                                     .w_full()
-                                    .h(sized(row_height))
+                                    .h(px(row_height))
                                     .px_2()
                                     .flex()
                                     .items_center()
@@ -998,7 +1028,7 @@ impl SettingsView {
         // field nor the specimen, which would run past the window's foot.
         let list = crate::modal::options("choices-list", "Choices", count, a11y)
             .relative()
-            .h(sized(row_height * count.clamp(1, LONG_ROWS) as f32))
+            .h(px(row_height * count.clamp(1, LONG_ROWS) as f32))
             .min_h_0()
             .child(rows)
             .when(count == 0, |d| {
