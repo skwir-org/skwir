@@ -281,10 +281,13 @@ around the views is in [shell.md](shell.md).
 ## Text size (ADR-117)
 
 - A pane's view is drawn in the files' rem (`elements::rem`, from
-  `Theme::sizes`, the Files text size): `text_sm` is a name's size there
-  in every view (the list's rows, the grid's labels, the board's cards),
-  `text_xs` a detail's, a header's, a caption's. A grid label is a name:
-  never smaller than the list's.
+  `Theme::sizes`, the Files text size), where the named sizes
+  (`sizes::TextSizes`) are the files': a name is Body in every view (the
+  list's rows, the grid's labels, the board's cards), a detail, a
+  column's header and a caption Small. A grid label is a name: never
+  smaller than the list's. Text a view's element paints itself (Usage's
+  map) takes the same sizes from the rem in force (`sizes::painted`),
+  and the lengths around it grow with it.
 - A length that holds text is written at 100 % and drawn at the files'
   scale, in whole pixels (`sizes::Scale`): a row (`list::row_height`),
   a grid label's line and least width, a caption's line, a column's and

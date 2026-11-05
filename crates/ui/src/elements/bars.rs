@@ -146,9 +146,13 @@ impl IntoElement for BarChart {
 /// Inside the element: a margin on each side, the labels' line at the
 /// bottom, the counts' above the bars when they are said.
 const SIDE: f32 = 8.;
-const AXIS: f32 = 16.;
-const TALLY: f32 = 13.;
-const FONT: f32 = 11.;
+/// The lines its labels and counts are written on, as shares of their size
+/// (Small where the chart is drawn, ADR-117): the axis under the bars holds
+/// a label's line and the 2 px above it, a count's line is above its bar.
+const AXIS: f32 = 16. / 11.;
+const TALLY: f32 = 13. / 11.;
+/// What a line of the wheel turns, in pixels.
+const WHEEL_LINE: f32 = 16.;
 /// Room kept between two labels, and between a count and the next.
 const SPACE: f32 = 6.;
 /// A label at a period's start is drawn this far after its tick.
@@ -234,6 +238,9 @@ struct Laid {
     /// From one bar to the next.
     pitch: f32,
     left: Pixels,
+    /// The line a label is written on, and a count's.
+    label_line: f32,
+    tally_line: f32,
 }
 
 /// What a chart laid out, kept between frames by what it was laid out from
@@ -276,18 +283,27 @@ fn shape(
                 strikethrough: None,
                 position: gpui::RunPosition::Baseline,
             };
-            // At the size of the text where the chart is drawn (ADR-117).
-            let size = px(FONT * crate::sizes::Scale::of(window).0);
             window
                 .text_system()
-                .shape_line(text.clone(), size, &[run], None)
+                .shape_line(text.clone(), label_size(window), &[run], None)
         })
         .clone()
 }
 
+/// The labels' and counts' size: Small, in the rem where the chart is
+/// drawn (ADR-117).
+fn label_size(window: &Window) -> Pixels {
+    crate::sizes::painted(window, crate::sizes::Text::Small)
+}
+
+/// The axis' line and a count's, in whole pixels, for labels of `size`.
+fn lines(size: Pixels) -> (f32, f32) {
+    let size = f32::from(size);
+    ((size * AXIS).round(), (size * TALLY).round())
+}
+
 fn lay_out(bars: &[Bar], colors: BarColors, bounds: Bounds<Pixels>, window: &Window) -> Laid {
-    // The labels' lines at the size of the text where it is drawn.
-    let s = crate::sizes::Scale::of(window).0;
+    let (axis, tally_line) = lines(label_size(window));
     let n = bars.len().max(1);
     let left = bounds.origin.x + px(SIDE);
     let width = (f32::from(bounds.size.width) - 2. * SIDE).max(1.);
@@ -307,8 +323,8 @@ fn lay_out(bars: &[Bar], colors: BarColors, bounds: Bounds<Pixels>, window: &Win
         .iter()
         .flatten()
         .all(|t| f32::from(t.width) + SPACE <= pitch);
-    let top = bounds.origin.y + px(if say_tallies { TALLY * s } else { 4. });
-    let floor = bounds.origin.y + bounds.size.height - px(AXIS * s);
+    let top = bounds.origin.y + px(if say_tallies { tally_line } else { 4. });
+    let floor = bounds.origin.y + bounds.size.height - px(axis);
     let high = f32::from(floor - top).max(1.);
     let heights = bar_heights(bars.iter().map(|b| b.value), high);
     let mut slots = Vec::with_capacity(bars.len());
@@ -334,7 +350,7 @@ fn lay_out(bars: &[Bar], colors: BarColors, bounds: Bounds<Pixels>, window: &Win
         if say_tallies && let Some(tally) = &tallies[i] {
             let at = point(
                 bar.origin.x + (bar.size.width - tally.width) / 2.,
-                bar.origin.y - px(TALLY * s),
+                bar.origin.y - px(tally_line),
             );
             said.push((at, tally.clone()));
         }
@@ -380,6 +396,8 @@ fn lay_out(bars: &[Bar], colors: BarColors, bounds: Bounds<Pixels>, window: &Win
         tallies: said,
         pitch,
         left,
+        label_line: axis - 2.,
+        tally_line,
     }
 }
 
@@ -515,9 +533,8 @@ impl Element for BarChart {
                     gpui::BorderStyle::Solid,
                 ));
             }
-            let s = crate::sizes::Scale::of(window).0;
-            let lines = (laid.labels.iter().map(|l| (l, (AXIS - 2.) * s)))
-                .chain(laid.tallies.iter().map(|t| (t, TALLY * s)));
+            let lines = (laid.labels.iter().map(|l| (l, laid.label_line)))
+                .chain(laid.tallies.iter().map(|t| (t, laid.tally_line)));
             for ((at, text), height) in lines {
                 if let Err(error) =
                     text.paint(*at, px(height), gpui::TextAlign::Left, None, window, cx)
@@ -603,7 +620,7 @@ impl Element for BarChart {
                 if phase != DispatchPhase::Bubble || !hitbox.should_handle_scroll(window) {
                     return;
                 }
-                let delta = ev.delta.pixel_delta(px(AXIS));
+                let delta = ev.delta.pixel_delta(px(WHEEL_LINE));
                 // Across or down, whichever the wheel turned more: up and
                 // left go back in time.
                 let turned = if delta.x.abs() > delta.y.abs() {

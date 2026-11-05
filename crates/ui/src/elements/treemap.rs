@@ -105,7 +105,8 @@ impl Treemap {
         self
     }
 
-    /// Record the top level's blocks in `laid` at each prepaint.
+    /// Record in `laid` where each block was laid out, at every depth
+    /// drawn, at each prepaint.
     pub fn record(mut self, laid: Laidout) -> Self {
         self.record = Some(laid);
         self
@@ -159,9 +160,11 @@ const GAP: f64 = 3.0;
 const HEADER: f64 = 22.0;
 /// A tile's corners, by depth: smaller inside.
 const RADII: [f32; 3] = [6., 5., 4.];
-/// A name, and what it weighs.
-const FONT: f32 = 11.5;
-const SMALL: f32 = 11.0;
+/// What the lengths around the labels (lines, insets, a tray's header)
+/// are written for: labels of this size. The labels, a name and what it
+/// weighs, are Small where the map is drawn (ADR-117), and the lengths grow
+/// with them (`label_metrics`).
+const WRITTEN_FOR: f32 = 11.5;
 /// A label's line, and its inset from its tile's sides.
 const LINE: f64 = 15.0;
 const INSET: f64 = 7.0;
@@ -197,7 +200,9 @@ struct Weight {
 /// of a name tells files apart.
 struct Labels<'a> {
     window: &'a Window,
-    /// The labels' metrics at the size the map is drawn (ADR-117).
+    /// The labels' size, and how much larger than `WRITTEN_FOR` it is
+    /// (`label_metrics`).
+    size: f32,
     s: f64,
     tile: Weight,
     header: Weight,
@@ -217,10 +222,17 @@ fn run(font: &Font, len: usize, color: Hsla) -> TextRun {
     }
 }
 
+/// The labels' size, Small in the rem where the map is drawn (ADR-117),
+/// and the scale of the lengths written for `WRITTEN_FOR` around them.
+fn label_metrics(window: &Window) -> (f32, f64) {
+    let size = f32::from(crate::sizes::painted(window, crate::sizes::Text::Small));
+    (size, f64::from(size / WRITTEN_FOR))
+}
+
 impl Labels<'_> {
-    /// A name's size.
+    /// A label's size.
     fn font(&self) -> f32 {
-        FONT * self.s as f32
+        self.size
     }
 
     /// `text` shaped to fit `width`, in a header's weight or a tile's,
@@ -267,7 +279,7 @@ impl Labels<'_> {
         }
         let line = self.window.text_system().shape_line(
             text.clone(),
-            px(SMALL * self.s as f32),
+            px(self.size),
             &[run(&self.font, text.len(), color)],
             None,
         );
@@ -427,8 +439,7 @@ impl Element for Treemap {
         cx: &mut App,
     ) -> Self::PrepaintState {
         let font = window.text_style().font();
-        // Labels at the size of the text where the map is drawn (ADR-117).
-        let s = f64::from(crate::sizes::Scale::of(window).0);
+        let (size, s) = label_metrics(window);
         let from = (
             Rc::as_ptr(&self.items) as usize,
             bounds,
@@ -453,15 +464,14 @@ impl Element for Treemap {
                     ..font.clone()
                 };
                 Weight {
-                    wrapper: cx
-                        .text_system()
-                        .line_wrapper(font.clone(), px(FONT * s as f32)),
+                    wrapper: cx.text_system().line_wrapper(font.clone(), px(size)),
                     font,
                     least,
                 }
             };
             let mut labels = Labels {
                 window,
+                size,
                 s,
                 tile: weight(FontWeight::MEDIUM, LEAST),
                 header: weight(FontWeight::SEMIBOLD, LEAST_HEADER),
@@ -521,7 +531,7 @@ impl Element for Treemap {
         cx: &mut App,
     ) {
         let style = self.style;
-        let s = f64::from(crate::sizes::Scale::of(window).0);
+        let (_, s) = label_metrics(window);
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             for b in prepaint.blocks.iter() {
                 let (tile, corners) = (b.tile, Corners::all(b.radius));
