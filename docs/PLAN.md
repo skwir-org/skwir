@@ -34,8 +34,8 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
 ## Current status (2026-11-05)
 
 - **Where:** named Skwir (skwir.org, application id `org.skwir.skwir`),
-  version 0.3.1, dated 2026-11-05; 0.3.0 was released 2026-11-03 on
-  GitHub and the AUR's three bases, 0.2.0 2026-10-20, 0.1.0
+  version 0.3.1, released 2026-11-05 on GitHub and the AUR's three
+  bases; 0.3.0 was released 2026-11-03, 0.2.0 2026-10-20, 0.1.0
   [released](#release-01-linux) 2026-10-13. Phases 0 to 4, 5a and 6 pass their gates. Maps and Notes
   everywhere are built, their gates not closed, as is much that no phase
   planned ([Built beyond the plan](#built-beyond-the-plan)).
@@ -61,14 +61,15 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
   checks and package builds kept as manual fallbacks. The manual full
   workflow, whose `native` job tests on macOS and Windows runners, has
   never run (no run on 2026-10-20).
-- **Budgets:** idle own share **103.7 MiB of 100, over**: 0.3.0's
-  tarball on the session's display (quiet, 2026-11-03), where 0.2.0's
-  read 91.3. Its code grew by a quarter and most of it is resident at
-  idle; the user released 0.3.0 so, and the work is under [What is
-  left](#what-is-left). First frame of 150 ms: the least 137 ms for
-  0.3.0's tarball and 113 for 0.2.0's (nine starts each, alternated),
-  both medians near 160. `just bench-check` meets all 51 budgets
-  (2026-11-03, quiet).
+- **Budgets:** idle own share **103.8 MiB of 100, over**: 0.3.1's
+  tarball on the session's display (quiet, 2026-11-05), where 0.3.0's
+  read 103.2 the same evening (103.7 on 11-03) and 0.2.0's 91.3. 0.3.0's
+  code grew by a quarter and most of it is resident at idle; the user
+  released 0.3.0 and 0.3.1 so, and the work is under [What is
+  left](#what-is-left). First frame of 150 ms: the least 147 ms for
+  0.3.1's tarball and 116 for 0.3.0's (nine starts each, alternated),
+  medians 159 and 154. `just bench-check` meets all 51 budgets
+  (2026-11-05, quiet).
 - **Latest work (2026-11-04 to 11-05), in 0.3.1:** text sizes by part
   from the desktop's (ADR-117), Fonts from and Colors from, twelve
   palettes and the desktop's colors on macOS and Windows (ADR-071
@@ -767,9 +768,10 @@ on the machines (`docs/HELP-WANTED.md`, `docs/PORTING.md`, which lists
 what is still Linux's); Phase 8; what [Remote folders](#remote-folders)
 leave (ADR-077).
 
-**From the release of 0.3.0** (2026-11-03, `docs/STATUS-LOG.md`):
-- Idle memory misses ADR-000's budget: 103.7 MiB of own share against
-  0.2.0's 91.3, on the session's display. Most of it is the binary: its
+**From the releases of 0.3.0 and 0.3.1** (2026-11-03 and 11-05,
+`docs/STATUS-LOG.md`):
+- Idle memory misses ADR-000's budget: 103.7 MiB of own share for 0.3.0
+  against 0.2.0's 91.3, on the session's display, and 103.8 for 0.3.1. Most of it is the binary: its
   code grew from 54 to 68 MiB and in both releases about 86 % of it is
   resident at idle, so idle memory follows code size. Find why so much
   of it is resident (more than an idle program runs), or make it

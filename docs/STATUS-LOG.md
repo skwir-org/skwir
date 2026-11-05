@@ -11550,3 +11550,65 @@ commits).
   before. `cargo clippy -p skwir-ui --all-targets -D warnings` and its
   tests (537) green.
 
+
+## Release 0.3.1 (2026-11-05)
+
+Released on GitHub and the AUR's three bases: the annotated tag
+`v0.3.1` on the Release commit 1c246df3, made after 0.3.0's two
+leftovers and a crowded footer were fixed (8a34dc72, 7aa56577,
+458966e5, the entry above) and the README's screenshots made again
+(9bf13be0). The release build found nothing to fix.
+
+- **Arch's packages, Windows' and macOS's builds tried alone first**
+  (20:16 to 21:05: macOS 7½ minutes, Windows 8, Arch 34), as a run of
+  `release-build` has no resume.
+- **One run of `release-build` (21:06 to 23:07) passed whole:**
+  release-check (3082 tests passed, 30 skipped; smoke, a11y, the
+  Poppler, MuPDF and DjVu checks, all 51 bench budgets met), the
+  AppImage and tarball, Debian's, Ubuntu's, Fedora's and Arch's packages
+  built and installed in fresh roots, Windows' zip and installer tried
+  under Wine, macOS's zip and disk image looked over. `release-verify`
+  passed.
+- **Skwir's own fonts (ADR-118)**, looked for in each package opened:
+  the ten Inter and JetBrains Mono files under `share/skwir/fonts`, and
+  both families' licences, in the AppImage, the tarball, Debian's,
+  Ubuntu's and Fedora's packages, Windows' zip and macOS's. Arch's,
+  built from the AUR's PKGBUILD, carries none and names `inter-font`
+  and `ttf-jetbrains-mono` as optional, as the review's PK-1 meant.
+- **Personal data:** the 67 commits not pushed before, and their
+  messages, scanned for the machine's own names (its host, its user,
+  its disks' labels, serials and identifiers): only false positives.
+- **Idle memory and the first frame**, on the session's display
+  (NVIDIA, load 0.2 to 0.4): the two releases' tarballs alternated,
+  three rounds of three starts each, run through Nix's glibc loader as
+  for 0.3.0.
+
+  | Median | 0.3.0 | 0.3.1 |
+  | --- | --- | --- |
+  | own share | 103.2 MiB | 103.8 MiB |
+  | the binary | 58.3 MiB | 58.6 MiB |
+  | anonymous | 30.8 MiB | 31.0 MiB |
+  | GPU buffers | 11.6 MiB | 11.6 MiB |
+  | GPU driver code | 47.9 MiB | 47.9 MiB |
+  | first frame, least and median | 116 and 154 ms | 147 and 159 ms |
+
+  0.3.1 reads 0.6 MiB above 0.3.0, still over ADR-000's 100 MiB: its
+  code is 0.4 MiB larger (`.text`, 67.9 to 68.3 MiB), 0.3 MiB more of
+  the binary resident. The first frames are equal within their spread
+  (116 to 175 ms), idle CPU 0.2 to 0.6 % for both (NVIDIA's thread).
+  The user chose to release 0.3.1 so and record it, as 0.3.0; the work
+  stays in PLAN.md's "What is left".
+- **The release page** is the changelog section's part above
+  `### All changes`, 2.1 KB, as the user approved it, posted as the
+  bundle made it. The draft's 36 files were compared with the bundle by
+  name, size and SHA-256.
+- **The AUR:** `skwir`, `skwir-bin` and `skwir-git` at 0.3.1
+  (`0.3.1.r0.g1c246df`), PDFium still at chromium/8125; `skwir` and
+  `skwir-git` gain the two fonts as optional dependencies, while
+  `skwir-bin`'s tarball carries them. `skwir-bin`'s checksum is the
+  bundle's tarball's; `skwir`'s matched GitHub's archive of the tag,
+  downloaded again.
+
+Not checked: the Windows and macOS builds on their systems; the manual
+`packages` workflow; the AppImage on the session, on GNOME or on
+Plasma.
