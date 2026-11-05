@@ -1447,7 +1447,7 @@ impl State {
     /// rows replace the estimate as they are drawn.
     fn row_estimate(&self, data: &Inspection) -> gpui::Pixels {
         px(match data.kind {
-            InspectionKind::Code => self.font_size.get() + 4.,
+            InspectionKind::Code => crate::code_preview::line_height(self.font_size.get()),
             InspectionKind::Hex | InspectionKind::Archive | InspectionKind::Table => 24.,
             // Prose wraps: call it two and a half lines and the space around
             // them, between a heading and a long paragraph.

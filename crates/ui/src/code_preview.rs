@@ -72,6 +72,14 @@ pub struct CodeRow<'a> {
     pub entity: WeakEntity<Shell>,
 }
 
+/// A code line's height for a view whose body is `font_size` (its code
+/// two pixels smaller): in whole pixels, as gpui lays a line out, so what
+/// is estimated before a line is drawn is what it measures (ADR-117: a
+/// text size is rarely a whole number of pixels).
+pub fn line_height(font_size: f32) -> f32 {
+    (font_size + 4.).round()
+}
+
 /// The digits a gutter holds for `rows` lines: five at least, so it does
 /// not widen as a short text's count grows.
 pub fn digits(rows: u64) -> usize {
@@ -145,7 +153,7 @@ impl CodeRow<'_> {
             .items_start()
             .font_family(mono.clone())
             .text_size(px(font_size - 2.))
-            .line_height(px(font_size + 4.))
+            .line_height(px(line_height(font_size)))
             .when(selected, |d| d.bg(theme.highlight))
             .child(gutter)
             .child(
@@ -199,6 +207,18 @@ mod tests {
         assert_eq!(visible(BTreeSet::from([0, 2])), [0, 7, 8, 9]);
         assert_eq!(visible(BTreeSet::from([0, 2, 7])), [0, 7, 9]);
         assert_eq!(visible(BTreeSet::new()), (0..10).collect::<Vec<_>>());
+    }
+
+    /// A code line is a whole number of pixels at any text size, so its
+    /// estimate before it is drawn is what it measures (ADR-117).
+    #[test]
+    fn a_code_line_is_whole_pixels_at_any_text_size() {
+        assert!((line_height(16.) - 20.).abs() < f32::EPSILON);
+        // A desktop's 10 pt monospace: a 15.33 px body.
+        let body = 10. * 96. / 72. + 2.;
+        let line = line_height(body);
+        assert!((line - line.round()).abs() < f32::EPSILON);
+        assert!((line - (body + 4.)).abs() <= 0.5);
     }
 
     /// Code is as light or dark as skwir unless the settings keep it in a
