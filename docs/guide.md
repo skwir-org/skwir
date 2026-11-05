@@ -674,7 +674,9 @@ says one). It follows them when you change them there. Appearance ›
 **Colors from** chooses: Automatic, GTK's or Qt's alone, as when you
 set them up apart, or one of Skwir's palettes, each drawn beside its
 name as a small window in its colors; Automatic says which it took
-("Automatic (Plasma)"). A scheme is one
+("Automatic (Plasma)"). While the list is open, the window wears the
+palette you point at or move to with the arrows; Enter keeps it, Escape
+goes back to yours. A scheme is one
 look's: with **Theme** on Automatic, Skwir takes the look of a scheme
 that has only one (Breeze Dark is dark), and the other look, chosen,
 is Skwir's own with your accent. When your desktop asks for more

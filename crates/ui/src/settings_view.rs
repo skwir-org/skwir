@@ -971,6 +971,7 @@ impl SettingsView {
                                             && narrowed.highlighted != at
                                         {
                                             narrowed.highlighted = at;
+                                            narrowed.show_highlighted();
                                             cx.notify();
                                         }
                                     }))

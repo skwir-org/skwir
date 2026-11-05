@@ -51,7 +51,14 @@ the reasoning.
   data): the dialog draws it in miniature before each value's name, in
   the choice's list and on its control, in the colors the value would
   give now; nothing is added under the row. Declared again when what
-  they show changes (`settings::show_resolved`).
+  they show changes (`settings::show_resolved`). While its list is open,
+  the row highlighted (by the keys, the pointer or what is typed) is
+  previewed (`settings::previewed`): its owner wears it as if chosen,
+  nothing is saved, and closing the list without taking it (Escape, a
+  click outside, the dialog closed) shows what holds again; one taken
+  stays shown until its save ends, so the look never goes back while the
+  setting waits for its worker. An owner that reads such a setting asks
+  `previewed` first (`ColorSource::chosen`).
 - A setting that applies only while a switch is on says so with
   `SettingSpec::under(switch)` and is declared right after it, in its
   section: the dialog draws it

@@ -208,12 +208,15 @@ pub enum ColorSource {
 }
 
 impl ColorSource {
-    /// What Colors from chooses; a toolkit this system does not read apart
-    /// (a settings file brought from Linux), or a palette no longer
-    /// offered, is Automatic.
+    /// What Colors from chooses, or the palette its list shows before it
+    /// is taken (`settings::previewed`); a toolkit this system does not
+    /// read apart (a settings file brought from Linux), or a palette no
+    /// longer offered, is Automatic.
     pub fn chosen(settings: &Settings) -> Self {
         let toolkits = skwir_platform::desktop_style::TOOLKITS;
-        match settings.get::<String>(COLORS_FROM_KEY).as_deref() {
+        let stored = settings.get::<String>(COLORS_FROM_KEY);
+        let shown = crate::settings::previewed(COLORS_FROM_KEY, stored.as_deref()).or(stored);
+        match shown.as_deref() {
             Some("gtk") if toolkits => ColorSource::Gtk,
             Some("qt") if toolkits => ColorSource::Qt,
             Some(id) => palettes::by_id(id).map_or(ColorSource::Automatic, ColorSource::Palette),

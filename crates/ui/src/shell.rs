@@ -3083,7 +3083,9 @@ impl Shell {
         self.sync_clipboard_files(cx);
         // What the theme is made of: the settings and the desktop's style,
         // both counted up, never down (ADR-071).
-        let revision = self.app.settings.revision() + crate::desktop_style::revision();
+        let revision = self.app.settings.revision()
+            + crate::desktop_style::revision()
+            + crate::settings::preview_revision();
         if revision != self.theme_revision {
             self.theme_revision = revision;
             self.resolve_theme(window, cx);

@@ -431,6 +431,10 @@ macOS's own colors read).
     miniature in the colors it would give now, its look as the theme and
     the system make it. A gallery of cards under the row was built first
     and taken back the same day: the user found it took too much room.
+    Then, asked whether to, the window wears the palette highlighted in
+    the list while it is open, as VS Code's and Zed's theme pickers do:
+    never saved, gone when the list closes without taking it, kept when
+    taken until its save ends (`settings::previewed`).
   - **Checked:** the palettes through the guard in both contrasts and
     both looks (`every_palette_reads_in_either_contrast`), the bound
     above, each code theme offered for its look, the carried themes

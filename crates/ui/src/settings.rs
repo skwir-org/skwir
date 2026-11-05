@@ -518,6 +518,83 @@ pub(crate) struct Shown {
 }
 
 static SHOWN: std::sync::RwLock<Option<Shown>> = std::sync::RwLock::new(None);
+
+/// A choice shown before it is taken: the row highlighted in the list of
+/// a choice whose values look like something
+/// (`SettingConstraints::swatches`), which its owner wears as if chosen
+/// while the list is open (Colors from's palettes, `previewed`). Never
+/// saved. Once taken it stays until the save that sends it ends, so the
+/// look does not go back while the setting waits for its worker.
+struct Preview {
+    key: String,
+    value: String,
+    taken: bool,
+}
+
+static PREVIEW: std::sync::Mutex<Option<Preview>> = std::sync::Mutex::new(None);
+/// Moves each time what is previewed changes: the theme is resolved again
+/// (`Shell::sync`).
+static PREVIEW_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn previews() -> std::sync::MutexGuard<'static, Option<Preview>> {
+    PREVIEW
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// What `key` shows in place of `stored` while one of its values is
+/// previewed: that value, until it is taken and stored.
+pub(crate) fn previewed(key: &str, stored: Option<&str>) -> Option<String> {
+    let previews = previews();
+    let preview = previews.as_ref().filter(|preview| preview.key == key)?;
+    (!preview.taken || stored != Some(preview.value.as_str())).then(|| preview.value.clone())
+}
+
+pub(crate) fn preview_revision() -> u64 {
+    PREVIEW_REVISION.load(std::sync::atomic::Ordering::Acquire)
+}
+
+/// Preview `value` of `key`, or nothing; whether what is shown changed.
+fn preview(next: Option<(&str, &str)>) -> bool {
+    let mut previews = previews();
+    let same = match (previews.as_ref(), next) {
+        (None, None) => true,
+        (Some(was), Some((key, value))) => was.key == key && was.value == value && !was.taken,
+        _ => false,
+    };
+    if same {
+        return false;
+    }
+    *previews = next.map(|(key, value)| Preview {
+        key: key.to_owned(),
+        value: value.to_owned(),
+        taken: false,
+    });
+    PREVIEW_REVISION.fetch_add(1, std::sync::atomic::Ordering::Release);
+    true
+}
+
+/// The value previewed of `key` is taken: kept until its save ends.
+fn preview_taken(key: &str) {
+    if let Some(preview) = previews().as_mut().filter(|preview| preview.key == key) {
+        preview.taken = true;
+    }
+}
+
+/// A save of `sent` ended, as it went: a value taken and sent is shown
+/// as the setting now holds it.
+fn preview_saved(sent: impl Fn(&str) -> bool) -> bool {
+    let mut previews = previews();
+    if previews
+        .as_ref()
+        .is_some_and(|preview| preview.taken && sent(&preview.key))
+    {
+        *previews = None;
+        PREVIEW_REVISION.fetch_add(1, std::sync::atomic::Ordering::Release);
+        return true;
+    }
+    false
+}
 /// The families listed last (`list_fonts`), which a font setting declared
 /// again keeps offering.
 static LISTED: std::sync::RwLock<Option<Arc<crate::fonts::Installed>>> =
@@ -1899,10 +1976,42 @@ pub(crate) struct Narrowed {
     /// moved by the keys and by the pointer.
     pub(crate) highlighted: usize,
     pub(crate) scroll: gpui::UniformListScrollHandle,
+    /// Where its values look like something (`SettingConstraints::swatches`),
+    /// the app told when the one highlighted is shown (`preview`).
+    previews: Option<std::sync::Weak<App>>,
+    /// Whether the one highlighted was taken: its preview then stays until
+    /// it is saved.
+    taken: bool,
     _typed: Subscription,
 }
 
+impl Drop for Narrowed {
+    /// Closed without taking one: what is previewed goes.
+    fn drop(&mut self) {
+        if let Some(app) = &self.previews
+            && !self.taken
+            && preview(None)
+            && let Some(app) = app.upgrade()
+        {
+            app.wake();
+        }
+    }
+}
+
 impl Narrowed {
+    /// Show the choice highlighted as if it were chosen, where its values
+    /// look like something; the window wears it while the list is open.
+    pub(crate) fn show_highlighted(&self) {
+        let Some(app) = &self.previews else { return };
+        let shown = preview(
+            self.highlighted_value()
+                .map(|value| (self.key.as_str(), value)),
+        );
+        if shown && let Some(app) = app.upgrade() {
+            app.wake();
+        }
+    }
+
     /// The choices of `spec`, as stored values and labels.
     pub(crate) fn choices_of(spec: &SettingSpec) -> std::rc::Rc<[(String, String)]> {
         spec.constraints
@@ -2402,6 +2511,10 @@ impl SettingsView {
             let ended = current != id || state != SaveState::Saving;
             if ended {
                 let (_, sent) = self.inflight.take().expect("checked above");
+                // A palette taken from its list is shown as saved now.
+                if preview_saved(|key| sent.contains_key(key)) {
+                    self.app.wake();
+                }
                 match state {
                     _ if current != id => {}
                     SaveState::Failed(error) => {
@@ -2979,6 +3092,7 @@ impl SettingsView {
                     let query = field.read(cx).text().to_owned();
                     if let Some(narrowed) = &mut this.narrowed {
                         narrowed.narrow(&query);
+                        narrowed.show_highlighted();
                     }
                     cx.notify();
                 }
@@ -2993,6 +3107,9 @@ impl SettingsView {
             kept: Vec::new(),
             highlighted: 0,
             scroll: gpui::UniformListScrollHandle::new(),
+            previews: (!spec.constraints.swatches.is_empty())
+                .then(|| std::sync::Arc::downgrade(&self.app)),
+            taken: false,
             _typed: typed,
         };
         narrowed.narrow("");
@@ -3020,11 +3137,17 @@ impl SettingsView {
 
     /// Take the choice highlighted.
     pub(crate) fn take_choice(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(narrowed) = &self.narrowed else {
+        let Some(narrowed) = &mut self.narrowed else {
             return;
         };
         let key = narrowed.key.clone();
         let value = narrowed.highlighted_value().map(str::to_owned);
+        // What is previewed is what is taken: it stays until saved.
+        if narrowed.previews.is_some() && value.is_some() {
+            narrowed.show_highlighted();
+            narrowed.taken = true;
+            preview_taken(&key);
+        }
         self.close_choices(window, cx);
         if let Some(value) = value {
             self.change(&key, value, cx);
@@ -3042,6 +3165,7 @@ impl SettingsView {
         narrowed
             .scroll
             .scroll_to_item(narrowed.highlighted, gpui::ScrollStrategy::Nearest);
+        narrowed.show_highlighted();
         cx.notify();
     }
 
@@ -3741,5 +3865,70 @@ mod tests {
         let paper = spec().swatch_of("paper").unwrap();
         assert!(paper.dark);
         assert_eq!(paper.ground, 0x1f_1d1a);
+    }
+
+    #[test]
+    fn a_value_previewed_shows_until_its_list_closes_or_it_is_saved() {
+        use super::{preview, preview_saved, preview_taken, previewed};
+        assert_eq!(previewed("ui.x", Some("a")), None);
+        assert!(preview(Some(("ui.x", "b"))));
+        assert!(
+            !preview(Some(("ui.x", "b"))),
+            "the same again moves nothing"
+        );
+        assert_eq!(previewed("ui.x", Some("a")).as_deref(), Some("b"));
+        assert_eq!(previewed("ui.y", Some("a")), None, "another setting's");
+        // Taken: shown while it is saved, then as the setting holds it.
+        preview_taken("ui.x");
+        assert_eq!(previewed("ui.x", Some("a")).as_deref(), Some("b"));
+        assert_eq!(previewed("ui.x", Some("b")), None);
+        assert!(!preview_saved(|key| key == "ui.y"), "another save");
+        assert!(preview_saved(|key| key == "ui.x"));
+        assert_eq!(
+            previewed("ui.x", Some("a")),
+            None,
+            "a failed save: what holds"
+        );
+        // Closed without taking it: gone.
+        assert!(preview(Some(("ui.x", "c"))));
+        let before = super::preview_revision();
+        assert!(preview(None));
+        assert!(super::preview_revision() > before);
+        assert_eq!(previewed("ui.x", Some("a")), None);
+    }
+
+    #[test]
+    fn colors_from_wears_the_palette_its_list_shows() {
+        use crate::desktop_style::ColorSource;
+        let tmp = tempfile::tempdir().unwrap();
+        let app = App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        declare(&app);
+        app.settings.set(super::COLORS_FROM_KEY, "nord".into());
+        let nord = crate::palettes::by_id("nord").unwrap();
+        assert_eq!(
+            ColorSource::chosen(&app.settings),
+            ColorSource::Palette(nord)
+        );
+        assert!(super::preview(Some((super::COLORS_FROM_KEY, "gruvbox"))));
+        let gruvbox = crate::palettes::by_id("gruvbox").unwrap();
+        assert_eq!(
+            ColorSource::chosen(&app.settings),
+            ColorSource::Palette(gruvbox)
+        );
+        assert_eq!(
+            crate::desktop_style::palette_code(&app.settings, true),
+            Some("gruvbox-dark"),
+            "its code colors too"
+        );
+        assert_eq!(
+            app.settings.text(super::COLORS_FROM_KEY).as_deref(),
+            Some("nord"),
+            "never saved"
+        );
+        assert!(super::preview(None));
+        assert_eq!(
+            ColorSource::chosen(&app.settings),
+            ColorSource::Palette(nord)
+        );
     }
 }

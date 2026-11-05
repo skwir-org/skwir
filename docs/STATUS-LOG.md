@@ -11370,3 +11370,18 @@ LXQt, GNOME or Xfce session; a Kvantum theme's colors (not read).
   Enter took Dracula, worn at once (its Alucard light look) and saved;
   the list in the dark look drawn with each palette's dark picture.
   Clippy clean (skwir-ui).
+- Then the palette highlighted is worn on the whole window while the
+  list is open (the user agreed to the suggestion). `settings::previewed`
+  (a preview never saved, its own revision in the shell's theme sum),
+  `Narrowed::show_highlighted` after the keys, the pointer or a narrowing
+  move the highlight, dropped with the list unless taken; one taken stays
+  until the save that sent it ends (`preview_saved`), as the save runs on
+  a worker. Generic: any choice whose values carry swatches; Colors from
+  reads it in `ColorSource::chosen`, so Default code colors follow too.
+  Tests: the preview's life (shown, the same again, taken, saved, a
+  failed save, dropped) and Colors from wearing a previewed palette
+  without saving it; 518 UI tests. On Xvfb: six Downs wore Gruvbox, two
+  more Dracula's Alucard, Escape gave Skwir's colors back with the file
+  unchanged; five Downs and Enter took Nord, worn at once (captured
+  0.15 s after, "Saved" shown) and saved; the pointer on Gruvbox wore it,
+  a click outside gave Nord back.
