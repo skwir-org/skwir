@@ -213,7 +213,11 @@ apart, and changes how gpui maps the pointer.
   wrote a length (10 px at 100 %, 9.5 at 10 pt) in a chip of a fixed
   16 px, take Tiny (Small on the largest pictures) in a chip that grows,
   and `every_place_names_a_text_size` now refuses a length as a text
-  size. The review, clash and delete dialogs' rows (`modal::Rows`) grow
+  size. Then (the user, the same day: tag chips read too small) a tag's
+  chip is Body on rows, Properties and the preview's header, as the
+  sidebar's places are (it is clicked: read and acted on), 20 px tall at
+  100 %, and Small over a picture, Body over the largest; Tiny is left
+  to History's row label. The review, clash and delete dialogs' rows (`modal::Rows`) grow
   with the text, the review's at a Body line (24 px at 100 %). An empty
   place's title is Body, semibold (in a variable font too since gpui
   patch 0045, ADR-073), and its message is as wide as the

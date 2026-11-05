@@ -11237,3 +11237,16 @@ LXQt, GNOME or Xfce session; a Kvantum theme's colors (not read).
   apart, a wrapped value at the same pitch; sections get 8 px before
   their rule (was 4) so they stay apart. Checked on Xvfb beside the
   build before (a picture's Content, General, Notes); 507 UI tests.
+
+## Tag chips one size up (2026-11-05)
+
+- The user found the tag chips too small, the sidebar's places (Body
+  already) excepted. A chip on a row, in Properties and the preview's
+  header is now Body (it was Small), its "+N" too, 20 px tall at 100 %
+  (`tags::CHIP_HEIGHT`, was 18; the grid's caption lines and the board's
+  tag row follow it), its dot 8 px; over a picture it is Small (was
+  Tiny), 18 px, and Body over the largest (from 192 px, was Small), the
+  picture's "+N" written as its chips are, at least as tall as the dots.
+  Tiny is left to History's row label. Checked on Xvfb: Properties' and
+  the header's chips, the grid's at the default zoom and at a large one;
+  a picture's "+N" not shown in the fixture. 507 UI tests.

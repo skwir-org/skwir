@@ -190,7 +190,9 @@ pub fn named_after_its_color(tag: &str, color: usize) -> bool {
 }
 
 /// A chip's height: rows of chips are one chip tall (the list's wrap).
-pub const CHIP_HEIGHT: f32 = 18.;
+/// Its name is the body text, as the sidebar's places are (ADR-117: a
+/// chip is clicked, read and acted on).
+pub const CHIP_HEIGHT: f32 = 20.;
 
 /// A tag as a chip, in its color: its dot, then its own name (`Paris`
 /// for `Places/France/Paris`), as a row has room for.
@@ -218,12 +220,12 @@ fn chip_frame(color: usize, theme: &Theme) -> Div {
         .flex()
         .items_center()
         .whitespace_nowrap()
-        .pl(sized(5.))
-        .pr(sized(6.))
+        .pl(sized(6.))
+        .pr(sized(7.))
         .rounded_sm()
-        .text_small()
+        .text_body()
         .bg(theme.tag_fill(color))
-        .child(dot(color, theme).size(px(7.)).mr(px(4.)))
+        .child(dot(color, theme).size(px(8.)).mr(px(5.)))
 }
 
 /// A tag's place in the sidebar: the views' chip (its dot, its tint, its
@@ -258,7 +260,7 @@ pub fn more_chip(n: usize, color: gpui::Hsla) -> Div {
         .items_center()
         .whitespace_nowrap()
         .px(sized(3.))
-        .text_small()
+        .text_body()
         .text_color(color)
         .child(format!("+{n}"))
 }
@@ -317,7 +319,7 @@ pub fn strip_acting(
             center: false,
         },
         StripOn::Picture { zoom } => {
-            // Growing slower than the picture, like the link's badge.
+            // Dots growing slower than the picture, like the link's badge.
             let side = (zoom * 0.04 + 7.).round().clamp(10., 16.);
             Metrics {
                 height: picture_chip_height(zoom),
@@ -381,16 +383,22 @@ pub fn strip_acting(
         let n = left.len();
         match on {
             StripOn::Row { .. } => more_chip(n, muted),
-            StripOn::Picture { .. } => div()
-                .flex_none()
-                .px(sized(3.))
-                .rounded_sm()
-                .bg(theme_more.bg)
-                .text_color(theme_more.text_muted)
-                .text_tiny()
-                .line_height(px(metrics.dot))
-                .whitespace_nowrap()
-                .child(format!("+{n}")),
+            // As its chips are written; beside dots, at least as tall.
+            StripOn::Picture { zoom } => picture_text(
+                div()
+                    .flex_none()
+                    .min_h(px(metrics.dot))
+                    .flex()
+                    .items_center()
+                    .px(sized(3.))
+                    .rounded_sm()
+                    .bg(theme_more.bg)
+                    .text_color(theme_more.text_muted)
+                    .line_height(gpui::relative(1.2))
+                    .whitespace_nowrap(),
+                zoom,
+            )
+            .child(format!("+{n}")),
         }
         .id("tag-more")
         .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), cx))
@@ -400,15 +408,29 @@ pub fn strip_acting(
 }
 
 /// A chip's height over a picture `zoom` px: smaller than a row's on the
-/// default tile, a row's on the large ones.
+/// default tile, its name Small; a row's on the large ones.
 fn picture_chip_height(zoom: f32) -> f32 {
-    if zoom >= 192. { CHIP_HEIGHT } else { 16. }
+    if large_picture(zoom) {
+        CHIP_HEIGHT
+    } else {
+        18.
+    }
 }
 
 /// Whether a picture of `zoom` is large enough for its tags to be written
-/// at Small rather than as badges.
+/// as a row's, at the body size, rather than at Small.
 fn large_picture(zoom: f32) -> bool {
     zoom >= 192.
+}
+
+/// `el` written as the tags over a picture of `zoom` are: Small, the
+/// body size on the large ones.
+fn picture_text(el: Div, zoom: f32) -> Div {
+    if large_picture(zoom) {
+        el.text_body()
+    } else {
+        el.text_small()
+    }
 }
 
 /// A tag's chip over a picture: opaque (`Theme::tag_solid`), ringed with
@@ -428,14 +450,7 @@ fn picture_chip(tag: &str, color: usize, zoom: f32, theme: &Theme) -> Div {
         .border_color(theme.bg)
         .bg(theme.tag_solid(color))
         .text_color(theme.text)
-        // A badge, Small on the largest pictures.
-        .map(|d| {
-            if large_picture(zoom) {
-                d.text_small()
-            } else {
-                d.text_tiny()
-            }
-        })
+        .map(|d| picture_text(d, zoom))
         .child(dot(color, theme).size(px(6.)).mr(px(3.)))
         .child(tag_leaf(tag).to_owned())
 }
