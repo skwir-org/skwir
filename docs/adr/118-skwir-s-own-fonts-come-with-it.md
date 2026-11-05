@@ -61,7 +61,10 @@ Skwir alone").
    installed Inter is used as it is.
 5. **Each package's check** looks for them and their licences
    (`linux/check.sh`, `appimage/check.py`, `macos-check.sh`,
-   `windows-check.sh`).
+   `windows-check.sh`). The AUR's source package carries none, so its
+   check (`check.sh system-fonts`, as `try.sh arch` runs it) asks
+   fontconfig for Inter and JetBrains Mono once Arch's optional packages
+   are installed with what skwir recommends, and nothing of skwir alone.
 
 Not decided here: whether Automatic on macOS and Windows becomes the
 system's own interface font once their styles are read, Inter staying

@@ -11,12 +11,27 @@
 # may say it cannot work where the system has none, as a test root has
 # not. skwir's licence and PDFium's notices are installed, and the
 # libraries skwir opens at run time are there, and so are the desktop
-# entry and its icon.
+# entry and its icon. Skwir's own fonts are where skwir finds those a
+# package carries (ADR-118); with `system-fonts`, for a package that
+# carries none (the AUR's source package), they are the system's optional
+# packages instead: found through fontconfig once what skwir recommends is
+# installed, and not asked of skwir alone.
 #
-#     tools/package/linux/check.sh [minimal]
+#     tools/package/linux/check.sh [minimal] [system-fonts]
 set -eu
 here="$(cd "$(dirname "$0")/.." && pwd)"
-minimal="${1:-}"
+minimal=""
+fonts=carried
+for argument in "$@"; do
+    case "$argument" in
+    minimal) minimal=minimal ;;
+    system-fonts) fonts=system ;;
+    *)
+        echo "usage: $0 [minimal] [system-fonts]" >&2
+        exit 2
+        ;;
+    esac
+done
 failed=0
 optional() {
     grep -qx "$1" "$here/optional"
@@ -86,8 +101,18 @@ else
     echo "missing: skwir's licence, PDFium's notices or the crates' notices"
     failed=1
 fi
-# Skwir's own fonts where skwir finds them, and their licences (ADR-118).
-if [ -f /usr/share/skwir/fonts/Inter-Regular.ttf ] &&
+# Skwir's own fonts where skwir finds them, and their licences (ADR-118);
+# or the system's, where the package carries none.
+if [ "$fonts" = system ]; then
+    if [ "$minimal" = minimal ]; then
+        echo "ok: skwir's own fonts are the system's optional packages, not installed alone"
+    elif fc-list 'Inter' family | grep -q . && fc-list 'JetBrains Mono' family | grep -q .; then
+        echo "ok: skwir's own fonts, Inter and JetBrains Mono, from the system's packages"
+    else
+        echo "missing: Inter or JetBrains Mono, which the system's optional packages install"
+        failed=1
+    fi
+elif [ -f /usr/share/skwir/fonts/Inter-Regular.ttf ] &&
     [ -f /usr/share/skwir/fonts/Inter-Bold.ttf ] &&
     [ -f /usr/share/skwir/fonts/JetBrainsMono-Regular.ttf ] &&
     { [ -f /usr/share/doc/skwir/fonts/Inter/LICENSE.txt ] ||

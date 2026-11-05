@@ -179,7 +179,12 @@ esac
 
 # A fresh root installs skwir alone, without what it only recommends,
 # and checks it; then the others, with what they recommend (and on Arch
-# the libraries skwir's helpers may go without), and checks them all.
+# the libraries skwir's helpers may go without, and skwir's own fonts:
+# the AUR's source package carries none, ADR-118), and checks them all.
+fonts=""
+if [ "$distribution" = arch ]; then
+    fonts=system-fonts
+fi
 fresh="$roots/$distribution-try"
 unpack "$fresh"
 rootless "$fresh"
@@ -207,7 +212,7 @@ arch)
     ;;
 esac
 echo "== $distribution: skwir alone"
-enter "$fresh" 0 /tools/package/linux/check.sh minimal
+enter "$fresh" 0 /tools/package/linux/check.sh minimal ${fonts:+"$fonts"}
 case "$distribution" in
 debian | ubuntu)
     enter "$fresh" 0 sh -c 'DEBIAN_FRONTEND=noninteractive apt-get install -y -q /package/extra/*.deb' >/dev/null
@@ -216,11 +221,11 @@ fedora)
     enter "$fresh" 0 sh -c 'dnf -y -q install /package/extra/*.rpm' >/dev/null
     ;;
 arch)
-    enter "$fresh" 0 sh -c 'pacman -S --noconfirm --needed gst-plugins-base poppler-glib djvulibre && pacman -U --noconfirm /package/extra/*.pkg.tar.zst' >/dev/null
+    enter "$fresh" 0 sh -c 'pacman -S --noconfirm --needed gst-plugins-base poppler-glib djvulibre inter-font ttf-jetbrains-mono && pacman -U --noconfirm /package/extra/*.pkg.tar.zst' >/dev/null
     ;;
 esac
 echo "== $distribution: with the others and what they recommend"
-enter "$fresh" 0 /tools/package/linux/check.sh
+enter "$fresh" 0 /tools/package/linux/check.sh ${fonts:+"$fonts"}
 # Only packages that passed both installations leave the test root.
 for package in "$fresh"/package/main/* "$fresh"/package/extra/*; do
     cp "$package" "$out/"
