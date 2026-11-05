@@ -17,7 +17,7 @@
   or GTK's or Qt's where they are set up apart. **Colors from** replaces Desktop colors with the same choices for
   the colors, Qt's color schemes (qt5ct, qt6ct, LXQt) now read too; if you
   had turned Desktop colors off, Skwir keeps its own colors and fonts. A font's Automatic says the family it comes to,
-  each size the points it comes to, and About's Copy details says the
+  each size the points it comes to, written in its list at that size, and About's Copy details says the
   display's scale and the text's sizes. A change made in qt5ct, qt6ct, LXQt or
   GTK's settings is taken in as it is saved, and on Wayland GTK's fonts are
   read in the order GTK's applications read them.

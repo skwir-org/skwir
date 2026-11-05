@@ -72,6 +72,35 @@ fn font_role(key: &str, theme: &Theme) -> Option<SharedString> {
     }
 }
 
+/// The part a text size setting sizes (ADR-117), by its key: its choices
+/// are each written at the size they give, in the part's font, as a font's
+/// are written in the font they give.
+fn size_part(key: &str) -> Option<crate::sizes::Part> {
+    crate::sizes::Part::ALL
+        .into_iter()
+        .find(|part| part.key() == key)
+}
+
+/// The rem and the font a text size's `choice` is written in: the part's
+/// size at that step, in its font.
+fn written_at(
+    part: crate::sizes::Part,
+    choice: &str,
+    theme: &Theme,
+) -> (gpui::Pixels, SharedString) {
+    use crate::sizes::Part;
+    let rem = theme
+        .sizes
+        .with_step(part, crate::sizes::step_of(Some(choice)))
+        .rem(part);
+    let font = match part {
+        Part::Interface | Part::Files => theme.font.clone(),
+        Part::Reading => theme.reading_font.clone(),
+        Part::Code => theme.code_font.clone(),
+    };
+    (rem, font)
+}
+
 /// The width of a table's column of a kind of control, its way back
 /// included.
 fn column_width(kind: SettingKind) -> f32 {
@@ -730,14 +759,26 @@ impl SettingsView {
                     this.dropdown = None;
                     cx.notify();
                 }));
+            let part = size_part(&key);
             for choice in row.spec.constraints.choices.clone() {
                 let selected = choice == row.value;
                 let label = row.spec.choice_shown(&choice).into_owned();
+                // A text size's choice written at the size it gives, in its
+                // part's font, its row as tall as it needs, the labels on
+                // one edge.
+                let label: AnyElement = match part.map(|part| written_at(part, &choice, theme)) {
+                    Some((rem, font)) => crate::elements::rem::rem(
+                        rem,
+                        div().text_body().font_family(font).child(label),
+                    )
+                    .into_any_element(),
+                    None => label.into_any_element(),
+                };
                 let key = key.clone();
                 panel = panel.child(
                     div()
                         .id(SharedString::from(format!("choice-{key}-{choice}")))
-                        .h(sized(26.))
+                        .min_h(sized(26.))
                         .px_2()
                         .flex()
                         .items_center()
@@ -1869,5 +1910,38 @@ impl Render for SettingsView {
                 cx.listener(|_, _, _, cx| cx.emit(SettingsEvent::Close)),
             )
             .child(panel)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{size_part, written_at};
+    use crate::sizes::{Part, Text};
+    use crate::theme::{Base, Contrast, Theme};
+
+    #[test]
+    fn a_text_size_s_choices_are_written_at_the_size_each_gives() {
+        let mut theme = Theme::derive(&Base::own(false), Contrast::Normal);
+        theme.reading_font = "Reading Serif".into();
+        theme.code_font = "Code Mono".into();
+        for part in Part::ALL {
+            assert_eq!(size_part(part.key()), Some(part));
+        }
+        assert_eq!(size_part(crate::settings::FONT_KEY), None);
+        // Each step's body text is its part's size at that step.
+        let body = |part: Part, choice: &str| {
+            f32::from(written_at(part, choice, &theme).0) * Text::Body.rems()
+        };
+        let close = |a: f32, b: f32| (a - b).abs() < 1e-3;
+        for part in Part::ALL {
+            let hundred = theme.sizes.with_step(part, 100).of(part);
+            assert!(close(body(part, "100"), hundred));
+            assert!(close(body(part, "200"), hundred * 2.));
+            assert!(close(body(part, "80"), hundred * 0.8));
+        }
+        // In the part's font.
+        assert_eq!(written_at(Part::Files, "110", &theme).1, theme.font);
+        assert_eq!(written_at(Part::Reading, "110", &theme).1, "Reading Serif");
+        assert_eq!(written_at(Part::Code, "110", &theme).1, "Code Mono");
     }
 }

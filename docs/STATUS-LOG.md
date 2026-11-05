@@ -11204,3 +11204,18 @@ LXQt, GNOME or Xfce session; a Kvantum theme's colors (not read).
   (interface 14 px). Code follows the monospace size the session's
   portal names (13.3 px here), GTK's file naming none. Tests: Skwir's own
   gives Automatic's sizes, its families none; 505 UI tests, clippy.
+
+## Each text size written at its size (2026-11-05)
+
+- The user chose this over a slider with a sample: each text size
+  setting's list (Text size, Files, Reading, Code) writes each step at
+  the size it gives, in its part's font (`settings_view::written_at`:
+  the part's rem at that step, `elements::rem`), labels on one left edge,
+  rows as tall as they need (`min_h` in place of a fixed height, which a
+  wrapped label of any list now also gets). The control itself stays at
+  the dialog's size.
+- Checked on Xvfb (debug build, the reference machine's 10 pt): Text
+  size's list from 80 % (8 pt) to 200 % (20 pt) in Noto Sans, aligned;
+  Code text size's in DejaVu Sans Mono. Test: each part's step written
+  at its size at that step (80, 100, 200 %) and in its font. 506 UI
+  tests, clippy.

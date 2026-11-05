@@ -192,6 +192,11 @@ The key is the owner's; the page is the subject's (ADR-072).
   that one (ADR-073): a family drawn is loaded and kept by the text
   system. Choices listed on a worker while the list is open replace its
   own, what is typed kept.
+- **A text size's choices are written at the size each gives**, in its
+  part's font (the interface's for Text size and Files text size, the
+  reading font, the code font: `settings_view::written_at`), each label
+  in a rem of its own on the list's one left edge, its row as tall as
+  it needs. The control itself stays at the dialog's size.
 - **The fold.** A page with essentials shows them, under their sections,
   and folds the rest under More settings (N) at its end; unfolded, it
   shows all, in order, and stays so (`ui.settings_unfolded`, the

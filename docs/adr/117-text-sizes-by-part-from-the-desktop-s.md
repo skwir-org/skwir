@@ -258,7 +258,9 @@ apart, and changes how gpui maps the pointer.
   (`desktop_style::keep_own_fonts`, as `Settings::rename` moves a
   value). Each font setting's Automatic says the family it comes to
   ("Automatic (Noto Sans)"); each size step the size it comes to, in
-  points as the desktops' font settings say them ("110% (11 pt)");
+  points as the desktops' font settings say them ("110% (11 pt)"),
+  written in its list at that size in its part's font (2026-11-05, the
+  user's choice over a slider with a sample);
   Fonts from says what it reads now ("Now Noto Sans at 10 pt, from
   GTK."), all declared again when what they come to changes
   (`settings::show_resolved`). Percentages stay over points: three of
