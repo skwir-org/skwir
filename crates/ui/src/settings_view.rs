@@ -138,61 +138,50 @@ pub(crate) fn card_row(theme: &Theme, edge: Edge) -> gpui::Div {
         .when(edge.last, gpui::Styled::rounded_b_lg)
 }
 
-/// A window in miniature, drawn in a choice's colors
-/// (`SettingConstraints::swatches`): its bars and sidebar in the chrome,
-/// rows of text on the ground, two chosen, the address in the accent, and
-/// the outcomes' colors. A picture: it keeps its size at any text size.
-fn miniature(swatch: &skwir_core::settings::Swatch) -> gpui::Div {
+/// The height of a choice's picture in its list (`swatch`), and on its
+/// closed control, which is lower.
+const SWATCH_ROW: f32 = 24.;
+const SWATCH_CONTROL: f32 = 18.;
+/// How much taller a list's row is when its choices have pictures.
+const PICTURED_ROW: f32 = 32.;
+
+/// A window in miniature, `height` tall, drawn in a choice's colors
+/// (`SettingConstraints::swatches`): its top bar and sidebar in the
+/// chrome, the accent in the bar, rows of text on the ground, one chosen.
+/// A picture: it keeps its size at any text size.
+fn swatch(swatch: &skwir_core::settings::Swatch, height: f32) -> gpui::Div {
     let color = |value: u32| gpui::rgb(value);
-    let bar = |value: u32, width: f32| div().h(px(3.)).w(px(width)).rounded_sm().bg(color(value));
-    let line = |text: u32, muted: u32, under: Option<u32>| {
+    let at = |share: f32| px((height * share).round().max(1.));
+    let bar = |value: u32, width: f32| {
         div()
-            .h(px(8.))
-            .px(px(3.))
-            .flex()
-            .items_center()
-            .justify_between()
-            .rounded_sm()
-            .when_some(under, |d, under| d.bg(color(under)))
-            .child(bar(text, 30.))
-            .child(bar(muted, 10.))
+            .flex_none()
+            .h(at(0.09))
+            .w(at(width))
+            .rounded_full()
+            .bg(color(value))
     };
-    let dot = |value: u32| div().size(px(5.)).rounded_full().bg(color(value));
-    let chosen = Some(swatch.selection);
     div()
-        .w(px(112.))
-        .h(px(74.))
+        .w(at(1.6))
+        .h(px(height))
         .flex_none()
         .flex()
         .flex_col()
         .overflow_hidden()
-        .rounded_md()
+        .rounded_sm()
         .border_1()
         .border_color(color(swatch.line))
         .bg(color(swatch.ground))
         .child(
             div()
-                .h(px(13.))
+                .h(at(0.25))
                 .flex_none()
-                .px(px(4.))
+                .px(at(0.08))
                 .flex()
                 .items_center()
-                .gap(px(3.))
                 .bg(color(swatch.chrome))
                 .border_b_1()
                 .border_color(color(swatch.line))
-                .child(
-                    div()
-                        .flex_1()
-                        .h(px(7.))
-                        .rounded_sm()
-                        .bg(color(swatch.ground))
-                        .border_1()
-                        .border_color(color(swatch.accent)),
-                )
-                .child(dot(swatch.success))
-                .child(dot(swatch.warning))
-                .child(dot(swatch.error)),
+                .child(bar(swatch.accent, 0.5)),
         )
         .child(
             div()
@@ -200,41 +189,31 @@ fn miniature(swatch: &skwir_core::settings::Swatch) -> gpui::Div {
                 .flex()
                 .child(
                     div()
-                        .w(px(32.))
+                        .w(at(0.42))
                         .flex_none()
-                        .p(px(3.))
-                        .flex()
-                        .flex_col()
-                        .gap(px(3.))
                         .bg(color(swatch.chrome))
                         .border_r_1()
-                        .border_color(color(swatch.line))
-                        .child(bar(swatch.muted, 20.))
-                        .child(
-                            div()
-                                .h(px(7.))
-                                .px(px(2.))
-                                .flex()
-                                .items_center()
-                                .rounded_sm()
-                                .bg(color(swatch.selection))
-                                .child(bar(swatch.selection_text, 18.)),
-                        )
-                        .child(bar(swatch.muted, 22.))
-                        .child(bar(swatch.muted, 16.)),
+                        .border_color(color(swatch.line)),
                 )
                 .child(
                     div()
                         .flex_1()
-                        .p(px(3.))
+                        .p(at(0.08))
                         .flex()
                         .flex_col()
-                        .gap(px(2.))
-                        .child(line(swatch.text, swatch.muted, None))
-                        .child(line(swatch.selection_text, swatch.selection_text, chosen))
-                        .child(line(swatch.selection_text, swatch.selection_text, chosen))
-                        .child(line(swatch.text, swatch.muted, None))
-                        .child(line(swatch.text, swatch.muted, None)),
+                        .justify_around()
+                        .child(bar(swatch.text, 0.6))
+                        .child(
+                            div()
+                                .h(at(0.2))
+                                .px(at(0.05))
+                                .flex()
+                                .items_center()
+                                .rounded_sm()
+                                .bg(color(swatch.selection))
+                                .child(bar(swatch.selection_text, 0.45)),
+                        )
+                        .child(bar(swatch.muted, 0.5)),
                 ),
         )
 }
@@ -805,10 +784,15 @@ impl SettingsView {
         let toggle = key.clone();
         // A font's control is written in the font it gives.
         let written_in = font_role(&key, theme);
+        let picture = row
+            .spec
+            .swatch_of(&row.value)
+            .map(|chosen| swatch(&chosen, SWATCH_CONTROL).into_any_element());
         let mut element = div().child(
             self.named(
-                controls::dropdown(
+                controls::dropdown_with(
                     format!("choice-{key}"),
+                    picture,
                     row.spec.choice_shown(&row.value).into_owned(),
                     focus,
                     theme,
@@ -875,11 +859,15 @@ impl SettingsView {
                     .into_any_element(),
                     None => label.into_any_element(),
                 };
+                let picture = row
+                    .spec
+                    .swatch_of(&choice)
+                    .map(|chosen| swatch(&chosen, SWATCH_ROW));
                 let key = key.clone();
                 panel = panel.child(
                     div()
                         .id(SharedString::from(format!("choice-{key}-{choice}")))
-                        .min_h(sized(26.))
+                        .min_h(sized(if picture.is_some() { PICTURED_ROW } else { 26. }))
                         .px_2()
                         .flex()
                         .items_center()
@@ -890,6 +878,7 @@ impl SettingsView {
                         .child(div().w(px(14.)).when(selected, |d| {
                             d.child(controls::glyph("check", theme.accent, 14.))
                         }))
+                        .children(picture)
                         .child(label)
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.dropdown = None;
@@ -917,6 +906,18 @@ impl SettingsView {
         let count = narrowed.kept.len();
         let field = narrowed.field.focus_handle(cx);
         let (value, a11y) = (row.value.clone(), self.a11y);
+        // Each choice's picture, where its owner draws them, in the order
+        // of `choices`; its rows taller to hold them.
+        let pictures: std::rc::Rc<[Option<skwir_core::settings::Swatch>]> = narrowed
+            .choices
+            .iter()
+            .map(|(choice, _)| row.spec.swatch_of(choice))
+            .collect();
+        let row_height = if pictures.iter().any(Option::is_some) {
+            PICTURED_ROW
+        } else {
+            CHOICE_ROW
+        };
         let rows = gpui::uniform_list(
             SharedString::from(format!("choices-{key}-rows")),
             count,
@@ -936,7 +937,7 @@ impl SettingsView {
                             Some(
                                 crate::modal::option(option, named, at, highlighted, &field)
                                     .w_full()
-                                    .h(sized(CHOICE_ROW))
+                                    .h(sized(row_height))
                                     .px_2()
                                     .flex()
                                     .items_center()
@@ -957,6 +958,13 @@ impl SettingsView {
                                             d.child(controls::glyph("check", tick, 14.))
                                         },
                                     ))
+                                    .children(
+                                        pictures
+                                            .get(kept)
+                                            .copied()
+                                            .flatten()
+                                            .map(|chosen| swatch(&chosen, SWATCH_ROW)),
+                                    )
                                     .child(div().min_w_0().truncate().child(label.clone()))
                                     .on_mouse_move(cx.listener(move |this, _, _, cx| {
                                         if let Some(narrowed) = &mut this.narrowed
@@ -986,7 +994,7 @@ impl SettingsView {
         // field nor the specimen, which would run past the window's foot.
         let list = crate::modal::options("choices-list", "Choices", count, a11y)
             .relative()
-            .h(sized(CHOICE_ROW * count.clamp(1, LONG_ROWS) as f32))
+            .h(sized(row_height * count.clamp(1, LONG_ROWS) as f32))
             .min_h_0()
             .child(rows)
             .when(count == 0, |d| {
@@ -1115,16 +1123,11 @@ impl SettingsView {
             .when(!row.available, |d| d.opacity(0.5))
             .child(self.control(row, item, false, theme, window, cx));
         let highlighted = self.highlight.as_deref() == Some(key.as_str());
-        // A list's records are rows of the same card, under its own, as
-        // are the cards of a choice whose owner draws its values
-        // (`SettingConstraints::swatches`).
+        // A list's records are rows of the same card, under its own.
         let records = row.spec.kind == SettingKind::Records;
-        let gallery = row.spec.kind == SettingKind::Choice
-            && row.spec.constraints.swatches.iter().any(Option::is_some);
-        let below = gallery
-            || records
-                && (!self.parsed_records(&key, &row.value).is_empty()
-                    || self.drafts.contains_key(&key));
+        let below = records
+            && (!self.parsed_records(&key, &row.value).is_empty()
+                || self.drafts.contains_key(&key));
         items.push(
             card_row(
                 theme,
@@ -1142,66 +1145,6 @@ impl SettingsView {
         if records {
             self.record_rows(&key, &row.value, edge.last, item, items, theme, window, cx);
         }
-        if gallery {
-            items.push(Self::swatch_gallery(row, edge.last, theme, cx));
-        }
-    }
-
-    /// A choice's values as cards, each a miniature in the colors it
-    /// gives and its label, the one chosen marked: clicked, a card is
-    /// chosen. The keyboard and a screen reader choose with the row's
-    /// dropdown, which says the same.
-    fn swatch_gallery(
-        row: &Snapshot,
-        last: bool,
-        theme: &Theme,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let key = row.spec.key.clone();
-        let mut cards = div().w_full().flex().flex_wrap().gap(sized(8.));
-        let constraints = &row.spec.constraints;
-        for (choice, swatch) in constraints.choices.iter().zip(&constraints.swatches) {
-            let Some(swatch) = *swatch else { continue };
-            let chosen = *choice == row.value;
-            let label = row.spec.choice_shown(choice).into_owned();
-            let (key, value) = (key.clone(), choice.clone());
-            let hover = theme.hover;
-            cards = cards.child(
-                div()
-                    .id(SharedString::from(format!("swatch-{key}-{choice}")))
-                    .w(sized(124.))
-                    .p_1()
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .gap_1()
-                    .rounded_md()
-                    .when(chosen, |d| {
-                        d.bg(theme.selection_bg).text_color(theme.selection_text)
-                    })
-                    .when(!chosen && row.available, |d| {
-                        d.cursor_pointer().hover(move |s| s.bg(hover))
-                    })
-                    .child(miniature(&swatch))
-                    .child(
-                        div()
-                            .w_full()
-                            .text_body()
-                            .text_center()
-                            .truncate()
-                            .child(label),
-                    )
-                    .when(row.available, |d| {
-                        d.on_click(cx.listener(move |this, _, _, cx| {
-                            this.change(&key, value.clone(), cx);
-                        }))
-                    }),
-            );
-        }
-        card_row(theme, Edge { first: false, last })
-            .when(!row.available, |d| d.opacity(0.5))
-            .child(cards)
-            .into_any_element()
     }
 
     /// A setting's title and the first sentence of its description: the

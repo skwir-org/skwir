@@ -347,14 +347,14 @@ pub struct SettingConstraints {
     /// itself.
     pub tries: Vec<Tried>,
     /// What each choice looks like, parallel to `choices` (empty: none
-    /// does): the dialog draws a choice whose values have one as a gallery
-    /// of cards, each a miniature in its colors (`ui.colors_from`'s
-    /// palettes). The value stays a plain choice for agents and scripts.
+    /// does): the dialog draws it in miniature before the value's name, in
+    /// the list and on the control (`ui.colors_from`'s palettes). The
+    /// value stays a plain choice for agents and scripts.
     pub swatches: Vec<Option<Swatch>>,
 }
 
-/// The colors a choice is drawn in where the dialog shows it as a card
-/// ([`SettingConstraints::swatches`]): a miniature of a window, as sRGB
+/// The colors a choice's miniature is drawn in, beside its name in the
+/// dialog ([`SettingConstraints::swatches`]): a window's, as sRGB
 /// `0xRRGGBB`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct Swatch {

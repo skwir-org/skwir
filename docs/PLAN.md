@@ -2248,7 +2248,8 @@ its own, every color readable on what it is drawn on.
   Slate, Black; Solarized, Nord, Gruvbox, Catppuccin, Dracula, Rosé Pine,
   Tokyo Night, Everforest), each a `Base` a look through the guard, with
   their makers' terminal colors and code themes (three carried in
-  `skwir-platform`, beside bat's), drawn as cards in the dialog;
+  `skwir-platform`, beside bat's), each drawn in miniature in the
+  dialog's list;
   declared on every system. **Built 2026-11-05.** Checked in a window on
   Xvfb (`docs/STATUS-LOG.md`, 2026-11-05). Not checked: a screen reader
   on the gallery (its cards are mouse targets; the dropdown is

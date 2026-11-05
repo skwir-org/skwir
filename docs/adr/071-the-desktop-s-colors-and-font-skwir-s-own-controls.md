@@ -424,17 +424,18 @@ macOS's own colors read).
   - **Every system.** Colors from is declared on macOS and Windows too,
     where Automatic is the Skwir palette until their colors are read
     (step 5).
-  - **The dialog draws it as cards.** A choice whose owner gives each
-    value a swatch (`SettingConstraints::swatches`, data an agent sees
-    as a plain choice) is drawn with a gallery under its row: each value
-    a miniature window in the colors it would give now, its look as the
-    theme and the system make it, the one chosen marked; the dropdown
-    stays the keyboard's and a screen reader's.
+  - **The dialog draws what each looks like.** A choice whose owner
+    gives each value a swatch (`SettingConstraints::swatches`, data an
+    agent sees as a plain choice) draws, before each value's name in its
+    list and before the chosen one's on its control, a window in
+    miniature in the colors it would give now, its look as the theme and
+    the system make it. A gallery of cards under the row was built first
+    and taken back the same day: the user found it took too much room.
   - **Checked:** the palettes through the guard in both contrasts and
     both looks (`every_palette_reads_in_either_contrast`), the bound
     above, each code theme offered for its look, the carried themes
     read and highlight, a palette worn whatever the desktop says (or
-    with nothing said), the cards drawn as worn. In a window: see
+    with nothing said), the pictures drawn as worn. In a window: see
     `docs/STATUS-LOG.md`, 2026-11-05.
 - 2026-11-05, **step 5, and macOS's own colors.** Asked whether Skwir
   could read the system's colors on macOS and Windows, and told that

@@ -672,9 +672,9 @@ qt6ct or qt5ct gives Qt's applications; with the accent color your
 desktop's settings name (GNOME's, or any desktop whose settings portal
 says one). It follows them when you change them there. Appearance ›
 **Colors from** chooses: Automatic, GTK's or Qt's alone, as when you
-set them up apart, or one of Skwir's palettes, each drawn as a small
-window in its colors under the setting; a dashed outline shows which
-Automatic took. A scheme is one
+set them up apart, or one of Skwir's palettes, each drawn beside its
+name as a small window in its colors; Automatic says which it took
+("Automatic (Plasma)"). A scheme is one
 look's: with **Theme** on Automatic, Skwir takes the look of a scheme
 that has only one (Breeze Dark is dark), and the other look, chosen,
 is Skwir's own with your accent. When your desktop asks for more

@@ -48,10 +48,10 @@ the reasoning.
   (bat)" (a language's grammar, `language_records`).
 - **A choice of looks** (Colors from's palettes) gives each value a
   swatch (`SettingSpec::swatches`, the colors of a miniature window, as
-  data): the dialog draws a gallery of cards under its row, each in the
-  colors its value would give now, and the row's dropdown stays the
-  keyboard's and a screen reader's. Declared again when what they show
-  changes (`settings::show_resolved`).
+  data): the dialog draws it in miniature before each value's name, in
+  the choice's list and on its control, in the colors the value would
+  give now; nothing is added under the row. Declared again when what
+  they show changes (`settings::show_resolved`).
 - A setting that applies only while a switch is on says so with
   `SettingSpec::under(switch)` and is declared right after it, in its
   section: the dialog draws it

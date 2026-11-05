@@ -9,7 +9,9 @@
 
 use crate::sizes::TextSizes;
 use crate::sizes::sized;
-use gpui::{Div, Entity, FocusHandle, SharedString, Stateful, div, prelude::*, px, svg};
+use gpui::{
+    AnyElement, Div, Entity, FocusHandle, SharedString, Stateful, div, prelude::*, px, svg,
+};
 
 use crate::input::TextInput;
 use crate::theme::Theme;
@@ -283,8 +285,26 @@ pub fn dropdown(
     focus: &FocusHandle,
     theme: &Theme,
 ) -> Stateful<Div> {
+    dropdown_with(id, None, label, focus, theme)
+}
+
+/// A dropdown whose label has a picture before it (what the choice looks
+/// like: a palette's colors).
+pub fn dropdown_with(
+    id: impl Into<SharedString>,
+    picture: Option<AnyElement>,
+    label: impl Into<SharedString>,
+    focus: &FocusHandle,
+    theme: &Theme,
+) -> Stateful<Div> {
     let (accent, hover) = (theme.accent, theme.hover);
     let label = label.into();
+    let shown = div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .children(picture)
+        .child(label.clone());
     div()
         .id(id.into())
         .role(gpui::Role::ComboBox)
@@ -308,7 +328,7 @@ pub fn dropdown(
         .cursor_pointer()
         .hover(move |s| s.bg(hover))
         .focus(move |s| s.border_color(accent))
-        .child(label)
+        .child(shown)
         .child(icon("chevron", theme.text_muted, 14.))
 }
 

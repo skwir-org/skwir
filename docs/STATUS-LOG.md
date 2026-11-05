@@ -11353,3 +11353,20 @@ LXQt, GNOME or Xfce session; a Kvantum theme's colors (not read).
   thread as documented, how close the window looks to Finder), a real
   Windows (the accent changed live, a contrast theme turned on). Both are
   in `docs/HELP-WANTED.md`, Colors.
+
+## Colors from's pictures in its list (2026-11-05)
+
+- The user found the gallery of cards under Colors from took too much
+  room, and suggested a list that shows the thumbnails. The gallery is
+  gone: each value's miniature (`settings_view::swatch`, 38×24 px, a
+  picture that keeps its size) stands before its name in the narrowing
+  list, whose rows are 32 px for such a choice (26 otherwise), and an
+  18 px one before the chosen value's name on the closed control
+  (`controls::dropdown_with`). Generic: any choice whose values carry
+  swatches.
+- Checked on Xvfb: the Appearance page back to one row for Colors from
+  (Nord's picture and name on the control); the list opened, its fifteen
+  rows each with its picture, the chosen one ticked; three Downs and
+  Enter took Dracula, worn at once (its Alucard light look) and saved;
+  the list in the dark look drawn with each palette's dark picture.
+  Clippy clean (skwir-ui).
