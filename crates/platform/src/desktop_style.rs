@@ -672,6 +672,10 @@ mod imp {
 
     /// The portal's keys of the fonts, in `INTERFACE`.
     const FONT_KEYS: [&str; 3] = ["font-name", "document-font-name", "monospace-font-name"];
+    /// The other keys of `INTERFACE` read (`read_from`), each followed as
+    /// the fonts are: the GTK theme and the text scaling factor (GNOME's
+    /// Large Text).
+    const INTERFACE_KEYS: [&str; 2] = ["gtk-theme", "text-scaling-factor"];
 
     /// What the desktop says: each font as `own` names it where the
     /// desktop keeps it, else as the portal on `bus` names it; its scheme
@@ -945,7 +949,7 @@ mod imp {
             };
             let read = match key.as_str() {
                 "accent-color" | "contrast" => namespace == APPEARANCE,
-                key if FONT_KEYS.contains(&key) || key == "gtk-theme" => {
+                key if FONT_KEYS.contains(&key) || INTERFACE_KEYS.contains(&key) => {
                     namespace.ends_with(".interface")
                 }
                 _ => false,
@@ -2073,6 +2077,21 @@ general=@Variant(\0\0\0@\0\0\0\x12\0N\0o\0t\0o\0 \0S\0\x61\0n\0s@$\0\0\0\0\0\0\x
                 Value::from("Hack 10"),
             );
             assert_eq!(next().monospace_font.as_deref(), Some("Hack"));
+
+            // The text scaling factor (Large Text turned on), followed too.
+            set(
+                &values,
+                INTERFACE,
+                "text-scaling-factor",
+                &Value::from(1.25_f64),
+            );
+            say(
+                &server,
+                INTERFACE,
+                "text-scaling-factor",
+                Value::from(1.25_f64),
+            );
+            assert_eq!(next().text_scaling, Some(1.25));
 
             // The portal gone, asked for again until stopped: the thread
             // ends.
