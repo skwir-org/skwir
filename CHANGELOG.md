@@ -1,5 +1,11 @@
 # Changes
 
+## Unreleased
+
+- **About**'s buttons stay on one line, the dialog as wide as they need: in
+  0.3.1 Licences went to a line of its own. Licences now comes after Copy
+  details, before Website and Source code, which open the browser.
+
 ## 0.3.1 (2026-11-05)
 
 Skwir 0.3.1 writes at your desktop's text size and lets you choose your own:

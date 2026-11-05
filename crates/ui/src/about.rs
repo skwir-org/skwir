@@ -38,6 +38,11 @@ const LICENCE: &str = env!("CARGO_PKG_LICENSE");
 const WEBSITE: &str = env!("CARGO_PKG_HOMEPAGE");
 const SOURCE: &str = concat!(env!("CARGO_PKG_HOMEPAGE"), "/source");
 
+/// The dialog's width at 100 %, which only its buttons widen, and the room
+/// around what it holds.
+const WIDTH: f32 = 520.;
+const PADDING: f32 = 20.;
+
 /// The version as `skwir --version` says it, with the commit a build that
 /// is not a release was made from (`skwir_platform::process::build`), and
 /// whether it is a build for development, slower than a release.
@@ -52,12 +57,12 @@ fn version() -> String {
 
 pub struct About {
     focus: FocusHandle,
-    /// Copy details, Website, Source code, Licences and the close button:
+    /// Copy details, Licences, Website, Source code and the close button:
     /// what Tab walks, of those shown.
     copy: FocusHandle,
+    licences_button: FocusHandle,
     website: FocusHandle,
     source: FocusHandle,
-    licences_button: FocusHandle,
     close: FocusHandle,
     previous: FocusReturn,
     /// What a report says of where skwir runs: a label and its value.
@@ -69,14 +74,14 @@ pub struct About {
 impl About {
     fn buttons(&self) -> Vec<&FocusHandle> {
         let mut buttons = vec![&self.copy];
+        if self.licences.is_some() {
+            buttons.push(&self.licences_button);
+        }
         if !WEBSITE.is_empty() {
             buttons.push(&self.website);
         }
         if !SOURCE.is_empty() {
             buttons.push(&self.source);
-        }
-        if self.licences.is_some() {
-            buttons.push(&self.licences_button);
         }
         buttons.push(&self.close);
         buttons
@@ -244,7 +249,12 @@ impl Shell {
 pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let about = shell.about.as_ref()?;
     let theme = cx.global::<Theme>().clone();
+    // The details ask for the dialog's width and take whatever it is: a
+    // long fact is cut short, never a reason for a wider dialog.
     let mut facts = div()
+        .w(sized(WIDTH - 2. * PADDING))
+        .min_w_full()
+        .max_w_full()
         .flex()
         .flex_col()
         .gap_1()
@@ -269,8 +279,10 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                 )),
         );
     }
-    // Four buttons fill the row; one that does not fit goes to the next
-    // line rather than out of the panel.
+    // What stays in skwir (copying what it runs on, the licences it
+    // installed), then what opens the browser. The dialog is as wide as
+    // they are on one line (`w_auto` below); they wrap only in a window
+    // too narrow for them, rather than go out of the panel.
     let mut buttons = div().flex().flex_wrap().justify_end().gap_2().child(
         controls::button(
             "about-copy",
@@ -282,6 +294,19 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         )
         .on_click(cx.listener(|this, _, _, cx| this.copy_about(cx))),
     );
+    if about.licences.is_some() {
+        buttons = buttons.child(
+            controls::button(
+                "about-licences",
+                "Licences",
+                Some("folder"),
+                ButtonStyle::Plain,
+                &about.licences_button,
+                &theme,
+            )
+            .on_click(cx.listener(|this, _, window, cx| this.show_licences(window, cx))),
+        );
+    }
     if !WEBSITE.is_empty() {
         buttons = buttons.child(
             controls::button(
@@ -310,22 +335,12 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
             .on_click(cx.listener(|this, _, _, cx| this.open_address(SOURCE, cx))),
         );
     }
-    if about.licences.is_some() {
-        buttons = buttons.child(
-            controls::button(
-                "about-licences",
-                "Licences",
-                Some("folder"),
-                ButtonStyle::Plain,
-                &about.licences_button,
-                &theme,
-            )
-            .on_click(cx.listener(|this, _, window, cx| this.show_licences(window, cx))),
-        );
-    }
-    let panel = modal::panel("about", 520., &theme)
+    // Its width is what it holds: the details' and the buttons' (still at
+    // most the panel's share of the window).
+    let panel = modal::panel("about", WIDTH, &theme)
+        .w_auto()
         .aria_label("About skwir")
-        .p_5()
+        .p(sized(PADDING))
         .gap_4()
         .line_height(sized(20.))
         .track_focus(&about.focus)
