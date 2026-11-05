@@ -43,8 +43,12 @@ pub const NOTES_OWNER: &str = skwir_core::notes::SETTINGS;
 pub const PRIVACY_OWNER: &str = skwir_core::permissions::SETTINGS;
 
 pub const THEME_KEY: &str = "ui.theme";
-/// Whether skwir wears the colors and the accent the desktop's settings
-/// name (ADR-071, `desktop_style`); the fonts are `FONTS_FROM_KEY`'s.
+/// Where skwir's colors and accent are read (ADR-071, amended 2026-11-05;
+/// `desktop_style::Source`): Automatic, skwir's own, GTK's or Qt's. Linux
+/// only, until macOS's and Windows' colors are read.
+pub const COLORS_FROM_KEY: &str = "ui.colors_from";
+/// 0.3.0's switch Colors from replaced, read only to move what it said
+/// (`desktop_style::keep_own_colors`, `keep_own_fonts`).
 pub const DESKTOP_COLORS_KEY: &str = "ui.desktop_colors";
 /// The fonts skwir writes in, by role (ADR-073, `fonts.rs`): the
 /// interface's, what is read, code. Each is Automatic or a family.
@@ -56,8 +60,8 @@ pub const FONT_KEYS: [&str; 3] = [FONT_KEY, READING_FONT_KEY, CODE_FONT_KEY];
 /// The fonts' Automatic.
 pub const FONT_AUTO: &str = "auto";
 /// Where the fonts a font setting's Automatic writes in, and their sizes,
-/// are read (ADR-117, `desktop_style::FontsFrom`): Automatic, skwir's
-/// own, GTK's or Qt's. Linux only.
+/// are read (ADR-117, `desktop_style::Source`): Automatic, skwir's own,
+/// and GTK's or Qt's where they are read apart.
 pub const FONTS_FROM_KEY: &str = "ui.fonts_from";
 /// The text sizes, by part of the window (ADR-117, `sizes.rs`): a step of
 /// `sizes::STEPS`, a percentage of the part's 100 %.
@@ -324,7 +328,7 @@ pub fn text_size_spec(part: crate::sizes::Part) -> SettingSpec {
 /// resolved it.
 fn fonts_from_spec() -> SettingSpec {
     use std::fmt::Write;
-    let pairs = crate::desktop_style::FontsFrom::choices();
+    let pairs = crate::desktop_style::Source::choices();
     let mut description = if skwir_platform::desktop_style::TOOLKITS {
         "Where skwir reads the fonts a font setting's Automatic writes in, and their sizes. Automatic reads your desktop's own settings, else GTK's, else Qt's; Skwir's own is skwir's fonts at its own size; GTK or Qt reads that toolkit's settings alone, as when they name different fonts."
     } else if cfg!(windows) {
@@ -352,7 +356,7 @@ fn fonts_from_spec() -> SettingSpec {
         pairs[0].0,
         pairs,
     )
-    .now(&fonts_from_now(
+    .now(&crate::desktop_style::Source::now(
         shown().and_then(|shown| shown.from).as_deref(),
     ))
 }
@@ -395,15 +399,21 @@ fn look_now() -> &'static str {
     }
 }
 
-/// What Fonts from's Automatic read, as its choices name it: GTK's (the
-/// portal's are GTK's), Qt's, or the desktop's own by its name.
-fn fonts_from_now(from: Option<&str>) -> String {
-    match from {
-        Some(from) if from.starts_with("GTK") || from == "the portal" => "gtk".to_owned(),
-        Some(from) if from.starts_with("Qt") => "qt".to_owned(),
-        Some(from) => from.to_owned(),
-        None => String::new(),
-    }
+/// `ui.colors_from` (ADR-071): where the colors are read, saying what its
+/// Automatic comes to once read.
+fn colors_from_spec() -> SettingSpec {
+    let pairs = crate::desktop_style::Source::choices();
+    SettingSpec::choice(
+        COLORS_FROM_KEY,
+        "Colors from",
+        "Where skwir takes its colors and accent: your desktop's settings, its own, or GTK's or Qt's alone. Automatic reads your desktop's own (Plasma's color scheme, LXQt's palette, the GTK theme GNOME, MATE, Cinnamon or Xfce names), else GTK's theme, else the color scheme of qt6ct or qt5ct; GTK or Qt reads that toolkit's alone, as when they differ. More contrast, when your desktop asks for it, is followed whatever is chosen.",
+        pairs[0].0,
+        pairs,
+    )
+    .essential()
+    .now(&crate::desktop_style::Source::now(
+        shown().and_then(|shown| shown.colors_from).as_deref(),
+    ))
 }
 
 /// A size in pixels as a desktop's font settings say it: in points, to
@@ -429,6 +439,8 @@ pub(crate) struct Shown {
     pub from: Option<String>,
     /// The look drawn: what the theme's Automatic comes to.
     pub dark: bool,
+    /// Where the colors were read while Colors from is Automatic.
+    pub colors_from: Option<String>,
 }
 
 static SHOWN: std::sync::RwLock<Option<Shown>> = std::sync::RwLock::new(None);
@@ -473,6 +485,9 @@ pub(crate) fn show_resolved(app: &App, now: Shown) {
     }
     if skwir_platform::desktop_style::FONTS {
         app.settings.declare(fonts_from_spec());
+    }
+    if skwir_platform::desktop_style::COLORS {
+        app.settings.declare(colors_from_spec());
     }
     app.settings.declare(theme_spec());
     app.settings.declare(code_appearance_spec());
@@ -993,17 +1008,15 @@ pub(crate) fn list_icon_themes(app: &Arc<App>) {
 /// never see them.
 pub fn declare(app: &App) {
     app.settings.declare(theme_spec());
-    if skwir_platform::desktop_style::COLORS {
-        app.settings.declare(SettingSpec::toggle(
-            DESKTOP_COLORS_KEY,
-            "Desktop colors",
-            "Draw with the colors chosen in your desktop's settings: Plasma's color scheme, or your GTK theme's, with your desktop's accent. Off, skwir keeps its own colors. More contrast, when your desktop asks for it, is followed either way.",
-            true,
-        )
-        .essential());
-    }
+    // 0.3.0's Desktop colors switch, read for the fonts, then the colors.
     if skwir_platform::desktop_style::FONTS {
         crate::desktop_style::keep_own_fonts(&app.settings);
+    }
+    if skwir_platform::desktop_style::COLORS {
+        crate::desktop_style::keep_own_colors(&app.settings);
+        app.settings.declare(colors_from_spec());
+    }
+    if skwir_platform::desktop_style::FONTS {
         app.settings.declare(fonts_from_spec());
     }
     app.settings

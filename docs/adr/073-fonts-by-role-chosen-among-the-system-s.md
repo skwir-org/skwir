@@ -56,7 +56,8 @@ own fonts, Inter and JetBrains Mono, come with its packages.
      specimen.
 2. **Automatic is the desktop's while Desktop colors is on** (amended
    by ADR-117: as `ui.fonts_from` says, Automatic, Skwir's own, GTK's or
-   Qt's; Desktop colors is the colors alone). Each role
+   Qt's; Desktop colors is the colors alone, and since 2026-11-05 Colors
+   from, ADR-071). Each role
    is Automatic by default: the interface takes the desktop's interface
    font, reading its document font (else the interface's), code its
    monospace font. With Desktop colors off, or where the desktop names

@@ -49,9 +49,11 @@ Views are in [views.md](views.md); what locations decide, in
 ## Colors and fonts (ADR-071, ADR-073)
 
 - Every token of a look is derived from its `Base` (`Theme::derive`):
-  the desktop's scheme for that look (Plasma's `kdeglobals`, a GTK3
-  theme's colors: `Desktop::schemes`), else Skwir's own (`Base::own`)
-  wearing the desktop's accent. Text, the accent and the outcomes are
+  the desktop's scheme for that look, from where `ui.colors_from` says
+  (Automatic: the desktop's own, then GTK's theme, then Qt's scheme; or
+  GTK's or Qt's alone: `DesktopStyle::schemes`, `gtk_colors`,
+  `qt_colors`, `Desktop::schemes`), else Skwir's own (`Base::own`)
+  wearing the desktop's accent; Skwir's own chosen, no accent either. Text, the accent and the outcomes are
   guarded to their contrast (7:1 when the desktop asks for more); a
   token no desktop changes is `Kept`. Never a color beside the tokens.
 - A scheme is one look's. A forced other look is Skwir's palette with
@@ -62,8 +64,10 @@ Views are in [views.md](views.md); what locations decide, in
 - What the desktop says is read on `desktop_style`'s thread, never while
   drawing; the first frame draws what was read last (the cache). A
   reading that differs from what was said wakes the window; one that
-  does not, nothing. It follows the portal's signals and `kdeglobals`
-  replaced (its folder watched, access dropped), never a timer. Toolkits
+  does not, nothing. It follows the portal's signals and the files the
+  colors and fonts come from (`kdeglobals`, `lxqt.conf`, qt5ct's and
+  qt6ct's, GTK's `settings.ini`; their folders watched, access
+  dropped), never a timer. Toolkits
   are never loaded: a GTK theme is read as the colors its sheet names.
 - The fonts are the theme's tokens (`font`, `reading_font`,
   `code_font`), resolved with it, read where they are drawn. A font's
@@ -74,8 +78,7 @@ Views are in [views.md](views.md); what locations decide, in
   `settings.ini` on Wayland, after it on X11; then Qt's: qt6ct's or
   qt5ct's, their files followed; macOS's and Windows' interface font),
   Skwir's own, or GTK's or Qt's alone
-  (`desktop_style::FontsFrom`), apart from Desktop colors, which is the
-  colors alone. The text scaling factor is followed whatever is chosen.
+  (`desktop_style::Source`, as Colors from's), apart from Colors from. The text scaling factor is followed whatever is chosen.
   What a font's Automatic and each size step come to is said beside
   them (`settings::show_resolved`, declared again when it changes).
 - **Text sizes (ADR-117).** The window's rem is the interface's size

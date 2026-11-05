@@ -8,7 +8,8 @@ macOS and Windows are not read yet. Amended 2026-10-19 (two switches,
 the font at the window's opening), again by ADR-073 (the font a choice
 among the system's, three of them, followed live), 2026-10-20 (steps
 3 and 4) and 2026-10-27 (the accent as text, the chrome apart, the hover
-laid over).
+laid over), and 2026-11-05 (Colors from: Automatic, Skwir's own, GTK's
+or Qt's, in place of the Desktop colors switch; Qt's palettes read).
 
 ## Context
 
@@ -147,7 +148,8 @@ laid over).
    theme is a palette the user chose: its colors fill the scheme of
    point 4, under the same stricter guard.
 7. **A switch, on by default, and the fonts' choices** (amended twice
-   on 2026-10-19, see below): `ui.desktop_colors`, "Desktop colors".
+   on 2026-10-19, see below; the switch a choice since 2026-11-05, at
+   the end): `ui.desktop_colors`, "Desktop colors".
    Off, Skwir's own palette and accent. The fonts are three choices of
    their own (ADR-073): `ui.font`, "Font", for the interface, and the
    reading and code fonts, each Automatic or a family installed.
@@ -342,3 +344,26 @@ laid over).
 - 2026-11-01: where the desktop asks for more contrast, the map's fills
   move further from that text, their hues kept, so it reads at 7:1 as
   all text then does (`Theme::blocks` by look and contrast).
+- 2026-11-05, **Colors from** (the user's choice, for consistency with
+  ADR-117's Fonts from): `ui.colors_from`, Automatic, Skwir's own, GTK
+  or Qt, replaces `ui.desktop_colors`. Automatic reads the desktop's own
+  settings (Plasma's scheme, LXQt's palette, the GTK3 theme GNOME's,
+  MATE's, Cinnamon's or Xfce's settings name), else GTK's theme (in
+  GTK's order: `GTK_THEME`, then on Wayland the portal's `gtk-theme`
+  before `settings.ini`, after it on X11), else Qt's (qt6ct's or
+  qt5ct's scheme, as `QT_QPA_PLATFORMTHEME` names it, while its custom
+  palette is on: its own `[ColorScheme]` or a KDE `.colors` file); GTK
+  or Qt wears that toolkit's alone (`DesktopStyle::gtk_colors`,
+  `qt_colors`, `colors_from`). Qt's are Plasma's on Plasma and LXQt's
+  palette on LXQt, as their applications are given. LXQt's palette
+  (`[Palette]` of `lxqt.conf`, read as `lxqt-qtplugin` does) counts once
+  it names the base, the window and a text color; Qt derives the rest
+  from the window's color alone, which names no scheme. A GTK3 theme is
+  read once a reading however many sources name it. Someone who had
+  turned Desktop colors off keeps Skwir's own colors (and fonts,
+  ADR-117); the switch's key is forgotten and named Colors from's for
+  `Settings::check`. More contrast is followed whatever is chosen. The
+  accent rule of point 4 is unchanged for the scheme chosen. Not
+  followed: a qt5ct or qt6ct scheme file edited in place (its
+  configuration is followed), a Kvantum theme's colors; macOS and
+  Windows still say no colors, so the setting is Linux's.

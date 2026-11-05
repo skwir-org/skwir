@@ -14,8 +14,9 @@
   messages are written at that size rather than smaller. **Fonts from**
   (Settings › Appearance) chooses whose fonts and sizes Skwir follows: your
   desktop's, Skwir's own (at 14 px), or GTK's or Qt's where they are set up
-  apart. Desktop colors is now the colors alone; if you had turned it off,
-  Skwir keeps its own fonts. A font's Automatic says the family it comes to,
+  apart. **Colors from** replaces Desktop colors with the same choices for
+  the colors, Qt's color schemes (qt5ct, qt6ct, LXQt) now read too; if you
+  had turned Desktop colors off, Skwir keeps its own colors and fonts. A font's Automatic says the family it comes to,
   each size the points it comes to, and About's Copy details says the
   display's scale and the text's sizes. A change made in qt5ct, qt6ct, LXQt or
   GTK's settings is taken in as it is saved, and on Wayland GTK's fonts are
@@ -26,6 +27,9 @@
 - **Skwir's own fonts**, Inter and JetBrains Mono for code, now come with its
   packages, so choosing them looks the same everywhere, and macOS and Windows
   write code in JetBrains Mono by default. They are read only when drawn.
+- **Automatic says what it gives**: in Settings, a setting left on Automatic
+  outlines the choice it comes to now (the theme's Light or Dark, GTK or Qt),
+  or says it beside, "Automatic (Breeze)".
 - **macOS and Windows** draw the window in their own interface font (San
   Francisco, Segoe UI) rather than Inter, and Windows' Text size, in its
   Accessibility settings, enlarges Skwir's text as it changes.

@@ -705,8 +705,10 @@ heights in rems), and step 4, the desktop's sizes (Qt's and LXQt's
 settings read, `ui.fonts_from`, Copy details), built 2026-11-04 and
 checked on Linux (`docs/STATUS-LOG.md`). Reviewed beside 0.3.0 on
 2026-11-05: sentences at the body size, Small nine tenths of it, Fonts
-from with Skwir's own apart from Desktop colors, the labels saying what
-Automatic and each size come to; and Skwir's own fonts, Inter and
+from with Skwir's own apart from Desktop colors (since then Colors from,
+the same four choices for the colors, ADR-071), the labels saying what
+Automatic and each size come to, outlined or in words for every setting
+that says it; and Skwir's own fonts, Inter and
 JetBrains Mono, carried by every package built here (ADR-118; the
 packages' scripts run at the next release). On macOS and Windows,
 Automatic is the system's interface font and Windows' Text size is

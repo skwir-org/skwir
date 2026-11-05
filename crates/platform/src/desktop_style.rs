@@ -78,6 +78,15 @@ pub struct DesktopStyle {
     pub gtk: Option<Fonts>,
     #[serde(default)]
     pub qt: Option<Fonts>,
+    /// Which settings named `schemes` (`Plasma`, `GNOME`, `GTK`, `Qt
+    /// (qt6ct)`), and GTK's colors and Qt's, each apart: what the user may
+    /// choose to follow instead (`Colors from`, ADR-071).
+    #[serde(default)]
+    pub colors_from: Option<String>,
+    #[serde(default)]
+    pub gtk_colors: Option<Colors>,
+    #[serde(default)]
+    pub qt_colors: Option<Colors>,
     /// The desktop's text scaling factor (GNOME's Large Text), where it
     /// names one.
     #[serde(default)]
@@ -100,6 +109,15 @@ pub struct Fonts {
     pub interface_px: Option<f32>,
     #[serde(default)]
     pub monospace_px: Option<f32>,
+}
+
+/// The colors one source names (GTK's theme, Qt's scheme), and which
+/// source it is.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Colors {
+    pub from: String,
+    #[serde(default)]
+    pub schemes: Schemes,
 }
 
 /// The colors a desktop's scheme names for the base of a look (ADR-071,
@@ -397,6 +415,40 @@ mod imp {
         }
     }
 
+    /// The colors a source names, a look's each, and the source.
+    #[derive(Clone, Debug, Default)]
+    pub(super) struct Painted {
+        pub(super) schemes: Schemes,
+        pub(super) from: Option<&'static str>,
+    }
+
+    impl Painted {
+        /// One scheme, said by `from`.
+        pub(super) fn one(scheme: Option<super::Scheme>, from: &'static str) -> Painted {
+            let mut schemes = Schemes::default();
+            if let Some(scheme) = scheme {
+                schemes.add(scheme);
+            }
+            Painted {
+                schemes,
+                from: Some(from),
+            }
+        }
+
+        /// These colors where they name any, else `other`'s.
+        pub(super) fn or(self, other: Painted) -> Painted {
+            if self.schemes.is_empty() { other } else { self }
+        }
+
+        /// Apart, as the user may choose it.
+        fn apart(&self) -> Option<super::Colors> {
+            (!self.schemes.is_empty()).then(|| super::Colors {
+                from: self.from.unwrap_or_default().to_owned(),
+                schemes: self.schemes.clone(),
+            })
+        }
+    }
+
     /// What the desktop's own settings and files say beside the portal,
     /// read again at each change.
     pub(super) trait Own: Send + Sync + 'static {
@@ -418,9 +470,28 @@ mod imp {
         fn wayland(&self) -> bool {
             std::env::var_os("WAYLAND_DISPLAY").is_some_and(|display| !display.is_empty())
         }
-        /// Its color scheme: Plasma's, or the GTK3 theme its settings name,
-        /// else `portal_theme`, the theme the portal names.
-        fn schemes(&self, portal_theme: &dyn Fn() -> Option<String>) -> Schemes;
+        /// The colors its own settings name: Plasma's scheme, LXQt's
+        /// palette, or the GTK3 theme GNOME's, MATE's, Cinnamon's or Xfce's
+        /// settings name, read by `theme`.
+        fn own_colors(&self, theme: &dyn Fn(&str) -> Schemes) -> Painted;
+        /// The GTK3 theme GTK's own settings name (`settings.ini`, GTK 3's
+        /// before GTK 4's, as the themes read are GTK 3's).
+        fn gtk_theme(&self) -> Option<String> {
+            None
+        }
+        /// The GTK3 theme `GTK_THEME` forces on GTK's applications.
+        fn forced_gtk_theme(&self) -> Option<String> {
+            desktop::forced_gtk_theme()
+        }
+        /// The colors Qt's applications are given: Plasma's scheme, LXQt's
+        /// palette, qt6ct's or qt5ct's scheme.
+        fn qt_colors(&self) -> Painted {
+            Painted::default()
+        }
+        /// The colors of the GTK3 theme `name` (`gtk_theme::schemes`).
+        fn theme(&self, name: &str) -> Schemes {
+            crate::gtk_theme::schemes(name, &crate::gtk_theme::folders())
+        }
         /// The files it says a change in by writing or replacing them
         /// (Plasma's `kdeglobals`, LXQt's `lxqt.conf`, qt5ct's and qt6ct's
         /// files, GTK's `settings.ini`), each followed in its folder.
@@ -450,18 +521,29 @@ mod imp {
             qt_fonts()
         }
 
-        fn schemes(&self, portal_theme: &dyn Fn() -> Option<String>) -> Schemes {
-            let mut schemes = Schemes::default();
-            if desktop::chosen() == Some(Chosen::Kde) {
-                if let Some(scheme) = crate::kde_scheme::read() {
-                    schemes.add(scheme);
-                }
-                return schemes;
+        fn own_colors(&self, theme: &dyn Fn(&str) -> Schemes) -> Painted {
+            own_colors(theme)
+        }
+
+        fn gtk_theme(&self) -> Option<String> {
+            desktop::gtk_settings("gtk-theme-name").pop()
+        }
+
+        fn qt_colors(&self) -> Painted {
+            match desktop::chosen() {
+                Some(Chosen::Kde | Chosen::Lxqt) => own_colors(&|_| Schemes::default()),
+                _ => match desktop::qt_ct() {
+                    Some((program, text)) => Painted::one(
+                        crate::qt_palette::qt_ct(&text),
+                        if program == "qt6ct" {
+                            "Qt (qt6ct)"
+                        } else {
+                            "Qt (qt5ct)"
+                        },
+                    ),
+                    None => Painted::default(),
+                },
             }
-            desktop::gtk_theme()
-                .or_else(portal_theme)
-                .map(|theme| crate::gtk_theme::schemes(&theme, &crate::gtk_theme::folders()))
-                .unwrap_or(schemes)
         }
 
         fn followed(&self) -> Vec<PathBuf> {
@@ -527,6 +609,33 @@ mod imp {
         let text_scaling = portal(INTERFACE, "text-scaling-factor")
             .and_then(|value| f64::try_from(value).ok())
             .filter(|factor| *factor > 0. && factor.is_finite());
+        // A GTK3 theme read once a reading, however many name it.
+        let read = std::cell::RefCell::new(std::collections::HashMap::<String, Schemes>::new());
+        let theme = |name: &str| {
+            read.borrow_mut()
+                .entry(name.to_owned())
+                .or_insert_with(|| own.theme(name))
+                .clone()
+        };
+        // GTK's theme as GTK's applications here take it (`Own::wayland`).
+        let portal_theme = portal_string(INTERFACE, "gtk-theme").filter(|theme| !theme.is_empty());
+        let gtk_theme = own.forced_gtk_theme().or_else(|| {
+            if own.wayland() {
+                portal_theme.or_else(|| own.gtk_theme())
+            } else {
+                own.gtk_theme().or(portal_theme)
+            }
+        });
+        let gtk_colors = Painted {
+            schemes: gtk_theme.as_deref().map(theme).unwrap_or_default(),
+            from: Some("GTK"),
+        };
+        let qt_colors = own.qt_colors();
+        // The desktop's own, then GTK's, then Qt's, as the fonts.
+        let colors = own
+            .own_colors(&theme)
+            .or(gtk_colors.clone())
+            .or(qt_colors.clone());
         DesktopStyle {
             accent: portal(APPEARANCE, "accent-color").and_then(accent),
             more_contrast: portal(APPEARANCE, "contrast")
@@ -541,9 +650,10 @@ mod imp {
             font: unaliased(named.interface),
             document_font: unaliased(named.document),
             monospace_font: unaliased(named.monospace),
-            schemes: own.schemes(&|| {
-                portal_string(INTERFACE, "gtk-theme").filter(|theme| !theme.is_empty())
-            }),
+            schemes: colors.schemes.clone(),
+            colors_from: colors.from.map(str::to_owned),
+            gtk_colors: gtk_colors.apart(),
+            qt_colors: qt_colors.apart(),
         }
     }
 
@@ -805,11 +915,7 @@ mod imp {
                     document: pango(&other("document-font-name")),
                     monospace: pango(&monospace),
                     monospace_px: size(&monospace),
-                    from: Some(match schema {
-                        "org.cinnamon.desktop.interface" => "Cinnamon",
-                        "org.mate.interface" => "MATE",
-                        _ => "GNOME",
-                    }),
+                    from: Some(schema_name(schema)),
                 }
             }
             Some(Chosen::Kde) => {
@@ -864,6 +970,38 @@ mod imp {
     /// The fonts Qt's applications are given: Plasma's and LXQt's own on
     /// those desktops, elsewhere qt6ct's or qt5ct's, as
     /// `QT_QPA_PLATFORMTHEME` names it.
+    /// The colors the desktop's own settings name (`Own::own_colors`), a
+    /// GTK3 theme read by `theme`, `GTK_THEME` before the settings as GTK
+    /// takes it.
+    fn own_colors(theme: &dyn Fn(&str) -> Schemes) -> Painted {
+        let gtk = |named: Option<String>, from: &'static str| Painted {
+            schemes: desktop::forced_gtk_theme()
+                .or(named)
+                .map(|name| theme(&name))
+                .unwrap_or_default(),
+            from: Some(from),
+        };
+        match desktop::chosen() {
+            Some(Chosen::Kde) => Painted::one(crate::kde_scheme::read(), "Plasma"),
+            Some(Chosen::Lxqt) => Painted::one(
+                desktop::lxqt_conf().and_then(|conf| crate::qt_palette::lxqt(&conf)),
+                "LXQt",
+            ),
+            Some(Chosen::GSettings(schema)) => gtk(desktop::own_gtk_theme(), schema_name(schema)),
+            Some(Chosen::Xfce) => gtk(desktop::own_gtk_theme(), "Xfce"),
+            None => Painted::default(),
+        }
+    }
+
+    /// The desktop a `GSettings` schema of interface settings is.
+    fn schema_name(schema: &str) -> &'static str {
+        match schema {
+            "org.cinnamon.desktop.interface" => "Cinnamon",
+            "org.mate.interface" => "MATE",
+            _ => "GNOME",
+        }
+    }
+
     fn qt_fonts() -> Named {
         match desktop::chosen() {
             Some(Chosen::Kde | Chosen::Lxqt) => own_fonts(),
@@ -1165,18 +1303,22 @@ mod tests {
                 (self.fonts)()
             }
 
-            fn schemes(&self, portal_theme: &dyn Fn() -> Option<String>) -> Schemes {
-                let mut schemes = Schemes::default();
-                if let Some(file) = &self.kdeglobals {
-                    let text = std::fs::read_to_string(file).unwrap_or_default();
-                    if let Some(scheme) = crate::kde_scheme::scheme_of(&[text], &[]) {
-                        schemes.add(scheme);
+            fn own_colors(&self, _: &dyn Fn(&str) -> Schemes) -> imp::Painted {
+                match &self.kdeglobals {
+                    Some(file) => {
+                        let text = std::fs::read_to_string(file).unwrap_or_default();
+                        imp::Painted::one(crate::kde_scheme::scheme_of(&[text], &[]), "Plasma")
                     }
-                    return schemes;
+                    None => imp::Painted::default(),
                 }
-                portal_theme()
-                    .map(|theme| crate::gtk_theme::schemes(&theme, &self.themes))
-                    .unwrap_or(schemes)
+            }
+
+            fn forced_gtk_theme(&self) -> Option<String> {
+                None
+            }
+
+            fn theme(&self, name: &str) -> Schemes {
+                crate::gtk_theme::schemes(name, &self.themes)
             }
 
             fn followed(&self) -> Vec<PathBuf> {
@@ -1228,6 +1370,9 @@ mod tests {
                         monospace_px: Some(10. * 96. / 72.),
                     }),
                     qt: None,
+                    colors_from: None,
+                    gtk_colors: None,
+                    qt_colors: None,
                     text_scaling: None,
                 }
             );
@@ -1267,8 +1412,8 @@ mod tests {
                 )
             }
 
-            fn schemes(&self, _: &dyn Fn() -> Option<String>) -> Schemes {
-                Schemes::default()
+            fn own_colors(&self, _: &dyn Fn(&str) -> Schemes) -> imp::Painted {
+                imp::Painted::default()
             }
 
             fn followed(&self) -> Vec<PathBuf> {
@@ -1297,13 +1442,122 @@ mod tests {
                 self.0
             }
 
-            fn schemes(&self, _: &dyn Fn() -> Option<String>) -> Schemes {
-                Schemes::default()
+            fn own_colors(&self, _: &dyn Fn(&str) -> Schemes) -> imp::Painted {
+                imp::Painted::default()
             }
 
             fn followed(&self) -> Vec<PathBuf> {
                 Vec::new()
             }
+        }
+
+        /// GTK's `settings.ini` naming one theme and qt6ct a scheme; the
+        /// desktop's own settings none, or Plasma's.
+        struct Painters {
+            themes: PathBuf,
+            wayland: bool,
+            plasma: bool,
+        }
+
+        impl imp::Own for Painters {
+            fn fonts(&self) -> imp::Named {
+                imp::Named::default()
+            }
+
+            fn own_colors(&self, _: &dyn Fn(&str) -> Schemes) -> imp::Painted {
+                if self.plasma {
+                    let breeze = "[Colors:View]\nBackgroundNormal=255,255,255\n\
+                        ForegroundNormal=35,38,41\n[Colors:Window]\nBackgroundNormal=239,240,241\n";
+                    imp::Painted::one(
+                        crate::kde_scheme::scheme_of(&[breeze.into()], &[]),
+                        "Plasma",
+                    )
+                } else {
+                    imp::Painted::default()
+                }
+            }
+
+            fn gtk_theme(&self) -> Option<String> {
+                Some("Ini".into())
+            }
+
+            fn forced_gtk_theme(&self) -> Option<String> {
+                None
+            }
+
+            fn wayland(&self) -> bool {
+                self.wayland
+            }
+
+            fn qt_colors(&self) -> imp::Painted {
+                imp::Painted::one(
+                    crate::qt_palette::palette(
+                        "#ff000000, #ffefefef, #ffffffff, #ffcacaca, #ff9f9f9f, #ffb8b8b8, \
+                         #ffffffff, #ffffffff, #ff000000, #ff202020, #ff303030",
+                    ),
+                    "Qt (qt6ct)",
+                )
+            }
+
+            fn theme(&self, name: &str) -> Schemes {
+                crate::gtk_theme::schemes(name, std::slice::from_ref(&self.themes))
+            }
+
+            fn followed(&self) -> Vec<PathBuf> {
+                Vec::new()
+            }
+        }
+
+        #[test]
+        fn gtk_s_and_qt_s_colors_are_read_apart_after_the_desktop_s() {
+            let themes = tempfile::tempdir().unwrap();
+            for (name, base) in [("Ini", "#fdf6e3"), ("Portal", "#e0e0e0")] {
+                let sheet = themes.path().join(name).join("gtk-3.0/gtk.css");
+                std::fs::create_dir_all(sheet.parent().unwrap()).unwrap();
+                std::fs::write(
+                    &sheet,
+                    format!(
+                        "@define-color theme_base_color {base};\n\
+                         @define-color theme_bg_color #eee8d5;\n\
+                         @define-color theme_text_color #586e75;\n"
+                    ),
+                )
+                .unwrap();
+            }
+            let values = Values::default();
+            set(&values, INTERFACE, "gtk-theme", &Value::from("Portal"));
+            let (bus, _server) = portal(&values);
+            let painters = |wayland, plasma| Painters {
+                themes: themes.path().to_path_buf(),
+                wayland,
+                plasma,
+            };
+            let bg = |colors: &Option<super::super::Colors>| {
+                colors
+                    .as_ref()
+                    .and_then(|c| c.schemes.light.as_ref())
+                    .map(|s| s.bg[0])
+            };
+            // On X11 GTK takes settings.ini's theme; Automatic is GTK's, the
+            // desktop naming none, and Qt's is kept apart.
+            let x11 = imp::read_from(Some(&bus), &painters(false, false));
+            assert_eq!(x11.colors_from.as_deref(), Some("GTK"));
+            assert_eq!(bg(&x11.gtk_colors), Some(253. / 255.));
+            assert_eq!(
+                x11.schemes.light.as_ref().map(|s| s.bg[0]),
+                Some(253. / 255.)
+            );
+            let qt = x11.qt_colors.as_ref().expect("Qt's colors");
+            assert_eq!(qt.from, "Qt (qt6ct)");
+            assert!(qt.schemes.dark.is_some());
+            // On Wayland the portal's theme first.
+            let wayland = imp::read_from(Some(&bus), &painters(true, false));
+            assert_eq!(bg(&wayland.gtk_colors), Some(224. / 255.));
+            // The desktop's own first: Plasma's, GTK's and Qt's still apart.
+            let plasma = imp::read_from(Some(&bus), &painters(false, true));
+            assert_eq!(plasma.colors_from.as_deref(), Some("Plasma"));
+            assert_eq!(plasma.schemes.light.as_ref().map(|s| s.bg[0]), Some(1.));
+            assert!(plasma.gtk_colors.is_some() && plasma.qt_colors.is_some());
         }
 
         #[test]
@@ -1625,8 +1879,8 @@ mod tests {
                 imp::qt_named(text.as_deref(), "Fonts", ("general", "fixed"), "Qt (qt6ct)")
             }
 
-            fn schemes(&self, _: &dyn Fn() -> Option<String>) -> Schemes {
-                Schemes::default()
+            fn own_colors(&self, _: &dyn Fn(&str) -> Schemes) -> imp::Painted {
+                imp::Painted::default()
             }
 
             fn followed(&self) -> Vec<PathBuf> {

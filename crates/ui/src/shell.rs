@@ -3823,6 +3823,7 @@ fn show_resolved(app: &Arc<App>, cx: &gpui::App) {
         hundreds,
         from: crate::desktop_style::sizes(&app.settings).from,
         dark: theme.is_dark,
+        colors_from: crate::desktop_style::colors_source(),
     };
     crate::settings::show_resolved(app, shown);
 }

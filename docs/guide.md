@@ -664,13 +664,16 @@ A plugin from outside Skwir with options of its own has a page of its
 own, listed under the others.
 
 On Linux, Skwir wears the colors your desktop's settings name: on
-Plasma its color scheme, elsewhere the colors of the GTK theme your
-desktop names (adw-gtk3, Materia and most others; a theme whose styles
-are compiled into a resource file, as Arc's are, names none Skwir can
-read), with the accent color your desktop's settings name (GNOME's, or
-any desktop whose settings portal says one). It follows Plasma's scheme,
-the accent and a theme your desktop's portal names when you change them
-there; Appearance › **Desktop colors** turns that off. A scheme is one
+Plasma its color scheme, on LXQt its palette, elsewhere the colors of
+the GTK theme your desktop names (adw-gtk3, Materia and most others; a
+theme whose styles are compiled into a resource file, as Arc's are,
+names none Skwir can read), else GTK's own theme, else the color scheme
+qt6ct or qt5ct gives Qt's applications; with the accent color your
+desktop's settings name (GNOME's, or any desktop whose settings portal
+says one). It follows them when you change them there. Appearance ›
+**Colors from** chooses: Automatic, Skwir's own colors, or GTK's or
+Qt's alone, as when you set them up apart; a dashed outline shows which
+Automatic took. A scheme is one
 look's: with **Theme** on Automatic, Skwir takes the look of a scheme
 that has only one (Breeze Dark is dark), and the other look, chosen,
 is Skwir's own with your accent. When your desktop asks for more

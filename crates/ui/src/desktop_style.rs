@@ -15,7 +15,7 @@ use skwir_core::App;
 use skwir_core::settings::Settings;
 use skwir_platform::desktop_style::{DesktopStyle, Scheme};
 
-use crate::settings::DESKTOP_COLORS_KEY;
+use crate::settings::{COLORS_FROM_KEY, DESKTOP_COLORS_KEY};
 use crate::theme::{Base, Contrast, Desktop, Schemes};
 
 /// What the desktop said last, or when skwir last ran.
@@ -80,16 +80,13 @@ pub fn revision() -> u64 {
     REVISION.load(Ordering::Acquire)
 }
 
-fn on(settings: &Settings, key: &str) -> bool {
-    settings.get::<bool>(key).unwrap_or(true)
-}
-
-/// What the look takes from the desktop: while `ui.desktop_colors` is on,
-/// its scheme and its accent; more contrast whenever it asks for it, which
-/// is a need, not a style. An accent the system names (the portal's)
-/// replaces a scheme's, whose selection is then derived from it, unless it
-/// is the scheme's own said again (Plasma's portal); a look without a
-/// scheme wears the system's accent, else the scheme's (ADR-071, point 4).
+/// What the look takes from the desktop: the scheme `ui.colors_from`
+/// chooses (Automatic's, GTK's or Qt's) and the accent, unless skwir's own
+/// are chosen; more contrast whenever it asks for it, which is a need, not
+/// a style. An accent the system names (the portal's) replaces a scheme's,
+/// whose selection is then derived from it, unless it is the scheme's own
+/// said again (Plasma's portal); a look without a scheme wears the
+/// system's accent, else the scheme's (ADR-071, point 4).
 pub fn colors(settings: &Settings) -> Desktop {
     let Some(said) = said() else {
         return Desktop::default();
@@ -99,12 +96,25 @@ pub fn colors(settings: &Settings) -> Desktop {
     } else {
         Contrast::Normal
     };
-    if !on(settings, DESKTOP_COLORS_KEY) {
-        return Desktop {
-            contrast,
-            ..Desktop::default()
-        };
-    }
+    let chosen = match Source::of_colors(settings) {
+        Source::Own => {
+            return Desktop {
+                contrast,
+                ..Desktop::default()
+            };
+        }
+        Source::Automatic => said.schemes.clone(),
+        Source::Gtk => said
+            .gtk_colors
+            .clone()
+            .map(|c| c.schemes)
+            .unwrap_or_default(),
+        Source::Qt => said
+            .qt_colors
+            .clone()
+            .map(|c| c.schemes)
+            .unwrap_or_default(),
+    };
     let scheme = |scheme: Option<&Scheme>| {
         let scheme = scheme?;
         let mut base = base(scheme);
@@ -116,11 +126,11 @@ pub fn colors(settings: &Settings) -> Desktop {
         Some(base)
     };
     let schemes = Schemes {
-        light: scheme(said.schemes.light.as_ref()),
-        dark: scheme(said.schemes.dark.as_ref()),
+        light: scheme(chosen.light.as_ref()),
+        dark: scheme(chosen.dark.as_ref()),
     };
     let accent = said.accent.or_else(|| {
-        [&said.schemes.light, &said.schemes.dark]
+        [&chosen.light, &chosen.dark]
             .into_iter()
             .find_map(|scheme| scheme.as_ref()?.accent)
     });
@@ -182,19 +192,19 @@ pub fn fonts(settings: &Settings) -> Fonts {
 }
 
 /// Where the fonts a font setting's Automatic writes in, and their sizes,
-/// are read (`ui.fonts_from`, ADR-117): Automatic (the desktop's own, then
-/// GTK's, then Qt's; macOS's or Windows' own), skwir's own, or GTK's or
-/// Qt's alone where they are read apart (`desktop_style::TOOLKITS`). Apart
-/// from Desktop colors, which is the colors alone.
+/// are read (`ui.fonts_from`, ADR-117), and where the colors are
+/// (`ui.colors_from`, ADR-071): Automatic (the desktop's own, then GTK's,
+/// then Qt's; macOS's or Windows' own fonts), skwir's own, or GTK's or
+/// Qt's alone where they are read apart (`desktop_style::TOOLKITS`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FontsFrom {
+pub enum Source {
     Automatic,
     Own,
     Gtk,
     Qt,
 }
 
-impl FontsFrom {
+impl Source {
     const ALL: [(&'static str, &'static str); 4] = [
         ("auto", "Automatic"),
         (OWN, "Skwir's own"),
@@ -212,23 +222,42 @@ impl FontsFrom {
         }
     }
 
-    /// What the settings choose; a toolkit this system does not read apart
-    /// (a settings file brought from Linux) is Automatic.
-    pub fn chosen(settings: &Settings) -> Self {
+    /// What the setting `key` chooses; a toolkit this system does not read
+    /// apart (a settings file brought from Linux) is Automatic.
+    pub fn chosen(settings: &Settings, key: &str) -> Self {
         let toolkits = skwir_platform::desktop_style::TOOLKITS;
-        match settings
-            .get::<String>(crate::settings::FONTS_FROM_KEY)
-            .as_deref()
-        {
-            Some(OWN) => FontsFrom::Own,
-            Some("gtk") if toolkits => FontsFrom::Gtk,
-            Some("qt") if toolkits => FontsFrom::Qt,
-            _ => FontsFrom::Automatic,
+        match settings.get::<String>(key).as_deref() {
+            Some(OWN) => Source::Own,
+            Some("gtk") if toolkits => Source::Gtk,
+            Some("qt") if toolkits => Source::Qt,
+            _ => Source::Automatic,
+        }
+    }
+
+    /// What Fonts from chooses.
+    pub fn of_fonts(settings: &Settings) -> Self {
+        Self::chosen(settings, crate::settings::FONTS_FROM_KEY)
+    }
+
+    /// What Colors from chooses.
+    pub fn of_colors(settings: &Settings) -> Self {
+        Self::chosen(settings, crate::settings::COLORS_FROM_KEY)
+    }
+
+    /// What the source's Automatic read, as its choices name it: GTK's
+    /// (the portal's are GTK's), Qt's, or the desktop's own by its name
+    /// (`Plasma`); empty when nothing was.
+    pub fn now(from: Option<&str>) -> String {
+        match from {
+            Some(from) if from.starts_with("GTK") || from == "the portal" => "gtk".to_owned(),
+            Some(from) if from.starts_with("Qt") => "qt".to_owned(),
+            Some(from) => from.to_owned(),
+            None => String::new(),
         }
     }
 }
 
-/// `ui.fonts_from`'s value for skwir's own fonts.
+/// `ui.fonts_from`'s and `ui.colors_from`'s value for skwir's own.
 pub const OWN: &str = "skwir";
 
 /// Before `ui.fonts_from` stood apart, Desktop colors turned off gave
@@ -245,13 +274,35 @@ pub fn keep_own_fonts(settings: &Settings) {
     }
 }
 
+/// Colors from replaced the Desktop colors switch: someone who turned it
+/// off keeps skwir's own colors (`keep_own_fonts` read it first, for the
+/// fonts). The switch's key is then forgotten, and named Colors from's for
+/// `Settings::check`; a value it held is not moved, being a switch's.
+pub fn keep_own_colors(settings: &Settings) {
+    if settings.get::<bool>(DESKTOP_COLORS_KEY) == Some(false)
+        && settings.text(COLORS_FROM_KEY).is_none()
+    {
+        settings.set(COLORS_FROM_KEY, OWN.into());
+    }
+    if settings.text(DESKTOP_COLORS_KEY).is_some() {
+        settings.unset(DESKTOP_COLORS_KEY);
+    }
+    settings.rename(DESKTOP_COLORS_KEY, COLORS_FROM_KEY);
+}
+
+/// Where the colors were read while Colors from is Automatic (`Plasma`,
+/// `GTK`): what its Automatic comes to (`settings::show_resolved`).
+pub fn colors_source() -> Option<String> {
+    said().and_then(|said| said.colors_from)
+}
+
 /// The fonts the desktop names as the settings choose to read them, with
 /// their sizes and where they were read: none for skwir's own.
 fn chosen(settings: &Settings) -> Option<skwir_platform::desktop_style::Fonts> {
     let said = said()?;
-    match FontsFrom::chosen(settings) {
-        FontsFrom::Own => None,
-        FontsFrom::Automatic => Some(skwir_platform::desktop_style::Fonts {
+    match Source::of_fonts(settings) {
+        Source::Own => None,
+        Source::Automatic => Some(skwir_platform::desktop_style::Fonts {
             from: said.fonts_from.unwrap_or_default(),
             interface: said.font,
             document: said.document_font,
@@ -259,8 +310,8 @@ fn chosen(settings: &Settings) -> Option<skwir_platform::desktop_style::Fonts> {
             interface_px: said.font_px,
             monospace_px: said.monospace_px,
         }),
-        FontsFrom::Gtk => said.gtk,
-        FontsFrom::Qt => said.qt,
+        Source::Gtk => said.gtk,
+        Source::Qt => said.qt,
     }
 }
 
@@ -291,7 +342,7 @@ pub fn sizes(settings: &Settings) -> Sizes {
             .map(|fonts| fonts.from)
             .filter(|from| !from.is_empty()),
         scaling,
-        own: FontsFrom::chosen(settings) == FontsFrom::Own,
+        own: Source::of_fonts(settings) == Source::Own,
     }
 }
 
@@ -388,10 +439,9 @@ mod tests {
         let theme = Theme::of(false, colors(&app.settings));
         assert!(ratio(theme.text_muted, theme.surface) >= 7.);
 
-        // The switch off: skwir's own, but for the contrast asked.
+        // Skwir's own: its colors, but for the contrast asked.
         set(with_scheme(Some(breeze()), None));
-        app.settings
-            .set(DESKTOP_COLORS_KEY, toml::Value::Boolean(false));
+        app.settings.set(COLORS_FROM_KEY, OWN.into());
         assert_eq!(Theme::of(false, colors(&app.settings)), Theme::light());
     }
 
@@ -478,17 +528,15 @@ mod tests {
         // The other look, for code kept in it, wears it too.
         assert_eq!(theme.in_look(true).desktop, theme.desktop);
 
-        app.settings
-            .set(DESKTOP_COLORS_KEY, toml::Value::Boolean(false));
+        app.settings.set(COLORS_FROM_KEY, OWN.into());
         assert_eq!(colors(&app.settings), Desktop::default());
         assert_eq!(Theme::of(false, colors(&app.settings)), Theme::light());
     }
 
     #[test]
-    fn more_contrast_is_followed_whatever_the_switch_says() {
+    fn more_contrast_is_followed_whatever_the_colors_are_from() {
         let (_tmp, app) = app();
-        app.settings
-            .set(DESKTOP_COLORS_KEY, toml::Value::Boolean(false));
+        app.settings.set(COLORS_FROM_KEY, OWN.into());
         set(DesktopStyle {
             more_contrast: true,
             ..teal()
@@ -511,9 +559,8 @@ mod tests {
             monospace: None,
         };
         assert_eq!(fonts(&app.settings), lent);
-        // Desktop colors is the colors alone (ADR-117).
-        app.settings
-            .set(DESKTOP_COLORS_KEY, toml::Value::Boolean(false));
+        // Colors from is the colors alone (ADR-117).
+        app.settings.set(COLORS_FROM_KEY, OWN.into());
         assert_eq!(fonts(&app.settings), lent);
         app.settings
             .set(crate::settings::FONTS_FROM_KEY, OWN.into());
@@ -589,9 +636,8 @@ mod tests {
         let qt = sizes(&app.settings);
         assert_eq!((qt.interface, qt.monospace), (Some(px(9.)), Some(px(10.))));
         assert_eq!(qt.from.as_deref(), Some("Qt (qt6ct)"));
-        // Desktop colors off is the colors alone: the fonts stay Qt's.
-        app.settings
-            .set(DESKTOP_COLORS_KEY, toml::Value::Boolean(false));
+        // Skwir's own colors are the colors alone: the fonts stay Qt's.
+        app.settings.set(COLORS_FROM_KEY, OWN.into());
         assert_eq!(
             fonts(&app.settings).interface.as_deref(),
             Some("DejaVu Sans")
@@ -615,15 +661,77 @@ mod tests {
         app.settings
             .set(DESKTOP_COLORS_KEY, toml::Value::Boolean(false));
         keep_own_fonts(&app.settings);
-        assert_eq!(FontsFrom::chosen(&app.settings), FontsFrom::Own);
+        assert_eq!(Source::of_fonts(&app.settings), Source::Own);
         // Chosen since, it is never moved again.
         app.settings.set(FONTS_FROM_KEY, "gtk".into());
         keep_own_fonts(&app.settings);
-        assert_eq!(FontsFrom::chosen(&app.settings), FontsFrom::Gtk);
+        assert_eq!(Source::of_fonts(&app.settings), Source::Gtk);
         // Desktop colors left on: nothing moves.
         let tmp = tempfile::tempdir().unwrap();
         let app = App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
         keep_own_fonts(&app.settings);
         assert_eq!(app.settings.text(FONTS_FROM_KEY), None);
+    }
+
+    #[test]
+    fn desktop_colors_turned_off_before_keeps_skwir_s_colors() {
+        // As a file of 0.3.0 says it, before the settings are declared.
+        let file = |desktop_colors: bool| {
+            let tmp = tempfile::tempdir().unwrap();
+            let app = App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+            app.settings
+                .set(DESKTOP_COLORS_KEY, toml::Value::Boolean(desktop_colors));
+            keep_own_fonts(&app.settings);
+            keep_own_colors(&app.settings);
+            (tmp, app)
+        };
+        let (_tmp, off) = file(false);
+        assert_eq!(Source::of_colors(&off.settings), Source::Own);
+        assert_eq!(Source::of_fonts(&off.settings), Source::Own);
+        assert_eq!(off.settings.text(DESKTOP_COLORS_KEY), None, "forgotten");
+        // Left on: Automatic, the switch forgotten, nothing moved into
+        // Colors from.
+        let (_tmp, on) = file(true);
+        assert_eq!(on.settings.text(COLORS_FROM_KEY), None);
+        assert_eq!(on.settings.text(DESKTOP_COLORS_KEY), None);
+        // Chosen since, it is never moved again.
+        off.settings.set(COLORS_FROM_KEY, "qt".into());
+        keep_own_colors(&off.settings);
+        assert_eq!(Source::of_colors(&off.settings), Source::Qt);
+    }
+
+    #[test]
+    fn gtk_s_or_qt_s_colors_are_worn_when_chosen() {
+        use skwir_platform::desktop_style::Colors;
+        let (_tmp, app) = app();
+        let night = Scheme {
+            bg: channels(0x202020),
+            surface: channels(0x303030),
+            text: channels(0xf0f0f0),
+            ..breeze()
+        };
+        set(DesktopStyle {
+            colors_from: Some("Plasma".into()),
+            gtk_colors: Some(Colors {
+                from: "GTK".into(),
+                schemes: skwir_platform::desktop_style::Schemes {
+                    light: None,
+                    dark: Some(night.clone()),
+                },
+            }),
+            qt_colors: None,
+            ..with_scheme(Some(breeze()), None)
+        });
+        assert!(colors(&app.settings).schemes.light.is_some(), "Automatic's");
+        app.settings.set(COLORS_FROM_KEY, "gtk".into());
+        let gtk = colors(&app.settings);
+        assert!(gtk.schemes.light.is_none() && gtk.schemes.dark.is_some());
+        // Qt names none: skwir's colors, with the accent its scheme had not.
+        app.settings.set(COLORS_FROM_KEY, "qt".into());
+        assert!(colors(&app.settings).schemes.light.is_none());
+        assert_eq!(colors_source().as_deref(), Some("Plasma"));
+        assert_eq!(Source::now(Some("Plasma")), "Plasma");
+        assert_eq!(Source::now(Some("Qt (qt6ct)")), "qt");
+        assert_eq!(Source::now(Some("the portal")), "gtk");
     }
 }

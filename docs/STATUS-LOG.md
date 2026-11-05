@@ -11052,3 +11052,32 @@ Automatic, Fonts from's GTK outlined, "Automatic (Breeze)" and
 and `now_of`; clippy on core, platform, UI and books; 69 settings, font
 and theme tests. Not yet: the other engines' Automatic (documents,
 DjVu, video, remote connectors), which their probes would answer.
+
+## Colors from (2026-11-05)
+
+ADR-071, amended: the user chose Colors from, the four choices of Fonts
+from for the colors, in place of the Desktop colors switch. The platform
+reads each source apart (`DesktopStyle::colors_from`, `gtk_colors`,
+`qt_colors`): the desktop's own (Plasma's `kdeglobals`, LXQt's palette,
+the GTK3 theme GNOME's, MATE's, Cinnamon's or Xfce's settings name), GTK's
+theme in GTK's order (`GTK_THEME`, then the portal's `gtk-theme` before
+`settings.ini` on Wayland, after it on X11), Qt's (Plasma's, LXQt's, or
+qt6ct's or qt5ct's scheme while their custom palette is on: their own
+`[ColorScheme] active_colors`, `#aarrggbb` in `QPalette::ColorRole`'s
+order, or a KDE `.colors` file; `qt_palette.rs`). LXQt's `[Palette]` keys
+were read in `lxqt-qtplugin`'s source. A GTK3 theme is read once a
+reading. The UI's `desktop_style::Source` serves both choices; a 0.3.0
+file with Desktop colors off keeps Skwir's own colors and fonts, the
+switch's key forgotten and renamed for `Settings::check`. Colors from
+says what its Automatic took (outlined).
+
+Checked: the palette reader against qt6ct's own "darker" scheme, a KDE
+`.colors` named by qt6ct, custom palette off, LXQt's palette and its
+default (none); the platform's order test (X11, Wayland, Plasma first,
+GTK's and Qt's kept apart); the UI's migration and choice tests; 1569
+tests of core, platform and UI, the binary's settings and plugin toggle
+tests. On Xvfb from a 0.3.0 file with `desktop_colors = false`: Colors
+from and Fonts from on Skwir's own, the old key gone from the file once
+saved; Qt chosen, the window in qt5ct's scheme's accent; Automatic, Qt
+outlined (no desktop, GTK naming no theme there). Not tried: a Plasma,
+LXQt, GNOME or Xfce session; a Kvantum theme's colors (not read).

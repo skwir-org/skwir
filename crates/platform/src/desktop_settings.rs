@@ -127,21 +127,24 @@ pub(crate) fn kdeglobals() -> Option<String> {
     .ok()
 }
 
-/// The GTK3 theme the user chose, found as the icon theme is: `GTK_THEME`
-/// (`Name`, or `Name:dark`), else their desktop's own setting, else GTK's
-/// `settings.ini` (GTK 3's before GTK 4's). Plasma's colors are its own,
-/// so it names none here.
-pub(crate) fn gtk_theme() -> Option<String> {
-    let named = |name: String| Some(name.trim().to_owned()).filter(|name| !name.is_empty());
-    if let Some(theme) = std::env::var("GTK_THEME").ok().and_then(named) {
-        return Some(theme);
-    }
+/// The GTK3 theme `GTK_THEME` forces on GTK's applications (`Name`, or
+/// `Name:dark`), whatever their settings say.
+pub(crate) fn forced_gtk_theme() -> Option<String> {
+    std::env::var("GTK_THEME")
+        .ok()
+        .map(|name| name.trim().to_owned())
+        .filter(|name| !name.is_empty())
+}
+
+/// The GTK3 theme the desktop's own settings name (GNOME's, MATE's,
+/// Cinnamon's, Xfce's); Plasma's and LXQt's colors are their own, so they
+/// name none here.
+pub(crate) fn own_gtk_theme() -> Option<String> {
     match chosen() {
         Some(Chosen::GSettings(schema)) => gsettings(schema, "gtk-theme"),
         Some(Chosen::Xfce) => xfconf("/Net/ThemeName"),
         Some(Chosen::Kde | Chosen::Lxqt) | None => None,
     }
-    .or_else(|| gtk_settings("gtk-theme-name").pop())
 }
 
 /// `key` of `group` in a key file's `text`, when it says something.

@@ -70,6 +70,8 @@ pub mod preview;
 pub mod print;
 pub mod print_job;
 pub mod process;
+#[cfg(target_os = "linux")]
+mod qt_palette;
 pub mod sandbox;
 pub mod shrink_job;
 pub mod system_icons;
