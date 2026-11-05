@@ -11539,4 +11539,14 @@ commits).
   paused, Ctrl+Q's Finish in the background, a second `skwir` launched:
   the first program's window opened again on the paused copy and logged
   "first frame 153.4 ms after opening", 38 s after its start.
+- **A dialog's footer crowded.** Since buttons and hints are written at
+  the body size (1c00f308), Quit's three answers left its hint ("Enter
+  to finish in the background") some 70 px in its 560 px dialog: a word
+  a line, "backg" over "round". A footer keeps the hint at least
+  `modal::HINT_LEAST` (180 px at 100 %) beside its buttons, else puts
+  them, as one group, under it at the end. Checked on Xvfb at 100 %:
+  Quit's question with the hint on one line and its three buttons under
+  it; Delete permanently's with hint, Cancel and Delete on one line as
+  before. `cargo clippy -p skwir-ui --all-targets -D warnings` and its
+  tests (537) green.
 

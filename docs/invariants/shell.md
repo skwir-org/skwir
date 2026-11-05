@@ -1055,7 +1055,9 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
 - **A click answers what a key answers.** A dialog that waits for an
   answer ends with `modal::footer`: what its keys do, muted, then Cancel
   and the answer, named by its verb (Rename, Unlock, Delete; `ui.ask`
-  takes it as `accept`, OK when absent). A picker's rows are its buttons.
+  takes it as `accept`, OK when absent); the buttons go under the hint
+  when beside it they would leave it less than `modal::HINT_LEAST`. A
+  picker's rows are its buttons.
   A press outside cancels too, but is never the only way: what is only
   read (About, F1's overview) closes from its ✕, as Settings does.
 - **A dialog keeps the keyboard.** Tab walks its field, Cancel and its

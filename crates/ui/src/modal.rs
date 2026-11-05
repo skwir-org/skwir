@@ -256,7 +256,9 @@ pub fn panel(id: &'static str, width: f32, theme: &Theme) -> Stateful<Div> {
 /// ([`pressed`]: a focused Cancel cancels, whatever Enter does elsewhere in
 /// the dialog), and a press on one leaves the keyboard where it was, in
 /// the field: one that clicks nothing (a dimmed button, a release outside)
-/// strands nothing.
+/// strands nothing. The buttons stand beside the hint while it keeps
+/// [`HINT_LEAST`], else under it, at the end: three answers in a narrow
+/// dialog never squeeze the hint into a column of a word a line.
 pub fn footer(
     hint: impl Into<gpui::SharedString>,
     buttons: impl IntoIterator<Item = Pressed>,
@@ -264,22 +266,34 @@ pub fn footer(
 ) -> Div {
     div()
         .flex()
+        .flex_wrap()
         .items_center()
+        .justify_end()
         .gap_2()
         .child(
             div()
                 .flex_1()
-                .min_w_0()
+                .min_w(crate::sizes::sized(HINT_LEAST))
                 .text_body()
                 .text_color(theme.text_muted)
                 .child(hint.into()),
         )
-        .children(buttons.into_iter().map(|button| {
-            button
-                .0
-                .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
-        }))
+        .child(
+            div()
+                .flex()
+                .flex_none()
+                .items_center()
+                .gap_2()
+                .children(buttons.into_iter().map(|button| {
+                    button
+                        .0
+                        .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
+                })),
+        )
 }
+
+/// The least a dialog footer's hint keeps beside its buttons, at 100 %.
+const HINT_LEAST: f32 = 180.;
 
 /// A control the keys press as a click does, made by [`pressed`]: all a
 /// dialog's footer holds.
