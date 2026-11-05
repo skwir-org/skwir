@@ -1780,7 +1780,21 @@ impl Shell {
             while self.preview.rx.try_recv().is_ok() {}
             return;
         }
-        let code = cx.global::<Theme>().code.clone();
+        // The colors code is drawn in; while Colors from's list shows a
+        // palette before it is taken, those the preview was made in: a row
+        // crossed colors nothing again, a palette taken does.
+        let code = match &self.preview.version {
+            Some(shown)
+                if crate::settings::previewed(
+                    &self.app.settings,
+                    crate::settings::COLORS_FROM_KEY,
+                )
+                .is_some() =>
+            {
+                shown.code.clone()
+            }
+            _ => cx.global::<Theme>().code.clone(),
+        };
         // Nothing selected: where the pane is (`here`).
         let cursor = self.cursor_id();
         let current = if let Some(id) = cursor {

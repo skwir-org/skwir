@@ -632,9 +632,8 @@ contexts:
     /// The colors `set` gives a line in the grammar for `token`.
     fn colors(set: &SyntaxSet, token: &str, line: &str) -> std::collections::BTreeSet<[u8; 3]> {
         let syntax = set.find_syntax_by_token(token).unwrap();
-        let theme =
-            super::super::bat_themes().get(two_face::theme::EmbeddedThemeName::Base16OceanLight);
-        syntect::easy::HighlightLines::new(syntax, theme)
+        let theme = super::super::bat_theme(two_face::theme::EmbeddedThemeName::Base16OceanLight);
+        syntect::easy::HighlightLines::new(syntax, &theme)
             .highlight_line(&format!("{line}\n"), set)
             .unwrap()
             .into_iter()

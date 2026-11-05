@@ -1536,6 +1536,15 @@ is still to come are in `docs/preview-frame.md`.
   finding grammars, the Reading page and choosing an engine never read
   the set. The last few sets built are kept (`added::KEEP`), so builds
   of skwir run side by side each find theirs.
+- **Code themes are let go of too.** bat's (unpacked from its set,
+  which is read for one and let go of) and those skwir carries
+  (`highlight::CARRIED`) are read when a palette asks for one
+  (`Palette::of`, on a worker), kept by name and let go of once none was
+  asked for `THEMES_KEPT`, as the grammars are: never in a static. A
+  palette holds its own. A preview is not colored again for each
+  palette Colors from's list shows before one is taken: its code keeps
+  the colors it was made in until the palette is taken
+  (`preview::Version`).
 - **A tree-sitter grammar is the second engine** (ADR-110), chosen by
   `highlight::engine`: a language's own choice first
   (`reading.grammar_for`: bat, a source's tree-sitter grammar, or plain

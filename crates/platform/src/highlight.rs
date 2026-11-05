@@ -16,11 +16,11 @@
 use parking_lot::{Condvar, Mutex};
 use skwir_core::inspection::{Inspection, Run};
 use std::path::Path;
-use std::sync::{Arc, OnceLock, RwLock, Weak};
+use std::sync::{Arc, RwLock, Weak};
 use std::time::{Duration, Instant};
 use syntect::highlighting::{Color, FontStyle, Theme as Colors, ThemeSet};
 use syntect::parsing::SyntaxSet;
-use two_face::theme::{EmbeddedLazyThemeSet, EmbeddedThemeName as Bat};
+use two_face::theme::EmbeddedThemeName as Bat;
 
 pub mod added;
 pub mod tree;
@@ -159,10 +159,80 @@ fn let_go_if_idle(now: Instant) -> Option<Duration> {
     None
 }
 
-/// bat's themes: read once, each unpacked when it is first drawn.
-fn bat_themes() -> &'static EmbeddedLazyThemeSet {
-    static SET: OnceLock<EmbeddedLazyThemeSet> = OnceLock::new();
-    SET.get_or_init(two_face::theme::extra)
+/// How long the code themes read stay after one was last asked for (a
+/// file about to be colored): then they are let go of, as the grammars
+/// are (ADR-060). Reading one again takes well under a millisecond.
+const THEMES_KEPT: Duration = GRAMMARS_KEPT;
+
+/// The code themes read so far, bat's and those skwir carries, by the
+/// name stored for them: kept until none was asked for `THEMES_KEPT`. A
+/// palette holds the one it paints with.
+struct Themes {
+    kept: std::collections::BTreeMap<&'static str, Arc<Colors>>,
+    last_use: Option<Instant>,
+    /// Whether a thread waits to let go of `kept`.
+    waiting: bool,
+}
+
+static THEMES: Mutex<Themes> = Mutex::new(Themes {
+    kept: std::collections::BTreeMap::new(),
+    last_use: None,
+    waiting: false,
+});
+
+/// The theme stored as `name`, kept, else read by `read` and kept.
+fn kept_theme(name: &'static str, read: impl FnOnce() -> Option<Colors>) -> Option<Arc<Colors>> {
+    {
+        let mut themes = THEMES.lock();
+        themes.last_use = Some(Instant::now());
+        if !themes.waiting {
+            themes.waiting = std::thread::Builder::new()
+                .name("skwir-code-themes".into())
+                .spawn(let_go_of_themes)
+                .is_ok();
+        }
+        if let Some(colors) = themes.kept.get(name) {
+            return Some(Arc::clone(colors));
+        }
+    }
+    // Read outside the lock: two asking at once may each read it.
+    let colors = Arc::new(read()?);
+    THEMES.lock().kept.insert(name, Arc::clone(&colors));
+    Some(colors)
+}
+
+/// bat's theme `name`, unpacked from bat's set, which is read for it
+/// (some 60 KB) and let go of.
+fn bat_theme(name: Bat) -> Arc<Colors> {
+    let read = || two_face::theme::extra().get(name).clone();
+    kept_theme(name.as_name(), || Some(read())).unwrap_or_else(|| Arc::new(read()))
+}
+
+/// Wait until no code theme was asked for `THEMES_KEPT`, let go of them,
+/// and give back what they took.
+fn let_go_of_themes() {
+    while let Some(wait) = let_go_of_themes_if_idle(Instant::now()) {
+        std::thread::sleep(wait);
+    }
+    // Workers read them: what is freed here stays with each worker until
+    // it releases.
+    skwir_core::scheduler::release_on_workers();
+    skwir_core::scheduler::release_now();
+}
+
+/// Let go of the code themes kept if none was asked for `THEMES_KEPT` at
+/// `now`; else how long until they may be.
+fn let_go_of_themes_if_idle(now: Instant) -> Option<Duration> {
+    let mut themes = THEMES.lock();
+    let due = themes.last_use.map_or(now, |at| at + THEMES_KEPT);
+    if due > now {
+        return Some(due - now);
+    }
+    let kept = std::mem::take(&mut themes.kept);
+    themes.waiting = false;
+    drop(themes);
+    drop(kept);
+    None
 }
 
 /// The choice of `reading.code_light` and `reading.code_dark` that keeps
@@ -252,15 +322,14 @@ const CARRIED: [(&str, &str, bool, &[u8]); 6] = [
     ),
 ];
 
-/// The theme of `CARRIED` named `name`, read once; `None` for another
-/// name, or for one that does not read (a test holds them all to).
-fn carried(name: &str) -> Option<&'static Colors> {
-    static READ: [OnceLock<Option<Colors>>; CARRIED.len()] =
-        [const { OnceLock::new() }; CARRIED.len()];
-    let at = CARRIED.iter().position(|(value, ..)| *value == name)?;
-    READ[at]
-        .get_or_init(|| ThemeSet::load_from_reader(&mut std::io::Cursor::new(CARRIED[at].3)).ok())
-        .as_ref()
+/// The theme of `CARRIED` named `name`, read when asked unless kept
+/// (`kept_theme`); `None` for another name, or for one that does not
+/// read (a test holds them all to).
+fn carried(name: &str) -> Option<Arc<Colors>> {
+    let (value, _, _, bytes) = CARRIED.iter().find(|(value, ..)| *value == name)?;
+    kept_theme(value, || {
+        ThemeSet::load_from_reader(&mut std::io::Cursor::new(*bytes)).ok()
+    })
 }
 
 /// The colors code is drawn in and the look they are for, as the
@@ -429,8 +498,8 @@ pub struct Palette {
 }
 
 enum Painted {
-    /// bat's, or one skwir carries (`CARRIED`).
-    Bat(&'static Colors),
+    /// bat's, or one skwir carries (`CARRIED`), as kept (`kept_theme`).
+    Bat(Arc<Colors>),
     User(Arc<UserTheme>),
 }
 
@@ -441,7 +510,7 @@ impl Palette {
     /// user's themes: a worker's work.
     pub fn of(code: &CodeTheme) -> Self {
         let own = || Palette {
-            colors: Painted::Bat(bat_themes().get(if code.dark {
+            colors: Painted::Bat(bat_theme(if code.dark {
                 Bat::Base16OceanDark
             } else {
                 Bat::Base16OceanLight
@@ -459,7 +528,7 @@ impl Palette {
             Painted::User(Arc::clone(theme))
         } else if let Some((name, ..)) = BAT.iter().find(|(name, ..)| name.as_name() == &*code.name)
         {
-            Painted::Bat(bat_themes().get(*name))
+            Painted::Bat(bat_theme(*name))
         } else if let Some(colors) = carried(&code.name) {
             Painted::Bat(colors)
         } else {
@@ -480,7 +549,7 @@ impl Palette {
 
     fn colors(&self) -> &Colors {
         match &self.colors {
-            Painted::Bat(colors) => colors,
+            Painted::Bat(colors) => colors.as_ref(),
             Painted::User(theme) => &theme.colors,
         }
     }
@@ -664,6 +733,21 @@ mod tests {
     }
 
     #[test]
+    fn code_themes_are_let_go_of_once_unused_and_read_again() {
+        let first = carried("rose-pine").unwrap();
+        assert!(Arc::ptr_eq(&first, &carried("rose-pine").unwrap()), "kept");
+        let ocean = bat_theme(Bat::Base16OceanDark);
+        assert!(Arc::ptr_eq(&ocean, &bat_theme(Bat::Base16OceanDark)));
+        assert!(let_go_of_themes_if_idle(Instant::now()).is_some());
+        // Unused for `THEMES_KEPT`: let go of; a palette still holds its own.
+        assert_eq!(let_go_of_themes_if_idle(Instant::now() + THEMES_KEPT), None);
+        let again = carried("rose-pine").unwrap();
+        assert!(!Arc::ptr_eq(&first, &again), "read again");
+        assert_eq!(first.settings.background, again.settings.background);
+        assert!(!Arc::ptr_eq(&ocean, &bat_theme(Bat::Base16OceanDark)));
+    }
+
+    #[test]
     fn grammars_are_let_go_of_once_unused_and_read_again() {
         let grammars = Arc::downgrade(&syntaxes());
         // Used a moment ago: kept, nothing holding them but the keeper.
@@ -777,11 +861,11 @@ mod tests {
     #[test]
     fn bat_s_themes_are_offered_to_the_look_their_background_is_for() {
         for (name, label, dark) in BAT {
-            assert_eq!(is_dark(bat_themes().get(name)), dark, "{label}");
+            assert_eq!(is_dark(&bat_theme(name)), dark, "{label}");
         }
         // A theme a new bat brings is offered, or left out with the
         // terminal's.
-        for name in EmbeddedLazyThemeSet::theme_names() {
+        for name in two_face::theme::EmbeddedLazyThemeSet::theme_names() {
             assert!(
                 BAT.iter().any(|(bat, ..)| bat == name)
                     || [Bat::Ansi, Bat::Base16, Bat::Base16_256].contains(name),
@@ -801,7 +885,7 @@ mod tests {
     fn the_themes_skwir_carries_read_and_are_offered_to_their_look() {
         for (name, label, dark, _) in CARRIED {
             let colors = carried(name).unwrap_or_else(|| panic!("{name} reads"));
-            assert_eq!(is_dark(colors), dark, "{label}");
+            assert_eq!(is_dark(&colors), dark, "{label}");
             assert!(!BAT.iter().any(|(bat, ..)| bat.as_name() == name), "{name}");
             assert!(
                 choices(dark, DEFAULT, Some(&[])).contains(&(name.to_owned(), label.to_owned())),
