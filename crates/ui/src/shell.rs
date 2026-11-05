@@ -3015,6 +3015,10 @@ impl Shell {
             self.preview.remeasure();
             cx.refresh_windows();
         }
+        let reading = |sizes: &crate::sizes::Sizes| sizes.of(crate::sizes::Part::Reading);
+        if (reading(&now.1) - reading(&was.1)).abs() > f32::EPSILON {
+            self.reading_size_changed(window, cx);
+        }
     }
 
     pub(crate) fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {

@@ -4564,15 +4564,14 @@ impl Shell {
                 .text_size
                 .unwrap_or_else(|| reading_size(&sizes));
             let percent = (size / hundred * 100.).round() as u32;
-            let next = match direction {
-                "in" | "out" => {
-                    hundred * crate::sizes::preview_stepped(percent, direction == "in") as f32
-                        / 100.
-                }
-                _ => reading_size(&sizes),
-            };
-            if (next - size).abs() > f32::EPSILON {
+            // Reset follows Reading's setting again (`None`).
+            let next = matches!(direction, "in" | "out").then(|| {
+                hundred * crate::sizes::preview_stepped(percent, direction == "in") as f32 / 100.
+            });
+            if (next.unwrap_or_else(|| reading_size(&sizes)) - size).abs() > f32::EPSILON {
                 self.relayout(next, window, cx);
+            } else if next.is_none() {
+                self.preview.text_size = None;
             }
             return;
         }
@@ -4746,14 +4745,23 @@ impl Shell {
             .is_some_and(|session| session.info().reflowable)
     }
 
-    /// Lay the book out again at text `size`, where the reader is: its
-    /// pages are others now, so the reader finds what it was reading in them
-    /// (`reader_anchor`, `reader_land`).
-    fn relayout(&mut self, size: f32, window: &mut Window, cx: &mut Context<Self>) {
+    /// Reading's size changed (ADR-117): a book its engine laid out at it is
+    /// laid out again at the new one, where the reader is; one the reader
+    /// sized keeps its size.
+    pub(crate) fn reading_size_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.preview.text_size.is_none() && self.reader_reflows() {
+            self.relayout(None, window, cx);
+        }
+    }
+
+    /// Lay the book out again at text `size` (`None`: Reading's), where
+    /// the reader is: its pages are others now, so the reader finds what it
+    /// was reading in them (`reader_anchor`, `reader_land`).
+    fn relayout(&mut self, size: Option<f32>, window: &mut Window, cx: &mut Context<Self>) {
         let anchor = self.reader_anchor();
         self.reader_reopen(window, cx);
         self.preview.reader.relayout = Some(anchor);
-        self.preview.text_size = Some(size);
+        self.preview.text_size = size;
         self.cancel_pending_preview();
         self.preview.phase = PreviewPhase::Queued;
         cx.notify();

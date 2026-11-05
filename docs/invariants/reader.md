@@ -227,7 +227,11 @@ Measurements: `docs/pdf-comparison.md`, ADR-061 for `DjVu`.
 
 - A reflowable document (a MuPDF book, `DocumentInfo::reflowable`) is laid
   out by its worker at the preview's text size; size keys relayout instead
-  of zooming (`Shell::preview_zoom`, `relayout`).
+  of zooming (`Shell::preview_zoom`, `relayout`). Until a size is chosen
+  for it (`preview.text_size`, `None` again on reset) that size is
+  Reading's, and a change of Reading's setting lays the book shown out
+  again where the reader is (`Shell::reading_size_changed`, from
+  `resolve_theme`).
 - After a relayout the reader lands through `reader::Anchor` and
   `DocumentSession::locate`, never the old page number, and takes the
   located page only if it has not moved since.
