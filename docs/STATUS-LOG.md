@@ -11096,3 +11096,11 @@ LXQt, GNOME or Xfce session; a Kvantum theme's colors (not read).
   `documents.pdfium_library` naming no file, Poppler outlined once the
   dialog probed again; core's test of `tries` and `with_found`; 88 tests
   of the crates touched and the binary's settings tests.
+- **An old qt5ct's binary fonts**: `qt_family` and `qt_size` take a font
+  written as `@Variant(…)` (Qt's binary form, which qt5ct wrote before it
+  wrote text; 1.9 writes `QFont::toString`, read in its source) as naming
+  nothing, so Automatic goes on to the next source instead of stopping
+  at Qt with a family no font has. Not decoded: qt5ct writes it as text
+  at its next save. Tests: the binary line read from a key file reaches
+  the check, names no family and no size, and gives way; 414 platform
+  tests pass.

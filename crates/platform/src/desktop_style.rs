@@ -309,17 +309,25 @@ fn points(size: f32) -> f32 {
     size * 96. / 72.
 }
 
+/// A font as Qt writes it, unquoted; `None` for one an old qt5ct wrote
+/// as Qt's binary form (`@Variant(…)`), which names nothing read here:
+/// qt5ct writes it again as text when its fonts are next saved.
+fn qt_written(font: &str) -> Option<&str> {
+    let font = font.trim().trim_matches('"');
+    (!font.starts_with("@Variant(")).then_some(font)
+}
+
 /// The family of a font as Qt writes it in `kdeglobals` (`Noto
 /// Sans,10,-1,5,400,0,0,0,0,0`), quoted or not.
 pub fn qt_family(font: &str) -> Option<String> {
-    let family = font.trim().trim_matches('"').split(',').next()?.trim();
+    let family = qt_written(font)?.split(',').next()?.trim();
     (!family.is_empty()).then(|| family.to_owned())
 }
 
 /// The size of a font as Qt writes it, in pixels: its points (the second
 /// field), else its pixels (the third) where the points say -1.
 pub fn qt_size(font: &str) -> Option<f32> {
-    let mut fields = font.trim().trim_matches('"').split(',').skip(1);
+    let mut fields = qt_written(font)?.split(',').skip(1);
     let points_said: f32 = fields.next()?.trim().parse().ok()?;
     if points_said > 0. {
         return Some(points(points_said));
@@ -1164,6 +1172,11 @@ mod tests {
         );
         assert_eq!(qt_family("Hack"), Some("Hack".to_owned()));
         assert_eq!(qt_family(",10"), None);
+        // An old qt5ct's binary form names nothing, its size neither.
+        let variant = r"@Variant(\0\0\0@\0\0\0\x12\0N\0o\0t\0o\0 \0S\0\x61\0n\0s@$\0\0\0\0\0\0\xff\xff\xff\xff\x5\x1\0\x32\x10)";
+        assert_eq!(qt_family(variant), None);
+        assert_eq!(qt_size(variant), None);
+        assert_eq!(qt_family(&format!("\"{variant}\"")), None);
     }
 
     #[cfg(target_os = "linux")]
@@ -1581,6 +1594,27 @@ mod tests {
             // Without a portal, settings.ini's either way.
             let alone = imp::read_from(None, &IniOnly(true));
             assert_eq!(alone.font.as_deref(), Some("Noto Sans"));
+        }
+
+        #[test]
+        fn an_old_qt5ct_s_binary_fonts_name_nothing_and_automatic_goes_on() {
+            let conf = r"[Fonts]
+fixed=@Variant(\0\0\0@\0\0\0\x10\0H\0\x61\0\x63\0k@$\0\0\0\0\0\0\xff\xff\xff\xff\x5\x1\0\x32\x10)
+general=@Variant(\0\0\0@\0\0\0\x12\0N\0o\0t\0o\0 \0S\0\x61\0n\0s@$\0\0\0\0\0\0\xff\xff\xff\xff\x5\x1\0\x32\x10)
+";
+            // Read as written, it is the binary form that names nothing.
+            let general = crate::desktop_settings::keyfile_value(conf, "Fonts", "general");
+            assert!(general.is_some_and(|value| value.starts_with("@Variant(")));
+            let old = imp::qt_named(Some(conf), "Fonts", ("general", "fixed"), "Qt (qt5ct)");
+            assert_eq!((old.interface.as_deref(), old.interface_px), (None, None));
+            assert_eq!((old.monospace.as_deref(), old.monospace_px), (None, None));
+            // Named nothing, it gives way to what follows.
+            let after = imp::Named {
+                interface: Some("Noto Sans".into()),
+                from: Some("GTK"),
+                ..imp::Named::default()
+            };
+            assert_eq!(old.or(after).from, Some("GTK"));
         }
 
         #[test]

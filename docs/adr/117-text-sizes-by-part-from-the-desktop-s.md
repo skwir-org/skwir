@@ -175,7 +175,11 @@ apart, and changes how gpui maps the pointer.
   `kdeglobals` (one watcher for their folders, a folder not there not
   followed). Checked by the platform's tests: the order on Wayland and
   X11 against a fake portal, qt6ct's file written in a folder of the
-  test's own.
+  test's own. A font an old qt5ct wrote in Qt's binary form
+  (`@Variant(…)`) names nothing, so Automatic goes on past it: qt5ct
+  1.9 writes fonts as text (`QFont::toString`, read in its source) and
+  writes an old one again so when its fonts are next saved; decoding
+  the binary form was judged not worth it.
 - 2026-11-05 too: a book its engine laid out (MuPDF's) at Reading's size
   is laid out again, where the reader is, when that setting changes
   while it is shown; one sized in the preview keeps its size, and the
