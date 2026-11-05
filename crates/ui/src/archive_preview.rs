@@ -28,9 +28,11 @@ pub fn rem(theme: &Theme, members: impl IntoElement) -> crate::elements::rem::Re
 pub fn header(theme: &Theme) -> Div {
     let scale = files_scale(theme);
     let height = scale.f(HEADER_HEIGHT);
+    // Over the names: past the triangle and the icon, which keep their
+    // size, and the two gaps of a row (`gap_1`), which grow with the text.
     let name = div()
         .min_w_0()
-        .pl(px(DISCLOSURE_SIZE + ICON_SIZE + 8.))
+        .pl(px(DISCLOSURE_SIZE + ICON_SIZE + scale.f(8.)))
         .child("Name");
     div()
         .h(px(height))

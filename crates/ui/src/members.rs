@@ -28,9 +28,26 @@ use gpui::{
 pub const SHARE: f32 = 0.4;
 /// What each side keeps, whatever the drag: the container's bar, its strip,
 /// its header and a few rows, or a column wide enough for a name, and as
-/// much of the member's preview.
-const KEEP_HEIGHT: f32 = crate::preview_bar::HEIGHT + crate::views::list::ROW_HEIGHT * 5.;
+/// much of the member's preview. At 100 %: drawn by `keep`.
+const KEEP_ROWS: f32 = 5.;
 const KEEP_WIDTH: f32 = 160.;
+
+/// What each side keeps, in pixels, at the sizes they are drawn at
+/// (ADR-117): the bar at the interface's, the container's rows and a
+/// name's column at the files' (`archive_preview`).
+fn keep(theme: &Theme, beside: bool) -> f32 {
+    let files = crate::views::list::files_scale(theme);
+    if beside {
+        files.f(KEEP_WIDTH)
+    } else {
+        let bar = theme
+            .sizes
+            .scale(crate::sizes::Part::Interface)
+            .f(crate::preview_bar::HEIGHT);
+        let row = crate::views::list::row_height(crate::views::list::DEFAULT_ROW_ZOOM, files);
+        bar + KEEP_ROWS * row
+    }
+}
 
 /// Marker for dragging the edge between the container and the member; it
 /// knows which way the edge runs.
@@ -91,13 +108,13 @@ pub fn split(body: AnyElement, wide: bool, shell: &Shell, cx: &mut Context<Shell
         .when(beside, |d| {
             d.w(relative(share))
                 .h_full()
-                .min_w(px(KEEP_WIDTH))
+                .min_w(px(keep(&theme, true)))
                 .border_r_1()
         })
         .when(!beside, |d| {
             d.h(relative(share))
                 .w_full()
-                .min_h(px(KEEP_HEIGHT))
+                .min_h(px(keep(&theme, false)))
                 .border_b_1()
         })
         .child(inspector::parked(shell, &theme, cx));
@@ -112,8 +129,8 @@ pub fn split(body: AnyElement, wide: bool, shell: &Shell, cx: &mut Context<Shell
         })
         .relative()
         .flex_1()
-        .when(beside, |d| d.min_w(px(KEEP_WIDTH)).min_h_0())
-        .when(!beside, |d| d.min_h(px(KEEP_HEIGHT)).min_w_0())
+        .when(beside, |d| d.min_w(px(keep(&theme, true))).min_h_0())
+        .when(!beside, |d| d.min_h(px(keep(&theme, false))).min_w_0())
         .flex()
         .flex_col()
         .child(body)
@@ -157,18 +174,11 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         let beside = ev.drag(cx).beside;
-        let (along, size, keep) = if beside {
-            (
-                ev.event.position.x - ev.bounds.left(),
-                ev.bounds.size.width,
-                KEEP_WIDTH,
-            )
+        let keep = keep(cx.global::<Theme>(), beside);
+        let (along, size) = if beside {
+            (ev.event.position.x - ev.bounds.left(), ev.bounds.size.width)
         } else {
-            (
-                ev.event.position.y - ev.bounds.top(),
-                ev.bounds.size.height,
-                KEEP_HEIGHT,
-            )
+            (ev.event.position.y - ev.bounds.top(), ev.bounds.size.height)
         };
         if let Some(share) = crate::elements::edge::share(f32::from(along), f32::from(size), keep) {
             self.preview.members_share.set(beside, share);

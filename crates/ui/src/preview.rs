@@ -29,10 +29,10 @@ use crate::keymap;
 use crate::shell::Shell;
 use crate::theme::Theme;
 
-/// The size a book is laid out at before the reader changes it: Reading's
-/// (ADR-117), in pixels.
-fn reading_size(sizes: &crate::sizes::Sizes) -> f32 {
-    sizes.of(crate::sizes::Part::Reading)
+/// Whether a book laid out at `laid_out_at` pixels (`None`: not known) is
+/// to be laid out again to be at `wanted` (ADR-117).
+fn book_size_moved(laid_out_at: Option<f32>, wanted: f32) -> bool {
+    laid_out_at.is_none_or(|at| (at - wanted).abs() > f32::EPSILON)
 }
 /// The zoom range of a picture or a page, as a share of its pixels. The
 /// floor is low enough that Zoom out from Fit always shrinks: a large page in
@@ -588,10 +588,16 @@ pub struct PreviewState {
     /// (`watch_area`), kept from one file to the next. Larger later, the
     /// picture shown asks again (`Sharpen`).
     pub(crate) media_box: (u32, u32),
-    /// The size a book laid out by its engine is read at (`MuPDF`'s books),
-    /// in pixels; `None` until the reader changes it. A book in reading mode
-    /// keeps its own (`inspector::State`), pictures and pages zoom instead.
-    pub(crate) text_size: Option<f32>,
+    /// The size chosen for a book laid out by its engine (`MuPDF`'s books),
+    /// a percentage of Reading's 100 % as an inspection's is
+    /// (`inspector::State::percent`); `None` until the reader changes it,
+    /// Reading's setting (`book_text_size`). A book in reading mode keeps
+    /// its own (`inspector::State`), pictures and pages zoom instead.
+    pub(crate) text_percent: Option<u32>,
+    /// The text size, in pixels, the book shown (or on its way) was asked to
+    /// be laid out at: what the size it should be at is compared with, as
+    /// its session comes and as a size changes (`Shell::follow_book_size`).
+    pub(crate) laid_out_at: Option<f32>,
     tx: flume::Sender<PreviewResult>,
     rx: flume::Receiver<PreviewResult>,
     /// Peek's keyboard, and the whole screen's where what it shows has none.
@@ -887,7 +893,8 @@ impl Default for PreviewState {
             area: Arc::default(),
             window_shown: true,
             media_box: (2 * SHARPEN_STEP, 2 * SHARPEN_STEP),
-            text_size: None,
+            text_percent: None,
+            laid_out_at: None,
             tx,
             rx,
             peek_focus: None,
@@ -1139,6 +1146,17 @@ impl PreviewState {
             Some(slot @ None) if parked.depth + 1 == count => *slot = Some(parked),
             _ => self.container_asked = Some(parked),
         }
+    }
+
+    /// The size, in pixels, a book laid out by its engine is asked at: the
+    /// percentage chosen for it of Reading's 100 %, else Reading's setting,
+    /// as an inspection is sized (`inspector::State::font_size`, ADR-117).
+    /// So a desktop's size changed carries a book sized in the preview
+    /// with it, and Reading's setting moves only a book not sized.
+    pub(crate) fn book_text_size(&self, sizes: &crate::sizes::Sizes) -> f32 {
+        let part = crate::sizes::Part::Reading;
+        let percent = self.text_percent.unwrap_or_else(|| sizes.step(part));
+        sizes.hundred(part) * percent as f32 / 100.
     }
 
     /// Every row is a different height now (a font changed): the
@@ -2052,8 +2070,8 @@ impl Shell {
             return;
         }
         if !self.take_ahead(&key, &version, window, cx) {
-            let reading = reading_size(&cx.global::<Theme>().sizes);
-            self.preview_request(&key, &version, &entry, reading);
+            let book = self.preview.book_text_size(&cx.global::<Theme>().sizes);
+            self.preview_request(&key, &version, &entry, book);
         }
     }
 
@@ -2299,6 +2317,8 @@ impl Shell {
                 cx.drop_image(image, Some(window));
             }
         }
+        // Whether a document's session came with it (`follow_book_size`).
+        let mut opened = false;
         if result.complete {
             self.preview.reader.tried = true;
             // The track stepped to is shown now, playable or not: the wish
@@ -2335,6 +2355,7 @@ impl Shell {
                 self.preview.reader.shown_side = side;
                 self.preview.page_side.get_or_insert(side);
             }
+            opened = result.session.is_some();
             if let Some(session) = result.session {
                 self.reader_opened(session, cx);
             } else if self.preview.reader.session.is_none()
@@ -2414,6 +2435,10 @@ impl Shell {
         };
         self.fullscreen_arrived(window, cx);
         self.read_ahead_next(window, cx);
+        // A book laid out at a size changed since it was asked (ADR-117).
+        if opened {
+            self.follow_book_size(window, cx);
+        }
     }
 
     /// Read ahead what the next step shows, once the entry shown has
@@ -2536,7 +2561,7 @@ impl Shell {
         key: &PreviewKey,
         version: &Version,
         entry: &skwir_core::Entry,
-        reading: f32,
+        book: f32,
     ) {
         let cancel = self.app.lifetime().child();
         self.preview.cancel = Some(cancel.clone());
@@ -2575,15 +2600,19 @@ impl Shell {
             self.preview.inspection.request.whole,
             members_dir(self.app.cache.root()),
         );
+        // A book laid out into pages is at the size chosen for it, else at
+        // Reading's (ADR-117); what a request that opens it asks is what it
+        // is laid out at, a page turned keeping its session's.
+        if self.preview.reader.session.is_none() {
+            self.preview.laid_out_at = Some(book);
+        }
         let request = PreviewRequest {
             entry: content,
             mime: self.preview.info.mime.clone(),
             page: self.preview.page,
             seconds: self.preview.seconds,
             max_side: IMAGE_MAX_SIDE,
-            // A book laid out into pages is at the size chosen for it, else
-            // at Reading's (ADR-117).
-            text_size: Some(self.preview.text_size.unwrap_or(reading)),
+            text_size: Some(book),
             fit: None,
             held,
         };
@@ -3770,7 +3799,7 @@ impl Shell {
         self.preview.fit_width = false;
         self.preview.picture_scroll = gpui::ScrollHandle::new();
         self.preview.picture_side = 0;
-        self.preview.text_size = None;
+        self.preview.text_percent = None;
         self.preview.map = crate::map_preview::MapState::default();
         self.preview.model = crate::model_preview::ModelState::default();
     }
@@ -4555,24 +4584,16 @@ impl Shell {
             return;
         }
         if matches!(direction, "in" | "out" | "reset") && self.reader_reflows() {
-            // In the preview's steps, of reading's 100 % (ADR-117); back to
-            // the size Reading's setting says.
+            // In the preview's steps, of Reading's 100 %, as an inspection's
+            // (ADR-117); reset follows Reading's setting again (`None`).
             let sizes = cx.global::<Theme>().sizes;
-            let hundred = sizes.hundred(crate::sizes::Part::Reading);
-            let size = self
+            let now = self
                 .preview
-                .text_size
-                .unwrap_or_else(|| reading_size(&sizes));
-            let percent = (size / hundred * 100.).round() as u32;
-            // Reset follows Reading's setting again (`None`).
-            let next = matches!(direction, "in" | "out").then(|| {
-                hundred * crate::sizes::preview_stepped(percent, direction == "in") as f32 / 100.
-            });
-            if (next.unwrap_or_else(|| reading_size(&sizes)) - size).abs() > f32::EPSILON {
-                self.relayout(next, window, cx);
-            } else if next.is_none() {
-                self.preview.text_size = None;
-            }
+                .text_percent
+                .unwrap_or_else(|| sizes.step(crate::sizes::Part::Reading));
+            self.preview.text_percent = matches!(direction, "in" | "out")
+                .then(|| crate::sizes::preview_stepped(now, direction == "in"));
+            self.follow_book_size(window, cx);
             return;
         }
         // A step from Fit or Fit width starts at the scale they show, so
@@ -4745,23 +4766,31 @@ impl Shell {
             .is_some_and(|session| session.info().reflowable)
     }
 
-    /// Reading's size changed (ADR-117): a book its engine laid out at it is
-    /// laid out again at the new one, where the reader is; one the reader
-    /// sized keeps its size.
+    /// Reading's size changed (ADR-117): the book shown follows it
+    /// (`follow_book_size`).
     pub(crate) fn reading_size_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.preview.text_size.is_none() && self.reader_reflows() {
-            self.relayout(None, window, cx);
+        self.follow_book_size(window, cx);
+    }
+
+    /// A book its engine laid out is laid out again, where the reader is,
+    /// when it was asked at another size than it should be at now
+    /// (`PreviewState::book_text_size`): a size chosen for it, or Reading's
+    /// changed (ADR-117). Asked again as its session comes, so a size
+    /// changed while it was being laid out is not lost.
+    pub(crate) fn follow_book_size(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let wanted = self.preview.book_text_size(&cx.global::<Theme>().sizes);
+        if self.reader_reflows() && book_size_moved(self.preview.laid_out_at, wanted) {
+            self.relayout(window, cx);
         }
     }
 
-    /// Lay the book out again at text `size` (`None`: Reading's), where
-    /// the reader is: its pages are others now, so the reader finds what it
-    /// was reading in them (`reader_anchor`, `reader_land`).
-    fn relayout(&mut self, size: Option<f32>, window: &mut Window, cx: &mut Context<Self>) {
+    /// Lay the book out again at the size it should be at, where the reader
+    /// is: its pages are others now, so the reader finds what it was
+    /// reading in them (`reader_anchor`, `reader_land`).
+    fn relayout(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let anchor = self.reader_anchor();
         self.reader_reopen(window, cx);
         self.preview.reader.relayout = Some(anchor);
-        self.preview.text_size = size;
         self.cancel_pending_preview();
         self.preview.phase = PreviewPhase::Queued;
         cx.notify();
@@ -5755,13 +5784,16 @@ fn notes_items(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Vec<Any
         .natural()
         .into_any_element()
     });
+    // As tall as the chips beside them, the stars as large as the list's,
+    // at the interface's size (ADR-117).
+    let scale = theme.sizes.scale(crate::sizes::Part::Interface);
     rating
         .map(|stars| {
             div()
-                .h(px(crate::tags::CHIP_HEIGHT))
+                .h(sized(crate::tags::CHIP_HEIGHT))
                 .flex()
                 .items_center()
-                .child(crate::tags::stars(stars, 12., theme))
+                .child(crate::tags::stars(stars, scale.f(12.), theme))
                 .into_any_element()
         })
         .into_iter()
@@ -6253,7 +6285,8 @@ pub fn render_panel(
             .tab_group()
             .flex_none()
             .w_full()
-            .h(px(crate::address::PANE_ROW_HEIGHT))
+            // As tall as a pane's row at every text size (ADR-117).
+            .h(sized(crate::address::PANE_ROW_HEIGHT))
             .px(sized(6.))
             .border_b_1()
             .border_color(theme.border)
@@ -6424,6 +6457,39 @@ mod tests {
         max_width, picture_written, selection_stamp, sharper, still_counts, zoomed_offset,
     };
     use skwir_core::workspace::{PaneId, Selection};
+
+    /// A book laid out by its engine is sized as an inspection is: a
+    /// percentage of Reading's 100 %, else Reading's setting (ADR-117).
+    #[test]
+    fn a_book_s_size_is_a_share_of_reading_s_100() {
+        use crate::sizes::{Part, Sizes};
+        let close = |a: f32, b: f32| (a - b).abs() < 1e-3;
+        let mut state = super::PreviewState::default();
+        let sizes = Sizes::default().with_step(Part::Reading, 125);
+        assert!(close(state.book_text_size(&sizes), 20.));
+        // Sized in the preview, Reading's setting no longer moves it...
+        state.text_percent = Some(150);
+        assert!(close(state.book_text_size(&sizes), 24.));
+        let stepped = sizes.with_step(Part::Reading, 80);
+        assert!(close(state.book_text_size(&stepped), 24.));
+        // ...nor its reset, which follows the setting again.
+        state.text_percent = None;
+        assert!(close(state.book_text_size(&stepped), 12.8));
+    }
+
+    /// A size changed while a book was being laid out, with no session to
+    /// lay out again, is kept: the session that comes, laid out at the size
+    /// asked before, is laid out again at the one wanted now (ADR-117).
+    #[test]
+    fn a_size_changed_while_a_book_is_laid_out_is_kept() {
+        use super::book_size_moved;
+        // Asked at 16 px, Reading at 125 % since: laid out again.
+        assert!(book_size_moved(Some(16.), 20.));
+        // Asked at the size wanted: kept.
+        assert!(!book_size_moved(Some(20.), 20.));
+        // Not known what it was asked at: laid out again.
+        assert!(book_size_moved(None, 20.));
+    }
 
     /// A request about the file at `path`, as the panel makes one.
     fn asked(path: &std::path::Path) -> super::PreviewRequest {

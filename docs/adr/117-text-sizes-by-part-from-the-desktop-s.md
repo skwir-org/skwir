@@ -70,10 +70,12 @@ Qt's settings (4).
    followed whatever the fonts are read from, as more contrast is.
 3. **A part is drawn in a rem of its own** (`elements::rem`, gpui's
    `with_rem_size` in each phase): the rem is the part's body text over
-   0.875, so `text_sm` is its body text, `text_xs` its small text, and
-   gpui's spacing scale follows. The window's rem is the interface's.
+   0.875, so `text_sm` is its body text (the named sizes are shares of
+   it, point 5; `text_xs` is never written), and gpui's spacing scale
+   follows. The window's rem is the interface's.
 4. **What holds text grows with it.** A length that holds text is
-   written at 100 % and drawn at its part's scale, in whole pixels
+   written at 100 % (beside a 14 px body, whatever the part) and drawn
+   at its part's scale, the part's rem over gpui's, in whole pixels
    (`sizes::Scale`): from the theme in `render`, from the rem in an
    element's layout. Pictures and icons keep the zoom's size: a list row
    is its text's height or its icon's, whichever is taller; a grid label
@@ -124,9 +126,10 @@ Qt's settings (4).
    13 px, Windows' message font, Segoe UI, at 14 px times its Text size)
    and Fonts from offers Automatic and Skwir's own; code stays Skwir's
    own there, neither naming a monospace font.
-8. **Commands and keys.** `ui.text_size` (`part`, `dir`: in, out, reset)
-   steps a part's size as its setting does, the palette offering the
-   files'; no default keys: Ctrl+= and Ctrl+wheel stay zoom.
+8. **Commands and keys.** `ui.text_size` (`part`, `dir`: in, out, reset,
+   any other way refused, naming them) steps a part's size as its
+   setting does, the palette offering the files'; no default keys: Ctrl+=
+   and Ctrl+wheel stay zoom.
 9. **Diagnostics.** About › Copy details says the display's scale and the
    fonts' source and sizes (step 4).
 
@@ -147,7 +150,8 @@ apart, and changes how gpui maps the pointer.
 - Step 1 (2026-11-04): `ui.files_text_size` on Appearance after Font; a
   pane's view drawn in the files' rem; the list's rows, header, gaps,
   name and columns, the columns view's columns, the grid's labels (now
-  Body, their line 18 px at 100 %), captions and least width, the
+  Body, their line 18 px at 100 %, 17 px since the review beside
+  0.3.0), captions and least width, the
   board's columns and cards at the files' scale; `ui.text_size`.
 - Step 2 (2026-11-04): `reading.text_size` (Reading, Text, after the
   reading font) and `ui.code_text_size` (Reading, Code, after the code
@@ -273,4 +277,15 @@ apart, and changes how gpui maps the pointer.
   (`settings::show_resolved`). Percentages stay over points: three of
   the four sizes are relative by nature, and a percentage keeps
   following the desktop's size where a size in points would stop.
-
+- Reviewed since 0.3.0, 2026-11-05: one scale per part, its rem over
+  gpui's, in `render` (`Sizes::scale`) as in an element's layout
+  (`Scale::of`) and as `sized` lengths come to (Reading's was its size
+  over 16 px, a seventh smaller than its rem draws). A book laid out by
+  its engine keeps the size chosen for it as a percentage of Reading's
+  100 %, as an inspection does, and is laid out again whenever the size
+  it should be at is not the one it was asked at, also as its session
+  comes: a change made while it was being laid out was lost. The
+  preview's bar is as tall as a pane's row at every size, its rating
+  row as tall as its chips; what the members' and Properties' splits
+  keep grows with their text; an archive's header stands over its
+  names at every size; a code line is whole pixels.

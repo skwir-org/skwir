@@ -1046,9 +1046,12 @@ is still to come are in `docs/preview-frame.md`.
   is followed while shown. Whatever holds text is sized: blocks, a
   table's cells and header (`table_size`, its columns' widths counted
   and dragged at 100 %), bytes and their columns (`bytes_size`). A book
-  an engine lays out into pages starts at Reading's size. The size
-  drawn is read in `content` (`State::font_size`), which measures the
-  rows again when it moves.
+  an engine lays out into pages is sized the same way, a percentage of
+  Reading's 100 % (`PreviewState::text_percent`, `book_text_size`), and
+  laid out again when that size moves (`docs/invariants/reader.md`). The
+  size drawn is read in `content` (`State::font_size`), which measures
+  the rows again when it moves; a code line is whole pixels
+  (`code_preview::line_height`), as its estimate is.
 - Shared actions take their words from `preview_bar::label`.
 - A button's label names what it does or shows, never the state it
   leaves: Source is Source in both states, lit while on. A provider

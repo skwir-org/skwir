@@ -323,9 +323,17 @@ pub struct SourceRow {
 pub const SHARE: f32 = 0.5;
 /// What each side keeps, whatever the drag: a heading and a few rows of
 /// Properties, the preview's toolbar and some of it; a column wide enough
-/// for a label and its value.
+/// for a label and its value. At 100 %, drawn at the interface's size
+/// (`keep`).
 const KEEP_HEIGHT: f32 = crate::preview_bar::HEIGHT + crate::views::list::ROW_HEIGHT * 3.;
 const KEEP_WIDTH: f32 = 200.;
+
+/// What each side keeps, in pixels: Properties' rows and the preview's
+/// bar grow with the interface's text (ADR-117).
+fn keep(theme: &Theme, beside: bool) -> f32 {
+    let scale = theme.sizes.scale(crate::sizes::Part::Interface);
+    scale.f(if beside { KEEP_WIDTH } else { KEEP_HEIGHT })
+}
 
 fn text_of(value: &Value) -> String {
     match value {
@@ -2015,18 +2023,11 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         let beside = ev.drag(cx).beside;
-        let (along, size, keep) = if beside {
-            (
-                ev.event.position.x - ev.bounds.left(),
-                ev.bounds.size.width,
-                KEEP_WIDTH,
-            )
+        let keep = keep(cx.global::<Theme>(), beside);
+        let (along, size) = if beside {
+            (ev.event.position.x - ev.bounds.left(), ev.bounds.size.width)
         } else {
-            (
-                ev.event.position.y - ev.bounds.top(),
-                ev.bounds.size.height,
-                KEEP_HEIGHT,
-            )
+            (ev.event.position.y - ev.bounds.top(), ev.bounds.size.height)
         };
         if let Some(share) = crate::elements::edge::share(f32::from(along), f32::from(size), keep) {
             self.preview.properties_share.set(beside, share);
