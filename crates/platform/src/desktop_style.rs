@@ -398,12 +398,20 @@ mod imp {
         fn qt_fonts(&self) -> Named {
             Named::default()
         }
+        /// Whether GTK's applications here draw through Wayland: there GTK
+        /// takes its settings from the settings portal (else `GSettings`)
+        /// before `settings.ini`, as GTK 3's and 4's Wayland backends do;
+        /// on X11 without an XSETTINGS daemon, from `settings.ini`.
+        fn wayland(&self) -> bool {
+            std::env::var_os("WAYLAND_DISPLAY").is_some_and(|display| !display.is_empty())
+        }
         /// Its color scheme: Plasma's, or the GTK3 theme its settings name,
         /// else `portal_theme`, the theme the portal names.
         fn schemes(&self, portal_theme: &dyn Fn() -> Option<String>) -> Schemes;
-        /// The file it says a change in by being replaced (Plasma's
-        /// `kdeglobals`), followed in its folder.
-        fn followed(&self) -> Option<PathBuf>;
+        /// The files it says a change in by writing or replacing them
+        /// (Plasma's `kdeglobals`, LXQt's `lxqt.conf`, qt5ct's and qt6ct's
+        /// files, GTK's `settings.ini`), each followed in its folder.
+        fn followed(&self) -> Vec<PathBuf>;
     }
 
     /// This session's desktop.
@@ -443,10 +451,27 @@ mod imp {
                 .unwrap_or(schemes)
         }
 
-        fn followed(&self) -> Option<PathBuf> {
-            (desktop::chosen() == Some(Chosen::Kde))
-                .then(crate::kde_scheme::user_file)
-                .flatten()
+        fn followed(&self) -> Vec<PathBuf> {
+            let Some(config) = crate::xdg::config_home() else {
+                return Vec::new();
+            };
+            let desktop = match desktop::chosen() {
+                Some(Chosen::Kde) => crate::kde_scheme::user_file(),
+                Some(Chosen::Lxqt) => Some(config.join("lxqt/lxqt.conf")),
+                _ => None,
+            };
+            desktop
+                .into_iter()
+                .chain(
+                    [
+                        "qt5ct/qt5ct.conf",
+                        "qt6ct/qt6ct.conf",
+                        "gtk-3.0/settings.ini",
+                        "gtk-4.0/settings.ini",
+                    ]
+                    .map(|file| config.join(file)),
+                )
+                .collect()
         }
     }
 
@@ -475,7 +500,12 @@ mod imp {
             monospace_px: monospace_name.as_deref().and_then(super::pango_size),
             from: Some("the portal"),
         };
-        let gtk = own.gtk_fonts().or(portal_named);
+        // As GTK's applications here take them (`Own::wayland`).
+        let gtk = if own.wayland() {
+            portal_named.or(own.gtk_fonts())
+        } else {
+            own.gtk_fonts().or(portal_named)
+        };
         let qt = own.qt_fonts();
         // The desktop's own, then GTK's, then Qt's (ADR-117).
         let named = own.fonts().or(gtk.clone()).or(qt.clone());
@@ -590,10 +620,7 @@ mod imp {
             changed: Mutex::new(Box::new(changed)),
             reading: Mutex::new(None),
         });
-        let file = following
-            .own
-            .followed()
-            .and_then(|file| follow_file(&following, &file, stop));
+        let files = follow_files(&following, &following.own.followed(), stop);
         let mut read = false;
         crate::bus::keep(connect, stop, |bus| {
             *following.bus.lock().unwrap_or_else(PoisonError::into_inner) = Some(bus.clone());
@@ -612,27 +639,39 @@ mod imp {
         if !read {
             following.read_soon();
         }
-        if file.is_some() {
-            // No bus, the file is followed still.
+        if files.is_some() {
+            // No bus, the files are followed still.
             let _ = stop.subscribe().receiver().recv();
         }
     }
 
-    /// Follow `file` being replaced in its folder (access dropped, as
-    /// `fs::Settled` does), reading again once its writes settle.
-    fn follow_file(
+    /// Follow `files` being written or replaced, each in its folder
+    /// (access dropped, as `fs::Settled` does), reading again once their
+    /// writes settle. A folder not there is not followed.
+    fn follow_files(
         following: &Arc<Following>,
-        file: &std::path::Path,
+        files: &[PathBuf],
         stop: &CancelToken,
     ) -> Option<skwir_core::fs::Settled> {
-        let folder = file.parent()?.to_path_buf();
-        let name = file.file_name()?.to_owned();
+        let wanted: Vec<(PathBuf, std::ffi::OsString)> = files
+            .iter()
+            .filter_map(|file| Some((file.parent()?.to_path_buf(), file.file_name()?.to_owned())))
+            .collect();
+        if wanted.is_empty() {
+            return None;
+        }
         let weak = Arc::downgrade(following);
         let stop = stop.clone();
+        let relevant = wanted.clone();
         let mut settled = skwir_core::fs::Settled::start(
             "skwir-desktop-files",
             SETTLE,
-            move |path| path.file_name() == Some(name.as_os_str()),
+            move |path| {
+                relevant.iter().any(|(folder, name)| {
+                    path.file_name() == Some(name.as_os_str())
+                        && path.parent() == Some(folder.as_path())
+                })
+            },
             move || {
                 let Some(following) = weak.upgrade().filter(|_| !stop.is_cancelled()) else {
                     return false;
@@ -641,9 +680,16 @@ mod imp {
                 true
             },
         )?;
-        let followed = settled.watch(&folder);
-        if !followed {
-            tracing::debug!("{} is read, not followed", file.display());
+        let mut folders: Vec<&PathBuf> = wanted.iter().map(|(folder, _)| folder).collect();
+        folders.sort();
+        folders.dedup();
+        let mut followed = false;
+        for folder in folders {
+            if settled.watch(folder) {
+                followed = true;
+            } else {
+                tracing::debug!("{} is read, not followed", folder.display());
+            }
         }
         followed.then_some(settled)
     }
@@ -1050,8 +1096,8 @@ mod tests {
                     .unwrap_or(schemes)
             }
 
-            fn followed(&self) -> Option<PathBuf> {
-                self.kdeglobals.clone()
+            fn followed(&self) -> Vec<PathBuf> {
+                self.kdeglobals.clone().into_iter().collect()
             }
         }
 
@@ -1142,9 +1188,62 @@ mod tests {
                 Schemes::default()
             }
 
-            fn followed(&self) -> Option<PathBuf> {
-                None
+            fn followed(&self) -> Vec<PathBuf> {
+                Vec::new()
             }
+        }
+
+        /// GTK's `settings.ini` naming one font, on Wayland or X11.
+        struct IniOnly(bool);
+
+        impl imp::Own for IniOnly {
+            fn fonts(&self) -> imp::Named {
+                imp::Named::default()
+            }
+
+            fn gtk_fonts(&self) -> imp::Named {
+                imp::Named {
+                    interface: Some("Noto Sans".into()),
+                    interface_px: Some(10. * 96. / 72.),
+                    from: Some("GTK"),
+                    ..imp::Named::default()
+                }
+            }
+
+            fn wayland(&self) -> bool {
+                self.0
+            }
+
+            fn schemes(&self, _: &dyn Fn() -> Option<String>) -> Schemes {
+                Schemes::default()
+            }
+
+            fn followed(&self) -> Vec<PathBuf> {
+                Vec::new()
+            }
+        }
+
+        #[test]
+        fn gtk_s_fonts_are_read_in_the_order_gtk_reads_them() {
+            let values = Values::default();
+            set(
+                &values,
+                INTERFACE,
+                "font-name",
+                &Value::from("Cantarell 11"),
+            );
+            let (bus, _server) = portal(&values);
+            // On Wayland GTK takes the portal's before settings.ini.
+            let wayland = imp::read_from(Some(&bus), &IniOnly(true));
+            assert_eq!(wayland.font.as_deref(), Some("Cantarell"));
+            assert_eq!(wayland.fonts_from.as_deref(), Some("the portal"));
+            // On X11 settings.ini's.
+            let x11 = imp::read_from(Some(&bus), &IniOnly(false));
+            assert_eq!(x11.font.as_deref(), Some("Noto Sans"));
+            assert_eq!(x11.fonts_from.as_deref(), Some("GTK"));
+            // Without a portal, settings.ini's either way.
+            let alone = imp::read_from(None, &IniOnly(true));
+            assert_eq!(alone.font.as_deref(), Some("Noto Sans"));
         }
 
         #[test]
@@ -1425,6 +1524,59 @@ mod tests {
             );
 
             // No bus, the file followed still; stopped, the thread ends.
+            stop.cancel();
+            following.join().unwrap();
+        }
+
+        /// qt6ct's file in a folder of the test's own, its fonts read from
+        /// it each time.
+        struct Qt6ct(PathBuf);
+
+        impl imp::Own for Qt6ct {
+            fn fonts(&self) -> imp::Named {
+                imp::Named::default()
+            }
+
+            fn qt_fonts(&self) -> imp::Named {
+                let text = std::fs::read_to_string(&self.0).ok();
+                imp::qt_named(text.as_deref(), "Fonts", ("general", "fixed"), "Qt (qt6ct)")
+            }
+
+            fn schemes(&self, _: &dyn Fn() -> Option<String>) -> Schemes {
+                Schemes::default()
+            }
+
+            fn followed(&self) -> Vec<PathBuf> {
+                vec![self.0.clone()]
+            }
+        }
+
+        #[test]
+        fn qt6ct_s_file_is_followed_as_it_is_written() {
+            let config = tempfile::tempdir().unwrap();
+            let conf = config.path().join("qt6ct.conf");
+            let fonts =
+                |size: u32| format!("[Fonts]\ngeneral=\"Fira Sans,{size},-1,5,400,0,0,0,0,0\"\n");
+            std::fs::write(&conf, fonts(10)).unwrap();
+            let (sent, got) = mpsc::channel();
+            let stop = CancelToken::new();
+            let following = {
+                let stop = stop.clone();
+                let desktop = Arc::new(Qt6ct(conf.clone()));
+                std::thread::spawn(move || {
+                    imp::follow_on(
+                        handed(Vec::new()),
+                        desktop,
+                        move |style| sent.send(style).unwrap(),
+                        &stop,
+                    );
+                })
+            };
+            let next = || got.recv_timeout(Duration::from_secs(10)).unwrap();
+            assert_eq!(next().font_px, Some(10. * 96. / 72.));
+            // Written in place, as qt6ct saves it: read again.
+            std::fs::write(&conf, fonts(12)).unwrap();
+            assert_eq!(next().font_px, Some(16.));
             stop.cancel();
             following.join().unwrap();
         }

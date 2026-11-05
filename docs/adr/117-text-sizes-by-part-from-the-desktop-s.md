@@ -95,8 +95,9 @@ Qt's settings (4).
    its standing apart from Desktop colors, which is then the colors
    alone, 2026-11-05). Automatic reads the running
    desktop's own settings (GSettings, `kdeglobals`, xfconf, LXQt's
-   `lxqt.conf`), else GTK's (`settings.ini`, then the settings portal),
-   else Qt's (qt6ct or qt5ct, as `QT_QPA_PLATFORMTHEME` names), else the
+   `lxqt.conf`), else GTK's (as GTK's applications there take them: on
+   Wayland the settings portal, else `settings.ini`; on X11
+   `settings.ini`, else the portal), else Qt's (qt6ct or qt5ct, as `QT_QPA_PLATFORMTHEME` names), else the
    system's default size. GTK or Qt reads that toolkit's alone. A
    family and its size are read together, as every source writes them.
    Colours stay as ADR-071 reads them.
@@ -159,7 +160,16 @@ apart, and changes how gpui maps the pointer.
   `GPUI_X11_SCALE_FACTOR`) and the text's font, size, source and steps;
   the guide says what is followed and the X11 workarounds. A change of
   qt5ct's or qt6ct's file is taken in at the next change the desktop
-  says, or the next start: it is not watched.
+  says, or the next start: it is not watched (until 2026-11-05, below).
+- Followed, 2026-11-05: GTK's fonts are read in the order GTK reads
+  them, read in GTK 3.24's and 4.22's sources (on Wayland the portal's,
+  else GSettings', outrank `settings.ini`; on X11 without an XSETTINGS
+  daemon `settings.ini` is all); qt5ct's, qt6ct's, LXQt's and GTK's
+  files are followed as they are written or replaced, beside
+  `kdeglobals` (one watcher for their folders, a folder not there not
+  followed). Checked by the platform's tests: the order on Wayland and
+  X11 against a fake portal, qt6ct's file written in a folder of the
+  test's own.
 - Reviewed beside 0.3.0, 2026-11-05 (the release's AppImage and the
   build of step 4 on one display, one folder, the reference machine's
   settings): body text 14 to 13.3 px at the desktop's 10 pt, as GTK's

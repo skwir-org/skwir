@@ -10981,3 +10981,21 @@ Not run: the packages' builds and their checks (deb, rpm, AppImage and
 tarball, Nix, macOS, Windows), which a release runs; macOS and Windows
 compiled only.
 
+
+## Text sizes: what was left before 0.3.1 (2026-11-05)
+
+What the review beside 0.3.0 left (ADR-117), taken up before 0.3.1.
+
+- **Settings rows** (70ea5c92): at 150 % in a 1280 px window the dialog
+  cut its controls at the card's edge. The control's box now shrinks, so
+  a choice falls back to its dropdown and a field narrows; the texts
+  keep 35 % of the row. Checked on Xvfb at 100 % and 150 %.
+- **GTK's order and the files followed**: GTK's fonts are read as GTK 3.24
+  and 4.22 read them (their sources: on Wayland the settings portal's,
+  else GSettings', outrank `settings.ini`; on X11 without an XSETTINGS
+  daemon `settings.ini` is all). qt5ct's, qt6ct's, LXQt's `lxqt.conf` and
+  GTK 3's and 4's `settings.ini` are followed beside `kdeglobals`, one
+  watcher for their folders (a folder not there is not followed). The
+  platform's tests: the order on Wayland and X11 against a fake portal;
+  qt6ct's file written in a folder of the test's own, the style sent
+  again at 16 px for 12 pt; 409 platform tests pass, clippy clean.

@@ -709,8 +709,7 @@ from with Skwir's own apart from Desktop colors, the labels saying what
 Automatic and each size come to; and Skwir's own fonts, Inter and
 JetBrains Mono, carried by every package built here (ADR-118; the
 packages' scripts run at the next release). macOS and Windows compiled
-only, their sizes not read (`docs/PORTING.md`); qt5ct's and qt6ct's
-files are not watched.
+only, their sizes not read (`docs/PORTING.md`).
 
 ## What is left
 
@@ -2230,8 +2229,8 @@ its own, every color readable on what it is drawn on.
   adw-gtk3, Materia and Breeze's schemes. Automatic takes a scheme's look
   when it has only one look's.
 - Left of C and D: a real Plasma, Xfce, Cinnamon or MATE session; changes
-  made in GSettings, xfconf or `settings.ini` themselves, which are not
-  followed.
+  made in GSettings or xfconf themselves, which are not followed
+  (`settings.ini`, qt5ct's and qt6ct's files are, since 2026-11-05).
 - **E. macOS and Windows:** the accent, more contrast, Windows' contrast
   themes; read again on appearance changes and activation. Windows tried
   under Wine for what it answers; macOS compiled only.
