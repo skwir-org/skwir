@@ -74,14 +74,27 @@ mod args {
     }
 
     /// A part of the window's text size (ADR-117): `interface`, `files`,
-    /// `reading` or `code` (`files` when absent), and which way: `in`
-    /// larger, `out` smaller, `reset` back to 100 %.
+    /// `reading` or `code` (`files` when absent), and which way (`reset`
+    /// when absent).
     #[derive(Deserialize, JsonSchema)]
     pub(super) struct TextSize {
         #[serde(default)]
         part: Option<String>,
         #[serde(default)]
-        dir: Option<String>,
+        dir: Option<TextStep>,
+    }
+
+    /// Which way a text size goes: any other word is refused, naming
+    /// these, rather than taken for a reset.
+    #[derive(Deserialize, JsonSchema)]
+    #[serde(rename_all = "lowercase")]
+    pub(super) enum TextStep {
+        /// A step larger.
+        In,
+        /// A step smaller.
+        Out,
+        /// Back to 100 %.
+        Reset,
     }
 
     /// What the Usage map's blocks say.
@@ -2489,6 +2502,31 @@ pub fn declare_all(app: &App) {
 #[cfg(test)]
 mod tests {
     use skwir_core::command::{CommandError, Effect, Invocation};
+
+    /// A text size goes in, out or back to 100 %: any other way is refused,
+    /// the refusal naming the three, never taken for a reset.
+    #[test]
+    fn a_text_size_s_way_is_in_out_or_reset() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = skwir_core::App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        super::declare_all(&app);
+        let check = |args: serde_json::Value| {
+            app.commands.check(&Invocation {
+                name: "ui.text_size".into(),
+                args,
+            })
+        };
+        for dir in ["in", "out", "reset"] {
+            assert!(check(serde_json::json!({"part": "reading", "dir": dir})).is_ok());
+        }
+        assert!(check(serde_json::json!({"part": "files"})).is_ok(), "reset");
+        let refused = check(serde_json::json!({"part": "reading", "dir": "larger"}))
+            .expect_err("a way not known")
+            .to_string();
+        for named in ["larger", "`in`", "`out`", "`reset`"] {
+            assert!(refused.contains(named), "{refused}");
+        }
+    }
 
     /// The lists of what an agent may run name only commands declared,
     /// and what answers the user's own dialogs is never an agent's.
