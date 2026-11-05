@@ -11227,3 +11227,13 @@ LXQt, GNOME or Xfce session; a Kvantum theme's colors (not read).
   desktop's monospace size where it names one for Code. Checked on Xvfb
   (the four rows, searched); a test that each row's shown sentence says
   it; 507 UI tests.
+
+## Properties' rows as a paragraph's lines (2026-11-05)
+
+- The user found Properties' rows too far apart. They were 28 px apart at
+  13.3 px text: gpui's default line height (1.618) and 3 px above and
+  below each row. Properties' text now has a paragraph's line height
+  (`properties::LINE`, 1.4) and rows 1 px of padding (`ROW_PAD`), 21 px
+  apart, a wrapped value at the same pitch; sections get 8 px before
+  their rule (was 4) so they stay apart. Checked on Xvfb beside the
+  build before (a picture's Content, General, Notes); 507 UI tests.

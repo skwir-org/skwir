@@ -1542,6 +1542,16 @@ pub fn room(shell: &Shell, wide: bool) -> Room {
 /// What a row's links are a group of: the pointer on the row shows them.
 const ROW: &str = "properties-row";
 
+/// The line height of Properties' text, a paragraph's rather than gpui's
+/// default 1.618: a section's rows read as the lines of one paragraph, a
+/// value that wraps at the same pitch as the rows, while the sections stand
+/// apart under their headings.
+const LINE: f32 = 1.4;
+
+/// What a row adds above and below its line, at 100 %: enough for its
+/// hover to frame it.
+const ROW_PAD: f32 = 1.;
+
 /// The section: right under the header's card (`preview::under_card` puts
 /// it there, and nothing else draws it), in the `room` it is given. Opened
 /// on demand over a preview or above a container's kept rows; always open
@@ -1682,8 +1692,9 @@ pub fn render(
         .px_3()
         .pb_3()
         // What is read here is about the file: its values are the body
-        // text, their labels muted (ADR-117).
-        .text_body();
+        // text, their labels muted (ADR-117), in the lines of a paragraph.
+        .text_body()
+        .line_height(gpui::relative(LINE));
     for (g, group) in groups.into_iter().enumerate() {
         let folded = preview.properties_folds.folded(&group.title, group.folded);
         let chips = folded.then(|| group.tags()).flatten().map(|(tags, given)| {
@@ -1770,8 +1781,10 @@ fn heading(
     let fold = title.clone();
     div()
         .when(g == 0, gpui::Styled::pt_2)
+        // Sections stand apart, their rows the lines of a paragraph
+        // (`LINE`).
         .when(g > 0, |d| {
-            d.mt_1().pt_1().border_t_1().border_color(theme.border)
+            d.mt_2().pt_1().border_t_1().border_color(theme.border)
         })
         .child(
             div()
@@ -1900,7 +1913,7 @@ fn row_element(
         .flex()
         .items_start()
         .gap_2()
-        .py(sized(3.))
+        .py(sized(ROW_PAD))
         .rounded_sm()
         .cursor_pointer()
         .hover(|d| d.bg(theme.hover))
@@ -1950,7 +1963,7 @@ fn row_element(
                 .absolute()
                 .bottom_0()
                 .right_0()
-                .py(sized(3.))
+                .py(sized(ROW_PAD))
                 .pl_3()
                 .rounded_sm()
                 // Over the row's words: opaque, as the row it covers is.

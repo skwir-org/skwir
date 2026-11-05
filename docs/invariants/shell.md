@@ -853,6 +853,10 @@ of bars, split or not.
 
 ## Properties and links
 
+- **A section's rows are the lines of a paragraph** (`properties::LINE`,
+  1.4, rather than gpui's default 1.618; a row 1 px above and below its
+  line, for its hover): a value that wraps keeps the rows' pitch, and the
+  sections stand apart under their rules and headings.
 - A provider's fact can carry a command (`Detail::with_action`), a link
   run through `Shell::run`. Links show over the end of the row's last
   line while the pointer is on it, taking no room otherwise; those that
