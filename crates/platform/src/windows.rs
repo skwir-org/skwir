@@ -1110,11 +1110,13 @@ pub mod style {
         }
     }
 
-    /// Call `changed` each time the Text size, the window metrics, the
-    /// accent, the contrast theme or its colors change, until `stop`,
-    /// waiting on the registry's notices (no timer). Returns at once when
-    /// no key can be watched; a key Windows has not made yet (no accent
-    /// ever chosen) is left out.
+    /// Call `changed` once its keys are watched, then each time the Text
+    /// size, the window metrics, the accent, the contrast theme or its
+    /// colors change, until `stop`, waiting on the registry's notices (no
+    /// timer): what changed while `changed` read is told again, as each
+    /// key is asked again before. Calls it once and returns when no key
+    /// can be watched; a key Windows has not made yet (no accent ever
+    /// chosen) is left out, as is one Windows will not tell of again.
     pub fn follow(stop: &skwir_core::CancelToken, mut changed: impl FnMut()) {
         let watched: Vec<Watched> = [
             ACCESSIBILITY,
@@ -1129,6 +1131,7 @@ pub mod style {
         .collect();
         let Some(stopped) = Event::new(true).filter(|_| !watched.is_empty()) else {
             tracing::debug!("Windows' style is read, not followed");
+            changed();
             return;
         };
         // The token's signal set as the event, from a thread that waits on
@@ -1145,10 +1148,15 @@ pub mod style {
                 // is closed.
                 unsafe { SetEvent(handle as HANDLE) };
             });
-        let Ok(setter) = setter else { return };
+        let Ok(setter) = setter else {
+            changed();
+            return;
+        };
         let mut events: Vec<HANDLE> = watched.iter().map(|w| w.changed.0).collect();
         events.push(stopped.0);
         let count = u32::try_from(events.len()).unwrap_or(u32::MAX);
+        // Read once every key is watched: a change made meanwhile is told.
+        changed();
         while !stop.is_cancelled() {
             // SAFETY: open events this owns, as many as said.
             let woke = unsafe { WaitForMultipleObjects(count, events.as_ptr(), 0, INFINITE) };
@@ -1159,7 +1167,11 @@ pub mod style {
             else {
                 break;
             };
-            which.arm();
+            // Asked again before reading, so a change made while reading
+            // is told. Refused, that key is not followed any more.
+            if !which.arm() {
+                tracing::debug!("a key of Windows' style is no longer followed");
+            }
             changed();
         }
         // Ended by a failure, the setter is let go all the same.
@@ -1232,6 +1244,10 @@ mod tests {
             let stop = stop.clone();
             std::thread::spawn(move || style::follow(&stop, || told.send(()).unwrap()))
         };
+        // Told once its keys are watched, before anything changes.
+        heard
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("told once watched");
         // Written until it is told: the watch may not be set up yet.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         let mut percent = 150;

@@ -310,6 +310,14 @@ pub fn read() -> DesktopStyle {
     imp::read()
 }
 
+/// What the desktop says of its fonts alone (their families, sizes and
+/// sources, GTK's and Qt's apart, the text scaling), its colors left
+/// unread: for what writes in its fonts and wears none of its colors (a
+/// print). On a worker, as `read`.
+pub fn read_fonts() -> DesktopStyle {
+    imp::read_fonts()
+}
+
 /// What the desktop says, then what it says each time it changes:
 /// `changed` is called from a thread of its own, at once and on each
 /// change, until `stop`. The session's bus ended (started again), what it
@@ -428,6 +436,27 @@ pub fn qt_size(font: &str) -> Option<f32> {
     (pixels > 0.).then_some(pixels)
 }
 
+/// The `Xft.dpi` X11's resources name (`xrdb -query`'s text).
+#[cfg(any(target_os = "linux", test))]
+fn xft_dpi(resources: &str) -> Option<f64> {
+    resources.lines().find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        let dpi: f64 = (name.trim() == "Xft.dpi")
+            .then(|| value.trim().parse().ok())
+            .flatten()?;
+        (dpi > 0. && dpi.is_finite()).then_some(dpi)
+    })
+}
+
+/// Whether a window scaled by `dpi` / 96 is scaled by the text scaling
+/// `factor` already: its scale the factor times a whole scale (1, 2), as
+/// GNOME's settings daemon writes `Xft.dpi` (rounded to a whole dpi).
+#[cfg(any(target_os = "linux", test))]
+fn scales_text(dpi: f64, factor: f64) -> bool {
+    let whole = dpi / 96. / factor;
+    (factor - 1.).abs() > 0.01 && whole > 0.98 && (whole - whole.round()).abs() < 0.02
+}
+
 #[cfg(target_os = "linux")]
 mod imp {
     use std::path::PathBuf;
@@ -450,10 +479,14 @@ mod imp {
     /// is read again: choosing a scheme writes it more than once.
     const SETTLE: Duration = Duration::from_millis(200);
 
-    /// The session bus, the program's own connection (`bus::session`).
+    /// The portal asked on a connection of the reading's own
+    /// (`Own::asking`).
     pub(super) fn read() -> DesktopStyle {
-        let bus = crate::bus::session().ok();
-        read_from(bus.as_ref(), &TheDesktop)
+        read_from(TheDesktop.asking(None).as_ref(), &TheDesktop)
+    }
+
+    pub(super) fn read_fonts() -> DesktopStyle {
+        read_parts(TheDesktop.asking(None).as_ref(), &TheDesktop, false)
     }
 
     pub(super) fn follow(changed: impl FnMut(DesktopStyle) + Send + 'static, stop: CancelToken) {
@@ -570,6 +603,22 @@ mod imp {
         fn wayland(&self) -> bool {
             std::env::var_os("WAYLAND_DISPLAY").is_some_and(|display| !display.is_empty())
         }
+        /// The connection a reading asks the portal on, `listened` being
+        /// the one its changes are followed on: a test's portal there. The
+        /// desktop's opens one of its own, with a call timeout, closed once
+        /// the reading is done: the shared connection has none, and a call
+        /// there to a portal that hangs waits for good (AGENTS.md).
+        fn asking(&self, listened: Option<&Connection>) -> Option<Connection> {
+            listened.cloned()
+        }
+        /// The `Xft.dpi` X11's resources named when this program started,
+        /// which gpui's X11 backend takes as the window's scale (`Xft.dpi`
+        /// / 96, read once at its start) unless `GPUI_X11_SCALE_FACTOR`
+        /// names one; `None` on Wayland, where the compositor gives the
+        /// scale, or where nothing names one.
+        fn window_dpi(&self) -> Option<f64> {
+            None
+        }
         /// The colors its own settings name: Plasma's scheme, LXQt's
         /// palette, or the GTK3 theme GNOME's, MATE's, Cinnamon's or Xfce's
         /// settings name, read by `theme`.
@@ -577,6 +626,15 @@ mod imp {
         /// The GTK3 theme GTK's own settings name (`settings.ini`, GTK 3's
         /// before GTK 4's, as the themes read are GTK 3's).
         fn gtk_theme(&self) -> Option<String> {
+            None
+        }
+        /// The fonts GNOME's `GSettings` schema names (its defaults where
+        /// unset), which GTK reads on Wayland when the portal names none.
+        fn gsettings_fonts(&self) -> Named {
+            Named::default()
+        }
+        /// The GTK theme GNOME's `GSettings` schema names, as the fonts.
+        fn gsettings_theme(&self) -> Option<String> {
             None
         }
         /// The GTK3 theme `GTK_THEME` forces on GTK's applications.
@@ -606,6 +664,29 @@ mod imp {
             own_fonts()
         }
 
+        fn asking(&self, _: Option<&Connection>) -> Option<Connection> {
+            zbus::blocking::connection::Builder::session()
+                .map(|builder| builder.method_timeout(PATIENCE))
+                .and_then(zbus::blocking::connection::Builder::build)
+                .inspect_err(|error| tracing::debug!("the portal is not asked: {error}"))
+                .ok()
+        }
+
+        fn window_dpi(&self) -> Option<f64> {
+            // Read once, as gpui reads it once, when the window's scale is
+            // made: a later change moves the resource, not that scale.
+            static AT_START: std::sync::OnceLock<Option<f64>> = std::sync::OnceLock::new();
+            *AT_START.get_or_init(|| {
+                let set =
+                    |name: &str| std::env::var_os(name).is_some_and(|value| !value.is_empty());
+                if self.wayland() || !set("DISPLAY") || set("GPUI_X11_SCALE_FACTOR") {
+                    return None;
+                }
+                desktop::printed(std::path::Path::new("xrdb"), &["-query"])
+                    .and_then(|resources| super::xft_dpi(&resources))
+            })
+        }
+
         fn gtk_fonts(&self) -> Named {
             let named = desktop::gtk_settings("gtk-font-name");
             let named = named.first();
@@ -627,6 +708,23 @@ mod imp {
 
         fn gtk_theme(&self) -> Option<String> {
             desktop::gtk_settings("gtk-theme-name").pop()
+        }
+
+        fn gsettings_fonts(&self) -> Named {
+            let [interface, document, monospace] =
+                FONT_KEYS.map(|key| desktop::gsettings(INTERFACE, key));
+            Named {
+                interface: interface.as_deref().and_then(super::pango_family),
+                interface_px: interface.as_deref().and_then(super::pango_size),
+                document: document.as_deref().and_then(super::pango_family),
+                monospace: monospace.as_deref().and_then(super::pango_family),
+                monospace_px: monospace.as_deref().and_then(super::pango_size),
+                from: Some("GTK (GSettings)"),
+            }
+        }
+
+        fn gsettings_theme(&self) -> Option<String> {
+            desktop::gsettings(INTERFACE, "gtk-theme")
         }
 
         fn qt_colors(&self) -> Painted {
@@ -681,8 +779,31 @@ mod imp {
     /// desktop keeps it, else as the portal on `bus` names it; its scheme
     /// as `own` finds it.
     pub(super) fn read_from(bus: Option<&Connection>, own: &dyn Own) -> DesktopStyle {
-        let portal =
-            |namespace: &str, key: &str| bus.and_then(|bus| portal_read(bus, namespace, key));
+        read_parts(bus, own, true)
+    }
+
+    /// `read_from`, its colors left unread unless `colors`: a reading for
+    /// the fonts alone (`super::read_fonts`).
+    pub(super) fn read_parts(
+        bus: Option<&Connection>,
+        own: &dyn Own,
+        with_colors: bool,
+    ) -> DesktopStyle {
+        // A portal that did not answer in time is not asked again in this
+        // reading: one wait at most (`Own::asking`).
+        let silent = std::cell::Cell::new(false);
+        let portal = |namespace: &str, key: &str| {
+            let bus = bus.filter(|_| !silent.get())?;
+            match portal_read(bus, namespace, key) {
+                Answer::Said(value) => Some(value),
+                Answer::Unsaid => None,
+                Answer::Silent => {
+                    tracing::debug!("the settings portal does not answer: read without it");
+                    silent.set(true);
+                    None
+                }
+            }
+        };
         let portal_string = |namespace: &str, key: &str| {
             portal(namespace, key).and_then(|value| String::try_from(value).ok())
         };
@@ -699,9 +820,17 @@ mod imp {
             monospace_px: monospace_name.as_deref().and_then(super::pango_size),
             from: Some("the portal"),
         };
-        // As GTK's applications here take them (`Own::wayland`).
+        // As GTK's applications here take them (`Own::wayland`): on
+        // Wayland the portal's, else GSettings' (whose schema names its
+        // defaults), before `settings.ini`, which only a GTK without
+        // either reads there.
         let gtk = if own.wayland() {
-            portal_named.or(own.gtk_fonts())
+            let first = if portal_named.names_any() {
+                portal_named
+            } else {
+                own.gsettings_fonts()
+            };
+            first.or(own.gtk_fonts())
         } else {
             own.gtk_fonts().or(portal_named)
         };
@@ -710,40 +839,25 @@ mod imp {
         let named = own.fonts().or(gtk.clone()).or(qt.clone());
         let unaliased =
             |family: Option<String>| family.map(|family| crate::fonts::unalias(&family));
+        // GNOME's settings daemon writes the factor into X11's `Xft.dpi`
+        // (96 × the factor × the window's scale, `gsd-xsettings-manager.c`),
+        // which gpui takes as the window's scale on X11: there it is in the
+        // window's scale already, and said again it would count twice.
+        let window_dpi = own.window_dpi();
         let text_scaling = portal(INTERFACE, "text-scaling-factor")
             .and_then(|value| f64::try_from(value).ok())
-            .filter(|factor| *factor > 0. && factor.is_finite());
-        // A GTK3 theme read once a reading, however many name it.
-        let read = std::cell::RefCell::new(std::collections::HashMap::<String, Schemes>::new());
-        let theme = |name: &str| {
-            read.borrow_mut()
-                .entry(name.to_owned())
-                .or_insert_with(|| own.theme(name))
-                .clone()
+            .filter(|factor| *factor > 0. && factor.is_finite())
+            .filter(|factor| !window_dpi.is_some_and(|dpi| super::scales_text(dpi, *factor)));
+        let (colors, gtk_colors, qt_colors) = if with_colors {
+            read_colors(own, &portal_string)
+        } else {
+            Default::default()
         };
-        // GTK's theme as GTK's applications here take it (`Own::wayland`).
-        let portal_theme = portal_string(INTERFACE, "gtk-theme").filter(|theme| !theme.is_empty());
-        let gtk_theme = own.forced_gtk_theme().or_else(|| {
-            if own.wayland() {
-                portal_theme.or_else(|| own.gtk_theme())
-            } else {
-                own.gtk_theme().or(portal_theme)
-            }
-        });
-        let gtk_colors = Painted {
-            schemes: gtk_theme.as_deref().map(theme).unwrap_or_default(),
-            from: Some("GTK"),
-        };
-        let qt_colors = own.qt_colors();
-        // The desktop's own, then GTK's, then Qt's, as the fonts.
-        let colors = own
-            .own_colors(&theme)
-            .or(gtk_colors.clone())
-            .or(qt_colors.clone());
+        // The accent and the contrast are the colors' too.
+        let appearance = |key: &str| with_colors.then(|| portal(APPEARANCE, key)).flatten();
         DesktopStyle {
-            accent: portal(APPEARANCE, "accent-color").and_then(accent),
-            more_contrast: portal(APPEARANCE, "contrast")
-                .and_then(|value| u32::try_from(value).ok())
+            accent: appearance("accent-color").and_then(accent),
+            more_contrast: appearance("contrast").and_then(|value| u32::try_from(value).ok())
                 == Some(1),
             font_px: named.interface_px,
             monospace_px: named.monospace_px,
@@ -759,6 +873,44 @@ mod imp {
             gtk_colors: gtk_colors.apart(),
             qt_colors: qt_colors.apart(),
         }
+    }
+
+    /// The colors `own` names, Automatic's then GTK's and Qt's apart, the
+    /// portal asked through `portal_string`.
+    fn read_colors(
+        own: &dyn Own,
+        portal_string: &dyn Fn(&str, &str) -> Option<String>,
+    ) -> (Painted, Painted, Painted) {
+        // A GTK3 theme read once a reading, however many name it.
+        let read = std::cell::RefCell::new(std::collections::HashMap::<String, Schemes>::new());
+        let theme = |name: &str| {
+            read.borrow_mut()
+                .entry(name.to_owned())
+                .or_insert_with(|| own.theme(name))
+                .clone()
+        };
+        // GTK's theme as GTK's applications here take it (`Own::wayland`).
+        let portal_theme = portal_string(INTERFACE, "gtk-theme").filter(|theme| !theme.is_empty());
+        let gtk_theme = own.forced_gtk_theme().or_else(|| {
+            if own.wayland() {
+                portal_theme
+                    .or_else(|| own.gsettings_theme())
+                    .or_else(|| own.gtk_theme())
+            } else {
+                own.gtk_theme().or(portal_theme)
+            }
+        });
+        let gtk_colors = Painted {
+            schemes: gtk_theme.as_deref().map(theme).unwrap_or_default(),
+            from: Some("GTK"),
+        };
+        let qt_colors = own.qt_colors();
+        // The desktop's own, then GTK's, then Qt's, as the fonts.
+        let colors = own
+            .own_colors(&theme)
+            .or(gtk_colors.clone())
+            .or(qt_colors.clone());
+        (colors, gtk_colors, qt_colors)
     }
 
     /// What was said last, and whom to tell of a change: read again at
@@ -783,7 +935,9 @@ mod imp {
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .clone();
-            let now = read_from(bus.as_ref(), &*self.own);
+            let asking = self.own.asking(bus.as_ref());
+            let now = read_from(asking.as_ref(), &*self.own);
+            drop(asking);
             let mut said = self.said.lock().unwrap_or_else(PoisonError::into_inner);
             if said.as_ref() != Some(&now) {
                 *said = Some(now.clone());
@@ -929,19 +1083,42 @@ mod imp {
         stop: &CancelToken,
         ready: impl FnOnce(),
     ) {
-        let rule = zbus::MatchRule::builder()
+        let changed = zbus::MatchRule::builder()
             .msg_type(zbus::message::Type::Signal)
             .interface(SETTINGS)
             .and_then(|rule| rule.member("SettingChanged"))
             .map(zbus::match_rule::Builder::build);
-        let rule = match rule {
-            Ok(rule) => rule,
-            Err(error) => {
+        // The portal started (late at login, or again): what it says is
+        // read again, as a reading that found it silent went without it.
+        let started = zbus::MatchRule::builder()
+            .msg_type(zbus::message::Type::Signal)
+            .sender("org.freedesktop.DBus")
+            .and_then(|rule| rule.interface("org.freedesktop.DBus"))
+            .and_then(|rule| rule.member("NameOwnerChanged"))
+            .and_then(|rule| rule.arg(0, DESTINATION))
+            .map(zbus::match_rule::Builder::build);
+        let rules = match (changed, started) {
+            (Ok(changed), Ok(started)) => vec![changed, started],
+            (Err(error), _) | (_, Err(error)) => {
                 tracing::debug!("the desktop's style is read, not followed: {error}");
                 return;
             }
         };
-        crate::bus::listen(bus, vec![rule], stop, ready, |message| {
+        crate::bus::listen(bus, rules, stop, ready, |message| {
+            if message
+                .header()
+                .member()
+                .is_some_and(|m| m == "NameOwnerChanged")
+            {
+                if message
+                    .body()
+                    .deserialize::<(String, String, String)>()
+                    .is_ok_and(|(name, _, owner)| name == DESTINATION && !owner.is_empty())
+                {
+                    following.read_soon();
+                }
+                return;
+            }
             let Ok((namespace, key, _)) =
                 message.body().deserialize::<(String, String, OwnedValue)>()
             else {
@@ -962,7 +1139,7 @@ mod imp {
 
     /// A setting the portal on `bus` answers: `ReadOne`, or `Read` for a
     /// portal before its second version, which wraps the value once more.
-    fn portal_read(bus: &Connection, namespace: &str, key: &str) -> Option<OwnedValue> {
+    fn portal_read(bus: &Connection, namespace: &str, key: &str) -> Answer {
         let call = |method: &str| {
             bus.call_method(
                 Some(DESTINATION),
@@ -971,17 +1148,48 @@ mod imp {
                 method,
                 &(namespace, key),
             )
-            .ok()
         };
-        if let Some(reply) = call("ReadOne") {
-            return reply.body().deserialize::<OwnedValue>().ok();
+        // An error the portal (or the bus, for a portal not there) answers
+        // is an answer; any other, a call timed out, is silence.
+        let answered = |error: &zbus::Error| {
+            matches!(error, zbus::Error::MethodError(..) | zbus::Error::FDO(_))
+        };
+        match call("ReadOne") {
+            Ok(reply) => return reply.body().deserialize::<OwnedValue>().ok().into(),
+            Err(error) if !answered(&error) => return Answer::Silent,
+            Err(_) => {}
         }
-        let value = call("Read")?.body().deserialize::<OwnedValue>().ok()?;
-        match &*value {
-            Value::Value(inner) => inner.try_to_owned().ok(),
-            _ => Some(value),
+        let value = match call("Read") {
+            Ok(reply) => reply.body().deserialize::<OwnedValue>().ok(),
+            Err(error) if !answered(&error) => return Answer::Silent,
+            Err(_) => None,
+        };
+        value
+            .and_then(|value| match &*value {
+                Value::Value(inner) => inner.try_to_owned().ok(),
+                _ => Some(value),
+            })
+            .into()
+    }
+
+    /// What the portal answers of a setting.
+    enum Answer {
+        Said(OwnedValue),
+        /// It says nothing of it.
+        Unsaid,
+        /// It did not answer in time.
+        Silent,
+    }
+
+    impl From<Option<OwnedValue>> for Answer {
+        fn from(value: Option<OwnedValue>) -> Self {
+            value.map_or(Answer::Unsaid, Answer::Said)
         }
     }
+
+    /// How long the portal is waited for, a call: on a connection of the
+    /// reading's own (`Own::asking`), as the shared one waits for good.
+    const PATIENCE: Duration = Duration::from_secs(5);
 
     /// An accent as the portal says it: three channels from 0 to 1, any
     /// outside them meaning none chosen.
@@ -1178,12 +1386,18 @@ mod imp {
                 more_contrast,
                 colors_from: (!schemes.is_empty()).then(|| "macOS".to_owned()),
                 schemes,
-                font: Some(SYSTEM_FONT.to_owned()),
-                font_px: Some(SYSTEM_FONT_SIZE),
-                fonts_from: Some("macOS".to_owned()),
-                ..DesktopStyle::default()
+                ..read_fonts()
             }
         })
+    }
+
+    pub(super) fn read_fonts() -> DesktopStyle {
+        DesktopStyle {
+            font: Some(SYSTEM_FONT.to_owned()),
+            font_px: Some(SYSTEM_FONT_SIZE),
+            fonts_from: Some("macOS".to_owned()),
+            ..DesktopStyle::default()
+        }
     }
 
     /// The scheme of the appearance `name` names: its colors resolved
@@ -1263,6 +1477,13 @@ mod imp {
             more_contrast: contrast,
             colors_from: contrast.then(|| "Windows".to_owned()),
             schemes,
+            ..read_fonts()
+        }
+    }
+
+    pub(super) fn read_fonts() -> DesktopStyle {
+        use crate::windows::style;
+        DesktopStyle {
             font: style::message_font(),
             fonts_from: Some("Windows".to_owned()),
             text_scaling: style::text_scale(),
@@ -1277,12 +1498,13 @@ mod imp {
         let thread = std::thread::Builder::new()
             .name("skwir-desktop-style".into())
             .spawn(move || {
-                let mut said = read();
-                changed(said.clone());
+                // First read once its keys are watched, so nothing changed
+                // between the reading and the watch goes untold.
+                let mut said: Option<DesktopStyle> = None;
                 crate::windows::style::follow(&stop, || {
                     let now = read();
-                    if now != said {
-                        said = now.clone();
+                    if said.as_ref() != Some(&now) {
+                        said = Some(now.clone());
                         changed(now);
                     }
                 });
@@ -1301,6 +1523,10 @@ mod imp {
     use super::DesktopStyle;
 
     pub(super) fn read() -> DesktopStyle {
+        DesktopStyle::default()
+    }
+
+    pub(super) fn read_fonts() -> DesktopStyle {
         DesktopStyle::default()
     }
 
@@ -1430,6 +1656,24 @@ mod tests {
     }
 
     #[test]
+    fn a_text_scaling_x11_s_dpi_carries_is_in_the_window_s_scale() {
+        let resources = "Xcursor.size:\t24\nXft.antialias:\t1\nXft.dpi:\t120\n";
+        assert_eq!(xft_dpi(resources), Some(120.));
+        assert_eq!(xft_dpi("Xft.antialias:\t1\n"), None);
+        assert_eq!(xft_dpi("Xft.dpi:\tlarge\n"), None);
+        // As GNOME's settings daemon writes it: 96 × the factor × a whole
+        // scale, rounded to a whole dpi.
+        assert!(scales_text(120., 1.25));
+        assert!(scales_text(240., 1.25), "a scale of two");
+        assert!(scales_text(110., 1.15), "rounded");
+        assert!(scales_text(77., 0.8), "smaller text");
+        // A dpi of its own, or no factor: nothing in the scale.
+        assert!(!scales_text(96., 1.25));
+        assert!(!scales_text(192., 1.25));
+        assert!(!scales_text(120., 1.));
+    }
+
+    #[test]
     fn a_pango_font_s_family_is_its_name_without_size_or_style() {
         let family = |description| pango_family(description);
         assert_eq!(family("Noto Sans  10").as_deref(), Some("Noto Sans"));
@@ -1536,6 +1780,48 @@ mod tests {
             serve(Portal {
                 values: Arc::clone(values),
             })
+        }
+
+        /// A portal that hangs: it answers only after its delay.
+        struct Hung(Duration);
+
+        #[zbus::interface(name = "org.freedesktop.portal.Settings")]
+        impl Hung {
+            fn read_one(&self, namespace: String, key: String) -> zbus::fdo::Result<OwnedValue> {
+                std::thread::sleep(self.0);
+                let asked = (namespace, key);
+                Err(zbus::fdo::Error::Failed(format!("{asked:?}: late")))
+            }
+        }
+
+        #[test]
+        fn a_portal_that_hangs_is_waited_for_once_a_reading() {
+            let (theirs, ours) = std::os::unix::net::UnixStream::pair().unwrap();
+            let server = std::thread::spawn(move || {
+                zbus::blocking::connection::Builder::async_io_unix_stream(theirs)
+                    .server(zbus::Guid::generate())
+                    .unwrap()
+                    .p2p()
+                    .serve_at(
+                        "/org/freedesktop/portal/desktop",
+                        Hung(Duration::from_secs(1)),
+                    )
+                    .unwrap()
+                    .build()
+                    .unwrap()
+            });
+            let asking = zbus::blocking::connection::Builder::async_io_unix_stream(ours)
+                .p2p()
+                .method_timeout(Duration::from_millis(200))
+                .build()
+                .unwrap();
+            let _server = server.join().unwrap();
+            let started = std::time::Instant::now();
+            let style = imp::read_from(Some(&asking), &*Fixed::fonts(nothing_named));
+            // One call given up on, the others not made: well under the
+            // seven waits asking each would take.
+            assert!(started.elapsed() < Duration::from_millis(900));
+            assert_eq!(style, DesktopStyle::default());
         }
 
         fn serve(answering: impl zbus::object_server::Interface) -> (Connection, Connection) {
@@ -1724,6 +2010,50 @@ mod tests {
             }
         }
 
+        /// A desktop naming nothing, its window scaled by X11's `Xft.dpi`.
+        struct OnX11(f64);
+
+        impl imp::Own for OnX11 {
+            fn fonts(&self) -> imp::Named {
+                imp::Named::default()
+            }
+
+            fn wayland(&self) -> bool {
+                false
+            }
+
+            fn window_dpi(&self) -> Option<f64> {
+                Some(self.0)
+            }
+
+            fn own_colors(&self, _: &dyn Fn(&str) -> Schemes) -> imp::Painted {
+                imp::Painted::default()
+            }
+
+            fn followed(&self) -> Vec<PathBuf> {
+                Vec::new()
+            }
+        }
+
+        #[test]
+        fn a_text_scaling_the_window_s_x11_scale_carries_counts_once() {
+            let values = Values::default();
+            set(
+                &values,
+                INTERFACE,
+                "text-scaling-factor",
+                &Value::from(1.25_f64),
+            );
+            let (bus, _server) = portal(&values);
+            // GNOME's daemon wrote it into Xft.dpi, which gpui took: once.
+            assert_eq!(imp::read_from(Some(&bus), &OnX11(120.)).text_scaling, None);
+            // A dpi that does not carry it: the factor is said.
+            assert_eq!(
+                imp::read_from(Some(&bus), &OnX11(96.)).text_scaling,
+                Some(1.25)
+            );
+        }
+
         /// GTK's `settings.ini` naming one font, on Wayland or X11.
         struct IniOnly(bool);
 
@@ -1747,6 +2077,73 @@ mod tests {
 
             fn own_colors(&self, _: &dyn Fn(&str) -> Schemes) -> imp::Painted {
                 imp::Painted::default()
+            }
+
+            fn followed(&self) -> Vec<PathBuf> {
+                Vec::new()
+            }
+        }
+
+        /// `settings.ini` naming one font, and GNOME's schema installed,
+        /// naming its default, on Wayland or X11.
+        struct IniAndSchema(bool);
+
+        impl imp::Own for IniAndSchema {
+            fn fonts(&self) -> imp::Named {
+                imp::Named::default()
+            }
+
+            fn gtk_fonts(&self) -> imp::Named {
+                IniOnly(self.0).gtk_fonts()
+            }
+
+            fn gsettings_fonts(&self) -> imp::Named {
+                imp::Named {
+                    interface: Some("Adwaita Sans".into()),
+                    interface_px: Some(11. * 96. / 72.),
+                    from: Some("GTK (GSettings)"),
+                    ..imp::Named::default()
+                }
+            }
+
+            fn gsettings_theme(&self) -> Option<String> {
+                Some("Adwaita".into())
+            }
+
+            fn gtk_theme(&self) -> Option<String> {
+                Some("Ini".into())
+            }
+
+            fn wayland(&self) -> bool {
+                self.0
+            }
+
+            fn own_colors(&self, _: &dyn Fn(&str) -> Schemes) -> imp::Painted {
+                imp::Painted::default()
+            }
+
+            fn theme(&self, name: &str) -> Schemes {
+                // A scheme each, told apart by its ground's red.
+                let red = if name == "Adwaita" { 1. } else { 0.5 };
+                let mut schemes = Schemes::default();
+                schemes.add(crate::desktop_style::Scheme {
+                    bg: [red, 1., 1.],
+                    surface: [1., 1., 1.],
+                    text: [0., 0., 0.],
+                    text_muted: None,
+                    zebra: None,
+                    border: None,
+                    accent: None,
+                    selection: None,
+                    error: None,
+                    warning: None,
+                    success: None,
+                });
+                schemes
+            }
+
+            fn forced_gtk_theme(&self) -> Option<String> {
+                None
             }
 
             fn followed(&self) -> Vec<PathBuf> {
@@ -1884,6 +2281,20 @@ mod tests {
             // Without a portal, settings.ini's either way.
             let alone = imp::read_from(None, &IniOnly(true));
             assert_eq!(alone.font.as_deref(), Some("Noto Sans"));
+            // Unless GNOME's schema is there: on Wayland GTK takes its
+            // values (its defaults) before settings.ini, font and theme.
+            let schema = imp::read_from(None, &IniAndSchema(true));
+            assert_eq!(schema.font.as_deref(), Some("Adwaita Sans"));
+            assert_eq!(schema.fonts_from.as_deref(), Some("GTK (GSettings)"));
+            let light = schema.schemes.light.expect("the theme GSettings names");
+            assert!((light.bg[0] - 1.).abs() < 1e-6);
+            // The portal still first; on X11 settings.ini's.
+            let portal_first = imp::read_from(Some(&bus), &IniAndSchema(true));
+            assert_eq!(portal_first.font.as_deref(), Some("Cantarell"));
+            let x11 = imp::read_from(None, &IniAndSchema(false));
+            assert_eq!(x11.font.as_deref(), Some("Noto Sans"));
+            let ini = x11.schemes.light.expect("the theme settings.ini names");
+            assert!((ini.bg[0] - 0.5).abs() < 1e-6);
         }
 
         #[test]

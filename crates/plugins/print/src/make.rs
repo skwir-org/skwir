@@ -976,22 +976,53 @@ fn write_png(image: &skwir_core::thumbs::Image, path: &Path) -> anyhow::Result<(
     Ok(())
 }
 
-/// The job of `parts`, titled `name`, laid out on `paper` in the fonts the
-/// Reading page chooses (the desktop's where it says Automatic), in the
-/// light look.
-fn job(app: &App, name: &str, paper: &Paper, parts: Vec<Part>) -> Job {
-    let style = skwir_platform::desktop_style::read();
-    let chosen = |key: &str, desktop: Option<String>, generic: &str| {
+/// The families a print is written in, `style` the desktop's fonts:
+/// each role's chosen family, else, where it says Automatic, the one Fonts
+/// from lends (`ui.fonts_from`: Automatic's, GTK's or Qt's alone, Skwir's
+/// own carried families), reading falling back to the interface's as the
+/// window's does, then the generic family.
+fn roles(app: &App, style: &skwir_platform::desktop_style::DesktopStyle) -> Roles {
+    use skwir_platform::desktop_style::{Fonts, TOOLKITS};
+    let [own_interface, own_code] =
+        skwir_platform::fonts::CARRIED.map(|family| Some(family.to_owned()));
+    let lent = match app.settings.get::<String>("ui.fonts_from").as_deref() {
+        Some("skwir") => Fonts {
+            interface: own_interface,
+            monospace: own_code,
+            ..Fonts::default()
+        },
+        Some("gtk") if TOOLKITS => style.gtk.clone().unwrap_or_default(),
+        Some("qt") if TOOLKITS => style.qt.clone().unwrap_or_default(),
+        _ => Fonts {
+            interface: style.font.clone(),
+            document: style.document_font.clone(),
+            monospace: style.monospace_font.clone(),
+            ..Fonts::default()
+        },
+    };
+    let chosen = |key: &str| {
         app.settings
             .get::<String>(key)
             .filter(|family| !family.is_empty() && family != "auto")
-            .or(desktop)
-            .unwrap_or_else(|| generic.to_owned())
     };
-    let roles = Roles {
-        text: chosen("reading.font", style.document_font.clone(), "serif"),
-        code: chosen("ui.code_font", style.monospace_font.clone(), "monospace"),
-    };
+    let interface = chosen("ui.font").or(lent.interface);
+    Roles {
+        text: chosen("reading.font")
+            .or(lent.document)
+            .or(interface)
+            .unwrap_or_else(|| "serif".to_owned()),
+        code: chosen("ui.code_font")
+            .or(lent.monospace)
+            .unwrap_or_else(|| "monospace".to_owned()),
+    }
+}
+
+/// The job of `parts`, titled `name`, laid out on `paper` in the fonts the
+/// Reading page chooses, as the window writes in them: where a font says
+/// Automatic, the desktop's as Fonts from reads them, else the
+/// interface's for reading; in the light look.
+fn job(app: &App, name: &str, paper: &Paper, parts: Vec<Part>) -> Job {
+    let roles = roles(app, &skwir_platform::desktop_style::read_fonts());
     let (fonts, fallback) = print_job::faces(&roles);
     let name = name.to_owned();
     Job {
@@ -1019,6 +1050,47 @@ pub(crate) fn display_name(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A print writes in the families the window writes in: each role's
+    /// chosen, else what Fonts from lends, reading falling back to the
+    /// interface's.
+    #[test]
+    fn a_print_writes_in_the_fonts_the_window_writes_in() {
+        use skwir_platform::desktop_style::{DesktopStyle, Fonts};
+        let tmp = tempfile::tempdir().unwrap();
+        let app = App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        let style = DesktopStyle {
+            font: Some("Noto Sans".into()),
+            monospace_font: Some("Hack".into()),
+            gtk: Some(Fonts {
+                from: "GTK".into(),
+                interface: Some("Cantarell".into()),
+                monospace: Some("Source Code Pro".into()),
+                ..Fonts::default()
+            }),
+            ..DesktopStyle::default()
+        };
+        let written = |app: &App| {
+            let roles = roles(app, &style);
+            (roles.text, roles.code)
+        };
+        // Automatic: the desktop's, reading in its interface font as it
+        // names no document font.
+        assert_eq!(written(&app), ("Noto Sans".into(), "Hack".into()));
+        if skwir_platform::desktop_style::TOOLKITS {
+            app.settings.set("ui.fonts_from", "gtk".into());
+            assert_eq!(
+                written(&app),
+                ("Cantarell".into(), "Source Code Pro".into())
+            );
+        }
+        app.settings.set("ui.fonts_from", "skwir".into());
+        assert_eq!(written(&app), ("Inter".into(), "JetBrains Mono".into()));
+        // A family chosen is written in, whatever Fonts from says.
+        app.settings.set("reading.font", "Literata".into());
+        app.settings.set("ui.code_font", "auto".into());
+        assert_eq!(written(&app), ("Literata".into(), "JetBrains Mono".into()));
+    }
 
     /// A contact sheet takes the pictures among the files, shrunk and
     /// named, a see-through one kept see-through, and says what it left.
