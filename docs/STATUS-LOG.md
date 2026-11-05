@@ -11385,3 +11385,116 @@ LXQt, GNOME or Xfce session; a Kvantum theme's colors (not read).
   unchanged; five Downs and Enter took Nord, worn at once (captured
   0.15 s after, "Saved" shown) and saved; the pointer on Gruvbox wore it,
   a click outside gave Nord back.
+
+## Review fixes (2026-11-05)
+
+The user asked for a review of what came after 0.3.0 (v0.3.0..c52e02eb,
+40 commits: the grammars combined and checked, Usage lending what it
+draws, the text sizes and their sweep, the desktop's fonts and
+Automatic's answers, Skwir's own fonts carried, gpui patch 0045, Breeze's
+icons filled from the theme), then, after their last changes before
+0.3.1, of what came since (..7527c641: the palettes, macOS's and
+Windows' colors, Colors from's list and its live preview). Six reviewers,
+one area each, found 66 and then 12 more in the new commits; each was
+then the fixer of its area, six at once in one tree, each owning its
+files, builds in capped scopes without incremental builds
+(`target/debug/incremental`, 58 GB, deleted with the user's leave
+first). The integrator read each fix and committed it, only the fixer's
+hunks staged where several shared a file (f18fb034..77034be9, 26
+commits).
+
+- Packaging and fonts (`f18fb034`, `158c5942`, `11216117`, `679dd7a4`):
+  Arch's package check takes `system-fonts` from `try.sh` and asks
+  fontconfig for Inter and JetBrains Mono once Arch's optional packages
+  are installed (Arch's inter-font holds Inter.ttc, whose 18 Inter faces
+  are named "Inter", checked with fc-scan on Inter 4.1). Skwir's own
+  fonts are read on a thread at launch, only the families a role
+  reaches, the first theme waiting for them, registered one file at a
+  time (DirectWrite's `add_fonts` lost a whole batch to one bad file).
+  `fonts.py` empties what it makes; a release test ties the code themes
+  compiled in to the notices.
+- Icons, code themes, gpui (`3e8ded6f`, `ffdfa94d`, `544b00bd`,
+  `05dade10`): Breeze's rasters kept by ink, the last drawn shown while a
+  new one is made, old inks given back once the colors settle (not while
+  Colors from previews), a retired raster dropped when its file is drawn
+  anew; `same_colors` gone. Code themes kept by name and let go of after
+  a minute unused; a preview keeps its code colors while palettes are
+  browsed. Patch 0045: a weight axis given backwards no longer panics,
+  each face rasterized at its own coordinates (series rebuilt and the
+  patch amended by README.skwir.md's workflow; `just gpui-check` green).
+- The desktop's style and Colors from (`5e3b7e31`, `84c16f79`,
+  `947bf5fe`, `3370cf41`, `41cb7d14`, `0675c168`): the text scaling
+  factor followed; a taken palette worn only while the save carrying it
+  is queued or runs; both lists closed together; any choice with
+  swatches previews; Automatic's answer said whatever is chosen; one
+  theme resolution a change (the declares that say what it came to
+  counted in), swatches made again only when what they show changes;
+  the portal asked on a connection of each reading's own (5 s timeout),
+  read again when it starts; Windows' keys watched before the first
+  reading; GSettings before settings.ini on Wayland; a print in the
+  window's fonts; GNOME's text scaling counted once on X11 (from
+  gnome-settings-daemon 50.1's `gsd-xsettings-manager.c`:
+  `get_dpi_from_gsettings` returns 96 × the factor, written as
+  `Xft.dpi`); Plasma and LXQt read once, Plasma's fonts through the
+  kdeglobals cascade; no source said that named nothing; macOS's
+  readings worn in order, the cache written on change; a print in
+  Skwir's own fonts from the files its package carries where the system
+  lacks them (`77034be9`).
+- Usage (`05166fa6`): lent again only when this pane's answer changes,
+  lending what is lent a no-op, a loan seen as before keeping its
+  reading, a reading asked before a renewed loan not taken for it; lent
+  entries followed through renames and an editor's save; lending in
+  `sync_usage`; `entry_at` finds lent entries; what a view lent let go
+  of when its plugin is turned off.
+- Grammars (`0b51ae4d`): a helper's failure never kept as an answer; the
+  library's refusal said apart from the queries'; the row named by the
+  query set that colors; `ui.languages` off the window's thread checks
+  first; a check's keys read first, a guard for `CHECK_ASKED`, the
+  generation moved only by what colors; version-named libraries refused;
+  each file credited to the deepest folder; per-system folders; one
+  home-path helper (`os_path::from_home`); ADR-110 says what was built.
+- Sizes (`37edc38b`, `737247a3`, `1d24227b`, `4eb6e31b`, `b3fbafdc`,
+  `2af99afb`, `d6bcd578`, `e62e6603`, `2c79193a`): code lines in whole
+  pixels; one scale per part; `ui.text_size`'s `dir` refused unless in,
+  out or reset; the preview's bar, rating row, splits and archive header
+  sized; a book's size kept as a percentage and laid out again when the
+  size it was asked at is not the one wanted; the timeline's and Usage's
+  labels at Small; dialogs, tabs, tooltips and fields growing with the
+  text, capped to the window; switches 36 × 20 px and tag dots at their
+  size; every dialog's title at Title; a dialog's list stepping by the
+  row as laid out; a list of choices paging by the rows in sight, its
+  swatches read by place, its pictured rows tall enough; the text-size
+  test reading sizes over lines and paths, every size given checked,
+  form.rs's exemption replaced by 23 listed places with their reasons.
+- Checked, per fix: rustfmt, clippy -D warnings on the crates touched
+  (for Windows and macOS where system code changed), the tests of what
+  changed (each fix's own new tests among them), `just test-windows` on
+  the Windows style tests (12), `just gpui-check`, release-tools-check
+  (33). On Xvfb, debug builds: Usage with an entry selected inside a
+  folder while 400 files were written below it, the entry stat-ed 2
+  times before and 2 after (strace), and 3 and 3 with another pane
+  counting 29,828 stats elsewhere; idle 0 to 2 %. Skwir's own fonts:
+  10 files registered with Fonts from on them, 4 (JetBrains Mono) with a
+  lent interface font, the window waiting 17 to 38 µs for the read,
+  first frames equal within the noise of a load of 11. Breeze's folders
+  went from Nord's accent to Gruvbox's with no blank frame among 25
+  grabbed (~0.1 s apart). GNOME's 1.25 on X11 (a fake portal, xrdb):
+  Xft.dpi 120 gave gpui's scale 1.25 and sizes [14.67, 14.67, 16, 14],
+  Xft.dpi 96 scale 1 and [18.33, 18.33, 20, 17.5], the interface at
+  18.3 device px both ways. A step through Colors from's list took 0.28
+  to 1.11 ms of the window's thread, no second pass. A taken palette
+  then settings.toml edited by hand: worn at once. At 80, 100, 150 and
+  200 %: the preview's bar with the pane's row (42 px at every size
+  before), the archive's header within a pixel of its names (4 to 8 px
+  off before), the switch 36 × 20 (36 × 29 off centre before), Page Down
+  in Colors from's list by 7 rows at 150 % (to the end before), the
+  inspection bar's full variant at the same width as before. Grammars:
+  an Emacs library refused said as Emacs's, paths from `~`; queries
+  refused with their line; a CLI repository added names the row by it.
+- At the end, on 77034be9 (CARGO_INCREMENTAL=0, after a prune):
+  `just lint-all` (rustfmt, clippy -D warnings over the workspace, the
+  cross checks for Windows and macOS) and `just test` (3055 passed, 30
+  skipped) green. release-check, the packages' tries and `just
+  idle-pss` not run (before the release, as the user asked).
+- Not checked: listed in `docs/PLAN.md`, What is left, "From the review
+  since 0.3.0".

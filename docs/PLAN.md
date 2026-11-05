@@ -715,6 +715,36 @@ Automatic is the system's interface font and Windows' Text size is
 followed (2026-11-05; compiled, Windows' tried under Wine,
 `docs/PORTING.md`).
 
+## Review fixes (2026-11-05)
+
+A review of what came after 0.3.0 (v0.3.0..7527c641: the grammars
+combined and checked, Usage lending what it draws, the text sizes and
+their sweep, the desktop's fonts and Automatic's answers, Skwir's own
+fonts carried, gpui patch 0045, Breeze's icons in the theme's colors,
+the palettes and macOS's and Windows' colors) made 78 findings, fixed
+the same day by six fixers at once (f18fb034..77034be9, 26 commits, not
+pushed). One was high: a release stopped at Arch, whose package check
+asked the AUR's source package for fonts it leaves to Arch's packages.
+Among the others: Usage read what was selected inside folders again at
+each scan anywhere (now only when it changes, and it follows renames);
+a palette taken from Colors from's list could stay worn after the
+setting changed; each palette crossed in that list blanked every
+Breeze icon and inspected the open preview again; all ten carried font
+files were read on the window's thread before the first frame (now
+those of the families drawn, on a thread at launch, the first theme
+waiting for it, as the user chose); a helper's failure was remembered
+as a grammar that does not fit; a hung settings portal stopped Skwir
+following the desktop; GNOME's Large Text was not followed, and counted
+twice on X11. Decided with the user: switches are 36 × 20 px at every
+size, as icons; every dialog's title is at Title; lent entries follow
+renames; the GSettings fallback is built. The integrator's choices: a
+whole grammar colors with its own queries alone, as ADR-110 says
+"whole"; the toolbar's icon buttons stay as wide as their icon and
+padding (square, the bars fell back to narrower variants sooner); one
+step through Colors from's list measured 0.3 to 1.1 ms of the window's
+time, left as it is. Checks in `docs/STATUS-LOG.md` (2026-11-05, "Review
+fixes").
+
 ## What is left
 
 Gathered on 2026-10-20 from the notes of this plan and of
@@ -743,6 +773,30 @@ leave (ADR-077).
   `.SystemUIFont` once in the AppImage, the place not found.
 - A window opened again from the tray logs its first frame counted from
   the process's start ("first frame 82397.7 ms after start").
+
+**From the review since 0.3.0** (2026-11-05):
+- On X11 GNOME's Large Text is counted once by asking `xrdb -query` for
+  `Xft.dpi`: without xrdb it is counted twice, as before. Reading the
+  resource through `x11rb` (in the lock through gpui) would need no
+  program. Large Text changed while Skwir runs on X11 shows fully at the
+  next start (gpui takes the window's scale once).
+- A first run, with nothing kept of the desktop's style, reads Skwir's
+  own fonts for that run (ADR-118, point 4).
+- Usage: a file rewritten in the same second at the same size is seen as
+  before and not read again until it changes again; leaving the view
+  letting go of what it lent has no UI test (no gpui test harness), nor
+  does closing both lists of a setting (DS-13).
+- Not tried in a window: a book's size changed while it is laid out,
+  the members' and Properties' splits dragged to their least, tooltips
+  at 200 % in a narrow window, the tab strip at 200 %, the pill's × at
+  80 %, Colors from's palettes hovered over Breeze icons and an open
+  code preview, `ui.languages` from an agent.
+- Not tried on real systems: a hung portal, the portal starting late on
+  a real bus, Plasma with `kdedefaults`, any Mac or Windows machine.
+- The text-size test reads sizes given directly; one passed through a
+  helper of one's own is not seen.
+- At 200 % a settings row keeps its texts at the 35 % share, leaving a
+  wide blank before its control (70ea5c92's design).
 
 **From the review of 2026-11-03** (the History and the queue's
 progress, fixed the same night):

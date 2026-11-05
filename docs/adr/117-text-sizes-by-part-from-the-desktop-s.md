@@ -67,7 +67,10 @@ Qt's settings (4).
    as browsers keep a page's text whatever the desktop says; code
    follows the desktop's monospace size, as terminals and editors do,
    else 14 px. The text scaling factor applies to every part, and is
-   followed whatever the fonts are read from, as more contrast is.
+   followed whatever the fonts are read from, as more contrast is, and
+   counted once: on X11, where GNOME's settings daemon writes it into
+   `Xft.dpi`, which gpui takes as the window's scale, it is left out of
+   the text's size (2026-11-05).
 3. **A part is drawn in a rem of its own** (`elements::rem`, gpui's
    `with_rem_size` in each phase): the rem is the part's body text over
    0.875, so `text_sm` is its body text (the named sizes are shares of
@@ -112,8 +115,8 @@ Qt's settings (4).
    alone, 2026-11-05). Automatic reads the running
    desktop's own settings (GSettings, `kdeglobals`, xfconf, LXQt's
    `lxqt.conf`), else GTK's (as GTK's applications there take them: on
-   Wayland the settings portal, else `settings.ini`; on X11
-   `settings.ini`, else the portal), else Qt's (qt6ct or qt5ct, as `QT_QPA_PLATFORMTHEME` names), else the
+   Wayland the settings portal, else GSettings', before `settings.ini`;
+   on X11 `settings.ini`, else the portal; since 2026-11-05), else Qt's (qt6ct or qt5ct, as `QT_QPA_PLATFORMTHEME` names), else the
    system's default size. GTK or Qt reads that toolkit's alone. A
    family and its size are read together, as every source writes them.
    Skwir's own is its fonts at the sizes Automatic reads (2026-11-05,

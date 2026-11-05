@@ -28,8 +28,10 @@
   choices, the toolbar's labels, the footer, dialogs and settings' choices;
   the smaller size is kept for shortcuts, counts, column headers and what is
   said under a name, and badges such as the grid's tags are no smaller than
-  any desktop's smallest text. An empty folder's or place's message no longer
-  runs past a narrow pane.
+  any desktop's smallest text. Every dialog's title is written at the title
+  size. Dialogs, tabs and tooltips grow with the text, never wider than the
+  window, while switches and tags' dots keep their size, as icons do. An
+  empty folder's or place's message no longer runs past a narrow pane.
 - **Bold text in variable fonts**: on Linux, bold and semibold text in a variable
   font, such as Noto Sans on Fedora and NixOS, Cantarell or Ubuntu Sans, is now
   drawn bold, where it was drawn regular: headings and bold in previews, titles.
@@ -46,7 +48,41 @@
   says it beside, "Automatic (Breeze)", as a language's grammar does.
 - **macOS and Windows** draw the window in their own interface font (San
   Francisco, Segoe UI) rather than Inter, and Windows' Text size, in its
-  Accessibility settings, enlarges Skwir's text as it changes.
+  Accessibility settings, enlarges Skwir's text as it changes. They wear their
+  colors too: on macOS those it draws its own windows in, Increase contrast's
+  when it is on; on Windows the accent, and a contrast theme's colors while one
+  is on.
+- **Palettes**: Colors from also offers twelve palettes, worn whatever the
+  desktop says but its more contrast: Skwir, Paper, Slate and Black, and
+  Solarized, Nord, Gruvbox, Catppuccin, Dracula, Rosé Pine, Tokyo Night and
+  Everforest as their makers publish them, each with its own accent, terminal
+  colors and code colors (Reading's Default). Each is drawn in the list as a
+  small window in its colors, and the window wears the one highlighted while
+  the list is open; nothing is saved until one is taken.
+- **The desktop followed more closely**: GNOME's Large Text shows as it is
+  turned on or off, and on X11 it no longer enlarges the text twice; a settings
+  portal that stops answering no longer stops Skwir following the desktop; on
+  Wayland, where the portal names no font, GTK's settings are read as GTK reads
+  them; a print is written in the fonts Fonts from chooses.
+- **Select inside folders in Usage**: a click on a block inside a folder
+  selects that file or folder, at any depth, to open, copy or act on as any
+  other, and the arrows move among the blocks inside folders. What is selected
+  there follows a rename, and is read only when it changes.
+- **Usage while files keep coming**: a folder whose files keep changing is
+  counted again at a pace, the map at most a second behind, for a half to a
+  quarter of the work it took.
+- **Grammars**: Settings › Reading › Grammars says where grammars were looked
+  for and what was nearly found (a repository a folder too deep, a
+  configuration that does not read), each with what to do. An editor's
+  grammar library is colored with its grammar's own repository's queries or
+  the system's, never another editor's, checked before it is offered and
+  named by both ("tree-sitter CLI, with Emacs's library"); one that cannot be
+  used says whether its library or its queries are refused, and what to do. A
+  library in the system's folders is the system's, not Emacs's.
+- **The board** keeps every column filled after another view and back, where
+  all but the place's own showed empty.
+- **Print Listing…** is what the folder's menu calls printing its listing, as
+  the palette does; Print… stays for files.
 
 ## 0.3.0 (2026-11-03)
 
