@@ -11219,3 +11219,11 @@ LXQt, GNOME or Xfce session; a Kvantum theme's colors (not read).
   Code text size's in DejaVu Sans Mono. Test: each part's step written
   at its size at that step (80, 100, 200 %) and in its font. 506 UI
   tests, clippy.
+- Then each text size's description says what 100 % is, in the sentence
+  its row shows, with what it comes to now: "100 % is your desktop's
+  font size, now 10 pt" (the usual size where no desktop names one; the
+  system's text size on macOS and Windows), the interface's size for
+  Files, the size browsers write a page's text at for Reading, the
+  desktop's monospace size where it names one for Code. Checked on Xvfb
+  (the four rows, searched); a test that each row's shown sentence says
+  it; 507 UI tests.

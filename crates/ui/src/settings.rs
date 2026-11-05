@@ -300,24 +300,34 @@ pub fn text_size_spec(part: crate::sizes::Part) -> SettingSpec {
             &pairs,
         )
     };
+    // What 100 % is, said in the sentence the row shows (`first_sentence`),
+    // with the size it comes to once the window resolved it.
+    let now = hundred.map_or_else(String::new, |px| format!(", now {} pt", points(px)));
+    let desktop = if cfg!(any(target_os = "macos", windows)) {
+        "your system's text size"
+    } else if hundred.is_none() || shown().is_some_and(|shown| shown.from.is_some()) {
+        "your desktop's font size"
+    } else {
+        "the usual size, as no desktop names one"
+    };
     match part {
         Part::Files => spec(
             "Files text size",
-            "How large names and details are written in the list, the grid, the columns and the board. At 100 % they are the interface's size; rows and labels grow with the text, while icons and pictures keep the zoom's size.",
+            &format!("How large names and details are written in the list, the grid, the columns and the board; 100 % is the interface's size{now}. Rows and labels grow with the text, while icons and pictures keep the zoom's size."),
         ),
         Part::Interface => spec(
             "Text size",
-            "How large skwir writes its menus, bars, the sidebar and dialogs, and its file views with them. Bars, rows and menus grow with the text; icons keep their size.",
+            &format!("How large skwir writes its menus, bars, the sidebar, dialogs and file views; 100 % is {desktop}{now}. Bars, rows and menus grow with the text; icons keep their size."),
         ),
         Part::Reading => spec(
             "Reading text size",
-            "The size books, Markdown and HTML files, documents and mail open at. The preview's own size buttons still change only the file shown.",
+            &format!("The size books, Markdown and HTML files, documents and mail open at; 100 % is the size browsers write a page's text at{now}. The preview's own size buttons still change only the file shown."),
         )
         .page(page::READING)
         .section("Text"),
         Part::Code => spec(
             "Code text size",
-            "The size of source and text files, the byte view and the terminal. The preview's own size buttons still change only the file shown.",
+            &format!("The size of source and text files, the byte view and the terminal; 100 % is your desktop's monospace font size where it names one{now}. The preview's own size buttons still change only the file shown."),
         )
         .page(page::READING)
         .section("Code"),
@@ -3611,5 +3621,15 @@ mod tests {
         assert_eq!(Page::parse("network"), Page::Network);
         assert_eq!(Page::of_owner(skwir_core::keymap::OWNER), Page::Keyboard);
         assert!(Page::Plugin("tags".into()).builtin().is_none());
+    }
+
+    #[test]
+    fn a_text_size_says_what_100_percent_is_in_the_sentence_its_row_shows() {
+        for part in crate::sizes::Part::ALL {
+            let spec = super::text_size_spec(part);
+            let (shown, more) = super::first_sentence(&spec.description);
+            assert!(shown.contains("; 100 % is "), "{shown}");
+            assert!(more, "the rest in its tooltip: {}", spec.description);
+        }
     }
 }
