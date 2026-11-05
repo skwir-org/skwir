@@ -769,8 +769,6 @@ leave (ADR-077).
 - `just idle-pss` measures the dev build (`target/release`), whose first
   frame read 177 to 184 ms while the shipped tarballs read 137 to 170
   the same evening: why it starts slower is not known.
-- A window opened again from the tray logs its first frame counted from
-  the process's start ("first frame 82397.7 ms after start").
 
 **From the review since 0.3.0** (2026-11-05):
 - On X11 GNOME's Large Text is counted once by asking `xrdb -query` for

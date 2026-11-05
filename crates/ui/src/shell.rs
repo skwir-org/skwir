@@ -510,8 +510,8 @@ pub struct Shell {
     pub sidebar_scroll: gpui::ScrollHandle,
     /// The sidebar's keyboard (F6): its focus and its cursor.
     pub sidebar_keys: crate::sidebar::Keys,
-    started: Instant,
-    first_frame_logged: bool,
+    /// What the window's first frame is timed from, until it is logged.
+    first_frame: Option<FirstFrame>,
     /// Whether assistive technology listens this frame
     /// (`Window::is_a11y_active`): what only it reads (a row's label, its
     /// place in the list) is built only then
@@ -535,7 +535,7 @@ impl Shell {
     pub(crate) fn new(
         app: Arc<App>,
         initial: Option<Location>,
-        started: Instant,
+        first_frame: FirstFrame,
         keymap: keymap::Keymap,
         work: std::rc::Rc<std::cell::RefCell<crate::work::Work>>,
         window: &mut Window,
@@ -790,8 +790,7 @@ impl Shell {
             stored_session: None,
             sidebar_scroll: gpui::ScrollHandle::new(),
             sidebar_keys: crate::sidebar::Keys::new(cx.focus_handle()),
-            started,
-            first_frame_logged: false,
+            first_frame: Some(first_frame),
             a11y: false,
             draws_meshes: turns_models(window),
             title: gpui::SharedString::default(),
@@ -3575,6 +3574,16 @@ pub fn lane_of<P: AsRef<std::path::Path>>(paths: impl IntoIterator<Item = P>) ->
     })
 }
 
+/// What a window's first frame is timed from: the process's start for the
+/// program's first window (what `just idle-pss` reads), its opening for one
+/// opened again (from the tray, by a later launch).
+#[derive(Clone, Copy)]
+pub(crate) struct FirstFrame {
+    pub(crate) from: Instant,
+    /// What the log says it is after: "start" or "opening".
+    pub(crate) after: &'static str,
+}
+
 /// Whether `window` turns 3D models (`Shell::draws_meshes`).
 fn turns_models(window: &Window) -> bool {
     window.draws_meshes()
@@ -3601,11 +3610,11 @@ fn split_edge(stacked: bool, cx: &mut Context<Shell>) -> gpui::AnyElement {
 
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if !self.first_frame_logged {
-            self.first_frame_logged = true;
+        if let Some(first) = self.first_frame.take() {
             tracing::info!(
-                "first frame {:.1} ms after start",
-                self.started.elapsed().as_secs_f64() * 1000.0
+                "first frame {:.1} ms after {}",
+                first.from.elapsed().as_secs_f64() * 1000.0,
+                first.after
             );
         }
         self.a11y = window.is_a11y_active();

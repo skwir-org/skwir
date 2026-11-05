@@ -11530,4 +11530,13 @@ commits).
   builds, lavapipe): a file dragged in the build before the change logged
   the warning as the drag started and wrapped its name; after it, no
   warning and one line in the window's font.
+- **A window opened again timed from the start.** Every window's shell
+  was given the process's start (`Finishing::started`), so one opened
+  again logged "first frame 82397.7 ms after start". The first window
+  is still timed from the start (what `just idle-pss` reads), one opened
+  again from its opening ("after opening", `shell::FirstFrame`). Checked
+  on Xvfb with a session bus of the check's own: a copy of 600,000 files
+  paused, Ctrl+Q's Finish in the background, a second `skwir` launched:
+  the first program's window opened again on the paused copy and logged
+  "first frame 153.4 ms after opening", 38 s after its start.
 

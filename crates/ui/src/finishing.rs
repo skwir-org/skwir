@@ -471,7 +471,20 @@ fn open(cx: &mut App, initial: Option<Location>, token: Option<String>, activity
     let state = cx.global_mut::<Finishing>();
     // A later launch starts its own Skwir again.
     stop_taking_over(state);
-    let (app, keymap, started) = (Arc::clone(&state.app), state.keymap.clone(), state.started);
+    let (app, keymap) = (Arc::clone(&state.app), state.keymap.clone());
+    // The first window is timed from the process's start, one opened again
+    // from now: the program may have run for hours without one.
+    let first_frame = if state.opened {
+        crate::shell::FirstFrame {
+            from: Instant::now(),
+            after: "opening",
+        }
+    } else {
+        crate::shell::FirstFrame {
+            from: state.started,
+            after: "start",
+        }
+    };
     let work = Rc::clone(&state.work);
     let bounds = gpui::Bounds::centered(None, gpui::size(gpui::px(1200.), gpui::px(800.)), cx);
     let opened = cx.open_window(
@@ -484,7 +497,7 @@ fn open(cx: &mut App, initial: Option<Location>, token: Option<String>, activity
             app_id: Some(skwir_core::APP_ID.into()),
             ..Default::default()
         },
-        |window, cx| cx.new(|cx| Shell::new(app, initial, started, keymap, work, window, cx)),
+        |window, cx| cx.new(|cx| Shell::new(app, initial, first_frame, keymap, work, window, cx)),
     );
     let window = match opened {
         Ok(window) => window,
@@ -499,7 +512,11 @@ fn open(cx: &mut App, initial: Option<Location>, token: Option<String>, activity
             return;
         }
     };
-    tracing::debug!(ms = started.elapsed().as_millis() as u64, "window opened");
+    tracing::debug!(
+        ms = first_frame.from.elapsed().as_millis() as u64,
+        after = first_frame.after,
+        "window opened"
+    );
     let state = cx.global_mut::<Finishing>();
     state.window = Some(window);
     state.opened = true;
