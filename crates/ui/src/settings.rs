@@ -367,7 +367,7 @@ fn fonts_from_spec() -> SettingSpec {
         pairs,
     )
     .now(&crate::desktop_style::Source::now(
-        shown().and_then(|shown| shown.from).as_deref(),
+        shown().and_then(|shown| shown.fonts_automatic).as_deref(),
     ))
 }
 
@@ -382,7 +382,7 @@ fn theme_spec() -> SettingSpec {
         &[("auto", "Automatic"), ("light", "Light"), ("dark", "Dark")],
     )
     .essential()
-    .now(look_now())
+    .now(look_now(|shown| shown.automatic_dark))
 }
 
 /// Code's look: Automatic follows the theme's, and says it.
@@ -396,13 +396,13 @@ fn code_appearance_spec() -> SettingSpec {
     )
     .section("Code")
     .essential()
-    .now(look_now())
+    .now(look_now(|shown| shown.dark))
 }
 
-/// The look the window resolved last, as the looks' choices name it;
-/// empty before it is.
-fn look_now() -> &'static str {
-    match shown().map(|shown| shown.dark) {
+/// A look the window resolved last (`dark` of `Shown`), as the looks'
+/// choices name it; empty before it is.
+fn look_now(dark: impl Fn(&Shown) -> bool) -> &'static str {
+    match shown().as_ref().map(dark) {
         Some(true) => "dark",
         Some(false) => "light",
         None => "",
@@ -421,13 +421,10 @@ fn colors_from_spec(app: &App) -> SettingSpec {
         .map(|(source, label)| (source.value(), *label))
         .collect();
     let shown = shown();
-    let swatches = choices
-        .iter()
-        .map(|(source, _)| {
-            let shown = shown.as_ref()?;
-            Some(colors_swatch(app, *source, shown.system_dark))
-        })
-        .collect();
+    let swatches = match shown.as_ref() {
+        Some(shown) => colors_swatches(app, &choices, shown),
+        None => vec![None; choices.len()],
+    };
     let now = crate::desktop_style::Source::now(
         shown
             .as_ref()
@@ -444,6 +441,42 @@ fn colors_from_spec(app: &App) -> SettingSpec {
         .essential()
         .now(&now)
         .swatches(swatches)
+}
+
+/// Each of `choices`' swatch, as `colors_swatch` draws it, made again only
+/// when what they show changed: what the desktop said, the system's look,
+/// `ui.theme` (not each time the settings say what the window resolved:
+/// each is a theme derived).
+fn colors_swatches(
+    app: &App,
+    choices: &[(crate::desktop_style::ColorSource, &'static str)],
+    shown: &Shown,
+) -> Vec<Option<skwir_core::settings::Swatch>> {
+    type Made = (
+        (bool, u64, Option<String>),
+        Vec<Option<skwir_core::settings::Swatch>>,
+    );
+    static MADE: std::sync::Mutex<Option<Made>> = std::sync::Mutex::new(None);
+    let of = (
+        shown.system_dark,
+        shown.colors,
+        app.settings.get::<String>(THEME_KEY),
+    );
+    let mut made = MADE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some((was, swatches)) = made.as_ref()
+        && *was == of
+        && swatches.len() == choices.len()
+    {
+        return swatches.clone();
+    }
+    let swatches: Vec<_> = choices
+        .iter()
+        .map(|(source, _)| Some(colors_swatch(app, *source, shown.system_dark)))
+        .collect();
+    *made = Some((of, swatches.clone()));
+    swatches
 }
 
 /// The colors `source` would draw the window in: its look as `ui.theme`
@@ -505,8 +538,13 @@ pub(crate) struct Shown {
     pub hundreds: [f32; 4],
     /// Where the fonts were read, none for skwir's own.
     pub from: Option<String>,
-    /// The look drawn: what the theme's Automatic comes to.
+    /// Where Fonts from's Automatic reads them, whatever it chooses: what
+    /// its Automatic comes to.
+    pub fonts_automatic: Option<String>,
+    /// The look drawn: what code's Automatic comes to.
     pub dark: bool,
+    /// The look the theme's Automatic gives, whatever the theme says.
+    pub automatic_dark: bool,
     /// Where the colors were read while Colors from is Automatic.
     pub colors_from: Option<String>,
     /// Whether the system's appearance is dark, which a palette's card
@@ -519,82 +557,179 @@ pub(crate) struct Shown {
 
 static SHOWN: std::sync::RwLock<Option<Shown>> = std::sync::RwLock::new(None);
 
-/// A choice shown before it is taken: the row highlighted in the list of
-/// a choice whose values look like something
-/// (`SettingConstraints::swatches`), which its owner wears as if chosen
-/// while the list is open (Colors from's palettes, `previewed`). Never
-/// saved. Once taken it stays until the save that sends it ends, so the
-/// look does not go back while the setting waits for its worker.
-struct Preview {
-    key: String,
-    value: String,
-    taken: bool,
+/// What a choice whose values look like something
+/// (`SettingConstraints::swatches`) shows before it is chosen, which its
+/// owner wears as if chosen (Colors from's palettes, `previewed`): the row
+/// highlighted in its open list, and the value taken from it until the
+/// save that sends it ends, so the look never goes back while the setting
+/// waits for its worker. Never saved.
+struct Previews {
+    /// The row highlighted in an open list: its key and value.
+    highlighted: Option<(String, String)>,
+    /// The value taken and not saved yet.
+    pending: Option<Pending>,
 }
 
-static PREVIEW: std::sync::Mutex<Option<Preview>> = std::sync::Mutex::new(None);
+/// A value taken from a list, waiting for its save.
+struct Pending {
+    key: String,
+    value: String,
+    /// The save that sends it (`Settings::save_status`'s id) once sent;
+    /// `None` while it waits in the dialog's queue.
+    save: Option<u64>,
+}
+
+static PREVIEWS: std::sync::Mutex<Previews> = std::sync::Mutex::new(Previews {
+    highlighted: None,
+    pending: None,
+});
 /// Moves each time what is previewed changes: the theme is resolved again
 /// (`Shell::sync`).
 static PREVIEW_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-fn previews() -> std::sync::MutexGuard<'static, Option<Preview>> {
-    PREVIEW
+fn previews() -> std::sync::MutexGuard<'static, Previews> {
+    PREVIEWS
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-/// What `key` shows in place of `stored` while one of its values is
-/// previewed: that value, until it is taken and stored.
-pub(crate) fn previewed(key: &str, stored: Option<&str>) -> Option<String> {
+fn previews_moved() {
+    PREVIEW_REVISION.fetch_add(1, std::sync::atomic::Ordering::Release);
+}
+
+/// What `key` shows in place of what `settings` hold: the value its open
+/// list highlights, else the one taken while its save waits or runs. A
+/// save ended (saved, failed, or another surface's since), what holds is
+/// shown, whatever changed it.
+pub(crate) fn previewed(settings: &skwir_core::settings::Settings, key: &str) -> Option<String> {
     let previews = previews();
-    let preview = previews.as_ref().filter(|preview| preview.key == key)?;
-    (!preview.taken || stored != Some(preview.value.as_str())).then(|| preview.value.clone())
+    if let Some((_, value)) = previews.highlighted.as_ref().filter(|(k, _)| k == key) {
+        return Some(value.clone());
+    }
+    let pending = previews
+        .pending
+        .as_ref()
+        .filter(|pending| pending.key == key)?;
+    let waiting = match pending.save {
+        None => true,
+        Some(id) => settings.save_status() == (id, SaveState::Saving),
+    };
+    waiting.then(|| pending.value.clone())
 }
 
 pub(crate) fn preview_revision() -> u64 {
     PREVIEW_REVISION.load(std::sync::atomic::Ordering::Acquire)
 }
 
-/// Preview `value` of `key`, or nothing; whether what is shown changed.
-fn preview(next: Option<(&str, &str)>) -> bool {
+/// Show `value` of `key` as its list highlights it, or nothing of `key`;
+/// whether what is shown changed.
+fn preview_highlight(key: &str, value: Option<&str>) -> bool {
     let mut previews = previews();
-    let same = match (previews.as_ref(), next) {
-        (None, None) => true,
-        (Some(was), Some((key, value))) => was.key == key && was.value == value && !was.taken,
-        _ => false,
+    let next = value.map(|value| (key.to_owned(), value.to_owned()));
+    let was = previews.highlighted.as_ref();
+    let same = match (was, &next) {
+        (Some(was), Some(next)) => was == next,
+        (Some((was, _)), None) => was != key,
+        (None, next) => next.is_none(),
     };
     if same {
         return false;
     }
-    *previews = next.map(|(key, value)| Preview {
-        key: key.to_owned(),
-        value: value.to_owned(),
-        taken: false,
-    });
-    PREVIEW_REVISION.fetch_add(1, std::sync::atomic::Ordering::Release);
+    previews.highlighted = next;
+    previews_moved();
     true
 }
 
-/// The value previewed of `key` is taken: kept until its save ends.
-fn preview_taken(key: &str) {
-    if let Some(preview) = previews().as_mut().filter(|preview| preview.key == key) {
-        preview.taken = true;
+/// `value` of `key` was taken and waits for its save (`save`, once
+/// sent): shown until it ends.
+fn preview_pending(key: &str, value: &str, save: Option<u64>) {
+    previews().pending = Some(Pending {
+        key: key.to_owned(),
+        value: value.to_owned(),
+        save,
+    });
+    previews_moved();
+}
+
+/// The changes `sent` were sent as the save `id`, or not sent at all
+/// (`None`: refused, so never saved): a value taken among them is shown
+/// while that save runs, or no longer. Whether what is shown changed.
+fn preview_sent(sent: impl Fn(&str) -> bool, id: Option<u64>) -> bool {
+    let mut previews = previews();
+    let Some(pending) = previews
+        .pending
+        .as_mut()
+        .filter(|pending| sent(&pending.key))
+    else {
+        return false;
+    };
+    if let Some(id) = id {
+        pending.save = Some(id);
+        return false;
     }
+    previews.pending = None;
+    previews_moved();
+    true
 }
 
 /// A save of `sent` ended, as it went: a value taken and sent is shown
-/// as the setting now holds it.
+/// as the setting now holds it. Whether what is shown changed.
 fn preview_saved(sent: impl Fn(&str) -> bool) -> bool {
     let mut previews = previews();
     if previews
+        .pending
         .as_ref()
-        .is_some_and(|preview| preview.taken && sent(&preview.key))
+        .is_some_and(|pending| pending.save.is_some() && sent(&pending.key))
     {
-        *previews = None;
-        PREVIEW_REVISION.fetch_add(1, std::sync::atomic::Ordering::Release);
+        previews.pending = None;
+        previews_moved();
         return true;
     }
     false
 }
+
+/// How a save carries a value taken from a list.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Carried {
+    /// In the dialog's queue, not sent yet.
+    Queued,
+    /// Sent as this save (`Settings::save_status`'s id).
+    Sent(u64),
+}
+
+/// How a save carries `value` of `key`: queued, or sent as the save in
+/// flight; `None` when none does (the value held already, so nothing was
+/// sent).
+fn carried(
+    inflight: Option<&(u64, BTreeMap<String, String>)>,
+    queue: &BTreeMap<String, String>,
+    key: &str,
+    value: &str,
+) -> Option<Carried> {
+    if queue.get(key).is_some_and(|queued| queued == value) {
+        return Some(Carried::Queued);
+    }
+    inflight
+        .filter(|(_, sent)| sent.get(key).is_some_and(|sent| sent == value))
+        .map(|(id, _)| Carried::Sent(*id))
+}
+
+/// The dialog closed: a value taken and still in its queue is never sent,
+/// so what holds is shown again. Whether what is shown changed.
+fn preview_unqueued() -> bool {
+    let mut previews = previews();
+    if previews
+        .pending
+        .as_ref()
+        .is_some_and(|pending| pending.save.is_none())
+    {
+        previews.pending = None;
+        previews_moved();
+        return true;
+    }
+    false
+}
+
 /// The families listed last (`list_fonts`), which a font setting declared
 /// again keeps offering.
 static LISTED: std::sync::RwLock<Option<Arc<crate::fonts::Installed>>> =
@@ -616,30 +751,37 @@ fn listed() -> Option<Arc<crate::fonts::Installed>> {
 
 /// Say beside the font and size settings what they come to, when that
 /// changed: a font's Automatic, each step's size, where Fonts from read.
-pub(crate) fn show_resolved(app: &App, now: Shown) {
+/// How many settings it declared again (each moves the settings'
+/// revision once).
+pub(crate) fn show_resolved(app: &App, now: Shown) -> u64 {
     {
         let mut shown = SHOWN
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if shown.as_ref() == Some(&now) {
-            return;
+            return 0;
         }
         *shown = Some(now);
     }
+    let mut specs: Vec<SettingSpec> = Vec::new();
     let listed = listed();
     for key in FONT_KEYS {
-        app.settings
-            .declare(font_spec(key, &font_chosen(app, key), listed.as_deref()));
+        specs.push(font_spec(key, &font_chosen(app, key), listed.as_deref()));
     }
     for part in crate::sizes::Part::ALL {
-        app.settings.declare(text_size_spec(part));
+        specs.push(text_size_spec(part));
     }
     if skwir_platform::desktop_style::FONTS {
-        app.settings.declare(fonts_from_spec());
+        specs.push(fonts_from_spec());
     }
-    app.settings.declare(colors_from_spec(app));
-    app.settings.declare(theme_spec());
-    app.settings.declare(code_appearance_spec());
+    specs.push(colors_from_spec(app));
+    specs.push(theme_spec());
+    specs.push(code_appearance_spec());
+    let declared = specs.len() as u64;
+    for spec in specs {
+        app.settings.declare(spec);
+    }
+    declared
 }
 
 /// What a font setting says, Automatic when nothing.
@@ -1977,20 +2119,17 @@ pub(crate) struct Narrowed {
     pub(crate) highlighted: usize,
     pub(crate) scroll: gpui::UniformListScrollHandle,
     /// Where its values look like something (`SettingConstraints::swatches`),
-    /// the app told when the one highlighted is shown (`preview`).
+    /// the app told when the one highlighted is shown (`preview_highlight`).
     previews: Option<std::sync::Weak<App>>,
-    /// Whether the one highlighted was taken: its preview then stays until
-    /// it is saved.
-    taken: bool,
     _typed: Subscription,
 }
 
 impl Drop for Narrowed {
-    /// Closed without taking one: what is previewed goes.
+    /// Closed, taken or not: its highlight goes (one taken is shown, while
+    /// its save waits, as `Pending`).
     fn drop(&mut self) {
         if let Some(app) = &self.previews
-            && !self.taken
-            && preview(None)
+            && preview_highlight(&self.key, None)
             && let Some(app) = app.upgrade()
         {
             app.wake();
@@ -2003,13 +2142,16 @@ impl Narrowed {
     /// look like something; the window wears it while the list is open.
     pub(crate) fn show_highlighted(&self) {
         let Some(app) = &self.previews else { return };
-        let shown = preview(
-            self.highlighted_value()
-                .map(|value| (self.key.as_str(), value)),
-        );
-        if shown && let Some(app) = app.upgrade() {
+        if preview_highlight(&self.key, self.highlighted_value())
+            && let Some(app) = app.upgrade()
+        {
             app.wake();
         }
+    }
+
+    /// Whether its values look like something, and are worn as highlighted.
+    pub(crate) fn previews(&self) -> bool {
+        self.previews.is_some()
     }
 
     /// The choices of `spec`, as stored values and labels.
@@ -2151,6 +2293,17 @@ pub struct SettingsView {
 }
 
 impl EventEmitter<SettingsEvent> for SettingsView {}
+
+impl Drop for SettingsView {
+    /// Closed: a value taken from a list and still in the queue is never
+    /// sent, so what holds is worn again. One sent is worn until its save
+    /// ends (`previewed` asks the settings), the dialog gone or not.
+    fn drop(&mut self) {
+        if preview_unqueued() {
+            self.app.wake();
+        }
+    }
+}
 
 impl SettingsView {
     /// Keep `subscription` while the dialog lives (a list's filter).
@@ -2672,9 +2825,20 @@ impl SettingsView {
             &Invocation::with_args("settings.apply", &serde_json::json!({ "changes": changes })),
             &self.app,
         ) {
-            Ok(Outcome::Value(id)) => self.inflight = Some((id.as_u64().unwrap_or(0), changes)),
-            Ok(_) => {}
+            Ok(Outcome::Value(id)) => {
+                let id = id.as_u64().unwrap_or(0);
+                preview_sent(|key| changes.contains_key(key), Some(id));
+                self.inflight = Some((id, changes));
+            }
+            Ok(_) => {
+                if preview_sent(|key| changes.contains_key(key), None) {
+                    self.app.wake();
+                }
+            }
             Err(error) => {
+                if preview_sent(|key| changes.contains_key(key), None) {
+                    self.app.wake();
+                }
                 for key in changes.keys() {
                     self.errors.insert(key.clone(), format!("{error:#}"));
                 }
@@ -2728,13 +2892,22 @@ impl SettingsView {
                 let query = narrowed.field.read(cx).text().to_owned();
                 narrowed.relist(choices, &query);
             }
-        } else if let Some(key) = &self.dropdown
-            && self
-                .row(key)
-                .is_some_and(|row| crate::settings_view::narrows(&row.spec))
+        } else if self.narrowed.is_some()
+            || self.dropdown.as_ref().is_some_and(|key| {
+                self.row(key)
+                    .is_some_and(|row| crate::settings_view::narrows(&row.spec))
+            })
         {
-            self.dropdown = None;
+            // Its setting gone: the list goes, and what it previewed.
+            self.close_lists();
         }
+    }
+
+    /// Close whatever list is open, the long one's preview with it: no
+    /// list is hidden while what it highlights stays worn.
+    fn close_lists(&mut self) {
+        self.dropdown = None;
+        self.narrowed = None;
     }
 
     pub(crate) fn adjust_key(&mut self, key: &str, delta: i64, cx: &mut Context<Self>) {
@@ -2906,7 +3079,7 @@ impl SettingsView {
     pub(crate) fn go(&mut self, page: Page, cx: &mut Context<Self>) {
         self.search.update(cx, |input, cx| input.set_text("", cx));
         self.page = page;
-        self.dropdown = None;
+        self.close_lists();
         self.reset_armed = false;
         self.keys.editor = None;
         self.keys.new = None;
@@ -3109,7 +3282,6 @@ impl SettingsView {
             scroll: gpui::UniformListScrollHandle::new(),
             previews: (!spec.constraints.swatches.is_empty())
                 .then(|| std::sync::Arc::downgrade(&self.app)),
-            taken: false,
             _typed: typed,
         };
         narrowed.narrow("");
@@ -3142,15 +3314,26 @@ impl SettingsView {
         };
         let key = narrowed.key.clone();
         let value = narrowed.highlighted_value().map(str::to_owned);
-        // What is previewed is what is taken: it stays until saved.
-        if narrowed.previews.is_some() && value.is_some() {
-            narrowed.show_highlighted();
-            narrowed.taken = true;
-            preview_taken(&key);
+        let previews = narrowed.previews();
+        if let Some(value) = value {
+            self.change(&key, value.clone(), cx);
+            // What was previewed is taken: shown until the save that sends
+            // it ends, before its highlight goes with the list. None is sent
+            // (the value it holds already): nothing waits.
+            if previews {
+                self.pend_preview(&key, &value);
+            }
         }
         self.close_choices(window, cx);
-        if let Some(value) = value {
-            self.change(&key, value, cx);
+    }
+
+    /// `value` of `key`, just changed, shown while the save that sends it
+    /// waits or runs: queued, or sent as the save in flight.
+    fn pend_preview(&self, key: &str, value: &str) {
+        match carried(self.inflight.as_ref(), &self.queue, key, value) {
+            Some(Carried::Queued) => preview_pending(key, value, None),
+            Some(Carried::Sent(id)) => preview_pending(key, value, Some(id)),
+            None => {}
         }
     }
 
@@ -3170,8 +3353,7 @@ impl SettingsView {
     }
 
     fn step_focus(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
-        self.dropdown = None;
-        self.narrowed = None;
+        self.close_lists();
         if self.stops.is_empty() {
             return;
         }
@@ -3835,7 +4017,9 @@ mod tests {
                 automatic: crate::fonts::Families::default(),
                 hundreds: [16.; 4],
                 from: None,
+                fonts_automatic: None,
                 dark: false,
+                automatic_dark: false,
                 colors_from: None,
                 system_dark: false,
                 colors: 0,
@@ -3856,7 +4040,9 @@ mod tests {
                 automatic: crate::fonts::Families::default(),
                 hundreds: [16.; 4],
                 from: None,
+                fonts_automatic: None,
                 dark: true,
+                automatic_dark: false,
                 colors_from: None,
                 system_dark: false,
                 colors: 0,
@@ -3867,34 +4053,120 @@ mod tests {
         assert_eq!(paper.ground, 0x1f_1d1a);
     }
 
+    /// What Automatic gives is said as Automatic's, whatever is chosen:
+    /// the theme's look and Fonts from's source, not those of the choice.
     #[test]
-    fn a_value_previewed_shows_until_its_list_closes_or_it_is_saved() {
-        use super::{preview, preview_saved, preview_taken, previewed};
-        assert_eq!(previewed("ui.x", Some("a")), None);
-        assert!(preview(Some(("ui.x", "b"))));
+    fn automatic_says_what_it_gives_whatever_is_chosen() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        declare(&app);
+        app.settings.set(THEME_KEY, "light".into());
+        app.settings.set(super::FONTS_FROM_KEY, "gtk".into());
+        let declared = super::show_resolved(
+            &app,
+            super::Shown {
+                automatic: crate::fonts::Families::default(),
+                hundreds: [16.; 4],
+                from: Some("GTK".into()),
+                fonts_automatic: Some("Plasma".into()),
+                dark: false,
+                automatic_dark: true,
+                colors_from: None,
+                system_dark: true,
+                colors: 0,
+            },
+        );
+        assert!(declared > 0);
+        let now = |key: &str| app.settings.spec(key).unwrap().constraints.now;
+        assert_eq!(now(THEME_KEY), "dark", "the desktop's look");
+        assert_eq!(now(super::CODE_APPEARANCE_KEY), "light", "the theme drawn");
+        if skwir_platform::desktop_style::FONTS {
+            assert_eq!(now(super::FONTS_FROM_KEY), "Plasma");
+        }
+        let theme = app.settings.spec(THEME_KEY).unwrap();
+        assert_eq!(theme.choice_shown("auto"), "Automatic (Dark)");
+    }
+
+    /// An app whose settings name Colors from, holding `value`.
+    fn holding(value: &str) -> (tempfile::TempDir, std::sync::Arc<App>) {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        declare(&app);
+        app.settings.set(super::COLORS_FROM_KEY, value.into());
+        (tmp, app)
+    }
+
+    #[test]
+    fn a_value_highlighted_shows_until_its_list_closes() {
+        use super::{COLORS_FROM_KEY as KEY, preview_highlight, previewed};
+        let (_tmp, app) = holding("nord");
+        assert_eq!(previewed(&app.settings, KEY), None);
+        assert!(preview_highlight(KEY, Some("gruvbox")));
         assert!(
-            !preview(Some(("ui.x", "b"))),
+            !preview_highlight(KEY, Some("gruvbox")),
             "the same again moves nothing"
         );
-        assert_eq!(previewed("ui.x", Some("a")).as_deref(), Some("b"));
-        assert_eq!(previewed("ui.y", Some("a")), None, "another setting's");
-        // Taken: shown while it is saved, then as the setting holds it.
-        preview_taken("ui.x");
-        assert_eq!(previewed("ui.x", Some("a")).as_deref(), Some("b"));
-        assert_eq!(previewed("ui.x", Some("b")), None);
-        assert!(!preview_saved(|key| key == "ui.y"), "another save");
-        assert!(preview_saved(|key| key == "ui.x"));
-        assert_eq!(
-            previewed("ui.x", Some("a")),
-            None,
-            "a failed save: what holds"
-        );
-        // Closed without taking it: gone.
-        assert!(preview(Some(("ui.x", "c"))));
+        assert_eq!(previewed(&app.settings, KEY).as_deref(), Some("gruvbox"));
+        assert_eq!(previewed(&app.settings, "ui.theme"), None, "another's");
+        assert!(!preview_highlight("ui.theme", None), "another list closed");
+        // Closed: what holds.
         let before = super::preview_revision();
-        assert!(preview(None));
+        assert!(preview_highlight(KEY, None));
         assert!(super::preview_revision() > before);
-        assert_eq!(previewed("ui.x", Some("a")), None);
+        assert_eq!(previewed(&app.settings, KEY), None);
+    }
+
+    #[test]
+    fn a_value_taken_shows_while_its_save_waits_and_never_after() {
+        use super::{COLORS_FROM_KEY as KEY, preview_highlight, preview_pending, previewed};
+        let (_tmp, app) = holding("nord");
+        // Taken, in the queue: shown, and again once a list opened since
+        // closes (its highlight goes, not what was taken).
+        preview_pending(KEY, "gruvbox", None);
+        assert_eq!(previewed(&app.settings, KEY).as_deref(), Some("gruvbox"));
+        assert!(preview_highlight(KEY, Some("dracula")));
+        assert_eq!(previewed(&app.settings, KEY).as_deref(), Some("dracula"));
+        assert!(preview_highlight(KEY, None));
+        assert_eq!(previewed(&app.settings, KEY).as_deref(), Some("gruvbox"));
+        // The dialog closed with it unsent: what holds.
+        assert!(super::preview_unqueued());
+        assert_eq!(previewed(&app.settings, KEY), None);
+
+        // Sent: shown while that save runs. Ended (here, a save no longer
+        // the settings' own: failed or another's since), what holds is
+        // shown, whatever changes it after, the dialog there or not.
+        preview_pending(KEY, "gruvbox", None);
+        assert!(!super::preview_sent(|key| key == KEY, Some(u64::MAX)));
+        assert_eq!(previewed(&app.settings, KEY), None);
+        app.settings.set(KEY, "dracula".into());
+        assert_eq!(previewed(&app.settings, KEY), None);
+        // Refused when sent: never saved, never shown.
+        preview_pending(KEY, "gruvbox", None);
+        assert!(super::preview_sent(|key| key == KEY, None));
+        assert_eq!(previewed(&app.settings, KEY), None);
+    }
+
+    #[test]
+    fn a_value_taken_waits_only_for_a_save_that_carries_it() {
+        use std::collections::BTreeMap;
+        let key = super::COLORS_FROM_KEY;
+        let one = |value: &str| BTreeMap::from([(key.to_owned(), value.to_owned())]);
+        // The value held taken again: nothing sent, nothing waits.
+        assert_eq!(super::carried(None, &BTreeMap::new(), key, "nord"), None);
+        // Queued, or in flight.
+        assert_eq!(
+            super::carried(None, &one("gruvbox"), key, "gruvbox"),
+            Some(super::Carried::Queued)
+        );
+        let flight = (7, one("gruvbox"));
+        assert_eq!(
+            super::carried(Some(&flight), &BTreeMap::new(), key, "gruvbox"),
+            Some(super::Carried::Sent(7))
+        );
+        assert_eq!(
+            super::carried(Some(&flight), &BTreeMap::new(), key, "nord"),
+            None
+        );
     }
 
     #[test]
@@ -3909,7 +4181,10 @@ mod tests {
             ColorSource::chosen(&app.settings),
             ColorSource::Palette(nord)
         );
-        assert!(super::preview(Some((super::COLORS_FROM_KEY, "gruvbox"))));
+        assert!(super::preview_highlight(
+            super::COLORS_FROM_KEY,
+            Some("gruvbox")
+        ));
         let gruvbox = crate::palettes::by_id("gruvbox").unwrap();
         assert_eq!(
             ColorSource::chosen(&app.settings),
@@ -3925,7 +4200,7 @@ mod tests {
             Some("nord"),
             "never saved"
         );
-        assert!(super::preview(None));
+        assert!(super::preview_highlight(super::COLORS_FROM_KEY, None));
         assert_eq!(
             ColorSource::chosen(&app.settings),
             ColorSource::Palette(nord)

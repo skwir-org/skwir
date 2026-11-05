@@ -51,14 +51,20 @@ the reasoning.
   data): the dialog draws it in miniature before each value's name, in
   the choice's list and on its control, in the colors the value would
   give now; nothing is added under the row. Declared again when what
-  they show changes (`settings::show_resolved`). While its list is open,
-  the row highlighted (by the keys, the pointer or what is typed) is
-  previewed (`settings::previewed`): its owner wears it as if chosen,
-  nothing is saved, and closing the list without taking it (Escape, a
-  click outside, the dialog closed) shows what holds again; one taken
-  stays shown until its save ends, so the look never goes back while the
-  setting waits for its worker. An owner that reads such a setting asks
-  `previewed` first (`ColorSource::chosen`).
+  they show changes (`settings::show_resolved`), each made again only
+  when the desktop's colors, the system's look or the theme moved. Such a
+  choice always opens as the list that narrows, however few its values
+  (`settings_view::narrows`). While its list is open, the row
+  highlighted (by the keys, the pointer or what is typed) is previewed
+  (`settings::previewed`): its owner wears it as if chosen, nothing is
+  saved, and closing the list without taking it (Escape, a click
+  outside, a page changed, the dialog closed) shows what holds again;
+  no list is hidden while its preview stays (`close_lists`). One taken
+  stays shown while the save that carries it waits or runs (asked of
+  `Settings::save_status`, the dialog open or not), and no longer once it
+  ends, whatever changes the setting after; a value taken that is the
+  one held sends nothing, so nothing waits. An owner that reads such a
+  setting asks `previewed` first (`ColorSource::chosen`).
 - A setting that applies only while a switch is on says so with
   `SettingSpec::under(switch)` and is declared right after it, in its
   section: the dialog draws it
@@ -188,8 +194,12 @@ The key is the owner's; the page is the subject's (ADR-072).
   keeps room for the outline, so marking one moves none), and Automatic
   is named "Automatic, now Dark" to a screen reader; a dropdown, its
   list and the revert button's tooltip say "Automatic (Dark)"
-  (`SettingSpec::choice_shown`). A name that is no choice (a desktop's
-  own fonts, Plasma) outlines nothing and is said in words alone.
+  (`SettingSpec::choice_shown`). What it says is Automatic's own answer,
+  whatever is chosen: the revert tooltip of a Theme set to Light names the
+  look the desktop's preference gives, Fonts from set to GTK names where
+  Automatic reads (`Shown::automatic_dark`, `fonts_automatic`), never
+  what the choice gives. A name that is no choice (a desktop's own
+  fonts, Plasma) outlines nothing and is said in words alone.
 - **A long list narrows.** A dropdown of more than
   `settings_view::FILTERED` choices (the icon themes, bat's themes), and
   a font's however few (the code font's monospaced families may be),

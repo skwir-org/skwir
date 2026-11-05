@@ -214,8 +214,8 @@ impl ColorSource {
     /// longer offered, is Automatic.
     pub fn chosen(settings: &Settings) -> Self {
         let toolkits = skwir_platform::desktop_style::TOOLKITS;
-        let stored = settings.get::<String>(COLORS_FROM_KEY);
-        let shown = crate::settings::previewed(COLORS_FROM_KEY, stored.as_deref()).or(stored);
+        let shown = crate::settings::previewed(settings, COLORS_FROM_KEY)
+            .or_else(|| settings.get::<String>(COLORS_FROM_KEY));
         match shown.as_deref() {
             Some("gtk") if toolkits => ColorSource::Gtk,
             Some("qt") if toolkits => ColorSource::Qt,
@@ -400,6 +400,15 @@ pub fn keep_own_colors(settings: &Settings) {
 /// `GTK`): what its Automatic comes to (`settings::show_resolved`).
 pub fn colors_source() -> Option<String> {
     said().and_then(|said| said.colors_from)
+}
+
+/// Where Fonts from's Automatic reads the fonts (`Plasma`, `GTK`),
+/// whatever it chooses: what its Automatic comes to
+/// (`settings::show_resolved`).
+pub fn fonts_source() -> Option<String> {
+    read(Source::Automatic)
+        .map(|fonts| fonts.from)
+        .filter(|from| !from.is_empty())
 }
 
 /// The fonts the desktop names as the settings choose to read them, with

@@ -51,13 +51,15 @@ const SPECIMEN: &str = "Sphinx of black quartz, judge my vow. 0123456789";
 const SPECIMEN_CODE: &str = "if (x != 0O) { l1 = I[i]; } // => <=";
 
 /// Whether `spec`'s dropdown opens as a list that narrows
-/// (`settings::Narrowed`): one of more than `FILTERED` choices, and a
-/// font's however few the system has, for the specimen its list writes
-/// (ADR-073): the code font is offered only the monospaced families, often
-/// fewer.
+/// (`settings::Narrowed`): one of more than `FILTERED` choices; a font's
+/// however few the system has, for the specimen its list writes (ADR-073):
+/// the code font is offered only the monospaced families, often fewer; and
+/// one whose values look like something (`SettingConstraints::swatches`),
+/// however few, as that list wears the one highlighted.
 pub(crate) fn narrows(spec: &SettingSpec) -> bool {
     spec.constraints.choices.len() > FILTERED
         || crate::settings::FONT_KEYS.contains(&spec.key.as_str())
+        || !spec.constraints.swatches.is_empty()
 }
 
 /// The family a font setting's control and specimen are written in when
@@ -741,9 +743,10 @@ impl SettingsView {
         let now = &row.spec.constraints.now;
         for (index, choice) in choices.into_iter().enumerate() {
             let label = row.spec.choice_label(&choice).to_owned();
-            let said = row
-                .spec
-                .now_of(&choice)
+            // Said while Automatic is chosen: what it gives is the now.
+            let said = automatic
+                .then(|| row.spec.now_of(&choice))
+                .flatten()
                 .map(|now| format!("{label}, now {now}"));
             let key = key.clone();
             let focus = focus.clone();
@@ -2053,5 +2056,29 @@ mod tests {
         assert_eq!(written_at(Part::Files, "110", &theme).1, theme.font);
         assert_eq!(written_at(Part::Reading, "110", &theme).1, "Reading Serif");
         assert_eq!(written_at(Part::Code, "110", &theme).1, "Code Mono");
+    }
+
+    /// A choice whose values look like something opens as the list that
+    /// wears the one highlighted, however few its values.
+    #[test]
+    fn a_choice_of_looks_opens_as_the_list_that_previews() {
+        use skwir_core::settings::{SettingSpec, Swatch};
+        let few = || SettingSpec::choice("ui.x", "X", "", "a", &[("a", "A"), ("b", "B")]);
+        assert!(!super::narrows(&few()));
+        let swatch = Swatch {
+            ground: 0,
+            chrome: 0,
+            text: 0xff_ffff,
+            muted: 0,
+            line: 0,
+            accent: 0,
+            selection: 0,
+            selection_text: 0,
+            success: 0,
+            warning: 0,
+            error: 0,
+            dark: true,
+        };
+        assert!(super::narrows(&few().swatches(vec![Some(swatch), None])));
     }
 }

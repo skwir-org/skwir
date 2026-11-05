@@ -3002,6 +3002,11 @@ impl Shell {
     /// `inspector.rs`); the rest is laid out in the theme's fonts and
     /// sizes as it is drawn.
     fn resolve_theme(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Taken in up to now: what the settings declared again here, to say
+        // what the look came to, is taken in too, so that saying it starts
+        // no second pass (`theme_inputs_of`).
+        let current = self.theme_revision == theme_inputs_of(&self.app);
+        let started = Instant::now();
         let was = (cx.global::<Theme>().families(), cx.global::<Theme>().sizes);
         let theme = Theme::resolve(&self.app, window.appearance(), cx.text_system());
         let now = (theme.families(), theme.sizes);
@@ -3012,7 +3017,11 @@ impl Shell {
         // The window is written at the interface's size (ADR-117).
         window.set_rem_size(now.1.rem(crate::sizes::Part::Interface));
         cx.set_global(theme);
-        show_resolved(&self.app, cx);
+        let declared = show_resolved(&self.app, cx);
+        if current {
+            self.theme_revision += declared;
+        }
+        tracing::trace!(took = ?started.elapsed(), declared, "theme resolved");
         if now.0 != was.0 {
             let fonts = &now.0;
             tracing::info!(ui = %fonts.ui, reading = %fonts.reading, code = %fonts.code, "fonts");
@@ -3081,11 +3090,9 @@ impl Shell {
         }
         self.pending = self.app.pending.get();
         self.sync_clipboard_files(cx);
-        // What the theme is made of: the settings and the desktop's style,
-        // both counted up, never down (ADR-071).
-        let revision = self.app.settings.revision()
-            + crate::desktop_style::revision()
-            + crate::settings::preview_revision();
+        // What the theme is made of: the settings, the desktop's style and
+        // what a list previews, all counted up, never down (ADR-071).
+        let revision = theme_inputs_of(&self.app);
         if revision != self.theme_revision {
             self.theme_revision = revision;
             self.resolve_theme(window, cx);
@@ -3824,24 +3831,40 @@ fn compared(text: &str, copied: &str, what: &str) -> (String, bool) {
     }
 }
 
+/// What the theme is made of, counted up, never down: the settings, the
+/// desktop's style and what a list previews (ADR-071). The shell resolves
+/// the theme again when it moves.
+fn theme_inputs_of(app: &App) -> u64 {
+    app.settings.revision() + crate::desktop_style::revision() + crate::settings::preview_revision()
+}
+
 /// Say beside the font and size settings what they come to as just
-/// resolved (`settings::show_resolved`, ADR-117).
-fn show_resolved(app: &Arc<App>, cx: &gpui::App) {
+/// resolved (`settings::show_resolved`, ADR-117): how many settings were
+/// declared again for it.
+fn show_resolved(app: &Arc<App>, cx: &gpui::App) -> u64 {
     let theme = cx.global::<Theme>();
     let hundreds = crate::sizes::Part::ALL.map(|part| theme.sizes.hundred(part));
+    let appearance = cx.window_appearance();
     let shown = crate::settings::Shown {
         automatic: crate::fonts::automatic(app, cx.text_system()),
         hundreds,
         from: crate::desktop_style::sizes(&app.settings).from,
+        fonts_automatic: crate::desktop_style::fonts_source(),
         dark: theme.is_dark,
+        // What the theme's Automatic gives, whatever it says.
+        automatic_dark: Theme::look(
+            None,
+            &crate::desktop_style::colors(&app.settings),
+            appearance,
+        ),
         colors_from: crate::desktop_style::colors_source(),
         system_dark: matches!(
-            cx.window_appearance(),
+            appearance,
             gpui::WindowAppearance::Dark | gpui::WindowAppearance::VibrantDark
         ),
         colors: crate::desktop_style::revision(),
     };
-    crate::settings::show_resolved(app, shown);
+    crate::settings::show_resolved(app, shown)
 }
 
 #[cfg(test)]
