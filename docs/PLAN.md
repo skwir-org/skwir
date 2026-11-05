@@ -708,8 +708,10 @@ checked on Linux (`docs/STATUS-LOG.md`). Reviewed beside 0.3.0 on
 from with Skwir's own apart from Desktop colors, the labels saying what
 Automatic and each size come to; and Skwir's own fonts, Inter and
 JetBrains Mono, carried by every package built here (ADR-118; the
-packages' scripts run at the next release). macOS and Windows compiled
-only, their sizes not read (`docs/PORTING.md`).
+packages' scripts run at the next release). On macOS and Windows,
+Automatic is the system's interface font and Windows' Text size is
+followed (2026-11-05; compiled, Windows' tried under Wine,
+`docs/PORTING.md`).
 
 ## What is left
 

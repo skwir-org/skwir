@@ -11012,3 +11012,21 @@ What the review beside 0.3.0 left (ADR-117), taken up before 0.3.1.
   folders at Files 100 % and 150 %, the size column giving way at 150 %
   in a narrow preview as the list's does. 501 UI tests pass, clippy
   clean.
+- **macOS's and Windows' fonts**: Automatic there is the system's
+  interface font. A Mac's `.AppleSystemUIFont` (San Francisco, the
+  family `NSFont.systemFont` names) at its 13 px, nothing to follow;
+  Windows' message font (`SystemParametersInfoW`, non-client metrics) at
+  WinUI's 14 px times its Text size (`TextScaleFactor` under
+  `HKCU\Software\Microsoft\Accessibility`), both followed through
+  `RegNotifyChangeKeyValue` (that key and `WindowMetrics`), a thread
+  waiting on their events and the stop's, no timer
+  (`platform::windows::style`). `desktop_style::COLORS`, `FONTS` and
+  `TOOLKITS` replace `READ`: Desktop colors stays Linux's; Fonts from is
+  offered everywhere, GTK and Qt only on Linux (a value brought from
+  Linux reads as Automatic). A family the system keeps apart is said
+  "the system font" in the font settings' labels. Checked: clippy for
+  Linux, Windows (platform and UI) and macOS (platform; the UI is not
+  built for macOS here); under Wine (`just test-windows`), the message
+  font read, the Text size's range, and a Text size written in the test
+  prefix's registry followed (8 tests); 910 Linux tests of the platform
+  and the UI. Not run: a Mac; the UI's tests on Windows.

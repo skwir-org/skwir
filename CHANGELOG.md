@@ -25,7 +25,10 @@
   tables and the byte view, which could not be enlarged, now follow them.
 - **Skwir's own fonts**, Inter and JetBrains Mono for code, now come with its
   packages, so choosing them looks the same everywhere, and macOS and Windows
-  draw in them by default. They are read only when drawn.
+  write code in JetBrains Mono by default. They are read only when drawn.
+- **macOS and Windows** draw the window in their own interface font (San
+  Francisco, Segoe UI) rather than Inter, and Windows' Text size, in its
+  Accessibility settings, enlarges Skwir's text as it changes.
 
 ## 0.3.0 (2026-11-03)
 

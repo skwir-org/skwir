@@ -217,7 +217,7 @@ pub fn font_spec(
         })
         .map_or_else(
             || "Automatic".to_owned(),
-            |family| format!("Automatic ({family})"),
+            |family| format!("Automatic ({})", crate::fonts::named(&family)),
         );
     let mut choices = vec![(FONT_AUTO.to_owned(), automatic)];
     if let Some(installed) = installed {
@@ -258,7 +258,7 @@ pub fn font_spec(
         .section("Code"),
         _ => spec(
             "Font",
-            "The font of skwir's menus, lists, bars and dialogs. Automatic is your desktop's, as Fonts from reads it, else skwir's own: Inter where it is installed.",
+            "The font of skwir's menus, lists, bars and dialogs. Automatic is your desktop's, as Fonts from reads it, else skwir's own, Inter.",
         ),
     }
 }
@@ -325,8 +325,15 @@ pub fn text_size_spec(part: crate::sizes::Part) -> SettingSpec {
 /// resolved it.
 fn fonts_from_spec() -> SettingSpec {
     use std::fmt::Write;
-    let pairs = crate::desktop_style::FontsFrom::CHOICES;
-    let mut description = "Where skwir reads the fonts a font setting's Automatic writes in, and their sizes. Automatic reads your desktop's own settings, else GTK's, else Qt's; Skwir's own is skwir's fonts at its own size; GTK or Qt reads that toolkit's settings alone, as when they name different fonts.".to_owned();
+    let pairs = crate::desktop_style::FontsFrom::choices();
+    let mut description = if skwir_platform::desktop_style::TOOLKITS {
+        "Where skwir reads the fonts a font setting's Automatic writes in, and their sizes. Automatic reads your desktop's own settings, else GTK's, else Qt's; Skwir's own is skwir's fonts at its own size; GTK or Qt reads that toolkit's settings alone, as when they name different fonts."
+    } else if cfg!(windows) {
+        "Where skwir reads the fonts a font setting's Automatic writes in, and their sizes. Automatic is Windows' interface font, at the size its new applications write in, times the Text size of its Accessibility settings; Skwir's own is skwir's fonts at its own size, times that Text size too."
+    } else {
+        "Where skwir reads the fonts a font setting's Automatic writes in, and their sizes. Automatic is the system font, at the size its applications write in; Skwir's own is skwir's fonts at its own size."
+    }
+    .to_owned();
     if let Some(shown) = shown() {
         let from = shown
             .from
@@ -335,7 +342,7 @@ fn fonts_from_spec() -> SettingSpec {
         let _ = write!(
             description,
             " Now {} at {} pt, {from}.",
-            shown.automatic.ui,
+            crate::fonts::named(&shown.automatic.ui),
             points(shown.hundreds[crate::sizes::Part::Interface as usize])
         );
     }
@@ -344,7 +351,7 @@ fn fonts_from_spec() -> SettingSpec {
         "Fonts from",
         &description,
         pairs[0].0,
-        &pairs,
+        pairs,
     )
 }
 
@@ -410,7 +417,7 @@ pub(crate) fn show_resolved(app: &App, now: Shown) {
     for part in crate::sizes::Part::ALL {
         app.settings.declare(text_size_spec(part));
     }
-    if skwir_platform::desktop_style::READ {
+    if skwir_platform::desktop_style::FONTS {
         app.settings.declare(fonts_from_spec());
     }
 }
@@ -937,7 +944,7 @@ pub fn declare(app: &App) {
         )
         .essential(),
     );
-    if skwir_platform::desktop_style::READ {
+    if skwir_platform::desktop_style::COLORS {
         app.settings.declare(SettingSpec::toggle(
             DESKTOP_COLORS_KEY,
             "Desktop colors",
@@ -945,6 +952,8 @@ pub fn declare(app: &App) {
             true,
         )
         .essential());
+    }
+    if skwir_platform::desktop_style::FONTS {
         crate::desktop_style::keep_own_fonts(&app.settings);
         app.settings.declare(fonts_from_spec());
     }

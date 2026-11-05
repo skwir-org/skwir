@@ -447,11 +447,17 @@ Left:
   monospaced, and resolves its aliases **(c)**; a Mac (CoreText's traits)
   and Windows (DirectWrite's `IsMonospacedFont`) say nothing yet, so a
   family that writes no Latin is offered and drawn as Automatic, and code
-  is offered every family. Neither names a font of the desktop's
-  (ADR-071), nor a text size (ADR-117): a Mac writes at 13 px, Windows at
-  14 px, and Windows' Text size (`UISettings.TextScaleFactor`) is not
-  read yet. Automatic there is Skwir's own: Inter and JetBrains Mono,
-  which the bundles carry (ADR-118), not the system's interface font.
+  is offered every family. Automatic there is the system's interface
+  font (ADR-117, 2026-11-05; `platform/desktop_style.rs`): a Mac's
+  (`.AppleSystemUIFont`, San Francisco, at its 13 px; nothing to follow)
+  **(c)**, Windows' message font (`SystemParametersInfoW`, Segoe UI) at
+  WinUI's 14 px times its Text size (`TextScaleFactor`, where Windows
+  keeps what `UISettings.TextScaleFactor` reads), both followed through
+  the registry's change notices (`windows::style`; tried under Wine,
+  whose message font is its own). Code stays Skwir's own there, JetBrains
+  Mono, which the bundles carry with Inter (ADR-118), neither system
+  naming a monospace font. Fonts from offers Automatic and Skwir's own;
+  their colors are not read (ADR-071, step 5).
 - `alloc/lib.rs` ELF constructor (Linux); `skwir/gpu.rs` sysfs **(c)**.
 - **Keys** (step J, done): the standard shortcuts are `secondary` (Cmd on a
   Mac, Ctrl elsewhere; Linux unchanged); bindings are compared as GPUI reads

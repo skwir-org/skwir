@@ -29,7 +29,8 @@ const KEPT: &[u8] = b"desktop-style";
 /// Take what the desktop said when skwir last ran, then follow what it
 /// says: the first answer, and each change, wake the window.
 pub fn start(app: &Arc<App>) {
-    if !skwir_platform::desktop_style::READ {
+    use skwir_platform::desktop_style::{COLORS, FONTS};
+    if !COLORS && !FONTS {
         return;
     }
     let slot = app.cache.namespace("ui");
@@ -182,8 +183,9 @@ pub fn fonts(settings: &Settings) -> Fonts {
 
 /// Where the fonts a font setting's Automatic writes in, and their sizes,
 /// are read (`ui.fonts_from`, ADR-117): Automatic (the desktop's own, then
-/// GTK's, then Qt's), skwir's own, or GTK's or Qt's alone. Apart from
-/// Desktop colors, which is the colors alone.
+/// GTK's, then Qt's; macOS's or Windows' own), skwir's own, or GTK's or
+/// Qt's alone where they are read apart (`desktop_style::TOOLKITS`). Apart
+/// from Desktop colors, which is the colors alone.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FontsFrom {
     Automatic,
@@ -193,21 +195,34 @@ pub enum FontsFrom {
 }
 
 impl FontsFrom {
-    pub const CHOICES: [(&'static str, &'static str); 4] = [
+    const ALL: [(&'static str, &'static str); 4] = [
         ("auto", "Automatic"),
         (OWN, "Skwir's own"),
         ("gtk", "GTK"),
         ("qt", "Qt"),
     ];
 
+    /// The choices this system offers: GTK and Qt where they are read
+    /// apart.
+    pub fn choices() -> &'static [(&'static str, &'static str)] {
+        if skwir_platform::desktop_style::TOOLKITS {
+            &Self::ALL
+        } else {
+            &Self::ALL[..2]
+        }
+    }
+
+    /// What the settings choose; a toolkit this system does not read apart
+    /// (a settings file brought from Linux) is Automatic.
     pub fn chosen(settings: &Settings) -> Self {
+        let toolkits = skwir_platform::desktop_style::TOOLKITS;
         match settings
             .get::<String>(crate::settings::FONTS_FROM_KEY)
             .as_deref()
         {
             Some(OWN) => FontsFrom::Own,
-            Some("gtk") => FontsFrom::Gtk,
-            Some("qt") => FontsFrom::Qt,
+            Some("gtk") if toolkits => FontsFrom::Gtk,
+            Some("qt") if toolkits => FontsFrom::Qt,
             _ => FontsFrom::Automatic,
         }
     }

@@ -1,7 +1,8 @@
 # ADR-117: Text sizes by part, from the desktop's
 
 Status: accepted and built, 2026-11-04 (GitHub issue #5), on Linux;
-macOS and Windows compiled only, their sizes not read (`docs/PORTING.md`). Amends ADR-073 (its "Not
+macOS's and Windows' interface fonts and Windows' Text size read since
+2026-11-05, compiled, Windows' tried under Wine (`docs/PORTING.md`). Amends ADR-073 (its "Not
 done: a size per role") and ADR-071 (the desktop's font is read with its
 size). Built in four steps: the files' size (1), reading and code (2),
 the interface's named sizes and heights (3), the desktop's sizes and
@@ -60,7 +61,7 @@ Qt's settings (4).
    font size (points × 96 ⁄ 72) times its text scaling factor; where
    nothing names a size, the system's own: 10 pt (13.3 px) on Linux,
    GTK's own fallback; 13 px on macOS; WinUI's 14 px on Windows, times
-   its Text size once read (Windows has no font size to read, and
+   its Text size (Windows has no font size to read, and
    Explorer's 12 px is a legacy view's, under which Skwir's small text
    would fall below Microsoft's 12 px minimum). Reading stays at 16 px,
    as browsers keep a page's text whatever the desktop says; code
@@ -101,7 +102,11 @@ Qt's settings (4).
    `settings.ini`, else the portal), else Qt's (qt6ct or qt5ct, as `QT_QPA_PLATFORMTHEME` names), else the
    system's default size. GTK or Qt reads that toolkit's alone. A
    family and its size are read together, as every source writes them.
-   Colours stay as ADR-071 reads them.
+   Colours stay as ADR-071 reads them. On macOS and Windows (2026-11-05)
+   Automatic is the system's interface font (a Mac's San Francisco at
+   13 px, Windows' message font, Segoe UI, at 14 px times its Text size)
+   and Fonts from offers Automatic and Skwir's own; code stays Skwir's
+   own there, neither naming a monospace font.
 8. **Commands and keys.** `ui.text_size` (`part`, `dir`: in, out, reset)
    steps a part's size as its setting does, the palette offering the
    files'; no default keys: Ctrl+= and Ctrl+wheel stay zoom.
@@ -181,6 +186,19 @@ apart, and changes how gpui maps the pointer.
   `settings.toml` while shown, the book laid out again at twice the
   size on its first page; a zip of nested folders at Files 100 % and
   150 %.
+- macOS and Windows, 2026-11-05: `desktop_style` reads a Mac's interface
+  font (`.AppleSystemUIFont`, the family `NSFont.systemFont` names, at
+  `NSFont.systemFontSize`'s 13 px) and Windows' (the message font of
+  `SystemParametersInfoW`'s non-client metrics) with its Text size
+  (`TextScaleFactor` under `HKCU\Software\Microsoft\Accessibility`),
+  followed through `RegNotifyChangeKeyValue` on that key and the window
+  metrics', waiting on their events and the stop's, no timer.
+  `desktop_style::COLORS` (Linux), `FONTS` (all three) and `TOOLKITS`
+  (Linux: GTK and Qt read apart) say what each system reads; a font
+  setting's label calls a family the system keeps apart (a leading `.`)
+  "the system font". Checked: clippy for Linux, Windows and macOS; under
+  Wine, the message font read, the Text size's range, and a Text size
+  written in the test prefix's registry followed. A Mac's not run.
 - Reviewed beside 0.3.0, 2026-11-05 (the release's AppImage and the
   build of step 4 on one display, one folder, the reference machine's
   settings): body text 14 to 13.3 px at the desktop's 10 pt, as GTK's

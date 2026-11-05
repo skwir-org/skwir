@@ -685,7 +685,8 @@ documents and mail; **Code font**, beside it, for source and text files,
 code in documents, the byte view and the terminal, which offers the fonts
 whose letters are all one width. Automatic is the font your desktop's
 settings name for each (its interface, document and monospace fonts),
-read where **Fonts from** says, else Skwir's own: Inter, and JetBrains
+read where **Fonts from** says (on macOS the system font, on Windows the
+font of its messages, Segoe UI), else Skwir's own: Inter, and JetBrains
 Mono for code, which Skwir's packages carry (built from the AUR's
 `skwir` or `skwir-git`, install `inter-font` and `ttf-jetbrains-mono`). A
 font's list says which family Automatic is now. A change shows at once. A
@@ -696,14 +697,16 @@ as you type, and a font's list writes the one you point at in itself.
 on Appearance for the whole window, **Files text size** for the file
 views alone, **Reading text size** and **Code text size** on Reading for
 what previews open at. At 100 % Skwir writes at your desktop's font
-size, times its text scaling (GNOME's Large Text), as its other
-applications do; where the desktop names no size, at 10 pt on Linux,
-13 px on macOS and 14 px on Windows. Bars, rows and menus grow with the
-text; icons and pictures keep their size. On a desktop that sets GTK
-and Qt up apart (Hyprland, Sway, labwc, niri, with nwg-look, qt5ct or
-qt6ct), **Fonts from** chooses whose fonts and sizes Skwir reads:
-Automatic (your desktop's own settings, else GTK's, else Qt's), GTK or
-Qt. About › Copy details says which it read.
+size, times its text scaling (GNOME's Large Text, Windows' Text size in
+its Accessibility settings), as its other applications do; where the
+desktop names no size, at 10 pt on Linux, 13 px on macOS and 14 px on
+Windows. Bars, rows and menus grow with the text; icons and pictures
+keep their size. **Fonts from** chooses whose fonts and sizes Skwir
+reads: Automatic, or Skwir's own (Inter at 14 px); on a desktop that
+sets GTK and Qt up apart (Hyprland, Sway, labwc, niri, with nwg-look,
+qt5ct or qt6ct), GTK's or Qt's alone too, Automatic reading your
+desktop's own settings, else GTK's, else Qt's. About › Copy details
+says which it read.
 
 The window's scale is the display's: on Wayland the compositor's, a
 fractional one included. On X11 it is `GPUI_X11_SCALE_FACTOR` (a number,

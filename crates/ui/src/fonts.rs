@@ -191,6 +191,16 @@ fn choose_with(
     }
 }
 
+/// A family as a person knows it: one the system keeps apart from those
+/// listed (a leading `.`, macOS's `.AppleSystemUIFont`) is the system font.
+pub fn named(family: &str) -> &str {
+    if family.starts_with('.') {
+        "the system font"
+    } else {
+        family
+    }
+}
+
 /// The family `key` names, unless it says Automatic.
 pub(crate) fn chosen(settings: &Settings, key: &str) -> Option<String> {
     settings

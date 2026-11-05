@@ -62,13 +62,15 @@ Skwir alone").
    `windows-check.sh`).
 
 Not decided here: whether Automatic on macOS and Windows becomes the
-system's own interface font (SF, Segoe UI Variable) once their styles
-are read, Inter staying Skwir's own; until then Automatic there is Inter.
+system's own interface font once their styles are read, Inter staying
+Skwir's own. Decided 2026-11-05 (ADR-117): it is, San Francisco on a Mac
+and Windows' message font (Segoe UI); code stays JetBrains Mono there.
 
 ## Consequences
 
-- On macOS and Windows the window is drawn in Inter and code in
-  JetBrains Mono by default.
+- On macOS and Windows code is drawn in JetBrains Mono by default, and
+  the window in Inter where Skwir's own fonts are chosen (until
+  2026-11-05, by default too: Automatic is now the system's font).
 - The packages grow by about 3.5 MB each; a window drawing Skwir's own
   fonts reads them once (about 3.5 MB) and keeps them while it runs.
 - A release fetches two more archives (from GitHub) beside PDFium's.

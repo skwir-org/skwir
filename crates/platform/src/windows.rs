@@ -850,6 +850,243 @@ pub mod classes {
     }
 }
 
+/// What Windows says of text (ADR-117): the family it writes messages
+/// in, and the Text size chosen in Settings › Accessibility, each read
+/// where Windows keeps it and followed there.
+pub mod style {
+    use std::ptr::{null, null_mut};
+
+    use windows_sys::Win32::Foundation::{CloseHandle, ERROR_SUCCESS, HANDLE, WAIT_OBJECT_0};
+    use windows_sys::Win32::System::Registry::{
+        HKEY, HKEY_CURRENT_USER, KEY_NOTIFY, REG_NOTIFY_CHANGE_LAST_SET, RRF_RT_REG_DWORD,
+        RegCloseKey, RegGetValueW, RegNotifyChangeKeyValue, RegOpenKeyExW,
+    };
+    use windows_sys::Win32::System::Threading::{
+        CreateEventW, INFINITE, SetEvent, WaitForMultipleObjects,
+    };
+
+    /// Where the Text size is kept, as a percentage (100 to 225).
+    pub const ACCESSIBILITY: &str = r"Software\Microsoft\Accessibility";
+    const TEXT_SCALE: &str = "TextScaleFactor";
+    /// Where the fonts of messages, menus and captions are kept.
+    const WINDOW_METRICS: &str = r"Control Panel\Desktop\WindowMetrics";
+
+    fn wide(text: &str) -> Vec<u16> {
+        text.encode_utf16().chain([0]).collect()
+    }
+
+    /// The family Windows writes its messages in (`Segoe UI`): the message
+    /// font of its non-client metrics, as its own dialogs take it.
+    pub fn message_font() -> Option<String> {
+        use ::windows::Win32::UI::WindowsAndMessaging::{
+            NONCLIENTMETRICSW, SPI_GETNONCLIENTMETRICS, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
+            SystemParametersInfoW,
+        };
+        let size = u32::try_from(std::mem::size_of::<NONCLIENTMETRICSW>()).ok()?;
+        let mut metrics = NONCLIENTMETRICSW {
+            cbSize: size,
+            ..NONCLIENTMETRICSW::default()
+        };
+        // SAFETY: a structure of the size it says, which the call fills
+        // and which outlives it.
+        unsafe {
+            SystemParametersInfoW(
+                SPI_GETNONCLIENTMETRICS,
+                size,
+                Some((&raw mut metrics).cast()),
+                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+            )
+        }
+        .ok()?;
+        let face = &metrics.lfMessageFont.lfFaceName;
+        let face = face.split(|u| *u == 0).next()?;
+        let family = String::from_utf16(face).ok()?;
+        let family = family.trim();
+        (!family.is_empty()).then(|| family.to_owned())
+    }
+
+    /// The Text size as a factor (1.25 for 125 %); `None` where none was
+    /// chosen, as Windows keeps none until the slider moves.
+    pub fn text_scale() -> Option<f64> {
+        dword(ACCESSIBILITY, TEXT_SCALE).and_then(scale_of)
+    }
+
+    /// A Text size Windows keeps (a percentage) as a factor; `None` out of
+    /// the slider's range.
+    pub fn scale_of(percent: u32) -> Option<f64> {
+        (100..=225)
+            .contains(&percent)
+            .then(|| f64::from(percent) / 100.)
+    }
+
+    /// The number `name` of `key` under the user's registry.
+    fn dword(key: &str, name: &str) -> Option<u32> {
+        let (key, name) = (wide(key), wide(name));
+        let mut value: u32 = 0;
+        let mut size = u32::try_from(std::mem::size_of::<u32>()).ok()?;
+        // SAFETY: a NUL-terminated key and name and a number of the size
+        // said, all outliving the call.
+        let read = unsafe {
+            RegGetValueW(
+                HKEY_CURRENT_USER,
+                key.as_ptr(),
+                name.as_ptr(),
+                RRF_RT_REG_DWORD,
+                null_mut(),
+                (&raw mut value).cast(),
+                &raw mut size,
+            )
+        };
+        (read == ERROR_SUCCESS).then_some(value)
+    }
+
+    /// Set the Text size for a test: in Wine's scratch prefix alone, never
+    /// a user's registry.
+    #[cfg(test)]
+    pub fn set_text_scale(percent: u32) {
+        use windows_sys::Win32::System::Registry::{REG_DWORD, RegSetKeyValueW};
+        let (key, name) = (wide(ACCESSIBILITY), wide(TEXT_SCALE));
+        // SAFETY: a NUL-terminated key and name and a number of the size
+        // said, all outliving the call.
+        let set = unsafe {
+            RegSetKeyValueW(
+                HKEY_CURRENT_USER,
+                key.as_ptr(),
+                name.as_ptr(),
+                REG_DWORD,
+                (&raw const percent).cast(),
+                4,
+            )
+        };
+        assert_eq!(set, ERROR_SUCCESS, "set {percent}");
+    }
+
+    /// Remove the Text size `set_text_scale` set.
+    #[cfg(test)]
+    pub fn remove_text_scale() {
+        use windows_sys::Win32::System::Registry::RegDeleteKeyValueW;
+        let (key, name) = (wide(ACCESSIBILITY), wide(TEXT_SCALE));
+        // SAFETY: a NUL-terminated key and name outliving the call.
+        unsafe { RegDeleteKeyValueW(HKEY_CURRENT_USER, key.as_ptr(), name.as_ptr()) };
+    }
+
+    /// An event of its own, closed when dropped.
+    struct Event(HANDLE);
+
+    impl Event {
+        fn new(manual: bool) -> Option<Self> {
+            // SAFETY: no attributes nor name; a handle or null.
+            let handle = unsafe { CreateEventW(null(), i32::from(manual), 0, null()) };
+            (!handle.is_null()).then_some(Event(handle))
+        }
+    }
+
+    impl Drop for Event {
+        fn drop(&mut self) {
+            // SAFETY: a handle this owns, closed once.
+            unsafe { CloseHandle(self.0) };
+        }
+    }
+
+    /// A key of the user's registry opened to be told of its changes.
+    struct Watched {
+        key: HKEY,
+        changed: Event,
+    }
+
+    impl Watched {
+        fn open(path: &str) -> Option<Self> {
+            let path = wide(path);
+            let mut key: HKEY = null_mut();
+            // SAFETY: a NUL-terminated path outliving the call; the key is
+            // written on success.
+            let opened = unsafe {
+                RegOpenKeyExW(
+                    HKEY_CURRENT_USER,
+                    path.as_ptr(),
+                    0,
+                    KEY_NOTIFY,
+                    &raw mut key,
+                )
+            };
+            if opened != ERROR_SUCCESS {
+                return None;
+            }
+            let watched = Watched {
+                key,
+                changed: Event::new(false)?,
+            };
+            watched.arm().then_some(watched)
+        }
+
+        /// Ask to be told, once, of the next change of a value of it.
+        fn arm(&self) -> bool {
+            // SAFETY: a key and an event this owns, both open while the
+            // registry may signal it.
+            let armed = unsafe {
+                RegNotifyChangeKeyValue(self.key, 0, REG_NOTIFY_CHANGE_LAST_SET, self.changed.0, 1)
+            };
+            armed == ERROR_SUCCESS
+        }
+    }
+
+    impl Drop for Watched {
+        fn drop(&mut self) {
+            // SAFETY: a key this owns, closed once; its pending notice ends
+            // with it.
+            unsafe { RegCloseKey(self.key) };
+        }
+    }
+
+    /// Call `changed` each time the Text size or the window metrics
+    /// change, until `stop`, waiting on the registry's notices (no timer).
+    /// Returns at once when neither key can be watched.
+    pub fn follow(stop: &skwir_core::CancelToken, mut changed: impl FnMut()) {
+        let watched: Vec<Watched> = [ACCESSIBILITY, WINDOW_METRICS]
+            .into_iter()
+            .filter_map(Watched::open)
+            .collect();
+        let Some(stopped) = Event::new(true).filter(|_| !watched.is_empty()) else {
+            tracing::debug!("Windows' text settings are read, not followed");
+            return;
+        };
+        // The token's signal set as the event, from a thread that waits on
+        // it (a handle crosses as a number): a child of it, which a failure
+        // here cancels too.
+        let stop = stop.child();
+        let signal = stop.subscribe();
+        let handle = stopped.0 as usize;
+        let setter = std::thread::Builder::new()
+            .name("skwir-style-stop".into())
+            .spawn(move || {
+                let _ = signal.receiver().recv();
+                // SAFETY: the event outlives this thread, joined before it
+                // is closed.
+                unsafe { SetEvent(handle as HANDLE) };
+            });
+        let Ok(setter) = setter else { return };
+        let mut events: Vec<HANDLE> = watched.iter().map(|w| w.changed.0).collect();
+        events.push(stopped.0);
+        let count = u32::try_from(events.len()).unwrap_or(u32::MAX);
+        while !stop.is_cancelled() {
+            // SAFETY: open events this owns, as many as said.
+            let woke = unsafe { WaitForMultipleObjects(count, events.as_ptr(), 0, INFINITE) };
+            let Some(which) = woke
+                .checked_sub(WAIT_OBJECT_0)
+                .and_then(|i| usize::try_from(i).ok())
+                .and_then(|i| watched.get(i))
+            else {
+                break;
+            };
+            which.arm();
+            changed();
+        }
+        // Ended by a failure, the setter is let go all the same.
+        stop.cancel();
+        let _ = setter.join();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -878,6 +1115,59 @@ mod tests {
         assert!(is_locked_error(0x8031_0017));
         assert!(!is_locked_error(21), "ERROR_NOT_READY");
         assert!(!is_locked_error(5), "ERROR_ACCESS_DENIED");
+    }
+
+    #[test]
+    fn windows_names_the_font_of_its_messages_and_keeps_a_text_size_in_range() {
+        let family = style::message_font().expect("the message font");
+        assert!(!family.is_empty());
+        assert_eq!(style::scale_of(100), Some(1.));
+        assert_eq!(style::scale_of(125), Some(1.25));
+        assert_eq!(style::scale_of(225), Some(2.25));
+        assert_eq!(style::scale_of(99), None);
+        assert_eq!(style::scale_of(226), None);
+    }
+
+    /// A Text size chosen is followed as Windows keeps it. In the Wine
+    /// prefix of the tests alone, never a user's registry.
+    #[test]
+    fn a_text_size_chosen_is_followed_in_the_registry() {
+        struct Removed;
+        impl Drop for Removed {
+            fn drop(&mut self) {
+                style::remove_text_scale();
+            }
+        }
+        if std::env::var_os("SKWIR_TEST_UNDER_WINE").is_none() {
+            eprintln!("skipped: writes the registry; only in Wine's scratch prefix");
+            return;
+        }
+        let _removed = Removed;
+        style::set_text_scale(150);
+        assert_eq!(style::text_scale(), Some(1.5));
+        let stop = skwir_core::CancelToken::new();
+        let (told, heard) = std::sync::mpsc::channel();
+        let following = {
+            let stop = stop.clone();
+            std::thread::spawn(move || style::follow(&stop, || told.send(()).unwrap()))
+        };
+        // Written until it is told: the watch may not be set up yet.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let mut percent = 150;
+        loop {
+            percent = if percent == 175 { 200 } else { 175 };
+            style::set_text_scale(percent);
+            if heard
+                .recv_timeout(std::time::Duration::from_millis(200))
+                .is_ok()
+            {
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline, "never told");
+        }
+        assert_eq!(style::text_scale(), Some(f64::from(percent) / 100.));
+        stop.cancel();
+        following.join().unwrap();
     }
 
     /// In the Wine prefix of the tests alone (`just test-windows`), never

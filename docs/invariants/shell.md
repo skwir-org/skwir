@@ -72,7 +72,8 @@ Views are in [views.md](views.md); what locations decide, in
   read apart too (`gtk`, `qt`), and `ui.fonts_from` chooses Automatic
   (the desktop's own, then GTK's in GTK's order: the portal before
   `settings.ini` on Wayland, after it on X11; then Qt's: qt6ct's or
-  qt5ct's, their files followed), Skwir's own, or GTK's or Qt's alone
+  qt5ct's, their files followed; macOS's and Windows' interface font),
+  Skwir's own, or GTK's or Qt's alone
   (`desktop_style::FontsFrom`), apart from Desktop colors, which is the
   colors alone. The text scaling factor is followed whatever is chosen.
   What a font's Automatic and each size step come to is said beside

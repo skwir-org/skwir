@@ -16,15 +16,28 @@
 //! it); a fontconfig alias among them (`Monospace`) is the family
 //! fontconfig matches it to (`fonts::unalias`). Each font's size is read
 //! with its family, from the same settings, and GTK's and Qt's fonts are
-//! also said apart, for the user to choose (ADR-117). macOS and Windows
-//! say nothing yet: skwir's own colors and fonts there, until they are
-//! read (ADR-071, step 5).
+//! also said apart, for the user to choose (ADR-117).
+//!
+//! On macOS the interface font is the system's (San Francisco) at 13 px,
+//! as its controls are written; on Windows the family it writes messages
+//! in (`Segoe UI`) and the Text size chosen in its Accessibility settings,
+//! followed in the registry (`windows::style`). Their colors are not read
+//! yet: skwir's own there (ADR-071, step 5).
 
 use skwir_core::CancelToken;
 
-/// Whether this system's desktop is read: Linux's; macOS's and Windows'
-/// in a later step (ADR-071).
-pub const READ: bool = cfg!(target_os = "linux");
+/// Whether this system's colors are read (its scheme, its accent): Linux's;
+/// macOS's and Windows' in a later step (ADR-071).
+pub const COLORS: bool = cfg!(target_os = "linux");
+
+/// Whether this system's fonts and their sizes are read (ADR-117): Linux's
+/// desktops, macOS's interface font, Windows' and its Text size.
+pub const FONTS: bool = cfg!(any(target_os = "linux", target_os = "macos", windows));
+
+/// Whether GTK's and Qt's settings are read apart, for the user to choose
+/// (`Fonts`, `DesktopStyle::gtk` and `qt`): where both toolkits set
+/// applications up, the free systems'.
+pub const TOOLKITS: bool = cfg!(target_os = "linux");
 
 /// A color as sRGB channels from 0 to 1.
 pub type Rgb = [f32; 3];
@@ -867,10 +880,80 @@ mod imp {
     }
 }
 
-// macOS and Windows: their accent and contrast are read in a later step
-// (ADR-071, step 5); until then the desktop says nothing, and skwir wears
-// its own colors and font.
-#[cfg(not(target_os = "linux"))]
+// macOS: its interface font, at the size its controls are written in.
+// Nothing a user sets changes either, so nothing is followed. Its accent
+// and contrast are read in a later step (ADR-071, step 5).
+#[cfg(target_os = "macos")]
+mod imp {
+    use skwir_core::CancelToken;
+
+    use super::DesktopStyle;
+
+    /// The family `NSFont.systemFont(ofSize:)` names: San Francisco, kept
+    /// apart from the families listed (a leading `.`), which `CoreText`
+    /// finds by this name.
+    const SYSTEM_FONT: &str = ".AppleSystemUIFont";
+    /// `NSFont.systemFontSize`, in points, which are pixels at 1×.
+    const SYSTEM_FONT_SIZE: f32 = 13.;
+
+    pub(super) fn read() -> DesktopStyle {
+        DesktopStyle {
+            font: Some(SYSTEM_FONT.to_owned()),
+            font_px: Some(SYSTEM_FONT_SIZE),
+            fonts_from: Some("macOS".to_owned()),
+            ..DesktopStyle::default()
+        }
+    }
+
+    pub(super) fn follow(mut changed: impl FnMut(DesktopStyle) + Send + 'static, _: CancelToken) {
+        changed(read());
+    }
+}
+
+// Windows: the family it writes messages in and the Text size chosen in
+// its settings (`windows::style`), followed in the registry; the size
+// itself is WinUI's (ADR-117), Windows naming none. Its accent, contrast
+// themes and colors are read in a later step (ADR-071, step 5).
+#[cfg(windows)]
+mod imp {
+    use skwir_core::CancelToken;
+
+    use super::DesktopStyle;
+
+    pub(super) fn read() -> DesktopStyle {
+        DesktopStyle {
+            font: crate::windows::style::message_font(),
+            fonts_from: Some("Windows".to_owned()),
+            text_scaling: crate::windows::style::text_scale(),
+            ..DesktopStyle::default()
+        }
+    }
+
+    pub(super) fn follow(
+        mut changed: impl FnMut(DesktopStyle) + Send + 'static,
+        stop: CancelToken,
+    ) {
+        let thread = std::thread::Builder::new()
+            .name("skwir-desktop-style".into())
+            .spawn(move || {
+                let mut said = read();
+                changed(said.clone());
+                crate::windows::style::follow(&stop, || {
+                    let now = read();
+                    if now != said {
+                        said = now.clone();
+                        changed(now);
+                    }
+                });
+            });
+        if let Err(error) = thread {
+            tracing::debug!("the desktop's style is not followed: {error}");
+        }
+    }
+}
+
+// The other systems say nothing: skwir's own colors and fonts.
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 mod imp {
     use skwir_core::CancelToken;
 
