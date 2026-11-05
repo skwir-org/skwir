@@ -42,24 +42,42 @@ pub fn start(app: &Arc<App>) {
     {
         set(kept);
     }
+    // Not followed (macOS), read as it is read again: in turn.
+    if !skwir_platform::desktop_style::FOLLOWED {
+        read_again(app);
+        return;
+    }
     let weak = Arc::downgrade(app);
     skwir_platform::desktop_style::follow(
         move |style| {
             if let Some(app) = weak.upgrade() {
-                said_now(&app, style);
+                said_now(&app, style, None);
             }
         },
         app.lifetime().child(),
     );
 }
 
-/// Keep what the system says now for the next start, and wear it when it
-/// differs from what was said.
-fn said_now(app: &App, style: DesktopStyle) {
-    if let Ok(bytes) = serde_json::to_vec(&style) {
-        let _ = app.cache.namespace("ui").put(KEPT, &bytes);
+/// The readings asked (`read_again`), and the last one worn: one asked
+/// earlier that ends later is not worn over it.
+static ASKED: AtomicU64 = AtomicU64::new(0);
+static WORN: AtomicU64 = AtomicU64::new(0);
+
+/// Wear what the system says now when it differs from what was said, and
+/// keep it for the next start (a reading that says the same writes
+/// nothing). `asked`: the reading's turn, where readings may overlap
+/// (`read_again`); a follower's come in turn.
+fn said_now(app: &App, style: DesktopStyle, asked: Option<u64>) {
+    if let Some(asked) = asked
+        && WORN.fetch_max(asked, Ordering::AcqRel) > asked
+    {
+        return;
     }
+    let bytes = serde_json::to_vec(&style);
     if set(style) {
+        if let Ok(bytes) = bytes {
+            let _ = app.cache.namespace("ui").put(KEPT, &bytes);
+        }
         app.wake();
     }
 }
@@ -74,6 +92,7 @@ pub fn read_again(app: &Arc<App>) {
         return;
     }
     let weak = Arc::downgrade(app);
+    let asked = ASKED.fetch_add(1, Ordering::AcqRel) + 1;
     app.scheduler.spawn(
         skwir_core::scheduler::Priority::Normal,
         "desktop-style",
@@ -81,7 +100,7 @@ pub fn read_again(app: &Arc<App>) {
         move || {
             let style = skwir_platform::desktop_style::read();
             if let Some(app) = weak.upgrade() {
-                said_now(&app, style);
+                said_now(&app, style, Some(asked));
             }
         },
     );
@@ -290,7 +309,8 @@ pub struct Fonts {
 }
 
 /// What a font that says Automatic takes from the desktop (`fonts.rs`):
-/// its fonts while `ui.desktop_colors` is on, else nothing.
+/// its fonts as Fonts from reads them (`ui.fonts_from`), nothing for
+/// Skwir's own.
 pub fn fonts(settings: &Settings) -> Fonts {
     chosen(settings)
         .map(|chosen| Fonts {
@@ -460,7 +480,9 @@ pub fn sizes(settings: &Settings) -> Sizes {
     Sizes {
         interface: fonts.as_ref().and_then(|fonts| fonts.interface_px),
         monospace: fonts.as_ref().and_then(|fonts| fonts.monospace_px),
+        // Where the interface's size was read: none when none was.
         from: fonts
+            .filter(|fonts| fonts.interface_px.is_some())
             .map(|fonts| fonts.from)
             .filter(|from| !from.is_empty()),
         scaling,
@@ -819,6 +841,29 @@ mod tests {
         off.settings.set(COLORS_FROM_KEY, "qt".into());
         keep_own_colors(&off.settings);
         assert_eq!(ColorSource::chosen(&off.settings), ColorSource::Qt);
+    }
+
+    /// Readings that overlap (macOS's, asked again at each activation) are
+    /// worn in the order they were asked; what is worn is kept for the
+    /// next start.
+    #[test]
+    fn a_reading_asked_earlier_and_ending_later_is_not_worn() {
+        let (_tmp, app) = app();
+        let accent = |a: f32| DesktopStyle {
+            accent: Some([a, 0.5, 0.5]),
+            ..DesktopStyle::default()
+        };
+        let before = revision();
+        said_now(&app, accent(0.2), Some(2));
+        assert!(revision() > before);
+        said_now(&app, accent(0.1), Some(1));
+        assert_eq!(said().and_then(|said| said.accent), Some([0.2, 0.5, 0.5]));
+        let kept = app.cache.namespace("ui").get(KEPT).expect("kept");
+        let kept: DesktopStyle = serde_json::from_slice(&kept).unwrap();
+        assert_eq!(kept.accent, Some([0.2, 0.5, 0.5]));
+        // A follower's, in turn.
+        said_now(&app, accent(0.3), None);
+        assert_eq!(said().and_then(|said| said.accent), Some([0.3, 0.5, 0.5]));
     }
 
     #[test]

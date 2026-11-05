@@ -118,6 +118,20 @@ pub(crate) fn qt_ct() -> Option<(&'static str, String)> {
         .find_map(|program| Some((program, config_text(&format!("{program}/{program}.conf"))?)))
 }
 
+/// Plasma's `kdeglobals` as `KConfig` cascades them, each as text: the
+/// user's, then those of `XDG_CONFIG_DIRS` (the system's, and the global
+/// theme's defaults, `kdedefaults`, which Plasma names there).
+pub(crate) fn kdeglobals_cascade() -> Vec<String> {
+    crate::xdg::config_home()
+        .into_iter()
+        .chain(crate::xdg::config_dirs())
+        .filter_map(|config| {
+            crate::file::read_regular_text(&config.join("kdeglobals"), crate::file::DESKTOP_FILE)
+                .ok()
+        })
+        .collect()
+}
+
 /// Plasma's `kdeglobals`, as text.
 pub(crate) fn kdeglobals() -> Option<String> {
     crate::file::read_regular_text(

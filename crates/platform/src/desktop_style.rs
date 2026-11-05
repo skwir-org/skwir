@@ -568,9 +568,15 @@ mod imp {
             }
         }
 
-        /// These colors where they name any, else `other`'s.
+        /// These colors where they name any, else `other`'s; none, from no
+        /// source, when neither names any: a source that named nothing is
+        /// never said to be where the colors come from.
         pub(super) fn or(self, other: Painted) -> Painted {
-            if self.schemes.is_empty() { other } else { self }
+            match (self.schemes.is_empty(), other.schemes.is_empty()) {
+                (false, _) => self,
+                (true, false) => other,
+                (true, true) => Painted::default(),
+            }
         }
 
         /// Apart, as the user may choose it.
@@ -591,8 +597,8 @@ mod imp {
         fn gtk_fonts(&self) -> Named {
             Named::default()
         }
-        /// The fonts Qt's applications are given: Plasma's, LXQt's,
-        /// qt6ct's or qt5ct's.
+        /// The fonts Qt's applications are given where they are not the
+        /// desktop's own (`qt_is_own`): qt6ct's or qt5ct's.
         fn qt_fonts(&self) -> Named {
             Named::default()
         }
@@ -641,8 +647,13 @@ mod imp {
         fn forced_gtk_theme(&self) -> Option<String> {
             desktop::forced_gtk_theme()
         }
-        /// The colors Qt's applications are given: Plasma's scheme, LXQt's
-        /// palette, qt6ct's or qt5ct's scheme.
+        /// Whether Qt's applications are given the desktop's own fonts and
+        /// colors (Plasma's, LXQt's): read once, as its own.
+        fn qt_is_own(&self) -> bool {
+            false
+        }
+        /// The colors Qt's applications are given elsewhere: qt6ct's or
+        /// qt5ct's scheme.
         fn qt_colors(&self) -> Painted {
             Painted::default()
         }
@@ -727,20 +738,21 @@ mod imp {
             desktop::gsettings(INTERFACE, "gtk-theme")
         }
 
+        fn qt_is_own(&self) -> bool {
+            matches!(desktop::chosen(), Some(Chosen::Kde | Chosen::Lxqt))
+        }
+
         fn qt_colors(&self) -> Painted {
-            match desktop::chosen() {
-                Some(Chosen::Kde | Chosen::Lxqt) => own_colors(&|_| Schemes::default()),
-                _ => match desktop::qt_ct() {
-                    Some((program, text)) => Painted::one(
-                        crate::qt_palette::qt_ct(&text),
-                        if program == "qt6ct" {
-                            "Qt (qt6ct)"
-                        } else {
-                            "Qt (qt5ct)"
-                        },
-                    ),
-                    None => Painted::default(),
-                },
+            match desktop::qt_ct() {
+                Some((program, text)) => Painted::one(
+                    crate::qt_palette::qt_ct(&text),
+                    if program == "qt6ct" {
+                        "Qt (qt6ct)"
+                    } else {
+                        "Qt (qt5ct)"
+                    },
+                ),
+                None => Painted::default(),
             }
         }
 
@@ -834,9 +846,14 @@ mod imp {
         } else {
             own.gtk_fonts().or(portal_named)
         };
-        let qt = own.qt_fonts();
+        let own_fonts = own.fonts();
+        let qt = if own.qt_is_own() {
+            own_fonts.clone()
+        } else {
+            own.qt_fonts()
+        };
         // The desktop's own, then GTK's, then Qt's (ADR-117).
-        let named = own.fonts().or(gtk.clone()).or(qt.clone());
+        let named = own_fonts.or(gtk.clone()).or(qt.clone());
         let unaliased =
             |family: Option<String>| family.map(|family| crate::fonts::unalias(&family));
         // GNOME's settings daemon writes the factor into X11's `Xft.dpi`
@@ -861,7 +878,12 @@ mod imp {
                 == Some(1),
             font_px: named.interface_px,
             monospace_px: named.monospace_px,
-            fonts_from: named.from.map(str::to_owned),
+            // Where the interface's font was read: none when none was, a
+            // source that named nothing never said.
+            fonts_from: named
+                .from
+                .filter(|_| named.interface.is_some())
+                .map(str::to_owned),
             gtk: gtk.apart(),
             qt: qt.apart(),
             text_scaling,
@@ -904,12 +926,14 @@ mod imp {
             schemes: gtk_theme.as_deref().map(theme).unwrap_or_default(),
             from: Some("GTK"),
         };
-        let qt_colors = own.qt_colors();
+        let own_colors = own.own_colors(&theme);
+        let qt_colors = if own.qt_is_own() {
+            own_colors.clone()
+        } else {
+            own.qt_colors()
+        };
         // The desktop's own, then GTK's, then Qt's, as the fonts.
-        let colors = own
-            .own_colors(&theme)
-            .or(gtk_colors.clone())
-            .or(qt_colors.clone());
+        let colors = own_colors.or(gtk_colors.clone()).or(qt_colors.clone());
         (colors, gtk_colors, qt_colors)
     }
 
@@ -1231,13 +1255,12 @@ mod imp {
                 }
             }
             Some(Chosen::Kde) => {
-                let kdeglobals = desktop::kdeglobals();
-                qt_named(
-                    kdeglobals.as_deref(),
-                    "General",
-                    ("font", "fixed"),
-                    "Plasma",
-                )
+                // As its colors are: the user's, then the system's and the
+                // look's (`kdedefaults`, which Plasma names in
+                // `XDG_CONFIG_DIRS`).
+                let kdeglobals = desktop::kdeglobals_cascade();
+                let texts: Vec<&str> = kdeglobals.iter().map(String::as_str).collect();
+                qt_named_in(&texts, "General", ("font", "fixed"), "Plasma")
             }
             Some(Chosen::Lxqt) => {
                 let conf = desktop::lxqt_conf();
@@ -1264,10 +1287,26 @@ mod imp {
     pub(super) fn qt_named(
         text: Option<&str>,
         group: &str,
+        keys: (&str, &str),
+        from: &'static str,
+    ) -> Named {
+        qt_named_in(text.as_slice(), group, keys, from)
+    }
+
+    /// `qt_named` over a cascade of files (`texts`, the first saying a key
+    /// winning), as `KConfig` reads `kdeglobals`: the user's, then the
+    /// system's and the look's defaults.
+    pub(super) fn qt_named_in(
+        texts: &[&str],
+        group: &str,
         (interface, fixed): (&str, &str),
         from: &'static str,
     ) -> Named {
-        let value = |key| text.and_then(|text| desktop::keyfile_value(text, group, key));
+        let value = |key| {
+            texts
+                .iter()
+                .find_map(|text| desktop::keyfile_value(text, group, key))
+        };
         let (interface, fixed) = (value(interface), value(fixed));
         Named {
             interface: interface.as_deref().and_then(super::qt_family),
@@ -1314,18 +1353,15 @@ mod imp {
         }
     }
 
+    /// qt6ct's or qt5ct's fonts, as `QT_QPA_PLATFORMTHEME` names it (on
+    /// Plasma and LXQt, Qt's are the desktop's own: `Own::qt_is_own`).
     fn qt_fonts() -> Named {
-        match desktop::chosen() {
-            Some(Chosen::Kde | Chosen::Lxqt) => own_fonts(),
-            _ => match desktop::qt_ct() {
-                Some(("qt6ct", text)) => {
-                    qt_named(Some(&text), "Fonts", ("general", "fixed"), "Qt (qt6ct)")
-                }
-                Some((_, text)) => {
-                    qt_named(Some(&text), "Fonts", ("general", "fixed"), "Qt (qt5ct)")
-                }
-                None => Named::default(),
-            },
+        match desktop::qt_ct() {
+            Some(("qt6ct", text)) => {
+                qt_named(Some(&text), "Fonts", ("general", "fixed"), "Qt (qt6ct)")
+            }
+            Some((_, text)) => qt_named(Some(&text), "Fonts", ("general", "fixed"), "Qt (qt5ct)"),
+            None => Named::default(),
         }
     }
 }
@@ -2052,6 +2088,58 @@ mod tests {
                 imp::read_from(Some(&bus), &OnX11(96.)).text_scaling,
                 Some(1.25)
             );
+        }
+
+        /// qt6ct set up, its file naming no font and its custom palette
+        /// off; nothing else naming fonts or colors.
+        struct QtNamesNothing;
+
+        impl imp::Own for QtNamesNothing {
+            fn fonts(&self) -> imp::Named {
+                imp::Named::default()
+            }
+
+            fn qt_fonts(&self) -> imp::Named {
+                imp::qt_named(
+                    Some("[Appearance]\ncustom_palette=false\nstyle=Fusion\n"),
+                    "Fonts",
+                    ("general", "fixed"),
+                    "Qt (qt6ct)",
+                )
+            }
+
+            fn qt_colors(&self) -> imp::Painted {
+                imp::Painted::one(None, "Qt (qt6ct)")
+            }
+
+            fn own_colors(&self, _: &dyn Fn(&str) -> Schemes) -> imp::Painted {
+                imp::Painted::one(None, "LXQt")
+            }
+
+            fn followed(&self) -> Vec<PathBuf> {
+                Vec::new()
+            }
+        }
+
+        #[test]
+        fn plasma_s_fonts_are_read_as_kconfig_cascades_them() {
+            // The user's names the code font alone; the look's defaults
+            // both: each read where it is first said.
+            let user = "[General]\nfixed=Hack,10,-1,5,400,0,0,0,0,0\n";
+            let defaults = "[General]\nfont=Noto Sans,11,-1,5,400,0,0,0,0,0\n\
+                            fixed=Noto Sans Mono,10,-1,5,400,0,0,0,0,0\n";
+            let named = imp::qt_named_in(&[user, defaults], "General", ("font", "fixed"), "Plasma");
+            assert_eq!(named.interface.as_deref(), Some("Noto Sans"));
+            assert_eq!(named.monospace.as_deref(), Some("Hack"));
+        }
+
+        #[test]
+        fn a_source_that_names_nothing_is_never_said_to_give_it() {
+            let style = imp::read_from(None, &QtNamesNothing);
+            assert_eq!(style.fonts_from, None);
+            assert_eq!(style.colors_from, None);
+            assert!(style.schemes.is_empty());
+            assert_eq!((style.qt, style.qt_colors), (None, None));
         }
 
         /// GTK's `settings.ini` naming one font, on Wayland or X11.
