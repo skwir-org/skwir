@@ -13,13 +13,15 @@ A package puts <out>/fonts in skwir's data folder, `share/skwir/fonts`
 Resources), where skwir finds them (`skwir_platform::fonts::bundled`).
 The archives are kept in <out>/.downloads and fetched again only when
 missing or no longer matching their sums: a build that may not fetch (the
-Nix package's) puts them there first.
+Nix package's) puts them there first. <out>/fonts and <out>/licenses/fonts
+are made again each time, so files an older lock took are never carried.
 
     tools/package/fonts.py <out>
 """
 
 import hashlib
 import pathlib
+import shutil
 import sys
 import urllib.request
 import zipfile
@@ -85,7 +87,10 @@ def main():
     out = pathlib.Path(sys.argv[1])
     downloads = out / ".downloads"
     downloads.mkdir(parents=True, exist_ok=True)
-    (out / "fonts").mkdir(exist_ok=True)
+    # Only what this lock takes: a file an older one took goes.
+    for made in (out / "fonts", out / "licenses/fonts"):
+        shutil.rmtree(made, ignore_errors=True)
+    (out / "fonts").mkdir()
     for name, url, sum_ in pinned():
         if name not in TAKEN:
             fail(f"{name}: fonts.lock names an archive fonts.py takes nothing from")
