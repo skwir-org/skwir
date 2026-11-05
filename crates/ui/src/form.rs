@@ -781,11 +781,7 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
         .max_h(relative(0.9))
         .p_3()
         .gap_3()
-        .child(
-            div()
-                .font_weight(gpui::FontWeight::SEMIBOLD)
-                .child(form.title.clone()),
-        )
+        .child(div().text_title().child(form.title.clone()))
         .child(body)
         .children(state.refusal.clone().map(|refusal| {
             div()
@@ -1244,7 +1240,7 @@ fn choice_list(
         list = list.child(
             div()
                 .px_2()
-                .text_small()
+                .text_body()
                 .text_color(theme.text_muted)
                 .child(format!(
                     "{}–{} of {}: the arrows move further",

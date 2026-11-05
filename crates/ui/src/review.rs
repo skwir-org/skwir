@@ -430,7 +430,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
             div()
                 .flex()
                 .items_center()
-                .child(div().flex_1().child(title))
+                .child(div().flex_1().text_title().child(title))
                 .child(div().text_small().text_color(theme.text_muted).child(size)),
         )
         // What the plan left out, and why; what a question means.

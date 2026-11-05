@@ -431,7 +431,11 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
         .p_3()
         .gap_2()
         .key_context(keymap::BULK)
-        .child(div().child(format!("Rename {} items", b.count)))
+        .child(
+            div()
+                .text_title()
+                .child(format!("Rename {} items", b.count)),
+        )
         .child(form)
         .children(
             b.error

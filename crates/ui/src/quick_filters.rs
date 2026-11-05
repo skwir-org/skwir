@@ -33,7 +33,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
-use gpui::{AnyElement, Context, SharedString, div, prelude::*, px};
+use gpui::{AnyElement, Context, SharedString, div, prelude::*};
 use skwir_core::CancelToken;
 use skwir_core::app::App;
 use skwir_core::entry::EntryId;
@@ -634,10 +634,19 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let theme = cx.global::<Theme>().clone();
     let pane = shell.pane;
     let command = skwir_core::command::Invocation::new("query.narrow");
+    // A group's heading ("Kind") is a note before its pills, Small; what
+    // the bar says of itself is a sentence, at the body size (ADR-117).
     let label = |text: String| {
         div()
             .flex_none()
             .text_small()
+            .text_color(theme.text_muted)
+            .child(text)
+    };
+    let said = |text: String| {
+        div()
+            .flex_none()
+            .text_body()
             .text_color(theme.text_muted)
             .child(text)
     };
@@ -683,7 +692,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
             .flex()
             .items_center()
             .gap(sized(5.))
-            .rounded(px(11.))
+            .rounded_full()
             .text_body()
             .text_color(theme.text)
             .when_some(tone, |d, tone| d.bg(theme.tag_fill(tone)))
@@ -770,10 +779,10 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         }
     }
     if offer.is_empty() {
-        row = row.child(label(why_empty(quick)));
+        row = row.child(said(why_empty(quick)));
     } else if quick.files.unknown > 0 {
         // What the details still read may offer more.
-        row = row.child(label(format!(
+        row = row.child(said(format!(
             "Reading the details of {}…",
             crate::format::count(quick.files.unknown, "file")
         )));

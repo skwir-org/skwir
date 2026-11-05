@@ -562,7 +562,7 @@ pub fn render_prompt(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElemen
         .when(shell.a11y, |d| d.aria_label(p.title.clone()))
         .p_3()
         .gap_2()
-        .child(div().text_color(theme.text_muted).child(p.title.clone()))
+        .child(div().text_title().child(p.title.clone()))
         .child(
             div()
                 .h(sized(30.))
@@ -687,7 +687,7 @@ pub fn render_confirm(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyEleme
         .gap_2()
         .track_focus(&c.focus)
         .key_context(keymap::CONFIRM)
-        .child(div().child(c.message.clone()))
+        .child(div().text_title().child(c.message.clone()))
         .children(
             c.listed
                 .as_ref()
