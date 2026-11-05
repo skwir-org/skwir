@@ -1,6 +1,45 @@
 # Changes
 
-## Unreleased
+## 0.3.1 (2026-11-05)
+
+Skwir 0.3.1 writes at your desktop's text size and lets you choose your own:
+the whole window from 80 to 200 %, the files, reading and code each apart. It
+follows your desktop's fonts and colors more closely, offers twelve palettes,
+and comes with its own fonts.
+
+[Installation instructions](README.md#installing)
+
+- **Text sizes**: Settings › Appearance › Text size for the window, Files text
+  size for the views, Settings › Reading for documents and code; bars, rows and
+  menus grow with the text while icons and pictures keep their size.
+- **Fonts from** and **Colors from** choose whose fonts and colors Skwir wears:
+  your desktop's, Skwir's own, GTK's or Qt's.
+- **Palettes**: Skwir, Paper, Slate, Black, Solarized, Nord, Gruvbox,
+  Catppuccin, Dracula, Rosé Pine, Tokyo Night and Everforest, worn as you go
+  through the list, saved only when you take one.
+- **Skwir's own fonts**, Inter and JetBrains Mono, come with its packages.
+- **Breeze's icons** take your color scheme's accent, as KDE's applications draw
+  them, and bold text in variable fonts (Noto Sans, Cantarell, Ubuntu Sans) is
+  drawn bold.
+- **Automatic** says what it comes to: "Automatic (Breeze)", the theme it
+  gives, the engine installed.
+- **Usage** selects files and folders inside folders, and keeps up with a
+  folder whose files keep changing for a quarter to a half of the work.
+- **Grammars** settings say where grammars were looked for and why one cannot
+  be used.
+
+**Changed from 0.3.0**: at 100 % text is your desktop's size times its text
+scaling (on a desktop at 10 pt, 13.3 px rather than 14); buttons, menus and
+dialogs are written at the body size, the smaller size kept for shortcuts,
+counts and headers; Colors from replaces Desktop colors, and if you had turned
+Desktop colors off, Skwir keeps its own colors and fonts.
+
+**Windows and macOS builds to try** now draw in the system's font and colors,
+and Windows' follows its Text size. They are made on Linux and have never run on
+either system: please [try them and tell us what happens](docs/HELP-WANTED.md).
+Skwir itself is for Linux, as in 0.3.0.
+
+### All changes
 
 - **Text sizes**: the whole window's text has a size, from 80 to 200 %
   (Settings › Appearance › Text size), and the file views' a size of their own

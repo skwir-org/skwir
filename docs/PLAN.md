@@ -31,12 +31,12 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
 6. **Agent-ready:** commands are data, plans before apply, stable
    identity (ADR-049), metadata with provenance.
 
-## Current status (2026-11-03)
+## Current status (2026-11-05)
 
 - **Where:** named Skwir (skwir.org, application id `org.skwir.skwir`),
-  version 0.3.0, released 2026-11-03 on GitHub and the AUR's three
-  bases; 0.2.0 was released 2026-10-20, 0.1.0 [released](#release-01-linux)
-  2026-10-13. Phases 0 to 4, 5a and 6 pass their gates. Maps and Notes
+  version 0.3.1, dated 2026-11-05; 0.3.0 was released 2026-11-03 on
+  GitHub and the AUR's three bases, 0.2.0 2026-10-20, 0.1.0
+  [released](#release-01-linux) 2026-10-13. Phases 0 to 4, 5a and 6 pass their gates. Maps and Notes
   everywhere are built, their gates not closed, as is much that no phase
   planned ([Built beyond the plan](#built-beyond-the-plan)).
 - **Next:** skwird's steps (ADR-050) and Phase 7, which the user put
@@ -69,7 +69,15 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
   0.3.0's tarball and 113 for 0.2.0's (nine starts each, alternated),
   both medians near 160. `just bench-check` meets all 51 budgets
   (2026-11-03, quiet).
-- **Latest work (2026-10-21 to 11-03), in 0.3.0:** remote folders
+- **Latest work (2026-11-04 to 11-05), in 0.3.1:** text sizes by part
+  from the desktop's (ADR-117), Fonts from and Colors from, twelve
+  palettes and the desktop's colors on macOS and Windows (ADR-071
+  amended), Skwir's own fonts carried in every package (ADR-118),
+  Breeze's icons in the color scheme's colors, a variable font's weights
+  (gpui patch 0045), Usage selecting inside folders (ADR-116), what a
+  grammar search found and refused (ADR-110); the review since 0.3.0
+  fixed (78 findings, [below](#review-fixes-2026-11-05)).
+- **Work in 0.3.0 (2026-10-21 to 11-03):** remote folders
   (ADR-077 to ADR-088): servers mounted by sshfs, GVfs, KIO or rclone,
   configured from Skwir, found nearby, copies in batches retried from
   where they stopped; phones and cameras listed before they are mounted,
