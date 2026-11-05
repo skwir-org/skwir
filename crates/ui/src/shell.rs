@@ -3828,6 +3828,11 @@ fn show_resolved(app: &Arc<App>, cx: &gpui::App) {
         from: crate::desktop_style::sizes(&app.settings).from,
         dark: theme.is_dark,
         colors_from: crate::desktop_style::colors_source(),
+        system_dark: matches!(
+            cx.window_appearance(),
+            gpui::WindowAppearance::Dark | gpui::WindowAppearance::VibrantDark
+        ),
+        colors: crate::desktop_style::revision(),
     };
     crate::settings::show_resolved(app, shown);
 }

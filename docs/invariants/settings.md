@@ -46,6 +46,12 @@ the reasoning.
   starts a helper. A record's own choice,
   whose labels its owner writes, says it the same way: "Automatic
   (bat)" (a language's grammar, `language_records`).
+- **A choice of looks** (Colors from's palettes) gives each value a
+  swatch (`SettingSpec::swatches`, the colors of a miniature window, as
+  data): the dialog draws a gallery of cards under its row, each in the
+  colors its value would give now, and the row's dropdown stays the
+  keyboard's and a screen reader's. Declared again when what they show
+  changes (`settings::show_resolved`).
 - A setting that applies only while a switch is on says so with
   `SettingSpec::under(switch)` and is declared right after it, in its
   section: the dialog draws it

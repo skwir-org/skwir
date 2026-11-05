@@ -649,7 +649,7 @@ Settings are grouped by subject, whichever plugin brings them:
 | Page | What it sets |
 | --- | --- |
 | General | What Skwir does at startup, with tabs, the split and the path above the files, and with what you drag and drop |
-| Appearance | How it looks: theme, your desktop's colors and font, the text's size (the whole window's, and the file views' of their own), icons, dates |
+| Appearance | How it looks: theme, your desktop's colors or Skwir's palettes, the font, the text's size (the whole window's, and the file views' of their own), icons, dates |
 | Folders and views | Quick filters, the grid, the list's columns, thumbnails |
 | Tags and notes | The tags the sidebar suggests, tags kept when copying, companion files, and where tags, ratings and comments are read and written |
 | Reading | How documents, books, comics, Markdown, text and code read, and the engine that reads each kind |
@@ -671,8 +671,9 @@ names none Skwir can read), else GTK's own theme, else the color scheme
 qt6ct or qt5ct gives Qt's applications; with the accent color your
 desktop's settings name (GNOME's, or any desktop whose settings portal
 says one). It follows them when you change them there. Appearance ›
-**Colors from** chooses: Automatic, Skwir's own colors, or GTK's or
-Qt's alone, as when you set them up apart; a dashed outline shows which
+**Colors from** chooses: Automatic, GTK's or Qt's alone, as when you
+set them up apart, or one of Skwir's palettes, each drawn as a small
+window in its colors under the setting; a dashed outline shows which
 Automatic took. A scheme is one
 look's: with **Theme** on Automatic, Skwir takes the look of a scheme
 that has only one (Breeze Dark is dark), and the other look, chosen,
@@ -680,6 +681,21 @@ is Skwir's own with your accent. When your desktop asks for more
 contrast, Skwir's colors give it, whatever these say. Skwir's own
 controls stay as they are: it takes your colors, not another toolkit's
 look (ADR-071).
+
+Skwir's palettes are its own four, **Skwir** (its usual grays),
+**Paper** (warm), **Slate** (cool) and **Black** (white, and true black
+for screens that turn black pixels off), and eight its makers publish
+for every application: **Solarized**, **Nord**, **Gruvbox**,
+**Catppuccin**, **Dracula**, **Rosé Pine**, **Tokyo Night** and
+**Everforest**. Each has a light look and a dark one, which **Theme**
+chooses as for any colors, and keeps its own accent. The eight bring
+their terminal colors and their code colors: with the Reading page's
+code theme on **Default**, code is drawn in the palette's (where it has
+one for that look), else in Skwir's. Skwir keeps every text readable
+on what it is drawn on, so a palette whose text is faint (Solarized's
+light look) is drawn a little darker than its makers wrote it. On
+macOS and Windows, where Skwir does not read the system's colors yet,
+Automatic is the Skwir palette.
 
 Skwir writes in three fonts, each **Automatic** or a family installed on
 your system (ADR-073): **Font** on Appearance, for its menus, lists, bars

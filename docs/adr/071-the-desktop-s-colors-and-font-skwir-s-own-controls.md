@@ -9,7 +9,8 @@ the font at the window's opening), again by ADR-073 (the font a choice
 among the system's, three of them, followed live), 2026-10-20 (steps
 3 and 4) and 2026-10-27 (the accent as text, the chrome apart, the hover
 laid over), and 2026-11-05 (Colors from: Automatic, Skwir's own, GTK's
-or Qt's, in place of the Desktop colors switch; Qt's palettes read).
+or Qt's, in place of the Desktop colors switch; Qt's palettes read;
+then Skwir's palettes, twelve, among its values).
 
 ## Context
 
@@ -367,3 +368,69 @@ or Qt's, in place of the Desktop colors switch; Qt's palettes read).
   followed: a qt5ct or qt6ct scheme file edited in place (its
   configuration is followed), a Kvantum theme's colors; macOS and
   Windows still say no colors, so the setting is Linux's.
+- 2026-11-05, **Skwir's palettes.** The user asked whether, when Skwir's
+  own colors are chosen, a set of color themes could be offered, "like
+  Brave". A proposal page drew candidates through a port of
+  `Theme::derive` and its guard; the user took its recommendations and
+  asked for all twelve at once, with the code themes they need. Colors
+  from now offers, after Automatic, GTK and Qt, Skwir's palettes
+  (`palettes.rs`): **Skwir** (what Skwir's own was; its value `skwir`
+  is kept, so no settings file changes meaning), **Paper** (warm),
+  **Slate** (cool), **Black** (white and true black), then the
+  community's: **Solarized**, **Nord**, **Gruvbox**, **Catppuccin**
+  (Latte, Mocha), **Dracula** (Alucard, the classic), **Rosé Pine**
+  (Dawn, main), **Tokyo Night** (Day, Night) and **Everforest**
+  (medium).
+  - **A palette is a `Base` a look.** Every other token is derived and
+    guarded as a desktop's scheme is; a palette names no token of its
+    own, only its secondary text or selection where its makers design one
+    for that use. The colors and roles are their makers' (checked
+    2026-11-05 against each project's own published palette: Rosé Pine
+    Dawn's text is the darker one it took in 2025, Nord's warning nord13
+    as `nord.css` says, Tokyo Night's errors its `error` role).
+  - **Point 2 holds**: never a platform's palette (Adwaita's, macOS's,
+    Fluent's) nor a company's colors. A community palette is one its
+    makers publish for every application, under a permissive licence;
+    the packages' notices credit them.
+  - **A palette keeps its own accent**: the desktop's is not worn, as
+    Skwir's own colors wore none. More contrast is followed.
+  - **Both looks.** Each has a light and a dark look (Dracula's spec now
+    has Alucard). One with a single look would be a scheme of one look's
+    (amendment of 2026-10-20): Automatic would take it, the other look
+    forced being Skwir's own with its accent; a test holds that.
+  - **Beyond the `Base`** (amending point 4's `Kept` for these): a
+    community palette brings its terminal's sixteen colors, from its
+    makers' own ports (Solarized's one set for both looks; Catppuccin's
+    from `palette.json`; Nord's light look has none, so it keeps
+    `Kept`'s), and its code theme, which code is drawn in while the
+    Reading page says Default. bat ships Solarized's, Nord's (dark),
+    Gruvbox's, Catppuccin's and Dracula's; Skwir carries Rosé Pine's
+    (MIT), Tokyo Night's (Apache-2.0: the Day file's colors its
+    generator left from Night, unreadable at 1.04 to 1.9:1, replaced by
+    their Day counterparts, as the file says) and Everforest's (MIT, the
+    only medium-contrast TextMate port, archived), in
+    `crates/platform/assets/code-themes` (`highlight::CARRIED`), offered
+    on the Reading page beside bat's. Nord's light look and Alucard have
+    no code theme: Default is Skwir's there. Tags, ratings, find marks,
+    maps and the Usage map stay `Kept`.
+  - **The guard binds.** Solarized's light text (4.13:1 on its ground,
+    3.46:1 on the chrome under a hover) is drawn a little darker; light
+    palettes' yellows and greens darken the most. A test bounds how far
+    the guard moves a palette's chrome, text and accent at normal
+    contrast (0.07 of Oklab's lightness; Solarized's text moves 0.063),
+    so a palette that would stop looking like itself fails.
+  - **Every system.** Colors from is declared on macOS and Windows too,
+    where Automatic is the Skwir palette until their colors are read
+    (step 5).
+  - **The dialog draws it as cards.** A choice whose owner gives each
+    value a swatch (`SettingConstraints::swatches`, data an agent sees
+    as a plain choice) is drawn with a gallery under its row: each value
+    a miniature window in the colors it would give now, its look as the
+    theme and the system make it, the one chosen marked; the dropdown
+    stays the keyboard's and a screen reader's.
+  - **Checked:** the palettes through the guard in both contrasts and
+    both looks (`every_palette_reads_in_either_contrast`), the bound
+    above, each code theme offered for its look, the carried themes
+    read and highlight, a palette worn whatever the desktop says (or
+    with nothing said), the cards drawn as worn. In a window: see
+    `docs/STATUS-LOG.md`, 2026-11-05.

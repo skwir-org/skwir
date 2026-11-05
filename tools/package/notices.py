@@ -131,6 +131,41 @@ def licences(program, target=None):
     return found
 
 
+# What skwir's program carries that is no crate: the code themes compiled
+# into skwir-platform (crates/platform/assets/code-themes, ADR-071), each
+# under the licence beside it, and the palettes whose colors it wears.
+CARRIED = ROOT / "crates/platform/assets/code-themes"
+CARRIED_THEMES = [
+    ("Rosé Pine's code themes (rose-pine.tmTheme, rose-pine-dawn.tmTheme)",
+     "MIT License (MIT)", "rose-pine.LICENSE"),
+    ("Tokyo Night's code themes (tokyonight_night.tmTheme, tokyonight_day.tmTheme), "
+     "by Folke Lemaitre, changed by Skwir as each file's first comment says",
+     "Apache License 2.0 (Apache-2.0)", "tokyonight.LICENSE"),
+    ("Everforest's code themes (everforest-dark.tmTheme, everforest-light.tmTheme), "
+     "from everforest-textmate",
+     "MIT License (MIT)", "everforest-textmate.LICENSE"),
+]
+PALETTES = (
+    "Skwir's palettes wear the colors of Solarized (Ethan Schoonover, MIT), "
+    "Nord (Sven Greb, MIT), Gruvbox (Pavel Pertsev, MIT), Catppuccin (MIT), "
+    "Dracula (Dracula Theme, MIT), Rosé Pine (MIT), Tokyo Night (Enkia, MIT; "
+    "Folke Lemaitre's tokyonight.nvim, Apache-2.0) and Everforest "
+    "(Sainnhe Park, MIT), as their makers publish them."
+)
+
+
+def carried():
+    """The notices of what the skwir program carries that is no crate."""
+    rule = "-" * 72
+    out = [rule, "Carried in skwir, not crates", "",
+           *textwrap.wrap(PALETTES, 72, break_on_hyphens=False), ""]
+    for what, name, licence in CARRIED_THEMES:
+        out += [rule, name, "",
+                *textwrap.wrap("Used by: " + what, 72, break_on_hyphens=False), "",
+                (CARRIED / licence).read_text().rstrip("\n"), ""]
+    return out
+
+
 def notices(package, programs, target):
     merged = {}
     for program in programs:
@@ -155,6 +190,8 @@ def notices(package, programs, target):
         if not used:
             continue
         out += [rule, f"{name} ({ident})", "", "Used by: " + ", ".join(used), "", text, ""]
+    if "skwir" in programs:
+        out += carried()
     return "\n".join(out) + "\n"
 
 

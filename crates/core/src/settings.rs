@@ -346,6 +346,34 @@ pub struct SettingConstraints {
     /// (`SettingSpec::with_found`). Empty for a choice that says `now`
     /// itself.
     pub tries: Vec<Tried>,
+    /// What each choice looks like, parallel to `choices` (empty: none
+    /// does): the dialog draws a choice whose values have one as a gallery
+    /// of cards, each a miniature in its colors (`ui.colors_from`'s
+    /// palettes). The value stays a plain choice for agents and scripts.
+    pub swatches: Vec<Option<Swatch>>,
+}
+
+/// The colors a choice is drawn in where the dialog shows it as a card
+/// ([`SettingConstraints::swatches`]): a miniature of a window, as sRGB
+/// `0xRRGGBB`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct Swatch {
+    /// What is read is on (a list of files), and the chrome around it.
+    pub ground: u32,
+    pub chrome: u32,
+    pub text: u32,
+    pub muted: u32,
+    pub line: u32,
+    pub accent: u32,
+    /// What is chosen, and its text.
+    pub selection: u32,
+    pub selection_text: u32,
+    /// Outcomes: done, a warning, a failure.
+    pub success: u32,
+    pub warning: u32,
+    pub error: u32,
+    /// Whether it is a dark look.
+    pub dark: bool,
 }
 
 /// A choice Automatic tries ([`SettingConstraints::tries`]) and the
@@ -548,6 +576,20 @@ impl SettingSpec {
             self.constraints.now.clone_from(&tried.choice);
         }
         self
+    }
+
+    /// What each of its choices looks like (`SettingConstraints::swatches`),
+    /// parallel to its choices.
+    #[must_use]
+    pub fn swatches(mut self, swatches: Vec<Option<Swatch>>) -> Self {
+        self.constraints.swatches = swatches;
+        self
+    }
+
+    /// What `value` looks like, when its owner says.
+    pub fn swatch_of(&self, value: &str) -> Option<Swatch> {
+        let index = self.constraints.choices.iter().position(|c| c == value)?;
+        self.constraints.swatches.get(index).copied().flatten()
     }
 
     /// Choices others may join where skwir runs, said in a few words

@@ -65,9 +65,10 @@
 //!
 //! A look is derived (`Theme::derive`, ADR-071) from a few colors, its
 //! `Base`: what the desktop's scheme names for that look (Plasma's, a
-//! GTK3 theme's: `Desktop::schemes`), else skwir's own (`Base::own`)
-//! wearing the desktop's accent; either way in the contrast the desktop
-//! asks for (`Desktop`, `Theme::of`, `desktop_style`). A scheme is one
+//! GTK3 theme's: `Desktop::schemes`) or the palette chosen
+//! (`palettes.rs`), else skwir's own (`Base::own`) wearing the desktop's
+//! accent; either way in the contrast the desktop asks for (`Desktop`,
+//! `Theme::of`, `desktop_style`). A scheme is one
 //! look's: the other look is skwir's own, and Automatic takes the
 //! scheme's look when it has one look's (`Theme::look`). The other
 //! grounds and lines (`zebra`, `code_bg`, `hover`,
@@ -408,35 +409,18 @@ pub struct Base {
     pub error: Hsla,
     pub warning: Hsla,
     pub success: Hsla,
+    /// The sixteen colors a terminal's programs name, where the look has
+    /// its own (a community palette's, `palettes.rs`); else `Kept`'s.
+    pub terminal: Option<[Hsla; 16]>,
 }
 
 impl Base {
-    /// Skwir's own colors, of the dark look or the light one.
+    /// Skwir's own colors, of the dark look or the light one: the Skwir
+    /// palette's (`palettes::SKWIR`).
     pub fn own(dark: bool) -> Self {
-        let [bg, surface, text, accent, error, warning, success] = if dark {
-            [
-                0x1e1e1e, 0x262626, 0xe6e6e6, 0x6ea8fe, 0xff6b6b, 0xf2b84b, 0x6fcf7f,
-            ]
-        } else {
-            [
-                0xfafafa, 0xf0f0f0, 0x1f1f1f, 0x2f6feb, 0xc62828, 0xb26a00, 0x2e7d32,
-            ]
-        }
-        .map(|value| Hsla::from(rgb(value)));
-        Base {
-            dark,
-            bg,
-            surface,
-            text,
-            text_muted: None,
-            zebra: None,
-            border: None,
-            accent,
-            selection: None,
-            error,
-            warning,
-            success,
-        }
+        crate::palettes::SKWIR.base(dark).unwrap_or_else(|| {
+            unreachable!("the Skwir palette has both looks");
+        })
     }
 }
 
@@ -741,7 +725,7 @@ impl Theme {
             map_land: kept.map_land,
             map_water: kept.map_water,
             map_border: kept.map_border,
-            terminal: kept.terminal,
+            terminal: base.terminal.unwrap_or(kept.terminal),
             is_dark: base.dark,
             desktop: Desktop {
                 contrast,
@@ -885,6 +869,22 @@ impl Theme {
         {
             return theme.clone();
         }
+        let theme = Theme::made(dark, desktop);
+        // The two looks of what the desktop says now.
+        if made.len() == 2 {
+            made.remove(0);
+        }
+        made.push(theme.clone());
+        theme
+    }
+
+    /// The look `dark` names, wearing `desktop`, derived again: what
+    /// `of` keeps, and a palette's card in the settings, which is not
+    /// worn.
+    pub fn made(dark: bool, desktop: Desktop) -> Self {
+        if desktop == Desktop::default() {
+            return if dark { Theme::dark() } else { Theme::light() };
+        }
         // The desktop's scheme of this look, else skwir's own wearing the
         // desktop's accent.
         let base = desktop.schemes.of(dark).copied().unwrap_or_else(|| Base {
@@ -893,11 +893,6 @@ impl Theme {
         });
         let mut theme = Theme::derive(&base, desktop.contrast);
         theme.desktop = desktop;
-        // The two looks of what the desktop says now.
-        if made.len() == 2 {
-            made.remove(0);
-        }
-        made.push(theme.clone());
         theme
     }
 
@@ -961,6 +956,13 @@ impl Theme {
         );
         let mut theme = Theme::of(dark, desktop);
         theme.code = crate::code_preview::CodeTheme::chosen(app, theme.is_dark);
+        // Default is the palette's own code theme, where it has one for
+        // the look code is drawn in.
+        if &*theme.code.name == crate::code_preview::DEFAULT
+            && let Some(name) = crate::desktop_style::palette_code(&app.settings, theme.code.dark)
+        {
+            theme.code.name = name.into();
+        }
         theme.set_fonts(crate::fonts::resolve(app, text));
         theme.sizes = crate::sizes::Sizes::resolve(app);
         theme
@@ -1084,6 +1086,7 @@ mod tests {
                 error: gray(0, 255),
                 warning: gray(0, 255),
                 success: gray(0, 255),
+                terminal: None,
             };
             for contrast in [Contrast::Normal, Contrast::More] {
                 let theme = Theme::derive(&base, contrast);
@@ -1224,6 +1227,7 @@ mod tests {
                 error: color(error),
                 warning: color(warning),
                 success: color(success),
+                terminal: None,
             };
             for contrast in [Contrast::Normal, Contrast::More] {
                 let theme = Theme::derive(&base, contrast);
@@ -1233,6 +1237,62 @@ mod tests {
                         "{} of {name}, {contrast:?}",
                         g.name
                     );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn every_palette_reads_in_either_contrast() {
+        for palette in &crate::palettes::PALETTES {
+            for dark in [false, true] {
+                let Some(base) = palette.base(dark) else {
+                    continue;
+                };
+                for contrast in [Contrast::Normal, Contrast::More] {
+                    let theme = Theme::derive(&base, contrast);
+                    for g in groups(&theme, contrast) {
+                        assert!(
+                            color::reads(g.fg, &g.grounds, g.ratio),
+                            "{} of {}, dark: {dark}, {contrast:?}",
+                            g.name,
+                            palette.name
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_palette_looks_like_itself_as_drawn() {
+        // The guard may move a palette's chrome, text and accent only a
+        // little at the contrast most ask for: one it rewrites is no
+        // longer that palette. Solarized's text, 4.13:1 on its light
+        // ground and less on its chrome under a hover, moves the most
+        // (0.063 in Oklab's lightness).
+        const MOST: f32 = 0.07;
+        for palette in &crate::palettes::PALETTES {
+            for dark in [false, true] {
+                let Some(base) = palette.base(dark) else {
+                    continue;
+                };
+                let theme = Theme::derive(&base, Contrast::Normal);
+                assert_eq!(theme.bg, base.bg, "a ground never moves");
+                for (name, written, drawn) in [
+                    ("surface", base.surface, theme.surface),
+                    ("text", base.text, theme.text),
+                    ("accent", base.accent, theme.accent),
+                ] {
+                    let moved = (Oklab::of(drawn).l - Oklab::of(written).l).abs();
+                    assert!(
+                        moved <= MOST,
+                        "{name} of {}, dark: {dark}, moved {moved:.3}",
+                        palette.name
+                    );
+                }
+                if let Some(terminal) = base.terminal {
+                    assert_eq!(theme.terminal, terminal, "its own terminal colors");
                 }
             }
         }

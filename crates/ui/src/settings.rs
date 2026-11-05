@@ -409,21 +409,82 @@ fn look_now() -> &'static str {
     }
 }
 
-/// `ui.colors_from` (ADR-071): where the colors are read, saying what its
-/// Automatic comes to once read.
-fn colors_from_spec() -> SettingSpec {
-    let pairs = crate::desktop_style::Source::choices();
-    SettingSpec::choice(
-        COLORS_FROM_KEY,
-        "Colors from",
-        "Where skwir takes its colors and accent: your desktop's settings, its own, or GTK's or Qt's alone. Automatic reads your desktop's own (Plasma's color scheme, LXQt's palette, the GTK theme GNOME, MATE, Cinnamon or Xfce names), else GTK's theme, else the color scheme of qt6ct or qt5ct; GTK or Qt reads that toolkit's alone, as when they differ. More contrast, when your desktop asks for it, is followed whatever is chosen.",
-        pairs[0].0,
-        pairs,
-    )
-    .essential()
-    .now(&crate::desktop_style::Source::now(
-        shown().and_then(|shown| shown.colors_from).as_deref(),
-    ))
+/// `ui.colors_from` (ADR-071): where the colors are read, or the palette
+/// worn, saying what its Automatic comes to once read, and drawing each
+/// choice as the window would wear it once the window has a look
+/// (`Shown`).
+fn colors_from_spec(app: &App) -> SettingSpec {
+    use crate::desktop_style::ColorSource;
+    let choices = ColorSource::choices();
+    let pairs: Vec<(&str, &str)> = choices
+        .iter()
+        .map(|(source, label)| (source.value(), *label))
+        .collect();
+    let shown = shown();
+    let swatches = choices
+        .iter()
+        .map(|(source, _)| {
+            let shown = shown.as_ref()?;
+            Some(colors_swatch(app, *source, shown.system_dark))
+        })
+        .collect();
+    let (description, now) = if skwir_platform::desktop_style::COLORS {
+        (
+            "Where skwir takes its colors: your desktop's, or one of skwir's palettes. Automatic reads your desktop's own (Plasma's color scheme, LXQt's palette, the GTK theme GNOME, MATE, Cinnamon or Xfce names), else GTK's theme, else the color scheme of qt6ct or qt5ct; GTK or Qt reads that toolkit's alone. A palette keeps its own accent and brings its code and terminal colors, each in a light look and a dark one. More contrast, when your desktop asks for it, is followed whatever is chosen.",
+            crate::desktop_style::Source::now(
+                shown
+                    .as_ref()
+                    .and_then(|shown| shown.colors_from.as_deref()),
+            ),
+        )
+    } else {
+        (
+            "The colors skwir wears: one of its palettes. Automatic is the Skwir palette until this system's own colors are read. A palette brings its code and terminal colors, each in a light look and a dark one. More contrast, when your system asks for it, is followed whatever is chosen.",
+            crate::palettes::SKWIR.id.to_owned(),
+        )
+    };
+    SettingSpec::choice(COLORS_FROM_KEY, "Colors from", description, "auto", &pairs)
+        .essential()
+        .now(&now)
+        .swatches(swatches)
+}
+
+/// The colors `source` would draw the window in: its look as `ui.theme`
+/// and the system's appearance (`system_dark`) make it, its tokens as
+/// derived and guarded.
+fn colors_swatch(
+    app: &App,
+    source: crate::desktop_style::ColorSource,
+    system_dark: bool,
+) -> skwir_core::settings::Swatch {
+    use crate::theme::Theme;
+    let desktop = crate::desktop_style::colors_for(source);
+    let appearance = if system_dark {
+        gpui::WindowAppearance::Dark
+    } else {
+        gpui::WindowAppearance::Light
+    };
+    let dark = Theme::look(
+        app.settings.get::<String>(THEME_KEY).as_deref(),
+        &desktop,
+        appearance,
+    );
+    let theme = Theme::made(dark, desktop);
+    let hex = crate::color::hex;
+    skwir_core::settings::Swatch {
+        ground: hex(theme.bg),
+        chrome: hex(theme.surface),
+        text: hex(theme.text),
+        muted: hex(theme.text_muted),
+        line: hex(theme.border),
+        accent: hex(theme.accent),
+        selection: hex(theme.selection_bg),
+        selection_text: hex(theme.selection_text),
+        success: hex(theme.success),
+        warning: hex(theme.warning),
+        error: hex(theme.error),
+        dark,
+    }
 }
 
 /// A size in pixels as a desktop's font settings say it: in points, to
@@ -451,6 +512,12 @@ pub(crate) struct Shown {
     pub dark: bool,
     /// Where the colors were read while Colors from is Automatic.
     pub colors_from: Option<String>,
+    /// Whether the system's appearance is dark, which a palette's card
+    /// is drawn in unless the theme or the palette says otherwise.
+    pub system_dark: bool,
+    /// What the desktop said, by its revision (`desktop_style::revision`):
+    /// the cards of Automatic, GTK and Qt are drawn in it.
+    pub colors: u64,
 }
 
 static SHOWN: std::sync::RwLock<Option<Shown>> = std::sync::RwLock::new(None);
@@ -496,9 +563,7 @@ pub(crate) fn show_resolved(app: &App, now: Shown) {
     if skwir_platform::desktop_style::FONTS {
         app.settings.declare(fonts_from_spec());
     }
-    if skwir_platform::desktop_style::COLORS {
-        app.settings.declare(colors_from_spec());
-    }
+    app.settings.declare(colors_from_spec(app));
     app.settings.declare(theme_spec());
     app.settings.declare(code_appearance_spec());
 }
@@ -557,7 +622,7 @@ pub fn code_theme_spec(
         key,
         title,
         &format!(
-            "The colors of source files and of code in documents when code is {look}: while skwir is {look}, or always when Light or dark above says {choice}. Default is skwir's own, on its {look} background; a theme brings its own background, bold and italic. Themes you added to bat, in its themes folder, follow bat's own."
+            "The colors of source files and of code in documents when code is {look}: while skwir is {look}, or always when Light or dark above says {choice}. Default is the code theme of the palette Colors from chooses, where it has one for that look, else skwir's own, on its {look} background; a theme brings its own background, bold and italic. Themes you added to bat, in its themes folder, follow bat's own."
         ),
         crate::code_preview::DEFAULT,
         &pairs,
@@ -1024,8 +1089,8 @@ pub fn declare(app: &App) {
     }
     if skwir_platform::desktop_style::COLORS {
         crate::desktop_style::keep_own_colors(&app.settings);
-        app.settings.declare(colors_from_spec());
     }
+    app.settings.declare(colors_from_spec(app));
     if skwir_platform::desktop_style::FONTS {
         app.settings.declare(fonts_from_spec());
     }
@@ -3631,5 +3696,53 @@ mod tests {
             assert!(shown.contains("; 100 % is "), "{shown}");
             assert!(more, "the rest in its tooltip: {}", spec.description);
         }
+    }
+
+    #[test]
+    fn each_palette_is_drawn_as_it_would_be_worn() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        declare(&app);
+        let spec = || app.settings.spec(super::COLORS_FROM_KEY).unwrap();
+        assert!(
+            spec().swatch_of("paper").is_none(),
+            "before the window's look"
+        );
+        super::show_resolved(
+            &app,
+            super::Shown {
+                automatic: crate::fonts::Families::default(),
+                hundreds: [16.; 4],
+                from: None,
+                dark: false,
+                colors_from: None,
+                system_dark: false,
+                colors: 0,
+            },
+        );
+        let paper = spec().swatch_of("paper").expect("its card");
+        assert!(!paper.dark);
+        assert_eq!(paper.ground, 0xfb_f8f2);
+        for palette in &crate::palettes::PALETTES {
+            let card = spec().swatch_of(palette.id).expect("every palette's");
+            assert!(!card.dark, "{}: the system's look", palette.id);
+        }
+        // The look forced dark: every card that has one is dark.
+        app.settings.set(THEME_KEY, "dark".into());
+        super::show_resolved(
+            &app,
+            super::Shown {
+                automatic: crate::fonts::Families::default(),
+                hundreds: [16.; 4],
+                from: None,
+                dark: true,
+                colors_from: None,
+                system_dark: false,
+                colors: 0,
+            },
+        );
+        let paper = spec().swatch_of("paper").unwrap();
+        assert!(paper.dark);
+        assert_eq!(paper.ground, 0x1f_1d1a);
     }
 }

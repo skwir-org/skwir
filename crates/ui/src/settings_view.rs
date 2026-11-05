@@ -138,6 +138,107 @@ pub(crate) fn card_row(theme: &Theme, edge: Edge) -> gpui::Div {
         .when(edge.last, gpui::Styled::rounded_b_lg)
 }
 
+/// A window in miniature, drawn in a choice's colors
+/// (`SettingConstraints::swatches`): its bars and sidebar in the chrome,
+/// rows of text on the ground, two chosen, the address in the accent, and
+/// the outcomes' colors. A picture: it keeps its size at any text size.
+fn miniature(swatch: &skwir_core::settings::Swatch) -> gpui::Div {
+    let color = |value: u32| gpui::rgb(value);
+    let bar = |value: u32, width: f32| div().h(px(3.)).w(px(width)).rounded_sm().bg(color(value));
+    let line = |text: u32, muted: u32, under: Option<u32>| {
+        div()
+            .h(px(8.))
+            .px(px(3.))
+            .flex()
+            .items_center()
+            .justify_between()
+            .rounded_sm()
+            .when_some(under, |d, under| d.bg(color(under)))
+            .child(bar(text, 30.))
+            .child(bar(muted, 10.))
+    };
+    let dot = |value: u32| div().size(px(5.)).rounded_full().bg(color(value));
+    let chosen = Some(swatch.selection);
+    div()
+        .w(px(112.))
+        .h(px(74.))
+        .flex_none()
+        .flex()
+        .flex_col()
+        .overflow_hidden()
+        .rounded_md()
+        .border_1()
+        .border_color(color(swatch.line))
+        .bg(color(swatch.ground))
+        .child(
+            div()
+                .h(px(13.))
+                .flex_none()
+                .px(px(4.))
+                .flex()
+                .items_center()
+                .gap(px(3.))
+                .bg(color(swatch.chrome))
+                .border_b_1()
+                .border_color(color(swatch.line))
+                .child(
+                    div()
+                        .flex_1()
+                        .h(px(7.))
+                        .rounded_sm()
+                        .bg(color(swatch.ground))
+                        .border_1()
+                        .border_color(color(swatch.accent)),
+                )
+                .child(dot(swatch.success))
+                .child(dot(swatch.warning))
+                .child(dot(swatch.error)),
+        )
+        .child(
+            div()
+                .flex_1()
+                .flex()
+                .child(
+                    div()
+                        .w(px(32.))
+                        .flex_none()
+                        .p(px(3.))
+                        .flex()
+                        .flex_col()
+                        .gap(px(3.))
+                        .bg(color(swatch.chrome))
+                        .border_r_1()
+                        .border_color(color(swatch.line))
+                        .child(bar(swatch.muted, 20.))
+                        .child(
+                            div()
+                                .h(px(7.))
+                                .px(px(2.))
+                                .flex()
+                                .items_center()
+                                .rounded_sm()
+                                .bg(color(swatch.selection))
+                                .child(bar(swatch.selection_text, 18.)),
+                        )
+                        .child(bar(swatch.muted, 22.))
+                        .child(bar(swatch.muted, 16.)),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .p(px(3.))
+                        .flex()
+                        .flex_col()
+                        .gap(px(2.))
+                        .child(line(swatch.text, swatch.muted, None))
+                        .child(line(swatch.selection_text, swatch.selection_text, chosen))
+                        .child(line(swatch.selection_text, swatch.selection_text, chosen))
+                        .child(line(swatch.text, swatch.muted, None))
+                        .child(line(swatch.text, swatch.muted, None)),
+                ),
+        )
+}
+
 /// The place of a row's revert button, held whether or not the row is
 /// modified: changing a value or restoring it never moves the texts or the
 /// control beside it.
@@ -1014,11 +1115,16 @@ impl SettingsView {
             .when(!row.available, |d| d.opacity(0.5))
             .child(self.control(row, item, false, theme, window, cx));
         let highlighted = self.highlight.as_deref() == Some(key.as_str());
-        // A list's records are rows of the same card, under its own.
+        // A list's records are rows of the same card, under its own, as
+        // are the cards of a choice whose owner draws its values
+        // (`SettingConstraints::swatches`).
         let records = row.spec.kind == SettingKind::Records;
-        let below = records
-            && (!self.parsed_records(&key, &row.value).is_empty()
-                || self.drafts.contains_key(&key));
+        let gallery = row.spec.kind == SettingKind::Choice
+            && row.spec.constraints.swatches.iter().any(Option::is_some);
+        let below = gallery
+            || records
+                && (!self.parsed_records(&key, &row.value).is_empty()
+                    || self.drafts.contains_key(&key));
         items.push(
             card_row(
                 theme,
@@ -1036,6 +1142,66 @@ impl SettingsView {
         if records {
             self.record_rows(&key, &row.value, edge.last, item, items, theme, window, cx);
         }
+        if gallery {
+            items.push(Self::swatch_gallery(row, edge.last, theme, cx));
+        }
+    }
+
+    /// A choice's values as cards, each a miniature in the colors it
+    /// gives and its label, the one chosen marked: clicked, a card is
+    /// chosen. The keyboard and a screen reader choose with the row's
+    /// dropdown, which says the same.
+    fn swatch_gallery(
+        row: &Snapshot,
+        last: bool,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let key = row.spec.key.clone();
+        let mut cards = div().w_full().flex().flex_wrap().gap(sized(8.));
+        let constraints = &row.spec.constraints;
+        for (choice, swatch) in constraints.choices.iter().zip(&constraints.swatches) {
+            let Some(swatch) = *swatch else { continue };
+            let chosen = *choice == row.value;
+            let label = row.spec.choice_shown(choice).into_owned();
+            let (key, value) = (key.clone(), choice.clone());
+            let hover = theme.hover;
+            cards = cards.child(
+                div()
+                    .id(SharedString::from(format!("swatch-{key}-{choice}")))
+                    .w(sized(124.))
+                    .p_1()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap_1()
+                    .rounded_md()
+                    .when(chosen, |d| {
+                        d.bg(theme.selection_bg).text_color(theme.selection_text)
+                    })
+                    .when(!chosen && row.available, |d| {
+                        d.cursor_pointer().hover(move |s| s.bg(hover))
+                    })
+                    .child(miniature(&swatch))
+                    .child(
+                        div()
+                            .w_full()
+                            .text_body()
+                            .text_center()
+                            .truncate()
+                            .child(label),
+                    )
+                    .when(row.available, |d| {
+                        d.on_click(cx.listener(move |this, _, _, cx| {
+                            this.change(&key, value.clone(), cx);
+                        }))
+                    }),
+            );
+        }
+        card_row(theme, Edge { first: false, last })
+            .when(!row.available, |d| d.opacity(0.5))
+            .child(cards)
+            .into_any_element()
     }
 
     /// A setting's title and the first sentence of its description: the

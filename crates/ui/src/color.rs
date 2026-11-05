@@ -31,6 +31,13 @@ pub fn luminance(color: Hsla) -> f32 {
     0.2126 * linear(rgb.r) + 0.7152 * linear(rgb.g) + 0.0722 * linear(rgb.b)
 }
 
+/// A color as sRGB `0xRRGGBB`, its opacity left aside.
+pub fn hex(color: Hsla) -> u32 {
+    let rgb = color.to_rgb();
+    let channel = |c: f32| (c.clamp(0., 1.) * 255.).round() as u32;
+    (channel(rgb.r) << 16) | (channel(rgb.g) << 8) | channel(rgb.b)
+}
+
 /// The contrast of two relative luminances, from 1 to 21.
 pub fn contrast(a: f32, b: f32) -> f32 {
     (a.max(b) + 0.05) / (a.min(b) + 0.05)

@@ -11,7 +11,8 @@
 //! theme for that look (`CodeTheme`): base16 Ocean's, on that look's
 //! background. A theme chosen, one of bat's or one its user added to bat
 //! (`bat::themes_dir`), brings the background it is meant for, and its
-//! bold and italic: not its underline, which in skwir is a link's.
+//! bold and italic: not its underline, which in skwir is a link's. Beside
+//! bat's, skwir carries the themes of its palettes bat lacks (`CARRIED`).
 use parking_lot::{Condvar, Mutex};
 use skwir_core::inspection::{Inspection, Run};
 use std::path::Path;
@@ -206,6 +207,62 @@ const BAT: [(Bat, &str, bool); 29] = [
     (Bat::Zenburn, "Zenburn", true),
 ];
 
+/// The code themes skwir carries: those of its palettes bat does not ship
+/// (ADR-071, amended 2026-11-05; `assets/code-themes`, each under its
+/// licence there), each its makers' own. The value stored (named as bat
+/// would name the file, so a theme the user added to bat under that name
+/// replaces it), the name shown, whether it is dark, and the file, read
+/// the first time it is drawn.
+const CARRIED: [(&str, &str, bool, &[u8]); 6] = [
+    (
+        "everforest-dark",
+        "Everforest",
+        true,
+        include_bytes!("../assets/code-themes/everforest-dark.tmTheme"),
+    ),
+    (
+        "everforest-light",
+        "Everforest",
+        false,
+        include_bytes!("../assets/code-themes/everforest-light.tmTheme"),
+    ),
+    (
+        "rose-pine",
+        "Rosé Pine",
+        true,
+        include_bytes!("../assets/code-themes/rose-pine.tmTheme"),
+    ),
+    (
+        "rose-pine-dawn",
+        "Rosé Pine Dawn",
+        false,
+        include_bytes!("../assets/code-themes/rose-pine-dawn.tmTheme"),
+    ),
+    (
+        "tokyonight_day",
+        "Tokyo Night Day",
+        false,
+        include_bytes!("../assets/code-themes/tokyonight_day.tmTheme"),
+    ),
+    (
+        "tokyonight_night",
+        "Tokyo Night",
+        true,
+        include_bytes!("../assets/code-themes/tokyonight_night.tmTheme"),
+    ),
+];
+
+/// The theme of `CARRIED` named `name`, read once; `None` for another
+/// name, or for one that does not read (a test holds them all to).
+fn carried(name: &str) -> Option<&'static Colors> {
+    static READ: [OnceLock<Option<Colors>>; CARRIED.len()] =
+        [const { OnceLock::new() }; CARRIED.len()];
+    let at = CARRIED.iter().position(|(value, ..)| *value == name)?;
+    READ[at]
+        .get_or_init(|| ThemeSet::load_from_reader(&mut std::io::Cursor::new(CARRIED[at].3)).ok())
+        .as_ref()
+}
+
 /// The colors code is drawn in and the look they are for, as the
 /// settings choose them while skwir has its look (`Theme::code`, read
 /// with the theme). A preview is highlighted with it, so a new choice
@@ -330,8 +387,14 @@ pub fn choices(dark: bool, chosen: &str, user: Option<&[Arc<UserTheme>]>) -> Vec
     let theirs = |name: &str| user.is_some_and(|user| user.iter().any(|theme| theme.name == name));
     let mut bat: Vec<_> = BAT
         .iter()
-        .filter(|(name, _, theme_dark)| *theme_dark == dark && !theirs(name.as_name()))
-        .map(|(name, label, _)| (name.as_name().to_owned(), (*label).to_owned()))
+        .map(|(name, label, theme_dark)| (name.as_name(), *label, *theme_dark))
+        .chain(
+            CARRIED
+                .iter()
+                .map(|(name, label, theme_dark, _)| (*name, *label, *theme_dark)),
+        )
+        .filter(|(name, _, theme_dark)| *theme_dark == dark && !theirs(name))
+        .map(|(name, label, _)| (name.to_owned(), label.to_owned()))
         .collect();
     bat.sort_by_cached_key(|(_, label)| label.to_lowercase());
     let mut choices = vec![(DEFAULT.to_owned(), "Default".to_owned())];
@@ -366,6 +429,7 @@ pub struct Palette {
 }
 
 enum Painted {
+    /// bat's, or one skwir carries (`CARRIED`).
     Bat(&'static Colors),
     User(Arc<UserTheme>),
 }
@@ -396,6 +460,8 @@ impl Palette {
         } else if let Some((name, ..)) = BAT.iter().find(|(name, ..)| name.as_name() == &*code.name)
         {
             Painted::Bat(bat_themes().get(*name))
+        } else if let Some(colors) = carried(&code.name) {
+            Painted::Bat(colors)
         } else {
             return own();
         };
@@ -729,6 +795,29 @@ mod tests {
         let dark = choices(true, DEFAULT, Some(&[]));
         assert!(dark.contains(&("Solarized (dark)".to_owned(), "Solarized".to_owned())));
         assert!(dark.contains(&("Dracula".to_owned(), "Dracula".to_owned())));
+    }
+
+    #[test]
+    fn the_themes_skwir_carries_read_and_are_offered_to_their_look() {
+        for (name, label, dark, _) in CARRIED {
+            let colors = carried(name).unwrap_or_else(|| panic!("{name} reads"));
+            assert_eq!(is_dark(colors), dark, "{label}");
+            assert!(!BAT.iter().any(|(bat, ..)| bat.as_name() == name), "{name}");
+            assert!(
+                choices(dark, DEFAULT, Some(&[])).contains(&(name.to_owned(), label.to_owned())),
+                "{name}"
+            );
+            let palette = Palette::of(&CodeTheme {
+                name: name.into(),
+                ..CodeTheme::own(dark)
+            });
+            assert!(palette.background.is_some(), "{name}: its own ground");
+            assert!(
+                !Highlighter::new(Some("rs"), &palette)
+                    .line("fn main() {}")
+                    .is_empty()
+            );
+        }
     }
 
     #[test]

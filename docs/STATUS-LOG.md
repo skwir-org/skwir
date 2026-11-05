@@ -11255,3 +11255,66 @@ LXQt, GNOME or Xfce session; a Kvantum theme's colors (not read).
   the named sizes (`sizes::Text`, `TextSizes::text_tiny`): Body, Small
   and Title, nothing written below Small (AGENTS.md, `sizes.rs`,
   ADR-117).
+
+## Skwir's palettes (2026-11-05)
+
+- The user asked whether Skwir's own colors could be chosen among preset
+  color themes, as Brave offers. A proposal page drew candidates through a
+  JavaScript port of `color.rs` and `Theme::derive` (it gives back the
+  hand-picked colors `skwir_s_steps_give_its_hand_picked_colors_again`
+  asserts, within its tolerances) and measured what the guard does to each.
+  The user took its recommendations and asked for all twelve at once, with
+  the code themes they need (ADR-071's amendment of 2026-11-05).
+- Built: `palettes.rs` (twelve palettes, a `Base` a look, their makers'
+  terminal colors and code themes), `ColorSource` in `desktop_style.rs`
+  (a palette worn whatever the desktop says, more contrast excepted, its
+  own accent kept; `colors_of`, `palette_code`), Colors from declared on
+  every system with each value's swatch (`SettingConstraints::swatches`,
+  `SettingSpec::swatch_of`, drawn from `Theme::made` in the look the theme
+  and the system's appearance give), the dialog's gallery of cards under
+  a row whose choice has swatches (`settings_view::swatch_gallery`,
+  `miniature`), `Base::terminal`, Default code following the palette
+  (`Theme::resolve`), and three code themes carried in `skwir-platform`
+  (`highlight::CARRIED`, `crates/platform/assets/code-themes`), offered
+  on the Reading page beside bat's. The notices carry their licences and
+  credit the palettes (`tools/package/notices.py`, `just notices`).
+- Colors checked against each project's own published palette by a
+  research agent (Solarized's README, `nord.css`, gruvbox.vim, Catppuccin's
+  `palette.json`, Dracula's spec, rosepinetheme.com, tokyonight.nvim,
+  everforest.vim): every value was theirs but Rosé Pine Dawn's text,
+  which became #464261 in 2025. Roles moved to the projects' own: Nord's
+  warning nord13, Tokyo Night's errors its `error` role, Rosé Pine's
+  success pine in both looks. Dracula's spec now has a light look
+  (Alucard), so every palette has both. Terminal colors from their makers'
+  ports (Catppuccin's from `palette.json`, where its terminal ports
+  disagree with it and each other); Nord's light look has none.
+- Code themes: Rosé Pine's from rose-pine/tm-theme (MIT); Tokyo Night's
+  from tokyonight.nvim (Apache-2.0), the Day file's leftovers of the
+  Night style (twelve colors, 1.04 to 1.9:1 on its ground) replaced by
+  their Day counterparts and the change said in the file; Everforest's
+  from mhanberg/everforest-textmate (MIT, archived, the only
+  medium-contrast port).
+- Tests (skwir-ui, skwir-platform): every palette reads in either
+  contrast and look; the guard moves no palette's chrome, text or accent
+  by more than 0.07 of Oklab's lightness at normal contrast (Solarized's
+  light text moves the most, 0.063); every palette's code theme is
+  offered for its look; the carried themes read, are offered to their
+  look and highlight; a palette is worn with nothing said and over a
+  scheme and accent said, its code theme Default's; a one-look palette
+  turns Automatic dark and lends its accent to the other look; Colors
+  from lists every palette and forgets one no longer offered; the cards
+  are drawn as worn (light with a light system, dark with the theme
+  forced dark). 158 tests of the two crates' theme, colors and code
+  themes passed.
+- In a window (debug build, Xvfb, lavapipe, no session bus so nothing
+  said by a desktop): Appearance shows the fifteen cards in four columns
+  under Colors from; clicking Nord wore it at once and wrote
+  `colors_from = "nord"`; Theme Dark redrew every card dark; Gruvbox
+  dark worn in the window (accent, selection, chrome); a Rust file's
+  preview drawn in Gruvbox's code colors, then, from the settings file
+  edited while it ran, in Rosé Pine's (carried) and Tokyo Night Day's
+  (carried), and Skwir's own with `skwir`.
+- Not checked: a screen reader on the gallery (its cards are mouse
+  targets; the dropdown is announced); macOS and Windows beyond
+  compiling; the terminal panel in each palette; Automatic's card on a
+  desktop whose scheme is read (no portal on the test display).

@@ -56,7 +56,17 @@ Views are in [views.md](views.md); what locations decide, in
   wearing the desktop's accent; Skwir's own chosen, no accent either. Text, the accent and the outcomes are
   guarded to their contrast (7:1 when the desktop asks for more); a
   token no desktop changes is `Kept`. Never a color beside the tokens.
-- A scheme is one look's. A forced other look is Skwir's palette with
+- **Skwir's palettes** (`palettes.rs`) are values of Colors from beside
+  Automatic, GTK and Qt: a `Base` a look each, worn whatever the desktop
+  says (more contrast excepted), with their own accent, and the
+  terminal colors and code theme their makers publish (Default on the
+  Reading page draws in it, `desktop_style::palette_code`). A palette
+  names no token: never a platform's palette or a company's colors
+  (ADR-071, 2026-11-05). A new one passes the guard tests
+  (`every_palette_reads_in_either_contrast`,
+  `a_palette_looks_like_itself_as_drawn`), and its credits go in
+  `tools/package/notices.py`.
+- A scheme is one look's. A forced other look is Skwir's own colors with
   the desktop's accent; Automatic takes the scheme's look when the
   desktop has one look's (`Theme::look`). An accent the system names
   replaces a scheme's, and the selection is then derived, unless it is

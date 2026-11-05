@@ -69,6 +69,7 @@ mod note_popover;
 mod omnibox;
 mod outline;
 pub mod palette;
+pub mod palettes;
 pub mod placeholder;
 mod player;
 pub mod preview;

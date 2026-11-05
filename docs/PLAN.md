@@ -102,7 +102,7 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
 | [Release 0.1: Linux](#release-01-linux) | released 2026-10-13 (0.1.0) | — |
 | [Names indexed by skwird](#names-indexed-by-skwird) | C built 2026-10-20; A, B and D wait for skwird (ADR-050) | — |
 | [Remote folders](#remote-folders) | A to F built and checked on Linux 2026-10-21 (ADR-077); G's list for the night of 2026-10-23 built (ADR-080 amended, ADR-084); devices listed before they are mounted 2026-10-26 (ADR-096); what is left in G | — |
-| [Colors and font from the desktop](#colors-and-font-from-the-desktop) | A to D and the fonts by role built 2026-10-19 and 20; E planned (ADR-071, ADR-073) | — |
+| [Colors and font from the desktop](#colors-and-font-from-the-desktop) | A to D and the fonts by role built 2026-10-19 and 20; Skwir's palettes (F) built 2026-11-05; E planned (ADR-071, ADR-073) | — |
 | [Indexing and AI (Phase 7)](#indexing-and-ai-phase-7) | designed and accepted 2026-10-26 (ADR-089 to ADR-095, `docs/indexing-and-ai.md`); nothing built | ~10 weeks |
 | [Phase 8: Polish and release](#phase-8-polish-and-release) | planned, ongoing | — |
 
@@ -2238,6 +2238,17 @@ its own, every color readable on what it is drawn on.
 - **E. macOS and Windows:** the accent, more contrast, Windows' contrast
   themes; read again on appearance changes and activation. Windows tried
   under Wine for what it answers; macOS compiled only.
+- **F. Skwir's palettes** (ADR-071's amendment of 2026-11-05): twelve
+  values of Colors from beside Automatic, GTK and Qt (Skwir, Paper,
+  Slate, Black; Solarized, Nord, Gruvbox, Catppuccin, Dracula, Rosé Pine,
+  Tokyo Night, Everforest), each a `Base` a look through the guard, with
+  their makers' terminal colors and code themes (three carried in
+  `skwir-platform`, beside bat's), drawn as cards in the dialog;
+  declared on every system. **Built 2026-11-05.** Checked in a window on
+  Xvfb (`docs/STATUS-LOG.md`, 2026-11-05). Not checked: a screen reader
+  on the gallery (its cards are mouse targets; the dropdown is
+  announced), macOS and Windows (compiled only), the terminal panel in
+  each palette.
 - **Fonts by role (ADR-073).** Three choices, Automatic or a family:
   `ui.font` (Appearance), `reading.font` (Reading › Text), `ui.code_font`
   (Reading › Code); Automatic is the desktop's font while Desktop colors

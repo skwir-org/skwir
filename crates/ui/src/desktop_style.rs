@@ -15,6 +15,7 @@ use skwir_core::App;
 use skwir_core::settings::Settings;
 use skwir_platform::desktop_style::{DesktopStyle, Scheme};
 
+use crate::palettes::{self, Palette};
 use crate::settings::{COLORS_FROM_KEY, DESKTOP_COLORS_KEY};
 use crate::theme::{Base, Contrast, Desktop, Schemes};
 
@@ -81,35 +82,49 @@ pub fn revision() -> u64 {
 }
 
 /// What the look takes from the desktop: the scheme `ui.colors_from`
-/// chooses (Automatic's, GTK's or Qt's) and the accent, unless skwir's own
-/// are chosen; more contrast whenever it asks for it, which is a need, not
-/// a style. An accent the system names (the portal's) replaces a scheme's,
-/// whose selection is then derived from it, unless it is the scheme's own
-/// said again (Plasma's portal); a look without a scheme wears the
-/// system's accent, else the scheme's (ADR-071, point 4).
+/// chooses (Automatic's, GTK's or Qt's) and the accent, or the palette it
+/// chooses (`palettes.rs`, worn whatever the desktop says); more contrast
+/// whenever it asks for it, which is a need, not a style. An accent the
+/// system names (the portal's) replaces a scheme's, whose selection is
+/// then derived from it, unless it is the scheme's own said again
+/// (Plasma's portal); a look without a scheme wears the system's accent,
+/// else the scheme's (ADR-071, point 4). A palette keeps its own accent.
 pub fn colors(settings: &Settings) -> Desktop {
-    let Some(said) = said() else {
-        return Desktop::default();
-    };
-    let contrast = if said.more_contrast {
+    colors_of(ColorSource::chosen(settings), said().as_ref())
+}
+
+/// What the look takes from `source`, as the desktop said last.
+pub fn colors_for(source: ColorSource) -> Desktop {
+    colors_of(source, said().as_ref())
+}
+
+/// What the look takes from `source`, the desktop having said `said`.
+pub fn colors_of(source: ColorSource, said: Option<&DesktopStyle>) -> Desktop {
+    let contrast = if said.is_some_and(|said| said.more_contrast) {
         Contrast::More
     } else {
         Contrast::Normal
     };
-    let chosen = match Source::of_colors(settings) {
-        Source::Own => {
-            return Desktop {
-                contrast,
-                ..Desktop::default()
-            };
-        }
-        Source::Automatic => said.schemes.clone(),
-        Source::Gtk => said
+    let said = match source {
+        ColorSource::Palette(palette) => return palette.desktop(contrast),
+        _ => match said {
+            Some(said) => said,
+            None => {
+                return Desktop {
+                    contrast,
+                    ..Desktop::default()
+                };
+            }
+        },
+    };
+    let chosen = match source {
+        ColorSource::Automatic | ColorSource::Palette(_) => said.schemes.clone(),
+        ColorSource::Gtk => said
             .gtk_colors
             .clone()
             .map(|c| c.schemes)
             .unwrap_or_default(),
-        Source::Qt => said
+        ColorSource::Qt => said
             .qt_colors
             .clone()
             .map(|c| c.schemes)
@@ -141,6 +156,66 @@ pub fn colors(settings: &Settings) -> Desktop {
     }
 }
 
+/// The code theme the palette chosen publishes for the look `dark`
+/// names, which code is drawn in while the Reading page says Default.
+pub fn palette_code(settings: &Settings, dark: bool) -> Option<&'static str> {
+    match ColorSource::chosen(settings) {
+        ColorSource::Palette(palette) => palette.code(dark),
+        _ => None,
+    }
+}
+
+/// Where the colors are read (`ui.colors_from`, ADR-071): the desktop's
+/// own then GTK's then Qt's (Automatic), GTK's or Qt's alone where they
+/// are read apart, or one of Skwir's palettes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ColorSource {
+    Automatic,
+    Gtk,
+    Qt,
+    Palette(&'static Palette),
+}
+
+impl ColorSource {
+    /// What Colors from chooses; a toolkit this system does not read apart
+    /// (a settings file brought from Linux), or a palette no longer
+    /// offered, is Automatic.
+    pub fn chosen(settings: &Settings) -> Self {
+        let toolkits = skwir_platform::desktop_style::TOOLKITS;
+        match settings.get::<String>(COLORS_FROM_KEY).as_deref() {
+            Some("gtk") if toolkits => ColorSource::Gtk,
+            Some("qt") if toolkits => ColorSource::Qt,
+            Some(id) => palettes::by_id(id).map_or(ColorSource::Automatic, ColorSource::Palette),
+            None => ColorSource::Automatic,
+        }
+    }
+
+    /// Its value of `ui.colors_from`.
+    pub fn value(self) -> &'static str {
+        match self {
+            ColorSource::Automatic => "auto",
+            ColorSource::Gtk => "gtk",
+            ColorSource::Qt => "qt",
+            ColorSource::Palette(palette) => palette.id,
+        }
+    }
+
+    /// The choices this system offers, in their order: Automatic, GTK and
+    /// Qt where they are read apart, then the palettes.
+    pub fn choices() -> Vec<(ColorSource, &'static str)> {
+        let mut choices = vec![(ColorSource::Automatic, "Automatic")];
+        if skwir_platform::desktop_style::TOOLKITS {
+            choices.extend([(ColorSource::Gtk, "GTK"), (ColorSource::Qt, "Qt")]);
+        }
+        choices.extend(
+            palettes::PALETTES
+                .iter()
+                .map(|palette| (ColorSource::Palette(palette), palette.name)),
+        );
+        choices
+    }
+}
+
 fn hsla([r, g, b]: [f32; 3]) -> Hsla {
     Hsla::from(Rgba { r, g, b, a: 1. })
 }
@@ -168,6 +243,7 @@ fn base(scheme: &Scheme) -> Base {
         error: scheme.error.map_or(own.error, hsla),
         warning: scheme.warning.map_or(own.warning, hsla),
         success: scheme.success.map_or(own.success, hsla),
+        terminal: None,
     }
 }
 
@@ -192,10 +268,10 @@ pub fn fonts(settings: &Settings) -> Fonts {
 }
 
 /// Where the fonts a font setting's Automatic writes in, and their sizes,
-/// are read (`ui.fonts_from`, ADR-117), and where the colors are
-/// (`ui.colors_from`, ADR-071): Automatic (the desktop's own, then GTK's,
-/// then Qt's; macOS's or Windows' own fonts), skwir's own, or GTK's or
-/// Qt's alone where they are read apart (`desktop_style::TOOLKITS`).
+/// are read (`ui.fonts_from`, ADR-117): Automatic (the desktop's own,
+/// then GTK's, then Qt's; macOS's or Windows' own fonts), skwir's own, or
+/// GTK's or Qt's alone where they are read apart
+/// (`desktop_style::TOOLKITS`). The colors' are a `ColorSource`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Source {
     Automatic,
@@ -239,11 +315,6 @@ impl Source {
         Self::chosen(settings, crate::settings::FONTS_FROM_KEY)
     }
 
-    /// What Colors from chooses.
-    pub fn of_colors(settings: &Settings) -> Self {
-        Self::chosen(settings, crate::settings::COLORS_FROM_KEY)
-    }
-
     /// What the source's Automatic read, as its choices name it: GTK's
     /// (the portal's are GTK's), Qt's, or the desktop's own by its name
     /// (`Plasma`); empty when nothing was.
@@ -257,7 +328,8 @@ impl Source {
     }
 }
 
-/// `ui.fonts_from`'s and `ui.colors_from`'s value for skwir's own.
+/// `ui.fonts_from`'s value for skwir's own, and `ui.colors_from`'s for
+/// the Skwir palette (`palettes::SKWIR`).
 pub const OWN: &str = "skwir";
 
 /// Before `ui.fonts_from` stood apart, Desktop colors turned off gave
@@ -689,7 +761,10 @@ mod tests {
             (tmp, app)
         };
         let (_tmp, off) = file(false);
-        assert_eq!(Source::of_colors(&off.settings), Source::Own);
+        assert_eq!(
+            ColorSource::chosen(&off.settings),
+            ColorSource::Palette(palettes::SKWIR)
+        );
         assert_eq!(Source::of_fonts(&off.settings), Source::Own);
         assert_eq!(off.settings.text(DESKTOP_COLORS_KEY), None, "forgotten");
         // Left on: Automatic, the switch forgotten, nothing moved into
@@ -700,7 +775,88 @@ mod tests {
         // Chosen since, it is never moved again.
         off.settings.set(COLORS_FROM_KEY, "qt".into());
         keep_own_colors(&off.settings);
-        assert_eq!(Source::of_colors(&off.settings), Source::Qt);
+        assert_eq!(ColorSource::chosen(&off.settings), ColorSource::Qt);
+    }
+
+    #[test]
+    fn a_palette_is_worn_whatever_the_desktop_says_with_its_own_accent() {
+        let (_tmp, app) = app();
+        app.settings.set(COLORS_FROM_KEY, "nord".into());
+        let nord = palettes::by_id("nord").unwrap();
+        // Nothing said: macOS, Windows, or before the desktop answers.
+        let desktop = colors(&app.settings);
+        assert_eq!(desktop.schemes.dark, nord.base(true));
+        assert_eq!(Theme::of(true, desktop).bg, nord.base(true).unwrap().bg);
+        // A scheme and an accent said: neither is worn; more contrast is.
+        set(DesktopStyle {
+            accent: Some([0.9, 0.3, 0.1]),
+            more_contrast: true,
+            ..with_scheme(Some(breeze()), None)
+        });
+        let desktop = colors(&app.settings);
+        assert_eq!(desktop.schemes.light, nord.base(false));
+        assert_eq!(desktop.contrast, Contrast::More);
+        assert_eq!(desktop.accent, nord.base(false).map(|base| base.accent));
+        // Its code theme is Default's while it is worn.
+        assert_eq!(palette_code(&app.settings, true), Some("Nord"));
+        app.settings.set(COLORS_FROM_KEY, "auto".into());
+        assert_eq!(palette_code(&app.settings, true), None);
+    }
+
+    #[test]
+    fn a_palette_of_one_look_takes_it_and_lends_its_accent_to_the_other() {
+        use crate::palettes::Look;
+        use gpui::WindowAppearance::Light;
+        static NIGHT: Palette = Palette {
+            id: "night",
+            name: "Night",
+            by: None,
+            light: None,
+            dark: Some(Look {
+                bg: 0x101018,
+                surface: 0x18181f,
+                text: 0xe8e8f0,
+                muted: None,
+                accent: 0xc080ff,
+                selection: None,
+                error: 0xff6b6b,
+                warning: 0xf2b84b,
+                success: 0x6fcf7f,
+                terminal: None,
+                code: Some("Dracula"),
+            }),
+        };
+        let desktop = colors_of(ColorSource::Palette(&NIGHT), None);
+        assert!(Theme::look(None, &desktop, Light), "Automatic turns dark");
+        assert!(!Theme::look(Some("light"), &desktop, Light));
+        // Light forced: Skwir's light look, wearing the palette's accent.
+        let light = Theme::of(false, desktop);
+        assert_eq!(light.bg, Theme::light().bg);
+        assert_ne!(light.accent, Theme::light().accent);
+        assert_eq!(light.terminal, Theme::light().terminal);
+        assert_eq!(NIGHT.code(false), None);
+    }
+
+    #[test]
+    fn colors_from_offers_the_palettes_and_forgets_one_no_longer_offered() {
+        let (_tmp, app) = app();
+        let values: Vec<_> = ColorSource::choices()
+            .into_iter()
+            .map(|(source, _)| source.value())
+            .collect();
+        assert_eq!(values[0], "auto");
+        for palette in &palettes::PALETTES {
+            assert!(values.contains(&palette.id), "{}", palette.id);
+        }
+        let spec = app.settings.spec(COLORS_FROM_KEY).expect("declared");
+        assert_eq!(spec.constraints.choices, values);
+        app.settings.set(COLORS_FROM_KEY, "gone".into());
+        assert_eq!(ColorSource::chosen(&app.settings), ColorSource::Automatic);
+        app.settings.set(COLORS_FROM_KEY, OWN.into());
+        assert_eq!(
+            ColorSource::chosen(&app.settings),
+            ColorSource::Palette(palettes::SKWIR)
+        );
     }
 
     #[test]
