@@ -30,6 +30,10 @@
   said under a name, and badges such as the grid's tags are no smaller than
   any desktop's smallest text. An empty folder's or place's message no longer
   runs past a narrow pane.
+- **Breeze's icons in your colors**: folders and the other icons Breeze draws
+  in the color scheme's colors now take the accent and the warning, error and
+  success colors as KDE's applications draw them, where large folders were
+  drawn flat in the text's color, grey or black.
 - **Skwir's own fonts**, Inter and JetBrains Mono for code, now come with its
   packages, so choosing them looks the same everywhere, and macOS and Windows
   write code in JetBrains Mono by default. They are read only when drawn.

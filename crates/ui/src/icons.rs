@@ -1,14 +1,23 @@
 //! Icon lookup through the platform crate, resolved on a worker and cached
 //! per (name, size), and a GPUI `AssetSource` serving absolute filesystem paths so `svg()` works.
 //!
-//! A named icon the theme has only as a symbolic variant (current Adwaita
-//! and Breeze ship `folder-saved-search` only as `-symbolic`) is used as
-//! GTK does, drawn in the text color: a symbolic SVG is a shape to tint,
-//! not a picture. So is an icon drawn in the color scheme's colors (KDE's
-//! `current-color-scheme` stylesheet: Breeze's small icons), which its
-//! theme expects recolored: drawn as its file says, it stays dark gray on
-//! a dark theme. The worker that finds one reads it too (`shape_of`), so
-//! drawing it never touches the disk.
+//! A theme's icon is one of three kinds (`Kind`), which the worker that
+//! finds it reads (`kind_of`):
+//!
+//! - An icon drawn in KDE's color scheme (its `current-color-scheme`
+//!   stylesheet: most of Breeze) names its colors by their part, text,
+//!   accent, a state, and leaves them for whoever draws it to fill, as
+//!   KDE's icon loader fills them from the palette. Skwir fills them from
+//!   the theme (`Ink`) and draws it in full color: drawn as its file says,
+//!   it stays dark gray on a dark theme, and drawn in one color, a large
+//!   folder's layers (its body in the accent, a flap and a shadow over it)
+//!   run into one shape in the text's color.
+//! - A symbolic icon (GTK's, by its `-symbolic` name; current Adwaita and
+//!   Breeze ship `folder-saved-search` only so) is a shape drawn in the
+//!   text's color, as GTK draws it. A named icon the theme has only as one
+//!   is used so. The worker keeps its bytes, so drawing it never touches
+//!   the disk.
+//! - Any other is a picture in its own colors.
 //!
 //! A full-color SVG icon is rasterized at the size it is drawn, in device
 //! pixels rounded up to a few sides (`raster_side`), never at the size its
@@ -62,47 +71,63 @@ fn lookup_named(name: &str, size: u16) -> Option<PathBuf> {
     })
 }
 
-/// What `shape_of` found each theme icon file to be: a shape or not.
-fn shapes() -> &'static Mutex<HashMap<PathBuf, bool>> {
-    static SHAPES: std::sync::OnceLock<Mutex<HashMap<PathBuf, bool>>> = std::sync::OnceLock::new();
-    SHAPES.get_or_init(Mutex::default)
+/// What a theme's icon file is, and so how it is drawn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Kind {
+    /// In its own colors.
+    Picture,
+    /// In KDE's color scheme, filled from the theme (`Ink`).
+    Scheme,
+    /// One color: a symbolic icon.
+    Shape,
 }
 
-/// An icon file larger than this is no shape: drawn as a picture.
+/// What `kind_of` found each theme icon file to be.
+fn kinds() -> &'static Mutex<HashMap<PathBuf, Kind>> {
+    static KINDS: std::sync::OnceLock<Mutex<HashMap<PathBuf, Kind>>> = std::sync::OnceLock::new();
+    KINDS.get_or_init(Mutex::default)
+}
+
+/// An icon file larger than this is read no further: drawn as a picture.
 const ICON_BYTES: u64 = 1 << 20;
 
-/// Whether a theme's icon file is a shape to draw in one color: a
-/// symbolic one (GTK's, by its name), or an SVG in the color scheme's
-/// colors (KDE's `current-color-scheme` stylesheet). Reads the file the
-/// first time, and keeps a shape's bytes for `svg()`: a worker's.
-fn shape_of(path: &Path) -> bool {
-    if let Some(known) = known_shape(path) {
+/// What a theme's icon file is (`Kind`): an SVG in KDE's color scheme (its
+/// `current-color-scheme` stylesheet), a symbolic one (GTK's, by its name),
+/// or a picture. Reads the file the first time, and keeps a shape's bytes
+/// for `svg()`: a worker's.
+fn kind_of(path: &Path) -> Kind {
+    if let Some(known) = known_kind(path) {
         return known;
     }
     let bytes = (is_svg(path) && std::fs::metadata(path).is_ok_and(|m| m.len() <= ICON_BYTES))
         .then(|| std::fs::read(path).ok())
         .flatten();
-    let shape = bytes.as_deref().is_some_and(|bytes| {
-        is_symbolic(path)
-            || bytes
+    let kind = match bytes.as_deref() {
+        Some(bytes)
+            if bytes
                 .windows(b"current-color-scheme".len())
-                .any(|w| w == b"current-color-scheme")
-    });
-    if shape
+                .any(|w| w == b"current-color-scheme") =>
+        {
+            Kind::Scheme
+        }
+        Some(_) if is_symbolic(path) => Kind::Shape,
+        _ => Kind::Picture,
+    };
+    if kind == Kind::Shape
         && let Some(bytes) = bytes
         && let Ok(mut preloaded) = preloaded().lock()
     {
         preloaded.insert(path.to_string_lossy().into_owned(), bytes.into());
     }
-    if let Ok(mut shapes) = shapes().lock() {
-        shapes.insert(path.to_path_buf(), shape);
+    if let Ok(mut kinds) = kinds().lock() {
+        kinds.insert(path.to_path_buf(), kind);
     }
-    shape
+    kind
 }
 
-/// What `shape_of` found `path` to be, if it has read it. Never blocks.
-fn known_shape(path: &Path) -> Option<bool> {
-    shapes().lock().ok()?.get(path).copied()
+/// What `kind_of` found `path` to be, if it has read it. Never blocks.
+fn known_kind(path: &Path) -> Option<Kind> {
+    kinds().lock().ok()?.get(path).copied()
 }
 
 impl AssetSource for FsAssets {
@@ -137,20 +162,106 @@ impl AssetSource for FsAssets {
 pub enum Pic {
     /// A theme's icon, in its own colors.
     Theme(Arc<Path>),
-    /// A theme's icon drawn as a shape in one color (`shape_of`).
+    /// A theme's icon in KDE's color scheme, filled from the theme
+    /// (`Kind::Scheme`).
+    Scheme(Arc<Path>),
+    /// A theme's icon drawn as a shape in one color (`Kind::Shape`).
     Shape(Arc<Path>),
     System(Arc<SystemIcon>),
 }
 
 impl Pic {
-    /// A theme's icon file, as `shape_of` read it: blocks the first time.
+    /// A theme's icon file, as `kind_of` read it: blocks the first time.
     fn of_theme(path: PathBuf) -> Pic {
-        if shape_of(&path) {
-            Pic::Shape(path.into())
-        } else {
-            Pic::Theme(path.into())
+        let kind = kind_of(&path);
+        Pic::of_kind(path, kind)
+    }
+
+    fn of_kind(path: PathBuf, kind: Kind) -> Pic {
+        match kind {
+            Kind::Picture => Pic::Theme(path.into()),
+            Kind::Scheme => Pic::Scheme(path.into()),
+            Kind::Shape => Pic::Shape(path.into()),
         }
     }
+}
+
+/// The colors an icon is drawn in: a shape's (`Pic::Shape`) its text's,
+/// and what an icon in KDE's color scheme (`Pic::Scheme`) names, filled as
+/// KDE's icon loader fills them from the palette: its text (and buttons'
+/// text) in the color the caller draws text in there, its background the
+/// ground it is drawn on, its accent (and highlight) and states (positive,
+/// neutral, negative) the theme's. Straight RGBA, so it keys what is drawn
+/// in it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Ink {
+    text: [u8; 4],
+    ground: [u8; 4],
+    accent: [u8; 4],
+    positive: [u8; 4],
+    neutral: [u8; 4],
+    negative: [u8; 4],
+}
+
+impl Ink {
+    /// Text in `text`, on the theme's ground.
+    pub fn of(theme: &crate::theme::Theme, text: Hsla) -> Ink {
+        Ink {
+            text: rgba_bytes(text),
+            ground: rgba_bytes(theme.bg),
+            accent: rgba_bytes(theme.accent),
+            positive: rgba_bytes(theme.success),
+            neutral: rgba_bytes(theme.warning),
+            negative: rgba_bytes(theme.error),
+        }
+    }
+
+    /// Drawn on `ground` (a chosen row's selection) instead.
+    #[must_use]
+    pub fn on(self, ground: Hsla) -> Ink {
+        Ink {
+            ground: rgba_bytes(ground),
+            ..self
+        }
+    }
+
+    /// What a shape is drawn in: the text's color.
+    fn tint(&self) -> Hsla {
+        let [r, g, b, a] = self.text.map(|c| f32::from(c) / 255.);
+        gpui::Rgba { r, g, b, a }.into()
+    }
+
+    /// The stylesheet that fills KDE's color scheme with these colors, laid
+    /// under the icon's own and winning over it (`!important`).
+    fn style_sheet(&self) -> String {
+        let css = |[r, g, b, a]: [u8; 4]| format!("rgba({r},{g},{b},{})", f32::from(a) / 255.);
+        let rule = |classes: &[&str], color: [u8; 4]| {
+            let selector: Vec<String> = classes
+                .iter()
+                .map(|c| format!(".ColorScheme-{c}"))
+                .collect();
+            format!("{}{{color:{} !important}}", selector.join(","), css(color))
+        };
+        [
+            rule(&["Text", "ButtonText", "ViewText"], self.text),
+            rule(
+                &["Background", "ViewBackground", "ButtonBackground"],
+                self.ground,
+            ),
+            rule(&["Accent", "Highlight", "ActiveText"], self.accent),
+            rule(&["PositiveText"], self.positive),
+            rule(&["NeutralText"], self.neutral),
+            rule(&["NegativeText"], self.negative),
+        ]
+        .concat()
+    }
+}
+
+/// A color as straight RGBA bytes.
+fn rgba_bytes(color: Hsla) -> [u8; 4] {
+    let rgba = color.to_rgb();
+    let byte = |c: f32| (c.clamp(0., 1.) * 255.).round() as u8;
+    [byte(rgba.r), byte(rgba.g), byte(rgba.b), byte(rgba.a)]
 }
 
 /// What an icon is looked up by.
@@ -385,16 +496,10 @@ impl IconCache {
             },
             _ => None,
         };
-        // Whether a file is a shape is known once a worker read it.
+        // What a file is, is known once a worker read it.
         let found = match cached {
             Some(None) => Some(None),
-            Some(Some(path)) => known_shape(&path).map(|shape| {
-                Some(if shape {
-                    Pic::Shape(path.into())
-                } else {
-                    Pic::Theme(path.into())
-                })
-            }),
+            Some(Some(path)) => known_kind(&path).map(|kind| Some(Pic::of_kind(path, kind))),
             None => None,
         };
         let Some(found) = found else {
@@ -425,21 +530,19 @@ impl IconCache {
         self.lookup(Want::of_entry(e, path), size)
     }
 
-    /// The icon `for_entry` gives, as pixels `side` wide, a shape in
-    /// `tint`: what `pixels` draws, for a picture that leaves the window.
+    /// The icon `for_entry` gives, as pixels `side` wide, in `ink`: what
+    /// `pixels` draws, for a picture that leaves the window.
     pub fn pixels_for_entry(
         &self,
         e: &Entry,
         path: impl FnOnce() -> Option<PathBuf>,
         side: u32,
-        tint: Hsla,
+        ink: Ink,
     ) -> IconPixels {
-        let rgba = tint.to_rgb();
-        let byte = |c: f32| (c.clamp(0., 1.) * 255.).round() as u8;
         IconPixels {
             want: Want::of_entry(e, path),
             side,
-            tint: [byte(rgba.r), byte(rgba.g), byte(rgba.b), byte(rgba.a)],
+            ink,
             theme: self.theme.clone(),
         }
     }
@@ -516,16 +619,29 @@ impl IconCache {
     }
 }
 
-/// Render an icon at `size` px: a theme's file in its own colors, a shape
-/// in `tint`, the system's picture.
-pub fn element(pic: &Pic, size: f32, tint: Hsla) -> AnyElement {
+/// Render an icon at `size` px: a theme's file in its own colors or in
+/// `ink` (KDE's color scheme filled, a shape in its text's color), the
+/// system's picture.
+pub fn element(pic: &Pic, size: f32, ink: Ink) -> AnyElement {
     match pic {
         Pic::Theme(path) => file_element(path, size),
+        Pic::Scheme(path) => {
+            let path = Arc::clone(path);
+            img(ImageSource::Custom(Arc::new(
+                move |window: &mut Window, cx: &mut gpui::App| {
+                    let pixels = raster_side(size * window.scale_factor());
+                    window.use_asset::<SchemeSvg>(&(Arc::clone(&path), pixels, ink), cx)
+                },
+            )))
+            .size(px(size))
+            .flex_none()
+            .into_any_element()
+        }
         Pic::Shape(path) => svg()
             .path(SharedString::from(path.to_string_lossy().into_owned()))
             .size(px(size))
             .flex_none()
-            .text_color(tint)
+            .text_color(ink.tint())
             .into_any_element(),
         Pic::System(icon) => {
             let icon = Arc::clone(icon);
@@ -618,6 +734,59 @@ impl Asset for SizedSvg {
     }
 }
 
+/// An SVG icon in KDE's color scheme (`Pic::Scheme`) rasterized within a
+/// side of device pixels in an `Ink`, kept per (file, side, ink) as
+/// `SizedSvg` keeps a file's. What the colors before drew is given back
+/// when the theme's change (`recolored`).
+enum SchemeSvg {}
+
+/// What was drawn of icons in KDE's color scheme, as long as GPUI keeps
+/// it: what `recolored` gives back.
+type SchemeKey = (Arc<Path>, u32, Ink);
+fn scheme_drawn() -> &'static Mutex<HashMap<SchemeKey, Weak<RenderImage>>> {
+    static DRAWN: std::sync::OnceLock<Mutex<HashMap<SchemeKey, Weak<RenderImage>>>> =
+        std::sync::OnceLock::new();
+    DRAWN.get_or_init(Mutex::default)
+}
+
+impl Asset for SchemeSvg {
+    type Source = SchemeKey;
+    type Output = Result<Arc<RenderImage>, ImageCacheError>;
+
+    // As `SizedSvg::load`: the work stays in the future.
+    #[allow(clippy::manual_async_fn)]
+    fn load(
+        (path, side, ink): Self::Source,
+        _cx: &mut gpui::App,
+    ) -> impl Future<Output = Self::Output> + Send + 'static {
+        async move {
+            let sheet = ink.style_sheet();
+            let image = render_image(icons::rasterize_styled(&path, side, Some(&sheet)))?;
+            if let Ok(mut drawn) = scheme_drawn().lock() {
+                drawn.insert((path, side, ink), Arc::downgrade(&image));
+            }
+            Ok(image)
+        }
+    }
+}
+
+/// The theme's colors changed: what icons in KDE's color scheme were drawn
+/// in the colors before is given back (GPUI's asset cache keeps a picture
+/// until told to forget it, the atlas its texture until it is dropped).
+/// The next frame draws them in the new colors.
+pub fn recolored(window: &mut Window, cx: &mut gpui::App) {
+    let drawn: Vec<(SchemeKey, Weak<RenderImage>)> = match scheme_drawn().lock() {
+        Ok(mut drawn) => drawn.drain().collect(),
+        Err(_) => return,
+    };
+    for (key, image) in drawn {
+        cx.remove_asset::<SchemeSvg>(&key);
+        if let Some(image) = image.upgrade() {
+            cx.drop_image(image, Some(&mut *window));
+        }
+    }
+}
+
 /// skwir's icon (`APP_ICON`) rasterized within a side of device pixels,
 /// kept per side as `SizedSvg` keeps a file's.
 enum AppIcon {}
@@ -682,12 +851,12 @@ impl Asset for SystemPicture {
 /// An entry's icon as straight RGBA pixels, for a picture that leaves the
 /// window and must be pixels of its own (a drag's, which the compositor
 /// shows once it leaves): what it is looked up by, the side it is drawn
-/// within, the color a shape is drawn in, and the theme it was asked of.
+/// within, the colors it is drawn in, and the theme it was asked of.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct IconPixels {
     want: Want,
     side: u32,
-    tint: [u8; 4],
+    ink: Ink,
     theme: Option<String>,
 }
 
@@ -701,8 +870,13 @@ impl IconPixels {
         };
         match resolve(&self.want, u16::try_from(self.side).unwrap_or(u16::MAX))? {
             Pic::Theme(path) => icon_file(&path, self.side).map(decoded),
+            Pic::Scheme(path) => {
+                icons::rasterize_styled(&path, self.side, Some(&self.ink.style_sheet()))
+                    .ok()
+                    .map(decoded)
+            }
             Pic::Shape(path) => icon_file(&path, self.side).map(|mut drawn| {
-                tint(&mut drawn.rgba, self.tint);
+                tint(&mut drawn.rgba, self.ink.text);
                 decoded(drawn)
             }),
             Pic::System(icon) => system_icons::picture(&icon, self.side).ok()?,
@@ -852,7 +1026,7 @@ pub fn entry_picture(
     theme: &crate::theme::Theme,
 ) -> AnyElement {
     let picture = match icon {
-        Some(icon) => element(icon, size, theme.text_muted),
+        Some(icon) => element(icon, size, Ink::of(theme, theme.text_muted)),
         None => div()
             .size(px(size))
             .flex_none()
@@ -867,16 +1041,15 @@ pub fn entry_picture(
     marked(picture, size, mark, theme)
 }
 
-/// A named icon at `size` px: in its own colors, or in `color` when it is
-/// a shape (`Pic::Shape`).
-pub fn themed(pic: &Pic, size: f32, color: Hsla) -> AnyElement {
-    element(pic, size, color)
+/// A named icon at `size` px: in its own colors, or in `ink` (`element`).
+pub fn themed(pic: &Pic, size: f32, ink: Ink) -> AnyElement {
+    element(pic, size, ink)
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        APP_ICON, IconCache, OWN_KEPT, OwnIcons, Pic, SystemIcon, Want, is_svg, is_symbolic,
+        APP_ICON, IconCache, Ink, OWN_KEPT, OwnIcons, Pic, SystemIcon, Want, is_svg, is_symbolic,
         preloaded, raster_side, tint,
     };
     use std::path::{Path, PathBuf};
@@ -959,9 +1132,9 @@ mod tests {
     }
 
     #[test]
-    fn an_icon_in_the_color_schemes_colors_is_a_shape_drawn_in_the_text_color() {
+    fn an_icon_in_the_color_schemes_colors_is_filled_and_a_symbolic_one_is_a_shape() {
         let dir = tempfile::tempdir().unwrap();
-        // Breeze's small icons: a stylesheet whose colors KDE replaces.
+        // Breeze's: a stylesheet whose colors KDE fills.
         let recolored = dir.path().join("user-home.svg");
         std::fs::write(
             &recolored,
@@ -981,7 +1154,7 @@ mod tests {
 
         assert_eq!(
             Pic::of_theme(recolored.clone()),
-            Pic::Shape(recolored.clone().into())
+            Pic::Scheme(recolored.clone().into())
         );
         assert_eq!(Pic::of_theme(picture.clone()), Pic::Theme(picture.into()));
         assert_eq!(
@@ -989,10 +1162,89 @@ mod tests {
             Pic::Shape(symbolic.clone().into())
         );
         assert_eq!(Pic::of_theme(png.clone()), Pic::Theme(png.into()));
-        // A shape's bytes are kept for `svg()`, which draws it.
+        // A shape's bytes are kept for `svg()`, which draws it; an icon
+        // filled is read where it is drawn.
         let kept = preloaded().lock().unwrap();
-        assert!(kept.contains_key(&*recolored.to_string_lossy()));
         assert!(kept.contains_key(&*symbolic.to_string_lossy()));
+        assert!(!kept.contains_key(&*recolored.to_string_lossy()));
+    }
+
+    #[test]
+    fn a_folder_in_the_color_scheme_keeps_its_layers_in_the_themes_colors() {
+        // Breeze's 32 px folder, cut down: its body in the accent, a flap
+        // darkened over it, an edge in the text's color, faint.
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("folder.svg");
+        std::fs::write(
+            &folder,
+            r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 4 4"><defs><style type="text/css" id="current-color-scheme">.ColorScheme-Text { color:#31363b; } .ColorScheme-Accent { color:#3daee9; }</style></defs><path style="fill:currentColor" d="M0 0h4v4H0z" class="ColorScheme-Accent"/><path style="fill-opacity:0.5" d="M0 0h4v1H0z"/><path style="fill:currentColor;fill-opacity:0.5" d="M0 3h4v1H0z" class="ColorScheme-Text"/></svg>"#,
+        )
+        .unwrap();
+        let ink = Ink {
+            text: [255, 255, 255, 255],
+            ground: [0, 0, 0, 255],
+            accent: [200, 0, 0, 255],
+            positive: [0, 200, 0, 255],
+            neutral: [200, 200, 0, 255],
+            negative: [200, 0, 200, 255],
+        };
+        let drawn =
+            skwir_platform::icons::rasterize_styled(&folder, 4, Some(&ink.style_sheet())).unwrap();
+        let pixel = |y: usize| &drawn.rgba[y * 4 * 4..][..4];
+        assert_eq!(pixel(2), [200, 0, 0, 255], "the body in the theme's accent");
+        assert_eq!(pixel(0), [100, 0, 0, 255], "the flap darkened over it");
+        assert_eq!(
+            pixel(3),
+            [228, 128, 128, 255],
+            "the edge in the text's color, faint"
+        );
+    }
+
+    #[test]
+    fn an_ink_fills_every_part_kdes_scheme_names() {
+        let ink = Ink {
+            text: [1, 2, 3, 255],
+            ground: [4, 5, 6, 255],
+            accent: [7, 8, 9, 255],
+            positive: [10, 11, 12, 255],
+            neutral: [13, 14, 15, 255],
+            negative: [16, 17, 18, 128],
+        };
+        let sheet = ink.style_sheet();
+        for (part, color) in [
+            ("Text", "rgba(1,2,3,1)"),
+            ("ButtonText", "rgba(1,2,3,1)"),
+            ("Background", "rgba(4,5,6,1)"),
+            ("Accent", "rgba(7,8,9,1)"),
+            ("Highlight", "rgba(7,8,9,1)"),
+            ("PositiveText", "rgba(10,11,12,1)"),
+            ("NeutralText", "rgba(13,14,15,1)"),
+            ("NegativeText", "rgba(16,17,18,0.5019608)"),
+        ] {
+            let rule = sheet
+                .split('}')
+                .find(|rule| {
+                    rule.split('{')
+                        .next()
+                        .unwrap()
+                        .split(',')
+                        .any(|s| s == format!(".ColorScheme-{part}"))
+                })
+                .unwrap_or_else(|| panic!("{part} filled: {sheet}"));
+            assert!(
+                rule.ends_with(&format!("color:{color} !important")),
+                "{rule}"
+            );
+        }
+        assert_eq!(
+            ink.tint(),
+            gpui::Hsla::from(gpui::Rgba {
+                r: 1. / 255.,
+                g: 2. / 255.,
+                b: 3. / 255.,
+                a: 1.
+            })
+        );
     }
 
     #[test]

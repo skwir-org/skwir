@@ -21,12 +21,23 @@ use crate::mime::Mime;
 /// with the 16 px of a sidebar row. Inert, as a drawing previewed is.
 /// Reads the file: call it from a worker.
 pub fn rasterize(path: &std::path::Path, side: u32) -> anyhow::Result<crate::inspection::Decoded> {
+    rasterize_styled(path, side, None)
+}
+
+/// An SVG icon drawn as `rasterize` draws it, with `style_sheet` laid under
+/// its own (`inspection::drawing_styled`): the colors of KDE's color
+/// scheme, which its icons leave to whoever draws them.
+pub fn rasterize_styled(
+    path: &std::path::Path,
+    side: u32,
+    style_sheet: Option<&str>,
+) -> anyhow::Result<crate::inspection::Decoded> {
     let bytes = crate::inspection::read_drawing(
         path,
         crate::inspection::limits::Bounds::QUICK,
         &skwir_core::CancelToken::new(),
     )?;
-    crate::inspection::drawing_within(&bytes, side)
+    crate::inspection::drawing_styled(&bytes, side, style_sheet)
 }
 
 /// The theme the user chose in skwir (`ui.icon_theme`), by its folder's

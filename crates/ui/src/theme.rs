@@ -916,6 +916,17 @@ impl Theme {
         }
     }
 
+    /// Whether `other` draws in the same colors: it may write in other
+    /// fonts or sizes.
+    pub fn same_colors(&self, other: &Theme) -> bool {
+        let mut colors = other.clone();
+        colors.font.clone_from(&self.font);
+        colors.reading_font.clone_from(&self.reading_font);
+        colors.code_font.clone_from(&self.code_font);
+        colors.sizes = self.sizes;
+        *self == colors
+    }
+
     /// The families it writes in.
     pub fn families(&self) -> crate::fonts::Families {
         crate::fonts::Families {

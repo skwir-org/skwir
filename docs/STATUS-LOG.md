@@ -11119,3 +11119,39 @@ LXQt, GNOME or Xfce session; a Kvantum theme's colors (not read).
   drawn grey in Skwir's own colors and black in qt5ct's scheme here; and
   a test window's double-click opened a picture in a browser of its own
   on the test display, stopped by its pid.
+
+## Breeze's icons filled from the theme (2026-11-05)
+
+- **Cause**: an icon whose SVG carries KDE's `current-color-scheme`
+  stylesheet was taken for a shape and drawn in one color (gpui's
+  `svg()`, a mask). Right for Breeze's small icons, which name only the
+  text's color; wrong for the 2,347 of Breeze 6.31's icons that also name
+  the accent or a state (760 at 16 px, 1,017 at 22, 279 at 32, 81 at 48,
+  113 at 64, 97 at 96: almost every scheme-colored icon from 64 px), its
+  folders from 32 px among them, a body in the accent with a flap at a
+  third black and a shadow over it. Run into one shape in the text's
+  color, the grid's folders were grey in Skwir's colors and black in a
+  qt5ct scheme.
+- **Fix**, as KDE's icon loader does it: such an icon is a third kind
+  (`icons::Pic::Scheme`), rasterized in full color with a stylesheet laid
+  under its own (`inspection::drawing_styled`, usvg's `style_sheet`, its
+  rules `!important`, which usvg 0.46 lets win over the file's own sheet,
+  read in its parser): text, button and view text in the color the
+  caller draws text in, background the ground, accent, highlight and
+  active text the accent, positive, neutral and negative text success,
+  warning and error (`icons::Ink`, keying what is drawn). A theme whose
+  colors change gives back what was drawn in the colors before
+  (`icons::recolored`, from `resolve_theme`, `Theme::same_colors`). GTK's
+  `-symbolic` icons stay shapes; a file's kind is read once by the lookup
+  worker (`kind_of`), and only a shape's bytes are kept in memory.
+- Checked on Xvfb (debug build, `ui.icon_theme = "breeze"`): the grid's
+  folders in qt5ct's scheme here took its accent exactly (#416165), the
+  flap darker over it; in Skwir's own colors its blue; in Breeze Dark with
+  the dark theme its lighter blue; switching the theme to dark while the
+  window ran redrew them in the dark accent. The sidebar's small icons
+  unchanged. Tests: usvg's precedence (an important rule wins, one not
+  important does not, the file's opacity kept); a cut-down Breeze folder
+  drawn in an `Ink` keeps its three layers in the theme's colors; every
+  part KDE's scheme names is filled; the kinds of a theme's files. Not
+  checked in a window: a drag's picture (`IconPixels`, the same
+  rasterizing as the tests').

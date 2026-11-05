@@ -3000,6 +3000,10 @@ impl Shell {
         let was = (cx.global::<Theme>().families(), cx.global::<Theme>().sizes);
         let theme = Theme::resolve(&self.app, window.appearance(), cx.text_system());
         let now = (theme.families(), theme.sizes);
+        // Icons in KDE's color scheme were drawn in the colors before.
+        if !cx.global::<Theme>().same_colors(&theme) {
+            crate::icons::recolored(window, cx);
+        }
         // The window is written at the interface's size (ADR-117).
         window.set_rem_size(now.1.rem(crate::sizes::Part::Interface));
         cx.set_global(theme);

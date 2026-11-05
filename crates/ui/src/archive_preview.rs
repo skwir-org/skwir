@@ -73,7 +73,7 @@ pub fn row(
                 })
                 .into_any_element()
         },
-        |pic| icons::element(pic, ICON_SIZE, theme.text_muted),
+        |pic| icons::element(pic, ICON_SIZE, icons::Ink::of(theme, theme.text_muted)),
     );
     let mut name = div()
         .min_w_0()

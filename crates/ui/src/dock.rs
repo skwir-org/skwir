@@ -620,7 +620,13 @@ fn compact_row(
                     .icon
                     .as_ref()
                     .and_then(|(_, icon)| icon.as_ref())
-                    .map(|icon| crate::icons::element(icon, 48., theme.text_muted)),
+                    .map(|icon| {
+                        crate::icons::element(
+                            icon,
+                            48.,
+                            crate::icons::Ink::of(theme, theme.text_muted),
+                        )
+                    }),
             )
             .into_any_element(),
     };

@@ -878,10 +878,17 @@ of bars, split or not.
 
 ## The sidebar
 
-- **Icons.** A place has a theme icon name. Symbolic-only or
-  scheme-colored icons (Breeze's small ones) are shapes drawn tinted
-  (`icons::Pic::Shape`); full-color SVGs are rasterized for the pixels
-  they cover (`icons::element`). The theme is `ui.icon_theme` while
+- **Icons.** A place has a theme icon name. An icon in KDE's color
+  scheme (its `current-color-scheme` stylesheet: most of Breeze) names
+  its colors by their part and is drawn in full color with them filled
+  from the theme (`icons::Pic::Scheme`, `icons::Ink`: its text in the
+  color text is drawn in there, its accent and states the theme's), as
+  KDE's icon loader fills them, never flattened into one color: a large
+  folder's body is the accent, its flap and shadow laid over it. What
+  was drawn in the colors before is given back when they change
+  (`icons::recolored`). A symbolic icon (GTK's `-symbolic`) is a shape
+  drawn tinted (`icons::Pic::Shape`); every SVG is rasterized for the
+  pixels it covers (`icons::element`). The theme is `ui.icon_theme` while
   installed, else the desktop's, changed only through
   `IconCache::set_theme`. On macOS and Windows the name maps to a system
   icon (`system_icons::for_name`).

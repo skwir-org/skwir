@@ -5658,7 +5658,7 @@ fn header(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
         })
         .children(info.icon.as_ref().map(|icon| {
             icons::marked(
-                icons::element(icon, ICON, theme.text_muted),
+                icons::element(icon, ICON, icons::Ink::of(theme, theme.text_muted)),
                 ICON,
                 icons::Mark::Link(info.link),
                 theme,

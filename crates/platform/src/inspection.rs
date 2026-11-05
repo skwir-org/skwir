@@ -1079,7 +1079,18 @@ pub fn drawing(bytes: &[u8], side: Option<u32>) -> anyhow::Result<Decoded> {
 /// side, however small: an icon, drawn at the size it is shown (`drawing`
 /// keeps a preview's least). At most `limits::PICTURE_SIDE`.
 pub fn drawing_within(bytes: &[u8], side: u32) -> anyhow::Result<Decoded> {
-    let tree = svg_tree(bytes)?;
+    drawing_styled(bytes, side, None)
+}
+/// A drawing fitted within `side` pixels as `drawing_within` fits it, with
+/// `style_sheet` (CSS) laid under its own: what an icon theme's stylesheet
+/// leaves for its users to fill (KDE's `current-color-scheme`), its rules
+/// marked `!important` to win over the file's own.
+pub fn drawing_styled(
+    bytes: &[u8],
+    side: u32,
+    style_sheet: Option<&str>,
+) -> anyhow::Result<Decoded> {
+    let tree = svg_tree_styled(bytes, style_sheet)?;
     let own = own_size(&tree);
     let side = f64::from(side.clamp(1, limits::PICTURE_SIDE));
     let scale = side / f64::from(own.0.max(own.1));
@@ -1138,6 +1149,10 @@ pub(crate) fn system_fonts() -> &'static std::sync::Arc<resvg::usvg::fontdb::Dat
 /// text set in the system's fonts. Reading those is costly the first time:
 /// a drawing without text never does.
 fn svg_tree(bytes: &[u8]) -> anyhow::Result<resvg::usvg::Tree> {
+    svg_tree_styled(bytes, None)
+}
+/// `svg_tree`, with `style_sheet` laid under the document's own sheets.
+fn svg_tree_styled(bytes: &[u8], style_sheet: Option<&str>) -> anyhow::Result<resvg::usvg::Tree> {
     // Compressed (SVGZ), as usvg would read it, within the input's bound.
     let unpacked;
     let text = if bytes.starts_with(&[0x1f, 0x8b]) {
@@ -1164,6 +1179,7 @@ fn svg_tree(bytes: &[u8]) -> anyhow::Result<resvg::usvg::Tree> {
         options.fontdb = std::sync::Arc::clone(system_fonts());
     }
     options.image_href_resolver.resolve_string = Box::new(|_, _| None);
+    options.style_sheet = style_sheet.map(str::to_owned);
     Ok(resvg::usvg::Tree::from_data(text, &options)?)
 }
 /// How a list or its notes count: `1.`, `01`, `b)`, `xiv`.
@@ -1604,6 +1620,40 @@ mod tests {
             "bounded"
         );
         assert_eq!(drawing_size(DRAWING.as_bytes()).unwrap(), (40, 20));
+    }
+
+    #[test]
+    fn a_style_sheet_laid_under_a_drawing_wins_where_it_is_important() {
+        // KDE's icons: a sheet of their own naming colors for others to fill.
+        let icon = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2 1"><style type="text/css" id="current-color-scheme">.ColorScheme-Text { color:#232629; } .ColorScheme-Accent { color:#3daee9; }</style><rect width="1" height="1" style="fill:currentColor" class="ColorScheme-Text"/><rect x="1" width="1" height="1" style="fill:currentColor;fill-opacity:0.5" class="ColorScheme-Accent"/></svg>"#;
+        let pixels = |sheet: Option<&str>| {
+            let drawn = drawing_styled(icon, 2, sheet).unwrap();
+            assert_eq!((drawn.width, drawn.height), (2, 1));
+            drawn.rgba
+        };
+        // Half covered, a channel may round a step either way.
+        let near = |got: &[u8], want: [u8; 4]| {
+            got.iter()
+                .zip(want)
+                .all(|(got, want)| got.abs_diff(want) <= 1)
+        };
+        let own = pixels(None);
+        assert_eq!(own[..4], [0x23, 0x26, 0x29, 255], "the file's own");
+        assert!(near(&own[4..], [0x3d, 0xae, 0xe9, 128]), "{own:?}");
+        let filled = pixels(Some(
+            ".ColorScheme-Text{color:#ff0000 !important}\
+             .ColorScheme-Accent{color:#00ff00 !important}",
+        ));
+        assert_eq!(filled[..4], [255, 0, 0, 255], "the sheet's");
+        assert!(
+            near(&filled[4..], [0, 255, 0, 128]),
+            "the file's opacity kept: {filled:?}"
+        );
+        assert_eq!(
+            pixels(Some(".ColorScheme-Text{color:#ff0000}"))[..4],
+            [0x23, 0x26, 0x29, 255],
+            "not important: the file's own win"
+        );
     }
 
     #[test]

@@ -341,7 +341,11 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                 this.choose_submit(window, cx);
             }))
             .child(match icon {
-                Some(pic) => crate::icons::themed(&pic, ICON_PX, theme.text_muted),
+                Some(pic) => crate::icons::themed(
+                    &pic,
+                    ICON_PX,
+                    crate::icons::Ink::of(&theme, theme.text_muted),
+                ),
                 None => div().size(px(ICON_PX)).flex_none().into_any_element(),
             })
             .child(crate::elements::clip::clipped(

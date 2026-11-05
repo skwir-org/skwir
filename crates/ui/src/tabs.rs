@@ -742,7 +742,7 @@ fn tab(
         .on_drag(drag, move |_, position, _, cx| {
             cx.new(|_| crate::dnd::DragPreview::named(dragged.clone(), position))
         })
-        .child(icon(shell, label, 14., color))
+        .child(icon(shell, label, 14., color, &theme))
         .child(title(label, (color, theme.text_muted), &theme))
         .when(closes(shell, id, shown, count), |d| {
             d.child(close(id, 18., cx))
@@ -786,7 +786,13 @@ fn close(id: TabId, size: f32, cx: &mut Context<Shell>) -> gpui::Stateful<gpui::
 
 /// A tab's icon: split, the two panes as the Split button draws them; else
 /// the place it shows, its theme's icon or the bundled one.
-fn icon(shell: &mut Shell, label: &Label, size: f32, color: gpui::Hsla) -> AnyElement {
+fn icon(
+    shell: &mut Shell,
+    label: &Label,
+    size: f32,
+    color: gpui::Hsla,
+    theme: &Theme,
+) -> AnyElement {
     let glyph = if !label.is_split() {
         label.glyph
     } else if shell.tab_stacked(label.tab) {
@@ -800,7 +806,7 @@ fn icon(shell: &mut Shell, label: &Label, size: f32, color: gpui::Hsla) -> AnyEl
         .filter(|_| !label.is_split())
         .and_then(|name| shell.icons.named(name, 16));
     match themed {
-        Some(path) => crate::icons::themed(&path, size, color),
+        Some(path) => crate::icons::themed(&path, size, crate::icons::Ink::of(theme, color)),
         None => svg()
             .path(format!("toolbar/{glyph}.svg"))
             .size(px(size))
@@ -971,7 +977,7 @@ fn sidebar_row(
             cx.new(|_| crate::dnd::DragPreview::named(dragged.clone(), position))
         })
         .children(shell.host_marker(crate::menu::MenuHost::Sidebar, marked))
-        .child(icon(shell, label, 16., theme.text_muted))
+        .child(icon(shell, label, 16., theme.text_muted, &theme))
         .child(title(label, (theme.text, theme.text_muted), &theme))
         .when(closes(shell, id, shown, count), |d| {
             d.child(close(id, 20., cx))

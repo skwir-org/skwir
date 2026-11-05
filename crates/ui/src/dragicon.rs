@@ -10,14 +10,14 @@
 //! Everything here is plain RGBA8 with straight alpha; no text system is
 //! involved, so digits come from a tiny built-in 3x5 font.
 
-use gpui::{ExternalDragIcon, Hsla, Window};
+use gpui::{ExternalDragIcon, Window};
 use skwir_core::EntryId;
 use skwir_core::document::PixelOrder;
 use skwir_core::thumbs::{Image, ThumbSize};
 use skwir_core::workspace::PaneId;
 
 use crate::backdrop::Picture;
-use crate::icons::IconPixels;
+use crate::icons::{IconPixels, Ink};
 use crate::shell::Shell;
 
 /// Longest side of a lone picture's icon.
@@ -947,9 +947,8 @@ impl Shell {
     /// says: the entry `grabbed` (a row of a multi-selection pressed) or
     /// else the selection's first, and as many more as the layout draws,
     /// one of each other type first. Each is its thumbnail if the window
-    /// keeps one, else its icon, a shape drawn in `tint` as the views draw
-    /// it.
-    pub fn drag_look(&mut self, pane: PaneId, grabbed: Option<EntryId>, tint: Hsla) -> DragLook {
+    /// keeps one, else its icon, in `ink` as the views draw it.
+    pub fn drag_look(&mut self, pane: PaneId, grabbed: Option<EntryId>, ink: Ink) -> DragLook {
         let layout = self.prefs.drag_image;
         let ws = self.app.workspace.read();
         let Some(pane) = ws.pane(pane) else {
@@ -1012,7 +1011,7 @@ impl Shell {
                 let thumb = self.thumbs.kept(e, &[ThumbSize::Normal, ThumbSize::Large]);
                 let coming = thumb.is_none().then(|| {
                     self.icons
-                        .pixels_for_entry(e, || pane.path_of(id), PICTURE_PX, tint)
+                        .pixels_for_entry(e, || pane.path_of(id), PICTURE_PX, ink)
                 });
                 Some(Card {
                     is_dir: e.is_dir(),

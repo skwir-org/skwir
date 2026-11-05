@@ -904,9 +904,9 @@ pub fn render(
                 &path,
                 ICON_PX,
                 if is_current {
-                    theme.selection_text
+                    crate::icons::Ink::of(&theme, theme.selection_text).on(theme.selection_bg)
                 } else {
-                    theme.text_muted
+                    crate::icons::Ink::of(&theme, theme.text_muted)
                 },
             ),
             None if busy.is_some() => controls::glyph(
