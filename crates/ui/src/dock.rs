@@ -684,7 +684,7 @@ fn compact_row(
                     .flex()
                     .gap_3()
                     .child(match form {
-                        Form::Least => text.flex_1().flex_basis(px(TEXT_LEAST)),
+                        Form::Least => text.flex_1().flex_basis(sized(TEXT_LEAST)),
                         _ => text.flex_none(),
                     })
                     .child(

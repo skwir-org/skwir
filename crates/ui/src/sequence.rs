@@ -6,7 +6,7 @@
 
 use crate::sizes::TextSizes;
 use crate::sizes::sized;
-use gpui::{AnyElement, Context, Keystroke, Window, div, prelude::*, px};
+use gpui::{AnyElement, Context, Keystroke, Window, div, prelude::*};
 
 use crate::controls;
 use crate::keymap::{self, KeyHint};
@@ -146,7 +146,8 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     Some(
         div()
             .absolute()
-            .bottom(px(38.))
+            // Above the footer, which grows with the text (ADR-117).
+            .bottom(sized(38.))
             .left_0()
             .right_0()
             .flex()

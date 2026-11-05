@@ -119,7 +119,8 @@ pub fn asset(path: &str) -> Option<&'static [u8]> {
     )
 }
 
-/// The widest a tooltip grows: a long name (`elements::clip`) wraps.
+/// The widest a tooltip grows at 100 %: a long name (`elements::clip`)
+/// wraps. It grows with the text (ADR-117), never wider than the window.
 const TIP_MAX: f32 = 480.;
 
 /// A tooltip: a view of its own, drawn outside what it is the tooltip of,
@@ -128,8 +129,16 @@ struct Tip {
     text: SharedString,
 }
 impl Render for Tip {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.global::<Theme>();
+        // Laid out on its own, with no width to be a share of: the
+        // window's, less a margin each side.
+        let most = theme
+            .sizes
+            .scale(crate::sizes::Part::Interface)
+            .f(TIP_MAX)
+            .min(f32::from(window.viewport_size().width) - 16.)
+            .max(1.);
         div()
             .font_family(theme.font.clone())
             .text_body()
@@ -139,7 +148,7 @@ impl Render for Tip {
             .border_color(theme.border)
             .rounded_md()
             .shadow_sm()
-            .max_w(px(TIP_MAX))
+            .max_w(px(most))
             .px_2()
             .py_1()
             .child(self.text.clone())
@@ -401,6 +410,9 @@ impl Button {
             })
             .relative()
             .h(sized(if menu { MENU_ROW } else { 30. }))
+            // Its icon keeps its size and its padding grows with the text:
+            // an icon alone is as wide as that, not as tall as the row, so a
+            // bar's parts take no more room than they hold (ADR-117).
             .min_w(px(30.))
             .flex_none()
             .px(sized(6.))

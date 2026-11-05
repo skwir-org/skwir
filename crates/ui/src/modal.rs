@@ -229,15 +229,17 @@ pub fn modal(
     .into_any_element()
 }
 
-/// The frame of a modal panel, `width` px wide: a modal dialog to
-/// assistive technology, which the caller names (`aria_label`); `id`
+/// The frame of a modal panel, `width` px wide at 100 %, growing with the
+/// text it holds and never wider than the window (ADR-117): a modal dialog
+/// to assistive technology, which the caller names (`aria_label`); `id`
 /// tells it from the other dialogs drawn in the same frame.
 pub fn panel(id: &'static str, width: f32, theme: &Theme) -> Stateful<Div> {
     div()
         .id(id)
         .role(gpui::Role::Dialog)
         .aria_modal()
-        .w(px(width))
+        .w(crate::sizes::sized(width))
+        .max_w(gpui::relative(0.94))
         .flex()
         .flex_col()
         .rounded_lg()
@@ -352,6 +354,13 @@ pub struct Rows {
 }
 
 impl Rows {
+    /// A row's height as it is laid out at `scale` (`sizes::sized`, in the
+    /// rem of `scale`): not rounded, or a key's steps would drift off the
+    /// rows' edges, a fraction of a pixel a row.
+    fn row(self, scale: crate::sizes::Scale) -> f32 {
+        self.height * scale.0
+    }
+
     /// The box of `count` rows, `build` making those on screen.
     pub fn list(
         self,
@@ -429,7 +438,7 @@ impl Rows {
         let offset = handle.offset();
         let end = f32::from(handle.max_offset().y).max(0.);
         let top = -f32::from(offset.y);
-        let row = scale.f(self.height);
+        let row = self.row(scale);
         let to = match mv {
             ListMove::By(rows) => top + row * rows as f32,
             ListMove::Page(pages) => top + row * (self.shown as isize * pages) as f32,
@@ -574,7 +583,23 @@ impl Picker {
 
 #[cfg(test)]
 mod tests {
-    use super::{PICKER_ROWS, Picker};
+    use super::{PICKER_ROWS, Picker, Rows};
+
+    /// A key steps a dialog's list by its rows as laid out: in the rem of
+    /// a desktop's 10 pt (13.3 px body text, a rem of 15.24 px), a 24 px
+    /// row is 22.86 px, and a step of 23 would leave ten rows paged 1.4 px
+    /// past their edge.
+    #[test]
+    fn a_row_steps_as_it_is_laid_out() {
+        let rem = 10. * 96. / 72. / 0.875;
+        let scale = crate::sizes::Scale(rem / crate::sizes::REM);
+        let rows = Rows {
+            height: 24.,
+            shown: 10,
+        };
+        let laid = 24. / crate::sizes::REM * rem;
+        assert!((rows.row(scale) - laid).abs() < 1e-4);
+    }
 
     #[test]
     fn the_highlight_stays_on_a_row_that_is_shown() {

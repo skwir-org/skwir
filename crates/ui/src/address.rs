@@ -1213,7 +1213,7 @@ fn pane_row(
     let mut field = div()
         .id(("address-field", pane.0 as usize))
         .flex_1()
-        .min_w(px(FIELD_MIN))
+        .min_w(sized(FIELD_MIN))
         .h(sized(FIELD_HEIGHT))
         .flex()
         .items_center()

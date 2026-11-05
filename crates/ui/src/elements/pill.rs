@@ -1,48 +1,24 @@
-//! A pill: a short state in a line, as the address shows them (a search's
-//! facets, the filter typed, what narrows a folder). Its body is the shared
-//! toolbar button (focus, keys, its tooltip and the key that does it), so
-//! the keyboard reaches every pill; one that can be taken away ends with a
-//! ×, the pointer's shortcut, which runs its command with a tooltip of its
-//! own and takes no focus: it goes with what it removes, and a focused
-//! element that goes takes the keyboard with it.
+//! A pill's ×: a short state in a line, as the address shows them (a
+//! search's facets, the filter typed, what narrows a folder), is the shared
+//! toolbar button drawn round (`search_bar.rs`), so the keyboard reaches
+//! every pill; one that can be taken away ends with this ×, the pointer's
+//! shortcut, which runs its command with a tooltip of its own and takes no
+//! focus: it goes with what it removes, and a focused element that goes
+//! takes the keyboard with it.
 
-use gpui::{Context, Div, SharedString, Stateful, div, prelude::*, px};
+use gpui::{Context, Div, SharedString, Stateful, div, prelude::*};
 use skwir_core::command::Invocation;
 use skwir_core::workspace::PaneId;
 
 use crate::shell::Shell;
+use crate::sizes::sized;
 use crate::theme::Theme;
-use crate::toolbar::{Button, tooltip};
-
-/// `button` drawn as a pill, ending with a × that runs `remove` (said by
-/// `tip`) on `pane` when there is one.
-pub fn pill(
-    shell: &Shell,
-    button: Button,
-    remove: Option<(Invocation, SharedString)>,
-    cx: &mut Context<Shell>,
-) -> Stateful<Div> {
-    let theme = cx.global::<Theme>().clone();
-    let ink = if button.tinted() {
-        theme.text_muted
-    } else {
-        theme.selection_text
-    };
-    let body = button
-        .render(shell, cx)
-        .h(px(22.))
-        .max_w(px(200.))
-        .rounded_full()
-        .mr(px(2.));
-    match remove {
-        Some((remove, tip)) => body.pr(px(2.)).child(clear(shell, remove, tip, ink, cx)),
-        None => body,
-    }
-}
+use crate::toolbar::tooltip;
 
 /// The × that takes a pill away: `remove` run on the pane being drawn, as
 /// the pointer's shortcut for what the keyboard does otherwise, in `ink`,
-/// the pill's text color.
+/// the pill's text color. It is as tall as the pill's text, which grows
+/// with the text size (ADR-117); its glyph keeps its size.
 pub fn clear(
     shell: &Shell,
     remove: Invocation,
@@ -56,7 +32,7 @@ pub fn clear(
     let id = SharedString::from(format!("pill-clear-{}-{tip}", pane.0));
     div()
         .id(id)
-        .size(px(18.))
+        .size(sized(18.))
         .flex()
         .flex_none()
         .items_center()

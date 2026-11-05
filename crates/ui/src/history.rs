@@ -477,7 +477,7 @@ pub fn undo_control(
         .items_center()
         .justify_center()
         .h(sized(20.))
-        .w(px(18.))
+        .w(sized(18.))
         .rounded_r_md()
         .border_1()
         .border_color(gpui::transparent_black())

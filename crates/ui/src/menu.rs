@@ -1906,7 +1906,7 @@ fn choice_element(
                 let icon = menu.items[v].icon.clone().unwrap_or_default();
                 value(v, "choice", cx)
                     .h(sized(20.))
-                    .min_w(px(26.))
+                    .min_w(sized(26.))
                     .px(sized(5.))
                     .flex()
                     .items_center()

@@ -1350,7 +1350,7 @@ pub fn tray(
                     .flex()
                     .flex_col()
                     .min_h_0()
-                    .max_h(px(TRAY_MOST))
+                    .max_h(crate::sizes::sized(TRAY_MOST))
                     .child(heading)
                     .child(scrolled("activity-tray", body, &reveal)),
             )

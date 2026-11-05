@@ -718,7 +718,7 @@ fn rows(shell: &Shell, range: Range<usize>, cx: &mut Context<Shell>) -> Vec<AnyE
                         clipped(
                             div()
                                 .id(("deleting-folder", at))
-                                .w(px(FOLDER))
+                                .w(sized(FOLDER))
                                 .flex_none()
                                 .text_small()
                                 .text_color(theme.text_muted)

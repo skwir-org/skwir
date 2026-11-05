@@ -233,14 +233,15 @@ pub struct Placed {
 }
 
 impl Metrics {
-    /// These metrics at `scale`.
+    /// These metrics at `scale`: what holds text (the strip's height, the
+    /// gaps between chips) grows with it; a dot is drawn as an icon is, at
+    /// its own size, and so is the step between dots, which makes them
+    /// overlap as they were written to (ADR-117).
     #[must_use]
     pub fn at(self, scale: crate::sizes::Scale) -> Self {
         Metrics {
             height: scale.f(self.height),
             gap: scale.f(self.gap),
-            dot: scale.f(self.dot),
-            dot_step: scale.f(self.dot_step),
             ..self
         }
     }
@@ -435,6 +436,16 @@ mod tests {
 
     fn of(whole: usize, dots: usize, more: usize) -> Fit {
         Fit { whole, dots, more }
+    }
+
+    /// At a larger text, the strip and its gaps grow; its dots are drawn at
+    /// their own size (`tags::strip_dot`), so they are laid out at it too,
+    /// overlapping as written.
+    #[test]
+    fn a_larger_text_grows_the_strip_not_its_dots() {
+        let at = ROW.at(crate::sizes::Scale(1.5));
+        assert_eq!((at.height, at.gap), (27., 6.));
+        assert_eq!((at.dot, at.dot_step), (ROW.dot, ROW.dot_step));
     }
 
     #[test]

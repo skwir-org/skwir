@@ -27,7 +27,9 @@ fn icon(name: &str, color: gpui::Hsla, size: f32) -> gpui::Svg {
         .flex_none()
 }
 
-/// An on/off switch. The whole pill is the hit target.
+/// An on/off switch. The whole pill is the hit target. It is drawn as an
+/// icon is, 36 × 20 px at every text size (ADR-117): the row around it
+/// grows with its text, the switch keeps its shape.
 pub fn switch(
     id: impl Into<SharedString>,
     on: bool,
@@ -41,7 +43,7 @@ pub fn switch(
         .aria_toggled(toggled(on))
         .track_focus(focus)
         .flex_none()
-        .p(sized(2.))
+        .p(px(2.))
         .rounded_full()
         .border_1()
         .border_color(gpui::transparent_black())
@@ -51,7 +53,7 @@ pub fn switch(
             div()
                 .relative()
                 .w(px(36.))
-                .h(sized(20.))
+                .h(px(20.))
                 .rounded_full()
                 .bg(if on { theme.accent } else { theme.border })
                 .child(
