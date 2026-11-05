@@ -147,10 +147,13 @@ The key is the owner's; the page is the subject's (ADR-072).
 
 - It is a self-contained entity: it holds the `App`, never the shell,
   and closes through an event, so it can move to a window of its own.
-- A row's title and description keep `TEXTS_MIN` of width whatever the
-  control. A choice is segmented buttons only while they fit beside that
-  (`elements::adaptive::Fit` measures both forms; no character counts),
-  else a dropdown. A text field narrows before the texts do.
+- A row's title and description keep a share of the row whatever the
+  control (`TEXTS_SHARE`, a share rather than a width, so a large text
+  size in a narrow window still fits: ADR-117), and the control gives way
+  in what is left, never cut at the card's edge. A choice is segmented
+  buttons only while they fit beside that (`elements::adaptive::Fit`
+  measures both forms; no character counts), else a dropdown. A text
+  field narrows before the texts do.
 - **A long list narrows.** A dropdown of more than
   `settings_view::FILTERED` choices (the icon themes, bat's themes), and
   a font's however few (the code font's monospaced families may be),

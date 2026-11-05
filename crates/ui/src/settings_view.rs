@@ -26,9 +26,14 @@ const SEGMENTED_MAX: usize = 4;
 const TEXT_WIDTH: f32 = 260.;
 /// A text field narrows to this before the row's texts give way.
 const FIELD_MIN: f32 = 160.;
-/// A row's title and description keep this much width whatever the
-/// control beside them: the control shrinks, or picks a narrower form.
+/// A table's titles keep this much width whatever the controls beside
+/// them.
 const TEXTS_MIN: f32 = 240.;
+/// A row's title and description keep this share of the row whatever the
+/// control beside it: the control shrinks, or picks a narrower form (a
+/// choice's dropdown). A share, not a width: at a large text size in a
+/// narrow window both still fit, the texts wrapping (ADR-117).
+const TEXTS_SHARE: f32 = 0.35;
 
 /// How wide a choice is on a table's line, where it is a dropdown: its
 /// column's dropdowns line up.
@@ -350,7 +355,7 @@ impl SettingsView {
         let description: SharedString = description.into();
         div()
             .flex_1()
-            .min_w(sized(TEXTS_MIN))
+            .min_w(gpui::relative(TEXTS_SHARE))
             .flex()
             .flex_col()
             .gap(sized(3.))
@@ -938,8 +943,11 @@ impl SettingsView {
         // in a slot every row keeps (`revert_slot`).
         let revert = self.revert_button(row, item, theme, cx);
         // Built after the revert button: traversal follows the visual order.
+        // It gives way before the texts' least width: a choice's buttons
+        // become its dropdown, a field narrows (`elements::adaptive::Fit`,
+        // `FIELD_MIN`), never cut at the card's edge at a large text size.
         let control = div()
-            .flex_none()
+            .flex_shrink_1()
             .when(!row.available, |d| d.opacity(0.5))
             .child(self.control(row, item, false, theme, window, cx));
         let highlighted = self.highlight.as_deref() == Some(key.as_str());
