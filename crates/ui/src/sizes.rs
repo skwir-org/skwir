@@ -370,40 +370,225 @@ impl Scale {
 mod tests {
     use super::*;
 
-    /// Every place names one of the named sizes (`TextSizes`), never
-    /// gpui's scale or a literal (ADR-117): a size written beside them
-    /// would not follow the text size. A preview's content, drawn at the
-    /// size its reader chose, is sized from it; a choice's picture
-    /// (`form::drawn`) is drawn at its own size, as a picture is.
+    /// Why a preview's content is sized as written: at the size its reader
+    /// chose (`inspector::State::font_size`, ADR-117).
+    const READ: &str = "a preview's content, at the size its reader chose";
+    /// Why a size held in a variable is a named one.
+    const NAMED_ABOVE: &str = "a named size (`painted`, `Sizes::body`) taken where it is held";
+
+    /// Text sized other than by a name, each where it must be: its file
+    /// under `src/`, the size as written (spaces left out), how many times
+    /// it is there, and why. One more, or one fewer, fails.
+    const SIZED_AS_WRITTEN: &[(&str, &str, usize, &str)] = &[
+        ("code_preview.rs", "px(font_size-2.)", 1, READ),
+        ("inspector.rs", "px(table_size(font_size))", 1, READ),
+        (
+            "inspector.rs",
+            "px(table_size(font_size)*12./TABLE_TEXT)",
+            1,
+            READ,
+        ),
+        ("inspector.rs", "px(bytes_size(font_size))", 1, READ),
+        ("inspector.rs", "px(size)", 1, READ),
+        (
+            "inspector.rs",
+            "std::cell::Cell::new(TEXT_SIZE)",
+            1,
+            "what a preview is estimated at before its first draw reads its size",
+        ),
+        ("markdown.rs", "px(style.body_size)", 2, READ),
+        ("markdown.rs", "px(size)", 2, READ),
+        ("markdown.rs", "px(style.code_size)", 1, READ),
+        ("markdown.rs", "px((style.body_size-4.).max(8.))", 1, READ),
+        ("note_popover.rs", "px(size)", 1, READ),
+        (
+            "form.rs",
+            "gpui::px(10.)",
+            1,
+            "a choice's picture (`form::drawn`), drawn at its own size as a picture is",
+        ),
+        (
+            "form.rs",
+            "gpui::px(12.)",
+            1,
+            "a choice's picture (`form::drawn`), drawn at its own size as a picture is",
+        ),
+        (
+            "terminal.rs",
+            "px(FONT_SIZE*theme.sizes.scale(crate::sizes::Part::Code).0)",
+            1,
+            "the terminal at Code's size, its cells a step below code's as bytes are",
+        ),
+        (
+            "elements/terminal.rs",
+            "self.font_size",
+            1,
+            "the terminal's, given by `terminal.rs`",
+        ),
+        (
+            "input.rs",
+            "font_size",
+            1,
+            "the field's text style, which the place it stands in names",
+        ),
+        ("elements/bars.rs", "label_size(window)", 1, NAMED_ABOVE),
+        ("elements/treemap.rs", "px(self.font())", 1, NAMED_ABOVE),
+        ("elements/treemap.rs", "px(self.size)", 1, NAMED_ABOVE),
+        ("elements/treemap.rs", "px(size)", 1, NAMED_ABOVE),
+        ("nav_menu.rs", "size", 1, NAMED_ABOVE),
+        ("views/grid.rs", "font_size", 1, NAMED_ABOVE),
+    ];
+
+    /// `text`'s code without its comments, what its strings hold and its
+    /// white space, and the line of each of its bytes: a call written over
+    /// several lines reads as one.
+    fn code_of(text: &str) -> (String, Vec<usize>) {
+        let (mut code, mut lines) = (String::new(), Vec::new());
+        for (n, line) in text.lines().enumerate() {
+            let (mut quoted, mut escaped) = (false, false);
+            for (at, c) in line.char_indices() {
+                if !quoted && line[at..].starts_with("//") {
+                    break;
+                }
+                let quote = c == '"' && !escaped;
+                if quote {
+                    quoted = !quoted;
+                }
+                escaped = c == '\\' && !escaped;
+                if !c.is_whitespace() && (quote || !quoted) {
+                    code.push(c);
+                    lines.extend(std::iter::repeat_n(n + 1, c.len_utf8()));
+                }
+            }
+        }
+        (code, lines)
+    }
+
+    /// What stands between the parenthesis opened before `from` and the
+    /// one that closes it.
+    fn inside(code: &str, from: usize) -> &str {
+        let mut depth = 1;
+        for (at, c) in code[from..].char_indices() {
+            match c {
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return &code[from..from + at];
+                    }
+                }
+                _ => {}
+            }
+        }
+        &code[from..]
+    }
+
+    /// `list` cut at its commas outside parentheses.
+    fn arguments(list: &str) -> Vec<&str> {
+        let (mut parts, mut depth, mut start) = (Vec::new(), 0, 0);
+        for (at, c) in list.char_indices() {
+            match c {
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => depth -= 1,
+                ',' if depth == 0 => {
+                    parts.push(&list[start..at]);
+                    start = at + 1;
+                }
+                _ => {}
+            }
+        }
+        parts.push(&list[start..]);
+        parts
+    }
+
+    /// What a field is given, from `from` up to the comma or the brace
+    /// that ends it.
+    fn given(code: &str, from: usize) -> &str {
+        let mut depth = 0;
+        for (at, c) in code[from..].char_indices() {
+            match c {
+                ')' | ']' | '}' | ',' | ';' if depth == 0 => return &code[from..from + at],
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => depth -= 1,
+                _ => {}
+            }
+        }
+        &code[from..]
+    }
+
+    /// `expr` without the paths before it (`gpui::`, `crate::sizes::`).
+    fn unpathed(mut expr: &str) -> &str {
+        loop {
+            let name = expr
+                .find(|c: char| !(c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'))
+                .unwrap_or(expr.len());
+            match expr[name..].strip_prefix("::") {
+                Some(rest) if name > 0 => expr = rest,
+                _ => return expr,
+            }
+        }
+    }
+
+    /// Whether `expr` is a number: as pixels, as rems, or bare.
+    fn number(expr: &str) -> bool {
+        let expr = unpathed(expr);
+        let digit = |rest: &str| rest.starts_with(|c: char| c.is_ascii_digit());
+        digit(expr)
+            || ["px(", "rems("]
+                .iter()
+                .any(|unit| expr.strip_prefix(unit).is_some_and(digit))
+    }
+
+    /// Whether what follows `font_size:` is a type (a field declared, an
+    /// argument), not a size given.
+    fn a_type(expr: &str) -> bool {
+        let expr = unpathed(expr);
+        let name = expr
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .unwrap_or(expr.len());
+        let after = &expr[name..];
+        let primitive = ["f32", "f64", "u16", "u32", "usize"].contains(&&expr[..name]);
+        let declared = expr.starts_with(|c: char| c.is_ascii_uppercase())
+            && (after.is_empty() || after.starts_with(['<', ',', '>', ')', '}']));
+        primitive || declared
+    }
+
+    /// Whether `expr` names a size (`TextSizes`' share, `painted`, a
+    /// part's body text).
+    fn named(expr: &str) -> bool {
+        !number(expr)
+            && ["painted(", "Text::", ".body(Part::"]
+                .iter()
+                .any(|n| expr.contains(n))
+    }
+
+    /// Every place names one of the named sizes (`TextSizes`, `painted`,
+    /// `Sizes::body`), never gpui's scale, a number or a length (ADR-117):
+    /// a size written beside them would not follow the text size, and a
+    /// length (`sized`) follows the rem without the names' floor (the
+    /// grid's tags once fell to 9.5 px so). Read in the code without its
+    /// comments and white space, so a call over several lines or behind a
+    /// path (`gpui::px`, `sizes::sized`) is read as one: every text size
+    /// given (`text_size`, the size `shape_line` and `line_wrapper` take, a
+    /// `font_size:` given) and every line height, which may be any length
+    /// but a number. What is sized as written stands in
+    /// `SIZED_AS_WRITTEN`, with why.
     #[test]
     fn every_place_names_a_text_size() {
-        const GPUI: [&str; 6] = [
+        const GPUI: [&str; 7] = [
             ".text_xs()",
             ".text_sm()",
             ".text_base()",
             ".text_lg()",
             ".text_xl()",
             ".text_2xl()",
+            ".text_3xl()",
         ];
-        // A number, or a length written at 100 % (`sized`): neither is a
-        // named size, and a length follows the rem without the names'
-        // floor (the grid's tags once fell to 9.5 px so).
-        let literal = |line: &str| {
-            line.split("text_size(").skip(1).any(|after| {
-                let after = after
-                    .trim_start_matches("gpui::")
-                    .trim_start_matches("crate::sizes::");
-                after.starts_with("sized(")
-                    || ["px(", "rems("].iter().any(|unit| {
-                        after
-                            .strip_prefix(unit)
-                            .is_some_and(|n| n.starts_with(|c: char| c.is_ascii_digit()))
-                    })
-            })
-        };
-        let drawn = ["form.rs"];
+        let src = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
         let mut found = Vec::new();
-        let mut folders = vec![std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src")];
+        let mut written: std::collections::HashMap<(String, String), usize> =
+            std::collections::HashMap::new();
+        let mut folders = vec![src.clone()];
         while let Some(folder) = folders.pop() {
             for entry in std::fs::read_dir(&folder).expect("the sources") {
                 let path = entry.expect("a source").path();
@@ -411,21 +596,102 @@ mod tests {
                     folders.push(path);
                     continue;
                 }
-                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                let source = path.extension().is_some_and(|ext| ext == "rs");
-                if !source || name == "sizes.rs" {
+                let file = path
+                    .strip_prefix(&src)
+                    .expect("under src")
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                if path.extension().is_none_or(|ext| ext != "rs") || file == "sizes.rs" {
                     continue;
                 }
-                let text = std::fs::read_to_string(&path).expect("a source");
-                for (n, line) in text.lines().enumerate() {
-                    let named = GPUI.iter().any(|gpui| line.contains(gpui));
-                    if named || (literal(line) && !drawn.contains(&name)) {
-                        found.push(format!("{name}:{}: {}", n + 1, line.trim()));
+                let (code, lines) = code_of(&std::fs::read_to_string(&path).expect("a source"));
+                let mut sized = |at: usize, what: &str, expr: &str, may: bool| {
+                    let allowed = SIZED_AS_WRITTEN
+                        .iter()
+                        .any(|(f, e, _, _)| *f == file && *e == expr);
+                    if allowed {
+                        *written.entry((file.clone(), expr.to_owned())).or_default() += 1;
+                    } else if !may {
+                        found.push(format!("{file}:{}: {what} {expr}", lines[at]));
+                    }
+                };
+                for gpui in GPUI {
+                    for (at, _) in code.match_indices(gpui) {
+                        sized(at, "gpui's", gpui, false);
+                    }
+                }
+                for call in [
+                    ".text_size(",
+                    "shape_line(",
+                    "line_wrapper(",
+                    ".line_height(",
+                ] {
+                    for (at, _) in code.match_indices(call) {
+                        let list = arguments(inside(&code, at + call.len()));
+                        let expr = match call {
+                            "shape_line(" | "line_wrapper(" => list.get(1).copied(),
+                            _ => list.first().copied(),
+                        };
+                        let Some(expr) = expr.filter(|expr| !expr.is_empty()) else {
+                            continue;
+                        };
+                        let may = if call == ".line_height(" {
+                            !number(expr)
+                        } else {
+                            named(expr)
+                        };
+                        sized(at, call, expr, may);
+                    }
+                }
+                for (at, _) in code.match_indices("font_size:") {
+                    let field = code[..at]
+                        .chars()
+                        .next_back()
+                        .is_none_or(|c| !(c.is_ascii_alphanumeric() || c == '_'));
+                    let expr = given(&code, at + "font_size:".len());
+                    if field && !expr.starts_with(':') && !a_type(expr) {
+                        sized(at, "font_size:", expr, named(expr));
                     }
                 }
             }
         }
+        for (file, expr, times, why) in SIZED_AS_WRITTEN {
+            assert!(!why.is_empty(), "{file}: {expr} says why");
+            let seen = written
+                .get(&((*file).to_owned(), (*expr).to_owned()))
+                .copied()
+                .unwrap_or(0);
+            if seen != *times {
+                found.push(format!(
+                    "{file}: {expr} is written {seen} times, `SIZED_AS_WRITTEN` says {times}"
+                ));
+            }
+        }
         assert!(found.is_empty(), "sizes not named:\n{}", found.join("\n"));
+    }
+
+    /// The reading of the code the test above relies on.
+    #[test]
+    fn a_size_is_read_over_lines_behind_paths_and_out_of_comments() {
+        let (code, lines) = code_of(
+            "a.text_size(\n    gpui::px(12.), // .text_xs()\n)\nlet s = \"// not a comment\";",
+        );
+        assert_eq!(code, "a.text_size(gpui::px(12.),)lets=\"\";");
+        assert_eq!(lines[code.find("px").unwrap()], 2);
+        let list = inside(&code, "a.text_size(".len());
+        assert_eq!(arguments(list), ["gpui::px(12.)", ""]);
+        assert!(number("gpui::px(12.)") && number("crate::sizes::rems(1.)") && number("14."));
+        assert!(!number("px(size)") && !named("sizes::sized(14.)"));
+        assert!(named(
+            "crate::sizes::painted(window,crate::sizes::Text::Small)"
+        ));
+        assert!(!named("px(10.)"));
+        assert!(a_type("f32") && a_type("std::cell::Cell<f32>") && a_type("Pixels"));
+        assert!(!a_type("std::cell::Cell::new(TEXT_SIZE)") && !a_type("px(14.)"));
+        assert_eq!(
+            given("font_size:px(f(1,2)),x", "font_size:".len()),
+            "px(f(1,2))"
+        );
     }
 
     #[test]

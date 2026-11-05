@@ -97,8 +97,13 @@ Views are in [views.md](views.md); what locations decide, in
 - **Text sizes (ADR-117).** The window's rem is the interface's size
   (`Window::set_rem_size`, from `Theme::sizes`, set where the theme is
   resolved), a pane's view the files' (`elements::rem`). Every place
-  names a size (`sizes::TextSizes`; `sizes::every_place_names_a_text_size`
-  fails on `text_xs` or a literal). A bar, a row, a control, a chip, a
+  names a size (`sizes::TextSizes`, `painted`, `Sizes::body`):
+  `sizes::every_place_names_a_text_size` reads the code without comments
+  and white space and fails on gpui's scale, a number or a length given
+  as a text size (`text_size`, `shape_line`'s and `line_wrapper`'s size,
+  a `font_size:`) or a number as a line height, but where
+  `SIZED_AS_WRITTEN` says why (a preview's content, at its reader's
+  size), as many times as it says. A bar, a row, a control, a chip, a
   menu's row and the padding around text are written at 100 % in rems
   (`sizes::sized`), so they grow with the text; what is counted (a
   popup's height before it is laid out, a list's uniform estimate, a
