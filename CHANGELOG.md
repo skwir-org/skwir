@@ -30,6 +30,9 @@
   said under a name, and badges such as the grid's tags are no smaller than
   any desktop's smallest text. An empty folder's or place's message no longer
   runs past a narrow pane.
+- **Bold text in variable fonts**: on Linux, bold and semibold text in a variable
+  font, such as Noto Sans on Fedora and NixOS, Cantarell or Ubuntu Sans, is now
+  drawn bold, where it was drawn regular: headings and bold in previews, titles.
 - **Breeze's icons in your colors**: folders and the other icons Breeze draws
   in the color scheme's colors now take the accent and the warning, error and
   success colors as KDE's applications draw them, where large folders were

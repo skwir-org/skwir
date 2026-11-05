@@ -11155,3 +11155,34 @@ LXQt, GNOME or Xfce session; a Kvantum theme's colors (not read).
   part KDE's scheme names is filled; the kinds of a theme's files. Not
   checked in a window: a drag's picture (`IconPixels`, the same
   rasterizing as the tests').
+
+## A variable font's weights drawn (2026-11-05)
+
+- **Cause** (ADR-073's note): gpui's Linux text system chose a face by the
+  weight its file declares, and a variable font is one face at 400 to
+  fontdb; it loaded every face at the normal weight, so cosmic-text shaped
+  it there, and drew glyphs with no variation coordinates. A semibold or
+  bold run in Noto Sans (one variable file on the reference machine, as on
+  Fedora) was shaped, measured and drawn regular: previews' bold and
+  headings, the empty place's semibold title. Not in Zed's main at the
+  vendored commit.
+- **Fix**, gpui patch 0045 (`vendor/zed/README.skwir.md`): a loaded font
+  carries its weight, its face's weight axis and swash's coordinates there;
+  `font_id` returns a variable face's instance at the weight asked (clamped
+  to its axis, one font per weight), shaped there by cosmic-text 0.19
+  (`get_font(id, weight)`), measured and drawn with its coordinates; a
+  glyph shaped in a variable fallback at another weight resolves to the
+  fallback's instance. A face of one weight is drawn as before.
+- Tests (`just gpui-check gpui_wgpu`, 30 text-system tests, without and
+  with font-kit, which Skwir builds with): Inter's variable font at four
+  weights (a font per weight, kept; wider lines and advances as the weight
+  grows; a bold H at 32 px with more than 5/4 the ink of a regular one:
+  with the drawing coordinates taken out, both drew 44,715, the bug) and a
+  bold Lilex run whose fallback, Inter's variable font, is drawn bold. The
+  check takes InterVariable.ttf from the Inter archive `fonts.lock` pins.
+- Checked in a window (debug build, Xvfb, the reference machine's Noto
+  Sans, `NotoSans.ttf`, the variable file): a Markdown preview's heading,
+  bold and bold italic drawn bold, an empty folder's title semibold. No
+  build without the patch was run beside it: the test above, with the
+  drawing coordinates taken out, is the before. macOS and Windows have their own
+  text systems: not affected, not checked.

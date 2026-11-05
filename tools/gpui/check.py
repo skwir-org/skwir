@@ -9,7 +9,8 @@ The text, list, scrolling and key tests need no GPU; gpui_wgpu's atlas and
 renderer tests ask wgpu for any adapter (lavapipe will do). gpui's library
 tests embed two of Zed's fonts, which the vendored crates leave out: they are
 fetched once from Zed's repository at the vendored commit, into
-~/.cache/skwir-tests.
+~/.cache/skwir-tests. A variable font's weights (0045) are tried with Inter's,
+taken from the archive Skwir's packages pin (tools/package/fonts.lock).
 """
 from pathlib import Path
 import os
@@ -17,6 +18,10 @@ import shutil
 import subprocess
 import sys
 import urllib.request
+import zipfile
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "package"))
+import fonts as package_fonts  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 VENDOR = ROOT / "vendor/zed"
@@ -27,6 +32,8 @@ FONTS = {
     "lilex": ["Lilex-Regular.ttf", "Lilex-Bold.ttf", "Lilex-Italic.ttf",
               "Lilex-BoldItalic.ttf"],
 }
+# A variable font: (folder, name) under assets/fonts, from a pinned archive.
+VARIABLE = ("inter", "InterVariable.ttf", "Inter-4.1.zip")
 PATCHED = {"async-process", "async-task", "calloop", "khronos-egl"}
 RUNS = [
     ("gpui", ["--no-default-features", "--features", "wayland,x11"], [
@@ -44,9 +51,11 @@ RUNS = [
         # Upstream's tooltips, and a press before one shows (0038).
         "elements::div::tests::tooltip",
     ]),
-    # All of them: the atlas (an upload to a removed texture), the context
-    # and the renderer.
+    # All of them: the atlas (an upload to a removed texture), the context,
+    # the renderer and the text system (a variable face's weights, 0045).
     ("gpui_wgpu", [], []),
+    # The text system again, faces chosen by font-kit as Skwir builds it.
+    ("gpui_wgpu", ["--features", "font-kit"], ["cosmic_text_system"]),
     # The clipboard (0024), and the space bar with Shift (0039).
     ("gpui_linux", [], ["clipboard", "the_space_bar_with_shift"]),
 ]
@@ -66,6 +75,18 @@ def fonts(commit):
             with urllib.request.urlopen(url, timeout=60) as response:
                 data = response.read()
             path.with_suffix(".part").write_bytes(data)
+            path.with_suffix(".part").rename(path)
+    folder, name, archive = VARIABLE
+    path = cache / folder / name
+    if not path.is_file():
+        # Where the Linux packages keep the archives (fonts.py target/fonts).
+        downloads = ROOT / "target/fonts/.downloads"
+        downloads.mkdir(parents=True, exist_ok=True)
+        (url, sum_), = [(u, s) for n, u, s in package_fonts.pinned() if n == archive]
+        print(f"taking {name} from {archive}", flush=True)
+        with zipfile.ZipFile(package_fonts.fetched(downloads, archive, url, sum_)) as zipped:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.with_suffix(".part").write_bytes(zipped.read(name))
             path.with_suffix(".part").rename(path)
     return cache
 

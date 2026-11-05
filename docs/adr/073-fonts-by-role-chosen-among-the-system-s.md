@@ -162,4 +162,6 @@ installed on the system, where every application finds it).
   reader on the long list, idle memory on the session's own display.
 - Seen while checking, not changed: Noto Sans on the reference machine is
   one variable file whose Bold is a named instance, and gpui draws its
-  bold runs regular; DejaVu Serif's bold draws.
+  bold runs regular; DejaVu Serif's bold draws. Fixed 2026-11-05 by gpui
+  patch 0045 (`vendor/zed/README.skwir.md`): a variable face is shaped,
+  measured and drawn at the weight asked within its axis, on Linux.

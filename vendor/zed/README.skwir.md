@@ -26,8 +26,9 @@ same modules:
 
 - gpui's list, wheel-axis, line wrapper, line layout, style and key dispatch
   tests;
-- all of gpui_wgpu's library tests (the atlas, the context, the renderer),
-  which need a wgpu adapter (lavapipe will do);
+- all of gpui_wgpu's library tests (the atlas, the context, the renderer,
+  the text system), which need a wgpu adapter (lavapipe will do), and the
+  text system's again with font-kit choosing the faces, as Skwir builds it;
 - gpui_linux's clipboard tests.
 
 `just gpui-check-windows` runs gpui_windows's tests of the mesh pass under
@@ -36,7 +37,9 @@ Wine's Direct3D 11 draws on OpenGL, through Mesa's llvmpipe on an Xvfb of
 its own.
 
 gpui's library tests embed two of Zed's fonts, which the script fetches once
-at the vendored commit.
+at the vendored commit, and 0045's Inter's variable font, which Zed does not
+carry: the script takes it from the Inter release Skwir's packages pin
+(`tools/package/fonts.lock`).
 
 ## Patches
 
@@ -74,6 +77,7 @@ at the vendored commit.
 | `0042-list-overdraw-set-later` | `ListState::set_overdraw`: a list about to scroll up by more than its overdraw measures that far first, and crosses heights known rather than hinted | — |
 | `0043-activate-with-token` | `Window::activate_window_with_token`: the window brought forward with the token the desktop gave (Wayland's xdg-activation, a notification clicked) | — |
 | `0044-should-quit` | `Application::on_should_quit`: macOS's `applicationShouldTerminate:` asks the application whether it may quit (Quit from the Dock, a log out, a restart) | — |
+| `0045-variable-font-weights` | A variable face is shaped, measured and drawn at the weight asked within its weight axis (Linux), a variable fallback at its run's | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
 
@@ -709,6 +713,36 @@ and a log out is cancelled, the system saying by which program.
 answers `NSTerminateCancel` when it says no, `NSTerminateNow` otherwise or
 without one, or while the application is borrowed. Other platforms never
 ask and ignore it (`Platform::on_should_quit` has a default).
+
+### 0045: Variable font weights
+
+A variable font is one face to fontdb, at the weight its file declares
+(400), its other weights named instances of its weight axis: Noto Sans as
+Fedora and NixOS ship it, Cantarell, Ubuntu Sans, Inter's variable file.
+Upstream's Linux text system chose a face by its declared weight, loaded
+every face at the normal weight and drew glyphs at the face's default
+coordinates, so a semibold or bold run in such a font was shaped, measured
+and drawn regular. cosmic-text 0.19 does the rest already: `get_font(id,
+weight)` shapes at that weight, its matcher counts a variable face as
+holding the weights its axis spans, and its own drawing sets swash's
+coordinates.
+
+`LoadedFont` carries the weight it is drawn at, its face's weight axis and
+swash's coordinates there (none for a face of one weight, which is drawn
+as before). `font_id` chooses the face as before, then for a variable face
+returns its instance at the weight asked, clamped to its axis, loaded once
+per weight (`LoadedFontKey` names the weight). A run is shaped at its
+font's weight (`font_match_properties`); its glyphs are measured
+(`advance`, `typographic_bounds`, `font_metrics`) and drawn
+(`render_glyph_image`) with its coordinates. A glyph cosmic-text shaped in
+a variable fallback at another weight resolves to the fallback's instance
+there (`font_id_for_cosmic_id`). Two tests with Inter's variable font: a
+face at four weights (fonts kept per weight, wider lines, wider advances,
+a bold H with more ink than a regular one, where the same before), and a
+variable fallback of a bold run drawn bold. Not changed: a static family
+without the weight asked is drawn at its nearest face, the fallback beside
+it at that face's weight. macOS and Windows have text systems of their
+own.
 
 ## Adding or changing a patch
 

@@ -16,7 +16,9 @@ Skwir alone").
   The README's screenshots are drawn in Inter (the flake provides it).
 - **gpui draws a variable font's bold as its regular** (ADR-073, seen
   with Noto Sans), and Skwir draws medium, semibold and bold. Inter's
-  own packages are often the variable font alone.
+  own packages are often the variable font alone. (Since 2026-11-05 gpui
+  patch 0045 draws a variable face's weights on Linux; the static files
+  stay, drawn alike by every text system.)
 - **Common practice is split.** Cross-platform applications with a look
   of their own carry their fonts (JetBrains' IDEs Inter and JetBrains
   Mono, Zed its own, Signal Desktop Inter); native Linux applications

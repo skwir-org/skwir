@@ -210,8 +210,8 @@ apart, and changes how gpui maps the pointer.
   and `every_place_names_a_text_size` now refuses a length as a text
   size. The review, clash and delete dialogs' rows (`modal::Rows`) grow
   with the text, the review's at a Body line (24 px at 100 %). An empty
-  place's title is Body, semibold (drawn regular in a variable font, as
-  gpui draws its weights, ADR-073), and its message is as wide as the
+  place's title is Body, semibold (in a variable font too since gpui
+  patch 0045, ADR-073), and its message is as wide as the
   pane up to its measure: it ran past a narrow pane's edges. Checked on
   Xvfb at the reference machine's 10 pt: the list, the grid with tagged
   pictures, Settings at 100 % and 150 %, the delete dialog, F1, the

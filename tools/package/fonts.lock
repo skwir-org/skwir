@@ -1,6 +1,7 @@
 # Skwir's own fonts as its packages carry them (ADR-118): Inter for the
 # interface, JetBrains Mono for code, the static files of their projects'
-# releases (gpui draws a variable font's bold as its regular, ADR-073).
+# releases, drawn alike by every text system (gpui drew a variable font's
+# bold as its regular before its patch 0045, ADR-073).
 # Each line: an archive, where it is published, its SHA-256.
 # tools/package/fonts.py fetches and checks them; flake.nix names the same
 # archives and sums. To update: a newer release here and in flake.nix,
