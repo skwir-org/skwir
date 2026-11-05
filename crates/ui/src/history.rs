@@ -657,7 +657,7 @@ fn history_row(
                     .rounded_sm()
                     .bg(theme.hover)
                     .text_color(theme.text_muted)
-                    .text_tiny()
+                    .text_small()
                     .child(pill)
             }))
             .child(crate::elements::clip::clipped(

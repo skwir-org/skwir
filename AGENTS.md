@@ -89,8 +89,8 @@ working in an area, also read that area's rules (see
   size (`sizes::TextSizes`: Body by default, for all text you read or
   act on, every control included; Small only for a note read after the
   Body text beside it, a shortcut, a count or unit, what is said under
-  a name, a column's header, a group's heading; Tiny for a badge; Title
-  for a dialog's title; ADR-117), never `text_xs`, a literal or a length;
+  a name, a column's header, a group's heading, a badge; nothing
+  smaller; Title for a dialog's title; ADR-117), never `text_xs`, a literal or a length;
   a length that holds text is written at 100 % and grows with it
   (`sizes::sized`, `sizes::Scale`), while pictures and icons keep
   their size.

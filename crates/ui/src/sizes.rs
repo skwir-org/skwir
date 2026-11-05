@@ -20,9 +20,9 @@
 //!   Small, nine tenths of the body, is only a note read after the Body
 //!   text it stands beside: a shortcut or a key cap, a count or a unit,
 //!   what is said under a name (a size, a date, a speed), a column's
-//!   header, a group's heading, a short hint beside a control. Tiny,
-//!   four fifths of the body, is a badge (a count on an icon, a tag over
-//!   a picture). Title is the title of a dialog or a panel. Text an
+//!   header, a group's heading, a short hint beside a control, a badge
+//!   (a state, a tag over a picture). Nothing is written smaller. Title is
+//!   the title of a dialog or a panel. Text an
 //!   element paints itself takes the same sizes from the rem in force
 //!   (`painted`).
 //! - **Lengths written at 100 %** (a row's 26 px, a column's width) grow
@@ -50,20 +50,17 @@ pub const REM: f32 = 16.;
 /// The share of a rem that is a part's body text (gpui's `text_sm`).
 const BODY_REMS: f32 = 0.875;
 
-/// The named text sizes, as shares of the rem in force: 14, 12.6, 11.2
-/// and 18 px where the body is 14 px. Small is nine tenths of the body, a
+/// The named text sizes, as shares of the rem in force: 14, 12.6 and
+/// 18 px where the body is 14 px. Small is nine tenths of the body, a
 /// step the eye sees that never falls far below it (12 px at a desktop's
-/// 10 pt); Tiny four fifths, as Plasma's small font is of its general one
-/// (10.7 px at 10 pt), between macOS's smallest text (10/13) and GNOME's
-/// captions: no desktop writes smaller.
+/// 10 pt). A smaller one, four fifths, was the badges' until 2026-11-05:
+/// the user found it too small, and every badge moved to Small.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Text {
     /// All text you read or act on, controls included: the default.
     Body,
-    /// A note read after the Body text it stands beside.
+    /// A note read after the Body text it stands beside, or a badge.
     Small,
-    /// A badge.
-    Tiny,
     /// A dialog's or a panel's title.
     Title,
 }
@@ -73,7 +70,6 @@ impl Text {
         match self {
             Text::Body => BODY_REMS,
             Text::Small => BODY_REMS * 0.9,
-            Text::Tiny => BODY_REMS * 0.8,
             Text::Title => 1.125,
         }
     }
@@ -89,15 +85,11 @@ pub trait TextSizes: Styled + Sized {
         self.text_size(rems(Text::Body.rems()))
     }
 
-    /// A short label in a tight place: a heading, a count, a caption, a
-    /// button's label, a column's header, a shortcut. Never a sentence.
+    /// A note beside Body text: a shortcut or a key cap, a count or a
+    /// unit, what is said under a name, a column's header, a group's
+    /// heading; a badge. Never a sentence, nor a control.
     fn text_small(self) -> Self {
         self.text_size(rems(Text::Small.rems()))
-    }
-
-    /// A badge: a tag's chip, a count on an icon.
-    fn text_tiny(self) -> Self {
-        self.text_size(rems(Text::Tiny.rems()))
     }
 
     /// A dialog's or a panel's title.

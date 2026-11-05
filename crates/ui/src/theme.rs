@@ -56,8 +56,8 @@
 //!   reading, code) is written at a size of its own, `sizes` (ADR-117,
 //!   `sizes.rs`), and drawn in a rem of its own (the window's, a view's
 //!   `elements::rem`); every place names one of the sizes there
-//!   (`sizes::TextSizes`: `text_body`, `text_small`, `text_tiny`,
-//!   `text_title`), never gpui's scale or a literal.
+//!   (`sizes::TextSizes`: `text_body`, `text_small`, `text_title`),
+//!   never gpui's scale or a literal.
 //! - spacing: multiples of 4 px; rows are 26 px, controls 28 px, bars 42 px
 //!   (a pane's row, the sidebar's header, the tab strip: their edges meet),
 //!   at 100 %: a length that holds text is scaled with its part

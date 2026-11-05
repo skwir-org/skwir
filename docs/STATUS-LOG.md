@@ -11250,3 +11250,8 @@ LXQt, GNOME or Xfce session; a Kvantum theme's colors (not read).
   Tiny is left to History's row label. Checked on Xvfb: Properties' and
   the header's chips, the grid's at the default zoom and at a large one;
   a picture's "+N" not shown in the fixture. 507 UI tests.
+- Then History's row label ("running", "waiting", "undone"), Tiny's last
+  use, moved to Small, as `controls::badge`'s labels are, and Tiny left
+  the named sizes (`sizes::Text`, `TextSizes::text_tiny`): Body, Small
+  and Title, nothing written below Small (AGENTS.md, `sizes.rs`,
+  ADR-117).

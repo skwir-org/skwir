@@ -97,7 +97,10 @@ Qt's settings (4).
    key cap, a count or a unit, what is said under a name, a column's
    header, a group's heading, a short hint beside a control); Tiny,
    four fifths of the body (it was 0.71: 9.5 px at 10 pt, below any
-   desktop's smallest text), for badges.
+   desktop's smallest text), for badges. Later that day (the user: tag
+   chips too small) chips moved up a size and the last badge to Small,
+   and Tiny was removed: the sizes are Body, Small and Title, and
+   nothing is written below Small.
 6. **The preview's picker changes the file shown;** Reading's and Code's
    settings are where each file starts, and the picker shows the same
    percentages. Tables and the byte view follow it (step 2).
