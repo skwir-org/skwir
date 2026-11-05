@@ -153,13 +153,19 @@ pub struct Opened {
 }
 
 /// A grammar checked: the ABI it was generated for, what is wrong with it
-/// or a query (the query left out, the grammar used without it), and why
-/// it colors nothing, when none of its highlights queries compiles.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// or a query (the query left out, the grammar used without it), why it
+/// colors nothing, when none of its highlights queries compiles, and which
+/// of its query sets colors it (`Grammar::query_sets`). Its library
+/// refused (it does not load, its ABI is not read here) is `refused`,
+/// why: the helper's answer about the grammar, not a failure of the
+/// helper (`check`'s error).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Checked {
     pub abi: u32,
     pub problems: Vec<String>,
     pub colorless: Option<String>,
+    pub colored_by: Option<usize>,
+    pub refused: Option<String>,
 }
 
 /// A text open in a helper, and what opens it again: its grammar's name,
@@ -421,7 +427,10 @@ impl Helper {
     }
 
     /// Load the grammar named `name` and compile its queries, parsing
-    /// nothing: the Reading page's question.
+    /// nothing: the Reading page's question. Its library refused is an
+    /// answer (`Checked::refused`); an error is the helper's own failure
+    /// (it did not start, did not answer, ended) or a name not told, and
+    /// says nothing of the grammar.
     pub fn check(&self, name: &str, cancel: &CancelToken) -> anyhow::Result<Checked> {
         let process = self.process(cancel)?;
         let answer = process.call(
@@ -437,10 +446,14 @@ impl Helper {
                 abi,
                 problems,
                 colorless,
+                colored_by,
+                refused,
             } => Ok(Checked {
                 abi,
                 problems,
                 colorless,
+                colored_by: colored_by.and_then(|at| usize::try_from(at).ok()),
+                refused,
             }),
             reply => Err(unexpected(&reply)),
         }
@@ -1214,8 +1227,8 @@ mod tests {
             helper.check("json", &cancel).unwrap(),
             Checked {
                 abi: 14,
-                problems: Vec::new(),
-                colorless: None
+                colored_by: Some(0),
+                ..Checked::default()
             }
         );
         let error = helper.check("yaml", &cancel).unwrap_err().to_string();

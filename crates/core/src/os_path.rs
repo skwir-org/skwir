@@ -355,6 +355,29 @@ pub fn home() -> Option<PathBuf> {
     dirs::home_dir()
 }
 
+/// `path` as a person reads it: from `~` where it lies under the home
+/// folder (`~/.config/x`; `~\AppData\x` on Windows), else whole. The one
+/// way a path is said so; `from_home_in` for a text that names paths.
+pub fn from_home(path: &Path) -> String {
+    home()
+        .and_then(|home| {
+            path.strip_prefix(home)
+                .ok()
+                .map(|rest| format!("~{}{}", std::path::MAIN_SEPARATOR, rest.display()))
+        })
+        .unwrap_or_else(|| path.display().to_string())
+}
+
+/// `text` (a message a program wrote, naming files by their whole path)
+/// with each path under the home folder from `~`, as `from_home` says it.
+pub fn from_home_in(text: &str) -> String {
+    let Some(home) = home().filter(|home| home.parent().is_some()) else {
+        return text.to_owned();
+    };
+    let sep = std::path::MAIN_SEPARATOR;
+    text.replace(&format!("{}{sep}", home.display()), &format!("~{sep}"))
+}
+
 /// `std::fs::canonicalize`, the one way a path is made absolute and freed
 /// of its links: on Windows without the `\\?\` the system puts before
 /// it where the path reads the same without (`C:\…`, `\\server\share\…`),
@@ -595,5 +618,26 @@ mod tests {
         assert_eq!(units(b"\xE2\x82"), None);
         assert_eq!(units(b"\xF4\x90\x80\x80"), None);
         assert_eq!(units(b"\xFF"), None);
+    }
+
+    /// A path under the home folder is said from `~`, in a path and in a
+    /// message; another whole.
+    #[test]
+    fn paths_under_the_home_folder_are_said_from_it() {
+        let Some(home) = home().filter(|home| home.parent().is_some()) else {
+            return;
+        };
+        let sep = std::path::MAIN_SEPARATOR;
+        let file = home.join("grammars").join("x.so");
+        assert_eq!(from_home(&file), format!("~{sep}grammars{sep}x.so"));
+        let elsewhere = std::env::temp_dir().join("x.so");
+        if !elsewhere.starts_with(&home) {
+            assert_eq!(from_home(&elsewhere), elsewhere.display().to_string());
+        }
+        let said = format!("load {}: no such file", file.display());
+        assert_eq!(
+            from_home_in(&said),
+            format!("load ~{sep}grammars{sep}x.so: no such file")
+        );
     }
 }

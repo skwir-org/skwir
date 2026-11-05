@@ -1665,8 +1665,11 @@ pub fn declare_all(app: &App) {
         Topic::Skwir,
         "ui.languages",
         "Languages and their grammars",
-        "The languages a grammar was found or added for, as last found: each one's files and what colors it, Automatic or chosen, with what may be chosen",
-        |_, app| Ok(Outcome::Value(crate::settings::language_records(app))),
+        "The languages a grammar was found or added for, as last found: each one's files and what colors it, Automatic or chosen, with what may be chosen; the grammars combined from two sources checked first",
+        |_, app| {
+            crate::settings::check_grammars_where_asked(app);
+            Ok(Outcome::Value(crate::settings::language_records(app)))
+        },
     );
     app.commands.register_raw::<NoArgs, _>(
         OWNER,

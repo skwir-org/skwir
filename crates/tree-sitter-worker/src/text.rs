@@ -103,16 +103,28 @@ impl Worker {
             }
             Request::Check { name } => {
                 let index = self.grammars.find(&name)?;
-                let loaded = self.grammars.load(index)?;
-                Ok(Reply::Checked {
-                    abi: loaded.abi,
-                    problems: loaded
-                        .problems
-                        .iter()
-                        .chain(&loaded.colorless)
-                        .cloned()
-                        .collect(),
-                    colorless: loaded.colorless.clone(),
+                // Its library refused is an answer about it, said apart
+                // from its queries; a grammar not told is no answer.
+                Ok(match self.grammars.loaded_or_refused(index)? {
+                    Ok(loaded) => Reply::Checked {
+                        abi: loaded.abi,
+                        problems: loaded
+                            .problems
+                            .iter()
+                            .chain(&loaded.colorless)
+                            .cloned()
+                            .collect(),
+                        colorless: loaded.colorless.clone(),
+                        colored_by: loaded.colored_by.and_then(|at| u32::try_from(at).ok()),
+                        refused: None,
+                    },
+                    Err(why) => Reply::Checked {
+                        abi: 0,
+                        problems: Vec::new(),
+                        colorless: None,
+                        colored_by: None,
+                        refused: Some(why),
+                    },
                 })
             }
             Request::Open { doc, name, text } => {

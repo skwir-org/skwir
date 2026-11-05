@@ -1575,23 +1575,38 @@ is still to come are in `docs/preview-frame.md`.
   or the system's folder is followed. The helper is told those folders
   and reads nothing else of the user's.
 - **A grammar is whole, or combined by one rule** (ADR-110, amended
-  2026-11-04): one source's library and its own queries; else a library
-  and the queries of its grammar's own repository (Skwir's folder, the
-  CLI's) or the system's (`Source::lends`), never an editor's, which are
-  written for its revision and its conditions. Those that lend are told
-  (`Grammar::lent`) and tried in turn where one does not compile; a
+  2026-11-04): one source's library and its own queries alone; else a
+  library and the queries of its grammar's own repository (Skwir's
+  folder, the CLI's) or the system's (`Source::lends`), never an
+  editor's, which are written for its revision and its conditions.
+  Those that lend are told (`Grammar::lent`, where each came from in
+  `Found::lent_from`) and tried in turn where one does not compile; a
   grammar none of whose highlights compile colors no text, which bat's
   grammar then colors. A part is never listed alone. A language is
   known by its key (`grammars::key_of`: lower case, `-` read as `_`, as
-  its library's symbol says), choices too. A source is named by the
-  folder a grammar was found in, never by its library's name; a combined
-  grammar by its queries' source first. A combined grammar is checked in
-  a helper of its own (`tree_sitter::checking`, `check_combined`) when
-  Languages is first drawn, kept for the run by its files' identity and
-  change time, offered once it fits (`Found::checking`); it colors
-  meanwhile. Where grammars were looked for, and what was nearly found,
-  is kept beside them (`grammars::report`): never an editor's queries of
-  a language it has no parser of.
+  its library's symbol says), choices too; a file name with a version
+  in it is no grammar's name. A source is named by the folder a grammar
+  was found in, never by its library's name; a combined grammar by the
+  source of the queries its check found to color it, first. A combined
+  grammar is checked in a helper of its own (`tree_sitter::checking`,
+  `check_combined`, one at a time, `grammars::Asked` let go of however
+  its job ends) when Languages is first drawn, or where `ui.languages`
+  is asked off the window's thread (waited for there): the files' keys
+  read before the helper reads them, kept for the run by identity and
+  change time, offered once it fits (`Found::checking`). It colors
+  meanwhile, and the Reading page says what colors as the engine picks
+  it (Automatic "…, being checked"). The helper's answer is kept: its
+  library refused (`Checked::refused`) is said apart from its queries
+  refused; the helper's own failure is no answer, never kept
+  (`Found::unchecked`), asked again once the grammars are found again.
+  What only the Reading page says (a check answered, a reason's words)
+  colors nothing again (`grammars::generation` moves for what colors).
+  Where grammars were looked for, and what was nearly found, is kept
+  beside them (`grammars::report`): each file the deepest folder's of
+  its source that holds it, never an editor's queries of a language it
+  has no parser of. The system's folders are each system's own
+  (`Packaged`): the distributions' on Linux and the BSDs, Homebrew's on
+  macOS, none on Windows.
 - **The tree-sitter helper is let go of a minute after its last use**,
   whatever is open in it (`tree_sitter::KEPT`): a `Doc` keeps its text
   (`tree_sitter::Text`, shared with the preview's bytes), not the

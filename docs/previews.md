@@ -151,11 +151,16 @@ The player, in the panel or pinned at its foot:
   a tree-sitter CLI parser directory, built or not) or the system's,
   never another editor's, which are written for their own copy of the
   grammar: the choice names both ("tree-sitter CLI, with Emacs's
-  library"), and is offered once the two are checked to fit, when the
-  languages are first shown. Emacs keeps no queries (its modes color in
-  Lisp), so an Emacs grammar colors only once its repository is there:
-  clone it at the revision Emacs built, or its queries may name what the
-  library lacks and be refused, with why. Reading › Grammars lists
+  library", by the queries found to fit where several are), and is
+  offered once the two are checked to fit, when the languages are first
+  shown; it colors meanwhile, Automatic saying it is being checked.
+  Emacs keeps no queries (its modes color in Lisp), so an Emacs grammar
+  colors only once its repository is there: clone it at the revision
+  Emacs built, or its queries may name what the library lacks and be
+  refused, with why. A refusal says which part is refused: the library
+  (it does not load here, or was built for a tree-sitter Skwir does not
+  read) or its queries. A check that could not be made says why, and is
+  made again the next time the settings open. Reading › Grammars lists
   the languages a grammar was found or added for, with the files each
   colors and a choice of what colors it: Automatic (bat first by
   default, as "Automatic uses" says), bat's grammar, the tree-sitter

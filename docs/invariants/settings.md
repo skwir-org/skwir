@@ -247,7 +247,9 @@ The key is the owner's; the page is the subject's (ADR-072).
   does, its popup under its right edge, inside the dialog. A list is
   parsed once for each text it has (`SettingsView::parsed_records`),
   never per frame or per record; a list its owner keeps elsewhere is
-  answered from memory (`ui.languages` reads no grammar).
+  answered from memory (`ui.languages` reads no grammar there; asked off
+  the window's thread, by a script or an agent, it checks the combined
+  grammars waiting first, ADR-110).
 - **Data is written by its owning command, off the window's thread.**
   `settings.apply` takes no `data` setting; its command changes it
   through `Settings::set` and saves it on a worker when asked from the

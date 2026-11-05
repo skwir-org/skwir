@@ -201,12 +201,20 @@ pub enum Reply {
     /// `Check`: the grammar's ABI, and what is wrong with it or a query
     /// (the query left out, the grammar used without it); why it colors
     /// nothing, when none of its highlights queries compiles (also the
-    /// last of `problems`).
+    /// last of `problems`); which of its query sets colors it (its place
+    /// in `Grammar::query_sets`: the first whose highlights compile). Its
+    /// library refused (it does not load, its ABI is not one this
+    /// tree-sitter reads) is `refused`, why, said apart from its queries
+    /// and without the name it was told: the rest is then empty.
     Checked {
         abi: u32,
         problems: Vec<String>,
         #[serde(default)]
         colorless: Option<String>,
+        #[serde(default)]
+        colored_by: Option<u32>,
+        #[serde(default)]
+        refused: Option<String>,
     },
     /// `Open`: how many lines the text holds, and the capture names its
     /// colors index (`Span::capture`): the grammar's highlights and those

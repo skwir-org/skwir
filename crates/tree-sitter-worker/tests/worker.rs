@@ -467,11 +467,41 @@ fn a_grammar_that_fails_is_said_and_the_helper_goes_on() {
         assert!(absent.starts_with("absent: load "), "{absent}");
         let unnamed = error(helper.open(1, "unnamed", &text));
         assert!(unnamed.contains("tree_sitter_nothing"), "{unnamed}");
-        let future = error(helper.ask(&Request::Check {
+        // Checked, a library refused is an answer of its own, said apart
+        // from its queries and without the name it was told.
+        let Reply::Checked {
+            refused: Some(future),
+            colorless: None,
+            colored_by: None,
+            ..
+        } = helper.ask(&Request::Check {
             name: "future".into(),
-        }));
+        })
+        else {
+            panic!("not refused");
+        };
         assert!(future.contains("ABI is 99"), "{future}");
+        assert!(!future.contains("future"), "{future}");
+        let Reply::Checked {
+            refused: Some(absent),
+            ..
+        } = helper.ask(&Request::Check {
+            name: "absent".into(),
+        })
+        else {
+            panic!("not refused");
+        };
+        assert!(absent.starts_with("load "), "{absent}");
+        // Opened, it still fails under its name.
+        assert!(error(helper.open(1, "future", &text)).starts_with("future: "));
     }
+    // A grammar not told is no answer about one.
+    assert!(
+        error(helper.ask(&Request::Check {
+            name: "nobody".into(),
+        }))
+        .contains("no grammar named nobody")
+    );
     assert!(error(helper.open(1, "nobody", &text)).contains("no grammar named nobody"));
     // A query that does not compile is passed over, where it is said; a
     // grammar no highlights query of compiles colors no text (bat's
@@ -480,6 +510,8 @@ fn a_grammar_that_fails_is_said_and_the_helper_goes_on() {
         abi,
         problems,
         colorless,
+        colored_by,
+        refused,
     } = helper.ask(&Request::Check {
         name: "broken".into(),
     })
@@ -487,6 +519,7 @@ fn a_grammar_that_fails_is_said_and_the_helper_goes_on() {
         panic!("not checked");
     };
     assert_eq!(abi, 14);
+    assert_eq!((colored_by, refused), (None, None));
     assert!(
         colorless.is_some_and(|why| why.contains("none of its highlights")),
         "said apart"
@@ -511,9 +544,14 @@ fn a_grammar_that_fails_is_said_and_the_helper_goes_on() {
         "{captures:?}"
     );
     assert!(helper.colors(1, lines).iter().any(|line| !line.is_empty()));
-    let Reply::Checked { problems, .. } = helper.ask(&Request::Check {
+    let Reply::Checked {
+        problems,
+        colored_by,
+        ..
+    } = helper.ask(&Request::Check {
         name: "lent".into(),
-    }) else {
+    })
+    else {
         panic!("not checked");
     };
     assert_eq!(
@@ -521,10 +559,12 @@ fn a_grammar_that_fails_is_said_and_the_helper_goes_on() {
         2,
         "its own and the first lent: {problems:?}"
     );
+    assert_eq!(colored_by, Some(2), "the second lent colors it");
     // And the next works.
     let Reply::Checked {
         problems,
         colorless,
+        colored_by,
         ..
     } = helper.ask(&Request::Check {
         name: "JSON".into(),
@@ -533,7 +573,7 @@ fn a_grammar_that_fails_is_said_and_the_helper_goes_on() {
         panic!("not checked");
     };
     assert!(problems.is_empty(), "{problems:?}");
-    assert_eq!(colorless, None);
+    assert_eq!((colorless, colored_by), (None, Some(0)));
     assert!(matches!(
         helper.open(2, "json", &text),
         Reply::Opened { .. }

@@ -959,21 +959,15 @@ pub(crate) fn grammar_folder_records() -> serde_json::Value {
     serde_json::json!({ "records": records })
 }
 
+/// `path` as the settings show it: from `~` where it is under the home
+/// folder (`os_path::from_home`, the one way it is said).
+pub(crate) fn home_shown(path: &std::path::Path) -> String {
+    skwir_core::os_path::from_home(path)
+}
+
 /// The languages a tree-sitter grammar was found or a grammar added for,
 /// as listed and as their choices are kept (`highlight::tree::languages`):
 /// the key the engine finds a text's choice by is theirs.
-/// `path` as the settings show it: from `~/` where it is under the home
-/// folder.
-pub(crate) fn home_shown(path: &std::path::Path) -> String {
-    skwir_core::os_path::home()
-        .and_then(|home| {
-            path.strip_prefix(home)
-                .ok()
-                .map(|rest| format!("~/{}", rest.display()))
-        })
-        .unwrap_or_else(|| path.display().to_string())
-}
-
 fn languages() -> std::sync::Arc<[skwir_platform::highlight::tree::Language]> {
     skwir_platform::highlight::tree::listed_languages()
 }
@@ -1014,110 +1008,130 @@ fn colors_from(found: &skwir_platform::grammars::Found) -> Option<String> {
 /// added one where one is), each source's tree-sitter grammar (one that
 /// cannot be used greyed, saying why), Plain text.
 pub(crate) fn language_records(app: &App) -> serde_json::Value {
-    use skwir_platform::highlight::{Choice, First, GrammarChoices};
-    let choices = GrammarChoices::chosen(app);
+    let choices = skwir_platform::highlight::GrammarChoices::chosen(app);
     // What bat knows, from memory: answered on the window's thread, it
     // never reads bat's grammars.
     let bat_table = skwir_platform::highlight::added::table().unwrap_or_default();
     let records: Vec<serde_json::Value> = languages()
         .iter()
-        .map(|language| {
-            let usable_added = language.added.iter().find(|added| added.problem.is_none());
-            let bat_knows = usable_added.is_some()
-                || language
-                    .file_types
-                    .iter()
-                    .any(|t| bat_table.colors_files(t.trim_start_matches('.')));
-            let bat = bat_knows.then(|| match usable_added {
-                Some(added) => format!("{}: {}", added.source.label(), added.name),
-                None => "bat".to_owned(),
-            });
-            // A combined grammar is offered once checked (ADR-110, amended).
-            let usable_tree = language
-                .tree
-                .iter()
-                .find(|found| found.problem.is_none() && !found.checking);
-            let automatic = match (choices.first, &bat, usable_tree) {
-                (First::Bat, Some(bat), _) | (First::TreeSitter, Some(bat), None) => bat.clone(),
-                (_, _, Some(found)) => tree_label(found),
-                (_, None, None) => "Plain text".to_owned(),
-            };
-            let mut offered = vec![serde_json::json!({
-                "value": "auto",
-                "label": format!("Automatic ({automatic})"),
-            })];
-            if let Some(bat) = &bat {
-                offered.push(serde_json::json!({ "value": "bat", "label": bat }));
-            }
-            for found in &language.tree {
-                let detail = match &found.problem {
-                    Some(problem) => problem.clone(),
-                    None if found.checking => "Checking…".to_owned(),
-                    None => colors_from(found).unwrap_or_default(),
-                };
-                offered.push(serde_json::json!({
-                    "value": found.source.key(),
-                    "label": tree_label(found),
-                    "detail": detail,
-                    "disabled": found.problem.is_some() || found.checking,
-                }));
-            }
-            offered.push(serde_json::json!({ "value": "plain", "label": "Plain text" }));
-            // The choice kept, where it is still offered and usable.
-            let kept = choices.chosen.get(&language.key).copied();
-            let usable = |value: &str| {
-                offered.iter().any(|choice| {
-                    choice["value"] == value && choice["disabled"].as_bool() != Some(true)
-                })
-            };
-            let value = kept
-                .map(Choice::key)
-                .filter(|value| usable(value))
-                .unwrap_or("auto");
-            let label = offered
-                .iter()
-                .find(|choice| choice["value"] == value)
-                .and_then(|choice| choice["label"].as_str())
-                .unwrap_or_default()
-                .to_owned();
-            let mut detail = language.file_types.join(", ");
-            if let Some(kept) = kept.filter(|kept| !usable(kept.key())) {
-                let gone = match kept {
-                    Choice::TreeSitter(source) => format!("{}'s grammar", source.short()),
-                    Choice::Bat => "bat's grammar".to_owned(),
-                    Choice::Plain => "Plain text".to_owned(),
-                };
-                detail = format!("{detail} · {gone} chosen is not here: Automatic");
-            }
-            for added in language
-                .added
-                .iter()
-                .filter(|added| added.problem.is_some())
-            {
-                detail = format!(
-                    "{detail} · {}'s {}: {}",
-                    added.source.label(),
-                    added.name,
-                    added.problem.as_deref().unwrap_or_default()
-                );
-            }
-            serde_json::json!({
-                "id": language.key,
-                "name": language.title,
-                "detail": detail,
-                "fixed": true,
-                "choice": {
-                    "value": value,
-                    "label": label,
-                    "choices": offered,
-                    "command": "ui.grammar_choose",
-                    "args": { "language": language.key },
-                    "field": "grammar",
-                },
-            })
-        })
+        .map(|language| language_record(language, &choices, &bat_table))
         .collect();
     serde_json::json!({ "records": records })
+}
+
+/// One language's record (`language_records`), as `choices` choose and
+/// `bat_table` says what bat colors.
+fn language_record(
+    language: &skwir_platform::highlight::tree::Language,
+    choices: &skwir_platform::highlight::GrammarChoices,
+    bat_table: &skwir_platform::highlight::added::Table,
+) -> serde_json::Value {
+    use skwir_platform::highlight::{Choice, First};
+    let usable_added = language.added.iter().find(|added| added.problem.is_none());
+    let bat_knows = usable_added.is_some()
+        || language
+            .file_types
+            .iter()
+            .any(|t| bat_table.colors_files(t.trim_start_matches('.')));
+    let bat = bat_knows.then(|| match usable_added {
+        Some(added) => format!("{}: {}", added.source.label(), added.name),
+        None => "bat".to_owned(),
+    });
+    // What Automatic colors with, as the engine picks it
+    // (`grammars::pick`): a combined grammar colors while it is
+    // checked, and says so (ADR-110, amended).
+    let usable_tree = language.tree.iter().find(|found| found.problem.is_none());
+    let automatic = match (choices.first, &bat, usable_tree) {
+        (First::Bat, Some(bat), _) | (First::TreeSitter, Some(bat), None) => bat.clone(),
+        (_, _, Some(found)) if found.checking => {
+            format!("{}, being checked", tree_label(found))
+        }
+        (_, _, Some(found)) => tree_label(found),
+        (_, None, None) => "Plain text".to_owned(),
+    };
+    let mut offered = vec![serde_json::json!({
+        "value": "auto",
+        "label": format!("Automatic ({automatic})"),
+    })];
+    if let Some(bat) = &bat {
+        offered.push(serde_json::json!({ "value": "bat", "label": bat }));
+    }
+    // A combined grammar is offered once checked; one whose check
+    // the helper could not make says why, and is checked again
+    // when the settings open.
+    for found in &language.tree {
+        let detail = match (&found.problem, &found.unchecked) {
+            (Some(problem), _) => problem.clone(),
+            (None, Some(why)) if found.checking => {
+                format!("Not checked ({why}): checked again when the settings open")
+            }
+            (None, None) if found.checking => "Checking…".to_owned(),
+            (None, _) => colors_from(found).unwrap_or_default(),
+        };
+        offered.push(serde_json::json!({
+            "value": found.source.key(),
+            "label": tree_label(found),
+            "detail": detail,
+            "disabled": found.problem.is_some() || found.checking,
+        }));
+    }
+    offered.push(serde_json::json!({ "value": "plain", "label": "Plain text" }));
+    // The choice kept, where it is still offered and usable, or
+    // colors while it is checked (as the engine uses it).
+    let kept = choices.chosen.get(&language.key).copied();
+    let usable = |value: &str| {
+        offered
+            .iter()
+            .any(|choice| choice["value"] == value && choice["disabled"].as_bool() != Some(true))
+            || language.tree.iter().any(|found| {
+                found.checking && found.problem.is_none() && found.source.key() == value
+            })
+    };
+    let value = kept
+        .map(Choice::key)
+        .filter(|value| usable(value))
+        .unwrap_or("auto");
+    let label = offered
+        .iter()
+        .find(|choice| choice["value"] == value)
+        .and_then(|choice| choice["label"].as_str())
+        .unwrap_or_default()
+        .to_owned();
+    let mut detail = language.file_types.join(", ");
+    if let Some(kept) = kept.filter(|kept| !usable(kept.key())) {
+        let gone = match kept {
+            Choice::TreeSitter(source) => format!("{}'s grammar", source.short()),
+            Choice::Bat => "bat's grammar".to_owned(),
+            Choice::Plain => "Plain text".to_owned(),
+        };
+        detail = format!("{detail} · {gone} chosen is not here: Automatic");
+    }
+    for added in language
+        .added
+        .iter()
+        .filter(|added| added.problem.is_some())
+    {
+        detail = format!(
+            "{detail} · {}'s {}: {}",
+            added.source.label(),
+            added.name,
+            added.problem.as_deref().unwrap_or_default()
+        );
+    }
+    serde_json::json!({
+        "id": language.key,
+        "name": language.title,
+        "detail": detail,
+        "fixed": true,
+        "choice": {
+            "value": value,
+            "label": label,
+            "choices": offered,
+            "command": "ui.grammar_choose",
+            "args": { "language": language.key },
+            "field": "grammar",
+        },
+    })
 }
 
 /// The grammars chosen and not kept yet, in the order chosen
@@ -1205,12 +1219,13 @@ fn keep_grammars_chosen(app: &App) -> anyhow::Result<()> {
 /// Check the combined grammars waiting on a worker, once Languages is
 /// shown (ADR-110, amended): a row's Automatic label depends on the
 /// answer, so it is asked then, not when a picker opens, and only when
-/// one waits and no check runs (`grammars::take_waiting`). What answers
-/// is listed again.
+/// one waits and no check is asked (`grammars::take_waiting`, its `Asked`
+/// held by the job, let go of however it ends). What answers is listed
+/// again.
 pub(crate) fn check_grammars(app: &Arc<App>) {
-    if !skwir_platform::grammars::take_waiting() {
+    let Some(asked) = skwir_platform::grammars::take_waiting() else {
         return;
-    }
+    };
     let weak = app.weak();
     let token = app.lifetime().child();
     app.scheduler.spawn(
@@ -1218,6 +1233,7 @@ pub(crate) fn check_grammars(app: &Arc<App>) {
         "grammar-checks",
         token.clone(),
         move || {
+            let _asked = asked;
             if skwir_platform::grammars::check_combined(&token) {
                 LANGUAGES.changed();
                 if let Some(app) = weak.upgrade() {
@@ -1226,6 +1242,21 @@ pub(crate) fn check_grammars(app: &Arc<App>) {
             }
         },
     );
+}
+
+/// `ui.languages` asked off the window's thread (a script, an agent):
+/// the combined grammars waiting are checked there first, waited for, so
+/// it lists what the Languages page shows once checked. On the window's
+/// thread the dialog lists every page's records when it opens, so the
+/// page asks, once shown (`check_grammars`).
+pub(crate) fn check_grammars_where_asked(app: &App) {
+    if skwir_core::scheduler::on_window_thread() || !skwir_platform::grammars::waiting() {
+        return;
+    }
+    if skwir_platform::grammars::check_combined(&app.lifetime().child()) {
+        LANGUAGES.changed();
+        app.wake();
+    }
 }
 
 /// Read the themes the user added to bat on a worker and declare the code
@@ -3532,10 +3563,12 @@ mod tests {
             source,
             queries_from,
             queries_at: queries_at.map(std::path::PathBuf::from),
+            lent_from: Vec::new(),
             file_types: Vec::new(),
             first_line: None,
             problem: None,
             checking: false,
+            unchecked: None,
         };
         let whole = found(Source::Zed, None, None);
         assert_eq!(super::tree_label(&whole), "Zed (tree-sitter)");
@@ -3565,6 +3598,89 @@ mod tests {
             super::colors_from(&system).as_deref(),
             Some("its colors from the system's queries")
         );
+    }
+
+    /// A combined grammar coloring while it is checked is what Automatic
+    /// says it colors with, and a choice of it kept is still the choice;
+    /// it is offered once checked, and one whose check the helper could
+    /// not make says why.
+    #[test]
+    fn a_grammar_being_checked_is_said_as_it_colors() {
+        use skwir_platform::grammars::{Found, Source};
+        use skwir_platform::highlight::{Choice, First, GrammarChoices};
+        let waiting = Found {
+            grammar: skwir_core::syntax::Grammar {
+                name: "heex".into(),
+                library: "/x/libtree-sitter-heex.so".into(),
+                ..skwir_core::syntax::Grammar::default()
+            },
+            source: Source::Emacs,
+            queries_from: Some(Source::Skwir),
+            queries_at: Some("/grammars/tree-sitter-heex".into()),
+            lent_from: Vec::new(),
+            file_types: vec!["heex".into()],
+            first_line: None,
+            problem: None,
+            checking: true,
+            unchecked: None,
+        };
+        let language = |found: &Found| skwir_platform::highlight::tree::Language {
+            key: "heex".into(),
+            title: "heex".into(),
+            file_types: vec!["heex".into()],
+            tree: vec![found.clone()],
+            added: Vec::new(),
+        };
+        let table = skwir_platform::highlight::added::Table::default();
+        let automatic = GrammarChoices::automatic(First::TreeSitter);
+        let record = super::language_record(&language(&waiting), &automatic, &table);
+        let choice = &record["choice"];
+        assert_eq!(choice["value"], "auto");
+        assert_eq!(
+            choice["label"],
+            "Automatic (Skwir's folder, with Emacs's library, being checked)"
+        );
+        let emacs = &choice["choices"][1];
+        assert_eq!(
+            (&emacs["detail"], &emacs["disabled"]),
+            (&"Checking…".into(), &true.into())
+        );
+        // Chosen before: still the choice, not "not here".
+        let chosen = GrammarChoices {
+            chosen: std::sync::Arc::new(std::collections::BTreeMap::from([(
+                "heex".to_owned(),
+                Choice::TreeSitter(Source::Emacs),
+            )])),
+            ..automatic.clone()
+        };
+        let record = super::language_record(&language(&waiting), &chosen, &table);
+        assert_eq!(record["choice"]["value"], "emacs");
+        assert_eq!(record["detail"], "heex", "{record}");
+        // Not checked: why, and when it is asked again.
+        let unchecked = Found {
+            unchecked: Some("the tree-sitter helper did not answer".into()),
+            ..waiting.clone()
+        };
+        let record = super::language_record(&language(&unchecked), &automatic, &table);
+        let detail = record["choice"]["choices"][1]["detail"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert!(
+            detail.starts_with("Not checked (the tree-sitter helper did not answer)"),
+            "{detail}"
+        );
+        // Checked and fitting: offered, Automatic's without the check.
+        let fits = Found {
+            checking: false,
+            ..waiting
+        };
+        let record = super::language_record(&language(&fits), &automatic, &table);
+        assert_eq!(
+            record["choice"]["label"],
+            "Automatic (Skwir's folder, with Emacs's library)"
+        );
+        assert_eq!(record["choice"]["choices"][1]["disabled"], false);
     }
 
     #[test]

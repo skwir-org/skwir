@@ -13,9 +13,11 @@
 //! (`choose`), else the first usable. A grammar is whole (one source's
 //! library and queries) or combined by one rule (ADR-110, amended): a
 //! library without queries takes those of its grammar's own repository
-//! (Skwir's folder, the CLI's) or the system's, never an editor's, and
-//! is checked to fit before the Reading page offers it
-//! (`check_combined`). A part is never listed alone. A language is known
+//! (Skwir's folder, the CLI's) or the system's, never an editor's, each
+//! tried in turn, and is checked to fit before the Reading page offers
+//! it (`check_combined`), named then by the queries that color it. A
+//! whole grammar colors with its own queries alone. A part is never
+//! listed alone. A language is known
 //! by its key (`key_of`), as its library's symbol names it. What files a
 //! language colors is said by `languages.toml` in Skwir's folder first,
 //! then its own source, another source, bat's grammar of that name, and
@@ -137,6 +139,10 @@ pub struct Found {
     /// and the folder they lie in (the grammar's repository).
     pub queries_from: Option<Source>,
     pub queries_at: Option<PathBuf>,
+    /// Where each set of `grammar.lent` came from, and its folder: what a
+    /// combined grammar is named by once its check says that set colors
+    /// it (`colored_by`).
+    pub lent_from: Vec<(Source, Option<PathBuf>)>,
     /// Extensions (without their dot) and whole names it colors.
     pub file_types: Vec<String>,
     /// What a file's first line says when its name says nothing.
@@ -146,6 +152,17 @@ pub struct Found {
     /// not yet checked to fit (`check_combined`): colors as it is, offered
     /// on the Reading page once checked.
     pub checking: bool,
+    /// Why its check could not be made (the helper did not start, did not
+    /// answer, ended): no answer about the grammar, so never kept. It
+    /// waits, asked again once the grammars are found again (`find`).
+    pub unchecked: Option<String>,
+}
+
+impl Found {
+    /// Whether it waits for a check that may be asked now.
+    pub fn waits(&self) -> bool {
+        self.checking && self.unchecked.is_none()
+    }
 }
 
 /// The folders each source keeps grammars in, as found on this system;
@@ -201,8 +218,53 @@ struct State {
     /// Where they were looked for, as last found.
     report: Option<Arc<Report>>,
     /// What each combined grammar's check answered, by its files as they
-    /// were (`fit_key`): `None` it fits, else why not. Kept for the run.
-    fits: Option<HashMap<FitKey, Option<String>>>,
+    /// were (`fit_key`). Kept for the run.
+    fits: Option<HashMap<FitKey, Fit>>,
+}
+
+/// What a combined grammar's check answered (`check_combined`): the
+/// helper's answer about these files, kept for the run.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Fit {
+    /// It fits: the set of its queries at this place of
+    /// `Grammar::query_sets` colors it.
+    Colors(usize),
+    /// Its library cannot be used here (it does not load, its ABI is not
+    /// one this tree-sitter reads): why, as the helper says.
+    Library(String),
+    /// None of its highlights queries compiles against its library: why
+    /// the first does not.
+    Queries(String),
+}
+
+/// What a check came to: an answer about the grammar, kept, or the
+/// helper's own failure, which says nothing of it and is never kept.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Answer {
+    Fit(Fit),
+    Failed(String),
+}
+
+impl Answer {
+    /// What the helper's check answered (`tree_sitter::Helper::check`).
+    fn of(checked: anyhow::Result<crate::tree_sitter::Checked>) -> Answer {
+        let checked = match checked {
+            Ok(checked) => checked,
+            Err(error) => return Answer::Failed(format!("{error:#}")),
+        };
+        Answer::Fit(match (checked.refused, checked.colorless) {
+            (Some(why), _) => Fit::Library(why),
+            // An older helper says no set: its own, the first.
+            (None, None) => Fit::Colors(checked.colored_by.unwrap_or(0)),
+            (None, Some(colorless)) => Fit::Queries(
+                checked
+                    .problems
+                    .into_iter()
+                    .find(|problem| problem.starts_with("highlights"))
+                    .unwrap_or(colorless),
+            ),
+        })
+    }
 }
 
 static STATE: RwLock<State> = RwLock::new(State {
@@ -216,7 +278,7 @@ static STATE: RwLock<State> = RwLock::new(State {
 });
 
 /// Whether a check of the combined grammars is asked and not done
-/// (`take_waiting`): one at a time.
+/// (`take_waiting`, `Asked`): one asked at a time.
 static CHECK_ASKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// The grammar used for each language, as last found and chosen. Finding
@@ -241,13 +303,15 @@ pub fn generation() -> u64 {
 /// Find the grammars again where this system keeps them, keep them for
 /// `all`, and pick each language's with the choices last given to `sync`:
 /// a choice made while they are found is the one used. The grammars used.
+/// A combined grammar whose check could not be made waits again.
 pub fn find() -> Arc<[Found]> {
     let (mut all, folders, report) = find_all(&Roots::here(), &bat_file_types());
     // A combined grammar checked before with these very files is not
     // checked again: their keys read here, the lock not held.
     let keys = waiting_keys(&all);
     let mut state = STATE.write();
-    fitted(&mut all, &keys, state.fits.get_or_insert_with(HashMap::new));
+    let fits = state.fits.get_or_insert_with(HashMap::new);
+    fitted(&mut all, &keys, fits, &HashMap::new());
     state.all = Some(all.into());
     state.folders = folders;
     state.report = Some(Arc::new(report));
@@ -287,44 +351,122 @@ fn waiting_keys(all: &[Found]) -> Vec<(usize, FitKey)> {
         .collect()
 }
 
-/// The checks `fits` remembers applied to `all`'s grammars at `keys`:
-/// one that fits is checked, one that does not cannot be used, saying
-/// why. Whether any was.
+/// The checks `fits` remembers, and those that could not be made
+/// (`failed`, this check's), applied to `all`'s grammars at `keys`: one
+/// that fits is checked, named by the set of queries that colors it; one
+/// refused cannot be used, saying why in words of its parts; one whose
+/// check failed waits, saying why. Whether any changed.
 fn fitted(
     all: &mut [Found],
     keys: &[(usize, FitKey)],
-    fits: &HashMap<FitKey, Option<String>>,
+    fits: &HashMap<FitKey, Fit>,
+    failed: &HashMap<FitKey, String>,
 ) -> bool {
     let mut any = false;
     for (at, key) in keys {
-        let (Some(found), Some(answer)) = (all.get_mut(*at), fits.get(key)) else {
+        let Some(found) = all.get_mut(*at) else {
             continue;
         };
-        found.checking = false;
-        if let Some(why) = answer {
-            // The helper names files by their whole path: from `~/`.
-            let why = home().map_or_else(
-                || why.clone(),
-                |home| why.replace(&format!("{}/", home.display()), "~/"),
-            );
-            found.problem = Some(format!(
-                "its queries do not fit this library ({why}): put the repository at the revision its library was built from"
-            ));
+        if let Some(fit) = fits.get(key) {
+            found.checking = false;
+            found.unchecked = None;
+            match fit {
+                Fit::Colors(set) => colored_by(found, *set),
+                Fit::Library(why) => found.problem = Some(library_refused(found, why)),
+                Fit::Queries(why) => found.problem = Some(queries_refused(found, why)),
+            }
+            any = true;
+        } else if let Some(why) = failed.get(key) {
+            found.unchecked = Some(home_in(why));
+            any = true;
         }
-        any = true;
     }
     any
 }
 
-/// Whether combined grammars wait for their check and none is asked: the
-/// one caller told `true` asks it (`check_combined`).
-pub fn take_waiting() -> bool {
-    let waiting = STATE
+/// Why a combined grammar's library cannot be used, the helper's reason
+/// with its paths from `~/`: "Emacs's library cannot be used (its ABI is
+/// 16, …)". Its queries are not the matter.
+fn library_refused(found: &Found, why: &str) -> String {
+    format!(
+        "{} cannot be used ({})",
+        found.source.library(),
+        home_in(why)
+    )
+}
+
+/// Why none of a combined grammar's queries colors its library, and what
+/// makes them fit, by whose they are: a repository's is checked out at
+/// the revision the library was built from; the system's are for its own
+/// library, so the repository goes in Skwir's folder.
+fn queries_refused(found: &Found, why: &str) -> String {
+    let library = found.source.library();
+    let why = home_in(why);
+    match found.queries_from {
+        Some(Source::Skwir | Source::TreeSitter) => format!(
+            "its repository's queries do not fit {library} ({why}): check the repository out at the revision its library was built from"
+        ),
+        _ => format!(
+            "the system's queries do not fit {library} ({why}): put the grammar's repository, at the revision its library was built from, in Skwir's grammars folder"
+        ),
+    }
+}
+
+/// `found` colored by the set of its queries at `set` of
+/// `Grammar::query_sets`, as its check says: that set first, named by
+/// where it came from, and those before it, whose highlights do not
+/// compile against its library, left out. Its own first set: as it is.
+fn colored_by(found: &mut Found, set: usize) {
+    let Some(lent) = set.checked_sub(1) else {
+        return;
+    };
+    if lent >= found.grammar.lent.len() || lent >= found.lent_from.len() {
+        return;
+    }
+    let after = found.grammar.lent.split_off(lent + 1);
+    let after_from = found.lent_from.split_off(lent + 1);
+    let (Some(queries), Some((from, folder))) = (found.grammar.lent.pop(), found.lent_from.pop())
+    else {
+        return;
+    };
+    let grammar = &mut found.grammar;
+    grammar.highlights = queries.highlights;
+    grammar.injections = queries.injections;
+    grammar.locals = queries.locals;
+    grammar.folds = queries.folds;
+    grammar.outline = queries.outline;
+    grammar.lent = after;
+    found.lent_from = after_from;
+    let combined = from != found.source;
+    found.queries_from = combined.then_some(from);
+    found.queries_at = folder.filter(|_| combined);
+}
+
+/// Whether combined grammars wait for a check that may be asked now.
+pub fn waiting() -> bool {
+    STATE
         .read()
         .all
         .as_ref()
-        .is_some_and(|all| all.iter().any(|found| found.checking));
-    waiting
+        .is_some_and(|all| all.iter().any(Found::waits))
+}
+
+/// A check of the combined grammars asked (`take_waiting`): the next may
+/// be asked once this is dropped, whether its job ran, never started (its
+/// token cancelled) or panicked.
+pub struct Asked(());
+
+impl Drop for Asked {
+    fn drop(&mut self) {
+        CHECK_ASKED.store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
+/// Whether combined grammars wait for their check and none is asked: the
+/// one caller handed `Asked` asks it (`check_combined`), holding it until
+/// it is done.
+pub fn take_waiting() -> Option<Asked> {
+    let asked = waiting()
         && CHECK_ASKED
             .compare_exchange(
                 false,
@@ -332,7 +474,8 @@ pub fn take_waiting() -> bool {
                 std::sync::atomic::Ordering::AcqRel,
                 std::sync::atomic::Ordering::Acquire,
             )
-            .is_ok()
+            .is_ok();
+    asked.then_some(Asked(()))
 }
 
 /// Check each combined grammar waiting (ADR-110, amended): its library
@@ -340,21 +483,23 @@ pub fn take_waiting() -> bool {
 /// (`tree_sitter::checking`), each told under a name of its own so two
 /// sources' grammars of a language are checked apart; what it answers
 /// kept for the run, and applied. A worker's work, asked when the
-/// Reading page's Languages is first shown. Whether any grammar changed.
+/// Reading page's Languages is first shown or `ui.languages` is asked
+/// off the window's thread; one check at a time, a second checking what
+/// the first left. Whether any grammar changed.
 pub fn check_combined(cancel: &skwir_core::CancelToken) -> bool {
-    let changed = check_waiting(cancel);
-    CHECK_ASKED.store(false, std::sync::atomic::Ordering::Release);
-    changed
+    static ONE: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+    let _one = ONE.lock();
+    check_waiting(crate::tree_sitter::checking(), cancel)
 }
 
-fn check_waiting(cancel: &skwir_core::CancelToken) -> bool {
+fn check_waiting(helper: &crate::tree_sitter::Helper, cancel: &skwir_core::CancelToken) -> bool {
     let (waiting, folders) = {
         let state = STATE.read();
         let waiting: Vec<Found> = state
             .all
             .iter()
             .flat_map(|all| all.iter())
-            .filter(|found| found.checking)
+            .filter(|found| found.waits())
             .cloned()
             .collect();
         (waiting, state.folders.clone())
@@ -362,6 +507,13 @@ fn check_waiting(cancel: &skwir_core::CancelToken) -> bool {
     if waiting.is_empty() {
         return false;
     }
+    // Each one's files as they are before the helper reads them: one
+    // written again during the check is checked again, its answer never
+    // kept under the new file's key.
+    let keys: Vec<FitKey> = waiting
+        .iter()
+        .map(|found| fit_key(&found.grammar))
+        .collect();
     let apart = |found: &Found| format!("{}@{}", found.grammar.name, found.source.key());
     let told: Vec<Grammar> = waiting
         .iter()
@@ -372,33 +524,36 @@ fn check_waiting(cancel: &skwir_core::CancelToken) -> bool {
         .collect();
     // Told afresh: a helper still running from the last check keeps what
     // it loaded, and these files may have been written again since.
-    let helper = crate::tree_sitter::checking();
     helper.set_grammars_afresh(told.clone(), folders_read(&told, &folders));
-    let mut answers = Vec::new();
-    for found in &waiting {
+    let mut fits = Vec::new();
+    let mut failed = HashMap::new();
+    for (found, key) in waiting.iter().zip(keys) {
         if cancel.is_cancelled() {
             break;
         }
-        let answer = match helper.check(&apart(found), cancel) {
-            Ok(checked) => checked
-                .colorless
-                .map(|why| checked.problems.first().cloned().unwrap_or(why)),
-            Err(_) if cancel.is_cancelled() => break,
-            Err(error) => Some(format!("{error:#}")),
-        };
-        answers.push((fit_key(&found.grammar), answer));
+        let checked = helper.check(&apart(found), cancel);
+        if checked.is_err() && cancel.is_cancelled() {
+            break;
+        }
+        match Answer::of(checked) {
+            Answer::Fit(fit) => fits.push((key, fit)),
+            Answer::Failed(why) => {
+                failed.insert(key, why);
+            }
+        }
     }
-    if answers.is_empty() {
+    if fits.is_empty() && failed.is_empty() {
         return false;
     }
     let all = {
         let mut state = STATE.write();
-        state.fits.get_or_insert_with(HashMap::new).extend(answers);
+        state.fits.get_or_insert_with(HashMap::new).extend(fits);
         state.all.clone()
     };
     let Some(all) = all else { return false };
     // Applied to the grammars as they stand: their keys read without the
-    // lock; found again meanwhile, `find` applied them.
+    // lock; found again meanwhile, `find` applied what was kept, and what
+    // failed is asked again.
     let keys = waiting_keys(&all);
     let mut state = STATE.write();
     if !state.all.as_ref().is_some_and(|now| Arc::ptr_eq(now, &all)) {
@@ -406,7 +561,7 @@ fn check_waiting(cancel: &skwir_core::CancelToken) -> bool {
     }
     let mut checked = all.to_vec();
     let fits = state.fits.get_or_insert_with(HashMap::new);
-    if !fitted(&mut checked, &keys, fits) {
+    if !fitted(&mut checked, &keys, fits, &failed) {
         return false;
     }
     state.all = Some(checked.into());
@@ -456,8 +611,10 @@ pub fn sync(chosen: &BTreeMap<String, Source>) -> Arc<[Found]> {
 fn repick(state: &mut State) -> Arc<[Found]> {
     let all = state.all.clone().unwrap_or_default();
     let found: Arc<[Found]> = pick(&all, &state.chosen).into();
-    // Never found and found nothing are alike: nothing is colored again.
-    if state.found.as_deref().unwrap_or_default() != &*found {
+    // Never found and found nothing are alike: nothing is colored again;
+    // nor when only what the Reading page says changed (a check answered
+    // that a grammar coloring meanwhile fits).
+    if !colors_alike(state.found.as_deref().unwrap_or_default(), &found) {
         state.generation += 1;
     }
     state.found = Some(Arc::clone(&found));
@@ -469,6 +626,22 @@ fn repick(state: &mut State) -> Arc<[Found]> {
     let folders = folders_read(&told, &state.folders);
     crate::tree_sitter::shared().set_grammars_reading(told, folders);
     found
+}
+
+/// Whether two picks color texts alike: the same grammars, from the same
+/// sources, for the same files, each usable or not. What only the Reading
+/// page says (a check's state, a reason's words) colors nothing again.
+fn colors_alike(before: &[Found], now: &[Found]) -> bool {
+    fn colors(found: &Found) -> (&Grammar, Source, &[String], Option<&str>, bool) {
+        (
+            &found.grammar,
+            found.source,
+            &found.file_types,
+            found.first_line.as_deref(),
+            found.problem.is_none(),
+        )
+    }
+    before.len() == now.len() && before.iter().zip(now).all(|(a, b)| colors(a) == colors(b))
 }
 
 /// The folders a helper told `grammars` reads: of `folders` (where the
@@ -608,6 +781,7 @@ impl Roots {
     pub fn here() -> Roots {
         let config = editor_config();
         let home = home();
+        let packaged = Packaged::here();
         let mut roots = Roots {
             skwir: folder(),
             ..Roots::default()
@@ -667,15 +841,7 @@ impl Roots {
             )
             .chain(installed("hx"))
             .chain(installed("helix"))
-            .chain(
-                [
-                    "/usr/lib/helix/runtime",
-                    "/usr/share/helix/runtime",
-                    "/usr/lib/hx/runtime",
-                    "/usr/local/lib/helix/runtime",
-                ]
-                .map(PathBuf::from),
-            )
+            .chain(packaged.helix)
             .collect();
         let nvim = program("nvim").and_then(|exe| Some(exe.parent()?.parent()?.to_owned()));
         let nvim_data = neovim_data();
@@ -686,14 +852,7 @@ impl Roots {
                 [data.join("site/parser"), lazy.join("parser")]
             })
             .chain(nvim.iter().map(|prefix| prefix.join("lib/nvim/parser")))
-            .chain(
-                [
-                    "/usr/lib/nvim/parser",
-                    "/usr/lib64/nvim/parser",
-                    "/usr/local/lib/nvim/parser",
-                ]
-                .map(PathBuf::from),
-            )
+            .chain(packaged.neovim_parsers)
             .collect();
         roots.neovim_queries = nvim_data
             .iter()
@@ -709,31 +868,11 @@ impl Roots {
                 nvim.iter()
                     .map(|prefix| prefix.join("share/nvim/runtime/queries")),
             )
-            .chain(["/usr/share/nvim/runtime/queries"].map(PathBuf::from))
+            .chain(packaged.neovim_queries)
             .collect();
-        roots.system_parsers = [
-            "/usr/lib/tree_sitter",
-            "/usr/lib64/tree_sitter",
-            "/usr/local/lib/tree_sitter",
-        ]
-        .map(PathBuf::from)
-        .into();
-        roots.system_queries = [
-            "/usr/share/tree-sitter/queries",
-            "/usr/local/share/tree-sitter/queries",
-        ]
-        .map(PathBuf::from)
-        .into();
-        roots.system_libraries = [
-            "/usr/lib",
-            "/usr/lib64",
-            "/usr/local/lib",
-            "/usr/lib/x86_64-linux-gnu",
-            "/usr/lib/aarch64-linux-gnu",
-            "/opt/homebrew/lib",
-        ]
-        .map(PathBuf::from)
-        .into();
+        roots.system_parsers = packaged.system_parsers;
+        roots.system_queries = packaged.system_queries;
+        roots.system_libraries = packaged.system_libraries;
         roots.emacs = home
             .iter()
             .map(|home| home.join(".emacs.d/tree-sitter"))
@@ -744,6 +883,81 @@ impl Roots {
     }
 }
 
+/// The folders a system's packages keep grammars and editors' runtimes
+/// in, beside those found from where a program is (`Roots::here`).
+#[derive(Default)]
+struct Packaged {
+    helix: Vec<PathBuf>,
+    neovim_parsers: Vec<PathBuf>,
+    neovim_queries: Vec<PathBuf>,
+    system_parsers: Vec<PathBuf>,
+    system_queries: Vec<PathBuf>,
+    system_libraries: Vec<PathBuf>,
+}
+
+impl Packaged {
+    /// The distributions' folders on Linux and the BSDs: Arch's
+    /// `/usr/lib/tree_sitter` and `libtree-sitter-<lang>` libraries, Debian's
+    /// multiarch ones, each editor's runtime as packaged.
+    #[cfg(not(any(target_os = "macos", windows)))]
+    fn here() -> Packaged {
+        let paths = |paths: &[&str]| paths.iter().map(PathBuf::from).collect();
+        Packaged {
+            helix: paths(&[
+                "/usr/lib/helix/runtime",
+                "/usr/share/helix/runtime",
+                "/usr/lib/hx/runtime",
+                "/usr/local/lib/helix/runtime",
+            ]),
+            neovim_parsers: paths(&[
+                "/usr/lib/nvim/parser",
+                "/usr/lib64/nvim/parser",
+                "/usr/local/lib/nvim/parser",
+            ]),
+            neovim_queries: paths(&["/usr/share/nvim/runtime/queries"]),
+            system_parsers: paths(&[
+                "/usr/lib/tree_sitter",
+                "/usr/lib64/tree_sitter",
+                "/usr/local/lib/tree_sitter",
+            ]),
+            system_queries: paths(&[
+                "/usr/share/tree-sitter/queries",
+                "/usr/local/share/tree-sitter/queries",
+            ]),
+            system_libraries: paths(&[
+                "/usr/lib",
+                "/usr/lib64",
+                "/usr/local/lib",
+                "/usr/lib/x86_64-linux-gnu",
+                "/usr/lib/aarch64-linux-gnu",
+            ]),
+        }
+    }
+
+    /// Homebrew's on macOS (Apple silicon's prefix, then Intel's): its
+    /// libraries and their queries. Helix and Neovim are found from their
+    /// program's prefix, the system keeps no grammar of its own.
+    #[cfg(target_os = "macos")]
+    fn here() -> Packaged {
+        let paths = |paths: &[&str]| paths.iter().map(PathBuf::from).collect();
+        Packaged {
+            system_queries: paths(&[
+                "/opt/homebrew/share/tree-sitter/queries",
+                "/usr/local/share/tree-sitter/queries",
+            ]),
+            system_libraries: paths(&["/opt/homebrew/lib", "/usr/local/lib"]),
+            ..Packaged::default()
+        }
+    }
+
+    /// None on Windows: each program keeps its grammars in its own folders,
+    /// found from the user's (`Roots::here`) and its program's.
+    #[cfg(windows)]
+    fn here() -> Packaged {
+        Packaged::default()
+    }
+}
+
 /// Skwir's grammars folder: grammars' repositories, built or not (an
 /// unbuilt one lends its queries to a library found elsewhere), and
 /// `languages.toml`.
@@ -751,11 +965,15 @@ pub fn folder() -> Option<PathBuf> {
     skwir_core::folders::data().map(|dir| dir.join("grammars"))
 }
 
+/// The home folder, as the rest of Skwir reads it.
 fn home() -> Option<PathBuf> {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-        .filter(|dir| dir.is_absolute())
+    skwir_core::os_path::home()
+}
+
+/// A text the helper wrote (naming files by their whole path), its paths
+/// from `~` (`os_path::from_home_in`).
+fn home_in(text: &str) -> String {
+    skwir_core::os_path::from_home_in(text)
 }
 
 /// The configuration folder Helix, the tree-sitter CLI and Emacs use: XDG's
@@ -827,8 +1045,7 @@ fn program(name: &str) -> Option<PathBuf> {
     std::env::split_paths(&path)
         .map(|dir| dir.join(&file))
         .find(|path| path.is_file())
-        .and_then(|path| std::fs::canonicalize(path).ok())
-        .map(plain)
+        .and_then(|path| canonical(&path))
 }
 
 /// A library and its queries as one source holds them, before they are
@@ -1004,11 +1221,15 @@ pub struct Nearly {
 
 /// Every folder each source is read in, in the sources' order: the CLI's
 /// parser directories its configuration names and its library cache.
+/// A folder that is another one of its source (`/usr/lib64`, a link to
+/// `/usr/lib`) is that one.
 fn folders_looked(roots: &Roots) -> Vec<(Source, PathBuf)> {
     let mut looked: Vec<(Source, PathBuf)> = Vec::new();
+    let mut seen: HashSet<(Source, PathBuf)> = HashSet::new();
     let mut add = |source: Source, folders: &[PathBuf]| {
         for folder in folders {
-            if !looked.iter().any(|(s, f)| *s == source && f == folder) {
+            let real = canonical(folder).unwrap_or_else(|| folder.clone());
+            if seen.insert((source, real)) {
                 looked.push((source, folder.clone()));
             }
         }
@@ -1091,20 +1312,22 @@ fn report_of(roots: &Roots, held: &[Held], all: &[Found]) -> Report {
     }
     // A grammar found that cannot be used: a library with nothing to
     // color with, a repository put in Skwir's or the CLI's folders with
-    // no library anywhere, a file outside its folder. An editor's queries
-    // of a language it has no parser of (Helix's `markup`, Neovim's
-    // queries of parsers not installed) are its own business.
-    let nearly_found = |found: &&Found| {
-        found.problem.is_some()
-            && (!found.grammar.library.as_os_str().is_empty()
-                || matches!(found.source, Source::Skwir | Source::TreeSitter))
-    };
-    for found in all.iter().filter(nearly_found) {
+    // no library anywhere, a library outside its folder. An editor's
+    // queries of a language it has no parser of (Helix's `markup`,
+    // Neovim's queries of parsers not installed) are its own business:
+    // never listed (`merge`), so never said.
+    let mut held_as: HashMap<(Source, String), &Held> = HashMap::new();
+    for held in held {
+        held_as
+            .entry((held.source, key_of(&held.name)))
+            .or_insert(held);
+    }
+    for found in all.iter().filter(|found| found.problem.is_some()) {
         let what = Some(found.grammar.library.clone())
             .filter(|library| !library.as_os_str().is_empty())
             .or_else(|| {
-                held.iter()
-                    .find(|held| held.source == found.source && held.name == found.grammar.name)
+                held_as
+                    .get(&(found.source, key_of(&found.grammar.name)))
                     .and_then(|held| held.home.clone().or_else(|| held.at.first().cloned()))
             })
             .unwrap_or_default();
@@ -1114,16 +1337,26 @@ fn report_of(roots: &Roots, held: &[Held], all: &[Found]) -> Report {
             said: found.problem.clone().unwrap_or_default(),
         });
     }
-    let looked = folders_looked(roots)
-        .into_iter()
-        .map(|(source, folder)| {
-            let mut languages: Vec<String> = held
+    let folders = folders_looked(roots);
+    // Each file is the deepest folder's of its source that holds it: the
+    // system's `/usr/lib/tree_sitter` gives its own, not `/usr/lib`.
+    let mut languages: Vec<Vec<String>> = vec![Vec::new(); folders.len()];
+    for held in held {
+        for at in &held.at {
+            let deepest = folders
                 .iter()
-                .filter(|held| {
-                    held.source == source && held.at.iter().any(|at| at.starts_with(&folder))
-                })
-                .map(|held| held.name.clone())
-                .collect();
+                .enumerate()
+                .filter(|(_, (source, folder))| *source == held.source && at.starts_with(folder))
+                .max_by_key(|(_, (_, folder))| folder.components().count());
+            if let Some((index, _)) = deepest {
+                languages[index].push(held.name.clone());
+            }
+        }
+    }
+    let looked = folders
+        .into_iter()
+        .zip(languages)
+        .map(|((source, folder), mut languages)| {
             languages.sort();
             languages.dedup();
             Looked {
@@ -1167,16 +1400,10 @@ fn is_repository(dir: &Path) -> bool {
     dir.join("tree-sitter.json").is_file() || dir.join("grammar.js").is_file()
 }
 
-/// `path` as a reason says it: from `~/` where it is under the home
-/// folder.
+/// `path` as a reason says it: from `~` where it is under the home
+/// folder (`os_path::from_home`, as the settings say paths).
 fn shown(path: &Path) -> String {
-    home()
-        .and_then(|home| {
-            path.strip_prefix(&home)
-                .ok()
-                .map(|rest| format!("~/{}", rest.display()))
-        })
-        .unwrap_or_else(|| path.display().to_string())
+    skwir_core::os_path::from_home(path)
 }
 
 /// Every folder of `folders`, as one list.
@@ -1299,25 +1526,10 @@ impl Confined {
     }
 }
 
-/// `path` as it really is, its links followed; `None` when it is not there.
+/// `path` as it really is, its links followed (`os_path::canonical`);
+/// `None` when it is not there.
 fn canonical(path: &Path) -> Option<PathBuf> {
-    std::fs::canonicalize(path).ok().map(plain)
-}
-
-/// A real path as other programs take it: on Windows, without the `\\?\`
-/// that `canonicalize` puts before a drive's path.
-fn plain(path: PathBuf) -> PathBuf {
-    #[cfg(windows)]
-    {
-        let bytes = path.as_os_str().as_encoded_bytes();
-        if let Some(rest) = bytes.strip_prefix(br"\\?\")
-            && rest.get(1) == Some(&b':')
-            && rest.first().is_some_and(u8::is_ascii_alphabetic)
-        {
-            return PathBuf::from(skwir_core::os_path::from_bytes(rest.to_vec()));
-        }
-    }
-    path
+    skwir_core::os_path::canonical(path).ok()
 }
 
 /// Each source's grammar of each language, by language, sources in order
@@ -1380,17 +1592,26 @@ fn merge(
             })
             .unwrap_or_else(|| vec![name.clone()]);
         let mut sources = HashSet::new();
+        let with_library: HashSet<Source> = candidates
+            .iter()
+            .filter(|c| c.library.is_some())
+            .map(|c| c.source.unwrap_or(Source::Skwir))
+            .collect();
         for own in candidates {
             // One grammar a source: its first. Queries alone are a part,
             // never listed (ADR-110, amended): lent where they may be,
             // and said only of a repository the user put in Skwir's or
             // the CLI's folders when no source has a library of it, to
-            // say it is not built. A source's candidate without a library
-            // never hides one of the same source that has one.
+            // say it is not built. A library left out (it lies outside
+            // its folder) is said where its source has no other. A
+            // source's candidate without a library never hides one of the
+            // same source that has one.
             let source = own.source.unwrap_or(Source::Skwir);
             let first_of_all = first.is_some_and(|first| std::ptr::eq(first, own));
             let repository = matches!(source, Source::Skwir | Source::TreeSitter);
-            if (own.library.is_none() && !(first_of_all && repository)) || !sources.insert(source) {
+            let left_out = own.problem.is_some() && !with_library.contains(&source);
+            let said = own.library.is_some() || (first_of_all && repository) || left_out;
+            if !said || !sources.insert(source) {
                 continue;
             }
             found.push(alternative(own, candidates, &file_types, &name));
@@ -1400,9 +1621,10 @@ fn merge(
 }
 
 /// `own`, a source's grammar of a language whose grammars are
-/// `candidates`, as found, named `name`: its queries, else those its
-/// grammar's own repository or the system lends; its first line and
-/// injections, else another's; what makes it unusable.
+/// `candidates`, as found, named `name`: whole, its own queries; a part
+/// (a library without queries), those its grammar's own repository or the
+/// system lends; its first line and injections, else another's; what
+/// makes it unusable.
 fn alternative(
     own: &Candidate,
     candidates: &[Candidate],
@@ -1410,53 +1632,63 @@ fn alternative(
     name: &str,
 ) -> Found {
     let source = own.source.unwrap_or(Source::Skwir);
-    // Its own queries first, then those of its grammar's own repository
-    // (Skwir's folder, the CLI's) and the system's, by rank: the helper
-    // tries them in turn where one does not compile against this library.
-    // An editor's are written for its own revision of the grammar and its
-    // own conditions: never lent (ADR-110, amended).
-    let mut lenders: Vec<&Candidate> = candidates
-        .iter()
-        .filter(|c| {
-            !c.queries.is_empty()
-                && !std::ptr::eq(*c, own)
-                && c.source.unwrap_or(Source::Skwir).lends()
-        })
-        .collect();
-    lenders.sort_by_key(|c| lender_rank(c.source.unwrap_or(Source::Skwir)));
+    // Whole, it colors with its own queries alone. A library without
+    // queries takes those of its grammar's own repository (Skwir's folder,
+    // the CLI's) and the system's, by rank: the helper tries them in turn
+    // where one does not compile, and its check says which colors it
+    // (`colored_by`). An editor's are written for its own revision of the
+    // grammar and its own conditions: never lent (ADR-110, amended).
+    let sets: Vec<&Candidate> = if own.queries.is_empty() {
+        let mut lenders: Vec<&Candidate> = candidates
+            .iter()
+            .filter(|c| {
+                !c.queries.is_empty()
+                    && !std::ptr::eq(*c, own)
+                    && c.source.unwrap_or(Source::Skwir).lends()
+            })
+            .collect();
+        lenders.sort_by_key(|c| lender_rank(c.source.unwrap_or(Source::Skwir)));
+        // The same queries found twice (the system's, through its parser
+        // and its library folders) are one set.
+        let mut seen: Vec<&Queries> = Vec::new();
+        lenders.retain(|c| {
+            let new = !seen.contains(&&c.queries);
+            seen.push(&c.queries);
+            new
+        });
+        lenders
+    } else {
+        vec![own]
+    };
     // An editor that holds queries of it, not lent: said.
     let unlent = candidates
         .iter()
         .filter(|c| !c.queries.is_empty() && !std::ptr::eq(*c, own))
         .filter_map(|c| c.source)
         .find(|source| !source.lends());
-    let mut sets = std::iter::once(own)
-        .filter(|own| !own.queries.is_empty())
-        .chain(lenders.iter().copied());
-    let first = sets.next();
+    let first = sets.first().copied();
     let queries = first.map(|set| set.queries.clone()).unwrap_or_default();
-    let mut seen = vec![queries.clone()];
-    let lent: Vec<syntax::Queries> = sets
-        .filter(|set| {
-            let new = !seen.contains(&set.queries);
-            seen.push(set.queries.clone());
-            new
-        })
-        .map(|set| set.queries.clone().into())
-        .collect();
     // Lent: by whom, and from which folder (its home, else the folder of
     // its highlights).
-    let lender = first.filter(|set| !std::ptr::eq(*set, own));
-    let queries_from = lender.and_then(|lender| lender.source);
-    let queries_at = lender.and_then(|lender| {
-        lender.home.clone().or_else(|| {
-            lender
-                .queries
+    let folder_of = |set: &Candidate| {
+        set.home.clone().or_else(|| {
+            set.queries
                 .highlights
                 .last()
                 .and_then(|file| file.parent().map(Path::to_owned))
         })
-    });
+    };
+    let lender = first.filter(|set| !std::ptr::eq(*set, own));
+    let queries_from = lender.and_then(|lender| lender.source);
+    let combined = queries_from.is_some_and(|from| from != source);
+    // The sets tried after the first: only a combined grammar's, each
+    // that lends; one source's library and queries are one grammar.
+    let after: &[&Candidate] = if combined { &sets[1..] } else { &[] };
+    let lent: Vec<syntax::Queries> = after.iter().map(|set| set.queries.clone().into()).collect();
+    let lent_from = after
+        .iter()
+        .map(|set| (set.source.unwrap_or(Source::Skwir), folder_of(set)))
+        .collect();
     let first_line = own
         .first_line
         .clone()
@@ -1473,7 +1705,6 @@ fn alternative(
             (Some(_), true) => Some(no_highlights(source, unlent)),
             (Some(_), false) => None,
         });
-    let combined = queries_from.is_some_and(|from| from != source);
     Found {
         grammar: Grammar {
             name: name.to_owned(),
@@ -1492,10 +1723,12 @@ fn alternative(
         },
         source,
         queries_from: queries_from.filter(|_| combined),
-        queries_at: queries_at.filter(|_| combined),
+        queries_at: lender.and_then(folder_of).filter(|_| combined),
+        lent_from,
         file_types: file_types.to_vec(),
         first_line,
         checking: combined && problem.is_none(),
+        unchecked: None,
         problem,
     }
 }
@@ -1552,6 +1785,16 @@ fn sorted(dir: &Path) -> Vec<PathBuf> {
 fn read_text(path: &Path) -> Option<String> {
     let bytes = crate::file::read_regular(path, LIMIT).ok()?;
     String::from_utf8(bytes).ok()
+}
+
+/// Whether `name` can be a grammar's: what its library's symbol is made
+/// of (`tree_sitter_<name>`, `-` read as `_`). A version a library's file
+/// name carries (`libtree-sitter-c.0.dylib`, `c.0.24.so`) makes none.
+fn is_grammar_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
 }
 
 /// A library's file name ends so on this system.
@@ -1792,7 +2035,8 @@ fn helix_grammars(roots: &Roots) -> Vec<Candidate> {
             sorted(&runtime.join("grammars"))
                 .into_iter()
                 .filter(|path| is_library(path))
-                .filter_map(|path| Some(path.file_stem()?.to_string_lossy().into_owned())),
+                .filter_map(|path| Some(path.file_stem()?.to_string_lossy().into_owned()))
+                .filter(|name| is_grammar_name(name)),
         );
         // Queries alone are lent to libraries found elsewhere.
         names.extend(
@@ -1886,6 +2130,7 @@ fn parser_folder_grammars(
             let Some(name) = path
                 .file_stem()
                 .map(|stem| stem.to_string_lossy().into_owned())
+                .filter(|name| is_grammar_name(name))
             else {
                 continue;
             };
@@ -1935,7 +2180,13 @@ fn library_folder_grammars(
 ) -> Vec<Candidate> {
     let mut candidates = Vec::new();
     let mut seen = HashSet::new();
+    // A folder that is another (`/usr/lib64`, a link to `/usr/lib`) is
+    // listed once: the system's library folders hold thousands of files.
+    let mut listed = HashSet::new();
     for dir in folders {
+        if !listed.insert(canonical(dir).unwrap_or_else(|| dir.clone())) {
+            continue;
+        }
         for path in sorted(dir) {
             let Some(file) = path
                 .file_name()
@@ -1946,14 +2197,15 @@ fn library_folder_grammars(
             let Some(rest) = file.strip_prefix("libtree-sitter-") else {
                 continue;
             };
-            // `libtree-sitter-c.so`, not `.so.15` nor the runtime itself.
+            // `libtree-sitter-c.so`, not `.so.15`, `.0.dylib` nor the
+            // runtime itself.
             let Some(name) = [".so", ".dylib", ".dll"]
                 .iter()
                 .find_map(|ending| rest.strip_suffix(ending))
             else {
                 continue;
             };
-            if name.is_empty() || !path.is_file() || !seen.insert(name.to_owned()) {
+            if !is_grammar_name(name) || !path.is_file() || !seen.insert(name.to_owned()) {
                 continue;
             }
             candidates.push(Candidate {
@@ -2666,6 +2918,69 @@ mod tests {
         );
     }
 
+    /// Each grammar is the deepest folder's of its source that holds it,
+    /// a folder that is another (a link to it) is looked in once, and a
+    /// library left out of its folder (a Zed extension's linked outside
+    /// it) is listed and said.
+    #[cfg(unix)]
+    #[test]
+    fn the_folders_looked_in_credit_the_folder_that_holds_each() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = &canonical(tmp.path()).unwrap();
+        let lib = root.join("usr/lib");
+        write(&lib.join("tree_sitter/c.so"), "");
+        write(&root.join("queries/c/highlights.scm"), "(a) @a");
+        write(&lib.join("libtree-sitter-json.so"), "");
+        write(&root.join("queries/json/highlights.scm"), "(a) @a");
+        std::os::unix::fs::symlink(&lib, root.join("usr/lib64")).unwrap();
+        // A Zed extension whose library is a link out of it.
+        let nix = root.join("zed/nix");
+        write(&root.join("elsewhere/nix.wasm"), "");
+        std::fs::create_dir_all(nix.join("grammars")).unwrap();
+        std::os::unix::fs::symlink(
+            root.join("elsewhere/nix.wasm"),
+            nix.join("grammars/nix.wasm"),
+        )
+        .unwrap();
+        write(
+            &nix.join("languages/nix/config.toml"),
+            "name = \"Nix\"\ngrammar = \"nix\"\npath_suffixes = [\"nix\"]\n",
+        );
+        write(&nix.join("languages/nix/highlights.scm"), "(a) @a");
+        let roots = Roots {
+            zed: vec![root.join("zed")],
+            system_parsers: vec![lib.join("tree_sitter")],
+            system_queries: vec![root.join("queries")],
+            system_libraries: vec![lib.clone(), root.join("usr/lib64")],
+            ..Roots::default()
+        };
+        let (all, _, report) = find_all(&roots, &HashMap::new());
+        let held = |folder: &Path| {
+            report
+                .looked
+                .iter()
+                .find(|looked| looked.folder == folder)
+                .map(|looked| looked.languages.clone())
+        };
+        assert_eq!(held(&lib.join("tree_sitter")), Some(vec!["c".to_owned()]));
+        assert_eq!(held(&lib), Some(vec!["json".to_owned()]), "not c");
+        assert_eq!(held(&root.join("usr/lib64")), None, "the same folder");
+        let nix = named(&all, "nix").unwrap();
+        assert_eq!(nix.source, Source::Zed);
+        assert!(
+            nix.problem.as_deref().unwrap().contains("outside"),
+            "{nix:?}"
+        );
+        assert!(
+            report
+                .nearly
+                .iter()
+                .any(|nearly| nearly.source == Source::Zed && nearly.said.contains("outside")),
+            "{:#?}",
+            report.nearly
+        );
+    }
+
     /// A grammar is known by the symbol its library exports: Emacs's
     /// `c-sharp` and Neovim's `c_sharp` are one language, named as the
     /// first is, each library keeping its own symbol.
@@ -2707,61 +3022,234 @@ mod tests {
         assert_eq!(chosen.len(), 1);
     }
 
-    /// A combined grammar's check is kept by its files as they were: the
-    /// same files fit as they did, a refusal makes it unusable saying why,
-    /// a file changed since is checked again.
-    #[test]
-    fn a_check_is_kept_by_the_files_it_checked() {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = &canonical(tmp.path()).unwrap();
-        write(&root.join("lib/a.so"), "");
-        write(&root.join("repo/queries/highlights.scm"), "(x) @x");
-        let grammar = Grammar {
-            name: "a".into(),
-            library: root.join("lib/a.so"),
-            highlights: vec![root.join("repo/queries/highlights.scm")],
-            ..Grammar::default()
-        };
-        let combined = |grammar: &Grammar| Found {
-            grammar: grammar.clone(),
+    /// A combined grammar of Emacs's library and a repository's queries,
+    /// waiting for its check.
+    fn combined(root: &Path) -> Found {
+        Found {
+            grammar: Grammar {
+                name: "a".into(),
+                library: root.join("lib/a.so"),
+                highlights: vec![root.join("repo/queries/highlights.scm")],
+                lent: vec![syntax::Queries {
+                    highlights: vec![root.join("system/a/highlights.scm")],
+                    ..syntax::Queries::default()
+                }],
+                ..Grammar::default()
+            },
             source: Source::Emacs,
             queries_from: Some(Source::Skwir),
             queries_at: Some(root.join("repo")),
+            lent_from: vec![(Source::System, Some(root.join("system/a")))],
             file_types: vec!["a".into()],
             first_line: None,
             problem: None,
             checking: true,
-        };
-        let mut all = vec![combined(&grammar)];
+            unchecked: None,
+        }
+    }
+
+    fn combined_files(root: &Path) {
+        write(&root.join("lib/a.so"), "");
+        write(&root.join("repo/queries/highlights.scm"), "(x) @x");
+        write(&root.join("system/a/highlights.scm"), "(x) @x");
+    }
+
+    /// A combined grammar's check is kept by its files as they were: the
+    /// same files fit as they did, a refusal makes it unusable saying why
+    /// in words of the part refused, a file changed since is checked again.
+    #[test]
+    fn a_check_is_kept_by_the_files_it_checked() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = &canonical(tmp.path()).unwrap();
+        combined_files(root);
+        let mut all = vec![combined(root)];
         let keys = waiting_keys(&all);
         assert_eq!(keys.len(), 1);
+        let none = HashMap::new();
         let mut fits = HashMap::new();
-        assert!(!fitted(&mut all, &keys, &fits), "never checked: waits");
-        assert!(all[0].checking);
-        fits.insert(keys[0].1.clone(), None);
-        assert!(fitted(&mut all, &keys, &fits));
-        assert!(!all[0].checking && all[0].problem.is_none(), "it fits");
-        // Refused: unusable, saying why.
-        let mut refused = vec![combined(&grammar)];
-        fits.insert(keys[0].1.clone(), Some("no node `x`".into()));
-        assert!(fitted(&mut refused, &keys, &fits));
         assert!(
-            refused[0]
-                .problem
-                .as_deref()
-                .unwrap()
-                .contains("no node `x`"),
-            "{:?}",
-            refused[0].problem
+            !fitted(&mut all, &keys, &fits, &none),
+            "never checked: waits"
+        );
+        assert!(all[0].waits());
+        fits.insert(keys[0].1.clone(), Fit::Colors(0));
+        assert!(fitted(&mut all, &keys, &fits, &none));
+        assert!(!all[0].checking && all[0].problem.is_none(), "it fits");
+        assert_eq!(all[0].queries_from, Some(Source::Skwir), "named as found");
+        // Its queries refused: unusable, saying whose and what to do.
+        let mut refused = vec![combined(root)];
+        fits.insert(keys[0].1.clone(), Fit::Queries("no node `x`".into()));
+        assert!(fitted(&mut refused, &keys, &fits, &none));
+        let why = refused[0].problem.as_deref().unwrap();
+        assert!(
+            why.starts_with("its repository's queries do not fit Emacs's library (no node `x`)")
+                && why.contains("revision its library was built from"),
+            "{why}"
+        );
+        // Its library refused: said of the library, never of its queries,
+        // nor under the name the helper was told.
+        let mut library = vec![combined(root)];
+        let abi = "its ABI is 16, and this tree-sitter reads 13 to 15";
+        fits.insert(keys[0].1.clone(), Fit::Library(abi.into()));
+        assert!(fitted(&mut library, &keys, &fits, &none));
+        assert_eq!(
+            library[0].problem.as_deref(),
+            Some(format!("Emacs's library cannot be used ({abi})").as_str())
         );
         // Its queries written again: another key, checked again.
         std::fs::remove_file(root.join("repo/queries/highlights.scm")).unwrap();
         write(&root.join("repo/queries/highlights.scm"), "(y) @y");
-        let mut again = vec![combined(&grammar)];
+        let mut again = vec![combined(root)];
         let changed = waiting_keys(&again);
         assert_ne!(changed[0].1, keys[0].1);
-        assert!(!fitted(&mut again, &changed, &fits));
-        assert!(again[0].checking);
+        assert!(!fitted(&mut again, &changed, &fits, &none));
+        assert!(again[0].waits());
+    }
+
+    /// A check the helper could not make (it did not start) is no answer:
+    /// never kept, the grammar waits saying why, not asked again until the
+    /// grammars are found again, then asked again. One check is asked at a
+    /// time, and may be asked again once its `Asked` is let go of.
+    #[test]
+    fn a_check_the_helper_failed_is_asked_again() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = &canonical(tmp.path()).unwrap();
+        combined_files(root);
+        STATE.write().all = Some(vec![combined(root)].into());
+        let asked = take_waiting().expect("one waits");
+        assert!(take_waiting().is_none(), "one asked at a time");
+        drop(asked);
+        let asked = take_waiting().expect("asked again once let go of");
+        let helper = crate::tree_sitter::with_program(root.join("no-such-helper"));
+        let cancel = skwir_core::CancelToken::new();
+        assert!(check_waiting(&helper, &cancel), "said, though not kept");
+        drop(asked);
+        let all = all().unwrap();
+        assert!(all[0].checking && all[0].problem.is_none(), "{:?}", all[0]);
+        assert!(all[0].unchecked.is_some(), "why it was not checked");
+        assert!(!waiting(), "not asked again at once");
+        assert!(take_waiting().is_none());
+        assert!(STATE.read().fits.as_ref().is_none_or(HashMap::is_empty));
+        // Found again: it waits again.
+        let mut again = vec![combined(root)];
+        let keys = waiting_keys(&again);
+        let fits = STATE.read().fits.clone().unwrap_or_default();
+        assert!(!fitted(&mut again, &keys, &fits, &HashMap::new()));
+        STATE.write().all = Some(again.into());
+        assert!(waiting());
+        // Cancelled, nothing is said.
+        cancel.cancel();
+        assert!(!check_waiting(&helper, &cancel));
+        assert!(all_waiting());
+    }
+
+    fn all_waiting() -> bool {
+        all().unwrap().iter().all(Found::waits)
+    }
+
+    /// The check says which set of a combined grammar's queries colors it:
+    /// named by that one, those before it left out. A whole grammar colors
+    /// with its own queries alone, lent none.
+    #[test]
+    fn a_combined_grammar_is_named_by_the_queries_that_color_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = &canonical(tmp.path()).unwrap();
+        combined_files(root);
+        let mut all = vec![combined(root)];
+        let keys = waiting_keys(&all);
+        let fits = HashMap::from([(keys[0].1.clone(), Fit::Colors(1))]);
+        assert!(fitted(&mut all, &keys, &fits, &HashMap::new()));
+        let found = &all[0];
+        assert_eq!(found.queries_from, Some(Source::System));
+        assert_eq!(found.queries_at, Some(root.join("system/a")));
+        assert_eq!(
+            found.grammar.highlights,
+            [root.join("system/a/highlights.scm")]
+        );
+        assert!(found.grammar.lent.is_empty() && found.lent_from.is_empty());
+        assert!(found.problem.is_none() && !found.checking);
+        // From the sources: a library without queries takes each that
+        // lends, in turn; one with its own, none.
+        write(&root.join("emacs/libtree-sitter-heex.so"), "");
+        write(&root.join("nvim/parser/heex.so"), "");
+        write(&root.join("nvim/queries/heex/highlights.scm"), "(a) @a");
+        write(
+            &root.join("skwir/tree-sitter-heex/tree-sitter.json"),
+            r#"{"grammars":[{"name":"heex"}]}"#,
+        );
+        write(
+            &root.join("skwir/tree-sitter-heex/queries/highlights.scm"),
+            "(b) @b",
+        );
+        write(&root.join("system-queries/heex/highlights.scm"), "(c) @c");
+        let roots = Roots {
+            skwir: Some(root.join("skwir")),
+            neovim_parsers: vec![root.join("nvim/parser")],
+            neovim_queries: vec![root.join("nvim/queries")],
+            system_queries: vec![root.join("system-queries")],
+            emacs: vec![root.join("emacs")],
+            ..Roots::default()
+        };
+        let (all, _) = find_in(&roots, &HashMap::new());
+        let of = |source: Source| all.iter().find(|found| found.source == source).unwrap();
+        let neovim = of(Source::Neovim);
+        assert!(!neovim.checking && neovim.grammar.lent.is_empty(), "whole");
+        let emacs = of(Source::Emacs);
+        assert!(emacs.checking);
+        assert_eq!(emacs.queries_from, Some(Source::Skwir));
+        assert_eq!(
+            emacs.lent_from,
+            [(Source::System, Some(root.join("system-queries/heex")))]
+        );
+        assert_eq!(emacs.grammar.lent.len(), 1);
+    }
+
+    /// What colors texts is compared, not what only the Reading page says:
+    /// a check answered for a grammar coloring meanwhile colors nothing
+    /// again.
+    #[test]
+    fn a_fitting_check_colors_nothing_again() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = &canonical(tmp.path()).unwrap();
+        let waiting = combined(root);
+        let checked = Found {
+            checking: false,
+            ..waiting.clone()
+        };
+        assert!(colors_alike(
+            std::slice::from_ref(&waiting),
+            std::slice::from_ref(&checked)
+        ));
+        let refused = Found {
+            problem: Some("no".into()),
+            ..checked.clone()
+        };
+        assert!(!colors_alike(&[checked], &[refused]));
+    }
+
+    /// A version a library's file name carries makes no language of its
+    /// own: neither `.so.0.24` nor macOS's `.0.dylib`, nor `c.0.so`.
+    #[test]
+    fn a_library_version_is_no_language() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = &canonical(tmp.path()).unwrap();
+        for name in [
+            "libtree-sitter-c.so",
+            "libtree-sitter-c.so.0.24",
+            "libtree-sitter-c.0.dylib",
+            "libtree-sitter-c.0.24.dylib",
+            "libtree-sitter-c_sharp.dylib",
+        ] {
+            write(&root.join("lib").join(name), "");
+        }
+        write(&root.join("parsers/lua.so"), "");
+        write(&root.join("parsers/lua.0.so"), "");
+        let found = library_folder_grammars(Source::System, &[root.join("lib")], &[]);
+        let names: Vec<&str> = found.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["c", "c_sharp"]);
+        let found = parser_folder_grammars(Source::Neovim, &[root.join("parsers")], &[]);
+        let names: Vec<&str> = found.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["lua"]);
     }
 
     /// The grammars used follow the choices each caller reads, picked again
@@ -2776,10 +3264,12 @@ mod tests {
             source,
             queries_from: None,
             queries_at: None,
+            lent_from: Vec::new(),
             file_types: vec!["nix".into()],
             first_line: None,
             problem: None,
             checking: false,
+            unchecked: None,
         };
         // Before the grammars are found: none, the choice kept; found
         // none, nothing changed.
@@ -2816,10 +3306,12 @@ mod tests {
             source: Source::Skwir,
             queries_from: None,
             queries_at: None,
+            lent_from: Vec::new(),
             file_types: vec!["fish".into()],
             first_line: Some("^#!.*\\bfish\\b".into()),
             problem: None,
             checking: false,
+            unchecked: None,
         }];
         assert!(for_file(&found, "setup", Some("#!/usr/bin/env fish")).is_some());
         // Unusable, it is no grammar to color with, but still the file's.

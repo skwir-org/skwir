@@ -6,7 +6,10 @@ Linux, compiled for Windows and macOS (`just lint-all`), not run there. Extends
 ADR-060 (bat's grammars, matched by Ferroni), which stands. Decision 4
 revised 2026-11-01: a choice for each language beside Automatic's rule.
 Decision 3 amended 2026-11-04 with the user, from a page of samples: a
-grammar found whole or combined by one rule, said and checked (below).
+grammar found whole or combined by one rule, said and checked (below);
+the amendment's text made to say what was built after the review since
+0.3.0 (2026-11-05): what a check answers, what names a combined grammar,
+what the folders looked in say.
 
 ## Context
 
@@ -152,10 +155,13 @@ Languages is first shown.
      repository built (Skwir's folder, the CLI's). Otherwise it is a
      part: a library alone (Emacs's, a parser whose queries are not
      installed) or queries alone (a repository not built). A whole
-     grammar is offered as now; a part is never offered alone.
+     grammar is offered as now, colored by its own queries alone (one
+     that does not compile is not stood in for by another source's); a
+     part is never offered alone.
   2. **One rule combines parts:** a library and the queries of its
      grammar's own repository (Skwir's folder, a CLI parser directory)
-     or the system's queries of it. An editor's queries (Helix's, Zed's,
+     or the system's queries of it, those that lend tried in that order
+     where one does not compile. An editor's queries (Helix's, Zed's,
      Neovim's) never color another source's library: they are written
      for that editor's revision of the grammar and its predicates. A
      grammar is known by the symbol its library exports
@@ -168,30 +174,46 @@ Languages is first shown.
      as a whole grammar is named by its source and as the user put the
      repository there: "tree-sitter CLI, with Emacs's library", in the
      picker and in Automatic's label; the repository's own name in its
-     detail and in the folders looked in.
+     detail and in the folders looked in. Its queries' source is the one
+     whose queries its check found to color it, the lenders before it
+     left out.
   4. **A combined grammar is checked before it is offered.** When the
      Languages list is first shown (not when the settings open on
      another page, nor when a picker opens: Automatic's label needs the
-     answer), the helper loads its library and compiles its queries
-     (`Check`), remembered for the run by both files' identity and
-     change time. Until answered it is offered as being checked; a
-     refusal greys it with the helper's reason. A file colored before
-     then checks it the same way. Whole grammars are checked only when
-     they color, as now.
+     answer), or when `ui.languages` is asked off the window's thread (a
+     script, an agent, which waits for it), the helper loads its library
+     and compiles its queries (`Check`), remembered for the run by both
+     files' identity and change time, read before the helper reads
+     them. Until answered it is offered as being checked, and colors
+     meanwhile as it is (a file colored before then: a query that does
+     not compile is passed over there too), Automatic's label saying it
+     is being checked. A refusal greys it, saying which part is refused:
+     its library (it does not load here, its ABI is not one this
+     tree-sitter reads) or its queries, and what to do. A check the
+     helper could not make (it did not start, did not answer, ended)
+     answers nothing of the grammar: never remembered, the choice says
+     why, and it is asked again once the grammars are found again (the
+     settings opened). Whole grammars are checked only when they color,
+     as now.
   5. **A source is named by its folder.** Emacs's are
      `~/.emacs.d/tree-sitter` and `<config>/emacs/tree-sitter`; a
      library in the system's library folders (`/usr/lib`,
-     `/usr/local/lib`, Homebrew's) is the system's.
+     `/usr/local/lib` and Debian's multiarch ones on Linux and the BSDs,
+     Homebrew's on macOS, none on Windows) is the system's. A name a
+     library's file gives with a version in it (`libtree-sitter-c.so.15`,
+     `libtree-sitter-c.0.dylib`) is no grammar's.
   6. **Where grammars were looked for is shown** on the Reading page,
      folded under Languages, its header counting what was nearly found:
-     each folder read, whether it is there, what it gave (whole
-     grammars, libraries alone, repositories not built), and what was
-     nearly found with what to do: a repository one folder too deep in
-     a parser directory (the CLI reads only the folders directly in
-     it), a repository with no library (`tree-sitter build`, or its
-     queries color a library found elsewhere), a library with nothing to
-     combine (the 2026-11-03 reason), a parser directory that is not
-     there.
+     what was nearly found with what to do, first: a repository one
+     folder too deep in a parser directory (the CLI reads only the
+     folders directly in it), a repository with no library anywhere
+     (`tree-sitter build`), a library with nothing to combine (the
+     2026-11-03 reason), a library that lies outside its folder, a
+     parser directory that is not there; then each folder read that is
+     there, with the languages it gave, each the deepest folder's of its
+     source that holds it (the system's `/usr/lib/tree_sitter`, not
+     `/usr/lib`; a folder that is another, a link to it, read once); then
+     each source none of whose folders is there.
   7. **A folder kept elsewhere is linked into Skwir's grammars folder:**
      the one explicit way, for a repository kept anywhere or a folder
      Emacs's `treesit-extra-load-path` names, which Skwir never reads.
@@ -216,5 +238,6 @@ Languages is first shown.
   - Showing Languages starts the helper when a combined grammar is
     found (a library loaded and its queries compiled each); whole
     grammars cost nothing more.
-  - `Grammar::lent` holds only the grammar's own repositories' queries;
-    the test of every source changes with the rule.
+  - `Grammar::lent` holds only a combined grammar's lenders after the
+    first (its own repository's, the system's); a whole grammar's is
+    empty. The test of every source changes with the rule.

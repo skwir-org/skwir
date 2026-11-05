@@ -47,6 +47,9 @@ pub struct Loaded {
     /// against its library. A text is then not colored by it (bat's
     /// grammar colors it), though it still parses what is injected.
     pub colorless: Option<String>,
+    /// Which of its query sets (`Grammar::query_sets`) its highlights
+    /// came from: the first whose highlights compile.
+    pub colored_by: Option<usize>,
 }
 
 pub struct Grammars {
@@ -150,10 +153,30 @@ impl Grammars {
             .with_context(|| format!("no grammar named {name}"))
     }
 
-    /// The grammar at `index`, loaded now if it was not.
+    /// The grammar at `index`, loaded now if it was not; why it cannot be,
+    /// after the grammar's name.
     pub fn load(&mut self, index: usize) -> anyhow::Result<&'static Loaded> {
+        let name = self
+            .list
+            .get(index)
+            .context("no such grammar")?
+            .name
+            .clone();
+        self.loaded_or_refused(index)?
+            .map_err(|why| anyhow::anyhow!("{name}: {why}"))
+    }
+
+    /// The grammar at `index`, loaded now if it was not, or why its library
+    /// cannot be used (it does not load, its ABI is not one this
+    /// tree-sitter reads): the helper's own answer about it, kept for its
+    /// life, said without the name it was told. An error is no answer: no
+    /// grammar is at `index`.
+    pub fn loaded_or_refused(
+        &mut self,
+        index: usize,
+    ) -> anyhow::Result<Result<&'static Loaded, String>> {
         if let Some(loaded) = self.loaded.get(&index) {
-            return loaded.clone().map_err(anyhow::Error::msg);
+            return Ok(loaded.clone());
         }
         let grammar = self.list.get(index).context("no such grammar")?.clone();
         let loaded = self
@@ -166,9 +189,9 @@ impl Grammars {
                 }
                 loaded
             })
-            .map_err(|error| format!("{}: {error:#}", grammar.name));
+            .map_err(|error| format!("{error:#}"));
         self.loaded.insert(index, loaded.clone());
-        loaded.map_err(anyhow::Error::msg)
+        Ok(loaded)
     }
 
     /// The highlights of the language an injection names, loaded if need
@@ -263,9 +286,14 @@ impl Grammars {
         let mut problems = Vec::new();
         let sets = grammar.query_sets();
         let mut highlight = None;
-        for set in sets.iter().filter(|set| !set.highlights.is_empty()) {
+        let mut colored_by = None;
+        for (at, set) in sets.iter().enumerate() {
+            if set.highlights.is_empty() {
+                continue;
+            }
             highlight = highlight_of(grammar, &language, set, &mut problems);
             if highlight.is_some() {
+                colored_by = Some(at);
                 break;
             }
         }
@@ -306,6 +334,7 @@ impl Grammars {
             outline,
             problems,
             colorless,
+            colored_by,
         }
     }
 
