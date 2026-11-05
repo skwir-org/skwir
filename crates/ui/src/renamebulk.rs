@@ -323,7 +323,7 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
                 .child(
                     div()
                         .w(sized(100.))
-                        .text_small()
+                        .text_body()
                         .text_color(theme.text_muted)
                         .child(*label),
                 )
@@ -350,7 +350,7 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
             .child(
                 div()
                     .w(sized(100.))
-                    .text_small()
+                    .text_body()
                     .text_color(theme.text_muted)
                     .child("Case"),
             )
@@ -381,7 +381,7 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
         .max_h(sized(260.))
         .track_scroll(&b.scroll)
         .overflow_y_scroll()
-        .text_small()
+        .text_body()
         .font_family(theme.code_font.clone());
     for (i, (from, to)) in b.preview.iter().enumerate() {
         list = list.child(
@@ -436,7 +436,7 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
         .children(
             b.error
                 .clone()
-                .map(|e| div().text_small().text_color(theme.error).child(e)),
+                .map(|e| div().text_body().text_color(theme.error).child(e)),
         )
         .child(list)
         .children(more)

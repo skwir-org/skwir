@@ -605,7 +605,7 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                 .gap_2()
                 .border_b_1()
                 .border_color(theme.border)
-                .child(div().text_small().text_color(theme.text_muted).child(label))
+                .child(div().text_body().text_color(theme.text_muted).child(label))
                 .child(div().flex_1().child(p.input.clone())),
         );
     if p.args.is_none() {

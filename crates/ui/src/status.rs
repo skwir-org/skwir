@@ -198,7 +198,7 @@ pub(crate) fn render(
         .items_center()
         .gap_4()
         .px_2()
-        .text_small()
+        .text_body()
         .border_t_1()
         .border_color(theme.border)
         .bg(theme.surface)

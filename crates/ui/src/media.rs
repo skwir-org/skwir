@@ -1157,7 +1157,7 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
     bar.push(Item::widget(Slot::Navigate, 1, |shell, _| {
         let media = &shell.preview.media;
         div()
-            .text_small()
+            .text_body()
             .flex_none()
             .child(time(media.scrub.unwrap_or(media.state.position)))
             .into_any_element()
@@ -1172,7 +1172,7 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
     let muted = theme.text_muted;
     bar.push(Item::widget(Slot::Navigate, 0, move |shell, _| {
         div()
-            .text_small()
+            .text_body()
             .flex_none()
             .text_color(muted)
             .child(duration(&shell.preview.media.state))
@@ -1300,7 +1300,7 @@ fn settings(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Vec<AnyEle
         ),
         crate::preview_bar::separator(theme).into_any_element(),
         div()
-            .text_small()
+            .text_body()
             .child(format!("{} / {}", time(state.position), duration(state)))
             .into_any_element(),
     ];

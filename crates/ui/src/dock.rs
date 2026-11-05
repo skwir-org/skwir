@@ -279,7 +279,7 @@ pub fn render(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Option<AnyE
             .flex()
             .items_center()
             .gap_2()
-            .text_small()
+            .text_body()
             .child(revealed(
                 div().id("caption-title").min_w_0().truncate(),
                 title.clone(),
@@ -392,7 +392,7 @@ fn transport(
     let time = |text: String, muted: bool| {
         div()
             .flex_none()
-            .text_small()
+            .text_body()
             .when(muted, |d| d.text_color(theme.text_muted))
             .child(text)
     };
@@ -515,7 +515,7 @@ fn menu(
             let mut left = Vec::new();
             if !kept.steps {
                 let position = pinned.scrub.unwrap_or(state.position);
-                panel = panel.child(div().px_2().text_small().child(format!(
+                panel = panel.child(div().px_2().text_body().child(format!(
                     "{} / {}",
                     crate::media::time(position),
                     crate::media::duration(state)

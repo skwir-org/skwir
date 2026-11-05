@@ -4230,7 +4230,7 @@ pub fn content(
             .flex()
             .flex_wrap()
             .gap_x_3()
-            .text_small()
+            .text_body()
             .bg(theme.surface)
             .border_t_1()
             .border_color(theme.border);

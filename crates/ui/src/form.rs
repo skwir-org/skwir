@@ -812,7 +812,7 @@ fn field_row(
     cx: &mut Context<Shell>,
 ) -> AnyElement {
     let label = div()
-        .text_small()
+        .text_body()
         .font_weight(gpui::FontWeight::MEDIUM)
         .child(if field.required {
             format!("{} *", field.title)
@@ -855,7 +855,7 @@ fn field_row(
                         div()
                             .id(SharedString::from(format!("form-switch-label-{at}")))
                             .cursor_pointer()
-                            .text_small()
+                            .text_body()
                             .on_click(cx.listener(move |this, _, _, cx| this.form_toggle(at, cx)))
                             .child(title),
                     ),
@@ -1186,7 +1186,7 @@ fn choice_list(
             div()
                 .px_2()
                 .py_1()
-                .text_small()
+                .text_body()
                 .text_color(theme.text_muted)
                 .child("Nothing matches"),
         );

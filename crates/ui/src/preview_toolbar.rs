@@ -207,7 +207,7 @@ pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyEleme
         bar.push(Item::widget(Slot::Navigate, 1, move |_, _| {
             div()
                 .flex_none()
-                .text_small()
+                .text_body()
                 .whitespace_nowrap()
                 .child(time.clone())
                 .into_any_element()

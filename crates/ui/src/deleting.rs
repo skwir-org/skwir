@@ -616,7 +616,7 @@ impl Shell {
             return false;
         };
         if let Some(listed) = &confirm.listed {
-            ROWS.scroll(&listed.scroll, mv);
+            ROWS.scroll(&listed.scroll, mv, crate::sizes::Scale::of(window));
             cx.notify();
         }
         true
@@ -649,7 +649,7 @@ pub fn render(
         .child(
             div()
                 .min_h(sized(16.))
-                .text_small()
+                .text_body()
                 .text_color(theme.text_muted)
                 .truncate()
                 .child(listed.summary()),
@@ -696,7 +696,7 @@ fn rows(shell: &Shell, range: Range<usize>, cx: &mut Context<Shell>) -> Vec<AnyE
                     .role(gpui::Role::ListItem)
                     .when_some(said, |d, said| d.aria_label(said).aria_position_in_set(at))
                     .w_full()
-                    .h(px(ROWS.height))
+                    .h(sized(ROWS.height))
                     .px_2()
                     .flex()
                     .items_center()

@@ -86,10 +86,11 @@ working in an area, also read that area's rules (see
   desktop's colors change what it means (ADR-071). A font is a role
   (`theme.font`, `reading_font`, `code_font`, ADR-073), read where it is
   drawn and never copied: a change shows at once. A text size is a named
-  size (`sizes::TextSizes`: Body for a name or a value you read or
-  choose and for anything written as a sentence, Small for a short
-  label in a tight place, Tiny for a badge, Title for a dialog's title;
-  ADR-117), never `text_xs` or a literal;
+  size (`sizes::TextSizes`: Body by default, for all text you read or
+  act on, every control included; Small only for a note read after the
+  Body text beside it, a shortcut, a count or unit, what is said under
+  a name, a column's header, a group's heading; Tiny for a badge; Title
+  for a dialog's title; ADR-117), never `text_xs`, a literal or a length;
   a length that holds text is written at 100 % and grows with it
   (`sizes::sized`, `sizes::Scale`), while pictures and icons keep
   their size.

@@ -2861,7 +2861,7 @@ pub fn scope_token(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement>
             .gap(sized(4.))
             .rounded_full()
             .bg(bg)
-            .text_small()
+            .text_body()
             .text_color(fg)
             .cursor_pointer()
             .when(shell.a11y, |d| {
@@ -3228,7 +3228,7 @@ fn depth_line(shell: &Shell, typed: Typed, cx: &mut Context<Shell>) -> Option<An
             .flex()
             .items_center()
             .gap_2()
-            .text_small()
+            .text_body()
             .child(
                 div()
                     .flex_none()
@@ -3359,7 +3359,7 @@ fn draw_piece(shell: &Shell, ix: usize, text: &str, cx: &mut Context<Shell>) -> 
             .border_1()
             .border_color(theme.border)
             .cursor_pointer()
-            .text_small()
+            .text_body()
             .when(highlighted, |b| {
                 b.bg(theme.selection_bg)
                     .text_color(theme.selection_text)

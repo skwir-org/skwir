@@ -11104,3 +11104,18 @@ LXQt, GNOME or Xfce session; a Kvantum theme's colors (not read).
   at its next save. Tests: the binary line read from a key file reaches
   the check, names no family and no size, and gives way; 414 platform
   tests pass.
+- **Body by default** (the user, after Tiny and the grid's tags read too
+  small at 10 pt with no scaling, the most common setup): the
+  rule is now Body for all text read or acted on, Small only for a note
+  beside Body text, Tiny (0.8 of the body, from 0.71) for badges. 48 of
+  126 Small places moved to Body; the grid's picture chips use Tiny or
+  Small in a chip that grows (they wrote a length, which the size test
+  now refuses); the dialogs' rows grow with the text; the places menu is
+  measured at Body; an empty place's title is semibold Body and its
+  message wraps within a narrow pane (it ran past both edges), as does
+  the key sequence's card. Checked on Xvfb (list, grid, Settings at 100 %
+  and 150 %, delete dialog, F1, palette, Activity, Nearby at 560 px); 503
+  UI tests. Seen meanwhile, not from this: Breeze's large folder icons
+  drawn grey in Skwir's own colors and black in qt5ct's scheme here; and
+  a test window's double-click opened a picture in a browser of its own
+  on the test display, stopped by its pid.

@@ -421,7 +421,7 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                         .whitespace_nowrap()
                         .overflow_hidden()
                         .text_ellipsis_middle()
-                        .text_small()
+                        .text_body()
                         .text_color(theme.text_muted),
                     c.title.clone(),
                 ))

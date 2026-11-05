@@ -684,7 +684,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
             .items_center()
             .gap(sized(5.))
             .rounded(px(11.))
-            .text_small()
+            .text_body()
             .text_color(theme.text)
             .when_some(tone, |d, tone| d.bg(theme.tag_fill(tone)))
             .when(tone.is_none(), |d| d.border_1().border_color(theme.border))

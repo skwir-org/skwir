@@ -498,7 +498,7 @@ impl PaneView for MapView {
                     .when_some(said.clone(), StatefulInteractiveElement::aria_value)
                     .flex_1()
                     .min_w_0()
-                    .text_small()
+                    .text_body()
                     .text_color(theme.text_muted)
                     .truncate(),
                 self.status(),

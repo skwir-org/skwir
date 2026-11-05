@@ -5,12 +5,11 @@
 //! the names a copy, a move or a link found taken (ADR-054, `clashes.rs`).
 
 use crate::sizes::TextSizes;
+use crate::sizes::sized;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
-use gpui::{
-    AnyElement, Context, FocusHandle, UniformListScrollHandle, Window, div, prelude::*, px,
-};
+use gpui::{AnyElement, Context, FocusHandle, UniformListScrollHandle, Window, div, prelude::*};
 use skwir_core::Plan;
 use skwir_core::app::{Asker, ClashQuestion, Question};
 use skwir_core::op::{Change, PlanDiff, StepStatus};
@@ -32,7 +31,8 @@ pub enum LineKind {
 
 /// A step's row, and the rows in sight before the list scrolls.
 const ROWS: Rows = Rows {
-    height: 20.,
+    // A line of Body text, as the delete dialog's rows (ADR-117).
+    height: 24.,
     shown: 16,
 };
 
@@ -250,7 +250,7 @@ impl Shell {
         else {
             return false;
         };
-        ROWS.scroll(&review.scroll, mv);
+        ROWS.scroll(&review.scroll, mv, crate::sizes::Scale::of(window));
         cx.notify();
         true
     }
@@ -449,7 +449,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                 within,
             ))
         })
-        .child(list.text_small().font_family(theme.code_font.clone()))
+        .child(list.text_body().font_family(theme.code_font.clone()))
         .child(modal::footer(
             hint,
             [
@@ -544,12 +544,12 @@ fn step_rows(shell: &Shell, range: Range<usize>, cx: &mut Context<Shell>) -> Vec
                     .role(gpui::Role::ListItem)
                     .when_some(said, |d, said| d.aria_label(said).aria_position_in_set(i))
                     .w_full()
-                    .h(px(ROWS.height))
+                    .h(sized(ROWS.height))
                     .px_2()
                     .flex()
                     .items_center()
                     .gap_2()
-                    .text_small()
+                    .text_body()
                     .font_family(font.clone())
                     .text_color(color)
                     // Cut in the middle: a line ends with what it comes

@@ -1346,7 +1346,7 @@ fn render(view: &mut UsageView, shell: &mut Shell, cx: &mut Context<Shell>) -> A
                 .id("usage-hint")
                 .h(sized(24.))
                 .px_2()
-                .text_small()
+                .text_body()
                 .text_color(theme.text_muted)
                 .truncate(),
             hint,
@@ -1421,7 +1421,7 @@ fn tools(
                             .id("usage-summary")
                             .flex_1()
                             .min_w_0()
-                            .text_small()
+                            .text_body()
                             .truncate(),
                         summary.to_owned(),
                     ),

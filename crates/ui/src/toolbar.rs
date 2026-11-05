@@ -411,7 +411,7 @@ impl Button {
             .rounded_md()
             .border_1()
             .border_color(gpui::transparent_black())
-            .text_small()
+            .text_body()
             .whitespace_nowrap()
             .text_color(theme.text_muted)
             // A popup's row, as a context menu's (`menu::render`): the

@@ -405,12 +405,19 @@ fn picture_chip_height(zoom: f32) -> f32 {
     if zoom >= 192. { CHIP_HEIGHT } else { 16. }
 }
 
+/// Whether a picture of `zoom` is large enough for its tags to be written
+/// at Small rather than as badges.
+fn large_picture(zoom: f32) -> bool {
+    zoom >= 192.
+}
+
 /// A tag's chip over a picture: opaque (`Theme::tag_solid`), ringed with
 /// the background, so it reads on any picture.
 fn picture_chip(tag: &str, color: usize, zoom: f32, theme: &Theme) -> Div {
     div()
         .flex_none()
-        .h(px(picture_chip_height(zoom)))
+        // As tall as its text needs, which grows with it.
+        .h(sized(picture_chip_height(zoom)))
         .flex()
         .items_center()
         .whitespace_nowrap()
@@ -421,8 +428,14 @@ fn picture_chip(tag: &str, color: usize, zoom: f32, theme: &Theme) -> Div {
         .border_color(theme.bg)
         .bg(theme.tag_solid(color))
         .text_color(theme.text)
-        // A badge, a step larger on the largest pictures.
-        .text_size(crate::sizes::sized(if zoom >= 192. { 11. } else { 10. }))
+        // A badge, Small on the largest pictures.
+        .map(|d| {
+            if large_picture(zoom) {
+                d.text_small()
+            } else {
+                d.text_tiny()
+            }
+        })
         .child(dot(color, theme).size(px(6.)).mr(px(3.)))
         .child(tag_leaf(tag).to_owned())
 }
@@ -1324,7 +1337,7 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                         .whitespace_nowrap()
                         .overflow_hidden()
                         .text_ellipsis_middle()
-                        .text_small()
+                        .text_body()
                         .text_color(theme.text_muted),
                     e.title.clone(),
                 ))
@@ -1396,7 +1409,7 @@ fn color_strip(
             .ml_2()
             .px_2()
             .rounded_sm()
-            .text_small()
+            .text_body()
             .text_color(if chosen {
                 theme.accent
             } else {

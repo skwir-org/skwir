@@ -116,7 +116,8 @@ impl NavMenu {
 /// a menu row draws it, with what a row and the popup add around it,
 /// from 200 to 360 pixels as the menu was.
 fn width_of(rows: &[NavRow], font: &SharedString, window: &mut Window) -> Pixels {
-    let size = crate::sizes::painted(window, crate::sizes::Text::Small);
+    // Its rows are buttons: Body, as every control (ADR-117).
+    let size = crate::sizes::painted(window, crate::sizes::Text::Body);
     // What a row adds around its label grows with the text (ADR-117).
     let scale = crate::sizes::Scale::of(window);
     let font = gpui::font(font.clone());

@@ -115,7 +115,7 @@ pub fn contents(
         .flex()
         .flex_col()
         .size_full()
-        .text_small()
+        .text_body()
         .child(
             div()
                 .flex()

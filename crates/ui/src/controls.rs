@@ -106,7 +106,7 @@ pub fn segment(
         // none.
         .border_1()
         .border_color(gpui::transparent_black())
-        .text_small()
+        .text_body()
         .whitespace_nowrap()
         .cursor_pointer()
         .when(selected, |d| {
@@ -202,7 +202,7 @@ fn button_frame(
         .border_1()
         .border_color(theme.border)
         .bg(theme.bg)
-        .text_small()
+        .text_body()
         .whitespace_nowrap()
         .focus(move |s| s.border_color(accent))
 }
@@ -304,7 +304,7 @@ pub fn dropdown(
         .border_1()
         .border_color(theme.border)
         .bg(theme.bg)
-        .text_small()
+        .text_body()
         .cursor_pointer()
         .hover(move |s| s.bg(hover))
         .focus(move |s| s.border_color(accent))

@@ -607,7 +607,7 @@ impl SettingsView {
             .rounded_md()
             .cursor_pointer()
             .hover(move |s| s.bg(hover))
-            .text_small()
+            .text_body()
             .text_color(theme.text_muted)
             .child(controls::glyph(
                 if open { "chevron" } else { "chevron-right" },

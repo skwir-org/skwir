@@ -89,6 +89,15 @@ Qt's settings (4).
    was six sevenths, 11.4 px at a desktop's 10 pt); badges Tiny. Grid
    names are Body (step 1), their lines 1.2 times the text, as are tab
    titles and Properties' values, their labels muted (step 3).
+   Amended again on 2026-11-05 (the user: Small and Tiny sparingly):
+   Body is the default, for all text read or acted on, every control
+   included (buttons, dropdowns, segmented choices, fields, the
+   toolbar's labels, the footer, dialogs' forms and messages); Small
+   only for a note read after the Body text beside it (a shortcut or a
+   key cap, a count or a unit, what is said under a name, a column's
+   header, a group's heading, a short hint beside a control); Tiny,
+   four fifths of the body (it was 0.71: 9.5 px at 10 pt, below any
+   desktop's smallest text), for badges.
 6. **The preview's picker changes the file shown;** Reading's and Code's
    settings are where each file starts, and the picker shows the same
    percentages. Tables and the byte view follow it (step 2).
@@ -190,6 +199,23 @@ apart, and changes how gpui maps the pointer.
   `settings.toml` while shown, the book laid out again at twice the
   size on its first page; a zip of nested folders at Files 100 % and
   150 %.
+- Body by default, 2026-11-05 (point 5 amended): of 126 places at
+  Small, 48 moved to Body (the shared button, dropdown and segment, the
+  toolbar's buttons, the footer and the player's line, dialogs' forms,
+  summaries and messages, the address card's controls, Usage's summary,
+  the document outline); the places menu is measured at Body as its
+  rows are drawn. Tiny is 0.8 of the body; the grid's tag chips, which
+  wrote a length (10 px at 100 %, 9.5 at 10 pt) in a chip of a fixed
+  16 px, take Tiny (Small on the largest pictures) in a chip that grows,
+  and `every_place_names_a_text_size` now refuses a length as a text
+  size. The review, clash and delete dialogs' rows (`modal::Rows`) grow
+  with the text, the review's at a Body line (24 px at 100 %). An empty
+  place's title is Body, semibold (drawn regular in a variable font, as
+  gpui draws its weights, ADR-073), and its message is as wide as the
+  pane up to its measure: it ran past a narrow pane's edges. Checked on
+  Xvfb at the reference machine's 10 pt: the list, the grid with tagged
+  pictures, Settings at 100 % and 150 %, the delete dialog, F1, the
+  palette, Activity, Nearby in a 560 px window.
 - macOS and Windows, 2026-11-05: `desktop_style` reads a Mac's interface
   font (`.AppleSystemUIFont`, the family `NSFont.systemFont` names, at
   `NSFont.systemFontSize`'s 13 px) and Windows' (the message font of

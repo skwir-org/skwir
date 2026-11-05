@@ -13,14 +13,18 @@
 //!   `text_xs` its small text, and every length written in rems (the
 //!   spacing scale, `p_1`, `gap_2`) follows it.
 //! - **Named sizes** (`TextSizes`): every place writes at one of them,
-//!   never `text_xs` or a literal. A name or a value you read or choose
-//!   (a file, a place, a tab, a menu item, a property's value, a choice
-//!   in a list) and anything written as a sentence (a tooltip, a
-//!   setting's description, a message, a hint) is Body; a short label in
-//!   a tight place (a heading, a count, a caption, a button's label, a
-//!   column's header, a shortcut) is Small, nine tenths of the body; a
-//!   badge is Tiny; the title of a dialog or a panel is Title. Text an element paints itself takes
-//!   the same sizes from the rem in force (`painted`).
+//!   never `text_xs`, a literal or a length. Body is the default: all
+//!   text you read or act on, names, values and sentences (a tooltip, a
+//!   setting's description, a message), and every control (a button, a
+//!   menu's row, a choice, a field, the toolbar's labels, the footer).
+//!   Small, nine tenths of the body, is only a note read after the Body
+//!   text it stands beside: a shortcut or a key cap, a count or a unit,
+//!   what is said under a name (a size, a date, a speed), a column's
+//!   header, a group's heading, a short hint beside a control. Tiny,
+//!   four fifths of the body, is a badge (a count on an icon, a tag over
+//!   a picture). Title is the title of a dialog or a panel. Text an
+//!   element paints itself takes the same sizes from the rem in force
+//!   (`painted`).
 //! - **Lengths written at 100 %** (a row's 26 px, a column's width) grow
 //!   with the text of where they are drawn: in rems (`sized`, laid out
 //!   in the rem in force), or scaled in whole pixels (`Scale::px`) where
@@ -46,15 +50,17 @@ pub const REM: f32 = 16.;
 /// The share of a rem that is a part's body text (gpui's `text_sm`).
 const BODY_REMS: f32 = 0.875;
 
-/// The named text sizes, as shares of the rem in force: 14, 12.6, 10 and
-/// 18 px where the body is 14 px; Small is nine tenths of the body, a
+/// The named text sizes, as shares of the rem in force: 14, 12.6, 11.2
+/// and 18 px where the body is 14 px. Small is nine tenths of the body, a
 /// step the eye sees that never falls far below it (12 px at a desktop's
-/// 10 pt).
+/// 10 pt); Tiny four fifths, as Plasma's small font is of its general one
+/// (10.7 px at 10 pt), between macOS's smallest text (10/13) and GNOME's
+/// captions: no desktop writes smaller.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Text {
-    /// A name or a value you read or choose.
+    /// All text you read or act on, controls included: the default.
     Body,
-    /// What labels or describes it.
+    /// A note read after the Body text it stands beside.
     Small,
     /// A badge.
     Tiny,
@@ -67,7 +73,7 @@ impl Text {
         match self {
             Text::Body => BODY_REMS,
             Text::Small => BODY_REMS * 0.9,
-            Text::Tiny => 0.625,
+            Text::Tiny => BODY_REMS * 0.8,
             Text::Title => 1.125,
         }
     }
@@ -382,10 +388,20 @@ mod tests {
             ".text_xl()",
             ".text_2xl()",
         ];
+        // A number, or a length written at 100 % (`sized`): neither is a
+        // named size, and a length follows the rem without the names'
+        // floor (the grid's tags once fell to 9.5 px so).
         let literal = |line: &str| {
             line.split("text_size(").skip(1).any(|after| {
-                let after = after.trim_start_matches("gpui::").trim_start_matches("px(");
-                after.starts_with(|c: char| c.is_ascii_digit())
+                let after = after
+                    .trim_start_matches("gpui::")
+                    .trim_start_matches("crate::sizes::");
+                after.starts_with("sized(")
+                    || ["px(", "rems("].iter().any(|unit| {
+                        after
+                            .strip_prefix(unit)
+                            .is_some_and(|n| n.starts_with(|c: char| c.is_ascii_digit()))
+                    })
             })
         };
         let drawn = ["form.rs"];

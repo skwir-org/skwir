@@ -252,7 +252,7 @@ impl Render for DragPreview {
             .rounded_md()
             .bg(theme.accent)
             .text_color(theme.on_accent)
-            .text_small()
+            .text_body()
             .shadow_md()
             .child(text);
         let Some((image, hotspot)) = &self.icon else {

@@ -170,8 +170,12 @@ pub fn render(
     } else {
         theme.text_muted
     };
+    // As wide as the pane, up to a measure: narrower, it wraps rather than
+    // standing past the pane's edges.
     let mut card = div()
+        .w_full()
         .max_w(sized(420.))
+        .min_w_0()
         .flex()
         .flex_col()
         .items_center()
@@ -188,7 +192,14 @@ pub fn render(
                 .bg(theme.surface)
                 .child(controls::glyph(placeholder.icon, color, 22.)),
         )
-        .child(div().text_color(theme.text).child(placeholder.title))
+        // A title by its weight, at the size of the words under it.
+        .child(
+            div()
+                .text_body()
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .text_color(theme.text)
+                .child(placeholder.title),
+        )
         .when(!placeholder.detail.is_empty(), |d| {
             d.child(
                 div()

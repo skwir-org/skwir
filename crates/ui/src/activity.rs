@@ -759,7 +759,7 @@ fn spell_header(
                 .justify_between()
                 .gap_2()
                 .min_h(sized(22.))
-                .text_small()
+                .text_body()
                 .child(div().text_color(theme.text).child(said))
                 .child(
                     div()
@@ -799,7 +799,7 @@ fn cancel_all_button(
     )
     .h(sized(22.))
     .px_2()
-    .text_small()
+    .text_body()
     .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), cx))
     .child(reveal.marker(&focus))
     .press(
@@ -1642,7 +1642,7 @@ fn earlier_fold(
         .py_1()
         .border_t_1()
         .border_color(theme.border)
-        .text_small()
+        .text_body()
         .text_color(theme.text_muted)
         .cursor_pointer()
         .hover(move |s| s.bg(hover))
@@ -1709,7 +1709,7 @@ fn waiting_heading(
         )
         .h(sized(22.))
         .px_2()
-        .text_small()
+        .text_body()
         .child(reveal.marker(&focus))
         .press(
             |this, _, cx| {
@@ -1781,7 +1781,7 @@ fn waiting_row(
                 .min_w_0()
                 .flex()
                 .flex_col()
-                .text_small()
+                .text_body()
                 .child(crate::elements::clip::clipped(
                     div()
                         .id(("activity-waiting-what", asked))
@@ -1813,7 +1813,7 @@ fn waiting_row(
             )
             .h(sized(22.))
             .px_2()
-            .text_small()
+            .text_body()
             .child(reveal.marker(&focus))
             .press(
                 move |this, _, cx| {
@@ -2028,7 +2028,7 @@ fn progress_card(
                 ))
                 .child(
                     div()
-                        .text_small()
+                        .text_body()
                         .text_color(theme.text_muted)
                         .child(format!("{}{amount}", capitalized(&state))),
                 )
@@ -2166,12 +2166,7 @@ fn task_card(
                     capitalized(&task.title),
                 ))
                 .when(!amount.is_empty(), |d| {
-                    d.child(
-                        div()
-                            .text_small()
-                            .text_color(theme.text_muted)
-                            .child(amount),
-                    )
+                    d.child(div().text_body().text_color(theme.text_muted).child(amount))
                 })
                 .child(small_bar_full(fraction, theme.accent, theme)),
         )

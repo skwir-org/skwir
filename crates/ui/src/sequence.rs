@@ -116,8 +116,10 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                 )),
         );
     }
+    // Narrower than its measure where the window is, never past its edges.
     let card = div()
         .max_w(sized(820.))
+        .min_w_0()
         .p_3()
         .flex()
         .flex_col()
@@ -127,7 +129,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         .border_color(theme.border)
         .bg(theme.bg)
         .shadow_lg()
-        .text_small()
+        .text_body()
         .child(
             div()
                 .flex()

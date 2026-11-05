@@ -24,6 +24,12 @@
   Reading and code have sizes of their own too (Settings › Reading): each file
   opens at its size, the preview's − and + changing only the file shown, and
   tables and the byte view, which could not be enlarged, now follow them.
+- **Text you read or act on is written at the body size**: buttons, menus'
+  choices, the toolbar's labels, the footer, dialogs and settings' choices;
+  the smaller size is kept for shortcuts, counts, column headers and what is
+  said under a name, and badges such as the grid's tags are no smaller than
+  any desktop's smallest text. An empty folder's or place's message no longer
+  runs past a narrow pane.
 - **Skwir's own fonts**, Inter and JetBrains Mono for code, now come with its
   packages, so choosing them looks the same everywhere, and macOS and Windows
   write code in JetBrains Mono by default. They are read only when drawn.

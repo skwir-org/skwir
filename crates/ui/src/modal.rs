@@ -346,6 +346,7 @@ pub fn pressed_with(
 /// an emptied trash lists thousands, a plan ten thousand steps.
 #[derive(Clone, Copy)]
 pub struct Rows {
+    /// A row's height at 100 %: laid out, it grows with the text.
     pub height: f32,
     pub shown: usize,
 }
@@ -368,7 +369,9 @@ impl Rows {
             cx.processor(build),
         )
         .track_scroll(scroll)
-        .h(px(self.height * count.min(self.shown) as f32));
+        .h(crate::sizes::sized(
+            self.height * count.min(self.shown) as f32,
+        ));
         let handle = scroll.0.borrow().base_handle.clone();
         Self::boxed(id, rows, handle, theme)
     }
@@ -385,7 +388,7 @@ impl Rows {
         let handle = scroll.0.borrow().base_handle.clone();
         let text = div()
             .id(SharedString::from(format!("{id}-text")))
-            .max_h(px(self.height * self.shown as f32))
+            .max_h(crate::sizes::sized(self.height * self.shown as f32))
             .overflow_y_scroll()
             .track_scroll(&handle)
             .px_2()
@@ -415,15 +418,21 @@ impl Rows {
     }
 
     /// Scroll the box as a key asks: a row, a page, an end; never past its
-    /// ends, as it was last laid out.
-    pub fn scroll(self, scroll: &UniformListScrollHandle, mv: ListMove) {
+    /// ends, as it was last laid out, its rows at `scale`.
+    pub fn scroll(
+        self,
+        scroll: &UniformListScrollHandle,
+        mv: ListMove,
+        scale: crate::sizes::Scale,
+    ) {
         let handle = scroll.0.borrow().base_handle.clone();
         let offset = handle.offset();
         let end = f32::from(handle.max_offset().y).max(0.);
         let top = -f32::from(offset.y);
+        let row = scale.f(self.height);
         let to = match mv {
-            ListMove::By(rows) => top + self.height * rows as f32,
-            ListMove::Page(pages) => top + self.height * (self.shown as isize * pages) as f32,
+            ListMove::By(rows) => top + row * rows as f32,
+            ListMove::Page(pages) => top + row * (self.shown as isize * pages) as f32,
             ListMove::First => 0.,
             ListMove::Last => end,
         };

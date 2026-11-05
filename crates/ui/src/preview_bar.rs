@@ -233,7 +233,7 @@ pub fn number_tool(
     bar.push(Item::widget(Slot::Navigate, 1, move |_, _| {
         div()
             .flex_none()
-            .text_small()
+            .text_body()
             .text_color(muted)
             .whitespace_nowrap()
             .child(format!("/ {total}"))
@@ -715,7 +715,7 @@ pub fn find_popup(
                 .flex()
                 .items_center()
                 .gap_1()
-                .text_small()
+                .text_body()
                 .child(line.flex_1().min_w_0())
                 .children(buttons.into_iter().map(|button| button.render(shell, cx))),
         )
