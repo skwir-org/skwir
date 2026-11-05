@@ -71,6 +71,18 @@ pub enum Engine {
 }
 
 impl Engine {
+    /// Its value in the engine settings (`documents.backend`,
+    /// `djvu.engine`).
+    pub fn key(self) -> &'static str {
+        match self {
+            Engine::Pdfium => "pdfium",
+            Engine::Poppler => "poppler",
+            Engine::Mupdf => "mupdf",
+            Engine::Djvulibre => "djvulibre",
+            Engine::DjvuRs => "djvu-rs",
+        }
+    }
+
     /// Its name, as the Documents page says it.
     pub fn label(self) -> &'static str {
         match self {

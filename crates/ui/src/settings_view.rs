@@ -135,9 +135,19 @@ struct Snapshot {
 
 impl Snapshot {
     fn of(row: &Row, view: &SettingsView) -> Self {
+        // What Automatic tries, as the probes found its owner's
+        // requirements (`SettingSpec::tries`).
+        let spec = if row.spec.constraints.tries.is_empty() {
+            row.spec.clone()
+        } else {
+            let owner = row.spec.owner().to_owned();
+            row.spec
+                .clone()
+                .with_found(|name| view.found.contains(&(owner.clone(), name.to_owned())))
+        };
         Snapshot {
             label: row.spec.title.clone().into(),
-            spec: row.spec.clone(),
+            spec,
             value: row.value.clone(),
             input: row.input.clone(),
             anchor: row.anchor.clone(),

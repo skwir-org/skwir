@@ -52,19 +52,25 @@ impl Plugin for PreviewPlugin {
         skwir_core::permissions::Capabilities::of(&[Capability::Read, Capability::Programs])
     }
     fn register(&self, app: &App) {
-        app.settings.declare(skwir_core::settings::SettingSpec::choice(
-            ENGINE,
-            "DjVu engine",
-            "Automatic prefers DjVuLibre, where it is installed, and falls back to djvu-rs, which skwir carries.",
-            "auto",
-            &[
-                ("auto", "Automatic"),
-                ("djvulibre", "DjVuLibre"),
-                ("djvu-rs", "djvu-rs"),
-            ],
-        )
-        .page(skwir_core::settings::page::READING)
-        .section("Documents"));
+        // What Automatic gives, once the settings probed each engine.
+        let tries =
+            document::DJVU_AUTO.map(|engine| (engine.key(), document::worker(engine).executable));
+        app.settings.declare(
+            skwir_core::settings::SettingSpec::choice(
+                ENGINE,
+                "DjVu engine",
+                "Automatic prefers DjVuLibre, where it is installed, and falls back to djvu-rs, which skwir carries.",
+                "auto",
+                &[
+                    ("auto", "Automatic"),
+                    ("djvulibre", "DjVuLibre"),
+                    ("djvu-rs", "djvu-rs"),
+                ],
+            )
+            .tries(&tries)
+            .page(skwir_core::settings::page::READING)
+            .section("Documents"),
+        );
         register_reader(app);
         // A fallback stage: the desktop's cache and thumbnailers come first.
         app.thumbnails.register(ID, Arc::new(FirstPages));

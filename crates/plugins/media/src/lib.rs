@@ -108,6 +108,11 @@ fn declare(app: &App) {
                 ("stills", "Still frames"),
             ],
         )
+        // What Automatic gives, once the settings probed what it needs.
+        .tries(&[
+            ("gstreamer", skwir_platform::media::WORKER.executable),
+            ("stills", "ffmpeg"),
+        ])
         .page(skwir_core::settings::page::MEDIA)
         .section("Video"),
     );

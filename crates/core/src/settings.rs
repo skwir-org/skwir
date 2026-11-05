@@ -340,6 +340,20 @@ pub struct SettingConstraints {
     /// family); empty when its owner does not say. The dialog shows it
     /// while the default is chosen (`SettingSpec::choice_shown`).
     pub now: String,
+    /// What Automatic tries, in its order, each choice with the requirement
+    /// it needs (`Plugin::requirements`, by name): it gives the first whose
+    /// requirement is found, which the dialog knows once it probed them
+    /// (`SettingSpec::with_found`). Empty for a choice that says `now`
+    /// itself.
+    pub tries: Vec<Tried>,
+}
+
+/// A choice Automatic tries ([`SettingConstraints::tries`]) and the
+/// requirement of its owner it needs.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct Tried {
+    pub choice: String,
+    pub requires: String,
 }
 
 impl SettingSpec {
@@ -506,6 +520,33 @@ impl SettingSpec {
     #[must_use]
     pub fn now(mut self, now: &str) -> Self {
         now.clone_into(&mut self.constraints.now);
+        self
+    }
+
+    /// What Automatic tries, in its order: each choice and the name of the
+    /// requirement it needs, one of its owner's (`SettingConstraints::tries`).
+    #[must_use]
+    pub fn tries(mut self, tries: &[(&str, &str)]) -> Self {
+        self.constraints.tries = tries
+            .iter()
+            .map(|(choice, requires)| Tried {
+                choice: (*choice).to_owned(),
+                requires: (*requires).to_owned(),
+            })
+            .collect();
+        self
+    }
+
+    /// The setting saying what Automatic gives as `found` answers for each
+    /// of its owner's requirements it tries: the first found. Unchanged
+    /// when its owner says it (`now`) or none is found.
+    #[must_use]
+    pub fn with_found(mut self, found: impl Fn(&str) -> bool) -> Self {
+        if self.constraints.now.is_empty()
+            && let Some(tried) = self.constraints.tries.iter().find(|t| found(&t.requires))
+        {
+            self.constraints.now.clone_from(&tried.choice);
+        }
         self
     }
 

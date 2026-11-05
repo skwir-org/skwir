@@ -11081,3 +11081,18 @@ from and Fonts from on Skwir's own, the old key gone from the file once
 saved; Qt chosen, the window in qt5ct's scheme's accent; Automatic, Qt
 outlined (no desktop, GTK naming no theme there). Not tried: a Plasma,
 LXQt, GNOME or Xfce session; a Kvantum theme's colors (not read).
+- **The engines' Automatic** (the same day, after the user asked what it
+  would cost): `SettingSpec::tries` names what Automatic tries, in order,
+  each choice with its owner's requirement; the dialog, which already
+  probes every requirement when it opens (3 to 25 ms a helper in a
+  release build here, 2.4 s for the whole batch in a debug build),
+  outlines the first found (`with_found`, looked up in a set of the
+  requirements found). The document engine (from `document::AUTO`:
+  PDFium, then Poppler), the DjVu engine (`DJVU_AUTO`), the video engine
+  (the media helper, then FFmpeg's stills); Where servers are kept says
+  KDE on KDE's desktop, else Skwir, from `XDG_CURRENT_DESKTOP`, with no
+  probe. A grammar's row says "Automatic (bat)". Checked on Xvfb: PDFium,
+  DjVuLibre, GStreamer, Built-in and Skwir outlined; with
+  `documents.pdfium_library` naming no file, Poppler outlined once the
+  dialog probed again; core's test of `tries` and `with_found`; 88 tests
+  of the crates touched and the binary's settings tests.

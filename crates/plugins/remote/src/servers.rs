@@ -70,6 +70,11 @@ pub fn declare(app: &App) {
                 ("kde", "KDE"),
             ],
         )
+        .now(if on_kde(&skwir_platform::apps::current_desktops()) {
+            "kde"
+        } else {
+            "skwir"
+        })
         .page(skwir_core::settings::page::NETWORK)
         .section("Servers"),
     );
@@ -96,13 +101,18 @@ pub fn keeper(app: &App, scheme: Scheme) -> Kept {
 
 /// [`keeper`] for `chosen`, on `desktops`, of a kind KIO opens or not.
 fn keeper_on(chosen: &str, desktops: &[String], kio_opens: bool) -> Kept {
-    let on_kde = desktops.iter().any(|d| d.eq_ignore_ascii_case("KDE"));
-    let kde = chosen == "kde" || (chosen == "automatic" && on_kde);
+    let kde = chosen == "kde" || (chosen == "automatic" && on_kde(desktops));
     if kde && kio_opens {
         Kept::Kde
     } else {
         Kept::Skwir
     }
+}
+
+/// Whether `desktops` (`XDG_CURRENT_DESKTOP`'s) are KDE's: where
+/// Automatic keeps servers in KDE's network folders.
+fn on_kde(desktops: &[String]) -> bool {
+    desktops.iter().any(|d| d.eq_ignore_ascii_case("KDE"))
 }
 
 /// Every server kept: Skwir's list, then KDE's network folders, each

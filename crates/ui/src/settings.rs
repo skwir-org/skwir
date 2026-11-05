@@ -1896,6 +1896,9 @@ pub struct SettingsView {
     pub(crate) plugins: Vec<PluginInfo>,
     /// `None` until the first probe finishes.
     pub(crate) requirements: Option<Vec<RequirementStatus>>,
+    /// The requirements found, by plugin and name: what a setting's
+    /// Automatic tries is looked up in it (`SettingSpec::with_found`).
+    pub(crate) found: std::collections::HashSet<(String, String)>,
     probe: Arc<Mutex<Option<Vec<RequirementStatus>>>>,
     pub(crate) root: FocusHandle,
     /// Whether assistive technology listens this frame: a setting's
@@ -2049,6 +2052,7 @@ impl SettingsView {
             search,
             rows: Vec::new(),
             requirements: None,
+            found: std::collections::HashSet::new(),
             probe: Arc::new(Mutex::new(None)),
             drafts: BTreeMap::new(),
             record_stops: Vec::new(),
@@ -2366,6 +2370,11 @@ impl SettingsView {
         }
         changed |= self.list_sourced();
         if let Some(found) = self.probe.lock().ok().and_then(|mut slot| slot.take()) {
+            self.found = found
+                .iter()
+                .filter(|status| status.found)
+                .map(|status| (status.plugin.to_owned(), status.name.clone()))
+                .collect();
             self.requirements = Some(found);
             changed = true;
         }

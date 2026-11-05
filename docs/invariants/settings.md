@@ -37,7 +37,13 @@ the reasoning.
   it again when that changes (the theme's look, the fonts read: through
   `settings::show_resolved`; the icon themes once listed). Never bake it
   into the label: the label stays "Automatic", and `choice_shown` adds
-  what it comes to wherever a label is shown. A record's own choice,
+  what it comes to wherever a label is shown. An Automatic that tries
+  engines in an order says it with `SettingSpec::tries` (each choice and
+  the name of its owner's requirement it needs, from the same list the
+  runtime tries: `document::AUTO`): the dialog, which probes every
+  requirement when it opens, outlines the first found
+  (`SettingSpec::with_found`). Never probe to say it elsewhere: a probe
+  starts a helper. A record's own choice,
   whose labels its owner writes, says it the same way: "Automatic
   (bat)" (a language's grammar, `language_records`).
 - A setting that applies only while a switch is on says so with

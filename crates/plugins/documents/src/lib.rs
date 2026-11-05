@@ -133,20 +133,26 @@ impl Plugin for PreviewPlugin {
     }
     fn register(&self, app: &App) {
         use skwir_core::settings::SettingSpec;
-        app.settings.declare(SettingSpec::choice(
-            BACKEND,
-            "Document engine",
-            "Automatic prefers PDFium and falls back to Poppler; MuPDF is used only when chosen.",
-            "auto",
-            &[
-                ("auto", "Automatic"),
-                ("pdfium", "PDFium"),
-                ("poppler", "Poppler"),
-                ("mupdf", "MuPDF"),
-            ],
-        )
-        .page(skwir_core::settings::page::READING)
-        .section("Documents"));
+        use skwir_platform::document::{AUTO, worker};
+        // What Automatic gives, once the settings probed each engine.
+        let tries = AUTO.map(|engine| (engine.key(), worker(engine).executable));
+        app.settings.declare(
+            SettingSpec::choice(
+                BACKEND,
+                "Document engine",
+                "Automatic prefers PDFium and falls back to Poppler; MuPDF is used only when chosen.",
+                "auto",
+                &[
+                    ("auto", "Automatic"),
+                    ("pdfium", "PDFium"),
+                    ("poppler", "Poppler"),
+                    ("mupdf", "MuPDF"),
+                ],
+            )
+            .tries(&tries)
+            .page(skwir_core::settings::page::READING)
+            .section("Documents"),
+        );
         app.settings.declare(
             SettingSpec::path(
                 PDFIUM_LIBRARY,

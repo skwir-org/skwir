@@ -395,6 +395,27 @@ fn builders_describe_controls_and_the_schema_serializes_for_agents() {
         "First (Noto Sans)"
     );
     assert_eq!(engine.now("first").now_of("first"), None);
+    // What Automatic tries, found by its requirements: the first there.
+    let tried = SettingSpec::choice(
+        "sample.engine",
+        "Engine",
+        "d",
+        "auto",
+        &[("auto", "Automatic"), ("fast", "Fast"), ("slow", "Slow")],
+    )
+    .tries(&[("fast", "fast-helper"), ("slow", "slow-helper")]);
+    assert_eq!(
+        tried.clone().with_found(|_| true).now_of("auto"),
+        Some("Fast")
+    );
+    let without_fast = tried.clone().with_found(|name| name == "slow-helper");
+    assert_eq!(without_fast.now_of("auto"), Some("Slow"));
+    assert_eq!(tried.clone().with_found(|_| false).now_of("auto"), None);
+    // Its owner's word stands.
+    assert_eq!(
+        tried.now("slow").with_found(|_| true).now_of("auto"),
+        Some("Slow")
+    );
     let saved = SettingSpec::data("sample.saved", "d", toml::Value::Array(vec![]));
     assert!(!saved.editable());
     assert!(saved.parse("[]").is_err());

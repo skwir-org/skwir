@@ -28,8 +28,9 @@
   packages, so choosing them looks the same everywhere, and macOS and Windows
   write code in JetBrains Mono by default. They are read only when drawn.
 - **Automatic says what it gives**: in Settings, a setting left on Automatic
-  outlines the choice it comes to now (the theme's Light or Dark, GTK or Qt),
-  or says it beside, "Automatic (Breeze)".
+  outlines the choice it comes to now (the theme's Light or Dark, GTK or Qt,
+  the document, DjVu and video engine installed, where servers are kept), or
+  says it beside, "Automatic (Breeze)", as a language's grammar does.
 - **macOS and Windows** draw the window in their own interface font (San
   Francisco, Segoe UI) rather than Inter, and Windows' Text size, in its
   Accessibility settings, enlarges Skwir's text as it changes.
