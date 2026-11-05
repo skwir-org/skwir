@@ -61,11 +61,60 @@ pub struct Roles {
 /// faces lack. Reads fontconfig's aliases (`fonts::unalias`): a worker's.
 pub fn faces(roles: &Roles) -> (Fonts, Vec<PathBuf>) {
     let db = crate::inspection::system_fonts();
+    // A family skwir carries that the system lacks (Skwir's own, not
+    // installed) is the one its package carries, as the window writes in
+    // it (ADR-118): its files, which the helper may read as it reads every
+    // face it is given.
+    let carried = carried_lacked(
+        db,
+        &crate::fonts::CARRIED,
+        roles,
+        crate::fonts::bundled_files,
+    );
+    let of = |name: &str, generic| match carried.as_ref() {
+        Some(carried) if crate::fonts::CARRIED.contains(&name) && has(carried, name) => {
+            family(carried, name, generic)
+        }
+        _ => family(db, name, generic),
+    };
     let fonts = Fonts {
-        text: family(db, &roles.text, fontdb::Family::Serif),
-        code: family(db, &roles.code, fontdb::Family::Monospace),
+        text: of(&roles.text, fontdb::Family::Serif),
+        code: of(&roles.code, fontdb::Family::Monospace),
     };
     (fonts, folders(db))
+}
+
+/// The faces of the families of `carried` that `roles` name and `db` lacks,
+/// from the files that carry them (`files`: `fonts::bundled_files`, those
+/// skwir's package carries): none when the system has each, or nothing
+/// carries them.
+fn carried_lacked(
+    db: &fontdb::Database,
+    carried: &[&str],
+    roles: &Roles,
+    files: impl FnOnce(&[&str]) -> Vec<PathBuf>,
+) -> Option<fontdb::Database> {
+    let lacked: Vec<&str> = carried
+        .iter()
+        .copied()
+        .filter(|family| (roles.text == *family || roles.code == *family) && !has(db, family))
+        .collect();
+    if lacked.is_empty() {
+        return None;
+    }
+    let mut faces = fontdb::Database::new();
+    for path in files(&lacked) {
+        if let Err(error) = faces.load_font_file(&path) {
+            tracing::warn!(path = %path.display(), %error, "a font skwir carries is unread");
+        }
+    }
+    (!faces.is_empty()).then_some(faces)
+}
+
+/// Whether `db` has a face of the family `name`.
+fn has(db: &fontdb::Database, name: &str) -> bool {
+    db.faces()
+        .any(|face| face.families.iter().any(|(family, _)| family == name))
 }
 
 /// A face's file, for one the system read from a file.
@@ -682,6 +731,42 @@ mod tests {
             eprintln!("skipped: none of {wanted:?} is installed");
         }
         found
+    }
+
+    /// A family skwir carries that the system lacks is printed in the
+    /// files its package carries, as the window draws it.
+    #[test]
+    fn a_family_the_system_lacks_is_printed_in_the_files_carried() {
+        let system = crate::inspection::system_fonts();
+        let Some((name, path)) = system.faces().find_map(|face| match &face.source {
+            fontdb::Source::File(path) if face.style == fontdb::Style::Normal => {
+                Some((face.families.first()?.0.clone(), path.clone()))
+            }
+            _ => None,
+        }) else {
+            eprintln!("skipped: no font file on this machine");
+            return;
+        };
+        let roles = Roles {
+            text: name.clone(),
+            code: "monospace".into(),
+        };
+        let lacking = fontdb::Database::new();
+        let carried = carried_lacked(&lacking, &[name.as_str()], &roles, |asked| {
+            assert_eq!(asked, [name.as_str()]);
+            vec![path.clone()]
+        })
+        .expect("its carried files");
+        let family = family(&carried, &name, fontdb::Family::Serif);
+        assert_eq!(family.regular.map(|face| face.path), Some(path.clone()));
+        // The system has it: nothing carried is read.
+        assert!(carried_lacked(system, &[name.as_str()], &roles, |_| unreachable!()).is_none());
+        // A family no role names: none.
+        let other = Roles {
+            text: "serif".into(),
+            code: "monospace".into(),
+        };
+        assert!(carried_lacked(&lacking, &[name.as_str()], &other, |_| unreachable!()).is_none());
     }
 
     #[test]

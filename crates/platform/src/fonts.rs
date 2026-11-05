@@ -37,8 +37,41 @@ pub fn bundled(families: &[&str]) -> Vec<(&'static str, Vec<u8>)> {
     read_carried(&folder, families)
 }
 
+/// The font files of `families` (of `CARRIED`) skwir's packages carry, as
+/// `bundled` finds them, by path: for a program that opens them itself
+/// (the print helper). None for a build not packaged.
+pub fn bundled_files(families: &[&str]) -> Vec<PathBuf> {
+    std::env::current_exe()
+        .ok()
+        .as_deref()
+        .and_then(Path::parent)
+        .and_then(bundled_beside)
+        .map(|folder| carried_in(&folder, families))
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(_, path)| path)
+        .collect()
+}
+
 /// The font files of `families` in `folder`, as `bundled` reads them.
 fn read_carried(folder: &Path, families: &[&str]) -> Vec<(&'static str, Vec<u8>)> {
+    carried_in(folder, families)
+        .into_iter()
+        .filter_map(
+            |(family, path)| match crate::file::read_regular(&path, FONT_FILE) {
+                Ok(bytes) => Some((family, bytes)),
+                Err(error) => {
+                    tracing::warn!(path = %path.display(), %error, "a font skwir carries is unread");
+                    None
+                }
+            },
+        )
+        .collect()
+}
+
+/// The font files of `families` in `folder`, each with its family, in
+/// order of their names.
+fn carried_in(folder: &Path, families: &[&str]) -> Vec<(&'static str, PathBuf)> {
     let Ok(entries) = std::fs::read_dir(folder) else {
         return Vec::new();
     };
@@ -59,17 +92,6 @@ fn read_carried(folder: &Path, families: &[&str]) -> Vec<(&'static str, Vec<u8>)
         .collect();
     files.sort();
     files
-        .into_iter()
-        .filter_map(
-            |(family, path)| match crate::file::read_regular(&path, FONT_FILE) {
-                Ok(bytes) => Some((family, bytes)),
-                Err(error) => {
-                    tracing::warn!(path = %path.display(), %error, "a font skwir carries is unread");
-                    None
-                }
-            },
-        )
-        .collect()
 }
 
 /// The family of `CARRIED` a carried file's name says it is of.
