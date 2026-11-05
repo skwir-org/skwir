@@ -83,6 +83,9 @@
   all but the place's own showed empty.
 - **Print Listing…** is what the folder's menu calls printing its listing, as
   the palette does; Print… stays for files.
+- **More settings** points down at a settings page's end, and Fewer settings
+  up, where the page goes; More settings pointed right, as a link to another
+  page does.
 
 ## 0.3.0 (2026-11-03)
 

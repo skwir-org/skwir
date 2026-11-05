@@ -11498,3 +11498,19 @@ commits).
   idle-pss` not run (before the release, as the user asked).
 - Not checked: listed in `docs/PLAN.md`, What is left, "From the review
   since 0.3.0".
+
+## The settings fold's chevrons (2026-11-05)
+
+- More settings (N), at the end of a page with essentials, pointed right,
+  which in a settings window reads as a row opening a page of its own,
+  and Fewer settings pointed down, as a disclosure that opens. The fold
+  is a list's Show more, at the end of what it unfolds: its chevron now
+  points where the page goes, down on More settings and up on Fewer
+  settings (`settings_view.rs`, the fold's rule in
+  `docs/invariants/settings.md`). The headings' disclosures (the
+  sidebar's sections, Properties' groups, the keys, Activity) keep right
+  and down.
+- Checked: `cargo clippy -p skwir-ui --all-targets -D warnings`, the
+  settings tests (34). On Xvfb, a debug build: General's More settings
+  (9) with the chevron down, unfolded to its end, Fewer settings with
+  the chevron up.

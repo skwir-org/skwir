@@ -223,7 +223,9 @@ The key is the owner's; the page is the subject's (ADR-072).
 - **The fold.** A page with essentials shows them, under their sections,
   and folds the rest under More settings (N) at its end; unfolded, it
   shows all, in order, and stays so (`ui.settings_unfolded`, the
-  window's state) until folded again. A page without essentials folds
+  window's state) until folded again. The fold's chevron points where
+  the page goes, as a list's Show more does: down on More settings, up
+  on Fewer settings (a right one, in a settings window, opens a page). A page without essentials folds
   nothing. What a page reached shows whether folded or not, until
   another page is reached (`SettingsView::revealed`): every setting that
   differs from its default, the one a link pointed at, a plugin's

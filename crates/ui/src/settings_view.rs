@@ -1380,10 +1380,13 @@ impl SettingsView {
         let word = page.word();
         let focus = self.handle(&format!("fold:{word}"), cx);
         self.stop(&focus, Some(item), None);
+        // A chevron points where the page goes: down as it unfolds, up as
+        // it folds back (never right, which in a settings window opens a
+        // page of its own).
         let (label, icon) = if folded {
-            (format!("More settings ({hidden})"), "chevron-right")
+            (format!("More settings ({hidden})"), "chevron")
         } else {
-            ("Fewer settings".to_owned(), "chevron")
+            ("Fewer settings".to_owned(), "chevron-up")
         };
         let page = page.clone();
         items.push(
