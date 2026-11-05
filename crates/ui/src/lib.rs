@@ -204,6 +204,9 @@ pub fn run_from(app: Arc<App>, initial: Option<Location>, started: Instant) -> a
     // What the desktop said when skwir last ran, then what it says
     // (ADR-071): its colors and fonts are the theme's (ADR-073).
     desktop_style::start(&app);
+    // The fonts skwir's packages carry that it will draw in, read while
+    // the window opens (ADR-118).
+    fonts::read_ahead(&app);
 
     // The system's backend, with AccessKit (ADR-064).
     let application = gpui_platform::application().with_assets(icons::FsAssets);

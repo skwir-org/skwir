@@ -52,13 +52,25 @@ Skwir alone").
    user's machine, carry none: they list Arch's `inter-font` and
    `ttf-jetbrains-mono` as optional, found through fontconfig as any
    installed font.
-4. **Read only when drawn.** When Skwir's own fonts are reached (nothing
-   chosen or lent by the desktop loads, for the interface or for code)
-   and Inter or JetBrains Mono is not installed, the window registers
-   the files it finds (`skwir_platform::fonts::bundled`,
-   `fonts::carried`), once a run, then resolves the fonts again. A
-   window in the desktop's fonts reads and keeps none of them; an
-   installed Inter is used as it is.
+4. **Read only when drawn, family by family, off the window's thread.**
+   A carried family is needed by a role whose families (the one chosen,
+   the desktop's, Skwir's own first) reach it before one that loads:
+   Inter chosen and not installed, or Skwir's own where nothing chosen
+   or lent loads (`fonts::needed`). At launch, before the window opens,
+   a thread of its own reads the files of the families the settings and
+   the desktop's style kept from the last run point to
+   (`fonts::read_ahead`, `skwir_platform::fonts::bundled`); the window's
+   first theme waits for it, so the first frame is drawn in them, and
+   registers each file of a family needed and not installed, one at a
+   time (`fonts::carry`), each family once a run. What was read and is
+   not needed (an Inter installed) is let go. A family needed later
+   (another choice, Fonts from on Skwir's own) is read on a thread too,
+   the theme resolved again once it is in: the window never reads them.
+   A window in the desktop's fonts reads and keeps none of them, one on
+   macOS or Windows only JetBrains Mono for code; an installed Inter is
+   used as it is. On a first run, or with the cache deleted, nothing
+   says yet what the desktop lends: Skwir's own are read and kept for
+   that run.
 5. **Each package's check** looks for them and their licences
    (`linux/check.sh`, `appimage/check.py`, `macos-check.sh`,
    `windows-check.sh`). The AUR's source package carries none, so its
@@ -77,7 +89,8 @@ and Windows' message font (Segoe UI); code stays JetBrains Mono there.
   the window in Inter where Skwir's own fonts are chosen (until
   2026-11-05, by default too: Automatic is now the system's font).
 - The packages grow by about 3.5 MB each; a window drawing Skwir's own
-  fonts reads them once (about 3.5 MB) and keeps them while it runs.
+  fonts reads those of the families it draws once (Inter's 2.5 MB,
+  JetBrains Mono's 1.1 MB), on a thread, and keeps them while it runs.
 - A release fetches two more archives (from GitHub) beside PDFium's.
 - Checked: the runtime on Xvfb with the files beside a debug build and
   Fonts from on Skwir's own: Inter and JetBrains Mono drawn ("fonts

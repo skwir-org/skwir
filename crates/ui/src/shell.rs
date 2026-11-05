@@ -3090,8 +3090,8 @@ impl Shell {
         }
         self.pending = self.app.pending.get();
         self.sync_clipboard_files(cx);
-        // What the theme is made of: the settings, the desktop's style and
-        // what a list previews, all counted up, never down (ADR-071).
+        // What the theme is made of (`theme_inputs_of`), counted up, never
+        // down (ADR-071, ADR-118).
         let revision = theme_inputs_of(&self.app);
         if revision != self.theme_revision {
             self.theme_revision = revision;
@@ -3832,10 +3832,13 @@ fn compared(text: &str, copied: &str, what: &str) -> (String, bool) {
 }
 
 /// What the theme is made of, counted up, never down: the settings, the
-/// desktop's style and what a list previews (ADR-071). The shell resolves
-/// the theme again when it moves.
+/// desktop's style, what a list previews and the fonts the window found
+/// (ADR-071). The shell resolves the theme again when it moves.
 fn theme_inputs_of(app: &App) -> u64 {
-    app.settings.revision() + crate::desktop_style::revision() + crate::settings::preview_revision()
+    app.settings.revision()
+        + crate::desktop_style::revision()
+        + crate::settings::preview_revision()
+        + crate::fonts::revision()
 }
 
 /// Say beside the font and size settings what they come to as just

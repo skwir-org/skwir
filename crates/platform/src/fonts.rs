@@ -5,7 +5,7 @@
 //! asks it; macOS and Windows say nothing yet, so every family the text
 //! system has is offered there, for code too, and a name is taken as it
 //! is. Skwir's own fonts, Inter and JetBrains Mono, come with its packages
-//! (`bundled`, ADR-118).
+//! (`CARRIED`, `bundled`, ADR-118).
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -13,12 +13,19 @@ use std::path::{Path, PathBuf};
 /// The largest font file a package carries is read whole up to this.
 const FONT_FILE: u64 = 8 << 20;
 
-/// The font files skwir's packages carry (`tools/package/fonts.py`,
-/// ADR-118), read whole: those in `skwir/fonts` of its data folder beside
-/// the program (`share` next to it on Windows, above it on Linux, a Mac's
-/// `Resources/share`). None for a build not packaged. Reads the disk:
-/// asked once, when skwir's own fonts are drawn and not installed.
-pub fn bundled() -> Vec<Vec<u8>> {
+/// The families skwir's packages carry (ADR-118): Inter for the interface,
+/// JetBrains Mono for code. A family's files are named as its release
+/// names them (`tools/package/fonts.py`): the family without its spaces,
+/// a dash, the style (`Inter-SemiBold.ttf`, `JetBrainsMono-Italic.ttf`).
+pub const CARRIED: [&str; 2] = ["Inter", "JetBrains Mono"];
+
+/// The font files of `families` (of `CARRIED`) skwir's packages carry,
+/// each with its family, read whole: those in `skwir/fonts` of its data
+/// folder beside the program (`share` next to it on Windows, above it on
+/// Linux, a Mac's `Resources/share`). None for a build not packaged, nor
+/// for a family not asked. Reads the disk: call it off the window's
+/// thread (`fonts::read_ahead` in the UI).
+pub fn bundled(families: &[&str]) -> Vec<(&'static str, Vec<u8>)> {
     let Some(folder) = std::env::current_exe()
         .ok()
         .as_deref()
@@ -27,10 +34,15 @@ pub fn bundled() -> Vec<Vec<u8>> {
     else {
         return Vec::new();
     };
-    let Ok(entries) = std::fs::read_dir(&folder) else {
+    read_carried(&folder, families)
+}
+
+/// The font files of `families` in `folder`, as `bundled` reads them.
+fn read_carried(folder: &Path, families: &[&str]) -> Vec<(&'static str, Vec<u8>)> {
+    let Ok(entries) = std::fs::read_dir(folder) else {
         return Vec::new();
     };
-    let mut files: Vec<PathBuf> = entries
+    let mut files: Vec<(&'static str, PathBuf)> = entries
         .flatten()
         .map(|entry| entry.path())
         .filter(|path| {
@@ -40,18 +52,32 @@ pub fn bundled() -> Vec<Vec<u8>> {
                     ext.eq_ignore_ascii_case("ttf") || ext.eq_ignore_ascii_case("otf")
                 })
         })
+        .filter_map(|path| {
+            let family = family_of(path.file_name()?.to_str()?)?;
+            families.contains(&family).then_some((family, path))
+        })
         .collect();
     files.sort();
     files
-        .iter()
-        .filter_map(|path| match crate::file::read_regular(path, FONT_FILE) {
-            Ok(bytes) => Some(bytes),
-            Err(error) => {
-                tracing::warn!(path = %path.display(), %error, "a font skwir carries is unread");
-                None
-            }
-        })
+        .into_iter()
+        .filter_map(
+            |(family, path)| match crate::file::read_regular(&path, FONT_FILE) {
+                Ok(bytes) => Some((family, bytes)),
+                Err(error) => {
+                    tracing::warn!(path = %path.display(), %error, "a font skwir carries is unread");
+                    None
+                }
+            },
+        )
         .collect()
+}
+
+/// The family of `CARRIED` a carried file's name says it is of.
+fn family_of(name: &str) -> Option<&'static str> {
+    CARRIED.into_iter().find(|family| {
+        name.strip_prefix(&*family.replace(' ', ""))
+            .is_some_and(|rest| rest.starts_with('-'))
+    })
 }
 
 /// The folder of the fonts a package put beside the program in `bin`.
@@ -209,6 +235,46 @@ mod tests {
         assert!(super::bundled_beside(&mac).is_some());
         // A build not packaged carries none.
         assert_eq!(super::bundled_beside(&program("build/debug")), None);
+    }
+
+    #[test]
+    fn only_the_families_asked_are_read_each_file_with_its_family() {
+        let folder = tempfile::tempdir().unwrap();
+        for name in [
+            "Inter-Regular.ttf",
+            "Inter-SemiBold.ttf",
+            "InterDisplay-Bold.ttf",
+            "JetBrainsMono-Italic.ttf",
+            "JetBrainsMono-Regular.otf",
+            "Other-Regular.ttf",
+            "README.txt",
+        ] {
+            std::fs::write(folder.path().join(name), name).unwrap();
+        }
+        let read = |families: &[&str]| -> Vec<(&str, String)> {
+            super::read_carried(folder.path(), families)
+                .into_iter()
+                .map(|(family, bytes)| (family, String::from_utf8(bytes).unwrap()))
+                .collect()
+        };
+        assert_eq!(
+            read(&["JetBrains Mono"]),
+            [
+                ("JetBrains Mono", "JetBrainsMono-Italic.ttf".to_owned()),
+                ("JetBrains Mono", "JetBrainsMono-Regular.otf".to_owned()),
+            ]
+        );
+        // Inter Display is another family, whatever its name starts with.
+        assert_eq!(
+            read(&["Inter"]),
+            [
+                ("Inter", "Inter-Regular.ttf".to_owned()),
+                ("Inter", "Inter-SemiBold.ttf".to_owned()),
+            ]
+        );
+        assert_eq!(read(&super::CARRIED).len(), 4);
+        assert!(read(&[]).is_empty());
+        assert!(super::read_carried(&folder.path().join("none"), &super::CARRIED).is_empty());
     }
 
     use super::*;

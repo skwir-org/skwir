@@ -14,6 +14,12 @@
 //! to gpui's own stack and panics when none of it is installed either (a
 //! minimal system with only Liberation or Inter), and a family that does
 //! not resolve costs a fallback search on every frame (`AGENTS.md`).
+//!
+//! Skwir's own, Inter and JetBrains Mono, come with its packages
+//! (ADR-118): the files of a family a role needs and the system lacks are
+//! read on a thread of their own, ahead of the window at launch
+//! (`read_ahead`), and registered as the theme resolves (`carry`); a
+//! window in the desktop's fonts reads none.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -75,7 +81,9 @@ impl Default for Families {
     }
 }
 
-/// The families of `app`'s settings and the desktop's, against `text`.
+/// The families of `app`'s settings and the desktop's, against `text`,
+/// once the fonts skwir's packages carry that a role needs are registered
+/// (`carry`).
 pub fn resolve(app: &App, text: &gpui::TextSystem) -> Families {
     let loads = |family: &str| text.font_id(&gpui::font(family.to_owned())).is_ok();
     let any = || {
@@ -87,41 +95,211 @@ pub fn resolve(app: &App, text: &gpui::TextSystem) -> Families {
         any
     };
     let desktop = crate::desktop_style::fonts(&app.settings);
-    // Skwir's own reached (nothing chosen or lent loads, for the interface
-    // or code) and not installed: the ones its packages carry, once.
-    let named = |key: &str, lent: &Option<String>| {
-        chosen(&app.settings, key)
-            .iter()
-            .chain(lent)
-            .any(|family| loads(family))
-    };
-    let reached = !named(FONT_KEY, &desktop.interface) || !named(CODE_FONT_KEY, &desktop.monospace);
-    if reached && !(loads(INTERFACE[0]) && loads(CODE[0])) {
-        carried(text);
-    }
+    carry(app, text, &needed(&app.settings, &desktop, loads));
     choose(&app.settings, &desktop, loads, any)
 }
 
-/// Register the fonts skwir's packages carry (Inter, JetBrains Mono:
-/// `skwir_platform::fonts::bundled`, ADR-118) with `text`, once a run:
-/// read only when skwir's own fonts are drawn and not installed, so a
-/// window in the desktop's fonts reads and keeps none of them.
-fn carried(text: &gpui::TextSystem) {
-    static DONE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
-    DONE.get_or_init(|| {
-        let fonts: Vec<std::borrow::Cow<'static, [u8]>> = skwir_platform::fonts::bundled()
+/// The fonts skwir's packages carry (`skwir_platform::fonts::CARRIED`,
+/// ADR-118) that a role would be drawn in and that do not `load`: walking
+/// each role's families as `choose` does (the one chosen, the desktop's,
+/// skwir's own first), the first carried family met before one that loads.
+/// So Inter chosen and not installed is needed, whatever the desktop lends,
+/// and skwir's own only where nothing chosen or lent loads: a window in the
+/// desktop's fonts needs none, one on macOS or Windows only JetBrains Mono
+/// for code. Reading falls back on the interface's family, so it needs one
+/// only chosen or lent.
+pub(crate) fn needed(
+    settings: &Settings,
+    desktop: &Desktop,
+    loads: impl Fn(&str) -> bool,
+) -> Vec<&'static str> {
+    let roles = [
+        (FONT_KEY, &desktop.interface, Some(INTERFACE[0])),
+        (READING_FONT_KEY, &desktop.document, None),
+        (CODE_FONT_KEY, &desktop.monospace, Some(CODE[0])),
+    ];
+    let mut needed = Vec::new();
+    for (key, lent, own) in roles {
+        let chosen = chosen(settings, key);
+        for family in chosen
+            .as_deref()
             .into_iter()
-            .map(std::borrow::Cow::Owned)
-            .collect();
-        if fonts.is_empty() {
-            return;
+            .chain(lent.as_deref())
+            .chain(own)
+        {
+            let carried = skwir_platform::fonts::CARRIED
+                .into_iter()
+                .find(|carried| *carried == family);
+            if let Some(carried) = carried
+                && !loads(carried)
+            {
+                if !needed.contains(&carried) {
+                    needed.push(carried);
+                }
+                break;
+            }
+            if loads(family) {
+                break;
+            }
         }
-        let count = fonts.len();
-        match text.add_fonts(fonts) {
-            Ok(()) => tracing::info!(count, "fonts skwir carries"),
-            Err(error) => tracing::warn!(%error, "the fonts skwir carries did not load"),
-        }
+    }
+    needed
+}
+
+/// What this run has read of the fonts skwir's packages carry.
+struct Carried {
+    /// Files being read (`read`), not taken yet.
+    reading: Option<Reading>,
+    /// The families read, registered or not found: never read again.
+    read: Vec<&'static str>,
+}
+
+/// Files of the carried fonts read on a thread of their own.
+struct Reading {
+    families: Vec<&'static str>,
+    files: std::sync::mpsc::Receiver<Vec<(&'static str, Vec<u8>)>>,
+    /// Read ahead at launch (`read_ahead`): the window's first theme
+    /// waits for them, so it is drawn in them from its first frame.
+    awaited: bool,
+}
+
+fn carried() -> std::sync::MutexGuard<'static, Carried> {
+    static CARRIED: std::sync::Mutex<Carried> = std::sync::Mutex::new(Carried {
+        reading: None,
+        read: Vec::new(),
     });
+    CARRIED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Moves each time fonts read after launch are in: the theme is resolved
+/// again (`Shell::sync`), which registers them.
+static READ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// What `Shell::sync` counts among what the theme is made of.
+pub fn revision() -> u64 {
+    READ.load(std::sync::atomic::Ordering::Acquire)
+}
+
+/// Start reading, on a thread of its own, the fonts skwir's packages
+/// carry that the settings and what the desktop said when skwir last ran
+/// (`desktop_style::start`) will draw in, as `needed` finds them taking a
+/// carried family as not installed and any other as installed: nothing
+/// says yet what the text system has. Called at launch, before the window
+/// opens; its first theme takes them (`carry`).
+pub fn read_ahead(app: &App) {
+    let desktop = crate::desktop_style::fonts(&app.settings);
+    let families = needed(&app.settings, &desktop, |family| {
+        !skwir_platform::fonts::CARRIED.contains(&family)
+    });
+    if !families.is_empty() {
+        carried().reading = read(families, true, None);
+    }
+}
+
+/// Read the carried files of `families` on a thread of its own, then wake
+/// with `waker`, if any. Files no longer wanted when read are dropped
+/// there, where they were allocated.
+fn read(
+    families: Vec<&'static str>,
+    awaited: bool,
+    waker: Option<skwir_core::location::Waker>,
+) -> Option<Reading> {
+    let (sender, files) = std::sync::mpsc::sync_channel(1);
+    let asked = families.clone();
+    let spawned = std::thread::Builder::new()
+        .name("skwir-fonts".to_owned())
+        .spawn(move || {
+            let read = skwir_platform::fonts::bundled(&asked);
+            if sender.send(read).is_ok()
+                && let Some(waker) = waker
+            {
+                READ.fetch_add(1, std::sync::atomic::Ordering::Release);
+                waker();
+            }
+        });
+    match spawned {
+        Ok(_) => Some(Reading {
+            families,
+            files,
+            awaited,
+        }),
+        Err(error) => {
+            tracing::warn!(%error, "the fonts skwir carries are not read");
+            None
+        }
+    }
+}
+
+/// Register with `text` the fonts skwir's packages carry of the families
+/// `needed`, each family once a run and one file at a time (DirectWrite
+/// drops a whole batch for one file it refuses). Those read ahead at
+/// launch are waited for; a family needed later (another choice, Fonts
+/// from on skwir's own) is read on a thread, and the theme resolved again
+/// once it is in (`revision`), so the window never waits on the disk.
+fn carry(app: &App, text: &gpui::TextSystem, needed: &[&'static str]) {
+    let mut carried = carried();
+    let wanted: Vec<&'static str> = needed
+        .iter()
+        .copied()
+        .filter(|family| !carried.read.contains(family))
+        .collect();
+    let mut files = Vec::new();
+    if let Some(reading) = carried.reading.take() {
+        let taken = if !reading
+            .families
+            .iter()
+            .any(|family| wanted.contains(family))
+        {
+            // Read for nothing (an Inter installed): let go.
+            None
+        } else if reading.awaited {
+            let started = std::time::Instant::now();
+            let read = reading.files.recv().unwrap_or_default();
+            tracing::debug!(waited = ?started.elapsed(), "the fonts skwir carries, read ahead");
+            Some(read)
+        } else {
+            match reading.files.try_recv() {
+                Ok(read) => Some(read),
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(Vec::new()),
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    // Still reading: it wakes the window when done.
+                    carried.reading = Some(reading);
+                    return;
+                }
+            }
+        };
+        if let Some(read) = taken {
+            let families = reading.families;
+            carried.read.extend(
+                families
+                    .into_iter()
+                    .filter(|family| wanted.contains(family)),
+            );
+            files = read;
+        }
+    }
+    let mut count = 0;
+    for (family, bytes) in files {
+        if !wanted.contains(&family) {
+            continue;
+        }
+        match text.add_fonts(vec![std::borrow::Cow::Owned(bytes)]) {
+            Ok(()) => count += 1,
+            Err(error) => tracing::warn!(family, %error, "a font skwir carries did not load"),
+        }
+    }
+    if count > 0 {
+        tracing::info!(count, "fonts skwir carries");
+    }
+    let missing: Vec<&'static str> = wanted
+        .into_iter()
+        .filter(|family| !carried.read.contains(family))
+        .collect();
+    if !missing.is_empty() {
+        carried.reading = read(missing, false, Some(app.waker_handle()));
+    }
 }
 
 /// Each role's family: the one chosen, else the desktop's, else skwir's
@@ -294,6 +472,63 @@ mod tests {
 
     fn names(families: &Families) -> [&str; 3] {
         [&families.ui, &families.reading, &families.code]
+    }
+
+    #[test]
+    fn skwir_s_own_first_families_are_those_its_packages_carry() {
+        for family in [INTERFACE[0], CODE[0]] {
+            assert!(skwir_platform::fonts::CARRIED.contains(&family), "{family}");
+        }
+    }
+
+    #[test]
+    fn a_carried_font_is_needed_only_by_a_role_that_reaches_it() {
+        let (_tmp, app) = app();
+        let lent = desktop();
+        let desktop_s = system(&["Noto Sans", "Noto Serif", "Hack"]);
+        // In the desktop's fonts: none.
+        assert!(needed(&app.settings, &lent, &desktop_s).is_empty());
+        // macOS and Windows lend the interface's alone: code's.
+        let interface_only = Desktop {
+            interface: Some("Noto Sans".into()),
+            ..Desktop::default()
+        };
+        assert_eq!(
+            needed(&app.settings, &interface_only, &desktop_s),
+            ["JetBrains Mono"]
+        );
+        // Nothing lent: both, but one installed.
+        assert_eq!(
+            needed(&app.settings, &Desktop::default(), &desktop_s),
+            ["Inter", "JetBrains Mono"]
+        );
+        assert_eq!(
+            needed(
+                &app.settings,
+                &Desktop::default(),
+                system(&["JetBrains Mono"])
+            ),
+            ["Inter"]
+        );
+        // A chosen family that does not load reaches the desktop's.
+        set(&app, FONT_KEY, "Missing Sans");
+        assert!(needed(&app.settings, &lent, &desktop_s).is_empty());
+        // Inter chosen and not installed: needed whatever is lent, for
+        // reading too.
+        set(&app, FONT_KEY, "Inter");
+        assert_eq!(needed(&app.settings, &lent, &desktop_s), ["Inter"]);
+        set(&app, FONT_KEY, FONT_AUTO);
+        set(&app, READING_FONT_KEY, "Inter");
+        assert_eq!(needed(&app.settings, &lent, &desktop_s), ["Inter"]);
+        // Installed, it is the system's.
+        assert!(
+            needed(
+                &app.settings,
+                &lent,
+                system(&["Noto Sans", "Hack", "Inter"])
+            )
+            .is_empty()
+        );
     }
 
     #[test]
