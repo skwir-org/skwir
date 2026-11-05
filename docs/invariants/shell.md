@@ -80,18 +80,31 @@ Views are in [views.md](views.md); what locations decide, in
   dropped), Windows' registry keys (the accent, a contrast theme), never
   a timer. macOS tells only AppKit's own windows: what it says is read
   again on a worker when the window's look changes or it is activated
-  (`desktop_style::read_again`, `FOLLOWED`). Toolkits
+  (`desktop_style::read_again`, `FOLLOWED`), each reading worn in the
+  order it was asked; what is kept for the next start is written only
+  when it changed. The portal's signals are followed on the shared bus,
+  the text scaling factor among them; each reading asks the portal on a
+  connection of its own with a call timeout (`Own::asking`), goes without
+  a portal that does not answer, and is made again when the portal
+  starts (`NameOwnerChanged`). Windows' keys are watched before the
+  first reading. A source that names nothing is never said to be where
+  the fonts or colors come from. Toolkits
   are never loaded: a GTK theme is read as the colors its sheet names.
 - The fonts are the theme's tokens (`font`, `reading_font`,
   `code_font`), resolved with it, read where they are drawn. A font's
   size is read with its family, from the same settings
   (`DesktopStyle::font_px`, `monospace_px`); GTK's and Qt's fonts are
   read apart too (`gtk`, `qt`), and `ui.fonts_from` chooses Automatic
-  (the desktop's own, then GTK's in GTK's order: the portal before
-  `settings.ini` on Wayland, after it on X11; then Qt's: qt6ct's or
-  qt5ct's, their files followed; macOS's and Windows' interface font),
-  Skwir's own, or GTK's or Qt's alone
-  (`desktop_style::Source`, as Colors from's), apart from Colors from. The text scaling factor is followed whatever is chosen.
+  (the desktop's own, then GTK's in GTK's order: on Wayland the
+  portal's, else GSettings', before `settings.ini`, on X11 after it;
+  then Qt's: qt6ct's or qt5ct's, their files followed; Plasma's
+  `kdeglobals` as KConfig cascades them; macOS's and Windows' interface
+  font), Skwir's own, or GTK's or Qt's alone
+  (`desktop_style::Source`, as Colors from's), apart from Colors from;
+  a print writes in the same (`read_fonts`). The text scaling factor is
+  followed whatever is chosen, counted once: on X11 an `Xft.dpi` that
+  carries it (GNOME's settings daemon writes 96 × the factor there,
+  which gpui takes as the window's scale) leaves it out.
   What a font's Automatic and each size step come to is said beside
   them (`settings::show_resolved`, declared again when it changes).
 - **Text sizes (ADR-117).** The window's rem is the interface's size

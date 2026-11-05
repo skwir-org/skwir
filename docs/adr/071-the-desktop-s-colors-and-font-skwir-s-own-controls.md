@@ -484,3 +484,21 @@ macOS's own colors read).
     (its blue accent, `#0078d7`, no contrast theme, its system colors);
     Windows and macOS compiled and linted. Not checked: any real Mac or
     Windows machine (`docs/HELP-WANTED.md`, Colors).
+- 2026-11-05, **reviewed beside 0.3.1.** The portal is asked, at each
+  reading, on a connection of the reading's own with a call timeout (5 s;
+  the shared one has none), and a portal that does not answer is not
+  asked again in that reading; it is read again when the portal starts
+  (`NameOwnerChanged`), as at a login where it comes late. A source that
+  names nothing (qt6ct with its custom palette off, LXQt's window color
+  alone) is never said to be where the colors come from. Plasma and
+  LXQt are read once a reading, their scheme being Qt's too. macOS's
+  readings, which overlap as activations ask them, are worn in the order
+  asked, and the cache is written only when what is said changed.
+  Windows' keys are watched before its first reading. Colors from's
+  palette taken from its list is worn while the save that carries it
+  waits or runs, and no longer once it ends (failed, refused, or
+  another surface's since), the dialog open or not; taking the palette
+  held sends nothing and waits for nothing; a list's highlight going
+  leaves a taken palette worn; no list is hidden while its preview stays
+  (`docs/invariants/settings.md`). Swatches are made again only when the
+  desktop's colors, the system's look or `ui.theme` change.

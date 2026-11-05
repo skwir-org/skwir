@@ -740,7 +740,10 @@ or `randr`), else `Xft.dpi` divided by 96, else the screen's own density;
 the variables GTK and Qt read (`GDK_SCALE`, `QT_SCALE_FACTOR`) are not
 followed. If everything is drawn too small on an X11 desktop that scales
 GTK and Qt by those, set `Xft.dpi: 192` in `~/.Xresources` (twice the
-size), or start Skwir with `GPUI_X11_SCALE_FACTOR=2`.
+size), or start Skwir with `GPUI_X11_SCALE_FACTOR=2`. On X11, GNOME
+writes its Large Text into `Xft.dpi`: the window's scale then carries
+it, and Skwir counts it once. That scale is taken when Skwir starts, so
+Large Text turned on or off while it runs shows fully at the next start.
 
 If the settings file cannot be read (edited by hand into something that
 is no longer TOML), Skwir starts with its defaults, keeps the file aside

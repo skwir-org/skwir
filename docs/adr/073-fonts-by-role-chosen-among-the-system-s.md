@@ -165,3 +165,13 @@ installed on the system, where every application finds it).
   bold runs regular; DejaVu Serif's bold draws. Fixed 2026-11-05 by gpui
   patch 0045 (`vendor/zed/README.skwir.md`): a variable face is shaped,
   measured and drawn at the weight asked within its axis, on Linux.
+- 2026-11-05, reviewed beside 0.3.1: a print writes in the families the
+  window writes in (each role's chosen, else what Fonts from lends,
+  reading falling back to the interface's), from a reading of the fonts
+  alone (`desktop_style::read_fonts`, no colors read). Plasma's fonts are
+  read as KConfig cascades `kdeglobals` (the user's, then the system's
+  and the global theme's defaults), as its colors are. On Wayland GTK's
+  fonts are GSettings' where the portal names none, before
+  `settings.ini`, as GTK reads them. Fonts from's Automatic names the
+  source it reads whatever is chosen, and no source when the interface's
+  font was read nowhere.
