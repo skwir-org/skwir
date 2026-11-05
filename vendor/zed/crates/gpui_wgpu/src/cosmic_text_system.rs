@@ -127,10 +127,16 @@ fn weight_axis(font: &CosmicTextFont) -> Option<(f32, f32)> {
 }
 
 /// The weight a face is drawn at when `asked` is: within a variable face's
-/// weight axis (`axis`), else the face's own (`own`).
+/// weight axis (`axis`), else the face's own (`own`). An axis whose least
+/// is past its greatest (a font's mistake, which swash reads as it is)
+/// spans the weights between them.
 fn instance_weight(axis: Option<(f32, f32)>, own: Weight, asked: Weight) -> Weight {
     match axis {
-        Some((least, most)) => Weight(f32::from(asked.0).clamp(least, most).round() as u16),
+        Some((one, other)) => Weight(
+            f32::from(asked.0)
+                .clamp(one.min(other), one.max(other))
+                .round() as u16,
+        ),
         None => own,
     }
 }
@@ -639,16 +645,16 @@ impl CosmicTextSystemState {
             params.subpixel_variant.y as f32 / SUBPIXEL_VARIANTS_Y as f32 / params.scale_factor,
         );
 
+        // A variable face at the weight it was asked at. A face of one
+        // weight has no coordinates, which clears those of the face drawn
+        // before: swash's context keeps them from one builder to the next.
         let mut scaler = self
             .swash_scale_context
             .builder(font_ref)
             .size(pixel_size * params.scale_factor)
-            .hint(true);
-        if !loaded_font.coords.is_empty() {
-            // A variable face, at the weight it was asked at.
-            scaler = scaler.normalized_coords(&loaded_font.coords);
-        }
-        let mut scaler = scaler.build();
+            .hint(true)
+            .normalized_coords(&loaded_font.coords)
+            .build();
 
         let sources: &[Source] = if params.is_emoji {
             &[
@@ -1575,6 +1581,16 @@ mod tests {
         );
         assert!(thin * 5 < heavy * 4, "regular {thin}, bold {heavy}");
         Ok(())
+    }
+
+    #[test]
+    fn a_weight_axis_read_backwards_spans_the_weights_between_its_ends() {
+        let asked = |axis, weight| instance_weight(axis, Weight(400), Weight(weight));
+        assert_eq!(asked(Some((100., 900.)), 1000), Weight(900));
+        assert_eq!(asked(Some((900., 100.)), 1000), Weight(900));
+        assert_eq!(asked(Some((900., 100.)), 50), Weight(100));
+        assert_eq!(asked(Some((700., 700.)), 400), Weight(700));
+        assert_eq!(asked(None, 700), Weight(400));
     }
 
     #[test]

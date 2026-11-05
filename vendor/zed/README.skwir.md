@@ -77,7 +77,7 @@ carry: the script takes it from the Inter release Skwir's packages pin
 | `0042-list-overdraw-set-later` | `ListState::set_overdraw`: a list about to scroll up by more than its overdraw measures that far first, and crosses heights known rather than hinted | — |
 | `0043-activate-with-token` | `Window::activate_window_with_token`: the window brought forward with the token the desktop gave (Wayland's xdg-activation, a notification clicked) | — |
 | `0044-should-quit` | `Application::on_should_quit`: macOS's `applicationShouldTerminate:` asks the application whether it may quit (Quit from the Dock, a log out, a restart) | — |
-| `0045-variable-font-weights` | A variable face is shaped, measured and drawn at the weight asked within its weight axis (Linux), a variable fallback at its run's | — |
+| `0045-variable-font-weights` | A variable face is shaped, measured and drawn at the weight asked within its weight axis (Linux), a variable fallback at its run's | — (its tests need Inter's variable font in Zed's assets) |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
 
@@ -731,18 +731,29 @@ coordinates.
 swash's coordinates there (none for a face of one weight, which is drawn
 as before). `font_id` chooses the face as before, then for a variable face
 returns its instance at the weight asked, clamped to its axis, loaded once
-per weight (`LoadedFontKey` names the weight). A run is shaped at its
-font's weight (`font_match_properties`); its glyphs are measured
-(`advance`, `typographic_bounds`, `font_metrics`) and drawn
-(`render_glyph_image`) with its coordinates. A glyph cosmic-text shaped in
-a variable fallback at another weight resolves to the fallback's instance
-there (`font_id_for_cosmic_id`). Two tests with Inter's variable font: a
-face at four weights (fonts kept per weight, wider lines, wider advances,
-a bold H with more ink than a regular one, where the same before), and a
-variable fallback of a bold run drawn bold. Not changed: a static family
-without the weight asked is drawn at its nearest face, the fallback beside
-it at that face's weight. macOS and Windows have text systems of their
-own.
+per weight (`LoadedFontKey` names the weight). An axis a font gives
+backwards (its least past its greatest, which swash reads as it is) spans
+the weights between its ends, as read-fonts takes it, never a panic of
+`clamp`. A run is shaped at its font's weight (`font_match_properties`);
+its glyphs are measured (`advance`, `typographic_bounds`, `font_metrics`)
+and drawn (`render_glyph_image`) with its coordinates. Every glyph drawn
+sets the scaler's coordinates, none for a face of one weight: swash's
+context keeps them from one builder to the next, so a face drawn after a
+variable one would otherwise take its coordinates. A glyph cosmic-text
+shaped in a variable fallback at another weight resolves to the
+fallback's instance there (`font_id_for_cosmic_id`). Three tests: with
+Inter's variable font, a face at four weights (fonts kept per weight,
+wider lines, wider advances, a bold H with more ink than a regular one,
+where the same before) and a variable fallback of a bold run drawn bold;
+and an axis given backwards. Not changed: a static family without the
+weight asked is drawn at its nearest face, the fallback beside it at that
+face's weight. macOS and Windows have text systems of their own.
+
+To upstream it, Inter's variable font (SIL Open Font License) goes into
+`assets/fonts/inter/` beside Zed's other test fonts: its tests embed
+`InterVariable.ttf`, which Zed does not carry and `just gpui-check` takes
+from the Inter release Skwir's packages pin. Zed carries no variable font
+of its own to test with.
 
 ## Adding or changing a patch
 

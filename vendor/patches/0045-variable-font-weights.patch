@@ -1,7 +1,7 @@
 0045 variable-font-weights: a variable face is shaped, measured and drawn at the weight asked within its weight axis (Linux's text system): a font per weight asked, cosmic-text's instance there, swash's coordinates when drawing; a variable fallback is drawn at the weight its run was shaped at
 
 diff --git a/crates/gpui_wgpu/src/cosmic_text_system.rs b/crates/gpui_wgpu/src/cosmic_text_system.rs
-index 26d9f301..f71775dd 100644
+index 26d9f30..225175c 100644
 --- a/crates/gpui_wgpu/src/cosmic_text_system.rs
 +++ b/crates/gpui_wgpu/src/cosmic_text_system.rs
 @@ -44,6 +44,9 @@ impl FontKey {
@@ -14,7 +14,7 @@ index 26d9f301..f71775dd 100644
  }
  
  struct CosmicTextSystemState {
-@@ -68,6 +71,68 @@ struct LoadedFont {
+@@ -68,6 +71,74 @@ struct LoadedFont {
      /// resolved at load time so `layout_line` shares one chain across faces.
      /// `Arc` keeps clone cheap on the per-run hot path.
      user_fallback_chain: Arc<[(FontId, SharedString)]>,
@@ -74,16 +74,22 @@ index 26d9f301..f71775dd 100644
 +}
 +
 +/// The weight a face is drawn at when `asked` is: within a variable face's
-+/// weight axis (`axis`), else the face's own (`own`).
++/// weight axis (`axis`), else the face's own (`own`). An axis whose least
++/// is past its greatest (a font's mistake, which swash reads as it is)
++/// spans the weights between them.
 +fn instance_weight(axis: Option<(f32, f32)>, own: Weight, asked: Weight) -> Weight {
 +    match axis {
-+        Some((least, most)) => Weight(f32::from(asked.0).clamp(least, most).round() as u16),
++        Some((one, other)) => Weight(
++            f32::from(asked.0)
++                .clamp(one.min(other), one.max(other))
++                .round() as u16,
++        ),
 +        None => own,
 +    }
  }
  
  struct FontMatchProperties {
-@@ -92,7 +157,8 @@ impl FontMatchProperties {
+@@ -92,7 +163,8 @@ impl FontMatchProperties {
  }
  
  impl CosmicTextSystem {
@@ -93,7 +99,7 @@ index 26d9f301..f71775dd 100644
      pub fn font_weight_and_style(
          &self,
          font_id: FontId,
-@@ -112,7 +178,7 @@ impl CosmicTextSystem {
+@@ -112,7 +184,7 @@ impl CosmicTextSystem {
              cosmic_text::Style::Italic => gpui::FontStyle::Italic,
              cosmic_text::Style::Oblique => gpui::FontStyle::Oblique,
          };
@@ -102,7 +108,7 @@ index 26d9f301..f71775dd 100644
      }
  
      /// Builds reports for unresolved source indices after an outer text system
-@@ -204,8 +270,11 @@ impl PlatformTextSystem for CosmicTextSystem {
+@@ -204,8 +276,11 @@ impl PlatformTextSystem for CosmicTextSystem {
          };
  
          let ix = find_best_match(font, candidates, &state)?;
@@ -115,7 +121,7 @@ index 26d9f301..f71775dd 100644
      }
  
      fn prewarm_fonts(&self, font_ids: &[FontId]) {
-@@ -213,13 +282,9 @@ impl PlatformTextSystem for CosmicTextSystem {
+@@ -213,13 +288,9 @@ impl PlatformTextSystem for CosmicTextSystem {
      }
  
      fn font_metrics(&self, font_id: FontId) -> FontMetrics {
@@ -132,7 +138,7 @@ index 26d9f301..f71775dd 100644
  
          FontMetrics {
              units_per_em: metrics.units_per_em as u32,
-@@ -239,7 +304,11 @@ impl PlatformTextSystem for CosmicTextSystem {
+@@ -239,7 +310,11 @@ impl PlatformTextSystem for CosmicTextSystem {
  
      fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>> {
          let lock = self.0.read();
@@ -145,7 +151,7 @@ index 26d9f301..f71775dd 100644
          let glyph_id = glyph_id.0 as u16;
          Ok(Bounds {
              origin: point(0.0, 0.0),
-@@ -303,7 +372,7 @@ impl CosmicTextSystemState {
+@@ -303,7 +378,7 @@ impl CosmicTextSystemState {
              primary_family_name: first_family.0.clone().into(),
              stretch: face.stretch,
              style: face.style,
@@ -154,7 +160,7 @@ index 26d9f301..f71775dd 100644
              features: loaded_font.features.clone(),
              fallback_chain: Arc::clone(&loaded_font.user_fallback_chain),
          })
-@@ -390,16 +459,17 @@ impl CosmicTextSystemState {
+@@ -390,16 +465,17 @@ impl CosmicTextSystemState {
              .db()
              .faces()
              .filter(|face| face.families.iter().any(|family| *name == family.0))
@@ -174,7 +180,7 @@ index 26d9f301..f71775dd 100644
              };
              if let Some(&font_id) = self.loaded_font_ids_by_key.get(&key) {
                  self.loaded_fonts[font_id.0].user_fallback_chain = Arc::clone(&user_fallback_chain);
-@@ -407,9 +477,10 @@ impl CosmicTextSystemState {
+@@ -407,9 +483,10 @@ impl CosmicTextSystemState {
                  continue;
              }
  
@@ -186,7 +192,7 @@ index 26d9f301..f71775dd 100644
                  .context("Could not load font")?;
  
              // HACK: To let the storybook run and render Windows caption icons. We should actually do better font fallback.
-@@ -434,20 +505,65 @@ impl CosmicTextSystemState {
+@@ -434,20 +511,65 @@ impl CosmicTextSystemState {
  
              let font_id = FontId(self.loaded_fonts.len());
              loaded_font_ids.push(font_id);
@@ -258,22 +264,23 @@ index 26d9f301..f71775dd 100644
          Ok(Size {
              width: glyph_metrics.advance_width(glyph_id.0 as u16),
              height: glyph_metrics.advance_height(glyph_id.0 as u16),
-@@ -527,8 +643,12 @@ impl CosmicTextSystemState {
+@@ -523,11 +645,15 @@ impl CosmicTextSystemState {
+             params.subpixel_variant.y as f32 / SUBPIXEL_VARIANTS_Y as f32 / params.scale_factor,
+         );
+ 
++        // A variable face at the weight it was asked at. A face of one
++        // weight has no coordinates, which clears those of the face drawn
++        // before: swash's context keeps them from one builder to the next.
+         let mut scaler = self
              .swash_scale_context
              .builder(font_ref)
              .size(pixel_size * params.scale_factor)
--            .hint(true)
--            .build();
-+            .hint(true);
-+        if !loaded_font.coords.is_empty() {
-+            // A variable face, at the weight it was asked at.
-+            scaler = scaler.normalized_coords(&loaded_font.coords);
-+        }
-+        let mut scaler = scaler.build();
+             .hint(true)
++            .normalized_coords(&loaded_font.coords)
+             .build();
  
          let sources: &[Source] = if params.is_emoji {
-             &[
-@@ -564,31 +684,46 @@ impl CosmicTextSystemState {
+@@ -564,31 +690,46 @@ impl CosmicTextSystemState {
      /// `LoadedFont.features`, as it will have an arbitrarily chosen or empty value. The only
      /// current use of this field is for the *input* of `layout_line`, and so it's fine to use
      /// `font_id_for_cosmic_id` when computing the *output* of `layout_line`.
@@ -335,7 +342,7 @@ index 26d9f301..f71775dd 100644
  
              Ok(font_id)
          }
-@@ -792,8 +927,10 @@ impl CosmicTextSystemState {
+@@ -792,8 +933,10 @@ impl CosmicTextSystemState {
          for glyph in &layout.glyphs {
              let mut font_id = FontId(glyph.metadata);
              let mut loaded_font = self.loaded_font(font_id);
@@ -348,7 +355,7 @@ index 26d9f301..f71775dd 100644
                      std::result::Result::Ok(resolved_id) => {
                          font_id = resolved_id;
                          loaded_font = self.loaded_font(font_id);
-@@ -1260,6 +1397,10 @@ mod tests {
+@@ -1260,6 +1403,10 @@ mod tests {
      const IBM_PLEX: &[u8] =
          include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf");
      const LILEX: &[u8] = include_bytes!("../../../assets/fonts/lilex/Lilex-Regular.ttf");
@@ -359,7 +366,7 @@ index 26d9f301..f71775dd 100644
  
      /// Every code point of `Bidi_Class=B`, each of which starts a new bidi
      /// paragraph and so can split one line into mixed-direction paragraphs.
-@@ -1362,6 +1503,126 @@ mod tests {
+@@ -1362,6 +1509,136 @@ mod tests {
          Ok(())
      }
  
@@ -435,6 +442,16 @@ index 26d9f301..f71775dd 100644
 +        );
 +        assert!(thin * 5 < heavy * 4, "regular {thin}, bold {heavy}");
 +        Ok(())
++    }
++
++    #[test]
++    fn a_weight_axis_read_backwards_spans_the_weights_between_its_ends() {
++        let asked = |axis, weight| instance_weight(axis, Weight(400), Weight(weight));
++        assert_eq!(asked(Some((100., 900.)), 1000), Weight(900));
++        assert_eq!(asked(Some((900., 100.)), 1000), Weight(900));
++        assert_eq!(asked(Some((900., 100.)), 50), Weight(100));
++        assert_eq!(asked(Some((700., 700.)), 400), Weight(700));
++        assert_eq!(asked(None, 700), Weight(400));
 +    }
 +
 +    #[test]
