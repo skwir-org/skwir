@@ -11514,3 +11514,20 @@ commits).
   settings tests (34). On Xvfb, a debug build: General's More settings
   (9) with the chevron down, unfolded to its end, Fewer settings with
   the chevron up.
+
+## Before 0.3.1: 0.3.0's two leftovers and a crowded footer (2026-11-05)
+
+- **A drag's label without a font.** gpui draws a drag's view on its own
+  (`prepaint_as_root`, outside the window's text style), and
+  `dnd::DragPreview`'s label named no family: it asked for gpui's
+  `.SystemUIFont`, IBM Plex Sans on Linux, missing, so gpui logged
+  "failed to load font" once and drew it in the first of its ten
+  fallbacks it found (it panics when it finds none). Laid out at its
+  least width, the label also broke at each chance ("a-note." over
+  "txt"). It now names the theme's font and does not wrap
+  (`dnd.rs`); the shell's fonts rule says a view gpui draws on its own
+  names the font itself, as `toolbar::Tip` did. Checked on Xvfb (debug
+  builds, lavapipe): a file dragged in the build before the change logged
+  the warning as the drag started and wrapped its name; after it, no
+  warning and one line in the window's font.
+

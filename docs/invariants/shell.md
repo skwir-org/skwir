@@ -91,7 +91,11 @@ Views are in [views.md](views.md); what locations decide, in
   the fonts or colors come from. Toolkits
   are never loaded: a GTK theme is read as the colors its sheet names.
 - The fonts are the theme's tokens (`font`, `reading_font`,
-  `code_font`), resolved with it, read where they are drawn. A font's
+  `code_font`), resolved with it, read where they are drawn. A view
+  gpui draws on its own, outside the window's text style (a tooltip,
+  `toolbar::Tip`; a drag's preview, `dnd::DragPreview`), names the
+  theme's font itself: gpui's default, `.SystemUIFont`, is a family
+  Linux seldom has (IBM Plex Sans), then gpui's fallbacks. A font's
   size is read with its family, from the same settings
   (`DesktopStyle::font_px`, `monospace_px`); GTK's and Qt's fonts are
   read apart too (`gtk`, `qt`), and `ui.fonts_from` chooses Automatic

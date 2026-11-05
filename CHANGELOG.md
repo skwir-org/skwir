@@ -79,6 +79,8 @@
   named by both ("tree-sitter CLI, with Emacs's library"); one that cannot be
   used says whether its library or its queries are refused, and what to do. A
   library in the system's folders is the system's, not Emacs's.
+- **Dragging** names what it carries on one line, in the window's font,
+  where a name broke at each dot or dash, in a font of gpui's choosing.
 - **The board** keeps every column filled after another view and back, where
   all but the place's own showed empty.
 - **Print Listing…** is what the folder's menu calls printing its listing, as

@@ -769,8 +769,6 @@ leave (ADR-077).
 - `just idle-pss` measures the dev build (`target/release`), whose first
   frame read 177 to 184 ms while the shipped tarballs read 137 to 170
   the same evening: why it starts slower is not known.
-- Text drawn without a font family: gpui fell back from
-  `.SystemUIFont` once in the AppImage, the place not found.
 - A window opened again from the tray logs its first frame counted from
   the process's start ("first frame 82397.7 ms after start").
 

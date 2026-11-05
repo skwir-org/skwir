@@ -246,12 +246,19 @@ impl Render for DragPreview {
             Some(DropOp::Link) => format!("Link {text}"),
             None => text,
         };
+        // gpui draws a drag's view on its own, outside the window's text
+        // style: without a family it asks for gpui's `.SystemUIFont`
+        // (a family Linux seldom has, then gpui's fallbacks, then a panic).
+        // It lays it out at its least width, where text wraps at each
+        // chance ("a-note." over "txt"): the label stays one line.
         let label = div()
             .px_2()
             .py_1()
             .rounded_md()
             .bg(theme.accent)
             .text_color(theme.on_accent)
+            .font_family(theme.font.clone())
+            .whitespace_nowrap()
             .text_body()
             .shadow_md()
             .child(text);
