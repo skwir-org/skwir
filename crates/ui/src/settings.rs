@@ -753,7 +753,7 @@ pub(crate) fn language_records(app: &App) -> serde_json::Value {
             };
             let mut offered = vec![serde_json::json!({
                 "value": "auto",
-                "label": format!("Automatic: {automatic}"),
+                "label": format!("Automatic ({automatic})"),
             })];
             if let Some(bat) = &bat {
                 offered.push(serde_json::json!({ "value": "bat", "label": bat }));

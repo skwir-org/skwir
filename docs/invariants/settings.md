@@ -37,7 +37,9 @@ the reasoning.
   it again when that changes (the theme's look, the fonts read: through
   `settings::show_resolved`; the icon themes once listed). Never bake it
   into the label: the label stays "Automatic", and `choice_shown` adds
-  what it comes to wherever a label is shown.
+  what it comes to wherever a label is shown. A record's own choice,
+  whose labels its owner writes, says it the same way: "Automatic
+  (bat)" (a language's grammar, `language_records`).
 - A setting that applies only while a switch is on says so with
   `SettingSpec::under(switch)` and is declared right after it, in its
   section: the dialog draws it
