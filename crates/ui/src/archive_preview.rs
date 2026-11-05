@@ -1,11 +1,13 @@
 //! Archive contents use the file list's density and column alignment, and
 //! its way of giving way: the size drops whole when the name needs the room
-//! (`views::list::line`).
+//! (`views::list::line`). They are written at the files' size, as the list
+//! is (ADR-117): the inspector draws them in its rem (`rem`), and their
+//! lengths follow it.
 use crate::sizes::TextSizes;
 use crate::{
     format, icons,
     theme::Theme,
-    views::list::{ROW_HEIGHT, column, line},
+    views::list::{DEFAULT_ROW_ZOOM, column, files_scale, line, row_height},
 };
 use gpui::{Div, div, prelude::*, px, svg};
 use skwir_core::inspection::Row;
@@ -17,13 +19,21 @@ const DISCLOSURE_SIZE: f32 = 12.;
 const NAME_MIN: f32 = 120.;
 const HEADER_HEIGHT: f32 = 24.;
 
+/// `members` (the header or the list of an archive's members) at the
+/// files' size.
+pub fn rem(theme: &Theme, members: impl IntoElement) -> crate::elements::rem::Rem {
+    crate::elements::rem::rem(theme.sizes.rem(crate::sizes::Part::Files), members)
+}
+
 pub fn header(theme: &Theme) -> Div {
+    let scale = files_scale(theme);
+    let height = scale.f(HEADER_HEIGHT);
     let name = div()
         .min_w_0()
         .pl(px(DISCLOSURE_SIZE + ICON_SIZE + 8.))
         .child("Name");
     div()
-        .h(px(HEADER_HEIGHT))
+        .h(px(height))
         .flex_none()
         .flex()
         .items_center()
@@ -34,8 +44,8 @@ pub fn header(theme: &Theme) -> Div {
         .border_b_1()
         .border_color(theme.border)
         .child(
-            line(name, NAME_MIN, HEADER_HEIGHT, crate::sizes::Scale::ONE).child(
-                column(SIZE_WIDTH, theme.text_muted, HEADER_HEIGHT)
+            line(name, NAME_MIN, height, scale).child(
+                column(scale.f(SIZE_WIDTH), theme.text_muted, height)
                     .text_right()
                     .child("Size"),
             ),
@@ -49,6 +59,8 @@ pub fn row(
     selected: bool,
     theme: &Theme,
 ) -> Div {
+    let scale = files_scale(theme);
+    let height = row_height(DEFAULT_ROW_ZOOM, scale);
     let icon = icon.map_or_else(
         || {
             div()
@@ -68,7 +80,7 @@ pub fn row(
         .overflow_hidden()
         .gap_1()
         // Indentation belongs to Name only; sizes must stay aligned at every depth.
-        .pl(px(row.depth.min(32) as f32 * 14.))
+        .pl(px(row.depth.min(32) as f32 * scale.f(14.)))
         .child(
             div()
                 .w(px(DISCLOSURE_SIZE))
@@ -110,18 +122,18 @@ pub fn row(
         );
     }
     let size = column(
-        SIZE_WIDTH,
+        scale.f(SIZE_WIDTH),
         if selected {
             theme.selection_text
         } else {
             theme.text
         },
-        ROW_HEIGHT,
+        height,
     )
     .text_right()
     .child(row.bytes.map_or_else(|| "—".into(), format::size));
     div()
-        .h(px(ROW_HEIGHT))
+        .h(px(height))
         .w_full()
         .flex()
         .items_center()
@@ -129,5 +141,5 @@ pub fn row(
         .text_body()
         .when(!selected, |d| d.hover(|d| d.bg(theme.hover)))
         .when(selected, |d| d.text_color(theme.selection_text))
-        .child(line(name, NAME_MIN, ROW_HEIGHT, crate::sizes::Scale::ONE).child(size))
+        .child(line(name, NAME_MIN, height, scale).child(size))
 }

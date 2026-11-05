@@ -10999,3 +10999,16 @@ What the review beside 0.3.0 left (ADR-117), taken up before 0.3.1.
   platform's tests: the order on Wayland and X11 against a fake portal;
   qt6ct's file written in a folder of the test's own, the style sent
   again at 16 px for 12 pt; 409 platform tests pass, clippy clean.
+- **A shown book follows Reading** (MuPDF's books): a change of
+  Reading's size lays the book shown out again where the reader is,
+  unless a size was chosen for it in the preview; the preview's reset
+  follows the setting again. Checked on Xvfb: the synthetic EPUB through
+  MuPDF, `reading.text_size` set to 200 in `settings.toml` while shown,
+  the book laid out again at twice the size.
+- **An archive's members at the files' size**: the inspector draws an
+  archive's header and rows in the files' rem, their heights, indents,
+  name's least width and size column at the files' scale (rows no lower
+  than the icon's, as the list's). Checked on Xvfb: a zip of nested
+  folders at Files 100 % and 150 %, the size column giving way at 150 %
+  in a narrow preview as the list's does. 501 UI tests pass, clippy
+  clean.

@@ -48,7 +48,8 @@ Qt's settings (4).
 1. **Four parts, a size each.** Interface (`ui.text_size`, "Text size":
    bars, menus, the sidebar, dialogs, tooltips, footers), Files
    (`ui.files_text_size`: names and details in the list, the grid, the
-   columns and the board; issue #5), Reading (`reading.text_size`: the
+   columns and the board, and an archive's members in its preview, a
+   list of files too; issue #5), Reading (`reading.text_size`: the
    running text of previews) and Code (`ui.code_text_size`: code
    previews, the byte view, the terminal). Each is a percentage in
    steps, 80, 90, 100, 110, 125, 150, 175 and 200 (`sizes::STEPS`),
@@ -170,6 +171,16 @@ apart, and changes how gpui maps the pointer.
   followed). Checked by the platform's tests: the order on Wayland and
   X11 against a fake portal, qt6ct's file written in a folder of the
   test's own.
+- 2026-11-05 too: a book its engine laid out (MuPDF's) at Reading's size
+  is laid out again, where the reader is, when that setting changes
+  while it is shown; one sized in the preview keeps its size, and the
+  preview's reset follows the setting again. An archive's members (rows,
+  header, indents, size column) are at the files' size, drawn in their
+  rem, the size column giving way as the list's does. Checked on Xvfb:
+  the synthetic EPUB through MuPDF, `reading.text_size` set to 200 in
+  `settings.toml` while shown, the book laid out again at twice the
+  size on its first page; a zip of nested folders at Files 100 % and
+  150 %.
 - Reviewed beside 0.3.0, 2026-11-05 (the release's AppImage and the
   build of step 4 on one display, one folder, the reference machine's
   settings): body text 14 to 13.3 px at the desktop's 10 pt, as GTK's

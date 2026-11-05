@@ -4019,8 +4019,12 @@ pub fn content(
             }))
         })
         .when_some(state.focus.as_ref(), gpui::InteractiveElement::track_focus);
-    if display.data.kind == InspectionKind::Archive {
-        body = body.child(crate::archive_preview::header(theme));
+    let archive = display.data.kind == InspectionKind::Archive;
+    if archive {
+        body = body.child(crate::archive_preview::rem(
+            theme,
+            crate::archive_preview::header(theme),
+        ));
     } else if !display.data.columns.is_empty() {
         let mut header = div().p_2().flex().gap_3().text_small().when(
             display.data.kind == InspectionKind::Hex,
@@ -4125,6 +4129,8 @@ pub fn content(
                     .when_some(measure, |d, measure| d.max_w(px(measure)))
                     .map(|d| match rows.or(bytes_rows) {
                         Some(rows) => d.child(rows),
+                        // An archive's members at the files' size.
+                        None if archive => d.child(crate::archive_preview::rem(theme, list)),
                         None => d.child(list),
                     }),
             )
