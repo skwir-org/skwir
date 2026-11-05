@@ -3006,7 +3006,6 @@ impl Shell {
         // what the look came to, is taken in too, so that saying it starts
         // no second pass (`theme_inputs_of`).
         let current = self.theme_revision == theme_inputs_of(&self.app);
-        let started = Instant::now();
         let was = (cx.global::<Theme>().families(), cx.global::<Theme>().sizes);
         let theme = Theme::resolve(&self.app, window.appearance(), cx.text_system());
         let now = (theme.families(), theme.sizes);
@@ -3023,7 +3022,6 @@ impl Shell {
         if current {
             self.theme_revision += declared;
         }
-        tracing::trace!(took = ?started.elapsed(), declared, "theme resolved");
         if now.0 != was.0 {
             let fonts = &now.0;
             tracing::info!(ui = %fonts.ui, reading = %fonts.reading, code = %fonts.code, "fonts");
