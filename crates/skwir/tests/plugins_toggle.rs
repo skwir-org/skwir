@@ -177,6 +177,57 @@ fn every_plugin_disables_without_a_trace_and_re_enables() {
     }
 }
 
+/// What the Usage view lent a pane (ADR-116: the entries it draws inside
+/// the folder's own) goes when its plugin is turned off, with the rest of
+/// what it contributed: no pane keeps, selected or not, entries a view no
+/// longer registered drew. Turned on again, nothing is lent until the view
+/// draws.
+#[test]
+fn what_the_usage_view_lent_goes_when_it_is_turned_off() {
+    use skwir_core::entry::{Entry, EntryKind};
+    use skwir_core::workspace::{Loaned, Pane};
+    let tmp = tempfile::tempdir().unwrap();
+    let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+    let usage = all_plugins()
+        .into_iter()
+        .find(|plugin| plugin.id() == "usage")
+        .unwrap();
+    app.plugins.add(usage, &app);
+    let file = tmp.path().join("l'été").join("it's inside.txt");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file, b"x").unwrap();
+    let id = skwir_core::fs::stat_path(&file).expect("there").id;
+    let pane = app.workspace.read().active().id;
+    {
+        let mut ws = app.workspace.write();
+        let p = ws.pane_mut(pane).unwrap();
+        p.lend(
+            "usage",
+            [Loaned {
+                entry: Entry::new(id, "it's inside.txt", EntryKind::File),
+                path: file.clone(),
+                seen: 0,
+            }],
+        );
+        p.selection.set([id]);
+    }
+    let lent = |app: &App| app.workspace.read().pane(pane).is_some_and(Pane::has_lent);
+    assert!(lent(&app));
+    assert!(app.plugins.set_enabled("usage", false, &app));
+    assert!(!lent(&app), "turned off, what its view lent goes");
+    assert!(
+        app.workspace
+            .read()
+            .pane(pane)
+            .unwrap()
+            .selection
+            .is_empty(),
+        "and leaves the selection"
+    );
+    assert!(app.plugins.set_enabled("usage", true, &app));
+    assert!(!lent(&app), "lent again only as the view draws");
+}
+
 /// The `PDFium` library the documents plugin's setting names is the one
 /// the platform keeps for every `PDFium` helper (printing opens it too)
 /// while the plugin is on, and none once it is turned off.

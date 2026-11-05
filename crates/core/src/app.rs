@@ -644,7 +644,18 @@ impl App {
         self.terminals.unregister_owner(owner);
         self.tiles.unregister_owner(owner);
         self.maps.unregister_owner(owner);
+        let views = || -> crate::hashing::Set<Arc<str>> {
+            self.registry
+                .views
+                .all()
+                .into_iter()
+                .map(|view| view.id)
+                .collect()
+        };
+        let views_before = views();
         self.registry.remove_owner(owner);
+        let views_now = views();
+        self.let_go_of_lent_by(&views_before, &views_now);
         let withdrawn: Vec<Arc<str>> = {
             let mut providers = self.providers.write();
             let withdrawn = providers
@@ -661,6 +672,26 @@ impl App {
         for spec in self.settings.schema() {
             if spec.owner() == owner {
                 self.settings.undeclare(&spec.key);
+            }
+        }
+    }
+
+    /// Panes let go of what a view withdrawn (in `before`, not in `now`)
+    /// lent them (`Pane::lend`, ADR-116): its plugin turned off, it draws
+    /// it no more.
+    fn let_go_of_lent_by(
+        &self,
+        before: &crate::hashing::Set<Arc<str>>,
+        now: &crate::hashing::Set<Arc<str>>,
+    ) {
+        let gone: Vec<&Arc<str>> = before.iter().filter(|id| !now.contains(*id)).collect();
+        if gone.is_empty() {
+            return;
+        }
+        let mut ws = self.workspace.write();
+        for p in ws.panes_mut() {
+            for view in &gone {
+                p.let_go_of_lent(view);
             }
         }
     }
@@ -2124,9 +2155,16 @@ impl App {
     /// Read the entries a view lent `pane` (`Pane::lend`, ADR-116) as a
     /// listing reads its own, by their paths, a job for each lane (a
     /// server that stopped answering holds its own alone), and give the
-    /// pane what was read. Lent entries are no location's, so the pane
-    /// is their listing; ended with the pane's location.
-    fn read_lent(&self, pane: PaneId, items: Vec<(EntryId, PathBuf)>, priority: Priority) {
+    /// pane what was read, as of the version `asked` (`Pane::lent_paths`):
+    /// a loan lent again since, seen otherwise, is not taken for it. Lent
+    /// entries are no location's, so the pane is their listing; ended
+    /// with the pane's location.
+    fn read_lent(
+        &self,
+        pane: PaneId,
+        (items, asked): (Vec<(EntryId, PathBuf)>, u64),
+        priority: Priority,
+    ) {
         if items.is_empty() {
             return;
         }
@@ -2165,7 +2203,7 @@ impl App {
                         .workspace
                         .write()
                         .pane_mut(pane)
-                        .is_some_and(|p| p.lent_read(found_all, &gone_all, &unread));
+                        .is_some_and(|p| p.lent_read(found_all, &gone_all, &unread, asked));
                     if changed {
                         app.wake();
                     }

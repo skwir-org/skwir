@@ -92,20 +92,24 @@ around the views is in [shell.md](shell.md).
   Delete must never take what cannot be seen. Showing a hidden entry by
   name turns hidden files on first (`Pane::select_revealed`).
 - **What a view draws beside the listing is lent to the pane**
-  (`Pane::lend`, ADR-116): shown while lent, so selected and acted on
-  as any entry, but in no order. Select all, Invert selection, ranges,
+  (`Pane::lend`, ADR-116): shown while lent, so selected and acted on as
+  any entry, but in no order. Select all, Invert selection, ranges,
   sweeps, the filter and every count read `Pane::order`, the listing's
   and its folders opened in place, and never see a lent entry; a range
   to one adds it. What the view stops drawing (fewer levels, a rescan,
   another view, another location) leaves the selection by the rule
   above. A lent entry is read by its path when selected, and again once
-  lent again (`Pane::lent_to_read`, `Shell::sync_lent_hydration`,
-  `App::read_lent`), never by a listing, what was read shown meanwhile;
-  until then it is what the view knew of it, its kind exact (a pipe is
-  never lent as a file) or not lent at all. A reading never moves
-  `Pane::lent_version`: a view lends again when it moves, and lending
-  again asks for a reading. After a lent entry goes, nothing is
-  selected in its place (ADR-116: the map reflows).
+  lent again seen otherwise (`Loaned::seen`, `Pane::lent_to_read`,
+  `Shell::sync_lent_hydration`, `App::read_lent`), never by a listing,
+  what was read shown meanwhile; until then it is what the view knew of
+  it, its kind exact (a pipe is never lent as a file) or not lent at
+  all. Lending what is lent already changes nothing, and a reading never
+  moves `Pane::lent_version`: a view lends again when it moves, and
+  lending again may ask for a reading. A reading asked before an entry
+  was lent again seen otherwise is not its. The selection follows a lent
+  entry renamed, or a name another file took, as a listing's (paired by
+  file, else by name). After a lent entry goes, nothing is selected in
+  its place (ADR-116: the map reflows).
 - **What the user puts somewhere is selected there.** What a plan the
   user asked puts in a folder a pane shows is selected there once it is
   done and listed, as Nautilus and Dolphin do: a new folder or file (and
@@ -370,19 +374,26 @@ around the views is in [shell.md](shell.md).
 ## Usage (ADR-007)
 
 - **Every block drawn is an entry** (ADR-116): the folder's own are the
-  pane's, those drawn inside them are lent to it (`Pane::lend`), built
-  with the blocks and lent again when what is drawn changes (the
-  plugin's answer, the levels, hidden files; `LentFrom`) or the pane let
-  go of them (`Pane::lent_version`); the scan gives each its kind
-  (`Node::entry_kind`). A click selects the block under the pointer, an
-  open folder by its header, and is the whole press (nothing on the map
-  is dragged): a plain click in a selection of several makes it that
-  one. The arrows move among the blocks beside the cursor's in its
-  folder where they were last laid out, out to that folder's neighbours
-  at its edge (`UsageView::beside`); on the folder's own entries they
-  move as before. The footer weighs the selection by its blocks
-  (`usage::weigh`): what lies in a folder selected counts with it once.
-  Leaving the view lets go of what it lent.
+  pane's, those drawn inside them are lent to it (`Pane::lend`, from
+  `usage::lent_of`, by the rules the blocks are built by: `drawn`,
+  `opens`, `Node::lent_id`), lent again when what is drawn changes (the
+  plugin's answer for this pane, `UsageState::answer`, never the
+  plugin's revision, which any pane's scan moves; the levels, hidden
+  files; `LentFrom`) or the pane let go of them (`Pane::lent_version`).
+  Lent in `Shell::sync_usage`, never in `render`: a wake applies it,
+  drawn or not. Each is lent with what the scan saw of it
+  (`Node::seen`), so one seen as before keeps its reading; the scan
+  gives each its kind (`Node::entry_kind`). A click selects the block
+  under the pointer, an open folder by its header, and is the whole
+  press (nothing on the map is dragged): a plain click in a selection of
+  several makes it that one. The arrows move among the blocks beside the
+  cursor's in its folder where they were last laid out, out to that
+  folder's neighbours at its edge (`UsageView::beside`), from the
+  nearest laid block that holds the cursor's when that one is not laid
+  (too small to open); on the folder's own entries they move as before.
+  The footer weighs the selection by its blocks (`usage::weigh`): what
+  lies in a folder selected counts with it once. Leaving the view lets
+  go of what it lent.
 - Its toolbar holds the zoom's steps (`ui.zoom`, in the View menu's
   words: `usage::STEPS`) around the count of levels, which goes first
   when the pane is narrow (`elements::adaptive::AdaptiveRow`). The

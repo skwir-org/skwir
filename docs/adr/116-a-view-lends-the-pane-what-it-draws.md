@@ -36,11 +36,18 @@ system's).
 ## Decision
 
 1. **A view may lend the pane entries it draws** beside what the pane
-   lists (`Pane::lend`, each `Entry` with its path), in place of what it
-   lent before. A lent entry is shown (`Pane::is_shown`), so it is
-   selected, found by `Pane::entry` and `Pane::path_of`, and handed to
-   commands by `App::selected_refs` as any entry: what acts on files acts
-   on it unchanged, plans checking before they run.
+   lists (`Pane::lend`, each a `Loaned`: the `Entry`, its path, and what
+   the view saw of it), in place of what it lent before; lending what is
+   lent already changes nothing. A lent entry is shown
+   (`Pane::is_shown`), so it is selected, found by `Pane::entry`,
+   `Pane::entry_at` and `Pane::path_of`, and handed to commands by
+   `App::selected_refs` as any entry: what acts on files acts on it
+   unchanged, plans checking before they run. What the pane keeps by
+   entry (the selection, its cursor and anchor) follows a lent entry
+   renamed or moved within what the view draws, and one whose name
+   another file took (an editor saving), as a listing's rows do: paired
+   by file when the file had one name, else by name (amended 2026-11-05,
+   with the user).
 2. **A lent entry is in no order.** `Pane::order` is the listing's and
    its folders opened in place: Select all, Invert selection, ranges,
    sweeps, the filter and every count stay the folder's own. A range to a
@@ -50,19 +57,29 @@ system's).
    (fewer levels, a rescan that folded it into the rest, hidden files
    hidden), it went (a reading found it gone), the view changed, or the
    pane showed another location or slept. The pane lets go of everything
-   lent on navigation and dormancy; the view lends again when the
-   version its lending said moves (`Pane::lent_version`). What is lent is
-   what the view's levels draw, not what has room on the screen: a block
-   too small to open hides what is inside it as a list scrolled away
-   does, and resizing the window never changes the selection.
+   lent on navigation and dormancy, and of what a view lent once its
+   plugin is turned off (`App::unregister_owner`); the view lends again
+   when the version its lending said moves (`Pane::lent_version`), and
+   lends where the pane's state is synced (`Shell::sync_usage`), never
+   while drawing: a wake applies it whether the window draws or not.
+   What is lent is what the view's levels draw, not what has room on the
+   screen: a block too small to open hides what is inside it as a list
+   scrolled away does, and resizing the window never changes the
+   selection.
 4. **A lent entry is read as a listing reads its own, by its path**,
    when it is selected (`hydrate`, `fs::read_paths`, a job per lane):
    owner, permissions, times, a link's target, tags. An entry lent again
-   at the same path keeps what was read of it until it is read again,
-   once selected: what drew it again may have seen it change. Until read it is what the
-   view knew: Usage lends each with its kind from its scan's stat, so a
-   link or a pipe is never taken for a file to read, and lends nothing
-   its scan could not type.
+   at its path as the view saw it before keeps its reading; seen
+   otherwise (Usage's scan saw its size, time or names change), it keeps
+   what was read of it until it is read again, once selected. A reading
+   asked before it was lent again seen otherwise is not taken for it.
+   Usage lends again only when its answer for that pane changes: another
+   pane's scan, or a recount that found nothing changed, lends and reads
+   nothing (amended 2026-11-05: each scan anywhere re-read the
+   selection, at 5 a second while one was counting). Until read it is
+   what the view knew: Usage lends each with its kind from its scan's
+   stat, so a link or a pipe is never taken for a file to read, and
+   lends nothing its scan could not type.
 5. **Usage lends what it draws inside the folder's own entries**, at
    every level drawn. A click selects the block under the pointer at any
    depth, an open folder by its header; Ctrl adds or takes out; a
@@ -97,4 +114,9 @@ system's).
 - Switching to a view that draws less (List, from Usage) lets go of what
   was selected inside folders: that view does not show it.
 - Another view that draws entries no listing holds may lend them the
-  same way, without opening a location of its own.
+  same way, without opening a location of its own; what each lent is its
+  own (`Pane::lent_by`), let go of when it is no longer shown.
+- A lent entry renamed is followed once the view draws it again: the
+  scan counts a change at once, or within four times its last recount
+  while changes keep coming (views.md, "Usage"); meanwhile it is
+  selected at its old path, which a plan checks before it runs.

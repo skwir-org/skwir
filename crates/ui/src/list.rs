@@ -637,11 +637,11 @@ impl Shell {
 
     /// Ask for what a listing would know of the selected entries a view
     /// lent the pane (ADR-116), read by their paths, and read again once
-    /// lent again (what drew them again may have seen them change): what
-    /// drew them (a scan) read no more than their kind. On screen: they
-    /// are the selection, which the preview and Properties show. Asked
-    /// again only when the selection or what is lent changes, which a
-    /// reading does.
+    /// lent again seen otherwise (what drew them again saw them change):
+    /// what drew them (a scan) read no more than their kind. On screen:
+    /// they are the selection, which the preview and Properties show.
+    /// Asked again only when the selection or what is lent changes, which
+    /// a reading never does (`Pane::lent_version`).
     pub(crate) fn sync_lent_hydration(&mut self) {
         let pane = self.pane;
         let app = std::sync::Arc::clone(&self.app);

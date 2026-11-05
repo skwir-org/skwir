@@ -28,6 +28,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use gpui::{AnyElement, Context, MouseButton, Window, div, prelude::*, px};
 use serde::{Deserialize, Serialize};
 use skwir_core::entry::{Entry, EntryKind};
+use skwir_core::workspace::Loaned;
 use skwir_core::{EntryId, command::Invocation, os_path::PathArg};
 use skwir_platform::mime::Kind;
 
@@ -116,7 +117,7 @@ pub enum Reclaim {
     /// Freed when the Trash is emptied.
     Trash,
 }
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 pub struct Node {
     pub id: Option<EntryId>,
     pub name: String,
@@ -165,18 +166,48 @@ pub struct Node {
 }
 
 impl Node {
-    /// The entry it is, as it is lent to the pane: `None` for what the
-    /// scan could not say the kind of, which is not lent rather than
-    /// taken for a file to read.
-    fn entry(&self, path: PathBuf) -> Option<(Entry, PathBuf)> {
-        let id = self.id?;
-        let kind = if self.is_dir {
-            EntryKind::Directory
+    /// What it is lent to the pane as when drawn inside the folder's own:
+    /// `None` for what the scan could not say the kind of, which is not
+    /// lent rather than taken for a file to read.
+    fn lent_kind(&self) -> Option<EntryKind> {
+        if self.is_dir {
+            Some(EntryKind::Directory)
         } else {
-            self.entry_kind.filter(|kind| *kind != EntryKind::Unknown)?
-        };
+            self.entry_kind.filter(|kind| *kind != EntryKind::Unknown)
+        }
+    }
+
+    /// The entry it is, as it is lent to the pane at `path` (`Pane::lend`),
+    /// with what the scan saw of it.
+    fn loan(&self, path: PathBuf) -> Option<Loaned> {
+        let id = self.lent_id(&path)?;
+        let kind = self.lent_kind()?;
         let name = path.file_name()?.to_os_string();
-        Some((Entry::new(id, name, kind), path))
+        Some(Loaned {
+            entry: Entry::new(id, name, kind),
+            path,
+            seen: self.seen(),
+        })
+    }
+
+    /// The id it is lent by at `path`, when it is (`loan`).
+    fn lent_id(&self, path: &Path) -> Option<EntryId> {
+        self.lent_kind()?;
+        path.file_name()?;
+        self.id
+    }
+
+    /// What the scan saw of it, as one number (`Loaned::seen`): lent again
+    /// as it was seen, what the pane read of it stands; seen otherwise
+    /// (grown, changed, another number of names), it is read again. A
+    /// folder by its last change alone: what it holds, counted as a scan
+    /// goes on, is not what the pane reads of it.
+    fn seen(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut seen = std::collections::hash_map::DefaultHasher::new();
+        let size = (!self.is_dir).then_some((self.size, self.alloc));
+        (self.lent_kind(), size, self.modified, self.nlink).hash(&mut seen);
+        seen.finish()
     }
 
     /// What its block weighs in `mode`.
@@ -201,7 +232,7 @@ impl Node {
         kinds
     }
 }
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 pub struct Status {
     pub root: Option<PathBuf>,
     pub updating: bool,
@@ -226,6 +257,33 @@ pub struct UsageState {
     /// frames read one atomic instead of querying the registry.
     source: Option<Arc<AtomicU64>>,
     revision: Option<u64>,
+    /// The plugin's answer for this pane, numbered as it changes
+    /// (`UsageState::answered`). The plugin's revision moves for any
+    /// pane's scan; this one only when what this pane's map draws does.
+    answer: Option<u64>,
+    /// What was last lent to the pane, and the version it said
+    /// (`Pane::lend`): lent again when either moves.
+    lent: Option<(LentFrom, u64)>,
+}
+
+/// Every answer of the plugin's numbered once, never again: a pane's
+/// state made anew starts with none, not with a number a map was drawn
+/// from.
+static ANSWERS: AtomicU64 = AtomicU64::new(0);
+
+impl UsageState {
+    /// Take the plugin's answer for this pane: a new one only when it says
+    /// something else than the one held. Another pane's scan, or a
+    /// recount that found nothing changed, moves the plugin's revision
+    /// and says the same here: nothing is drawn or lent again for it.
+    fn answered(&mut self, status: Status) -> bool {
+        if self.status.as_ref() == Some(&status) {
+            return false;
+        }
+        self.status = Some(status);
+        self.answer = Some(ANSWERS.fetch_add(1, Ordering::Relaxed));
+        true
+    }
 }
 
 impl Shell {
@@ -245,9 +303,9 @@ impl Shell {
                 .workspace
                 .read()
                 .pane(self.pane)
-                .is_some_and(skwir_core::workspace::Pane::has_lent);
+                .is_some_and(|p| p.lent_by() == Some(crate::view::USAGE));
             if lent && let Some(p) = self.app.workspace.write().pane_mut(self.pane) {
-                p.lend(Vec::new());
+                p.let_go_of_lent(crate::view::USAGE);
             }
             return;
         }
@@ -315,9 +373,53 @@ impl Shell {
                 && let Ok(status) = serde_json::from_value::<Status>(value)
                 && status.root == dir
             {
-                self.ui_mut().usage.status = Some(status);
+                self.ui_mut().usage.answered(status);
             }
         }
+        self.lend_usage();
+    }
+
+    /// Lend the pane what the map draws inside the folder's own entries
+    /// (ADR-116) when it is not what the pane holds: drawn otherwise (this
+    /// pane's answer, the levels, hidden files), or let go of by the pane.
+    /// Here, as the pane's state is synced, so a wake applies it (and what
+    /// it takes out of the selection) whether or not the window draws.
+    fn lend_usage(&mut self) {
+        let pane = self.pane;
+        let show_hidden = self.sort_spec().show_hidden;
+        let state = &self.ui().usage;
+        let from = LentFrom {
+            root: state.root.clone(),
+            answer: state.answer,
+            levels: self.levels,
+            show_hidden,
+        };
+        let Some(holds) = self
+            .app
+            .workspace
+            .read()
+            .pane(pane)
+            .map(skwir_core::workspace::Pane::lent_version)
+        else {
+            return;
+        };
+        if state.lent.as_ref() == Some(&(from.clone(), holds)) {
+            return;
+        }
+        let lent = match (
+            state.status.as_ref().and_then(|s| s.tree.as_ref()),
+            state.root.as_deref(),
+        ) {
+            (Some(tree), Some(root)) => lent_of(tree, root, self.levels as usize, show_hidden),
+            _ => Vec::new(),
+        };
+        let version = self
+            .app
+            .workspace
+            .write()
+            .pane_mut(pane)
+            .map(|p| p.lend(crate::view::USAGE, lent));
+        self.ui_mut().usage.lent = version.map(|version| (from, version));
     }
 
     pub fn refresh_usage(&mut self, cx: &mut Context<Self>) {
@@ -607,9 +709,6 @@ struct Build<'a> {
     /// The hues of the folder shown's entries, kept between builds.
     hues: &'a mut Hues,
     blocks: Vec<Block>,
-    /// The entries drawn inside the folder's own, as they are lent to the
-    /// pane.
-    lent: Vec<(Entry, PathBuf)>,
 }
 
 /// What a level inherits from the folder it is drawn in.
@@ -624,8 +723,7 @@ struct Outer {
 
 impl Build<'_> {
     fn shown(&self, path: &Path) -> PathBuf {
-        path.strip_prefix(self.tree)
-            .map_or_else(|_| path.to_path_buf(), |inside| self.root.join(inside))
+        shown_path(self.root, self.tree, path)
     }
 
     /// `12 Mar 2024`: when `modified` was.
@@ -737,7 +835,7 @@ impl Build<'_> {
         let mut items = Vec::new();
         let mut hidden = Gathered::default();
         let show_hidden = self.show_hidden;
-        let shown = |child: &Node| show_hidden || !child.name.starts_with('.');
+        let shown = |child: &Node| drawn(child, show_hidden);
         // Colored by identity, so a block keeps its color as the map
         // reflows and as other entries come and go (`Hues`).
         let hues = if outer.is_some() {
@@ -765,14 +863,10 @@ impl Build<'_> {
             };
             let path = self.shown(&child.path);
             // The folder's own entries are the pane's; one drawn inside
-            // them is lent to it while it is drawn.
+            // them is lent to it while it is drawn (`lent_of`).
             let entry = match outer {
                 None => child.id,
-                Some(_) => child.entry(path.clone()).map(|lent| {
-                    let id = lent.0.id;
-                    self.lent.push(lent);
-                    id
-                }),
+                Some(_) => child.lent_id(&path),
             };
             let key = self.blocks.len();
             self.blocks.push(Block {
@@ -785,7 +879,7 @@ impl Build<'_> {
                 path,
                 hint: self.hint(child, &trail, node, outer),
             });
-            let children = if child.is_dir && depth + 1 < self.levels {
+            let children = if opens(child, depth, self.levels) {
                 let outer = Outer {
                     key,
                     hue,
@@ -910,8 +1004,52 @@ impl Build<'_> {
     }
 }
 
-/// The blocks of the map as `from` says, each entry drawn inside the
-/// folder's own with what it is lent to the pane as.
+/// Whether `child` is drawn: hidden files only while they are shown.
+fn drawn(child: &Node, show_hidden: bool) -> bool {
+    show_hidden || !child.name.starts_with('.')
+}
+
+/// Whether what `child` holds is drawn inside it, `depth` folders inside
+/// the one shown, at `levels`.
+fn opens(child: &Node, depth: usize, levels: usize) -> bool {
+    child.is_dir && depth + 1 < levels
+}
+
+/// Where the pane names `path`, which the plugin names inside `tree` (it
+/// counts by canonical path), the pane naming `tree` `root`.
+fn shown_path(root: &Path, tree: &Path, path: &Path) -> PathBuf {
+    path.strip_prefix(tree)
+        .map_or_else(|_| path.to_path_buf(), |inside| root.join(inside))
+}
+
+/// What the map draws inside the folder's own entries, as it is lent to
+/// the pane (`Pane::lend`, ADR-116): every entry at the levels drawn,
+/// hidden files left out while they are not shown, each where the pane
+/// names it and as the scan saw it. What `Build::level` draws, by the same
+/// rules (`drawn`, `opens`, `Node::lent_id`), worked out where the pane's
+/// state is synced (`Shell::sync_usage`), never while drawing.
+fn lent_of(tree: &Node, root: &Path, levels: usize, show_hidden: bool) -> Vec<Loaned> {
+    fn walk(
+        node: &Node,
+        depth: usize,
+        (root, tree, levels, show_hidden): (&Path, &Path, usize, bool),
+        lent: &mut Vec<Loaned>,
+    ) {
+        for child in node.children.iter().filter(|c| drawn(c, show_hidden)) {
+            if depth > 0 {
+                lent.extend(child.loan(shown_path(root, tree, &child.path)));
+            }
+            if opens(child, depth, levels) {
+                walk(child, depth + 1, (root, tree, levels, show_hidden), lent);
+            }
+        }
+    }
+    let mut lent = Vec::new();
+    walk(tree, 0, (root, &tree.path, levels, show_hidden), &mut lent);
+    lent
+}
+
+/// The blocks of the map as `from` says.
 fn build_map(
     shell: &Shell,
     from: BuiltFrom,
@@ -923,7 +1061,6 @@ fn build_map(
     let status = state.status.as_ref();
     let mut items = Vec::new();
     let mut blocks = Vec::new();
-    let mut lent = Vec::new();
     if let (Some(node), Some(root)) = (status.and_then(|s| s.tree.as_ref()), state.root.as_deref())
     {
         let ws = shell.app.workspace.read();
@@ -942,11 +1079,9 @@ fn build_map(
             selected: &selected,
             hues,
             blocks: Vec::new(),
-            lent: Vec::new(),
         };
         items = build.level(node, 0, None);
         blocks = build.blocks;
-        lent = build.lent;
     }
     let keys = keys_of(&blocks);
     Built {
@@ -954,7 +1089,6 @@ fn build_map(
         items: Rc::new(items),
         blocks: Rc::new(blocks),
         keys,
-        lent,
     }
 }
 
@@ -970,9 +1104,6 @@ pub struct UsageView {
     built: Option<Built>,
     /// The hues the folder shown's entries wear, kept as it is built again.
     hues: Hues,
-    /// What was last lent to the pane, and the version it said
-    /// (`Pane::lend`): lent again when either moves.
-    lent: Option<(LentFrom, u64)>,
 }
 
 /// What the entries of `selection` weigh, each by the block it is drawn
@@ -1027,6 +1158,17 @@ impl UsageView {
             return Beside::Own;
         }
         let laid = self.laid.borrow();
+        // A block too small to open lays none of its own (`Laidout`): the
+        // cursor's block not laid (the window made smaller, an entry
+        // selected by a command), the arrows go from the nearest laid
+        // block that holds it, rather than nowhere.
+        let shown: std::collections::HashSet<usize> = laid.iter().map(|(key, _)| *key).collect();
+        while !shown.contains(&at) {
+            let Some(outer) = built.blocks[at].parent else {
+                return Beside::Own;
+            };
+            at = outer;
+        }
         loop {
             let parent = built.blocks[at].parent;
             let (keys, rects): (Vec<usize>, Vec<crate::treemap::Rect>) = laid
@@ -1062,27 +1204,26 @@ struct Built {
     blocks: Rc<Vec<Block>>,
     /// The block of each entry drawn, by its id.
     keys: std::collections::HashMap<EntryId, usize>,
-    /// The entries drawn inside the folder's own, as they are lent.
-    lent: Vec<(Entry, PathBuf)>,
 }
 
 /// What decides which entries are drawn inside the folder's own: the
-/// plugin's answer, the levels and whether hidden files are shown. Not
-/// the mode, the selection nor the minute, which change only how.
+/// plugin's answer for this pane (`UsageState::answer`), the levels and
+/// whether hidden files are shown. Not the mode, the selection nor the
+/// minute, which change only how.
 #[derive(Clone, PartialEq)]
 struct LentFrom {
     root: Option<PathBuf>,
-    revision: Option<u64>,
+    answer: Option<u64>,
     levels: u32,
     show_hidden: bool,
 }
 
-/// What the blocks depend on: the plugin's answer, how it is shown, what
-/// is selected, the minute (a file's age) and the colors.
+/// What the blocks depend on: the plugin's answer for this pane, how it
+/// is shown, what is selected, the minute (a file's age) and the colors.
 #[derive(PartialEq)]
 struct BuiltFrom {
     root: Option<PathBuf>,
-    revision: Option<u64>,
+    answer: Option<u64>,
     mode: Mode,
     levels: u32,
     show_hidden: bool,
@@ -1201,7 +1342,7 @@ fn render(view: &mut UsageView, shell: &mut Shell, cx: &mut Context<Shell>) -> A
     let zoned = jiff::Zoned::now();
     let built_from = |shell: &Shell| BuiltFrom {
         root: shell.ui().usage.root.clone(),
-        revision: shell.ui().usage.revision,
+        answer: shell.ui().usage.answer,
         mode,
         levels: shell.levels,
         show_hidden,
@@ -1214,41 +1355,12 @@ fn render(view: &mut UsageView, shell: &mut Shell, cx: &mut Context<Shell>) -> A
         minute: zoned.timestamp().as_second().div_euclid(60),
         theme: theme.clone(),
     };
+    // What is drawn inside the folder's own entries was lent to the pane
+    // as the pane's state was synced (`Shell::sync_usage`), and what it
+    // let go of left the selection before this.
     let from = built_from(shell);
     if view.built.as_ref().is_none_or(|built| built.from != from) {
         view.built = Some(build_map(shell, from, &theme, &zoned, &mut view.hues));
-    }
-    // What is drawn inside the folder's own entries is lent to the pane
-    // (ADR-116) when it is not what the pane holds: drawn otherwise
-    // (another folder, scan, level), or let go of by the pane.
-    let lent_from = LentFrom {
-        root: shell.ui().usage.root.clone(),
-        revision: shell.ui().usage.revision,
-        levels: shell.levels,
-        show_hidden,
-    };
-    let holds = shell
-        .app
-        .workspace
-        .read()
-        .pane(pane)
-        .map(skwir_core::workspace::Pane::lent_version);
-    if let (Some(holds), Some(built)) = (holds, view.built.as_ref())
-        && view.lent.as_ref() != Some(&(lent_from.clone(), holds))
-    {
-        let lent = built.lent.clone();
-        let version = shell
-            .app
-            .workspace
-            .write()
-            .pane_mut(pane)
-            .map(|p| p.lend(lent));
-        view.lent = version.map(|version| (lent_from, version));
-        // What is no longer drawn left the selection: rings drawn again.
-        let from = built_from(shell);
-        if view.built.as_ref().is_none_or(|built| built.from != from) {
-            view.built = Some(build_map(shell, from, &theme, &zoned, &mut view.hues));
-        }
     }
     let state = &shell.ui().usage;
     let (items, blocks) = view.built.as_ref().map_or_else(
@@ -1774,7 +1886,6 @@ mod tests {
             selected: &|_| false,
             hues: &mut Hues::default(),
             blocks: Vec::new(),
-            lent: Vec::new(),
         };
         let items = build.level(tree, 0, None);
         (items, build.blocks)
@@ -1834,14 +1945,13 @@ mod tests {
             selected: &|_| false,
             hues: &mut hues,
             blocks: Vec::new(),
-            lent: Vec::new(),
         };
         let items = build.level(tree, 0, None);
-        let (blocks, lent) = (build.blocks, build.lent);
+        let blocks = build.blocks;
         Built {
             from: BuiltFrom {
                 root: None,
-                revision: None,
+                answer: None,
                 mode: Mode::Size,
                 levels,
                 show_hidden: false,
@@ -1852,7 +1962,6 @@ mod tests {
             items: Rc::new(items),
             keys: keys_of(&blocks),
             blocks: Rc::new(blocks),
-            lent,
         }
     }
 
@@ -1878,10 +1987,13 @@ mod tests {
         let a = map.keys[&id_of(&tree, "/tree/l'été photos/a.jpg")];
         assert_eq!(map.blocks[a].parent, Some(photos));
         assert_eq!(map.blocks[photos].parent, None);
-        let lent: Vec<(String, EntryKind, PathBuf)> = map
-            .lent
+        let loans = lent_of(&tree, Path::new("/shown"), 2, false);
+        let lent: Vec<(String, EntryKind, PathBuf)> = loans
             .iter()
-            .map(|(e, path)| (e.name.to_string_lossy().into_owned(), e.kind, path.clone()))
+            .map(|l| {
+                let name = l.entry.name.to_string_lossy().into_owned();
+                (name, l.entry.kind, l.path.clone())
+            })
             .collect();
         assert_eq!(
             lent,
@@ -1907,7 +2019,59 @@ mod tests {
             !map.keys
                 .contains_key(&id_of(&tree, "/tree/l'été photos/odd"))
         );
-        assert!(built(&tree, 1).lent.is_empty(), "nothing drawn inside");
+        assert!(
+            lent_of(&tree, Path::new("/shown"), 1, false).is_empty(),
+            "nothing drawn inside"
+        );
+        // What is lent is what is drawn inside, by the same rules.
+        let drawn: std::collections::BTreeSet<EntryId> = map
+            .blocks
+            .iter()
+            .filter(|b| b.depth > 0)
+            .filter_map(|b| b.entry)
+            .collect();
+        let ids: std::collections::BTreeSet<EntryId> = loans.iter().map(|l| l.entry.id).collect();
+        assert_eq!(ids, drawn);
+    }
+
+    /// The scan's answer for a pane again as it was (another pane's scan,
+    /// a recount that found nothing changed) is no new answer: nothing is
+    /// drawn or lent again for it, and what is lent is seen as it was, so
+    /// what the pane read of it stands. An answer that says something
+    /// else is a new one, and an entry that grew is seen otherwise.
+    #[test]
+    fn the_same_answer_draws_and_lends_nothing_again() {
+        let tree = holding();
+        let status = |tree: &Node| Status {
+            root: Some(PathBuf::from("/shown")),
+            tree: Some(tree.clone()),
+            size: tree.size,
+            ..Status::default()
+        };
+        let mut state = UsageState::default();
+        assert!(state.answered(status(&tree)));
+        let answer = state.answer;
+        assert!(!state.answered(status(&tree)), "the same answer");
+        assert_eq!(state.answer, answer);
+        let seen = |tree: &Node| -> Vec<u64> {
+            lent_of(tree, Path::new("/shown"), 2, false)
+                .into_iter()
+                .map(|l| l.seen)
+                .collect()
+        };
+        assert_eq!(seen(&tree), seen(&holding()), "seen as it was");
+
+        let mut grown = holding();
+        grown.children[0].children[1].size += 1;
+        assert!(state.answered(status(&grown)));
+        assert_ne!(state.answer, answer);
+        let (before, after) = (seen(&tree), seen(&grown));
+        assert_eq!(before[0], after[0], "a.jpg is as it was");
+        assert_ne!(before[1], after[1], "b.jpg grew");
+        // A pane's state made anew never takes a number given before.
+        let mut anew = UsageState::default();
+        assert!(anew.answered(status(&tree)));
+        assert_ne!(anew.answer, answer);
     }
 
     /// The footer weighs a selection at any depth: what lies in a folder
@@ -1991,6 +2155,16 @@ mod tests {
             view.beside(Some(id("/tree/notes.txt")), Toward::Left),
             Beside::Own
         ));
+        // Its folder too small to lay what it holds (the window made
+        // smaller): the arrows go from the folder, not nowhere.
+        view.laid
+            .borrow_mut()
+            .retain(|(key, _)| view.built.as_ref().unwrap().blocks[*key].depth == 0);
+        assert_eq!(
+            to("/tree/l'été photos/b.jpg", Toward::Right),
+            Some(id("/tree/notes.txt"))
+        );
+        assert_eq!(to("/tree/l'été photos/b.jpg", Toward::Left), None);
     }
 
     #[test]

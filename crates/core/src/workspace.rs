@@ -980,40 +980,132 @@ fn shows<'a>(
             .find_map(|(l, shows)| l.get(id).map(|e| (e, shows(id))));
         match found {
             Some((e, true)) => filter.as_ref().is_none_or(|f| f.keeps(e)),
+            Some((_, false)) => false,
             // What a view draws is shown while it lends it, whatever
             // filters the listing: the view drew it.
-            Some((_, false)) => false,
             None => lent.entries.contains_key(&id),
         }
     }
+}
+
+/// An entry a view lends the pane ([`Pane::lend`], ADR-116): the entry as
+/// the view knows it, where it is, and what the view saw of it.
+#[derive(Clone, Debug)]
+pub struct Loaned {
+    pub entry: Entry,
+    pub path: PathBuf,
+    /// What the view saw of it as it drew it (its size and its last
+    /// change, say), as one number: lent again as it was seen, it keeps
+    /// what was read of it; seen otherwise, it is read again once
+    /// selected.
+    pub seen: u64,
 }
 
 /// Entries a view draws beside what the pane lists, lent while it draws
 /// them (ADR-116): each by its id, with where it is.
 #[derive(Default)]
 struct Lent {
+    /// The view that lent them (`ViewSpec::id`): they go with it, its
+    /// plugin turned off (`App::unregister_owner`).
+    by: Option<Arc<str>>,
     entries: crate::hashing::Map<EntryId, Loan>,
-    /// Changes at each lending and as the pane lets go of it, never as
-    /// what is lent is read (`Pane::lent_version`): never back to a
-    /// version a view was told.
+    /// The entries lent of each file: what [`Pane::entry_at`] finds one
+    /// by, with its path.
+    of_file: crate::hashing::Map<crate::FileId, Vec<EntryId>>,
+    /// Changes at each lending that changes what is lent and as the pane
+    /// lets go of it, never as what is lent is read
+    /// (`Pane::lent_version`): never back to a version a view was told.
     version: u64,
 }
 
-/// An entry lent, where it is, and whether it was read since it was last
-/// lent: one lent again keeps what was read of it, read again once
-/// selected (what drew it again may have seen it change).
+/// An entry lent, where it is, what the view saw of it, and whether it
+/// was read since it was lent as seen: one lent again as it was seen
+/// keeps its reading; one seen otherwise keeps what was read of it, read
+/// again once selected.
 struct Loan {
     entry: Entry,
     path: PathBuf,
+    seen: u64,
     read: bool,
+    /// The version (`Lent::version`) it was last to be read since: a
+    /// reading asked before it is of an entry seen otherwise, and is not
+    /// taken as its own.
+    since: u64,
 }
 
 impl Lent {
     /// Nothing lent any more: another location shown, the pane dormant.
     fn let_go(&mut self) {
+        self.by = None;
         self.entries.clear();
+        self.of_file.clear();
         self.version += 1;
     }
+
+    /// Index what is lent by file, for `Pane::entry_at`.
+    fn index(&mut self) {
+        self.of_file.clear();
+        for id in self.entries.keys() {
+            self.of_file.entry(id.file).or_default().push(*id);
+        }
+    }
+
+    /// `id` no longer lent (found gone).
+    fn remove(&mut self, id: EntryId) -> bool {
+        if self.entries.remove(&id).is_none() {
+            return false;
+        }
+        if let Some(ids) = self.of_file.get_mut(&id.file) {
+            ids.retain(|other| *other != id);
+            if ids.is_empty() {
+                self.of_file.remove(&id.file);
+            }
+        }
+        true
+    }
+}
+
+/// The entries lent before that went (`gone`), each with the one lent in
+/// its place among those that came, as a listing pairs them
+/// (`ListingEvent::Renamed`): a file of one name gone under it and come
+/// under another (renamed, or moved within what the view draws), else a
+/// name another file took (an editor saving writes a new file and renames
+/// it onto the name). What the pane keeps by entry follows each pair.
+fn lent_renamed(gone: impl Iterator<Item = EntryId>, came: &[EntryId]) -> Vec<(EntryId, EntryId)> {
+    use crate::hashing::{Map, Set};
+    // Each file by how many of its names went or came, and the last.
+    let count = |ids: &mut dyn Iterator<Item = EntryId>| {
+        let mut files: Map<crate::FileId, (usize, EntryId)> = Map::default();
+        for id in ids {
+            let seen = files.entry(id.file).or_insert((0, id));
+            seen.0 += 1;
+            seen.1 = id;
+        }
+        files
+    };
+    let gone: Vec<EntryId> = gone.collect();
+    let went = count(&mut gone.iter().copied());
+    let arrived = count(&mut came.iter().copied());
+    let mut renamed = Vec::new();
+    let mut paired: Set<EntryId> = Set::default();
+    for &new in came {
+        if let (Some((1, old)), Some((1, _))) = (went.get(&new.file), arrived.get(&new.file)) {
+            renamed.push((*old, new));
+            paired.insert(*old);
+            paired.insert(new);
+        }
+    }
+    let mut named: Map<u64, EntryId> = gone
+        .iter()
+        .filter(|id| !paired.contains(id))
+        .map(|id| (id.at, *id))
+        .collect();
+    for &new in came.iter().filter(|id| !paired.contains(id)) {
+        if let Some(old) = named.remove(&new.at) {
+            renamed.push((old, new));
+        }
+    }
+    renamed
 }
 
 /// The pane's filter as it is asked of each entry: its reader's test, or
@@ -2039,36 +2131,90 @@ impl Pane {
         Some((self.expanded.get(e)?, self.kept.get(k)?))
     }
 
-    /// Lend the pane `entries`, each with where it is: what a view draws
-    /// beside what the pane lists (Usage's blocks inside the folder's own
-    /// entries, ADR-116), in place of what it lent before. Shown while
-    /// lent, so selected and acted on as the listing's, but in no order.
-    /// An entry lent again at the same path keeps what was read of it,
-    /// to be read again ([`Pane::lent_to_read`]); what is no longer lent
-    /// leaves the selection. Says the version lent,
-    /// which [`Pane::lent_version`] gives until the view lends again, the
-    /// pane lets go of them (another location, dormancy) or they are read.
-    pub fn lend(&mut self, entries: impl IntoIterator<Item = (Entry, PathBuf)>) -> u64 {
+    /// Lend the pane `entries`, from the view `view` (`ViewSpec::id`):
+    /// what it draws beside what the pane lists (Usage's blocks inside the
+    /// folder's own entries, ADR-116), in place of what it lent before.
+    /// Shown while lent, so selected and acted on as the listing's, but in
+    /// no order. An entry lent again at its path as it was seen keeps its
+    /// reading; one seen otherwise keeps what was read of it, read again
+    /// once selected ([`Pane::lent_to_read`]). What the pane keeps by
+    /// entry follows one renamed, or a name another file took, as a
+    /// listing's (`lent_renamed`); what is no longer lent leaves the
+    /// selection. Lending what is lent already changes nothing. Says the
+    /// version lent, which [`Pane::lent_version`] gives until what is lent
+    /// changes or the pane lets go of it (another location, dormancy).
+    pub fn lend(&mut self, view: &str, entries: impl IntoIterator<Item = Loaned>) -> u64 {
+        let next = self.lent.version + 1;
         let mut before = std::mem::take(&mut self.lent.entries);
+        let mut same = true;
+        let mut came = Vec::new();
         self.lent.entries = entries
             .into_iter()
-            .map(|(entry, path)| {
+            .map(|Loaned { entry, path, seen }| {
                 let id = entry.id;
-                let entry = match before.remove(&id) {
-                    Some(known) if known.path == path => known.entry,
-                    _ => entry,
+                let loan = match before.remove(&id) {
+                    // As it was seen: its reading stands.
+                    Some(known) if known.path == path && known.seen == seen => known,
+                    // Seen otherwise: what was read of it shows until it
+                    // is read again.
+                    Some(known) if known.path == path => {
+                        same = false;
+                        Loan {
+                            entry: known.entry,
+                            path,
+                            seen,
+                            read: false,
+                            since: next,
+                        }
+                    }
+                    known => {
+                        same = false;
+                        if known.is_none() {
+                            came.push(id);
+                        }
+                        Loan {
+                            entry,
+                            path,
+                            seen,
+                            read: false,
+                            since: next,
+                        }
+                    }
                 };
-                let read = false;
-                (id, Loan { entry, path, read })
+                (id, loan)
             })
             .collect();
-        self.lent.version += 1;
+        let lender = (!self.lent.entries.is_empty()).then(|| Arc::<str>::from(view));
+        if same && before.is_empty() && (lender.is_none() || self.lent.by == lender) {
+            return self.lent.version;
+        }
+        self.lent.by = lender;
+        self.lent.version = next;
+        self.lent.index();
+        let renamed = lent_renamed(before.into_keys(), &came);
+        self.selection.rekey(&renamed);
         self.retain_shown();
         self.lent.version
     }
 
-    /// Changes as a view lends entries and as the pane lets go of them,
-    /// never as what is lent is read or found gone: a view lends again
+    /// Let go of what `view` lent, if it lent what the pane holds: it
+    /// draws it no more (another view shown, its plugin turned off).
+    /// Whether anything was let go of.
+    pub fn let_go_of_lent(&mut self, view: &str) -> bool {
+        if self.lent.by.as_deref() != Some(view) {
+            return false;
+        }
+        self.lend(view, std::iter::empty());
+        true
+    }
+
+    /// The view that lent what the pane holds (`Pane::lend`).
+    pub fn lent_by(&self) -> Option<&str> {
+        self.lent.by.as_deref()
+    }
+
+    /// Changes as what a view lends changes and as the pane lets go of
+    /// it, never as what is lent is read or found gone: a view lends again
     /// when it is not the version its lending said, and lending again
     /// asks for a reading (`lent_to_read`), so a reading that moved it
     /// read the selection again and again, forever.
@@ -2079,6 +2225,18 @@ impl Pane {
     /// Whether a view lent the pane anything.
     pub fn has_lent(&self) -> bool {
         !self.lent.entries.is_empty()
+    }
+
+    /// The entry a view lent of the file `file` at `path`
+    /// ([`Pane::entry_at`]).
+    fn lent_at(&self, file: crate::FileId, path: &Path) -> Option<&Entry> {
+        self.lent
+            .of_file
+            .get(&file)?
+            .iter()
+            .filter_map(|id| self.lent.entries.get(id))
+            .find(|loan| loan.path == path)
+            .map(|loan| &loan.entry)
     }
 
     /// Whether `id` is an entry a view lent, which no listing holds.
@@ -2095,35 +2253,44 @@ impl Pane {
     }
 
     /// Those of `ids` lent and not read since, with where each is: what
-    /// a hydration reads by path (`fs::read_paths`).
-    pub(crate) fn lent_paths(&self, ids: &[EntryId]) -> Vec<(EntryId, PathBuf)> {
-        ids.iter()
+    /// a hydration reads by path (`fs::read_paths`); and the version they
+    /// are asked at, which their reading gives back (`lent_read`).
+    pub(crate) fn lent_paths(&self, ids: &[EntryId]) -> (Vec<(EntryId, PathBuf)>, u64) {
+        let paths = ids
+            .iter()
             .filter(|id| self.lent_to_read(**id))
             .filter_map(|id| Some((*id, self.lent.entries.get(id)?.path.clone())))
-            .collect()
+            .collect();
+        (paths, self.lent.version)
     }
 
-    /// What was read of lent entries (`lent_paths`): `found` read, `gone`
-    /// no longer there, `unread` there and unreadable (marked
-    /// `keys::UNREAD`, so nothing waits for them). An entry no longer lent
-    /// is left alone. Whether anything changed.
+    /// What was read of lent entries (`lent_paths`, at version `asked`):
+    /// `found` read, `gone` no longer there, `unread` there and unreadable
+    /// (marked `keys::UNREAD`, so nothing waits for them). An entry no
+    /// longer lent is left alone, and so is one lent again since, seen
+    /// otherwise: the reading is of what it was. Whether anything changed.
     pub(crate) fn lent_read(
         &mut self,
         found: Vec<Entry>,
         gone: &[EntryId],
         unread: &[EntryId],
+        asked: u64,
     ) -> bool {
         use crate::entry::{Provenance, Value, keys};
         let mut changed = false;
         for entry in found {
-            if let Some(loan) = self.lent.entries.get_mut(&entry.id) {
+            if let Some(loan) = self.lent.entries.get_mut(&entry.id)
+                && loan.since <= asked
+            {
                 loan.entry = entry;
                 loan.read = true;
                 changed = true;
             }
         }
         for id in unread {
-            if let Some(loan) = self.lent.entries.get_mut(id) {
+            if let Some(loan) = self.lent.entries.get_mut(id)
+                && loan.since <= asked
+            {
                 // What was known of it stands.
                 if !loan.entry.metadata.is_hydrated() {
                     loan.entry.metadata.set(
@@ -2136,10 +2303,20 @@ impl Pane {
                 changed = true;
             }
         }
-        let went = gone
+        let went: Vec<EntryId> = gone
             .iter()
-            .filter(|id| self.lent.entries.remove(id).is_some())
-            .count();
+            .copied()
+            .filter(|id| {
+                self.lent
+                    .entries
+                    .get(id)
+                    .is_some_and(|loan| loan.since <= asked)
+            })
+            .collect();
+        for id in &went {
+            self.lent.remove(*id);
+        }
+        let went = went.len();
         // The version stays: what the view lent is what it drew, and it
         // draws again once what drew it (a scan) sees the change.
         if went > 0 {
@@ -2328,13 +2505,15 @@ impl Pane {
     /// The entry the pane shows of the file `file` at `path`: of a file
     /// with several names, the one listed there (ADR-049). Found by its
     /// name and file in each listing (`Listing::named_file`), so a command
-    /// may ask it of each entry of a selection of a whole folder.
+    /// may ask it of each entry of a selection of a whole folder; one a
+    /// view lent (ADR-116) by its file and its path.
     pub fn entry_at(&self, file: crate::FileId, path: &Path) -> Option<&Entry> {
         let name = path.file_name()?;
         std::iter::once(&self.listing)
             .chain(self.kept.iter().map(|k| &k.listing))
             .flat_map(|l| l.named_file(name, file))
             .find(|e| self.path_of(e.id).as_deref() == Some(path))
+            .or_else(|| self.lent_at(file, path))
     }
 
     /// The listing (`Listing::id`) that holds entry `id`: the shown one's,
@@ -3685,6 +3864,39 @@ mod tests {
     /// What is open in place moves `expanded_version` when a folder opens
     /// or closes, not as its listing fills: the board asks for its columns
     /// once for each, and again once another view closed them.
+    /// A reading asked before an entry was lent again seen otherwise is of
+    /// what it was: it is not taken for it, nor its finding it gone, and
+    /// the entry is still to be read; asked after, it is.
+    #[test]
+    fn a_reading_asked_before_an_entry_was_seen_otherwise_is_not_its() {
+        let mut lent = file(7);
+        lent.id.at = 9;
+        let id = lent.id;
+        let loaned = |seen| Loaned {
+            entry: lent.clone(),
+            path: PathBuf::from("/s/a folder/f7"),
+            seen,
+        };
+        let read = || {
+            let mut e = sized(7, 3);
+            e.id = id;
+            e
+        };
+        let (mut p, _tx) = pane_with("/s", vec![file(1)]);
+        p.lend("usage", [loaned(1)]);
+        let (asked, before) = p.lent_paths(&[id]);
+        assert_eq!(asked.len(), 1);
+        p.lend("usage", [loaned(2)]);
+        assert!(!p.lent_read(vec![read()], &[], &[], before));
+        assert!(!p.lent_read(Vec::new(), &[id], &[], before));
+        assert!(!p.lent_read(Vec::new(), &[], &[id], before));
+        assert!(p.lent_to_read(id) && p.is_lent(id), "still to be read");
+        let (_, now) = p.lent_paths(&[id]);
+        assert!(p.lent_read(vec![read()], &[], &[], now));
+        assert!(!p.lent_to_read(id));
+        assert_eq!(p.entry(id).and_then(size_of), Some(3));
+    }
+
     #[test]
     fn what_is_open_in_place_changes_when_folders_open_or_close() {
         use crate::location::ListingEvent;
