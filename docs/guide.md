@@ -705,7 +705,8 @@ its Accessibility settings), as its other applications do; where the
 desktop names no size, at 10 pt on Linux, 13 px on macOS and 14 px on
 Windows. Bars, rows and menus grow with the text; icons and pictures
 keep their size. **Fonts from** chooses whose fonts and sizes Skwir
-reads: Automatic, or Skwir's own (Inter at 14 px); on a desktop that
+reads: Automatic, or Skwir's own (Inter and JetBrains Mono, at the sizes
+Automatic reads); on a desktop that
 sets GTK and Qt up apart (Hyprland, Sway, labwc, niri, with nwg-look,
 qt5ct or qt6ct), GTK's or Qt's alone too, Automatic reading your
 desktop's own settings, else GTK's, else Qt's. About › Copy details

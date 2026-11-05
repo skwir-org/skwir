@@ -11186,3 +11186,21 @@ LXQt, GNOME or Xfce session; a Kvantum theme's colors (not read).
   build without the patch was run beside it: the test above, with the
   drawing coordinates taken out, is the before. macOS and Windows have their own
   text systems: not affected, not checked.
+
+## Skwir's own fonts at the desktop's sizes (2026-11-05)
+
+- The user's choice, after the Body-by-default change: Fonts from's
+  Skwir's own no longer has a size of its own (14 px). It is Inter and
+  JetBrains Mono at the sizes Automatic reads (`desktop_style::sizes`
+  reads Automatic's source for it; `Sizes::own` and its 14 px fallback
+  are gone: nothing said is the system's usual size, 10 pt on Linux).
+  Why: choosing Skwir's look overrode the size someone set their desktop
+  to (12 pt became 14 px); the Text size is where Skwir's size is chosen.
+  Fonts from is not released yet, so no setting moves. The description's
+  last line says "sizes read from GTK" (or the system's usual size).
+  The README's screenshots (`tools/screenshots/readme.py`) relied on the
+  14 px: their settings.ini now names Inter 10.5 (14 px) and no desktop
+  is named, so GTK's file is read first; checked in a window on Xvfb
+  (interface 14 px). Code follows the monospace size the session's
+  portal names (13.3 px here), GTK's file naming none. Tests: Skwir's own
+  gives Automatic's sizes, its families none; 505 UI tests, clippy.

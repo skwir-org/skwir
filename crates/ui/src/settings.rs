@@ -330,18 +330,18 @@ fn fonts_from_spec() -> SettingSpec {
     use std::fmt::Write;
     let pairs = crate::desktop_style::Source::choices();
     let mut description = if skwir_platform::desktop_style::TOOLKITS {
-        "Where skwir reads the fonts a font setting's Automatic writes in, and their sizes. Automatic reads your desktop's own settings, else GTK's, else Qt's; Skwir's own is skwir's fonts at its own size; GTK or Qt reads that toolkit's settings alone, as when they name different fonts."
+        "Where skwir reads the fonts a font setting's Automatic writes in, and their sizes. Automatic reads your desktop's own settings, else GTK's, else Qt's; Skwir's own is skwir's fonts, Inter and JetBrains Mono, at the sizes Automatic reads; GTK or Qt reads that toolkit's settings alone, as when they name different fonts."
     } else if cfg!(windows) {
-        "Where skwir reads the fonts a font setting's Automatic writes in, and their sizes. Automatic is Windows' interface font, at the size its new applications write in, times the Text size of its Accessibility settings; Skwir's own is skwir's fonts at its own size, times that Text size too."
+        "Where skwir reads the fonts a font setting's Automatic writes in, and their sizes. Automatic is Windows' interface font, at the size its new applications write in, times the Text size of its Accessibility settings; Skwir's own is skwir's fonts, Inter and JetBrains Mono, at the same size."
     } else {
-        "Where skwir reads the fonts a font setting's Automatic writes in, and their sizes. Automatic is the system font, at the size its applications write in; Skwir's own is skwir's fonts at its own size."
+        "Where skwir reads the fonts a font setting's Automatic writes in, and their sizes. Automatic is the system font, at the size its applications write in; Skwir's own is skwir's fonts, Inter and JetBrains Mono, at the same size."
     }
     .to_owned();
     if let Some(shown) = shown() {
-        let from = shown
-            .from
-            .as_deref()
-            .map_or_else(|| "skwir's own".to_owned(), |from| format!("from {from}"));
+        let from = shown.from.as_deref().map_or_else(
+            || "the system's usual size, as no desktop names one".to_owned(),
+            |from| format!("sizes read from {from}"),
+        );
         let _ = write!(
             description,
             " Now {} at {} pt, {from}.",

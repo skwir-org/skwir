@@ -299,8 +299,14 @@ pub fn colors_source() -> Option<String> {
 /// The fonts the desktop names as the settings choose to read them, with
 /// their sizes and where they were read: none for skwir's own.
 fn chosen(settings: &Settings) -> Option<skwir_platform::desktop_style::Fonts> {
+    read(Source::of_fonts(settings))
+}
+
+/// The fonts `source` names, with their sizes and where they were read:
+/// none for skwir's own.
+fn read(source: Source) -> Option<skwir_platform::desktop_style::Fonts> {
     let said = said()?;
-    match Source::of_fonts(settings) {
+    match source {
         Source::Own => None,
         Source::Automatic => Some(skwir_platform::desktop_style::Fonts {
             from: said.fonts_from.unwrap_or_default(),
@@ -316,25 +322,26 @@ fn chosen(settings: &Settings) -> Option<skwir_platform::desktop_style::Fonts> {
 }
 
 /// What the desktop says of text sizes (ADR-117): the interface font's
-/// size and the monospace font's, in pixels, unless skwir's own fonts are
-/// chosen, and where they were read; and its text scaling factor,
-/// followed whatever is chosen, as more contrast is: a need, not a style.
+/// size and the monospace font's, in pixels, and where they were read; and
+/// its text scaling factor. Followed whatever fonts are chosen, as more
+/// contrast is: how large text is written is a need, not a style.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Sizes {
     pub interface: Option<f32>,
     pub monospace: Option<f32>,
     pub from: Option<String>,
     pub scaling: Option<f32>,
-    /// Skwir's own fonts are chosen: at skwir's own size, whatever the
-    /// system says when nothing names one.
-    pub own: bool,
 }
 
 pub fn sizes(settings: &Settings) -> Sizes {
     let scaling = said()
         .and_then(|said| said.text_scaling)
         .map(|factor| factor as f32);
-    let fonts = chosen(settings);
+    // Skwir's own fonts are a look: written at the sizes Automatic reads.
+    let fonts = read(match Source::of_fonts(settings) {
+        Source::Own => Source::Automatic,
+        source => source,
+    });
     Sizes {
         interface: fonts.as_ref().and_then(|fonts| fonts.interface_px),
         monospace: fonts.as_ref().and_then(|fonts| fonts.monospace_px),
@@ -342,7 +349,6 @@ pub fn sizes(settings: &Settings) -> Sizes {
             .map(|fonts| fonts.from)
             .filter(|from| !from.is_empty()),
         scaling,
-        own: Source::of_fonts(settings) == Source::Own,
     }
 }
 
@@ -642,14 +648,11 @@ mod tests {
             fonts(&app.settings).interface.as_deref(),
             Some("DejaVu Sans")
         );
-        // Skwir's own: its fonts and sizes, the scaling a need still
-        // followed.
+        // Skwir's own: its fonts, at the sizes Automatic reads, the
+        // scaling followed too.
         choose(OWN);
         assert_eq!(fonts(&app.settings).interface, None);
-        let own = sizes(&app.settings);
-        assert_eq!((own.interface, own.from), (None, None));
-        assert!(own.own);
-        assert_eq!(own.scaling, Some(1.25));
+        assert_eq!(sizes(&app.settings), automatic);
     }
 
     #[test]

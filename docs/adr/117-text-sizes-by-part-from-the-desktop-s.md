@@ -111,6 +111,11 @@ Qt's settings (4).
    `settings.ini`, else the portal), else Qt's (qt6ct or qt5ct, as `QT_QPA_PLATFORMTHEME` names), else the
    system's default size. GTK or Qt reads that toolkit's alone. A
    family and its size are read together, as every source writes them.
+   Skwir's own is its fonts at the sizes Automatic reads (2026-11-05,
+   the user's choice: it had a size of its own, 14 px, so choosing
+   Skwir's look overrode the size someone set their desktop to; how
+   large text is written is a need, as the text scaling and more
+   contrast are, and the Text size is where Skwir's is chosen).
    Colours stay as ADR-071 reads them. On macOS and Windows (2026-11-05)
    Automatic is the system's interface font (a Mac's San Francisco at
    13 px, Windows' message font, Segoe UI, at 14 px times its Text size)

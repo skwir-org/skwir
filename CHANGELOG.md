@@ -13,8 +13,8 @@
   little smaller than before, while tooltips, settings' descriptions and
   messages are written at that size rather than smaller. **Fonts from**
   (Settings › Appearance) chooses whose fonts and sizes Skwir follows: your
-  desktop's, Skwir's own (at 14 px), or GTK's or Qt's where they are set up
-  apart. **Colors from** replaces Desktop colors with the same choices for
+  desktop's, Skwir's own (Inter and JetBrains Mono, at your desktop's sizes),
+  or GTK's or Qt's where they are set up apart. **Colors from** replaces Desktop colors with the same choices for
   the colors, Qt's color schemes (qt5ct, qt6ct, LXQt) now read too; if you
   had turned Desktop colors off, Skwir keeps its own colors and fonts. A font's Automatic says the family it comes to,
   each size the points it comes to, and About's Copy details says the

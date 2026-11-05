@@ -249,6 +249,8 @@ class Window:
             XDG_DATA_HOME=str(self.root / "data"),
             XDG_DATA_DIRS=":".join(data_dirs),
             XDG_RUNTIME_DIR=str(self.root / "rt"),
+            # No desktop whose own settings come before GTK's.
+            XDG_CURRENT_DESKTOP="",
         )
         return env
 
@@ -265,9 +267,15 @@ class Window:
         (config / "gtk-3.0" / "bookmarks").write_text(
             (self.home / "Projects").as_uri() + " Projects\n"
         )
+        # The size Skwir writes at, 14 px, whatever the desktop running
+        # this says (ADR-117): GTK's, read first on X11, no desktop's own
+        # being named (`env`).
+        (config / "gtk-3.0" / "settings.ini").write_text(
+            "[Settings]\ngtk-font-name=Inter 10.5\n"
+        )
         (config / "skwir" / "settings.toml").write_text(
-            # Skwir's own colors and font, whatever the desktop running
-            # this chose (ADR-071).
+            # Skwir's own colors and fonts, whatever the desktop running
+            # this chose (ADR-071), at the size settings.ini names.
             f'[ui]\ntheme = "{self.theme}"\nicon_theme = "Papirus"\ncolors_from = "skwir"\nfonts_from = "skwir"\n'
         )
         # The window as it was left is state, not a setting (ADR-056).
