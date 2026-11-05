@@ -264,6 +264,46 @@ fn rgba_bytes(color: Hsla) -> [u8; 4] {
     [byte(rgba.r), byte(rgba.g), byte(rgba.b), byte(rgba.a)]
 }
 
+/// What the inks icons are drawn in read of a theme (`Ink::of`,
+/// `Ink::on`): its accent and states, the grounds icons are drawn on (the
+/// window's, a chosen row's) and the colors text is drawn in beside them.
+/// Only these moving redraws what is drawn in KDE's color scheme
+/// (`colors_now`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct InkColors {
+    accent: [u8; 4],
+    positive: [u8; 4],
+    neutral: [u8; 4],
+    negative: [u8; 4],
+    grounds: [[u8; 4]; 2],
+    texts: [[u8; 4]; 3],
+}
+
+impl InkColors {
+    pub fn of(theme: &crate::theme::Theme) -> Self {
+        InkColors {
+            accent: rgba_bytes(theme.accent),
+            positive: rgba_bytes(theme.success),
+            neutral: rgba_bytes(theme.warning),
+            negative: rgba_bytes(theme.error),
+            grounds: [theme.bg, theme.selection_bg].map(rgba_bytes),
+            texts: [theme.text, theme.text_muted, theme.selection_text].map(rgba_bytes),
+        }
+    }
+}
+
+impl Ink {
+    /// Whether it is one of `colors`' inks: a theme's that draws in them.
+    fn is_of(&self, colors: &InkColors) -> bool {
+        self.accent == colors.accent
+            && self.positive == colors.positive
+            && self.neutral == colors.neutral
+            && self.negative == colors.negative
+            && colors.grounds.contains(&self.ground)
+            && colors.texts.contains(&self.text)
+    }
+}
+
 /// What an icon is looked up by.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum Want {
@@ -630,7 +670,11 @@ pub fn element(pic: &Pic, size: f32, ink: Ink) -> AnyElement {
             img(ImageSource::Custom(Arc::new(
                 move |window: &mut Window, cx: &mut gpui::App| {
                     let pixels = raster_side(size * window.scale_factor());
-                    window.use_asset::<SchemeSvg>(&(Arc::clone(&path), pixels, ink), cx)
+                    // While it is rasterized in this ink, as it was drawn
+                    // last: in other colors, never blank.
+                    window
+                        .use_asset::<SchemeSvg>(&(Arc::clone(&path), pixels, ink), cx)
+                        .or_else(|| drawn_last(&path, pixels).map(Ok))
                 },
             )))
             .size(px(size))
@@ -736,17 +780,38 @@ impl Asset for SizedSvg {
 
 /// An SVG icon in KDE's color scheme (`Pic::Scheme`) rasterized within a
 /// side of device pixels in an `Ink`, kept per (file, side, ink) as
-/// `SizedSvg` keeps a file's. What the colors before drew is given back
-/// when the theme's change (`recolored`).
+/// `SizedSvg` keeps a file's. What other colors drew is given back once
+/// the theme's are settled (`colors_now`).
 enum SchemeSvg {}
 
-/// What was drawn of icons in KDE's color scheme, as long as GPUI keeps
-/// it: what `recolored` gives back.
 type SchemeKey = (Arc<Path>, u32, Ink);
-fn scheme_drawn() -> &'static Mutex<HashMap<SchemeKey, Weak<RenderImage>>> {
-    static DRAWN: std::sync::OnceLock<Mutex<HashMap<SchemeKey, Weak<RenderImage>>>> =
-        std::sync::OnceLock::new();
-    DRAWN.get_or_init(Mutex::default)
+
+/// What was drawn of icons in KDE's color scheme.
+#[derive(Default)]
+struct SchemeDrawn {
+    /// Each raster, as long as GPUI keeps it: what `colors_now` gives back.
+    drawn: HashMap<SchemeKey, Weak<RenderImage>>,
+    /// The last rasterized of each file at each side, drawn while it is
+    /// rasterized in other colors (`element`): at most one a file and
+    /// side, the one GPUI keeps for the colors now once they are drawn.
+    last: HashMap<(Arc<Path>, u32), Arc<RenderImage>>,
+    /// The colors given back to last (`colors_now`), and whether a value
+    /// was shown before it was taken since.
+    settled: Option<InkColors>,
+    previewed: bool,
+}
+
+fn scheme_drawn() -> std::sync::MutexGuard<'static, SchemeDrawn> {
+    static DRAWN: std::sync::OnceLock<Mutex<SchemeDrawn>> = std::sync::OnceLock::new();
+    DRAWN
+        .get_or_init(Mutex::default)
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// What `path` was rasterized in last at `side`, in whatever colors.
+fn drawn_last(path: &Arc<Path>, side: u32) -> Option<Arc<RenderImage>> {
+    scheme_drawn().last.get(&(Arc::clone(path), side)).cloned()
 }
 
 impl Asset for SchemeSvg {
@@ -762,24 +827,53 @@ impl Asset for SchemeSvg {
         async move {
             let sheet = ink.style_sheet();
             let image = render_image(icons::rasterize_styled(&path, side, Some(&sheet)))?;
-            if let Ok(mut drawn) = scheme_drawn().lock() {
-                drawn.insert((path, side, ink), Arc::downgrade(&image));
-            }
+            let mut drawn = scheme_drawn();
+            drawn
+                .drawn
+                .insert((Arc::clone(&path), side, ink), Arc::downgrade(&image));
+            drawn.last.insert((path, side), Arc::clone(&image));
             Ok(image)
         }
     }
 }
 
-/// The theme's colors changed: what icons in KDE's color scheme were drawn
-/// in the colors before is given back (GPUI's asset cache keeps a picture
-/// until told to forget it, the atlas its texture until it is dropped).
-/// The next frame draws them in the new colors.
-pub fn recolored(window: &mut Window, cx: &mut gpui::App) {
-    let drawn: Vec<(SchemeKey, Weak<RenderImage>)> = match scheme_drawn().lock() {
-        Ok(mut drawn) => drawn.drain().collect(),
-        Err(_) => return,
+/// The theme's colors are `theme`'s, or `previewing`: a value shown
+/// before it is taken (Colors from's list, `settings::previewed`). Once
+/// they are settled, what icons in KDE's color scheme were drawn in other
+/// colors is given back (GPUI's asset cache keeps a picture until told to
+/// forget it, the atlas its texture until it is dropped): while values
+/// are shown, every one's is kept, so going back to one draws it at once.
+/// Only the colors an ink reads count (`InkColors`). A file drawn in new
+/// colors shows as it was last drawn until it is rasterized in them.
+pub fn colors_now(
+    theme: &crate::theme::Theme,
+    previewing: bool,
+    window: &mut Window,
+    cx: &mut gpui::App,
+) {
+    let given_back: Vec<(SchemeKey, Weak<RenderImage>)> = {
+        let mut drawn = scheme_drawn();
+        if previewing {
+            drawn.previewed = true;
+            return;
+        }
+        let now = InkColors::of(theme);
+        if !drawn.previewed && drawn.settled == Some(now) {
+            return;
+        }
+        drawn.settled = Some(now);
+        drawn.previewed = false;
+        let gone: Vec<SchemeKey> = drawn
+            .drawn
+            .keys()
+            .filter(|(_, _, ink)| !ink.is_of(&now))
+            .cloned()
+            .collect();
+        gone.into_iter()
+            .filter_map(|key| drawn.drawn.remove_entry(&key))
+            .collect()
     };
-    for (key, image) in drawn {
+    for (key, image) in given_back {
         cx.remove_asset::<SchemeSvg>(&key);
         if let Some(image) = image.upgrade() {
             cx.drop_image(image, Some(&mut *window));
@@ -1167,6 +1261,28 @@ mod tests {
         let kept = preloaded().lock().unwrap();
         assert!(kept.contains_key(&*symbolic.to_string_lossy()));
         assert!(!kept.contains_key(&*recolored.to_string_lossy()));
+    }
+
+    #[test]
+    fn an_ink_is_of_the_colors_of_the_theme_that_draws_it() {
+        use super::InkColors;
+        use crate::theme::Theme;
+        let (light, dark) = (Theme::light(), Theme::dark());
+        let colors = InkColors::of(&light);
+        for ink in [
+            Ink::of(&light, light.text_muted),
+            Ink::of(&light, light.text),
+            Ink::of(&light, light.selection_text).on(light.selection_bg),
+        ] {
+            assert!(ink.is_of(&colors), "{ink:?}");
+        }
+        assert!(!Ink::of(&dark, dark.text_muted).is_of(&colors));
+        assert_ne!(InkColors::of(&dark), colors);
+        // Fonts and sizes are no colors an ink reads; nor is code's theme.
+        let mut written = light.clone();
+        written.font = "Another Sans".into();
+        written.code_bg = dark.code_bg;
+        assert_eq!(InkColors::of(&written), colors);
     }
 
     #[test]

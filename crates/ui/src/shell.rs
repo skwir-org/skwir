@@ -3010,10 +3010,12 @@ impl Shell {
         let was = (cx.global::<Theme>().families(), cx.global::<Theme>().sizes);
         let theme = Theme::resolve(&self.app, window.appearance(), cx.text_system());
         let now = (theme.families(), theme.sizes);
-        // Icons in KDE's color scheme were drawn in the colors before.
-        if !cx.global::<Theme>().same_colors(&theme) {
-            crate::icons::recolored(window, cx);
-        }
+        // Icons in KDE's color scheme drawn in other colors go once no
+        // palette is shown before it is taken.
+        let previewing =
+            crate::settings::previewed(&self.app.settings, crate::settings::COLORS_FROM_KEY)
+                .is_some();
+        crate::icons::colors_now(&theme, previewing, window, cx);
         // The window is written at the interface's size (ADR-117).
         window.set_rem_size(now.1.rem(crate::sizes::Part::Interface));
         cx.set_global(theme);

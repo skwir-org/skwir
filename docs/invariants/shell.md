@@ -901,9 +901,13 @@ of bars, split or not.
   from the theme (`icons::Pic::Scheme`, `icons::Ink`: its text in the
   color text is drawn in there, its accent and states the theme's), as
   KDE's icon loader fills them, never flattened into one color: a large
-  folder's body is the accent, its flap and shadow laid over it. What
-  was drawn in the colors before is given back when they change
-  (`icons::recolored`). A symbolic icon (GTK's `-symbolic`) is a shape
+  folder's body is the accent, its flap and shadow laid over it. Each
+  raster is kept by its ink; one being made in new colors (a palette, a
+  chosen row) draws the file as it was last drawn, never a blank. What
+  was drawn in colors the theme no longer has is given back once they
+  are settled, not while Colors from's list shows palettes, and only the
+  colors an ink reads count (`icons::colors_now`, `icons::InkColors`).
+  A symbolic icon (GTK's `-symbolic`) is a shape
   drawn tinted (`icons::Pic::Shape`); every SVG is rasterized for the
   pixels it covers (`icons::element`). The theme is `ui.icon_theme` while
   installed, else the desktop's, changed only through
