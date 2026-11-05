@@ -6,12 +6,14 @@
 //!   the columns and the board), reading (the running text of previews)
 //!   and code. Each has a setting in steps (`STEPS`), a percentage of its
 //!   100 %; the files' 100 % is the interface's size.
-//! - **A size is a part's body text**, in pixels: Skwir's own at 100 %
-//!   (`Part::base`) times the setting.
+//! - **A size is a part's body text**, in pixels: its 100 % (the
+//!   desktop's size, `hundreds`; Skwir's own, `Part::base`, where none is
+//!   said) times the setting.
 //! - **A part is drawn in a rem of its own** (`Sizes::rem`, the
-//!   `elements::rem` element): gpui's `text_sm` is its body text there,
-//!   `text_xs` its small text, and every length written in rems (the
-//!   spacing scale, `p_1`, `gap_2`) follows it.
+//!   `elements::rem` element): gpui's `text_sm` (0.875 rem) is its body
+//!   text there, and every length written in rems (the spacing scale,
+//!   `p_1`, `gap_2`) follows it. gpui's other sizes are never written
+//!   (`TextSizes` are).
 //! - **Named sizes** (`TextSizes`): every place writes at one of them,
 //!   never `text_xs`, a literal or a length. Body is the default: all
 //!   text you read or act on, names, values and sentences (a tooltip, a
@@ -30,8 +32,9 @@
 //!   in the rem in force), or scaled in whole pixels (`Scale::px`) where
 //!   they are counted: by the theme's scale for the part in `render`
 //!   (`Sizes::scale`), by the rem in force in an element's layout
-//!   (`Scale::of`). Pictures and icons keep their size: only what holds
-//!   text grows with it.
+//!   (`Scale::of`), the two one scale, the part's rem over gpui's.
+//!   Pictures and icons keep their size: only what holds text grows with
+//!   it.
 
 use gpui::{Pixels, Rems, Styled, Window, px, rems};
 use skwir_core::App;
@@ -144,7 +147,10 @@ impl Part {
         }
     }
 
-    /// Its body text at 100 %, in pixels, where its lengths are written.
+    /// Skwir's own body text at 100 %, in pixels, where nothing says
+    /// another (`Sizes::default`, code's without a monospace size).
+    /// Lengths are written beside a 14 px body whatever the part
+    /// (`Sizes::scale`).
     pub fn base(self) -> f32 {
         match self {
             Part::Interface | Part::Files | Part::Code => 14.,
@@ -309,9 +315,13 @@ impl Sizes {
         px(self.of(part) / BODY_REMS)
     }
 
-    /// How much larger than at 100 % a part is drawn.
+    /// How much larger than written a length is drawn in a part: its rem
+    /// over gpui's (`REM`), where lengths are written beside a 14 px body,
+    /// so the same as `Scale::of` reads in the part's layout and as `sized`
+    /// lengths come to there. Reading's body is 16 px at 100 %: its lengths
+    /// are 16/14 of what is written.
     pub fn scale(&self, part: Part) -> Scale {
-        Scale(self.of(part) / part.base())
+        Scale(f32::from(self.rem(part)) / REM)
     }
 }
 
@@ -441,7 +451,29 @@ mod tests {
         let sizes = Sizes::default();
         assert_eq!(sizes.rem(Part::Files), px(REM));
         assert_eq!(sizes.scale(Part::Files).px(26.), px(26.));
-        assert_eq!(sizes.scale(Part::Reading), Scale::ONE);
+        // Reading's body is 16 px: what holds it grows as its rem does.
+        assert_eq!(sizes.scale(Part::Reading).px(14.), px(16.));
+    }
+
+    /// One scale per part: the theme's in `render` is what the part's rem
+    /// gives a length in its layout (`Scale::of`, `sized`), every part and
+    /// every step alike.
+    #[test]
+    fn a_part_s_scale_is_its_rem_s() {
+        for part in Part::ALL {
+            for step in STEPS {
+                let sizes = Sizes::default().with_step(part, step);
+                let of_rem = f32::from(sizes.rem(part)) / REM;
+                assert!(
+                    (sizes.scale(part).0 - of_rem).abs() < 1e-6,
+                    "{part:?} {step}"
+                );
+                // A length in rems laid out there is the scaled length.
+                let laid_out = f32::from(sizes.rem(part)) * sized(26.).0;
+                let scaled = f32::from(sizes.scale(part).px(26.));
+                assert!((scaled - laid_out.round()).abs() < 1e-3, "{part:?} {step}");
+            }
+        }
     }
 
     #[test]
