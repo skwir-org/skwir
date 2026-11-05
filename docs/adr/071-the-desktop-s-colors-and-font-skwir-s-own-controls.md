@@ -4,13 +4,15 @@ Status: accepted, 2026-10-19. Steps 1 and 2 built 2026-10-19: the
 derivation and the guard, Skwir's palettes through them; Linux's portal
 read and followed (the accent, more contrast, the font). Steps 3 and 4
 built 2026-10-20: Plasma's scheme, followed, and GTK3 themes' colors.
-macOS and Windows are not read yet. Amended 2026-10-19 (two switches,
+Step 5 built 2026-11-05: macOS's colors (point 2 amended for them) and
+Windows' accent and contrast themes. Amended 2026-10-19 (two switches,
 the font at the window's opening), again by ADR-073 (the font a choice
 among the system's, three of them, followed live), 2026-10-20 (steps
 3 and 4) and 2026-10-27 (the accent as text, the chrome apart, the hover
 laid over), and 2026-11-05 (Colors from: Automatic, Skwir's own, GTK's
 or Qt's, in place of the Desktop colors switch; Qt's palettes read;
-then Skwir's palettes, twelve, among its values).
+then Skwir's palettes, twelve, among its values; then step 5, and
+macOS's own colors read).
 
 ## Context
 
@@ -434,3 +436,46 @@ then Skwir's palettes, twelve, among its values).
     read and highlight, a palette worn whatever the desktop says (or
     with nothing said), the cards drawn as worn. In a window: see
     `docs/STATUS-LOG.md`, 2026-11-05.
+- 2026-11-05, **step 5, and macOS's own colors.** Asked whether Skwir
+  could read the system's colors on macOS and Windows, and told that
+  step 5 (the accent, more contrast, Windows' contrast themes) was
+  accepted but not built, that macOS names far more (the colors AppKit
+  draws its own windows in), which point 2 declined as "macOS's window
+  backgrounds", and that Windows names no such colors, the user: "go
+  ahead with step 5 and amending ADR-071".
+  - **Point 2, amended for macOS.** Copying a platform's palette into
+    Skwir stays declined. Reading what the system says at run time is
+    harnessing the environment (ADR-000, 4), as Plasma's scheme is read
+    though its user may never have chosen it: on macOS, Automatic reads
+    AppKit's semantic colors, each look's as its appearance resolves
+    them (`NSAppearance.performAsCurrentDrawingAppearance`): a list's
+    ground (`controlBackgroundColor`), the window's as the chrome
+    (`windowBackgroundColor`), labels and secondary labels, separators,
+    the second alternating row, the accent (`controlAccentColor`), the
+    selection (`selectedContentBackgroundColor`, which follows the
+    accent) and its text, and the system's red, orange and green. Their
+    translucent labels and lines are laid over the ground, as drawn.
+    With Increase contrast on, the accessibility high-contrast
+    appearances are read, and the stricter guard applies (point 6).
+    Nothing is written in Skwir: a later macOS that changes them changes
+    Skwir with it. Fluent's colors stay out on Windows, where no system
+    call names them (they are WinUI's resources, not the system's).
+  - **Windows** (point 3's table): the accent from `UISettings`
+    (`UIColorType::Accent`, as gpui reads the look; WinRT on the reading
+    thread's multithreaded apartment), worn on Skwir's colors; a contrast
+    theme (`SPI_GETHIGHCONTRAST`) read whole from `GetSysColor` as point
+    4's table says, keeping its own accent, under the stricter guard.
+  - **Followed.** Windows: the registry keys where the accent, the
+    contrast theme and its colors are kept, watched beside the text
+    settings' (`windows::style::follow`, no timer). macOS: AppKit tells
+    only its own windows of a change, so what it says is read again on a
+    worker when the window's look changes or it is activated
+    (`desktop_style::FOLLOWED`, `read_again`), as point 9 planned.
+  - Colors from's Automatic says "macOS" or "Windows" while it wears a
+    scheme read there; each system's description says what it reads.
+  - **Checked:** the mapping of AppKit's colors (Apple's documented values
+    for both appearances) and of a contrast theme's (Windows 11's Aquatic
+    and Desert) into schemes, on Linux; under Wine, the reading itself
+    (its blue accent, `#0078d7`, no contrast theme, its system colors);
+    Windows and macOS compiled and linted. Not checked: any real Mac or
+    Windows machine (`docs/HELP-WANTED.md`, Colors).

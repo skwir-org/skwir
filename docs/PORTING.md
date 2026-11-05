@@ -456,8 +456,15 @@ Left:
   the registry's change notices (`windows::style`; tried under Wine,
   whose message font is its own). Code stays Skwir's own there, JetBrains
   Mono, which the bundles carry with Inter (ADR-118), neither system
-  naming a monospace font. Fonts from offers Automatic and Skwir's own;
-  their colors are not read (ADR-071, step 5).
+  naming a monospace font. Fonts from offers Automatic and Skwir's own.
+  Their colors (ADR-071, step 5, 2026-11-05) **(c)**: macOS's are those
+  AppKit draws its own windows in (`NSColor`'s semantic colors, each
+  appearance's, Increase contrast's when it is on), read again when the
+  window's look changes or it is activated, AppKit telling only its own
+  windows of a change; Windows' are its accent (`UISettings`) and, while
+  a contrast theme is on, that theme's system colors (`GetSysColor`),
+  followed in the registry (tried under Wine, which answers its blue
+  accent and no theme). Colors from offers Automatic and the palettes.
 - `alloc/lib.rs` ELF constructor (Linux); `skwir/gpu.rs` sysfs **(c)**.
 - **Keys** (step J, done): the standard shortcuts are `secondary` (Cmd on a
   Mac, Ctrl elsewhere; Linux unchanged); bindings are compared as GPUI reads

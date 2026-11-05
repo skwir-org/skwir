@@ -84,37 +84,42 @@ new. Intel Macs have no build yet.
 4. **Types and pictures** (try). Files show the right kind and icon (UTType,
    `NSWorkspace`); thumbnails come from Quick Look (PORTING sections 7, 8).
    Report which files look wrong.
-5. **Archives** (try). Open a ZIP, a 7z, a RAR and a tar.gz in the preview;
+5. **Colors** (try). With Colors from on Automatic, the window wears the
+   colors macOS draws its own windows in, light and dark: compare a
+   folder with Finder's. Change the accent and turn Increase contrast on
+   in System Settings, then come back to Skwir: it reads them again as it
+   is activated. Never run on a Mac (ADR-071, PORTING section 6).
+6. **Archives** (try). Open a ZIP, a 7z, a RAR and a tar.gz in the preview;
    extract one, and one downloaded, whose files should stay in quarantine
    (Gatekeeper asks before a program from it first runs); compress a
    folder in each format and open what is made in Archive Utility. Names
    with accents and other scripts should come through both ways. The
    helper carries its libarchive, built on Linux and never run (PORTING
    section 8).
-6. **Audio and video** (try). Play films (MP4, MKV, an iPhone's HEVC),
+7. **Audio and video** (try). Play films (MP4, MKV, an iPhone's HEVC),
    music (MP3, FLAC, AAC), change a film's audio track and subtitles, its
    speed, seek, and play it on the whole screen. Say whether the hardware
    decodes (Activity Monitor: the helper's CPU stays low on a 4K film) and
    how long the first file takes (GStreamer reads its plugins once). It
    plays through the GStreamer the bundle carries (ADR-076), never run on
    a Mac (PORTING section 8).
-7. **Keys** (try). Cmd is the standard modifier; Ctrl where macOS keeps Cmd
+8. **Keys** (try). Cmd is the standard modifier; Ctrl where macOS keeps Cmd
    for itself (PORTING "10–15"). Report shortcuts that do the wrong thing.
    A drag's copy modifier should be Option (not done).
-8. **Isolation** (code). Converters (LibreOffice, Pandoc, ImageMagick) and
+9. **Isolation** (code). Converters (LibreOffice, Pandoc, ImageMagick) and
    plugins from outside run under `sandbox-exec` with Skwir's profile
    (`platform/src/sandbox.rs`, ADR-039). Find what the profile must let
    through for each to start; without it they are refused.
-9. **What is not written** (code): ejecting a volume (DiskArbitration); the
+10. **What is not written** (code): ejecting a volume (DiskArbitration); the
    trash's listing (`~/.Trash` records no origin); Finder's favorites as
    bookmarks; media keys (Now Playing). PORTING sections 4, 6, 8, "10–15".
-10. **The package** (code). `tools/package/macos.sh` makes `skwir.app` on
+11. **The package** (code). `tools/package/macos.sh` makes `skwir.app` on
    Linux (ADR-075); try it on a fresh account, and moved to Applications.
    An Intel build and the helpers that link libraries (Poppler, MuPDF)
    are not done.
    Notarization needs an Apple developer identity: the project decides that
    with you.
-11. **CI** (code). The `native` job in `.github/workflows/full.yml` builds,
+12. **CI** (code). The `native` job in `.github/workflows/full.yml` builds,
    lints and tests on `macos-latest`. It does not block merging until it
    passes.
 
@@ -145,11 +150,16 @@ window: everything below is new.
    name instead (PORTING section 3).
 4. **The terminal** (try). The terminal panel (ConPTY) starts, takes keys,
    and follows the folder shown (PORTING section 9).
-5. **Archives** (try). Open a ZIP, a 7z, a RAR and a tar.gz in the preview;
+5. **Colors** (try). With Colors from on Automatic, Skwir wears the
+   accent chosen in Settings › Personalization › Colors, changed while it
+   runs; a contrast theme (Settings › Accessibility › Contrast themes)
+   replaces its colors with the theme's own. Wine answers its blue accent
+   and no theme (ADR-071, PORTING section 6).
+6. **Archives** (try). Open a ZIP, a 7z, a RAR and a tar.gz in the preview;
    extract one; compress a folder in each format and open what is made in
    Explorer or 7-Zip. Names with accents and other scripts should come
    through both ways, a tar made on Linux included (PORTING section 8).
-6. **Audio and video** (try). Play films (MP4, MKV, H.264 and HEVC),
+7. **Audio and video** (try). Play films (MP4, MKV, H.264 and HEVC),
    music (MP3, FLAC, AAC), change a film's audio track and subtitles
    (turning them off while paused stalled under Wine), its speed, seek, and
    play it on the whole screen. Say whether the GPU decodes (Task
@@ -157,26 +167,26 @@ window: everything below is new.
    (GStreamer reads its plugins once). It plays through the GStreamer the
    package carries (ADR-076) and played clips under Wine (PORTING
    section 8).
-7. **Control channel security** (code). Agents and scripts reach the window
+8. **Control channel security** (code). Agents and scripts reach the window
    through a named pipe with Windows' default security, which lets other
    accounts open it, and the client does not check the server's account.
    Before Control can be turned on there, the pipe needs a DACL of the user
    alone and the client a check of the server
    (`plugins/control/src/channel.rs`, PORTING "10–15").
-8. **Isolation** (code). Windows has none yet (ADR-039): converters that
+9. **Isolation** (code). Windows has none yet (ADR-039): converters that
    need it are refused, and plugins from outside that run as programs do
    not run. The plan is an AppContainer (`platform/src/sandbox.rs`).
-9. **What is not written** (code): ejecting a drive; drives plugged in
+10. **What is not written** (code): ejecting a drive; drives plugged in
    appearing at once (`WM_DEVICECHANGE`); owners by SID; Quick Access as
    bookmarks; Windows Search for hints; media keys (SMTC). PORTING sections
    6, 7, 8, "10–15".
-10. **The package** (code). `tools/package/windows.sh` makes the zip and the
+11. **The package** (code). `tools/package/windows.sh` makes the zip and the
    installer on Linux (ADR-074); try the installer on a fresh account:
    installing, the Start menu entry, updating over an older one, removing.
    The helpers that link libraries (Poppler, MuPDF) need those built for
    Windows. Signing needs a
    code-signing certificate: the project decides that with you.
-11. **CI** (code). The `native` job runs on `windows-latest` too.
+12. **CI** (code). The `native` job runs on `windows-latest` too.
 
 ## When a system is ready
 

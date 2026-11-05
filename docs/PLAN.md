@@ -102,7 +102,7 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
 | [Release 0.1: Linux](#release-01-linux) | released 2026-10-13 (0.1.0) | — |
 | [Names indexed by skwird](#names-indexed-by-skwird) | C built 2026-10-20; A, B and D wait for skwird (ADR-050) | — |
 | [Remote folders](#remote-folders) | A to F built and checked on Linux 2026-10-21 (ADR-077); G's list for the night of 2026-10-23 built (ADR-080 amended, ADR-084); devices listed before they are mounted 2026-10-26 (ADR-096); what is left in G | — |
-| [Colors and font from the desktop](#colors-and-font-from-the-desktop) | A to D and the fonts by role built 2026-10-19 and 20; Skwir's palettes (F) built 2026-11-05; E planned (ADR-071, ADR-073) | — |
+| [Colors and font from the desktop](#colors-and-font-from-the-desktop) | A to D and the fonts by role built 2026-10-19 and 20; E (macOS, Windows) and Skwir's palettes (F) built 2026-11-05 (ADR-071, ADR-073) | — |
 | [Indexing and AI (Phase 7)](#indexing-and-ai-phase-7) | designed and accepted 2026-10-26 (ADR-089 to ADR-095, `docs/indexing-and-ai.md`); nothing built | ~10 weeks |
 | [Phase 8: Polish and release](#phase-8-polish-and-release) | planned, ongoing | — |
 
@@ -2200,8 +2200,8 @@ after Release 0.1 and after skwird's phase 1.
 ## Colors and font from the desktop
 
 ADR-071, ADR-073. Steps A and B built 2026-10-19 (Linux's portal), C and
-D on 2026-10-20 (Plasma's scheme, GTK3 themes); macOS and Windows not yet
-(E). The fonts by role (ADR-073) built 2026-10-19. How each step was built and
+D on 2026-10-20 (Plasma's scheme, GTK3 themes), E (macOS, Windows) and F
+(Skwir's palettes) on 2026-11-05. The fonts by role (ADR-073) built 2026-10-19. How each step was built and
 checked: `docs/STATUS-LOG.md`, "Colors and font from the desktop".
 
 **Goal:** Skwir wears what the user chose on their desktop (the accent,
@@ -2235,9 +2235,14 @@ its own, every color readable on what it is drawn on.
 - Left of C and D: a real Plasma, Xfce, Cinnamon or MATE session; changes
   made in GSettings or xfconf themselves, which are not followed
   (`settings.ini`, qt5ct's and qt6ct's files are, since 2026-11-05).
-- **E. macOS and Windows:** the accent, more contrast, Windows' contrast
-  themes; read again on appearance changes and activation. Windows tried
-  under Wine for what it answers; macOS compiled only.
+- **E. macOS and Windows:** **Built 2026-11-05.** macOS: the colors
+  AppKit draws its own windows in, each look's (ADR-071's amendment of
+  point 2), Increase contrast's appearances when it is on; read again
+  when the window's look changes or it is activated. Windows: the accent
+  (`UISettings`) and a contrast theme's colors, followed in the registry.
+  Windows tried under Wine for what it answers (its accent, no theme);
+  macOS compiled only. Left: both on real machines
+  (`docs/HELP-WANTED.md`).
 - **F. Skwir's palettes** (ADR-071's amendment of 2026-11-05): twelve
   values of Colors from beside Automatic, GTK and Qt (Skwir, Paper,
   Slate, Black; Solarized, Nord, Gruvbox, Catppuccin, Dracula, Rosé Pine,

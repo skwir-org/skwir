@@ -693,9 +693,13 @@ their terminal colors and their code colors: with the Reading page's
 code theme on **Default**, code is drawn in the palette's (where it has
 one for that look), else in Skwir's. Skwir keeps every text readable
 on what it is drawn on, so a palette whose text is faint (Solarized's
-light look) is drawn a little darker than its makers wrote it. On
-macOS and Windows, where Skwir does not read the system's colors yet,
-Automatic is the Skwir palette.
+light look) is drawn a little darker than its makers wrote it.
+
+On macOS, Automatic wears the colors macOS draws its own windows in,
+light and dark, with your accent, and Increase contrast's when it is
+on; Skwir reads them again as its window comes back to the front. On
+Windows, it wears Skwir's colors with the accent you chose in Windows'
+settings, and a contrast theme's own colors while one is on.
 
 Skwir writes in three fonts, each **Automatic** or a family installed on
 your system (ADR-073): **Font** on Appearance, for its menus, lists, bars

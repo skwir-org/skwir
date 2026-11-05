@@ -19,16 +19,30 @@
 //! also said apart, for the user to choose (ADR-117).
 //!
 //! On macOS the interface font is the system's (San Francisco) at 13 px,
-//! as its controls are written; on Windows the family it writes messages
-//! in (`Segoe UI`) and the Text size chosen in its Accessibility settings,
-//! followed in the registry (`windows::style`). Their colors are not read
-//! yet: skwir's own there (ADR-071, step 5).
+//! as its controls are written, and its colors those `AppKit` draws its own
+//! windows in (`NSColor`'s, each look's as its appearance resolves them:
+//! the accent the user chose, which its lists' selection follows, and
+//! Increase contrast's appearances when it is on). `AppKit` tells only its own windows of a
+//! change, so they are read again when the window's look changes or it is
+//! activated (`FOLLOWED`). On Windows the family it writes messages in
+//! (`Segoe UI`), the Text size chosen in its Accessibility settings, the
+//! accent (`UISettings`) and a contrast theme's colors (`GetSysColor`),
+//! followed in the registry (`windows::style`). Windows names no other
+//! colors: its own applications' are their toolkit's, which Skwir does
+//! not copy (ADR-071, point 2).
 
 use skwir_core::CancelToken;
 
-/// Whether this system's colors are read (its scheme, its accent): Linux's;
-/// macOS's and Windows' in a later step (ADR-071).
-pub const COLORS: bool = cfg!(target_os = "linux");
+/// Whether this system's colors are read (its scheme, its accent):
+/// Linux's desktops', macOS's, Windows' accent and contrast themes
+/// (ADR-071).
+pub const COLORS: bool = cfg!(any(target_os = "linux", target_os = "macos", windows));
+
+/// Whether `follow` follows what the system says by itself; where not
+/// (macOS, whose notices of its colors reach only `AppKit`'s own windows),
+/// the window reads it again (`read`) when its look changes or it is
+/// activated.
+pub const FOLLOWED: bool = !cfg!(target_os = "macos");
 
 /// Whether this system's fonts and their sizes are read (ADR-117): Linux's
 /// desktops, macOS's interface font, Windows' and its Text size.
@@ -210,6 +224,84 @@ fn luminance(color: Rgb) -> f32 {
 pub fn over(color: [f32; 4], ground: Rgb) -> Rgb {
     let a = color[3].clamp(0., 1.);
     [0, 1, 2].map(|i| (color[i] * a + ground[i] * (1. - a)).clamp(0., 1.))
+}
+
+/// The colors `AppKit` draws its own windows in, as one appearance resolves
+/// them, as sRGB with their opacity: a list's ground (`controlBackground`),
+/// the window's (`windowBackground`), labels and secondary labels,
+/// separators, the second of the alternating rows, the accent, the
+/// selection (`selectedContentBackground`) and its text, and the system's
+/// red, orange and green.
+#[cfg(any(target_os = "macos", test))]
+#[derive(Clone, Copy, Debug)]
+struct SystemColors {
+    ground: [f32; 4],
+    chrome: [f32; 4],
+    text: [f32; 4],
+    secondary_text: [f32; 4],
+    separator: [f32; 4],
+    alternate_row: Option<[f32; 4]>,
+    accent: [f32; 4],
+    selection: [f32; 4],
+    selection_text: [f32; 4],
+    red: [f32; 4],
+    orange: [f32; 4],
+    green: [f32; 4],
+}
+
+/// macOS's colors as the base of a look: its translucent labels and
+/// lines laid over the ground, as they are drawn; the ground taken opaque.
+#[cfg(any(target_os = "macos", test))]
+fn system_scheme(colors: &SystemColors) -> Scheme {
+    let bg = [colors.ground[0], colors.ground[1], colors.ground[2]];
+    let on = |color: [f32; 4]| over(color, bg);
+    let selection = on(colors.selection);
+    Scheme {
+        bg,
+        surface: on(colors.chrome),
+        text: on(colors.text),
+        text_muted: Some(on(colors.secondary_text)),
+        zebra: colors.alternate_row.map(on),
+        border: Some(on(colors.separator)),
+        accent: Some(on(colors.accent)),
+        selection: Some((selection, over(colors.selection_text, selection))),
+        error: Some(on(colors.red)),
+        warning: Some(on(colors.orange)),
+        success: Some(on(colors.green)),
+    }
+}
+
+/// A Windows contrast theme as the base of a look (ADR-071, point 4), from
+/// its system colors (`windows::style::contrast_colors`, `0x00BBGGRR`):
+/// the window's ground and text, a button's face as the chrome, text
+/// grayed, the highlight as the accent and the selection. Its outcomes
+/// are derived: a contrast theme names none.
+#[cfg(any(windows, test))]
+fn contrast_scheme(
+    [
+        window,
+        window_text,
+        face,
+        gray_text,
+        highlight,
+        highlight_text,
+    ]: [u32; 6],
+) -> Scheme {
+    let rgb =
+        |color: u32| [0, 8, 16].map(|shift| f32::from(((color >> shift) & 0xff) as u8) / 255.);
+    Scheme {
+        bg: rgb(window),
+        surface: rgb(face),
+        text: rgb(window_text),
+        text_muted: Some(rgb(gray_text)),
+        zebra: None,
+        border: Some(rgb(window_text)),
+        accent: Some(rgb(highlight)),
+        selection: Some((rgb(highlight), rgb(highlight_text))),
+        error: None,
+        warning: None,
+        success: None,
+    }
 }
 
 /// What the desktop says now. It asks the session's bus and may run a
@@ -1026,14 +1118,28 @@ mod imp {
     }
 }
 
-// macOS: its interface font, at the size its controls are written in.
-// Nothing a user sets changes either, so nothing is followed. Its accent
-// and contrast are read in a later step (ADR-071, step 5).
+// macOS: its interface font, at the size its controls are written in,
+// and the colors AppKit draws its own windows in, each look's as its
+// appearance resolves them, Increase contrast's when it is on (ADR-071).
+// AppKit tells only its own windows of a change: the window reads it
+// again as its look changes or it is activated (`FOLLOWED`).
+// The system's calls are Objective-C messages and extern statics: each
+// `unsafe` block says why it is sound, and nothing unsafe leaves the module.
 #[cfg(target_os = "macos")]
+#[allow(unsafe_code)]
 mod imp {
+    use std::cell::RefCell;
+
+    use block2::StackBlock;
+    use objc2::rc::autoreleasepool;
+    use objc2_app_kit::{
+        NSAppearance, NSAppearanceName, NSAppearanceNameAccessibilityHighContrastAqua,
+        NSAppearanceNameAccessibilityHighContrastDarkAqua, NSAppearanceNameAqua,
+        NSAppearanceNameDarkAqua, NSColor, NSColorSpace, NSWorkspace,
+    };
     use skwir_core::CancelToken;
 
-    use super::DesktopStyle;
+    use super::{DesktopStyle, Scheme, Schemes, SystemColors};
 
     /// The family `NSFont.systemFont(ofSize:)` names: San Francisco, kept
     /// apart from the families listed (a leading `.`), which `CoreText`
@@ -1043,34 +1149,119 @@ mod imp {
     const SYSTEM_FONT_SIZE: f32 = 13.;
 
     pub(super) fn read() -> DesktopStyle {
-        DesktopStyle {
-            font: Some(SYSTEM_FONT.to_owned()),
-            font_px: Some(SYSTEM_FONT_SIZE),
-            fonts_from: Some("macOS".to_owned()),
-            ..DesktopStyle::default()
-        }
+        autoreleasepool(|_| {
+            let more_contrast =
+                NSWorkspace::sharedWorkspace().accessibilityDisplayShouldIncreaseContrast();
+            // SAFETY: names AppKit defines, read as the statics they are.
+            let (light, dark) = unsafe {
+                if more_contrast {
+                    (
+                        NSAppearanceNameAccessibilityHighContrastAqua,
+                        NSAppearanceNameAccessibilityHighContrastDarkAqua,
+                    )
+                } else {
+                    (NSAppearanceNameAqua, NSAppearanceNameDarkAqua)
+                }
+            };
+            let schemes = Schemes {
+                light: scheme(light),
+                dark: scheme(dark),
+            };
+            DesktopStyle {
+                // Each look's scheme carries the accent as that look
+                // resolves it: none is said apart to replace it.
+                accent: None,
+                more_contrast,
+                colors_from: (!schemes.is_empty()).then(|| "macOS".to_owned()),
+                schemes,
+                font: Some(SYSTEM_FONT.to_owned()),
+                font_px: Some(SYSTEM_FONT_SIZE),
+                fonts_from: Some("macOS".to_owned()),
+                ..DesktopStyle::default()
+            }
+        })
+    }
+
+    /// The scheme of the appearance `name` names: its colors resolved
+    /// while it is the thread's drawing appearance.
+    fn scheme(name: &NSAppearanceName) -> Option<Scheme> {
+        let appearance = NSAppearance::appearanceNamed(name)?;
+        let read = RefCell::new(None);
+        let block = StackBlock::new(|| {
+            *read.borrow_mut() = colors();
+        });
+        appearance.performAsCurrentDrawingAppearance(&block);
+        read.into_inner()
+            .map(|colors| super::system_scheme(&colors))
+    }
+
+    fn colors() -> Option<SystemColors> {
+        let alternating = NSColor::alternatingContentBackgroundColors();
+        Some(SystemColors {
+            ground: rgba(&NSColor::controlBackgroundColor())?,
+            chrome: rgba(&NSColor::windowBackgroundColor())?,
+            text: rgba(&NSColor::labelColor())?,
+            secondary_text: rgba(&NSColor::secondaryLabelColor())?,
+            separator: rgba(&NSColor::separatorColor())?,
+            alternate_row: alternating.iter().nth(1).and_then(|color| rgba(&color)),
+            accent: rgba(&NSColor::controlAccentColor())?,
+            selection: rgba(&NSColor::selectedContentBackgroundColor())?,
+            selection_text: rgba(&NSColor::alternateSelectedControlTextColor())?,
+            red: rgba(&NSColor::systemRedColor())?,
+            orange: rgba(&NSColor::systemOrangeColor())?,
+            green: rgba(&NSColor::systemGreenColor())?,
+        })
+    }
+
+    /// `color` in sRGB, with its opacity, as the drawing appearance
+    /// resolves it.
+    fn rgba(color: &NSColor) -> Option<[f32; 4]> {
+        let srgb = color.colorUsingColorSpace(&NSColorSpace::sRGBColorSpace())?;
+        let (mut r, mut g, mut b, mut a) = (0., 0., 0., 0.);
+        // SAFETY: four numbers this owns, which the call writes.
+        unsafe { srgb.getRed_green_blue_alpha(&raw mut r, &raw mut g, &raw mut b, &raw mut a) };
+        Some([r, g, b, a].map(|c| c as f32))
     }
 
     pub(super) fn follow(mut changed: impl FnMut(DesktopStyle) + Send + 'static, _: CancelToken) {
-        changed(read());
+        // Read on a thread of its own: AppKit's colors are asked off the
+        // window's thread, as every reading is.
+        let thread = std::thread::Builder::new()
+            .name("skwir-desktop-style".into())
+            .spawn(move || changed(read()));
+        if let Err(error) = thread {
+            tracing::debug!("the system's style is not read: {error}");
+        }
     }
 }
 
 // Windows: the family it writes messages in and the Text size chosen in
-// its settings (`windows::style`), followed in the registry; the size
-// itself is WinUI's (ADR-117), Windows naming none. Its accent, contrast
-// themes and colors are read in a later step (ADR-071, step 5).
+// its settings (`windows::style`), the accent, and a contrast theme,
+// followed in the registry; the size itself is WinUI's (ADR-117),
+// Windows naming none. A contrast theme is a palette the user chose: its
+// colors are a scheme, under the stricter guard, and keep their own
+// accent (ADR-071, points 4 and 6).
 #[cfg(windows)]
 mod imp {
     use skwir_core::CancelToken;
 
-    use super::DesktopStyle;
+    use super::{DesktopStyle, Schemes};
 
     pub(super) fn read() -> DesktopStyle {
+        use crate::windows::style;
+        let contrast = style::high_contrast();
+        let mut schemes = Schemes::default();
+        if contrast {
+            schemes.add(super::contrast_scheme(style::contrast_colors()));
+        }
         DesktopStyle {
-            font: crate::windows::style::message_font(),
+            accent: if contrast { None } else { style::accent() },
+            more_contrast: contrast,
+            colors_from: contrast.then(|| "Windows".to_owned()),
+            schemes,
+            font: style::message_font(),
             fonts_from: Some("Windows".to_owned()),
-            text_scaling: crate::windows::style::text_scale(),
+            text_scaling: style::text_scale(),
             ..DesktopStyle::default()
         }
     }
@@ -1116,7 +1307,102 @@ mod imp {
 
 #[cfg(test)]
 mod tests {
+    // Colors are written as their hex codes are, `0xrrggbb`.
+    #![allow(clippy::unreadable_literal)]
+
     use super::*;
+
+    fn rgba(hex: u32, alpha: f32) -> [f32; 4] {
+        let [r, g, b] = [16, 8, 0].map(|shift| f32::from(((hex >> shift) & 0xff) as u8) / 255.);
+        [r, g, b, alpha]
+    }
+
+    #[test]
+    fn macos_s_colors_are_a_scheme_its_labels_laid_on_its_ground() {
+        // AppKit's own, as its two appearances resolve them.
+        let light = system_scheme(&SystemColors {
+            ground: rgba(0xffffff, 1.),
+            chrome: rgba(0xececec, 1.),
+            text: rgba(0x000000, 0.85),
+            secondary_text: rgba(0x000000, 0.5),
+            separator: rgba(0x000000, 0.1),
+            alternate_row: Some(rgba(0xf4f5f5, 1.)),
+            accent: rgba(0x007aff, 1.),
+            selection: rgba(0x0064e1, 1.),
+            selection_text: rgba(0xffffff, 1.),
+            red: rgba(0xff3b30, 1.),
+            orange: rgba(0xff9500, 1.),
+            green: rgba(0x28cd41, 1.),
+        });
+        assert!(!light.is_dark());
+        assert_eq!(light.bg, [1., 1., 1.]);
+        assert!(
+            (light.text[0] - 0.15).abs() < 1e-3,
+            "black at 85 % on white"
+        );
+        assert!((light.text_muted.unwrap()[0] - 0.5).abs() < 1e-3);
+        assert!(light.zebra.is_some() && light.selection.is_some());
+        let dark = system_scheme(&SystemColors {
+            ground: rgba(0x1e1e1e, 1.),
+            chrome: rgba(0x323232, 1.),
+            text: rgba(0xffffff, 0.85),
+            secondary_text: rgba(0xffffff, 0.55),
+            separator: rgba(0xffffff, 0.1),
+            alternate_row: None,
+            accent: rgba(0x0a84ff, 1.),
+            selection: rgba(0x0058d0, 1.),
+            selection_text: rgba(0xffffff, 1.),
+            red: rgba(0xff453a, 1.),
+            orange: rgba(0xff9f0a, 1.),
+            green: rgba(0x32d74b, 1.),
+        });
+        assert!(dark.is_dark());
+        assert_eq!(dark.zebra, None, "derived where AppKit says none");
+        let mut schemes = Schemes::default();
+        schemes.add(light);
+        schemes.add(dark);
+        assert!(schemes.light.is_some() && schemes.dark.is_some());
+    }
+
+    #[test]
+    fn a_windows_contrast_theme_is_a_scheme_of_its_system_colors() {
+        // Windows 11's Aquatic and Desert, as `GetSysColor` says them
+        // (0x00BBGGRR): window, its text, a button's face, gray text,
+        // highlight, its text.
+        let aquatic = contrast_scheme([
+            0x00202020, 0x00ffffff, 0x00202020, 0x00a6a6a6, 0x00f0e38e, 0x00503b26,
+        ]);
+        assert!(aquatic.is_dark());
+        let close = |a: Rgb, hex: u32| {
+            let [r, g, b, _] = rgba(hex, 1.);
+            a.iter().zip([r, g, b]).all(|(a, b)| (a - b).abs() < 1e-3)
+        };
+        assert!(close(aquatic.accent.unwrap(), 0x8ee3f0), "BGR read as RGB");
+        assert!(close(aquatic.selection.unwrap().1, 0x263b50));
+        assert_eq!(aquatic.error, None, "outcomes derived");
+        let desert = contrast_scheme([
+            0x00effaff, 0x003d3d3d, 0x00effaff, 0x006d6d6d, 0x00093990, 0x00e3f5ff,
+        ]);
+        assert!(!desert.is_dark());
+        assert!(close(desert.bg, 0xfffaef));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_says_its_contrast_theme_or_its_accent() {
+        // Under Wine no contrast theme is on, and its accent may be none.
+        let style = read();
+        assert_eq!(style.schemes.is_empty(), !style.more_contrast);
+        assert_eq!(style.colors_from.is_some(), style.more_contrast);
+        if style.more_contrast {
+            assert_eq!(style.accent, None, "a contrast theme keeps its own");
+        }
+        assert!(
+            crate::windows::style::contrast_colors()
+                .iter()
+                .any(|color| *color != 0)
+        );
+    }
 
     #[test]
     fn a_font_s_size_is_read_in_points_or_pixels() {

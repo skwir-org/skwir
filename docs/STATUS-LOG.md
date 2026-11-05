@@ -11318,3 +11318,38 @@ LXQt, GNOME or Xfce session; a Kvantum theme's colors (not read).
   targets; the dropdown is announced); macOS and Windows beyond
   compiling; the terminal panel in each palette; Automatic's card on a
   desktop whose scheme is read (no portal on the test display).
+
+## The system's colors on macOS and Windows (2026-11-05)
+
+- ADR-071's step 5, and its point 2 amended for macOS (the user: "go
+  ahead with step 5 and amending ADR-071"). `COLORS` is now true on
+  macOS and Windows; Colors from's description says what each system's
+  Automatic reads.
+- macOS (`desktop_style::imp`, compiled only): AppKit's semantic colors,
+  each look's resolved under its appearance
+  (`performAsCurrentDrawingAppearance`, Increase contrast's high-contrast
+  appearances when it is on), mapped by `system_scheme` (labels and lines
+  laid over the ground); read on a thread at start and again on a worker
+  when the window's look changes or it is activated
+  (`desktop_style::read_again`, `FOLLOWED` false there). objc2-app-kit
+  takes `NSColor`, `NSColorSpace`, `NSAppearance`, `NSAccessibility` and
+  `block2`: features of crates already linked, no new crate.
+- Windows (`windows::style`): `accent` (`UISettings`, on the
+  multithreaded apartment), `high_contrast` (`SPI_GETHIGHCONTRAST`),
+  `contrast_colors` (`GetSysColor`), mapped by `contrast_scheme`; the
+  registry keys of the accent (`Explorer\Accent`, `DWM`), the contrast
+  flag and the system colors watched beside the text settings'. The
+  `windows` crate takes `UI`, `UI_ViewManagement` and
+  `Win32_UI_Accessibility`: gpui links the first two already.
+- Checked: `system_scheme` with Apple's documented colors of both
+  appearances and `contrast_scheme` with Windows 11's Aquatic and Desert,
+  on Linux; under Wine (`just test-windows -p skwir-platform --lib --
+  desktop_style`, 6 passed), `read` answered Wine's accent `#0078d7`, no
+  contrast theme and Wine's system colors (seen once through a temporary
+  assertion, removed). Clippy clean for Linux and Windows (skwir-platform,
+  skwir-ui) and macOS (skwir-platform; skwir-ui is not built for macOS
+  here); 1123 tests of skwir-platform, skwir-ui and skwir passed on Linux.
+- Not checked: a real Mac (whether AppKit's colors resolve off the main
+  thread as documented, how close the window looks to Finder), a real
+  Windows (the accent changed live, a contrast theme turned on). Both are
+  in `docs/HELP-WANTED.md`, Colors.

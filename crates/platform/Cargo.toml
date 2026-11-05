@@ -79,7 +79,9 @@ windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Globali
 # What the desktop is told (`desktop`): toasts, the taskbar's progress, a
 # power request; the WinRT features gpui's own toasts already build. The
 # notification area's icon and the session's end held off (ADR-115).
-windows = { version = "0.62", features = ["Data_Xml_Dom", "Foundation", "UI_Notifications", "Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Power", "Win32_System_Shutdown", "Win32_System_Threading", "Win32_UI_Controls", "Win32_UI_Controls_Dialogs", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+# The accent (`UISettings`, as gpui reads the look) and a contrast theme
+# (`desktop_style`, ADR-071).
+windows = { version = "0.62", features = ["Data_Xml_Dom", "Foundation", "UI", "UI_Notifications", "UI_ViewManagement", "Win32_UI_Accessibility", "Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Power", "Win32_System_Shutdown", "Win32_System_Threading", "Win32_UI_Controls", "Win32_UI_Controls_Dialogs", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
 # macOS's own calls (ADR-035): the calendar's first weekday, the
 # Keychain, the types the system knows (ADR-037). The versions already in
@@ -90,7 +92,9 @@ objc2-foundation = { version = "0.3", default-features = false, features = ["std
 objc2-uniform-type-identifiers = { version = "0.3", default-features = false, features = ["std", "UTCoreTypes", "UTType"] }
 # The system's icons, drawn by NSImage (system_icons). The dock tile's
 # badge (`desktop`).
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSDockTile", "NSGraphicsContext", "NSImage", "NSImageRep", "NSPrintInfo", "NSPrintPanel", "NSPrinter", "NSResponder", "NSWorkspace", "objc2-core-foundation", "objc2-core-graphics", "objc2-uniform-type-identifiers"] }
+# The system's colors, accent and contrast, as each appearance resolves
+# them (`desktop_style`, ADR-071).
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "block2", "NSAccessibility", "NSAppearance", "NSApplication", "NSColor", "NSColorSpace", "NSDockTile", "NSGraphicsContext", "NSImage", "NSImageRep", "NSPrintInfo", "NSPrintPanel", "NSPrinter", "NSResponder", "NSWorkspace", "objc2-core-foundation", "objc2-core-graphics", "objc2-uniform-type-identifiers"] }
 # Notices (`desktop`): the version gpui's own notifications link.
 objc2-user-notifications = { version = "0.3", default-features = false, features = ["std", "block2", "UNNotificationContent", "UNNotificationRequest", "UNNotificationTrigger", "UNUserNotificationCenter"] }
 # The print panel, shown on the main thread from a worker (ADR-111).

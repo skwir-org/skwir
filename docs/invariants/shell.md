@@ -77,7 +77,10 @@ Views are in [views.md](views.md); what locations decide, in
   does not, nothing. It follows the portal's signals and the files the
   colors and fonts come from (`kdeglobals`, `lxqt.conf`, qt5ct's and
   qt6ct's, GTK's `settings.ini`; their folders watched, access
-  dropped), never a timer. Toolkits
+  dropped), Windows' registry keys (the accent, a contrast theme), never
+  a timer. macOS tells only AppKit's own windows: what it says is read
+  again on a worker when the window's look changes or it is activated
+  (`desktop_style::read_again`, `FOLLOWED`). Toolkits
   are never loaded: a GTK theme is read as the colors its sheet names.
 - The fonts are the theme's tokens (`font`, `reading_font`,
   `code_font`), resolved with it, read where they are drawn. A font's

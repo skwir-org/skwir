@@ -34,8 +34,9 @@ pub fn start(app: &Arc<App>) {
     if !COLORS && !FONTS {
         return;
     }
-    let slot = app.cache.namespace("ui");
-    if let Some(kept) = slot
+    if let Some(kept) = app
+        .cache
+        .namespace("ui")
         .get(KEPT)
         .and_then(|bytes| serde_json::from_slice::<DesktopStyle>(&bytes).ok())
     {
@@ -44,15 +45,45 @@ pub fn start(app: &Arc<App>) {
     let weak = Arc::downgrade(app);
     skwir_platform::desktop_style::follow(
         move |style| {
-            let Some(app) = weak.upgrade() else { return };
-            if let Ok(bytes) = serde_json::to_vec(&style) {
-                let _ = slot.put(KEPT, &bytes);
-            }
-            if set(style) {
-                app.wake();
+            if let Some(app) = weak.upgrade() {
+                said_now(&app, style);
             }
         },
         app.lifetime().child(),
+    );
+}
+
+/// Keep what the system says now for the next start, and wear it when it
+/// differs from what was said.
+fn said_now(app: &App, style: DesktopStyle) {
+    if let Ok(bytes) = serde_json::to_vec(&style) {
+        let _ = app.cache.namespace("ui").put(KEPT, &bytes);
+    }
+    if set(style) {
+        app.wake();
+    }
+}
+
+/// Read what the system says again, where it is not followed
+/// (`desktop_style::FOLLOWED`: macOS, which tells only `AppKit`'s own
+/// windows): when the window's look changes or it is activated, on a
+/// worker.
+pub fn read_again(app: &Arc<App>) {
+    use skwir_platform::desktop_style::{COLORS, FOLLOWED};
+    if FOLLOWED || !COLORS {
+        return;
+    }
+    let weak = Arc::downgrade(app);
+    app.scheduler.spawn(
+        skwir_core::scheduler::Priority::Normal,
+        "desktop-style",
+        app.lifetime().child(),
+        move || {
+            let style = skwir_platform::desktop_style::read();
+            if let Some(app) = weak.upgrade() {
+                said_now(&app, style);
+            }
+        },
     );
 }
 

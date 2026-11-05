@@ -585,6 +585,9 @@ impl Shell {
         show_resolved(&app, cx);
         let mut subs = Vec::new();
         subs.push(cx.observe_window_appearance(window, |this, window, cx| {
+            // Where the system's colors are not followed (macOS), its
+            // new look's are read again (ADR-071).
+            crate::desktop_style::read_again(&this.app);
             this.resolve_theme(window, cx);
             cx.notify();
         }));
@@ -595,6 +598,8 @@ impl Shell {
             let active = window.is_window_active();
             if active {
                 this.app.refresh_remote();
+                // An accent or a contrast changed while away (macOS).
+                crate::desktop_style::read_again(&this.app);
             }
             // Looked at again: what the desktop was told is taken back.
             this.window_activated(active);

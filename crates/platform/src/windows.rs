@@ -870,6 +870,14 @@ pub mod style {
     const TEXT_SCALE: &str = "TextScaleFactor";
     /// Where the fonts of messages, menus and captions are kept.
     const WINDOW_METRICS: &str = r"Control Panel\Desktop\WindowMetrics";
+    /// Where Windows keeps the accent the user chose (its palette of
+    /// shades, and the window frames' copy of it), whether a contrast
+    /// theme is on, and the colors it asks applications to draw with:
+    /// watched, so a change is read again (ADR-071).
+    pub const ACCENT: &str = r"Software\Microsoft\Windows\CurrentVersion\Explorer\Accent";
+    pub const DWM: &str = r"Software\Microsoft\Windows\DWM";
+    const HIGH_CONTRAST: &str = r"Control Panel\Accessibility\HighContrast";
+    const SYSTEM_COLORS: &str = r"Control Panel\Colors";
 
     fn wide(text: &str) -> Vec<u16> {
         text.encode_utf16().chain([0]).collect()
@@ -903,6 +911,70 @@ pub mod style {
         let family = String::from_utf16(face).ok()?;
         let family = family.trim();
         (!family.is_empty()).then(|| family.to_owned())
+    }
+
+    /// The accent the user chose (Settings › Personalization › Colors), as
+    /// `UISettings` gives it to applications and gpui reads the look, in
+    /// sRGB from 0 to 1; `None` where it gives none.
+    pub fn accent() -> Option<[f32; 3]> {
+        use ::windows::UI::ViewManagement::{UIColorType, UISettings};
+        use ::windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx};
+        // WinRT on a thread of skwir's own: the multithreaded apartment,
+        // joined once and kept while the thread lives (as the shell's
+        // thumbnails' threads do).
+        // SAFETY: no reserved argument; a failure (another apartment
+        // joined already) leaves the thread as it was.
+        let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+        let color = UISettings::new()
+            .and_then(|settings| settings.GetColorValue(UIColorType::Accent))
+            .ok()?;
+        Some([color.R, color.G, color.B].map(|c| f32::from(c) / 255.))
+    }
+
+    /// Whether a contrast theme is on (`SPI_GETHIGHCONTRAST`).
+    pub fn high_contrast() -> bool {
+        use ::windows::Win32::UI::Accessibility::{HCF_HIGHCONTRASTON, HIGHCONTRASTW};
+        use ::windows::Win32::UI::WindowsAndMessaging::{
+            SPI_GETHIGHCONTRAST, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SystemParametersInfoW,
+        };
+        let Ok(size) = u32::try_from(std::mem::size_of::<HIGHCONTRASTW>()) else {
+            return false;
+        };
+        let mut contrast = HIGHCONTRASTW {
+            cbSize: size,
+            ..HIGHCONTRASTW::default()
+        };
+        // SAFETY: a structure of the size it says, which the call fills
+        // and which outlives it.
+        let read = unsafe {
+            SystemParametersInfoW(
+                SPI_GETHIGHCONTRAST,
+                size,
+                Some((&raw mut contrast).cast()),
+                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+            )
+        };
+        read.is_ok() && contrast.dwFlags.contains(HCF_HIGHCONTRASTON)
+    }
+
+    /// The colors a contrast theme asks applications to draw with
+    /// (`GetSysColor`), each `0x00BBGGRR`: the window's ground and text,
+    /// a button's face, text grayed, and what is highlighted and its text.
+    pub fn contrast_colors() -> [u32; 6] {
+        use ::windows::Win32::Graphics::Gdi::{
+            COLOR_BTNFACE, COLOR_GRAYTEXT, COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT, COLOR_WINDOW,
+            COLOR_WINDOWTEXT, GetSysColor,
+        };
+        [
+            COLOR_WINDOW,
+            COLOR_WINDOWTEXT,
+            COLOR_BTNFACE,
+            COLOR_GRAYTEXT,
+            COLOR_HIGHLIGHT,
+            COLOR_HIGHLIGHTTEXT,
+        ]
+        // SAFETY: a color index Windows defines; the call only reads.
+        .map(|index| unsafe { GetSysColor(index) })
     }
 
     /// The Text size as a factor (1.25 for 125 %); `None` where none was
@@ -1038,16 +1110,25 @@ pub mod style {
         }
     }
 
-    /// Call `changed` each time the Text size or the window metrics
-    /// change, until `stop`, waiting on the registry's notices (no timer).
-    /// Returns at once when neither key can be watched.
+    /// Call `changed` each time the Text size, the window metrics, the
+    /// accent, the contrast theme or its colors change, until `stop`,
+    /// waiting on the registry's notices (no timer). Returns at once when
+    /// no key can be watched; a key Windows has not made yet (no accent
+    /// ever chosen) is left out.
     pub fn follow(stop: &skwir_core::CancelToken, mut changed: impl FnMut()) {
-        let watched: Vec<Watched> = [ACCESSIBILITY, WINDOW_METRICS]
-            .into_iter()
-            .filter_map(Watched::open)
-            .collect();
+        let watched: Vec<Watched> = [
+            ACCESSIBILITY,
+            WINDOW_METRICS,
+            ACCENT,
+            DWM,
+            HIGH_CONTRAST,
+            SYSTEM_COLORS,
+        ]
+        .into_iter()
+        .filter_map(Watched::open)
+        .collect();
         let Some(stopped) = Event::new(true).filter(|_| !watched.is_empty()) else {
-            tracing::debug!("Windows' text settings are read, not followed");
+            tracing::debug!("Windows' style is read, not followed");
             return;
         };
         // The token's signal set as the event, from a thread that waits on

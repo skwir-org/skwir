@@ -428,20 +428,17 @@ fn colors_from_spec(app: &App) -> SettingSpec {
             Some(colors_swatch(app, *source, shown.system_dark))
         })
         .collect();
-    let (description, now) = if skwir_platform::desktop_style::COLORS {
-        (
-            "Where skwir takes its colors: your desktop's, or one of skwir's palettes. Automatic reads your desktop's own (Plasma's color scheme, LXQt's palette, the GTK theme GNOME, MATE, Cinnamon or Xfce names), else GTK's theme, else the color scheme of qt6ct or qt5ct; GTK or Qt reads that toolkit's alone. A palette keeps its own accent and brings its code and terminal colors, each in a light look and a dark one. More contrast, when your desktop asks for it, is followed whatever is chosen.",
-            crate::desktop_style::Source::now(
-                shown
-                    .as_ref()
-                    .and_then(|shown| shown.colors_from.as_deref()),
-            ),
-        )
+    let now = crate::desktop_style::Source::now(
+        shown
+            .as_ref()
+            .and_then(|shown| shown.colors_from.as_deref()),
+    );
+    let description = if cfg!(target_os = "macos") {
+        "Where skwir takes its colors: macOS's, or one of skwir's palettes. Automatic wears the colors macOS draws its own windows in, with the accent you chose and its Increase contrast. A palette keeps its own accent and brings its code and terminal colors, each in a light look and a dark one. Increase contrast is followed whatever is chosen."
+    } else if cfg!(windows) {
+        "Where skwir takes its colors: Windows' accent, or one of skwir's palettes. Automatic wears skwir's colors with the accent you chose in Windows' settings, or a contrast theme's colors while one is on. A palette keeps its own accent and brings its code and terminal colors, each in a light look and a dark one. A contrast theme's need for more contrast is followed whatever is chosen."
     } else {
-        (
-            "The colors skwir wears: one of its palettes. Automatic is the Skwir palette until this system's own colors are read. A palette brings its code and terminal colors, each in a light look and a dark one. More contrast, when your system asks for it, is followed whatever is chosen.",
-            crate::palettes::SKWIR.id.to_owned(),
-        )
+        "Where skwir takes its colors: your desktop's, or one of skwir's palettes. Automatic reads your desktop's own (Plasma's color scheme, LXQt's palette, the GTK theme GNOME, MATE, Cinnamon or Xfce names), else GTK's theme, else the color scheme of qt6ct or qt5ct; GTK or Qt reads that toolkit's alone. A palette keeps its own accent and brings its code and terminal colors, each in a light look and a dark one. More contrast, when your desktop asks for it, is followed whatever is chosen."
     };
     SettingSpec::choice(COLORS_FROM_KEY, "Colors from", description, "auto", &pairs)
         .essential()
