@@ -670,11 +670,24 @@ pub fn element(pic: &Pic, size: f32, ink: Ink) -> AnyElement {
             img(ImageSource::Custom(Arc::new(
                 move |window: &mut Window, cx: &mut gpui::App| {
                     let pixels = raster_side(size * window.scale_factor());
-                    // While it is rasterized in this ink, as it was drawn
-                    // last: in other colors, never blank.
-                    window
-                        .use_asset::<SchemeSvg>(&(Arc::clone(&path), pixels, ink), cx)
-                        .or_else(|| drawn_last(&path, pixels).map(Ok))
+                    match window.use_asset::<SchemeSvg>(&(Arc::clone(&path), pixels, ink), cx) {
+                        Some(Ok(image)) => {
+                            // Drawn in the colors now: what was drawn there
+                            // before it, given back, leaves the atlas.
+                            if RETIRING.load(std::sync::atomic::Ordering::Acquire) {
+                                let place = (Arc::clone(&path), pixels);
+                                let retired = scheme_drawn().replaced(&place, &image);
+                                if let Some(retired) = retired {
+                                    cx.drop_image(retired, Some(&mut *window));
+                                }
+                            }
+                            Some(Ok(image))
+                        }
+                        // While it is rasterized in this ink, as it was
+                        // drawn last: in other colors, never blank.
+                        None => drawn_last(&path, pixels).map(Ok),
+                        failed => failed,
+                    }
                 },
             )))
             .size(px(size))
@@ -786,6 +799,10 @@ enum SchemeSvg {}
 
 type SchemeKey = (Arc<Path>, u32, Ink);
 
+/// A file at a side of device pixels: where `SchemeDrawn` keeps what it
+/// was drawn as last.
+type Place = (Arc<Path>, u32);
+
 /// What was drawn of icons in KDE's color scheme.
 #[derive(Default)]
 struct SchemeDrawn {
@@ -794,11 +811,116 @@ struct SchemeDrawn {
     /// The last rasterized of each file at each side, drawn while it is
     /// rasterized in other colors (`element`): at most one a file and
     /// side, the one GPUI keeps for the colors now once they are drawn.
-    last: HashMap<(Arc<Path>, u32), Arc<RenderImage>>,
+    last: HashMap<Place, Arc<RenderImage>>,
+    /// Rasters given back while still the last of their place, waiting
+    /// for it in the colors now: dropped from the atlas once that is drawn
+    /// (`element`), else at the next settling (`settle`).
+    retiring: HashMap<Place, Arc<RenderImage>>,
     /// The colors given back to last (`colors_now`), and whether a value
     /// was shown before it was taken since.
     settled: Option<InkColors>,
     previewed: bool,
+}
+
+/// What a settling gives back: the rasters GPUI's asset cache forgets,
+/// and those the atlas drops now.
+#[derive(Default)]
+struct GivenBack {
+    forgotten: Vec<SchemeKey>,
+    dropped: Vec<Arc<RenderImage>>,
+}
+
+/// Whether `SchemeDrawn::retiring` holds any: what `element` asks each
+/// time it draws, without the lock.
+static RETIRING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+impl SchemeDrawn {
+    /// `image` rasterized for `key`: kept, and its place's last.
+    fn loaded(&mut self, key: SchemeKey, image: &Arc<RenderImage>) {
+        self.last
+            .insert((Arc::clone(&key.0), key.1), Arc::clone(image));
+        self.drawn.insert(key, Arc::downgrade(image));
+    }
+
+    /// The colors are `now`'s: every raster in other colors is given back.
+    /// One that is the last of its place gives way there to its place's
+    /// raster in the colors now, else stays its last, drawn until there
+    /// is one (`retiring`); no raster given back is drawn from `last`
+    /// after the atlas let go of it.
+    fn settle(&mut self, now: &InkColors) -> GivenBack {
+        let current: HashMap<Place, Arc<RenderImage>> = self
+            .drawn
+            .iter()
+            .filter(|((_, _, ink), _)| ink.is_of(now))
+            .filter_map(|((path, side, _), image)| {
+                Some(((Arc::clone(path), *side), image.upgrade()?))
+            })
+            .collect();
+        let mut given = GivenBack::default();
+        // What waited from the settling before goes now: colors moved
+        // twice while its place was not drawn again.
+        for (place, image) in self.retiring.drain() {
+            if self
+                .last
+                .get(&place)
+                .is_some_and(|last| Arc::ptr_eq(last, &image))
+            {
+                match current.get(&place) {
+                    Some(now) => self.last.insert(place, Arc::clone(now)),
+                    None => self.last.remove(&place),
+                };
+            }
+            given.dropped.push(image);
+        }
+        let gone: Vec<SchemeKey> = self
+            .drawn
+            .keys()
+            .filter(|(_, _, ink)| !ink.is_of(now))
+            .cloned()
+            .collect();
+        for key in gone {
+            let image = self.drawn.remove(&key).and_then(|weak| weak.upgrade());
+            let place = (Arc::clone(&key.0), key.1);
+            given.forgotten.push(key);
+            let Some(image) = image else { continue };
+            if self
+                .last
+                .get(&place)
+                .is_some_and(|last| Arc::ptr_eq(last, &image))
+            {
+                if let Some(now) = current.get(&place) {
+                    self.last.insert(place, Arc::clone(now));
+                } else {
+                    self.retiring.insert(place, image);
+                    continue;
+                }
+            }
+            given.dropped.push(image);
+        }
+        RETIRING.store(
+            !self.retiring.is_empty(),
+            std::sync::atomic::Ordering::Release,
+        );
+        given
+    }
+
+    /// `place` is drawn in the colors now, as `image`: what retired there
+    /// goes, and `image` is its last.
+    fn replaced(&mut self, place: &Place, image: &Arc<RenderImage>) -> Option<Arc<RenderImage>> {
+        let retired = self.retiring.remove(place)?;
+        if self
+            .last
+            .get(place)
+            .is_some_and(|last| Arc::ptr_eq(last, &retired))
+        {
+            self.last.insert(place.clone(), Arc::clone(image));
+        }
+        RETIRING.store(
+            !self.retiring.is_empty(),
+            std::sync::atomic::Ordering::Release,
+        );
+        Some(retired)
+    }
 }
 
 fn scheme_drawn() -> std::sync::MutexGuard<'static, SchemeDrawn> {
@@ -827,11 +949,7 @@ impl Asset for SchemeSvg {
         async move {
             let sheet = ink.style_sheet();
             let image = render_image(icons::rasterize_styled(&path, side, Some(&sheet)))?;
-            let mut drawn = scheme_drawn();
-            drawn
-                .drawn
-                .insert((Arc::clone(&path), side, ink), Arc::downgrade(&image));
-            drawn.last.insert((path, side), Arc::clone(&image));
+            scheme_drawn().loaded((path, side, ink), &image);
             Ok(image)
         }
     }
@@ -851,7 +969,7 @@ pub fn colors_now(
     window: &mut Window,
     cx: &mut gpui::App,
 ) {
-    let given_back: Vec<(SchemeKey, Weak<RenderImage>)> = {
+    let given = {
         let mut drawn = scheme_drawn();
         if previewing {
             drawn.previewed = true;
@@ -863,21 +981,13 @@ pub fn colors_now(
         }
         drawn.settled = Some(now);
         drawn.previewed = false;
-        let gone: Vec<SchemeKey> = drawn
-            .drawn
-            .keys()
-            .filter(|(_, _, ink)| !ink.is_of(&now))
-            .cloned()
-            .collect();
-        gone.into_iter()
-            .filter_map(|key| drawn.drawn.remove_entry(&key))
-            .collect()
+        drawn.settle(&now)
     };
-    for (key, image) in given_back {
+    for key in given.forgotten {
         cx.remove_asset::<SchemeSvg>(&key);
-        if let Some(image) = image.upgrade() {
-            cx.drop_image(image, Some(&mut *window));
-        }
+    }
+    for image in given.dropped {
+        cx.drop_image(image, Some(&mut *window));
     }
 }
 
@@ -1261,6 +1371,59 @@ mod tests {
         let kept = preloaded().lock().unwrap();
         assert!(kept.contains_key(&*symbolic.to_string_lossy()));
         assert!(!kept.contains_key(&*recolored.to_string_lossy()));
+    }
+
+    #[test]
+    fn a_raster_given_back_leaves_the_last_drawn_once_its_place_is_drawn_anew() {
+        use super::{InkColors, SchemeDrawn};
+        use crate::theme::Theme;
+        use std::sync::Arc;
+        let image = || crate::thumbs::owned_render_image(1, 1, vec![0; 4]).unwrap();
+        let (light, dark) = (Theme::light(), Theme::dark());
+        let in_light = Ink::of(&light, light.text_muted);
+        let in_dark = Ink::of(&dark, dark.text_muted);
+        let folder: Arc<Path> = Path::new("/icons/folder.svg").into();
+        let place = (Arc::clone(&folder), 32);
+        let key = |ink| (Arc::clone(&folder), 32, ink);
+        let mut drawn = SchemeDrawn::default();
+
+        // Light, then dark shown before it is taken, then light again: the
+        // light raster is still GPUI's, so the dark one leaves at once,
+        // `last` included.
+        let (lit, darkened) = (image(), image());
+        drawn.loaded(key(in_light), &lit);
+        drawn.loaded(key(in_dark), &darkened);
+        assert!(Arc::ptr_eq(&drawn.last[&place], &darkened));
+        let given = drawn.settle(&InkColors::of(&light));
+        assert_eq!(given.forgotten, [key(in_dark)]);
+        assert!(given.dropped.iter().any(|i| Arc::ptr_eq(i, &darkened)));
+        assert!(
+            Arc::ptr_eq(&drawn.last[&place], &lit),
+            "the light one is last"
+        );
+        assert!(drawn.retiring.is_empty());
+
+        // Dark taken at once: the light raster stays the last, drawn until
+        // the dark one is, then leaves the atlas.
+        let given = drawn.settle(&InkColors::of(&dark));
+        assert_eq!(given.forgotten, [key(in_light)]);
+        assert!(given.dropped.is_empty(), "still drawn while dark is made");
+        assert!(Arc::ptr_eq(&drawn.retiring[&place], &lit));
+        let dark_again = image();
+        drawn.loaded(key(in_dark), &dark_again);
+        let retired = drawn.replaced(&place, &dark_again).unwrap();
+        assert!(Arc::ptr_eq(&retired, &lit));
+        assert!(Arc::ptr_eq(&drawn.last[&place], &dark_again));
+        assert!(drawn.replaced(&place, &dark_again).is_none());
+
+        // Retired and never drawn again: gone at the next settling.
+        let given = drawn.settle(&InkColors::of(&light));
+        assert!(given.dropped.is_empty());
+        assert!(Arc::ptr_eq(&drawn.retiring[&place], &dark_again));
+        let given = drawn.settle(&InkColors::of(&dark));
+        assert!(given.dropped.iter().any(|i| Arc::ptr_eq(i, &dark_again)));
+        assert!(!drawn.last.contains_key(&place));
+        assert!(drawn.retiring.is_empty());
     }
 
     #[test]
