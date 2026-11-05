@@ -102,6 +102,10 @@ pub fn segment(
         .flex()
         .items_center()
         .rounded_sm()
+        // Room for `now`'s outline in every segment, so marking one moves
+        // none.
+        .border_1()
+        .border_color(gpui::transparent_black())
         .text_small()
         .whitespace_nowrap()
         .cursor_pointer()
@@ -112,6 +116,13 @@ pub fn segment(
             d.text_color(theme.text_muted).hover(move |s| s.bg(hover))
         })
         .child(label)
+}
+
+/// A segment marked as what the automatic choice, chosen, comes to now:
+/// outlined in dashes, as a toolbar's automatic value is (`toolbar`'s
+/// `now`).
+pub fn now(segment: Stateful<Div>, theme: &Theme) -> Stateful<Div> {
+    segment.border_dashed().border_color(theme.accent)
 }
 
 fn toggled(on: bool) -> gpui::Toggled {

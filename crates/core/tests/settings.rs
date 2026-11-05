@@ -383,6 +383,18 @@ fn builders_describe_controls_and_the_schema_serializes_for_agents() {
     );
     assert_eq!(engine.choice_label("second"), "The second");
     assert_eq!(engine.choice_label("unknown"), "unknown");
+    // What the default comes to, shown beside it alone: a choice by its
+    // label, a name as it is, nothing when it comes to itself.
+    assert_eq!(engine.choice_shown("first"), "First");
+    let engine = engine.now("second");
+    assert_eq!(engine.choice_shown("first"), "First (The second)");
+    assert_eq!(engine.choice_shown("second"), "The second");
+    assert_eq!(engine.now_of("first"), Some("The second"));
+    assert_eq!(
+        engine.clone().now("Noto Sans").choice_shown("first"),
+        "First (Noto Sans)"
+    );
+    assert_eq!(engine.now("first").now_of("first"), None);
     let saved = SettingSpec::data("sample.saved", "d", toml::Value::Array(vec![]));
     assert!(!saved.editable());
     assert!(saved.parse("[]").is_err());

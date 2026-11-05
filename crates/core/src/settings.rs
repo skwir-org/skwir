@@ -335,6 +335,11 @@ pub struct SettingConstraints {
     /// where skwir runs (the themes a user added to bat). A file's value
     /// outside them is noted by `Settings::check`, not refused.
     pub more_choices: String,
+    /// What the default choice, Automatic, comes to here and now: one of
+    /// `choices` (the theme's `dark`) or a name of its own (a font's
+    /// family); empty when its owner does not say. The dialog shows it
+    /// while the default is chosen (`SettingSpec::choice_shown`).
+    pub now: String,
 }
 
 impl SettingSpec {
@@ -495,6 +500,15 @@ impl SettingSpec {
         self
     }
 
+    /// What the default choice, Automatic, comes to now: a value of its
+    /// choices or a name (`SettingConstraints::now`). The owner declares
+    /// the setting again when it changes.
+    #[must_use]
+    pub fn now(mut self, now: &str) -> Self {
+        now.clone_into(&mut self.constraints.now);
+        self
+    }
+
     /// Choices others may join where skwir runs, said in a few words
     /// ("themes you added to bat"): see `SettingConstraints::more_choices`.
     #[must_use]
@@ -567,6 +581,26 @@ impl SettingSpec {
             .position(|choice| choice == value)
             .and_then(|index| self.constraints.choice_labels.get(index))
             .map_or(value, String::as_str)
+    }
+
+    /// The choice `value` as shown: its label, and for the default, while
+    /// its owner says what it comes to (`now`), that too: "Automatic
+    /// (Dark)", "Automatic (Noto Sans)".
+    pub fn choice_shown<'a>(&'a self, value: &'a str) -> std::borrow::Cow<'a, str> {
+        let label = self.choice_label(value);
+        match self.now_of(value) {
+            Some(now) => format!("{label} ({now})").into(),
+            None => label.into(),
+        }
+    }
+
+    /// What the choice `value` comes to now, as shown: the label of the
+    /// choice it is, or its own name; `None` unless `value` is the default
+    /// and its owner says, or it comes to itself.
+    pub fn now_of(&self, value: &str) -> Option<&str> {
+        let now = self.constraints.now.as_str();
+        let default = self.default.as_str()?;
+        (value == default && !now.is_empty() && now != default).then(|| self.choice_label(now))
     }
 
     /// Collections are application data (e.g. saved queries), managed by their

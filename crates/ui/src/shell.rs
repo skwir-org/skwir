@@ -3822,6 +3822,7 @@ fn show_resolved(app: &Arc<App>, cx: &gpui::App) {
         automatic: crate::fonts::automatic(app, cx.text_system()),
         hundreds,
         from: crate::desktop_style::sizes(&app.settings).from,
+        dark: theme.is_dark,
     };
     crate::settings::show_resolved(app, shown);
 }

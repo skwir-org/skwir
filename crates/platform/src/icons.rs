@@ -74,6 +74,13 @@ pub fn choose_theme(theme: Option<&str>) {
 /// The desktop's theme, read once (`imp::detect_theme`).
 static DETECTED: OnceLock<String> = OnceLock::new();
 
+/// The desktop's icon theme (a folder's name, `breeze`): what the icon
+/// theme setting's Automatic comes to. Reads the icon folders the first
+/// time: blocks.
+pub fn desktop_theme() -> String {
+    DETECTED.get_or_init(imp::detect_theme).clone()
+}
+
 /// The active icon theme name: the one chosen in skwir when it is
 /// installed, else the desktop's. Reads the icon folders the first time:
 /// blocks.
@@ -85,7 +92,7 @@ pub fn theme_name() -> String {
     let chosen = chosen().lock().ok().and_then(|c| c.clone());
     let name = chosen
         .filter(|theme| imp::is_installed(theme))
-        .unwrap_or_else(|| DETECTED.get_or_init(imp::detect_theme).clone());
+        .unwrap_or_else(desktop_theme);
     // Kept unless a choice came meanwhile.
     if let Ok(mut resolved) = resolved().lock()
         && GENERATION.load(Ordering::SeqCst) == generation

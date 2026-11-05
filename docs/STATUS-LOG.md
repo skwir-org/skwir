@@ -11030,3 +11030,25 @@ What the review beside 0.3.0 left (ADR-117), taken up before 0.3.1.
   font read, the Text size's range, and a Text size written in the test
   prefix's registry followed (8 tests); 910 Linux tests of the platform
   and the UI. Not run: a Mac; the UI's tests on Windows.
+
+## Automatic says what it gives in the settings (2026-11-05)
+
+The user chose, after the text-size follow-ups, to show what an
+Automatic setting comes to at a glance, as a popup's setting row does
+(ADR-099): `SettingSpec::now` (core) says what the default choice gives
+here and now, a choice or a name; the dialog outlines that segment in
+dashes while the default is chosen (`controls::now`, every segment
+keeping a transparent border so none moves), names Automatic "Automatic,
+now X" to a screen reader, and says "Automatic (X)" in a dropdown, its
+list and the revert tooltip (`SettingSpec::choice_shown`). Fonts went
+through it rather than their own label. Saying it: the theme's and
+code's Light or dark (the look the window resolved, `Shown::dark`),
+Fonts from (GTK's, the portal's counted as GTK's, Qt's, or the desktop's
+own by name), the icon theme (the desktop's, once the themes are listed
+on a worker: `icons::desktop_theme`), the book engine (the built-in).
+Checked on Xvfb: Appearance with defaults, Light outlined beside
+Automatic, Fonts from's GTK outlined, "Automatic (Breeze)" and
+"Automatic (Noto Sans)" in the dropdowns; core's test of `choice_shown`
+and `now_of`; clippy on core, platform, UI and books; 69 settings, font
+and theme tests. Not yet: the other engines' Automatic (documents,
+DjVu, video, remote connectors), which their probes would answer.

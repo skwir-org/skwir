@@ -209,17 +209,15 @@ pub fn font_spec(
     installed: Option<&crate::fonts::Installed>,
 ) -> SettingSpec {
     // Automatic says what it comes to, once the window resolved it.
-    let automatic = shown()
+    let now = shown()
         .map(|shown| match key {
             READING_FONT_KEY => shown.automatic.reading,
             CODE_FONT_KEY => shown.automatic.code,
             _ => shown.automatic.ui,
         })
-        .map_or_else(
-            || "Automatic".to_owned(),
-            |family| format!("Automatic ({})", crate::fonts::named(&family)),
-        );
-    let mut choices = vec![(FONT_AUTO.to_owned(), automatic)];
+        .map(|family| crate::fonts::named(&family).to_owned())
+        .unwrap_or_default();
+    let mut choices = vec![(FONT_AUTO.to_owned(), "Automatic".to_owned())];
     if let Some(installed) = installed {
         choices.extend(
             installed
@@ -242,6 +240,7 @@ pub fn font_spec(
     let spec = |title: &str, description: &str| {
         SettingSpec::choice(key, title, description, FONT_AUTO, &pairs)
             .more_choices("the fonts installed")
+            .now(&now)
     };
     match key {
         READING_FONT_KEY => spec(
@@ -353,6 +352,58 @@ fn fonts_from_spec() -> SettingSpec {
         pairs[0].0,
         pairs,
     )
+    .now(&fonts_from_now(
+        shown().and_then(|shown| shown.from).as_deref(),
+    ))
+}
+
+/// The theme's look: Automatic (the desktop's preference, saying the look
+/// it comes to once the window resolved it), Light or Dark.
+fn theme_spec() -> SettingSpec {
+    SettingSpec::choice(
+        THEME_KEY,
+        "Theme",
+        "Follow the desktop's light or dark preference, or always use one.",
+        "auto",
+        &[("auto", "Automatic"), ("light", "Light"), ("dark", "Dark")],
+    )
+    .essential()
+    .now(look_now())
+}
+
+/// Code's look: Automatic follows the theme's, and says it.
+fn code_appearance_spec() -> SettingSpec {
+    SettingSpec::choice(
+        CODE_APPEARANCE_KEY,
+        "Light or dark",
+        "Draw source files and code in documents light or dark. Automatic follows skwir's theme; Light or Dark keeps code in the theme chosen below for that look, with its gutter, selection and background, whatever skwir is.",
+        "auto",
+        &[("auto", "Automatic"), ("light", "Light"), ("dark", "Dark")],
+    )
+    .section("Code")
+    .essential()
+    .now(look_now())
+}
+
+/// The look the window resolved last, as the looks' choices name it;
+/// empty before it is.
+fn look_now() -> &'static str {
+    match shown().map(|shown| shown.dark) {
+        Some(true) => "dark",
+        Some(false) => "light",
+        None => "",
+    }
+}
+
+/// What Fonts from's Automatic read, as its choices name it: GTK's (the
+/// portal's are GTK's), Qt's, or the desktop's own by its name.
+fn fonts_from_now(from: Option<&str>) -> String {
+    match from {
+        Some(from) if from.starts_with("GTK") || from == "the portal" => "gtk".to_owned(),
+        Some(from) if from.starts_with("Qt") => "qt".to_owned(),
+        Some(from) => from.to_owned(),
+        None => String::new(),
+    }
 }
 
 /// A size in pixels as a desktop's font settings say it: in points, to
@@ -367,7 +418,8 @@ pub(crate) fn points(px: f32) -> String {
 }
 
 /// What a font setting's Automatic comes to and each part's 100 %, as the
-/// window resolved them last (ADR-117): said beside their choices.
+/// window resolved them last (ADR-117), and the look the theme's
+/// Automatic comes to: said beside their choices.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Shown {
     pub automatic: crate::fonts::Families,
@@ -375,6 +427,8 @@ pub(crate) struct Shown {
     pub hundreds: [f32; 4],
     /// Where the fonts were read, none for skwir's own.
     pub from: Option<String>,
+    /// The look drawn: what the theme's Automatic comes to.
+    pub dark: bool,
 }
 
 static SHOWN: std::sync::RwLock<Option<Shown>> = std::sync::RwLock::new(None);
@@ -420,6 +474,8 @@ pub(crate) fn show_resolved(app: &App, now: Shown) {
     if skwir_platform::desktop_style::FONTS {
         app.settings.declare(fonts_from_spec());
     }
+    app.settings.declare(theme_spec());
+    app.settings.declare(code_appearance_spec());
 }
 
 /// What a font setting says, Automatic when nothing.
@@ -918,13 +974,15 @@ pub(crate) fn list_icon_themes(app: &Arc<App>) {
         app.lifetime().child(),
         move || {
             let themes = skwir_platform::icons::installed_themes();
+            // What Automatic comes to: the desktop's, read once.
+            let desktop = skwir_platform::icons::desktop_theme();
             let Some(app) = weak.upgrade() else { return };
             let chosen = app
                 .settings
                 .get::<String>(ICON_THEME_KEY)
                 .unwrap_or_default();
             app.settings
-                .declare(icon_theme_spec(&chosen, Some(&themes)));
+                .declare(icon_theme_spec(&chosen, Some(&themes)).now(&desktop));
             app.wake();
         },
     );
@@ -934,16 +992,7 @@ pub(crate) fn list_icon_themes(app: &Arc<App>) {
 /// (`ui`, `reading`) and exist only while a shell does, so headless tools
 /// never see them.
 pub fn declare(app: &App) {
-    app.settings.declare(
-        SettingSpec::choice(
-            THEME_KEY,
-            "Theme",
-            "Follow the desktop's light or dark preference, or always use one.",
-            "auto",
-            &[("auto", "Automatic"), ("light", "Light"), ("dark", "Dark")],
-        )
-        .essential(),
-    );
+    app.settings.declare(theme_spec());
     if skwir_platform::desktop_style::COLORS {
         app.settings.declare(SettingSpec::toggle(
             DESKTOP_COLORS_KEY,
@@ -1136,17 +1185,7 @@ pub fn declare(app: &App) {
         )
         .section("Text"),
     );
-    app.settings.declare(
-        SettingSpec::choice(
-            CODE_APPEARANCE_KEY,
-            "Light or dark",
-            "Draw source files and code in documents light or dark. Automatic follows skwir's theme; Light or Dark keeps code in the theme chosen below for that look, with its gutter, selection and background, whatever skwir is.",
-            "auto",
-            &[("auto", "Automatic"), ("light", "Light"), ("dark", "Dark")],
-        )
-        .section("Code")
-        .essential(),
-    );
+    app.settings.declare(code_appearance_spec());
     for (dark, key) in [(false, CODE_LIGHT_KEY), (true, CODE_DARK_KEY)] {
         // Nothing stored and nothing declared yet: the default is chosen.
         let chosen = app
@@ -1784,7 +1823,7 @@ impl Narrowed {
         spec.constraints
             .choices
             .iter()
-            .map(|value| (value.clone(), spec.choice_label(value).to_owned()))
+            .map(|value| (value.clone(), spec.choice_shown(value).into_owned()))
             .collect()
     }
 

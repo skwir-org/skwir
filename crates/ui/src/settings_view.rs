@@ -616,22 +616,34 @@ impl SettingsView {
                     this.change(&cycle_key, cycle[next].clone(), cx);
                 }
             }));
+        // While Automatic (the default) is chosen, what it comes to now is
+        // outlined, and Automatic says it to a screen reader.
+        let automatic = row.spec.default.as_str() == Some(row.value.as_str());
+        let now = &row.spec.constraints.now;
         for (index, choice) in choices.into_iter().enumerate() {
             let label = row.spec.choice_label(&choice).to_owned();
+            let said = row
+                .spec
+                .now_of(&choice)
+                .map(|now| format!("{label}, now {now}"));
             let key = key.clone();
             let focus = focus.clone();
-            frame = frame.child(
-                controls::segment(
-                    format!("choice-{key}-{choice}"),
-                    label,
-                    current == Some(index),
-                    theme,
-                )
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    window.focus(&focus, cx);
-                    this.change(&key, choice.clone(), cx);
-                })),
-            );
+            let segment = controls::segment(
+                format!("choice-{key}-{choice}"),
+                label,
+                current == Some(index),
+                theme,
+            )
+            .when_some(said, gpui::StatefulInteractiveElement::aria_label);
+            let segment = if automatic && *now == choice && current != Some(index) {
+                controls::now(segment, theme)
+            } else {
+                segment
+            };
+            frame = frame.child(segment.on_click(cx.listener(move |this, _, window, cx| {
+                window.focus(&focus, cx);
+                this.change(&key, choice.clone(), cx);
+            })));
         }
         frame.into_any_element()
     }
@@ -657,7 +669,7 @@ impl SettingsView {
             self.named(
                 controls::dropdown(
                     format!("choice-{key}"),
-                    row.spec.choice_label(&row.value).to_owned(),
+                    row.spec.choice_shown(&row.value).into_owned(),
                     focus,
                     theme,
                 )
@@ -710,7 +722,7 @@ impl SettingsView {
                 }));
             for choice in row.spec.constraints.choices.clone() {
                 let selected = choice == row.value;
-                let label = row.spec.choice_label(&choice).to_owned();
+                let label = row.spec.choice_shown(&choice).into_owned();
                 let key = key.clone();
                 panel = panel.child(
                     div()
@@ -1032,7 +1044,7 @@ impl SettingsView {
         } else {
             format!(
                 "Restore the default: {}",
-                row.spec.choice_label(&row.default_text)
+                row.spec.choice_shown(&row.default_text)
             )
             .into()
         };

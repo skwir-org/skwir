@@ -70,6 +70,7 @@ impl Plugin for PreviewPlugin {
                 ("mupdf", "MuPDF"),
             ],
         )
+        .now("builtin")
         .page(skwir_core::settings::page::READING)
         .section("Books"));
         register_books(app);

@@ -31,6 +31,13 @@ the reasoning.
 - The owner states the title, description, unit, step, choice labels and
   section, so the dialog, the palette and agents need no key-specific
   branches.
+- **What Automatic comes to.** A choice whose default is Automatic says
+  what it gives here and now where its owner knows (`SettingSpec::now`:
+  one of its choices, `dark`, or a name, a font's family), and declares
+  it again when that changes (the theme's look, the fonts read: through
+  `settings::show_resolved`; the icon themes once listed). Never bake it
+  into the label: the label stays "Automatic", and `choice_shown` adds
+  what it comes to wherever a label is shown.
 - A setting that applies only while a switch is on says so with
   `SettingSpec::under(switch)` and is declared right after it, in its
   section: the dialog draws it
@@ -154,6 +161,14 @@ The key is the owner's; the page is the subject's (ADR-072).
   buttons only while they fit beside that (`elements::adaptive::Fit`
   measures both forms; no character counts), else a dropdown. A text
   field narrows before the texts do.
+- **Automatic says what it gives**, as a popup's setting row does
+  (`docs/invariants/shell.md`): while the default is chosen, the segment
+  it comes to now is outlined in dashes (`controls::now`; every segment
+  keeps room for the outline, so marking one moves none), and Automatic
+  is named "Automatic, now Dark" to a screen reader; a dropdown, its
+  list and the revert button's tooltip say "Automatic (Dark)"
+  (`SettingSpec::choice_shown`). A name that is no choice (a desktop's
+  own fonts, Plasma) outlines nothing and is said in words alone.
 - **A long list narrows.** A dropdown of more than
   `settings_view::FILTERED` choices (the icon themes, bat's themes), and
   a font's however few (the code font's monospaced families may be),
