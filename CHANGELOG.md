@@ -36,6 +36,9 @@
   than 0.72 s). It is read and sorted away from the window, which never stalls
   meanwhile, and says how many items it has read so far. Searches, the Trash
   and Nearby still show what they find as they find it.
+- **Sorting a large folder anew** (a column's header, the direction, hidden
+  files) no longer stalls the window: the rows keep their order until the new
+  one is ready, a moment later.
 
 ## 0.3.1 (2026-11-05)
 

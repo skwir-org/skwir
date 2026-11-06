@@ -76,7 +76,8 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
   drag's name under its icon, inside the window and out; names broken
   where they read best; a folder appears whole, filled and sorted on a
   worker, with how many entries were read until then (ADR-120, amends
-  ADR-000's principle 1).
+  ADR-000's principle 1); an order asked anew made on a worker, the
+  order before shown meanwhile (ADR-121).
 - **Work (2026-11-04 to 11-05) in 0.3.1:** text sizes by part
   from the desktop's (ADR-117), Fonts from and Colors from, twelve
   palettes and the desktop's colors on macOS and Windows (ADR-071
@@ -788,10 +789,10 @@ leave (ADR-077).
   the same evening: why it starts slower is not known.
 
 **From a folder appearing whole** (ADR-120, 2026-11-06):
-- A sort chosen anew (a column's header) still sorts the whole folder
-  on the window's thread (about 110 ms for `/nix/store`'s 390 000
-  entries in the release build): the order before would have to stay
-  shown until a worker's is back.
+- A listing whose order no longer holds (an entry renamed or hidden in
+  place, a companion arriving, companions shown or hidden) is still
+  sorted whole on the window's thread (ADR-121, decision 5): rare, but
+  about 110 ms for 390 000 entries.
 - What streams (a search, the Trash) is still built on the window's
   thread: its tables, copied whole at each doubling, cost there (about
   31 ms at 230 400 entries in a probe), for a search or a trash that

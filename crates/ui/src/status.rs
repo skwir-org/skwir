@@ -133,7 +133,7 @@ pub(crate) fn render(
                 shell.ui().place.search,
                 p.selection.sweeping(),
                 // Filtered (its lens, words typed): how many there are in all.
-                p.is_filtered().then(|| p.listing.sorted(p.sort).len()),
+                p.is_filtered().then(|| p.listing.order_shown(p.sort).len()),
                 p.listing.as_of().cloned(),
                 p.read_filter().is_some_and(|r| r.metadata),
             )

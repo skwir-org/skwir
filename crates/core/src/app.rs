@@ -1410,14 +1410,15 @@ impl App {
     /// shows that one in its place.
     pub fn pump_report(&self) -> crate::workspace::PumpReport {
         let mut report = self.workspace.write().pump_report();
-        // A folder is filled on a worker, and taken whole by the pump its
-        // wake brings (ADR-120). Never cancelled: a job for a folder left
-        // stops by itself, and one kept (a column gone to) still waits.
-        for job in std::mem::take(&mut report.fills) {
+        // A folder is filled on a worker, an order asked anew made there,
+        // and each taken by the pump its wake brings (ADR-120, ADR-121).
+        // Never cancelled: a job for a folder left stops or is dropped, and
+        // one kept (a column gone to) still waits for it.
+        for job in std::mem::take(&mut report.jobs) {
             let wake = self.waker_handle();
             self.scheduler.spawn(
                 Priority::Visible,
-                "listing.fill",
+                job.label(),
                 CancelToken::new(),
                 move || {
                     job.run();

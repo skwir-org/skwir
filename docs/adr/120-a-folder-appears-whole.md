@@ -96,7 +96,6 @@ the streaming past a second removed (this record says the last).
 
 ## Not done
 
-- **Sorting again on a worker.** A sort chosen anew (a column's header
-  clicked) still sorts the whole folder on the window's thread: showing
-  the order before until the new one is back needs the view to know the
-  order it shows is not the one asked for.
+- A sort chosen anew (a column's header clicked) sorted the whole folder
+  on the window's thread: made on a worker since, the order before shown
+  meanwhile ([ADR-121](121-an-order-asked-anew-is-made-on-a-worker.md)).

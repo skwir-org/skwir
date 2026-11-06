@@ -872,7 +872,7 @@ impl Rank {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct Slot {
     entry: Entry,
     /// [`crate::collate::sort_key`] of the name, computed once per name.
@@ -1101,6 +1101,127 @@ fn stamp() -> u64 {
     CLOCK.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
+/// A sort of a listing shown, running on a worker (ADR-121): what it was
+/// asked for, and where its order comes back.
+#[derive(Debug)]
+struct Sorting {
+    spec: SortSpec,
+    companions_shown: bool,
+    /// The listing's version when it was asked: one changed since (by a
+    /// change made to it directly, as its events wait) is sorted again.
+    version: u64,
+    order: Receiver<Sorted>,
+}
+
+/// An order made on a worker, and its ranks for placing what arrives
+/// after it.
+#[derive(Debug)]
+struct Sorted {
+    ids: Arc<[EntryId]>,
+    ranks: Vec<Rank>,
+}
+
+/// A sort of a listing shown, for a worker (`Listing::sort_job`): the
+/// window's thread sorts no folder anew.
+pub struct SortJob {
+    entries: Arc<crate::hashing::IndexMap<EntryId, Slot>>,
+    spec: SortSpec,
+    companions: bool,
+    /// The names companions belong to that are listed.
+    named: crate::hashing::Set<OsString>,
+    order: Sender<Sorted>,
+}
+
+impl fmt::Debug for SortJob {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SortJob")
+            .field("entries", &self.entries.len())
+            .field("spec", &self.spec)
+            .finish_non_exhaustive()
+    }
+}
+
+impl SortJob {
+    /// Sort, then send the order. The entries are let go first, so the
+    /// listing that takes the order finds them its own again and copies
+    /// nothing when its events go on.
+    pub fn run(self) {
+        let SortJob {
+            entries,
+            spec,
+            companions,
+            named,
+            order,
+        } = self;
+        let sorted = {
+            let keyed = keyed_of(
+                spec,
+                entries.values().filter(|slot| {
+                    shown_with(spec, slot, companions, |owner| named.contains(owner))
+                }),
+            );
+            Sorted {
+                ids: keyed.iter().map(|key| key.4).collect(),
+                ranks: keyed.into_iter().map(Rank::of).collect(),
+            }
+        };
+        drop(entries);
+        // A listing gone, or asked for another order since, does not wait
+        // for it.
+        let _ = order.send(sorted);
+    }
+}
+
+/// What a pump hands to a worker for the listings it shows: a folder to
+/// fill (ADR-120), an order to make (ADR-121).
+#[derive(Debug)]
+pub enum ListingJob {
+    Fill(FillJob),
+    Sort(SortJob),
+}
+
+impl ListingJob {
+    pub fn run(self) {
+        match self {
+            ListingJob::Fill(job) => job.run(),
+            ListingJob::Sort(job) => job.run(),
+        }
+    }
+
+    /// What the scheduler calls it.
+    pub fn label(&self) -> &'static str {
+        match self {
+            ListingJob::Fill(_) => "listing.fill",
+            ListingJob::Sort(_) => "listing.sort",
+        }
+    }
+}
+
+/// Whether `slot` is shown under `spec`, `is_named` saying whether a
+/// companion's file is listed: see [`Listing::shown`].
+fn shown_with(
+    spec: SortSpec,
+    slot: &Slot,
+    companions: bool,
+    is_named: impl Fn(&OsStr) -> bool,
+) -> bool {
+    let with_file = slot
+        .beside
+        .as_ref()
+        .is_some_and(|owner| owner.is_empty() || is_named(owner));
+    if with_file {
+        return spec.show_hidden && companions;
+    }
+    spec.show_hidden || !slot.entry.is_hidden()
+}
+
+/// `slots`' sort keys under `spec`, in order.
+fn keyed_of<'a>(spec: SortSpec, slots: impl Iterator<Item = &'a Slot>) -> Vec<SortKeyOf<'a>> {
+    let mut keyed: Vec<SortKeyOf<'a>> = slots.map(|slot| Listing::sort_key(spec, slot)).collect();
+    keyed.sort_unstable_by(|a, b| Listing::compare(spec, *a, *b));
+    keyed
+}
+
 /// A listing filled on a worker while it is not shown (ADR-120): shared by
 /// the listing standing in for it and the job filling it.
 #[derive(Debug)]
@@ -1182,7 +1303,11 @@ impl FillJob {
 pub struct Listing {
     /// Which listing this is; see [`stamp`].
     id: u64,
-    entries: crate::hashing::IndexMap<EntryId, Slot>,
+    /// Shared only with a sort running on a worker (`sort_job`), which
+    /// lets go before its order is sent: while it runs the listing takes
+    /// no events, so `Arc::make_mut` finds them its own and copies
+    /// nothing.
+    entries: Arc<crate::hashing::IndexMap<EntryId, Slot>>,
     complete: bool,
     error: Option<String>,
     /// What the answer rests on, when not the files as they are
@@ -1258,6 +1383,10 @@ pub struct Listing {
     fill: Option<Arc<Fill>>,
     /// How many entries its fill had read when `drain` last looked.
     counted: usize,
+    /// An order asked anew, made on a worker (ADR-121): until it is back
+    /// the order before is shown (`order_shown`), and the listing takes
+    /// no events.
+    sorting: Option<Sorting>,
 }
 
 impl Default for Listing {
@@ -1265,7 +1394,7 @@ impl Default for Listing {
         let id = stamp();
         Listing {
             id,
-            entries: crate::hashing::IndexMap::default(),
+            entries: Arc::default(),
             complete: false,
             error: None,
             as_of: None,
@@ -1293,6 +1422,7 @@ impl Default for Listing {
             unfollowed: None,
             fill: None,
             counted: 0,
+            sorting: None,
         }
     }
 }
@@ -1382,6 +1512,106 @@ impl Listing {
         fill.filled.try_lock()?.take()
     }
 
+    /// The order to show for `spec` (ADR-121): its own when the listing
+    /// has it, or can place what changed in it; while one asked anew is
+    /// made on a worker (`sort_job`), the order the listing had before,
+    /// kept current as entries come and go. Sorted here only when it has
+    /// no order to show. What reads a pane's order reads this one: it
+    /// acts on the order drawn.
+    pub fn order_shown(&self, spec: SortSpec) -> Arc<[EntryId]> {
+        match self.order_before(spec) {
+            Some(before) => self.sorted(before),
+            None => self.sorted(spec),
+        }
+    }
+
+    /// The spec of the order it holds, when that order is current but for
+    /// another spec than `spec`: the one to show while `spec`'s is made.
+    fn order_before(&self, spec: SortSpec) -> Option<SortSpec> {
+        let cache = self.sort_cache.lock();
+        let c = cache.as_ref()?;
+        let current =
+            c.stamp == self.order_version && c.companions_shown == self.companions_shown();
+        (current && c.spec != spec).then_some(c.spec)
+    }
+
+    /// The sort that makes `spec`'s order on a worker (ADR-121), when the
+    /// order shown is another's (`order_shown`) and none runs for it. A
+    /// sort asked for another spec before is let go. Until its order is
+    /// back the listing takes no events.
+    pub fn sort_job(&mut self, spec: SortSpec) -> Option<SortJob> {
+        if self.fill.is_some() || self.sorting.as_ref().is_some_and(|s| s.spec == spec) {
+            return None;
+        }
+        self.order_before(spec)?;
+        let companions = self.companions_shown();
+        let named = self
+            .owners
+            .iter()
+            .filter(|owner| self.is_named(owner))
+            .cloned()
+            .collect();
+        let (order, sorted) = crossbeam_channel::bounded(1);
+        self.sorting = Some(Sorting {
+            spec,
+            companions_shown: companions,
+            version: self.version,
+            order: sorted,
+        });
+        Some(SortJob {
+            entries: Arc::clone(&self.entries),
+            spec,
+            companions,
+            named,
+            order,
+        })
+    }
+
+    /// Whether an order asked anew is made on a worker: its events wait
+    /// until it is back, which wakes the window.
+    pub fn is_sorting(&self) -> bool {
+        self.sorting.is_some()
+    }
+
+    /// Take the order a worker made, if it came: shown from now on.
+    /// Whether it was.
+    fn take_sorted(&mut self) -> bool {
+        let Some(sorting) = &self.sorting else {
+            return false;
+        };
+        let sorted = match sorting.order.try_recv() {
+            Ok(sorted) => sorted,
+            Err(crossbeam_channel::TryRecvError::Empty) => return false,
+            // Never run: asked again.
+            Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                self.sorting = None;
+                return false;
+            }
+        };
+        let Some(sorting) = self.sorting.take() else {
+            return false;
+        };
+        if sorting.version != self.version {
+            // Changed under it: sorted again.
+            return false;
+        }
+        *self.sort_cache.get_mut() = Some(SortCache {
+            stamp: self.order_version,
+            spec: sorting.spec,
+            companions_shown: sorting.companions_shown,
+            ids: sorted.ids,
+            seen: self.entries.len(),
+            ranks: sorted.ranks,
+            moved: Vec::new(),
+            gone: IdSet::default(),
+        });
+        // Another order, and other entries shown where hidden files are.
+        let now = stamp();
+        self.shown_version = now;
+        self.version = now;
+        true
+    }
+
     fn slot(&mut self, e: Entry) -> Slot {
         let slot = Slot::new(e, self.companions.as_deref());
         if let Some(owner) = &slot.beside {
@@ -1456,10 +1686,11 @@ impl Listing {
                     // One pass instead of an O(n) shift per id: one id is
                     // one shift, as long as the pass.
                     let gone: crate::hashing::Set<EntryId> = ids.into_iter().collect();
-                    self.entries.retain(|id, _| !gone.contains(id));
+                    Arc::make_mut(&mut self.entries).retain(|id, _| !gone.contains(id));
                 } else {
+                    let entries = Arc::make_mut(&mut self.entries);
                     for id in ids {
-                        self.entries.shift_remove(&id);
+                        entries.shift_remove(&id);
                     }
                 }
                 if self.entries.len() != before {
@@ -1470,7 +1701,7 @@ impl Listing {
             ListingEvent::Unreadable(ids) => {
                 use crate::entry::{Provenance, Value, keys};
                 for id in ids {
-                    let Some(slot) = self.entries.get_mut(&id) else {
+                    let Some(slot) = Arc::make_mut(&mut self.entries).get_mut(&id) else {
                         continue;
                     };
                     // What was known of it stands.
@@ -1575,7 +1806,7 @@ impl Listing {
 
     fn upsert(&mut self, mut e: Entry, insert: bool, delta: &mut Delta) {
         let id = e.id;
-        match self.entries.entry(id) {
+        match Arc::make_mut(&mut self.entries).entry(id) {
             indexmap::map::Entry::Occupied(mut slot) => {
                 let old = &slot.get().entry;
                 // A re-listing (refresh, a watcher's rescan) sends bare
@@ -1638,7 +1869,7 @@ impl Listing {
                     let hash = self.name_hasher.hash_one(new.entry.name.as_os_str());
                     name(&mut self.by_name, hash, new.entry.id);
                     delta.touched.push(new.entry.id);
-                    self.entries.insert(new.entry.id, new);
+                    Arc::make_mut(&mut self.entries).insert(new.entry.id, new);
                     // A new name; nothing listed moved (see `order`).
                     delta.any = true;
                     delta.name = true;
@@ -1827,14 +2058,7 @@ impl Listing {
     /// hidden files and companions both; one whose file is gone, an
     /// orphan, as any file.
     fn shown(&self, spec: SortSpec, slot: &Slot, companions: bool) -> bool {
-        let with_file = slot
-            .beside
-            .as_ref()
-            .is_some_and(|owner| owner.is_empty() || self.is_named(owner));
-        if with_file {
-            return spec.show_hidden && companions;
-        }
-        spec.show_hidden || !slot.entry.is_hidden()
+        shown_with(spec, slot, companions, |owner| self.is_named(owner))
     }
 
     /// Whether an entry is listed and shown under `spec`: not a hidden file
@@ -1852,14 +2076,12 @@ impl Listing {
     /// The shown entries' sort keys, in order.
     fn keyed(&self, spec: SortSpec) -> Vec<SortKeyOf<'_>> {
         let companions = self.companions_shown();
-        let mut keyed: Vec<SortKeyOf<'_>> = self
-            .entries
-            .values()
-            .filter(|slot| self.shown(spec, slot, companions))
-            .map(|slot| Self::sort_key(spec, slot))
-            .collect();
-        keyed.sort_unstable_by(|a, b| Self::compare(spec, *a, *b));
-        keyed
+        keyed_of(
+            spec,
+            self.entries
+                .values()
+                .filter(|slot| self.shown(spec, slot, companions)),
+        )
     }
 
     #[cfg(test)]
@@ -1968,7 +2190,9 @@ impl Listing {
     /// A listing filled elsewhere (ADR-120) applies nothing: its events are
     /// its jobs'. Once done it is taken whole and sorted, a change, and
     /// what came after is applied here; before, a change is its count
-    /// having moved, for "Loading…" to say it.
+    /// having moved, for "Loading…" to say it. One whose order asked anew
+    /// is made on a worker (ADR-121) applies nothing until the order is
+    /// back; taken, it is a change.
     pub fn drain(&mut self, rx: &Receiver<ListingEvent>, budget: std::time::Duration) -> usize {
         if self.fill.is_some() {
             if let Some(filled) = self.take_filled() {
@@ -1978,8 +2202,14 @@ impl Listing {
             let count = self.filling_count().unwrap_or(0);
             return usize::from(std::mem::replace(&mut self.counted, count) != count);
         }
+        // An order asked anew, made on a worker: taken, it is shown; until
+        // it is back, the listing's events wait (ADR-121).
+        let sorted = self.take_sorted();
+        if self.sorting.is_some() {
+            return 0;
+        }
         let started = std::time::Instant::now();
-        let mut n = 0;
+        let mut n = usize::from(sorted);
         for _ in 0..rx.len() {
             let Ok(ev) = rx.try_recv() else { break };
             n += usize::from(self.apply(ev));
@@ -2232,6 +2462,106 @@ mod tests {
         assert!(streams.fill_job(&rx, spec).is_none());
         assert_eq!(streams.drain(&rx, long), 1);
         assert_eq!(names(&streams), ["a"], "a search's results as they come");
+    }
+
+    /// An order asked anew is made on a worker (ADR-121): the order before
+    /// is shown meanwhile, kept current, the listing's events waiting;
+    /// once it is back it is shown, what waited placed in it. A sort asked
+    /// for another order before is let go, one changed under is made
+    /// again, one never run is asked again.
+    #[test]
+    fn an_order_asked_anew_is_made_elsewhere_the_one_before_shown() {
+        let file = |ino, name: &str| {
+            Entry::new(
+                EntryId {
+                    file: crate::FileId::new(1, ino),
+                    at: 0,
+                },
+                name,
+                EntryKind::File,
+            )
+        };
+        let names = |listing: &Listing, spec| -> Vec<String> {
+            listing
+                .order_shown(spec)
+                .iter()
+                .map(|id| {
+                    listing
+                        .get(*id)
+                        .unwrap()
+                        .name
+                        .to_string_lossy()
+                        .into_owned()
+                })
+                .collect()
+        };
+        let by_name = SortSpec::default();
+        let backwards = SortSpec {
+            ascending: false,
+            ..by_name
+        };
+        let with_hidden = SortSpec {
+            show_hidden: true,
+            ..by_name
+        };
+        let long = std::time::Duration::from_secs(60);
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let mut listing = Listing::default();
+        listing.apply(ListingEvent::Added(vec![
+            file(1, "b"),
+            file(2, ".a"),
+            file(3, "c"),
+        ]));
+        assert_eq!(
+            names(&listing, by_name),
+            ["b", "c"],
+            "no order before: sorted here"
+        );
+        assert!(listing.sort_job(by_name).is_none(), "its own order");
+
+        assert_eq!(names(&listing, backwards), ["b", "c"], "the order before");
+        let job = listing.sort_job(backwards).expect("for a worker");
+        assert!(listing.sort_job(backwards).is_none(), "one at a time");
+        tx.send(ListingEvent::Added(vec![file(4, "d")])).unwrap();
+        assert_eq!(listing.drain(&rx, long), 0, "its events wait");
+        assert!(listing.is_sorting());
+        let version = listing.version();
+        job.run();
+        assert_eq!(listing.drain(&rx, long), 2, "the order, then what waited");
+        assert!(!listing.is_sorting());
+        assert_ne!(listing.version(), version);
+        assert_eq!(names(&listing, backwards), ["d", "c", "b"]);
+
+        // Asked for one order, then another: the first is let go.
+        let first = listing.sort_job(by_name).unwrap();
+        let second = listing.sort_job(with_hidden).unwrap();
+        first.run();
+        second.run();
+        listing.drain(&rx, long);
+        assert_eq!(names(&listing, with_hidden), [".a", "b", "c", "d"]);
+        assert!(
+            listing.sort_job(by_name).is_some(),
+            "the first is asked again"
+        );
+        // Dropped unrun: let go of by the next drain.
+        listing.drain(&rx, long);
+
+        // Changed under it, by a change made to it directly: made again.
+        let job = listing.sort_job(backwards).unwrap();
+        listing.apply(ListingEvent::Added(vec![file(5, "e")]));
+        job.run();
+        assert_eq!(listing.drain(&rx, long), 0);
+        assert!(!listing.is_sorting());
+        assert_eq!(names(&listing, backwards), [".a", "b", "c", "d", "e"]);
+        listing.sort_job(backwards).unwrap().run();
+        listing.drain(&rx, long);
+        assert_eq!(names(&listing, backwards), ["e", "d", "c", "b"]);
+
+        // Never run: asked again.
+        drop(listing.sort_job(by_name));
+        assert_eq!(listing.drain(&rx, long), 0);
+        assert!(!listing.is_sorting());
+        assert!(listing.sort_job(by_name).is_some());
     }
 
     #[test]

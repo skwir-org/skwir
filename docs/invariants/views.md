@@ -331,6 +331,12 @@ around the views is in [shell.md](shell.md).
   goes there with the file selected.
 - Columns are chosen in the header's menu (`Shell::open_column_menu`),
   through `settings.apply`, so it never disagrees with Settings.
+- **A sort asked anew** (a header clicked, the direction, hidden files) is
+  made on a worker (ADR-121): the header says it at once, the rows keep
+  the order before (`Listing::order_shown`, kept current) until the new
+  one is back, and what acts on the order (the arrows, ranges, Select
+  all) acts on the one drawn. A view reads a listing's order through
+  `order_shown` with the pane's sort, never `sorted`.
 
 ## Scrolling
 

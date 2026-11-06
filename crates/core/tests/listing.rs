@@ -1340,9 +1340,17 @@ fn companions_hide_beside_their_file_and_orphans_do_not() {
     navigate(&app, &dir);
     wait(&app, pane, |l| l.len() == 4);
     let shown = |hidden: bool| {
-        let mut ws = app.workspace.write();
-        let p = ws.pane_mut(pane).unwrap();
-        p.sort.show_hidden = hidden;
+        app.workspace
+            .write()
+            .pane_mut(pane)
+            .unwrap()
+            .sort
+            .show_hidden = hidden;
+        // An order asked anew is made on a worker, the one before shown
+        // until it is back (ADR-121).
+        wait(&app, pane, |l| !l.is_sorting());
+        let ws = app.workspace.read();
+        let p = ws.pane(pane).unwrap();
         let mut names: Vec<String> = p
             .order()
             .iter()
@@ -1389,9 +1397,17 @@ fn a_file_windows_hides_is_hidden() {
     navigate(&app, &dir);
     wait(&app, pane, |l| l.len() == 3);
     let shown = |hidden: bool| {
-        let mut ws = app.workspace.write();
-        let p = ws.pane_mut(pane).unwrap();
-        p.sort.show_hidden = hidden;
+        app.workspace
+            .write()
+            .pane_mut(pane)
+            .unwrap()
+            .sort
+            .show_hidden = hidden;
+        // An order asked anew is made on a worker, the one before shown
+        // until it is back (ADR-121).
+        wait(&app, pane, |l| !l.is_sorting());
+        let ws = app.workspace.read();
+        let p = ws.pane(pane).unwrap();
         let mut names: Vec<String> = p
             .order()
             .iter()

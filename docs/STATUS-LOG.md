@@ -11968,3 +11968,41 @@ drag left the window and came back; the name lost outside the window.
   skwir-core -p skwir-ui -p skwir-plugin-trash -p skwir-plugin-remote
   --all-targets -D warnings`; nextest over the default members, 3067
   passed. Not checked: a remote folder, macOS, Windows.
+
+## An order asked anew made on a worker (ADR-121, 2026-11-06)
+
+- **Asked for:** the second point left by ADR-120, the whole sort a
+  column's header (the direction, hidden files) made on the window's
+  thread.
+- **Built:** `Listing::order_shown(spec)` is the order a pane shows: its
+  own when the listing has it or can place what changed, else, while the
+  cache is current for another spec, that order (kept current by
+  placement) until the new one is made. `Listing::sort_job` makes a
+  `SortJob` for the spec asked, through `Pane::jobs_wanted` and
+  `PumpReport::jobs` (a `ListingJob`, with the folders' `FillJob`s),
+  run by `App::pump_report`; the drain after its wake takes the order
+  (`take_sorted`), stamping the version and what is shown. The entries
+  are an `Arc` again, shared with the sort alone, which drops it before
+  sending; the listing takes no events while it sorts and is no
+  backlog. The last spec asked wins; a listing changed under its sort is
+  sorted again; a sort never run is asked again. `Pane::unfiltered_order`,
+  the footer's total, the address card's count, the board and the
+  columns view read `order_shown`. Still sorted on the window's thread:
+  a listing with no order yet, or whose order no longer holds (renamed
+  or hidden in place, companions).
+- **Measured** on `/nix/store` (392 593 entries), Xvfb :92, the release
+  build of d80efaaf (sort on the window's thread) and this one,
+  alternated, three runs each, load 3.7 to 4.1, the Name header clicked
+  with xdotool once the folder was shown: before, the sync after the
+  click took 163.3, 162.0, 129.6 ms; after, 0.0 ms, the sort on a worker
+  157, 127, 131 ms, the sync taking its order 1.1, 2.8, 1.0 ms, the new
+  order shown 176, 146, 149 ms after the click (before: 180, 169, 143).
+  A screenshot shows Name ▼ and the names from `zz`.
+- **Checked:** a unit test (the order before shown and kept current,
+  events waiting, the order taken and what waited placed in it, the
+  last asked winning, changed under it, never run); `cargo clippy -p
+  skwir-core -p skwir-ui --all-targets -D warnings`; nextest over the
+  default members: 3067 passed and one failed, a test that set
+  `show_hidden` and read the order at once (it waits for the order shown
+  now, as does its Windows twin, which is not compiled here); rerun, it
+  passed.
