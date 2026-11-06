@@ -114,7 +114,7 @@ fn a_folders_own_notes_are_inside_it_and_sidecars_follow_their_files() {
     );
     assert!(dir.join(".ts/b.txt.json").exists() && dir.join(".ts/b.txt.jpg").exists());
     assert!(!dir.join(".ts/a.txt.json").exists());
-    assert!(TagSpacesCompanion.is_folder(OsStr::new(".ts")));
+    assert!(TagSpacesCompanion::default().is_folder(OsStr::new(".ts")));
 }
 
 #[test]
@@ -145,4 +145,34 @@ fn a_locations_index_hints_where_a_tag_is() {
         Some(vec![root.join("b.txt")])
     );
     assert_eq!(hint.candidates(keys::TAGS, "x", tmp.path(), &cancel), None);
+}
+
+/// What the store read of a folder's `.ts` says, before any look at the
+/// disk, which companions of a file are there: Properties says them at
+/// once. A folder not read says nothing.
+#[test]
+fn what_the_store_read_says_what_is_beside_a_file() {
+    let tmp = home_tempdir();
+    let dir = tmp.path().join("it's a folder");
+    std::fs::create_dir_all(dir.join(".ts")).unwrap();
+    std::fs::write(dir.join("it's a.pdf"), b"%PDF").unwrap();
+    std::fs::write(dir.join(".ts/it's a.pdf.jpg"), b"jpg").unwrap();
+    let store = TagSpacesStore::default();
+    let companion = TagSpacesCompanion {
+        names: Arc::clone(&store.names),
+    };
+    let file = dir.join("it's a.pdf");
+    assert_eq!(companion.known(&file, 1), None, "nothing read yet");
+    store.names.of(&dir.join(FOLDER));
+    // Its sidecar (`x.json`) is not there, its thumbnail (`x.jpg`) is.
+    assert_eq!(companion.known(&file, 0), Some(false));
+    assert_eq!(companion.known(&file, 1), Some(true));
+    let companions = skwir_core::companions::Companions::default();
+    companions.register(ID, Arc::new(companion));
+    let known: Vec<PathBuf> = companions
+        .known(&file)
+        .into_iter()
+        .map(|f| f.path)
+        .collect();
+    assert_eq!(known, [dir.join(".ts/it's a.pdf.jpg")]);
 }

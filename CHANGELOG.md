@@ -63,6 +63,15 @@
   read. With Preview alone, a folder shows its icon and how many items it
   holds; Properties shows only when asked. The card above the panel is no
   longer a button.
+- **Properties no longer jump as they fill in**: rows read a moment later (On
+  disk, Opens with, the checksums, the drive) are there at once, labelled, and
+  their values fill in without moving anything. General ends with what is
+  shown measured in its own unit (a folder's Contains, a picture's Dimensions,
+  a document's Pages, a track's Duration); the rest of Content is the last
+  group. What is beside a file (its sidecars) comes from its folder's listing,
+  with the rest, and the card keeps its icon's place while the icon is read. A
+  file whose name several types claim gets its Opens with with the rest, and
+  with Properties alone at all.
 - **The player's seek bar** has a knob, and a drag that leaves the bar still
   moves it: let go anywhere, it seeks there.
 - **Sliders in Settings**: a setting judged as it changes can be a slider

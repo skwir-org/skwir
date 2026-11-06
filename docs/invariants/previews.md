@@ -1024,7 +1024,39 @@ is still to come are in `docs/preview-frame.md`.
   A source that says so (`PropertySource::typed`: Open with) is also
   given `mime`, the type the preview settled from what it read, and
   asked only once it is settled: a name several types claim (`.json`)
-  is not read again to type it (ADR-101).
+  is not read again to type it (ADR-101). The worker says the type as
+  soon as it has read the bytes (`typed_rx`, `Shell::settle_type`), not
+  with the preview drawn. With Properties alone no preview reads it:
+  the source is asked at once without `mime`, and reads the head
+  itself, once.
+- **What comes later fills in; it never moves what is shown** (ADR-058,
+  decision 9). Properties' rows are decided when the entry is shown;
+  what is read on a worker only fills in values. A row known to come
+  is there at once, labelled and empty (`Row::reserved`): the rows a
+  source says it answers for a kind of entry (`PropertySource::places`:
+  Opens with, the checksums; `properties::places`), what every reading
+  of the fields answers (On disk, the drive's Volume), a size not yet
+  stat-ed, and the measure a preview on its way will say. The rows of
+  the entry before are never kept for the next: an empty value is
+  unknown, a kept one would be wrong. A row that comes only sometimes
+  is made one that always does where it can (a folder's Contains says
+  its folders and its files in one row), or placed where it moves
+  nothing (Content, last). A row that comes only sometimes is said as
+  soon as what is in memory says it: what is beside a file comes from its
+  folder's listing ([notes.md](notes.md)), with the rest. An entry not
+  read yet keeps the headings reading it always brings (Permissions,
+  Times, with their first row reserved), and the card keeps its icon's
+  place while the theme's is read, so its facts wrap the same. Never add
+  a row whose presence depends on an answer above rows already shown.
+- **General ends with what is shown measured in its own unit**
+  (`properties::measure`), under its sizes: a folder's items
+  (Contains), a picture's pixels (Dimensions), a document's pages, a
+  track's or a film's length (Duration). Which one comes is known by
+  the kind before the preview says it. **Content**, what else the file
+  says of itself (a picture's facts, a format's details, a track's
+  title and tracks, the fields plugins read on demand), is the last
+  group (`properties::content_group`): how many rows it has is known
+  only once read, and below it nothing moves.
 - **A source that reads a whole file** (the checksums) reads what the
   window asks in a lane of its own: one job at a time holds a worker,
   reading the file asked last for everything asked of it at once, so

@@ -29,7 +29,7 @@ use skwir_core::command::{Invocation, Outcome, Topic};
 use skwir_core::op::EntryArg;
 use skwir_core::os_path::PathArg;
 use skwir_core::plugin::Plugin;
-use skwir_core::registry::PropertySource;
+use skwir_core::registry::{PlaceOf, PropertyPlace, PropertySource};
 use skwir_core::scheduler::Priority;
 
 const ID: &str = "checksums";
@@ -713,6 +713,16 @@ impl Plugin for ChecksumsPlugin {
                 command: Invocation::new("checksums.properties"),
                 revision: Arc::clone(&self.revision),
                 typed: false,
+                // Each algorithm's row for every file, computed or not.
+                places: Algorithm::ALL
+                    .into_iter()
+                    .map(|algorithm| PropertyPlace {
+                        group: "Checksums".into(),
+                        label: algorithm.label().into(),
+                        folded: true,
+                        of: PlaceOf::Files,
+                    })
+                    .collect(),
             },
         );
     }

@@ -387,25 +387,15 @@ struct FieldRows {
     fields: Vec<crate::properties::Row>,
     /// What the system adds to the mode, and the flags it keeps.
     access: Vec<crate::properties::Row>,
-    /// The files beside it, or the file an orphan belonged to.
-    beside: Vec<crate::properties::Row>,
+    /// The files beside it, or the file an orphan belonged to, that its
+    /// folder's listing does not say (`Beside::read`).
+    beside: Beside,
     /// What it takes on its drive, beside its size.
     general: Vec<crate::properties::Row>,
     /// The drive it is on (the folder shown has its own, `Here`).
     volume: Option<crate::properties::Group>,
     /// That drive is mounted read-only: nothing on it changes access.
     read_only: bool,
-}
-
-impl FieldRows {
-    fn is_empty(&self) -> bool {
-        self.fields.is_empty()
-            && self.access.is_empty()
-            && self.beside.is_empty()
-            && self.general.is_empty()
-            && self.volume.is_none()
-            && !self.read_only
-    }
 }
 
 /// A count of what folders hold (`fs::count`), asked by Properties' Count
@@ -486,35 +476,117 @@ fn still_counts(
     now() == Some(counted)
 }
 
-/// What Properties says of files beside a file (ADR-028): those beside the
-/// file at `path`, or, for a companion whose file is gone, what it was.
-/// Looks at the disk: call on a worker.
-fn beside_rows(
-    companions: &skwir_core::companions::Companions,
-    path: &std::path::Path,
+/// What is beside a file (ADR-028): the names of its companions there,
+/// and for a companion, the file it belongs to and whether that is gone.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct Beside {
+    names: Vec<String>,
+    owner: Option<(String, bool)>,
+}
+
+impl Beside {
+    /// As the listing of its folder says it, at once (`Pane::folder_of`):
+    /// the companions it judged the file's by their names
+    /// (`Listing::companions_of`), and the file a companion belongs to,
+    /// gone where the listing lacks it. No look at the disk.
+    fn listed(
+        companions: &skwir_core::companions::Companions,
+        listing: &skwir_core::location::Listing,
+        name: &std::ffi::OsStr,
+    ) -> Self {
+        Beside {
+            names: listing
+                .companions_of(name)
+                .iter()
+                .map(|n| n.to_string_lossy().into_owned())
+                .collect(),
+            owner: companions.owner(name).map(|owner| {
+                let gone = !listing.is_named(&owner);
+                (owner.to_string_lossy().into_owned(), gone)
+            }),
+        }
+    }
+
+    /// As the rules keep it in memory (`Companions::known`: the names a
+    /// store read of a folder of companions, `.ts`), at once: what is said
+    /// until the worker's look (`read`) says it. No look at the disk.
+    fn known(companions: &skwir_core::companions::Companions, path: &std::path::Path) -> Self {
+        let Some(dir) = path.parent() else {
+            return Beside::default();
+        };
+        Beside {
+            names: companions
+                .known(path)
+                .iter()
+                .filter_map(|f| Some(f.path.strip_prefix(dir).ok()?.display().to_string()))
+                .collect(),
+            owner: None,
+        }
+    }
+
+    /// As the disk says it, for the file at `path`: on a worker. Where its
+    /// folder's listing said what it judges (`listed`), only the rest: a
+    /// companion in a folder of its own, one whose name does not say its
+    /// file (Adobe's `x.xmp`, which only a look at the folder settles).
+    fn read(
+        companions: &skwir_core::companions::Companions,
+        path: &std::path::Path,
+        listed: bool,
+    ) -> Self {
+        let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
+            return Beside::default();
+        };
+        let judged = |at: &std::path::Path| {
+            listed
+                && at.parent() == Some(dir)
+                && at
+                    .file_name()
+                    .is_some_and(|c| companions.owner(c).as_deref() == Some(name))
+        };
+        let names = companions
+            .existing_as(path, &|at| {
+                !judged(at) && std::fs::symlink_metadata(at).is_ok()
+            })
+            .iter()
+            .filter_map(|f| Some(f.path.strip_prefix(dir).ok()?.display().to_string()))
+            .collect();
+        let owner = (!listed)
+            .then(|| companions.owner(name))
+            .flatten()
+            .map(|owner| {
+                let gone = std::fs::symlink_metadata(dir.join(&owner)).is_err();
+                (owner.to_string_lossy().into_owned(), gone)
+            });
+        Beside { names, owner }
+    }
+}
+
+/// What Properties says of files beside a file: what its folder's listing
+/// says (`Beside::listed`), then of the rest what the worker read, or
+/// until it has, what the rules keep in memory (`Beside::known`).
+pub(crate) fn beside_rows(
+    listed: &Beside,
+    known: &Beside,
+    read: Option<&Beside>,
 ) -> Vec<crate::properties::Row> {
+    let read = read.unwrap_or(known);
     let mut rows = Vec::new();
-    let names: Vec<String> = companions
-        .existing(path)
-        .iter()
-        .filter_map(|f| {
-            let dir = path.parent()?;
-            Some(f.path.strip_prefix(dir).ok()?.display().to_string())
-        })
-        .collect();
+    let mut names: Vec<&str> = Vec::new();
+    for name in listed.names.iter().chain(&read.names) {
+        if !names.contains(&name.as_str()) {
+            names.push(name);
+        }
+    }
     if !names.is_empty() {
         rows.push(crate::properties::Row::new("Beside it", names.join(", ")));
     }
-    if let (Some(dir), Some(name)) = (path.parent(), path.file_name())
-        && let Some(owner) = companions.owner(name)
-    {
-        let gone = std::fs::symlink_metadata(dir.join(&owner)).is_err();
+    if let Some((owner, gone)) = listed.owner.as_ref().or(read.owner.as_ref()) {
         rows.push(crate::properties::Row::new(
             "Beside",
-            if gone {
-                format!("“{}”, which is gone", owner.to_string_lossy())
+            if *gone {
+                format!("“{owner}”, which is gone")
             } else {
-                format!("“{}”", owner.to_string_lossy())
+                format!("“{owner}”")
             },
         ));
     }
@@ -672,8 +744,15 @@ pub struct PreviewState {
     /// The volume last read for an entry (`VolumeFacts::kept`).
     volume_cache: VolumeCache,
     /// What plugins say of the entry shown (`Registry::property_sources`),
-    /// each row with the group it joins.
+    /// each row with the group it joins; until they answer, the rows they
+    /// said they answer, labelled and empty (`properties::places`).
     pub plugin_rows: Vec<crate::properties::SourceRow>,
+    /// The file `plugin_rows` are of, as `fields_for` says it.
+    sources_of: Option<(
+        std::path::PathBuf,
+        Option<std::time::SystemTime>,
+        Option<u64>,
+    )>,
     /// What the sources were last asked of: the file as `fields_for` says
     /// it, and their revisions.
     sources_asked: Option<(
@@ -686,6 +765,11 @@ pub struct PreviewState {
     sources_cancel: Option<CancelToken>,
     sources_tx: flume::Sender<(u64, Vec<crate::properties::SourceRow>)>,
     sources_rx: flume::Receiver<(u64, Vec<crate::properties::SourceRow>)>,
+    /// The type the preview's worker read of the bytes, said as soon as it
+    /// is, with its request's generation: what waits for the type (a
+    /// source's rows) does not wait for the preview to be drawn.
+    typed_tx: flume::Sender<(u64, String)>,
+    typed_rx: flume::Receiver<(u64, String)>,
     /// A count of what folders hold, asked for.
     pub count: Option<Counting>,
     count_generation: u64,
@@ -694,8 +778,14 @@ pub struct PreviewState {
     count_tx: flume::Sender<CountSent>,
     count_rx: flume::Receiver<CountSent>,
     /// The files beside the entry (ADR-028), or the file an orphan belonged
-    /// to, read on the same worker.
-    pub beside: Vec<crate::properties::Row>,
+    /// to: as its folder's listing says them, at once, with the entry
+    /// (`Beside::listed`), and what the fields worker read of the rest
+    /// (`Beside::read`).
+    pub(crate) beside_listed: Beside,
+    /// What the companion rules keep in memory of the rest (`Beside::known`),
+    /// said until the worker's look (`beside_read`) has answered.
+    pub(crate) beside_known: Beside,
+    pub(crate) beside_read: Option<Beside>,
     fields_tx: flume::Sender<(u64, FieldRows)>,
     fields_rx: flume::Receiver<(u64, FieldRows)>,
     /// The file the fields were read of, as of its version (its path,
@@ -867,6 +957,7 @@ impl Default for PreviewState {
         let (fields_tx, fields_rx) = flume::unbounded();
         let (count_tx, count_rx) = flume::unbounded();
         let (sources_tx, sources_rx) = flume::unbounded();
+        let (typed_tx, typed_rx) = flume::unbounded();
         PreviewState {
             // No file yet: each one shown gets a reader of its own, in the
             // mode the user chose (`Shell::let_reader_go`).
@@ -932,17 +1023,22 @@ impl Default for PreviewState {
             read_only: false,
             volume_cache: VolumeCache::default(),
             plugin_rows: Vec::new(),
+            sources_of: None,
             sources_asked: None,
             sources_generation: 0,
             sources_cancel: None,
             sources_tx,
+            typed_tx,
+            typed_rx,
             sources_rx,
             count: None,
             count_generation: 0,
             count_wanted: false,
             count_tx,
             count_rx,
-            beside: Vec::new(),
+            beside_listed: Beside::default(),
+            beside_known: Beside::default(),
+            beside_read: None,
             fields_tx,
             fields_rx,
             fields_for: None,
@@ -1291,7 +1387,7 @@ pub(crate) fn media_picture(
 
 /// Whether the file shown opens in the document reader, as pages: its
 /// thumbnail, while it loads, stands where the reader will put its first.
-fn opens_as_pages(shell: &Shell) -> bool {
+pub(crate) fn opens_as_pages(shell: &Shell) -> bool {
     let mime = shell.preview.info.mime.as_deref().unwrap_or_default();
     let extension = shell
         .preview
@@ -2017,12 +2113,24 @@ impl Shell {
             {
                 self.preview.properties.push(volume);
             }
+            // What is beside it, as its folder's listing says it: with the
+            // rest, at once, and again as the names there change.
+            let listed = {
+                let ws = self.app.workspace.read();
+                ws.pane(self.pane)
+                    .and_then(|pane| pane.folder_of(id))
+                    .filter(|(dir, _)| Some(dir.as_path()) == key.path.parent())
+                    .map(|(_, listing)| Beside::listed(&self.app.companions, listing, &entry.name))
+            };
+            let is_listed = listed.is_some();
+            self.preview.beside_listed = listed.unwrap_or_default();
+            self.preview.beside_known = Beside::known(&self.app.companions, &key.path);
             // Fields read of the file: again when the file changed, never
             // for a batch of metadata, which would blank them meanwhile.
             let file = (key.path.clone(), version.modified, version.size);
             if self.preview.fields_for.as_ref() != Some(&file) {
                 self.preview.fields_for = Some(file);
-                self.read_fields(&entry, &key.path, here);
+                self.read_fields(&entry, &key.path, here, is_listed);
             }
             self.preview.neighbours = match self.media_kind() {
                 Some(kind) => self.neighbours(id, |entry| crate::media::is_track(entry, kind)),
@@ -2081,6 +2189,13 @@ impl Shell {
                 )
             };
         }
+        // The type, as soon as the worker read it: the sources waiting
+        // for it are asked now, not once the preview is drawn.
+        while let Ok((generation, mime)) = self.preview.typed_rx.try_recv() {
+            if generation == self.preview.generation {
+                self.settle_type(mime);
+            }
+        }
         self.ask_sources(&entry, &key.path);
         while let Ok((generation, rows)) = self.preview.sources_rx.try_recv() {
             if generation == self.preview.sources_generation {
@@ -2092,7 +2207,7 @@ impl Shell {
             if generation == self.preview.fields_generation {
                 self.preview.fields = read.fields;
                 self.preview.access = read.access;
-                self.preview.beside = read.beside;
+                self.preview.beside_read = Some(read.beside);
                 self.preview.general = read.general;
                 self.preview.volume = read.volume;
                 self.preview.read_only = read.read_only;
@@ -2301,6 +2416,23 @@ impl Shell {
         cx.notify();
     }
 
+    /// The type the bytes said, for the file shown (`sniffed`): the header
+    /// names it, and the file's next request (a page, a search) carries it
+    /// instead of asking the bytes again. Said by the worker as soon as it
+    /// read them (`typed_rx`), and with its first result. A member the panel
+    /// went down into resolved its own type when it was extracted.
+    fn settle_type(&mut self, sniffed: String) {
+        if self.preview.info.identified || !self.preview.nested.is_empty() {
+            return;
+        }
+        let mime = skwir_platform::mime::Mime(sniffed);
+        self.type_names.get(&mime);
+        self.type_names.request(&Arc::clone(&self.app));
+        self.preview.info.picture = crate::fullscreen::is_picture_type(&mime.0);
+        self.preview.info.mime = Some(mime.0);
+        self.preview.info.identified = true;
+    }
+
     /// A result for the current request.
     fn preview_arrived(
         &mut self,
@@ -2312,16 +2444,8 @@ impl Shell {
         // request (a page, a search) carries it instead of asking the bytes
         // again. A member the panel went down into resolved its own type
         // when it was extracted.
-        if let Some(sniffed) = result.sniffed
-            && !self.preview.info.identified
-            && self.preview.nested.is_empty()
-        {
-            let mime = skwir_platform::mime::Mime(sniffed);
-            self.type_names.get(&mime);
-            self.type_names.request(&Arc::clone(&self.app));
-            self.preview.info.picture = crate::fullscreen::is_picture_type(&mime.0);
-            self.preview.info.mime = Some(mime.0);
-            self.preview.info.identified = true;
+        if let Some(sniffed) = result.sniffed {
+            self.settle_type(sniffed);
         }
         // The thumbnail waits aside: it is shown only once the wait has
         // lasted (`BUSY_AFTER`), in place of "Loading…", so a preview that
@@ -2685,6 +2809,7 @@ impl Shell {
         let source_types = self.preview.source_types.clone();
         let turned_types = self.preview.turned_types.clone();
         let tx = self.preview.tx.clone();
+        let typed_tx = self.preview.typed_tx.clone();
         let nested = self.preview.nested.last().cloned();
         let descend = self.preview.descend.clone();
         let nested_tx = self.preview.nested_tx.clone();
@@ -2814,6 +2939,15 @@ impl Shell {
                     }
                     .map(|m| m.to_string());
                     sniffed.replace(request.mime.clone());
+                    // Said at once, not with the preview: what waits for
+                    // the type (a source's rows) need not wait for it to be
+                    // drawn.
+                    if let Some(mime) = request.mime.clone()
+                        && !cancel.is_cancelled()
+                        && typed_tx.send((generation, mime)).is_ok()
+                    {
+                        wake();
+                    }
                 }
                 // A type shown as its source opens on it (`SourceTypes`):
                 // the file's own type, settled now, before a plugin from
@@ -3642,13 +3776,27 @@ impl Shell {
         entry: &skwir_core::entry::Entry,
         path: &std::path::Path,
         here: bool,
+        listed: bool,
     ) {
         self.preview.fields_generation += 1;
         self.preview.fields.clear();
         self.preview.access.clear();
-        self.preview.beside.clear();
-        self.preview.general.clear();
-        self.preview.volume = None;
+        self.preview.beside_read = None;
+        // What every reading answers keeps its place, labelled and empty,
+        // until it does: the room a file takes, after its size, and the
+        // drive it is on (the folder shown has its own, `Here`).
+        self.preview.general = if entry.is_dir() {
+            Vec::new()
+        } else {
+            vec![crate::properties::Row::reserved("On disk")]
+        };
+        self.preview.volume = (!here).then(|| crate::properties::Group {
+            folded: true,
+            ..crate::properties::Group::new(
+                "Volume",
+                vec![crate::properties::Row::reserved("Volume")],
+            )
+        });
         self.preview.read_only = false;
         // A folder, a pipe, a device: no file to read a field of. Their
         // access is read all the same: without opening anything.
@@ -3718,12 +3866,13 @@ impl Shell {
                 let read = FieldRows {
                     fields: rows,
                     access,
-                    beside: beside_rows(&companions, &path),
+                    beside: Beside::read(&companions, &path, listed),
                     general,
                     volume,
                     read_only: skwir_core::fs::volume::read_only(&path).unwrap_or(false),
                 };
-                if !read.is_empty() && tx.send((generation, read)).is_ok() {
+                // Always: what it answers replaces what kept its place.
+                if tx.send((generation, read)).is_ok() {
                     wake();
                 }
             },
@@ -3732,8 +3881,9 @@ impl Shell {
 
     /// Ask the plugins what they say of the entry shown, on a worker
     /// (their commands may read the file): again when the file changes or
-    /// a source says its answers did. Rows of another file go at once; a
-    /// source's new answer replaces its old one when it comes.
+    /// a source says its answers did. Rows of another file go at once, the
+    /// rows the sources said they answer kept in place, empty, until they
+    /// do; a source's new answer replaces its old one when it comes.
     fn ask_sources(&mut self, entry: &skwir_core::entry::Entry, path: &std::path::Path) {
         let sources = self.app.registry.property_sources.all();
         let revision = sources.iter().fold(
@@ -3745,29 +3895,41 @@ impl Shell {
         let Some((at, modified, size)) = self.preview.fields_for.clone() else {
             return;
         };
+        // Another file, or the file changed: the rows of the last go, and
+        // what was asked for it with them (its answer would land here).
+        // Each row a source said it answers keeps its place, labelled and
+        // empty, until it does (`properties::places`).
+        let file = (at.clone(), modified, size);
+        if self.preview.sources_of.as_ref() != Some(&file) {
+            self.preview.sources_of = Some(file);
+            self.preview.sources_asked = None;
+            self.preview.sources_generation += 1;
+            if let Some(before) = self.preview.sources_cancel.take() {
+                before.cancel();
+            }
+            self.preview.plugin_rows = crate::properties::places(&sources, entry, path);
+        }
         // A source that takes the entry's type waits for the preview to
         // settle it from what it read (ADR-101), rather than read the file
-        // again to type it: asked at the next sync once it is.
+        // again to type it: asked at the next sync once it is. With
+        // Properties alone no preview reads it: the source is asked at
+        // once without the type, and reads the head itself, once.
         let typed = self
             .preview
             .info
             .identified
             .then(|| self.preview.info.mime.clone())
             .flatten();
-        if typed.is_none() && !entry.is_dir() && sources.iter().any(|source| source.typed) {
+        if typed.is_none()
+            && !entry.is_dir()
+            && self.preview.previews()
+            && sources.iter().any(|source| source.typed)
+        {
             return;
         }
         let asked = (at, modified, size, revision);
         if self.preview.sources_asked.as_ref() == Some(&asked) {
             return;
-        }
-        if self
-            .preview
-            .sources_asked
-            .as_ref()
-            .is_none_or(|before| (&before.0, before.1, before.2) != (&asked.0, asked.1, asked.2))
-        {
-            self.preview.plugin_rows.clear();
         }
         self.preview.sources_asked = Some(asked);
         self.preview.sources_generation += 1;
@@ -5839,14 +6001,25 @@ fn header(
         .px_1()
         .py_1()
         .rounded_md()
-        .children(info.icon.as_ref().map(|icon| {
-            icons::marked(
-                icons::element(icon, ICON, icons::Ink::of(theme, theme.text_muted)),
-                ICON,
-                icons::Mark::Link(info.link),
-                theme,
+        // The icon's place is kept while the theme's icon is read for an
+        // entry shown (`icons.request`): the name and the facts beside it
+        // wrap the same before it comes and after, and nothing under the
+        // card moves.
+        .when(info.icon.is_some() || preview.key.is_some(), |d| {
+            d.child(
+                div()
+                    .flex_none()
+                    .size(px(ICON))
+                    .children(info.icon.as_ref().map(|icon| {
+                        icons::marked(
+                            icons::element(icon, ICON, icons::Ink::of(theme, theme.text_muted)),
+                            ICON,
+                            icons::Mark::Link(info.link),
+                            theme,
+                        )
+                    })),
             )
-        }))
+        })
         .child(
             div()
                 .flex_1()

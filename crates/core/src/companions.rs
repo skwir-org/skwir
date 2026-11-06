@@ -31,6 +31,15 @@ pub trait Companion: Send + Sync {
     fn follows(&self, _path: &Path, _index: usize) -> bool {
         true
     }
+    /// Whether the companion at `index` of the file at `path` is there and
+    /// follows it, as what the rule keeps in memory says (the names its
+    /// store read of a folder of companions, `FolderNames::kept`), never
+    /// by a look at the disk: asked on the window's thread. `None` where it
+    /// keeps nothing of it. A look at the disk has the last word
+    /// (`Companions::existing`).
+    fn known(&self, _path: &Path, _index: usize) -> Option<bool> {
+        None
+    }
     /// Whether it holds its file's extended attributes (a Mac's `._x`),
     /// where the file's volume keeps none.
     fn holds_attributes(&self) -> bool {
@@ -133,6 +142,18 @@ impl FolderNames {
             names: Arc::clone(&names),
         });
         names
+    }
+
+    /// What `keep` took of `dir`'s names when it was last read, from memory
+    /// alone (no look at the folder, as `of` takes): `None` where it was
+    /// not read, or is no longer remembered. What a rule says before a
+    /// look at the disk (`Companion::known`).
+    pub fn kept(&self, dir: &Path) -> Option<Arc<std::collections::HashSet<OsString>>> {
+        self.folders
+            .lock()
+            .iter()
+            .find(|s| s.dir == dir)
+            .map(|s| Arc::clone(&s.names))
     }
 
     /// The store that asks wrote the file `name` in `dir` (a sidecar made
@@ -265,6 +286,29 @@ impl Companions {
         self.list
             .find_map(|r| r.is_folder(name).then_some(()))
             .is_some()
+    }
+
+    /// The companions of the file at `path` its rules keep in memory as
+    /// there (`Companion::known`): what is said of them before the disk is
+    /// looked at. Never looks at it.
+    pub fn known(&self, path: &Path) -> Vec<Found> {
+        let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
+            return Vec::new();
+        };
+        let mut out: Vec<Found> = Vec::new();
+        for (rule, r) in self.rules().iter().enumerate() {
+            for (index, relative) in r.of(name).into_iter().enumerate() {
+                let at = dir.join(&relative);
+                if r.known(path, index) == Some(true) && !out.iter().any(|f| f.path == at) {
+                    out.push(Found {
+                        rule,
+                        index,
+                        path: at,
+                    });
+                }
+            }
+        }
+        out
     }
 
     /// The companions of the file at `path` that are there. Blocking: it

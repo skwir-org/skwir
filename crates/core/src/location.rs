@@ -2281,6 +2281,43 @@ impl Listing {
         self.named(name).next().is_some()
     }
 
+    /// The companions listed of the file named `name` (ADR-028): the names
+    /// beside it that say they are its (`Companion::owner`), as the
+    /// listing judged them when they came, found by name in its index and
+    /// never by a look at the disk. A companion in a folder of its own
+    /// (`.notes/x.note`), or one whose name does not say its file (Adobe's
+    /// `x.xmp`), is not judged here. Empty without the rules
+    /// (`with_companions`).
+    pub fn companions_of(&self, name: &OsStr) -> Vec<OsString> {
+        let Some(companions) = self.companions.as_deref() else {
+            return Vec::new();
+        };
+        if !self.owners.contains(name) {
+            return Vec::new();
+        }
+        let mut out: Vec<OsString> = Vec::new();
+        for relative in companions.of(name) {
+            if relative
+                .parent()
+                .is_some_and(|parent| !parent.as_os_str().is_empty())
+            {
+                continue;
+            }
+            let candidate = relative.as_os_str();
+            let judged = self
+                .by_name
+                .get(&self.name_hasher.hash_one(candidate))
+                .into_iter()
+                .flat_map(|named| named.ids(None))
+                .filter_map(|id| self.entries.get(&id))
+                .any(|slot| slot.entry.name == candidate && slot.beside.as_deref() == Some(name));
+            if judged && !out.iter().any(|known| known == candidate) {
+                out.push(candidate.to_owned());
+            }
+        }
+        out
+    }
+
     fn named_in<'a>(
         &'a self,
         name: &OsStr,
@@ -2356,6 +2393,53 @@ mod tests {
         for kept in ["%+1", "%-1", "% 1", "%4", "%", "%zz"] {
             assert_eq!(unescape(kept), kept.as_bytes(), "{kept}");
         }
+    }
+
+    /// A file's companions are found by name in its folder's listing, as
+    /// the listing judged them: never one in a folder of its own, nor one
+    /// another file's, nor where the rules are not given.
+    #[test]
+    fn a_file_s_companions_are_found_by_name_in_its_listing() {
+        let file = |ino, name: &str| {
+            Entry::new(
+                EntryId {
+                    file: crate::FileId::new(1, ino),
+                    at: 0,
+                },
+                name,
+                EntryKind::File,
+            )
+        };
+        let companions = Arc::new(crate::companions::Companions::default());
+        companions.register("test", Arc::new(crate::companions::tests::Rules));
+        let mut listing = Listing::with_companions(companions);
+        listing.apply(ListingEvent::Added(vec![
+            file(1, "it's a.txt"),
+            file(2, "._it's a.txt"),
+            file(3, "other.txt"),
+            file(4, "._gone.txt"),
+            file(5, ".notes"),
+        ]));
+        listing.apply(ListingEvent::Complete);
+        assert_eq!(
+            listing.companions_of(OsStr::new("it's a.txt")),
+            [OsString::from("._it's a.txt")]
+        );
+        assert!(listing.companions_of(OsStr::new("other.txt")).is_empty());
+        // A companion's file need not be listed for it to be judged its.
+        assert_eq!(
+            listing.companions_of(OsStr::new("gone.txt")),
+            [OsString::from("._gone.txt")]
+        );
+        let mut plain = Listing::default();
+        plain.apply(ListingEvent::Added(vec![
+            file(1, "it's a.txt"),
+            file(2, "._it's a.txt"),
+        ]));
+        assert!(
+            plain.companions_of(OsStr::new("it's a.txt")).is_empty(),
+            "without the rules, nothing is judged"
+        );
     }
 
     /// A folder opened is filled on a worker (ADR-120): what stands for it

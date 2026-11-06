@@ -2562,6 +2562,23 @@ impl Pane {
         self.opened_of(id).map(|(o, _)| &o.location)
     }
 
+    /// The folder entry `id` is listed in, with that folder's listing, once
+    /// complete: the one shown, or a folder opened in place. `None` where
+    /// the listing is not a folder's (a search's, a tag's, Recent) or is
+    /// still filling. What else that folder holds is then known by name
+    /// from memory (`Listing::is_named`, `Listing::companions_of`), with
+    /// no look at the disk.
+    pub fn folder_of(&self, id: EntryId) -> Option<(PathBuf, &Listing)> {
+        let (location, listing) = if self.listing.get(id).is_some() {
+            (self.location()?, &self.listing)
+        } else {
+            let (opened, kept) = self.opened_of(id)?;
+            (&opened.location, &kept.listing)
+        };
+        let dir = location.path()?;
+        listing.is_complete().then_some((dir, listing))
+    }
+
     pub fn listing_of(&self, id: EntryId) -> Option<u64> {
         if self.listing.get(id).is_some() {
             return Some(self.listing.id());

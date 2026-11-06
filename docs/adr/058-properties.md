@@ -1,7 +1,8 @@
 # ADR-058: Properties
 
 Status: accepted, 2026-10-13. Built. Amended 2026-11-06 (decision 8: the
-panel is two switches, Preview and Properties).
+panel is two switches, Preview and Properties; decision 9: what comes
+later fills in, it never moves what is shown).
 
 ## Context
 
@@ -145,6 +146,48 @@ panel is two switches, Preview and Properties).
      button on a folder; and with Properties alone, what only the
      preview reads (a picture's dimensions, a document's details) is not
      said.
+9. **What comes later fills in; it never moves what is shown**
+   (amended 2026-11-06, the user's report: Properties flickered as a
+   folder's Content came a moment after the rest, and Opens with after
+   a delay). What is read on a worker (the room a file takes, its drive,
+   a plugin's rows, what the preview says) came about 30 ms after the
+   rest, each part pushing down what was below it; the entry before
+   lost its rows at once, so even between two files with the same
+   answers rows went and came back. A short hold of the whole section
+   until everything answered was weighed: it adds that wait to every
+   step and still moves rows on a slow drive. Instead:
+   - Properties' rows are decided when the entry is shown; an answer
+     only fills in values. A row known to come is there at once,
+     labelled and empty: what a source says it answers for a kind of
+     entry (`PropertySource::places`, said when it is registered: Opens
+     with for every file, each checksum), what every reading of the
+     fields answers (On disk, Volume), a size not stat-ed yet.
+   - The thing's own measure moves into General, under its sizes, kept
+     in place while the preview that says it is on its way: a folder's
+     Contains (its folders and its files in one row, replacing
+     Contains and Of which), a picture's Dimensions, a document's Pages,
+     a track's or a film's Duration. Which comes is known by the kind.
+   - Content, what else the file says of itself, whose rows are known
+     only once read, is the last group: below it nothing moves.
+   - The type the preview's worker reads of the bytes is said as soon
+     as it is read, so a source waiting for it (Opens with, for a name
+     several types claim) fills in with the rest; with Properties alone,
+     where no preview reads it, the source is asked without it at once
+     and reads the head itself.
+   - A row that comes only sometimes is said from what is in memory
+     where it can be: what is beside a file (its companions, the file a
+     companion belongs to) from its folder's listing, which holds every
+     name there and judged each companion when it came; the worker reads
+     only what the listing does not judge.
+   - An entry shown before it is read keeps the headings reading always
+     brings (Permissions, Times); the card keeps its icon's place while
+     the theme's icon is read. Rows only some files have that only
+     reading says (Kept in, Downloaded from, Hard links) still come in
+     for such an entry: it is shown before it is read only for a moment,
+     where the cursor runs ahead of a large folder's reading.
+   - An empty value is unknown: the rows of the entry before are never
+     kept for the next. So between two files with the same answers a
+     value is empty for a frame or two; nothing moves.
 
 ## Consequences
 

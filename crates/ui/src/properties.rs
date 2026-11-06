@@ -124,6 +124,17 @@ impl Row {
         }
     }
 
+    /// A row known to come before its value has (what a source said it
+    /// answers, what the shell reads on a worker, what a preview on its way
+    /// will say): its label in place and its value empty, so the answer
+    /// fills it in and moves nothing below it (ADR-058).
+    pub fn reserved(label: impl Into<SharedString>) -> Self {
+        Row {
+            copies: false,
+            ..Row::new(label, "")
+        }
+    }
+
     /// It says `words` on its folded group's heading.
     pub(crate) fn gist(mut self, words: impl Into<SharedString>) -> Self {
         self.gist = Some(Gist::Said(words.into()));
@@ -568,8 +579,8 @@ pub fn entry_groups(
             ..Row::new("Size", "")
         }]
     } else {
-        uint(keys::SIZE)
-            .map(|size| {
+        match uint(keys::SIZE) {
+            Some(size) => vec![
                 Row::new(
                     "Size",
                     format!(
@@ -578,10 +589,12 @@ pub fn entry_groups(
                         format::thousands(size as usize)
                     ),
                 )
-                .gist(format::size(size))
-            })
-            .into_iter()
-            .collect()
+                .gist(format::size(size)),
+            ],
+            // Not stat-ed yet: it comes, in its place.
+            None if !meta.is_hydrated() => vec![Row::reserved("Size")],
+            None => Vec::new(),
+        }
     };
 
     let mut location = Vec::new();
@@ -657,7 +670,7 @@ pub fn entry_groups(
              it seldom or never, to spare the drive.",
         )
     };
-    let times = [
+    let times: Vec<Row> = [
         (
             "Deleted",
             keys::TRASHED,
@@ -708,6 +721,18 @@ pub fn entry_groups(
     let [notes, source] = match notes {
         Some(fields) => notes_groups(entry, path, fields),
         None => [None, None],
+    };
+    // Not read yet: what reading the entry always says keeps its place,
+    // its group's heading there from the start, its first row labelled and
+    // empty, so the rest fills in under it (both groups ship folded).
+    let unread = !meta.is_hydrated();
+    if unread && permissions.is_empty() {
+        permissions.push(Row::reserved("Owner"));
+    }
+    let times = if unread && times.is_empty() {
+        vec![Row::reserved("Modified")]
+    } else {
+        times
     };
     [
         group("General", general),
@@ -1335,35 +1360,91 @@ pub fn flag_rows(flags: skwir_core::fs::stat::Flags) -> Vec<Row> {
     .collect()
 }
 
-/// What the preview in memory knows, without touching the file again.
-/// Folded, it says what measures the content: a picture's size, what a
-/// folder holds, the format's first fact, the pages, the length.
-fn preview_group(shell: &Shell) -> Option<Group> {
+/// What is shown measured in its own unit, for General under its sizes:
+/// a folder's items, a picture's pixels, a document's pages, a track's or
+/// a film's length. Which one comes is known by its kind before the
+/// preview says it, so while that preview is on its way the row is there,
+/// labelled and empty (`Row::reserved`), and its value moves nothing.
+fn measure(shell: &Shell) -> Option<Row> {
+    let preview = &shell.preview;
+    if let Some(PreviewContent::Dir { items, folders }) = &preview.content {
+        return Some(contains(*items, *folders));
+    }
+    if shell.shows_player() {
+        return Some(match preview.media.state.duration {
+            Some(duration) => Row::new("Duration", crate::media::time(duration))
+                .in_gist()
+                .led("Lasts"),
+            None => Row::reserved("Duration"),
+        });
+    }
+    if let Some(pages) = crate::reader::pages(shell) {
+        return Some(
+            Row::new("Pages", pages.to_string()).gist(format::count(pages as usize, "page")),
+        );
+    }
+    if let Some(PreviewContent::Image {
+        width,
+        height,
+        document: None,
+        ..
+    }) = &preview.content
+    {
+        return Some(Row::new("Dimensions", format!("{width} × {height} px")).in_gist());
+    }
+    // On its way: asked of the worker, not answered yet. A folder is read
+    // whenever it is shown, the Preview off too; a file only while a
+    // preview is (`PreviewState::previews`).
+    let coming = preview.content.is_none() && preview.phase != crate::preview::PreviewPhase::Idle;
+    if !coming {
+        return None;
+    }
+    if preview.info.is_dir {
+        Some(Row::reserved("Contains"))
+    } else if !preview.previews() {
+        None
+    } else if shell.media_kind().is_some() {
+        Some(Row::reserved("Duration"))
+    } else if crate::preview::opens_as_pages(shell) {
+        Some(Row::reserved("Pages"))
+    } else if preview.info.picture {
+        Some(Row::reserved("Dimensions"))
+    } else {
+        None
+    }
+}
+
+/// What a folder holds, one row whatever it holds: its folders and its
+/// files (anything else it holds counted with them).
+fn contains(items: usize, folders: usize) -> Row {
+    let files = items.saturating_sub(folders);
+    let value = match (folders, files) {
+        (0, 0) => "Nothing".to_owned(),
+        (0, files) => format::count(files, "file"),
+        (folders, 0) => format::count(folders, "folder"),
+        (folders, files) => format!(
+            "{}, {}",
+            format::count(folders, "folder"),
+            format::count(files, "file")
+        ),
+    };
+    Row::new("Contains", value).gist(format::count(items, "item"))
+}
+
+/// What the file says of itself, beyond its measure (`measure`): a
+/// picture's facts, a format's details, a track's title and tracks, and
+/// what plugins read of it on demand (a picture's place). Last of the
+/// groups: how many rows it has is known only once read.
+fn content_group(shell: &Shell) -> Option<Group> {
     let preview = &shell.preview;
     let mut rows = Vec::new();
     match &preview.content {
         Some(PreviewContent::Image {
-            width,
-            height,
-            document,
+            document: None,
             facts,
             ..
-        }) if document.is_none() && !shell.shows_player() => {
-            rows.push(Row::new("Dimensions", format!("{width} × {height} px")).in_gist());
+        }) if !shell.shows_player() => {
             rows.extend(facts.iter().map(Row::of));
-        }
-        Some(PreviewContent::Dir { items, folders }) => {
-            rows.push(Row::new("Contains", format::count(*items, "item")).in_gist());
-            if *folders > 0 && folders < items {
-                rows.push(Row::new(
-                    "Of which",
-                    format!(
-                        "{}, {}",
-                        format::count(*folders, "folder"),
-                        format::count(items - folders, "file")
-                    ),
-                ));
-            }
         }
         Some(PreviewContent::Inspection(display)) => {
             // A fact of the format's is said with its label: its value
@@ -1379,9 +1460,6 @@ fn preview_group(shell: &Shell) -> Option<Group> {
         }
         _ => {}
     }
-    if let Some(pages) = crate::reader::pages(shell) {
-        rows.push(Row::new("Pages", pages.to_string()).gist(format::count(pages as usize, "page")));
-    }
     if shell.shows_player() {
         let state = &preview.media.state;
         for (label, value) in [
@@ -1392,13 +1470,6 @@ fn preview_group(shell: &Shell) -> Option<Group> {
             if !value.is_empty() {
                 rows.push(Row::new(label, value.clone()));
             }
-        }
-        if let Some(duration) = state.duration {
-            rows.push(
-                Row::new("Duration", crate::media::time(duration))
-                    .in_gist()
-                    .led("Lasts"),
-            );
         }
         rows.extend(
             state
@@ -1421,6 +1492,33 @@ fn preview_group(shell: &Shell) -> Option<Group> {
     // What plugins read of the file on demand (a picture's place).
     rows.extend(preview.fields.iter().cloned());
     group("Content", rows)
+}
+
+/// The rows the sources said they answer for `entry` (`PropertyPlace`),
+/// labelled and empty: what Properties shows of them while they are asked.
+pub fn places(
+    sources: &[skwir_core::registry::PropertySource],
+    entry: &Entry,
+    path: &std::path::Path,
+) -> Vec<SourceRow> {
+    use skwir_core::registry::PlaceOf;
+    let of = if entry.is_dir() {
+        PlaceOf::Folders
+    } else if entry.content(path).is_some() {
+        PlaceOf::Files
+    } else {
+        return Vec::new();
+    };
+    sources
+        .iter()
+        .flat_map(|source| &source.places)
+        .filter(|place| place.of == of)
+        .map(|place| SourceRow {
+            group: SharedString::from(place.group.clone()),
+            folded: place.folded,
+            row: Row::reserved(place.label.clone()),
+        })
+        .collect()
 }
 
 /// Tags as chips in their colors: a click searches for the tag where the
@@ -1629,9 +1727,9 @@ pub fn render(
         .iter()
         .map(|group| (true, group))
         .chain(
-            preview_group(shell)
+            preview
+                .properties
                 .iter()
-                .chain(preview.properties.iter())
                 .chain(preview.volume.iter())
                 .map(|group| (false, group)),
         )
@@ -1643,11 +1741,19 @@ pub fn render(
             }
             // The files beside it, or what a companion belongs to.
             if group.title.as_ref() == "Location" {
-                group.rows.extend(preview.beside.iter().cloned());
+                group.rows.extend(crate::preview::beside_rows(
+                    &preview.beside_listed,
+                    &preview.beside_known,
+                    preview.beside_read.as_ref(),
+                ));
             }
-            // What the file takes on its drive, after its size.
+            // What the file takes on its drive, after its size, then its
+            // own measure (`measure`).
             if group.title.as_ref() == "General" {
                 group.rows.extend(preview.general.iter().cloned());
+                if !of_selection {
+                    group.rows.extend(measure(shell));
+                }
             }
             // Nothing on a read-only drive changes who may use it: the
             // entry's drive, or for the selection's, any of theirs.
@@ -1701,6 +1807,9 @@ pub fn render(
             );
         }
     }
+    // What else the file says of itself, last: how many rows it has is
+    // known only once read, and below it nothing moves.
+    groups.extend(content_group(shell));
     let mut list = div()
         .id("details-list")
         .track_scroll(&preview.properties_scroll)
@@ -2112,6 +2221,68 @@ mod tests {
         assert!(!row.copies && row.value.contains('\u{FFFD}'));
         let folder = Row::path("Folder", path.parent().unwrap());
         assert!(folder.copies, "its folder is text");
+    }
+
+    /// A folder's contents are one row, whatever it holds, so a folder of
+    /// files alone has the rows a folder of both has (ADR-058).
+    #[test]
+    fn a_folder_s_contents_are_one_row_whatever_it_holds() {
+        let said = |items, folders| {
+            let row = contains(items, folders);
+            (row.label.to_string(), row.value.to_string())
+        };
+        assert_eq!(said(0, 0), ("Contains".into(), "Nothing".into()));
+        assert_eq!(said(3, 0).1, "3 files");
+        assert_eq!(said(2, 2).1, "2 folders");
+        assert_eq!(said(3, 1).1, "1 folder, 2 files");
+        assert_eq!(
+            contains(3, 1)
+                .gist
+                .as_ref()
+                .map(Gist::words)
+                .map(ToString::to_string),
+            Some("3 items".into()),
+            "folded, how many in all"
+        );
+    }
+
+    /// What a source said it answers keeps its place, labelled and empty,
+    /// for the kind of entry it answers for, and only for that kind.
+    #[test]
+    fn a_source_s_rows_keep_their_place_where_it_answers() {
+        let source = skwir_core::registry::PropertySource {
+            places: vec![skwir_core::registry::PropertyPlace {
+                group: "General".into(),
+                label: "Opens with".into(),
+                folded: false,
+                of: skwir_core::registry::PlaceOf::Files,
+            }],
+            ..skwir_core::registry::PropertySource::new(Invocation::new("test.properties"))
+        };
+        let entry = |kind| {
+            Entry::new(
+                EntryId {
+                    file: skwir_core::FileId::new(1, 2),
+                    at: 0,
+                },
+                "it's a café.txt",
+                kind,
+            )
+        };
+        let path = std::path::Path::new(FILE);
+        let kept = places(std::slice::from_ref(&source), &entry(EntryKind::File), path);
+        assert_eq!(kept.len(), 1);
+        assert_eq!(
+            (kept[0].group.as_ref(), kept[0].row.label.as_ref()),
+            ("General", "Opens with")
+        );
+        assert!(kept[0].row.value.is_empty() && !kept[0].row.copies);
+        for kind in [EntryKind::Directory, EntryKind::Fifo] {
+            assert!(
+                places(std::slice::from_ref(&source), &entry(kind), path).is_empty(),
+                "{kind:?} is not a file read"
+            );
+        }
     }
 
     #[test]

@@ -696,7 +696,34 @@ pub struct PropertySource {
     /// Whether it is also given `mime`, the type the panel settled for the
     /// entry (from what the preview read of it, ADR-101): it is asked once
     /// the type is settled, and never reads the file again to type it.
+    /// Where no preview is read to settle it (Properties alone), it is
+    /// asked at once without `mime`, and reads the head itself.
     pub typed: bool,
+    /// The rows it answers for every entry of a kind, said ahead: while it
+    /// is asked, Properties shows them labelled and empty, so its answer
+    /// fills them in and moves nothing (ADR-058).
+    pub places: Vec<PropertyPlace>,
+}
+
+/// A row a [`PropertySource`] answers for every entry of a kind, as its
+/// answer names it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PropertyPlace {
+    pub group: String,
+    pub label: String,
+    /// Its group ships folded ([`Property::folded`]).
+    pub folded: bool,
+    pub of: PlaceOf,
+}
+
+/// What a [`PropertyPlace`] is answered for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlaceOf {
+    /// A file whose bytes are read: not a folder, nor a pipe, a socket, a
+    /// device or a link that leads nowhere (`Entry::content`).
+    Files,
+    /// A folder, or a link to one.
+    Folders,
 }
 
 impl PropertySource {
@@ -706,6 +733,7 @@ impl PropertySource {
             command,
             revision: Arc::default(),
             typed: false,
+            places: Vec::new(),
         }
     }
 

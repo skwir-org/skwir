@@ -1284,6 +1284,13 @@ impl Plugin for OpenWithPlugin {
                 // The type the preview settled: a name several types claim
                 // is not read again to type it (ADR-101).
                 typed: true,
+                // Every file has one, "No application" where none opens it.
+                places: vec![skwir_core::registry::PropertyPlace {
+                    group: "General".into(),
+                    label: "Opens with".into(),
+                    folded: false,
+                    of: skwir_core::registry::PlaceOf::Files,
+                }],
             },
         );
         let cache = Arc::clone(&self.catalog);
