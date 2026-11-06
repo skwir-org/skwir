@@ -16,6 +16,11 @@
   is behind the window shows through, blurred where the desktop blurs it,
   while text, icons, pictures, menus and dialogs stay whole. The window stays
   opaque while the desktop asks for more contrast.
+- **A dragged file's name** is written under its icon on up to three lines, as
+  the grid writes names, a long one keeping its beginning and its end, rather
+  than on one line stretching far beside it.
+- **Out of the window, a drag keeps its name** (Wayland): other applications
+  see the same icon and name as Skwir, as sharp on a scaled display.
 - **A drag brought back into the window** no longer shows its icon twice.
 - **Dragging files marks only where they would go**: a folder, a place, a tab
   or a column under the pointer, no longer the pane or the sidebar around it as

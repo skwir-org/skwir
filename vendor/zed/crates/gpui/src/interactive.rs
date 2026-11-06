@@ -764,7 +764,7 @@ impl FileDragPaths {
 /// The image under the pointer during a native drag: RGBA8 with straight
 /// (not premultiplied) alpha, `width * height * 4` bytes, and the pixel that
 /// sits under the pointer.
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct ExternalDragIcon {
     /// Width in pixels.
     pub width: u32,
@@ -776,7 +776,14 @@ pub struct ExternalDragIcon {
     pub hotspot_x: u32,
     /// Y of the pixel under the pointer.
     pub hotspot_y: u32,
+    /// How many of its pixels make one of the window's: 1 for an image
+    /// shown pixel for pixel, the window's scale factor for one drawn at
+    /// it, which the platform shows at its logical size, sharp.
+    pub scale: f32,
 }
+
+// A scale is a finite number.
+impl Eq for ExternalDragIcon {}
 
 impl Debug for ExternalDragIcon {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -785,6 +792,7 @@ impl Debug for ExternalDragIcon {
             .field("height", &self.height)
             .field("hotspot_x", &self.hotspot_x)
             .field("hotspot_y", &self.hotspot_y)
+            .field("scale", &self.scale)
             .finish_non_exhaustive()
     }
 }

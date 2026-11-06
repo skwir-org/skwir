@@ -532,6 +532,11 @@ struct DragIcon {
     buffer: wl_buffer::WlBuffer,
     pool: wl_shm_pool::WlShmPool,
     _file: std::fs::File,
+    /// What shows an image drawn at a scale at its logical size.
+    viewport: Option<wp_viewport::WpViewport>,
+    /// The buffer's pixels for one of the surface's: the image's scale
+    /// where the surface shows it so, else 1.
+    shown_at: f32,
 }
 
 impl DragIcon {
@@ -573,18 +578,48 @@ impl DragIcon {
             (),
         );
         let surface = globals.compositor.create_surface(&globals.qh, ());
+        // An image drawn at a scale is shown at its logical size: through
+        // a viewport, at any scale; without one, through the buffer's own
+        // scale where it is whole and divides the image; else pixel for
+        // pixel, larger than drawn.
+        let scale = icon.scale;
+        let mut shown_at = 1.;
+        let viewport = (scale.is_finite() && scale > 0. && (scale - 1.).abs() > 1e-3)
+            .then_some(globals.viewporter.as_ref())
+            .flatten()
+            .map(|viewporter| {
+                let viewport = viewporter.get_viewport(&surface, &globals.qh, ());
+                let logical = |pixels: u32| ((pixels as f32 / scale).round() as i32).max(1);
+                viewport.set_destination(logical(width), logical(height));
+                shown_at = scale;
+                viewport
+            });
+        let whole = scale.round();
+        if viewport.is_none()
+            && whole > 1.
+            && (scale - whole).abs() < 1e-3
+            && width % whole as u32 == 0
+            && height % whole as u32 == 0
+        {
+            surface.set_buffer_scale(whole as i32);
+            shown_at = whole;
+        }
         Some(Self {
             surface,
             buffer,
             pool,
             _file: file,
+            viewport,
+            shown_at,
         })
     }
 
     /// Gives the surface its pixels once `start_drag` made it the drag's
     /// icon, its hotspot under the pointer.
     fn show(&self, icon: &ExternalDragIcon) {
-        let (x, y) = (-(icon.hotspot_x as i32), -(icon.hotspot_y as i32));
+        // In the surface's coordinates, the logical size's.
+        let logical = |pixels: u32| (pixels as f32 / self.shown_at).round() as i32;
+        let (x, y) = (-logical(icon.hotspot_x), -logical(icon.hotspot_y));
         if self.surface.version() >= wl_surface::REQ_OFFSET_SINCE {
             self.surface.attach(Some(&self.buffer), 0, 0);
             self.surface.offset(x, y);
@@ -597,6 +632,9 @@ impl DragIcon {
     }
 
     fn destroy(self) {
+        if let Some(viewport) = self.viewport {
+            viewport.destroy();
+        }
         self.buffer.destroy();
         self.pool.destroy();
         self.surface.destroy();

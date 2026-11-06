@@ -80,6 +80,8 @@ carry: the script takes it from the Inter release Skwir's packages pin
 | `0045-variable-font-weights` | A variable face is shaped, measured and drawn at the weight asked within its weight axis (Linux), a variable fallback at its run's | — (its tests need Inter's variable font in Zed's assets) |
 | `0046-active-drag-of` | `App::has_active_drag_of::<T>()`: whether the drag under way carries a `T` | — |
 | `0047-platform-draws-its-drag` | A drag the platform carries, come back to its source window, is not drawn there again | — |
+| `0048-glyph-rasterization-public` | `TextSystem::raster_bounds` and `rasterize_glyph` public | — |
+| `0049-drag-icon-scale` | A drag icon drawn at a scale is shown at its logical size (Wayland: a viewport, or the buffer's scale) | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
 
@@ -780,6 +782,28 @@ its source window is the platform's (`RestoredInSourceWindow`,
 `App::platform_draws_drag`), the window draws its view no more; the drag
 otherwise goes on as it did (its hover styles, its drop). Checked on a
 headless sway: out of the window and back, one image.
+
+### 0048: Glyph rasterization public
+
+`TextSystem::raster_bounds` and `rasterize_glyph` were the crate's: a caller
+can now draw text into an image of its own, glyph by glyph, with the fonts
+and the fallbacks the window draws with. Skwir writes a dragged file's name
+into the image the compositor shows (`dragname.rs`). A glyph comes as one
+byte of coverage a pixel, or four (BGRA) for an emoji, placed at its raster
+bounds' origin from its position on the baseline; `RenderGlyphParams` was
+already public.
+
+### 0049: Drag icon scale
+
+An `ExternalDragIcon` says how many of its pixels make one of the
+window's (`scale`): an image drawn at the window's scale. On Wayland its
+surface shows it at its logical size, through a viewport where the
+compositor has the viewporter (any scale, fractional ones included), else
+through the buffer's scale where the scale is whole and divides the image;
+else pixel for pixel, as before. The hotspot is given in the surface's
+logical coordinates. It extends 0001 (a patch of its own rather than a
+change of 0001, made by hand). Checked on a headless sway at 2 and 1.25: the
+name under the icon as sharp outside the window as inside, the same size.
 
 ## Adding or changing a patch
 

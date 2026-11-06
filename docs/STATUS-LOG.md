@@ -11706,3 +11706,44 @@ Plasma.
   row remembered its width (200 to 270.9 in `state.toml`). `cargo clippy
   -p skwir-ui --all-targets -D warnings`, skwir-ui's tests (540). Not
   run: `just gpui-check`, the release checks; Activity pinned not drawn.
+
+## A drag's name under its icon, inside the window and out (2026-11-06)
+
+The user's asks: the name wrapped under the icon as the grid writes
+names (it ran on one line far beside the icon); the icon twice after a
+drag left the window and came back; the name lost outside the window.
+
+- **The name** (`dragname.rs`): centred on the accent's pill, up to three
+  lines at most 160 px wide at 100 % (growing with the interface's text),
+  a longer name keeping its first lines and its end on the last (gpui
+  patch 0037, as the grid); a short one on a pill as wide as it, measured
+  with the text system, since gpui lays a drag's view out at its least
+  width. The icon stays under the pointer where it was taken, the name
+  centred under it however wide.
+- **The doubled icon:** upstream's gpui (since the switch to Zed's main,
+  2026-10-18) takes a drag back when the pointer returns to its source
+  window and draws its view again, while the compositor, which still
+  carries the drag, draws its own image there. Patch 0047: a drag the
+  platform carries is not drawn again in its source window. Once out and
+  back, a key held no longer adds "Copy" before the name (the
+  compositor's picture is fixed); drop targets are still marked.
+- **The name outside:** the picture handed to the compositor was plain
+  pixels with no text. It now holds the name under the icon, drawn as the
+  window draws it: broken and cut by gpui's line wrapper
+  (`truncate_wrapped_line`, `wrap_line`), each glyph drawn by the text
+  system (patch 0048 makes `raster_bounds` and `rasterize_glyph` public)
+  and laid into the picture (`dragicon::Canvas::glyph`), at the window's
+  scale. Patch 0049 gives `ExternalDragIcon` a `scale`, and the Wayland
+  surface shows it at its logical size through a viewport (any scale), else
+  the buffer's scale (a whole one that divides the image). The patches were
+  written by hand as additions after 0046, each checked to apply.
+- Checked on a headless sway (pixman, lavapipe, a virtual pointer), Skwir
+  floating so a drag can leave it: at scale 2, a name of 92 characters
+  dragged in the window (three lines, "plateau, …raphs.txt"), out over the
+  wallpaper (the compositor's picture the same, the text as sharp), and
+  back (one picture); at 1.25, "file 1.txt" on a pill as wide as it, in and
+  out, the same size and sharpness. `cargo clippy -p skwir-ui
+  --all-targets -D warnings`, skwir-ui's tests (541, the glyph's laying
+  among them). Not run: `just gpui-check`, `just check-cross`, the
+  release checks; a drag on X11 (which never leaves the window), on
+  KWin, on GNOME or on the session's Hyprland.

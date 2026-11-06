@@ -710,10 +710,26 @@ of bars, split or not.
   (`ThumbCache::kept`, whichever size a view drew), else its icon, drawn
   for the drag on GPUI's executor (`icons::pixels`) while a glyph stands
   in; a badge counts them, the mosaic's last quarter says how many more.
-  One file is its picture alone in every layout. The same image goes to
-  the compositor if the drag leaves the window (`dnd::FilesIcon`). It
-  never asks the core's thumbnails: the window takes what it draws out
-  of them (`Thumbnails::take`).
+  One file is its picture alone in every layout. It never asks the
+  core's thumbnails: the window takes what it draws out of them
+  (`Thumbnails::take`).
+- **A drag's name is under its icon, as the grid writes names**
+  (`dragname.rs`): centred on the accent's pill, up to three lines at
+  most `dragname::WIDTH` wide, a longer one keeping its first lines and
+  its end on the last (gpui patch 0037); a short one on a pill as wide as
+  it, measured with the text system, as gpui lays a drag's view out at
+  its least width. Its own font is named (gpui draws a drag's view
+  outside the window's text style). A key held says what the drop does
+  before the name ("Copy …"), in the window only.
+- **The same picture inside and out.** If a drag of files leaves the
+  window (Wayland), the compositor shows the icon with its name under
+  it, drawn as the window draws them (`dragname::picture`: broken and
+  cut by gpui's line wrapper, each glyph from the text system, gpui
+  patch 0048) at the window's scale, which the compositor shows at its
+  logical size (patch 0049, through the viewporter for a fractional
+  one): the text as sharp as the window's. Brought back into the
+  window, the drag is still the compositor's, which draws it there too:
+  the window does not draw it again (patch 0047).
 - A drop on the terminal types the files' paths at its prompt and asks
   nothing: no file is copied or moved (see the terminal panel).
 

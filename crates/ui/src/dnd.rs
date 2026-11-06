@@ -11,7 +11,6 @@
 //! folder it came from as it was, and paths from another application are
 //! copied.
 
-use crate::sizes::TextSizes;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -221,11 +220,22 @@ impl DragPreview {
             return;
         }
         let drawn = look.drawn();
-        if let Ok(Some(icon)) =
-            shell.update(cx, |shell, cx| shell.show_files_icon(drawn, window, cx))
-        {
+        let name = dragged(self.count, &self.label);
+        if let Ok(Some(icon)) = shell.update(cx, |shell, cx| {
+            shell.show_files_icon(drawn, &name, window, cx)
+        }) {
             self.icon = Some(icon);
         }
+    }
+}
+
+/// What a drag of `count` things says, `label` the one taken's name: its
+/// name, or how many.
+fn dragged(count: usize, label: &str) -> String {
+    if count == 1 {
+        label.to_owned()
+    } else {
+        crate::format::count(count, "item")
     }
 }
 
@@ -233,11 +243,7 @@ impl Render for DragPreview {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.take_icons(window, cx);
         let theme = cx.global::<Theme>().clone();
-        let text = if self.count == 1 {
-            self.label.clone()
-        } else {
-            crate::format::count(self.count, "item")
-        };
+        let text = dragged(self.count, &self.label);
         // A key held says what the drop will do wherever it lands; without
         // one it depends on where, and the label does not guess.
         let text = match held(window.modifiers()) {
@@ -246,44 +252,35 @@ impl Render for DragPreview {
             Some(DropOp::Link) => format!("Link {text}"),
             None => text,
         };
-        // gpui draws a drag's view on its own, outside the window's text
-        // style: without a family it asks for gpui's `.SystemUIFont`
-        // (a family Linux seldom has, then gpui's fallbacks, then a panic).
-        // It lays it out at its least width, where text wraps at each
-        // chance ("a-note." over "txt"): the label stays one line.
-        let label = div()
-            .px_2()
-            .py_1()
-            .rounded_md()
-            .bg(theme.accent)
-            .text_color(theme.on_accent)
-            .font_family(theme.font.clone())
-            .whitespace_nowrap()
-            .text_body()
-            .shadow_md()
-            .child(text);
+        // The name under the icon as the grid writes names, and as the
+        // compositor shows it once the drag leaves (`dragname.rs`). gpui
+        // draws a drag's view on its own, outside the window's text style:
+        // the name says its font itself (without a family gpui asks for
+        // `.SystemUIFont`, a family Linux seldom has).
+        let name = crate::dragname::Name::of(text, &theme, window);
+        let label = name.element(&theme, window);
         let Some((image, hotspot)) = &self.icon else {
             return div()
                 .pl(self.position.x + px(12.))
                 .pt(self.position.y + px(12.))
                 .child(label);
         };
-        // Where the compositor puts the same icon once the drag leaves.
+        // Where the compositor puts the same picture once the drag leaves:
+        // the icon under the pointer as it was taken, the name centred
+        // under it, wider than it or not.
         let size = image.size(0);
+        let icon_width = px(size.width.0 as f32);
+        let beyond = ((name.width(window) - icon_width) / 2.).max(px(0.));
         div().child(
             div()
                 .absolute()
-                .left(self.position.x - hotspot.x)
+                .left(self.position.x - hotspot.x - beyond)
                 .top(self.position.y - hotspot.y)
                 .flex()
                 .flex_col()
                 .items_center()
-                .gap_1()
-                .child(
-                    img(image.clone())
-                        .w(px(size.width.0 as f32))
-                        .h(px(size.height.0 as f32)),
-                )
+                .gap(crate::sizes::sized(crate::dragname::GAP))
+                .child(img(image.clone()).w(icon_width).h(px(size.height.0 as f32)))
                 .child(label),
         )
     }
@@ -336,11 +333,13 @@ impl Shell {
     }
 
     /// `icon` as the files' icon: drawn under the pointer (the image and
-    /// its point under it, returned) and handed to the compositor if the
-    /// drag leaves the window. The icon before it is drawn no more.
+    /// its point under it, returned), and, with `name` under it, handed to
+    /// the compositor if the drag leaves the window (`dragname::picture`).
+    /// The icon before it is drawn no more.
     fn show_files_icon(
         &mut self,
         icon: gpui::ExternalDragIcon,
+        name: &str,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<(Arc<RenderImage>, Point<Pixels>)> {
@@ -349,8 +348,11 @@ impl Shell {
         }
         let hotspot = point(px(icon.hotspot_x as f32), px(icon.hotspot_y as f32));
         let image = crate::thumbs::owned_render_image(icon.width, icon.height, icon.rgba.clone())?;
+        let theme = cx.global::<Theme>().clone();
+        let named = crate::dragname::Name::of(name.to_owned(), &theme, window);
+        let picture = crate::dragname::picture(&icon, &named, &theme, window, cx);
         self.files_icon = Some(FilesIcon {
-            icon: Arc::new(icon),
+            icon: Arc::new(picture),
             image: image.clone(),
         });
         Some((image, hotspot))
@@ -747,7 +749,8 @@ pub fn draggable(el: Stateful<Div>, pane: PaneId, cx: &mut Context<Shell>) -> St
                         .and_then(|(at, id)| (at == pane).then_some(id));
                     let label = shell.drag_label(pane);
                     let mut look = shell.drag_look(pane, grabbed, ink);
-                    let icon = shell.show_files_icon(look.drawn(), window, cx);
+                    let name = dragged(label.0, &label.1);
+                    let icon = shell.show_files_icon(look.drawn(), &name, window, cx);
                     let waits = look.cards.iter().any(|card| card.coming.is_some());
                     (label, icon, waits.then_some(look))
                 })

@@ -8,7 +8,9 @@
 //! or when there is none.
 //!
 //! Everything here is plain RGBA8 with straight alpha; no text system is
-//! involved, so digits come from a tiny built-in 3x5 font.
+//! involved, so digits come from a tiny built-in 3x5 font. The name under
+//! the icon, for the compositor, is written by `dragname.rs` with the text
+//! system's glyphs (`Canvas::glyph`).
 
 use gpui::{ExternalDragIcon, Window};
 use skwir_core::EntryId;
@@ -102,6 +104,16 @@ pub struct Bitmap<'a> {
 }
 
 impl<'a> Bitmap<'a> {
+    /// A drag's icon, as drawn here.
+    pub fn of_icon(icon: &'a ExternalDragIcon) -> Self {
+        Bitmap {
+            width: icon.width,
+            height: icon.height,
+            bytes: &icon.rgba,
+            order: PixelOrder::Rgba,
+        }
+    }
+
     /// A picture the window keeps.
     pub fn of_picture(picture: &'a Picture) -> Option<Self> {
         let size = picture.image.size(0);
@@ -487,6 +499,36 @@ impl Canvas {
         ]
     }
 
+    /// A glyph the text system drew (`dragname.rs`), its top-left at
+    /// `(x, y)`: a byte of coverage a pixel, laid in `color`, or an emoji's
+    /// own colors, four bytes a pixel in BGRA order.
+    pub fn glyph(
+        &mut self,
+        x: i32,
+        y: i32,
+        (width, height): (i32, i32),
+        pixels: &[u8],
+        emoji: bool,
+        color: [u8; 4],
+    ) {
+        let bytes = if emoji { 4 } else { 1 };
+        if width <= 0 || height <= 0 || pixels.len() < (width * height) as usize * bytes {
+            return;
+        }
+        for row in 0..height {
+            for column in 0..width {
+                let i = (row * width + column) as usize * bytes;
+                if emoji {
+                    let [b, g, r, a] = [pixels[i], pixels[i + 1], pixels[i + 2], pixels[i + 3]];
+                    self.blend(x + column, y + row, [r, g, b, a]);
+                } else {
+                    self.cover(x + column, y + row, color, f32::from(pixels[i]) / 255.);
+                }
+            }
+        }
+    }
+
+    /// The picture drawn, shown pixel for pixel.
     pub fn into_icon(self, hotspot_x: u32, hotspot_y: u32) -> ExternalDragIcon {
         ExternalDragIcon {
             width: self.width,
@@ -494,6 +536,7 @@ impl Canvas {
             rgba: self.rgba,
             hotspot_x,
             hotspot_y,
+            scale: 1.,
         }
     }
 }
@@ -1285,5 +1328,26 @@ mod tests {
         assert_eq!(px(2, 0), 255);
         assert_eq!(px(7, 5), 255);
         assert_eq!(px(8, 5), 0);
+    }
+
+    /// A glyph's coverage lays its color by as much; an emoji's own
+    /// colors come in BGRA order; one too short for its size draws
+    /// nothing, and one past the edge is clipped.
+    #[test]
+    fn a_glyph_is_laid_by_its_coverage() {
+        let mut c = Canvas::new(4, 2);
+        let blue = [0, 0, 255, 255];
+        c.glyph(1, 0, (2, 1), &[255, 128], false, blue);
+        assert_eq!(c.pixel(1, 0), blue);
+        assert_eq!(c.pixel(2, 0)[2], 255);
+        assert!((127..=129).contains(&c.pixel(2, 0)[3]), "half covered");
+        assert_eq!(c.pixel(0, 0), [0; 4]);
+        c.glyph(0, 1, (1, 1), &[10, 20, 30, 255], true, blue);
+        assert_eq!(c.pixel(0, 1), [30, 20, 10, 255], "BGRA read as RGBA");
+        let before = c.rgba.clone();
+        c.glyph(0, 0, (2, 2), &[255; 3], false, blue);
+        assert_eq!(c.rgba, before, "fewer pixels than its size");
+        c.glyph(3, 1, (2, 2), &[255; 4], false, blue);
+        assert_eq!(c.pixel(3, 1), blue, "clipped at the edge");
     }
 }

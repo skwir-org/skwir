@@ -34,6 +34,7 @@ mod desktop_style;
 pub mod dnd;
 pub mod dock;
 mod dragicon;
+mod dragname;
 pub mod elements;
 mod finishing;
 pub mod fonts;

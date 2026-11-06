@@ -1,0 +1,31 @@
+0048 glyph-rasterization-public: TextSystem::raster_bounds and rasterize_glyph public
+
+diff --git a/crates/gpui/src/text_system.rs b/crates/gpui/src/text_system.rs
+index 7e684a2..f6fb62e 100644
+--- a/crates/gpui/src/text_system.rs
++++ b/crates/gpui/src/text_system.rs
+@@ -555,8 +555,10 @@ impl TextSystem {
+         }
+     }
+ 
+-    /// Get the rasterized size and location of a specific, rendered glyph.
+-    pub(crate) fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
++    /// Get the rasterized size and location of a specific, rendered glyph:
++    /// public, so that a caller can draw text into an image of its own (a
++    /// drag's image handed to the platform).
++    pub fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
+         let raster_bounds = self.raster_bounds.upgradable_read();
+         if let Some(bounds) = raster_bounds.get(params) {
+             Ok(*bounds)
+@@ -568,7 +570,10 @@ impl TextSystem {
+         }
+     }
+ 
+-    pub(crate) fn rasterize_glyph(
++    /// Rasterize a glyph: its size, and its pixels, one byte of coverage
++    /// each, or four (BGRA) for an emoji. Placed at `raster_bounds`' origin
++    /// from the glyph's position.
++    pub fn rasterize_glyph(
+         &self,
+         params: &RenderGlyphParams,
+     ) -> Result<(Size<DevicePixels>, Vec<u8>)> {
