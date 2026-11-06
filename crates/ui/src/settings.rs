@@ -2168,6 +2168,70 @@ impl Drop for Narrowed {
     }
 }
 
+/// A slider's knob held by the pointer (`controls::slider`): the value it
+/// stands at, worn as if chosen while it moves (`preview_highlight`, as an
+/// open list's row is), saved once let go (`SettingsView::slide`).
+pub(crate) struct Sliding {
+    pub(crate) key: String,
+    pub(crate) value: i64,
+    app: std::sync::Weak<App>,
+}
+
+impl Sliding {
+    /// Stand at `value`, worn at once by an owner that wears what is
+    /// previewed (the window's opacity); others wait for the release.
+    fn stand(&mut self, value: i64) {
+        self.value = value;
+        if preview_highlight(&self.key, Some(&value.to_string()))
+            && let Some(app) = self.app.upgrade()
+        {
+            app.wake();
+        }
+    }
+}
+
+impl Drop for Sliding {
+    /// Let go, or the dialog closed while held: what holds is shown again
+    /// (a value let go is, as `Pending`, until its save ends).
+    fn drop(&mut self) {
+        if preview_highlight(&self.key, None)
+            && let Some(app) = self.app.upgrade()
+        {
+            app.wake();
+        }
+    }
+}
+
+/// The value of a slider of `spec` at `at` along it (0 to 1): its step
+/// nearest, in its range.
+pub(crate) fn slider_value(spec: &SettingSpec, at: f32) -> i64 {
+    let (min, max) = spec.constraints.integer_range.unwrap_or((0, 0));
+    let step = spec.constraints.step.max(1);
+    let stops = (max - min) / step;
+    #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // a short range
+    let nearest = (f64::from(at.clamp(0., 1.)) * stops as f64).round() as i64;
+    (min + nearest * step).clamp(min, max)
+}
+
+/// Where `value` stands along a slider of `spec`, from 0 to 1.
+pub(crate) fn slider_at(spec: &SettingSpec, value: i64) -> f32 {
+    let (min, max) = spec.constraints.integer_range.unwrap_or((0, 0));
+    if max <= min {
+        return 0.;
+    }
+    #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // a short range
+    let at = ((value.clamp(min, max) - min) as f64 / (max - min) as f64) as f32;
+    at
+}
+
+/// The steps a slider of `spec` moves by on Page Up and Page Down: a
+/// tenth of its range, at least two.
+fn slider_page(spec: &SettingSpec) -> i64 {
+    let (min, max) = spec.constraints.integer_range.unwrap_or((0, 0));
+    let stops = (max - min) / spec.constraints.step.max(1);
+    ((stops + 5) / 10).max(2)
+}
+
 impl Narrowed {
     /// Show the choice highlighted as if it were chosen, where its values
     /// look like something; the window wears it while the list is open.
@@ -2284,6 +2348,9 @@ pub struct SettingsView {
     pub(crate) dropdown: Option<String>,
     /// The dropdown open, when it is a long one.
     pub(crate) narrowed: Option<Narrowed>,
+    /// A slider's knob held by the pointer: the value under it, worn
+    /// until it is let go (`Sliding`).
+    pub(crate) sliding: Option<Sliding>,
     /// Setting to point out after `ui.settings {key}`.
     pub(crate) highlight: Option<String>,
     /// The pages unfolded to show all their settings, by their words
@@ -2444,6 +2511,7 @@ impl SettingsView {
             reset_armed: false,
             dropdown: None,
             narrowed: None,
+            sliding: None,
             highlight: None,
             unfolded: app_unfolded,
             revealed: std::collections::BTreeSet::new(),
@@ -2880,7 +2948,74 @@ impl SettingsView {
     }
 
     /// Left/right on a focused choice or number.
-    fn adjust(&mut self, delta: i64, window: &mut Window, cx: &mut Context<Self>) {
+    /// What a setting's slider says (`controls::slider`): a press holds its
+    /// knob at the step nearest, worn at once where its owner wears what is
+    /// previewed; the knob follows the pointer; let go, the value is saved
+    /// and shown until that save ends.
+    pub(crate) fn slide(
+        &mut self,
+        key: &str,
+        slid: crate::controls::Slid,
+        focus: &gpui::FocusHandle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::controls::Slide;
+        let Some(row) = self.row(key) else { return };
+        if !self.available(&row.spec) {
+            return;
+        }
+        let value = slider_value(&row.spec, slid.at);
+        match slid.slide {
+            Slide::Press => {
+                window.focus(focus, cx);
+                self.close_lists();
+                let mut sliding = Sliding {
+                    key: key.to_owned(),
+                    value,
+                    app: Arc::downgrade(&self.app),
+                };
+                sliding.stand(value);
+                self.sliding = Some(sliding);
+            }
+            Slide::Drag => {
+                let Some(sliding) = self.sliding.as_mut().filter(|held| held.key == key) else {
+                    return;
+                };
+                if sliding.value == value {
+                    return;
+                }
+                sliding.stand(value);
+            }
+            Slide::Release => {
+                // A release without its press (one begun elsewhere).
+                let Some(sliding) = self.sliding.take_if(|held| held.key == key) else {
+                    return;
+                };
+                // Taken before the knob's preview goes: shown until the save
+                // that sends it ends, so the look never goes back meanwhile.
+                let text = value.to_string();
+                self.change(key, text.clone(), cx);
+                self.pend_preview(key, &text);
+                drop(sliding);
+            }
+        }
+        cx.notify();
+    }
+
+    /// Step the focused control's value: by `mv`'s steps, a slider's page
+    /// (`slider_page`) or to an end.
+    fn adjust(&mut self, mv: crate::modal::ListMove, window: &mut Window, cx: &mut Context<Self>) {
+        use crate::modal::ListMove;
+        // Past either end: clamped there.
+        const END: i64 = i64::MAX / 4;
+        let by = |page: i64| match mv {
+            ListMove::By(delta) => i64::try_from(delta).unwrap_or(0),
+            // Page Up goes up a list (`-1`), and raises a value.
+            ListMove::Page(pages) => -i64::try_from(pages).unwrap_or(0) * page,
+            ListMove::First => -END,
+            ListMove::Last => END,
+        };
         // A record's own choice steps through its enabled choices.
         if let Some(pick) = self
             .record_picks
@@ -2888,7 +3023,7 @@ impl SettingsView {
             .find(|pick| pick.focus.contains_focused(window, cx))
             .cloned()
         {
-            pick.step(delta, self);
+            pick.step(by(1).clamp(-1, 1), self);
             return;
         }
         let Some(key) = self
@@ -2899,6 +3034,7 @@ impl SettingsView {
         else {
             return;
         };
+        let delta = by(self.row(&key).map_or(1, |row| slider_page(&row.spec)));
         // A long list opens rather than step: each step would apply its
         // choice, a font loaded for each one passed.
         let long = self.row(&key).is_some_and(|row| {
@@ -3467,7 +3603,7 @@ impl SettingsView {
                 window.focus(&self.nav, cx);
                 self.step_focus(1, window, cx);
             }
-            "settings_adjust" => self.adjust(delta, window, cx),
+            "settings_adjust" => self.adjust(crate::modal::ListMove::of(args), window, cx),
             "settings_move" => self.move_focused_record(delta, window, cx),
             "settings_key" => {
                 let key = args
@@ -4340,5 +4476,33 @@ mod tests {
             ColorSource::chosen(&app.settings),
             ColorSource::Palette(nord)
         );
+    }
+
+    /// A slider stops at its steps, in its range, whatever the pointer's
+    /// place; its page is a tenth of the range, at least two steps.
+    #[test]
+    fn a_slider_stands_at_its_steps() {
+        use super::{slider_at, slider_page, slider_value};
+        let fives = SettingSpec::integer("ui.test_fives", "Fives", "", 100, (50, 100))
+            .step(5)
+            .slider();
+        assert_eq!(slider_value(&fives, 0.), 50);
+        assert_eq!(slider_value(&fives, 1.), 100);
+        assert_eq!(slider_value(&fives, 0.5), 75);
+        // The step nearest.
+        assert_eq!(slider_value(&fives, 0.44), 70);
+        assert_eq!(slider_value(&fives, 0.46), 75);
+        assert_eq!(slider_value(&fives, -3.), 50);
+        assert_eq!(slider_value(&fives, 9.), 100);
+        for value in (50..=100).step_by(5) {
+            assert_eq!(slider_value(&fives, slider_at(&fives, value)), value);
+        }
+        // A value off its steps (a hand's edit) is drawn where it is.
+        assert!((slider_at(&fives, 87) - 0.74).abs() < 1e-6);
+        assert_eq!(slider_at(&fives, 20), 0.);
+        assert_eq!(slider_page(&fives), 2, "ten steps: at least two");
+        let ones = SettingSpec::integer("ui.test_ones", "Ones", "", 10, (0, 50)).slider();
+        assert_eq!(slider_value(&ones, 0.5), 25);
+        assert_eq!(slider_page(&ones), 5);
     }
 }

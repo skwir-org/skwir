@@ -7,8 +7,10 @@ the reasoning.
 
 ## Declaring a setting
 
-- Use the `SettingSpec` constructors: `toggle`, `choice`, `integer`,
-  `number`, `text`, `path`, `command`; `records` for a list the user
+- Use the `SettingSpec` constructors: `toggle`, `choice`, `integer`
+  (`slider` for a short range judged as it changes, an opacity, rather
+  than a number known as such, a memory budget), `number`, `text`,
+  `path`, `command`; `records` for a list the user
   builds in the dialog (tile servers: a record needs an id in the dialog,
   which edits it by it; a file's may leave it out, as what reads records
   does), or one its owner keeps elsewhere (`records_kept_by`, a
@@ -220,6 +222,17 @@ The key is the owner's; the page is the subject's (ADR-072).
   reading font, the code font: `settings_view::written_at`), each label
   in a rem of its own on the list's one left edge, its row as tall as
   it needs. The control itself stays at the dialog's size.
+- **A slider** (`SettingSpec::slider`, `controls::slider`) is a whole
+  number's track and knob, its value written after it in tabular
+  figures, in the room of its longest end, so moving it moves nothing
+  else. Its knob stops at the steps. Held, it follows the pointer over
+  the whole window, worn as it moves wherever its owner wears what is
+  previewed (`settings::Sliding`, as a palette's list is: the window's
+  own settings), and saved once let go, shown until that save ends;
+  closing the dialog while it is held shows what holds again. Left and
+  Right step it, Page Up and Page Down by a tenth of its range (at
+  least two steps), Home and End to its ends (`ui.settings_adjust`'s
+  `to`). A screen reader hears a slider, its value as written.
 - **The fold.** A page with essentials shows them, under their sections,
   and folds the rest under More settings (N) at its end; unfolded, it
   shows all, in order, and stays so (`ui.settings_unfolded`, the

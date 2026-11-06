@@ -820,7 +820,11 @@ mod tests {
             .filter(|a| a.command == "ui.settings_adjust")
             .collect();
         assert!(adjust.iter().all(|a| a.place == "Settings"));
-        assert_eq!(adjust.len(), 2, "less and more");
+        assert_eq!(
+            adjust.len(),
+            6,
+            "less and more, by a step, a page, to an end"
+        );
         // Anywhere first; the keys inside dialogs and menus last.
         assert_eq!(keyboard.actions[0].place, "Anywhere");
         let inside = keyboard.actions.iter().position(|a| a.inside).unwrap();

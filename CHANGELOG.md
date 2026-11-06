@@ -7,6 +7,9 @@
   details, before Website and Source code, which open the browser.
 - **The player's seek bar** has a knob, and a drag that leaves the bar still
   moves it: let go anywhere, it seeks there.
+- **Sliders in Settings**: a setting judged as it changes can be a slider
+  rather than a number to type, first Tags suggested in the sidebar. Left and
+  Right step it, Page Up and Page Down by a tenth, Home and End to its ends.
 
 ## 0.3.1 (2026-11-05)
 

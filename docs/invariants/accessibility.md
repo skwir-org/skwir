@@ -55,8 +55,10 @@ like `AGENTS.md`.
 
 - **The shared controls say what they are** (`controls.rs`): a switch and
   whether it is on, radio buttons in a group, a button by its words, an
-  icon button by the name it is given, a dropdown with its value. One that
-  draws no words of its name (a switch, a choice, a dropdown) is named by
+  icon button by the name it is given, a dropdown with its value, a
+  slider with its value, its least and its most (the seek bar's in
+  seconds, a setting's as its row writes it). One that
+  draws no words of its name (a switch, a choice, a dropdown, a slider) is named by
   its caller from the label beside it: a setting's control by the
   setting's title, described by its description (`SettingsView::named`).
 - **A toolbar button** (`toolbar::Button`) is a button, a menu item in a

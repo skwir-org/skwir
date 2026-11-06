@@ -1074,6 +1074,7 @@ impl Plugin for TagsPlugin {
                 sidebar::DEFAULT,
                 (0, 50),
             )
+            .slider()
             .page(skwir_core::settings::page::NOTES)
             .section("Tags"),
         );

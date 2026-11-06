@@ -51,6 +51,18 @@ mod args {
         delta: Option<i64>,
     }
 
+    /// A setting's value changed by steps, or a slider's page or end.
+    #[derive(Deserialize, JsonSchema)]
+    pub(super) struct Adjust {
+        /// Steps to change by: a number's, a choice's.
+        #[serde(default)]
+        delta: Option<i64>,
+        /// `page_up` or `page_down` (a tenth of a slider's range), `first`
+        /// or `last` instead.
+        #[serde(default)]
+        to: Option<String>,
+    }
+
     /// An amount to move by: seconds, or a fraction of the volume.
     #[derive(Deserialize, JsonSchema)]
     pub(super) struct Amount {
@@ -520,10 +532,11 @@ mod args {
 }
 
 use args::{
-    Amount, Ask, Bucket, Close, Continue, CopyText, Count, Cursor, Delta, Dir, Find, Fold, Folders,
-    History, Key, Layout, ListMoveArgs, Object, On, Pace, Page, PageLink, Pages, Pan, Pick, Player,
-    Pointer, Popup, PreviewScroll, Scrub, Settings, Split, Submit, TagsPrompt, TerminalPaste, Text,
-    TextSize, TimelineCursor, TimelineDate, Toggle, Toward, Url, UsageMode, View, ViewButton,
+    Adjust, Amount, Ask, Bucket, Close, Continue, CopyText, Count, Cursor, Delta, Dir, Find, Fold,
+    Folders, History, Key, Layout, ListMoveArgs, Object, On, Pace, Page, PageLink, Pages, Pan,
+    Pick, Player, Pointer, Popup, PreviewScroll, Scrub, Settings, Split, Submit, TagsPrompt,
+    TerminalPaste, Text, TextSize, TimelineCursor, TimelineDate, Toggle, Toward, Url, UsageMode,
+    View, ViewButton,
 };
 
 /// The window's commands an agent may run (ADR-044): they change only
@@ -1074,6 +1087,10 @@ const KEY_FORMS: &[(&str, &str, &str)] = &[
         r#"{"delta":1}"#,
         "More, or the next choice",
     ),
+    ("ui.settings_adjust", r#"{"to":"page_down"}"#, "Much less"),
+    ("ui.settings_adjust", r#"{"to":"page_up"}"#, "Much more"),
+    ("ui.settings_adjust", r#"{"to":"first"}"#, "The least"),
+    ("ui.settings_adjust", r#"{"to":"last"}"#, "The most"),
 ];
 
 /// The shell's commands whose keys may change but never all go (ADR-024):
@@ -2095,11 +2112,17 @@ pub fn declare_all(app: &App) {
         ("ui.settings_search", "Search settings"),
         ("ui.settings_page", "Next page"),
         ("ui.settings_enter", "Into the page"),
-        ("ui.settings_adjust", "Change the value"),
         ("ui.settings_move", "Move the record"),
     ] {
         declare::<Delta>(app, Topic::Window, name, title, "A key in the settings");
     }
+    declare::<Adjust>(
+        app,
+        Topic::Window,
+        "ui.settings_adjust",
+        "Change the value",
+        "A key in the settings",
+    );
     none(
         Topic::Skwir,
         "ui.quit",

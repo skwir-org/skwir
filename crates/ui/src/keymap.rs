@@ -1075,6 +1075,31 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
         r#"{"delta":1}"#,
         Some("setting_control"),
     ),
+    // A slider's page, a tenth of its range, and its ends.
+    (
+        "pageup",
+        "ui.settings_adjust",
+        r#"{"to":"page_up"}"#,
+        Some("setting_slider"),
+    ),
+    (
+        "pagedown",
+        "ui.settings_adjust",
+        r#"{"to":"page_down"}"#,
+        Some("setting_slider"),
+    ),
+    (
+        "home",
+        "ui.settings_adjust",
+        r#"{"to":"first"}"#,
+        Some("setting_slider"),
+    ),
+    (
+        "end",
+        "ui.settings_adjust",
+        r#"{"to":"last"}"#,
+        Some("setting_slider"),
+    ),
     (
         "down",
         "ui.settings_adjust",
@@ -1275,6 +1300,7 @@ pub(crate) const PLACES: &[Place] = &[
     inside("setting_control", "SettingControl", "Settings"),
     inside("setting_choices", "SettingChoices", "Settings"),
     inside("setting_number", "SettingNumber", "Settings"),
+    inside("setting_slider", "SettingSlider", "Settings"),
     inside("setting_record", "SettingRecord", "Settings"),
     inside("setting_keys", "SettingKeys", "Settings"),
 ];

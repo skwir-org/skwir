@@ -321,8 +321,12 @@ pub struct SettingConstraints {
     /// Human labels parallel to `choices` (empty: show the values).
     pub choice_labels: Vec<String>,
     pub integer_range: Option<(i64, i64)>,
-    /// Increment of a numeric stepper.
+    /// Increment of a numeric stepper, and the stops of a slider.
     pub step: i64,
+    /// A whole number shown as a slider over its range, in its steps,
+    /// rather than typed (`SettingSpec::slider`): a value seen as it
+    /// changes. Its value stays a number for agents and scripts.
+    pub slider: bool,
     /// The fields of a [`SettingKind::Records`] setting's records.
     pub fields: Vec<RecordField>,
     /// What one record is called ("tile server"), for "Add tile server".
@@ -642,6 +646,21 @@ impl SettingSpec {
     #[must_use]
     pub fn step(mut self, step: i64) -> Self {
         self.constraints.step = step.max(1);
+        self
+    }
+
+    /// A whole number in a short range, shown in the dialog as a slider
+    /// over it, its knob stopping at each `step` (an opacity in fives):
+    /// for a value judged as it changes rather than one known by its
+    /// number (a memory budget). Declared with `integer`.
+    #[must_use]
+    pub fn slider(mut self) -> Self {
+        debug_assert!(
+            self.constraints.integer_range.is_some(),
+            "{}: a slider needs a range",
+            self.key
+        );
+        self.constraints.slider = true;
         self
     }
 

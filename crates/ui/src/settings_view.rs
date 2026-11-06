@@ -26,6 +26,9 @@ const SEGMENTED_MAX: usize = 4;
 const TEXT_WIDTH: f32 = 260.;
 /// A text field narrows to this before the row's texts give way.
 const FIELD_MIN: f32 = 160.;
+/// A slider's length, and what it narrows to before the texts give way.
+const SLIDER_WIDTH: f32 = 200.;
+const SLIDER_MIN: f32 = 96.;
 /// A table's titles keep this much width whatever the controls beside
 /// them.
 const TEXTS_MIN: f32 = 240.;
@@ -617,6 +620,9 @@ impl SettingsView {
                 .into_any_element()
             }
             SettingKind::Data => div().into_any_element(),
+            SettingKind::Integer if row.spec.constraints.slider => {
+                self.slider(row, item, theme, cx)
+            }
             kind => {
                 let Some(input) = row.input.clone() else {
                     return div().into_any_element();
@@ -718,6 +724,102 @@ impl SettingsView {
                 group.into_any_element()
             }
         }
+    }
+
+    /// A whole number as a slider (`SettingSpec::slider`), its value
+    /// written after it: the knob's while it is held. Left and Right step
+    /// it, Page Up and Page Down a tenth of its range, Home and End to its
+    /// ends (`ui.settings_adjust`).
+    fn slider(
+        &mut self,
+        row: &Snapshot,
+        item: usize,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let key = row.spec.key.clone();
+        let focus = self.handle(&format!("control:{key}"), cx);
+        self.stop(&focus, Some(item), Some(&key));
+        let held = self.sliding.as_ref().filter(|sliding| sliding.key == key);
+        let value = held.map_or_else(
+            || {
+                row.value
+                    .parse()
+                    .ok()
+                    .or_else(|| row.spec.default.as_integer())
+                    .unwrap_or_default()
+            },
+            |sliding| sliding.value,
+        );
+        let at = crate::settings::slider_at(&row.spec, value);
+        let (min, max) = row.spec.constraints.integer_range.unwrap_or((0, 0));
+        let written = |value: i64| {
+            if row.spec.unit.is_empty() {
+                value.to_string()
+            } else {
+                format!("{value} {}", row.spec.unit)
+            }
+        };
+        let said = written(value);
+        // The value's room is the longest end's, its figures all as wide
+        // (tabular): the knob's value changing moves nothing.
+        let widest = [written(min), written(max)]
+            .into_iter()
+            .max_by_key(|text| text.chars().count())
+            .unwrap_or_default();
+        let figures = gpui::FontFeatures(std::sync::Arc::new(vec![("tnum".into(), 1)]));
+        let on_slide = {
+            let (key, focus) = (key.clone(), focus.clone());
+            cx.listener(move |this, slid: &controls::Slid, window, cx| {
+                this.slide(&key, *slid, &focus, window, cx);
+            })
+        };
+        let control = self
+            .named(
+                controls::slider(
+                    format!("slider-{key}"),
+                    at,
+                    held.is_some(),
+                    theme,
+                    std::rc::Rc::new(on_slide),
+                ),
+                row,
+            )
+            .track_focus(&focus)
+            .key_context("SettingControl SettingSlider")
+            .aria_numeric_value(value as f64)
+            .aria_min_numeric_value(min as f64)
+            .aria_max_numeric_value(max as f64)
+            .aria_value(said.clone())
+            .w(sized(SLIDER_WIDTH))
+            .min_w(sized(SLIDER_MIN))
+            .flex_shrink_1();
+        div()
+            .flex()
+            .items_center()
+            .gap(sized(8.))
+            .w(sized(SLIDER_WIDTH))
+            .min_w(sized(SLIDER_MIN))
+            .flex_shrink_1()
+            .child(control)
+            .child(
+                div()
+                    .flex_none()
+                    .relative()
+                    .text_body()
+                    .font_features(figures)
+                    .child(div().text_color(gpui::transparent_black()).child(widest))
+                    .child(
+                        div()
+                            .absolute()
+                            .inset_0()
+                            .flex()
+                            .justify_end()
+                            .text_color(theme.text)
+                            .child(said),
+                    ),
+            )
+            .into_any_element()
     }
 
     /// A choice as segmented buttons, one per value.
