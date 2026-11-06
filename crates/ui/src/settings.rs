@@ -3692,9 +3692,7 @@ impl crate::shell::Shell {
         }
         self.palette = None;
         self.menu = None;
-        if let Some(popup) = self.toolbar_menu.take() {
-            popup.restore(window, cx);
-        }
+        self.close_popups_for_dialog(window, cx);
         let (app, bound) = (Arc::clone(&self.app), self.keys.bound());
         // What had the keyboard gets it back when the dialog closes, as a
         // popup's does: the reader, the address, the pane.

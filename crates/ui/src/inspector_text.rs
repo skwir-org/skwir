@@ -588,30 +588,39 @@ pub fn part(
             }
         })
         .on_mouse_up(MouseButton::Left, move |_, window, cx| {
-            let _ = release.update(cx, |s, cx| {
-                s.with_pane(pane, |s| {
-                    s.run(
-                        "ui.inspect",
-                        serde_json::json!({"action":"text_up"}),
-                        window,
-                        cx,
-                    );
-                });
-            });
+            released(&release, pane, window, cx);
         })
         .on_mouse_up_out(MouseButton::Left, move |_, window, cx| {
-            let _ = entity.update(cx, |s, cx| {
-                s.with_pane(pane, |s| {
-                    s.run(
-                        "ui.inspect",
-                        serde_json::json!({"action":"text_up"}),
-                        window,
-                        cx,
-                    );
-                });
-            });
+            released(&entity, pane, window, cx);
         })
         .into_any_element()
+}
+
+/// A release ends the selection a press on the text began, and nothing
+/// else. It is heard outside the text too, wherever the text is not
+/// hovered, and text a dialog covers never is: run as a command, every
+/// release in the window would close About or the overview open over it
+/// (`Shell::admit`), and About's close button, clicked by that release,
+/// would open it again.
+fn released(
+    shell: &WeakEntity<Shell>,
+    pane: PaneId,
+    window: &mut gpui::Window,
+    cx: &mut gpui::App,
+) {
+    let _ = shell.update(cx, |s, cx| {
+        if !s.selecting_text() {
+            return;
+        }
+        s.with_pane(pane, |s| {
+            s.run(
+                "ui.inspect",
+                serde_json::json!({"action":"text_up"}),
+                window,
+                cx,
+            );
+        });
+    });
 }
 #[cfg(test)]
 mod tests {

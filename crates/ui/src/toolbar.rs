@@ -709,6 +709,18 @@ impl Shell {
         was
     }
 
+    /// Close the popup open and what is on its way to one (a menu of
+    /// places being read, a note read from another chapter), as a dialog
+    /// that holds the window's commands appears: Settings, the overview,
+    /// About (`Shell::takes_now`). A popup left under it runs its close at
+    /// every press outside it, a press in the dialog included, which the
+    /// dialog refuses (the popup stays over it) or closes for. Before the
+    /// dialog takes the keyboard: what had it before the popup has it then.
+    pub(crate) fn close_popups_for_dialog(&mut self, window: &mut Window, cx: &mut gpui::App) {
+        self.close_popup(window, cx);
+        self.preview.inspection.notes.close(window, cx);
+    }
+
     /// Every popup's toggle (`args`: `close`, and `pointer` when a press
     /// outside closes it), before opening the one named `key`: the popup
     /// open closes, and this one opens unless asked to close, unless it

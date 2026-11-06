@@ -193,6 +193,8 @@ impl Shell {
                 if let Some(specs) = window.gpu_specs() {
                     facts.push(("Graphics", graphics(&specs)));
                 }
+                // A menu opened while it was read closes.
+                this.close_popups_for_dialog(window, cx);
                 let previous = FocusReturn::capture(window, cx);
                 let focus = cx.focus_handle();
                 window.focus(&focus, cx);

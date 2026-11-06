@@ -1577,6 +1577,17 @@ impl Shell {
         }
     }
 
+    /// Whether a press on a text is selecting it, in the inspection shown
+    /// or in the container's view kept above a member: what a release
+    /// ends (`inspector_text::released`).
+    pub(crate) fn selecting_text(&self) -> bool {
+        self.preview.inspection.dragging
+            || self
+                .preview
+                .parked()
+                .is_some_and(|kept| kept.state.dragging)
+    }
+
     /// The member highlighted in the container's view kept above a member.
     fn parked_member(&self) -> Option<String> {
         let parked = self.preview.parked()?;

@@ -283,6 +283,9 @@ impl Shell {
             cx.notify();
             return;
         }
+        // The keys listed are those of what has the keyboard once the
+        // popup open closed.
+        self.close_popups_for_dialog(window, cx);
         let stack = window.context_stack();
         let holds = |token: &str| stack.iter().any(|context| context.contains(token));
         // How near the focus a binding's place is: the nearest of the

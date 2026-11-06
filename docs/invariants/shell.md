@@ -185,6 +185,24 @@ Views are in [views.md](views.md); what locations decide, in
   but a popup's row that switches one of several choices it shows (which
   views have a button) keeps it open, its row keeping the keyboard
   (`Button::keeps_open`), as does a setting's value.
+- **What hears outside acts on its own gesture.** gpui's
+  `on_mouse_down_out` and `on_mouse_up_out` fire wherever their element
+  is not hovered, and an element a dialog covers never is: under About
+  or the overview they hear every press and release in the window. Such
+  a handler ends only what its element began (a popup open, a text's
+  selection: `Shell::selecting_text`; a seek bar's knob: `media::scrub`)
+  and otherwise runs nothing. While About or the overview is open, any
+  command closes it (`Shell::admit`): a text preview's release did, and
+  the release on About's ✕ that closed it then opened it again.
+- **A dialog that holds the window's commands opens over no popup.**
+  Settings, the overview and About (`Shell::takes_now`) close the popup
+  open as they appear, and what is on its way to one (a menu of places
+  being read, a note read from another chapter), before they take the
+  keyboard (`Shell::close_popups_for_dialog`): About too, which appears
+  once what it says is read, a menu opened meanwhile. A popup left open is
+  drawn over the dialog, and its press outside, one in the dialog
+  included, runs a close the dialog refuses (Settings: the popup stays)
+  or closes for (the overview, About).
 - **A setting in a popup is one row** (`toolbar::MenuPart::Choice`): its
   name, then its values (`Button::segment`), an icon each, Automatic in
   words; or tiles, four to a row (`Button::tile`). The value chosen is

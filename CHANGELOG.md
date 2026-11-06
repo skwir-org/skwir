@@ -44,6 +44,12 @@
 - **About**'s buttons stay on one line, the dialog as wide as they need: in
   0.3.1 Licences went to a line of its own. Licences now comes after Copy
   details, before Website and Source code, which open the browser.
+- **About and the shortcuts overview stay open when clicked inside** while
+  a text is previewed: a click in either closed it, and About's ✕ closed it
+  only to open it again.
+- **Settings, the shortcuts overview and About close a menu left open** as
+  they appear: drawn over them, it stayed over Settings, and a click inside
+  the overview or About closed them instead.
 - **The player's seek bar** has a knob, and a drag that leaves the bar still
   moves it: let go anywhere, it seeks there.
 - **Sliders in Settings**: a setting judged as it changes can be a slider
