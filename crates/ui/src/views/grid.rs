@@ -338,6 +338,32 @@ impl GridView {
     }
 }
 
+/// A name as its tile writes it: on more than one line, broken where it
+/// reads best (`name_lines`), in the lines `measure` counted, so the row
+/// keeps its height.
+fn shown_name(
+    name: &str,
+    lines: u8,
+    zoom: u32,
+    scale: Scale,
+    theme: &Theme,
+    cx: &gpui::App,
+) -> gpui::SharedString {
+    let name = gpui::SharedString::from(name.to_owned());
+    if lines < 2 {
+        return name;
+    }
+    crate::name_lines::broken(
+        &name,
+        usize::from(lines),
+        px(GridView::label_width(zoom, scale)),
+        &gpui::font(theme.font.clone()),
+        theme.sizes.body(Part::Files),
+        cx,
+    )
+    .unwrap_or(name)
+}
+
 fn cell(
     shell: &mut Shell,
     theme: &Theme,
@@ -480,7 +506,7 @@ fn cell(
             .overflow_hidden()
             .text_ellipsis_middle()
             .line_clamp(usize::from(lines)),
-        look.name.clone(),
+        shown_name(&look.name, lines, zoom, scale, theme, cx),
     ))
     .when(!captions.is_empty(), |d| {
         d.child(caption_lines(row, captions, scale, theme, act.clone()))

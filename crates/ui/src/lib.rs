@@ -65,6 +65,7 @@ mod members;
 pub mod menu;
 pub mod modal;
 mod model_preview;
+mod name_lines;
 mod nav_menu;
 mod note_popover;
 mod omnibox;

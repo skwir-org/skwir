@@ -19,6 +19,11 @@
 - **A dragged file's name** is written under its icon on up to three lines, as
   the grid writes names, a long one keeping its beginning and its end, rather
   than on one line stretching far beside it.
+- **Names on several lines break where they read best**, in the grid and under
+  a dragged icon: lines about as long as each other, broken at a space, before
+  the extension or after a separator rather than mid-word, never leaving a
+  character or two alone on the last line (`photograph_final.jp` over `eg` is
+  now `photograph_` over `final.jpeg`).
 - **Out of the window, a drag keeps its name** (Wayland): other applications
   see the same icon and name as Skwir, as sharp on a scaled display.
 - **A drag brought back into the window** no longer shows its icon twice.

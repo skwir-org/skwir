@@ -718,7 +718,9 @@ of bars, split or not.
   most `dragname::WIDTH` wide, a longer one keeping its first lines and
   its end on the last (gpui patch 0037); a short one on a pill as wide as
   it, measured with the text system, as gpui lays a drag's view out at
-  its least width: the text's box is given that width in whole pixels
+  its least width; on several lines it breaks as a grid's name does
+  (`name_lines`, views.md), the pill as wide as its widest line. The
+  text's box is given that width in whole pixels
   and one more, as laid out an edge lands on a whole device pixel and a
   box a hair narrower wraps the last word ("3" over "items"). Its own
   font is named (gpui draws a drag's view

@@ -257,7 +257,7 @@ impl Render for DragPreview {
         // draws a drag's view on its own, outside the window's text style:
         // the name says its font itself (without a family gpui asks for
         // `.SystemUIFont`, a family Linux seldom has).
-        let name = crate::dragname::Name::of(text, &theme, window);
+        let name = crate::dragname::Name::of(text, &theme, window, cx);
         let label = name.element(&theme);
         let Some((image, hotspot)) = &self.icon else {
             return div()
@@ -349,7 +349,7 @@ impl Shell {
         let hotspot = point(px(icon.hotspot_x as f32), px(icon.hotspot_y as f32));
         let image = crate::thumbs::owned_render_image(icon.width, icon.height, icon.rgba.clone())?;
         let theme = cx.global::<Theme>().clone();
-        let named = crate::dragname::Name::of(name.to_owned(), &theme, window);
+        let named = crate::dragname::Name::of(name.to_owned(), &theme, window, cx);
         let picture = crate::dragname::picture(&icon, &named, &theme, window, cx);
         self.files_icon = Some(FilesIcon {
             icon: Arc::new(picture),

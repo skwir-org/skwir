@@ -11768,3 +11768,46 @@ drag left the window and came back; the name lost outside the window.
   line, the 92-character name on three; on a headless sway at scales 1,
   1.25 and 2, both in the window and out of it, the same lines.
   `cargo clippy -p skwir-ui --all-targets -D warnings`, skwir-ui's tests.
+
+## Names on several lines, balanced (2026-11-06)
+
+- **The user's report:** a name in the grid, or under a dragged icon,
+  sometimes left one or two characters alone on its last line. gpui
+  fills each line as far as it goes, so a long name without spaces
+  spills what is left (`photograph_final.jp` over `eg`).
+- **Built** (`name_lines.rs`): a name keeps the lines gpui's wrapper
+  gives it (the grid's row heights unchanged), and its breaks are chosen
+  by a small dynamic search: the lines balanced (each one's distance from
+  their mean, as a share of the width, squared), each break costing what
+  it reads like (0 at a space or before the extension, 0.02 after a
+  separator, 0.04 at a letter–digit change or into a capital, 0.15 mid
+  word, 0.25 before a separator or after an opening bracket), the
+  extension (up to 8 characters with its dot) never split unless nothing
+  else fits. The name is drawn with those breaks as newlines. Widths are
+  each character's as gpui's wrapper measures it (`layout_width`, kept
+  per font and size), less a pixel, so neither gpui's wrapper nor its
+  middle truncation breaks a line again. Results are kept per name, line
+  count, width, font and size (4096, then forgotten at once). The grid's
+  tiles use it at their label's width; a drag's name at the pill's most,
+  the pill then as wide as its widest line.
+- **Speed**, measured in the test build (unoptimized): 7 to 41 µs for
+  names of 21 and 42 characters, 95 µs for 74 characters on three lines
+  of 25; a name too long for its lines answers at once (10 µs for 250
+  characters); 1.2 ms for the worst, 254 characters on three lines of 90,
+  which no grid label holds (its widest holds about 36 characters a
+  line). The search stops at a line too wide, so it grows with the name
+  times a line's length; each name is searched once, then looked up.
+- Checked on Xvfb with Noto Sans 10 pt, the grid at its default zoom,
+  with balancing off (a switch not committed) and on: `IMG2026051218304`
+  over `5.jpg` became `IMG2026051` over `2183045.jpg`,
+  `photograph_final.jp` over `eg` `photograph_` over `final.jpeg`,
+  `ProjectBudgetDraft.` over `ods` `ProjectBudget` over `Draft.ods`,
+  `the-quick-brown-fox` over `-jumps-over.txt` `the-quick-brown-` over
+  `fox-jumps-over.txt`. On a headless sway at 1.25, two names dragged in
+  and out of the window, the same lines inside and outside. One name at
+  the drag's width, `screenshot-2026-11` over `-06-at-10.42.17.png`, has
+  no two lines that hold it otherwise: the rule against starting a line
+  with a separator is a cost, not a ban. Unit tests: 6 (orphans, spaces,
+  three even lines, what is left to gpui, extensions, separators);
+  `cargo clippy -p skwir-ui --all-targets -D warnings`, skwir-ui's 547
+  tests.
