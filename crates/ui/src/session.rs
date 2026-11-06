@@ -44,6 +44,7 @@ pub struct Session {
     pub panes: crate::layout::Panes,
     /// The open split's own arrangement, when it was made the other way.
     pub split_panes: Option<crate::layout::Panes>,
+    /// The panel's Preview switch (the panel was open, before 2026-11-06).
     pub preview: bool,
     /// The preview at the right, at the bottom, or as the window's shape says.
     pub preview_at: crate::layout::Preview,
@@ -58,8 +59,14 @@ pub struct Session {
     /// How tall the preview is when it is at the bottom, once dragged; 0
     /// until then (the default makes room for a pinned player).
     pub preview_height: f32,
-    /// Whether Properties is open under the preview.
-    pub properties: bool,
+    /// The panel's Properties switch: Properties shown, over the preview
+    /// or alone, the panel there while either switch is on.
+    pub properties_on: bool,
+    /// What windows wrote before 2026-11-06: Properties open under a
+    /// preview, shown only while the panel was. Read into `properties_on`
+    /// (`upgraded`), never written.
+    #[serde(skip_serializing)]
+    pub properties: Option<bool>,
     /// Its share of the room above a preview, and at its left, as their
     /// edge was dragged each way.
     pub properties_height_share: f32,
@@ -105,14 +112,15 @@ impl Shell {
             split: self.is_split(),
             panes: self.layout.panes,
             split_panes: self.layout.split,
-            preview: self.preview.open,
+            preview: self.preview.preview_on,
             preview_at: self.layout.preview,
             preview_width: self.preview.width,
             member_at: self.layout.member,
             members_height_share: self.preview.members_share.above,
             members_width_share: self.preview.members_share.beside,
             preview_height: self.preview.height.unwrap_or(0.),
-            properties: self.preview.properties_open,
+            properties_on: self.preview.properties_on,
+            properties: None,
             properties_height_share: self.preview.properties_share.above,
             properties_width_share: self.preview.properties_share.beside,
             properties_folds: self.preview.properties_folds.clone(),
@@ -199,11 +207,25 @@ impl Session {
         self.column_widths.retain(|_, width| width.is_finite());
         self
     }
+
+    /// What an older window wrote, in today's words: Properties open under
+    /// a preview showed only while the panel was open, so its switch is on
+    /// only where the panel was; a closed panel stays closed.
+    fn upgraded(mut self) -> Self {
+        if let Some(under) = self.properties.take() {
+            self.properties_on |= under && self.preview;
+        }
+        self
+    }
 }
 
 /// What was remembered, if anything was, as a window could have written it.
 pub fn restore(app: &skwir_core::App) -> Option<Session> {
-    let session = app.settings.get::<Session>(SESSION_KEY)?.written();
+    let session = app
+        .settings
+        .get::<Session>(SESSION_KEY)?
+        .written()
+        .upgraded();
     (session != Session::default()).then_some(session)
 }
 
@@ -262,5 +284,29 @@ mod tests {
             (sparse.panes, sparse.preview_at),
             (Panes::Auto, Preview::Auto)
         );
+    }
+
+    #[test]
+    fn properties_under_a_closed_panel_stay_closed() {
+        let read = |text: &str| {
+            let session: Session = toml::from_str(text).unwrap();
+            let session = session.upgraded();
+            (session.preview, session.properties_on)
+        };
+        // Before the two switches: Properties open under a preview showed
+        // only with the panel.
+        assert_eq!(read("preview = false\nproperties = true"), (false, false));
+        assert_eq!(read("preview = true\nproperties = true"), (true, true));
+        assert_eq!(read("preview = true\nproperties = false"), (true, false));
+        // Today's: Properties alone, the Preview off.
+        assert_eq!(read("preview = false\nproperties_on = true"), (false, true));
+        // The old word is never written again.
+        let session = Session {
+            properties_on: true,
+            ..Session::default()
+        };
+        let text = toml::to_string(&session).unwrap();
+        assert!(text.contains("properties_on = true"), "{text}");
+        assert!(!text.contains("properties ="), "{text}");
     }
 }

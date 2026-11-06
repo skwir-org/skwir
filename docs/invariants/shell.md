@@ -238,12 +238,14 @@ of bars, split or not.
   row its header would share: the tab strip while it shows, else the
   first pane's row. One rule decides (`Shell::corner_at`). More hangs
   from `Shell::more_anchor`.
-- **Split and Preview toggles** mirror them on the right: in the preview
-  panel's bar when it is open at the right, else at the end of the tab
-  strip, else at the end of the rightmost (or top, when stacked) pane's
-  row. One rule decides (`Shell::toggles_at`). Their labels show where
-  there is room (`address::panel_toggles`). A preview at the bottom has no
-  bar.
+- **Split, Properties and Preview toggles** mirror them on the right:
+  in the side panel's bar when it is open at the right, else at the end
+  of the tab strip, else at the end of the rightmost (or top, when
+  stacked) pane's row. One rule decides (`Shell::toggles_at`). Their
+  labels show where there is room (`address::panel_toggles`). A panel at
+  the bottom has no bar. Properties and Preview are the panel's two
+  switches, the panel there while either is on (ADR-058, decision 8,
+  [previews.md](previews.md), "Header and Properties").
 - **Tab strip** (`tabs.rs`): shown while the tabs are listed (two or
   more, or one with `ui.single_tab`) and not by the sidebar drawn this
   frame (`Shell::strip_shown`). With `ui.tabs_at` = sidebar, the tabs

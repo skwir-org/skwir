@@ -669,10 +669,9 @@ const LAST: i32 = 900;
 /// The command of the menu's Properties item.
 const PROPERTIES: &str = "ui.properties";
 
-/// The words of the menu's Properties item as things stand: what a click
-/// does now. Read at each frame, not when the menu opens: a right-click on
-/// a row not selected selects it as the menu opens, before the panel
-/// shows it, and the item speaks of the entry clicked.
+/// The words of the menu's Properties item: what a click does to its
+/// switch, whatever the menu is about. Read at each frame, so a press of
+/// Alt+Enter while the menu is open shows at once.
 fn properties_title(shell: &Shell) -> &'static str {
     if shell.properties_hide() {
         "Hide Properties"

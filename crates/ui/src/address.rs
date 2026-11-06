@@ -796,32 +796,43 @@ pub fn corner(shell: &Shell, cx: &mut Context<Shell>) -> [AnyElement; 2] {
     ]
 }
 
-/// Split and Preview, at the end of what has them (`Shell::toggles_at`).
+/// Split, Properties and Preview, at the end of what has them
+/// (`Shell::toggles_at`): the panel's two switches side by side, each lit
+/// while on, the panel there while either is (`PreviewState::panel_open`).
 /// `labeled`: each says its name beside its icon, so they are found; each
 /// place that holds them offers this as its richest variant, chosen by
 /// `AdaptiveRow` while nothing else gives up room for it.
-pub fn panel_toggles(shell: &Shell, labeled: bool, cx: &mut Context<Shell>) -> [AnyElement; 2] {
+pub fn panel_toggles(shell: &Shell, labeled: bool, cx: &mut Context<Shell>) -> [AnyElement; 3] {
     let (split_icon, split_tip) = shell.layout.split_button();
     let split_tip = shell.split_close_tip().unwrap_or(split_tip);
     let split = Button::new("split-toggle", split_icon, split_tip, "ui.split");
+    let properties = Button::new("properties-toggle", "info", "Properties", "ui.properties");
     let preview = Button::new(
         "preview-toggle",
         shell.layout.preview_icon(),
-        "Preview panel",
+        "Preview",
         "ui.toggle_preview",
     );
-    let (split, preview) = if labeled {
-        (split.label("Split"), preview.label("Preview"))
+    let (split, properties, preview) = if labeled {
+        (
+            split.label("Split"),
+            properties.label("Properties"),
+            preview.label("Preview"),
+        )
     } else {
-        (split, preview)
+        (split, properties, preview)
     };
     [
         split
             .active(shell.is_split())
             .render(shell, cx)
             .into_any_element(),
+        properties
+            .active(shell.preview.properties_on)
+            .render(shell, cx)
+            .into_any_element(),
         preview
-            .active(shell.preview.open)
+            .active(shell.preview.preview_on)
             .render(shell, cx)
             .into_any_element(),
     ]
@@ -904,7 +915,7 @@ struct PaneRow {
 }
 
 /// The window's tools a pane's row holds: the sidebar toggle and More at
-/// its start, Split and Preview at its end.
+/// its start, Split, Properties and Preview at its end.
 #[derive(Clone, Copy)]
 struct Ends {
     corner: bool,
@@ -1351,10 +1362,11 @@ fn pane_row(
         );
     }
     if row.ends.toggles {
-        let [split, preview] = panel_toggles(shell, labeled, cx);
+        let [split, properties, preview] = panel_toggles(shell, labeled, cx);
         line = line
             .child(toolbar::separator(&theme))
             .child(split)
+            .child(properties)
             .child(preview);
     }
     line.into_any_element()

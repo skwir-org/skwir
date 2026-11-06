@@ -106,7 +106,7 @@ impl Shell {
         let Some(pinned) = &self.player.pinned else {
             return false;
         };
-        self.preview.open
+        self.preview.panel_open()
             && !self.preview_is_pinned()
             && self.preview.autoplay.is_none()
             && self.preview.playing_path().as_ref() != Some(&pinned.path)

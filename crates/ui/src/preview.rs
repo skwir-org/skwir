@@ -528,7 +528,13 @@ pub struct PreviewState {
     pub inspection: crate::inspector::State,
     pub media: crate::media::MediaState,
     pub menu: Option<crate::toolbar::Popup>,
-    pub open: bool,
+    /// The Preview switch (F11, the Preview button): the panel shows the
+    /// preview of what is selected. With `properties_on`, one of the two
+    /// switches the panel is made of (`panel_open`); part of the window's
+    /// shape.
+    pub preview_on: bool,
+    /// Peek's overlay (Space): the preview for a moment, whatever the
+    /// switches say.
     pub peek: bool,
     /// The panel's width at the right edge, and its height at the bottom:
     /// each remembered, so moving it back finds it as it was. The height is
@@ -724,8 +730,10 @@ pub struct PreviewState {
     selection_drives: crate::latest::Latest<bool>,
     /// The devices `selection_drives` was asked of.
     selection_drives_of: Vec<u64>,
-    /// Whether Properties is open under a preview; part of the window's shape.
-    pub properties_open: bool,
+    /// The Properties switch (Alt+Enter, Ctrl+I, the Properties button):
+    /// the panel shows Properties, over the preview while the Preview
+    /// switch is on too, else alone; part of the window's shape.
+    pub properties_on: bool,
     /// Its share of the room over a preview, above it and beside it, as
     /// their edge was dragged; part of the window's shape.
     pub properties_share: crate::elements::edge::Share,
@@ -866,7 +874,7 @@ impl Default for PreviewState {
             inspection: crate::inspector::State::default(),
             media: crate::media::MediaState::default(),
             menu: None,
-            open: false,
+            preview_on: false,
             peek: false,
             width: DEFAULT_WIDTH,
             height: None,
@@ -947,7 +955,7 @@ impl Default for PreviewState {
             selection_read_only: false,
             selection_drives: crate::latest::Latest::default(),
             selection_drives_of: Vec::new(),
-            properties_open: false,
+            properties_on: false,
             properties_share: crate::elements::edge::Share::even(crate::properties::SHARE),
             properties_folds: crate::properties::Folds::default(),
             source_types: SourceTypes::default(),
@@ -1074,6 +1082,21 @@ impl PreviewState {
     /// a link that leads nowhere and a special file, which are never read.
     pub(crate) fn shown_content(&self) -> Option<&EntryRef> {
         self.key.as_ref()?.content.as_ref()
+    }
+
+    /// Whether the panel is on screen: while either of its switches is on,
+    /// the preview's or Properties'. There is no third state: each key
+    /// flips its own switch, and the panel is where they show.
+    pub fn panel_open(&self) -> bool {
+        self.preview_on || self.properties_on
+    }
+
+    /// Whether a preview is read and drawn: the panel's Preview switch on,
+    /// or peek showing it. With Properties alone nothing is read for a
+    /// preview but a folder's, whose preview is what it holds, which
+    /// Properties says (`Shell::sync_preview`).
+    pub fn previews(&self) -> bool {
+        self.preview_on || self.peek
     }
 
     /// Whether the entry shown is a file whose bytes are read: not a
@@ -1771,10 +1794,11 @@ impl Shell {
 
     /// Called on UI wake. Only a changed request schedules worker work.
     pub fn sync_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !(self.preview.open || self.preview.peek) || !self.prefs.read_ahead {
+        let previews = self.preview.previews();
+        if !previews || !self.prefs.read_ahead {
             self.let_ahead_go(window, cx);
         }
-        if !(self.preview.open || self.preview.peek) {
+        if !(self.preview.panel_open() || self.preview.peek) {
             self.preview.walk = Walk::default();
             if self.preview.key.is_some() {
                 self.cancel_preview(window, cx);
@@ -1786,6 +1810,17 @@ impl Shell {
             self.preview.count_wanted = false;
             while self.preview.rx.try_recv().is_ok() {}
             return;
+        }
+        // Properties alone: what a preview read goes, its player and the
+        // keys it held with it, as when the panel closes. A folder's stays:
+        // its preview is what it holds, which Properties says.
+        if !previews
+            && !self.preview.info.is_dir
+            && (self.preview.content.is_some() || self.preview.phase == PreviewPhase::Loading)
+        {
+            self.preview.walk = Walk::default();
+            self.cancel_preview(window, cx);
+            self.preview.let_go_of_held();
         }
         // The colors code is drawn in; while Colors from's list shows a
         // palette before it is taken, those the preview was made in: a row
@@ -1935,8 +1970,10 @@ impl Shell {
             }
             // Play on selection is the wish a step makes, made by the
             // selection: the track plays once shown, and the dock of what
-            // it replaces stays aside meanwhile (`dock_shown`).
-            if self.prefs.player.autoplay
+            // it replaces stays aside meanwhile (`dock_shown`). Not with
+            // Properties alone, where no preview is read to play.
+            if previews
+                && self.prefs.player.autoplay
                 && self.preview.autoplay.is_none()
                 && self.media_kind().is_some()
             {
@@ -2083,6 +2120,11 @@ impl Shell {
             }
         }
         if self.preview.phase != PreviewPhase::Queued {
+            return;
+        }
+        // With Properties alone, no preview is read but a folder's
+        // (`PreviewState::previews`).
+        if !previews && !entry.is_dir() {
             return;
         }
         // A page turned to that the reader kept, or reads ahead, is not
@@ -4215,19 +4257,33 @@ impl Shell {
         }
     }
 
-    /// `ui.properties` (Alt+Enter, Ctrl+I, the context menu): show the
-    /// properties of the selection, or of the folder shown, opening the
-    /// panel when it is closed; hide them where they cover a preview.
-    pub fn properties(&mut self, cx: &mut Context<Self>) {
-        if self.properties_hide() {
-            self.preview.properties_open = false;
-        } else {
-            if !self.preview.open && !self.preview.peek {
-                self.preview.open = true;
-            }
-            self.preview.properties_open = true;
-            // Asked for, a folder's properties say what it holds.
+    /// `ui.properties` (Alt+Enter, Ctrl+I, the Properties button, the
+    /// context menu's last item): flip the Properties switch. On, the
+    /// panel shows the properties of the selection, or of the folder
+    /// shown: over the preview while Preview is on too, else alone. Off,
+    /// they go, and the panel with them where Preview is off. Nothing else
+    /// turns the switch: not the cursor, not what is shown, not the press
+    /// before; so two presses always leave the window as it was.
+    pub fn properties(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.preview.properties_on = !self.preview.properties_on;
+        // Shown, a folder's properties say what it holds in all: turning
+        // them on is the asking.
+        if self.preview.properties_on {
             self.preview.count_wanted = true;
+        }
+        self.panel_switched(window, cx);
+    }
+
+    /// One of the panel's switches flipped: the preview's menus go with
+    /// the preview, the keyboard leaves a panel that went, and the
+    /// window's shape is kept. What the preview read goes at the next
+    /// sync (`sync_preview`).
+    fn panel_switched(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.preview.previews() {
+            self.preview.menu = None;
+        }
+        if !self.preview.panel_open() && !self.preview.peek {
+            window.focus(&self.ui().focus, cx);
         }
         self.remember_session();
         cx.notify();
@@ -4422,19 +4478,10 @@ impl Shell {
         }
     }
 
-    /// Whether `ui.properties` would hide Properties: they are on screen
-    /// over a preview. With nothing to preview they are all the panel
-    /// holds, and stay; a folder on its way is that too (its preview is
-    /// what it holds, which Properties says), so the menu's item, read as
-    /// soon as it opens, says what a click does once the folder is read.
+    /// Whether `ui.properties` would hide Properties: its switch is on,
+    /// whatever is shown. What the menu's item says.
     pub fn properties_hide(&self) -> bool {
-        let folder_coming = self.preview.content.is_none()
-            && self.preview.key.is_some()
-            && self.preview.info.is_dir;
-        (self.preview.open || self.preview.peek)
-            && self.preview.properties_open
-            && !crate::properties::alone(self)
-            && !folder_coming
+        self.preview.properties_on
     }
 
     /// `ui.preview_copy_path`: the path of what is shown, as text.
@@ -4817,14 +4864,11 @@ impl Shell {
         cx.notify();
     }
 
+    /// `ui.toggle_preview` (F11, the Preview button): flip the Preview
+    /// switch. The panel stays while Properties is on.
     pub fn toggle_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.preview.open = !self.preview.open;
-        if !self.preview.open && !self.preview.peek {
-            self.preview.menu = None;
-            window.focus(&self.ui().focus, cx);
-        }
-        self.remember_session();
-        cx.notify();
+        self.preview.preview_on = !self.preview.preview_on;
+        self.panel_switched(window, cx);
     }
 
     pub fn open_peek(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -4901,15 +4945,14 @@ impl Shell {
         )
     }
 
+    /// `ui.preview_close`: peek closed, else the Preview switch turned off
+    /// (Properties, on, keep the panel).
     pub fn preview_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.preview.peek {
             self.close_peek(window, cx);
         } else {
-            self.preview.open = false;
-            self.preview.menu = None;
-            window.focus(&self.ui().focus, cx);
-            self.remember_session();
-            cx.notify();
+            self.preview.preview_on = false;
+            self.panel_switched(window, cx);
         }
     }
 
@@ -5047,22 +5090,36 @@ fn shown_types(
 fn under_card(
     shell: &Shell,
     theme: &Theme,
+    previews: bool,
     interactive: bool,
     wide: bool,
     grounds: crate::theme::Grounds,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
+    use crate::properties::Room;
     let kept = interactive && shell.preview.parked().is_some();
-    // Opened on demand under a preview or above kept rows; always open
-    // with nothing to preview (a folder, an unknown file, an error), so
-    // the toolbar and what the content says (why the preview failed)
-    // follow right under it. While peek shows the preview, the panel
-    // behind it is only a picture and keeps Properties only when it is all
-    // there is.
-    let room = crate::properties::room(shell, wide);
+    // Properties, while its switch is on: over the preview or above kept
+    // rows; with nothing to preview (a folder, an unknown file, an error)
+    // as tall as it says, the toolbar and what the content says (why the
+    // preview failed) right under it; alone in the panel while `previews`
+    // is off. While peek shows the preview, the panel behind it is only a
+    // picture and keeps Properties only where nothing else is drawn.
+    let room = crate::properties::room(shell, previews, wide);
     let details = Some(())
-        .filter(|()| interactive || room == crate::properties::Room::Whole)
+        .filter(|()| interactive || matches!(room, Room::Panel | Room::Whole))
         .and_then(|()| crate::properties::render(shell, theme, room, grounds, cx));
+    if !previews {
+        // Properties fills the panel (`Room::Panel`) on its own ground;
+        // with nothing to say, the room is painted instead. Once either
+        // way: a see-through ground painted twice shows less of what is
+        // behind (shell.md, "The window's grounds are painted once").
+        let room = div().flex_1().min_h_0().min_w_0().flex().flex_col();
+        return match details {
+            Some(details) => room.child(details),
+            None => room.bg(grounds.read),
+        }
+        .into_any_element();
+    }
     let body = body(shell, theme, interactive, grounds, cx);
     let body = if kept {
         crate::members::split(body, wide, shell, grounds, cx)
@@ -5072,8 +5129,8 @@ fn under_card(
     // Over a preview, Properties takes its share of the room, at the
     // preview's left in a room wider than tall, and the edge between them
     // is dragged.
-    let over = details.is_some() && room != crate::properties::Room::Whole;
-    let beside = over && room == crate::properties::Room::Beside;
+    let over = details.is_some() && matches!(room, Room::Above | Room::Beside);
+    let beside = over && room == Room::Beside;
     div()
         .flex_1()
         .min_h_0()
@@ -5480,9 +5537,38 @@ pub(crate) fn content(
         // On its way, before the wait has lasted: the room it will show
         // in, empty, so the area is laid out for it (`watch_area`).
         None if shell.preview.phase != PreviewPhase::Idle => div().flex_1().into_any_element(),
-        // Nothing to look at: the header says what it is and Properties the rest.
+        // Nothing to look at: the header says what it is, and Properties,
+        // while on, the rest. While off, the type's icon stands for a
+        // preview, so the panel is not left blank, and a folder's preview
+        // says what it holds, as Properties would.
         None | Some(PreviewContent::Generic | PreviewContent::Dir { .. }) => {
-            div().into_any_element()
+            let holds = match &p.content {
+                Some(PreviewContent::Dir { items, .. }) => {
+                    Some(crate::format::count(*items, "item"))
+                }
+                _ => None,
+            };
+            match p.info.icon.as_ref().filter(|_| !p.properties_on) {
+                Some(icon) => {
+                    div()
+                        .flex_1()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .items_center()
+                        .justify_center()
+                        .child(icons::element(
+                            icon,
+                            STAND_IN,
+                            icons::Ink::of(theme, theme.text_muted),
+                        ))
+                        .children(holds.map(|holds| {
+                            div().text_body().text_color(theme.text_muted).child(holds)
+                        }))
+                        .into_any_element()
+                }
+                None => div().into_any_element(),
+            }
         }
         Some(PreviewContent::Image {
             image,
@@ -5699,23 +5785,20 @@ fn trail(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> gpui::Div {
 
 /// Everything the panel knows at a glance: the entry's icon, its name (a
 /// trail inside a container), and one line of type, size and date. The card
-/// is the one place that says what the panel shows; Properties, which opens
-/// right under it when the card or the Properties button beside it is clicked
-/// (or Ctrl+I), holds the rest and repeats none of it. With nothing to
-/// preview Properties is always open and there is no button. The peek overlay
-/// alone keeps a close button: the panel is closed by the Preview button
-/// that opened it.
+/// is the one place that says what the panel shows; Properties, right under
+/// it while its switch is on, holds the rest and repeats none of it. The
+/// panel's switches are the Preview and Properties buttons beside Split,
+/// not here. The peek overlay, which hides them, keeps Properties' and a
+/// close button.
 fn header(
     shell: &Shell,
     theme: &Theme,
+    in_peek: bool,
     ground: Option<gpui::Hsla>,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
     let preview = &shell.preview;
     let info = &preview.info;
-    let alone = crate::properties::alone(shell);
-    let toggles = !alone && !info.name.is_empty();
-    let open = alone || preview.properties_open;
     // Each fact is one unbreakable segment of a wrapping line: a narrow
     // panel wraps between the facts, never inside the date. One alone on
     // its line and still too wide is cut, and says itself whole, before
@@ -5756,13 +5839,6 @@ fn header(
         .px_1()
         .py_1()
         .rounded_md()
-        .when(toggles, |d| {
-            d.cursor_pointer()
-                .hover(|d| d.bg(theme.hover))
-                .on_click(cx.listener(|this, _, window, cx| {
-                    this.run("ui.properties", serde_json::json!({}), window, cx);
-                }))
-        })
         .children(info.icon.as_ref().map(|icon| {
             icons::marked(
                 icons::element(icon, ICON, icons::Ink::of(theme, theme.text_muted)),
@@ -5803,17 +5879,13 @@ fn header(
         .items_center()
         .gap_1()
         .child(card)
-        // The card opens Properties too, but nothing about it says so: the
-        // button does, as Preview's does for its panel, lit while open.
-        .when(toggles, |d| {
+        .when(in_peek, |d| {
             d.child(
                 crate::toolbar::Button::new("properties", "info", "Properties", "ui.properties")
-                    .active(open)
+                    .active(preview.properties_on)
                     .render(shell, cx),
             )
-        })
-        .when(preview.peek, |d| {
-            d.child(
+            .child(
                 crate::toolbar::Button::new(
                     "preview-close",
                     "close",
@@ -5828,6 +5900,10 @@ fn header(
 
 /// The header's icon: two lines of text tall.
 const ICON: f32 = 36.;
+
+/// The type's icon where there is nothing to preview and Properties is
+/// off: a picture, at its own size whatever the text's.
+const STAND_IN: f32 = 64.;
 
 /// The rating and the tags of the file shown, while a store keeps them:
 /// items of the facts' wrapping line, after them where they fit, else on
@@ -6310,7 +6386,7 @@ pub fn render_panel(
     dock_limit: f32,
     cx: &mut Context<Shell>,
 ) -> Option<AnyElement> {
-    if !shell.preview.open {
+    if !shell.preview.panel_open() {
         return None;
     }
     let theme = cx.global::<Theme>().clone();
@@ -6338,6 +6414,7 @@ pub fn render_panel(
     let body = under_card(
         shell,
         &theme,
+        shell.preview.preview_on,
         interactive,
         bottom,
         theme.preview_grounds(),
@@ -6346,17 +6423,24 @@ pub fn render_panel(
     let content = div()
         .flex()
         .flex_col()
-        .child(header(shell, &theme, Some(theme.window_surface()), cx))
+        .child(header(
+            shell,
+            &theme,
+            false,
+            Some(theme.window_surface()),
+            cx,
+        ))
         .child(body);
     // At the right, the panel's own bar mirrors the sidebar's header: as
-    // tall as a pane's row, their edges meeting, with Split and Preview at
-    // the window's edge (`Shell::toggles_at`).
-    // Split and Preview say their names while the panel is wide enough.
+    // tall as a pane's row, their edges meeting, with Split, Properties and
+    // Preview at the window's edge (`Shell::toggles_at`), saying their
+    // names while the panel is wide enough.
     let bar = (!bottom).then(|| {
         let variants = [true, false]
             .into_iter()
             .map(|labeled| {
-                let [split, preview] = crate::address::panel_toggles(shell, labeled, cx);
+                let [split, properties, preview] =
+                    crate::address::panel_toggles(shell, labeled, cx);
                 div()
                     .size_full()
                     .flex()
@@ -6364,6 +6448,7 @@ pub fn render_panel(
                     .gap(sized(2.))
                     .child(div().flex_1())
                     .child(split)
+                    .child(properties)
                     .child(preview)
                     .into_any_element()
             })
@@ -6385,11 +6470,15 @@ pub fn render_panel(
                 chosen: None,
             })
     });
-    // A landmark beside the files, described by what it shows.
+    // A landmark beside the files, named and described by what it shows.
     let panel = div()
         .id("preview-panel")
         .role(gpui::Role::Complementary)
-        .aria_label("Preview")
+        .aria_label(if shell.preview.preview_on {
+            "Preview"
+        } else {
+            "Properties"
+        })
         .when_some(said(shell), |d, (name, facts)| {
             d.aria_description(format!("{name}, {facts}"))
         })
@@ -6523,8 +6612,16 @@ pub fn render_peek(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement>
                     .bg(theme.surface)
                     .shadow_lg()
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .child(header(shell, &theme, None, cx))
-                    .child(under_card(shell, &theme, true, true, theme.grounds(), cx))
+                    .child(header(shell, &theme, true, None, cx))
+                    .child(under_card(
+                        shell,
+                        &theme,
+                        true,
+                        true,
+                        true,
+                        theme.grounds(),
+                        cx,
+                    ))
                     .child(
                         div()
                             .px_2()

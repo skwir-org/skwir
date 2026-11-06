@@ -523,7 +523,7 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
     if !shell.strip_shown() {
         return None;
     }
-    // Split and Preview say their names only while every tab can be as
+    // Split, Properties and Preview say their names only while every tab can be as
     // wide as a tab gets: the labeled row holds its tabs at `TAB_MAX`
     // (`AdaptiveRow` measures it so), so the labels never take a tab's room.
     if shell.toggles_at() != crate::shell::TogglesAt::Strip {
@@ -621,11 +621,11 @@ fn row(
     let new = crate::toolbar::Button::new("tab-strip-new", "plus", "New tab", "tab.new")
         .render(shell, cx);
     strip = strip.child(div().flex_none().h_full().flex().items_center().child(new));
-    // Split and Preview end the strip while the preview is not open at the
-    // right (`Shell::toggles_at`): beside the tabs, not in them, so a
+    // Split, Properties and Preview end the strip while the panel is not
+    // open at the right (`Shell::toggles_at`): beside the tabs, not in them, so a
     // double click on one opens no tab.
     let toggles = toggles.map(|labeled| {
-        let [split, preview] = crate::address::panel_toggles(shell, labeled, cx);
+        let [split, properties, preview] = crate::address::panel_toggles(shell, labeled, cx);
         div()
             .flex_none()
             .h_full()
@@ -634,6 +634,7 @@ fn row(
             .gap(sized(2.))
             .px(sized(6.))
             .child(split)
+            .child(properties)
             .child(preview)
     });
     // The sidebar's toggle and More start the strip while the sidebar is

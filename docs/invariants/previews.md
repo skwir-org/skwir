@@ -865,38 +865,57 @@ is still to come are in `docs/preview-frame.md`.
   dropped); the context menu's Tags…, Ctrl+Shift+G and Properties' Tags
   row add them. A fact says the type when pointed at; the rating and the
   tags do not.
-- Clicking the card opens Properties. So does the (i) button beside it,
-  since what the card does is not seen until tried; the button is lit
-  while Properties is open, as Preview's is while its panel is. So do
-  Alt+Enter, Ctrl+I and the context menu's last item: one command
-  (`ui.properties`), which hides them again where they cover a preview,
-  the menu's item then saying Hide Properties (ADR-058). The item's
-  words are read at each frame (`menu::properties_title`), never kept
-  from when the menu opened: a right-click selects the entry as the menu
-  opens, before the panel shows it, and a folder on its way counts as
-  shown (`Shell::properties_hide`).
-- The card has no close button: the Preview button closes the panel.
-  Only the peek overlay keeps one.
+- **The panel is two switches** (ADR-058, decision 8): Preview (F11,
+  Ctrl+Shift+Space, the Preview button, `ui.toggle_preview`) and
+  Properties (Alt+Enter, Ctrl+I, the Properties button beside it, the
+  context menu's last item, `ui.properties`), each lit on its button
+  and kept with the window's shape. The panel is on screen while either
+  is on (`PreviewState::panel_open`); it has no state of its own. Each
+  key flips its own switch and nothing else turns one: not the cursor,
+  not what is shown, not the press before. So two presses leave the
+  window as it was, and the menu's item says Hide Properties exactly
+  while the switch is on (`Shell::properties_hide`, read at each frame
+  by `menu::properties_title`). Never make what a key does depend on
+  what is shown: that is how the panel once opened on a folder and would
+  not close.
+  - What it shows: Preview alone, the preview, or with nothing to
+    preview the type's icon under the card (a folder's saying how many
+    items it holds) and why there is none; Properties alone, Properties
+    filling the panel (`properties::Room::Panel`); both, Properties over
+    the preview, or with nothing to preview as tall as it says, the
+    reason under it.
+  - With Properties alone no preview is read (`PreviewState::previews`,
+    `Shell::sync_preview`), nor a track played on selection, but a
+    folder's, whose preview is what it holds, which Properties says;
+    what a preview had read goes as Preview is turned off, as when the
+    panel closes. So what only a preview knows (a picture's dimensions,
+    a document's details) is not said there.
+  - Peek always shows the preview, with Properties beside it while the
+    switch is on; its header keeps a Properties button and a close
+    button, the toolbar being under it. The panel's header has neither,
+    and the card is not a button: one control per switch.
 - **Properties** (`properties.rs`) is a section of the frame, not a kind of
   preview: everything known that the header does not say (no Name or
   Type row).
-  - With nothing to preview (a folder, an unknown file, an error) it is
-    always open, as tall as its content, the toolbar (a file's: a
-    folder has none) and the content's message (why the preview
-    failed) right under it. Not while a
+  - Shown while its switch is on, whatever is shown. With nothing to
+    preview (a folder, an unknown file, an error), as tall as its
+    content, the toolbar (a file's: a folder has none) and the content's
+    message (why the preview failed) right under it. Not while a
     container's view is kept above the member (`properties::alone`): that
-    view is content, so Properties stays as the card left it.
-  - Over a preview it opens on demand, under the card, with at most its
+    view is content.
+  - Over a preview, under the card, with at most its
     share of the room (`properties::Room`): above the toolbar, half the
     room until dragged, less when it says less; in a room wider than
     tall (the panel at the bottom, peek), a column of that share at the
     preview's left. It scrolls past it. The edge between them is
     `elements::edge`, at the start of the preview (`properties::edged`),
     dragged each way apart, held at half once brought near it
-    (`edge::share`), and back to half on a double click. With the
-    panel closed, `ui.properties` opens both. No dialog repeats it.
-  - Whether it is open, its share each way and the groups folded belong
-    to the window's shape (`session.rs`).
+    (`edge::share`), and back to half on a double click. No dialog
+    repeats it.
+  - Its switch, its share each way and the groups folded belong to the
+    window's shape (`session.rs`). A shape saved before the two switches
+    had Properties open under a closed panel: it opens with both off
+    (`Session::upgraded`).
   - Each group's heading folds it (`ui.properties_fold`), remembered by
     title for every file (`properties::Folds`). How a group ships is the
     group's to say (`Group::folded`): the shell's Volume ships folded, and
@@ -949,7 +968,7 @@ is still to come are in `docs/preview-frame.md`.
   on a worker, never read on the UI thread.
 - Properties never starts a scan by itself: a folder says what its
   listing already counted. What it holds in all is counted when asked
-  (Count, or `ui.properties`, which is the asking): `fs::count` on a
+  (Count, or turning Properties on, which is the asking): `fs::count` on a
   worker, reporting as it goes into `PreviewState::count`. It is kept by
   what it counts (`Counted`: the entry shown, or the entries selected as
   a set), never by the selection's revision, so a selection made again of

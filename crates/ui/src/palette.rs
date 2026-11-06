@@ -118,7 +118,7 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
         "{}",
         "Map: spread the files at one place, or group them",
     ),
-    ("ui.toggle_preview", "{}", "Toggle preview panel"),
+    ("ui.toggle_preview", "{}", "Toggle preview"),
     ("ui.terminal", "{}", "Toggle terminal"),
     ("ui.terminal_copy", "{}", "Terminal: copy"),
     ("ui.terminal_paste", "{}", "Terminal: paste"),
@@ -178,7 +178,7 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
     ),
     ("ui.media_step", r#"{"delta":1}"#, "Player: next track"),
     ("ui.media_step", r#"{"delta":-1}"#, "Player: previous track"),
-    ("ui.properties", "{}", "Properties"),
+    ("ui.properties", "{}", "Toggle properties"),
     ("ui.inspect", r#"{"action":"hex"}"#, "Preview: hexadecimal"),
     (
         "ui.inspect",

@@ -54,6 +54,15 @@
   holds, which Properties says above it, and its More held nothing the pane's
   menu lacks but View as hex, which did nothing. View as hex is no longer
   offered for a pipe, a socket, a device or a link that leads nowhere either.
+- **Preview and Properties are two switches**: F11 and the Preview button show
+  or hide the preview, Alt+Enter, Ctrl+I and a new Properties button beside it
+  show or hide Properties, and the side panel is there while either is on.
+  Each press undoes the one before, on a file, a folder or a pipe, from a
+  closed panel or an open one: Alt+Enter on a folder used to open the panel
+  and never close it. Properties can fill the panel alone, with no preview
+  read. With Preview alone, a folder shows its icon and how many items it
+  holds; Properties shows only when asked. The card above the panel is no
+  longer a button.
 - **The player's seek bar** has a knob, and a drag that leaves the bar still
   moves it: let go anywhere, it seeks there.
 - **Sliders in Settings**: a setting judged as it changes can be a slider

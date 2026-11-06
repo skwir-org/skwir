@@ -169,7 +169,7 @@ struct Shown {
 
 /// The shell's switches read from the settings (`Shell::sync`, when their
 /// revision changes), never per frame.
-/// Where Split and Preview are (`Shell::toggles_at`).
+/// Where Split, Properties and Preview are (`Shell::toggles_at`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TogglesAt {
     Preview,
@@ -850,8 +850,8 @@ impl Shell {
         if session.split_share > 0. && session.split_share < 1. {
             self.split_share = session.split_share;
         }
-        self.preview.open = session.preview;
-        self.preview.properties_open = session.properties;
+        self.preview.preview_on = session.preview;
+        self.preview.properties_on = session.properties_on;
         if session.preview_width > 0. {
             self.preview.width = session.preview_width;
         }
@@ -1026,7 +1026,7 @@ impl Shell {
     }
 
     /// Where the sidebar toggle and More are this frame (`address::corner`),
-    /// Split and Preview in mirror: the sidebar's header while it is
+    /// Split, Properties and Preview in mirror: the sidebar's header while it is
     /// drawn, else the start of the row beside it, the tab strip while it
     /// shows, else the first pane's (left, or top).
     pub fn corner_at(&self) -> CornerAt {
@@ -1041,13 +1041,13 @@ impl Shell {
             .map_or(CornerAt::Strip, |p| CornerAt::Pane(p.id))
     }
 
-    /// Where Split and Preview are this frame, the sidebar's toggle and
-    /// More in mirror (`corner_at`): the preview's own bar while it is open at the
+    /// Where Split, Properties and Preview are this frame, the sidebar's toggle and
+    /// More in mirror (`corner_at`): the panel's own bar while it is open at the
     /// right, else the right end of the tab strip while it shows, else the
     /// end of the row of the pane at the window's right (the top one when
     /// the split is stacked).
     pub fn toggles_at(&self) -> TogglesAt {
-        if self.preview.open && !self.layout.bottom() {
+        if self.preview.panel_open() && !self.layout.bottom() {
             return TogglesAt::Preview;
         }
         if self.strip_shown() {
@@ -1602,7 +1602,11 @@ impl Shell {
         let sidebar = self
             .sidebar_shown(window)
             .then(|| self.sidebar_keys.focus.clone());
-        let preview = self.preview.open.then(|| self.shown_focus()).flatten();
+        let preview = self
+            .preview
+            .preview_on
+            .then(|| self.shown_focus())
+            .flatten();
         let parts = [
             sidebar,
             Some(self.ui().focus.clone()),
@@ -2923,7 +2927,7 @@ impl Shell {
             "preview_open_external" => self.preview_open_external(cx),
             "preview_copy_path" => self.preview_copy_path(cx),
             "preview_invoke" => self.preview_invoke(args, window, cx),
-            "properties" => self.properties(cx),
+            "properties" => self.properties(window, cx),
             "properties_count" => self.properties_count(args, cx),
             "properties_fold" => self.properties_fold(args, cx),
             "preview_copy" => self.preview_copy(window, cx),

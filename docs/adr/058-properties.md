@@ -1,6 +1,7 @@
 # ADR-058: Properties
 
-Status: accepted, 2026-10-13. Built.
+Status: accepted, 2026-10-13. Built. Amended 2026-11-06 (decision 8: the
+panel is two switches, Preview and Properties).
 
 ## Context
 
@@ -26,7 +27,8 @@ Status: accepted, 2026-10-13. Built.
    panel when it is closed; over a preview it hides it again, and the
    menu's item then says Hide Properties. Opened over a preview it takes
    at most its share of the room (decision 7). It follows the cursor, as
-   the panel does; an edit carries the entry it was made on.
+   the panel does; an edit carries the entry it was made on. How it opens
+   and hides is decision 8's since 2026-11-06.
 2. **What it adds to say** (the stages below say what is built):
    - the room a file takes on its drive (`fs::stat::allocated`), beside
      its size;
@@ -100,6 +102,49 @@ Status: accepted, 2026-10-13. Built.
    taking no room otherwise, except those that are all the row says
    (Count, Compute, Add… to no tags or no comment) or that stop or start
    what runs.
+
+8. **The panel is two switches** (amended 2026-11-06, the user's
+   report). The panel had a state of its own (open or closed) and
+   Properties one inside it, ignored where there was nothing to preview:
+   on a folder Alt+Enter opened the panel and never closed it, and a
+   press counted instead. Every fix (closing the panel where Properties
+   was all it showed, remembering which press opened it) added a rule a
+   user had to guess. Now:
+   - **Preview** (F11, Ctrl+Shift+Space, the Preview button) and
+     **Properties** (Alt+Enter, Ctrl+I, the Properties button beside it,
+     the menu's last item, `ui.properties`) are two switches, each lit on
+     its button, kept with the window's shape. The panel is on screen
+     while either is on (`PreviewState::panel_open`): there is no third
+     state.
+   - Each key flips its own switch, always. Nothing else turns one: not
+     the cursor, not what is shown, not the press before. So two presses
+     leave the window as it was, from a closed panel or an open one, on
+     a file, a folder or a pipe; and the menu's item says Hide Properties
+     exactly while the switch is on.
+   - What the panel shows follows from the two and what is shown:
+     Preview alone shows the preview, or, with nothing to preview, the
+     type's icon under the card and why there is none; Properties alone
+     fills the panel and no preview is read, but a folder's, whose
+     preview is what it holds, which Properties says; both put Properties
+     over the preview (decision 7), or, with nothing to preview, as tall
+     as it says, the reason under it.
+   - Turning Properties on while a folder is shown counts it: that is
+     the asking (decision 2). With Properties on, another folder is
+     counted from its Count link.
+   - Peek (Space) always shows the preview, with Properties beside it
+     while the switch is on; its header keeps a Properties button, the
+     toolbar being under it.
+   - The card is no longer a button, nor has the panel's header a
+     Properties button: one control per switch, beside the other.
+   - A saved window that had the panel closed and Properties open under
+     it opens with both off (`Session::upgraded`): before, Properties
+     showed only with the panel.
+   - Costs: a folder no longer shows its Properties by itself in a
+     panel showing previews; closing a panel that shows both takes both
+     switches; with Properties on, Preview's switch changes only its
+     button on a folder; and with Properties alone, what only the
+     preview reads (a picture's dimensions, a document's details) is not
+     said.
 
 ## Consequences
 

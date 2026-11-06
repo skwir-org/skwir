@@ -431,8 +431,8 @@ impl Shell {
         mark: Mark,
         cx: &mut Context<Self>,
     ) {
-        if !self.preview.open {
-            self.preview.open = true;
+        if !self.preview.preview_on {
+            self.preview.preview_on = true;
             self.remember_session();
         }
         self.links.goto = Some(Goto {

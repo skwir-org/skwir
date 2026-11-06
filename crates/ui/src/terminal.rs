@@ -602,7 +602,7 @@ impl Shell {
     /// panes keep, the bars above and below, and the preview at the
     /// bottom.
     pub(crate) fn terminal_height_limit(&self, window: &Window) -> f32 {
-        let preview = if self.preview.open && self.layout.bottom() {
+        let preview = if self.preview.panel_open() && self.layout.bottom() {
             self.preview_panel_height()
         } else {
             0.

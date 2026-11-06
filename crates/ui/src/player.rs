@@ -1039,7 +1039,7 @@ impl Shell {
             .pinned
             .as_ref()
             .is_some_and(|pinned| pinned.video)
-            && self.preview.open
+            && self.preview.preview_on
         {
             self.player.fullscreen_wanted = true;
             self.player_reveal(window, cx);
@@ -1133,7 +1133,7 @@ pub fn render_status(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> O
         .player
         .pinned
         .as_ref()
-        .filter(|_| !shell.preview.open)?;
+        .filter(|_| !shell.preview.panel_open())?;
     let state = &pinned.state;
     let title = crate::media::track_title(state, &pinned.path);
     let title = if state.artist.is_empty() {

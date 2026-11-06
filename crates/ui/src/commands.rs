@@ -2147,20 +2147,20 @@ pub fn declare_all(app: &App) {
     none(
         Topic::View,
         "ui.toggle_preview",
-        "Toggle preview panel",
-        "Show or hide the preview panel",
+        "Toggle preview",
+        "Show or hide the preview in the side panel; the panel stays while Properties is shown",
     );
     none(
         Topic::Preview,
         "ui.preview_close",
         "Preview: close",
-        "Close the preview",
+        "Close peek, or hide the preview in the side panel",
     );
     none(
         Topic::Files,
         "ui.properties",
         "Properties",
-        "Show the properties of the selection (or of the folder shown), opening the panel; hide them where they cover a preview",
+        "Show or hide the properties of the selection (or of the folder shown) in the side panel, over the preview or alone; the panel stays while the preview is shown",
     );
     declare::<Count>(
         app,

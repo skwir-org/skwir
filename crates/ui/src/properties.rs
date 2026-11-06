@@ -1501,12 +1501,13 @@ fn star_picker(
         }))
 }
 
-/// Whether there is nothing to show but the properties. A preview still on
-/// its way is not nothing: Properties waits for the answer rather than
-/// filling the body for the instant before a picture replaces it. Nor is
-/// a member with no preview of its own while its container's view is kept
-/// above it (`PreviewState::parked`): that view is content, so Properties
-/// stays as the card left it, opened and closed on demand.
+/// Whether there is nothing to preview, so Properties, while on, takes the
+/// room as tall as it says (`Room::Whole`), and while off the type's icon
+/// stands for the preview. A preview still on its way is not nothing:
+/// Properties waits for the answer rather than filling the body for the
+/// instant before a picture replaces it. Nor is a member with no preview
+/// of its own while its container's view is kept above it
+/// (`PreviewState::parked`): that view is content.
 pub fn alone(shell: &Shell) -> bool {
     !shell.shows_player()
         && shell.preview.parked().is_none()
@@ -1525,8 +1526,11 @@ pub fn alone(shell: &Shell) -> bool {
 /// Where the section is in the room under the header's card.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Room {
-    /// Nothing to preview (`alone`): the section is open, as tall as what
-    /// it says, up to the whole panel, the toolbar under it.
+    /// The panel's Preview switch off: Properties is all the panel shows,
+    /// and fills it.
+    Panel,
+    /// Nothing to preview (`alone`): as tall as what it says, up to the
+    /// whole panel, the toolbar and why there is no preview under it.
     Whole,
     /// Over a preview, above it: at most its share of the room, less when
     /// it says less.
@@ -1536,9 +1540,13 @@ pub enum Room {
     Beside,
 }
 
-/// Where the section goes: `wide` is whether the room is wider than tall.
-pub fn room(shell: &Shell, wide: bool) -> Room {
-    if alone(shell) {
+/// Where the section goes: `previews` is whether the preview is drawn
+/// beside it (the panel's Preview switch, or peek), `wide` whether the
+/// room is wider than tall.
+pub fn room(shell: &Shell, previews: bool, wide: bool) -> Room {
+    if !previews {
+        Room::Panel
+    } else if alone(shell) {
         Room::Whole
     } else if wide {
         Room::Beside
@@ -1561,11 +1569,10 @@ const LINE: f32 = 1.4;
 const ROW_PAD: f32 = 1.;
 
 /// The section: right under the header's card (`preview::under_card` puts
-/// it there, and nothing else draws it), in the `room` it is given. Opened
-/// on demand over a preview or above a container's kept rows; always open
-/// with nothing to preview. It scrolls past its room. The header's card
-/// (or its Properties button) is what opens it, and holds the name, type,
-/// size and date, so the groups here repeat none of those.
+/// it there, and nothing else draws it), in the `room` it is given, while
+/// its switch is on (`PreviewState::properties_on`), whatever is shown. It
+/// scrolls past its room. The card holds the name, type, size and date, so
+/// the groups here repeat none of those.
 ///
 /// Each group's heading folds it (`ui.properties_fold`), as the user left
 /// it or as it ships (`Group::folded`), and while folded says at its right
@@ -1589,7 +1596,8 @@ pub fn render(
     if preview.info.name.is_empty() || nothing {
         return None;
     }
-    if room != Room::Whole && !preview.properties_open {
+    // Its switch alone says whether it shows, whatever is shown.
+    if !preview.properties_on {
         return None;
     }
     let share = preview.properties_share.get(room == Room::Beside);
@@ -1600,6 +1608,7 @@ pub fn render(
         .bg(grounds.read)
         .border_color(theme.border);
     let section = match room {
+        Room::Panel => section.flex_1(),
         Room::Whole => section.flex_initial().border_b_1(),
         Room::Above => section
             .flex_initial()

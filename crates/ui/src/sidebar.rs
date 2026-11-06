@@ -1552,7 +1552,7 @@ impl Shell {
     }
 
     fn sidebar_width_limit(&self, window: &gpui::Window) -> f32 {
-        let preview = self.preview.open && !self.layout.bottom();
+        let preview = self.preview.panel_open() && !self.layout.bottom();
         max_width(
             f32::from(window.viewport_size().width),
             self.panes_across(),
