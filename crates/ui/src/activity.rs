@@ -1343,7 +1343,7 @@ pub fn tray(
             .flex_col()
             .border_t_1()
             .border_color(theme.border)
-            .bg(theme.bg)
+            .bg(theme.window_bg())
             .text_color(theme.text)
             .child(
                 div()

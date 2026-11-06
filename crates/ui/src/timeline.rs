@@ -1186,7 +1186,7 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
             .flex_col()
             .border_t_1()
             .border_color(theme.border)
-            .bg(theme.surface)
+            .bg(theme.window_surface())
             .child(controls)
             .child(chart_area)
             .children(dates_popup(shell, &theme, cx))

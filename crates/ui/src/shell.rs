@@ -3756,7 +3756,9 @@ impl Render for Shell {
             .flex_col()
             .font_family(theme.font.clone())
             .text_body()
-            .bg(theme.bg)
+            // Nothing painted under the window's areas: each paints its own
+            // ground once (`Theme::window_bg`, `window_surface`), so what is
+            // behind the window shows through as much as they let it.
             .text_color(theme.text)
             .child(
                 div()

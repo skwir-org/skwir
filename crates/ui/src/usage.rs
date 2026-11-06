@@ -1522,7 +1522,9 @@ fn tools(
     cx: &mut Context<Shell>,
 ) -> AnyElement {
     let pane = shell.pane;
+    // The chrome, tinting the files' ground the pane paints.
     let mut header = toolbar::row(theme)
+        .bg(theme.surface_on_bg())
         .text_color(theme.text)
         .id(("usage-tools", pane.0 as usize))
         .child(

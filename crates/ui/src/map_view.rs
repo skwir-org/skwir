@@ -488,7 +488,9 @@ impl PaneView for MapView {
         // What the map holds, as its header says it: the figure's
         // description and a line of its own, for assistive technology.
         let said = shell.a11y.then(|| self.status());
+        // The chrome, tinting the files' ground the pane paints.
         let mut header = toolbar::row(&theme)
+            .bg(theme.surface_on_bg())
             .id(("map-view-tools", pane.0 as usize))
             .role(gpui::Role::Toolbar)
             .child(crate::elements::clip::clipped(
@@ -588,7 +590,8 @@ impl PaneView for MapView {
                 .flex()
                 .flex_col()
                 .child(header)
-                .child(div().flex_1().bg(theme.bg))
+                // On the pane's ground.
+                .child(div().flex_1())
                 .children(popup)
                 .into_any_element();
         }

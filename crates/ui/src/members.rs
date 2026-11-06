@@ -90,7 +90,13 @@ pub fn title(shell: &Shell) -> Option<(String, Option<String>)> {
 /// view of the container it was opened from above it or at its left. `wide`
 /// is whether the room is wider than tall (a panel at the bottom, peek),
 /// which Automatic follows.
-pub fn split(body: AnyElement, wide: bool, shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
+pub fn split(
+    body: AnyElement,
+    wide: bool,
+    shell: &Shell,
+    grounds: crate::theme::Grounds,
+    cx: &mut Context<Shell>,
+) -> AnyElement {
     let Some(parked) = shown(shell) else {
         return body;
     };
@@ -117,7 +123,7 @@ pub fn split(body: AnyElement, wide: bool, shell: &Shell, cx: &mut Context<Shell
                 .min_h(px(keep(&theme, false)))
                 .border_b_1()
         })
-        .child(inspector::parked(shell, &theme, cx));
+        .child(inspector::parked(shell, &theme, grounds, cx));
     // The body grew in the panel's column; it keeps a column of its own,
     // and room to be looked at however the panel narrows. Its focus handle
     // is what a press in it gives the keyboard to, when nothing inside

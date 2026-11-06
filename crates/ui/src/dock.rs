@@ -188,8 +188,7 @@ pub fn render(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Option<AnyE
             .flex_1()
             .min_h_0()
             .w_full()
-            // The letterbox round a film is the panel's own surface.
-            .bg(theme.surface)
+            // The letterbox round a film is the dock's own ground.
             .children(frame);
         reveal("dock-letterbox", letterbox, cx).into_any_element()
     } else if tall {
@@ -305,7 +304,8 @@ pub fn render(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Option<AnyE
         .flex_col()
         .border_t_1()
         .border_color(theme.border)
-        .bg(theme.surface)
+        // One of the panel's parts: the window's own ground.
+        .bg(theme.window_surface())
         .key_context(crate::keymap::PLAYER);
     if let Some(focus) = &shell.player.focus {
         let clicked = focus.clone();

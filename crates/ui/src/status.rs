@@ -201,7 +201,7 @@ pub(crate) fn render(
         .text_body()
         .border_t_1()
         .border_color(theme.border)
-        .bg(theme.surface)
+        .bg(theme.window_surface())
         .text_color(theme.text_muted)
         .child(items);
     if let Some((text, tip)) = as_of {

@@ -2691,7 +2691,12 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
 /// The view of the container kept above a member (`members.rs`), whole:
 /// its bar, what it says about itself, its rows, its contents drawer. The
 /// panel draws its own in `preview::body` and `preview::content`.
-pub fn parked(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
+pub fn parked(
+    shell: &Shell,
+    theme: &Theme,
+    grounds: crate::theme::Grounds,
+    cx: &mut Context<Shell>,
+) -> AnyElement {
     let Some(view) = view(shell, true) else {
         return div().into_any_element();
     };
@@ -2701,7 +2706,12 @@ pub fn parked(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyEleme
         .min_h_0()
         .flex()
         .flex_col()
-        .child(bar(shell, view, theme, cx))
+        .child(
+            div()
+                .flex_none()
+                .bg(grounds.chrome)
+                .child(bar(shell, view, theme, cx)),
+        )
         .children(notice(view.display).map(|text| crate::preview::notice_strip(text, theme)))
         // What is read is on paper, as the panel's own is (`preview::body`).
         .child(crate::outline::around(
@@ -2710,7 +2720,7 @@ pub fn parked(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyEleme
                 .min_h_0()
                 .flex()
                 .flex_col()
-                .bg(theme.bg)
+                .bg(grounds.read)
                 .child(content(shell, view, theme, cx))
                 .into_any_element(),
             outline_drawer(shell, view, theme, cx),

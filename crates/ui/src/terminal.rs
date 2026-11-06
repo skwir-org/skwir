@@ -733,7 +733,9 @@ impl Shell {
                 .h(px(height))
                 .border_t_1()
                 .border_color(theme.border)
-                .bg(theme.bg)
+                // The terminal's area: the window's own ground, its cells
+                // painting only the backgrounds programs ask for.
+                .bg(theme.window_bg())
                 .cursor(CursorStyle::IBeam)
                 .children(grid)
                 .child(edge)

@@ -527,14 +527,19 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         _ => None,
     }
     .unwrap_or_else(|| crate::preview::content(shell, &theme, true, cx));
-    let content = crate::preview::content_area(shell, &theme, true, false, inner, cx);
+    // On paper, or on the stage: opaque, over the whole window.
+    let grounds = crate::theme::Grounds {
+        chrome: theme.stage,
+        ..theme.grounds()
+    };
+    let content = crate::preview::content_area(shell, true, false, grounds, inner, cx);
     let keys = if shell.walks_pictures() {
         format!("{} {}", keymap::FULLSCREEN, keymap::SLIDESHOW)
     } else {
         keymap::FULLSCREEN.to_owned()
     };
     let mut bar = (!fullscreen.controls_hidden)
-        .then(|| crate::preview::controls(shell, &theme, cx))
+        .then(|| crate::preview::controls(shell, &theme, theme.grounds(), cx))
         .flatten()
         .map(|controls| {
             div()

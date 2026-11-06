@@ -111,6 +111,26 @@ Views are in [views.md](views.md); what locations decide, in
   which gpui takes as the window's scale) leaves it out.
   What a font's Automatic and each size step come to is said beside
   them (`settings::show_resolved`, declared again when it changes).
+- **The window's grounds are painted once.** Nothing is painted under
+  the window's areas: each paints its own ground, once, over nothing
+  else of the window (`Theme::window_bg` for the files, the terminal, a
+  preview's paper, the files' Quick filters and pinned Activity;
+  `window_surface` for the bars, the sidebar and its header, the tab
+  strip, the timeline, the footer, the preview panel's bars, letterbox
+  and dock), so that what is behind the window shows through them as
+  much as their opacity lets it. A container of areas (the shell's root,
+  the pane's column, the preview panel) paints nothing; an area that
+  shows a tint where a drag is over it lays it on its ground
+  (`window_bg().blend(drop_target)`). What is drawn on an area (a row, a
+  field, a card, a chip, a strip of a preview's content: its notice, a
+  column header) and what is drawn over the window (menus, popovers,
+  tooltips, toasts, dialogs, Peek, the whole screen) keeps `bg` and
+  `surface`, opaque. A part drawn both in the panel and over the window
+  (a preview's content area, Properties, a container's kept rows) is
+  handed the grounds it paints (`theme::Grounds`). A bar a view draws in
+  the files' area (Usage's, the Map's) tints the files' ground
+  (`Theme::surface_on_bg`) rather than laying a second ground on it;
+  `toolbar::row` paints none of its own.
 - **Text sizes (ADR-117).** The window's rem is the interface's size
   (`Window::set_rem_size`, from `Theme::sizes`, set where the theme is
   resolved), a pane's view the files' (`elements::rem`). Every place

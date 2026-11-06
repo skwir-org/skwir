@@ -1577,6 +1577,7 @@ pub fn render(
     shell: &Shell,
     theme: &Theme,
     room: Room,
+    grounds: crate::theme::Grounds,
     cx: &mut Context<Shell>,
 ) -> Option<AnyElement> {
     let preview = &shell.preview;
@@ -1596,7 +1597,7 @@ pub fn render(
         .flex()
         .flex_col()
         .min_h_0()
-        .bg(theme.bg)
+        .bg(grounds.read)
         .border_color(theme.border);
     let section = match room {
         Room::Whole => section.flex_initial().border_b_1(),

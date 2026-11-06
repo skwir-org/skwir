@@ -279,7 +279,7 @@ pub fn render(banner: Banner, shell: &Shell, cx: &mut Context<Shell>) -> AnyElem
         .gap_2()
         .text_body()
         .text_color(theme.text_muted)
-        .bg(theme.surface)
+        .bg(theme.window_surface())
         .child(div().flex_1().min_w_0().child(banner.text));
     for way in banner.ways {
         row = row.child(

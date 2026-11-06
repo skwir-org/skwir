@@ -5042,6 +5042,7 @@ fn under_card(
     theme: &Theme,
     interactive: bool,
     wide: bool,
+    grounds: crate::theme::Grounds,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
     let kept = interactive && shell.preview.parked().is_some();
@@ -5054,10 +5055,10 @@ fn under_card(
     let room = crate::properties::room(shell, wide);
     let details = Some(())
         .filter(|()| interactive || room == crate::properties::Room::Whole)
-        .and_then(|()| crate::properties::render(shell, theme, room, cx));
-    let body = body(shell, theme, interactive, cx);
+        .and_then(|()| crate::properties::render(shell, theme, room, grounds, cx));
+    let body = body(shell, theme, interactive, grounds, cx);
     let body = if kept {
-        crate::members::split(body, wide, shell, cx)
+        crate::members::split(body, wide, shell, grounds, cx)
     } else {
         body
     };
@@ -5100,7 +5101,13 @@ fn discard_parked(parked: crate::members::Parked, window: &mut Window, cx: &mut 
 }
 
 /// The toolbar and the content. Properties is not its to draw (`under_card`).
-fn body(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>) -> AnyElement {
+fn body(
+    shell: &Shell,
+    theme: &Theme,
+    interactive: bool,
+    grounds: crate::theme::Grounds,
+    cx: &mut Context<Shell>,
+) -> AnyElement {
     // With nothing to preview Properties gives way first: the toolbar and
     // what the content says (why the preview failed) keep their height.
     let alone = crate::properties::alone(shell);
@@ -5108,8 +5115,12 @@ fn body(shell: &Shell, theme: &Theme, interactive: bool, cx: &mut Context<Shell>
     frame(shell, interactive)
         .flex_1()
         .when(!alone, gpui::Styled::min_h_0)
-        .children(interactive.then(|| controls(shell, theme, cx)).flatten())
-        .child(content_area(shell, theme, interactive, alone, inner, cx))
+        .children(
+            interactive
+                .then(|| controls(shell, theme, grounds, cx))
+                .flatten(),
+        )
+        .child(content_area(shell, interactive, alone, grounds, inner, cx))
         .into_any_element()
 }
 
@@ -5160,6 +5171,7 @@ pub(crate) fn frame(shell: &Shell, interactive: bool) -> gpui::Stateful<gpui::Di
 pub(crate) fn controls(
     shell: &Shell,
     theme: &Theme,
+    grounds: crate::theme::Grounds,
     cx: &mut Context<Shell>,
 ) -> Option<AnyElement> {
     if shell.preview.info.name.is_empty() || shell.preview.key.is_none() {
@@ -5178,6 +5190,7 @@ pub(crate) fn controls(
         div()
             .relative()
             .flex_none()
+            .bg(grounds.chrome)
             .child(bar)
             .when(shell.preview_busy(), |d| {
                 d.child(
@@ -5194,12 +5207,13 @@ pub(crate) fn controls(
 }
 
 /// Where `inner`, the content, is shown: on paper for what is read, on
-/// the letterbox for what is looked at, with the content's own menu.
+/// the letterbox for what is looked at (`grounds`: the panel's, Peek's,
+/// the whole screen's), with the content's own menu.
 pub(crate) fn content_area(
     shell: &Shell,
-    theme: &Theme,
     interactive: bool,
     alone: bool,
+    grounds: crate::theme::Grounds,
     inner: AnyElement,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
@@ -5208,9 +5222,13 @@ pub(crate) fn content_area(
         .flex_col()
         .flex_1()
         .when(!alone, gpui::Styled::min_h_0)
-        // What is read is on paper; a picture, a page or a film keeps
-        // the panel's own surface as its letterbox.
-        .when(on_paper(shell), |d| d.bg(theme.bg))
+        // What is read is on paper; a picture, a page or a film is on the
+        // letterbox.
+        .bg(if on_paper(shell) {
+            grounds.read
+        } else {
+            grounds.chrome
+        })
         .when(interactive, |d| {
             d.on_mouse_down(
                 MouseButton::Right,
@@ -5646,7 +5664,12 @@ fn trail(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> gpui::Div {
 /// preview Properties is always open and there is no button. The peek overlay
 /// alone keeps a close button: the panel is closed by the Preview button
 /// that opened it.
-fn header(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
+fn header(
+    shell: &Shell,
+    theme: &Theme,
+    ground: Option<gpui::Hsla>,
+    cx: &mut Context<Shell>,
+) -> AnyElement {
     let preview = &shell.preview;
     let info = &preview.info;
     let alone = crate::properties::alone(shell);
@@ -5730,6 +5753,9 @@ fn header(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
     div()
         .px_1()
         .py(sized(2.))
+        // The panel's own ground; in Peek, the dialog's under it (a
+        // ground of its own would square its rounded corners).
+        .when_some(ground, gpui::Styled::bg)
         .border_b_1()
         .border_color(theme.border)
         .flex()
@@ -6268,11 +6294,18 @@ pub fn render_panel(
     // While peek shows the preview, the panel is only a picture of it: the
     // kept rows, which take the keyboard, are drawn in peek alone.
     let interactive = !shell.preview.peek;
-    let body = under_card(shell, &theme, interactive, bottom, cx);
+    let body = under_card(
+        shell,
+        &theme,
+        interactive,
+        bottom,
+        theme.window_grounds(),
+        cx,
+    );
     let content = div()
         .flex()
         .flex_col()
-        .child(header(shell, &theme, cx))
+        .child(header(shell, &theme, Some(theme.window_surface()), cx))
         .child(body);
     // At the right, the panel's own bar mirrors the sidebar's header: as
     // tall as a pane's row, their edges meeting, with Split and Preview at
@@ -6302,6 +6335,7 @@ pub fn render_panel(
             // As tall as a pane's row at every text size (ADR-117).
             .h(sized(crate::address::PANE_ROW_HEIGHT))
             .px(sized(6.))
+            .bg(theme.window_surface())
             .border_b_1()
             .border_color(theme.border)
             .child(crate::elements::adaptive::AdaptiveRow {
@@ -6321,8 +6355,9 @@ pub fn render_panel(
         .relative()
         .flex_none()
         .flex()
-        .border_color(theme.border)
-        .bg(theme.surface);
+        // Its parts paint their own grounds: its bars, the content's paper
+        // or letterbox, Properties, the dock.
+        .border_color(theme.border);
     let panel = if bottom {
         panel
             .w_full()
@@ -6447,8 +6482,8 @@ pub fn render_peek(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement>
                     .bg(theme.surface)
                     .shadow_lg()
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .child(header(shell, &theme, cx))
-                    .child(under_card(shell, &theme, true, true, cx))
+                    .child(header(shell, &theme, None, cx))
+                    .child(under_card(shell, &theme, true, true, theme.grounds(), cx))
                     .child(
                         div()
                             .px_2()

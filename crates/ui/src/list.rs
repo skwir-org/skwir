@@ -1495,7 +1495,10 @@ impl Shell {
         said: Option<String>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let tint = cx.global::<Theme>().drop_target;
+        let ground = cx.global::<Theme>().window_bg();
+        // Its ground under a drop's tint, which takes the place of the
+        // ground while a drag is over it.
+        let tint = ground.blend(cx.global::<Theme>().drop_target);
         let key_context = self.pane_key_context();
         let pane = self.pane;
         let typed = self.typed_label(cx);
@@ -1527,6 +1530,8 @@ impl Shell {
             .w_full()
             .flex()
             .flex_col()
+            // The files' area: the window's own ground (`window_bg`).
+            .bg(ground)
             .track_focus(&self.ui().focus)
             .key_context(key_context)
             .children(self.menu_area_marker(pane))

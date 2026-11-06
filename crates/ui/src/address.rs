@@ -841,7 +841,7 @@ pub fn sidebar_header(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
         .items_center()
         .gap(sized(2.))
         .px(sized(6.))
-        .bg(theme.surface)
+        .bg(theme.window_surface())
         .border_b_1()
         .border_r_1()
         .border_color(theme.border)
@@ -1019,7 +1019,7 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
         .flex_none()
         .border_b_1()
         .border_color(theme.border)
-        .bg(theme.surface)
+        .bg(theme.window_surface())
         .child(AdaptiveRow {
             // The toggles' labels go first, the view buttons next.
             variants: [(true, true), (true, false), (false, false)]

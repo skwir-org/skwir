@@ -665,6 +665,8 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
             d.style().restrict_scroll_to_axis = Some(false);
             d
         })
+        // Over the files, on their ground.
+        .bg(theme.window_bg())
         .border_b_1()
         .border_color(theme.border);
     let mut n = 0usize;

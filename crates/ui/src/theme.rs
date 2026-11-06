@@ -15,6 +15,17 @@
 //!   (`reading.code_appearance`) is drawn with that look's tokens
 //!   (`in_look`). `text_muted` is for secondary facts (line numbers,
 //!   captions), never for the data.
+//! - the window's own grounds: each of the window's areas (the files, the
+//!   terminal, a preview's paper or letterbox; the bars, the sidebar, the
+//!   tabs, the panel's parts, the dock) paints its ground once,
+//!   `window_bg` or `window_surface`, over nothing else of the window:
+//!   what is behind the window shows through them as much as their
+//!   opacity lets it (`Opacity`). What is drawn on an area (a row, a
+//!   field, a card, a strip of a preview's content) and what is drawn
+//!   over the window (a menu, a dialog, Peek, the whole screen) keeps
+//!   `bg` and `surface`, opaque. A part both draw is handed the grounds
+//!   it paints (`Grounds`); a bar a view draws in the files' area tints
+//!   their ground (`surface_on_bg`).
 //! - color: the fields of [`Theme`]. `accent_text` is the accent written
 //!   as text (a link, a key, what is chosen on `term`); `accent` marks and
 //!   fills. State colors are tokens too: `hover`, laid over whatever is
@@ -214,6 +225,46 @@ pub struct Theme {
     /// The text size of each part of the window (`sizes.rs`, ADR-117):
     /// read where it is drawn, as the fonts are.
     pub sizes: crate::sizes::Sizes,
+    /// How much of the window's own grounds hides what is behind it
+    /// (`window_bg`, `window_surface`).
+    pub opacity: Opacity,
+}
+
+/// How opaque the window's own grounds are, from 0 to 1: what is read's
+/// (`bg`: the files, a preview's paper, the terminal) and the chrome's
+/// (`surface`: the bars, the sidebar, the tabs, the panel around a
+/// preview). Whole unless chosen otherwise.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Opacity {
+    pub files: f32,
+    pub interface: f32,
+}
+
+impl Default for Opacity {
+    fn default() -> Self {
+        Opacity {
+            files: 1.,
+            interface: 1.,
+        }
+    }
+}
+
+/// The grounds an area paints: what is read is on (`read`) and the chrome
+/// around it (`chrome`). The window's own (`Theme::window_grounds`) where
+/// the area is one of the window's, opaque (`Theme::grounds`) where it is
+/// drawn over the window: Peek, the whole screen. A part both draw (a
+/// preview's content, Properties) is handed the one it paints.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Grounds {
+    pub read: Hsla,
+    pub chrome: Hsla,
+}
+
+impl Opacity {
+    /// Whether something behind the window shows through it.
+    pub fn see_through(self) -> bool {
+        self.files < 1. || self.interface < 1.
+    }
 }
 
 fn palette(hex: [u32; 16]) -> [Hsla; 16] {
@@ -736,7 +787,49 @@ impl Theme {
             reading_font: crate::fonts::Families::default().reading,
             code_font: crate::fonts::Families::default().code,
             sizes: crate::sizes::Sizes::default(),
+            opacity: Opacity::default(),
         }
+    }
+
+    /// `bg` where it is the window's own ground, under nothing else of
+    /// the window: what is read's area (the files, a preview's paper,
+    /// the terminal) paints it once, and what is behind the window shows
+    /// through it at the opacity chosen. Anything drawn on it (a row, a
+    /// field, a card) and anything over the window (a menu, a dialog)
+    /// keeps `bg`, opaque.
+    pub fn window_bg(&self) -> Hsla {
+        self.bg.opacity(self.opacity.files)
+    }
+
+    /// The chrome as a tint laid on the files' ground: a bar a view draws
+    /// in the files' area (Usage's, the Map's) is `surface` on `bg`, and
+    /// as see-through as the files where they are (`color::overlay`),
+    /// never a second ground under them.
+    pub fn surface_on_bg(&self) -> Hsla {
+        crate::color::overlay(self.bg, self.surface)
+    }
+
+    /// The window's own grounds, for an area of the window.
+    pub fn window_grounds(&self) -> Grounds {
+        Grounds {
+            read: self.window_bg(),
+            chrome: self.window_surface(),
+        }
+    }
+
+    /// The opaque grounds, for an area drawn over the window.
+    pub fn grounds(&self) -> Grounds {
+        Grounds {
+            read: self.bg,
+            chrome: self.surface,
+        }
+    }
+
+    /// `surface` where it is the window's own ground: the chrome's areas
+    /// (the bars, the sidebar, the tabs, the panel around a preview) each
+    /// paint it once, as `window_bg`.
+    pub fn window_surface(&self) -> Hsla {
+        self.surface.opacity(self.opacity.interface)
     }
 
     /// The fills of block `index` of a chart of folder contents (the

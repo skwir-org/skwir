@@ -539,7 +539,7 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
             .flex_none()
             .h(sized(STRIP_HEIGHT))
             .w_full()
-            .bg(theme.surface)
+            .bg(theme.window_surface())
             .border_b_1()
             .border_color(theme.border)
             .child(crate::elements::adaptive::AdaptiveRow {
@@ -657,7 +657,7 @@ fn row(
             .flex_none()
             .h(sized(STRIP_HEIGHT))
             .w_full()
-            .bg(theme.surface)
+            .bg(theme.window_surface())
             .border_b_1()
             .border_color(theme.border),
     }

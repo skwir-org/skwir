@@ -819,6 +819,9 @@ pub fn separator(theme: &Theme) -> Div {
 /// How tall a toolbar's row is.
 pub const HEIGHT: f32 = 42.;
 
+/// A toolbar's row, drawn on the chrome its area paints (a preview's
+/// bar on the panel's, Peek's or the whole screen's: `preview::controls`),
+/// or on one its caller gives it.
 pub fn row(theme: &Theme) -> Div {
     div()
         .tab_group()
@@ -829,7 +832,6 @@ pub fn row(theme: &Theme) -> Div {
         .items_center()
         .gap(sized(2.))
         .px(sized(6.))
-        .bg(theme.surface)
         .border_b_1()
         .border_color(theme.border)
 }
