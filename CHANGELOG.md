@@ -7,11 +7,30 @@
   shows it, filtered or not, titled by its name and what filters it. Where the
   files come from several folders, each one's folder is printed beside it; in
   the Trash, when each was deleted. A tag listed says how many files it holds.
-- **Where a PDF goes is said**: choosing PDF in Print…'s dialog shows Save in,
-  beside the file (or in the folder listed, a search's folder, Documents for
-  the Trash), and takes another: the other pane's folder, Documents, or one
-  typed. A folder chosen is kept for the next PDF. Its **Name** can be changed
-  too, when one PDF is made (`.pdf` is added when left out).
+- **Save as, in one line**: choosing PDF in Print…'s dialog shows where it
+  goes, folder and name together (`~/Documents/notes.pdf`): beside the file (or
+  in the folder listed, a search's folder, Documents for the Trash), the name
+  but `.pdf` selected so typing renames it. Folders are completed as you type,
+  as in the address field, in a list under it that scrolls and folds once you
+  leave it (Tab fills in or takes a folder, Down goes into the list, Alt+Up
+  goes to the folder above, Ctrl+Z takes a folder chosen back), keeping the
+  name; the other pane's folder, the folders chosen before (kept from one run
+  to the next) and the sidebar's places and bookmarks are a click or Down
+  away, and a press elsewhere in the dialog folds the list. Choosing PDF with a
+  click puts the keyboard in Save as, its name selected to be typed over. A
+  folder left without a name gets it back. The name follows the
+  layout until you type one. The dialog says when the folder already holds that
+  name, and holds Save back, saying why, while the folder is none, relative, or
+  the name one no file can have. The folder chosen is kept for the next PDF.
+- **Show**: the notice of a PDF saved, an archive made or anything else made
+  in a folder no pane shows says where it went and offers Show, which goes
+  there with it selected.
+- **A dialog's field that offers choices** has its button inside it, at its
+  end (up while its list shows), as a combobox does; Save as's list has a
+  scroll bar, and a path it cannot save at reddens the field and its note.
+- **A choice clicked in a dialog that shows a field to type in** (Pages…'s
+  pages) puts the keyboard there; a press elsewhere in a dialog folds the list
+  of a choice unfolded.
 - **A field of a dialog that offers choices and takes any text** lists every
   choice when unfolded, rather than only the one it holds; what is typed in it
   still narrows the list, and Enter takes what was typed rather than the first

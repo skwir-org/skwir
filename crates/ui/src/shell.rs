@@ -2546,6 +2546,10 @@ impl Shell {
             }
             // Tab in the address field: what is typed completed.
             "omnibox_complete" => self.omnibox_complete(cx),
+            // Tab in a dialog's Save as: the folder typed completed.
+            "form_complete" => self.form_complete(window, cx),
+            // Alt+Up there: the folder above, as Alt+Up goes up in a pane.
+            "form_up" => self.form_up(window, cx),
             // Alt+Down in the address field: where else words could search.
             "omnibox_scopes" => self.omnibox_scopes(cx),
             // Shift+Delete there: a recent search forgotten.

@@ -12094,3 +12094,192 @@ drag left the window and came back; the name lost outside the window.
   a form's keys). Not checked: `just release-check`, the whole suite, a
   screen reader with no row highlighted, macOS and Windows.
 
+
+## Save as in one line, Show after saving (ADR-111 revised, 2026-11-06)
+
+- **Asked for:** the folder and the name in one control, with the UX
+  ideas proposed: folders completed as typed, the stem selected, the
+  folders chosen before, a name already there said, the notice saying
+  where it went with Show.
+- **Built:** core's forms: `Kind::Save { folders, names, ending, alone,
+  beside }`, `Named` (a name with `when`), `Field::save_name`. The
+  window: `Control::Save` and `form/save.rs` (rows completing the
+  folder typed once edited, from `complete::folders` read on a worker
+  in its lane, else the folders offered; choosing one keeps the name;
+  the name follows the fields while it is the one put; the stem
+  selected; notes: no such folder, name there already, a name alone,
+  a folder alone); `list_of` draws a choice's list and a folder's;
+  Tab is `ui.form_complete` (`Form completes`). The print dialog: one
+  `save_as` field (`target`, `into_folder`, the last four folders
+  chosen, the last opening the next). The toast: Show before Undo for
+  a plan that made one thing in a folder no pane shows
+  (`made_alone`, `show_action`); Save as PDF's words name the folder.
+- **Found while checking**: the arrows into the list switched it from
+  the completions to the folders offered (both read one flag), so
+  Enter chose Documents; the completions now follow whether the text
+  was edited since the window put it (`put`), apart from whether a row
+  is highlighted.
+- **Seen** in the debug build on Xvfb :95 (fixture under
+  `~/.cache/skwir-tests`, Documents with `Work` and `Wonders`): a
+  search's listing dialog shows Save as `~/l'été papers/report in l'été
+  papers (listing).pdf`, its name but `.pdf` selected, kept by Tab into
+  it; `~/Do` listed Documents (`~/`), Tab gave `~/Documents/` with the
+  name back; `Wo` typed over the name listed Wonders and Work, Down
+  twice and Enter gave `~/Documents/Work/` with the name; Enter saved
+  there, the notice "Saved the listing of … as “…(listing).pdf” in
+  “Work”" with Show and Undo; the next dialog opened on
+  `~/Documents/Work/`, warning in orange that the name is there
+  already, its button listing l'été papers, Work ("Chosen before") and
+  Documents; `~/Documents/Work/copie` saved `copie.pdf`, Show went to
+  Documents › Work with it selected; printing `copie.pdf`, Save as held
+  `copie (printed).pdf` and Booklet made it `copie (booklet).pdf`.
+- **Checked:** unit tests (core: a file to write's names; the window:
+  stems, endings, a folder alone, folders written; the dialog: what
+  Save as holds and offers, what it reads, a folder alone, a name that
+  is a folder, folders chosen before; the toast: Show for one thing
+  made, none for several steps or a copy); `crates/skwir/tests/
+  print.rs` (Save as opening on the folder and the name, a folder that
+  is none asked again, a listing saved as typed, a name that is a
+  folder, the next dialog on the folder chosen); `keymap_titles`,
+  `plugins_toggle`; `cargo clippy -p skwir-core -p skwir-ui -p
+  skwir-plugin-print -p skwir --tests -D warnings`; nextest of the
+  print plugin (16), the print tests (12), skwir-ui's form, toast,
+  keymap, modal and work tests (66), core's form tests. Not checked:
+  `just release-check`, the whole suite, a screen reader on Save as's
+  list, a remote folder typed, macOS and Windows.
+
+## Save as's popover, Save held back, the name given back (ADR-111 revised, 2026-11-06)
+
+- **Asked for:** the suggestions as a scrollable popover that folds when
+  the field loses focus; the name given back when only a folder is
+  typed; Save disabled, and said why, while the path is invalid; more
+  usability.
+- **Built:** `form/save.rs::popover` (deferred, absolute under the
+  line, `max_h` 300 px at 100 %, `overflow_y_scroll`, `list_scroll`
+  following the arrows), `complete::rank_at_most` (64 folders), one
+  line a row where all are in the folder typed; `on_blur` →
+  `save_left` (folded but to its button, the name given back after a
+  folder alone or a folder's own name); `FormState::offered` (the
+  asker's folders only from the button or Down while folded; nothing
+  listed while nothing completes); `Note::blocks` and
+  `FormState::blocked` (the answer's button inert with its reason,
+  Enter refused) for a folder that is none or relative and a name the
+  system refuses; Tab as the address field's; `ui.form_up` (Alt+Up,
+  repeating); `save_put` with `replace_all` (Ctrl+Z) and `put` so that
+  the window's own edits are no typing; the print plugin looks at the
+  folders chosen before as the dialog opens (`dialog::kept_folders`),
+  offering and opening on those still there.
+- **Found while checking:** Tab with `~/` typed took Archives, the first
+  folder, where the address field highlights first; after Ctrl+Z, any
+  edit that completed nothing unfolded the asker's folders. Both
+  changed as above.
+- **Seen** in the debug build on Xvfb :95 (fixture under
+  `~/.cache/skwir-tests`, a home of 19 folders): `~/` typed opened the
+  popover over the form and past the dialog's foot, scrolled by the
+  wheel to Music…Recipes; `~/Documents/` typed then left (a click on
+  To) folded it and gave the name back
+  (`~/Documents/report in l'été papers (listing).pdf`); `~/Nowhere/x`
+  said "There is no folder “~/Nowhere”" in orange, Save greyed, Enter
+  did nothing; `~/Documents/Work/ma liste`, Alt+Up gave
+  `~/Documents/ma liste` (the name selected), Ctrl+Z took it back with
+  no list unfolded; Down with it folded listed l'été papers and
+  Documents; `ma liste` typed over the name listed nothing and kept
+  `.pdf`; `~/Do` then Tab highlighted Documents (Downloads below),
+  Tab again took it with the name back.
+- **Checked:** skwir-ui's tests whole (551) and core's form tests;
+  the print plugin's (16); `crates/skwir/tests/print.rs` (a folder
+  chosen before then removed neither opened on nor offered, one still
+  there offered), `keymap_titles`, `plugins_toggle` (21 in all); `cargo
+  clippy -p skwir-core -p skwir-ui -p skwir-plugin-print -p skwir
+  --tests -D warnings`. Not checked: `just release-check`, the whole
+  suite, a screen reader on the popover and the held-back button, a
+  remote folder typed, macOS and Windows.
+
+## Places offered in Save as, folders kept, lists folded, focus (ADR-111 revised, 2026-11-06)
+
+- **Asked for:** the sidebar's places among the folders Save as offers;
+  the folders chosen kept across runs; lists folding on a click
+  outside; whether choosing PDF should give Save as the keyboard.
+- **Built:** `sidebar_folders` (`registry.places`, `places` and
+  `bookmarks`, folders open now); sections in `save_as` and the popover
+  ("Chosen before", "Places"), details by path; `dialog::keep_chosen`,
+  `chosen_folders`, `with_chosen` (cache `print`/`save-folders`);
+  `form_fold` on the panel's inner frame, the open row and the popover
+  stopping their presses; `form_row_click` (a click revealing a text
+  field or Save as focuses it); Down over an unfolded list showing
+  nothing unfolds the folders.
+- **Found while checking:** Down after typing a name did nothing: the
+  list was unfolded with nothing in it. It now offers the folders.
+- **Seen** in the debug build on Xvfb :95 (fixture under
+  `~/.cache/skwir-tests`, user folders Documents, Downloads, Pictures):
+  PDF clicked put the keyboard in Save as, the name selected, `liste`
+  typed gave `~/l'été papers/liste.pdf`; Down listed the folder it is
+  of, then Places: Home `~/`, Documents, Downloads, Pictures; a press on
+  the dialog's empty top right folded it, the caret left in the field;
+  Pages… clicked put the keyboard in "Pages to print"; Downloads chosen
+  and saved made `~/Downloads/liste.pdf`; the app restarted, Save as
+  opened where it goes by itself and Down listed Downloads under
+  "Chosen before", Places without it.
+- **Checked:** the dialog's tests (sections, Documents without places,
+  the cache kept, each once, four at most; 16 in all), a cross-plugin
+  test of a folder offered after a restart (the plugin turned off and
+  on, as the dialog's choices are the process's), skwir-ui's tests whole
+  (551), `keymap_titles`, `plugins_toggle` (22 in all); `cargo clippy
+  -p skwir-core -p skwir-ui -p skwir-plugin-print -p skwir --tests -D
+  warnings`. Not checked: `just release-check`, the whole suite, a
+  screen reader, a bookmark of a remote folder, macOS and Windows.
+
+## The print and shrink plugins hold their state, not statics (2026-11-06)
+
+- **Asked for:** the problem found the same day, the print dialog's
+  last choices in a static (`dialog::LAST`) shared by every `App` of
+  the process, against AGENTS.md's "state stays in the plugin's own
+  struct".
+- **Found beside it:** the same in the shrink plugin (its dialog's
+  `LAST`), and in both the app their steps reach through a static
+  (`APP`: `RwLock<Option<Weak<App>>>`), the last app registered winning;
+  print's never let go of it when turned off, shrink's did. Other
+  plugin statics (geo's places index, rclone's listings, tables'
+  starts) cache data, not an app's state, and stay.
+- **Built:** core's `plugin::AppRef` (a shared `Option<Weak<App>>`:
+  `hold`, `release`, `get`; never serialized, any two alike); in each
+  plugin a `Held` (its `AppRef` and its dialog's `Last`) in the plugin's
+  struct (`PrintPlugin::default()`, `ShrinkPlugin::default()`), cloned
+  into its commands; `MakePdf::app` and `ShrinkCopy::app` (`#[serde(skip)]`),
+  set where the plan is made and where data rebuilds the step
+  (`OpRegistry::register_with`); `on_disable` forgets the choices and
+  releases the app, so a step made before is refused, in print now as
+  in shrink. The dialogs' `form` takes the choices it opens on.
+- **Checked:** `crates/skwir/tests/print.rs`: a second app in the same
+  process opens Save as where the PDF goes by itself, not on the first
+  app's folder (the turn-off-and-on the test needed before is gone); a
+  Save as PDF step rebuilt from its data (`Plan::to_data`,
+  `Plan::from_data` with the app's `ops`) saves the PDF, and is refused
+  once the plugin is turned off; `shrink.rs`, `plugins_toggle` (28 in
+  all); the two plugins' tests (22); core's plugin, form and op tests
+  (267); `cargo clippy -p skwir-core -p skwir-plugin-print -p
+  skwir-plugin-shrink -p skwir --tests -D warnings`. Not checked: `just
+  release-check`, the whole suite, macOS and Windows. No window check:
+  nothing drawn changed.
+
+## The chevron inside the field, the popover's scroll bar (2026-11-06)
+
+- **Asked for:** the down chevron inside the field rather than beside it;
+  a scroll bar on the dropdown list.
+- **Built:** `form.rs::inner_chevron`, the field's own frame
+  (`controls::field`) ending with the button, 20 px at 100 %, `chevron`
+  while folded and `chevron-up` while the list shows, for Save as and
+  any choice that takes text; `elements::scrollbar::vertical` over the
+  popover's right edge on `list_scroll`. Beside it: a path Save is held
+  back for draws the field's frame red (`controls::field`'s `invalid`)
+  and its note in the error's color; a name already there stays a
+  warning's.
+- **Seen** in the debug build on Xvfb :95: the chevron inside Save as at
+  its end, up with the popover of `~/`'s 19 folders, its scroll bar at
+  the right; `~/Nowhere/x` with a red frame, "There is no folder
+  “~/Nowhere”" in red, Save greyed. The open choice of another form
+  (none in Print…) was not drawn.
+- **Checked:** skwir-ui's tests whole (551); `cargo clippy -p skwir-ui
+  --tests -D warnings`. Not checked: `just release-check`, a screen
+  reader, macOS and Windows.
+

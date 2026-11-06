@@ -10,7 +10,7 @@
 
 use crate::sizes::TextSizes;
 use crate::sizes::sized;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -677,6 +677,39 @@ pub(crate) fn finished_actions(
     actions
 }
 
+/// What `running` made alone, done: the one thing a plan made new (a PDF
+/// saved, an archive made, a folder), under the name settled; `None` for
+/// any other plan.
+pub(crate) fn made_alone(
+    running: &Running,
+    items: Option<&skwir_core::op::Items>,
+) -> Option<PathBuf> {
+    if let Some(items) = items {
+        return match (&items.first, items.placed.as_slice()) {
+            (Change::Create { .. }, [made]) => Some(made.clone()),
+            _ => None,
+        };
+    }
+    match running.first() {
+        Some(Change::Create { path, .. }) if running.total == 1 => Some(path.clone()),
+        _ => None,
+    }
+}
+
+/// Show: the folder `made` is in, `made` selected there (`navigate`'s
+/// `select`), in the pane commands act on; Back returns.
+pub(crate) fn show_action(made: &Path) -> Action {
+    use skwir_core::os_path::PathArg;
+    Action {
+        label: "Show".into(),
+        command: "navigate".into(),
+        args: serde_json::json!({
+            "location": PathArg::from(made.parent().unwrap_or(made)),
+            "select": made.file_name().map(|name| PathArg::from(Path::new(name))),
+        }),
+    }
+}
+
 /// An action waiting its turn, as its row under the cards of what runs
 /// says it (ADR-079, 12): what it is ("Rename to b.txt"), and what it
 /// waits for ("Waits for copy to /media/stick").
@@ -867,9 +900,9 @@ pub fn render_answer(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyEl
 mod tests {
     use super::{
         Action, End, Running, Toast, ToastState, Tone, bar, describe, ended, failure,
-        finished_actions, pace, quit_question, shown_for, waiting_words,
+        finished_actions, made_alone, pace, quit_question, show_action, shown_for, waiting_words,
     };
-    use skwir_core::op::{Change, RunKind, Transfer};
+    use skwir_core::op::{Change, PlanId, RunKind, Transfer};
     use std::path::PathBuf;
     use std::time::Duration;
 
@@ -1439,5 +1472,49 @@ mod tests {
         assert!(toasts.over(shown));
         assert!(toasts.current.is_none());
         assert_eq!(toasts.drawn(), None, "nothing to time");
+    }
+
+    /// The one thing a plan made new is shown with Show: the folder it is
+    /// in, it selected there; a plan of several steps, or of a copy, is
+    /// not.
+    #[test]
+    fn what_a_plan_made_alone_is_shown() {
+        let made = PathBuf::from("/example/l'été/ma liste.pdf");
+        let create = Change::Create {
+            path: made.clone(),
+            directory: false,
+            words: None,
+        };
+        let progress = |change: Change, total: usize| skwir_core::op::Progress {
+            plan: PlanId(7),
+            step: 0,
+            total,
+            change,
+            named: None,
+            status: skwir_core::op::StepStatus::Pending { reversible: true },
+            error: None,
+        };
+        let mut running = Running::for_test(PlanId(7), "save as PDF", RunKind::Apply, 1);
+        running.stepped(&progress(create.clone(), 1));
+        assert_eq!(made_alone(&running, None), Some(made.clone()));
+        let action = show_action(&made);
+        assert_eq!(
+            (action.label.as_str(), action.command.as_str()),
+            ("Show", "navigate")
+        );
+        assert_eq!(action.args["location"], "/example/l'été");
+        assert_eq!(action.args["select"], "ma liste.pdf");
+        let mut several = Running::for_test(PlanId(8), "save as PDFs", RunKind::Apply, 2);
+        several.stepped(&progress(create, 2));
+        assert_eq!(made_alone(&several, None), None);
+        let mut copied = Running::for_test(PlanId(9), "copy", RunKind::Apply, 1);
+        copied.stepped(&progress(
+            Change::Copy {
+                from: PathBuf::from("/example/a.txt"),
+                to: PathBuf::from("/example/b/a.txt"),
+            },
+            1,
+        ));
+        assert_eq!(made_alone(&copied, None), None);
     }
 }

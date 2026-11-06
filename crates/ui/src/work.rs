@@ -498,6 +498,10 @@ impl Work {
                 }
                 let made = items.clone();
                 let running = self.running.remove(index);
+                let show = done
+                    .then(|| toast::made_alone(&running, items.as_ref()))
+                    .flatten()
+                    .filter(|path| !shown_in_a_pane(app, path));
                 let run = running.run;
                 let title = running.title.clone();
                 let stopped_by_error = error.is_some() && !cancelled;
@@ -521,13 +525,18 @@ impl Work {
                         ran,
                     },
                 );
-                let actions = toast::finished_actions(
+                let mut actions = toast::finished_actions(
                     plan,
                     run,
                     undoable && applied > 0,
                     run == RunKind::Apply && app.executor.can_retry(plan),
                     run == RunKind::Undo && app.executor.can_redo(),
                 );
+                if let Some(path) = show
+                    && run == RunKind::Apply
+                {
+                    actions.insert(0, toast::show_action(&path));
+                }
                 // Without a window every action is as a card: one started
                 // and stopped between two syncs keeps its Retry too.
                 let carded = watched.seen == Seen::NoWindow;
@@ -788,6 +797,17 @@ pub(crate) fn why(under: &Under) -> String {
         ([], []) => "Actions under way".to_owned(),
         _ => format!("{} under way", format::count(under.count(), "action")),
     }
+}
+
+/// Whether a pane shows the folder `path` is in: what a plan made there is
+/// selected in it (`Shell::made`), and Show is not offered.
+fn shown_in_a_pane(app: &skwir_core::App, path: &std::path::Path) -> bool {
+    let ws = app.workspace.read();
+    ws.panes().iter().any(|pane| {
+        pane.location()
+            .and_then(skwir_core::Location::path)
+            .is_some_and(|folder| Some(folder.as_path()) == path.parent())
+    })
 }
 
 #[cfg(test)]

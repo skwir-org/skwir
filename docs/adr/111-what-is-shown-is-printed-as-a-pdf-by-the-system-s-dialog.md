@@ -322,3 +322,119 @@ changeable, for every PDF saved.
   the dialog's choice being kept as its others are. Left: a folder typed
   in Save in is not completed as the address field completes one
   (ADR-070), which no form's field does yet.
+
+## Revision (2026-11-06, later): Save as, folder and name in one line
+
+The user asked whether Save in and Name could be one control, with the
+UX ideas proposed (folders completed as typed, Show after saving, a
+name already there said, the name's stem selected, the folders chosen
+before).
+
+- **One field, `Kind::Save`** (core's forms): a file to write, a whole
+  path written from `~`, which the window draws as one line
+  (`crates/ui/src/form/save.rs`). It replaces Save in and the Name
+  fields (`save_as`, key `save_as`). Its value is the folder alone,
+  ending with its separator; the window adds the name the first of its
+  `names` gives (`Named`, each with `when` as a field's), so the name
+  follows the layout and Together until one is typed. A name with no
+  folder saves where the PDF goes by itself (`beside` says it); none of
+  `names` holding (several files saved a PDF each), it holds a folder
+  alone (`alone`).
+- **Completed as the address field completes a path** (ADR-070,
+  `complete.rs`): once its text is edited, its list holds the folders
+  within the folder typed that its name begins (`.pdf` aside), the
+  folder read once on a worker in its lane; untouched or unfolded by its
+  button, the folders offered (where it goes by itself, the folders
+  chosen before, the other pane's, Documents). Choosing one, Tab
+  (`ui.form_complete`, while `Form completes`), Down and Enter or a
+  click, puts it in place of the folder typed and keeps the name: the
+  one typed, or, where what was typed began that folder's name, the one
+  put there before. The name but `.pdf` is selected whenever the window
+  puts one.
+- **Said under it**, from the folder read: a folder that is none, or a
+  name it holds already ("saving asks whether to replace it": the
+  clash's question, `op::clash`, as before); else where a name alone
+  goes, or that a folder alone is held; else its help.
+- **Read by the plugin** (`dialog::target`): the folder part (a whole
+  path or from `~`; `~` alone is home), the name (`.pdf` added; its own
+  left as `None`); asked again when the folder typed is none; a name
+  that is a folder's there is that folder, the PDF named by itself
+  (`into_folder`). The folders chosen are kept, the last four, until
+  Skwir quits (`Remembered::recent`); the last opens the next Save as.
+- **Show** (`toast::made_alone`, `show_action`): the notice of a plan
+  that made one thing new in a folder no pane shows offers Show before
+  Undo, `navigate` to its folder with it selected. The step's words name
+  the folder ("saved … as “x.pdf” in “Work”").
+- **Left**: Alt+Up to the parent folder in the field; completing a
+  name shared by several folders (Tab takes the first); a folder chosen
+  before that is gone is still offered until Skwir quits.
+
+## Revision (2026-11-06, evening): Save as's list a popover, its answer held back
+
+The user asked for the suggestions as a scrollable popover closing when
+the field loses focus, the name given back when only a folder is
+typed, the Save button disabled while the path is invalid, and more
+usability.
+
+- **A popover** (`form/save.rs::popover`): deferred over the form's
+  panel (priority 4, the form's modal 3), under the line, as wide, at
+  most 300 px at 100 % and scrolling, the row the arrows reach kept in
+  view (`FormState::list_scroll`); up to 64 folders completing what was
+  typed (`complete::rank_at_most`), one line each where they all are in
+  the folder typed. Folded when the field loses the keyboard (`on_blur`)
+  but to its own button, and by Escape.
+- **What it lists**: what completes the text once edited, nothing when
+  nothing does (no list while a name is typed); the asker's folders only
+  when asked for, by its button or Down while it is folded
+  (`FormState::offered`), the keyboard then left in the text.
+- **The name given back** when the field is left holding a folder alone
+  (`~/Documents/`) or a folder's own name without its separator
+  (`save_left`); the answer added it already.
+- **Held back** (`Note::blocks`, `FormState::blocked`): a folder that is
+  none, a relative one, or a name the system refuses (`valid_file_name`)
+  draws the answer's button inert, its reason its description, and
+  Enter does nothing; a name already there is only said. While the
+  folder is read, nothing is held back: the plugin checks again.
+- **Keys**: Tab as the address field's (a row highlighted taken, else
+  the start shared filled in, else the one there is, else the first
+  highlighted); Alt+Up the folder above, the name kept, repeating as a
+  step (`ui.form_up`), as Alt+Up goes up in the files; a folder put
+  there by the window an edit Ctrl+Z takes back (`replace_all`), which
+  the field does not take for typing (`put`).
+- **The folders chosen before** offered, and the one Save as opens on,
+  only while still folders (`dialog::kept_folders`, looked at as the
+  dialog opens, within 400 ms each; a slow server's kept).
+- **Rejected**: making a folder typed that is none, which holds Save
+  back instead (a plan making folders is another question); a folder
+  picker of its own.
+
+## Revision (2026-11-06, night): places offered, folders kept, focus
+
+The user chose the sidebar's places among the folders offered and the
+folders chosen kept across runs, and asked that lists fold on a click
+outside and whether choosing PDF should give Save as the keyboard.
+
+- **Offered, under headings** (`Choice::section`, drawn in the
+  popover): where it goes by itself and the other pane's folder first;
+  "Chosen before"; "Places", the sidebar's places and bookmarks that are
+  folders open now (`registry.places`, groups `places` and `bookmarks`,
+  none `unavailable` or to `activate`), by their titles, in the
+  sidebar's order (`sidebar_folders`), Documents where it lists none;
+  each once, each said by its path. Devices are left out: a volume's
+  root is seldom where a PDF goes, and a folder on it is typed.
+- **The folders chosen are kept in the cache** (`print` namespace,
+  `save-folders`, JSON of paths, `dialog::keep_chosen`, written on the
+  dialog's worker one change at a time), the last four, the last first,
+  looked at as the dialog opens; never a setting, never logged. The
+  folder Save as opens on stays the session's (`Remembered::dest`):
+  after a restart it opens where the PDF goes by itself, as the
+  dialog's other choices do. A cache cleared forgets them.
+- **A press elsewhere in the form folds its list** (`form_fold`), the
+  open field's row and its popover keeping their presses.
+- **Focus**: a choice clicked that shows a field to type in gives it the
+  keyboard (`form_row_click`): PDF clicked puts it in Save as, its name
+  selected, so typing renames; Pages… in its pages. With the keyboard on
+  the row, the arrows change the choice and the keyboard stays there:
+  moving it would make Left, back to Printer, move the caret instead.
+  The dialog opening on PDF keeps the keyboard on its first field.
+

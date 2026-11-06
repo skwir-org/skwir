@@ -62,7 +62,7 @@ fn with(root: &Path, more: Vec<Arc<dyn Plugin>>) -> Option<Arc<App>> {
     let app = App::new(AppConfig::ephemeral(root.join("state"))).unwrap();
     for plugin in [
         Arc::new(skwir_plugin_markdown::PreviewPlugin) as Arc<dyn Plugin>,
-        Arc::new(skwir_plugin_print::PrintPlugin),
+        Arc::new(skwir_plugin_print::PrintPlugin::default()),
     ]
     .into_iter()
     .chain(more)
@@ -630,25 +630,16 @@ fn print_asks_skwir_s_dialog_and_saves_the_pdf_it_chose() {
     assert_eq!(
         keys,
         [
-            "to",
-            "dest",
-            "name",
-            "name_booklet",
-            "pages",
-            "ranges",
-            "layout",
-            "per_side",
-            "fold",
-            "trim",
-            "paper",
+            "to", "save_as", "pages", "ranges", "layout", "per_side", "fold", "trim", "paper",
             "smaller"
         ]
     );
-    // A PDF goes beside the file unless another folder is chosen: said.
-    let dest = field(&asked, "dest");
-    assert_eq!(dest.value, skwir_core::os_path::from_home(&dir));
-    assert_eq!(dest.choices()[0].detail, "Beside it");
-    assert_eq!(field(&asked, "name").value, "main.pdf");
+    // A PDF goes beside the file unless another folder is chosen, named
+    // after it: said, in one line.
+    let save_as = field(&asked, "save_as");
+    assert_eq!(save_as.value, in_folder(&dir));
+    assert_eq!(offered(save_as)[0].detail, "Beside it");
+    assert_eq!(held(&asked, "save_as"), "main.pdf");
     let pages_offered: Vec<&str> = field(&asked, "pages")
         .choices()
         .iter()
@@ -759,22 +750,26 @@ fn a_search_s_listing_is_saved_where_the_dialog_says() {
         "{}",
         asked.form.title
     );
-    let dest = field(&asked, "dest");
-    assert_eq!(dest.value, skwir_core::os_path::from_home(&root));
-    assert_eq!(dest.choices()[0].detail, "The folder it is of");
+    let save_as = field(&asked, "save_as");
+    assert_eq!(save_as.value, in_folder(&root));
+    assert_eq!(offered(save_as)[0].detail, "The folder it is of");
     assert_eq!(
-        field(&asked, "name").value,
+        held(&asked, "save_as"),
         "report in l'été notes (listing).pdf"
     );
     // A folder typed that is none is asked again; one that is, taken.
-    answer(&app, &asked, &[("to", "pdf"), ("dest", "/nowhere/at all")]);
+    answer(
+        &app,
+        &asked,
+        &[("to", "pdf"), ("save_as", "/nowhere/at all/x.pdf")],
+    );
     let again = form_asked(&app);
     assert!(
         again
             .form
             .error
             .as_deref()
-            .is_some_and(|error| error.starts_with("Save in")),
+            .is_some_and(|error| error.starts_with("Save as")),
         "{:?}",
         again.form.error
     );
@@ -785,8 +780,10 @@ fn a_search_s_listing_is_saved_where_the_dialog_says() {
         &again,
         &[
             ("to", "pdf"),
-            ("dest", &elsewhere.to_string_lossy()),
-            ("name", "rapports d'été"),
+            (
+                "save_as",
+                &elsewhere.join("rapports d'été").to_string_lossy(),
+            ),
         ],
     );
     let saved = std::fs::read_dir(&elsewhere)
@@ -816,11 +813,67 @@ fn a_search_s_listing_is_saved_where_the_dialog_says() {
     )
     .unwrap();
     let next = form_asked(&app);
-    assert_eq!(
-        field(&next, "dest").value,
-        skwir_core::os_path::from_home(&elsewhere)
+    assert_eq!(field(&next, "save_as").value, in_folder(&elsewhere));
+    // A name that is a folder there is that folder, the PDF named by
+    // itself.
+    let inside = elsewhere.join("ïnside");
+    std::fs::create_dir(&inside).unwrap();
+    answer(
+        &app,
+        &next,
+        &[("to", "pdf"), ("save_as", &inside.to_string_lossy())],
     );
-    assert!(app.answer_form(next.id, None));
+    made(&app, &inside.join("report in l'été notes (listing).pdf"));
+    // A folder chosen before that is gone is neither opened on nor
+    // offered; one still there is.
+    std::fs::remove_dir_all(&inside).unwrap();
+    app.dispatch(
+        &Invocation::new("print.print")
+            .with("layout", "listing")
+            .with("pane", pane.0),
+    )
+    .unwrap();
+    let after = form_asked(&app);
+    let save_as = field(&after, "save_as");
+    assert_eq!(save_as.value, in_folder(&root), "where it goes by itself");
+    let offered: Vec<&str> = offered(save_as)
+        .iter()
+        .map(|choice| choice.value.as_str())
+        .collect();
+    assert!(
+        !offered.contains(&skwir_core::os_path::from_home(&inside).as_str()),
+        "{offered:?}"
+    );
+    assert!(
+        offered.contains(&skwir_core::os_path::from_home(&elsewhere).as_str()),
+        "{offered:?}"
+    );
+    assert!(app.answer_form(after.id, None));
+}
+
+/// `folder` as Save as holds it alone: from `~`, ending with a separator.
+fn in_folder(folder: &Path) -> String {
+    let mut written = skwir_core::os_path::from_home(folder);
+    written.push(std::path::MAIN_SEPARATOR);
+    written
+}
+
+/// The folders a Save as field offers.
+fn offered(field: &skwir_core::form::Field) -> &[skwir_core::form::Choice] {
+    match &field.kind {
+        skwir_core::form::Kind::Save { folders, .. } => folders,
+        _ => panic!("{} is no file to write", field.key),
+    }
+}
+
+/// The name the Save as field `key` of `asked` holds by itself, as its
+/// fields stand.
+fn held(asked: &Asked, key: &str) -> String {
+    let mut values = Values::default();
+    for field in &asked.form.fields {
+        values.set(field.key.clone(), field.value.clone());
+    }
+    field(asked, key).save_name(&values).to_owned()
 }
 
 /// The trash's listing, filtered, is saved where a script says: its
@@ -929,4 +982,88 @@ fn the_trash_s_listing_is_saved_where_a_script_says() {
             .with("dest", "listings"),
     );
     assert!(relative.is_err());
+}
+
+/// A folder chosen for a PDF is offered again the next time Skwir runs,
+/// under "Chosen before", kept in the cache.
+#[test]
+fn the_folders_chosen_are_offered_after_a_restart() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("files");
+    let out = tmp.path().join("l'été out");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    let code = dir.join("main.rs");
+    source(&code, 20);
+    let print = Invocation::new("print.print").with("entries", named(&code));
+    {
+        let Some(app) = app(tmp.path()) else { return };
+        app.set_window_shown();
+        app.dispatch(&print).unwrap();
+        let asked = form_asked(&app);
+        answer(
+            &app,
+            &asked,
+            &[("to", "pdf"), ("save_as", &out.to_string_lossy())],
+        );
+        made(&app, &out.join("main.pdf"));
+    }
+    // Another run, an app of its own in this process: what the first held
+    // in memory is not its (the dialog's choices are the plugin's, one for
+    // each app), what the cache keeps is.
+    let Some(app) = app(tmp.path()) else { return };
+    app.set_window_shown();
+    app.dispatch(&print).unwrap();
+    let asked = form_asked(&app);
+    let save_as = field(&asked, "save_as");
+    assert_eq!(save_as.value, in_folder(&dir), "where it goes by itself");
+    let before: Vec<(&str, &str)> = offered(save_as)
+        .iter()
+        .map(|choice| (choice.value.as_str(), choice.section.as_str()))
+        .collect();
+    let written = skwir_core::os_path::from_home(&out);
+    assert!(
+        before.contains(&(written.as_str(), "Chosen before")),
+        "{before:?}"
+    );
+    assert!(app.answer_form(asked.id, None));
+}
+
+/// A Save as PDF step rebuilt from its data (a plan kept, then read back)
+/// reaches the app it is rebuilt in, as one made there does; the plugin
+/// turned off, it is refused.
+#[test]
+fn a_step_rebuilt_from_its_data_reaches_its_app() {
+    let tmp = tempfile::tempdir().unwrap();
+    let Some(app) = app(tmp.path()) else { return };
+    let dir = tmp.path().join("files");
+    std::fs::create_dir(&dir).unwrap();
+    let code = dir.join("l'été.rs");
+    source(&code, 10);
+    let Outcome::Plan(plan) = app
+        .dispatch(&Invocation::new("print.save_pdf").with("entries", named(&code)))
+        .unwrap()
+    else {
+        panic!("Save as PDF makes a plan");
+    };
+    let data = plan.to_data();
+    let rebuilt = skwir_core::op::Plan::from_data(&data, &app.ops).unwrap();
+    let result = app.executor.execute_blocking(&rebuilt, app.lifetime());
+    assert!(result.error.is_none(), "{:?}", result.error);
+    made(&app, &dir.join("l'été.pdf"));
+
+    // Turned off, the step its data rebuilds before is refused.
+    let again = skwir_core::op::Plan::from_data(&data, &app.ops).unwrap();
+    std::fs::remove_file(dir.join("l'été.pdf")).unwrap();
+    assert!(app.plugins.set_enabled("print", false, &app));
+    let refused = app.executor.execute_blocking(&again, app.lifetime());
+    assert!(
+        refused
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("print plugin on")),
+        "{:?}",
+        refused.error
+    );
+    assert!(!dir.join("l'été.pdf").exists());
 }

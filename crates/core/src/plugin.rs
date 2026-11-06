@@ -9,6 +9,48 @@ use parking_lot::RwLock;
 use crate::app::App;
 use crate::command::Topic;
 
+/// The app a plugin was added to, as the plugin holds it (one plugin
+/// value for each app): what a step made of its data reaches beyond what
+/// it says (the previews a PDF is made with, the readers a copy is
+/// checked with). The plugin holds it while it is on (`hold`, in
+/// `register`) and clones it into each step it makes or rebuilds
+/// (`OpRegistry::register_with`); turned off, it lets go of it
+/// (`release`), and a step made before is refused. Never in a plugin's
+/// statics: two apps in one process each hold their own. No part of a
+/// step's data: never serialized, any two alike.
+#[derive(Clone, Default)]
+pub struct AppRef(Arc<RwLock<Option<std::sync::Weak<App>>>>);
+
+impl AppRef {
+    /// Hold `app`: the plugin is on in it.
+    pub fn hold(&self, app: &App) {
+        *self.0.write() = Some(app.weak());
+    }
+
+    /// Let go of the app: the plugin is off, its steps are refused.
+    pub fn release(&self) {
+        *self.0.write() = None;
+    }
+
+    /// The app, while the plugin is on in it and it runs.
+    pub fn get(&self) -> Option<Arc<App>> {
+        self.0.read().as_ref().and_then(std::sync::Weak::upgrade)
+    }
+}
+
+impl PartialEq for AppRef {
+    /// No part of what a step is: two steps alike but their app are alike.
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl std::fmt::Debug for AppRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("AppRef")
+    }
+}
+
 /// A plugin. `register` contributes commands, operations, providers, views,
 /// places, settings, and so on, all tagged with `id()` so they can be
 /// withdrawn on disable.

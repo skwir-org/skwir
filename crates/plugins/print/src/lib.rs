@@ -19,7 +19,7 @@
 //! as any command that acts does; Save as PDF is a plan.
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock, Weak};
+use std::sync::Arc;
 
 use anyhow::Context as _;
 use schemars::JsonSchema;
@@ -33,7 +33,7 @@ use skwir_core::op::{
     self, Change, EntryArg, EntryRef, Made, Operation, Plan, StepContext, StepStatus, Words,
 };
 use skwir_core::os_path::PathArg;
-use skwir_core::plugin::Plugin;
+use skwir_core::plugin::{AppRef, Plugin};
 use skwir_core::print::{PageSet, Pages};
 use skwir_core::registry::{KeyBinding, MenuItem};
 use skwir_core::scheduler::{Lane, Priority};
@@ -63,10 +63,6 @@ const LISTS: &str = "empty";
 /// whose items the window runs with what the preview shows
 /// (`ui.preview_invoke`).
 const PREVIEW: &str = "preview";
-
-/// The app the plugin registered with, for Save as PDF's step, which
-/// reaches previews as the window does; a step is data, not the app's.
-static APP: RwLock<Option<Weak<App>>> = RwLock::new(None);
 
 /// How what is printed is laid out.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -155,8 +151,22 @@ pub struct SaveArgs {
     pub paper: Option<String>,
 }
 
+/// The print plugin, one for each app it is added to: what it holds
+/// there, shared by what it registers (`Held`).
 #[derive(Default)]
-pub struct PrintPlugin;
+pub struct PrintPlugin {
+    held: Held,
+}
+
+/// What the plugin holds for its app, cloned into its commands and steps:
+/// the app, for Save as PDF's step, which reaches previews as the window
+/// does (a step is data, not the app's: `AppRef`), and the dialog's last
+/// choices. Never a static: two apps in one process hold their own.
+#[derive(Clone, Default)]
+struct Held {
+    app: AppRef,
+    last: dialog::Last,
+}
 
 impl Plugin for PrintPlugin {
     fn id(&self) -> &'static str {
@@ -186,17 +196,25 @@ impl Plugin for PrintPlugin {
     }
 
     fn register(&self, app: &App) {
-        if let Ok(mut held) = APP.write() {
-            *held = Some(app.weak());
-        }
-        app.ops.register::<MakePdf>(ID);
+        self.held.app.hold(app);
+        // A step rebuilt from its data (a plan kept, redone) reaches the
+        // app as one made here does.
+        let rebuilt = self.held.app.clone();
+        app.ops.register_with(ID, KIND, move |data| {
+            let step = MakePdf {
+                app: rebuilt.clone(),
+                ..serde_json::from_value(data)?
+            };
+            Ok(Box::new(step))
+        });
+        let held = self.held.clone();
         let print = app.commands.register::<PrintArgs, _>(
             ID,
             Topic::Files,
             "print.print",
             "Print…",
             "Print files as their previews show them, one job in their order (`layout`: as shown, a booklet folded in signatures of `signature` pages with `trim`, a contact sheet of the pictures, a pane's listing), the `pages` chosen; the window asks first in Skwir's dialog without `asked`, then the system's dialog chooses the printer, the paper and the sides",
-            |a, app| {
+            move |a, app| {
                 if a.asked || !app.window_shown() {
                     match request(app, &a) {
                         Ok(request) => start(app, request),
@@ -204,7 +222,7 @@ impl Plugin for PrintPlugin {
                     }
                 } else {
                     match resolved(app, a) {
-                        Ok(args) => ask_first(app, args),
+                        Ok(args) => ask_first(app, args, held.clone()),
                         Err(error) => app.notify(NotifyLevel::Error, format!("{error:#}")),
                     }
                 }
@@ -216,6 +234,7 @@ impl Plugin for PrintPlugin {
             serde_json::json!({ "layout": "listing" }),
             "Print Listing…",
         )]);
+        let saving = self.held.app.clone();
         app.commands
             .register::<SaveArgs, _>(
                 ID,
@@ -223,7 +242,7 @@ impl Plugin for PrintPlugin {
                 "print.save_pdf",
                 "Save as PDF",
                 "Make a PDF of each file as its preview shows it, beside it or in `dest` (one of them all with `together`), on the paper of the system's locale, laid out and of the pages Print… takes (plan)",
-                |a, app| {
+                move |a, app| {
                     let request = request(app, &a.print)?;
                     let dest = a
                         .dest
@@ -250,6 +269,7 @@ impl Plugin for PrintPlugin {
                             together: a.together,
                             smaller: a.smaller,
                             paper: a.paper.as_deref(),
+                            app: &saving,
                         },
                     )?))
                 },
@@ -281,7 +301,9 @@ impl Plugin for PrintPlugin {
     }
 
     fn on_disable(&self, _app: &App) {
-        dialog::forget();
+        self.held.last.forget();
+        // A step of a plan made before is refused from here on.
+        self.held.app.release();
     }
 }
 
@@ -438,10 +460,22 @@ const COUNTING: std::time::Duration = std::time::Duration::from_millis(400);
 /// What the dialog may offer of what `args` name (resolved: their files,
 /// or their pane's listing), and where a PDF of it goes. On a worker: it
 /// reads the user's folders (Documents).
-fn offers(app: &App, args: &PrintArgs, cancel: &CancelToken) -> anyhow::Result<dialog::Offers> {
+fn offers(
+    app: &App,
+    args: &PrintArgs,
+    last: &dialog::Last,
+    cancel: &CancelToken,
+) -> anyhow::Result<dialog::Offers> {
     let pane = app.pane_or_active(args.pane);
     let documents = documents();
     let other = other_folder(app, pane);
+    // The folders chosen before, those still folders (a server that
+    // answers slowly keeps its own).
+    let (opens, recent) = dialog::kept_folders(app, last);
+    let there = |folder: &PathBuf| is_folder(app, folder, cancel) != Some(false);
+    let opens = opens.filter(there);
+    let recent: Vec<PathBuf> = recent.into_iter().filter(there).collect();
+    let places = sidebar_folders(app);
     if args.layout == Arrange::Listing {
         let (location, filter) = shown(app, pane)?;
         let own = own_folder(app, &location);
@@ -459,13 +493,20 @@ fn offers(app: &App, args: &PrintArgs, cancel: &CancelToken) -> anyhow::Result<d
             what: format!("the listing of “{named}”"),
             subject: dialog::Subject::Listing,
             saved: dialog::Saved {
+                beside: folder.as_deref().map_or_else(
+                    || "In the folder listed".to_owned(),
+                    |folder| format!("In “{}”", display_name(folder)),
+                ),
                 folder,
                 said: said.to_owned(),
                 other,
                 documents,
-                named: dialog::Named {
+                opens,
+                recent,
+                places,
+                named: dialog::Names {
                     shown: file,
-                    ..dialog::Named::default()
+                    ..dialog::Names::default()
                 },
             },
             ..dialog::Offers::default()
@@ -492,10 +533,19 @@ fn offers(app: &App, args: &PrintArgs, cancel: &CancelToken) -> anyhow::Result<d
             _ => "Beside them",
         }
         .to_owned(),
+        beside: match (&folder, typed.len()) {
+            (Some(_), 1) => "Beside it",
+            (Some(_), _) => "Beside them",
+            (None, _) => "Beside each file; one PDF of them all beside the first",
+        }
+        .to_owned(),
         folder,
         other,
         documents,
-        named: dialog::Named {
+        opens,
+        recent,
+        places,
+        named: dialog::Names {
             shown: first_named(false),
             booklet: first_named(true),
             sheet: SHEET.to_owned(),
@@ -643,6 +693,22 @@ fn documents() -> Option<PathBuf> {
         .or_else(skwir_core::os_path::home)
 }
 
+/// The sidebar's folders, offered where a PDF goes: its places and its
+/// bookmarks that are folders here and open now (no volume, no place of
+/// a plugin's, none marked unavailable), each by its title, in its order.
+/// Read from the places core holds (`registry.places`), whoever made
+/// them.
+fn sidebar_folders(app: &App) -> Vec<(String, PathBuf)> {
+    app.registry
+        .places
+        .all()
+        .into_iter()
+        .filter(|place| matches!(place.group.as_str(), "places" | "bookmarks"))
+        .filter(|place| place.unavailable.is_none() && place.activate.is_none())
+        .filter_map(|place| Some((place.title, place.location.path()?)))
+        .collect()
+}
+
 /// The folder another pane of `pane`'s tab shows (the split's other
 /// side), offered as where a PDF goes, as the split's transfers go there.
 fn other_folder(app: &App, pane: PaneId) -> Option<PathBuf> {
@@ -685,7 +751,7 @@ fn in_lane<T: Send + 'static>(
 /// Ask Skwir's dialog on a worker, then print what it chose, or save it
 /// as a PDF: a plan applied as the user's own action is (undone to the
 /// trash).
-fn ask_first(app: &App, args: PrintArgs) {
+fn ask_first(app: &App, args: PrintArgs, held: Held) {
     let weak = app.weak();
     app.scheduler.spawn(
         Priority::Normal,
@@ -694,7 +760,7 @@ fn ask_first(app: &App, args: PrintArgs) {
         move || {
             let Some(app) = weak.upgrade() else { return };
             let cancel = app.lifetime().child();
-            match chosen_then(&app, args, &cancel) {
+            match chosen_then(&app, args, &held, &cancel) {
                 Ok(Some(said)) => app.notify(NotifyLevel::Info, said),
                 Ok(None) => {}
                 Err(error) => app.notify(NotifyLevel::Error, format!("{error:#}")),
@@ -709,11 +775,12 @@ fn ask_first(app: &App, args: PrintArgs) {
 fn chosen_then(
     app: &Arc<App>,
     args: PrintArgs,
+    held: &Held,
     cancel: &CancelToken,
 ) -> anyhow::Result<Option<String>> {
-    let offers = offers(app, &args, cancel)?;
+    let offers = offers(app, &args, &held.last, cancel)?;
     let is_folder = |path: &Path| is_folder(app, path, cancel);
-    let Some(chosen) = dialog::ask(app, &offers, &is_folder, cancel) else {
+    let Some(chosen) = dialog::ask(app, &offers, &held.last, &is_folder, cancel) else {
         return Ok(None);
     };
     let args = PrintArgs {
@@ -739,6 +806,7 @@ fn chosen_then(
                     together: chosen.together,
                     smaller,
                     paper: Some(chosen.paper.as_str()),
+                    app: &held.app,
                 },
             )?);
             Ok(None)
@@ -986,6 +1054,8 @@ struct Saving<'a> {
     together: bool,
     smaller: Option<Quality>,
     paper: Option<&'a str>,
+    /// The app its steps reach, as the plugin holds it.
+    app: &'a AppRef,
 }
 
 /// What a contact sheet's PDF is named by itself.
@@ -1017,6 +1087,7 @@ fn plan_of(app: &App, request: &Request, saving: &Saving<'_>) -> anyhow::Result<
         together,
         smaller,
         paper,
+        app: reach,
     } = *saving;
     let booklet = request.booklet;
     let what = if booklet.is_some() { "booklet" } else { "PDF" };
@@ -1037,6 +1108,7 @@ fn plan_of(app: &App, request: &Request, saving: &Saving<'_>) -> anyhow::Result<
         booklet,
         smaller,
         paper: paper.map(str::to_owned),
+        app: reach.clone(),
     };
     let plan = match &request.what {
         What::Files { entries, shown } => {
@@ -1195,6 +1267,11 @@ pub struct MakePdf {
     /// without.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paper: Option<String>,
+    /// The app it is made in, as the plugin holds it: no part of its data
+    /// (set as it is made, and as it is rebuilt: `register_with`).
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub app: AppRef,
 }
 
 /// What a PDF is made of.
@@ -1296,13 +1373,14 @@ impl op::Effect for MakePdf {
             Of::Sheet { entries } => format!("a contact sheet of {} files", entries.len()),
             Of::Listing { named, .. } => format!("the listing of “{named}”"),
         };
-        let pdf = display_name(&self.target());
+        // Where it goes said too: Save as may put it anywhere.
+        let (pdf, folder) = (display_name(&self.target()), display_name(&self.dest_dir));
         Change::Create {
             path: self.target(),
             directory: false,
             words: Some(Words {
-                will: format!("save {what} as “{pdf}”"),
-                did: format!("saved {what} as “{pdf}”"),
+                will: format!("save {what} as “{pdf}” in “{folder}”"),
+                did: format!("saved {what} as “{pdf}” in “{folder}”"),
             }),
         }
     }
@@ -1377,10 +1455,9 @@ impl op::Effect for MakePdf {
 
     fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
         let target = self.target();
-        let app = APP
-            .read()
-            .ok()
-            .and_then(|held| held.as_ref().and_then(Weak::upgrade))
+        let app = self
+            .app
+            .get()
             .context("Saving as PDF needs the print plugin on")?;
         let cancel = ctx.cancel_token();
         // What it is made of, named now: a listing as its pane shows it.

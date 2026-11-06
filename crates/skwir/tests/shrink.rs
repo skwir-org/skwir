@@ -53,7 +53,7 @@ fn app(root: &Path) -> Option<Arc<App>> {
     let app = App::new(AppConfig::ephemeral(root.join("state"))).unwrap();
     for plugin in [
         Arc::new(skwir_plugin_documents::PreviewPlugin::default()) as Arc<dyn Plugin>,
-        Arc::new(skwir_plugin_shrink::ShrinkPlugin),
+        Arc::new(skwir_plugin_shrink::ShrinkPlugin::default()),
     ] {
         app.plugins.add(plugin, &app);
     }

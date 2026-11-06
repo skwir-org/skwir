@@ -236,6 +236,18 @@ pub fn rank(
     typed: &str,
     show_hidden: bool,
 ) -> (Vec<Match>, Option<String>) {
+    rank_at_most(folders, typed, show_hidden, ROWS)
+}
+
+/// [`rank`], keeping `most` rows: a list that scrolls (a form's Save as)
+/// shows more than the address field's card.
+pub fn rank_at_most(
+    folders: &[Arc<Folder>],
+    typed: &str,
+    show_hidden: bool,
+    most: usize,
+) -> (Vec<Match>, Option<String>) {
+    let rows = most.max(1);
     let lower = typed.to_lowercase();
     let sensitive = sensitive(typed);
     let hidden_ok = show_hidden || typed.starts_with('.');
@@ -252,7 +264,7 @@ pub fn rank(
             .then_with(|| na.lower.cmp(&nb.lower))
             .then_with(|| na.text.cmp(&nb.text))
     };
-    let mut best: Vec<Match> = Vec::with_capacity(ROWS + 1);
+    let mut best: Vec<Match> = Vec::with_capacity(rows + 1);
     // What the names starting it share, in the one folder typed.
     let mut shared = Shared {
         key: None,
@@ -277,12 +289,12 @@ pub fn rank(
                 index,
                 tier,
             };
-            if best.len() == ROWS && order(&m, &best[ROWS - 1]) != Ordering::Less {
+            if best.len() == rows && order(&m, &best[rows - 1]) != Ordering::Less {
                 continue;
             }
             let at = best.partition_point(|b| order(b, &m) == Ordering::Less);
             best.insert(at, m);
-            best.truncate(ROWS);
+            best.truncate(rows);
         }
     }
     let shared = shared.count().and_then(|count| {

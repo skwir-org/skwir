@@ -101,6 +101,68 @@ pub enum Kind {
     /// Where the user can go to do what the form waits for (a sign-in's
     /// page): `value` is the address, opened by the window's link.
     Link,
+    /// A file to write, or the folder files are written in: a whole path,
+    /// written from `~` where it lies under the home folder
+    /// (`os_path::from_home`). The window completes its folders a name at
+    /// a time as the address field completes a path (ADR-070) and lists
+    /// `folders` (values written so), each chosen in place of the folder
+    /// typed, the name kept; it selects the name but its `ending` as it
+    /// puts one there, and says when the folder is none, or holds that
+    /// name already. Its name is the first of `names` whose `when` holds
+    /// (it follows them until another is typed); none holding, it holds a
+    /// folder alone, `alone` said under it. A name with no folder is in
+    /// the asker's own place, `beside` said under it. `value`: a folder
+    /// written so, ending with its separator, the name added by the
+    /// window; or a whole path (asked again).
+    Save {
+        folders: Vec<Choice>,
+        names: Vec<Named>,
+        /// What a name typed without it is given: `.pdf`.
+        ending: String,
+        alone: String,
+        beside: String,
+    },
+}
+
+/// A name a [`Kind::Save`] field holds while the form's fields hold what
+/// its `when` asks, as [`Field::when`] does.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Named {
+    pub name: String,
+    pub when: Vec<When>,
+}
+
+impl Named {
+    pub fn new(name: impl Into<String>) -> Self {
+        Named {
+            name: name.into(),
+            when: Vec::new(),
+        }
+    }
+
+    /// Held only while the field `key` holds one of `values`.
+    #[must_use]
+    pub fn when(mut self, key: impl Into<String>, values: &[&str]) -> Self {
+        self.when.push(When::of(key, values));
+        self
+    }
+}
+
+impl When {
+    fn of(key: impl Into<String>, values: &[&str]) -> Self {
+        When {
+            key: key.into(),
+            values: values.iter().map(|&value| value.to_owned()).collect(),
+        }
+    }
+
+    /// Whether each of `when` holds while the form's fields hold `values`.
+    fn all(when: &[When], values: &Values) -> bool {
+        when.iter().all(|when| {
+            let holds = values.get(&when.key);
+            when.values.iter().any(|value| value == holds)
+        })
+    }
 }
 
 /// One choice of a [`Kind::Choice`], [`Kind::Pick`] or [`Kind::Row`]
@@ -246,19 +308,26 @@ impl Field {
     /// any other `when` asks).
     #[must_use]
     pub fn when(mut self, key: impl Into<String>, values: &[&str]) -> Self {
-        self.when.push(When {
-            key: key.into(),
-            values: values.iter().map(|&value| value.to_owned()).collect(),
-        });
+        self.when.push(When::of(key, values));
         self
     }
 
     /// Whether it is shown while the form's fields hold `values`.
     pub fn shown_with(&self, values: &Values) -> bool {
-        self.when.iter().all(|when| {
-            let holds = values.get(&when.key);
-            when.values.iter().any(|value| value == holds)
-        })
+        When::all(&self.when, values)
+    }
+
+    /// The name a [`Kind::Save`] field holds by itself while the form's
+    /// fields hold `values`: empty for a folder alone, and for any other
+    /// field.
+    pub fn save_name(&self, values: &Values) -> &str {
+        match &self.kind {
+            Kind::Save { names, .. } => names
+                .iter()
+                .find(|named| When::all(&named.when, values))
+                .map_or("", |named| named.name.as_str()),
+            _ => "",
+        }
     }
 
     /// Its choices: a choice's, a pick's or a row's; none for the others.
@@ -668,5 +737,36 @@ mod tests {
         cancel.cancel();
         assert!(filler.join().unwrap());
         assert!(!app.form_waits(id));
+    }
+
+    /// A file to write holds the first name whose `when` holds, none
+    /// holding a folder alone; it is no choice the answer must be one of.
+    #[test]
+    fn a_file_to_write_is_named_by_what_the_form_holds() {
+        let field = Field::new(
+            "save_as",
+            "Save as",
+            Kind::Save {
+                folders: vec![Choice::new("~/Documents", "Documents")],
+                names: vec![
+                    Named::new("notes (booklet).pdf").when("layout", &["booklet"]),
+                    Named::new("notes.pdf")
+                        .when("layout", &["as_shown"])
+                        .when("together", &["one"]),
+                ],
+                ending: ".pdf".to_owned(),
+                alone: "Each named after its file".to_owned(),
+                beside: "Beside it".to_owned(),
+            },
+        );
+        let held = |pairs: &[(&str, &str)]| field.save_name(&values(pairs)).to_owned();
+        assert_eq!(held(&[("layout", "booklet")]), "notes (booklet).pdf");
+        assert_eq!(
+            held(&[("layout", "as_shown"), ("together", "one")]),
+            "notes.pdf"
+        );
+        assert_eq!(held(&[("layout", "as_shown"), ("together", "each")]), "");
+        assert_eq!(field.refusal("/anywhere/x.pdf"), None);
+        assert_eq!(Field::text("t", "T").save_name(&values(&[])), "");
     }
 }

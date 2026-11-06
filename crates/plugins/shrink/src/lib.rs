@@ -17,7 +17,7 @@
 //! Each copy is a step of a plan, undone to the trash, as a copy is.
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, PoisonError, RwLock, Weak};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use anyhow::Context as _;
@@ -31,7 +31,7 @@ use skwir_core::op::{
     self, Change, EntryArg, EntryRef, Made, Operation, Plan, StepContext, StepStatus, Words,
 };
 use skwir_core::os_path::PathArg;
-use skwir_core::plugin::Plugin;
+use skwir_core::plugin::{AppRef, Plugin};
 use skwir_core::registry::MenuItem;
 use skwir_core::scheduler::Priority;
 use skwir_core::shrink::{Job, Kind, Quality};
@@ -56,11 +56,6 @@ const COMPRESS: &str = "Compress";
 /// whose items the window runs with what the preview shows
 /// (`ui.preview_invoke`).
 const PREVIEW: &str = "preview";
-
-/// The app the plugin registered with, for the step, which checks a
-/// PDF's copy with the readers the window reads it with; a step is data,
-/// not the app's.
-static APP: RwLock<Option<Weak<App>>> = RwLock::new(None);
 
 /// What Reduce Size… is asked with, by its dialog or a script.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -88,8 +83,23 @@ pub struct ReduceArgs {
     pub dest: Option<PathArg>,
 }
 
+/// The shrink plugin, one for each app it is added to: what it holds
+/// there, shared by what it registers (`Held`).
 #[derive(Default)]
-pub struct ShrinkPlugin;
+pub struct ShrinkPlugin {
+    held: Held,
+}
+
+/// What the plugin holds for its app, cloned into its commands and steps:
+/// the app, for the step, which checks a PDF's copy with the readers the
+/// window reads it with (a step is data, not the app's: `AppRef`), and
+/// the dialog's last choices. Never a static: two apps in one process
+/// hold their own.
+#[derive(Clone, Default)]
+struct Held {
+    app: AppRef,
+    last: dialog::Last,
+}
 
 impl Plugin for ShrinkPlugin {
     fn id(&self) -> &'static str {
@@ -127,10 +137,18 @@ impl Plugin for ShrinkPlugin {
     }
 
     fn register(&self, app: &App) {
-        if let Ok(mut held) = APP.write() {
-            *held = Some(app.weak());
-        }
-        app.ops.register::<ShrinkCopy>(ID);
+        self.held.app.hold(app);
+        // A step rebuilt from its data (a plan kept, redone) reaches the
+        // app as one made here does.
+        let rebuilt = self.held.app.clone();
+        app.ops.register_with(ID, KIND, move |data| {
+            let step = ShrinkCopy {
+                app: rebuilt.clone(),
+                ..serde_json::from_value(data)?
+            };
+            Ok(Box::new(step))
+        });
+        let made = self.held.app.clone();
         app.commands
             .register::<ReduceArgs, _>(
                 ID,
@@ -138,9 +156,10 @@ impl Plugin for ShrinkPlugin {
                 "shrink.reduce",
                 "Make Smaller Copies",
                 "Make a smaller copy of each picture (JPEG, PNG) and PDF beside it, or in `dest`, named `name (reduced).ext`: `quality` lossless, print (pictures 3840 pixels across, a PDF's images 300 dpi), screen (1920, 150 dpi) or small (1280, 96 dpi); `gray`; `strip`, a picture's location and camera details left out; `at_most` a size each copy fits, smaller steps tried. A copy that would not be smaller is not made (plan)",
-                |a, app| Ok(Outcome::Plan(plan_of(app, &a)?)),
+                move |a, app| Ok(Outcome::Plan(plan_of(app, &a, &made)?)),
             )
             .plans();
+        let held = self.held.clone();
         app.commands
             .register::<ReduceArgs, _>(
                 ID,
@@ -148,9 +167,9 @@ impl Plugin for ShrinkPlugin {
                 "shrink.reduce_ask",
                 "Reduce Size…",
                 "Ask how small, then make a smaller copy of each picture and PDF beside it, as `shrink.reduce` does",
-                |a, app| {
+                move |a, app| {
                     match resolved(app, a) {
-                        Ok(args) => ask_first(app, args),
+                        Ok(args) => ask_first(app, args, held.clone()),
                         Err(error) => app.notify(NotifyLevel::Error, format!("{error:#}")),
                     }
                     Ok(Outcome::Done)
@@ -163,11 +182,9 @@ impl Plugin for ShrinkPlugin {
     }
 
     fn on_disable(&self, _app: &App) {
-        dialog::forget();
+        self.held.last.forget();
         // A step of a plan made before is refused from here on.
-        if let Ok(mut held) = APP.write() {
-            *held = None;
-        }
+        self.held.app.release();
     }
 }
 
@@ -216,7 +233,7 @@ fn resolved(app: &App, args: ReduceArgs) -> anyhow::Result<ReduceArgs> {
 
 /// The dialog on a worker, then the plan its answer makes applied as the
 /// user's action.
-fn ask_first(app: &App, args: ReduceArgs) {
+fn ask_first(app: &App, args: ReduceArgs, held: Held) {
     let weak = app.weak();
     app.scheduler.spawn(
         Priority::Normal,
@@ -225,7 +242,7 @@ fn ask_first(app: &App, args: ReduceArgs) {
         move || {
             let Some(app) = weak.upgrade() else { return };
             let cancel = app.lifetime().child();
-            if let Err(error) = asked_then(&app, args, &cancel) {
+            if let Err(error) = asked_then(&app, args, &held, &cancel) {
                 app.notify(NotifyLevel::Error, format!("{error:#}"));
             }
             app.wake();
@@ -233,7 +250,12 @@ fn ask_first(app: &App, args: ReduceArgs) {
     );
 }
 
-fn asked_then(app: &Arc<App>, args: ReduceArgs, cancel: &CancelToken) -> anyhow::Result<()> {
+fn asked_then(
+    app: &Arc<App>,
+    args: ReduceArgs,
+    held: &Held,
+    cancel: &CancelToken,
+) -> anyhow::Result<()> {
     let files = typed(app, &args)?;
     let offers = dialog::Offers {
         what: match files.as_slice() {
@@ -244,7 +266,7 @@ fn asked_then(app: &Arc<App>, args: ReduceArgs, cancel: &CancelToken) -> anyhow:
         pdfs: files.iter().any(|(_, kind)| *kind == Kind::Pdf),
         only_jpegs: files.iter().all(|(entry, _)| is_jpeg(&entry.path)),
     };
-    let Some(chosen) = dialog::ask(app, &offers, cancel) else {
+    let Some(chosen) = dialog::ask(app, &offers, &held.last, cancel) else {
         return Ok(());
     };
     let args = ReduceArgs {
@@ -254,7 +276,7 @@ fn asked_then(app: &Arc<App>, args: ReduceArgs, cancel: &CancelToken) -> anyhow:
         at_most: chosen.at_most.map(|bytes| bytes.to_string()),
         ..args
     };
-    app.apply_whole(plan_of(app, &args)?);
+    app.apply_whole(plan_of(app, &args, &held.app)?);
     Ok(())
 }
 
@@ -289,8 +311,8 @@ fn is_jpeg(path: &Path) -> bool {
 }
 
 /// The plan of `args`: a step a file, each copy beside its file (in
-/// `dest` when named).
-fn plan_of(app: &App, args: &ReduceArgs) -> anyhow::Result<Plan> {
+/// `dest` when named), each reaching the app as `reach` holds it.
+fn plan_of(app: &App, args: &ReduceArgs, reach: &AppRef) -> anyhow::Result<Plan> {
     let files = typed(app, args)?;
     let at_most = args
         .at_most
@@ -326,6 +348,7 @@ fn plan_of(app: &App, args: &ReduceArgs) -> anyhow::Result<Plan> {
             gray: args.gray,
             strip: args.strip,
             at_most,
+            app: reach.clone(),
         });
     }
     Ok(plan)
@@ -375,6 +398,11 @@ pub struct ShrinkCopy {
     pub strip: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub at_most: Option<u64>,
+    /// The app it is made in, as the plugin holds it: no part of its data
+    /// (set as it is made, and as it is rebuilt: `register_with`).
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub app: AppRef,
 }
 
 /// What a copy is made of, as a plan's step says it.
@@ -494,10 +522,9 @@ impl op::Effect for ShrinkCopy {
 
     fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
         let target = self.target();
-        let app = APP
-            .read()
-            .ok()
-            .and_then(|held| held.as_ref().and_then(Weak::upgrade))
+        let app = self
+            .app
+            .get()
             .context("Smaller copies need the plugin on")?;
         let cancel = ctx.cancel_token();
         let source = self.entry.resolve()?;

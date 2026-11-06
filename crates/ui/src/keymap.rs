@@ -213,6 +213,10 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     // Tab completes a path or a place typed in the address, while there
     // is something to complete; else it walks on, as everywhere.
     ("tab", "ui.omnibox_complete", Some("address completes")),
+    // So does a dialog's Save as, the folder typed; Alt+Up goes to the
+    // folder above there, as it does in the files.
+    ("tab", "ui.form_complete", Some("form completes")),
+    ("alt-up", "ui.form_up", Some("form")),
     // Where else the address field's words could search; a recent search
     // forgotten (ADR-098).
     ("alt-down", "ui.omnibox_scopes", Some("address")),

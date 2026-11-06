@@ -11,7 +11,11 @@
 //! plugin that wants a field in sight leaves it unfolded: core's `Field`).
 //! A list (a long choice, a pick) moves with the arrows, filtered by what
 //! is typed: a choice unfolded, else the form's pick. A pick keeps its own
-//! highlight, its value, whatever a choice's list does meanwhile.
+//! highlight, its value, whatever a choice's list does meanwhile. A file
+//! to write is one line, folder and name, completed as the address field
+//! completes a path (`save`).
+
+mod save;
 
 use crate::sizes::TextSizes;
 use gpui::{
@@ -58,6 +62,26 @@ enum Control {
         value: String,
         focus: FocusHandle,
     },
+    /// A file to write (`save`): its text, its list's button, the name
+    /// put there (the one its `names` give, or one kept as a folder was
+    /// chosen), which a folder chosen keeps and the form's fields change
+    /// while it is untouched, and the text put there with it: edited
+    /// since, its list completes what was typed.
+    Save {
+        input: Entity<TextInput>,
+        focus: FocusHandle,
+        settled: String,
+        put: String,
+    },
+}
+
+/// A row of a list as drawn: a choice's, a folder's; `id` known by its
+/// element, whichever row it stands at.
+pub(crate) struct Item {
+    id: usize,
+    title: String,
+    detail: String,
+    section: String,
 }
 
 /// The form shown.
@@ -79,6 +103,14 @@ pub struct FormState {
     typed: bool,
     /// Why the answer was refused (a field needed is empty).
     refusal: Option<String>,
+    /// The folders a Save field read, and the read under way.
+    read: save::Read,
+    reading: Option<skwir_core::CancelToken>,
+    /// Where a Save field's popover is scrolled (`save::popover`).
+    list_scroll: gpui::ScrollHandle,
+    /// A Save field's popover lists the asker's folders, asked for (its
+    /// button, Down), rather than what completes its text.
+    offered: bool,
     back_focus: FocusHandle,
     cancel_focus: FocusHandle,
     accept_focus: FocusHandle,
@@ -107,10 +139,10 @@ impl FormState {
                     continue;
                 }
                 walk.push(match control {
-                    Control::Input(input) | Control::Pick { input, .. } => {
-                        input.read(cx).focus_handle(cx)
-                    }
-                    Control::Choice {
+                    Control::Input(input)
+                    | Control::Pick { input, .. }
+                    | Control::Save { input, .. }
+                    | Control::Choice {
                         input: Some(input), ..
                     } => input.read(cx).focus_handle(cx),
                     Control::Toggle { focus, .. }
@@ -170,6 +202,9 @@ impl FormState {
                     input: Some(input), ..
                 } => input.read(cx).text().trim().to_owned(),
                 Control::Choice { value, .. } | Control::Row { value, .. } => value.clone(),
+                Control::Save { input, settled, .. } => {
+                    FormState::save_value(input.read(cx).text(), settled)
+                }
                 Control::Pick { shown, picker, .. } => shown
                     .get(picker.highlighted)
                     .and_then(|&at| choices(field).get(at))
@@ -209,6 +244,7 @@ impl FormState {
                     .unwrap_or_default();
                 Some(matching(choices(field), &typed))
             }
+            Control::Save { .. } => Some((0..self.save_rows(at, cx).len()).collect()),
             _ => None,
         }
     }
@@ -326,12 +362,37 @@ impl Shell {
                     },
                     focus: cx.focus_handle(),
                 },
+                // Its name put there once every field is (`save_open`).
+                Kind::Save { .. } => {
+                    use gpui::Focusable as _;
+                    let input = self.form_input(
+                        field,
+                        field.placeholder.as_str(),
+                        at,
+                        &mut subs,
+                        window,
+                        cx,
+                    );
+                    // Its popover folded, its name given back, once it is
+                    // left.
+                    let text = input.read(cx).focus_handle(cx);
+                    subs.push(cx.on_blur(&text, window, move |this, window, cx| {
+                        this.save_left(at, window, cx);
+                    }));
+                    Control::Save {
+                        input,
+                        focus: cx.focus_handle(),
+                        settled: String::new(),
+                        put: String::new(),
+                    }
+                }
             };
             if first.is_none() && !field.advanced && !waiting {
                 use gpui::Focusable as _;
                 first = Some(match &control {
                     Control::Input(input)
                     | Control::Pick { input, .. }
+                    | Control::Save { input, .. }
                     | Control::Choice {
                         input: Some(input), ..
                     } => input.read(cx).focus_handle(cx),
@@ -353,6 +414,10 @@ impl Shell {
             open: None,
             picker: Picker::default(),
             typed: false,
+            read: save::Read::new(),
+            reading: None,
+            list_scroll: gpui::ScrollHandle::new(),
+            offered: false,
             back_focus: cx.focus_handle(),
             cancel_focus: cx.focus_handle(),
             accept_focus: cx.focus_handle(),
@@ -370,6 +435,7 @@ impl Shell {
             }
         });
         self.form = Some(state);
+        self.save_open(window, cx);
         window.focus(&focus, cx);
         cx.notify();
     }
@@ -401,14 +467,15 @@ impl Shell {
             move |this, _, event: &InputEvent, window, cx| match event {
                 InputEvent::Submit => this.form_enter(Some(at), window, cx),
                 InputEvent::Cancel => this.form_cancel(window, cx),
-                InputEvent::Changed => this.form_typed(at, cx),
+                InputEvent::Changed => this.form_typed(at, window, cx),
             },
         ));
         input
     }
 
-    /// What was typed in field `at` changed: its list is filtered again.
-    fn form_typed(&mut self, at: usize, cx: &mut Context<Self>) {
+    /// What was typed in field `at` changed: its list is filtered again
+    /// (a file to write's folder read, to complete).
+    fn form_typed(&mut self, at: usize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(form) = self.form.as_mut() else {
             return;
         };
@@ -429,6 +496,17 @@ impl Shell {
                 form.open = Some(at);
                 form.picker = Picker::default();
                 form.typed = true;
+            }
+            // What the window put there itself (a folder chosen, the
+            // folder above) is no typing.
+            Some(Control::Save { input, put, .. }) if input.read(cx).text() == put.as_str() => {}
+            Some(Control::Save { .. }) => {
+                form.open = Some(at);
+                form.picker = Picker::default();
+                form.typed = true;
+                form.offered = false;
+                form.list_scroll.scroll_to_item(0);
+                self.save_read(at, window, cx);
             }
             _ => {}
         }
@@ -473,6 +551,17 @@ impl Shell {
         let Some(at) = clicked.map(|(at, _)| at).or_else(|| form.listed()) else {
             return;
         };
+        if let Some(Control::Save { .. }) = form.controls.get(at) {
+            if let Some((_, row)) = clicked {
+                form.picker.highlighted = row;
+                form.typed = false;
+            }
+            let rows = form.save_rows(at, cx);
+            if let Some(row) = form.highlighted(at).and_then(|row| rows.get(row)) {
+                self.save_choose(at, row, window, cx);
+            }
+            return;
+        }
         let Some(shown) = form.shown_of(at, cx) else {
             return;
         };
@@ -511,6 +600,7 @@ impl Shell {
         form.open = None;
         form.typed = false;
         form.refusal = None;
+        self.save_follow(cx);
         cx.notify();
     }
 
@@ -568,6 +658,20 @@ impl Shell {
             self.form_row_move(at, step, false, cx);
             return true;
         }
+        // Down in a Save field whose popover is folded, or shows nothing
+        // (nothing completes what was typed), unfolds its folders, as its
+        // button does.
+        if let Some(at) = form.save_focused(window, cx)
+            && (form.listed().is_none() || form.save_rows(at, cx).is_empty())
+        {
+            form.open = Some(at);
+            form.typed = false;
+            form.offered = true;
+            form.picker = Picker::default();
+            form.list_scroll.scroll_to_item(0);
+            cx.notify();
+            return true;
+        }
         let Some(at) = form.listed() else {
             return false;
         };
@@ -589,6 +693,12 @@ impl Shell {
         } else {
             form.picker_of(at).go(mv, shown.len());
         }
+        // A Save field's popover scrolls: the row highlighted in view.
+        if let (Some(Control::Save { .. }), Some(row)) =
+            (form.controls.get(at), form.highlighted(at))
+        {
+            form.list_scroll.scroll_to_item(row);
+        }
         cx.notify();
         true
     }
@@ -600,6 +710,11 @@ impl Shell {
             return;
         };
         let values = form.values(cx);
+        // A path no file can be saved at is said under its field, and
+        // holds the answer back.
+        if !back && form.blocked(cx).is_some() {
+            return;
+        }
         if !back && let Some(refusal) = form.form.refusal(&values) {
             // What it names may be folded: shown.
             form.more = true;
@@ -631,10 +746,68 @@ impl Shell {
         self.close_form(window, cx);
     }
 
+    /// A press in the form outside the list unfolded: the list folded.
+    fn form_fold(&mut self, cx: &mut Context<Self>) {
+        if let Some(form) = self.form.as_mut()
+            && form.open.is_some()
+        {
+            form.open = None;
+            form.typed = false;
+            form.offered = false;
+            cx.notify();
+        }
+    }
+
+    /// A choice of row `at` clicked: chosen, and a field to type in that it
+    /// shows (Pages…'s pages, a PDF's Save as) takes the keyboard, as what
+    /// the click asks for next. The arrows on the row move no keyboard.
+    fn form_row_click(
+        &mut self,
+        at: usize,
+        value: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let shown = |form: &FormState, cx: &gpui::App| -> Vec<bool> {
+            let values = form.values(cx);
+            form.form
+                .fields
+                .iter()
+                .map(|field| form.shows(field, &values))
+                .collect()
+        };
+        let Some(before) = self.form.as_ref().map(|form| shown(form, cx)) else {
+            return;
+        };
+        self.form_row_choose(at, value, cx);
+        let Some(form) = self.form.as_ref() else {
+            return;
+        };
+        let after = shown(form, cx);
+        let revealed = (0..after.len()).find_map(|field| {
+            if after[field] && !before.get(field).copied().unwrap_or(true) {
+                match form.controls.get(field)? {
+                    Control::Input(input) | Control::Save { input, .. } => Some(input.clone()),
+                    _ => None,
+                }
+            } else {
+                None
+            }
+        });
+        if let Some(input) = revealed {
+            use gpui::Focusable as _;
+            let focus = input.read(cx).focus_handle(cx);
+            window.focus(&focus, cx);
+        }
+    }
+
     /// Close the form and give the keyboard back to what had it. Its asker,
     /// if it still waits, hears no answer.
     pub fn close_form(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(form) = self.form.take() {
+            if let Some(reading) = &form.reading {
+                reading.cancel();
+            }
             self.app.answer_form(form.id, None);
             form.give_back.restore(window, &self.ui().focus, cx);
         }
@@ -648,6 +821,7 @@ impl Shell {
             self.form.as_mut().and_then(|f| f.controls.get_mut(at))
         {
             *on = !*on;
+            self.save_follow(cx);
             cx.notify();
         }
     }
@@ -659,6 +833,7 @@ impl Shell {
         {
             value.clone_into(held);
             form.refusal = None;
+            self.save_follow(cx);
             cx.notify();
         }
     }
@@ -796,18 +971,30 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
         cx,
     ));
     if form.waiting.is_none() {
-        buttons.push(modal::pressed(
-            controls::button(
-                "form-accept",
-                form.accept_with(&values).to_owned(),
-                Some("check"),
-                ButtonStyle::Plain,
-                &state.accept_focus,
-                &theme,
-            ),
-            |this, window, cx| this.form_answer(false, window, cx),
-            cx,
-        ));
+        let accept = form.accept_with(&values).to_owned();
+        // Held back while a path no file can be saved at is typed: said,
+        // not offered, as the reason under its field says.
+        if let Some(why) = state.blocked(cx) {
+            buttons.push(modal::pressed(
+                controls::inert_button("form-accept", accept, &state.accept_focus, &theme)
+                    .when(shell.a11y, |d| d.aria_description(why)),
+                |_, _, _| {},
+                cx,
+            ));
+        } else {
+            buttons.push(modal::pressed(
+                controls::button(
+                    "form-accept",
+                    accept,
+                    Some("check"),
+                    ButtonStyle::Plain,
+                    &state.accept_focus,
+                    &theme,
+                ),
+                |this, window, cx| this.form_answer(false, window, cx),
+                cx,
+            ));
+        }
     }
     let hint = if form.waiting.is_some() {
         "Escape to cancel"
@@ -816,12 +1003,25 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
     };
     // As tall as the room below its top allows but a tenth: a dialog of
     // pictures (Print…'s) fits a window 800 pixels high whole.
-    let panel = modal::panel("form", 600., &theme)
-        .when(shell.a11y, |d| d.aria_label(form.title.clone()))
-        .key_context(keymap::FORM)
-        .max_h(relative(0.9))
+    // Tab completes a folder typed while there is one to complete.
+    let mut context = gpui::KeyContext::default();
+    context.add(keymap::FORM);
+    if state.completes(window, cx) {
+        context.add("completes");
+    }
+    // A press anywhere in it but in the field whose list is unfolded (and
+    // that list) folds the list, as a press outside a menu closes it.
+    let inside = div()
+        .flex()
+        .flex_col()
+        .flex_1()
+        .min_h_0()
         .p_3()
         .gap_3()
+        .on_mouse_down(
+            gpui::MouseButton::Left,
+            cx.listener(|this, _, _, cx| this.form_fold(cx)),
+        )
         .child(div().text_title().child(form.title.clone()))
         .child(body)
         .children(state.refusal.clone().map(|refusal| {
@@ -833,7 +1033,35 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
                 .child(refusal)
         }))
         .child(modal::footer(hint, buttons, &theme));
+    let panel = modal::panel("form", 600., &theme)
+        .when(shell.a11y, |d| d.aria_label(form.title.clone()))
+        .key_context(context)
+        .max_h(relative(0.9))
+        .child(inside);
     Some(modal::modal(panel, 80., 3, Shell::form_cancel, &theme, cx))
+}
+
+/// The button that unfolds a text field's list, inside the field at its
+/// end, as a combobox draws it: down while the list is folded, up while
+/// it is shown.
+fn inner_chevron(
+    id: SharedString,
+    label: &str,
+    open: bool,
+    focus: &FocusHandle,
+    theme: &Theme,
+) -> gpui::Stateful<gpui::Div> {
+    controls::icon_button(
+        id,
+        if open { "chevron-up" } else { "chevron" },
+        label.to_owned(),
+        focus,
+        theme,
+    )
+    // Within the field's frame, as tall as its text allows.
+    .size(crate::sizes::sized(controls::HEIGHT - 8.))
+    .mr(gpui::px(-4.))
+    .aria_expanded(open)
 }
 
 /// Field `at`: its label, its control, what it is.
@@ -856,12 +1084,34 @@ fn field_row(
         } else {
             field.title.clone()
         });
-    let help = (!field.help.is_empty()).then(|| {
-        div()
-            .text_small()
-            .text_color(theme.text_muted)
-            .child(field.help.clone())
-    });
+    // A file to write says what its folder read tells, else its help.
+    let note = matches!(control, Control::Save { .. })
+        .then(|| state.save_note(at, field, cx))
+        .flatten();
+    // A path no file can be saved at marks its field, as its note says.
+    let blocked = note.as_ref().is_some_and(|note| note.blocks);
+    let help = match note {
+        Some(note) => Some(
+            div()
+                .text_small()
+                // Red as the field's frame where it holds the answer back,
+                // a warning's color where it only says something.
+                .text_color(if note.blocks {
+                    theme.error
+                } else if note.warns {
+                    theme.warning
+                } else {
+                    theme.text_muted
+                })
+                .child(note.text),
+        ),
+        None => (!field.help.is_empty()).then(|| {
+            div()
+                .text_small()
+                .text_color(theme.text_muted)
+                .child(field.help.clone())
+        }),
+    };
     let mut row = div().flex().flex_col().gap_1();
     match control {
         Control::Input(input) => {
@@ -911,19 +1161,15 @@ fn field_row(
             let picker = match input {
                 Some(input) => {
                     let focused = input.read(cx).is_focused(window);
-                    div()
-                        .flex()
-                        .gap_1()
-                        .child(controls::field(input, None, focused, false, None, theme))
+                    controls::field(input, None, focused, false, None, theme)
                         .child(modal::pressed(
-                            controls::icon_button(
+                            inner_chevron(
                                 SharedString::from(format!("form-suggest-{at}")),
-                                "chevron",
                                 "Suggestions",
+                                open,
                                 focus,
                                 theme,
-                            )
-                            .aria_expanded(open),
+                            ),
                             move |this, _, cx| this.form_unfold(at, cx),
                             cx,
                         ))
@@ -957,6 +1203,40 @@ fn field_row(
             if open {
                 row = row.child(choice_list(shell, state, at, field, CHOICE_ROWS, theme, cx));
             }
+        }
+        Control::Save { input, focus, .. } => {
+            let open = state.open == Some(at);
+            let focused = input.read(cx).is_focused(window);
+            let rows = if open {
+                state.save_rows(at, cx)
+            } else {
+                Vec::new()
+            };
+            // The popover, under the line and over what follows; nothing
+            // to offer, none, rather than one saying so.
+            let popover =
+                (!rows.is_empty()).then(|| save::popover(shell, state, at, &rows, theme, cx));
+            row = row.child(label).child(
+                div()
+                    .relative()
+                    .flex()
+                    .child(
+                        controls::field(input, None, focused, blocked, None, theme).child(
+                            modal::pressed(
+                                inner_chevron(
+                                    SharedString::from(format!("form-folders-{at}")),
+                                    "Folders",
+                                    open,
+                                    focus,
+                                    theme,
+                                ),
+                                move |this, window, cx| this.save_unfold(at, window, cx),
+                                cx,
+                            ),
+                        ),
+                    )
+                    .children(popover),
+            );
         }
         Control::Pick { input, .. } => {
             let focused = input.read(cx).is_focused(window);
@@ -993,7 +1273,13 @@ fn field_row(
             )));
         }
     }
-    row.children(help).into_any_element()
+    // A press in the field whose list is unfolded, or in its list, leaves
+    // the list as it is (`form_fold`).
+    row.when(state.open == Some(at), |row| {
+        row.on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+    })
+    .children(help)
+    .into_any_element()
 }
 
 /// A row of choices, `value` chosen: cards when one has a picture (the
@@ -1042,7 +1328,7 @@ fn choice_row(
                 )
                 .on_click(cx.listener(move |this, _, window, cx| {
                     window.focus(&focus, cx);
-                    this.form_row_choose(at, &chosen, cx);
+                    this.form_row_click(at, &chosen, window, cx);
                 })),
             );
         }
@@ -1113,7 +1399,7 @@ fn choice_row(
             })
             .on_click(cx.listener(move |this, _, window, cx| {
                 window.focus(&focus, cx);
-                this.form_row_choose(at, &chosen, cx);
+                this.form_row_click(at, &chosen, window, cx);
             }));
         frame = frame.child(card);
     }
@@ -1185,12 +1471,39 @@ fn choice_list(
     cx: &mut Context<Shell>,
 ) -> AnyElement {
     let all = choices(field);
-    let shown = state.shown_of(at, cx).unwrap_or_default();
+    let items: Vec<Item> = state
+        .shown_of(at, cx)
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|index| Some((index, all.get(index)?)))
+        .map(|(id, choice)| Item {
+            id,
+            title: choice.shown().to_owned(),
+            detail: choice.detail.clone(),
+            section: choice.section.clone(),
+        })
+        .collect();
+    list_of(shell, state, at, &items, rows, theme, cx)
+}
+
+/// The rows `items` of field `at`'s list, `rows` at most in sight, the
+/// highlighted one marked; a click chooses.
+fn list_of(
+    shell: &Shell,
+    state: &FormState,
+    at: usize,
+    items: &[Item],
+    rows: usize,
+    theme: &Theme,
+    cx: &mut Context<Shell>,
+) -> AnyElement {
+    let shown = items;
     let picker = state.highlight_of(at);
     let chosen_row = state.highlighted(at);
     let field_focus = match state.controls.get(at) {
         Some(
             Control::Pick { input, .. }
+            | Control::Save { input, .. }
             | Control::Choice {
                 input: Some(input), ..
             },
@@ -1230,10 +1543,7 @@ fn choice_list(
         );
     }
     let mut section = None;
-    for (row, &index) in shown.iter().enumerate().take(end).skip(start) {
-        let Some(choice) = all.get(index) else {
-            continue;
-        };
+    for (row, choice) in shown.iter().enumerate().take(end).skip(start) {
         if !choice.section.is_empty() && section != Some(&choice.section) {
             section = Some(&choice.section);
             list = list.child(
@@ -1246,12 +1556,10 @@ fn choice_list(
             );
         }
         let highlighted = chosen_row == Some(row);
-        let named = shell
-            .a11y
-            .then(|| SharedString::from(choice.shown().to_owned()));
+        let named = shell.a11y.then(|| SharedString::from(choice.title.clone()));
         let item = div()
             // Known by its choice: filtered, another stands at its row.
-            .id(crate::elements::known_by("form-option", (at, index)))
+            .id(crate::elements::known_by("form-option", (at, choice.id)))
             .px_2()
             .py_1()
             .mx_1()
@@ -1263,7 +1571,7 @@ fn choice_list(
                 d.bg(theme.selection_bg).text_color(theme.selection_text)
             })
             .when(!highlighted, |d| d.hover(|s| s.bg(theme.hover)))
-            .child(div().text_body().child(choice.shown().to_owned()))
+            .child(div().text_body().child(choice.title.clone()))
             .when(!choice.detail.is_empty(), |d| {
                 d.child(
                     div()

@@ -67,8 +67,8 @@ fn built_in() -> Vec<Arc<dyn Plugin>> {
         Arc::new(skwir_plugin_map_tiles::MapTilesPlugin::default()),
         Arc::new(skwir_plugin_hex::PreviewPlugin),
         Arc::new(skwir_plugin_checksums::ChecksumsPlugin::default()),
-        Arc::new(skwir_plugin_print::PrintPlugin),
-        Arc::new(skwir_plugin_shrink::ShrinkPlugin),
+        Arc::new(skwir_plugin_print::PrintPlugin::default()),
+        Arc::new(skwir_plugin_shrink::ShrinkPlugin::default()),
         // A key scheme: off until the user turns it on.
         Arc::new(skwir_plugin_vim::VimPlugin::default()),
     ]

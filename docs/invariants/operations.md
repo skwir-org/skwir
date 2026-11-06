@@ -11,6 +11,15 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   stopped action going on by itself once its server answers again is
   that action, asked already, going on (ADR-080, 9), not a new one.
 - Every operation has an inverse, a dry-run `check`, and is idempotent.
+- **A step is data.** One that reaches the app beyond what its data says
+  (the previews a PDF is made with, the readers a copy is checked with)
+  holds its plugin's `plugin::AppRef`, a field no part of its data
+  (`#[serde(skip)]`, any two alike), cloned in where the plugin makes
+  it and where its data rebuilds it (`OpRegistry::register_with`); the
+  plugin holds it while on and lets go of it when turned off, so a step
+  made before is refused. Never a plugin's static: two apps in one
+  process each hold their own (Save as PDF's `MakePdf`, Reduce Size's
+  `ShrinkCopy`).
 - Steps reference entries by `EntryRef` (`AGENTS.md`, "Files and
   entries"). A plan's steps look for a file gone from its name in one
   listing of its folder (`StepContext::listed`, `op::listed`), kept

@@ -4,7 +4,7 @@
 //! asked as a form the window draws (`skwir_core::form`). It opens on
 //! what was chosen last, kept in memory until Skwir quits or the plugin is
 //! turned off, never a setting.
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use skwir_core::App;
 use skwir_core::cancel::CancelToken;
@@ -44,15 +44,20 @@ struct Remembered {
     at_most: String,
 }
 
-static LAST: Mutex<Option<Remembered>> = Mutex::new(None);
+/// The last dialog's choices: the plugin's own, for the app it is added
+/// to (`ShrinkPlugin`), shared by what it registers there.
+#[derive(Clone, Default)]
+pub(crate) struct Last(Arc<Mutex<Option<Remembered>>>);
 
-fn last() -> MutexGuard<'static, Option<Remembered>> {
-    LAST.lock().unwrap_or_else(PoisonError::into_inner)
-}
+impl Last {
+    fn held(&self) -> MutexGuard<'_, Option<Remembered>> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
 
-/// Forget the last choices: the plugin turned off leaves no trace.
-pub(crate) fn forget() {
-    *last() = None;
+    /// Forget the last choices: the plugin turned off leaves no trace.
+    pub(crate) fn forget(&self) {
+        *self.held() = None;
+    }
 }
 
 /// The form's fields, by key.
@@ -66,15 +71,16 @@ const LOSSY: [&str; 3] = ["print", "screen", "small"];
 
 /// Ask the dialog until it is answered with choices that hold: `None`
 /// when it was cancelled, or no window can show it.
-pub(crate) fn ask(app: &App, offers: &Offers, cancel: &CancelToken) -> Option<Chosen> {
-    let mut form = form(offers);
+pub(crate) fn ask(app: &App, offers: &Offers, last: &Last, cancel: &CancelToken) -> Option<Chosen> {
+    let opened = last.held().clone().unwrap_or_default();
+    let mut form = form(offers, &opened);
     loop {
         let Some(Answer::Accepted(values)) = app.fill(form.clone(), cancel) else {
             return None;
         };
         match chosen(&values, offers) {
             Ok(chosen) => {
-                *last() = Some(Remembered {
+                *last.held() = Some(Remembered {
                     quality: chosen.quality,
                     gray: chosen.gray,
                     strip: chosen.strip,
@@ -87,9 +93,8 @@ pub(crate) fn ask(app: &App, offers: &Offers, cancel: &CancelToken) -> Option<Ch
     }
 }
 
-/// The dialog for `offers`, on the last choices.
-pub(crate) fn form(offers: &Offers) -> Form {
-    let last = last().clone().unwrap_or_default();
+/// The dialog for `offers`, on the `last` choices.
+fn form(offers: &Offers, last: &Remembered) -> Form {
     let several = !offers.what.starts_with('“');
     let mut form = Form::new(
         format!("Reduce Size of {}", offers.what),
@@ -128,7 +133,7 @@ pub(crate) fn form(offers: &Offers) -> Form {
     form.field(
         Field::text(AT_MOST, "At most")
             .placeholder("No limit, or a size: 2 MB, 500 KB")
-            .value(last.at_most)
+            .value(last.at_most.clone())
             .when(QUALITY, &LOSSY),
     )
 }
@@ -241,8 +246,9 @@ mod tests {
     #[test]
     fn location_is_offered_only_for_pictures() {
         let has = |form: &Form, key: &str| form.fields.iter().any(|field| field.key == key);
-        assert!(!has(&form(&offers(false, true)), STRIP));
-        assert!(has(&form(&offers(true, false)), STRIP));
+        let opened = |offers: &Offers| form(offers, &Remembered::default());
+        assert!(!has(&opened(&offers(false, true)), STRIP));
+        assert!(has(&opened(&offers(true, false)), STRIP));
     }
 
     #[test]

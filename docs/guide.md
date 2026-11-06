@@ -498,14 +498,26 @@ archives, and the bytes of any file.
   its pages, a text or source file numbered and colored, a table with its
   header on every page, a Markdown document or a book as it reads, a
   picture fitted to the page. Skwir's dialog asks first:
-  - **To**: a printer, or a PDF (Undo puts it in the trash). **Save in**
-    says where the PDF goes: beside the file, or beside each when they
-    are in several folders; or another folder, the other pane's,
-    Documents, or any typed from `/` or `~` (Enter takes what you typed;
-    Down goes into the folders offered). A folder you choose is kept for
-    the next PDF; choose the first again for beside the file. **Name** is
-    the PDF's (`.pdf` added when left out), offered when one PDF is made:
-    not for several files saved a PDF each, each named after its file.
+  - **To**: a printer, or a PDF (Undo puts it in the trash). **Save as**
+    is where the PDF goes, folder and name in one line: beside the file
+    by itself, its name but `.pdf` selected, so typing renames it. Type
+    a folder from `/` or `~` and its folders are offered in a list under
+    it as you type: Tab fills in what they share, highlights the first,
+    then takes it; Down goes into the list; Enter saves what is typed. A
+    folder chosen keeps the name, and Ctrl+Z takes it back; Alt+Up goes
+    to the folder above. The button beside it, or Down, offers the other
+    pane's folder, the folders chosen before (those still there, kept
+    from one run to the next) and the sidebar's places and bookmarks; a
+    press anywhere else in the dialog folds the list. Choosing PDF with
+    a click puts the keyboard in Save as, the name selected, ready to be
+    typed over. Leave it with a folder and no name, and the name comes
+    back. A name alone saves beside the file, `.pdf` added when left
+    out; the name follows the layout (`notes (booklet).pdf`) until you
+    type one. Said under it: a name already there (saving then asks
+    whether to replace it); a folder that is none, a relative one or a
+    name no file can have, which also hold Save back. Several files
+    saved a PDF each take a folder alone, each named after its file.
+    The folder you choose is kept for the next PDF.
   - **Pages**: all, the page the preview shows, what is selected in it,
     or pages typed (`1-3, 7, 10-`).
   - **Layout**: as shown, or a booklet, its pages in the order they fold
@@ -539,7 +551,9 @@ archives, and the bytes of any file.
   come from several folders, the folder each is in, and in the Trash
   when each was deleted. Saved, its PDF goes in the folder listed, a
   search's in the folder searched, a tag's in its folder, anything else
-  in Documents, unless Save in says otherwise. From a script, with or
+  in Documents, unless Save as says otherwise. A saved PDF's notice says
+  the folder it went in, with **Show** when no pane shows that folder.
+  From a script, with or
   without the window open:
   `skwir cmd --apply print.save_pdf '{"entries": ["/path/to/notes.md"]}'`
   (`"together": true` makes one PDF of several files; `"pages": "1-3"`;

@@ -1146,6 +1146,8 @@ fn repeats_of(name: &str) -> Option<Repeats> {
         | "ui.settings_page"
         | "ui.settings_adjust"
         | "ui.settings_move"
+        // A dialog's Save as, a folder up at each repeat.
+        | "ui.form_up"
         | "ui.terminal_page"
         | "ui.preview_page"
         | "ui.preview_scroll"
@@ -1706,6 +1708,18 @@ pub fn declare_all(app: &App) {
             crate::settings::choose_grammar(app, &args.language, &args.grammar)?;
             Ok(Outcome::Done)
         },
+    );
+    none(
+        Topic::Window,
+        "ui.form_complete",
+        "Complete the folder",
+        "Complete the folder typed in a dialog's Save as: the folder highlighted in its list, else the start the folders completing it share, else the first of them, the name kept",
+    );
+    none(
+        Topic::Window,
+        "ui.form_up",
+        "Folder above",
+        "In a dialog's Save as, the folder above the one typed, the name kept",
     );
     none(
         Topic::Go,

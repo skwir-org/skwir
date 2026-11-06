@@ -753,7 +753,10 @@ of bars, split or not.
   the plan it reports, `undo {"plan"}`: refused, saying why, once a plan
   asked after it touched what it did), Redo after an undo, Retry first
   for a plan a step's error stopped (ADR-080; a toast holds its buttons
-  in order, `Toast::actions`).
+  in order, `Toast::actions`). A plan that made one thing new (`Change::
+  Create`: a PDF, an archive, a folder) in a folder no pane shows offers
+  Show first (`toast::made_alone`, `navigate` with `select`): what it
+  made in a folder shown is selected there instead (`Shell::made`).
 - **What runs is docked, never over the files** (`activity.rs`,
   ADR-114). Work under way is the window's state: a strip at the end of
   the last pane's footer, before Undo, says how far it has gone in as
@@ -1113,6 +1116,32 @@ one needing a choice dispatches `ui.choose` with its choices or a command
 listing them on a worker (`choose.rs`; `option` adds a flag such as
 "Always use for…"). Never a prompt or picker of its own.
 
+- **A file to write** in a form (`form::Kind::Save`, `form/save.rs`) is
+  one line, folder and name, completed as the address field completes a
+  path (`complete.rs`: the folder typed read once on a worker in its
+  lane, each key matched in memory), the asker's folders listed only
+  when asked for (its button, Down while folded: `FormState::offered`).
+  Its list is a popover (deferred over the form, scrolling with its
+  scroll bar, the row highlighted kept in view), folded once the field
+  loses the keyboard but to its own button, which sits inside the field
+  at its end (`inner_chevron`, as for any choice that takes text: up
+  while the list shows). A folder chosen keeps the name; Enter takes
+  the text unless a row was gone into with the arrows
+  (`FormState::typed`, as for any choice that takes text); Tab does as
+  the address field's; what the window puts there is an edit Ctrl+Z
+  takes back, no typing (`put`). Its name follows the form's fields
+  until one is typed, and comes back when it is left with a folder
+  alone. A path no file can be saved at (a folder that is none or
+  relative, a name the system refuses) is said under it in the error's
+  color, its frame too, and holds the form's answer back (`FormState::blocked`: the answer's button drawn
+  inert, Enter refused); a name already there is said, not held back.
+  Never a folder picker of its own beside it.
+- **A form's lists fold on a press elsewhere in it** (`form_fold`, the
+  panel's inner frame; the field unfolded and its popover keep theirs),
+  and on Escape. **A choice clicked that shows a field to type in** (Pages…,
+  a PDF's Save as) gives that field the keyboard (`form_row_click`); the
+  arrows on a row of choices move no keyboard, so Left back to Printer
+  stays on the row.
 - **One text field** (`input.rs`), for every field: a rename, the
   address, a form's, a find. A line longer than the field scrolls to
   keep the caret in view (`scrolled`, in prepaint). A drag selects
