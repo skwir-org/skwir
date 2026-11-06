@@ -32,8 +32,8 @@ working in an area, also read that area's rules (see
 ## Principles (ADR-000, binding)
 
 1. **Always responsive.** No blocking work on the UI thread, ever.
-   Listings stream (a folder shown once whole, or past a second,
-   ADR-120); every provider call is async, batched and
+   A folder appears whole, built and sorted on a worker; searches
+   stream (ADR-120); every provider call is async, batched and
    cancellable; visible work goes first. The UI sleeps until the core
    wakes it (`App::set_waker`); never run a `request_animation_frame`
    loop.
@@ -348,16 +348,16 @@ working in an area, also read that area's rules (see
 - **Listings stream in slices.** `Listing::drain` takes what was queued
   when called, for at most `workspace::PUMP_BUDGET`; a sync that leaves a
   backlog gives the event loop a turn (a real timer: a zero one is a
-  ready task in gpui) and syncs again. A folder opened is held back
-  whole (ADR-120, `Listing::whole_within`): its order is empty until it
-  completes or fails, or until `WHOLE_WITHIN` (1 s) has passed; then
-  the pump hands its sort to a worker (`Listing::sort_whole`, the
-  entries shared by `Arc`, its events waiting) and the drain after the
-  wake takes the order, ends the hold and stamps its versions: what has
-  arrived shows, and the rest streams in. The window's thread never
-  sorts a whole folder it opens. A held listing is not `is_complete`. A
-  search streams from the start. What waits for an entry to be shown
-  (a reveal) waits while its listing `is_held`. `Listing::sorted` places
+  ready task in gpui) and syncs again. A folder opened is filled on a
+  worker (ADR-120, `Listing::filled_elsewhere`): the pane's listing
+  stands for it and holds nothing (`is_held`, never `is_complete`)
+  while the pump hands what the location sends to short jobs
+  (`fill_job`, `PumpReport::fills`), and takes it whole and sorted once
+  complete, failed or redirected; "Loading…" says how many were read.
+  The window's thread builds no folder it opens. What streams
+  (`LocationProvider::streams`: searches, the Trash, Nearby) is applied
+  here as it comes. What waits for an entry to be shown (a reveal)
+  waits while its listing `is_held`. `Listing::sorted` places
   arrivals in the cached order (ranks kept while the listing streams, a
   quarter of the order at a time); any other change sorts again. Never
   loop on a channel until it is empty while its producer runs.

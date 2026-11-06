@@ -11922,3 +11922,49 @@ drag left the window and came back; the name lost outside the window.
   shown: it waits for them shown now). The disk filled during the first
   full run (0.2 GB free); `tools/build/prune.py` freed 33 GB.
 
+
+## A folder filled on a worker, no streaming (ADR-120, 2026-11-06)
+
+- **Asked for:** after the probe of the 33–45 ms syncs (the listing's
+  216-byte entries copied whole at each doubling of its table, 24 of
+  31 ms at 230 400 entries with the binaries' mimalloc; the name index
+  6.5 ms; glibc's realloc remaps and showed no spike), the user chose
+  to build a folder off the window's thread and to drop the streaming
+  past a second ("the user can't really act when a folder is
+  streaming"), with a count while it loads, and the Trash and Nearby
+  streaming as searches do.
+- **Built:** `Listing::filled_elsewhere` makes the pane's listing stand
+  for one filled on a worker (`Fill`: the listing behind a mutex, its
+  count, one job at a time, done); `fill_job` asks for a `FillJob` when
+  events wait and none runs, collected by `Pane::fills_wanted` into
+  `PumpReport::fills`, run by `App::pump_report` at
+  `Priority::Visible` and waking the window after. A job applies what
+  is queued and returns (the `asked` flag cleared, then the queue
+  looked at again, so no event is left without a job); on Complete,
+  Error or Redirect it sorts the listing in the pane's order and says
+  it is done, leaving what came after to the window. `drain` takes the
+  listing whole under the same id, or says the count moved. A job for
+  a folder left (the last holder of its fill) stops. A held listing is
+  not complete and is no backlog. `LocationProvider::streams` (default
+  `searches`; the Trash and Nearby say so) keeps the listing filled on
+  the window's thread. The footer and the banner say "Loading… N
+  items". Taken out: `WHOLE_WITHIN`, the hold's timer and
+  `Pane::held_for`, `SortJob` and the entries shared by `Arc`.
+- **Measured** on `/nix/store` (392 593 entries), Xvfb :92, load 1.3 to
+  6: release, all rows 1.360 (the first run after the display started),
+  0.559, 0.593, 0.557, 0.529, 0.540, 0.529 s after the first frame,
+  longest sync while loading 0.1 to 0.2 ms (230 syncs, 2 to 3 ms in
+  all, the handover's included); debug, 2.75, 3.01, 2.57, 2.61,
+  2.70 s, longest 0.5 to 0.7 ms (22 to 27 ms in all). A folder of 60
+  files: all rows 7 ms after the first frame (release), 37 ms (debug).
+  Screenshots mid-load: "Loading location… 114,688 items" in the
+  banner and "Loading… 114,688 items" in the footer at 0.9 s, 229,376
+  at 1.6 s (debug). The CPU seen for a few seconds after the folder is
+  shown is the existing `folder-weight` task on a worker (2990 ms in
+  the debug build), per-thread sampling; then idle.
+- **Checked:** a unit test (filled by jobs, one at a time, the count,
+  what came after Complete left to the window, sorted in the cache,
+  failed, redirected, left, a listing that streams); `cargo clippy -p
+  skwir-core -p skwir-ui -p skwir-plugin-trash -p skwir-plugin-remote
+  --all-targets -D warnings`; nextest over the default members, 3067
+  passed. Not checked: a remote folder, macOS, Windows.

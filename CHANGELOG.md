@@ -32,10 +32,10 @@
   well.
 - **A folder appears whole**: opened, it shows its files all at once when it is
   listed, rather than streaming in and moving under the eye, and a large one is
-  ready sooner (`/nix/store`'s 390 000 entries in 0.53 s rather than 0.72 s),
-  sorted away from the window so that it never stalls. A
-  folder that takes more than a second shows what has come and the rest as it
-  comes, as before; searches show their results as they are found.
+  ready sooner (`/nix/store`'s 390 000 entries in about half a second rather
+  than 0.72 s). It is read and sorted away from the window, which never stalls
+  meanwhile, and says how many items it has read so far. Searches, the Trash
+  and Nearby still show what they find as they find it.
 
 ## 0.3.1 (2026-11-05)
 

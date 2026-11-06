@@ -3,7 +3,7 @@
 Status: accepted, 2026-09-18. Revised by ADR-002 and ADR-033 (the
 first-frame and idle-memory rows), ADR-049 (principle 6: a file's
 identity is not an entry's) and ADR-120 (principle 1: a folder appears
-whole, and streams past a second).
+whole, built on a worker; searches stream).
 
 ## Context
 

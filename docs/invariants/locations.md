@@ -138,10 +138,13 @@ and `notes.agree` are core `notes.*` commands.
   The parser's tokenizer and the field's lexer split text alike: a change
   to what a word is (`#print` is `tag:print`) is made in both, and
   `quote` writes a name that would read otherwise (`"#3"`).
-- **A search streams from the start** (`LocationProvider::searches`,
-  `App::is_search`): its results are answers as they are found, never
-  held back whole as a folder is (ADR-120). A provider that searches
-  says so, or its results wait like a folder's.
+- **What streams** (`LocationProvider::streams`, ADR-120) shows as it
+  comes, on the window's thread: a search's results (`searches`, the
+  default) and what is gathered from several sources, each an answer of
+  its own (the Trash of every volume, servers nearby). Everything else
+  is filled on a worker and appears whole: a provider whose listing
+  never completes, or completes only once every slow source answered,
+  says it streams, or it shows nothing until then.
 - **The tags `tag:` and `#` offer** are the folder's first, those its
   listing read (`tags.list`), then every other tag the user has, from
   the tags plugin's memory (`tags.known`: pinned, given, seen on files,

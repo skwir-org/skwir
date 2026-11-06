@@ -21,12 +21,6 @@ pub struct State {
     /// answering (`message`): asked again while it is listed, never once
     /// it is.
     remote: Option<Task<()>>,
-    /// The wake when a folder the pane shows stops being held back whole
-    /// (ADR-120): the pump it brings lets it go and shows what has
-    /// arrived, though nothing new arrived to say so. Asked again while
-    /// one is held, its own listing's or a folder kept beside it, never
-    /// once none is.
-    held: Option<Task<()>>,
 }
 
 impl Shell {
@@ -40,12 +34,11 @@ impl Shell {
                         pane.id,
                         pane.open.clone(),
                         !pane.listing.is_complete() && pane.listing.error().is_none(),
-                        pane.held_for(),
                     )
                 })
                 .collect()
         };
-        for (pane, open, pending, held) in pending {
+        for (pane, open, pending) in pending {
             let Some(ui) = self.panes.iter_mut().find(|ui| ui.id == pane) else {
                 continue;
             };
@@ -59,23 +52,6 @@ impl Shell {
                     open: open.clone(),
                     ..State::default()
                 };
-            }
-            match held {
-                None => ui.loading.held = None,
-                Some(left) if ui.loading.held.is_none() => {
-                    ui.loading.held = Some(cx.spawn(async move |this, cx| {
-                        cx.background_executor().timer(left).await;
-                        // A wake, as from the core: the sync it brings
-                        // lets the folder go, then the window draws it.
-                        let _ = this.update(cx, |shell, _| {
-                            if let Some(ui) = shell.panes.iter_mut().find(|ui| ui.id == pane) {
-                                ui.loading.held = None;
-                            }
-                            shell.app.wake();
-                        });
-                    }));
-                }
-                Some(_) => {}
             }
             if !pending || open.is_none() {
                 ui.loading.visible = false;
@@ -190,6 +166,13 @@ pub fn message(shell: &Shell, pane: PaneId) -> Option<Banner> {
     }
     let location = pane_state.location()?.clone();
     let back = pane_state.history_pos > 0;
+    // A folder filled elsewhere says how far it is (ADR-120).
+    let read = pane_state
+        .listing
+        .filling_count()
+        .filter(|&n| n > 0)
+        .map(|n| format!(" {}", crate::format::count(n, "item")))
+        .unwrap_or_default();
     drop(ws);
     // A remote's folder whose server stopped answering says so (ADR-077):
     // its lane has run a job that long. The pane may leave it, or let go
@@ -213,7 +196,7 @@ pub fn message(shell: &Shell, pane: PaneId) -> Option<Banner> {
     // What is no folder says what it opens (an address connecting), and
     // may be left: what opens it is the pane's, and stops.
     Some(if location.is_path() {
-        Banner::said("Loading location…")
+        Banner::said(format!("Loading location…{read}"))
     } else {
         Banner {
             text: format!("Opening {}…", shell.app.location_title(&location)),

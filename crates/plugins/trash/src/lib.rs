@@ -510,6 +510,12 @@ impl LocationProvider for TrashProvider {
         SCHEME
     }
 
+    /// Shown as it comes (ADR-120): it gathers the trash of every volume,
+    /// and a disk asleep would hold back the others'.
+    fn streams(&self, _location: &Location) -> bool {
+        true
+    }
+
     fn title(&self, location: &Location) -> Option<String> {
         Some(match folder_of(location) {
             Some(folder) => self.name_of(&folder),

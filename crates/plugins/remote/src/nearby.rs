@@ -136,6 +136,12 @@ impl LocationProvider for Provider {
         SCHEME
     }
 
+    /// Shown as they are found (ADR-120): the servers each finder
+    /// answers, a slow one not holding back the others.
+    fn streams(&self, _location: &Location) -> bool {
+        true
+    }
+
     fn open(&self, location: &Location, ctx: OpenContext) -> anyhow::Result<Arc<dyn OpenLocation>> {
         Ok(Open::start(location.clone(), &ctx))
     }

@@ -903,16 +903,23 @@ impl App {
         self.provider(&location.scheme)?.icon(location)
     }
 
-    /// A listing for `location`, opened now (ADR-120): a folder appears
-    /// whole once listed, held back for at most `WHOLE_WITHIN` before
-    /// what has arrived streams in; a search's results show as they come.
+    /// A listing for `location`, opened now (ADR-120): a folder is filled
+    /// and sorted on a worker and appears whole; what streams (a search's
+    /// results, what is gathered from several sources) shows as it comes.
     fn new_listing(&self, location: &Location) -> crate::Listing {
         let listing = crate::Listing::with_companions(Arc::clone(&self.companions));
-        if self.is_search(location) {
+        if self.streams(location) {
             listing
         } else {
-            listing.whole_within(crate::location::WHOLE_WITHIN)
+            listing.filled_elsewhere()
         }
+    }
+
+    /// Whether what `location` lists is shown as it comes
+    /// (`LocationProvider::streams`).
+    pub fn streams(&self, location: &Location) -> bool {
+        self.provider(&location.scheme)
+            .is_some_and(|provider| provider.streams(location))
     }
 
     /// Whether `location` is a search (`LocationProvider::searches`).
@@ -1403,15 +1410,14 @@ impl App {
     /// shows that one in its place.
     pub fn pump_report(&self) -> crate::workspace::PumpReport {
         let mut report = self.workspace.write().pump_report();
-        // A folder held back whole is sorted on a worker, whose order is
-        // taken by the pump its wake brings (ADR-120). Never cancelled: a
-        // listing left keeps none of it, one kept (a column gone to) waits
-        // for it.
-        for job in std::mem::take(&mut report.sorts) {
+        // A folder is filled on a worker, and taken whole by the pump its
+        // wake brings (ADR-120). Never cancelled: a job for a folder left
+        // stops by itself, and one kept (a column gone to) still waits.
+        for job in std::mem::take(&mut report.fills) {
             let wake = self.waker_handle();
             self.scheduler.spawn(
                 Priority::Visible,
-                "listing.sort",
+                "listing.fill",
                 CancelToken::new(),
                 move || {
                     job.run();
