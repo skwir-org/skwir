@@ -1,5 +1,6 @@
 //! Print…'s own dialog (ADR-111, revised 2026-11-01): where it goes (a
-//! printer, the system's dialog asked next, or a PDF beside the file),
+//! printer, the system's dialog asked next, or a PDF, in the folder said:
+//! beside what it is of unless another is chosen, `Saved`),
 //! which pages, and how they are laid out (as shown, folded as a booklet,
 //! a contact sheet), asked as a form the window draws
 //! (`skwir_core::form`). The system's dialog then chooses only the
@@ -10,7 +11,11 @@
 //!
 //! It opens on what was chosen last, but the pages, which are a
 //! document's own: kept in memory until Skwir quits or the plugin is
-//! turned off, never a setting.
+//! turned off, never a setting. A folder chosen for PDFs is kept so too;
+//! the one beside what is printed is no choice kept, but where each PDF
+//! goes by itself.
+use std::ffi::{OsStr, OsString};
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use skwir_core::App;
@@ -34,6 +39,53 @@ pub(crate) struct Offers {
     /// document's the preview reads): said, and drawn on the booklets.
     pub count: Option<u32>,
     pub subject: Subject,
+    /// Where a PDF of it goes, and what else is offered.
+    pub saved: Saved,
+}
+
+/// Where a PDF is saved unless another folder is chosen, and the folders
+/// offered beside it; any other is typed, a whole path or from `~`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Saved {
+    /// The folder it goes in: `None` for files in several folders, each
+    /// PDF beside its own (one of them all, a contact sheet, beside the
+    /// first).
+    pub folder: Option<PathBuf>,
+    /// What that folder is, said under it: "Beside it", "The folder
+    /// listed".
+    pub said: String,
+    /// The folder another pane shows.
+    pub other: Option<PathBuf>,
+    /// The user's Documents.
+    pub documents: Option<PathBuf>,
+    /// What the PDF is named unless another name is typed.
+    pub named: Named,
+}
+
+/// What a PDF is named by itself, by how it is laid out: offered of one
+/// PDF only (a file, several as one, a contact sheet, a listing), a PDF
+/// each being named after its file.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Named {
+    /// As shown, and a listing.
+    pub shown: String,
+    /// Folded as a booklet.
+    pub booklet: String,
+    /// A contact sheet.
+    pub sheet: String,
+}
+
+/// What the Save in field holds for files in several folders, each PDF
+/// beside its own: what it reads, as an open choice's value is.
+const EACH: &str = "Beside each file";
+
+impl Saved {
+    /// What the field holds for where it goes by itself.
+    fn value(&self) -> String {
+        self.folder
+            .as_deref()
+            .map_or_else(|| EACH.to_owned(), skwir_core::os_path::from_home)
+    }
 }
 
 /// What is printed, as the dialog tells them apart.
@@ -93,6 +145,11 @@ pub(crate) struct Chosen {
     pub per_side: PerSide,
     /// The paper a PDF is laid out on, by name (`Paper::NAMED`).
     pub paper: String,
+    /// The folder a PDF is saved in, chosen; where it goes by itself
+    /// (`Saved::folder`) without.
+    pub dest: Option<PathBuf>,
+    /// The PDF's name, typed; its own (`Named`) without.
+    pub name: Option<OsString>,
 }
 
 /// What the next dialog opens on.
@@ -106,6 +163,8 @@ struct Remembered {
     smaller: bool,
     per_side: PerSide,
     paper: Option<String>,
+    /// A folder chosen for PDFs: offered first while it is kept.
+    dest: Option<PathBuf>,
 }
 
 /// The last dialog's choices, but its pages.
@@ -122,6 +181,10 @@ pub(crate) fn forget() {
 
 /// The form's fields, by key.
 const TO: &str = "to";
+const DEST: &str = "dest";
+const NAME: &str = "name";
+const NAME_BOOKLET: &str = "name_booklet";
+const NAME_SHEET: &str = "name_sheet";
 const PAGES: &str = "pages";
 const RANGES: &str = "ranges";
 const LAYOUT: &str = "layout";
@@ -133,14 +196,28 @@ const PER_SIDE: &str = "per_side";
 const PAPER: &str = "paper";
 
 /// Ask the dialog until it is answered with choices that hold: `None`
-/// when it was cancelled, or no window can show it.
-pub(crate) fn ask(app: &App, offers: &Offers, cancel: &CancelToken) -> Option<Chosen> {
+/// when it was cancelled, or no window can show it. A folder chosen for a
+/// PDF must be one, as `is_folder` tells (`None`: not told in time, taken
+/// as typed).
+pub(crate) fn ask(
+    app: &App,
+    offers: &Offers,
+    is_folder: &dyn Fn(&Path) -> Option<bool>,
+    cancel: &CancelToken,
+) -> Option<Chosen> {
     let mut form = form(offers);
     loop {
         let Some(Answer::Accepted(values)) = app.fill(form.clone(), cancel) else {
             return None;
         };
-        match chosen(&values, offers) {
+        let held = chosen(&values, offers).and_then(|chosen| match chosen.dest.as_deref() {
+            Some(dest) if is_folder(dest) == Some(false) => Err(format!(
+                "Save in: “{}” is no folder",
+                skwir_core::os_path::from_home(dest)
+            )),
+            _ => Ok(chosen),
+        });
+        match held {
             Ok(chosen) => {
                 let mut last = last();
                 let before = last.take().unwrap_or_default();
@@ -186,6 +263,11 @@ fn remembered(values: &Values, chosen: &Chosen, before: &Remembered) -> Remember
             .and_then(PerSide::of_count)
             .unwrap_or(before.per_side),
         paper: Some(chosen.paper.clone()),
+        // Printed, the folder for PDFs is kept as it was.
+        dest: match chosen.to {
+            To::Pdf => chosen.dest.clone(),
+            To::Printer => before.dest.clone(),
+        },
     }
 }
 
@@ -196,13 +278,6 @@ pub(crate) fn form(offers: &Offers) -> Form {
     if let Some(count) = offers.count {
         form = form.intro(pages(count));
     }
-    let beside = if offers.listing() {
-        "PDF in the folder"
-    } else if offers.several() {
-        "PDF beside them"
-    } else {
-        "PDF beside it"
-    };
     let to = match last.to {
         To::Printer => "printer",
         To::Pdf => "pdf",
@@ -214,12 +289,16 @@ pub(crate) fn form(offers: &Offers) -> Form {
             Kind::Row {
                 choices: vec![
                     Choice::new("printer", "Printer").accept("Print…"),
-                    Choice::new("pdf", beside).accept("Save"),
+                    Choice::new("pdf", "PDF").accept("Save"),
                 ],
             },
         )
         .value(to),
     );
+    form = form.field(save_in(&offers.saved, last.dest.as_deref()));
+    for field in names(offers) {
+        form = form.field(field);
+    }
     let mut pages_offered = vec![Choice::new("all", "All")];
     if let Some(page) = offers.page {
         pages_offered.push(Choice::new("current", format!("Page {page}")));
@@ -358,6 +437,131 @@ pub(crate) fn form(offers: &Offers) -> Form {
     form.field(papers(&paper)).field(smaller(last.smaller))
 }
 
+/// Where a PDF is saved, said when one is chosen: the folder it goes in
+/// by itself first, then the one chosen last, the other pane's and
+/// Documents, each once; any other typed. It opens on the one chosen last
+/// while it is kept.
+fn save_in(saved: &Saved, last: Option<&Path>) -> Field {
+    let mut choices = vec![match &saved.folder {
+        Some(folder) => Choice::new(saved.value(), folder_title(folder)).detail(saved.said.clone()),
+        None => Choice::new(EACH, EACH).detail("One PDF of them all beside the first"),
+    }];
+    let mut offered: Vec<&Path> = saved.folder.as_deref().into_iter().collect();
+    for (folder, said) in [
+        (last, "Chosen before"),
+        (saved.other.as_deref(), "The other pane"),
+        (saved.documents.as_deref(), "Your documents"),
+    ] {
+        let Some(folder) = folder.filter(|folder| !offered.contains(folder)) else {
+            continue;
+        };
+        offered.push(folder);
+        choices.push(
+            Choice::new(skwir_core::os_path::from_home(folder), folder_title(folder)).detail(said),
+        );
+    }
+    let value = last.map_or_else(|| saved.value(), skwir_core::os_path::from_home);
+    Field::new(
+        DEST,
+        "Save in",
+        Kind::Choice {
+            choices,
+            open: true,
+        },
+    )
+    // Left empty, it goes where it goes by itself: nothing is needed.
+    .help("Choose a folder, or type one")
+    .value(value)
+    .when(TO, &["pdf"])
+}
+
+/// The PDF's name, offered of one PDF: one field for each layout, shown
+/// with it, each opening on what that layout names it (`notes.pdf`,
+/// `notes (booklet).pdf`, `Contact sheet.pdf`); none for several files
+/// saved a PDF each. Never kept: a name is a document's own.
+fn names(offers: &Offers) -> Vec<Field> {
+    let named = &offers.saved.named;
+    let field = |key: &str, value: &str| {
+        Field::text(key, "Name")
+            .help(".pdf is added when it is left out")
+            .value(value)
+            .when(TO, &["pdf"])
+    };
+    if offers.listing() {
+        return vec![field(NAME, &named.shown)];
+    }
+    // Several files make one PDF of them all only when asked.
+    let one = |field: Field| {
+        if offers.several() {
+            field.when(TOGETHER, &["one"])
+        } else {
+            field
+        }
+    };
+    let mut fields = vec![
+        one(field(NAME, &named.shown).when(LAYOUT, &["as_shown"])),
+        one(field(NAME_BOOKLET, &named.booklet).when(LAYOUT, &["booklet"])),
+    ];
+    if offers.sheet() {
+        fields.push(field(NAME_SHEET, &named.sheet).when(LAYOUT, &["contact_sheet"]));
+    }
+    fields
+}
+
+/// The name typed in the field of `key`, as `chosen` reads it: `None`
+/// for the PDF's own (`given`, or nothing typed); else a name a file can
+/// have here, `.pdf` added when it has no such ending.
+fn typed_name(values: &Values, key: &str, given: &str) -> Result<Option<OsString>, String> {
+    let typed = values.get(key).trim();
+    if typed.is_empty() || typed == given {
+        return Ok(None);
+    }
+    if typed.chars().any(std::path::is_separator) || typed.contains('/') {
+        return Err(format!(
+            "Name: “{typed}” names a folder too: choose the folder in Save in"
+        ));
+    }
+    crate::pdf_named(OsStr::new(typed))
+        .map(Some)
+        .map_err(|refused| format!("Name: {refused}"))
+}
+
+/// A folder's name, as a choice titles it; a folder without one (the
+/// root, a drive) by its path.
+fn folder_title(folder: &Path) -> String {
+    folder.file_name().map_or_else(
+        || folder.display().to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    )
+}
+
+/// The folder `typed` in Save in names, as `chosen` reads it: `None` for
+/// where the PDF goes by itself (`Saved::value`); else a whole path, or
+/// from `~`.
+fn typed_folder(typed: &str, saved: &Saved) -> Result<Option<PathBuf>, String> {
+    let typed = typed.trim();
+    if typed.is_empty() || typed == saved.value() {
+        return Ok(None);
+    }
+    let home = typed
+        .strip_prefix('~')
+        .filter(|rest| rest.is_empty() || rest.starts_with(std::path::is_separator));
+    let path = match home {
+        Some(rest) => skwir_core::os_path::home()
+            .ok_or("Save in: there is no home folder for “~”")?
+            .join(rest.trim_start_matches(std::path::is_separator)),
+        None => PathBuf::from(typed),
+    };
+    if !path.is_absolute() {
+        return Err(format!(
+            "Save in: “{typed}” is no whole path: type it from the top, or from ~"
+        ));
+    }
+    // What the folder offered first holds, typed otherwise (a separator
+    // more): it is where the PDF goes by itself still.
+    Ok(Some(path).filter(|path| saved.folder.as_deref() != Some(path.as_path())))
+}
+
 /// The paper a PDF is laid out on, offered when it is saved: a printer's
 /// is chosen in the system's dialog.
 fn papers(chosen: &str) -> Field {
@@ -411,6 +615,21 @@ fn chosen(values: &Values, offers: &Offers) -> Result<Chosen, String> {
             _ => Arrange::AsShown,
         }
     };
+    let dest = match to {
+        To::Pdf => typed_folder(values.get(DEST), &offers.saved)?,
+        To::Printer => None,
+    };
+    let together = offers.several() && to == To::Pdf && values.get(TOGETHER) == "one";
+    let named = &offers.saved.named;
+    let name = match (to, layout) {
+        (To::Printer, _) => None,
+        (To::Pdf, Arrange::Listing) => typed_name(values, NAME, &named.shown)?,
+        (To::Pdf, Arrange::ContactSheet) => typed_name(values, NAME_SHEET, &named.sheet)?,
+        // A PDF each is named after its file.
+        (To::Pdf, _) if offers.several() && !together => None,
+        (To::Pdf, Arrange::Booklet) => typed_name(values, NAME_BOOKLET, &named.booklet)?,
+        (To::Pdf, Arrange::AsShown) => typed_name(values, NAME, &named.shown)?,
+    };
     let booklet = layout == Arrange::Booklet;
     // Sets of pages folded together are a booklet's of two a side.
     let two = values.get(PER_SIDE).is_empty() || values.get(PER_SIDE) == "2";
@@ -425,7 +644,7 @@ fn chosen(values: &Values, offers: &Offers) -> Result<Chosen, String> {
         layout,
         signature,
         trim: booklet && values.on(TRIM),
-        together: offers.several() && to == To::Pdf && values.get(TOGETHER) == "one",
+        together,
         smaller: to == To::Pdf && values.on(SMALLER),
         per_side: values
             .get(PER_SIDE)
@@ -440,6 +659,8 @@ fn chosen(values: &Values, offers: &Offers) -> Result<Chosen, String> {
                 || skwir_platform::print::paper_name().to_owned(),
                 str::to_owned,
             ),
+        dest,
+        name,
     })
 }
 
@@ -664,6 +885,17 @@ mod tests {
             selection: true,
             count: Some(12),
             subject: Subject::One,
+            saved: Saved {
+                folder: Some(PathBuf::from("/example/notes")),
+                said: "Beside it".to_owned(),
+                other: Some(PathBuf::from("/example/other")),
+                documents: Some(PathBuf::from("/example/Documents")),
+                named: Named {
+                    shown: "notes.pdf".to_owned(),
+                    booklet: "notes (booklet).pdf".to_owned(),
+                    sheet: "Contact sheet.pdf".to_owned(),
+                },
+            },
         }
     }
 
@@ -678,7 +910,18 @@ mod tests {
         assert_eq!(
             keys,
             [
-                TO, PAGES, RANGES, LAYOUT, PER_SIDE, FOLD, TRIM, PAPER, SMALLER
+                TO,
+                DEST,
+                NAME,
+                NAME_BOOKLET,
+                PAGES,
+                RANGES,
+                LAYOUT,
+                PER_SIDE,
+                FOLD,
+                TRIM,
+                PAPER,
+                SMALLER
             ]
         );
         assert_eq!(form.title, "Print “notes.md”");
@@ -706,21 +949,39 @@ mod tests {
         assert_eq!(
             keys,
             [
-                TO, PAGES, RANGES, LAYOUT, PER_SIDE, FOLD, TRIM, TOGETHER, PAPER, SMALLER
+                TO,
+                DEST,
+                NAME,
+                NAME_BOOKLET,
+                NAME_SHEET,
+                PAGES,
+                RANGES,
+                LAYOUT,
+                PER_SIDE,
+                FOLD,
+                TRIM,
+                TOGETHER,
+                PAPER,
+                SMALLER
             ]
         );
+        let field = |form: &Form, key: &str| form.fields.iter().find(|f| f.key == key).cloned();
         assert_eq!(
-            several.fields[3].choices().len(),
+            field(&several, LAYOUT).unwrap().choices().len(),
             3,
             "a contact sheet of several pictures"
         );
-        assert_eq!(several.fields[1].choices().len(), 2, "All and Pages…");
+        assert_eq!(
+            field(&several, PAGES).unwrap().choices().len(),
+            2,
+            "All and Pages…"
+        );
         let listing = super::form(&Offers {
             subject: Subject::Listing,
             ..offers()
         });
         let keys: Vec<&str> = listing.fields.iter().map(|f| f.key.as_str()).collect();
-        assert_eq!(keys, [TO, PAGES, RANGES, PAPER, SMALLER]);
+        assert_eq!(keys, [TO, DEST, NAME, PAGES, RANGES, PAPER, SMALLER]);
     }
 
     /// The answer read: pages typed checked, what is hidden ignored (a
@@ -752,6 +1013,8 @@ mod tests {
                 smaller: false,
                 per_side: PerSide::Two,
                 paper: skwir_platform::print::paper_name().to_owned(),
+                dest: None,
+                name: None,
             }
         );
         let wrong = values(&[(PAGES, "ranges"), (RANGES, "3-1")]);
@@ -832,6 +1095,7 @@ mod tests {
             smaller: true,
             per_side: PerSide::Four,
             paper: Some("a5".to_owned()),
+            dest: None,
         });
         let form = form(&offers());
         let value = |key: &str| {
@@ -881,5 +1145,180 @@ mod tests {
         assert_eq!(kept.per_side, PerSide::Eight);
         assert_eq!(kept.signature, Some(16));
         assert!(kept.trim);
+    }
+
+    /// Where a PDF goes is said once one is chosen: where it goes by
+    /// itself first, then the other pane's folder and Documents, any other
+    /// typed (a whole path, or from `~`); a folder chosen is the next
+    /// dialog's, printing in between keeping it, and the folder offered
+    /// first chosen again is no choice kept.
+    #[test]
+    fn where_a_pdf_goes_is_said_and_chosen() {
+        forget();
+        let offers = offers();
+        let form = form(&offers);
+        let field = form.fields.iter().find(|f| f.key == DEST).unwrap();
+        assert!(field.shown_with(&values(&[(TO, "pdf")])));
+        assert!(!field.shown_with(&values(&[(TO, "printer")])));
+        let titled: Vec<(&str, &str)> = field
+            .choices()
+            .iter()
+            .map(|c| (c.title.as_str(), c.detail.as_str()))
+            .collect();
+        assert_eq!(
+            titled,
+            [
+                ("notes", "Beside it"),
+                ("other", "The other pane"),
+                ("Documents", "Your documents")
+            ]
+        );
+        assert_eq!(field.value, offers.saved.value(), "where it goes by itself");
+        let pdf = |dest: &str| values(&[(TO, "pdf"), (PAGES, "all"), (DEST, dest)]);
+        let to = |dest: &str| super::chosen(&pdf(dest), &offers).map(|c| c.dest);
+        assert_eq!(to(&offers.saved.value()), Ok(None));
+        assert_eq!(to("/example/notes/"), Ok(None), "the same folder");
+        assert_eq!(
+            to("/example/other"),
+            Ok(Some(PathBuf::from("/example/other")))
+        );
+        if let Some(home) = skwir_core::os_path::home() {
+            assert_eq!(to("~/l'été"), Ok(Some(home.join("l'été"))));
+        }
+        assert!(to("letters").unwrap_err().starts_with("Save in"));
+        // Printed, no folder is read.
+        let printed = values(&[(TO, "printer"), (DEST, "letters")]);
+        assert_eq!(super::chosen(&printed, &offers).unwrap().dest, None);
+
+        // Several files of several folders: each beside its own.
+        let each = Offers {
+            subject: Subject::Several { pictures: false },
+            saved: Saved {
+                folder: None,
+                said: "Beside them".to_owned(),
+                ..offers.saved.clone()
+            },
+            ..offers.clone()
+        };
+        let field = super::save_in(&each.saved, None);
+        assert_eq!(field.value, EACH);
+        assert_eq!(field.choices()[0].title, EACH);
+        assert_eq!(
+            super::chosen(&pdf(EACH), &each).unwrap().dest,
+            None,
+            "each beside its own"
+        );
+
+        // A folder chosen opens the next dialog, offered first after where
+        // it goes by itself; printing in between keeps it.
+        let chosen = super::chosen(&pdf("/example/kept"), &offers).unwrap();
+        let kept = remembered(&pdf("/example/kept"), &chosen, &Remembered::default());
+        assert_eq!(kept.dest, Some(PathBuf::from("/example/kept")));
+        let printed = super::chosen(&values(&[(TO, "printer")]), &offers).unwrap();
+        let kept = remembered(&values(&[(TO, "printer")]), &printed, &kept);
+        assert_eq!(kept.dest, Some(PathBuf::from("/example/kept")));
+        let field = super::save_in(&offers.saved, kept.dest.as_deref());
+        assert_eq!(
+            field.value,
+            skwir_core::os_path::from_home(Path::new("/example/kept"))
+        );
+        assert_eq!(field.choices()[1].detail, "Chosen before");
+        // The one offered first, chosen again: where it goes by itself.
+        let back = super::chosen(&pdf(&offers.saved.value()), &offers).unwrap();
+        assert_eq!(remembered(&pdf(""), &back, &kept).dest, None);
+    }
+
+    /// The PDF's name is offered of one PDF, each layout's opening on what
+    /// it names it and shown with it; a PDF each is named after its file;
+    /// a name typed is taken with `.pdf` added where left out, never one
+    /// naming a folder or none a file can have.
+    #[test]
+    fn a_pdf_s_name_is_typed() {
+        forget();
+        let offers = offers();
+        let form = form(&offers);
+        let shown = |key: &str, pairs: &[(&str, &str)]| {
+            form.fields
+                .iter()
+                .find(|f| f.key == key)
+                .unwrap()
+                .shown_with(&values(pairs))
+        };
+        let pdf = [(TO, "pdf"), (LAYOUT, "as_shown")];
+        assert!(shown(NAME, &pdf));
+        assert!(!shown(NAME_BOOKLET, &pdf));
+        assert!(shown(NAME_BOOKLET, &[(TO, "pdf"), (LAYOUT, "booklet")]));
+        assert!(!shown(NAME, &[(TO, "printer"), (LAYOUT, "as_shown")]));
+        let value = |key: &str| {
+            form.fields
+                .iter()
+                .find(|f| f.key == key)
+                .unwrap()
+                .value
+                .clone()
+        };
+        assert_eq!(value(NAME), "notes.pdf");
+        assert_eq!(value(NAME_BOOKLET), "notes (booklet).pdf");
+
+        let named = |pairs: &[(&str, &str)], offers: &Offers| {
+            super::chosen(&values(pairs), offers).map(|c| c.name)
+        };
+        let as_shown =
+            |name: &str| named(&[(TO, "pdf"), (LAYOUT, "as_shown"), (NAME, name)], &offers);
+        assert_eq!(as_shown("notes.pdf"), Ok(None), "its own");
+        assert_eq!(as_shown(""), Ok(None));
+        assert_eq!(as_shown("l'été"), Ok(Some(OsString::from("l'été.pdf"))));
+        assert_eq!(as_shown("Final.PDF"), Ok(Some(OsString::from("Final.PDF"))));
+        assert_eq!(
+            as_shown("notes.md"),
+            Ok(Some(OsString::from("notes.md.pdf")))
+        );
+        assert!(as_shown("a/b").unwrap_err().starts_with("Name"));
+        // The booklet's own field, the other one's text left aside.
+        let booklet = named(
+            &[
+                (TO, "pdf"),
+                (LAYOUT, "booklet"),
+                (NAME, "ignored"),
+                (NAME_BOOKLET, "folded"),
+            ],
+            &offers,
+        );
+        assert_eq!(booklet, Ok(Some(OsString::from("folded.pdf"))));
+        // Printed, no name.
+        assert_eq!(named(&[(TO, "printer"), (NAME, "x")], &offers), Ok(None));
+        // Several: named only as one PDF, or a contact sheet.
+        let several = Offers {
+            subject: Subject::Several { pictures: true },
+            ..offers.clone()
+        };
+        let each = [
+            (TO, "pdf"),
+            (LAYOUT, "as_shown"),
+            (TOGETHER, "each"),
+            (NAME, "x"),
+        ];
+        assert_eq!(named(&each, &several), Ok(None));
+        let one = [
+            (TO, "pdf"),
+            (LAYOUT, "as_shown"),
+            (TOGETHER, "one"),
+            (NAME, "x"),
+        ];
+        assert_eq!(named(&one, &several), Ok(Some(OsString::from("x.pdf"))));
+        let sheet = [
+            (TO, "pdf"),
+            (LAYOUT, "contact_sheet"),
+            (TOGETHER, "each"),
+            (NAME_SHEET, "faces"),
+        ];
+        assert_eq!(
+            named(&sheet, &several),
+            Ok(Some(OsString::from("faces.pdf")))
+        );
+        let form = super::form(&several);
+        let name = form.fields.iter().find(|f| f.key == NAME).unwrap();
+        assert!(!name.shown_with(&values(&each)), "a PDF each");
+        assert!(name.shown_with(&values(&one)));
     }
 }

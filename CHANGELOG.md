@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- **Print Listing… anywhere**: with nothing selected, a search, a tag, the
+  Trash, Recent or the shelf prints its listing as a folder does, as the pane
+  shows it, filtered or not, titled by its name and what filters it. Where the
+  files come from several folders, each one's folder is printed beside it; in
+  the Trash, when each was deleted. A tag listed says how many files it holds.
+- **Where a PDF goes is said**: choosing PDF in Print…'s dialog shows Save in,
+  beside the file (or in the folder listed, a search's folder, Documents for
+  the Trash), and takes another: the other pane's folder, Documents, or one
+  typed. A folder chosen is kept for the next PDF. Its **Name** can be changed
+  too, when one PDF is made (`.pdf` is added when left out).
+- **A field of a dialog that offers choices and takes any text** lists every
+  choice when unfolded, rather than only the one it holds; what is typed in it
+  still narrows the list, and Enter takes what was typed rather than the first
+  choice matching it (`~/` saved in the folder first offered, not the home
+  folder): Down goes into the list.
 - **About**'s buttons stay on one line, the dialog as wide as they need: in
   0.3.1 Licences went to a line of its own. Licences now comes after Copy
   details, before Website and Source code, which open the browser.

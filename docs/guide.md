@@ -498,8 +498,14 @@ archives, and the bytes of any file.
   its pages, a text or source file numbered and colored, a table with its
   header on every page, a Markdown document or a book as it reads, a
   picture fitted to the page. Skwir's dialog asks first:
-  - **To**: a printer, or a PDF beside the file (Undo puts it in the
-    trash).
+  - **To**: a printer, or a PDF (Undo puts it in the trash). **Save in**
+    says where the PDF goes: beside the file, or beside each when they
+    are in several folders; or another folder, the other pane's,
+    Documents, or any typed from `/` or `~` (Enter takes what you typed;
+    Down goes into the folders offered). A folder you choose is kept for
+    the next PDF; choose the first again for beside the file. **Name** is
+    the PDF's (`.pdf` added when left out), offered when one PDF is made:
+    not for several files saved a PDF each, each named after its file.
   - **Pages**: all, the page the preview shows, what is selected in it,
     or pages typed (`1-3, 7, 10-`).
   - **Layout**: as shown, or a booklet, its pages in the order they fold
@@ -526,12 +532,19 @@ archives, and the bytes of any file.
   nothing printable (a song) is left out and said. Saved, they make a PDF
   each or one of them all. With pictures among them, **Contact sheet**
   prints them several to a page, each named under it. With nothing
-  selected, **Print Listing…** (the folder's menu, `Ctrl+P`) prints what
-  the folder shows, in its order, as a table of names, kinds, sizes and
-  dates. From a script, with or without the window open:
+  selected, **Print Listing…** (the menu of the files' background,
+  `Ctrl+P`) prints what the pane lists, wherever it is (a folder, a
+  search, a tag, the Trash, Recent), as it shows it, filtered or not, in
+  its order, as a table of names, kinds, sizes and dates; where its files
+  come from several folders, the folder each is in, and in the Trash
+  when each was deleted. Saved, its PDF goes in the folder listed, a
+  search's in the folder searched, a tag's in its folder, anything else
+  in Documents, unless Save in says otherwise. From a script, with or
+  without the window open:
   `skwir cmd --apply print.save_pdf '{"entries": ["/path/to/notes.md"]}'`
   (`"together": true` makes one PDF of several files; `"pages": "1-3"`;
-  `"layout": "booklet"`, `"contact_sheet"` or `"listing"`; `"per_side":
+  `"layout": "booklet"`, `"contact_sheet"` or `"listing"`; `"dest":
+  "/a/folder"` saves it there, `"name": "notes"` as `notes.pdf`; `"per_side":
   4` or `8` for a booklet; `"paper": "a5"`, `letter`, `a3`, `legal`). A PDF saved
   can be made smaller as it is saved: **Smaller file** in the dialog,
   `"smaller": "screen"` from a script.

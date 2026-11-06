@@ -9,7 +9,10 @@
 //! the system's dialog (`skwir_platform::print`), with the paper, the
 //! copies and the sides; Skwir applies the pages, the sides and the order
 //! to the PDF it hands over, as an application printing through the portal
-//! does. Nothing selected in a folder, Print Listing… prints its listing.
+//! does. Nothing selected, Print Listing… prints what the pane lists,
+//! wherever it is: a folder, a search, a tag, the trash (`listing`).
+//! Saved, a PDF goes where the dialog says, beside what it is of unless
+//! another folder is chosen (`plan_of`, `dialog::Saved`).
 //!
 //! Printing waits for the user and for the helpers: it runs on a worker
 //! and says how it went in a notification. An agent's print asks first,
@@ -25,6 +28,7 @@ use skwir_core::App;
 use skwir_core::app::NotifyLevel;
 use skwir_core::cancel::CancelToken;
 use skwir_core::command::{Invocation, Outcome, Topic};
+use skwir_core::location::Location;
 use skwir_core::op::{
     self, Change, EntryArg, EntryRef, Made, Operation, Plan, StepContext, StepStatus, Words,
 };
@@ -32,7 +36,7 @@ use skwir_core::os_path::PathArg;
 use skwir_core::plugin::Plugin;
 use skwir_core::print::{PageSet, Pages};
 use skwir_core::registry::{KeyBinding, MenuItem};
-use skwir_core::scheduler::Priority;
+use skwir_core::scheduler::{Lane, Priority};
 use skwir_core::shrink::Quality;
 use skwir_core::workspace::PaneId;
 
@@ -51,8 +55,9 @@ const KIND: &str = "print_pdf";
 /// What the file menu offers Print… for: files, printed as one job.
 const FILES: &str = "file !place";
 
-/// What it offers the folder's listing for: the folder, nothing selected.
-const LISTS: &str = "empty folder";
+/// What it offers a pane's listing for: nothing selected, wherever the
+/// pane is (a folder, a search, a tag, the trash).
+const LISTS: &str = "empty";
 
 /// The menu of the preview's More button and of its own context menu,
 /// whose items the window runs with what the preview shows
@@ -125,14 +130,21 @@ pub struct PrintArgs {
 pub struct SaveArgs {
     #[serde(flatten)]
     pub print: PrintArgs,
-    /// The folder the PDFs are made in; each file's own without (a
-    /// contact sheet's: its first file's; a listing's: its folder).
+    /// The folder the PDFs are made in, a whole path; each file's own
+    /// without (a contact sheet's: its first file's; a listing's: the
+    /// folder listed, else the one the place is of, else Documents:
+    /// `listing_folder`).
     #[serde(default)]
     pub dest: Option<PathArg>,
     /// Several files saved as one PDF, in their order, named after the
     /// first, as they print together.
     #[serde(default)]
     pub together: bool,
+    /// The PDF's name, of one PDF (a file, several `together`, a contact
+    /// sheet, a listing); after what it is of without. `.pdf` is added
+    /// when it has no such ending.
+    #[serde(default)]
+    pub name: Option<PathArg>,
     /// Each PDF made smaller as Reduce Size makes a copy (ADR-112): its
     /// images at most this quality's dpi (`print`, `screen`, `small`).
     #[serde(default)]
@@ -199,7 +211,7 @@ impl Plugin for PrintPlugin {
                 Ok(Outcome::Done)
             },
         );
-        // Ctrl+P and Print Listing… in a folder with nothing selected.
+        // Ctrl+P and Print Listing… with nothing selected.
         print.forms([skwir_core::command::Form::new(
             serde_json::json!({ "layout": "listing" }),
             "Print Listing…",
@@ -213,31 +225,43 @@ impl Plugin for PrintPlugin {
                 "Make a PDF of each file as its preview shows it, beside it or in `dest` (one of them all with `together`), on the paper of the system's locale, laid out and of the pages Print… takes (plan)",
                 |a, app| {
                     let request = request(app, &a.print)?;
-                    let dest = a.dest.as_ref().map(|PathArg(dest)| dest.as_path());
+                    let dest = a
+                        .dest
+                        .as_ref()
+                        .map(|PathArg(dest)| skwir_core::os_path::absolute(dest))
+                        .transpose()?;
                     if let Some(paper) = a.paper.as_deref() {
                         anyhow::ensure!(
                             skwir_core::print::Paper::named(paper).is_some(),
                             "“{paper}” is no paper: a4, letter, a5, a3 or legal"
                         );
                     }
+                    let name = a
+                        .name
+                        .as_ref()
+                        .map(|PathArg(name)| pdf_named(name.as_os_str()))
+                        .transpose()?;
                     Ok(Outcome::Plan(plan_of(
                         app,
                         &request,
-                        dest,
-                        a.together,
-                        a.smaller,
-                        a.paper.as_deref(),
+                        &Saving {
+                            dest,
+                            name: name.as_deref(),
+                            together: a.together,
+                            smaller: a.smaller,
+                            paper: a.paper.as_deref(),
+                        },
                     )?))
                 },
             )
             .plans();
         menus(app);
-        // Ctrl+P prints the files selected, the folder's listing with none,
+        // Ctrl+P prints the files selected, the pane's listing with none,
         // or what the preview shows.
         for (when, command) in [
             ("pane file !place", Invocation::new("print.print")),
             (
-                "pane empty folder",
+                "pane empty",
                 Invocation::new("print.print").with("layout", "listing"),
             ),
             (
@@ -262,7 +286,7 @@ impl Plugin for PrintPlugin {
 }
 
 /// Print… in the file menu's group of what is made from it (3xx), for
-/// files and in the preview's menu; Print Listing… for the folder's
+/// files and in the preview's menu; Print Listing… for the pane's
 /// listing, named as the palette names it, so what is printed is said.
 fn menus(app: &App) {
     for (menu, when, title, invocation) in [
@@ -412,20 +436,71 @@ fn request(app: &App, args: &PrintArgs) -> anyhow::Result<Request> {
 const COUNTING: std::time::Duration = std::time::Duration::from_millis(400);
 
 /// What the dialog may offer of what `args` name (resolved: their files,
-/// or their pane's listing).
+/// or their pane's listing), and where a PDF of it goes. On a worker: it
+/// reads the user's folders (Documents).
 fn offers(app: &App, args: &PrintArgs, cancel: &CancelToken) -> anyhow::Result<dialog::Offers> {
+    let pane = app.pane_or_active(args.pane);
+    let documents = documents();
+    let other = other_folder(app, pane);
     if args.layout == Arrange::Listing {
-        let pane = app.pane_or_active(args.pane);
-        let folder = app
-            .pane_dir(pane)
-            .map_or_else(|_| "this folder".to_owned(), |dir| display_name(&dir));
+        let (location, filter) = shown(app, pane)?;
+        let own = own_folder(app, &location);
+        let said = match (location.is_path(), own.is_some()) {
+            (true, _) => "The folder listed",
+            (false, true) => "The folder it is of",
+            (false, false) => "It has no folder of its own",
+        };
+        let folder = own.or_else(|| documents.clone());
+        let named = listing_named(app, &location, filter.as_deref());
+        let file = listing_name(&location, &named)
+            .to_string_lossy()
+            .into_owned();
         return Ok(dialog::Offers {
-            what: format!("the listing of “{folder}”"),
+            what: format!("the listing of “{named}”"),
             subject: dialog::Subject::Listing,
+            saved: dialog::Saved {
+                folder,
+                said: said.to_owned(),
+                other,
+                documents,
+                named: dialog::Named {
+                    shown: file,
+                    ..dialog::Named::default()
+                },
+            },
             ..dialog::Offers::default()
         });
     }
     let typed = app.targets_typed(args.pane, args.entries.clone())?;
+    // Beside them, where they are in one folder; else each beside its own.
+    let mut folders = typed.iter().map(|(entry, _)| entry.path.parent());
+    let first = folders.next().flatten();
+    let folder = first
+        .filter(|first| folders.all(|folder| folder == Some(*first)))
+        .map(Path::to_owned);
+    // Named after the first file, as one PDF of several is.
+    let first_named = |booklet: bool| {
+        typed.first().map_or_else(String::new, |(entry, _)| {
+            pdf_name(&entry.path, booklet)
+                .to_string_lossy()
+                .into_owned()
+        })
+    };
+    let saved = dialog::Saved {
+        said: match typed.len() {
+            1 => "Beside it",
+            _ => "Beside them",
+        }
+        .to_owned(),
+        folder,
+        other,
+        documents,
+        named: dialog::Named {
+            shown: first_named(false),
+            booklet: first_named(true),
+            sheet: SHEET.to_owned(),
+        },
+    };
     let mime = |name: &Option<OsString>| name.as_deref().and_then(skwir_platform::mime::by_name);
     let what = match typed.as_slice() {
         [(entry, _)] => format!("“{}”", display_name(&entry.path)),
@@ -447,6 +522,7 @@ fn offers(app: &App, args: &PrintArgs, cancel: &CancelToken) -> anyhow::Result<d
     };
     Ok(dialog::Offers {
         what,
+        saved,
         page: args.page.filter(|_| !several),
         selection: !several
             && args
@@ -466,49 +542,136 @@ fn offers(app: &App, args: &PrintArgs, cancel: &CancelToken) -> anyhow::Result<d
 /// `COUNTING` (a file on a server that answers slowly is not waited for):
 /// found and counted in its remote's lane, which the wait bounds.
 fn counted(app: &App, entry: &EntryRef, cancel: &CancelToken) -> Option<u32> {
-    let (said, heard) = std::sync::mpsc::sync_channel(1);
-    let counting = cancel.child();
-    let (token, entry, weak) = (counting.clone(), entry.clone(), app.weak());
-    app.scheduler.spawn_in(
-        skwir_core::fs::reach::lane(&entry.path),
-        Priority::Normal,
+    let (entry, weak) = (entry.clone(), app.weak());
+    soon(
+        app,
+        &entry.path.clone(),
         "print-count",
-        counting.clone(),
-        move || {
-            let count = weak.upgrade().and_then(|app| {
-                let path = entry.resolve().ok()?;
-                make::page_count(&app, &path, &token).ok()
-            });
-            let _ = said.send(count);
+        cancel,
+        move |token| {
+            let app = weak.upgrade()?;
+            let path = entry.resolve().ok()?;
+            make::page_count(&app, &path, token).ok()
         },
-    );
-    let count = heard.recv_timeout(COUNTING).ok().flatten();
-    counting.cancel();
-    count
+    )
 }
 
-/// `work` run in the lane of `path` (its remote's, the shared one
-/// elsewhere: `fs::reach::lane`) and waited for here: what reads files
-/// runs there, so a server that stopped answering holds its own lane, and
-/// what waits for the user (a dialog) holds none (AGENTS.md, remote
-/// paths). An error when `cancel` fires first.
-fn in_lane<T: Send + 'static>(
+/// Whether `path` is a folder, if it is told within `COUNTING`: a folder
+/// typed in the dialog is refused there when it is none, and one on a
+/// server that answers slowly is taken as typed, the plan checking it
+/// again.
+fn is_folder(app: &App, path: &Path, cancel: &CancelToken) -> Option<bool> {
+    let asked = path.to_owned();
+    soon(app, path, "print-folder", cancel, move |_| {
+        Some(std::fs::metadata(&asked).is_ok_and(|meta| meta.is_dir()))
+    })
+}
+
+/// What `work` answers, run in the lane of `path`, if it answers within
+/// `COUNTING`; cancelled after.
+fn soon<T: Send + 'static>(
     app: &App,
     path: &Path,
+    label: &'static str,
+    cancel: &CancelToken,
+    work: impl FnOnce(&CancelToken) -> Option<T> + Send + 'static,
+) -> Option<T> {
+    let (said, heard) = std::sync::mpsc::sync_channel(1);
+    let working = cancel.child();
+    let token = working.clone();
+    app.scheduler.spawn_in(
+        skwir_core::fs::reach::lane(path),
+        Priority::Normal,
+        label,
+        working.clone(),
+        move || {
+            let _ = said.send(work(&token));
+        },
+    );
+    let answer = heard.recv_timeout(COUNTING).ok().flatten();
+    working.cancel();
+    answer
+}
+
+/// The location `pane` shows and the words filtering it.
+fn shown(app: &App, pane: PaneId) -> anyhow::Result<(Location, Option<String>)> {
+    let ws = app.workspace.read();
+    let shown = ws.pane(pane).context("No such pane")?;
+    let location = shown
+        .location()
+        .cloned()
+        .context("The pane shows nothing")?;
+    Ok((location, shown.filter().map(str::to_owned)))
+}
+
+/// What the listing of `location` is called in words: its name (a
+/// folder's own, a search's, a tag's), with what filters it.
+fn listing_named(app: &App, location: &Location, filter: Option<&str>) -> String {
+    listing::filtered(app.location_title(location), filter)
+}
+
+/// Where the PDF of what `location` lists is saved unless another folder
+/// is chosen: its own folder (`own_folder`), else the user's Documents
+/// (`documents`). Reads the user's folders: on a worker, or a script's
+/// thread.
+fn listing_folder(app: &App, location: &Location) -> Option<PathBuf> {
+    own_folder(app, location).or_else(documents)
+}
+
+/// The folder `location` lists, else the folder the place is of (a
+/// search's, a tag's: its trail's `base`, else the first of its places
+/// that is a folder), as its trail says, never its scheme; `None` for a
+/// place of no folder (the trash, Recent).
+fn own_folder(app: &App, location: &Location) -> Option<PathBuf> {
+    if let Some(path) = location.path() {
+        return Some(path);
+    }
+    app.trail(location).and_then(|trail| {
+        trail
+            .base
+            .or_else(|| trail.crumbs.iter().find_map(|crumb| crumb.location.path()))
+    })
+}
+
+/// The user's Documents folder, else their home: where what is of no
+/// folder is saved. Reads the user's folders' list.
+fn documents() -> Option<PathBuf> {
+    skwir_platform::places::user_dirs()
+        .into_iter()
+        .find(|dir| dir.kind == "documents")
+        .map(|dir| dir.path)
+        .or_else(skwir_core::os_path::home)
+}
+
+/// The folder another pane of `pane`'s tab shows (the split's other
+/// side), offered as where a PDF goes, as the split's transfers go there.
+fn other_folder(app: &App, pane: PaneId) -> Option<PathBuf> {
+    let ws = app.workspace.read();
+    let tab = ws.tab(ws.tab_of(pane)?)?;
+    tab.panes
+        .iter()
+        .filter(|&&other| other != pane)
+        .find_map(|&other| ws.pane(other)?.location()?.path())
+}
+
+/// `work` run in `lane` (a remote's, or the shared one: `fs::reach::lane`
+/// of what it reads) and waited for here: what reads files runs there, so
+/// a server that stopped answering holds its own lane, and what waits for
+/// the user (a dialog) holds none (AGENTS.md, remote paths). An error
+/// when `cancel` fires first. Never called from a job of `lane` itself,
+/// which would wait for its own turn.
+fn in_lane<T: Send + 'static>(
+    app: &App,
+    lane: Lane,
     label: &'static str,
     cancel: &CancelToken,
     work: impl FnOnce() -> anyhow::Result<T> + Send + 'static,
 ) -> anyhow::Result<T> {
     let (said, heard) = std::sync::mpsc::sync_channel(1);
-    app.scheduler.spawn_in(
-        skwir_core::fs::reach::lane(path),
-        Priority::Normal,
-        label,
-        cancel.clone(),
-        move || {
+    app.scheduler
+        .spawn_in(lane, Priority::Normal, label, cancel.clone(), move || {
             let _ = said.send(work());
-        },
-    );
+        });
     loop {
         match heard.recv_timeout(std::time::Duration::from_millis(100)) {
             Ok(done) => return done,
@@ -549,7 +712,8 @@ fn chosen_then(
     cancel: &CancelToken,
 ) -> anyhow::Result<Option<String>> {
     let offers = offers(app, &args, cancel)?;
-    let Some(chosen) = dialog::ask(app, &offers, cancel) else {
+    let is_folder = |path: &Path| is_folder(app, path, cancel);
+    let Some(chosen) = dialog::ask(app, &offers, &is_folder, cancel) else {
         return Ok(None);
     };
     let args = PrintArgs {
@@ -569,10 +733,13 @@ fn chosen_then(
             app.apply_whole(plan_of(
                 app,
                 &request,
-                None,
-                chosen.together,
-                smaller,
-                Some(chosen.paper.as_str()),
+                &Saving {
+                    dest: chosen.dest.as_deref(),
+                    name: chosen.name.as_deref(),
+                    together: chosen.together,
+                    smaller,
+                    paper: Some(chosen.paper.as_str()),
+                },
             )?);
             Ok(None)
         }
@@ -624,11 +791,12 @@ fn print(app: &Arc<App>, request: Request, cancel: &CancelToken) -> anyhow::Resu
                     format!("{} and {} more", display_name(&first.path), rest.len()),
                 ),
             };
-            let lane = entries[0].path.clone();
+            let lane = skwir_core::fs::reach::lane(&entries[0].path);
             (what, title, lane, Make::Files(entries, shown))
         }
         What::Sheet(entries) => {
-            let lane = entries.first().context("Nothing to print")?.path.clone();
+            let lane =
+                skwir_core::fs::reach::lane(&entries.first().context("Nothing to print")?.path);
             (
                 "a contact sheet".to_owned(),
                 "Contact sheet".to_owned(),
@@ -637,17 +805,14 @@ fn print(app: &Arc<App>, request: Request, cancel: &CancelToken) -> anyhow::Resu
             )
         }
         What::Listing(pane) => {
-            let folder = app.pane_dir(pane).unwrap_or_default();
-            let (weak, token) = (app.weak(), cancel.clone());
-            let (title, table) = in_lane(app, &folder, "print-listing", cancel, move || {
-                let app = weak.upgrade().context("Skwir is closing")?;
-                listing::listing(&app, pane, &token)
-            })?;
+            // Its files read in their lanes; the PDF made of the table
+            // reads none, in the shared one.
+            let listed = listing::listing(app, pane, cancel)?;
             (
-                format!("the listing of “{title}”"),
-                title.clone(),
-                folder,
-                Make::Listing(title, table),
+                format!("the listing of “{}”", listed.title),
+                listed.title.clone(),
+                Lane::SHARED,
+                Make::Listing(listed),
             )
         }
     };
@@ -688,7 +853,7 @@ fn print(app: &Arc<App>, request: Request, cancel: &CancelToken) -> anyhow::Resu
         chosen.clone(),
         Arc::clone(&task),
     );
-    let printed = in_lane(app, &lane, "print", &working, move || {
+    let printed = in_lane(app, lane, "print", &working, move || {
         let app = weak.upgrade().context("Skwir is closing")?;
         let work = tempfile::Builder::new()
             .prefix("skwir-print-")
@@ -764,7 +929,7 @@ fn resolve(entries: &[EntryRef]) -> anyhow::Result<Vec<PathBuf>> {
 enum Make {
     Files(Vec<EntryRef>, Shown),
     Sheet(Vec<EntryRef>),
-    Listing(String, skwir_core::print::Part),
+    Listing(listing::Listed),
 }
 
 /// The PDF of `made`, titled `title`, laid out as `layout` says, in
@@ -797,7 +962,7 @@ fn made_ready(
                 })
             })
         }
-        Make::Listing(title, table) => {
+        Make::Listing(listing::Listed { title, table }) => {
             make::made(app, &title, vec![table], layout, work, cancel, follow)
         }
     }
@@ -811,17 +976,48 @@ fn capitalized(text: &str) -> String {
     })
 }
 
-/// Save as PDF's plan for `request`: a step making each file's PDF beside
-/// it (or in `dest`), one of them all with `together`; a contact sheet's
-/// beside its first file, a listing's in its folder.
-fn plan_of(
-    app: &App,
-    request: &Request,
-    dest: Option<&Path>,
+/// How Save as PDF saves, besides what: where, named how, one PDF of
+/// several files or one each, made smaller, on what paper.
+struct Saving<'a> {
+    /// The folder; where each goes by itself without.
+    dest: Option<&'a Path>,
+    /// The name of the one PDF made; after what it is of without.
+    name: Option<&'a std::ffi::OsStr>,
     together: bool,
     smaller: Option<Quality>,
-    paper: Option<&str>,
-) -> anyhow::Result<Plan> {
+    paper: Option<&'a str>,
+}
+
+/// What a contact sheet's PDF is named by itself.
+const SHEET: &str = "Contact sheet.pdf";
+
+/// `name`, typed for a PDF, as it is saved: `.pdf` added where it has no
+/// such ending, refused where no file can be named so.
+fn pdf_named(name: &std::ffi::OsStr) -> anyhow::Result<OsString> {
+    let mut named = name.to_owned();
+    let pdf = Path::new(name)
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("pdf"));
+    if !pdf {
+        named.push(".pdf");
+    }
+    op::valid_file_name(&named)?;
+    Ok(named)
+}
+
+/// Save as PDF's plan for `request`: a step making each file's PDF beside
+/// it (or in `dest`), one of them all with `together`; a contact sheet's
+/// beside its first file, a listing's in the folder listed, else the one
+/// the place is of, else Documents (`listing_folder`); the one PDF named
+/// `name` where it is given.
+fn plan_of(app: &App, request: &Request, saving: &Saving<'_>) -> anyhow::Result<Plan> {
+    let Saving {
+        dest,
+        name: given,
+        together,
+        smaller,
+        paper,
+    } = *saving;
     let booklet = request.booklet;
     let what = if booklet.is_some() { "booklet" } else { "PDF" };
     let folder_of = |path: &Path| -> anyhow::Result<PathBuf> {
@@ -855,11 +1051,18 @@ fn plan_of(
             } else {
                 entries.iter().map(|entry| vec![entry.clone()]).collect()
             };
+            anyhow::ensure!(
+                given.is_none() || groups.len() == 1,
+                "A name is a PDF's: these files make one each (`together` makes one of them all)"
+            );
             for group in groups {
                 let Some(first) = group.first() else { continue };
                 let (dest_dir, name) = (
                     folder_of(&first.path)?,
-                    pdf_name(&first.path, booklet.is_some()),
+                    given.map_or_else(
+                        || pdf_name(&first.path, booklet.is_some()),
+                        ToOwned::to_owned,
+                    ),
                 );
                 plan.push(step(
                     Of::Files {
@@ -884,27 +1087,27 @@ fn plan_of(
                     entries: entries.clone(),
                 },
                 folder_of(&first.path)?,
-                OsString::from("Contact sheet.pdf"),
+                given.map_or_else(|| OsString::from(SHEET), ToOwned::to_owned),
             ));
             plan
         }
         What::Listing(pane) => {
-            let folder = app
-                .pane_dir(*pane)
-                .context("Only a folder's listing is saved, in it: this one is of no folder")?;
-            let name = listing_name(&folder);
-            let mut plan = Plan::new(format!(
-                "save the listing of “{}” as PDF",
-                display_name(&folder)
-            ));
-            let dest_dir = dest.map_or_else(|| folder.clone(), Path::to_owned);
+            let (location, filter) = shown(app, *pane)?;
+            let named = listing_named(app, &location, filter.as_deref());
+            let dest_dir = match dest {
+                Some(dest) => dest.to_owned(),
+                None => listing_folder(app, &location)
+                    .context("There is no folder to save the listing in: choose one")?,
+            };
+            let mut plan = Plan::new(format!("save the listing of “{named}” as PDF"));
             plan.push(step(
                 Of::Listing {
                     pane: *pane,
-                    folder,
+                    location: location.clone(),
+                    named: named.clone(),
                 },
                 dest_dir,
-                name,
+                given.map_or_else(|| listing_name(&location, &named), ToOwned::to_owned),
             ));
             plan
         }
@@ -912,15 +1115,42 @@ fn plan_of(
     Ok(plan)
 }
 
-/// What the PDF of `folder`'s listing is named: after the folder, a
+/// What the PDF of `location`'s listing is named: after the folder, a
 /// folder without a name of its own (the root, a drive) after what it is,
-/// never its path.
-fn listing_name(folder: &Path) -> OsString {
-    let Some(named) = folder.file_name() else {
-        return OsString::from("Listing.pdf");
+/// never its path; any other place after its name (`named`), a separator
+/// a dash and control characters left out, else, a name this system
+/// refuses, after what it is. Cut to what a folder takes, as a copy's
+/// name is (`kept_name`).
+fn listing_name(location: &Location, named: &str) -> OsString {
+    let plain = || OsString::from("Listing.pdf");
+    let own = if let Some(folder) = location.path() {
+        let Some(own) = folder.file_name() else {
+            return plain();
+        };
+        own.to_owned()
+    } else {
+        let kept: String = named
+            .chars()
+            .filter(|c| !c.is_control())
+            .map(|c| {
+                if c == '/' || std::path::is_separator(c) {
+                    '-'
+                } else {
+                    c
+                }
+            })
+            .collect();
+        OsString::from(kept.trim())
     };
-    let mut name = named.to_owned();
-    name.push(" (listing).pdf");
+    if own.is_empty() {
+        return plain();
+    }
+    let mut pdf = own;
+    pdf.push(".pdf");
+    let name = op::clash::kept_name(&pdf, "listing", false, |_| false);
+    if op::valid_file_name(&name).is_err() {
+        return plain();
+    }
     name
 }
 
@@ -983,12 +1213,12 @@ pub enum Of {
     },
     /// A contact sheet of the pictures among these files.
     Sheet { entries: Vec<EntryRef> },
-    /// The listing a pane shows of `folder`, as it stands when made.
+    /// The listing a pane shows of `location` (a folder, a search, a
+    /// tag, the trash), as it stands when made; `named` as it was asked.
     Listing {
         pane: PaneId,
-        #[serde(with = "skwir_core::os_path")]
-        #[schemars(with = "PathArg")]
-        folder: PathBuf,
+        location: Location,
+        named: String,
     },
 }
 
@@ -1001,14 +1231,15 @@ impl Of {
         }
     }
 
-    /// The path it is made from, first: its first file, the folder listed.
+    /// The path it is made from, first: its first file, the folder
+    /// listed; none for a place that is no folder.
     fn from(&self) -> PathBuf {
         match self {
             Of::Files { entries, .. } | Of::Sheet { entries } => entries
                 .first()
                 .map(|entry| entry.path.clone())
                 .unwrap_or_default(),
-            Of::Listing { folder, .. } => folder.clone(),
+            Of::Listing { location, .. } => location.path().unwrap_or_default(),
         }
     }
 }
@@ -1037,7 +1268,12 @@ impl op::Effect for MakePdf {
 
     fn footprint(&self, _: &op::footprint::Volumes) -> Option<op::footprint::Footprint> {
         let read = match &self.of {
-            Of::Listing { folder, .. } => op::footprint::Footprint::default().read(folder),
+            Of::Listing { location, .. } => match location.path() {
+                Some(folder) => op::footprint::Footprint::default().read(&folder),
+                // Its files' metadata, where the pane has not read it: as
+                // a search reads them, nothing held.
+                None => op::footprint::Footprint::default(),
+            },
             of => of
                 .entries()
                 .iter()
@@ -1058,7 +1294,7 @@ impl op::Effect for MakePdf {
                 _ => format!("“{}”", display_name(&self.of.from())),
             },
             Of::Sheet { entries } => format!("a contact sheet of {} files", entries.len()),
-            Of::Listing { folder, .. } => format!("the listing of “{}”", display_name(folder)),
+            Of::Listing { named, .. } => format!("the listing of “{named}”"),
         };
         let pdf = display_name(&self.target());
         Change::Create {
@@ -1084,10 +1320,11 @@ impl op::Effect for MakePdf {
                 return conflict(error.to_string());
             }
         }
-        if let Of::Listing { folder, .. } = &self.of
-            && !ctx.is_folder(folder)
+        if let Of::Listing { location, .. } = &self.of
+            && let Some(folder) = location.path()
+            && !ctx.is_folder(&folder)
         {
-            return conflict(format!("“{}” is not a folder", display_name(folder)));
+            return conflict(format!("“{}” is not a folder", display_name(&folder)));
         }
         if !ctx.is_folder(&self.dest_dir) {
             return conflict(format!(
@@ -1114,7 +1351,7 @@ impl op::Effect for MakePdf {
 
     fn makes(&self, _: &StepContext) -> Option<Made> {
         let inputs = match &self.of {
-            Of::Listing { folder, .. } => vec![folder.clone()],
+            Of::Listing { location, .. } => location.path().into_iter().collect(),
             of => of
                 .entries()
                 .iter()
@@ -1160,19 +1397,18 @@ impl op::Effect for MakePdf {
                 },
             ),
             Of::Sheet { entries } => Make::Sheet(entries.clone()),
-            Of::Listing { pane, folder } => {
-                // The pane's listing: it must show that folder still.
+            Of::Listing {
+                pane,
+                location,
+                named,
+            } => {
+                // The pane's listing: it must show that place still.
                 anyhow::ensure!(
-                    app.pane_dir(*pane).is_ok_and(|shown| shown == *folder),
-                    "“{}” is no longer shown, so its listing is not known",
-                    display_name(folder)
+                    app.pane_location(*pane).as_ref() == Some(location),
+                    "“{named}” is no longer shown, so its listing is not known",
                 );
-                let (pane, weak, token) = (*pane, app.weak(), cancel.clone());
-                let (title, table) = in_lane(&app, folder, "print-listing", cancel, move || {
-                    let app = weak.upgrade().context("Skwir is closing")?;
-                    listing::listing(&app, pane, &token)
-                })?;
-                Make::Listing(title, table)
+                // Read in its files' lanes, from this thread.
+                Make::Listing(listing::listing(&app, *pane, cancel)?)
             }
         };
         let title = match &self.of {
@@ -1202,7 +1438,8 @@ impl op::Effect for MakePdf {
         let (weak, token, at) = (app.weak(), cancel.clone(), work.path().to_owned());
         let smaller = self.smaller;
         let (gauge, inputs) = (ctx.gauge(), self.of.entries().to_vec());
-        let ready = in_lane(&app, &self.of.from(), "print-save", cancel, move || {
+        let lane = skwir_core::fs::reach::lane(&self.of.from());
+        let ready = in_lane(&app, lane, "print-save", cancel, move || {
             let app = weak.upgrade().context("Skwir is closing")?;
             // What it is made of announced, read here in its lane, so the
             // window shows it being made, with Cancel: one PDF is one step,
@@ -1372,15 +1609,31 @@ mod tests {
     }
 
     /// A listing's PDF is named after its folder; the root's, which has no
-    /// name, after what it is, a name a file can have.
+    /// name, after what it is, a name a file can have; any other place's
+    /// after its name, what no name holds left out.
     #[test]
     fn a_listing_is_named_after_its_folder_never_its_path() {
+        let folder = |path: &str| Location::from_path(Path::new(path));
         assert_eq!(
-            listing_name(Path::new("/example/letters")),
+            listing_name(&folder("/example/letters"), "letters"),
             "letters (listing).pdf"
         );
-        let root = listing_name(Path::new("/"));
+        let root = listing_name(&folder("/"), "/");
         assert_eq!(root, "Listing.pdf");
         assert!(op::valid_file_name(&root).is_ok());
+        let place = Location::new("query", "report in:/example/Papers");
+        assert_eq!(
+            listing_name(&place, "report in Papers"),
+            "report in Papers (listing).pdf"
+        );
+        let tag = Location::new("tags", "/Places/France");
+        let named = listing_name(&tag, "Places/France, filtered by kind:image");
+        assert_eq!(named, "Places-France, filtered by kind:image (listing).pdf");
+        assert!(op::valid_file_name(&named).is_ok());
+        assert_eq!(listing_name(&tag, " / "), "- (listing).pdf");
+        assert_eq!(listing_name(&tag, "two\nlines"), "twolines (listing).pdf");
+        let long = listing_name(&tag, &"x".repeat(300));
+        assert!(long.len() <= 255, "{}", long.len());
+        assert!(long.to_string_lossy().ends_with("x (listing).pdf"));
     }
 }

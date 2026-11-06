@@ -2,8 +2,9 @@
 //! PDF of what a file's preview shows (a Markdown document's reading view,
 //! a source file's code, a picture, a drawing), the pages chosen kept and
 //! no other, beside the file, and its undo takes it to the trash; a
-//! booklet, a contact sheet, a folder's listing. Print… asks Skwir's own
-//! dialog first, answered here as the window would. The print helper is a
+//! booklet, a contact sheet, a folder's listing, a search's and the
+//! trash's. Print… asks Skwir's own dialog first, answered here as the
+//! window would, saying where a PDF goes. The print helper is a
 //! default member, built with the tests; without it the test says so and
 //! passes, unless `SKWIR_REQUIRE_WORKERS` is set.
 use std::path::{Path, PathBuf};
@@ -40,6 +41,11 @@ fn helper() -> Option<PathBuf> {
 }
 
 fn app(root: &Path) -> Option<Arc<App>> {
+    with(root, Vec::new())
+}
+
+/// The app with the print plugin, the Markdown preview and `more`.
+fn with(root: &Path, more: Vec<Arc<dyn Plugin>>) -> Option<Arc<App>> {
     let helper = helper()?;
     // Tests in this binary run in processes of their own under nextest:
     // the variable cannot leak into another test.
@@ -57,7 +63,10 @@ fn app(root: &Path) -> Option<Arc<App>> {
     for plugin in [
         Arc::new(skwir_plugin_markdown::PreviewPlugin) as Arc<dyn Plugin>,
         Arc::new(skwir_plugin_print::PrintPlugin),
-    ] {
+    ]
+    .into_iter()
+    .chain(more)
+    {
         app.plugins.add(plugin, &app);
     }
     Some(app)
@@ -621,10 +630,26 @@ fn print_asks_skwir_s_dialog_and_saves_the_pdf_it_chose() {
     assert_eq!(
         keys,
         [
-            "to", "pages", "ranges", "layout", "per_side", "fold", "trim", "paper", "smaller"
+            "to",
+            "dest",
+            "name",
+            "name_booklet",
+            "pages",
+            "ranges",
+            "layout",
+            "per_side",
+            "fold",
+            "trim",
+            "paper",
+            "smaller"
         ]
     );
-    let pages_offered: Vec<&str> = asked.form.fields[1]
+    // A PDF goes beside the file unless another folder is chosen: said.
+    let dest = field(&asked, "dest");
+    assert_eq!(dest.value, skwir_core::os_path::from_home(&dir));
+    assert_eq!(dest.choices()[0].detail, "Beside it");
+    assert_eq!(field(&asked, "name").value, "main.pdf");
+    let pages_offered: Vec<&str> = field(&asked, "pages")
         .choices()
         .iter()
         .map(|c| c.value.as_str())
@@ -645,7 +670,7 @@ fn print_asks_skwir_s_dialog_and_saves_the_pdf_it_chose() {
         "{:?}",
         again.form.error
     );
-    assert_eq!(again.form.fields[2].value, "5-2", "kept as typed");
+    assert_eq!(field(&again, "ranges").value, "5-2", "kept as typed");
     answer(
         &app,
         &again,
@@ -666,10 +691,242 @@ fn print_asks_skwir_s_dialog_and_saves_the_pdf_it_chose() {
     // The next dialog opens on a PDF; closed, nothing is done.
     app.dispatch(&print).unwrap();
     let next = form_asked(&app);
-    assert_eq!(next.form.fields[0].value, "pdf");
+    assert_eq!(field(&next, "to").value, "pdf");
     assert_eq!(
-        next.form.fields[1].value, "all",
+        field(&next, "pages").value,
+        "all",
         "pages are a document's own"
     );
     assert!(app.answer_form(next.id, None));
+}
+
+/// The field of `asked` named `key`.
+fn field<'a>(asked: &'a Asked, key: &str) -> &'a skwir_core::form::Field {
+    asked
+        .form
+        .fields
+        .iter()
+        .find(|field| field.key == key)
+        .unwrap_or_else(|| panic!("a field {key}"))
+}
+
+/// Wait until `path` is made and the executor rests, within a minute.
+fn made(app: &App, path: &Path) {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while !path.is_file() || app.executor.is_busy() {
+        assert!(Instant::now() < deadline, "{} was not made", path.display());
+        app.pump();
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// A search's listing is printed as any place's: Print Listing… asks the
+/// dialog, which says its PDF goes in the folder searched and takes
+/// another typed; its files are said with the folder each is in.
+#[test]
+fn a_search_s_listing_is_saved_where_the_dialog_says() {
+    let tmp = tempfile::tempdir().unwrap();
+    let Some(app) = with(
+        tmp.path(),
+        vec![Arc::new(skwir_plugin_query::QueryPlugin::default())],
+    ) else {
+        return;
+    };
+    app.set_window_shown();
+    let root = tmp.path().join("l'été notes");
+    let (one, two) = (root.join("one"), root.join("two words"));
+    std::fs::create_dir_all(&one).unwrap();
+    std::fs::create_dir_all(&two).unwrap();
+    std::fs::write(one.join("a report.txt"), "hello").unwrap();
+    std::fs::write(two.join("ünïcode report.md"), "# Title\n").unwrap();
+    std::fs::write(two.join("other.txt"), "not found").unwrap();
+    let pane = app.workspace.read().active_id();
+    app.dispatch(&Invocation::with_args(
+        "query.search",
+        &serde_json::json!({ "expr": "report", "root": root, "pane": pane }),
+    ))
+    .unwrap();
+    assert!(app.pump_until_complete(pane, Duration::from_secs(10)));
+    app.dispatch(
+        &Invocation::new("print.print")
+            .with("layout", "listing")
+            .with("pane", pane.0),
+    )
+    .unwrap();
+    let asked = form_asked(&app);
+    assert!(
+        asked.form.title.starts_with("Print the listing of “report"),
+        "{}",
+        asked.form.title
+    );
+    let dest = field(&asked, "dest");
+    assert_eq!(dest.value, skwir_core::os_path::from_home(&root));
+    assert_eq!(dest.choices()[0].detail, "The folder it is of");
+    assert_eq!(
+        field(&asked, "name").value,
+        "report in l'été notes (listing).pdf"
+    );
+    // A folder typed that is none is asked again; one that is, taken.
+    answer(&app, &asked, &[("to", "pdf"), ("dest", "/nowhere/at all")]);
+    let again = form_asked(&app);
+    assert!(
+        again
+            .form
+            .error
+            .as_deref()
+            .is_some_and(|error| error.starts_with("Save in")),
+        "{:?}",
+        again.form.error
+    );
+    let elsewhere = tmp.path().join("kept here");
+    std::fs::create_dir(&elsewhere).unwrap();
+    answer(
+        &app,
+        &again,
+        &[
+            ("to", "pdf"),
+            ("dest", &elsewhere.to_string_lossy()),
+            ("name", "rapports d'été"),
+        ],
+    );
+    let saved = std::fs::read_dir(&elsewhere)
+        .ok()
+        .and_then(|mut read| read.next());
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let mut saved = saved;
+    while saved.is_none() || app.executor.is_busy() {
+        assert!(Instant::now() < deadline, "no listing was saved");
+        app.pump();
+        std::thread::sleep(Duration::from_millis(20));
+        saved = std::fs::read_dir(&elsewhere).unwrap().next();
+    }
+    let pdf = saved.unwrap().unwrap().path();
+    assert_eq!(pdf, elsewhere.join("rapports d'été.pdf"), "named as typed");
+    assert_eq!(pages(&pdf), 1);
+    if let Some(text) = text(&pdf) {
+        assert!(text.contains("Folder"), "{text}");
+        assert!(text.contains("a report.txt"), "{text}");
+        assert!(!text.contains("other.txt"), "{text}");
+    }
+    // The next dialog opens on the folder chosen.
+    app.dispatch(
+        &Invocation::new("print.print")
+            .with("layout", "listing")
+            .with("pane", pane.0),
+    )
+    .unwrap();
+    let next = form_asked(&app);
+    assert_eq!(
+        field(&next, "dest").value,
+        skwir_core::os_path::from_home(&elsewhere)
+    );
+    assert!(app.answer_form(next.id, None));
+}
+
+/// The trash's listing, filtered, is saved where a script says: its
+/// files with where each was put there from and when.
+#[test]
+fn the_trash_s_listing_is_saved_where_a_script_says() {
+    // A trash of the user's files' volume, never a tmpfs's.
+    let tmp = common::home_tempdir();
+    let Some(app) = with(
+        tmp.path(),
+        vec![
+            Arc::new(skwir_plugin_ops_basic::OpsBasicPlugin::default()),
+            Arc::new(skwir_plugin_trash::TrashPlugin::default()),
+        ],
+    ) else {
+        return;
+    };
+    let root = tmp.path().join("it's a folder");
+    std::fs::create_dir_all(&root).unwrap();
+    // A name of its own: the tests share one trash.
+    let mark = tmp
+        .path()
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    let name = format!("{mark} ünïcode.txt");
+    std::fs::write(root.join(&name), "hello").unwrap();
+    let Outcome::Plan(plan) = app
+        .dispatch(&Invocation::new("trash").with("entries", named(&root.join(&name))))
+        .unwrap()
+    else {
+        panic!("a plan that trashes it");
+    };
+    let trashed = app.executor.execute_blocking(&plan, app.lifetime());
+    assert!(trashed.error.is_none(), "{:?}", trashed.error);
+    let pane = app.workspace.read().active_id();
+    app.navigate(pane, &skwir_core::location::Location::parse("trash:"))
+        .unwrap();
+    app.dispatch(&Invocation::with_args(
+        "filter",
+        &serde_json::json!({ "text": mark, "pane": pane }),
+    ))
+    .unwrap();
+    // Every volume's trash streams in: what is ours is waited for.
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        app.pump();
+        let shown = {
+            let ws = app.workspace.read();
+            let p = ws.pane(pane).unwrap();
+            p.order()
+                .iter()
+                .filter_map(|id| p.entry(*id))
+                .any(|entry| entry.name_str() == name.as_str())
+        };
+        if shown {
+            break;
+        }
+        assert!(Instant::now() < deadline, "the trash lists {name}");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let out = tmp.path().join("listings");
+    std::fs::create_dir(&out).unwrap();
+    let Outcome::Plan(plan) = app
+        .dispatch(
+            &Invocation::new("print.save_pdf")
+                .with("layout", "listing")
+                .with("pane", pane.0)
+                .with("dest", out.to_string_lossy()),
+        )
+        .unwrap()
+    else {
+        panic!("Save as PDF makes a plan");
+    };
+    let listing = out.join(format!("Trash, filtered by {mark} (listing).pdf"));
+    let result = app.executor.execute_blocking(&plan, app.lifetime());
+    assert!(result.error.is_none(), "{:?}", result.error);
+    made(&app, &listing);
+    assert_eq!(pages(&listing), 1);
+    if let Some(text) = text(&listing) {
+        assert!(text.contains("Deleted"), "{text}");
+        assert!(text.contains(&mark), "{text}");
+    }
+    // A script names the PDF.
+    let Outcome::Plan(plan) = app
+        .dispatch(
+            &Invocation::new("print.save_pdf")
+                .with("layout", "listing")
+                .with("pane", pane.0)
+                .with("dest", out.to_string_lossy())
+                .with("name", "deleted"),
+        )
+        .unwrap()
+    else {
+        panic!("Save as PDF makes a plan");
+    };
+    let result = app.executor.execute_blocking(&plan, app.lifetime());
+    assert!(result.error.is_none(), "{:?}", result.error);
+    made(&app, &out.join("deleted.pdf"));
+    // A script's folder is a whole path.
+    let relative = app.dispatch(
+        &Invocation::new("print.save_pdf")
+            .with("layout", "listing")
+            .with("pane", pane.0)
+            .with("dest", "listings"),
+    );
+    assert!(relative.is_err());
 }

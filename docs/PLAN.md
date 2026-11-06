@@ -1003,6 +1003,12 @@ progress, fixed the same night):
   through GTK's); KDE's portal, the user's, was not tried with P5. The
   pages of a file that is not a PDF (a text, a Markdown document) are
   not counted before the dialog asks, so its booklet pictures say `n`.
+  Since 2026-11-06 (any place's listing, Save in): a folder typed in Save
+  in is not completed as the address field completes one (forms have no
+  such field); the Recent, shelf and tag listings were tested through a
+  stand-in place and the trash's and a search's through their plugins,
+  none printed in a window; Documents is read from the user's folders
+  each time the dialog opens.
   The preview's menu shows no key beside Print… (Ctrl+P there).
 - macOS's print panel and Windows' print dialog are compiled only;
   Windows' printing and the two new helpers were not run under Wine.

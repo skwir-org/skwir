@@ -12006,3 +12006,91 @@ drag left the window and came back; the name lost outside the window.
   `show_hidden` and read the order at once (it waits for the order shown
   now, as does its Windows twin, which is not compiled here); rerun, it
   passed.
+
+## Print Listing… anywhere, where a PDF goes said (ADR-111 revised, 2026-11-06)
+
+- **Asked for:** Print Listing… in any place, not only folders (a
+  search, a filter, tags, the trash); for a place that is no folder, its
+  PDF in its folder, else Documents, said in the dialog when PDF is
+  chosen and changeable, for any PDF saved.
+- **Built:** the listing's `when` is `empty` (the menu, Ctrl+P). The
+  listing (`listing.rs`) is titled by the folder's path or the
+  location's name, with the filter's words; its columns are the list's,
+  asked of the provider (Folder where not a folder nor `one_folder`,
+  the trash's `TRASHED_FROM`; Deleted where `Verbs::restore`); a place
+  listed says its kind and count. What the pane has not read is read
+  per lane (`fs::reach::by_lane`), the listing no longer made inside one
+  folder's lane. `Of::Listing { pane, location, named }` replaces
+  `folder`; a place's PDF is named after its name (`op::clash::
+  kept_name`). Its folder: the one listed, else the trail's `base` or
+  first folder crumb, else Documents, else home. The dialog's Save in
+  (`dialog::Saved`, an open choice shown with PDF) opens on where it
+  goes by itself, offers the folder chosen last, the other pane's and
+  Documents, takes one typed (a whole path or from `~`), checks it is a
+  folder in its lane within 400 ms, and keeps a folder chosen with the
+  dialog's other choices; "To" says "PDF". `print.save_pdf`'s `dest`
+  must be a whole path.
+  The window's open choice (`form.rs`, `shown_of`) lists every choice
+  while its text is the value it was given or chosen, narrowing once
+  something else is typed: it showed only the one it held.
+- **Seen** in the debug build on Xvfb :95 (fixture under
+  `~/.cache/skwir-tests`, its own XDG folders, a `user-dirs.dirs`
+  naming Documents): a search for `report` below `l'été papers` offers
+  Print Listing… (Ctrl+P) in its background menu; the dialog is titled
+  "Print the listing of “report in l'été papers”"; PDF shows Save in on
+  `~/l'été papers`, unfolded offering it ("The folder it is of") and
+  Documents (before the `form.rs` fix, the first alone); Documents
+  chosen and saved made `~/Documents/report in l'été papers
+  (listing).pdf`, its toast with Undo, `pdftotext` reading the Folder
+  column (`~/l'été papers/one`).
+- **Checked:** unit tests (a folder's listing filtered, a stand-in
+  place of files from two folders that restores them: Folder, Deleted,
+  read where it listed no metadata, a place's kind and count; the
+  dialog's Save in: offered, read, typed from `~`, refused relative,
+  kept, printing keeping it; a place's PDF name); `crates/skwir/tests/
+  print.rs`: a search's listing through the dialog (Save in on the
+  folder searched, a folder that is none asked again, another typed,
+  the next dialog opening on it, `pdftotext` reading Folder and the
+  results only), the trash's filtered listing saved in the `dest` a
+  script gave (Deleted, the file's name), a relative `dest` refused;
+  `plugins_toggle`; `cargo clippy -p skwir-plugin-print -p skwir-ui
+  -p skwir --all-targets -D warnings`; nextest of the print plugin, the
+  print tests and skwir-ui's form tests (26 and 14 passed). Not
+  checked: `just release-check`, the whole suite, a tag's, Recent's or
+  the shelf's listing in a window, a remote's files in a listing,
+  printing to a printer, macOS and Windows (not compiled:
+  `check-cross` not run).
+
+## Save in takes what is typed, a PDF's name (ADR-111 revised, 2026-11-06)
+
+- **Asked for:** `~/` typed in Save in saved in the folder first
+  offered, not home; and the PDF's name changeable.
+- **Cause:** Enter in an open choice chose its list's highlighted row,
+  always one (the first), and `~/` matches every folder offered.
+- **Built:** `form.rs`: `FormState::typed`, no row highlighted while
+  the list is of what was typed (`highlighted`); Enter then answers the
+  form with the text, Down or Up go into the list, a click chooses,
+  Escape and unfolding reset it. The print dialog: Name fields per
+  layout (`name`, `name_booklet`, `name_sheet`, `dialog::Named`), shown
+  with their layout and with PDF, of one PDF only; `typed_name` and
+  `pdf_named` (`.pdf` added, a separator refused, `valid_file_name`);
+  `Chosen::name`; `plan_of` takes a `Saving` (dest, name, together,
+  smaller, paper); `print.save_pdf`'s `name`.
+- **Seen** in the debug build on Xvfb :95 (fixture under
+  `~/.cache/skwir-tests`): the dialog of a search's listing shows Name
+  "report in l'été papers (listing).pdf"; `~/` typed in Save in lists
+  both folders with none highlighted, Enter saved
+  `~/report in l'été papers (listing).pdf`; the next dialog opened on
+  `~/`; `~/Doc` and Down highlighted Documents, Enter put `~/Documents`
+  in the field and folded the list, "ma liste" typed in Name and Enter
+  saved `~/Documents/ma liste.pdf`.
+- **Checked:** a dialog test (each layout's name, shown with it, read,
+  `.pdf` added, a separator refused, a PDF each unnamed, a contact
+  sheet's of several); `crates/skwir/tests/print.rs` (Name opening on
+  the file's and the listing's, a listing saved as typed, a script's
+  `name`); `cargo clippy -p skwir-ui -p skwir-plugin-print -p skwir
+  --tests -D warnings`; nextest of the print plugin (15) and the print
+  tests (12), skwir-ui's form, modal and picker tests (16; none drives
+  a form's keys). Not checked: `just release-check`, the whole suite, a
+  screen reader with no row highlighted, macOS and Windows.
+

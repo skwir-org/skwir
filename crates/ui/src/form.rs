@@ -72,6 +72,11 @@ pub struct FormState {
     open: Option<usize>,
     /// The highlight in the unfolded choice's list (a pick keeps its own).
     picker: Picker,
+    /// The unfolded list is of what was typed in a choice that takes any
+    /// text: no row is highlighted, Enter takes the text as typed, and the
+    /// arrows go into the list. Typing `~/` in a field of folders saves
+    /// there, never in the first folder offered that matches it.
+    typed: bool,
     /// Why the answer was refused (a field needed is empty).
     refusal: Option<String>,
     back_focus: FocusHandle,
@@ -189,15 +194,18 @@ impl FormState {
 
     /// The choices field `at` lists, as indices of its choices: a pick's
     /// those its filter leaves, a choice's those that match what is typed
-    /// in it.
+    /// in it. A choice that may take any text holds its value as text: as
+    /// given or chosen, nothing typed since, it lists every choice, so
+    /// that unfolding it offers the others.
     fn shown_of(&self, at: usize, cx: &gpui::App) -> Option<Vec<usize>> {
         let field = self.form.fields.get(at)?;
         match self.controls.get(at)? {
             Control::Pick { shown, .. } => Some(shown.clone()),
-            Control::Choice { input, .. } => {
+            Control::Choice { input, value, .. } => {
                 let typed = input
                     .as_ref()
                     .map(|input| input.read(cx).text().to_owned())
+                    .filter(|typed| typed != value)
                     .unwrap_or_default();
                 Some(matching(choices(field), &typed))
             }
@@ -218,6 +226,15 @@ impl FormState {
         match self.controls.get(at) {
             Some(Control::Pick { picker, .. }) => *picker,
             _ => self.picker,
+        }
+    }
+
+    /// The row of field `at`'s list Enter chooses: none while it lists
+    /// what was typed in a choice that takes any text (`typed`).
+    fn highlighted(&self, at: usize) -> Option<usize> {
+        match self.controls.get(at) {
+            Some(Control::Pick { picker, .. }) => Some(picker.highlighted),
+            _ => (!self.typed).then_some(self.picker.highlighted),
         }
     }
 }
@@ -335,6 +352,7 @@ impl Shell {
             more_focus: cx.focus_handle(),
             open: None,
             picker: Picker::default(),
+            typed: false,
             back_focus: cx.focus_handle(),
             cancel_focus: cx.focus_handle(),
             accept_focus: cx.focus_handle(),
@@ -410,6 +428,7 @@ impl Shell {
             Some(Control::Choice { input: Some(_), .. }) => {
                 form.open = Some(at);
                 form.picker = Picker::default();
+                form.typed = true;
             }
             _ => {}
         }
@@ -417,9 +436,10 @@ impl Shell {
     }
 
     /// Enter: in a field whose list is shown, its highlighted choice;
-    /// elsewhere, the form's answer.
+    /// elsewhere, or with none highlighted (what was typed in a choice
+    /// that takes any text), the form's answer.
     fn form_enter(&mut self, at: Option<usize>, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(form) = self.form.as_ref() else {
+        let Some(form) = self.form.as_mut() else {
             return;
         };
         if form.form.waiting.is_some() {
@@ -428,8 +448,12 @@ impl Shell {
         if let (Some(at), Some(open)) = (at, form.open)
             && at == open
         {
-            self.form_choose(None, window, cx);
-            return;
+            if form.highlighted(at).is_some() {
+                self.form_choose(None, window, cx);
+                return;
+            }
+            form.open = None;
+            form.typed = false;
         }
         self.form_answer(false, window, cx);
     }
@@ -452,11 +476,11 @@ impl Shell {
         let Some(shown) = form.shown_of(at, cx) else {
             return;
         };
-        let picker = form.picker_of(at);
         if let Some((_, row)) = clicked {
-            picker.highlighted = row;
+            form.picker_of(at).highlighted = row;
+            form.typed = false;
         }
-        let Some(&chosen) = shown.get(picker.highlighted) else {
+        let Some(&chosen) = form.highlighted(at).and_then(|row| shown.get(row)) else {
             return;
         };
         let Some(field) = form.form.fields.get(at) else {
@@ -485,6 +509,7 @@ impl Shell {
             _ => {}
         }
         form.open = None;
+        form.typed = false;
         form.refusal = None;
         cx.notify();
     }
@@ -494,6 +519,7 @@ impl Shell {
         let Some(form) = self.form.as_mut() else {
             return;
         };
+        form.typed = false;
         if form.open == Some(at) {
             form.open = None;
         } else {
@@ -548,7 +574,21 @@ impl Shell {
         let Some(shown) = form.shown_of(at, cx) else {
             return false;
         };
-        form.picker_of(at).go(mv, shown.len());
+        if form.highlighted(at).is_none() {
+            // From what was typed into the list: Down to its first row,
+            // Up to its last; nothing to go to when nothing matches.
+            if shown.is_empty() {
+                return true;
+            }
+            form.typed = false;
+            let into = match mv {
+                ListMove::By(delta) | ListMove::Page(delta) if delta < 0 => ListMove::Last,
+                _ => ListMove::First,
+            };
+            form.picker_of(at).go(into, shown.len());
+        } else {
+            form.picker_of(at).go(mv, shown.len());
+        }
         cx.notify();
         true
     }
@@ -584,6 +624,7 @@ impl Shell {
         if let (Some(form), Some(_)) = (self.form.as_mut(), open) {
             // Escape folds a list first.
             form.open = None;
+            form.typed = false;
             cx.notify();
             return;
         }
@@ -1146,6 +1187,7 @@ fn choice_list(
     let all = choices(field);
     let shown = state.shown_of(at, cx).unwrap_or_default();
     let picker = state.highlight_of(at);
+    let chosen_row = state.highlighted(at);
     let field_focus = match state.controls.get(at) {
         Some(
             Control::Pick { input, .. }
@@ -1203,7 +1245,7 @@ fn choice_list(
                     .child(choice.section.clone()),
             );
         }
-        let highlighted = row == picker.highlighted;
+        let highlighted = chosen_row == Some(row);
         let named = shell
             .a11y
             .then(|| SharedString::from(choice.shown().to_owned()));

@@ -249,3 +249,76 @@ ended (2)").
   KDE's, where it is `lpr`'s refusal; any other code is not taken. A 2
   from `PreparePrint`, the dialog, is still an error. What reaches paper
   is the printing system's to say, as it was: "Sent" means handed to it.
+
+## Revision (2026-11-06): any place's listing, where a PDF goes said
+
+The user asked for Print Listing… in any place, not only folders (a
+search, a filtered folder, a tag, the trash), and, for where such a
+listing's PDF goes, its folder, else Documents, said in the dialog and
+changeable, for every PDF saved.
+
+- **Offered wherever nothing is selected** (`when` `empty`, the menu and
+  Ctrl+P), any location's listing printed as the pane shows it
+  (`Pane::order`: its filter and lens applied, the folders opened in
+  place indented). A filtered folder printed already; its title now says
+  its filter's words. The title is a folder's path, else the location's
+  name (`App::location_title`: "Trash", "report in Papers", the tag).
+- **The list's columns, asked of the provider, never of its scheme**:
+  Folder where files come from many folders (not a folder, nor a place
+  of one folder's files, `Trail::one_folder`), the trash's from where it
+  was put there from (`keys::TRASHED_FROM`); Deleted where the place
+  restores (`Verbs::restore`, `keys::TRASHED`). A place listed says its
+  kind (`keys::PLACE_KIND`) and how many files it holds (`keys::FILES`).
+- **What the pane has not read is read in each file's lane**
+  (`fs::reach::by_lane`), a job of that lane per remote: a tag's or
+  Recent's files may be on several servers. The listing is no longer
+  made in one folder's lane: its rows are copied under the workspace's
+  lock and the PDF made of the table reads no file.
+- **Save as PDF's step names a location** (`Of::Listing { pane,
+  location, named }`, `folder` gone), applied while the pane still shows
+  it. A listing's PDF is named after the folder, else after the place's
+  name, a separator a dash, cut to what a folder takes
+  (`op::clash::kept_name`), "Listing.pdf" where this system refuses it.
+- **Where it goes**: the folder listed; else the folder the place is of
+  (its trail's `base`: a search's folder, a tag's; else the first of its
+  crumbs that is a folder); else the user's Documents
+  (`skwir_platform::places::user_dirs`), else home.
+- **Save in, in the dialog, for every PDF** (`dialog::Saved`): an open
+  choice shown when PDF is chosen, opening on where it goes by itself
+  (beside the file, beside them, "Beside each file" for files of several
+  folders, the folder of a listing, said under it), then the folder
+  chosen last, the other pane's, Documents, each once; any other typed,
+  a whole path or from `~`, checked as a folder in its lane within
+  400 ms (one on a server that answers slowly is taken as typed, the
+  plan checking it again). "To" says "PDF", no longer "PDF beside it". A
+  folder chosen is kept with the dialog's other choices until Skwir
+  quits (printing in between keeps it); the first choice taken again is
+  no folder kept. `print.save_pdf`'s `dest` must be a whole path. The
+  window's open choice (`crates/ui/src/form.rs`, `shown_of`) listed only
+  the choices matching the text it held, so a field opening on a value
+  offered that value alone: it now lists every choice while its text is
+  the value given or chosen, and narrows once something else is typed.
+- **Enter takes what was typed** (the user, the same day: `~/` typed
+  saved in the folder first offered). Enter in an open choice chose its
+  list's highlighted row, and the highlight was always on one, so `~/`,
+  which every folder offered matches, became the first of them. While
+  the list is of what was typed (`FormState::typed`) no row is
+  highlighted: Enter answers the form with the text; Down goes into the
+  list at its first row, Up at its last, and Enter then chooses; a click
+  chooses.
+- **Name, for one PDF** (the user, the same day): a text field after
+  Save in, one for each layout (as shown and a listing `name`, a
+  booklet's `name_booklet`, a contact sheet's `name_sheet`), each shown
+  with its layout and opening on what it names it (`dialog::Named`:
+  `notes.pdf`, `notes (booklet).pdf`, `Contact sheet.pdf`, a listing's),
+  so the name follows the layout chosen; of several files only as one
+  PDF. Never kept: a name is a document's own, as its pages are. Typed,
+  `.pdf` is added where it has no such ending (`pdf_named`); one with a
+  separator is refused (the folder is Save in's). `print.save_pdf` takes
+  `name`, refused for several files saved a PDF each. A name taken in
+  the folder is kept beside, numbered, as before.
+- **Rejected**: a folder chooser of the system's (a portal's), for a
+  file manager that shows folders itself; a setting for PDFs' folder,
+  the dialog's choice being kept as its others are. Left: a folder typed
+  in Save in is not completed as the address field completes one
+  (ADR-070), which no form's field does yet.
