@@ -125,12 +125,14 @@ pub fn zoom_tools(bar: &mut Bar, shell: &Shell) {
 }
 
 /// Whether the bytes of what is shown can be viewed: the hexadecimal
-/// inspection provider is registered, and what is shown is a file here, not
-/// a member asked for that was never written out (too large, refused). The
-/// registry lock is taken only when its revision changed since the last
-/// read, never once per variant per frame.
+/// inspection provider is registered, and what is shown is a file here
+/// whose bytes are read (`PreviewState::shows_bytes`: not a folder, a
+/// special file nor a link that leads nowhere), not a member asked for that
+/// was never written out (too large, refused). The registry lock is taken
+/// only when its revision changed since the last read, never once per
+/// variant per frame.
 pub(crate) fn hex_available(shell: &Shell) -> bool {
-    if shell.preview.descend.is_some() {
+    if shell.preview.descend.is_some() || !shell.preview.shows_bytes() {
         return false;
     }
     let revision = shell.app.previews.revision();
@@ -166,13 +168,13 @@ fn caption(shell: &Shell) -> String {
             ..
         }) => format!("Video still · {width} × {height}"),
         Some(PreviewContent::Image { width, height, .. }) => format!("{width} × {height}"),
-        Some(PreviewContent::Dir { items, .. }) => crate::format::count(*items, "item"),
         Some(PreviewContent::Error(_)) => "Preview unavailable".into(),
         Some(PreviewContent::TooLarge(_)) => "Large file".into(),
         Some(PreviewContent::Generic) => "No preview".into(),
         // Only once the wait has lasted: a caption that flashes by is noise.
         None if shell.preview_busy() => "Loading…".into(),
-        None | Some(PreviewContent::Inspection(_)) => String::new(),
+        // A folder has no bar (`preview::controls`).
+        None | Some(PreviewContent::Inspection(_) | PreviewContent::Dir { .. }) => String::new(),
     }
 }
 

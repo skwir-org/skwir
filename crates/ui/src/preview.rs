@@ -1076,6 +1076,13 @@ impl PreviewState {
         self.key.as_ref()?.content.as_ref()
     }
 
+    /// Whether the entry shown is a file whose bytes are read: not a
+    /// folder, which is counted, nor what is never read
+    /// (`shown_content`). Only such a file is viewed as hex.
+    pub(crate) fn shows_bytes(&self) -> bool {
+        !self.info.is_dir && self.shown_content().is_some()
+    }
+
     /// A request for the file shown `depth` members deep (0 is the entry),
     /// as a provider would be asked about it.
     pub(crate) fn request_at(&self, depth: usize) -> Option<PreviewRequest> {
@@ -5172,7 +5179,11 @@ pub(crate) fn frame(shell: &Shell, interactive: bool) -> gpui::Stateful<gpui::Di
 
 /// The bar of what is shown, its kind's, with the loading line under it.
 /// A location named with nothing to preview (a search, the shelf, with
-/// nothing selected) has no tools.
+/// nothing selected) has no tools, nor has a folder: what it holds is
+/// counted in Properties, and what is done to it is the pane's menu's. So
+/// from the moment it is chosen, not once counted: a bar that said
+/// "Loading…" would go as the count came. A member keeps its bar, whose ×
+/// leads out of it.
 pub(crate) fn controls(
     shell: &Shell,
     theme: &Theme,
@@ -5180,6 +5191,9 @@ pub(crate) fn controls(
     cx: &mut Context<Shell>,
 ) -> Option<AnyElement> {
     if shell.preview.info.name.is_empty() || shell.preview.key.is_none() {
+        return None;
+    }
+    if shell.preview.info.is_dir && !shell.preview.inside() {
         return None;
     }
     let bar = match &shell.preview.content {

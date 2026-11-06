@@ -50,6 +50,10 @@
 - **Settings, the shortcuts overview and About close a menu left open** as
   they appear: drawn over them, it stayed over Settings, and a click inside
   the overview or About closed them instead.
+- **A folder's preview has no toolbar**: it said how many items the folder
+  holds, which Properties says above it, and its More held nothing the pane's
+  menu lacks but View as hex, which did nothing. View as hex is no longer
+  offered for a pipe, a socket, a device or a link that leads nowhere either.
 - **The player's seek bar** has a knob, and a drag that leaves the bar still
   moves it: let go anywhere, it seeks there.
 - **Sliders in Settings**: a setting judged as it changes can be a slider

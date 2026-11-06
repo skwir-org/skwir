@@ -2269,7 +2269,13 @@ impl Shell {
             // A track stepped to by the player says so after this.
             self.preview.autoplay = None;
         }
-        let hex = self.app.previews.bytes_view();
+        // Bytes only of a file that is read (the palette offers them for
+        // whatever is shown).
+        let hex = self
+            .app
+            .previews
+            .bytes_view()
+            .filter(|_| self.preview.shows_bytes());
         let state = &mut self.preview.inspection;
         let previous_query = state.request.query.take();
         // Whether Source changed for the file's type (`SourceTypes`).

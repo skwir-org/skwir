@@ -881,8 +881,9 @@ is still to come are in `docs/preview-frame.md`.
   preview: everything known that the header does not say (no Name or
   Type row).
   - With nothing to preview (a folder, an unknown file, an error) it is
-    always open, as tall as its content, the toolbar and the content's
-    message (why the preview failed) right under it. Not while a
+    always open, as tall as its content, the toolbar (a file's: a
+    folder has none) and the content's message (why the preview
+    failed) right under it. Not while a
     container's view is kept above the member (`properties::alone`): that
     view is content, so Properties stays as the card left it.
   - Over a preview it opens on demand, under the card, with at most its
@@ -1032,6 +1033,11 @@ is still to come are in `docs/preview-frame.md`.
   6. the × that leaves a member (`preview_bar::close_tool`), the same for
      every kind, also for a member that could not be written out, whose
      failure stands in its place (`PreviewState::inside`).
+- **A folder has no bar** (`preview::controls`): Properties counts what
+  it holds, and what is done to it is the pane's menu's (Open With…,
+  Copy Path). So from the moment it is chosen, not once it is counted:
+  a bar saying "Loading…" would go as the count came. A file with
+  nothing to show keeps its bar, for View as hex or Full preview.
 - An item states the narrowest of the three variants that still shows
   it (`keep`). Text and a page give way alike: a tool in the same place
   has the same `keep`.
@@ -1052,8 +1058,11 @@ is still to come are in `docs/preview-frame.md`.
   rare for a button in any variant (View as hex) is `Item::menu_only`,
   but where nothing else is shown of a file that can be read (a failure,
   a file without a preview: `preview_toolbar::shows_nothing`), View as
-  hex is a button: the one way left to look. A link that leads nowhere
-  and a special file have none.
+  hex is a button: the one way left to look. It is offered only for a
+  file whose bytes are read (`PreviewState::shows_bytes`, asked by the
+  bar and by `ui.inspect`'s `hex`, which the palette offers whatever is
+  shown): a folder, a link that leads nowhere and a special file have
+  none.
 - `zoom_tools` is the one zoom group, for a picture and a page alike;
   text's twin is the inspector's text size picker (`text_size_panel`, a
   popup of kind `text`).
