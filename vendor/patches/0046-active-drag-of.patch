@@ -1,0 +1,22 @@
+0046 active-drag-of: App::has_active_drag_of tells a drag by what it carries
+
+diff --git a/crates/gpui/src/app.rs b/crates/gpui/src/app.rs
+index a771971..559c55a 100644
+--- a/crates/gpui/src/app.rs
++++ b/crates/gpui/src/app.rs
+@@ -3070,6 +3070,15 @@ impl App {
+         self.active_drag.is_some()
+     }
+ 
++    /// Is a `T` being dragged: a value given to `on_drag`, or the
++    /// `ExternalPaths` the platform drags in? An element can answer only
++    /// the drags it takes, while those of other kinds pass it by.
++    pub fn has_active_drag_of<T: 'static>(&self) -> bool {
++        self.active_drag
++            .as_ref()
++            .is_some_and(|drag| drag.value.as_ref().type_id() == TypeId::of::<T>())
++    }
++
+     /// Gets the cursor style of the currently active drag operation.
+     pub fn active_drag_cursor_style(&self) -> Option<CursorStyle> {
+         self.active_drag.as_ref().and_then(|drag| drag.cursor_style)

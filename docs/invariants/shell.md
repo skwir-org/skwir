@@ -681,6 +681,17 @@ of bars, split or not.
   (`core.drop_asks`, `Shell::ask_drop`), the default highlighted for Enter
   (`dnd::drop_op`: ours move within a filesystem and copy across; other
   applications' copy).
+- **Only the destination is marked.** While files are dragged (from a
+  pane, or `ExternalPaths` from another application), a drop target
+  (`dnd::droppable_dir`, `droppable_place`, a sidebar place that takes
+  nothing) hides what is behind it from the pointer
+  (`dnd::marked_alone`, `block_mouse_except_scroll`): over a folder's
+  row, a column, a tab, a crumb or a place, that one is marked and takes
+  the drop, never the pane, the column or the sidebar holding it as
+  well; the wheel still scrolls them. Asked of the drag's payload
+  (`App::has_active_drag_of`, gpui patch 0046), never of any drag: an
+  edge resized, a tab or a place moved pass a target by, so their
+  release reaches what is behind it (`Shell::resize_hook`).
 - Each row runs the core command (`move`, `copy`, `link`) with `entries`,
   so it acts on what was dropped, not the selection by then.
 - Plugins add rows through the registry's `drop` menu (order 100–899;
@@ -1018,9 +1029,11 @@ of bars, split or not.
   tags first.
 - **Drops:** a place takes what its location takes (`Verbs::drop`); one
   that takes nothing (Recent, a search) swallows the drop, never
-  bookmarking it. A place dragged onto a file's row (`dnd::takes_gifts`)
-  gives that file, or the selection containing it, what it takes
-  (`takes_gift_for`).
+  bookmarking it. Under files dragged, the sidebar is marked only where a
+  drop bookmarks (beside the places), a place alone where it is the
+  destination (`dnd::marked_alone`). A place dragged onto a file's row
+  (`dnd::takes_gifts`) gives that file, or the selection containing it,
+  what it takes (`takes_gift_for`).
 - **Arrangement (ADR-034).** Groups are the user's (`sidebar::Sections`,
   part of the window's shape): click folds, drag moves, the sidebar's
   menu shows or hides each (`ui.sidebar_section`). A plugin names a

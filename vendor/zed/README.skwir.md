@@ -78,6 +78,7 @@ carry: the script takes it from the Inter release Skwir's packages pin
 | `0043-activate-with-token` | `Window::activate_window_with_token`: the window brought forward with the token the desktop gave (Wayland's xdg-activation, a notification clicked) | — |
 | `0044-should-quit` | `Application::on_should_quit`: macOS's `applicationShouldTerminate:` asks the application whether it may quit (Quit from the Dock, a log out, a restart) | — |
 | `0045-variable-font-weights` | A variable face is shaped, measured and drawn at the weight asked within its weight axis (Linux), a variable fallback at its run's | — (its tests need Inter's variable font in Zed's assets) |
+| `0046-active-drag-of` | `App::has_active_drag_of::<T>()`: whether the drag under way carries a `T` | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
 
@@ -754,6 +755,18 @@ To upstream it, Inter's variable font (SIL Open Font License) goes into
 `InterVariable.ttf`, which Zed does not carry and `just gpui-check` takes
 from the Inter release Skwir's packages pin. Zed carries no variable font
 of its own to test with.
+
+### 0046: Active drag of
+
+`App::has_active_drag` says only that something is dragged. A drop target
+nested in another (a folder's row in a pane, a place in the sidebar) hides
+what is behind it from the pointer while files are dragged, so that only
+the destination shows it takes them, not the area holding it as well. It
+must not while another kind of drag is under way: an edge resized, a tab or
+a place moved, whose release the area behind still hears.
+`App::has_active_drag_of::<T>()` tells a drag by the type of what it
+carries, as `drag_over::<T>` and `on_drop::<T>` already do inside gpui;
+`ExternalPaths` for what the platform drags in.
 
 ## Adding or changing a patch
 

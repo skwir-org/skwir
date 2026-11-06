@@ -778,13 +778,29 @@ pub fn draggable(el: Stateful<Div>, pane: PaneId, cx: &mut Context<Shell>) -> St
     })
 }
 
+/// While files are dragged, from a pane or from another application, a
+/// drop target hides what is behind it from the pointer
+/// (`block_mouse_except_scroll`): only the destination under the pointer
+/// is marked, never the area holding it as well (a pane, a column, the
+/// sidebar), whose own drop is its background's; the wheel still scrolls
+/// it. Other drags (an edge, a tab, a place moved) pass it by, so their
+/// release is heard behind it (gpui patch 0046).
+pub fn marked_alone<E: InteractiveElement>(el: E, cx: &gpui::App) -> E {
+    if cx.has_active_drag_of::<DragPayload>() || cx.has_active_drag_of::<ExternalPaths>() {
+        el.block_mouse_except_scroll()
+    } else {
+        el
+    }
+}
+
 /// Make an element a drop target into `dir`, for in-window drags and for
 /// compositor drags (from other applications, or our own that went external).
 pub fn droppable_dir<E: InteractiveElement>(el: E, dir: PathBuf, cx: &mut Context<Shell>) -> E {
     let theme = cx.global::<Theme>().clone();
     let (tint, edge) = (theme.drop_target, theme.accent);
     let dir2 = dir.clone();
-    el.drag_over::<DragPayload>(move |s, _, _, _| s.bg(tint).border_color(edge))
+    marked_alone(el, cx)
+        .drag_over::<DragPayload>(move |s, _, _, _| s.bg(tint).border_color(edge))
         .on_drop(cx.listener(move |this, payload: &DragPayload, window, cx| {
             this.drop_into(payload.pane, &dir, None, window, cx);
         }))
@@ -805,7 +821,8 @@ pub fn droppable_place<E: InteractiveElement>(
     let theme = cx.global::<Theme>().clone();
     let (tint, edge) = (theme.drop_target, theme.accent);
     let place2 = place.clone();
-    el.drag_over::<DragPayload>(move |s, _, _, _| s.bg(tint).border_color(edge))
+    marked_alone(el, cx)
+        .drag_over::<DragPayload>(move |s, _, _, _| s.bg(tint).border_color(edge))
         .on_drop(cx.listener(move |this, payload: &DragPayload, window, cx| {
             cx.stop_propagation();
             this.drop_on_place(payload.pane, &place, None, window, cx);

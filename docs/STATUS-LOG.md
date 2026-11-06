@@ -11677,3 +11677,32 @@ Plasma.
 - Not checked: blur (KWin's protocol, Hyprland's rules, macOS, Windows),
   and a desktop asking for more contrast with the settings below 100
   (the unit test covers it). The release checks were not run.
+
+## Activity pinned opaque, a drop's destination marked alone (2026-11-06)
+
+- **Activity pinned** above the footer paints `bg`, opaque, whatever the
+  files' opacity: it is its popover kept open (`toolbar::popup_panel`,
+  `bg`), read at a glance whatever is behind (the user's ask).
+- **Only the destination is marked** (the user's ask): files dragged over
+  a place in the sidebar tinted the whole sidebar as well, and over a
+  folder in the other pane the whole pane, as gpui counts an area under
+  the pointer while any element on it is. While files are dragged (a
+  pane's `DragPayload`, `ExternalPaths` from another application), a
+  drop target now hides what is behind it from the pointer
+  (`dnd::marked_alone`, `block_mouse_except_scroll`): a folder's row, a
+  column, a tab, a crumb, a place (one that takes nothing too). The
+  sidebar is marked only beside its places, where a drop bookmarks; a
+  pane only over what is no target, where a drop lands in its folder.
+  Other drags pass a target by: the root's release after an edge resized
+  (`Shell::resize_hook`) still reaches it. gpui says only whether a drag
+  is under way; patch 0046 adds `App::has_active_drag_of::<T>()`,
+  written by hand as an addition after 0045 and checked to apply to the
+  vendored tree before it and to reverse from it.
+- Checked on Xvfb, a debug build: a file dragged over Home marked Home
+  alone, over the sidebar below its places the whole sidebar, released
+  on its own row nothing done; split, a file from the left pane over the
+  right pane's Notes marked Notes alone, over its file 4.txt the whole
+  right pane; the sidebar's edge dragged and released over a folder's
+  row remembered its width (200 to 270.9 in `state.toml`). `cargo clippy
+  -p skwir-ui --all-targets -D warnings`, skwir-ui's tests (540). Not
+  run: `just gpui-check`, the release checks; Activity pinned not drawn.

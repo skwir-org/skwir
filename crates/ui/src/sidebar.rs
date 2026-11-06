@@ -1408,7 +1408,9 @@ fn rings_its_files(
 /// folder's drop target, any other's is its location's (`Verbs::drop`,
 /// `takes`: the Trash trashes, a tag gives its tag, the shelf shelves).
 /// One that takes nothing (Recent, a search) still swallows a drop, which
-/// would otherwise reach the column and be bookmarked.
+/// would otherwise reach the column and be bookmarked. Either way the
+/// column is not marked under it (`dnd::marked_alone`): what a drop
+/// there does is the place's.
 fn takes_drops(
     place: gpui::Stateful<gpui::Div>,
     location: &Location,
@@ -1421,7 +1423,7 @@ fn takes_drops(
     if takes {
         return crate::dnd::droppable_place(place, location.clone(), cx);
     }
-    place
+    crate::dnd::marked_alone(place, cx)
         .on_drop(cx.listener(|_, _: &DragPayload, _, cx| cx.stop_propagation()))
         .on_drop(cx.listener(|_, _: &ExternalPaths, _, cx| cx.stop_propagation()))
 }
