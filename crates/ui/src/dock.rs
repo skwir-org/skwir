@@ -423,6 +423,7 @@ fn transport(
             d.child(crate::media::seek_bar_of(
                 "dock-seek",
                 fraction,
+                pinned.scrub.is_some(),
                 shell.a11y.then_some((position, duration)),
                 theme,
                 scrub,

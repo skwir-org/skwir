@@ -186,6 +186,11 @@ binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
 - A film playing, in the panel or the dock, keeps the screen awake
   (`Shell::sync_awake`); music does not.
 - Pointer movement must not take focus from an open playback popup.
+- The seek bar, the panel's and the dock's, is the shared slider
+  (`media::seek_bar_of`, `controls::slider`): its knob follows a press,
+  then the pointer over the whole window while held, and the release,
+  wherever it is, seeks there (`media::scrub`). Its keys are the
+  player's (Left and Right seek), not its own.
 - A click on the picture (`media::clickable`: film, audio figure, fullscreen
   canvas) toggles playback. Overlays on the film, such as the controls bar,
   must occlude it, or a click on their buttons also plays or pauses.

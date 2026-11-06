@@ -5,6 +5,8 @@
 - **About**'s buttons stay on one line, the dialog as wide as they need: in
   0.3.1 Licences went to a line of its own. Licences now comes after Copy
   details, before Website and Source code, which open the browser.
+- **The player's seek bar** has a knob, and a drag that leaves the bar still
+  moves it: let go anywhere, it seeks there.
 
 ## 0.3.1 (2026-11-05)
 

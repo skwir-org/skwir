@@ -3,8 +3,7 @@ use crate::sizes::TextSizes;
 use crate::sizes::sized;
 use crate::{preview::PreviewContent, shell::Shell, theme::Theme, toolbar::Button};
 use gpui::{
-    AnimationExt, AnyElement, Bounds, Context, FocusHandle, MouseButton, Pixels, RenderImage,
-    Window, div, prelude::*, px,
+    AnimationExt, AnyElement, Context, FocusHandle, RenderImage, Window, div, prelude::*, px,
 };
 use skwir_core::media::{Control, Frame, MediaSession, Playback};
 use std::{cell::Cell, rc::Rc, sync::Arc, time::Duration};
@@ -993,34 +992,33 @@ fn control(
 /// a move or a release it never saw the press of.
 pub type Scrub = Rc<dyn Fn(&mut Shell, &str, f32, &mut Window, &mut Context<Shell>)>;
 
-/// A seek bar drawn at `fraction`, reporting presses, moves and releases
-/// through `scrub`. The same bar serves the panel's player and the dock's.
-/// To assistive technology it is a slider of the position in seconds,
-/// said as its time of the whole (`at`: position and duration, while a
-/// screen reader listens).
+/// A seek bar drawn at `fraction` (`controls::slider`), reporting presses,
+/// moves and releases through `scrub`, which ignores a move or a release
+/// without a press: `held` while a knob is dragged, followed then over the
+/// whole window. The same bar serves the panel's player and the dock's;
+/// their keys are the player's (Left and Right seek). To assistive
+/// technology it is a slider of the position in seconds, said as its time
+/// of the whole (`at`: position and duration, while a screen reader
+/// listens).
 pub(crate) fn seek_bar_of(
     id: &'static str,
     fraction: f32,
+    held: bool,
     at: Option<(f64, f64)>,
     theme: &Theme,
     scrub: Scrub,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
-    let bounds = Rc::new(Cell::new(Bounds::<Pixels>::default()));
-    let measured = bounds.clone();
-    let coordinate = |bounds: Bounds<Pixels>, x: Pixels| {
-        f32::from(x - bounds.origin.x) / f32::from(bounds.size.width).max(1.)
-    };
-    let phase = |name: &'static str| {
-        let (bounds, scrub) = (bounds.clone(), scrub.clone());
-        cx.listener(move |this, position: &gpui::Point<Pixels>, window, cx| {
-            scrub(this, name, coordinate(bounds.get(), position.x), window, cx);
-        })
-    };
-    let (down, moved, up, up_out) = (phase("down"), phase("move"), phase("up"), phase("up"));
-    div()
-        .id(id)
-        .role(gpui::Role::Slider)
+    use crate::controls::{Slid, Slide};
+    let slid = cx.listener(move |this, slid: &Slid, window, cx| {
+        let phase = match slid.slide {
+            Slide::Press => "down",
+            Slide::Drag => "move",
+            Slide::Release => "up",
+        };
+        scrub(this, phase, slid.at, window, cx);
+    });
+    crate::controls::slider(id, fraction, held, theme, Rc::new(slid))
         .aria_label("Position")
         .when_some(at, |d, (position, duration)| {
             d.aria_numeric_value(position)
@@ -1028,56 +1026,9 @@ pub(crate) fn seek_bar_of(
                 .aria_max_numeric_value(duration)
                 .aria_value(format!("{} of {}", time(position), time(duration)))
         })
-        .relative()
         .flex_1()
         .min_w(sized(40.))
         .h(sized(30.))
-        .cursor_pointer()
-        .child(
-            gpui::canvas(move |b, _, _| measured.set(b), |_, (), _, _| {})
-                .absolute()
-                .size_full(),
-        )
-        .child(
-            div()
-                .absolute()
-                .top(px(13.))
-                .h(px(4.))
-                .w_full()
-                .rounded_full()
-                .bg(theme.border),
-        )
-        .child(
-            div()
-                .absolute()
-                .top(px(13.))
-                .h(px(4.))
-                .w(gpui::relative(fraction))
-                .rounded_full()
-                .bg(theme.accent),
-        )
-        .on_mouse_down(
-            MouseButton::Left,
-            move |ev: &gpui::MouseDownEvent, window, cx| {
-                down(&ev.position, window, cx);
-                cx.stop_propagation();
-            },
-        )
-        .on_mouse_move(move |ev: &gpui::MouseMoveEvent, window, cx| {
-            moved(&ev.position, window, cx);
-        })
-        .on_mouse_up(
-            MouseButton::Left,
-            move |ev: &gpui::MouseUpEvent, window, cx| {
-                up(&ev.position, window, cx);
-            },
-        )
-        .on_mouse_up_out(
-            MouseButton::Left,
-            move |ev: &gpui::MouseUpEvent, window, cx| {
-                up_out(&ev.position, window, cx);
-            },
-        )
         .into_any_element()
 }
 
@@ -1107,7 +1058,8 @@ fn seek_bar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement
         });
     });
     let at = shell.a11y.then_some((position, duration));
-    seek_bar_of("video-seek", fraction, at, theme, scrub, cx)
+    let held = shell.preview.media.scrubbing();
+    seek_bar_of("video-seek", fraction, held, at, theme, scrub, cx)
 }
 
 pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
