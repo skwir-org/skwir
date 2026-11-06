@@ -1343,7 +1343,9 @@ pub fn tray(
             .flex_col()
             .border_t_1()
             .border_color(theme.border)
-            .bg(theme.window_bg())
+            // Opaque whatever the files' ground: Activity pinned is its
+            // popover kept open, read at a glance over any background.
+            .bg(theme.bg)
             .text_color(theme.text)
             .child(
                 div()

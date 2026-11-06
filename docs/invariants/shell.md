@@ -114,7 +114,7 @@ Views are in [views.md](views.md); what locations decide, in
 - **The window's grounds are painted once.** Nothing is painted under
   the window's areas: each paints its own ground, once, over nothing
   else of the window (`Theme::window_bg` for the files, the terminal, a
-  preview's paper, the files' Quick filters and pinned Activity;
+  preview's paper, the files' Quick filters;
   `window_surface` for the bars, the sidebar and its header, the tab
   strip, the timeline, the footer, the preview panel's bars, letterbox
   and dock), so that what is behind the window shows through them as
@@ -129,7 +129,8 @@ Views are in [views.md](views.md); what locations decide, in
   field, a card, a chip, a strip of a preview's content: its notice, a
   column header) and what is drawn over the window (menus, popovers,
   tooltips, toasts, dialogs, Peek, the whole screen) keeps `bg` and
-  `surface`, opaque. A part drawn both in the panel and over the window
+  `surface`, opaque; so does Activity pinned above the footer, its
+  popover kept open, read at a glance whatever is behind. A part drawn both in the panel and over the window
   (a preview's content area, Properties, a container's kept rows) is
   handed the grounds it paints (`theme::Grounds`). A bar a view draws in
   the files' area (Usage's, the Map's) tints the files' ground
