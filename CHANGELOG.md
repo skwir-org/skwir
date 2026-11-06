@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **The line between split panes snaps to the middle**: dragged within 12 px
+  of it, it goes there and stays until the pointer moves on, so the panes are
+  even again without a double click. The line between Properties and the
+  preview, and between an archive's view and the member it shows, does the
+  same where it started.
 - **Print Listing… anywhere**: with nothing selected, a search, a tag, the
   Trash, Recent or the shelf prints its listing as a folder does, as the pane
   shows it, filtered or not, titled by its name and what filters it. Where the

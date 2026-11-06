@@ -871,7 +871,8 @@ is still to come are in `docs/preview-frame.md`.
     tall (the panel at the bottom, peek), a column of that share at the
     preview's left. It scrolls past it. The edge between them is
     `elements::edge`, at the start of the preview (`properties::edged`),
-    dragged each way apart and back to half on a double click. With the
+    dragged each way apart, held at half once brought near it
+    (`edge::share`), and back to half on a double click. With the
     panel closed, `ui.properties` opens both. No dialog repeats it.
   - Whether it is open, its share each way and the groups folded belong
     to the window's shape (`session.rs`).
@@ -1425,8 +1426,9 @@ is still to come are in `docs/preview-frame.md`.
     says (`layout::Member`, in `ui.layout`). Automatic follows the room:
     under it in a panel at the right edge, to its right at the bottom and
     in peek.
-  - Their edge is dragged like a split's and stores the view's share,
-    one per direction (`members::Share`), in the window's shape. Each
+  - Their edge is dragged like a split's, held where it ships once
+    brought near, and stores the view's share, one per direction
+    (`edge::Share`), in the window's shape. Each
     side keeps a minimum.
   - Properties stays under the card, above both (`preview::under_card`):
     it is about what the card names.

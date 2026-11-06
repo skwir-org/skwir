@@ -3561,7 +3561,9 @@ impl Shell {
         } else {
             crate::preview::PANE_KEEP
         };
-        if let Some(share) = crate::elements::edge::share(f32::from(along), f32::from(size), keep) {
+        if let Some(share) =
+            crate::elements::edge::share(f32::from(along), f32::from(size), keep, SPLIT_SHARE)
+        {
             self.split_share = share;
             cx.notify();
         }

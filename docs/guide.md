@@ -20,7 +20,9 @@ work where the keyboard is, by topic.
   the view buttons. Right-click them (or `Menu` on one, or View ›
   Buttons…) to choose which views have one. `F3` (or `Ctrl+Shift+D`)
   splits the window or joins it, `Shift+F3` splits the other way, `Tab`
-  switches pane. General says which pane closing the split closes.
+  switches pane. Drag the line between the panes to give either more
+  room: brought near the middle, it stays there, and a double click
+  shares evenly again. General says which pane closing the split closes.
 - **Tabs.** `Ctrl+T` opens one, `Ctrl+W` closes it, `Ctrl+Shift+T`
   reopens the last closed. `Ctrl+Tab` and `Ctrl+Shift+Tab` (or
   `Ctrl+PageDown`, `Ctrl+PageUp`) switch tabs, `Ctrl+Shift+PageDown` and
@@ -625,8 +627,8 @@ click on a row copies what it says (its Path, its Folder).
   on it; Count, Compute and Add… are always there.
 - Over a preview, Properties takes at most half the panel (beside the
   preview when the panel is at the bottom) and scrolls; drag the line
-  between them to give either more room, double-click it to share
-  evenly again. `Alt+Enter` again gives the room back to the preview.
+  between them to give either more room (brought near half way, it stays
+  there), double-click it to share evenly again. `Alt+Enter` again gives the room back to the preview.
 
 ## The terminal
 

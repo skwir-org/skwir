@@ -1378,7 +1378,9 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   location and filter, are remembered with `core.startup = last` (Tabs,
   above).
 - **Edges** dragged to size an area are one element (`elements/edge.rs`):
-  double click restores the default; shared room via `edge::share`. An
+  double click restores the default; shared room via `edge::share`,
+  which holds the edge where the areas ship (a split's middle) while the
+  pointer is within `edge::SNAP` px of it, a magnet. An
   area that grows by the pointer's travel (a list column, a table
   preview's) measures it from where the edge was pressed
   (`Shell::edge_pressed`), never from the first move reported: gpui
@@ -1392,7 +1394,9 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
 - The sidebar's width is bounded likewise (`sidebar::max_width`), and the
   sidebar hides below a window width computed in `Shell::render`.
 - The split edge stores a share, not pixels (the panes' flex grow); the
-  drag reads the container bounds from `DragMoveEvent`. Each pane keeps
+  drag reads the container bounds from `DragMoveEvent`. Brought near the
+  middle, the edge goes there (`edge::share`'s magnet), so the panes are
+  even again by hand. Each pane keeps
   `PANE_KEEP` across, `PANE_KEEP_HEIGHT` stacked. The share belongs to its
   tab (`tab_splits`, swapped in `Shell::present`); a tab gaining or losing
   its split, by any route, starts even again (`sync_tabs`);

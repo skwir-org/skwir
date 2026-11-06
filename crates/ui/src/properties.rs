@@ -2030,7 +2030,9 @@ impl Shell {
         } else {
             (ev.event.position.y - ev.bounds.top(), ev.bounds.size.height)
         };
-        if let Some(share) = crate::elements::edge::share(f32::from(along), f32::from(size), keep) {
+        if let Some(share) =
+            crate::elements::edge::share(f32::from(along), f32::from(size), keep, SHARE)
+        {
             self.preview.properties_share.set(beside, share);
             cx.notify();
         }
