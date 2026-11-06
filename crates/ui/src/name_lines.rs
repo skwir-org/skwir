@@ -8,11 +8,15 @@
 //! its rows keep their heights), and where they break is chosen: the
 //! lines balanced (each one's distance from their mean, squared, as a
 //! share of the width), each break costing what it reads like: nothing at
-//! a space or before the extension, little after a separator (`_ - . ,`)
-//! or at a change from letters to digits or into a capital, more in the
-//! middle of a word, most before a separator (a line starting "-06").
-//! The extension is never split. The name is then drawn
-//! with those breaks as newlines, so gpui wraps nothing more.
+//! a space or before the extension, little after a separator (any
+//! punctuation or symbol, `_ - . ,`, or before an opening bracket) or at a
+//! change from letters to digits or into a capital, more in the middle of
+//! a word, most before a separator or an apostrophe, or after an opening
+//! bracket (a line starting "-06", `l` over `'été`). The separators and
+//! the apostrophe are Dolphin's (`KStringHandler::preProcessWrap` in
+//! `KCoreAddons`, which gives Qt's greedy wrapping those chances to
+//! break); the balance is ours. The extension is never split. The name is
+//! then drawn with those breaks as newlines, so gpui wraps nothing more.
 //!
 //! Widths are each character's, as gpui's line wrapper measures them
 //! (`TextSystem::layout_width`), kept per font and size, so a line kept
@@ -188,13 +192,17 @@ fn cost_of_break(chars: &[char], at: usize, extension: Option<usize>) -> f32 {
         AT_SPACE
     } else if extension == Some(at) {
         BEFORE_EXTENSION
-    } else if matches!(after, '_' | '-' | '.' | ',' | ';' | '+' | ')' | ']' | '}')
-        || matches!(before, '(' | '[' | '{')
-    {
+    } else if apostrophe(after) || opening(before) {
+        // Never inside `l'été` or `don't`, nor after an opening bracket.
         BEFORE_SEPARATOR
-    } else if matches!(before, '_' | '-' | '.' | ',' | ';' | '+' | ')' | ']' | '}')
-        || matches!(after, '(' | '[' | '{')
-    {
+    } else if opening(after) {
+        AFTER_SEPARATOR
+    } else if separator(after) {
+        // A line never starts with punctuation.
+        BEFORE_SEPARATOR
+    } else if apostrophe(before) {
+        MID_WORD
+    } else if separator(before) {
         AFTER_SEPARATOR
     } else if (before.is_alphabetic() && after.is_numeric())
         || (before.is_numeric() && after.is_alphabetic())
@@ -204,6 +212,38 @@ fn cost_of_break(chars: &[char], at: usize, extension: Option<usize>) -> f32 {
     } else {
         MID_WORD
     }
+}
+
+/// Punctuation or a symbol: neither a letter, a digit, a space nor a
+/// control (Dolphin's `isPunct() || isSymbol()`).
+fn separator(c: char) -> bool {
+    !c.is_alphanumeric() && !c.is_whitespace() && !c.is_control()
+}
+
+/// An opening bracket or quote: a line may break before it, never after.
+fn opening(c: char) -> bool {
+    matches!(
+        c,
+        '(' | '['
+            | '{'
+            | '<'
+            | '«'
+            | '‹'
+            | '“'
+            | '‘'
+            | '„'
+            | '‚'
+            | '（'
+            | '［'
+            | '｛'
+            | '「'
+            | '『'
+    )
+}
+
+/// An apostrophe, which joins what is on either side (`l'été`, `don't`).
+fn apostrophe(c: char) -> bool {
+    matches!(c, '\'' | '’' | 'ʼ')
 }
 
 /// `chars` in `lines` lines at most `width` wide, each character
@@ -394,6 +434,32 @@ mod tests {
         assert!(cost(3) < super::MID_WORD, "after it");
         assert!(cost(1) == super::MID_WORD, "inside a word");
         assert!(cost(5) == 0., "before the extension");
+        // Any punctuation or symbol, as Dolphin has them.
+        let chars: Vec<char> = "a–b~c(d)e".chars().collect();
+        let cost = |at| super::cost_of_break(&chars, at, None);
+        assert!(cost(1) > super::MID_WORD, "before the dash");
+        assert!(cost(2) < super::MID_WORD, "after it");
+        assert!(cost(4) < super::MID_WORD, "after the tilde");
+        assert!(cost(5) < super::MID_WORD, "before an opening bracket");
+        assert!(cost(6) > super::MID_WORD, "not after it");
+        assert!(cost(8) < super::MID_WORD, "after a closing one");
+    }
+
+    #[test]
+    fn an_apostrophe_holds_what_is_on_either_side() {
+        let chars: Vec<char> = "l'été".chars().collect();
+        let cost = |at| super::cost_of_break(&chars, at, None);
+        assert!(cost(1) > super::MID_WORD, "not before it");
+        assert!(cost(2) >= super::MID_WORD, "nor cheaply after it");
+        // Spaces elsewhere: the lines break at one, the apostrophe kept.
+        let lines = broken("don't stop the music.mp3", 2, 14.).unwrap();
+        assert_eq!(lines, ["don't stop", "the music.mp3"]);
+        // None: the whole name is one word, cut anywhere but there.
+        let lines = broken("don'tstopthemusic.mp3", 2, 12.).unwrap();
+        assert!(
+            !lines[0].ends_with("don") && !lines[1].starts_with('\''),
+            "{lines:?}"
+        );
     }
 
     #[test]

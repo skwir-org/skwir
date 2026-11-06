@@ -271,9 +271,11 @@ around the views is in [shell.md](shell.md).
   many lines as gpui's wrapper gives it (`GridView::measure` counts them,
   and the rows keep their heights), balanced, each break costing what it
   reads like (nothing at a space or before the extension, little after a
-  separator or at a change from letters to digits or into a capital,
-  more in the middle of a word, most before a separator), the extension
-  never split; drawn with those breaks as newlines. Widths are the
+  separator, any punctuation or symbol as Dolphin has them, or at a
+  change from letters to digits or into a capital, more in the middle of
+  a word, most before a separator or an apostrophe, which holds `l'été`
+  together), the extension never split; drawn with those breaks as
+  newlines. Widths are the
   wrapper's own (`layout_width`, kept per font and size) less a pixel,
   so gpui wraps nothing more; a name broken is kept, and a frame looks
   it up. One its lines cannot hold, or holding a newline of its own, is

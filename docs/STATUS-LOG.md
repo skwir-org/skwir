@@ -11811,3 +11811,28 @@ drag left the window and came back; the name lost outside the window.
   three even lines, what is left to gpui, extensions, separators);
   `cargo clippy -p skwir-ui --all-targets -D warnings`, skwir-ui's 547
   tests.
+
+## Names' breaks beside Dolphin's (2026-11-06)
+
+- **Read, not measured** (the user's ask): Dolphin's icon view
+  (`KStandardItemListWidget::updateIconsLayoutTextCache`, and the item
+  heights it computes) gives Qt's greedy wrapping more chances to break
+  (`KStringHandler::preProcessWrap` in KCoreAddons: a zero-width space
+  after any punctuation or symbol, before an opening bracket, between
+  camelCase words where the name has no space, a word joiner before an
+  apostrophe), lays every name out with Qt's text engine for its height,
+  and elides the last line in a loop narrowing a pixel at a time. It does
+  not balance: a long run without a chance to break still leaves its end
+  alone (`IMG2026051218304` over `5.jpg`), and it breaks after the
+  extension's dot (`photograph_final.` over `jpeg`). Skwir's counting
+  sums cached character widths rather than shaping each name, and its
+  balancing runs only for names drawn, once each.
+- **Taken from it:** a separator is any punctuation or symbol (neither a
+  letter, a digit, a space nor a control), not a short list; an
+  apostrophe holds what is on either side (`l'été`, `don't`): a break
+  before it costs the most, after it as mid word; an opening bracket or
+  quote takes a break before it, never after (`name_lines::separator`,
+  `opening`, `apostrophe`).
+- Checked: two unit tests more (a dash, a tilde and brackets; an
+  apostrophe, alone and in a name without spaces); `cargo clippy -p
+  skwir-ui --all-targets -D warnings`, skwir-ui's 548 tests.
