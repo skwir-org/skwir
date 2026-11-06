@@ -79,6 +79,7 @@ carry: the script takes it from the Inter release Skwir's packages pin
 | `0044-should-quit` | `Application::on_should_quit`: macOS's `applicationShouldTerminate:` asks the application whether it may quit (Quit from the Dock, a log out, a restart) | — |
 | `0045-variable-font-weights` | A variable face is shaped, measured and drawn at the weight asked within its weight axis (Linux), a variable fallback at its run's | — (its tests need Inter's variable font in Zed's assets) |
 | `0046-active-drag-of` | `App::has_active_drag_of::<T>()`: whether the drag under way carries a `T` | — |
+| `0047-platform-draws-its-drag` | A drag the platform carries, come back to its source window, is not drawn there again | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
 
@@ -767,6 +768,18 @@ a place moved, whose release the area behind still hears.
 `App::has_active_drag_of::<T>()` tells a drag by the type of what it
 carries, as `drag_over::<T>` and `on_drop::<T>` already do inside gpui;
 `ExternalPaths` for what the platform drags in.
+
+### 0047: The platform draws its drag
+
+Upstream hands an in-window drag to the platform as the pointer leaves the
+window (0001 gives it an icon on Wayland), and takes it back when the pointer
+comes back to the window it started in (`restore_platform_drag`): the drag's
+view is drawn under the pointer again. The platform still carries the drag
+and draws its image there too, so it was seen twice. While the drag back in
+its source window is the platform's (`RestoredInSourceWindow`,
+`App::platform_draws_drag`), the window draws its view no more; the drag
+otherwise goes on as it did (its hover styles, its drop). Checked on a
+headless sway: out of the window and back, one image.
 
 ## Adding or changing a patch
 

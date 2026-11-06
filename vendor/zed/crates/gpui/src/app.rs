@@ -3112,6 +3112,16 @@ impl App {
         true
     }
 
+    /// Whether the drag under way in `window` is one the platform carries:
+    /// handed to it as it left the window, and come back. The platform
+    /// draws its image wherever the pointer is, this window included.
+    pub(crate) fn platform_draws_drag(&self, window: WindowId) -> bool {
+        self.platform_owned_drag.as_ref().is_some_and(|drag| {
+            drag.source_window == window
+                && matches!(&drag.state, PlatformOwnedDragState::RestoredInSourceWindow)
+        })
+    }
+
     pub(crate) fn restore_platform_drag(&mut self, source_window: WindowId) -> bool {
         let Some(platform_drag) = self
             .platform_owned_drag

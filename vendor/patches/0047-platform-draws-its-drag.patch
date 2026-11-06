@@ -1,0 +1,46 @@
+0047 platform-draws-its-drag: a drag the platform carries is not drawn again in its source window
+
+diff --git a/crates/gpui/src/app.rs b/crates/gpui/src/app.rs
+index 559c55a..fde7872 100644
+--- a/crates/gpui/src/app.rs
++++ b/crates/gpui/src/app.rs
+@@ -3112,6 +3112,16 @@ impl App {
+         true
+     }
+ 
++    /// Whether the drag under way in `window` is one the platform carries:
++    /// handed to it as it left the window, and come back. The platform
++    /// draws its image wherever the pointer is, this window included.
++    pub(crate) fn platform_draws_drag(&self, window: WindowId) -> bool {
++        self.platform_owned_drag.as_ref().is_some_and(|drag| {
++            drag.source_window == window
++                && matches!(&drag.state, PlatformOwnedDragState::RestoredInSourceWindow)
++        })
++    }
++
+     pub(crate) fn restore_platform_drag(&mut self, source_window: WindowId) -> bool {
+         let Some(platform_drag) = self
+             .platform_owned_drag
+diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
+index 2a88e0d..6bab251 100644
+--- a/crates/gpui/src/window.rs
++++ b/crates/gpui/src/window.rs
+@@ -3798,10 +3798,14 @@ impl Window {
+             prompt_element = Some(element);
+             self.prompt = Some(prompt);
+         } else if let Some(active_drag) = cx.active_drag.take() {
+-            let mut element = active_drag.view.clone().into_any_element();
+-            let offset = self.mouse_position() - active_drag.cursor_offset;
+-            element.prepaint_as_root(offset, AvailableSpace::min_size(), self, cx);
+-            active_drag_element = Some(element);
++            // A drag the platform carries is drawn by it, over this window
++            // too: drawn here as well, it would be seen twice.
++            if !cx.platform_draws_drag(self.handle.window_id()) {
++                let mut element = active_drag.view.clone().into_any_element();
++                let offset = self.mouse_position() - active_drag.cursor_offset;
++                element.prepaint_as_root(offset, AvailableSpace::min_size(), self, cx);
++                active_drag_element = Some(element);
++            }
+             cx.active_drag = Some(active_drag);
+         } else {
+             tooltip_element = self.prepaint_tooltip(cx);

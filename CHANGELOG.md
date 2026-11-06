@@ -16,6 +16,7 @@
   is behind the window shows through, blurred where the desktop blurs it,
   while text, icons, pictures, menus and dialogs stay whole. The window stays
   opaque while the desktop asks for more contrast.
+- **A drag brought back into the window** no longer shows its icon twice.
 - **Dragging files marks only where they would go**: a folder, a place, a tab
   or a column under the pointer, no longer the pane or the sidebar around it as
   well.

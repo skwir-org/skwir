@@ -3798,10 +3798,14 @@ impl Window {
             prompt_element = Some(element);
             self.prompt = Some(prompt);
         } else if let Some(active_drag) = cx.active_drag.take() {
-            let mut element = active_drag.view.clone().into_any_element();
-            let offset = self.mouse_position() - active_drag.cursor_offset;
-            element.prepaint_as_root(offset, AvailableSpace::min_size(), self, cx);
-            active_drag_element = Some(element);
+            // A drag the platform carries is drawn by it, over this window
+            // too: drawn here as well, it would be seen twice.
+            if !cx.platform_draws_drag(self.handle.window_id()) {
+                let mut element = active_drag.view.clone().into_any_element();
+                let offset = self.mouse_position() - active_drag.cursor_offset;
+                element.prepaint_as_root(offset, AvailableSpace::min_size(), self, cx);
+                active_drag_element = Some(element);
+            }
             cx.active_drag = Some(active_drag);
         } else {
             tooltip_element = self.prepaint_tooltip(cx);
