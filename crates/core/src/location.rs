@@ -788,6 +788,19 @@ impl SortKey {
     pub fn needs_metadata(self) -> bool {
         matches!(self, SortKey::Size | SortKey::Modified | SortKey::Rating)
     }
+
+    /// Whether what it sorts by has been read of an entry whose metadata
+    /// is `metadata`: a size or a date once stat-ed (`Metadata::is_hydrated`),
+    /// a rating once the providers read it (`Metadata::is_filled`), a name
+    /// always. What a sort waits for, and asks to be read, is this alone:
+    /// a search's hits, stat-ed by its walk, sort by size at once.
+    pub fn has_read(self, metadata: &crate::entry::Metadata) -> bool {
+        match self {
+            SortKey::Rating => metadata.is_filled(),
+            SortKey::Size | SortKey::Modified => metadata.is_hydrated(),
+            _ => true,
+        }
+    }
 }
 
 /// A pane's sort and filter settings; the sorted order is cached in the listing.
@@ -1820,6 +1833,20 @@ impl Listing {
                 if !e.metadata.is_hydrated() && old.metadata.is_hydrated() && old.name == e.name {
                     return;
                 }
+                // A stat alone (a search walked again) says less than what
+                // was read of it: what the providers read stays under the
+                // new stat, so its tags do not go until it is read again.
+                // Not what could not be read: a stat that reads it now is
+                // the first word on it.
+                if !e.metadata.is_filled()
+                    && old.metadata.is_filled()
+                    && !old.metadata.is_unread()
+                    && old.name == e.name
+                {
+                    let mut known = old.metadata.clone();
+                    known.merge(std::mem::take(&mut e.metadata));
+                    e.metadata = known;
+                }
                 let d = Delta::between(old, &e);
                 if !d.any {
                     return;
@@ -2010,8 +2037,8 @@ impl Listing {
     fn sort_key(spec: SortSpec, slot: &Slot) -> SortKeyOf<'_> {
         use crate::entry::{Value, keys};
         let e = &slot.entry;
-        let unknown =
-            spec.key.needs_metadata() && (!e.metadata.is_hydrated() || e.metadata.is_unread());
+        let unknown = spec.key.needs_metadata()
+            && (!spec.key.has_read(&e.metadata) || e.metadata.is_unread());
         let num = match spec.key {
             SortKey::Name => 0,
             // A place by how many files it holds.
@@ -2859,6 +2886,46 @@ mod tests {
         e.metadata
             .set(keys::SIZE, Value::UInt(size), Provenance::Filesystem);
         e
+    }
+
+    /// A stat alone (a search walked again) does not take back what was
+    /// read of a file: the providers' fields stay under the new stat, and
+    /// it stays read whole, so its tags do not go until it is read again.
+    #[test]
+    fn a_stat_alone_keeps_what_was_read_of_a_file() {
+        use crate::entry::{Provenance, Value, keys};
+        let file = || {
+            Entry::new(
+                EntryId {
+                    file: crate::FileId::new(1, 1),
+                    at: 0,
+                },
+                "it's a.txt",
+                EntryKind::File,
+            )
+        };
+        let mut listing = Listing::default();
+        listing.apply(ListingEvent::Added(vec![file()]));
+        let mut read = stat(file(), 7);
+        read.metadata.set(
+            keys::TAGS,
+            Value::List(vec![Value::Text("work".into())]),
+            Provenance::Filesystem,
+        );
+        read.metadata.mark_filled();
+        listing.apply(ListingEvent::Updated(vec![read]));
+        listing.apply(ListingEvent::Added(vec![stat(file(), 8)]));
+        let e = listing.get(file().id).unwrap();
+        assert_eq!(
+            e.metadata.value(keys::SIZE),
+            Some(&Value::UInt(8)),
+            "the new stat"
+        );
+        assert!(
+            e.metadata.value(keys::TAGS).is_some(),
+            "what was read stays"
+        );
+        assert!(e.metadata.is_filled());
     }
 
     /// What cannot be read is answered without facts: an entry known

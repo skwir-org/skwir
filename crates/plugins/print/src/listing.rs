@@ -55,7 +55,7 @@ pub(crate) fn listing(app: &App, pane: PaneId, cancel: &CancelToken) -> anyhow::
     };
     let unread: Vec<(EntryId, PathBuf)> = shown
         .iter()
-        .filter(|(entry, ..)| !entry.metadata.is_hydrated() && !entry.is_place())
+        .filter(|(entry, ..)| !entry.metadata.is_filled() && !entry.is_place())
         .filter_map(|(entry, _, path)| Some((entry.id, path.clone()?)))
         .collect();
     if !unread.is_empty() {
@@ -75,11 +75,13 @@ pub(crate) fn listing(app: &App, pane: PaneId, cancel: &CancelToken) -> anyhow::
             read.extend(found.into_iter().map(|entry| (entry.id, entry)));
         }
         for (entry, ..) in &mut shown {
-            // Its identity and name are the pane's: the rest is read.
+            // Its identity and name are the pane's: the rest is read, over
+            // what its place said of it (a trash's Deleted), which a read
+            // of the file does not say.
             if let Some(found) = read.remove(&entry.id) {
                 entry.kind = found.kind;
                 entry.target = found.target;
-                entry.metadata = found.metadata;
+                entry.metadata.merge(found.metadata);
             }
         }
     }

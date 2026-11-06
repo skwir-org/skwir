@@ -72,7 +72,11 @@
   Adobe's `x.xmp`, a Mac's `._x`, TagSpaces' `.ts`) is read with the rest of
   its metadata, and the card keeps its icon's place while the icon is read.
   Copying a folder of photos with Adobe's `x.xmp` sidecars no longer reads the
-  folder once for each photo. A
+  folder once for each photo.
+- **A search shows its files' tags**: a file a search found had its size and
+  date but never its tags, rating or what is beside it, in its row or in
+  Properties. Its rows are now read as a folder's are, as they come into view;
+  a sort by rating waits for what it sorts by, a sort by size does not. A
   file whose name several types claim gets its Opens with with the rest, and
   with Properties alone at all.
 - **The player's seek bar** has a knob, and a drag that leaves the bar still

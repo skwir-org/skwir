@@ -243,7 +243,7 @@ impl Shared {
     fn check(&self, mut batch: Vec<(Entry, PathBuf, u64)>, cancel: &CancelToken) {
         let unread: Vec<(EntryId, PathBuf)> = batch
             .iter()
-            .filter(|(entry, ..)| !entry.metadata.is_hydrated() && !entry.is_place())
+            .filter(|(entry, ..)| !entry.metadata.is_filled() && !entry.is_place())
             .map(|(entry, path, _)| (entry.id, path.clone()))
             .collect();
         let mut read: HashMap<EntryId, Entry> = HashMap::new();
@@ -258,12 +258,14 @@ impl Shared {
                 return;
             }
             for (entry, ..) in &mut batch {
-                // Its identity and name are the place's: the rest is read.
+                // Its identity and name are the place's: the rest is read,
+                // over what the place said of it (a trash's Deleted), which
+                // a read of the file does not say.
                 if let Some(e) = read.remove(&entry.id) {
                     entry.kind = e.kind;
                     entry.target = e.target;
                     entry.hidden = e.hidden;
-                    entry.metadata = e.metadata;
+                    entry.metadata.merge(e.metadata);
                 }
             }
         }

@@ -735,7 +735,7 @@ pub fn files_menu(app: &App, vocabulary: &Vocabulary, a: PaneOnly) -> Outcome {
                     places += 1;
                     continue;
                 }
-                let Some(e) = p.entry(id).filter(|e| e.metadata.is_hydrated()) else {
+                let Some(e) = p.entry(id).filter(|e| e.metadata.is_filled()) else {
                     continue;
                 };
                 for tag in crate::tags_of(&e.metadata).unwrap_or_default() {

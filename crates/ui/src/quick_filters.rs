@@ -474,7 +474,7 @@ fn count(app: &App, ask: &Ask, cancel: &CancelToken) -> Counted {
                 continue;
             }
             counted.files.listed += 1;
-            if !e.metadata.is_hydrated() {
+            if !e.metadata.is_filled() {
                 counted.files.unknown += 1;
                 if ask.hand.is_some() {
                     counted.unknown.push(e.id);

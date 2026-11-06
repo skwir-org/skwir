@@ -105,7 +105,7 @@ pub fn without_lens(expr: &str) -> Option<String> {
 /// comes, nor for a file that could not be read (`Metadata::is_unread`),
 /// whose size, dates and tags stay unknown, never taken for none.
 fn knows_metadata(entry: &Entry) -> bool {
-    entry.metadata.is_hydrated() && !entry.metadata.is_unread()
+    entry.metadata.is_filled() && !entry.metadata.is_unread()
 }
 
 /// Whether `entry` is what `test` asks, from what the listing knows of
@@ -324,7 +324,9 @@ mod tests {
         let mut e = Entry::new(id, name, kind);
         let mut m = Metadata::default();
         if let Some(size) = size {
+            // Read whole, as a hydration answers: stat-ed and filled.
             m.set(keys::SIZE, Value::UInt(size), Provenance::Filesystem);
+            m.mark_filled();
         }
         if !tags.is_empty() {
             m.set(

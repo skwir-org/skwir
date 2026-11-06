@@ -145,6 +145,13 @@ and `notes.agree` are core `notes.*` commands.
   is filled on a worker and appears whole: a provider whose listing
   never completes, or completes only once every slow source answered,
   says it streams, or it shows nothing until then.
+- **A hit the walk stat-ed is hydrated, not filled**: its size and dates
+  are the walk's, its tags, rating and what is beside it are read as a
+  folder's rows are, when a view asks for them (`Metadata::is_filled`,
+  AGENTS.md, "Entries arrive before metadata"). The walk runs the
+  providers itself only for a query that tests what they say
+  (`First::NeedsMetadata`). Walked again, a hit keeps what was read of it
+  under its new stat (`Listing::upsert`).
 - **The tags `tag:` and `#` offer** are the folder's first, those its
   listing read (`tags.list`), then every other tag the user has, from
   the tags plugin's memory (`tags.known`: pinned, given, seen on files,

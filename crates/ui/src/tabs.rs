@@ -373,11 +373,7 @@ impl Shell {
                     first
                         .iter()
                         .copied()
-                        .filter(|id| {
-                            p.listing
-                                .get(*id)
-                                .is_some_and(|e| !e.metadata.is_hydrated())
-                        })
+                        .filter(|id| p.listing.get(*id).is_some_and(|e| !e.metadata.is_filled()))
                         .collect()
                 })
             };
@@ -394,7 +390,7 @@ impl Shell {
         let listing = &p.listing;
         self.ui_mut()
             .warm
-            .retain(|id| listing.get(*id).is_some_and(|e| !e.metadata.is_hydrated()));
+            .retain(|id| listing.get(*id).is_some_and(|e| !e.metadata.is_filled()));
         self.ui().warm.is_empty()
     }
 

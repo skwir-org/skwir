@@ -272,6 +272,7 @@ impl MetadataProviders {
         for p in providers {
             p.fill_listed(dir, listed, entries);
         }
+        filled(entries);
     }
 
     pub fn fill(&self, dir: &Path, entries: &mut [Entry]) {
@@ -282,12 +283,51 @@ impl MetadataProviders {
         for p in providers {
             p.fill(dir, entries);
         }
+        filled(entries);
+    }
+}
+
+/// What every provider was asked of is filled (`Metadata::is_filled`): its
+/// row needs nothing more read.
+fn filled(entries: &mut [Entry]) {
+    for entry in entries {
+        entry.metadata.mark_filled();
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What the providers were asked of is read whole, whether any said
+    /// something of it or not: a stat alone is not.
+    #[test]
+    fn what_the_providers_were_asked_of_is_filled() {
+        let stated = || {
+            let mut e = Entry::new(
+                crate::entry::EntryId {
+                    file: crate::FileId::new(1, 1),
+                    at: 0,
+                },
+                "it's a.txt",
+                crate::entry::EntryKind::File,
+            );
+            e.metadata.set(
+                crate::entry::keys::SIZE,
+                crate::entry::Value::UInt(1),
+                crate::entry::Provenance::Filesystem,
+            );
+            e
+        };
+        let mut entries = [stated()];
+        assert!(entries[0].metadata.is_hydrated() && !entries[0].metadata.is_filled());
+        let providers = MetadataProviders::default();
+        providers.fill(Path::new("/"), &mut entries);
+        assert!(entries[0].metadata.is_filled());
+        let mut listed = [stated()];
+        providers.fill_listed(Path::new("/"), &|_| false, &mut listed);
+        assert!(listed[0].metadata.is_filled());
+    }
 
     #[test]
     fn a_tag_is_within_its_categories() {

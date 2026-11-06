@@ -2757,7 +2757,7 @@ impl Pane {
         let from = from.min(order.len());
         let unknown = |id: &EntryId| {
             self.entry(*id)
-                .is_some_and(|e| !e.is_dir() && !e.is_place() && !e.metadata.is_hydrated())
+                .is_some_and(|e| !e.is_dir() && !e.is_place() && !e.metadata.is_filled())
         };
         order[from..]
             .iter()
@@ -2789,17 +2789,19 @@ impl Pane {
             .or_else(|| before.and_then(|before| before.iter().position(unknown)))
     }
 
-    /// The entries the pane shows whose metadata has not come yet,
-    /// folders too (places count their files from the start): what a
-    /// sort by size, date or rating places after the rest until it comes
-    /// (`SortKey::needs_metadata`), so whoever sorts so asks for them.
+    /// The entries the pane shows whose fact its sort is by has not been
+    /// read yet (`SortKey::has_read`: a size or a date from a stat, a
+    /// rating from the providers), folders too (places count their files
+    /// from the start): what a sort by size, date or rating places after
+    /// the rest until it comes (`SortKey::needs_metadata`), so whoever
+    /// sorts so asks for them.
     pub fn unknown(&self) -> Vec<EntryId> {
         self.order()
             .iter()
             .copied()
             .filter(|id| {
                 self.entry(*id)
-                    .is_some_and(|e| !e.is_place() && !e.metadata.is_hydrated())
+                    .is_some_and(|e| !e.is_place() && !self.sort.key.has_read(&e.metadata))
             })
             .collect()
     }
@@ -3423,8 +3425,10 @@ mod tests {
                 kind,
             );
             if let Some(size) = size {
+                // Read whole, as a hydration answers: stat-ed and filled.
                 e.metadata
                     .set(keys::SIZE, Value::UInt(size), Provenance::Filesystem);
+                e.metadata.mark_filled();
             }
             e
         };

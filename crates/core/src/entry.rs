@@ -469,6 +469,12 @@ fn interned(key: &str) -> Arc<str> {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Metadata {
     fields: BTreeMap<Arc<str>, Field>,
+    /// The metadata providers ran over it (`MetadataProviders::fill`): what
+    /// its row needs beyond a stat is known (its tags, its rating, what is
+    /// beside it). A stat alone, as a search's walk makes, leaves it unset
+    /// (`is_filled`). This process's reading of it: never said.
+    #[serde(skip)]
+    filled: bool,
 }
 
 impl Metadata {
@@ -494,6 +500,7 @@ impl Metadata {
     /// Merge `other` into `self`, overwriting fields present in both.
     pub fn merge(&mut self, other: Metadata) {
         self.fields.extend(other.fields);
+        self.filled |= other.filled;
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&str, &Field)> {
@@ -504,14 +511,30 @@ impl Metadata {
         self.fields.is_empty()
     }
 
-    /// Whether it was asked for and answered: a stat populated it (size
-    /// is always set by stat), or, for a place, its provider (which counts
-    /// its files), or it could not be read (`is_unread`). Nothing waits
-    /// for an entry hydrated.
+    /// Whether its size and dates are known: a stat populated it (size is
+    /// always set by stat), or, for a place, its provider (which counts
+    /// its files), or it could not be read (`is_unread`). What weighs or
+    /// dates a file asks this; what needs its tags, its rating or what is
+    /// beside it asks `is_filled`, which a stat alone does not make.
     pub fn is_hydrated(&self) -> bool {
         self.fields.contains_key(keys::SIZE)
             || self.fields.contains_key(keys::FILES)
             || self.is_unread()
+    }
+
+    /// Whether everything its row says is known: the metadata providers
+    /// ran over it (`MetadataProviders::fill`, after the stat), or for a
+    /// place its provider counted it, or it could not be read. What asks
+    /// for an entry to be read (a view for its rows, Properties, a lens, a
+    /// test of its tags) asks this: a search's hit, stat-ed by its walk,
+    /// is hydrated and not yet filled, and is asked for like any other.
+    pub fn is_filled(&self) -> bool {
+        self.filled || self.fields.contains_key(keys::FILES) || self.is_unread()
+    }
+
+    /// The metadata providers ran over it.
+    pub fn mark_filled(&mut self) {
+        self.filled = true;
     }
 
     /// Whether it was asked for and could not be read (`keys::UNREAD`):

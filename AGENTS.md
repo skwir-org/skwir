@@ -262,7 +262,14 @@ working in an area, also read that area's rules (see
   rows while rendering. A hydration answers every id it is given:
   `Updated`, `Removed`, or `Unreadable` for what is there and cannot be
   read, marked `keys::UNREAD` (hydrated, so nothing waits for it; nothing
-  known, so a test of its size or tags stays unknown). A fact too costly
+  known, so a test of its size or tags stays unknown). A stat alone is not
+  a reading: it makes an entry hydrated (`Metadata::is_hydrated`: its size
+  and dates, what weighs or dates it), and only the metadata providers'
+  pass makes it filled (`Metadata::is_filled`, set by
+  `MetadataProviders::fill`: its tags, its rating, what is beside it).
+  What asks for an entry to be read (a view for its rows, Properties, a
+  lens, a test of its tags) asks whether it is filled: a search's hits,
+  stat-ed by its walk, are asked for like any other row. A fact too costly
   for every listing (a picture's position) is a field read on demand
   (`App::fields`, ADR-023): a plugin
   registers a `FieldProvider`, a caller on a worker asks `Fields::get`,

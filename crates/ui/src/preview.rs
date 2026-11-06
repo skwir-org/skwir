@@ -1949,7 +1949,7 @@ impl Shell {
             }
             self.preview.version = Some(version.clone());
             self.describe_version(&version, entry.is_dir());
-            if !here && !entry.metadata.is_hydrated() {
+            if !here && !entry.metadata.is_filled() {
                 self.request_hydrate(vec![id]);
             }
         } else if changed {

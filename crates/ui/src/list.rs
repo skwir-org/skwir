@@ -542,7 +542,7 @@ impl Shell {
                 return;
             };
             ids.into_iter()
-                .filter(|id| listing.get(*id).is_some_and(|e| !e.metadata.is_hydrated()))
+                .filter(|id| listing.get(*id).is_some_and(|e| !e.metadata.is_filled()))
                 .map(|id| (listing.id(), id))
                 .collect()
         };
@@ -557,7 +557,7 @@ impl Shell {
             let ws = self.app.workspace.read();
             let Some(p) = ws.pane(pane) else { return };
             ids.into_iter()
-                .filter(|id| p.entry(*id).is_some_and(|e| !e.metadata.is_hydrated()))
+                .filter(|id| p.entry(*id).is_some_and(|e| !e.metadata.is_filled()))
                 .filter_map(|id| Some((p.listing_of(id)?, id)))
                 .collect()
         };

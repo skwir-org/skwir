@@ -170,7 +170,8 @@ registered in `App::notes` by its plugin); all share one model,
   Copies keep every `user.*` attribute (ADR-006).
 - **What is beside a file is read with its metadata**
   (`companions::BesideProvider`, core's, run wherever a folder's files
-  are filled: a folder shown, the Trash, Recent, the shelf): its
+  are filled: a folder shown, the Trash, Recent, the shelf, a search's
+  hits once asked for): its
   companions (`keys::COMPANIONS`, their paths from its folder) and, for
   a companion, the file it belongs to (`keys::COMPANION_OF`, gone where
   it is not there). Properties reads them from the entry, so they come

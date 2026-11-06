@@ -1593,7 +1593,7 @@ impl App {
         let hydrated_by = std::time::Instant::now() + LISTED_WITHIN;
         while page
             .iter()
-            .any(|&id| listing.get(id).is_some_and(|e| !e.metadata.is_hydrated()))
+            .any(|&id| listing.get(id).is_some_and(|e| !e.metadata.is_filled()))
         {
             let Ok(event) = open.events().recv_deadline(hydrated_by) else {
                 break;

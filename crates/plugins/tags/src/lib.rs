@@ -1279,7 +1279,7 @@ impl Plugin for TagsPlugin {
                     refs.iter()
                         .map(|r| {
                             let e = ws.pane(pane)?.entry_at(r.id, &r.path)?;
-                            e.metadata.is_hydrated().then(|| has_tag(e, &tag))
+                            e.metadata.is_filled().then(|| has_tag(e, &tag))
                         })
                         .collect()
                 };
@@ -1794,7 +1794,7 @@ mod tests {
                 .unwrap()
                 .listing
                 .iter()
-                .all(|e| e.metadata.is_hydrated())
+                .all(|e| e.metadata.is_filled())
             {
                 return;
             }

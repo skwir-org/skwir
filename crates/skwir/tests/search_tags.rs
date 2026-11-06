@@ -222,7 +222,7 @@ fn tag_offers_the_folders_tags_then_the_users_others() {
             let read = {
                 let ws = app.workspace.read();
                 let p = ws.pane(pane).unwrap();
-                p.listing.iter().all(|e| e.metadata.is_hydrated())
+                p.listing.iter().all(|e| e.metadata.is_filled())
             };
             if read {
                 break;
@@ -304,5 +304,83 @@ fn tag_offers_the_folders_tags_then_the_users_others() {
     assert_eq!(
         reading(Some(Location::from_path(tmp.path()))).as_deref(),
         Some("tag:holiday")
+    );
+}
+
+/// A search's hits are stat-ed by its walk, not read whole: their size is
+/// known at once, their tags and what is beside them are not. Asked for as
+/// a view asks for its rows, each is read with its metadata. Before, a
+/// stat counted as reading, nothing asked, and a tagged file a search
+/// found showed no tags.
+#[test]
+fn a_search_s_hits_are_read_whole_once_asked_for() {
+    use skwir_core::entry::{Value, keys};
+    let tmp = home_tempdir();
+    let root = tmp.path().join("it's searched");
+    std::fs::create_dir(&root).unwrap();
+    std::fs::write(root.join("a note.txt"), b"a").unwrap();
+    std::fs::write(root.join("b photo.png"), b"b").unwrap();
+    std::fs::write(root.join("b photo.png.xmp"), b"<x:xmpmeta/>").unwrap();
+    if skwir_core::fs::xattr::set(&root.join("a note.txt"), "user.xdg.tags", b"work").is_err() {
+        eprintln!("skipped: no user extended attributes here");
+        return;
+    }
+    let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+    app.plugins
+        .add(Arc::new(skwir_plugin_query::QueryPlugin::default()), &app);
+    app.plugins
+        .add(Arc::new(skwir_plugin_tags::TagsPlugin::default()), &app);
+    app.plugins.add(Arc::new(skwir_plugin_xmp::XmpPlugin), &app);
+    let pane = app.workspace.read().active_id();
+    app.navigate(pane, &Location::from_path(&root)).unwrap();
+    assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+    app.dispatch(&Invocation::with_args(
+        "query.search",
+        &serde_json::json!({ "expr": "" }),
+    ))
+    .unwrap();
+    assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+    let hit = |name: &str| -> skwir_core::Entry {
+        let ws = app.workspace.read();
+        ws.pane(pane)
+            .unwrap()
+            .listing
+            .iter()
+            .find(|e| e.name_str() == name)
+            .unwrap_or_else(|| panic!("{name} not found"))
+            .clone()
+    };
+    let note = hit("a note.txt");
+    assert!(note.metadata.is_hydrated(), "its size is the walk's");
+    assert!(!note.metadata.is_filled(), "its tags are not read yet");
+    let ids = vec![note.id, hit("b photo.png").id];
+    app.dispatch(&Invocation::with_args(
+        "hydrate",
+        &serde_json::json!({ "ids": ids, "pane": pane }),
+    ))
+    .unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while !(hit("a note.txt").metadata.is_filled() && hit("b photo.png").metadata.is_filled()) {
+        app.pump();
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the hits were never read"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let texts = |e: &skwir_core::Entry, key: &str| -> Vec<String> {
+        match e.metadata.value(key) {
+            Some(Value::List(items)) => items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect(),
+            _ => Vec::new(),
+        }
+    };
+    assert_eq!(texts(&hit("a note.txt"), keys::TAGS), ["work"]);
+    assert_eq!(
+        texts(&hit("b photo.png"), keys::COMPANIONS),
+        ["b photo.png.xmp"]
     );
 }
