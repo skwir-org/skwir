@@ -32,7 +32,8 @@ working in an area, also read that area's rules (see
 ## Principles (ADR-000, binding)
 
 1. **Always responsive.** No blocking work on the UI thread, ever.
-   Listings stream; every provider call is async, batched and
+   Listings stream (a folder shown once whole, or past a second,
+   ADR-120); every provider call is async, batched and
    cancellable; visible work goes first. The UI sleeps until the core
    wakes it (`App::set_waker`); never run a `request_animation_frame`
    loop.
@@ -347,12 +348,16 @@ working in an area, also read that area's rules (see
 - **Listings stream in slices.** `Listing::drain` takes what was queued
   when called, for at most `workspace::PUMP_BUDGET`; a sync that leaves a
   backlog gives the event loop a turn (a real timer: a zero one is a
-  ready task in gpui) and syncs again. So a folder of hundreds of
-  thousands of entries draws as it streams, under the loading banner.
-  `Listing::sorted` places arrivals in the cached order (ranks kept while
-  the listing streams, a quarter of the order at a time); any other
-  change sorts again. Never loop on a channel until it is empty while its
-  producer runs.
+  ready task in gpui) and syncs again. A folder opened is held back
+  whole (ADR-120, `Listing::whole_within`): its order is empty until it
+  completes or fails, or until the first drain past `WHOLE_WITHIN` (1 s),
+  which ends the hold and stamps its versions; then what has arrived
+  shows and the rest streams in, under the loading banner. A search
+  streams from the start. What waits for an entry to be shown (a
+  reveal) waits while its listing `is_held`. `Listing::sorted` places
+  arrivals in the cached order (ranks kept while the listing streams, a
+  quarter of the order at a time); any other change sorts again. Never
+  loop on a channel until it is empty while its producer runs.
 - **The session bus is one connection** for the whole program
   (`skwir_platform::bus::session`, Linux): the desktop's style, the media
   controls, the devices the remote plugin follows. Nothing closes it;

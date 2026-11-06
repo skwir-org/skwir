@@ -11836,3 +11836,44 @@ drag left the window and came back; the name lost outside the window.
 - Checked: two unit tests more (a dash, a tilde and brackets; an
   apostrophe, alone and in a name without spaces); `cargo clippy -p
   skwir-ui --all-targets -D warnings`, skwir-ui's 548 tests.
+
+## A folder appears whole (ADR-120, 2026-11-06)
+
+- **Asked for** after comparing with hyprfm, which reads and sorts a
+  folder on a worker and hands its view the whole of it: a folder shows
+  nothing until it is listed, then all of it; past a second it streams
+  as before; the old view is not held for a navigation (the user: longer
+  than 150 ms feels unanswered); searches stream from the start.
+- **Built:** `Listing::whole_within` holds a listing back (its order
+  empty, nothing sorted) until `apply` sees it complete or fail, or the
+  first `drain` past `location::WHOLE_WITHIN`, each stamping the order,
+  shown and listing versions; `App::new_listing` holds every folder a
+  pane opens, keeps or opens in place, never a search; the window wakes
+  when a hold's time comes (`Pane::held_for`, `loading.rs`, through
+  `App::wake`); the footer says nothing, then "Loading…" with the
+  banner; a reveal and the columns' scroll to a child wait while held.
+- **Measured** on `/nix/store` (392 580 entries), a window on Xvfb :92,
+  RUST_LOG trace of each sync, three runs of each build and behaviour
+  alternated (load from 16.9 falling to 1.3 over the runs), from the
+  first frame to every row shown:
+
+  | build | streamed | whole | longest sync, streamed | longest sync, whole |
+  | --- | --- | --- | --- | --- |
+  | release | 0.701, 0.722, 0.726 s | 0.542, 0.533, 0.530 s | 36–37 ms | 107–111 ms |
+  | debug | 2.72, 2.64, 2.68 s | 2.50, 2.52, 2.52 s | 119–132 ms | 310–322 ms |
+
+  In one release run of each, the syncs took 367 ms in all streamed
+  and 294 ms whole. The longest sync whole is the one sort of the whole
+  folder on the UI thread; the debug build, past a second, streams from
+  then on. Measured with a switch in `App::new_listing` that was taken
+  out before the commit, while the hold was still a look at the clock in
+  `sorted()`; it was then made a state of the listing (same rule), so
+  every reader of a frame agrees and the versions move when it ends.
+- **The final code checked** in the debug build on the same display:
+  `/nix/store` empty with "Loading…" at 0.6 s, its first 207 871 rows
+  1.3 s after the first frame (the hold's second from the open, then the
+  sort of what had come), all 392 584 at 2.46 s; a folder of 60 files
+  whole 35 ms after the first frame. `cargo clippy -p skwir-core -p
+  skwir-ui --all-targets -D warnings`; nextest on skwir-core, skwir-ui
+  and skwir: 1396 passed (a new core test: held, whole, failed, held
+  long enough and let go by a drain, not yet, a search's).

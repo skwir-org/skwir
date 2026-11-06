@@ -903,6 +903,18 @@ impl App {
         self.provider(&location.scheme)?.icon(location)
     }
 
+    /// A listing for `location`, opened now (ADR-120): a folder appears
+    /// whole once listed, held back for at most `WHOLE_WITHIN` before
+    /// what has arrived streams in; a search's results show as they come.
+    fn new_listing(&self, location: &Location) -> crate::Listing {
+        let listing = crate::Listing::with_companions(Arc::clone(&self.companions));
+        if self.is_search(location) {
+            listing
+        } else {
+            listing.whole_within(crate::location::WHOLE_WITHIN)
+        }
+    }
+
     /// Whether `location` is a search (`LocationProvider::searches`).
     pub fn is_search(&self, location: &Location) -> bool {
         self.provider(&location.scheme)
@@ -1329,10 +1341,7 @@ impl App {
             .take_kept(&location);
         let (open, listing) = match kept {
             Some(kept) => kept,
-            None => (
-                self.open_admitted(&location)?,
-                crate::Listing::with_companions(Arc::clone(&self.companions)),
-            ),
+            None => (self.open_admitted(&location)?, self.new_listing(&location)),
         };
         let mut ws = self.workspace.write();
         let p = ws
@@ -1373,11 +1382,9 @@ impl App {
         for location in missing {
             match self.open_location(&location) {
                 Ok(open) => {
+                    let listing = self.new_listing(&location);
                     if let Some(p) = self.workspace.write().pane_mut(pane) {
-                        p.add_kept(
-                            open,
-                            crate::Listing::with_companions(Arc::clone(&self.companions)),
-                        );
+                        p.add_kept(open, listing);
                     }
                 }
                 Err(error) => tracing::warn!(%location, "cannot keep: {error:#}"),
@@ -2221,11 +2228,9 @@ impl App {
         for location in missing {
             match self.open_location(&location) {
                 Ok(open) => {
+                    let listing = self.new_listing(&location);
                     if let Some(p) = self.workspace.write().pane_mut(pane) {
-                        p.add_kept(
-                            open,
-                            crate::Listing::with_companions(Arc::clone(&self.companions)),
-                        );
+                        p.add_kept(open, listing);
                     }
                 }
                 Err(error) => tracing::warn!(%location, "cannot open in place: {error:#}"),

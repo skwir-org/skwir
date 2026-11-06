@@ -138,6 +138,10 @@ and `notes.agree` are core `notes.*` commands.
   The parser's tokenizer and the field's lexer split text alike: a change
   to what a word is (`#print` is `tag:print`) is made in both, and
   `quote` writes a name that would read otherwise (`"#3"`).
+- **A search streams from the start** (`LocationProvider::searches`,
+  `App::is_search`): its results are answers as they are found, never
+  held back whole as a folder is (ADR-120). A provider that searches
+  says so, or its results wait like a folder's.
 - **The tags `tag:` and `#` offer** are the folder's first, those its
   listing read (`tags.list`), then every other tag the user has, from
   the tags plugin's memory (`tags.known`: pinned, given, seen on files,

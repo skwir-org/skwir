@@ -1167,7 +1167,20 @@ pub struct Listing {
     /// A move its holder has not followed yet (`take_moved`): where it
     /// was reached before (`None`: where it was opened), and now.
     unfollowed: Option<(Option<Location>, Location)>,
+    /// Until when nothing of it is shown while it is listed (ADR-120): a
+    /// folder appears whole once complete, and streams only past
+    /// `WHOLE_WITHIN`. `None`: shown as it comes, as a search's results.
+    held_until: Option<std::time::Instant>,
 }
+
+/// How long a folder opened is held back whole (ADR-120): until its
+/// listing completes (or fails), nothing of it is shown, for at most this
+/// long; past it, what has arrived is shown and the rest streams in.
+pub const WHOLE_WITHIN: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// The order of a listing held back: nothing yet.
+static NOTHING_YET: std::sync::LazyLock<Arc<[EntryId]>> =
+    std::sync::LazyLock::new(|| Arc::from([]));
 
 impl Default for Listing {
     fn default() -> Self {
@@ -1200,6 +1213,7 @@ impl Default for Listing {
             redirect: None,
             moved: None,
             unfollowed: None,
+            held_until: None,
         }
     }
 }
@@ -1226,6 +1240,45 @@ impl Listing {
         let mut listing = Listing::default();
         listing.companions = Some(companions);
         listing
+    }
+
+    /// Held back whole until it completes, for at most `within` from now
+    /// (ADR-120): its order is empty until then (`is_held`), and nothing
+    /// is sorted while it is.
+    #[must_use]
+    pub fn whole_within(mut self, within: std::time::Duration) -> Self {
+        self.held_until = Some(std::time::Instant::now() + within);
+        self
+    }
+
+    /// Whether what it holds is held back (ADR-120). A state, not a look
+    /// at the clock: it ends when the listing completes or fails
+    /// (`apply`), or at the first `drain` past its time, which stamps the
+    /// versions it moves, so every reader of one frame agrees and what is
+    /// cached on them is made again.
+    pub fn is_held(&self) -> bool {
+        self.held_until.is_some()
+    }
+
+    /// How much longer it is held back, if it is: zero once its time has
+    /// come and no `drain` let it go yet.
+    pub fn held_for(&self) -> Option<std::time::Duration> {
+        self.held_until
+            .map(|until| until.saturating_duration_since(std::time::Instant::now()))
+    }
+
+    /// Let it go if it is held and its time has come, or it is whole:
+    /// what it holds is shown from now on. Whether it was.
+    fn release(&mut self, due: bool) -> bool {
+        if self.held_until.is_none() || !(due || self.complete || self.error.is_some()) {
+            return false;
+        }
+        self.held_until = None;
+        let now = stamp();
+        self.order_version = now;
+        self.shown_version = now;
+        self.version = now;
+        true
     }
 
     fn slot(&mut self, e: Entry) -> Slot {
@@ -1401,7 +1454,8 @@ impl Listing {
         if !delta.touched.is_empty() {
             self.note_updates(delta.touched);
         }
-        delta.any
+        // Whole, or failed: what it holds is shown (ADR-120).
+        self.release(false) || delta.any
     }
 
     /// Note `touched`, arrived or changed in place, under the version just
@@ -1579,6 +1633,10 @@ impl Listing {
     /// arrivals (see the placement rule below); once it is, it holds every
     /// shown entry.
     pub fn sorted(&self, spec: SortSpec) -> Arc<[EntryId]> {
+        // Held back whole: nothing to show, nothing sorted (ADR-120).
+        if self.is_held() {
+            return Arc::clone(&NOTHING_YET);
+        }
         let companions_shown = self.companions_shown();
         let mut cache = self.sort_cache.lock();
         if let Some(c) = cache.as_mut()
@@ -1807,7 +1865,7 @@ impl Listing {
 
     /// Apply what was queued when called, until `budget` has passed, without
     /// blocking; at least one event. Returns how many events changed the
-    /// listing. What is left waits for the next call: a location still
+    /// listing, one more where the hold's time came (ADR-120). What is left waits for the next call: a location still
     /// streaming never keeps the caller (the UI thread) here, and a backlog
     /// is applied a slice at a time, with frames drawn in between.
     pub fn drain(&mut self, rx: &Receiver<ListingEvent>, budget: std::time::Duration) -> usize {
@@ -1820,7 +1878,10 @@ impl Listing {
                 break;
             }
         }
-        n
+        // Held long enough: what has arrived is shown, and the rest
+        // streams in (ADR-120).
+        let due = self.held_until.is_some_and(|until| until <= started);
+        n + usize::from(self.release(due))
     }
 
     pub fn len(&self) -> usize {
@@ -1959,6 +2020,65 @@ mod tests {
         for kept in ["%+1", "%-1", "% 1", "%4", "%", "%zz"] {
             assert_eq!(unescape(kept), kept.as_bytes(), "{kept}");
         }
+    }
+
+    /// A folder opened is held back whole (ADR-120): nothing of it is in
+    /// its order until it completes, fails, or has been held long enough;
+    /// a listing not held (a search's) shows what comes as it comes.
+    #[test]
+    fn a_folder_appears_whole_or_streams_once_held_long_enough() {
+        let file = |ino, name: &str| {
+            Entry::new(
+                EntryId {
+                    file: crate::FileId::new(1, ino),
+                    at: 0,
+                },
+                name,
+                EntryKind::File,
+            )
+        };
+        let spec = SortSpec::default();
+        let mut whole = Listing::default().whole_within(std::time::Duration::from_secs(60));
+        whole.apply(ListingEvent::Added(vec![file(1, "b"), file(2, "a")]));
+        assert!(whole.is_held());
+        assert!(whole.sorted(spec).is_empty(), "nothing yet");
+        assert_eq!(whole.len(), 2, "though it holds what arrived");
+        whole.apply(ListingEvent::Complete);
+        assert!(!whole.is_held());
+        assert_eq!(whole.sorted(spec).len(), 2, "whole once complete");
+
+        let mut failed = Listing::default().whole_within(std::time::Duration::from_secs(60));
+        failed.apply(ListingEvent::Added(vec![file(1, "a")]));
+        failed.apply(ListingEvent::Error("gone".into()));
+        assert!(!failed.is_held(), "a failure shows what came");
+
+        let mut late = Listing::default().whole_within(std::time::Duration::ZERO);
+        late.apply(ListingEvent::Added(vec![file(1, "a")]));
+        assert!(late.is_held(), "held until a drain looks at the time");
+        let version = (late.version(), late.shown_version());
+        let (_tx, rx) = crossbeam_channel::unbounded();
+        assert_eq!(
+            late.drain(&rx, std::time::Duration::ZERO),
+            1,
+            "let go: a change"
+        );
+        assert!(!late.is_held(), "held long enough: it streams");
+        assert_ne!(version, (late.version(), late.shown_version()));
+        assert_eq!(late.sorted(spec).len(), 1);
+
+        let mut soon = Listing::default().whole_within(std::time::Duration::from_secs(60));
+        soon.apply(ListingEvent::Added(vec![file(1, "a")]));
+        assert_eq!(soon.drain(&rx, std::time::Duration::ZERO), 0, "not yet");
+        assert!(soon.is_held());
+
+        let mut streams = Listing::default();
+        streams.apply(ListingEvent::Added(vec![file(1, "a")]));
+        assert_eq!(streams.held_for(), None);
+        assert_eq!(
+            streams.sorted(spec).len(),
+            1,
+            "a search's results as they come"
+        );
     }
 
     #[test]

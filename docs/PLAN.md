@@ -72,7 +72,10 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
   (2026-11-05, quiet).
 - **Since 0.3.1 (2026-11-06):** About's buttons on one line; a shared
   slider (the seek bar, Settings' sliders); the window's grounds each
-  painted once, then see-through at the opacity chosen (ADR-119).
+  painted once, then see-through at the opacity chosen (ADR-119); a
+  drag's name under its icon, inside the window and out; names broken
+  where they read best; a folder appears whole, streaming only past a
+  second (ADR-120, amends ADR-000's principle 1).
 - **Work (2026-11-04 to 11-05) in 0.3.1:** text sizes by part
   from the desktop's (ADR-117), Fonts from and Colors from, twelve
   palettes and the desktop's colors on macOS and Windows (ADR-071
@@ -782,6 +785,14 @@ leave (ADR-077).
 - `just idle-pss` measures the dev build (`target/release`), whose first
   frame read 177 to 184 ms while the shipped tarballs read 137 to 170
   the same evening: why it starts slower is not known.
+
+**From a folder appearing whole** (ADR-120, 2026-11-06):
+- The whole folder is sorted once on the UI thread when it appears:
+  110 ms for `/nix/store`'s 390 000 entries in the release build, 315 ms
+  in the debug build. Sorting it on a worker before it is shown would
+  remove that hitch.
+- Checked on X11 (Xvfb) only, with `/nix/store` and the unit tests; not
+  on a remote folder past its second, nor on macOS or Windows.
 
 **From the see-through grounds** (ADR-119, 2026-11-06):
 - Checked on X11 (Xvfb, no compositor) and on a headless sway (no

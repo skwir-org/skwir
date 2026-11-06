@@ -2771,6 +2771,17 @@ impl Pane {
             .collect()
     }
 
+    /// How much longer what the pane shows is held back whole (ADR-120):
+    /// its listing, or the soonest of the folders it keeps beside it (the
+    /// columns above, those opened in place). Zero once due: the next
+    /// pump lets it go.
+    pub fn held_for(&self) -> Option<std::time::Duration> {
+        std::iter::once(&self.listing)
+            .chain(self.kept.iter().map(|kept| &kept.listing))
+            .filter_map(Listing::held_for)
+            .min()
+    }
+
     /// `order` before the name filter and the narrowing: what the pane
     /// holds. A narrowing cannot tell a file whose metadata has not come
     /// yet, and does not show it until it can; no view draws it, so

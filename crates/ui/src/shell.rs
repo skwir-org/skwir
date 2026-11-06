@@ -1338,6 +1338,11 @@ impl Shell {
                 self.reveal = None;
                 return;
             }
+            // A folder held back whole (ADR-120) shows nothing to scroll
+            // to yet: looked at once it shows what it holds.
+            if pane.listing.is_held() {
+                return;
+            }
             let names = (pane.listing.id(), pane.listing.names_version());
             let found = (reveal.looked != Some(names)).then(|| {
                 // The listing walked once, however many are looked for.

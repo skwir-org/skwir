@@ -121,26 +121,34 @@ pub(crate) fn render(
 ) -> AnyElement {
     let theme = cx.global::<Theme>().clone();
     let selection = shell.selection_ctx();
-    let (count, complete, error, is_query, sweep, total, as_of, reads) = {
+    let (held, count, complete, error, is_query, sweep, total, as_of, reads) = {
         let ws = shell.app.workspace.read();
         let pane = ws.pane(shell.pane);
-        pane.map_or((0, true, None, false, None, None, None, false), |p| {
-            (
-                shell.ui().list.sorted.len(),
-                p.listing.is_complete(),
-                p.listing.error().map(str::to_owned),
-                shell.ui().place.search,
-                p.selection.sweeping(),
-                // Filtered (its lens, words typed): how many there are in all.
-                p.is_filtered().then(|| p.listing.sorted(p.sort).len()),
-                p.listing.as_of().cloned(),
-                p.read_filter().is_some_and(|r| r.metadata),
-            )
-        })
+        pane.map_or(
+            (false, 0, true, None, false, None, None, None, false),
+            |p| {
+                (
+                    p.listing.is_held(),
+                    shell.ui().list.sorted.len(),
+                    p.listing.is_complete(),
+                    p.listing.error().map(str::to_owned),
+                    shell.ui().place.search,
+                    p.selection.sweeping(),
+                    // Filtered (its lens, words typed): how many there are in all.
+                    p.is_filtered().then(|| p.listing.sorted(p.sort).len()),
+                    p.listing.as_of().cloned(),
+                    p.read_filter().is_some_and(|r| r.metadata),
+                )
+            },
+        )
     };
     // "Loading…" follows the same delayed signal as the pane banner.
     let loading = crate::loading::pending(shell, shell.pane);
     let items = match (is_query, complete) {
+        // A folder held back until it is whole (ADR-120) has shown nothing
+        // to count: "Loading…" once that is said, nothing before.
+        _ if held && loading => "Loading…".to_owned(),
+        _ if held => String::new(),
         (true, false) => format!("Searching… {}", format::count(count, "result")),
         (true, true) => format::count(count, "result"),
         (false, false) if error.is_none() && loading => {

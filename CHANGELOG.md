@@ -30,6 +30,11 @@
 - **Dragging files marks only where they would go**: a folder, a place, a tab
   or a column under the pointer, no longer the pane or the sidebar around it as
   well.
+- **A folder appears whole**: opened, it shows its files all at once when it is
+  listed, rather than streaming in and moving under the eye, and a large one is
+  ready sooner (`/nix/store`'s 390 000 entries in 0.53 s rather than 0.72 s). A
+  folder that takes more than a second shows what has come and the rest as it
+  comes, as before; searches show their results as they are found.
 
 ## 0.3.1 (2026-11-05)
 

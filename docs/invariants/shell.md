@@ -943,6 +943,17 @@ of bars, split or not.
   holding that server offers Eject (its invocation, asked of the place:
   the banner names no plugin). Leaving a location stops what opens or
   lists it; the server stays connected.
+- **A folder appears whole (ADR-120).** A pane goes to a folder at once
+  (address, trail, an empty view) and shows its entries together when
+  the listing completes; past `location::WHOLE_WITHIN` (1 s) it shows
+  what came and streams the rest. While held, the footer says nothing,
+  then "Loading…" with the banner; the placeholder waits for the listing
+  to end. The window's wake when a hold's time comes is
+  `loading.rs`'s, from `Pane::held_for` (the pane's listing and the
+  folders it keeps beside it); a refresh reads into the listing shown
+  and never empties the view. The old view is never held for a
+  navigation: only a tab shown again keeps the one left, for
+  `tabs::HOLD`.
 
 ## Properties and links
 

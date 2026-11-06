@@ -568,8 +568,12 @@ impl PaneView for ColumnsView {
                     };
                     let ids = listing.sorted(spec);
                     // Looked for again only when its names change: every
-                    // batch of metadata moved the listing's version.
-                    if !a.shown_child && a.looked_at != Some(listing.names_version()) {
+                    // batch of metadata moved the listing's version. Not
+                    // while it is held back, which shows nothing yet.
+                    if !a.shown_child
+                        && !listing.is_held()
+                        && a.looked_at != Some(listing.names_version())
+                    {
                         a.looked_at = Some(listing.names_version());
                         if let Some(ix) = ids
                             .iter()

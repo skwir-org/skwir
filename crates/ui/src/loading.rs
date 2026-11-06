@@ -21,6 +21,12 @@ pub struct State {
     /// answering (`message`): asked again while it is listed, never once
     /// it is.
     remote: Option<Task<()>>,
+    /// The wake when a folder the pane shows stops being held back whole
+    /// (ADR-120): the pump it brings lets it go and shows what has
+    /// arrived, though nothing new arrived to say so. Asked again while
+    /// one is held, its own listing's or a folder kept beside it, never
+    /// once none is.
+    held: Option<Task<()>>,
 }
 
 impl Shell {
@@ -34,11 +40,12 @@ impl Shell {
                         pane.id,
                         pane.open.clone(),
                         !pane.listing.is_complete() && pane.listing.error().is_none(),
+                        pane.held_for(),
                     )
                 })
                 .collect()
         };
-        for (pane, open, pending) in pending {
+        for (pane, open, pending, held) in pending {
             let Some(ui) = self.panes.iter_mut().find(|ui| ui.id == pane) else {
                 continue;
             };
@@ -52,6 +59,23 @@ impl Shell {
                     open: open.clone(),
                     ..State::default()
                 };
+            }
+            match held {
+                None => ui.loading.held = None,
+                Some(left) if ui.loading.held.is_none() => {
+                    ui.loading.held = Some(cx.spawn(async move |this, cx| {
+                        cx.background_executor().timer(left).await;
+                        // A wake, as from the core: the sync it brings
+                        // lets the folder go, then the window draws it.
+                        let _ = this.update(cx, |shell, _| {
+                            if let Some(ui) = shell.panes.iter_mut().find(|ui| ui.id == pane) {
+                                ui.loading.held = None;
+                            }
+                            shell.app.wake();
+                        });
+                    }));
+                }
+                Some(_) => {}
             }
             if !pending || open.is_none() {
                 ui.loading.visible = false;
