@@ -7,16 +7,20 @@
 //! longer name keeping its first lines whole and its end on the last, an
 //! ellipsis between (gpui patch 0037); a short one on a pill as wide as it.
 //! gpui lays a drag's view out at its least width, where text wraps at each
-//! chance, so the width is given: the name's own, measured with the text
-//! system, up to the most (`Name::of`).
+//! chance, so the text's box is given its width: the name's own, measured
+//! with the text system, in whole pixels and one more (laid out, an edge
+//! lands on a whole device pixel, and a box a hair narrower wraps the
+//! name's last word), up to the most (`Name::of`).
 //!
 //! The compositor's picture is drawn here, glyph by glyph through the text
-//! system (gpui patch 0048), the name broken and cut as gpui breaks and
-//! cuts it in the window (`truncate_wrapped_line`, `wrap_line`), at the
-//! window's scale, which the compositor shows at its logical size (patch
-//! 0049): its text as sharp as the window's.
+//! system (gpui patch 0048), the name laid out as gpui's text element lays
+//! it out in the window, at the same width (`truncate_wrapped_line`, then
+//! `shape_text`, each row centred as gpui centres it), so it breaks where
+//! the window's does; at the window's scale, which the compositor shows at
+//! its logical size (patch 0049): its text as sharp as the window's.
 
 use gpui::{App, ExternalDragIcon, Pixels, SharedString, Window, div, point, prelude::*, px};
+use smallvec::SmallVec;
 
 use crate::dragicon::Canvas;
 use crate::sizes::{Text, TextSizes, painted, sized};
@@ -74,10 +78,11 @@ impl Name {
                 None,
             )
             .width;
-        let most = at(window, WIDTH - 2. * PAD_X);
-        // In whole pixels: a width a hair short of the text's would wrap
-        // its last word.
-        let inner = px(f32::from(own).ceil()).min(most);
+        let most = px(f32::from(at(window, WIDTH - 2. * PAD_X)).floor());
+        // In whole pixels and one more: laid out, an edge lands on a whole
+        // device pixel, and a box a hair short of the text's width wraps
+        // its last word ("3" over "items").
+        let inner = px(f32::from(own).ceil() + 1.).min(most);
         Name { text, inner }
     }
 
@@ -86,11 +91,11 @@ impl Name {
         self.inner + at(window, 2. * PAD_X)
     }
 
-    /// The name on its pill, as the window draws it.
-    pub fn element(&self, theme: &Theme, window: &Window) -> gpui::Div {
+    /// The name on its pill, as the window draws it: the text's box is
+    /// given its width, the pill holds it with its padding.
+    pub fn element(&self, theme: &Theme) -> gpui::Div {
         div()
             .flex_none()
-            .w(self.width(window))
             .px(sized(PAD_X))
             .py(sized(PAD_Y))
             .rounded(sized(RADIUS))
@@ -103,7 +108,7 @@ impl Name {
             .shadow_md()
             .child(
                 div()
-                    .w_full()
+                    .w(self.inner)
                     .overflow_hidden()
                     .text_ellipsis_middle()
                     .line_clamp(LINES)
@@ -111,15 +116,21 @@ impl Name {
             )
     }
 
-    /// The lines it is written in, as gpui breaks and cuts it in the
-    /// window: cut to `LINES` in the middle of the last, then wrapped at
-    /// the width given, a newline ending a line.
-    fn lines(&self, theme: &Theme, window: &Window, cx: &App) -> Vec<SharedString> {
+    /// The name laid out as the window lays it out: cut to `LINES` in
+    /// the middle of the last (`truncate_wrapped_line`), then shaped and
+    /// wrapped at the width given (`shape_text`), as gpui's text element
+    /// does, so that it breaks where the window's breaks.
+    fn laid_out(
+        &self,
+        theme: &Theme,
+        window: &Window,
+        cx: &App,
+    ) -> SmallVec<[gpui::WrappedLine; 1]> {
         let mut wrapper = cx
             .text_system()
             .line_wrapper(gpui::font(theme.font.clone()), painted(window, Text::Body));
         let runs = [run(&self.text, theme)];
-        let (cut, _) = wrapper.truncate_wrapped_line(
+        let (cut, runs) = wrapper.truncate_wrapped_line(
             self.text.clone(),
             self.inner,
             LINES,
@@ -127,23 +138,56 @@ impl Name {
             &runs,
             gpui::TruncateFrom::Middle,
         );
-        let mut lines = Vec::new();
-        for paragraph in cut.split('\n') {
-            let mut start = 0;
-            let fragments = [gpui::LineFragment::text(paragraph)];
-            // A boundary is where the next line starts; the space a line
-            // broke at stays on it, and is not centred.
-            for boundary in
-                wrapper.wrap_line(&fragments, self.inner, gpui::IndentAdjustment::NoIndent)
-            {
-                lines.push(paragraph[start..boundary.ix].trim_end().to_owned().into());
-                start = boundary.ix;
-            }
-            lines.push(paragraph[start..].trim_end().to_owned().into());
-        }
-        lines.truncate(LINES);
-        lines
+        window
+            .text_system()
+            .shape_text(
+                cut,
+                painted(window, Text::Body),
+                &runs,
+                Some(self.inner),
+                Some(LINES),
+            )
+            .unwrap_or_default()
     }
+}
+
+/// A row of a wrapped line: where it starts and ends along the line, and
+/// whether a glyph is on it.
+struct Row {
+    from: gpui::WrapBoundary,
+    to: Option<gpui::WrapBoundary>,
+    start: Pixels,
+    end: Pixels,
+}
+
+/// The rows `line` wraps to, at most `most`.
+fn rows(line: &gpui::WrappedLine, most: usize) -> Vec<Row> {
+    let layout = &line.unwrapped_layout;
+    let x = |at: &gpui::WrapBoundary| layout.runs[at.run_ix].glyphs[at.glyph_ix].position.x;
+    let mut rows = Vec::new();
+    let mut from = gpui::WrapBoundary {
+        run_ix: 0,
+        glyph_ix: 0,
+    };
+    let mut start = px(0.);
+    for boundary in &line.wrap_boundaries {
+        rows.push(Row {
+            from,
+            to: Some(*boundary),
+            start,
+            end: x(boundary),
+        });
+        from = *boundary;
+        start = x(boundary);
+    }
+    rows.push(Row {
+        from,
+        to: None,
+        start,
+        end: layout.width,
+    });
+    rows.truncate(most);
+    rows
 }
 
 /// The picture the compositor shows once a drag leaves the window: `icon`
@@ -164,7 +208,12 @@ pub fn picture(
         px(icon.width as f32 / icon_scale),
         px(icon.height as f32 / icon_scale),
     );
-    let lines = name.lines(theme, window, cx);
+    let laid = name.laid_out(theme, window, cx);
+    let mut lines = Vec::new();
+    for wrapped in &laid {
+        let left = LINES.saturating_sub(lines.len());
+        lines.extend(rows(wrapped, left).into_iter().map(|row| (wrapped, row)));
+    }
     let line = at(window, LINE);
     let (pill_w, pill_h) = (
         name.width(window),
@@ -193,20 +242,20 @@ pub fn picture(
     );
     let color = rgba(theme.on_accent);
     let text = cx.text_system();
-    for (row, line_text) in lines.into_iter().enumerate() {
-        let shaped = window.text_system().shape_line(
-            line_text.clone(),
-            painted(window, Text::Body),
-            &[run(&line_text, theme)],
-            None,
-        );
-        // Centred on the pill, on the line's baseline as gpui places it:
-        // the room the line leaves shared above and below.
-        let left = pill_x + at(window, PAD_X) + (name.inner - shaped.width) / 2.;
-        let top = pill_y + at(window, PAD_Y) + line * row as f32;
-        let baseline = top + (line - (shaped.ascent + shaped.descent)) / 2. + shaped.ascent;
-        for shaped_run in &shaped.runs {
-            for glyph in &shaped_run.glyphs {
+    for (index, (wrapped, row)) in lines.into_iter().enumerate() {
+        let layout = &wrapped.unwrapped_layout;
+        // Each row centred on the text's box, its width to the next row's
+        // start, and on the baseline, as gpui paints them: the room the
+        // line leaves shared above and below.
+        let left = pill_x + at(window, PAD_X) + (name.inner - (row.end - row.start)) / 2.;
+        let top = pill_y + at(window, PAD_Y) + line * index as f32;
+        let baseline = top + (line - (layout.ascent + layout.descent)) / 2. + layout.ascent;
+        for (run_ix, shaped_run) in layout.runs.iter().enumerate() {
+            for (glyph_ix, glyph) in shaped_run.glyphs.iter().enumerate() {
+                let at_glyph = gpui::WrapBoundary { run_ix, glyph_ix };
+                if at_glyph < row.from || row.to.is_some_and(|to| at_glyph >= to) {
+                    continue;
+                }
                 let params = gpui::RenderGlyphParams {
                     font_id: shaped_run.font_id,
                     glyph_id: glyph.id,
@@ -227,7 +276,7 @@ pub fn picture(
                     continue;
                 };
                 canvas.glyph(
-                    device(left + glyph.position.x) + bounds.origin.x.0,
+                    device(left + glyph.position.x - row.start) + bounds.origin.x.0,
                     device(baseline + glyph.position.y) + bounds.origin.y.0,
                     (size.width.0, size.height.0),
                     &pixels,

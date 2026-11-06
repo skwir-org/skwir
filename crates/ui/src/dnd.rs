@@ -258,7 +258,7 @@ impl Render for DragPreview {
         // the name says its font itself (without a family gpui asks for
         // `.SystemUIFont`, a family Linux seldom has).
         let name = crate::dragname::Name::of(text, &theme, window);
-        let label = name.element(&theme, window);
+        let label = name.element(&theme);
         let Some((image, hotspot)) = &self.icon else {
             return div()
                 .pl(self.position.x + px(12.))

@@ -11747,3 +11747,24 @@ drag left the window and came back; the name lost outside the window.
   among them). Not run: `just gpui-check`, `just check-cross`, the
   release checks; a drag on X11 (which never leaves the window), on
   KWin, on GNOME or on the session's Hyprland.
+
+## A short drag name on one line, inside and out (2026-11-06)
+
+- **The user's report:** a drag of several files wrote "3" over "items"
+  in the window, and one line outside it. With Noto Sans 10 pt the
+  interface's rem is 15.24 px, so the pill's padding was 7.62 px a side:
+  the pill had the name's width and the padding, and laid out with its
+  edges on whole pixels, the text was left 45 px for a name of 45.72
+  (printed while dragging, a temporary print). gpui's text element wraps
+  past its box's width; the compositor's picture was broken by the line
+  wrapper, which summed other widths and happened to keep one line.
+- **Fixed:** the text's own box is given the width (the name's, in whole
+  pixels and one more, up to the most), the pill holds it with its
+  padding; and the compositor's picture is laid out as gpui's text
+  element lays it out (`truncate_wrapped_line`, then `shape_text` at the
+  same width, each row centred on its own width as gpui centres it), so
+  both break in the same places.
+- Checked: on Xvfb at scale 1 with Noto Sans 10 pt, "3 items" on one
+  line, the 92-character name on three; on a headless sway at scales 1,
+  1.25 and 2, both in the window and out of it, the same lines.
+  `cargo clippy -p skwir-ui --all-targets -D warnings`, skwir-ui's tests.

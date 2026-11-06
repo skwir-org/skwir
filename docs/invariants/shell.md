@@ -718,14 +718,18 @@ of bars, split or not.
   most `dragname::WIDTH` wide, a longer one keeping its first lines and
   its end on the last (gpui patch 0037); a short one on a pill as wide as
   it, measured with the text system, as gpui lays a drag's view out at
-  its least width. Its own font is named (gpui draws a drag's view
+  its least width: the text's box is given that width in whole pixels
+  and one more, as laid out an edge lands on a whole device pixel and a
+  box a hair narrower wraps the last word ("3" over "items"). Its own
+  font is named (gpui draws a drag's view
   outside the window's text style). A key held says what the drop does
   before the name ("Copy …"), in the window only.
 - **The same picture inside and out.** If a drag of files leaves the
   window (Wayland), the compositor shows the icon with its name under
-  it, drawn as the window draws them (`dragname::picture`: broken and
-  cut by gpui's line wrapper, each glyph from the text system, gpui
-  patch 0048) at the window's scale, which the compositor shows at its
+  it, drawn as the window draws them (`dragname::picture`: laid out as
+  gpui's text element lays it out, at the same width, so it breaks where
+  the window's does; each glyph from the text system, gpui patch 0048)
+  at the window's scale, which the compositor shows at its
   logical size (patch 0049, through the viewporter for a fractional
   one): the text as sharp as the window's. Brought back into the
   window, the drag is still the compositor's, which draws it there too:
