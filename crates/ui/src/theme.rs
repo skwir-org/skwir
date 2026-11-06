@@ -233,7 +233,7 @@ pub struct Theme {
 /// How opaque the window's own grounds are, from 0 to 1: what is read's
 /// (`bg`: the files, a preview's paper, the terminal) and the chrome's
 /// (`surface`: the bars, the sidebar, the tabs, the panel around a
-/// preview). Whole unless chosen otherwise.
+/// preview). Whole unless chosen otherwise (`Opacity::chosen`, ADR-119).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Opacity {
     pub files: f32,
@@ -261,6 +261,31 @@ pub struct Grounds {
 }
 
 impl Opacity {
+    /// What the settings choose (`ui.background_opacity`,
+    /// `ui.files_background_opacity`), the value under a slider's knob
+    /// first (`settings::previewed`); whole where the desktop asks for
+    /// more contrast, which no ground that lets the desktop through can
+    /// keep (ADR-119).
+    pub fn chosen(app: &skwir_core::App, contrast: Contrast) -> Self {
+        if contrast == Contrast::More {
+            return Opacity::default();
+        }
+        let of = |key: &str| {
+            let percent = crate::settings::previewed(&app.settings, key)
+                .and_then(|value| value.parse::<i64>().ok())
+                .or_else(|| app.settings.get::<i64>(key))
+                .unwrap_or(100)
+                .clamp(crate::settings::OPACITY_LEAST, 100);
+            #[allow(clippy::cast_precision_loss)] // a percentage
+            let whole = percent as f32 / 100.;
+            whole
+        };
+        Opacity {
+            files: of(crate::settings::FILES_OPACITY_KEY),
+            interface: of(crate::settings::OPACITY_KEY),
+        }
+    }
+
     /// Whether something behind the window shows through it.
     pub fn see_through(self) -> bool {
         self.files < 1. || self.interface < 1.
@@ -1047,6 +1072,7 @@ impl Theme {
         }
         theme.set_fonts(crate::fonts::resolve(app, text));
         theme.sizes = crate::sizes::Sizes::resolve(app);
+        theme.opacity = Opacity::chosen(app, theme.desktop.contrast);
         theme
     }
 }

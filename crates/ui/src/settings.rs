@@ -69,6 +69,13 @@ pub const TEXT_SIZE_KEY: &str = "ui.text_size";
 pub const FILES_TEXT_SIZE_KEY: &str = "ui.files_text_size";
 pub const READING_TEXT_SIZE_KEY: &str = "reading.text_size";
 pub const CODE_TEXT_SIZE_KEY: &str = "ui.code_text_size";
+/// How opaque the window's own grounds are, in percent (ADR-119,
+/// `theme::Opacity`): the chrome's, and the files'.
+pub const OPACITY_KEY: &str = "ui.background_opacity";
+pub const FILES_OPACITY_KEY: &str = "ui.files_background_opacity";
+/// The least opacity a ground takes: below it, text over a light
+/// background behind a dark look would no longer read.
+pub const OPACITY_LEAST: i64 = 50;
 /// The icon theme skwir draws with, by its folder's name; Automatic is the
 /// desktop's (`icons::IconCache::set_theme`). The free desktops' only:
 /// macOS and Windows draw the system's own icons.
@@ -332,6 +339,35 @@ pub fn text_size_spec(part: crate::sizes::Part) -> SettingSpec {
         .page(page::READING)
         .section("Code"),
     }
+}
+
+/// How opaque the chrome's ground is, or (`files`) the files' (ADR-119):
+/// a slider, in fives, from `OPACITY_LEAST` to whole.
+fn opacity_spec(files: bool) -> SettingSpec {
+    const AFTER: &str = "Below it, what is behind the window shows through, blurred where your desktop blurs it; text, icons, pictures, menus and dialogs stay whole. Over a busy or contrasting background, text may read less clearly. While your desktop asks for more contrast, the window stays whole.";
+    let (key, title, what) = if files {
+        (
+            FILES_OPACITY_KEY,
+            "Files background opacity",
+            "How much the files, the terminal and what a preview shows to read hide what is behind the window; at 100 % they hide it.",
+        )
+    } else {
+        (
+            OPACITY_KEY,
+            "Background opacity",
+            "How much the bars, the tabs, the sidebar and the panel around a preview hide what is behind the window; at 100 % they hide it.",
+        )
+    };
+    SettingSpec::integer(
+        key,
+        title,
+        &format!("{what} {AFTER}"),
+        100,
+        (OPACITY_LEAST, 100),
+    )
+    .step(5)
+    .unit("%")
+    .slider()
 }
 
 /// `ui.fonts_from`, saying what its Automatic comes to once the window
@@ -1347,6 +1383,8 @@ pub fn declare(app: &App) {
         .declare(text_size_spec(crate::sizes::Part::Interface));
     app.settings
         .declare(text_size_spec(crate::sizes::Part::Files));
+    app.settings.declare(opacity_spec(false));
+    app.settings.declare(opacity_spec(true));
     if !skwir_platform::system_icons::AVAILABLE {
         let chosen = app
             .settings
@@ -4504,5 +4542,43 @@ mod tests {
         let ones = SettingSpec::integer("ui.test_ones", "Ones", "", 10, (0, 50)).slider();
         assert_eq!(slider_value(&ones, 0.5), 25);
         assert_eq!(slider_page(&ones), 5);
+    }
+
+    /// The window's grounds are as opaque as their settings say, the
+    /// value under a held slider's knob first, never less than the least,
+    /// and whole where the desktop asks for more contrast (ADR-119).
+    #[test]
+    fn the_grounds_are_as_opaque_as_chosen_unless_more_contrast_is_asked() {
+        use super::{FILES_OPACITY_KEY, OPACITY_KEY, preview_highlight};
+        use crate::theme::{Contrast, Opacity};
+        let tmp = tempfile::tempdir().unwrap();
+        let app = App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        declare(&app);
+        let chosen = || Opacity::chosen(&app, Contrast::Normal);
+        assert_eq!(chosen(), Opacity::default(), "whole by default");
+        assert!(!chosen().see_through());
+        app.settings.set(OPACITY_KEY, 70.into());
+        app.settings.set(FILES_OPACITY_KEY, 85.into());
+        assert_eq!(
+            chosen(),
+            Opacity {
+                files: 0.85,
+                interface: 0.7
+            }
+        );
+        assert!(chosen().see_through());
+        assert_eq!(
+            Opacity::chosen(&app, Contrast::More),
+            Opacity::default(),
+            "more contrast keeps the window whole"
+        );
+        // A slider held: its knob's value, until it is let go.
+        assert!(preview_highlight(OPACITY_KEY, Some("55")));
+        assert!((chosen().interface - 0.55).abs() < 1e-6);
+        assert!(preview_highlight(OPACITY_KEY, None));
+        assert!((chosen().interface - 0.7).abs() < 1e-6);
+        // A hand's value below the least is the least.
+        app.settings.set(FILES_OPACITY_KEY, 10.into());
+        assert!((chosen().files - 0.5).abs() < 1e-6);
     }
 }

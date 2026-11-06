@@ -581,6 +581,7 @@ impl Shell {
         );
         // The window is written at the interface's size (ADR-117).
         window.set_rem_size(theme.sizes.rem(crate::sizes::Part::Interface));
+        show_behind(&theme, window);
         cx.set_global(theme);
         show_resolved(&app, cx);
         let mut subs = Vec::new();
@@ -3016,6 +3017,7 @@ impl Shell {
         crate::icons::colors_now(&theme, previewing, window, cx);
         // The window is written at the interface's size (ADR-117).
         window.set_rem_size(now.1.rem(crate::sizes::Part::Interface));
+        show_behind(&theme, window);
         cx.set_global(theme);
         let declared = show_resolved(&self.app, cx);
         if current {
@@ -3840,6 +3842,18 @@ fn compared(text: &str, copied: &str, what: &str) -> (String, bool) {
     } else {
         (format!("No {what} is copied to compare with"), true)
     }
+}
+
+/// The window shows what is behind it where its grounds let it through
+/// (`Theme::opacity`), blurred where the system blurs what is behind a
+/// window that asks; whole otherwise, as the compositor need not draw
+/// what is behind it.
+fn show_behind(theme: &Theme, window: &Window) {
+    window.set_background_appearance(if theme.opacity.see_through() {
+        gpui::WindowBackgroundAppearance::Blurred
+    } else {
+        gpui::WindowBackgroundAppearance::Opaque
+    });
 }
 
 /// What the theme is made of, counted up, never down: the settings, the

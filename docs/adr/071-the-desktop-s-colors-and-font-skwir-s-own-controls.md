@@ -12,7 +12,10 @@ among the system's, three of them, followed live), 2026-10-20 (steps
 laid over), and 2026-11-05 (Colors from: Automatic, Skwir's own, GTK's
 or Qt's, in place of the Desktop colors switch; Qt's palettes read;
 then Skwir's palettes, twelve, among its values; then step 5, and
-macOS's own colors read).
+macOS's own colors read), and by ADR-119 (2026-11-06: the window's
+grounds may let the desktop through; the contrast guarded is on the
+theme's own grounds, and the window stays whole while more contrast is
+asked).
 
 ## Context
 

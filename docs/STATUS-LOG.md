@@ -11612,3 +11612,68 @@ leftovers and a crowded footer were fixed (8a34dc72, 7aa56577,
 Not checked: the Windows and macOS builds on their systems; the manual
 `packages` workflow; the AppImage on the session, on GNOME or on
 Plasma.
+
+## Sliders and see-through grounds (2026-11-06)
+
+- **A shared slider** (`controls::slider`): a track filled up to a
+  knob, telling its owner the press, each move while held (followed over
+  the whole window, not over the slider alone) and the release, where
+  the pointer is along it. The player's seek bar, the panel's and the
+  dock's, is drawn with it: it gains a knob, and a drag that leaves the
+  bar seeks where it is let go. Its keys stay the player's.
+- **A setting can be a slider** (`SettingSpec::slider`): a whole number
+  in a short range, its knob stopping at the steps, its value written
+  after it in tabular figures in the room of its longest end. The
+  knob's value is worn as it moves where its owner wears what is
+  previewed (`settings::Sliding`), saved once let go; the dialog closed
+  while it is held shows what holds again. Left and Right step it, Page
+  Up and Page Down by a tenth of its range (at least two steps), Home
+  and End to its ends (`ui.settings_adjust`'s `to`, the `setting_slider`
+  place). Tags suggested in the sidebar is one.
+- **The window's grounds painted once:** nothing under the window's
+  areas, each painting its own (`Theme::window_bg`, `window_surface`);
+  parts the panel shares with Peek and the whole screen handed their
+  grounds (`theme::Grounds`); Usage's and the Map's bars a tint of the
+  files' ground (`Theme::surface_on_bg`); `toolbar::row` painting none.
+- **See-through grounds (ADR-119):** Background opacity and Files
+  background opacity, 50 to 100 % in fives, under Appearance's More
+  settings; the window asks for a blurred background while either is
+  below 100 % (`shell::show_behind`), and stays whole while the desktop
+  asks for more contrast (`theme::Opacity::chosen`).
+- Checked, debug build:
+  - On Xvfb (`:92`, a private bus), the tag suggestions' slider: a drag
+    past its end and released below the slider saved 50; a click saved
+    14; Home 0, Page Up 5 then 10, Page Down 5, Right 6, End 50, Left
+    49 (Page Up and Down were the wrong way round at first: a list's
+    page up is `-1`). The seek bar dragged to 0:16 and released below
+    it stayed there.
+  - Eleven states of the window (list, text, Peek, a picture, the
+    player, the terminal, the grid, the split, tabs with Properties,
+    Settings, no preview) captured with the build before the grounds
+    changed and after, both at 100 %: identical but for the seek bar's
+    knob and a toast's timing, the sidebar's strip too. The first
+    comparison found Peek's file header squaring the dialog's rounded
+    corner by three pixels; the header now paints its ground in the
+    panel only.
+  - The same states with both grounds at half (a hook not committed),
+    on Xvfb, which shows a window's premultiplied pixels with no
+    compositor: every area read one ground (`surface` 120, `bg` 125 of
+    240 and 250) and none was missing, in those states and in Quick
+    filters, the timeline, the dock, Properties over a preview and
+    whole, an archive's kept rows and its member, Usage, the Map, the
+    whole screen. Usage's bar read 182 (two grounds) until it tinted
+    the files' instead; a folder's bar in the preview read whole until
+    `toolbar::row` stopped painting.
+  - On a headless sway (pixman, lavapipe) with a picture as wallpaper:
+    the chrome at 70 % and the files at 85 %, then the dark look at 80
+    and 90, the wallpaper through each as much, the text whole.
+  - The opacity slider in Settings on Xvfb: dragged to 50, the sidebar
+    behind the dialog went see-through before the release, the file
+    written only at the release; another drag, the dialog closed with
+    Escape while held: the files back to whole and nothing saved.
+  - `cargo clippy -p skwir-ui -p skwir-core -p skwir-plugin-tags
+    --all-targets -D warnings`; skwir-ui's tests, the tags plugin's, the
+    core's settings tests and `crates/skwir/tests/settings.rs`.
+- Not checked: blur (KWin's protocol, Hyprland's rules, macOS, Windows),
+  and a desktop asking for more contrast with the settings below 100
+  (the unit test covers it). The release checks were not run.

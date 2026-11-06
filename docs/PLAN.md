@@ -70,7 +70,10 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
   0.3.1's tarball and 116 for 0.3.0's (nine starts each, alternated),
   medians 159 and 154. `just bench-check` meets all 51 budgets
   (2026-11-05, quiet).
-- **Latest work (2026-11-04 to 11-05), in 0.3.1:** text sizes by part
+- **Since 0.3.1 (2026-11-06):** About's buttons on one line; a shared
+  slider (the seek bar, Settings' sliders); the window's grounds each
+  painted once, then see-through at the opacity chosen (ADR-119).
+- **Work (2026-11-04 to 11-05) in 0.3.1:** text sizes by part
   from the desktop's (ADR-117), Fonts from and Colors from, twelve
   palettes and the desktop's colors on macOS and Windows (ADR-071
   amended), Skwir's own fonts carried in every package (ADR-118),
@@ -779,6 +782,14 @@ leave (ADR-077).
 - `just idle-pss` measures the dev build (`target/release`), whose first
   frame read 177 to 184 ms while the shipped tarballs read 137 to 170
   the same evening: why it starts slower is not known.
+
+**From the see-through grounds** (ADR-119, 2026-11-06):
+- Checked on X11 (Xvfb, no compositor) and on a headless sway (no
+  blur) only: KWin's blur, Hyprland's, macOS's and Windows' are not
+  checked.
+- A preview's notice and the column headers drawn on its paper stay
+  opaque: making them grounds of their own would take them out of the
+  paper's area (`preview::content`, `inspector::content`).
 
 **From the review since 0.3.0** (2026-11-05):
 - On X11 GNOME's Large Text is counted once by asking `xrdb -query` for

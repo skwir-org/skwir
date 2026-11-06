@@ -10,6 +10,12 @@
 - **Sliders in Settings**: a setting judged as it changes can be a slider
   rather than a number to type, first Tags suggested in the sidebar. Left and
   Right step it, Page Up and Page Down by a tenth, Home and End to its ends.
+- **See-through backgrounds**: Settings › Appearance › More settings ›
+  Background opacity (the bars, the tabs, the sidebar) and Files background
+  opacity (the files, the terminal, a preview's text), from 50 to 100 %. What
+  is behind the window shows through, blurred where the desktop blurs it,
+  while text, icons, pictures, menus and dialogs stay whole. The window stays
+  opaque while the desktop asks for more contrast.
 
 ## 0.3.1 (2026-11-05)
 

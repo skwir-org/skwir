@@ -118,7 +118,11 @@ Views are in [views.md](views.md); what locations decide, in
   `window_surface` for the bars, the sidebar and its header, the tab
   strip, the timeline, the footer, the preview panel's bars, letterbox
   and dock), so that what is behind the window shows through them as
-  much as their opacity lets it. A container of areas (the shell's root,
+  much as their opacity lets it (ADR-119: Appearance's two sliders,
+  `theme::Opacity::chosen`, whole while the desktop asks for more
+  contrast; the window asks the system to blur what is behind it while
+  either lets it through, `shell::show_behind`, and says it is opaque
+  otherwise). A container of areas (the shell's root,
   the pane's column, the preview panel) paints nothing; an area that
   shows a tint where a drag is over it lays it on its ground
   (`window_bg().blend(drop_target)`). What is drawn on an area (a row, a
