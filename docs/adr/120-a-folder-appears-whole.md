@@ -1,7 +1,8 @@
 # ADR-120: A folder appears whole
 
 Status: accepted and built, 2026-11-06, on Linux; macOS and Windows
-compiled only. Amends ADR-000 (principle 1: listings stream).
+compiled only. Amends ADR-000 (principle 1: listings stream). The whole
+sort moved to a worker the same day (decision 5).
 
 ## Context
 
@@ -25,6 +26,8 @@ compiled only. Amends ADR-000 (principle 1: listings stream).
   build), but its longest sync grows from 36 ms to 110 ms (from 125 ms
   to 315 ms in the debug build): the one sort of the whole folder, on
   the UI thread.
+- **Then asked for** (2026-11-06): that one sort on a worker, as hyprfm
+  does it.
 - **Holding the old view** until the new one is ready (as tabs do,
   ADR-018's 150 ms) was refused for navigation: a click that changes
   nothing for longer than that feels unanswered.
@@ -43,29 +46,51 @@ compiled only. Amends ADR-000 (principle 1: listings stream).
    its results are answers as they are found, not a folder's contents.
 4. **The folders a pane keeps beside its own** (the columns above, those
    opened in place) appear whole the same way.
-5. **The hold is a state of the listing** (`Listing::whole_within`,
-   `is_held`), not a look at the clock: it ends when the listing
-   completes or fails (`apply`), or at the first pump past its time
-   (`drain`), and stamps the versions what is shown moves, so every
-   reader of a frame agrees and every cache keyed on them is made again.
-   The window asks for that pump when the time comes
+5. **Sorted on a worker.** Once a held folder is whole, failed or held
+   long enough, the pump asks for its sort (`Listing::sort_whole`,
+   `Pane::sorts_wanted`), run on the scheduler at `Priority::Visible`
+   (`SortJob::run`); the window's thread never sorts a whole folder.
+   The worker reads the listing's entries without a copy: they are
+   shared (`Arc`) with the sort alone, which lets go of them before it
+   sends its order, and the listing takes no events until the order is
+   back (they wait in its channel, and are not a backlog to pump for):
+   the next mutation finds the entries its own again
+   (`Arc::make_mut`) and copies nothing. A listing changed directly
+   under its sort is sorted again; a sort never run is asked again.
+6. **The hold is a state of the listing** (`Listing::whole_within`,
+   `is_held`), not a look at the clock: it ends when the drain after
+   the worker's wake takes the order (`drain`), which stamps the
+   versions what is shown moves, so every reader of a frame agrees and
+   every cache keyed on them is made again. A held listing is not
+   complete until then (`is_complete`): the banner, the footer, the
+   empty folder's placeholder and a tab shown again wait for the folder
+   shown. The window asks for a pump when the hold's time comes
    (`Pane::held_for`, `loading.rs`); what waits for an entry to be shown
    (a reveal, the column scrolled to its child) waits while it is held.
-6. **Refreshing keeps what is shown.** F5 reads the folder again into
+7. **Refreshing keeps what is shown.** F5 reads the folder again into
    the listing it has: it never goes empty.
 
 ## Consequences
 
 - The UI thread no longer re-places a streaming folder at each slice,
-  but sorts it whole once: a hitch of that sort's length when a large
-  folder appears (110 ms for 390 000 entries in the release build).
+  nor sorts it whole: opening `/nix/store`, its longest sync went from
+  75 to 158 ms (the sort, three runs) to 33 to 45 ms in the release
+  build, and from 310 to 322 ms to 116 to 129 ms in the debug build
+  (where the folder streams past its second, and arrivals are placed as
+  they always were). What is left in the release build is the listing's
+  own tables growing as entries arrive (rehashed whole at each doubling,
+  about 42 ms at 262 144 entries), as when the folder streamed. The
+  sort's time on its worker is in the wait.
 - Nothing is hydrated while a folder is held: no row is shown to ask
   for it. The rows shown first are asked for once they appear.
 - A folder on a slow server shows nothing for its first second, then
   streams as before.
+- While its sort runs, a folder's events wait: a change made in it
+  then shows once the order is back.
 
 ## Not done
 
-- **Sorting on a worker.** The whole folder could be sorted off the UI
-  thread before it is shown, as hyprfm does: the 110 ms hitch would go,
-  for a sort's copy of the order in memory while it runs.
+- **Sorting again on a worker.** A sort chosen anew (a column's header
+  clicked) still sorts the whole folder on the window's thread: showing
+  the order before until the new one is back needs the view to know the
+  order it shows is not the one asked for.

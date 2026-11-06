@@ -74,8 +74,8 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
   slider (the seek bar, Settings' sliders); the window's grounds each
   painted once, then see-through at the opacity chosen (ADR-119); a
   drag's name under its icon, inside the window and out; names broken
-  where they read best; a folder appears whole, streaming only past a
-  second (ADR-120, amends ADR-000's principle 1).
+  where they read best; a folder appears whole, sorted on a worker,
+  streaming only past a second (ADR-120, amends ADR-000's principle 1).
 - **Work (2026-11-04 to 11-05) in 0.3.1:** text sizes by part
   from the desktop's (ADR-117), Fonts from and Colors from, twelve
   palettes and the desktop's colors on macOS and Windows (ADR-071
@@ -787,10 +787,15 @@ leave (ADR-077).
   the same evening: why it starts slower is not known.
 
 **From a folder appearing whole** (ADR-120, 2026-11-06):
-- The whole folder is sorted once on the UI thread when it appears:
-  110 ms for `/nix/store`'s 390 000 entries in the release build, 315 ms
-  in the debug build. Sorting it on a worker before it is shown would
-  remove that hitch.
+- A sort chosen anew (a column's header) still sorts the whole folder
+  on the window's thread (about 110 ms for `/nix/store`'s 390 000
+  entries in the release build): the order before would have to stay
+  shown until a worker's is back.
+- A listing's tables (`Listing`'s entries and names) are rehashed whole
+  each time they double as a large folder arrives: about 42 ms on the
+  window's thread at 262 144 entries in the release build, now the
+  longest sync opening `/nix/store`. A table that grows a part at a
+  time, or one built off the window's thread, would spread it.
 - Checked on X11 (Xvfb) only, with `/nix/store` and the unit tests; not
   on a remote folder past its second, nor on macOS or Windows.
 

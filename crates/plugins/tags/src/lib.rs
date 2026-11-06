@@ -2765,7 +2765,7 @@ mod tests {
             };
             let deadline = std::time::Instant::now() + Duration::from_secs(5);
             while listed(&app) != then(&b) && std::time::Instant::now() < deadline {
-                app.workspace.write().pump();
+                app.pump();
                 std::thread::sleep(Duration::from_millis(5));
             }
         };

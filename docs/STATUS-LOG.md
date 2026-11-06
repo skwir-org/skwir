@@ -11877,3 +11877,48 @@ drag left the window and came back; the name lost outside the window.
   skwir-ui --all-targets -D warnings`; nextest on skwir-core, skwir-ui
   and skwir: 1396 passed (a new core test: held, whole, failed, held
   long enough and let go by a drain, not yet, a search's).
+
+## A folder sorted on a worker (ADR-120, 2026-11-06)
+
+- **Asked for:** the one sort a folder held back whole needed, on a
+  worker rather than the window's thread.
+- **Built:** `Listing::sort_whole` hands a `SortJob` once a held
+  listing is whole, failed or held long enough; `Pane::sorts_wanted`
+  collects the pane's and its kept folders' into `PumpReport::sorts`,
+  which `App::pump_report` runs on the scheduler (`Priority::Visible`,
+  never cancelled) and wakes the window after. The listing's entries are
+  an `Arc` shared with the job alone, which drops it before sending its
+  order; until the order is back the listing takes no events (`drain`
+  returns at once, `backlog` is false), so `Arc::make_mut` finds the
+  entries its own and copies nothing. A listing changed directly under
+  its sort is sorted again; a sort never run (its sender dropped) is
+  asked again. A held listing is not `is_complete` until shown, so the
+  banner, the placeholder and a tab shown again wait for it;
+  `pump_until_complete` waits for it shown. `Workspace::pump` (which
+  would have dropped the sorts) is gone: two tests pumped through it and
+  now pump through the app.
+- **Measured** on `/nix/store` (392 588 entries), Xvfb :92, the release
+  build before (sort on the window's thread) and after, alternated,
+  three runs each, load 8.5 to 9.2:
+
+  | | all rows shown | longest sync | syncs in all |
+  | --- | --- | --- | --- |
+  | before | 1.500 (streamed past its second), 0.580, 0.707 s | 74.9, 120.3, 157.8 ms | 381, 330, 396 ms |
+  | after | 0.539, 0.734, 0.706 s | 33.5, 44.8, 42.0 ms | 183, 242, 219 ms |
+
+  The longest syncs after are while the folder is held (no row shown),
+  one event each, doubling (5, 9 to 12, 20 to 22, 42 to 45 ms): the
+  listing's tables rehashed as they grow, there before as well (43 ms in
+  a run before). Debug build after, two runs at load 3.4 to 3.8: first
+  rows 1.36 and 1.37 s after the first frame, all at 2.66 and 2.69 s,
+  longest sync 116 and 129 ms (arrivals placed once it streams; 310 to
+  322 ms with the sort on the window's thread). Not compared back to
+  back in the debug build.
+- **Checked:** the hold test rewritten (whole, events waiting while
+  sorted then placed, failed, due, changed under its sort, never run, a
+  search's); `cargo clippy -p skwir-core -p skwir-ui -p skwir-plugin-tags
+  -p skwir --all-targets -D warnings`; nextest over the default members:
+  3067 passed (the lens test waited for the trash's entries listed, not
+  shown: it waits for them shown now). The disk filled during the first
+  full run (0.2 GB free); `tools/build/prune.py` freed 33 GB.
+

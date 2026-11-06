@@ -1402,7 +1402,23 @@ impl App {
     /// said it is reached at another (an address connected, ADR-077)
     /// shows that one in its place.
     pub fn pump_report(&self) -> crate::workspace::PumpReport {
-        let report = self.workspace.write().pump_report();
+        let mut report = self.workspace.write().pump_report();
+        // A folder held back whole is sorted on a worker, whose order is
+        // taken by the pump its wake brings (ADR-120). Never cancelled: a
+        // listing left keeps none of it, one kept (a column gone to) waits
+        // for it.
+        for job in std::mem::take(&mut report.sorts) {
+            let wake = self.waker_handle();
+            self.scheduler.spawn(
+                Priority::Visible,
+                "listing.sort",
+                CancelToken::new(),
+                move || {
+                    job.run();
+                    wake();
+                },
+            );
+        }
         for redirect in &report.redirects {
             let to = &redirect.to;
             if let Err(error) = self.follow_redirect(redirect.pane, &redirect.from, to) {
@@ -1593,7 +1609,8 @@ impl App {
             self.pump();
             let ws = self.workspace.read();
             let Some(p) = ws.pane(pane) else { return false };
-            if p.listing.is_complete() || p.listing.error().is_some() {
+            // Whole and shown, or failed and what came shown (ADR-120).
+            if !p.listing.is_held() && (p.listing.is_complete() || p.listing.error().is_some()) {
                 return p.listing.is_complete();
             }
             drop(ws);

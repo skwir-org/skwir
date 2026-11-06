@@ -135,7 +135,7 @@ fn a_tab_shown_again_keeps_its_opened_folders_and_its_filter() {
     };
     let deadline = std::time::Instant::now() + WAIT;
     while !inside(&app) && std::time::Instant::now() < deadline {
-        app.workspace.write().pump();
+        app.pump();
         std::thread::sleep(Duration::from_millis(5));
     }
     let ws = app.workspace.read();

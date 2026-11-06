@@ -350,11 +350,14 @@ working in an area, also read that area's rules (see
   backlog gives the event loop a turn (a real timer: a zero one is a
   ready task in gpui) and syncs again. A folder opened is held back
   whole (ADR-120, `Listing::whole_within`): its order is empty until it
-  completes or fails, or until the first drain past `WHOLE_WITHIN` (1 s),
-  which ends the hold and stamps its versions; then what has arrived
-  shows and the rest streams in, under the loading banner. A search
-  streams from the start. What waits for an entry to be shown (a
-  reveal) waits while its listing `is_held`. `Listing::sorted` places
+  completes or fails, or until `WHOLE_WITHIN` (1 s) has passed; then
+  the pump hands its sort to a worker (`Listing::sort_whole`, the
+  entries shared by `Arc`, its events waiting) and the drain after the
+  wake takes the order, ends the hold and stamps its versions: what has
+  arrived shows, and the rest streams in. The window's thread never
+  sorts a whole folder it opens. A held listing is not `is_complete`. A
+  search streams from the start. What waits for an entry to be shown
+  (a reveal) waits while its listing `is_held`. `Listing::sorted` places
   arrivals in the cached order (ranks kept while the listing streams, a
   quarter of the order at a time); any other change sorts again. Never
   loop on a channel until it is empty while its producer runs.

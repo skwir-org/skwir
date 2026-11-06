@@ -862,7 +862,7 @@ impl Rank {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct Slot {
     entry: Entry,
     /// [`crate::collate::sort_key`] of the name, computed once per name.
@@ -1098,7 +1098,11 @@ fn stamp() -> u64 {
 pub struct Listing {
     /// Which listing this is; see [`stamp`].
     id: u64,
-    entries: crate::hashing::IndexMap<EntryId, Slot>,
+    /// Shared only with the sort that shows it whole (ADR-120), which
+    /// lets go before its order is sent: while it runs the listing takes
+    /// no events, so `Arc::make_mut` finds them its own and copies
+    /// nothing.
+    entries: Arc<crate::hashing::IndexMap<EntryId, Slot>>,
     complete: bool,
     error: Option<String>,
     /// What the answer rests on, when not the files as they are
@@ -1169,8 +1173,13 @@ pub struct Listing {
     unfollowed: Option<(Option<Location>, Location)>,
     /// Until when nothing of it is shown while it is listed (ADR-120): a
     /// folder appears whole once complete, and streams only past
-    /// `WHOLE_WITHIN`. `None`: shown as it comes, as a search's results.
+    /// `WHOLE_WITHIN`, either once its order is back from a worker
+    /// (`sorting`). `None`: shown, or shown as it comes (a search's
+    /// results).
     held_until: Option<std::time::Instant>,
+    /// The sort that shows it whole, running on a worker (ADR-120): until
+    /// its order is back, the listing takes no events.
+    sorting: Option<Sorting>,
 }
 
 /// How long a folder opened is held back whole (ADR-120): until its
@@ -1182,12 +1191,107 @@ pub const WHOLE_WITHIN: std::time::Duration = std::time::Duration::from_secs(1);
 static NOTHING_YET: std::sync::LazyLock<Arc<[EntryId]>> =
     std::sync::LazyLock::new(|| Arc::from([]));
 
+/// A held listing's sort on a worker (ADR-120): what it was asked for,
+/// and where its order comes back.
+#[derive(Debug)]
+struct Sorting {
+    spec: SortSpec,
+    companions_shown: bool,
+    /// The listing's version when it was asked: one changed since (by a
+    /// change made to it directly, as its events wait) is sorted again.
+    version: u64,
+    order: crossbeam_channel::Receiver<Sorted>,
+}
+
+/// An order made on a worker, and its ranks for placing what arrives
+/// after it.
+#[derive(Debug)]
+struct Sorted {
+    ids: Arc<[EntryId]>,
+    ranks: Vec<Rank>,
+}
+
+/// The sort that shows a held listing (`Listing::sort_whole`), run on a
+/// worker: the window's thread never sorts a whole folder (ADR-120).
+pub struct SortJob {
+    entries: Arc<crate::hashing::IndexMap<EntryId, Slot>>,
+    spec: SortSpec,
+    companions: bool,
+    /// The names companions belong to that are listed.
+    named: crate::hashing::Set<OsString>,
+    order: crossbeam_channel::Sender<Sorted>,
+}
+
+impl std::fmt::Debug for SortJob {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SortJob")
+            .field("entries", &self.entries.len())
+            .field("spec", &self.spec)
+            .finish_non_exhaustive()
+    }
+}
+
+impl SortJob {
+    /// Sort, then send the order. The entries are let go first, so the
+    /// listing that takes the order finds them its own again and copies
+    /// nothing when its events go on.
+    pub fn run(self) {
+        let SortJob {
+            entries,
+            spec,
+            companions,
+            named,
+            order,
+        } = self;
+        let sorted = {
+            let keyed = keyed_of(
+                spec,
+                entries.values().filter(|slot| {
+                    shown_with(spec, slot, companions, |owner| named.contains(owner))
+                }),
+            );
+            Sorted {
+                ids: keyed.iter().map(|key| key.4).collect(),
+                ranks: keyed.into_iter().map(Rank::of).collect(),
+            }
+        };
+        drop(entries);
+        // A listing gone since does not wait for it.
+        let _ = order.send(sorted);
+    }
+}
+
+/// Whether `slot` is shown under `spec`, `is_named` saying whether a
+/// companion's file is listed: see [`Listing::shown`].
+fn shown_with(
+    spec: SortSpec,
+    slot: &Slot,
+    companions: bool,
+    is_named: impl Fn(&OsStr) -> bool,
+) -> bool {
+    let with_file = slot
+        .beside
+        .as_ref()
+        .is_some_and(|owner| owner.is_empty() || is_named(owner));
+    if with_file {
+        return spec.show_hidden && companions;
+    }
+    spec.show_hidden || !slot.entry.is_hidden()
+}
+
+/// `slots`' sort keys under `spec`, in order.
+fn keyed_of<'a>(spec: SortSpec, slots: impl Iterator<Item = &'a Slot>) -> Vec<SortKeyOf<'a>> {
+    let mut keyed: Vec<SortKeyOf<'a>> = slots.map(|slot| Listing::sort_key(spec, slot)).collect();
+    keyed.sort_unstable_by(|a, b| Listing::compare(spec, *a, *b));
+    keyed
+}
+
 impl Default for Listing {
     fn default() -> Self {
         let id = stamp();
         Listing {
             id,
-            entries: crate::hashing::IndexMap::default(),
+            entries: Arc::default(),
             complete: false,
             error: None,
             as_of: None,
@@ -1214,6 +1318,7 @@ impl Default for Listing {
             moved: None,
             unfollowed: None,
             held_until: None,
+            sorting: None,
         }
     }
 }
@@ -1252,30 +1357,100 @@ impl Listing {
     }
 
     /// Whether what it holds is held back (ADR-120). A state, not a look
-    /// at the clock: it ends when the listing completes or fails
-    /// (`apply`), or at the first `drain` past its time, which stamps the
-    /// versions it moves, so every reader of one frame agrees and what is
-    /// cached on them is made again.
+    /// at the clock: it ends when the order of what it holds comes back
+    /// from a worker (`sort_whole`, taken by `drain`), asked once it is
+    /// whole, failed, or held long enough, and the versions what is shown
+    /// moves are stamped then, so every reader of a frame agrees and what
+    /// is cached on them is made again.
     pub fn is_held(&self) -> bool {
         self.held_until.is_some()
     }
 
-    /// How much longer it is held back, if it is: zero once its time has
-    /// come and no `drain` let it go yet.
+    /// How long until a held listing is to be shown though it is not
+    /// whole: when the window pumps again to ask for its sort (zero once
+    /// due). `None` when no time is waited for: not held, whole or
+    /// failed, or sorted already.
     pub fn held_for(&self) -> Option<std::time::Duration> {
+        if self.sorting.is_some() || self.complete || self.error.is_some() {
+            return None;
+        }
         self.held_until
             .map(|until| until.saturating_duration_since(std::time::Instant::now()))
     }
 
-    /// Let it go if it is held and its time has come, or it is whole:
-    /// what it holds is shown from now on. Whether it was.
-    fn release(&mut self, due: bool) -> bool {
-        if self.held_until.is_none() || !(due || self.complete || self.error.is_some()) {
+    /// Whether its sort runs on a worker: its events wait until the order
+    /// is back, which wakes the window.
+    pub fn is_sorting(&self) -> bool {
+        self.sorting.is_some()
+    }
+
+    /// The sort that shows a held listing, once it is whole, failed or
+    /// held long enough and none runs yet: for a worker (`SortJob::run`),
+    /// whose order the next `drain` takes. Until then the listing takes
+    /// no events.
+    pub fn sort_whole(&mut self, spec: SortSpec) -> Option<SortJob> {
+        let until = self.held_until?;
+        let ready = self.complete || self.error.is_some() || until <= std::time::Instant::now();
+        if self.sorting.is_some() || !ready {
+            return None;
+        }
+        let companions = self.companions_shown();
+        let named = self
+            .owners
+            .iter()
+            .filter(|owner| self.is_named(owner))
+            .cloned()
+            .collect();
+        let (order, sorted) = crossbeam_channel::bounded(1);
+        self.sorting = Some(Sorting {
+            spec,
+            companions_shown: companions,
+            version: self.version,
+            order: sorted,
+        });
+        Some(SortJob {
+            entries: Arc::clone(&self.entries),
+            spec,
+            companions,
+            named,
+            order,
+        })
+    }
+
+    /// Take the order a worker made, if it came: what the listing holds
+    /// is shown from now on. Whether it was.
+    fn take_sorted(&mut self) -> bool {
+        let Some(sorting) = &self.sorting else {
+            return false;
+        };
+        let sorted = match sorting.order.try_recv() {
+            Ok(sorted) => sorted,
+            Err(crossbeam_channel::TryRecvError::Empty) => return false,
+            // Never run: asked again.
+            Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                self.sorting = None;
+                return false;
+            }
+        };
+        let Some(sorting) = self.sorting.take() else {
+            return false;
+        };
+        if sorting.version != self.version {
+            // Changed under it: sorted again.
             return false;
         }
         self.held_until = None;
+        *self.sort_cache.get_mut() = Some(SortCache {
+            stamp: self.order_version,
+            spec: sorting.spec,
+            companions_shown: sorting.companions_shown,
+            ids: sorted.ids,
+            seen: self.entries.len(),
+            ranks: sorted.ranks,
+            moved: Vec::new(),
+            gone: IdSet::default(),
+        });
         let now = stamp();
-        self.order_version = now;
         self.shown_version = now;
         self.version = now;
         true
@@ -1355,10 +1530,11 @@ impl Listing {
                     // One pass instead of an O(n) shift per id: one id is
                     // one shift, as long as the pass.
                     let gone: crate::hashing::Set<EntryId> = ids.into_iter().collect();
-                    self.entries.retain(|id, _| !gone.contains(id));
+                    Arc::make_mut(&mut self.entries).retain(|id, _| !gone.contains(id));
                 } else {
+                    let entries = Arc::make_mut(&mut self.entries);
                     for id in ids {
-                        self.entries.shift_remove(&id);
+                        entries.shift_remove(&id);
                     }
                 }
                 if self.entries.len() != before {
@@ -1369,7 +1545,7 @@ impl Listing {
             ListingEvent::Unreadable(ids) => {
                 use crate::entry::{Provenance, Value, keys};
                 for id in ids {
-                    let Some(slot) = self.entries.get_mut(&id) else {
+                    let Some(slot) = Arc::make_mut(&mut self.entries).get_mut(&id) else {
                         continue;
                     };
                     // What was known of it stands.
@@ -1454,8 +1630,7 @@ impl Listing {
         if !delta.touched.is_empty() {
             self.note_updates(delta.touched);
         }
-        // Whole, or failed: what it holds is shown (ADR-120).
-        self.release(false) || delta.any
+        delta.any
     }
 
     /// Note `touched`, arrived or changed in place, under the version just
@@ -1475,7 +1650,7 @@ impl Listing {
 
     fn upsert(&mut self, mut e: Entry, insert: bool, delta: &mut Delta) {
         let id = e.id;
-        match self.entries.entry(id) {
+        match Arc::make_mut(&mut self.entries).entry(id) {
             indexmap::map::Entry::Occupied(mut slot) => {
                 let old = &slot.get().entry;
                 // A re-listing (refresh, a watcher's rescan) sends bare
@@ -1538,7 +1713,7 @@ impl Listing {
                     let hash = self.name_hasher.hash_one(new.entry.name.as_os_str());
                     name(&mut self.by_name, hash, new.entry.id);
                     delta.touched.push(new.entry.id);
-                    self.entries.insert(new.entry.id, new);
+                    Arc::make_mut(&mut self.entries).insert(new.entry.id, new);
                     // A new name; nothing listed moved (see `order`).
                     delta.any = true;
                     delta.name = true;
@@ -1731,14 +1906,7 @@ impl Listing {
     /// hidden files and companions both; one whose file is gone, an
     /// orphan, as any file.
     fn shown(&self, spec: SortSpec, slot: &Slot, companions: bool) -> bool {
-        let with_file = slot
-            .beside
-            .as_ref()
-            .is_some_and(|owner| owner.is_empty() || self.is_named(owner));
-        if with_file {
-            return spec.show_hidden && companions;
-        }
-        spec.show_hidden || !slot.entry.is_hidden()
+        shown_with(spec, slot, companions, |owner| self.is_named(owner))
     }
 
     /// Whether an entry is listed and shown under `spec`: not a hidden file
@@ -1756,14 +1924,12 @@ impl Listing {
     /// The shown entries' sort keys, in order.
     fn keyed(&self, spec: SortSpec) -> Vec<SortKeyOf<'_>> {
         let companions = self.companions_shown();
-        let mut keyed: Vec<SortKeyOf<'_>> = self
-            .entries
-            .values()
-            .filter(|slot| self.shown(spec, slot, companions))
-            .map(|slot| Self::sort_key(spec, slot))
-            .collect();
-        keyed.sort_unstable_by(|a, b| Self::compare(spec, *a, *b));
-        keyed
+        keyed_of(
+            spec,
+            self.entries
+                .values()
+                .filter(|slot| self.shown(spec, slot, companions)),
+        )
     }
 
     #[cfg(test)]
@@ -1865,12 +2031,18 @@ impl Listing {
 
     /// Apply what was queued when called, until `budget` has passed, without
     /// blocking; at least one event. Returns how many events changed the
-    /// listing, one more where the hold's time came (ADR-120). What is left waits for the next call: a location still
+    /// listing, one more where a held listing's order came (ADR-120). What is left waits for the next call: a location still
     /// streaming never keeps the caller (the UI thread) here, and a backlog
     /// is applied a slice at a time, with frames drawn in between.
     pub fn drain(&mut self, rx: &Receiver<ListingEvent>, budget: std::time::Duration) -> usize {
+        // A held listing's order made on a worker: taken, the listing is
+        // shown; until it is back, its events wait (ADR-120).
+        let shown = self.take_sorted();
+        if self.sorting.is_some() {
+            return 0;
+        }
         let started = std::time::Instant::now();
-        let mut n = 0;
+        let mut n = usize::from(shown);
         for _ in 0..rx.len() {
             let Ok(ev) = rx.try_recv() else { break };
             n += usize::from(self.apply(ev));
@@ -1878,10 +2050,7 @@ impl Listing {
                 break;
             }
         }
-        // Held long enough: what has arrived is shown, and the rest
-        // streams in (ADR-120).
-        let due = self.held_until.is_some_and(|until| until <= started);
-        n + usize::from(self.release(due))
+        n
     }
 
     pub fn len(&self) -> usize {
@@ -1892,8 +2061,10 @@ impl Listing {
         self.entries.is_empty()
     }
 
+    /// Whether it is listed whole and shown: a listing held back
+    /// (ADR-120) completes once its order is back.
     pub fn is_complete(&self) -> bool {
-        self.complete
+        self.complete && self.held_until.is_none()
     }
 
     pub fn error(&self) -> Option<&str> {
@@ -2023,8 +2194,10 @@ mod tests {
     }
 
     /// A folder opened is held back whole (ADR-120): nothing of it is in
-    /// its order until it completes, fails, or has been held long enough;
-    /// a listing not held (a search's) shows what comes as it comes.
+    /// its order until it completes, fails, or has been held long enough,
+    /// and then until its order comes back from the sort run elsewhere,
+    /// its events waiting meanwhile; a listing not held (a search's) shows
+    /// what comes as it comes.
     #[test]
     fn a_folder_appears_whole_or_streams_once_held_long_enough() {
         let file = |ino, name: &str| {
@@ -2038,42 +2211,91 @@ mod tests {
             )
         };
         let spec = SortSpec::default();
-        let mut whole = Listing::default().whole_within(std::time::Duration::from_secs(60));
-        whole.apply(ListingEvent::Added(vec![file(1, "b"), file(2, "a")]));
+        let long = std::time::Duration::from_secs(60);
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let mut whole = Listing::default().whole_within(long);
+        tx.send(ListingEvent::Added(vec![file(1, "b"), file(2, "a")]))
+            .unwrap();
+        assert_eq!(whole.drain(&rx, long), 1);
         assert!(whole.is_held());
         assert!(whole.sorted(spec).is_empty(), "nothing yet");
         assert_eq!(whole.len(), 2, "though it holds what arrived");
-        whole.apply(ListingEvent::Complete);
-        assert!(!whole.is_held());
-        assert_eq!(whole.sorted(spec).len(), 2, "whole once complete");
+        assert!(whole.sort_whole(spec).is_none(), "not whole, not due");
+        assert!(whole.held_for().is_some_and(|left| left > long / 2));
+        tx.send(ListingEvent::Complete).unwrap();
+        assert_eq!(whole.drain(&rx, long), 1);
+        assert!(!whole.is_complete(), "complete once shown");
+        assert_eq!(whole.held_for(), None, "no time waited for");
+        let job = whole.sort_whole(spec).expect("whole: sorted elsewhere");
+        assert!(whole.is_sorting() && whole.sort_whole(spec).is_none());
+        // Its events wait while it is sorted.
+        tx.send(ListingEvent::Added(vec![file(3, "c")])).unwrap();
+        assert_eq!(whole.drain(&rx, long), 0);
+        assert_eq!(whole.len(), 2);
+        let version = whole.version();
+        job.run();
+        assert_eq!(whole.drain(&rx, long), 2, "shown, then what waited");
+        assert!(!whole.is_held() && whole.is_complete());
+        assert_ne!(whole.version(), version);
+        assert_eq!(whole.len(), 3);
+        let names = |listing: &Listing| -> Vec<String> {
+            listing
+                .sorted(spec)
+                .iter()
+                .map(|id| {
+                    listing
+                        .get(*id)
+                        .unwrap()
+                        .name
+                        .to_string_lossy()
+                        .into_owned()
+                })
+                .collect()
+        };
+        assert_eq!(names(&whole), ["a", "b", "c"], "its order, then placed");
 
-        let mut failed = Listing::default().whole_within(std::time::Duration::from_secs(60));
+        let mut failed = Listing::default().whole_within(long);
         failed.apply(ListingEvent::Added(vec![file(1, "a")]));
         failed.apply(ListingEvent::Error("gone".into()));
-        assert!(!failed.is_held(), "a failure shows what came");
+        failed
+            .sort_whole(spec)
+            .expect("a failure shows what came")
+            .run();
+        failed.drain(&rx, long);
+        assert!(!failed.is_held());
+        assert_eq!(failed.sorted(spec).len(), 1);
 
         let mut late = Listing::default().whole_within(std::time::Duration::ZERO);
         late.apply(ListingEvent::Added(vec![file(1, "a")]));
-        assert!(late.is_held(), "held until a drain looks at the time");
-        let version = (late.version(), late.shown_version());
-        let (_tx, rx) = crossbeam_channel::unbounded();
-        assert_eq!(
-            late.drain(&rx, std::time::Duration::ZERO),
-            1,
-            "let go: a change"
-        );
-        assert!(!late.is_held(), "held long enough: it streams");
-        assert_ne!(version, (late.version(), late.shown_version()));
+        assert_eq!(late.held_for(), Some(std::time::Duration::ZERO), "due");
+        late.sort_whole(spec).expect("held long enough").run();
+        assert_eq!(late.drain(&rx, long), 1, "let go: a change");
+        assert!(!late.is_held() && !late.is_complete(), "it streams");
         assert_eq!(late.sorted(spec).len(), 1);
 
-        let mut soon = Listing::default().whole_within(std::time::Duration::from_secs(60));
-        soon.apply(ListingEvent::Added(vec![file(1, "a")]));
-        assert_eq!(soon.drain(&rx, std::time::Duration::ZERO), 0, "not yet");
-        assert!(soon.is_held());
+        // Changed under its sort: sorted again.
+        let mut changed = Listing::default().whole_within(long);
+        changed.apply(ListingEvent::Complete);
+        let job = changed.sort_whole(spec).unwrap();
+        changed.apply(ListingEvent::Added(vec![file(1, "a")]));
+        job.run();
+        assert_eq!(changed.drain(&rx, long), 0);
+        assert!(changed.is_held() && !changed.is_sorting());
+        changed.sort_whole(spec).unwrap().run();
+        changed.drain(&rx, long);
+        assert_eq!(changed.sorted(spec).len(), 1);
+
+        // A sort never run is asked again.
+        let mut lost = Listing::default().whole_within(long);
+        lost.apply(ListingEvent::Complete);
+        drop(lost.sort_whole(spec));
+        assert_eq!(lost.drain(&rx, long), 0);
+        assert!(lost.sort_whole(spec).is_some());
 
         let mut streams = Listing::default();
         streams.apply(ListingEvent::Added(vec![file(1, "a")]));
         assert_eq!(streams.held_for(), None);
+        assert!(streams.sort_whole(spec).is_none());
         assert_eq!(
             streams.sorted(spec).len(),
             1,

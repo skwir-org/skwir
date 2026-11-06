@@ -73,7 +73,7 @@ fn shown(s: &Setup) -> BTreeSet<String> {
         .collect()
 }
 
-/// Show the trash and wait for `names` in its listing: it lists every
+/// Show the trash and wait for `names` shown in it: it lists every
 /// mounted volume's trash too (a disk asleep, another test's mounts), so
 /// what it lists of ours is waited for, never its whole listing.
 fn show_trash(s: &Setup, names: &[&str]) {
@@ -81,12 +81,18 @@ fn show_trash(s: &Setup, names: &[&str]) {
     let deadline = std::time::Instant::now() + Duration::from_secs(60);
     loop {
         s.app.pump();
+        // Shown, not only listed: a folder appears whole (ADR-120). The
+        // lens aside: what it leaves out is shown otherwise.
         let listed = {
             let ws = s.app.workspace.read();
             let p = ws.pane(s.pane).unwrap();
-            names
+            let shown: BTreeSet<String> = p
+                .unfiltered_order()
                 .iter()
-                .all(|name| p.listing.iter().any(|e| e.name_str() == *name))
+                .filter_map(|id| p.entry(*id))
+                .map(|e| e.name_str().into_owned())
+                .collect();
+            names.iter().all(|name| shown.contains(*name))
         };
         if listed {
             return;

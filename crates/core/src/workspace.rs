@@ -529,10 +529,14 @@ impl Kept {
         self.listing.drain(open.events(), budget)
     }
 
+    /// Events wait to be applied: not while its sort runs, whose order
+    /// wakes the window when it is back (ADR-120).
     fn backlog(&self) -> bool {
-        self.open
-            .as_ref()
-            .is_some_and(|open| !open.events().is_empty())
+        !self.listing.is_sorting()
+            && self
+                .open
+                .as_ref()
+                .is_some_and(|open| !open.events().is_empty())
     }
 
     /// Follow the folder it lists where it moved (`Listing::take_moved`):
@@ -1798,10 +1802,24 @@ impl Pane {
     /// Whether listing events are waiting to be applied, the kept
     /// locations' included.
     pub fn backlog(&self) -> bool {
-        self.open
-            .as_ref()
-            .is_some_and(|open| !open.events().is_empty())
+        !self.listing.is_sorting()
+            && self
+                .open
+                .as_ref()
+                .is_some_and(|open| !open.events().is_empty())
             || self.kept.iter().any(Kept::backlog)
+    }
+
+    /// The sorts that show what the pane holds back whole (ADR-120): its
+    /// listing's and the folders' it keeps beside it, each once it is
+    /// whole, failed or held long enough, in the pane's order. To run on
+    /// a worker: the window's thread never sorts a whole folder.
+    pub fn sorts_wanted(&mut self) -> Vec<crate::location::SortJob> {
+        let sort = self.sort;
+        std::iter::once(&mut self.listing)
+            .chain(self.kept.iter_mut().map(|kept| &mut kept.listing))
+            .filter_map(|listing| listing.sort_whole(sort))
+            .collect()
     }
 
     /// The location the pane shows: where it was opened, or where its
@@ -2771,10 +2789,10 @@ impl Pane {
             .collect()
     }
 
-    /// How much longer what the pane shows is held back whole (ADR-120):
-    /// its listing, or the soonest of the folders it keeps beside it (the
-    /// columns above, those opened in place). Zero once due: the next
-    /// pump lets it go.
+    /// How long until what the pane holds back whole is to be shown
+    /// though not whole (ADR-120): its listing, or the soonest of the
+    /// folders it keeps beside it (the columns above, those opened in
+    /// place). Zero once due: the next pump asks for its sort.
     pub fn held_for(&self) -> Option<std::time::Duration> {
         std::iter::once(&self.listing)
             .chain(self.kept.iter().map(|kept| &kept.listing))
@@ -3133,11 +3151,6 @@ impl Workspace {
         self.panes.iter_mut().find(|p| p.id == id)
     }
 
-    /// Pump every pane. Returns the total number of events applied.
-    pub fn pump(&mut self) -> usize {
-        self.pump_report().applied
-    }
-
     /// Pump every pane, each for at most `PUMP_BUDGET`, and say which ones
     /// changed and whether events are still waiting.
     pub fn pump_report(&mut self) -> PumpReport {
@@ -3158,6 +3171,7 @@ impl Workspace {
                 });
             }
             r.backlog |= p.backlog();
+            r.sorts.extend(p.sorts_wanted());
         }
         r
     }
@@ -3169,7 +3183,7 @@ impl Workspace {
 pub const PUMP_BUDGET: std::time::Duration = std::time::Duration::from_millis(4);
 
 /// What a pump did.
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
 pub struct PumpReport {
     pub applied: usize,
     pub panes_changed: Vec<PaneId>,
@@ -3179,6 +3193,10 @@ pub struct PumpReport {
     /// Panes whose location said it is reached at another
     /// (`ListingEvent::Redirect`): `App::pump_report` shows it there.
     pub redirects: Vec<Redirect>,
+    /// The sorts that show what the panes hold back whole
+    /// ([`Pane::sorts_wanted`]), for workers: `App::pump_report` runs
+    /// them. A pump that leaves them shows no folder it opened.
+    pub sorts: Vec<crate::location::SortJob>,
 }
 
 /// A pane's location said it is reached at another.
