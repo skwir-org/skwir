@@ -14,14 +14,16 @@
 //! leaves room under its end, and would draw that page from higher up. The
 //! pager (`overlay`) comes after it, so it reads where this frame laid the
 //! items and the lines of their texts (`Drawn`, which each text tells as it
-//! is prepainted), covers what is past the page's end and keeps the
-//! pointer from it, and takes the wheel before the list would scroll.
+//! is prepainted), finds the page's end, where the list is cut (`cut`:
+//! nothing is drawn past it, so the paper shows there as around it,
+//! see-through or not), keeps the pointer from what is past it, and takes
+//! the wheel before the list would scroll.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use gpui::{Bounds, Context, Hsla, ListOffset, ListState, ScrollEvent, point, prelude::*, px};
+use gpui::{Bounds, Context, ListOffset, ListState, Pixels, ScrollEvent, point, prelude::*, px};
 
 use crate::reader_scroll::WheelTurn;
 use crate::shell::Shell;
@@ -267,7 +269,7 @@ pub struct Pages {
     /// Whether it is the section's first.
     first: bool,
     /// Where it ends in the window, when before the view does: what is
-    /// below is covered.
+    /// below is not drawn (`cut`).
     pub cover: Option<f32>,
     /// The tops of the pages turned through to it, the last the one before.
     behind: Vec<ListOffset>,
@@ -486,17 +488,16 @@ fn laid_out(list: &ListState, spacer: usize) -> Vec<(usize, f32, f32)> {
 /// The pager over a text read a screen at a time, after the list in its
 /// parent and before what is drawn over it (its scrollbar, the zoom's
 /// wheel): it reads the frame the list just laid out, moves the list where
-/// a page is still being found, covers what is past the page's end in
-/// `cover` (the panel's background) and keeps the pointer from it, and
-/// turns the page on the wheel, in the capture phase, before the list
-/// would scroll. A wheel with Ctrl zooms, with Shift goes sideways: left
-/// to what is under it.
+/// a page is still being found, says where the page ends (`Pages::cover`,
+/// where `cut` stops drawing the list) and keeps the pointer from what is
+/// past it, and turns the page on the wheel, in the capture phase, before
+/// the list would scroll. A wheel with Ctrl zooms, with Shift goes
+/// sideways: left to what is under it.
 pub fn overlay(
     pages: Rc<RefCell<Pages>>,
     list: ListState,
     spacer: usize,
     size: f32,
-    cover: Hsla,
     cx: &mut Context<Shell>,
 ) -> impl IntoElement {
     let shell = cx.weak_entity();
@@ -533,15 +534,9 @@ pub fn overlay(
             if let Some(area) = covered {
                 window.insert_hitbox(area, gpui::HitboxBehavior::BlockMouse);
             }
-            (
-                covered,
-                window.insert_hitbox(bounds, gpui::HitboxBehavior::Normal),
-            )
+            window.insert_hitbox(bounds, gpui::HitboxBehavior::Normal)
         },
-        move |_, (covered, wheel), window, _| {
-            if let Some(area) = covered {
-                window.paint_quad(gpui::fill(area, cover));
-            }
+        move |_, wheel, window, _| {
             window.on_mouse_event(move |event: &ScrollEvent, phase, window, cx| {
                 let held = &event.modifiers;
                 if !phase.capture()
@@ -571,6 +566,96 @@ pub fn overlay(
     .top_0()
     .left_0()
     .size_full()
+}
+
+/// `child`, the list of a text read a screen at a time, cut at the page's
+/// end (`Pages::cover`, which the pager finds once the list is laid out,
+/// before anything is painted): nothing past it is drawn, so the paper
+/// under it shows there as around it, see-through or not (ADR-119), where
+/// a cover painted over it would be a ground of its own. Without `pages`,
+/// `child` as it is.
+pub fn cut(pages: Option<Rc<RefCell<Pages>>>, child: impl IntoElement) -> gpui::AnyElement {
+    match pages {
+        Some(pages) => Cut {
+            pages,
+            child: child.into_any_element(),
+        }
+        .into_any_element(),
+        None => child.into_any_element(),
+    }
+}
+
+struct Cut {
+    pages: Rc<RefCell<Pages>>,
+    child: gpui::AnyElement,
+}
+
+impl IntoElement for Cut {
+    type Element = Self;
+
+    fn into_element(self) -> Self::Element {
+        self
+    }
+}
+
+impl gpui::Element for Cut {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<gpui::ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        window: &mut gpui::Window,
+        cx: &mut gpui::App,
+    ) -> (gpui::LayoutId, ()) {
+        (self.child.request_layout(window, cx), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        _: Bounds<Pixels>,
+        _: &mut (),
+        window: &mut gpui::Window,
+        cx: &mut gpui::App,
+    ) {
+        self.child.prepaint(window, cx);
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        _: &mut (),
+        _: &mut (),
+        window: &mut gpui::Window,
+        cx: &mut gpui::App,
+    ) {
+        // Found by the pager's prepaint, which comes after the list's and
+        // before every paint.
+        let end = self.pages.borrow().cover;
+        let Some(end) = end.filter(|end| end.is_finite()) else {
+            self.child.paint(window, cx);
+            return;
+        };
+        let (top, bottom) = (f32::from(bounds.top()), f32::from(bounds.bottom()));
+        let end = px(end.max(top).min(bottom));
+        let shown = Bounds::from_corners(bounds.origin, point(bounds.right(), end));
+        window.with_content_mask(Some(gpui::ContentMask { bounds: shown }), |window| {
+            self.child.paint(window, cx);
+        });
+    }
 }
 
 #[cfg(test)]

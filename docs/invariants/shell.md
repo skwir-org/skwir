@@ -113,29 +113,34 @@ Views are in [views.md](views.md); what locations decide, in
   them (`settings::show_resolved`, declared again when it changes).
 - **The window's grounds are painted once.** Nothing is painted under
   the window's areas: each paints its own ground, once, over nothing
-  else of the window (`Theme::window_bg` for the files, the terminal, a
-  preview's paper, the files' Quick filters;
-  `window_surface` for the bars, the sidebar and its header, the tab
-  strip, the timeline, the footer, the preview panel's bars, letterbox
-  and dock), so that what is behind the window shows through them as
-  much as their opacity lets it (ADR-119: Appearance's two sliders,
+  else of the window (`Theme::window_bg` for the files, the terminal,
+  the files' Quick filters; `Theme::preview_grounds` for what a preview
+  shows, its paper or its letterbox whatever the kind, and Properties
+  beside it; `window_surface` for the bars, the sidebar and its header,
+  the tab strip, the timeline, the footer, the preview panel's bars and
+  dock), so that what is behind the window shows through them as much
+  as their opacity lets it (ADR-119: Appearance's three sliders,
   `theme::Opacity::chosen`, whole while the desktop asks for more
   contrast; the window asks the system to blur what is behind it while
-  either lets it through, `shell::show_behind`, and says it is opaque
+  any lets it through, `shell::show_behind`, and says it is opaque
   otherwise). A container of areas (the shell's root,
   the pane's column, the preview panel) paints nothing; an area that
   shows a tint where a drag is over it lays it on its ground
-  (`window_bg().blend(drop_target)`). What is drawn on an area (a row, a
-  field, a card, a chip, a strip of a preview's content: its notice, a
-  column header) and what is drawn over the window (menus, popovers,
-  tooltips, toasts, dialogs, Peek, the whole screen) keeps `bg` and
-  `surface`, opaque; so does Activity pinned above the footer, its
-  popover kept open, read at a glance whatever is behind. A part drawn both in the panel and over the window
-  (a preview's content area, Properties, a container's kept rows) is
-  handed the grounds it paints (`theme::Grounds`). A bar a view draws in
-  the files' area (Usage's, the Map's) tints the files' ground
-  (`Theme::surface_on_bg`) rather than laying a second ground on it;
-  `toolbar::row` paints none of its own.
+  (`window_bg().blend(drop_target)`). A band laid on an area (an
+  alternate row, a column's header, a code block, a notice, pinned
+  contents, a bar a view draws in the files: Usage's, the Map's) tints
+  its ground (`Theme::on_bg`, `color::overlay`, as `hover` does) rather
+  than laying a second ground on it, and lets through what the ground
+  lets through (`docs/invariants/previews.md`, Surfaces and colours);
+  `toolbar::row` paints none of its own. What is drawn on an area as a
+  thing of its own (a picture, a page, a selection, a field, a card, a
+  chip) and what is drawn over the window (menus, popovers, tooltips,
+  toasts, dialogs, Peek, the whole screen) keeps `bg` and `surface`,
+  opaque; so does Activity pinned above the footer, its popover kept
+  open, read at a glance whatever is behind. A part drawn both in the
+  panel and over the window (a preview's content area, Properties, a
+  container's kept rows) is handed the grounds it paints
+  (`theme::Grounds`).
 - **Text sizes (ADR-117).** The window's rem is the interface's size
   (`Window::set_rem_size`, from `Theme::sizes`, set where the theme is
   resolved), a pane's view the files' (`elements::rem`). Every place

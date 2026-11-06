@@ -526,10 +526,10 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         Some(Shows::Film) => crate::media::film(shell, cx),
         _ => None,
     }
-    .unwrap_or_else(|| crate::preview::content(shell, &theme, true, cx));
+    .unwrap_or_else(|| crate::preview::content(shell, &theme, true, theme.stage, cx));
     // On paper, or on the stage: opaque, over the whole window.
     let grounds = crate::theme::Grounds {
-        chrome: theme.stage,
+        letterbox: theme.stage,
         ..theme.grounds()
     };
     let content = crate::preview::content_area(shell, true, false, grounds, inner, cx);

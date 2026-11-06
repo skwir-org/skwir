@@ -1524,7 +1524,7 @@ fn tools(
     let pane = shell.pane;
     // The chrome, tinting the files' ground the pane paints.
     let mut header = toolbar::row(theme)
-        .bg(theme.surface_on_bg())
+        .bg(theme.on_bg(theme.surface))
         .text_color(theme.text)
         .id(("usage-tools", pane.0 as usize))
         .child(

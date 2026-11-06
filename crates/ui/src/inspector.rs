@@ -2712,21 +2712,28 @@ pub fn parked(
                 .bg(grounds.chrome)
                 .child(bar(shell, view, theme, cx)),
         )
-        .children(notice(view.display).map(|text| crate::preview::notice_strip(text, theme)))
-        // What is read is on paper, as the panel's own is (`preview::body`).
-        .child(crate::outline::around(
+        // What is read is on paper, as the panel's own is
+        // (`preview::content_area`): its notice and its contents on it.
+        .child({
+            let paper = paper(view.display, theme);
             div()
                 .flex_1()
                 .min_h_0()
                 .flex()
                 .flex_col()
-                .bg(grounds.read)
-                .child(content(shell, view, theme, cx))
-                .into_any_element(),
-            outline_drawer(shell, view, theme, cx),
-            shell,
-            theme,
-        ))
+                .bg(grounds.paper(paper))
+                .children(
+                    notice(view.display)
+                        .map(|text| crate::preview::notice_strip(text, theme, paper)),
+                )
+                .child(crate::outline::around(
+                    content(shell, view, theme, cx),
+                    outline_drawer(shell, view, theme, cx),
+                    paper,
+                    shell,
+                    theme,
+                ))
+        })
         .into_any_element()
 }
 
@@ -3166,6 +3173,21 @@ pub fn find_panel(
         theme,
         cx,
     ))
+}
+
+/// The paper an inspection is read on, opaque: a code view's own (its
+/// theme's background where it brings one, the other look's where code is
+/// kept in it, `reading.code_appearance`), else `bg`. The view's area
+/// paints it, once (`preview::content_area`, `parked`); what is laid on it
+/// tints it.
+pub(crate) fn paper(display: &Display, theme: &Theme) -> gpui::Hsla {
+    if display.data.kind != InspectionKind::Code {
+        return theme.bg;
+    }
+    match display.code_bg {
+        Some(background) => crate::code_preview::color(background),
+        None => theme.in_look(display.code_dark).bg,
+    }
 }
 
 /// What the frame's notice strip says about this inspection: how it is shown
@@ -3673,11 +3695,6 @@ pub fn content(
     if let Some(background) = display.code_bg {
         code_style.code_bg = crate::code_preview::color(background);
     }
-    let code_bg = display
-        .code_bg
-        .map(crate::code_preview::color)
-        .or_else(|| other_look.then_some(code_theme.bg))
-        .filter(|_| code_view);
     let code_text = code_theme.text;
     let list_theme = if code_view {
         list_style = code_style;
@@ -3867,7 +3884,7 @@ pub fn content(
                             .gap_0()
                             .when_some(grid, |d, width| d.w(px(width)))
                             .text_size(px(table_size(font_size)))
-                            .when(position % 2 == 1, |d| d.bg(theme.zebra))
+                            .when(position % 2 == 1, |d| d.bg(theme.on_bg(theme.zebra)))
                             .when(selected != Some(data.blocks.len() + ri), |d| {
                                 d.hover(|d| d.bg(theme.hover))
                             })
@@ -4044,7 +4061,7 @@ pub fn content(
                     .line_height(px(bytes_line(bytes_size(font_size))))
                     .py_1()
                     .text_color(theme.text_muted)
-                    .bg(theme.surface)
+                    .bg(theme.on_bg(theme.surface))
                     .border_b_1()
                     .border_color(theme.border)
             },
@@ -4058,7 +4075,7 @@ pub fn content(
                 .p_0()
                 .gap_0()
                 .when_some(grid, |d, width| d.w(px(width)))
-                .bg(theme.code_bg)
+                .bg(theme.on_bg(theme.code_bg))
                 .border_b_1()
                 .border_color(theme.border);
         }
@@ -4130,9 +4147,10 @@ pub fn content(
             .min_h_0()
             .flex()
             .justify_center()
-            .when_some(code_bg, gpui::Styled::bg)
+            // On the code's own paper, which its area paints (`paper`).
             .when(code_view, |d| d.text_color(code_text))
-            .child(
+            .child(crate::inspector_pages::cut(
+                paging.then(|| Rc::clone(&state.pages)),
                 div()
                     .w_full()
                     .h_full()
@@ -4143,7 +4161,7 @@ pub fn content(
                         None if archive => d.child(crate::archive_preview::rem(theme, list)),
                         None => d.child(list),
                     }),
-            )
+            ))
             // After the list's layout, which drew the rows: what they show
             // is what to decode. Deferred, never done while painting.
             .when(later, |d| {
@@ -4193,7 +4211,6 @@ pub fn content(
                     state.list.clone(),
                     spacer.unwrap_or_default(),
                     font_size,
-                    code_bg.unwrap_or(theme.bg),
                     cx,
                 ))
             })
@@ -4241,7 +4258,7 @@ pub fn content(
             .flex_wrap()
             .gap_x_3()
             .text_body()
-            .bg(theme.surface)
+            .bg(theme.on_bg(theme.surface))
             .border_t_1()
             .border_color(theme.border);
         for (label, value) in crate::inspector_rows::decode(&bytes) {
@@ -4389,7 +4406,7 @@ pub(crate) fn hex_row(
         .line_height(px(bytes_line(size)))
         .py(px(1.))
         .whitespace_nowrap()
-        .when(index % 2 == 1, |d| d.bg(theme.zebra))
+        .when(index % 2 == 1, |d| d.bg(theme.on_bg(theme.zebra)))
         .when(selected, |d| d.bg(theme.selection_bg))
         .when(!selected, |d| d.hover(|d| d.bg(theme.hover)));
     for (column, cell) in row.cells.iter().enumerate() {

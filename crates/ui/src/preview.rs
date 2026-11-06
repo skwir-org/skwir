@@ -5111,7 +5111,12 @@ fn body(
     // With nothing to preview Properties gives way first: the toolbar and
     // what the content says (why the preview failed) keep their height.
     let alone = crate::properties::alone(shell);
-    let inner = content(shell, theme, interactive, cx);
+    // The letterbox as it is where nothing lets the desktop through.
+    let letterbox = gpui::Hsla {
+        a: 1.,
+        ..grounds.letterbox
+    };
+    let inner = content(shell, theme, interactive, letterbox, cx);
     frame(shell, interactive)
         .flex_1()
         .when(!alone, gpui::Styled::min_h_0)
@@ -5206,9 +5211,11 @@ pub(crate) fn controls(
     )
 }
 
-/// Where `inner`, the content, is shown: on paper for what is read, on
-/// the letterbox for what is looked at (`grounds`: the panel's, Peek's,
-/// the whole screen's), with the content's own menu.
+/// Where `inner`, the content, is shown: on paper for what is read (a
+/// code view's own, where its theme brings one: `own_paper`), on the
+/// letterbox for what is looked at (`grounds`: the panel's, Peek's, the
+/// whole screen's), with the content's own menu. One ground, painted once:
+/// what is laid on it tints it (`Theme::on_bg`).
 pub(crate) fn content_area(
     shell: &Shell,
     interactive: bool,
@@ -5225,9 +5232,9 @@ pub(crate) fn content_area(
         // What is read is on paper; a picture, a page or a film is on the
         // letterbox.
         .bg(if on_paper(shell) {
-            grounds.read
+            grounds.paper(own_paper(shell, cx.global::<Theme>()))
         } else {
-            grounds.chrome
+            grounds.letterbox
         })
         .when(interactive, |d| {
             d.on_mouse_down(
@@ -5319,17 +5326,27 @@ pub fn active_popup(shell: &Shell, parked: bool) -> Option<&'static str> {
 /// One line under the toolbar for what a preview has to say about itself:
 /// how the content is shown and what was left out. Why there is no preview
 /// at all is the body's to say (`failure`).
-pub(crate) fn notice_strip(text: String, theme: &Theme) -> gpui::Div {
+pub(crate) fn notice_strip(text: String, theme: &Theme, paper: gpui::Hsla) -> gpui::Div {
     div()
         .flex_none()
         .px_2()
         .py_1()
         .text_body()
         .text_color(theme.text_muted)
-        .bg(theme.surface)
+        // A band on the paper `paper`: it tints it.
+        .bg(crate::color::overlay(paper, theme.surface))
         .border_b_1()
         .border_color(theme.border)
         .child(text)
+}
+
+/// The paper what is shown is read on, opaque: a code view's own, where its
+/// theme brings one (`inspector::paper`), else `bg`.
+pub(crate) fn own_paper(shell: &Shell, theme: &Theme) -> gpui::Hsla {
+    match &shell.preview.content {
+        Some(PreviewContent::Inspection(display)) => crate::inspector::paper(display, theme),
+        _ => theme.bg,
+    }
 }
 
 /// Whether the content is something to read rather than something to look at.
@@ -5359,10 +5376,14 @@ pub(crate) fn placeholder(shell: &Shell) -> Option<&PreviewContent> {
     })
 }
 
+/// What is shown, on the ground its area paints (`content_area`):
+/// `letterbox` is the one a picture, a page or a film is on, opaque, which
+/// a document's contents pinned beside its pages tint.
 pub(crate) fn content(
     shell: &Shell,
     theme: &Theme,
     interactive: bool,
+    letterbox: gpui::Hsla,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
     let p = &shell.preview;
@@ -5376,13 +5397,16 @@ pub(crate) fn content(
                 state: &p.inspection,
                 parked: false,
             };
+            let paper = crate::inspector::paper(display, theme);
             div()
                 .relative()
                 .flex()
                 .flex_col()
                 .flex_1()
                 .min_h_0()
-                .children(crate::inspector::notice(display).map(|text| notice_strip(text, theme)))
+                .children(
+                    crate::inspector::notice(display).map(|text| notice_strip(text, theme, paper)),
+                )
                 // Under peek, which shows the same inspection, the panel's
                 // copy leaves its list out: one list state drawn at two
                 // widths measured its rows again twice a frame, and each
@@ -5390,7 +5414,9 @@ pub(crate) fn content(
                 .when(interactive, |d| {
                     let content = crate::inspector::content(shell, view, theme, cx);
                     let contents = crate::inspector::outline_drawer(shell, view, theme, cx);
-                    d.child(crate::outline::around(content, contents, shell, theme))
+                    d.child(crate::outline::around(
+                        content, contents, paper, shell, theme,
+                    ))
                 })
                 .into_any_element()
         }
@@ -5564,6 +5590,7 @@ pub(crate) fn content(
                     } else {
                         None
                     },
+                    letterbox,
                     shell,
                     theme,
                 ))
@@ -6299,7 +6326,7 @@ pub fn render_panel(
         &theme,
         interactive,
         bottom,
-        theme.window_grounds(),
+        theme.preview_grounds(),
         cx,
     );
     let content = div()

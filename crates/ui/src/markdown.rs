@@ -47,6 +47,10 @@ pub struct MarkdownStyle {
     pub code_bg: Hsla,
     pub inline_code_bg: Hsla,
     pub table_header_bg: Hsla,
+    /// The paper the blocks lie on, opaque: a code block's box, inline
+    /// code and a table's header tint it (`color::overlay`) and let
+    /// through what it lets through (ADR-119).
+    pub page: Hsla,
     pub link_underline: bool,
     pub quote_text: Hsla,
     pub quote_border: Hsla,
@@ -131,6 +135,7 @@ impl MarkdownStyle {
             code_bg: theme.code_bg,
             inline_code_bg: theme.code_bg,
             table_header_bg: theme.code_bg,
+            page: theme.bg,
             link_underline: reading,
             quote_text: if reading {
                 theme.text_muted
@@ -172,6 +177,8 @@ impl MarkdownStyle {
             labels: self.labels.clone(),
             sought: self.sought.clone(),
             lines: self.lines.clone(),
+            // Its blocks lie on the same page.
+            page: self.page,
             ..Self::new(theme, self.body_size, self.reading, None)
         }
     }
@@ -405,7 +412,8 @@ fn table_row(
         .border_b_1()
         .border_color(style.border)
         .when(header, |d| {
-            d.font_weight(FontWeight::BOLD).bg(style.table_header_bg)
+            d.font_weight(FontWeight::BOLD)
+                .bg(crate::color::overlay(style.page, style.table_header_bg))
         });
     // The cells are ranges of the row's own text, so each column draws its
     // stretch of it and keeps the emphasis, code and links written there.
@@ -450,7 +458,7 @@ fn code_box(
     let mut container = div()
         .flex_1()
         .min_w_0()
-        .bg(style.code_bg)
+        .bg(crate::color::overlay(style.page, style.code_bg))
         .text_color(style.text)
         .rounded_md()
         .border_1()

@@ -490,7 +490,7 @@ impl PaneView for MapView {
         let said = shell.a11y.then(|| self.status());
         // The chrome, tinting the files' ground the pane paints.
         let mut header = toolbar::row(&theme)
-            .bg(theme.surface_on_bg())
+            .bg(theme.on_bg(theme.surface))
             .id(("map-view-tools", pane.0 as usize))
             .role(gpui::Role::Toolbar)
             .child(crate::elements::clip::clipped(

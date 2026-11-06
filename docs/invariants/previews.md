@@ -711,9 +711,12 @@ A text document is read as its structure, or laid out as pages.
   out yet (a long paragraph counted as a short one) left a chapter's last
   page found a page short, a frame per item, past the frames allowed
   (`SETTLE_TRIES`, a guard, not a schedule).
-- The pager covers what is past the page's end with the panel's paper
-  and a hitbox that blocks the pointer, and takes the wheel in the
-  capture phase over the text, before the list scrolls it; what is drawn
+- The pager cuts the list at the page's end (`inspector_pages::cut`, a
+  content mask set from what the pager's prepaint found, before anything
+  is painted): nothing is painted over what is past it, so the paper
+  shows there as around it, see-through or not (ADR-119). A hitbox
+  blocks the pointer there. The pager takes the wheel in the capture
+  phase over the text, before the list scrolls it; what is drawn
   over the text later (the floating contents, popups) occludes it and
   keeps its own wheel. A turn waits until the page turned to is drawn.
 
@@ -808,14 +811,31 @@ is still to come are in `docs/preview-frame.md`.
 
 - What is read (text, code, tables, bytes, trees, prose, the facts about
   an entry) is on `theme.bg` in `theme.text`, like the file list.
-  `theme.surface` is chrome: the header, the toolbar, and the letterbox
+  `theme.surface` is chrome (the header, the toolbar) and the letterbox
   around a picture, a film or a page (`preview::on_paper` decides).
-- `code_bg` sets code blocks, inline code and table headers apart on
-  paper; `zebra` tints alternate rows; hover is `theme.hover`. No preview
-  derives or hard-codes a colour.
+- **One ground under what is shown.** The content's area paints its
+  paper or its letterbox once (`preview::content_area`, from the
+  `theme::Grounds` it is handed: the panel's at the preview's opacity,
+  ADR-119; Peek's and the whole screen's opaque, the stage for the
+  latter's letterbox), and nothing under it is painted again. Every kind
+  is on it alike: text, a table, music, a picture, a page, a film.
+  Properties beside it and a container's kept rows paint the same
+  grounds.
+- **Bands are tints of it.** `code_bg` sets code blocks, inline code and
+  table headers apart on paper, `zebra` tints alternate rows, `surface`
+  a byte view's header, an archive's and a notice: each laid as a tint
+  of the paper it lies on (`Theme::on_bg`, `color::overlay`), never a
+  ground of its own, as hover is. Laid on the paper whole, a tint shows
+  the token itself; on paper that lets the desktop through, it lets
+  through about as much. A band of another look (a dark code block on a
+  light page) can only be about as dark by hiding more. Pinned contents
+  tint the paper beside them; what is a thing of its own (a picture, a
+  page, a selection, a chip, a field, the floating contents, a menu)
+  stays opaque. No preview derives or hard-codes a colour.
 - The one other background is a code theme's: one chosen on the Reading
   page brings its own, under the code view and code blocks
-  (`Display::code_bg`). A look lists only themes of its own lightness, so
+  (`Display::code_bg`). A code view's is its paper
+  (`inspector::paper`), painted by its area as `bg` is. A look lists only themes of its own lightness, so
   the tokens over them still read.
 - Code kept in the look Skwir is not in (`reading.code_appearance`) uses
   that look's tokens (`Display::code_dark`, `Theme::in_look`): the whole

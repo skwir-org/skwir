@@ -12283,3 +12283,42 @@ drag left the window and came back; the name lost outside the window.
   --tests -D warnings`. Not checked: `just release-check`, a screen
   reader, macOS and Windows.
 
+
+## Previews on one ground, their own opacity (ADR-119 amended, 2026-11-06)
+
+- **Asked for:** previews harmonized when only the files' ground lets the
+  desktop through (a film was opaque, music see-through, a table every
+  other row), then a third slider for previews.
+- **Built:** `ui.preview_background_opacity` (`settings::Ground`,
+  `theme::Opacity::preview`), Appearance › More settings beside the other
+  two; the files' slider now the files' and the terminal's. The preview
+  panel's grounds (`Theme::preview_grounds`: paper and letterbox at the
+  preview's opacity, bars at the chrome's; `Grounds::letterbox`,
+  `Grounds::paper`), painted once by `preview::content_area` for every
+  kind, a code view's own paper there too (`inspector::paper`), the
+  container's kept rows likewise (`inspector::parked`, its notice and
+  contents now on its paper). Bands tint the paper (`Theme::on_bg`, in
+  place of `surface_on_bg`; `MarkdownStyle::page`): alternate rows, a
+  table's, a byte view's and an archive's headers, notices, a byte's
+  meanings, code blocks, inline code and table headers in prose, pinned
+  contents (`outline::around`'s `paper`). `color::overlay` of a color
+  on itself is now nothing laid (it was the color, opaque). The pager
+  cuts the list at the page's end (`inspector_pages::cut`, a content
+  mask) rather than painting a cover.
+- **Seen** in the debug build on a headless sway (pixman, lavapipe), a
+  solid pink background behind the window, preview at 60 %, files and
+  chrome whole: a CSV's stripes and header, Markdown's code block,
+  table and inline code, code kept in the dark look on its own paper, a
+  picture's and a film's letterbox, music, a byte view, a long document
+  a page at a time (the paper below the page's end the same pixel as
+  above it, `EAAECE`), its contents pinned, Properties above it; menus,
+  the selected contents entry and the bars stayed opaque. A dark code
+  block on the light page hides more than the page (no tint can be as
+  dark and as see-through). At 100 %: paper `FAFAFA`, stripes `F4F5F6`,
+  table header `F0F1F3`, letterbox `F0F0F0`, the tokens as before.
+- **Checked:** skwir-ui's tests whole (553, with
+  `theme::tests::a_band_on_what_is_read_tints_its_ground`); `cargo
+  clippy -p skwir-ui --all-targets -D warnings`; `cargo fmt --all --
+  --check`. Not checked: `just release-check`, X11 with a compositor,
+  KWin's or Hyprland's blur, Peek and the whole screen in a window (they
+  stay opaque by their grounds), macOS and Windows.

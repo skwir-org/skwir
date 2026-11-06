@@ -200,7 +200,9 @@ pub fn readable_on(fg: Hsla, ground: Hsla, ratio: f32) -> (Hsla, Hsla) {
 /// sRGB), shows `seen`: the way from one to the other carried on to the
 /// edge of sRGB, at the opacity that comes back to `seen`. Laid over
 /// another ground it makes the same change there, so a hover reads on
-/// the chrome as on what is read.
+/// the chrome as on what is read, and over a ground that lets the desktop
+/// through it tints it without hiding what is behind (ADR-119). `seen`
+/// as `ground` is nothing to lay.
 pub fn overlay(ground: Hsla, seen: Hsla) -> Hsla {
     let (from, to) = (ground.to_rgb(), seen.to_rgb());
     let from = [from.r, from.g, from.b];
@@ -212,7 +214,10 @@ pub fn overlay(ground: Hsla, seen: Hsla) -> Hsla {
         .filter(|(_, d)| d.abs() > 1e-4)
         .map(|(c, d)| if d > 0. { (1. - c) / d } else { -c / d })
         .fold(f32::INFINITY, f32::min);
-    if !reach.is_finite() || reach <= 1. {
+    if !reach.is_finite() {
+        return seen.opacity(0.);
+    }
+    if reach <= 1. {
         return seen;
     }
     let [r, g, b] = [0, 1, 2].map(|i| (from[i] + way[i] * reach).clamp(0., 1.));
@@ -335,8 +340,8 @@ mod tests {
         assert!(luminance(on) < luminance(chrome));
         let (here, there) = (ratio(seen, ground), ratio(on, chrome));
         assert!((here - there).abs() < 0.02, "{here} {there}");
-        // Nothing to change: what was seen.
-        assert_eq!(overlay(ground, ground), ground);
+        // Nothing to change: nothing laid.
+        assert!(overlay(ground, ground).a.abs() < f32::EPSILON);
     }
 
     #[test]

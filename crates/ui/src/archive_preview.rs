@@ -42,7 +42,7 @@ pub fn header(theme: &Theme) -> Div {
         .px_2()
         .text_small()
         .text_color(theme.text_muted)
-        .bg(theme.surface)
+        .bg(theme.on_bg(theme.surface))
         .border_b_1()
         .border_color(theme.border)
         .child(

@@ -16,16 +16,19 @@
 //!   (`in_look`). `text_muted` is for secondary facts (line numbers,
 //!   captions), never for the data.
 //! - the window's own grounds: each of the window's areas (the files, the
-//!   terminal, a preview's paper or letterbox; the bars, the sidebar, the
-//!   tabs, the panel's parts, the dock) paints its ground once,
-//!   `window_bg` or `window_surface`, over nothing else of the window:
-//!   what is behind the window shows through them as much as their
-//!   opacity lets it (`Opacity`). What is drawn on an area (a row, a
-//!   field, a card, a strip of a preview's content) and what is drawn
-//!   over the window (a menu, a dialog, Peek, the whole screen) keeps
-//!   `bg` and `surface`, opaque. A part both draw is handed the grounds
-//!   it paints (`Grounds`); a bar a view draws in the files' area tints
-//!   their ground (`surface_on_bg`).
+//!   terminal; a preview's paper or letterbox; the bars, the sidebar, the
+//!   tabs, the panel's bars, the dock) paints its ground once,
+//!   `window_bg`, `preview_grounds` or `window_surface`, over nothing
+//!   else of the window: what is behind the window shows through them as
+//!   much as their opacity lets it (`Opacity`). A band laid on an area
+//!   (an alternate row, a column's header, a code block, a notice, a bar
+//!   a view draws in the files) tints its ground (`on_bg`,
+//!   `color::overlay`), as `hover` does, and lets through what the ground
+//!   lets through. What is drawn on an area as a thing of its own (a
+//!   picture, a page, a selection, a field, a card, a chip) and what is
+//!   drawn over the window (a menu, a dialog, Peek, the whole screen)
+//!   keeps `bg` and `surface`, opaque. A part both draw is handed the
+//!   grounds it paints (`Grounds`).
 //! - color: the fields of [`Theme`]. `accent_text` is the accent written
 //!   as text (a link, a key, what is chosen on `term`); `accent` marks and
 //!   fills. State colors are tokens too: `hover`, laid over whatever is
@@ -230,13 +233,16 @@ pub struct Theme {
     pub opacity: Opacity,
 }
 
-/// How opaque the window's own grounds are, from 0 to 1: what is read's
-/// (`bg`: the files, a preview's paper, the terminal) and the chrome's
-/// (`surface`: the bars, the sidebar, the tabs, the panel around a
-/// preview). Whole unless chosen otherwise (`Opacity::chosen`, ADR-119).
+/// How opaque the window's own grounds are, from 0 to 1: the files' (`bg`:
+/// the files, the terminal), what a preview shows (its paper, `bg`, and
+/// its letterbox, `surface`, whatever it shows, Properties beside it),
+/// and the chrome's (`surface`: the bars, the sidebar, the tabs, the
+/// preview panel's bars, the dock). Whole unless chosen otherwise
+/// (`Opacity::chosen`, ADR-119).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Opacity {
     pub files: f32,
+    pub preview: f32,
     pub interface: f32,
 }
 
@@ -244,25 +250,38 @@ impl Default for Opacity {
     fn default() -> Self {
         Opacity {
             files: 1.,
+            preview: 1.,
             interface: 1.,
         }
     }
 }
 
-/// The grounds an area paints: what is read is on (`read`) and the chrome
-/// around it (`chrome`). The window's own (`Theme::window_grounds`) where
-/// the area is one of the window's, opaque (`Theme::grounds`) where it is
-/// drawn over the window: Peek, the whole screen. A part both draw (a
-/// preview's content, Properties) is handed the one it paints.
+/// The grounds a preview's parts paint: the paper what is read is on
+/// (`read`), the letterbox around a picture, a page or a film
+/// (`letterbox`), and the chrome around them (`chrome`: its bars). The
+/// panel's own (`Theme::preview_grounds`), opaque (`Theme::grounds`) where
+/// it is drawn over the window: Peek, the whole screen (whose letterbox is
+/// the stage). A part both draw (a preview's content, Properties, a
+/// container's kept rows) is handed the one it paints.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Grounds {
     pub read: Hsla,
+    pub letterbox: Hsla,
     pub chrome: Hsla,
+}
+
+impl Grounds {
+    /// The paper of what brings its own (a code view's theme's
+    /// background), as see-through as `read`.
+    pub fn paper(self, own: Hsla) -> Hsla {
+        own.opacity(self.read.a)
+    }
 }
 
 impl Opacity {
     /// What the settings choose (`ui.background_opacity`,
-    /// `ui.files_background_opacity`), the value under a slider's knob
+    /// `ui.files_background_opacity`,
+    /// `ui.preview_background_opacity`), the value under a slider's knob
     /// first (`settings::previewed`); whole where the desktop asks for
     /// more contrast, which no ground that lets the desktop through can
     /// keep (ADR-119).
@@ -282,13 +301,14 @@ impl Opacity {
         };
         Opacity {
             files: of(crate::settings::FILES_OPACITY_KEY),
+            preview: of(crate::settings::PREVIEW_OPACITY_KEY),
             interface: of(crate::settings::OPACITY_KEY),
         }
     }
 
     /// Whether something behind the window shows through it.
     pub fn see_through(self) -> bool {
-        self.files < 1. || self.interface < 1.
+        self.files < 1. || self.preview < 1. || self.interface < 1.
     }
 }
 
@@ -817,27 +837,30 @@ impl Theme {
     }
 
     /// `bg` where it is the window's own ground, under nothing else of
-    /// the window: what is read's area (the files, a preview's paper,
-    /// the terminal) paints it once, and what is behind the window shows
-    /// through it at the opacity chosen. Anything drawn on it (a row, a
-    /// field, a card) and anything over the window (a menu, a dialog)
-    /// keeps `bg`, opaque.
+    /// the window: the files' area (the files, the terminal, the Quick
+    /// filters) paints it once, and what is behind the window shows
+    /// through it at the opacity chosen. Anything drawn on it as a thing
+    /// of its own (a selection, a field, a card) and anything over the
+    /// window (a menu, a dialog) keeps `bg`, opaque.
     pub fn window_bg(&self) -> Hsla {
         self.bg.opacity(self.opacity.files)
     }
 
-    /// The chrome as a tint laid on the files' ground: a bar a view draws
-    /// in the files' area (Usage's, the Map's) is `surface` on `bg`, and
-    /// as see-through as the files where they are (`color::overlay`),
-    /// never a second ground under them.
-    pub fn surface_on_bg(&self) -> Hsla {
-        crate::color::overlay(self.bg, self.surface)
+    /// `token` as a tint laid on what is read's ground, `bg`: a band on
+    /// it (an alternate row, a column's header, a code block, a notice, a
+    /// bar a view draws in the files) shows `token` there, and lets
+    /// through what the ground lets through (`color::overlay`), never a
+    /// second ground under it.
+    pub fn on_bg(&self, token: Hsla) -> Hsla {
+        crate::color::overlay(self.bg, token)
     }
 
-    /// The window's own grounds, for an area of the window.
-    pub fn window_grounds(&self) -> Grounds {
+    /// The preview panel's grounds: what it shows, read or looked at, at
+    /// the preview's opacity, its bars at the chrome's.
+    pub fn preview_grounds(&self) -> Grounds {
         Grounds {
-            read: self.window_bg(),
+            read: self.bg.opacity(self.opacity.preview),
+            letterbox: self.surface.opacity(self.opacity.preview),
             chrome: self.window_surface(),
         }
     }
@@ -846,12 +869,13 @@ impl Theme {
     pub fn grounds(&self) -> Grounds {
         Grounds {
             read: self.bg,
+            letterbox: self.surface,
             chrome: self.surface,
         }
     }
 
     /// `surface` where it is the window's own ground: the chrome's areas
-    /// (the bars, the sidebar, the tabs, the panel around a preview) each
+    /// (the bars, the sidebar, the tabs, the preview panel's bars) each
     /// paint it once, as `window_bg`.
     pub fn window_surface(&self) -> Hsla {
         self.surface.opacity(self.opacity.interface)
@@ -1080,6 +1104,43 @@ impl Theme {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A band laid on what is read (an alternate row, a column's header, a
+    /// code block, a notice) tints its ground: on the ground whole, the
+    /// token it is; on one that lets the desktop through, about as
+    /// see-through as the ground, never a second ground under it. The
+    /// preview panel's grounds are the preview's, its bars the chrome's
+    /// (ADR-119).
+    #[test]
+    fn a_band_on_what_is_read_tints_its_ground() {
+        for theme in [Theme::light(), Theme::dark()] {
+            for token in [theme.zebra, theme.code_bg, theme.surface] {
+                let tint = theme.on_bg(token);
+                let (on, want) = (theme.bg.blend(tint).to_rgb(), token.to_rgb());
+                for (got, want) in [(on.r, want.r), (on.g, want.g), (on.b, want.b)] {
+                    assert!((got - want).abs() < 1. / 255., "{got} {want}");
+                }
+                // Over a ground at 60 %, it hides little more than it.
+                let ground = 0.6;
+                let laid = tint.a + ground * (1. - tint.a);
+                assert!(laid < ground + 0.1, "{laid}");
+            }
+            let mut theme = theme;
+            theme.opacity = Opacity {
+                files: 1.,
+                preview: 0.6,
+                interface: 0.8,
+            };
+            let grounds = theme.preview_grounds();
+            assert!((grounds.read.a - 0.6).abs() < 1e-6);
+            assert!((grounds.letterbox.a - 0.6).abs() < 1e-6);
+            assert!((grounds.chrome.a - 0.8).abs() < 1e-6);
+            assert!((theme.window_bg().a - 1.).abs() < 1e-6);
+            // A code view's own paper, as see-through as the rest.
+            assert!((grounds.paper(theme.surface).a - 0.6).abs() < 1e-6);
+            assert!(theme.opacity.see_through());
+        }
+    }
 
     /// A color, what it is drawn on, the ratio it must read at there, and
     /// whether those grounds are fills that give way (`readable_on`).

@@ -72,7 +72,9 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
   (2026-11-05, quiet).
 - **Since 0.3.1 (2026-11-06):** About's buttons on one line; a shared
   slider (the seek bar, Settings' sliders); the window's grounds each
-  painted once, then see-through at the opacity chosen (ADR-119); a
+  painted once, then see-through at the opacity chosen, the files', a
+  preview's (every kind on one ground, its bands tints of it) and the
+  chrome's apart (ADR-119); a
   drag's name under its icon, inside the window and out; names broken
   where they read best; a folder appears whole, filled and sorted on a
   worker, with how many entries were read until then (ADR-120, amends
@@ -804,9 +806,10 @@ leave (ADR-077).
 - Checked on X11 (Xvfb, no compositor) and on a headless sway (no
   blur) only: KWin's blur, Hyprland's, macOS's and Windows' are not
   checked.
-- A preview's notice and the column headers drawn on its paper stay
-  opaque: making them grounds of their own would take them out of the
-  paper's area (`preview::content`, `inspector::content`).
+- A band of another look on a see-through page (a dark code block on a
+  light one, code kept in the other look) hides more than the page
+  around it: no tint can be as dark and as see-through (ADR-119's
+  amendment).
 
 **From the review since 0.3.0** (2026-11-05):
 - On X11 GNOME's Large Text is counted once by asking `xrdb -query` for

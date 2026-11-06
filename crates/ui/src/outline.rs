@@ -145,10 +145,13 @@ pub fn contents(
 
 /// `content` with its `contents`, when they are open: pinned, a column
 /// beside it, the content narrowed to make room; else a drawer over its
-/// left.
+/// left. Both lie on `paper`, the content's, opaque: pinned, the column
+/// tints it to `bg` (nothing where it is `bg`), as see-through as it is;
+/// the drawer, over the content, is opaque.
 pub fn around(
     content: AnyElement,
     contents: Option<AnyElement>,
+    paper: gpui::Hsla,
     shell: &Shell,
     theme: &Theme,
 ) -> AnyElement {
@@ -167,7 +170,7 @@ pub fn around(
                     .w(sized(WIDTH))
                     .max_w(relative(PINNED_SHARE))
                     .h_full()
-                    .bg(theme.bg)
+                    .bg(crate::color::overlay(paper, theme.bg))
                     .border_r_1()
                     .border_color(theme.border)
                     .child(contents),

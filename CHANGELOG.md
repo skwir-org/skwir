@@ -50,10 +50,13 @@
   rather than a number to type, first Tags suggested in the sidebar. Left and
   Right step it, Page Up and Page Down by a tenth, Home and End to its ends.
 - **See-through backgrounds**: Settings › Appearance › More settings ›
-  Background opacity (the bars, the tabs, the sidebar) and Files background
-  opacity (the files, the terminal, a preview's text), from 50 to 100 %. What
-  is behind the window shows through, blurred where the desktop blurs it,
-  while text, icons, pictures, menus and dialogs stay whole. The window stays
+  Background opacity (the bars, the tabs, the sidebar), Files background
+  opacity (the files, the terminal) and Preview background opacity (whatever
+  a preview shows: text, tables, music, the room around a picture, a page or
+  a film, and Properties beside it), from 50 to 100 %. What is behind the
+  window shows through, blurred where the desktop blurs it, while text, icons,
+  pictures, menus and dialogs stay whole; a table's rows, headers and code
+  blocks let it through as the preview around them does. The window stays
   opaque while the desktop asks for more contrast.
 - **A dragged file's name** is written under its icon on up to three lines, as
   the grid writes names, a long one keeping its beginning and its end, rather

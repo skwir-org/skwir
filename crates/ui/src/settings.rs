@@ -70,9 +70,10 @@ pub const FILES_TEXT_SIZE_KEY: &str = "ui.files_text_size";
 pub const READING_TEXT_SIZE_KEY: &str = "reading.text_size";
 pub const CODE_TEXT_SIZE_KEY: &str = "ui.code_text_size";
 /// How opaque the window's own grounds are, in percent (ADR-119,
-/// `theme::Opacity`): the chrome's, and the files'.
+/// `theme::Opacity`): the chrome's, the files', and what a preview shows.
 pub const OPACITY_KEY: &str = "ui.background_opacity";
 pub const FILES_OPACITY_KEY: &str = "ui.files_background_opacity";
+pub const PREVIEW_OPACITY_KEY: &str = "ui.preview_background_opacity";
 /// The least opacity a ground takes: below it, text over a light
 /// background behind a dark look would no longer read.
 pub const OPACITY_LEAST: i64 = 50;
@@ -341,22 +342,34 @@ pub fn text_size_spec(part: crate::sizes::Part) -> SettingSpec {
     }
 }
 
-/// How opaque the chrome's ground is, or (`files`) the files' (ADR-119):
-/// a slider, in fives, from `OPACITY_LEAST` to whole.
-fn opacity_spec(files: bool) -> SettingSpec {
+/// Which of the window's grounds an opacity is (ADR-119).
+#[derive(Clone, Copy)]
+enum Ground {
+    Interface,
+    Files,
+    Preview,
+}
+
+/// How opaque one of the window's grounds is (ADR-119): a slider, in
+/// fives, from `OPACITY_LEAST` to whole.
+fn opacity_spec(ground: Ground) -> SettingSpec {
     const AFTER: &str = "Below it, what is behind the window shows through, blurred where your desktop blurs it; text, icons, pictures, menus and dialogs stay whole. Over a busy or contrasting background, text may read less clearly. While your desktop asks for more contrast, the window stays whole.";
-    let (key, title, what) = if files {
-        (
-            FILES_OPACITY_KEY,
-            "Files background opacity",
-            "How much the files, the terminal and what a preview shows to read hide what is behind the window; at 100 % they hide it.",
-        )
-    } else {
-        (
+    let (key, title, what) = match ground {
+        Ground::Interface => (
             OPACITY_KEY,
             "Background opacity",
-            "How much the bars, the tabs, the sidebar and the panel around a preview hide what is behind the window; at 100 % they hide it.",
-        )
+            "How much the bars, the tabs, the sidebar and the preview's bars hide what is behind the window; at 100 % they hide it.",
+        ),
+        Ground::Files => (
+            FILES_OPACITY_KEY,
+            "Files background opacity",
+            "How much the files and the terminal hide what is behind the window; at 100 % they hide it.",
+        ),
+        Ground::Preview => (
+            PREVIEW_OPACITY_KEY,
+            "Preview background opacity",
+            "How much a preview hides what is behind the window, whatever it shows: text, a table, music, the room around a picture, a page or a film, and Properties beside it; at 100 % it hides it.",
+        ),
     };
     SettingSpec::integer(
         key,
@@ -1383,8 +1396,9 @@ pub fn declare(app: &App) {
         .declare(text_size_spec(crate::sizes::Part::Interface));
     app.settings
         .declare(text_size_spec(crate::sizes::Part::Files));
-    app.settings.declare(opacity_spec(false));
-    app.settings.declare(opacity_spec(true));
+    app.settings.declare(opacity_spec(Ground::Interface));
+    app.settings.declare(opacity_spec(Ground::Files));
+    app.settings.declare(opacity_spec(Ground::Preview));
     if !skwir_platform::system_icons::AVAILABLE {
         let chosen = app
             .settings
@@ -4549,7 +4563,7 @@ mod tests {
     /// and whole where the desktop asks for more contrast (ADR-119).
     #[test]
     fn the_grounds_are_as_opaque_as_chosen_unless_more_contrast_is_asked() {
-        use super::{FILES_OPACITY_KEY, OPACITY_KEY, preview_highlight};
+        use super::{FILES_OPACITY_KEY, OPACITY_KEY, PREVIEW_OPACITY_KEY, preview_highlight};
         use crate::theme::{Contrast, Opacity};
         let tmp = tempfile::tempdir().unwrap();
         let app = App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
@@ -4563,9 +4577,17 @@ mod tests {
             chosen(),
             Opacity {
                 files: 0.85,
+                preview: 1.,
                 interface: 0.7
             }
         );
+        app.settings.set(OPACITY_KEY, 100.into());
+        app.settings.set(FILES_OPACITY_KEY, 100.into());
+        app.settings.set(PREVIEW_OPACITY_KEY, 60.into());
+        assert!((chosen().preview - 0.6).abs() < 1e-6);
+        assert!(chosen().see_through(), "a preview alone lets it through");
+        app.settings.set(OPACITY_KEY, 70.into());
+        app.settings.set(FILES_OPACITY_KEY, 85.into());
         assert!(chosen().see_through());
         assert_eq!(
             Opacity::chosen(&app, Contrast::More),
