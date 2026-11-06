@@ -400,6 +400,15 @@ pub mod keys {
     /// The stores whose notes differ from the rest, a list of text: they
     /// can be made to agree.
     pub const NOTES_DIFFER: &str = "notes_differ";
+    /// The companions beside a file (ADR-028), by their paths from its
+    /// folder (`._x`, `x.jpg.xmp`, `.ts/x.jpg`), a list of text: read with
+    /// its metadata (`companions::BesideProvider`), so what is beside it is
+    /// known with the rest, wherever it is shown.
+    pub const COMPANIONS: &str = "companions";
+    /// For a companion, the name of the file it belongs to, text.
+    pub const COMPANION_OF: &str = "companion_of";
+    /// That file is not there: `Value::Bool(true)`, set only then.
+    pub const COMPANION_OF_GONE: &str = "companion_of_gone";
     /// Where the file says it was made: a picture's or a video's position,
     /// `Value::List` of two `Value::Float` (latitude, longitude, degrees).
     /// Read on demand (`crate::fields`), never at hydration (ADR-020).

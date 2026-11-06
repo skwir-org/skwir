@@ -31,14 +31,13 @@ pub trait Companion: Send + Sync {
     fn follows(&self, _path: &Path, _index: usize) -> bool {
         true
     }
-    /// Whether the companion at `index` of the file at `path` is there and
-    /// follows it, as what the rule keeps in memory says (the names its
-    /// store read of a folder of companions, `FolderNames::kept`), never
-    /// by a look at the disk: asked on the window's thread. `None` where it
-    /// keeps nothing of it. A look at the disk has the last word
-    /// (`Companions::existing`).
-    fn known(&self, _path: &Path, _index: usize) -> Option<bool> {
-        None
+    /// Whether `name` may be one of its companions, or a folder of them:
+    /// what is kept of a folder's names to find companions in, where the
+    /// folder has no listing (`BesideProvider`). Its own by default, and
+    /// what `owner` or `is_folder` says; a rule whose companions' names do
+    /// not say their file (Adobe's `x.xmp`) says which.
+    fn claims(&self, name: &OsStr) -> bool {
+        self.owner(name).is_some() || self.is_folder(name)
     }
     /// Whether it holds its file's extended attributes (a Mac's `._x`),
     /// where the file's volume keeps none.
@@ -84,7 +83,7 @@ pub const SHOW: &str = "core.show_companions";
 pub struct FolderNames {
     folders: parking_lot::Mutex<Vec<Seen>>,
     /// Which names of a folder are kept, and as what (`._x` as `x`).
-    keep: fn(&OsStr) -> Option<OsString>,
+    keep: Box<dyn Fn(&OsStr) -> Option<OsString> + Send + Sync>,
 }
 
 struct Seen {
@@ -101,9 +100,15 @@ impl FolderNames {
     const FRESH: std::time::Duration = std::time::Duration::from_secs(5);
 
     pub fn new(keep: fn(&OsStr) -> Option<OsString>) -> Self {
+        Self::keeping(keep)
+    }
+
+    /// [`FolderNames::new`], what is kept said by a closure (one that asks
+    /// the rules, `BesideProvider`).
+    pub fn keeping(keep: impl Fn(&OsStr) -> Option<OsString> + Send + Sync + 'static) -> Self {
         FolderNames {
             folders: parking_lot::Mutex::default(),
-            keep,
+            keep: Box::new(keep),
         }
     }
 
@@ -142,18 +147,6 @@ impl FolderNames {
             names: Arc::clone(&names),
         });
         names
-    }
-
-    /// What `keep` took of `dir`'s names when it was last read, from memory
-    /// alone (no look at the folder, as `of` takes): `None` where it was
-    /// not read, or is no longer remembered. What a rule says before a
-    /// look at the disk (`Companion::known`).
-    pub fn kept(&self, dir: &Path) -> Option<Arc<std::collections::HashSet<OsString>>> {
-        self.folders
-            .lock()
-            .iter()
-            .find(|s| s.dir == dir)
-            .map(|s| Arc::clone(&s.names))
     }
 
     /// The store that asks wrote the file `name` in `dir` (a sidecar made
@@ -281,34 +274,20 @@ impl Companions {
         self.list.find_map(|r| r.owner(name))
     }
 
+    /// Whether any rule claims `name` as a companion or a folder of them
+    /// (`Companion::claims`). Asked of every name a folder holds: the
+    /// rules are not cloned for it.
+    pub fn claims(&self, name: &OsStr) -> bool {
+        self.list
+            .find_map(|r| r.claims(name).then_some(()))
+            .is_some()
+    }
+
     /// Whether `name` is a folder of companions (`.ts`).
     pub fn is_folder(&self, name: &OsStr) -> bool {
         self.list
             .find_map(|r| r.is_folder(name).then_some(()))
             .is_some()
-    }
-
-    /// The companions of the file at `path` its rules keep in memory as
-    /// there (`Companion::known`): what is said of them before the disk is
-    /// looked at. Never looks at it.
-    pub fn known(&self, path: &Path) -> Vec<Found> {
-        let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
-            return Vec::new();
-        };
-        let mut out: Vec<Found> = Vec::new();
-        for (rule, r) in self.rules().iter().enumerate() {
-            for (index, relative) in r.of(name).into_iter().enumerate() {
-                let at = dir.join(&relative);
-                if r.known(path, index) == Some(true) && !out.iter().any(|f| f.path == at) {
-                    out.push(Found {
-                        rule,
-                        index,
-                        path: at,
-                    });
-                }
-            }
-        }
-        out
     }
 
     /// The companions of the file at `path` that are there. Blocking: it
@@ -406,9 +385,221 @@ impl Companions {
     }
 }
 
+/// What is beside each file of a batch (ADR-028), read with its metadata,
+/// wherever its folder's files are read (a folder shown, a search's hits,
+/// the Trash, Recent): its companions there (`keys::COMPANIONS`), and for
+/// a companion the file it belongs to (`keys::COMPANION_OF`, gone where it
+/// is not there). Each rule's names are looked up, never stat-ed one by
+/// one: in the folder's listing where it knows them all (`fill_listed`),
+/// else in the names the rules claim of the folder, read once while it is
+/// unchanged; a folder of companions (`.ts`) is read once while unchanged,
+/// and only where it is there.
+pub struct BesideProvider {
+    companions: Arc<Companions>,
+    /// The names of folders read without a listing, those a rule claims.
+    claimed: FolderNames,
+    /// The names in folders of companions (`.ts`).
+    folders: FolderNames,
+}
+
+impl BesideProvider {
+    pub fn new(companions: Arc<Companions>) -> Self {
+        let rules = Arc::clone(&companions);
+        BesideProvider {
+            companions,
+            claimed: FolderNames::keeping(move |name| rules.claims(name).then(|| name.to_owned())),
+            folders: FolderNames::new(|name| Some(name.to_owned())),
+        }
+    }
+
+    fn beside(
+        &self,
+        dir: &Path,
+        listed: Option<&crate::metadata::Listed<'_>>,
+        entries: &mut [crate::entry::Entry],
+    ) {
+        use crate::entry::{Provenance, Value, keys};
+        let rules = self.companions.rules();
+        if rules.is_empty() || entries.is_empty() {
+            return;
+        }
+        // Without a listing, the names the rules claim, read once.
+        let claimed = listed.is_none().then(|| self.claimed.of(dir));
+        let named = |name: &OsStr| match (listed, &claimed) {
+            (Some(listed), _) => listed(name),
+            (None, Some(claimed)) => claimed.contains(name),
+            (None, None) => false,
+        };
+        // Each folder of companions read once for the batch, where it is.
+        let mut folders: std::collections::HashMap<
+            PathBuf,
+            Arc<std::collections::HashSet<OsString>>,
+        > = std::collections::HashMap::new();
+        let mut there = |relative: &Path| -> bool {
+            let Some(file) = relative.file_name() else {
+                return false;
+            };
+            match relative.parent().filter(|p| !p.as_os_str().is_empty()) {
+                None => named(file),
+                Some(sub) => {
+                    let first = sub.components().next().map(|c| c.as_os_str().to_owned());
+                    // A listing says whether the folder is there; without
+                    // one, it is read, once, to say.
+                    if listed.is_some() && !first.is_some_and(|first| named(&first)) {
+                        return false;
+                    }
+                    folders
+                        .entry(sub.to_path_buf())
+                        .or_insert_with(|| self.folders.of(&dir.join(sub)))
+                        .contains(file)
+                }
+            }
+        };
+        for entry in entries.iter_mut() {
+            let name = entry.name.clone();
+            let path = dir.join(&name);
+            let mut found: Vec<Value> = Vec::new();
+            for rule in &rules {
+                for (index, relative) in rule.of(&name).into_iter().enumerate() {
+                    if there(&relative) && rule.follows(&path, index) {
+                        let said = Value::Text(Arc::from(relative.display().to_string()));
+                        if !found.contains(&said) {
+                            found.push(said);
+                        }
+                    }
+                }
+            }
+            if !found.is_empty() {
+                entry
+                    .metadata
+                    .set(keys::COMPANIONS, Value::List(found), Provenance::Filesystem);
+            }
+            if let Some(owner) = self.companions.owner(&name).filter(|o| !o.is_empty()) {
+                // A plain name, which the names claimed do not hold: looked
+                // up in the listing, else looked at, for a companion alone.
+                let gone = match listed {
+                    Some(listed) => !listed(&owner),
+                    None => std::fs::symlink_metadata(dir.join(&owner)).is_err(),
+                };
+                entry.metadata.set(
+                    keys::COMPANION_OF,
+                    Value::Text(Arc::from(owner.to_string_lossy())),
+                    Provenance::Filesystem,
+                );
+                if gone {
+                    entry.metadata.set(
+                        keys::COMPANION_OF_GONE,
+                        Value::Bool(true),
+                        Provenance::Filesystem,
+                    );
+                }
+            }
+        }
+    }
+}
+
+impl crate::metadata::MetadataProvider for BesideProvider {
+    fn id(&self) -> &'static str {
+        "core.companions"
+    }
+    fn fill(&self, dir: &Path, entries: &mut [crate::entry::Entry]) {
+        self.beside(dir, None, entries);
+    }
+    fn fill_listed(
+        &self,
+        dir: &Path,
+        listed: &crate::metadata::Listed<'_>,
+        entries: &mut [crate::entry::Entry],
+    ) {
+        self.beside(dir, Some(listed), entries);
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    /// What is beside a file is read with its metadata, the same from a
+    /// folder's listing as from the folder itself: a companion beside it,
+    /// one in a folder of its own, and for a companion the file it belongs
+    /// to, said gone where it is not there.
+    #[test]
+    fn what_is_beside_a_file_is_read_with_its_metadata() {
+        use crate::entry::{Entry, EntryId, EntryKind, Value, keys};
+        let dir = tempfile::tempdir().unwrap();
+        let dir = dir.path();
+        for name in ["it's a.txt", "._it's a.txt", "._gone.txt", "other.txt"] {
+            std::fs::write(dir.join(name), b"").unwrap();
+        }
+        std::fs::create_dir(dir.join(".notes")).unwrap();
+        std::fs::write(dir.join(".notes/it's a.txt.note"), b"").unwrap();
+        let companions = Arc::new(Companions::default());
+        companions.register("test", Arc::new(Rules));
+        let provider = BesideProvider::new(Arc::clone(&companions));
+        let entries = || {
+            ["it's a.txt", "._it's a.txt", "._gone.txt", "other.txt"]
+                .into_iter()
+                .enumerate()
+                .map(|(ino, name)| {
+                    Entry::new(
+                        EntryId {
+                            file: crate::FileId::new(1, ino as u64 + 1),
+                            at: 0,
+                        },
+                        name,
+                        EntryKind::File,
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let said = |entries: &[Entry]| -> Vec<(Vec<String>, Option<String>, bool)> {
+            entries
+                .iter()
+                .map(|e| {
+                    let beside = match e.metadata.value(keys::COMPANIONS) {
+                        Some(Value::List(names)) => names
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .map(str::to_owned)
+                            .collect(),
+                        _ => Vec::new(),
+                    };
+                    let of = e
+                        .metadata
+                        .value(keys::COMPANION_OF)
+                        .and_then(Value::as_str)
+                        .map(str::to_owned);
+                    (
+                        beside,
+                        of,
+                        e.metadata.value(keys::COMPANION_OF_GONE).is_some(),
+                    )
+                })
+                .collect()
+        };
+        let note = Path::new(".notes").join("it's a.txt.note");
+        let expected = vec![
+            (
+                vec!["._it's a.txt".to_owned(), note.display().to_string()],
+                None,
+                false,
+            ),
+            (Vec::new(), Some("it's a.txt".to_owned()), false),
+            (Vec::new(), Some("gone.txt".to_owned()), true),
+            (Vec::new(), None, false),
+        ];
+        let mut read = entries();
+        crate::metadata::MetadataProvider::fill(&provider, dir, &mut read);
+        assert_eq!(said(&read), expected, "looked up in the folder");
+        let names: std::collections::HashSet<OsString> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        let listed = |name: &OsStr| names.contains(name);
+        let mut listed_read = entries();
+        crate::metadata::MetadataProvider::fill_listed(&provider, dir, &listed, &mut listed_read);
+        assert_eq!(said(&listed_read), expected, "looked up in its listing");
+    }
 
     /// A file the store wrote joins the names it keeps of its folder.
     #[test]

@@ -174,11 +174,14 @@ later fills in, it never moves what is shown).
      several types claim) fills in with the rest; with Properties alone,
      where no preview reads it, the source is asked without it at once
      and reads the head itself.
-   - A row that comes only sometimes is said from what is in memory
-     where it can be: what is beside a file (its companions, the file a
-     companion belongs to) from its folder's listing, which holds every
-     name there and judged each companion when it came; the worker reads
-     only what the listing does not judge.
+   - A row that comes only sometimes is read where everything of its kind
+     is: what is beside a file (its companions, the file a companion
+     belongs to) is read with its metadata, by core, for every rule and
+     wherever its folder's files are read (`companions::BesideProvider`,
+     [notes.md](../invariants/notes.md)); Properties reads it from the
+     entry. A first fix answered it from the folder's listing and from
+     what some rules kept in memory, the rest on a worker: it left
+     sidecars of other forms (Adobe's `x.xmp`) and other rules late.
    - An entry shown before it is read keeps the headings reading always
      brings (Permissions, Times); the card keeps its icon's place while
      the theme's icon is read. Rows only some files have that only

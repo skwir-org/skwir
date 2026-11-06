@@ -379,7 +379,7 @@ fn label_of(key: &str) -> String {
 }
 
 /// The fields Properties names itself; any other is shown under More.
-const CORE: [&str; 20] = [
+const CORE: [&str; 23] = [
     keys::SIZE,
     keys::MODIFIED,
     keys::CHANGED,
@@ -398,6 +398,9 @@ const CORE: [&str; 20] = [
     keys::REFERRER,
     keys::NOTES_KEPT,
     keys::NOTES_DIFFER,
+    keys::COMPANIONS,
+    keys::COMPANION_OF,
+    keys::COMPANION_OF_GONE,
     keys::TRASHED,
     keys::TRASHED_FROM,
 ];
@@ -618,6 +621,26 @@ pub fn entry_groups(
     }
     if let Some(target) = meta.value(keys::LINK_TARGET).and_then(Value::as_str) {
         location.push(Row::new("Links to", target.to_owned()));
+    }
+    // What is beside it (ADR-028), read with its metadata wherever it is
+    // shown (`companions::BesideProvider`): its companions, or for one,
+    // the file it belongs to.
+    if let Some(Value::List(beside)) = meta.value(keys::COMPANIONS) {
+        let names: Vec<&str> = beside.iter().filter_map(Value::as_str).collect();
+        if !names.is_empty() {
+            location.push(Row::new("Beside it", names.join(", ")));
+        }
+    }
+    if let Some(owner) = meta.value(keys::COMPANION_OF).and_then(Value::as_str) {
+        let gone = meta.value(keys::COMPANION_OF_GONE).is_some();
+        location.push(Row::new(
+            "Beside",
+            if gone {
+                format!("“{owner}”, which is gone")
+            } else {
+                format!("“{owner}”")
+            },
+        ));
     }
     // Folded, it says the first: where the file was, or where it is.
     if let Some(first) = location.first_mut() {
@@ -1738,14 +1761,6 @@ pub fn render(
             // What the system adds to the mode, read after the rest.
             if group.title.as_ref() == "Permissions" {
                 group.rows.extend(preview.access.iter().cloned());
-            }
-            // The files beside it, or what a companion belongs to.
-            if group.title.as_ref() == "Location" {
-                group.rows.extend(crate::preview::beside_rows(
-                    &preview.beside_listed,
-                    &preview.beside_known,
-                    preview.beside_read.as_ref(),
-                ));
             }
             // What the file takes on its drive, after its size, then its
             // own measure (`measure`).

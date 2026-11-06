@@ -1042,8 +1042,8 @@ is still to come are in `docs/preview-frame.md`.
   is made one that always does where it can (a folder's Contains says
   its folders and its files in one row), or placed where it moves
   nothing (Content, last). A row that comes only sometimes is said as
-  soon as what is in memory says it: what is beside a file comes from its
-  folder's listing ([notes.md](notes.md)), with the rest. An entry not
+  soon as what is in memory says it: what is beside a file is read with
+  its metadata ([notes.md](notes.md)), with the rest. An entry not
   read yet keeps the headings reading it always brings (Permissions,
   Times, with their first row reserved), and the card keeps its icon's
   place while the theme's is read, so its facts wrap the same. Never add

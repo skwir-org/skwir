@@ -119,11 +119,13 @@ fn a_sidecar_follows_its_file_adobes_only_while_its_stem_is_the_files_alone() {
     assert!(dir.join("c.xmp").exists(), "c.JPG still claims it");
     // The listing's rule: only `x.jpg.xmp` names its file.
     assert_eq!(
-        XmpCompanion.owner(OsStr::new("a.jpg.xmp")).as_deref(),
+        XmpCompanion::default()
+            .owner(OsStr::new("a.jpg.xmp"))
+            .as_deref(),
         Some(OsStr::new("a.jpg"))
     );
-    assert_eq!(XmpCompanion.owner(OsStr::new("a.xmp")), None);
-    assert_eq!(XmpCompanion.owner(OsStr::new("a.jpg")), None);
+    assert_eq!(XmpCompanion::default().owner(OsStr::new("a.xmp")), None);
+    assert_eq!(XmpCompanion::default().owner(OsStr::new("a.jpg")), None);
 }
 
 #[test]
@@ -178,10 +180,12 @@ fn names_with_accents_are_read_as_names() {
     assert!(read[..5].iter().all(Option::is_none));
     assert!(is_sidecar(OsStr::new("Été.XMP")) && !is_sidecar(OsStr::new("abcèdef")));
     assert_eq!(
-        XmpCompanion.owner(OsStr::new("è.jpg.xmp")).as_deref(),
+        XmpCompanion::default()
+            .owner(OsStr::new("è.jpg.xmp"))
+            .as_deref(),
         Some(OsStr::new("è.jpg"))
     );
-    assert_eq!(XmpCompanion.owner(OsStr::new("abcèdef")), None);
+    assert_eq!(XmpCompanion::default().owner(OsStr::new("abcèdef")), None);
 }
 
 /// A sidecar it cannot read as text (UTF-16, which XMP allows) is left
@@ -216,4 +220,24 @@ fn a_sidecar_it_cannot_read_is_left_alone() {
         Ok(Wrote::NotHere)
     ));
     assert_eq!(std::fs::read(dir.join("ü a.jpg.xmp")).unwrap(), utf16);
+}
+
+/// Adobe's `x.xmp` is a file's only while no other file shares its stem,
+/// told from the folder's stems read once while it is unchanged: a file
+/// sharing the stem made since is seen.
+#[test]
+fn adobe_s_sidecar_is_a_file_s_while_its_stem_is_its_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    std::fs::write(dir.join("it's a.raw"), b"").unwrap();
+    std::fs::write(dir.join("it's a.xmp"), b"").unwrap();
+    std::fs::write(dir.join("it's a.raw.xmp"), b"").unwrap();
+    let rule = XmpCompanion::default();
+    let raw = dir.join("it's a.raw");
+    assert!(rule.follows(&raw, 1), "its stem is its alone");
+    assert!(rule.claims(OsStr::new("it's a.xmp")) && rule.claims(OsStr::new("it's a.raw.xmp")));
+    assert!(!rule.claims(OsStr::new("it's a.raw")));
+    std::fs::write(dir.join("it's a.jpg"), b"").unwrap();
+    assert!(!rule.follows(&raw, 1), "the picture shares its stem");
+    assert!(rule.follows(&raw, 0), "`x.raw.xmp` says its file");
 }

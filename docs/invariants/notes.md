@@ -168,16 +168,22 @@ registered in `App::notes` by its plugin); all share one model,
   file (`._` copied whole or created); where attributes are kept, a `._`
   file's are taken in. A copy fails only when nothing can keep them.
   Copies keep every `user.*` attribute (ADR-006).
-- Properties lists a file's companions, and an orphan's owner: from its
-  folder's listing where the file is listed in it (`Pane::folder_of`,
-  `Listing::companions_of`: the names the listing judged its, and the
-  owner's name looked up), and from what a rule keeps in memory
-  (`Companion::known`: the `.ts` names TagSpaces' store read), at once
-  with the rest and with no look at the disk; the fields worker reads
-  only what the listing does not judge (a companion in a folder of its
-  own, Adobe's `x.xmp`, whose rule looks at the folder) and everything of
-  an entry no folder's listing holds (a search's, Recent's), and its look
-  has the last word.
+- **What is beside a file is read with its metadata**
+  (`companions::BesideProvider`, core's, run wherever a folder's files
+  are filled: a folder shown, the Trash, Recent, the shelf): its
+  companions (`keys::COMPANIONS`, their paths from its folder) and, for
+  a companion, the file it belongs to (`keys::COMPANION_OF`, gone where
+  it is not there). Properties reads them from the entry, so they come
+  with the rest, for every rule. Each rule's names are looked up, never
+  stat-ed one by one: in the folder's listing (`fill_listed`), else in
+  the names some rule claims of the folder (`Companion::claims`), read
+  once while it is unchanged (`FolderNames`); a folder of companions
+  (`.ts`) is read once while unchanged, only where it is there. A rule
+  whose `follows` asks more of the folder (Adobe's `x.xmp`, its file's
+  only while no other file shares its stem) reads it once while
+  unchanged too (the XMP rule's `Stems`), never once per file: a copy of
+  a folder of photos and their sidecars costs the folder's size, not its
+  square.
 - A batch whose folder's names are all known is filled with them
   (`MetadataProvider::fill_listed`): stores find companions in the
   listing, not the folder.

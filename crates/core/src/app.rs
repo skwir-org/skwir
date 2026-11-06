@@ -344,6 +344,13 @@ impl App {
             lifetime,
         });
         app.register_provider("core", Arc::new(PathProvider));
+        // What is beside a file, read with its metadata wherever it is.
+        app.metadata.register(
+            "core",
+            Arc::new(crate::companions::BesideProvider::new(Arc::clone(
+                &app.companions,
+            ))),
+        );
         op::register_builtin(&app.ops);
         {
             let notes = Arc::clone(&app.notes);

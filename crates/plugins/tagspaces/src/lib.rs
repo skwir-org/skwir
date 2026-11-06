@@ -183,9 +183,8 @@ fn read_json(path: &Path) -> Option<Value> {
 
 /// `TagSpaces`' sidecars as a notes store.
 pub struct TagSpacesStore {
-    /// The names in a folder's `.ts` folder: shared with the companion
-    /// rule, which says from them what is there (`Companion::known`).
-    names: Arc<skwir_core::companions::FolderNames>,
+    /// The names in a folder's `.ts` folder.
+    names: skwir_core::companions::FolderNames,
     /// Whether a `TagSpaces` location covers a folder (a `.ts` there or
     /// above): only there are its folders' own sidecars looked for, a
     /// `stat` inside each folder listed elsewhere, which a sleeping disk
@@ -196,9 +195,7 @@ pub struct TagSpacesStore {
 impl Default for TagSpacesStore {
     fn default() -> Self {
         TagSpacesStore {
-            names: Arc::new(skwir_core::companions::FolderNames::new(|name| {
-                Some(name.to_owned())
-            })),
+            names: skwir_core::companions::FolderNames::new(|name| Some(name.to_owned())),
             used: skwir_core::companions::MarkedAbove::new(FOLDER),
         }
     }
@@ -308,22 +305,7 @@ impl NotesStore for TagSpacesStore {
 
 /// A file's sidecar and thumbnail in `.ts` as its companions; the `.ts`
 /// folder itself a folder of companions.
-pub struct TagSpacesCompanion {
-    /// What the store read of each folder's `.ts` (`TagSpacesStore::names`):
-    /// what is there is said from it before a look at the disk.
-    names: Arc<skwir_core::companions::FolderNames>,
-}
-
-impl Default for TagSpacesCompanion {
-    /// One that knows nothing of any folder: every answer is the disk's.
-    fn default() -> Self {
-        TagSpacesCompanion {
-            names: Arc::new(skwir_core::companions::FolderNames::new(|name| {
-                Some(name.to_owned())
-            })),
-        }
-    }
-}
+pub struct TagSpacesCompanion;
 
 impl Companion for TagSpacesCompanion {
     fn id(&self) -> &'static str {
@@ -339,12 +321,6 @@ impl Companion for TagSpacesCompanion {
     }
     fn is_folder(&self, name: &OsStr) -> bool {
         name == FOLDER
-    }
-    fn known(&self, path: &Path, index: usize) -> Option<bool> {
-        let (dir, name) = (path.parent()?, path.file_name()?);
-        let relative = self.of(name).into_iter().nth(index)?;
-        let names = self.names.kept(&dir.join(FOLDER))?;
-        Some(names.contains(relative.file_name()?))
     }
 }
 
@@ -484,12 +460,8 @@ impl Plugin for TagSpacesPlugin {
         skwir_core::permissions::Capabilities::of(&[Capability::Read, Capability::Write])
     }
     fn register(&self, app: &App) {
-        let store = TagSpacesStore::default();
-        let companion = TagSpacesCompanion {
-            names: Arc::clone(&store.names),
-        };
-        app.register_notes_store(ID, Arc::new(store));
-        app.companions.register(ID, Arc::new(companion));
+        app.register_notes_store(ID, Arc::new(TagSpacesStore::default()));
+        app.companions.register(ID, Arc::new(TagSpacesCompanion));
         app.hints.register(ID, Arc::new(IndexHint::default()));
     }
 }

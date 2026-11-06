@@ -387,9 +387,6 @@ struct FieldRows {
     fields: Vec<crate::properties::Row>,
     /// What the system adds to the mode, and the flags it keeps.
     access: Vec<crate::properties::Row>,
-    /// The files beside it, or the file an orphan belonged to, that its
-    /// folder's listing does not say (`Beside::read`).
-    beside: Beside,
     /// What it takes on its drive, beside its size.
     general: Vec<crate::properties::Row>,
     /// The drive it is on (the folder shown has its own, `Here`).
@@ -474,123 +471,6 @@ fn still_counts(
         return true;
     }
     now() == Some(counted)
-}
-
-/// What is beside a file (ADR-028): the names of its companions there,
-/// and for a companion, the file it belongs to and whether that is gone.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub(crate) struct Beside {
-    names: Vec<String>,
-    owner: Option<(String, bool)>,
-}
-
-impl Beside {
-    /// As the listing of its folder says it, at once (`Pane::folder_of`):
-    /// the companions it judged the file's by their names
-    /// (`Listing::companions_of`), and the file a companion belongs to,
-    /// gone where the listing lacks it. No look at the disk.
-    fn listed(
-        companions: &skwir_core::companions::Companions,
-        listing: &skwir_core::location::Listing,
-        name: &std::ffi::OsStr,
-    ) -> Self {
-        Beside {
-            names: listing
-                .companions_of(name)
-                .iter()
-                .map(|n| n.to_string_lossy().into_owned())
-                .collect(),
-            owner: companions.owner(name).map(|owner| {
-                let gone = !listing.is_named(&owner);
-                (owner.to_string_lossy().into_owned(), gone)
-            }),
-        }
-    }
-
-    /// As the rules keep it in memory (`Companions::known`: the names a
-    /// store read of a folder of companions, `.ts`), at once: what is said
-    /// until the worker's look (`read`) says it. No look at the disk.
-    fn known(companions: &skwir_core::companions::Companions, path: &std::path::Path) -> Self {
-        let Some(dir) = path.parent() else {
-            return Beside::default();
-        };
-        Beside {
-            names: companions
-                .known(path)
-                .iter()
-                .filter_map(|f| Some(f.path.strip_prefix(dir).ok()?.display().to_string()))
-                .collect(),
-            owner: None,
-        }
-    }
-
-    /// As the disk says it, for the file at `path`: on a worker. Where its
-    /// folder's listing said what it judges (`listed`), only the rest: a
-    /// companion in a folder of its own, one whose name does not say its
-    /// file (Adobe's `x.xmp`, which only a look at the folder settles).
-    fn read(
-        companions: &skwir_core::companions::Companions,
-        path: &std::path::Path,
-        listed: bool,
-    ) -> Self {
-        let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
-            return Beside::default();
-        };
-        let judged = |at: &std::path::Path| {
-            listed
-                && at.parent() == Some(dir)
-                && at
-                    .file_name()
-                    .is_some_and(|c| companions.owner(c).as_deref() == Some(name))
-        };
-        let names = companions
-            .existing_as(path, &|at| {
-                !judged(at) && std::fs::symlink_metadata(at).is_ok()
-            })
-            .iter()
-            .filter_map(|f| Some(f.path.strip_prefix(dir).ok()?.display().to_string()))
-            .collect();
-        let owner = (!listed)
-            .then(|| companions.owner(name))
-            .flatten()
-            .map(|owner| {
-                let gone = std::fs::symlink_metadata(dir.join(&owner)).is_err();
-                (owner.to_string_lossy().into_owned(), gone)
-            });
-        Beside { names, owner }
-    }
-}
-
-/// What Properties says of files beside a file: what its folder's listing
-/// says (`Beside::listed`), then of the rest what the worker read, or
-/// until it has, what the rules keep in memory (`Beside::known`).
-pub(crate) fn beside_rows(
-    listed: &Beside,
-    known: &Beside,
-    read: Option<&Beside>,
-) -> Vec<crate::properties::Row> {
-    let read = read.unwrap_or(known);
-    let mut rows = Vec::new();
-    let mut names: Vec<&str> = Vec::new();
-    for name in listed.names.iter().chain(&read.names) {
-        if !names.contains(&name.as_str()) {
-            names.push(name);
-        }
-    }
-    if !names.is_empty() {
-        rows.push(crate::properties::Row::new("Beside it", names.join(", ")));
-    }
-    if let Some((owner, gone)) = listed.owner.as_ref().or(read.owner.as_ref()) {
-        rows.push(crate::properties::Row::new(
-            "Beside",
-            if *gone {
-                format!("“{owner}”, which is gone")
-            } else {
-                format!("“{owner}”")
-            },
-        ));
-    }
-    rows
 }
 
 // Independent switches of one panel, not a state machine in disguise.
@@ -777,15 +657,6 @@ pub struct PreviewState {
     count_wanted: bool,
     count_tx: flume::Sender<CountSent>,
     count_rx: flume::Receiver<CountSent>,
-    /// The files beside the entry (ADR-028), or the file an orphan belonged
-    /// to: as its folder's listing says them, at once, with the entry
-    /// (`Beside::listed`), and what the fields worker read of the rest
-    /// (`Beside::read`).
-    pub(crate) beside_listed: Beside,
-    /// What the companion rules keep in memory of the rest (`Beside::known`),
-    /// said until the worker's look (`beside_read`) has answered.
-    pub(crate) beside_known: Beside,
-    pub(crate) beside_read: Option<Beside>,
     fields_tx: flume::Sender<(u64, FieldRows)>,
     fields_rx: flume::Receiver<(u64, FieldRows)>,
     /// The file the fields were read of, as of its version (its path,
@@ -1036,9 +907,6 @@ impl Default for PreviewState {
             count_wanted: false,
             count_tx,
             count_rx,
-            beside_listed: Beside::default(),
-            beside_known: Beside::default(),
-            beside_read: None,
             fields_tx,
             fields_rx,
             fields_for: None,
@@ -2113,24 +1981,12 @@ impl Shell {
             {
                 self.preview.properties.push(volume);
             }
-            // What is beside it, as its folder's listing says it: with the
-            // rest, at once, and again as the names there change.
-            let listed = {
-                let ws = self.app.workspace.read();
-                ws.pane(self.pane)
-                    .and_then(|pane| pane.folder_of(id))
-                    .filter(|(dir, _)| Some(dir.as_path()) == key.path.parent())
-                    .map(|(_, listing)| Beside::listed(&self.app.companions, listing, &entry.name))
-            };
-            let is_listed = listed.is_some();
-            self.preview.beside_listed = listed.unwrap_or_default();
-            self.preview.beside_known = Beside::known(&self.app.companions, &key.path);
             // Fields read of the file: again when the file changed, never
             // for a batch of metadata, which would blank them meanwhile.
             let file = (key.path.clone(), version.modified, version.size);
             if self.preview.fields_for.as_ref() != Some(&file) {
                 self.preview.fields_for = Some(file);
-                self.read_fields(&entry, &key.path, here, is_listed);
+                self.read_fields(&entry, &key.path, here);
             }
             self.preview.neighbours = match self.media_kind() {
                 Some(kind) => self.neighbours(id, |entry| crate::media::is_track(entry, kind)),
@@ -2207,7 +2063,6 @@ impl Shell {
             if generation == self.preview.fields_generation {
                 self.preview.fields = read.fields;
                 self.preview.access = read.access;
-                self.preview.beside_read = Some(read.beside);
                 self.preview.general = read.general;
                 self.preview.volume = read.volume;
                 self.preview.read_only = read.read_only;
@@ -3776,12 +3631,10 @@ impl Shell {
         entry: &skwir_core::entry::Entry,
         path: &std::path::Path,
         here: bool,
-        listed: bool,
     ) {
         self.preview.fields_generation += 1;
         self.preview.fields.clear();
         self.preview.access.clear();
-        self.preview.beside_read = None;
         // What every reading answers keeps its place, labelled and empty,
         // until it does: the room a file takes, after its size, and the
         // drive it is on (the folder shown has its own, `Here`).
@@ -3817,7 +3670,6 @@ impl Shell {
         }
         let cancel = self.app.lifetime().child();
         self.preview.fields_cancel = Some(cancel.clone());
-        let companions = Arc::clone(&self.app.companions);
         let is_dir = entry.is_dir();
         let device = entry.file().dev;
         let volumes = Arc::clone(&self.preview.volume_cache);
@@ -3866,7 +3718,6 @@ impl Shell {
                 let read = FieldRows {
                     fields: rows,
                     access,
-                    beside: Beside::read(&companions, &path, listed),
                     general,
                     volume,
                     read_only: skwir_core::fs::volume::read_only(&path).unwrap_or(false),

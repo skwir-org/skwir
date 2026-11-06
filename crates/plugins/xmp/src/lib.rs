@@ -65,19 +65,85 @@ fn is_sidecar(name: &OsStr) -> bool {
     bytes.len() > 4 && bytes[bytes.len() - 4..].eq_ignore_ascii_case(b".xmp")
 }
 
-/// Whether another file of `dir` than `path` has `path`'s stem: then
-/// Adobe's `x.xmp` is not `path`'s alone.
-fn stem_shared(path: &Path) -> bool {
-    let (Some(dir), Some(stem), Some(name)) = (path.parent(), path.file_stem(), path.file_name())
-    else {
-        return true;
-    };
-    std::fs::read_dir(dir).is_ok_and(|entries| {
-        entries.flatten().any(|e| {
-            let other = e.file_name();
-            other != name && !is_sidecar(&other) && Path::new(&other).file_stem() == Some(stem)
-        })
-    })
+/// The stems of a few folders' names, sidecars left out, with how many
+/// names have each: read once while a folder is unchanged, so whether
+/// Adobe's `x.xmp` is one file's (`Stems::shared`) does not read the folder
+/// again for each of its files, which made a folder of photos and their
+/// sidecars cost its size squared to copy or to read. Trusted a moment
+/// while the folder's time says it did not change, as `FolderNames` is.
+#[derive(Default)]
+struct Stems {
+    folders: std::sync::Mutex<Vec<StemsSeen>>,
+}
+
+struct StemsSeen {
+    dir: PathBuf,
+    modified: Option<std::time::SystemTime>,
+    at: std::time::Instant,
+    stems: Arc<std::collections::HashMap<OsString, usize>>,
+}
+
+impl Stems {
+    /// Folders remembered at once.
+    const FOLDERS: usize = 8;
+    /// How long a folder's stems are trusted while its time is unchanged.
+    const FRESH: std::time::Duration = std::time::Duration::from_secs(5);
+
+    /// `dir`'s stems. Reads the folder where it changed: on a worker.
+    fn of(&self, dir: &Path) -> Arc<std::collections::HashMap<OsString, usize>> {
+        let modified = std::fs::metadata(dir).ok().and_then(|m| m.modified().ok());
+        let mut folders = self
+            .folders
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(seen) = folders
+            .iter()
+            .find(|s| s.dir == dir && s.modified == modified && s.at.elapsed() < Self::FRESH)
+        {
+            return Arc::clone(&seen.stems);
+        }
+        drop(folders);
+        let mut stems = std::collections::HashMap::new();
+        for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+            let name = entry.file_name();
+            if is_sidecar(&name) {
+                continue;
+            }
+            if let Some(stem) = Path::new(&name).file_stem() {
+                *stems.entry(stem.to_owned()).or_insert(0) += 1;
+            }
+        }
+        let stems = Arc::new(stems);
+        folders = self
+            .folders
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        folders.retain(|s| s.dir != dir);
+        if folders.len() >= Self::FOLDERS {
+            folders.remove(0);
+        }
+        folders.push(StemsSeen {
+            dir: dir.to_path_buf(),
+            modified,
+            at: std::time::Instant::now(),
+            stems: Arc::clone(&stems),
+        });
+        stems
+    }
+
+    /// Whether another name of its folder than the file at `path` has its
+    /// stem, a sidecar's aside: then Adobe's `x.xmp` is not its alone.
+    fn shared(&self, path: &Path) -> bool {
+        let (Some(dir), Some(stem), Some(name)) =
+            (path.parent(), path.file_stem(), path.file_name())
+        else {
+            return true;
+        };
+        let count = self.of(dir).get(stem).copied().unwrap_or(0);
+        // The file itself counts among them where it is there.
+        let own = !is_sidecar(name) && std::fs::symlink_metadata(path).is_ok();
+        count > usize::from(own)
+    }
 }
 
 /// XMP sidecars as a notes store.
@@ -239,7 +305,10 @@ impl NotesStore for XmpStore {
 }
 
 /// A sidecar as its file's companion: it goes where the file goes.
-pub struct XmpCompanion;
+#[derive(Default)]
+pub struct XmpCompanion {
+    stems: Stems,
+}
 
 impl Companion for XmpCompanion {
     fn id(&self) -> &'static str {
@@ -265,7 +334,12 @@ impl Companion for XmpCompanion {
         (!file.starts_with('.')).then(|| file.into())
     }
     fn follows(&self, path: &Path, index: usize) -> bool {
-        index == 0 || !stem_shared(path)
+        index == 0 || !self.stems.shared(path)
+    }
+    fn claims(&self, name: &OsStr) -> bool {
+        // Both its forms: `x.jpg.xmp`, and Adobe's `x.xmp`, which does not
+        // say its file.
+        is_sidecar(name)
     }
 }
 
@@ -350,7 +424,8 @@ impl Plugin for XmpPlugin {
     }
     fn register(&self, app: &App) {
         app.register_notes_store(ID, Arc::new(XmpStore::default()));
-        app.companions.register(ID, Arc::new(XmpCompanion));
+        app.companions
+            .register(ID, Arc::new(XmpCompanion::default()));
         app.fields.register(ID, Arc::new(Embedded));
     }
 }
