@@ -108,6 +108,13 @@
   History's edge; it now wraps and the History is as tall as it. The address
   card's rows of buttons (Add a term, Search in) are no longer cut when they
   wrap either.
+- **The sidebar's free space stays current**: a drive's "free of" and its bar
+  were measured at start and when drives came and went, so a Skwir open for
+  hours showed the morning's numbers, even after copying gigabytes onto the
+  drive. They are now measured again when a window comes back to the front,
+  when an action ends, and every minute while a window has the keyboard; a
+  server's mount when the window comes back and when an action wrote there.
+  Asking does not wake a sleeping drive.
 - **Skwir started again opens in the one running**: a launcher, a browser's
   Show in Folder or `skwir ~/Documents` opens a window there, on the folder
   asked, rather than a second Skwir that knows nothing of the first; with

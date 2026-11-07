@@ -402,6 +402,10 @@ working in an area, also read that area's rules (see
   (`App::wake`, `waker_handle`): a source that names no window is never
   wrong, only costly. Name the window where a source is one window's and
   wakes often.
+- **What no watch tells** (how full a volume is) is asked again when
+  a window comes to the front (`Plugin::on_looked_at`, on a worker) and
+  when a plan ends (`Executor::observe`), and on a slow pace only while
+  someone looks (`App::looked_at`), published only when it changed.
 - A wake applies what the core sent (`Shell::sync`), then asks for a
   draw; it never leaves the applying to the draw. A window the
   compositor is not showing (another workspace, minimized) is never asked

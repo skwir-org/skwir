@@ -891,7 +891,7 @@ impl Remotes {
                 };
                 if newest {
                     this.publish(&app);
-                    this.ask_alive(&app, &mounted, &lifetime);
+                    this.ask_alive(&app, mounted.iter(), &lifetime);
                 }
                 // The servers kept (Skwir's list, KDE's network folders),
                 // then the tools' that are not those: read again where
@@ -976,7 +976,12 @@ impl Remotes {
     /// full it is, in the remote's own lane: a server that stopped
     /// answering holds that alone (ADR-077). A mount still being asked is
     /// not asked again.
-    fn ask_alive(&self, app: &App, mounted: &Arc<Vec<Mounted>>, lifetime: &CancelToken) {
+    fn ask_alive<'a>(
+        &self,
+        app: &App,
+        mounted: impl IntoIterator<Item = &'a Mounted>,
+        lifetime: &CancelToken,
+    ) {
         /// The mount being asked, no longer once its question ran, or was
         /// dropped unrun.
         struct Asking(Arc<Mutex<State>>, PathBuf);
@@ -986,7 +991,7 @@ impl Remotes {
             }
         }
         let weak = app.weak();
-        for m in mounted.iter() {
+        for m in mounted {
             let point = m.remote.point.clone();
             if !self.state.lock().asking.insert(point.clone()) {
                 continue;
@@ -1055,6 +1060,24 @@ impl Remotes {
         }
     }
 
+    /// Ask the mounts whose point `which` names again whether they answer
+    /// and how full they are (`ask_alive`): as the window comes back
+    /// (`Known::looked_at`), and as a plan that wrote there or freed room
+    /// there ends. No rescan follows what fills a server.
+    fn ask_again(&self, app: &App, which: impl Fn(&Path) -> bool) {
+        let (mounted, lifetime) = {
+            let state = self.state.lock();
+            (Arc::clone(&state.mounted), state.lifetime.clone())
+        };
+        if let Some(lifetime) = lifetime {
+            self.ask_alive(
+                app,
+                mounted.iter().filter(|m| which(&m.remote.point)),
+                &lifetime,
+            );
+        }
+    }
+
     /// Read what is mounted and publish it at once, on this thread: a
     /// connection was just made, its folder is shown next, and F5 there
     /// must find what its program is told (`Known::forget`). A refresh
@@ -1114,12 +1137,17 @@ impl Remotes {
                 thumbnails: thumbnails(rule, near, whole, fast),
                 forget: m.connector.as_ref().and_then(|c| c.forget(&m.remote)),
                 trash: state.features.get(point).and_then(|f| f.trash.clone()),
-                // What other programs left to be sent there, looked at when
-                // the window comes back (ADR-102).
-                looked_at: (m.remote.fstype == rclone::FSTYPE).then(|| {
+                // Asked when the window comes back: how full it is, and what
+                // other programs left to be sent there (rclone's, ADR-102).
+                looked_at: Some({
                     let (this, weak, point) = (self.clone(), app.weak(), point.clone());
+                    let uploads = m.remote.fstype == rclone::FSTYPE;
                     skwir_core::fs::reach::Look(Arc::new(move || {
-                        if let Some(app) = weak.upgrade() {
+                        let Some(app) = weak.upgrade() else {
+                            return;
+                        };
+                        this.ask_again(&app, |at| at == point);
+                        if uploads {
                             this.look_at_uploads(&app, &point);
                         }
                     }))
@@ -1545,15 +1573,28 @@ impl Plugin for RemotePlugin {
         }
         // A copy down that proved a server fast, or slow again, changes
         // its thumbnails' Automatic: published again at its plan's end.
+        // The mounts it wrote to or freed room on are asked how full they
+        // are.
         let (remotes, weak) = (self.remotes.clone(), app.weak());
         app.executor.observe(
             ID,
-            Arc::new(move |_| {
-                let seen = remotes.state.lock().proved_seen;
-                if skwir_core::fs::reach::proved_changed() != seen
-                    && let Some(app) = weak.upgrade()
-                {
+            Arc::new(move |changes| {
+                let Some(app) = weak.upgrade() else {
+                    return;
+                };
+                let (seen, mounted) = {
+                    let state = remotes.state.lock();
+                    (state.proved_seen, Arc::clone(&state.mounted))
+                };
+                if skwir_core::fs::reach::proved_changed() != seen {
                     remotes.publish(&app);
+                }
+                let touched = touched(
+                    mounted.iter().map(|m| m.remote.point.as_path()).collect(),
+                    changes,
+                );
+                if !touched.is_empty() {
+                    remotes.ask_again(&app, |point| touched.iter().any(|t| t == point));
                 }
             }),
         );
@@ -2030,6 +2071,25 @@ const UPLOADS_LOOKED_EVERY: Duration = if cfg!(test) {
     Duration::from_secs(2)
 };
 
+/// Which of the mount `points` `changes` name a path under: one pass over
+/// the changes, ended once every mount is found (mounts are few, a plan's
+/// changes may be a folder's 100,000).
+fn touched(points: Vec<&Path>, changes: &[skwir_core::op::Change]) -> Vec<PathBuf> {
+    let mut left = points;
+    let mut touched = Vec::new();
+    'changes: for change in changes {
+        for path in change.paths() {
+            if let Some(i) = left.iter().position(|point| path.starts_with(point)) {
+                touched.push(left.swap_remove(i).to_path_buf());
+                if left.is_empty() {
+                    break 'changes;
+                }
+            }
+        }
+    }
+    touched
+}
+
 /// What a mount's place says while it sends what waits.
 fn sending(files: usize) -> String {
     format!("Sending {} to the server…", self::files(files))
@@ -2207,6 +2267,38 @@ mod tests {
         assert_eq!(auto(Some(false), true, Some(true)), Small);
         assert_eq!(super::thumbnails("never", None, false, Some(true)), Never);
         assert_eq!(super::thumbnails("always", None, false, None), Always);
+    }
+
+    /// A plan's end asks again how full the mounts it wrote to or freed
+    /// room on are, and no other: a path below a mount names it, its
+    /// sibling's name beginning the same does not.
+    #[test]
+    fn a_plan_touches_the_mounts_it_names_a_path_under() {
+        use skwir_core::op::Change;
+        use std::path::{Path, PathBuf};
+        let (one, two, three) = (
+            Path::new("/run/user/1000/skwir/remote/one"),
+            Path::new("/run/user/1000/skwir/remote/two"),
+            Path::new("/run/user/1000/skwir/remote/three"),
+        );
+        let changes = [
+            Change::Move {
+                from: PathBuf::from("/home/me/a"),
+                to: one.join("a"),
+            },
+            Change::Create {
+                path: PathBuf::from("/run/user/1000/skwir/remote/twofold/b"),
+                directory: true,
+                words: None,
+            },
+            Change::Delete {
+                path: three.join("c"),
+            },
+        ];
+        let mut touched = super::touched(vec![one, two, three], &changes);
+        touched.sort();
+        assert_eq!(touched, [one.to_path_buf(), three.to_path_buf()]);
+        assert!(super::touched(vec![two], &changes).is_empty());
     }
 
     #[test]

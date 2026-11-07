@@ -12603,3 +12603,48 @@ buttons (Add a term, Search in) were cut the same way.
   (42, four new: a width said, a parent's, a width said that the parent
   narrows, a width of its rows; the first three fail without the patch);
   clippy on skwir-ui and skwir; skwir-ui's tests (560).
+
+## 2026-11-07: The sidebar's free space stays current
+
+The user asked when a drive's free space in the sidebar is measured. It
+was measured at start and at each rescan of the places (a drive plugged
+or mounted under `/run/media/$USER`, the bookmarks changed, a mount,
+unmount or unlock by Skwir, Refresh places), and a server's mount when
+the mounts changed: never otherwise, so a Skwir up for hours showed the
+morning's numbers, even after it copied gigabytes onto the drive. A
+copy's own room check asks the drive itself and was never misled.
+
+- **When it is asked now**, published only when a number changed:
+  - when a window comes to the front: `App::set_window_focused`, which
+    the shell calls as the desktop tells it (and as a window goes), reads
+    remote folders again as before and tells the plugins
+    (`Plugin::on_looked_at`, a new hook, on a worker);
+  - when a plan ends (`Executor::observe`): this machine's drives, and the
+    mounts a change names a path under (`touched`, one pass over the
+    changes);
+  - every minute while a window has the keyboard (`App::looked_at`): this
+    machine's drives, on a thread of the places plugin's that ends once
+    nobody looks or the plugin goes (`Places::pace`). A server's mount
+    is never asked on a timer: when the window comes back instead
+    (`Known::looked_at`, now every mount's, at most once in
+    `REFRESHED_WITHIN`).
+  - Not while the last asking runs (`Publisher::measuring`): a volume
+    that hangs holds one worker, not one a minute.
+- **Asking wakes no drive**: 200 `statfs` of each of two USB btrfs drives
+  and a vfat partition read and wrote nothing on them
+  (`/sys/block/*/stat` before and after).
+- **Seen** on Xvfb :95 (debug build, a synthetic home): the window
+  unfocused, 1 GiB written by another program left the home drive's
+  tooltip at 16.3 GB free; focused again, 15.3 GB. Unfocused, another
+  GiB, then a rename through `skwir cmd --apply`: 14.1 GB at the plan's
+  end. Focused, another GiB and nothing done: 14.1 GB at once, 13.3 GB
+  (as `df` said then) after the minute. The fill files were removed.
+- **Checked:** four new tests (core: the keyboard told in either order
+  between windows, let go as a window goes, the hook for enabled plugins
+  only; places: asked again and published only on a change, one being
+  unmounted not asked; after a plan, at the window's return, paced while
+  looked at and not after, and with the plugin; remote: the mounts a
+  plan touched); clippy on skwir-core, skwir-ui, the places and remote
+  plugins; their tests (823; skwir-ui and the binary, 566) and
+  `plugins_toggle`. Idle CPU with the pace running was not measured: one
+  wake of a thread a minute.

@@ -79,6 +79,12 @@ pub trait Plugin: Send + Sync {
     /// Apply changed preferences on a worker. Read-through settings need no hook.
     /// Refresh only affected contributions, preserving unrelated plugin state.
     fn on_settings_changed(&self, _app: &App, _keys: &[String]) {}
+    /// A window came to the front (`App::set_window_focused`): someone
+    /// looks at Skwir again, maybe after hours. Ask again here what may
+    /// have changed meanwhile that no watch tells (how full a volume is),
+    /// and start what is asked only while someone looks
+    /// (`App::looked_at`). On a worker; start work, never wait for it.
+    fn on_looked_at(&self, _app: &App) {}
     /// Release resources the registries do not know about. Called on disable.
     fn on_disable(&self, _app: &App) {}
     /// What it may do beyond naming and listing files (ADR-044): read what
@@ -399,6 +405,23 @@ impl PluginHost {
             if !owned.is_empty() {
                 plugin.on_settings_changed(app, &owned);
             }
+        }
+    }
+
+    /// Worker-only: tell each enabled plugin that a window came to the
+    /// front (`Plugin::on_looked_at`), serialized against enable and
+    /// disable as `settings_changed` is.
+    pub fn looked_at(&self, app: &App) {
+        let _lifecycle = self.lifecycle.lock();
+        let plugins: Vec<_> = self
+            .plugins
+            .read()
+            .iter()
+            .filter(|(_, enabled)| *enabled)
+            .map(|(plugin, _)| Arc::clone(plugin))
+            .collect();
+        for plugin in plugins {
+            plugin.on_looked_at(app);
         }
     }
 

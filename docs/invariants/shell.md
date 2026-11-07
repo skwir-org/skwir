@@ -1054,7 +1054,14 @@ of bars, split or not.
   block), `eject`, `unavailable` (dims the row; the reason is its
   tooltip), `busy` ("Unlocking…": a still hourglass, nothing to click
   until done), `menu` (its own items). A rescan publishes at once and
-  keeps the last measurements (`carry_over`), so nothing blinks.
+  keeps the last measurements (`carry_over`), so nothing blinks. How
+  full a volume is changes with no rescan to follow it, so its owner asks
+  again when a window comes to the front (`Plugin::on_looked_at`), when
+  a plan ends, and, for this machine's disks, every minute while a
+  window has the keyboard (`App::looked_at`; a disk's filesystem answers
+  from memory, so this wakes no drive); a remote's in its lane, never on
+  a timer (`remote.md`). The places are published again only when a
+  number changed.
 - **A tag looks the same wherever it is shown:** its chip, a dot and a
   tint of its color (`tags::chip`): on files' rows and tiles, in
   Properties and the preview's header, in the sidebar

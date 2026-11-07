@@ -264,6 +264,8 @@ pub struct App {
     /// Whether the window is up and has shown what it starts on
     /// (`window_shown`), with what waits for it.
     shown: (parking_lot::Mutex<bool>, parking_lot::Condvar),
+    /// The window that has the keyboard, if one has (`looked_at`).
+    focused: parking_lot::Mutex<Option<WindowId>>,
     /// The tabs closed last, to reopen (`tab.reopen`).
     pub(crate) closed_tabs: parking_lot::Mutex<crate::tabs::Closed>,
     /// Self reference so background work can keep a `Weak<App>`.
@@ -339,6 +341,7 @@ impl App {
             forms: crate::form::Forms::default(),
             front: parking_lot::Mutex::new(Vec::new()),
             shown: (parking_lot::Mutex::new(false), parking_lot::Condvar::new()),
+            focused: parking_lot::Mutex::new(None),
             scheduler,
             commands: CommandRegistry::default(),
             ops: OpRegistry::default(),
@@ -1815,6 +1818,45 @@ impl App {
     /// asked.
     pub fn window_shown(&self) -> bool {
         *self.shown.0.lock()
+    }
+
+    /// Window `window` has the keyboard, or no longer: the UI says so as
+    /// the desktop tells it, and as the window goes. Coming to the front
+    /// reads remote folders again (`refresh_remote`) and tells the plugins
+    /// (`Plugin::on_looked_at`, on a worker). Going from one window to
+    /// another may be told in either order: one losing the keyboard after
+    /// another took it changes nothing.
+    pub fn set_window_focused(&self, window: WindowId, focused: bool) {
+        {
+            let mut has = self.focused.lock();
+            if focused {
+                *has = Some(window);
+            } else if *has == Some(window) {
+                *has = None;
+            }
+        }
+        if !focused {
+            return;
+        }
+        self.refresh_remote();
+        let weak = self.weak();
+        self.scheduler.spawn(
+            Priority::Normal,
+            "looked-at",
+            self.lifetime().child(),
+            move || {
+                if let Some(app) = weak.upgrade() {
+                    app.plugins.looked_at(&app);
+                }
+            },
+        );
+    }
+
+    /// Whether one of the windows has the keyboard: someone is looking
+    /// (`set_window_focused`). What is asked again only while someone
+    /// looks stops once nobody does.
+    pub fn looked_at(&self) -> bool {
+        self.focused.lock().is_some()
     }
 
     /// Wait at most `timeout` for the window to be shown

@@ -536,3 +536,65 @@ fn a_wake_says_what_it_is_for() {
     }
     assert!(panes.contains(&pane), "the listing woke its pane");
 }
+
+/// A plugin counting the windows that came to the front.
+struct Looking(std::sync::atomic::AtomicUsize);
+
+impl skwir_core::plugin::Plugin for Looking {
+    fn id(&self) -> &'static str {
+        "looking"
+    }
+    fn title(&self) -> &'static str {
+        "Looking"
+    }
+    fn category(&self) -> skwir_core::plugin::Category {
+        skwir_core::plugin::Category::Files
+    }
+    fn register(&self, _app: &App) {}
+    fn on_looked_at(&self, _app: &App) {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// Someone looks while a window has the keyboard, told in either order
+/// going from one window to another and let go of as a window goes; each
+/// window coming to the front tells the enabled plugins, on a worker.
+#[test]
+fn a_window_with_the_keyboard_is_looked_at_and_tells_the_plugins() {
+    let dir = home_tempdir();
+    let app = app(dir.path());
+    navigate(&app, dir.path());
+    let looking = std::sync::Arc::new(Looking(std::sync::atomic::AtomicUsize::new(0)));
+    app.plugins.add(looking.clone(), &app);
+    let told = || looking.0.load(std::sync::atomic::Ordering::SeqCst);
+    let first = active_window(&app);
+    let second: WindowId = id(&value(&app, "window.new", serde_json::json!({})), "window");
+    assert!(!app.looked_at(), "no window has the keyboard yet");
+
+    app.set_window_focused(first, true);
+    assert!(app.looked_at());
+    assert!(app.scheduler.wait_idle(WAIT));
+    assert_eq!(told(), 1);
+
+    // To the second: the first may be told it lost the keyboard after
+    // the second took it.
+    app.set_window_focused(second, true);
+    app.set_window_focused(first, false);
+    assert!(app.looked_at(), "the second has it");
+    app.set_window_focused(second, false);
+    assert!(!app.looked_at(), "another program has it");
+    assert!(app.scheduler.wait_idle(WAIT));
+    assert_eq!(told(), 2, "losing the keyboard tells nobody");
+
+    // A window that goes with the keyboard lets go of it.
+    app.set_window_focused(first, true);
+    app.set_window_focused(first, false);
+    assert!(!app.looked_at());
+    assert!(app.scheduler.wait_idle(WAIT));
+    assert_eq!(told(), 3);
+
+    app.plugins.set_enabled("looking", false, &app);
+    app.set_window_focused(second, true);
+    assert!(app.scheduler.wait_idle(WAIT));
+    assert_eq!(told(), 3, "a disabled plugin is not told");
+}

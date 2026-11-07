@@ -100,6 +100,11 @@ ADR-077 (which revises ADR-021).
   `App::read_again`, never `OpenLocation::refresh` alone: a program that
   keeps what it listed (kio-fuse, 30 s) is told to forget it first
   (`Known::forget`), in the remote's lane.
+- **How full a mount is** is asked in its lane (`ask_alive`): when its
+  mount is listed, when the window comes back (`Known::looked_at`, with
+  the listings' bound), and when a plan that names a path under it ends.
+  Never on a timer, as this machine's disks are while a window has the
+  keyboard: its server may not answer, and each asking is a request.
 - **Walks** (searches, counts, the timeline's subtree) never enter a
   network mount below their root (`reach::is_point`, told before the
   point is stat-ed, which its server answers), nor answer what an index

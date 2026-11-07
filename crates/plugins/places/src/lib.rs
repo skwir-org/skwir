@@ -29,6 +29,16 @@ const SETTLE: Duration = Duration::from_millis(400);
 /// player, and the terminal's shell after its `cd`, are processes of their
 /// own. Past this, what still uses the volume is not ours.
 const RELEASE: Duration = Duration::from_secs(3);
+/// How often each volume is asked again how full it is while a window has
+/// the keyboard (`Places::pace`): a test's at once. A disk's filesystem
+/// answers from what it keeps in memory, so asking does not wake a drive
+/// (btrfs on two USB drives and a vfat partition: no read or write in 200
+/// askings).
+const MEASURED_EVERY: Duration = if cfg!(test) {
+    Duration::from_millis(20)
+} else {
+    Duration::from_secs(60)
+};
 
 /// The places plugin.
 pub struct PlacesPlugin {
@@ -98,6 +108,10 @@ struct Publisher {
     /// a container, with the container's place: once unlocked, a container
     /// is listed as that volume, which is still the same work.
     cleartext: Vec<Cleartext>,
+    /// The volumes are being asked how full they are (`Places::measure`).
+    measuring: bool,
+    /// A thread asks them again every `MEASURED_EVERY` (`Places::pace`).
+    pacing: bool,
 }
 
 /// An unlocked container's volume, as `lsblk` lists it in its stead.
@@ -620,6 +634,149 @@ impl Places {
                 }
             },
         );
+    }
+
+    /// Ask each volume shown how full it is, on a worker (asking can block
+    /// on a volume that does not answer), and publish again if a number
+    /// changed: when a window comes back, when a plan ends, and while a
+    /// window has the keyboard (`pace`), which no rescan follows. Not while
+    /// the last asking runs: a volume that hangs holds one worker, not one
+    /// a minute.
+    fn measure(&self, app: &App) {
+        /// The asking under way, no longer once it ran or was dropped
+        /// unrun.
+        struct Measuring(Places);
+        impl Drop for Measuring {
+            fn drop(&mut self) {
+                (self.0).0.lock().measuring = false;
+            }
+        }
+        let (volumes, lifetime) = {
+            let mut publisher = self.0.lock();
+            let Some(lifetime) = publisher.lifetime.as_ref().map(CancelToken::child) else {
+                return;
+            };
+            if publisher.measuring {
+                return;
+            }
+            // What is being unmounted is not asked: it is going.
+            let volumes: Vec<(Location, PathBuf)> = publisher
+                .shown
+                .iter()
+                .filter(|place| place.group == "devices" && place.busy.is_none())
+                .filter_map(|place| Some((place.location.clone(), place.location.path()?)))
+                .collect();
+            if volumes.is_empty() {
+                return;
+            }
+            publisher.measuring = true;
+            (volumes, lifetime)
+        };
+        let measuring = Measuring(self.clone());
+        let (this, weak) = (self.clone(), app.weak());
+        app.scheduler
+            .spawn(Priority::Background, "places-space", lifetime, move || {
+                let _measuring = measuring;
+                let measured: skwir_core::hashing::Map<Location, Option<(u64, u64)>> = volumes
+                    .into_iter()
+                    .map(|(location, path)| (location, skwir_platform::places::space(&path)))
+                    .collect();
+                if let Some(app) = weak.upgrade() {
+                    this.take_measured(&app, &measured);
+                }
+            });
+    }
+
+    /// Keep what `measure` found, in what the quick scan borrows from too
+    /// (`measured`), and publish what is shown again if a number changed.
+    fn take_measured(
+        &self,
+        app: &App,
+        measured: &skwir_core::hashing::Map<Location, Option<(u64, u64)>>,
+    ) {
+        let mut guard = self.0.lock();
+        let publisher = &mut *guard;
+        if publisher
+            .lifetime
+            .as_ref()
+            .is_none_or(CancelToken::is_cancelled)
+        {
+            return;
+        }
+        let mut changed = false;
+        for (place, shown) in publisher
+            .shown
+            .iter_mut()
+            .map(|place| (place, true))
+            .chain(publisher.measured.iter_mut().map(|place| (place, false)))
+        {
+            if place.group != "devices" {
+                continue;
+            }
+            if let Some(space) = measured.get(&place.location)
+                && place.space != *space
+            {
+                place.space = *space;
+                changed |= shown;
+            }
+        }
+        if changed {
+            app.registry
+                .places
+                .replace_owner(ID, publisher.shown.clone());
+            drop(guard);
+            app.wake();
+        }
+    }
+
+    /// While a window has the keyboard, ask the volumes how full they are
+    /// every `MEASURED_EVERY`, on a thread of its own that ends once nobody
+    /// looks (`App::looked_at`) or the plugin is disabled: another program
+    /// filling a disk shows within the minute while Skwir is looked at.
+    fn pace(&self, app: &App) {
+        let lifetime = {
+            let mut publisher = self.0.lock();
+            let Some(lifetime) = publisher.lifetime.clone() else {
+                return;
+            };
+            if publisher.pacing {
+                return;
+            }
+            publisher.pacing = true;
+            lifetime
+        };
+        let (this, weak) = (self.clone(), app.weak());
+        let started = std::thread::Builder::new()
+            .name("skwir-places-pace".into())
+            .spawn(move || {
+                let cancelled = lifetime.subscribe();
+                loop {
+                    // Received: the plugin was disabled.
+                    if cancelled.receiver().recv_timeout(MEASURED_EVERY).is_ok() {
+                        return;
+                    }
+                    let Some(app) = weak.upgrade() else {
+                        return;
+                    };
+                    {
+                        let mut publisher = this.0.lock();
+                        // `on_disable` let go of the pacing.
+                        if lifetime.is_cancelled() {
+                            return;
+                        }
+                        // Asked under the lock `pace` takes: a window that
+                        // takes the keyboard after this starts it again.
+                        if !app.looked_at() {
+                            publisher.pacing = false;
+                            return;
+                        }
+                    }
+                    this.measure(&app);
+                }
+            });
+        if started.is_err() {
+            self.0.lock().pacing = false;
+        }
     }
 
     /// Run `job` on a worker for as long as the plugin is enabled.
@@ -1207,11 +1364,19 @@ impl Plugin for PlacesPlugin {
         }
     }
 
+    fn on_looked_at(&self, app: &App) {
+        self.places.measure(app);
+        self.places.pace(app);
+    }
+
     fn on_disable(&self, _app: &App) {
         *self.watcher.0.lock() = None;
-        if let Some(lifetime) = self.places.0.lock().lifetime.take() {
+        let mut publisher = self.places.0.lock();
+        if let Some(lifetime) = publisher.lifetime.take() {
             lifetime.cancel();
         }
+        // Its thread ends at the cancel, leaving this to say.
+        publisher.pacing = false;
     }
 
     fn capabilities(&self) -> skwir_core::permissions::Capabilities {
@@ -1219,14 +1384,13 @@ impl Plugin for PlacesPlugin {
         skwir_core::permissions::Capabilities::of(&[Capability::Programs])
     }
     fn register(&self, app: &App) {
-        if let Some(previous) = self
-            .places
-            .0
-            .lock()
-            .lifetime
-            .replace(app.lifetime().child())
         {
-            previous.cancel();
+            let mut publisher = self.places.0.lock();
+            if let Some(previous) = publisher.lifetime.replace(app.lifetime().child()) {
+                previous.cancel();
+            }
+            // A thread pacing for the lifetime before ends with it.
+            publisher.pacing = false;
         }
         app.settings
             .declare(skwir_core::settings::SettingSpec::data(
@@ -1235,6 +1399,19 @@ impl Plugin for PlacesPlugin {
                 toml::Value::Array(Vec::new()),
             ));
         self.places.populate(app);
+        // A plan that ended may have filled a volume or freed room on it:
+        // asked at once, not at the next rescan.
+        let (places, weak) = (self.places.clone(), app.weak());
+        app.executor.observe(
+            ID,
+            Arc::new(move |changes| {
+                if !changes.is_empty()
+                    && let Some(app) = weak.upgrade()
+                {
+                    places.measure(&app);
+                }
+            }),
+        );
         let places = self.places.clone();
         app.commands
             .register::<NoArgs, _>(
@@ -1579,6 +1756,145 @@ impl Plugin for PlacesPlugin {
 mod tests {
     use super::*;
     use skwir_core::app::AppConfig;
+
+    /// How long a test waits for a worker or the pacing thread: a bound on
+    /// a hang, not a measure.
+    const WAIT: Duration = Duration::from_secs(10);
+
+    /// A volume's place at `path`, said to be `space` full.
+    fn volume(path: &Path, space: Option<(u64, u64)>) -> Place {
+        Place {
+            space,
+            ..Place::new("devices", "Disk", "", Location::from_path(path))
+        }
+    }
+
+    /// The volume at `path` as the sidebar is told of it, if it is.
+    fn listed(app: &App, path: &Path) -> Option<Place> {
+        app.registry
+            .places
+            .all()
+            .into_iter()
+            .find(|place| place.location == Location::from_path(path))
+    }
+
+    /// Each volume shown is asked again how full it is, on a worker, and
+    /// what is shown is published again only when a number changed; one
+    /// being unmounted is not asked.
+    #[test]
+    fn volumes_are_asked_again_and_published_when_a_number_changed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        let here = tmp.path().to_path_buf();
+        let (gone, going) = (here.join("gone"), here.join("going"));
+        let places = Places::default();
+        {
+            let mut publisher = places.0.lock();
+            publisher.lifetime = Some(CancelToken::new());
+            let mut unmounting = volume(&going, Some((1, 2)));
+            unmounting.busy = Some("Unmounting…".into());
+            publisher.shown = vec![
+                volume(&here, Some((1, 2))),
+                volume(&gone, Some((1, 2))),
+                unmounting,
+            ];
+            publisher.measured = vec![volume(&gone, Some((1, 2)))];
+        }
+        places.measure(&app);
+        assert!(app.scheduler.wait_idle(WAIT));
+        assert!(
+            matches!(listed(&app, &here).map(|place| place.space), Some(Some((_, total))) if total > 2),
+            "{:?}",
+            listed(&app, &here).map(|place| place.space)
+        );
+        assert_eq!(
+            listed(&app, &gone).map(|place| place.space),
+            Some(None),
+            "nothing is there"
+        );
+        assert_eq!(
+            listed(&app, &going).map(|place| place.space),
+            Some(Some((1, 2))),
+            "not asked"
+        );
+        assert_eq!(
+            places.0.lock().measured[0].space,
+            None,
+            "what the quick scan borrows is measured too"
+        );
+        assert!(!places.0.lock().measuring);
+
+        // Asked again, the same: nothing published.
+        places.0.lock().shown = vec![volume(&gone, None)];
+        app.registry.places.replace_owner(ID, Vec::new());
+        places.measure(&app);
+        assert!(app.scheduler.wait_idle(WAIT));
+        assert!(app.registry.places.all().is_empty());
+    }
+
+    /// A plan that ends, a window coming to the front and, while one has
+    /// the keyboard, every `MEASURED_EVERY` ask the volumes again; the
+    /// pacing ends once nobody looks, and with the plugin.
+    #[test]
+    fn volumes_are_asked_again_after_a_plan_and_while_looked_at() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        let plugin = Arc::new(PlacesPlugin::default());
+        let places = plugin.places.clone();
+        app.plugins.add(plugin, &app);
+        assert!(app.scheduler.wait_idle(WAIT), "the first scan measured");
+        let gone = tmp.path().join("gone");
+        // Said full until asked: nothing is there, which says nothing.
+        let said_full = || {
+            let mut publisher = places.0.lock();
+            let location = Location::from_path(&gone);
+            publisher.shown.retain(|place| place.location != location);
+            publisher.shown.push(volume(&gone, Some((1, 2))));
+            app.registry.places.replace_owner(ID, Vec::new());
+        };
+        let asked = || {
+            let deadline = std::time::Instant::now() + WAIT;
+            while listed(&app, &gone).map(|place| place.space) != Some(None) {
+                assert!(std::time::Instant::now() < deadline, "never asked");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        };
+
+        said_full();
+        let plan = skwir_core::op::Plan::with_steps(
+            "mkdir",
+            vec![Box::new(skwir_core::op::Mkdir {
+                path: tmp.path().join("new"),
+            })],
+        );
+        let applied = app.executor.execute_blocking(&plan, app.lifetime());
+        assert!(applied.error.is_none(), "{:?}", applied.error);
+        asked();
+
+        let window = app.workspace.read().active_window_id();
+        said_full();
+        app.set_window_focused(window, true);
+        asked();
+        // Again within `MEASURED_EVERY`, nobody asking.
+        said_full();
+        asked();
+        assert!(places.0.lock().pacing);
+
+        app.set_window_focused(window, false);
+        let deadline = std::time::Instant::now() + WAIT;
+        while places.0.lock().pacing {
+            assert!(std::time::Instant::now() < deadline, "still pacing");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        said_full();
+        app.set_window_focused(window, true);
+        asked();
+        assert!(app.scheduler.wait_idle(WAIT), "the plugin was told");
+        assert!(places.0.lock().pacing, "paced again");
+        app.plugins.set_enabled(ID, false, &app);
+        assert!(!places.0.lock().pacing, "its thread ends with the plugin");
+    }
 
     /// The kernel takes a mount out of the list as its unmount begins and
     /// only then writes what it had to: the volume, listed by its device in

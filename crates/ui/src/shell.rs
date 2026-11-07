@@ -592,10 +592,12 @@ impl Shell {
         }));
         subs.push(cx.observe_pending_input(window, Self::on_pending_input));
         subs.push(cx.observe_window_bounds(window, Self::window_moved));
-        // A server does not say what changed on it: the folders shown on a
-        // remote are read again as the window comes back (ADR-077).
+        // What no watch tells is asked again as the window comes back: the
+        // folders shown on a remote (a server does not say what changed on
+        // it, ADR-077), how full each volume is (`App::set_window_focused`).
         subs.push(cx.observe_window_activation(window, |this, window, cx| {
             let active = window.is_window_active();
+            this.app.set_window_focused(this.window_id, active);
             if active {
                 // The window used last is where commands that name no pane
                 // act (ADR-122), whose shape a new window takes.
@@ -603,7 +605,6 @@ impl Shell {
                 crate::finishing::raised(cx, this.window_id);
                 this.work.borrow().shown_in(Some(window));
                 this.remember_session();
-                this.app.refresh_remote();
                 // An accent or a contrast changed while away (macOS).
                 crate::desktop_style::read_again(&this.app);
             }
@@ -2383,6 +2384,8 @@ impl Shell {
         }
         self.decline_held();
         self.left = true;
+        // A window closed with the keyboard may not be told it lost it.
+        self.app.set_window_focused(self.window_id, false);
         // What it played stops with it (ADR-122), and the desktop's
         // controls let go of it.
         self.let_go_of_player();
