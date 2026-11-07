@@ -12447,3 +12447,14 @@ The user's follow-ups to ADR-122 after its four steps.
   `a_drop_lands_in_a_window_last_used_by_keyboard`, which fails without
   the fix); clippy on skwir-ui and skwir; skwir-ui's tests (558). A tab's
   drag along its own window's tabs is the code of step 3, unchanged.
+- **Ctrl+W on the last tab of the last window closes the window**, as its
+  close button does (browsers, Nautilus): `tab.close` run in the window
+  (`Shell::closes_last_window`: the tab named, else the window's shown
+  one, alone in the only window) closes it; the core's `tab.close`, an
+  agent's, still keeps the last tab, as `window.close` keeps the last
+  window. With nothing running the program ends, the window remembered;
+  with work running it goes on without the window (ADR-115). **Seen** on
+  Xvfb :95 (debug build): Ctrl+T, Ctrl+W closed the new tab (its toast),
+  Ctrl+W again closed the window and the program ended; started again,
+  the window came back on its folder. **Checked:** clippy on skwir-ui and
+  skwir-core, their tests (1229).

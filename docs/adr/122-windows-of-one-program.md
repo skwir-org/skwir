@@ -52,8 +52,11 @@ ADR-115 (one process for every window; launches always handed over).
    its own close button or Quit, ADR-115), `window.select`, `window.list`;
    `tab.move` takes a `window`, or `new_window`; `tab.list` says each
    tab's window. A window's last tab closing (`tab.close`, Ctrl+W) closes
-   the window while another is open; the last tab of the last window
-   stays. `tab.reopen` (Ctrl+Shift+T) reopens tabs and windows from one
+   the window while another is open. Closed from the window (Ctrl+W, the
+   palette), the last tab of the last window closes the window, as its
+   close button does, as browsers and Nautilus do; asked of the core
+   alone (an agent's `tab.close`), it stays, as `window.close` keeps the
+   last window. `tab.reopen` (Ctrl+Shift+T) reopens tabs and windows from one
    list, newest first, a tab in its window if it is still there, else the
    active one.
 3. **One for the program**: the queue, History and Undo (Ctrl+Z in any

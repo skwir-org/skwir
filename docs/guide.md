@@ -37,7 +37,7 @@ work where the keyboard is, by topic.
   own tabs, split and panels. What you do in a window shows its result there,
   and `Ctrl+Z` in any window undoes the last thing you did anywhere: one
   History, one queue, one player for all of them. `Ctrl+Shift+W` closes a
-  window (`Ctrl+W` on its last tab too, while another is open);
+  window (`Ctrl+W` on its last tab too);
   `Ctrl+Shift+T` brings it back with its tabs. Quit closes them all, and
   with General › At startup set to come back, every window comes back as
   it was; a window you closed yourself does not. Skwir started again (a

@@ -2166,6 +2166,15 @@ impl Shell {
             cx.notify();
             return;
         }
+        // The last tab of the last window, closed from the window (Ctrl+W,
+        // the palette, a script asking the window), closes the window, as
+        // its close button does (ADR-122): the core keeps a last tab, which
+        // only the window lets go of (ADR-115).
+        if name == "tab.close" && self.closes_last_window(&args) {
+            self.close_window(window, cx);
+            window.remove_window();
+            return;
+        }
         if name == "open" && self.app.commands.get("open").is_none() {
             self.open_fallback(window, cx);
             return;
@@ -2343,6 +2352,22 @@ impl Shell {
             tracing::warn!("a window closes: {error:#}");
         }
         self.leave(window, cx);
+    }
+
+    /// Whether `tab.close` with `args` closes the last tab of the last
+    /// window: the tab named, else this window's shown one.
+    fn closes_last_window(&self, args: &serde_json::Value) -> bool {
+        let ws = self.app.workspace.read();
+        if ws.windows().len() != 1 {
+            return false;
+        }
+        let tab = match args.get("tab").filter(|tab| !tab.is_null()) {
+            Some(tab) => serde_json::from_value::<skwir_core::workspace::TabId>(tab.clone()).ok(),
+            None => ws.window(self.window_id).map(|w| w.shown().id),
+        };
+        tab.and_then(|tab| ws.window_of_tab(tab))
+            .and_then(|w| ws.window(w))
+            .is_some_and(|w| w.tabs().len() == 1)
     }
 
     /// Quit's windows: every one goes, this one first, none forgotten by

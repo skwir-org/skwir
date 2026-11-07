@@ -1411,7 +1411,7 @@ pub(crate) fn register(app: &App) {
         Topic::Tabs,
         "tab.close",
         "Close tab",
-        "Close a tab (the one shown by default); the notification offers Undo. A window's last tab closes the window while another is open; the last tab of the last window stays",
+        "Close a tab (the one shown by default); the notification offers Undo. A window's last tab closes the window while another is open; the last tab of the last window stays (its window's own Ctrl+W closes the window)",
         |a, app| {
             let tab = a
                 .tab

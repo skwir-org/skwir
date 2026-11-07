@@ -87,8 +87,8 @@
   player (a play started in another window moves there, and stops with its
   window), one Settings dialog. Each window has its own tabs, split, panels and
   look; what an action did is shown, and its toast said, in the window that
-  asked. Ctrl+Shift+W closes a window, as Ctrl+W does its last tab while
-  another is open; Ctrl+Shift+T brings it back with its tabs. With At startup
+  asked. Ctrl+Shift+W closes a window, as Ctrl+W does on its last tab (the
+  last window too, as its close button does); Ctrl+Shift+T brings it back with its tabs. With At startup
   set to come back, every window comes back as it was, remembered as it
   changes: Quit keeps them all, a window closed alone is forgotten. Agents and
   scripts reach every window (`window.new`, `window.close`, `window.select`,

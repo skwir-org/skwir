@@ -1444,7 +1444,9 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   folder shown, shaped as its window (unsplit); Open in New Window on a
   folder (`window.open`) or a sidebar place (`sidebar::open_in_window`),
   Move to New Window on a tab of a window with more than one. Closing a
-  window (its button, Ctrl+Shift+W, `ui.close_window`) with others up
+  window (its button, Ctrl+Shift+W, `ui.close_window`; `tab.close` of its
+  last tab run in the window, Ctrl+W, `Shell::closes_last_window`, the
+  last window included) with others up
   closes the core's window, its tabs kept to be reopened together
   (Ctrl+Shift+T); the last one leaves as ADR-115 says. Quit closes every
   window (`Shell::close_every_window`), none forgotten.
