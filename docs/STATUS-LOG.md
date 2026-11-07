@@ -12530,3 +12530,36 @@ The user's follow-ups to ADR-122 after its four steps.
   skwir-ui and skwir for Linux and Windows; skwir-core's and
   skwir-ui's tests (1233 together), new: `a_wake_says_what_it_is_for`,
   `a_picture_wakes_the_windows_that_asked_for_it`.
+
+## 2026-11-07: Going up selects the way back down
+
+The user asked that a click on a place of the trail select the folder
+left, as file managers do. Up did (`up`'s own reveal); a place of the
+trail, the sidebar's or the columns view's goes through `navigate` and
+selected nothing. Looked up first: Nautilus selects the way back down on
+any change to a folder above the one shown that asks for no selection
+(`determine_new_selection` in `nautilus-window-slot.c`); Dolphin's
+breadcrumb asks for it as well (KUrlNavigator's `urlSelectionRequested`).
+
+- **Every navigation that adds a step** (`App::navigate`,
+  `navigate_as_is`, `navigate_as_kept`) now selects, when it goes to a
+  place above the one shown, the entry the way back down goes through
+  (`App::way_down`: the folder on the path, however many levels up, or
+  walking the trail's places by `App::parent` and `name_in_parent`, so a
+  tag's trail does it too); `up` keeps no reveal of its own. An entry
+  `navigate`'s `select` names wins. It selects quietly
+  (`Pane::reveal_way_down`): only if shown, so a hidden folder left turns
+  no hidden files on (Up from one used to) and one the filter leaves out
+  is not selected.
+- **Found on the way**: `crates/skwir/tests/outside_ids.rs` failed since
+  ADR-122's commands: `window` was not among the ids a plugin from
+  outside may not take (`manifest::RESERVED`); it is now.
+- **Seen** on Xvfb :95 (debug build, a synthetic tree): from
+  `l'été/in ner/deep`, a click on `l'été` in the trail selected `in ner`;
+  a click on the sidebar's Home then selected `l'été`. **Checked:**
+  clippy on skwir-core and skwir; the tests of skwir-core, skwir-ui,
+  skwir and skwir-plugin-api (1438; one remote test timed out at a load
+  average of 81 and passed alone three times and in the binary's suite
+  rerun, 197), new: `a_folder_above_gone_to_has_the_way_back_down_selected`
+  (two levels up, a folder beside, `select` winning, a hidden folder),
+  `a_tag_above_gone_to_has_the_way_back_down_selected`.

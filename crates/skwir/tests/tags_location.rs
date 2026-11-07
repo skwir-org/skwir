@@ -202,6 +202,24 @@ fn tags_are_browsed_as_folders_and_up_walks_back_to_the_folder_they_are_of() {
     );
 }
 
+/// A place above gone to (the trail's first, two places up) has the way
+/// back down selected, as a folder above does.
+#[test]
+fn a_tag_above_gone_to_has_the_way_back_down_selected() {
+    let s = setup();
+    go(&s, &tag_location(&s.root, None));
+    enter(&s, "Places");
+    enter(&s, "France");
+    go(&s, &tag_location(&s.root, None));
+    let ws = s.app.workspace.read();
+    let p = ws.pane(s.pane).unwrap();
+    let cursor = p.selection.cursor.and_then(|id| p.entry(id));
+    assert_eq!(
+        cursor.map(|e| e.name_str().into_owned()).as_deref(),
+        Some("Places")
+    );
+}
+
 /// What else narrows a tag's place than its tag and how deep it holds
 /// files (another tag, a kind) is the pane's lens (ADR-107): kept while
 /// its trail is walked and beyond it, never part of its address.

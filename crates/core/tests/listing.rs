@@ -789,6 +789,69 @@ fn up_selects_the_folder_left_and_navigate_the_entry_named() {
     assert_eq!(selected.len(), 1, "the entry named, alone");
 }
 
+/// Wherever a pane goes up to (a place of the trail, the sidebar's, several
+/// levels at once), the way back down is selected there, as in every file
+/// manager; quietly: a hidden folder left turns no hidden files on.
+#[test]
+fn a_folder_above_gone_to_has_the_way_back_down_selected() {
+    use skwir_core::command::Invocation;
+    use skwir_core::os_path::PathArg;
+    let tmp = tempfile::tempdir().unwrap();
+    let deep = tmp.path().join("l'été").join("in ner").join("deep");
+    std::fs::create_dir_all(&deep).unwrap();
+    std::fs::create_dir_all(tmp.path().join("a folder")).unwrap();
+    std::fs::create_dir_all(tmp.path().join(".a hidden one").join("inside")).unwrap();
+    let app = app(tmp.path());
+    let pane = active(&app);
+    let go = |to: &std::path::Path, select: Option<&str>| {
+        let mut args = serde_json::json!({ "location": PathArg::from(to) });
+        if let Some(name) = select {
+            args["select"] = serde_json::json!(name);
+        }
+        app.dispatch(&Invocation::with_args("navigate", &args))
+            .unwrap();
+        assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+        cursor_name(&app, pane)
+    };
+    go(&deep, None);
+    assert_eq!(
+        go(&tmp.path().join("l'été"), None).as_deref(),
+        Some("in ner"),
+        "two levels up, the folder on the way"
+    );
+    go(&deep, None);
+    assert_eq!(go(tmp.path(), None).as_deref(), Some("l'été"));
+    assert_eq!(
+        go(&tmp.path().join("a folder"), None),
+        None,
+        "a folder beside is no way down"
+    );
+    go(&deep, None);
+    assert_eq!(
+        go(tmp.path(), Some("a folder")).as_deref(),
+        Some("a folder"),
+        "an entry asked for wins"
+    );
+
+    let hidden = tmp.path().join(".a hidden one").join("inside");
+    go(&hidden, None);
+    assert_eq!(go(tmp.path(), None), None);
+    let up = || {
+        app.dispatch(&Invocation::new("up")).unwrap();
+        assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+        cursor_name(&app, pane)
+    };
+    go(&hidden, None);
+    assert_eq!(up().as_deref(), Some("inside"), "Up goes up the same way");
+    assert_eq!(up(), None);
+    assert_eq!(app.pane_dir(pane).unwrap(), tmp.path());
+    let ws = app.workspace.read();
+    assert!(
+        !ws.pane(pane).unwrap().sort.show_hidden,
+        "hidden files stay hidden"
+    );
+}
+
 #[test]
 fn virtual_locations_hydrate_by_path_in_one_batch() {
     use skwir_core::location::OpenContext;

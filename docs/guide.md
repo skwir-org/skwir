@@ -107,7 +107,8 @@ work where the keyboard is, by topic.
 | `Ctrl+D` | Keep the place shown in the sidebar, with its filters |
 
 - **The address** shows where you are as a trail. Click a segment to go
-  there; each `›` lists the folders inside the segment before it. The
+  there, the folder you came from selected, as `Alt+Up` does; each `›`
+  lists the folders inside the segment before it. The
   trail starts at the deepest sidebar place that holds the folder, under
   its sidebar name; General › Show the full path starts it at `/`.
   Click beside the trail, or press `Ctrl+L`, to type.

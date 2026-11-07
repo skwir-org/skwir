@@ -299,8 +299,13 @@ of bars, split or not.
   `ui.full_path`, every trail starts at `/` under real names.
 - Tabs and history use the sidebar's name (`App::location_title`);
   listings, toasts and Properties use the folder's own. Up goes to the real
-  parent, the folder left selected there (`App::name_in_parent`; a
-  place's label in the place before it); Ctrl+L edits the real path.
+  parent; Ctrl+L edits the real path. Whatever goes up (Up, a place of the
+  trail, of the sidebar or of the columns view, a path typed), the way
+  back down is selected there once listed (`App::way_down`: the folder on
+  the path, or the next place's label in the place before it), as every
+  file manager does; quietly (`Pane::reveal_way_down`): only if shown, so a
+  hidden folder left turns no hidden files on. An entry asked for
+  (`navigate`'s `select`) wins.
 - Back and Forward list history on right-click or a long press, as in a
   browser (`ui.history_menu`; `back`/`forward` take `steps`). A long
   press is any button's `toolbar::Button::on_hold`: held `HOLD`, it runs

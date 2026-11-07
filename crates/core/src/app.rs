@@ -1054,6 +1054,51 @@ impl App {
         Some(last.label.clone().into())
     }
 
+    /// The entry of `above` that the way down to `location` goes
+    /// through: the folder left, going up from `location` to a folder or
+    /// a place above it (its child on the path, or what the next place in
+    /// its trail is called there, `name_in_parent`). `None` when `above` is
+    /// not above `location`, or the way down is no entry of it (a search
+    /// goes up to the folder it looks in). Read from the locations' text.
+    pub fn way_down(&self, above: &Location, location: &Location) -> Option<std::ffi::OsString> {
+        // A trail ends at a folder, a folder at its root: deeper than any
+        // path can be, it is a provider's trail going round.
+        const DEEPEST: usize = 4096;
+        let above_path = above.path();
+        let mut at = location.clone();
+        for _ in 0..DEEPEST {
+            if let (Some(above), Some(path)) = (&above_path, at.path()) {
+                let below = path.strip_prefix(above).ok()?;
+                return match below.components().next()? {
+                    std::path::Component::Normal(name) => Some(name.to_owned()),
+                    _ => None,
+                };
+            }
+            let parent = self.parent(&at)?;
+            if parent.same_place(above) {
+                return self.name_in_parent(&at);
+            }
+            at = parent;
+        }
+        None
+    }
+
+    /// Going to `to` in `pane`, which showed `from`: when `to` is above
+    /// it (Up, a trail's place, the sidebar's, the columns view's), the
+    /// way back down is selected once listed, as every file manager does
+    /// (Nautilus and Dolphin whatever led there). Quietly: only where it is
+    /// shown (`Pane::reveal_way_down`), never a hidden folder turning
+    /// hidden files on.
+    fn select_way_down(&self, pane: PaneId, from: Option<&Location>, to: &Location) {
+        let Some(name) = from.and_then(|from| self.way_down(to, from)) else {
+            return;
+        };
+        if let Some(p) = self.workspace.write().pane_mut(pane) {
+            p.reveal_way_down(name);
+        }
+        self.wake();
+    }
+
     /// Select the entry of `pane` called `name` as soon as its listing has
     /// it (`Pane::reveal`): right after navigating there.
     pub fn reveal(&self, pane: PaneId, name: std::ffi::OsString) {
@@ -1122,7 +1167,10 @@ impl App {
     pub fn navigate(&self, pane: PaneId, location: &Location) -> anyhow::Result<()> {
         let location = &self.reached_in(pane, location)?;
         let left = self.cursor_of(pane);
-        self.show(pane, location, |p, shown| p.go_on(shown.clone(), left))
+        let from = self.pane_location(pane);
+        self.show(pane, location, |p, shown| p.go_on(shown.clone(), left))?;
+        self.select_way_down(pane, from.as_ref(), location);
+        Ok(())
     }
 
     /// Show `location` in `pane` as its own terms say its lens, the pane's
@@ -1148,9 +1196,12 @@ impl App {
             });
         }
         let left = self.cursor_of(pane);
+        let from = self.pane_location(pane);
         self.open_in(pane, location, as_is, |p, shown| {
             p.go_on(shown.clone(), left);
-        })
+        })?;
+        self.select_way_down(pane, from.as_ref(), location);
+        Ok(())
     }
 
     /// Show `location` in `pane` in place of the step it shows, with no
@@ -1323,10 +1374,13 @@ impl App {
         let location = &self.reached_in(pane, location)?;
         let filter = self.kept_filter(filter);
         let left = self.cursor_of(pane);
+        let from = self.pane_location(pane);
         let as_kept = Opening::lensing(Lensing::AsLeft(filter.as_ref()));
         self.open_in(pane, location, as_kept, |p, shown| {
             p.go_on(shown.clone(), left);
-        })
+        })?;
+        self.select_way_down(pane, from.as_ref(), location);
+        Ok(())
     }
 
     /// A kept place's filter as a step's (`StepFilter`), asked of the
@@ -2930,7 +2984,7 @@ mod builtin {
             "core", Topic::Go,
             "navigate",
             "Go to location",
-            "Open a path or location in a pane, an entry of it selected once listed when `select` names one; `in_place` puts it in place of the step the pane shows, with no step of its own; `as_kept` shows it as a saved place is kept, filtered by `filter` alone, the pane's lens left out (ADR-109)",
+            "Open a path or location in a pane, an entry of it selected once listed when `select` names one, else, gone up to it, the one the way back down goes through; `in_place` puts it in place of the step the pane shows, with no step of its own; `as_kept` shows it as a saved place is kept, filtered by `filter` alone, the pane's lens left out (ADR-109)",
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
                 let location = Location::parse_os(a.location.as_os_str());
@@ -3061,14 +3115,10 @@ mod builtin {
                 let shown = app
                     .pane_location(pane)
                     .ok_or_else(|| anyhow::anyhow!("the pane shows nothing"))?;
+                // The way back down selected there, as wherever a pane
+                // goes up (`App::way_down`).
                 if let Some(parent) = app.parent(&shown) {
-                    let left = app.name_in_parent(&shown);
                     app.navigate(pane, &parent)?;
-                    // As every file manager does: the way back down is
-                    // where the cursor is.
-                    if let Some(name) = left {
-                        app.reveal(pane, name);
-                    }
                 }
                 Ok(Outcome::Done)
             },

@@ -661,6 +661,19 @@ struct OrderCache {
     order: Arc<[EntryId]>,
 }
 
+/// How a name waiting to be selected is selected once listed
+/// (`Pane::reveal`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Revealing {
+    /// Asked for by its name (a path typed, a jump): a hidden one turns
+    /// hidden files on; forgotten once the listing is complete without it.
+    Asked,
+    /// Listed a moment after the listing is complete: kept until it is.
+    Coming,
+    /// The way back down, gone up from it: selected only if shown.
+    WayDown,
+}
+
 /// One pane: an open location, its listing, selection, and history.
 pub struct Pane {
     pub id: PaneId,
@@ -684,9 +697,9 @@ pub struct Pane {
     /// entry the cursor was on, which Back and Forward select again
     /// (`go_to`), and what filtered it, which they show it with (ADR-109).
     left_at: Vec<StepLeft>,
-    /// A name to select once the listing has it, and whether it is still
-    /// coming once the listing is complete; see [`Pane::reveal`].
-    reveal: Option<(OsString, bool)>,
+    /// A name to select once the listing has it, and how; see
+    /// [`Pane::reveal`].
+    reveal: Option<(OsString, Revealing)>,
     /// The listing's names when the reveal last looked for its name: it
     /// looks again only once they change, not at every pump.
     reveal_looked: Option<u64>,
@@ -1767,24 +1780,34 @@ impl Pane {
     /// the next navigation forgets it, and so does a listing that
     /// completes without that name.
     pub fn reveal(&mut self, name: OsString) {
-        self.reveal = Some((name, false));
-        self.reveal_looked = None;
-        self.take_reveal();
+        self.reveal_as(name, Revealing::Asked);
     }
 
     /// `reveal` an entry that its location lists a moment after it is
     /// complete (a tag just made, listed by a worker): the name is kept
     /// until it is listed or the pane shows another location.
     pub fn reveal_coming(&mut self, name: OsString) {
-        self.reveal = Some((name, true));
+        self.reveal_as(name, Revealing::Coming);
+    }
+
+    /// `reveal` the way back down, gone up from it (`App::way_down`):
+    /// selected only if shown, so a hidden folder left turns no hidden
+    /// files on and a folder the filter leaves out is not selected.
+    pub fn reveal_way_down(&mut self, name: OsString) {
+        self.reveal_as(name, Revealing::WayDown);
+    }
+
+    fn reveal_as(&mut self, name: OsString, how: Revealing) {
+        self.reveal = Some((name, how));
         self.reveal_looked = None;
         self.take_reveal();
     }
 
     fn take_reveal(&mut self) {
-        let Some((name, coming)) = &self.reveal else {
+        let Some((name, how)) = &self.reveal else {
             return;
         };
+        let how = *how;
         let names = Some(self.listing.names_version());
         let looked = std::mem::replace(&mut self.reveal_looked, names) == names;
         if looked && !self.listing.is_complete() {
@@ -1794,9 +1817,11 @@ impl Pane {
             .then(|| self.listing.find_by_name(name).map(|e| e.id))
             .flatten()
         {
-            self.select_revealed(&[id]);
+            if how != Revealing::WayDown || self.is_shown(id) {
+                self.select_revealed(&[id]);
+            }
             self.reveal = None;
-        } else if self.listing.is_complete() && !coming {
+        } else if self.listing.is_complete() && how != Revealing::Coming {
             self.reveal = None;
         }
     }

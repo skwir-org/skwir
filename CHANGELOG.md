@@ -99,6 +99,9 @@
   `window.list`, `window.open`; `tab.move` to a window or a new one).
 - **A window last used with the keyboard takes a drop**: files dragged onto it
   from another application landed on nothing.
+- **The folder you came from is selected wherever you go up**: a place of the
+  trail, two levels up or more, the sidebar's, the columns view's, as Alt+Up
+  already did; a hidden folder left no longer turns hidden files on.
 - **Skwir started again opens in the one running**: a launcher, a browser's
   Show in Folder or `skwir ~/Documents` opens a window there, on the folder
   asked, rather than a second Skwir that knows nothing of the first; with
