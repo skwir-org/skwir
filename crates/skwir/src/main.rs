@@ -95,13 +95,13 @@ fn main() -> anyhow::Result<()> {
 
     // A location on the command line wins: one a plugin opens (`trash:`,
     // `tags:/family`), else a folder. Otherwise the startup preference: a
-    // chosen folder, or the folders and tabs left open.
+    // chosen folder, or the windows and tabs left open (ADR-122).
     let folder =
         |path: std::path::PathBuf| Location::from_path(std::path::absolute(&path).unwrap_or(path));
     let initial = match args.first() {
         Some(arg) => Some(skwir_ui::location_of(&app, arg, &cwd)),
-        None => match skwir_core::tabs::last_tabs(&app.settings) {
-            Some(saved) if app.restore_tabs(&saved) => None,
+        None => match skwir_core::tabs::last_windows(&app.settings) {
+            Some(saved) if app.restore_windows(&saved) => None,
             _ => {
                 let home =
                     skwir_core::os_path::home().unwrap_or_else(|| std::path::PathBuf::from("/"));

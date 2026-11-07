@@ -3683,6 +3683,18 @@ impl crate::shell::Shell {
             settings.update(cx, |settings, cx| settings.open_target(target, window, cx));
             return;
         }
+        // One Settings dialog in the program (ADR-122): open in another
+        // window, that window comes forward with it.
+        if let Some(other) = crate::finishing::settings_elsewhere(cx, self.window_id) {
+            let target = target.clone();
+            cx.defer(move |cx| {
+                let _ = other.update(cx, |shell, window, cx| {
+                    window.activate_window();
+                    shell.open_settings(&target, window, cx);
+                });
+            });
+            return;
+        }
         self.palette = None;
         self.menu = None;
         self.close_popups_for_dialog(window, cx);
@@ -3707,6 +3719,11 @@ impl crate::shell::Shell {
             },
         ));
         self.settings = Some(settings);
+    }
+
+    /// Whether the Settings dialog is open in this window.
+    pub(crate) fn settings_open(&self) -> bool {
+        self.settings.is_some()
     }
 
     pub fn settings_command(

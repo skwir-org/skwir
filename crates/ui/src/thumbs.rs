@@ -253,7 +253,11 @@ impl Shell {
     /// file without a picture, its icon, not a placeholder: a picture
     /// seldom comes, and is shown if one does.
     fn thumb_asked(&mut self, key: Key, req: ThumbRequest) -> ThumbView {
-        match self.app.thumbnails.take(req, Priority::Visible) {
+        match self
+            .app
+            .thumbnails
+            .take_for(self.thumb_asker(), req, Priority::Visible)
+        {
             ThumbState::Ready(img) => {
                 let Some(picture) = Picture::of(&img) else {
                     return ThumbView::Unavailable;

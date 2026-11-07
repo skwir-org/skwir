@@ -748,6 +748,10 @@ fn more_panel(
                 "New tab",
             ),
             (
+                Button::new("menu-new-window", "window-new", "New window", "window.new"),
+                "New window",
+            ),
+            (
                 Button::new("menu-palette", "command", "Command palette", "ui.palette"),
                 "Command palette…",
             ),
@@ -955,7 +959,7 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
         let pane = ws.pane(shell.pane);
         let location = pane.and_then(|p| p.location()).cloned();
         let filter = pane.and_then(|p| p.filter()).map(str::to_owned);
-        let active = ws.active_id() == shell.pane;
+        let active = shell.window_pane_of(&ws) == shell.pane;
         let focused = shell.ui().address.read(cx).is_focused(window);
         PaneRow {
             back: pane.is_some_and(|p| p.history_pos > 0),

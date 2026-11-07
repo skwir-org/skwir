@@ -704,6 +704,7 @@ const ACTS: &[&str] = &[
     "ui.activity_cancel_all",
     "ui.activity_pause_all",
     "ui.quit",
+    "ui.close_window",
 ];
 
 /// What a command that shows (`SHOWS`) would do beyond the window by its
@@ -2142,6 +2143,12 @@ pub fn declare_all(app: &App) {
         "ui.quit",
         "Quit",
         "Quit, finishing what runs without the window or stopping it",
+    );
+    none(
+        Topic::Tabs,
+        "ui.close_window",
+        "Close window",
+        "Close this window and its tabs, which Reopen closed tab brings back; the last window closes as its close button does, what runs going on without it",
     );
     // The preview.
     none(

@@ -764,12 +764,34 @@ step through Colors from's list measured 0.3 to 1.1 ms of the window's
 time, left as it is. Checks in `docs/STATUS-LOG.md` (2026-11-05, "Review
 fixes").
 
+## Windows of one program (2026-11-07)
+
+ADR-122, asked by the user: several windows, as Dolphin and browsers
+have, in one program rather than a process per window, built in four
+steps. **Step 1** (52c16bb3): windows in the core (each its tabs and
+shown tab, one active), `window.*` commands, `tab.move` between windows,
+closed windows reopened whole, every window saved and the former
+`core.last_tabs` read as one. **Step 2**: the UI's program holds every
+window (`finishing.rs`), takes each wake once and hands each window what
+is its own (a plan's toast and what it made to the window that ran it),
+follows the core's windows; Ctrl+N, Open in New Window, Move to New
+Window, Ctrl+Shift+W; one player and one Settings dialog; thumbnails
+stale by their own window's frames; windows recorded as they change.
+Deviation: a wake still redraws every window (a film in one redraws the
+others at its rate). Checks in `docs/STATUS-LOG.md` (2026-11-07,
+"Windows of one program").
+
 ## What is left
 
 Gathered on 2026-10-20 from the notes of this plan and of
 `docs/STATUS-LOG.md`, each as recorded on the date it gives. Later work
 may have covered one: check the source before starting it. Work that
 closes an item removes its line; work that leaves one adds it here.
+
+**Windows** (ADR-122, 2026-11-07): a wake redraws every window;
+telling which windows a wake concerns needs wakers of their own (media
+frames, previews, thumbnails by asker). Each window's position is not
+remembered (its size neither: a window opens at 1200 × 800).
 
 **Planned** (in the sections below): Indexing and AI (Phase 7, designed
 2026-10-26: ADR-089 to ADR-095); [Grammars and

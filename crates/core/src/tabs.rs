@@ -769,6 +769,39 @@ impl App {
         Ok(window)
     }
 
+    /// What `ids` (else `pane`'s selection) lead to that opens in a tab or
+    /// a window, in the order the pane shows them: folders and places (a
+    /// tag's), a folder that does not open at its path (a trashed one)
+    /// where it leads. Refused when what was asked holds none.
+    fn selected_folders(&self, pane: PaneId, ids: Vec<EntryId>) -> anyhow::Result<Vec<Location>> {
+        let (asked, folders): (bool, Vec<Location>) = {
+            let ws = self.workspace.read();
+            let Some(p) = ws.pane(pane) else {
+                anyhow::bail!("no such pane");
+            };
+            // In the order the pane shows them, so the tabs line up the
+            // same.
+            let ids: Vec<EntryId> = if ids.is_empty() {
+                p.order()
+                    .iter()
+                    .copied()
+                    .filter(|id| p.selection.contains(*id))
+                    .collect()
+            } else {
+                ids
+            };
+            (
+                !ids.is_empty(),
+                ids.into_iter().filter_map(|id| p.leads_to(id)).collect(),
+            )
+        };
+        if folders.is_empty() {
+            anyhow::ensure!(!asked, "Only folders and places open in a tab or a window");
+            return Err(crate::command::NothingSelected.into());
+        }
+        Ok(folders)
+    }
+
     /// Every window, for scripts and agents.
     pub fn window_list(&self) -> Vec<WindowInfo> {
         let ws = self.workspace.read();
@@ -1329,38 +1362,30 @@ pub(crate) fn register(app: &App) {
         "Open each selected folder in a tab of its own, behind the tab shown; files do not open in tabs",
         |a, app| {
             let pane = app.pane_or_active(a.pane);
-            let (asked, folders): (bool, Vec<Location>) = {
-                let ws = app.workspace.read();
-                let Some(p) = ws.pane(pane) else {
-                    anyhow::bail!("no such pane");
-                };
-                // In the order the pane shows them, so the tabs line up
-                // the same.
-                let ids: Vec<EntryId> = if a.ids.is_empty() {
-                    p.order()
-                        .iter()
-                        .copied()
-                        .filter(|id| p.selection.contains(*id))
-                        .collect()
-                } else {
-                    a.ids
-                };
-                // A place (a tag's), or a folder that does not open at its
-                // path (a trashed one), opens where it leads.
-                (
-                    !ids.is_empty(),
-                    ids.into_iter().filter_map(|id| p.leads_to(id)).collect(),
-                )
-            };
-            if folders.is_empty() {
-                anyhow::ensure!(!asked, "Only folders and places open in a tab");
-                return Err(crate::command::NothingSelected.into());
-            }
+            let folders = app.selected_folders(pane, a.ids)?;
             let mut tabs = Vec::new();
             for location in folders {
                 tabs.push(app.new_tab(Some(pane), Some(location), false)?.0);
             }
             Ok(Outcome::Value(serde_json::json!({ "tabs": tabs })))
+        },
+    )
+    .shows();
+
+    c.register::<OpenTabsArgs, _>(
+        "core",
+        Topic::Tabs,
+        "window.open",
+        "Open in new window",
+        "Open each selected folder in a window of its own, shaped as the pane's; files do not open in windows",
+        |a, app| {
+            let pane = app.pane_or_active(a.pane);
+            let folders = app.selected_folders(pane, a.ids)?;
+            let mut windows = Vec::new();
+            for location in folders {
+                windows.push(app.new_window(Some(pane), Some(location))?.0);
+            }
+            Ok(Outcome::Value(serde_json::json!({ "windows": windows })))
         },
     )
     .shows();

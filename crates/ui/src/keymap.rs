@@ -198,6 +198,8 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     // Beside Undo's Ctrl+Z: what a right click on the footer's Undo does.
     ("secondary-alt-z", "ui.undo_history", None),
     ("secondary-q", "ui.quit", None),
+    // Beside Ctrl+W's tab, as in browsers (ADR-122).
+    ("secondary-shift-w", "ui.close_window", None),
     ("ctrl-h", "toggle_hidden", None),
     // Dolphin's key for it, beside GNOME's.
     ("alt-.", "toggle_hidden", None),

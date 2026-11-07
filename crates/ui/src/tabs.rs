@@ -120,21 +120,27 @@ impl Shell {
     pub(crate) fn sync_tabs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let (revision, shown, wanted, active, all) = {
             let ws = self.app.workspace.read();
+            // Its window closed: the program takes this one down.
+            let Some(mine) = ws.window(self.window_id) else {
+                return;
+            };
             if ws.revision() == self.tabs_revision {
                 // Commands may still make another pane of this tab active.
-                self.pane = ws.active_id();
+                self.pane = mine.active_pane();
                 return;
             }
-            self.tab_count = ws.tabs().len();
-            let tab = ws.active_tab();
+            self.tab_count = mine.tabs().len();
+            let tab = mine.shown();
             (
                 ws.revision(),
                 tab.id,
                 tab.panes.clone(),
                 tab.active,
-                ws.panes()
+                // This window's panes: those of its other tabs wait in
+                // `hidden`; those gone, or gone to another window, are let go.
+                mine.tabs()
                     .iter()
-                    .map(|p| p.id)
+                    .flat_map(|t| t.panes.iter().copied())
                     .collect::<std::collections::HashSet<_>>(),
             )
         };
@@ -169,15 +175,22 @@ impl Shell {
             .chain(self.hidden.drain().map(|(_, ui)| ui))
             .map(|ui| (ui.id, ui))
             .collect();
+        // A pane come from another window with its tab shows its files
+        // as it did there (`give_away_moved`).
+        let mut carried = crate::finishing::take_carried(cx, &wanted);
         let mut panes = Vec::with_capacity(wanted.len());
         for id in &wanted {
             let ui = pool.remove(id).unwrap_or_else(|| {
                 let mut ui = self.make_pane_ui(*id, window, cx);
+                let (view, quick_filters, timeline) = match carried.remove(id) {
+                    Some(carried) => (carried.view_id, carried.quick_filters_on, carried.timeline),
+                    None => (view, quick_filters, timeline.like()),
+                };
                 if ui.views.contains_key(view) {
                     ui.view_id = view;
                 }
                 ui.quick_filters_on = quick_filters;
-                ui.timeline = timeline.like();
+                ui.timeline = timeline;
                 ui
             });
             panes.push(ui);
@@ -234,6 +247,38 @@ impl Shell {
         }
     }
 
+    /// Before any window follows the tabs (`finishing::woken`): what this
+    /// window's panes now in another window (their tab moved there) show
+    /// their files as, for that window to take (`sync_tabs`).
+    pub(crate) fn give_away_moved(&self, cx: &mut Context<Self>) {
+        let moved: Vec<(PaneId, crate::shell::Carried)> = {
+            let ws = self.app.workspace.read();
+            if ws.revision() == self.tabs_revision {
+                return;
+            }
+            self.panes
+                .iter()
+                .chain(self.hidden.values())
+                .chain(self.presented.iter().flatten())
+                .filter(|ui| {
+                    ws.window_of(ui.id)
+                        .is_some_and(|window| window != self.window_id)
+                })
+                .map(|ui| {
+                    (
+                        ui.id,
+                        crate::shell::Carried {
+                            view_id: ui.view_id,
+                            quick_filters_on: ui.quick_filters_on,
+                            timeline: ui.timeline.like(),
+                        },
+                    )
+                })
+                .collect()
+        };
+        crate::finishing::carry(cx, moved);
+    }
+
     /// Draw the tab shown: the tab left, if it was still drawn, lets go of
     /// what it drew from and its panes are suspended; the tab's own split
     /// arrangement and the keyboard follow. `ready` says whether the tab
@@ -271,7 +316,7 @@ impl Shell {
                 }
             }
         }
-        self.app.settle_tabs();
+        self.app.settle_window(self.window_id);
         if self.presented_tab != self.shown_tab {
             // A split's own arrangement and share belong to its tab.
             if let Some(left) = self.presented_tab {
@@ -441,7 +486,9 @@ impl Shell {
     pub(crate) fn sync_tab_labels(&mut self) {
         let shows: Shows = {
             let ws = self.app.workspace.read();
-            ws.tabs()
+            ws.window(self.window_id)
+                .map(skwir_core::workspace::WindowTabs::tabs)
+                .unwrap_or_default()
                 .iter()
                 .map(|t| {
                     (

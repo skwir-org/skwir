@@ -487,16 +487,15 @@ impl Shell {
         cx.notify();
     }
 
-    /// Apply pending executor events (`Work::take`): what runs and what
-    /// was said follow them; the window shows what a plan made, and one
-    /// toast saying what it did and offering the way back.
-    pub fn drain_executor(&mut self, cx: &mut Context<Self>) {
-        let rx = self.app.executor.events().clone();
-        let watched = self.watched();
-        let mut any = false;
-        while let Ok(event) = rx.try_recv() {
-            any = true;
-            let taken = self.work.borrow_mut().take(&self.app, event, watched);
+    /// What the plans this window ran did, as the program took it from
+    /// the executor (`Work::take`, `finishing::deliver`): the window shows
+    /// what a plan made, and one toast saying what it did and offering the
+    /// way back.
+    pub(crate) fn take_plans(&mut self, taken: Vec<Taken>, cx: &mut Context<Self>) {
+        if taken.is_empty() {
+            return;
+        }
+        for taken in taken {
             match taken {
                 Taken::Nothing => {}
                 Taken::Step(progress) => self.made_step(&progress),
@@ -527,20 +526,7 @@ impl Shell {
                 }
             }
         }
-        self.work.borrow_mut().sync_stopped(&self.app);
-        self.work.borrow_mut().settle(&self.app);
-        // What joined is shown and announced as its time comes, the window
-        // woken then (ADR-114, amended 2026-11-03).
-        let next = self
-            .work
-            .borrow_mut()
-            .watch(&self.app, std::time::Instant::now());
-        if let Some(at) = next {
-            self.strip_wake_at(at, cx);
-        }
-        if any {
-            cx.notify();
-        }
+        cx.notify();
     }
 }
 

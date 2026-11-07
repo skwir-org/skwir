@@ -118,11 +118,20 @@ ADR-115 (one process for every window; launches always handed over).
   state.
 - An extra window costs its panes' listings, its surface and its atlas,
   not a program.
-- On Wayland Skwir cannot place its windows: each one's size is
-  remembered, not its position.
+- A window opens at 1200 × 800, set a little apart from the one before
+  where the system lets it say where it goes (not on Wayland): neither
+  its size nor its position is remembered yet.
 
 ## Built
 
 - 2026-11-07, step 1: windows in the core (`crates/core/src/workspace.rs`,
   `tabs.rs`), the commands, closed windows reopened, saved windows and
   the former tabs read once; `crates/core/tests/windows.rs`.
+- 2026-11-07, step 2: the UI's program holds the windows
+  (`crates/ui/src/finishing.rs`: `follow_windows`, `deliver`,
+  `record_windows`), each shell its window (`Shell::window_id`, its
+  `inbox`); Ctrl+N, `window.open`, Move to New Window, Ctrl+Shift+W; one
+  player (`claim_player`), one Settings dialog; thumbnails stale by
+  their own window's frames (`thumbs::Asker`). Questions go to the
+  window in use (they say no plan); a wake redraws every window, a
+  deviation `docs/PLAN.md` records. Checked on Xvfb (`docs/STATUS-LOG.md`).

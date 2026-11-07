@@ -1,7 +1,10 @@
 # ADR-056: The window's state is not a setting
 
 Status: accepted, 2026-10-12. Replaces decision 5 of ADR-055. Its
-consequence on saved searches and tags revised by ADR-057.
+consequence on saved searches and tags revised by ADR-057. Amended
+2026-11-07 by ADR-122: the state keeps every window (`core.last_windows`,
+each one's tabs and shape), written as they change; `ui.session` is the
+shape of the window used last, which a new window takes.
 
 ## Context
 

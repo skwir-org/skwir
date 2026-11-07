@@ -556,7 +556,7 @@ impl PaneView for MapView {
         // The background, chosen here as in the map preview and Settings;
         // its popup hangs from the active pane's, the pane that opened it.
         let backgrounds = shell.map_tiles.borrow_mut().backgrounds();
-        let open = shell.app.workspace.read().active_id() == pane
+        let open = shell.window_pane() == pane
             && shell
                 .toolbar_menu
                 .as_ref()

@@ -420,6 +420,9 @@ const BINDINGS: &[(&str, &str, Option<&str>)] = &[
     ("secondary-t", "tab.new", None),
     ("secondary-w", "tab.close", None),
     ("secondary-shift-t", "tab.reopen", None),
+    // As in browsers and file managers: a window on the folder shown
+    // (ADR-122).
+    ("secondary-n", "window.new", None),
 ];
 
 // Keys for core commands that take arguments: moving between tabs, and
@@ -453,6 +456,13 @@ const BINDINGS_ARGS: &[(&str, &str, &str)] = &[
 // commands.
 const MENU: &[(&str, &str, Option<&str>, i32, &str)] = &[
     ("Open in New Tab", "tab.open", Some("dir"), 2, "tab-new"),
+    (
+        "Open in New Window",
+        "window.open",
+        Some("dir"),
+        2,
+        "window-new",
+    ),
     (
         "Show in Folder",
         "show_in_folder",

@@ -4956,7 +4956,8 @@ impl Shell {
         else {
             return ThumbState::Unavailable;
         };
-        self.app.thumbnails.get(
+        self.app.thumbnails.get_for(
+            self.thumb_asker(),
             ThumbRequest {
                 entry: content,
                 mime: self.preview.info.mime.clone().map(Into::into),

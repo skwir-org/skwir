@@ -285,7 +285,12 @@ impl Installed {
 #[allow(clippy::struct_excessive_bools)]
 pub struct Shell {
     pub app: Arc<App>,
-    /// The pane commands act on: the workspace's active pane, or the pane
+    /// The core's window this one draws (ADR-122): its tabs, its panes.
+    pub(crate) window_id: skwir_core::workspace::WindowId,
+    /// What the program took from the core for this window, taken in at
+    /// the next sync (`finishing::deliver`).
+    pub(crate) inbox: crate::finishing::Inbox,
+    /// The pane commands act on: this window's active pane, or the pane
     /// being rendered while a pane renders.
     pub pane: PaneId,
     pub panes: Vec<PaneUi>,
@@ -538,43 +543,18 @@ pub struct Shell {
 impl Shell {
     pub(crate) fn new(
         app: Arc<App>,
-        initial: Option<Location>,
-        first_frame: FirstFrame,
+        window_id: skwir_core::workspace::WindowId,
+        start: Start,
         keymap: keymap::Keymap,
         work: std::rc::Rc<std::cell::RefCell<crate::work::Work>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        crate::settings::declare(&app);
-        // The themes the user added to bat and the fonts installed, on a
-        // worker: then a script or an agent can choose one before the
-        // settings ever open.
-        skwir_platform::highlight::added::keep_in(app.cache.namespace("grammars"));
-        // The WebAssembly grammars the tree-sitter helper compiles, kept
-        // in the cache rather than compiled at each start (ADR-110).
-        skwir_platform::tree_sitter::keep_compiled_in(
-            app.cache.namespace("wasmtime").folder("tree-sitter"),
-        );
-        crate::settings::list_code_themes(&app);
-        crate::settings::list_fonts(&app, cx.text_system().clone());
-        crate::session::declare(&app);
-        // Owner and group names for Properties: two small files, but a read can
-        // block, so not here.
-        let wake = app.waker_handle();
-        app.scheduler.spawn(
-            skwir_core::scheduler::Priority::Background,
-            "user-names",
-            app.lifetime().child(),
-            {
-                let cache = app.cache.root().to_owned();
-                move || {
-                    skwir_platform::users::load();
-                    // Members a killed process extracted for its previews.
-                    crate::preview::sweep_members(&cache);
-                    wake();
-                }
-            },
-        );
+        let Start {
+            shape,
+            split,
+            first_frame,
+        } = start;
         let theme = Theme::resolve(&app, window.appearance(), cx.text_system());
         tracing::info!(
             ui = %theme.font,
@@ -599,9 +579,15 @@ impl Shell {
         subs.push(cx.observe_pending_input(window, Self::on_pending_input));
         // A server does not say what changed on it: the folders shown on a
         // remote are read again as the window comes back (ADR-077).
-        subs.push(cx.observe_window_activation(window, |this, window, _| {
+        subs.push(cx.observe_window_activation(window, |this, window, cx| {
             let active = window.is_window_active();
             if active {
+                // The window used last is where commands that name no pane
+                // act (ADR-122), whose shape a new window takes.
+                this.app.workspace.write().set_active_window(this.window_id);
+                crate::finishing::raised(cx, this.window_id);
+                this.work.borrow().shown_in(Some(window));
+                this.remember_session();
                 this.app.refresh_remote();
                 // An accent or a contrast changed while away (macOS).
                 crate::desktop_style::read_again(&this.app);
@@ -646,11 +632,15 @@ impl Shell {
             });
         }));
 
-        // The window's close button closes it, asking nothing: what runs
-        // goes on without it (ADR-115, `finishing.rs`).
+        // The window's close button closes it, asking nothing: with other
+        // windows up, it and its tabs go, Reopen closed tab bringing them
+        // back (ADR-122); the last one, what runs goes on without it
+        // (ADR-115, `finishing.rs`).
         let shell = cx.weak_entity();
         window.on_window_should_close(cx, move |window, cx| {
-            shell.update(cx, |shell, cx| shell.leave(window, cx)).ok();
+            shell
+                .update(cx, |shell, cx| shell.close_window(window, cx))
+                .ok();
             true
         });
 
@@ -676,12 +666,17 @@ impl Shell {
         })
         .detach();
 
-        let pane = app.workspace.read().active_id();
+        let pane = app.workspace.read().window(window_id).map_or_else(
+            || app.workspace.read().active_id(),
+            skwir_core::workspace::WindowTabs::active_pane,
+        );
         let map_tiles = std::rc::Rc::new(std::cell::RefCell::new(
             crate::map_tiles::TileStore::new(&app),
         ));
         let mut shell = Shell {
             app,
+            window_id,
+            inbox: crate::finishing::Inbox::default(),
             pane,
             panes: Vec::new(),
             hidden: HashMap::new(),
@@ -801,46 +796,60 @@ impl Shell {
             clipboard_holds: crate::clipboard::Held::Nothing,
             _subscriptions: subs,
         };
-        // The tab left stays drawn until the tab shown is ready (`tabs.rs`).
-        shell.app.hold_tabs(true);
         shell.sync_tabs(window, cx);
-        // Without a location to show, the last window's tabs came back
-        // (`App::restore_tabs`), their splits with them.
-        let initial_given = initial.is_some();
-        if let Some(loc) = initial
-            && let Err(e) = shell.app.navigate(shell.pane, &loc)
-        {
-            shell.set_status(format!("{e:#}"), true, cx);
-        }
-        // Tabs restored from the last window open the one shown, now that
-        // the listing has a UI to wake.
-        if let Err(e) = shell.app.resume_tabs() {
-            shell.set_status(format!("{e:#}"), true, cx);
-        }
-        shell.restore_session(initial_given, window, cx);
-        // The taskbar's button shows the progress of this window's.
+        shell.restore_session(shape, split, window, cx);
+        // The taskbar's button shows the progress of the window used.
         shell.work.borrow().shown_in(Some(window));
-        // Scripts and agents reach the window from now on: what they ask
-        // comes after what it starts on.
-        shell.app.set_window_shown();
         shell
+    }
+
+    /// Whether the window has the focus.
+    pub(crate) fn is_window_active(&self) -> bool {
+        self.window_active
+    }
+
+    /// This window's active pane, the one with the keys while it has the
+    /// focus (ADR-122).
+    pub(crate) fn window_pane(&self) -> PaneId {
+        self.window_pane_of(&self.app.workspace.read())
+    }
+
+    /// `window_pane`, of the workspace `ws` read.
+    pub(crate) fn window_pane_of(&self, ws: &skwir_core::workspace::Workspace) -> PaneId {
+        ws.window(self.window_id).map_or_else(
+            || ws.active_id(),
+            skwir_core::workspace::WindowTabs::active_pane,
+        )
+    }
+
+    /// Who this window is to the thumbnails: its frames keep its own
+    /// requests asked, never another window's (ADR-122).
+    pub(crate) fn thumb_asker(&self) -> skwir_core::thumbs::Asker {
+        skwir_core::thumbs::Asker(u64::from(self.window_id.0) + 1)
     }
 
     /// Put the window back the way it was left: the same view, the same
     /// split (unless `split` is false: tabs that came back bring their own),
     /// the same panels. The view waits for `sync_views`, which is what
     /// decides which views this build and its plugins actually have.
-    fn restore_session(&mut self, split: bool, window: &mut Window, cx: &mut Context<Self>) {
+    fn restore_session(
+        &mut self,
+        kept: Option<crate::session::Session>,
+        split: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         // Quick filters turned on in Settings, before each pane had its own.
         let former = crate::session::former_quick_filters(&self.app);
         if former.is_some() {
             self.save_settings_later();
         }
-        let Some(session) = crate::session::restore(&self.app) else {
+        let Some(session) = kept else {
             for pane in &mut self.panes {
                 pane.quick_filters_on = former == Some(true);
             }
             self.stored_session = Some(self.session());
+            self.keep_shape();
             return;
         };
         if session.zoom > 0 {
@@ -933,6 +942,20 @@ impl Shell {
             }
         }
         self.stored_session = Some(self.session());
+        self.keep_shape();
+    }
+
+    /// The shape this window starts with, kept with its tabs from the
+    /// start (ADR-122): remembered even if it never changes.
+    fn keep_shape(&self) {
+        if let Some(session) = &self.stored_session
+            && let Ok(value) = toml::Value::try_from(session)
+        {
+            self.app
+                .workspace
+                .write()
+                .set_shape(self.window_id, Some(value));
+        }
     }
 
     pub(crate) fn make_pane_ui(
@@ -1537,7 +1560,7 @@ impl Shell {
 
     /// Make `id` the active pane (workspace and shell agree).
     pub fn activate_pane(&mut self, id: PaneId, cx: &mut Context<Self>) {
-        if self.app.workspace.read().active_id() == id && self.pane == id {
+        if self.window_pane() == id && self.pane == id {
             return;
         }
         self.app.workspace.write().set_active(id);
@@ -1560,7 +1583,7 @@ impl Shell {
         if self.modal_open() || !self.reviews.is_empty() {
             return;
         }
-        let pane = pane.unwrap_or_else(|| self.app.workspace.read().active_id());
+        let pane = pane.unwrap_or_else(|| self.window_pane());
         if self.app.workspace.read().pane(pane).is_none() {
             return;
         }
@@ -2164,6 +2187,7 @@ impl Shell {
             Ok(Outcome::Files { paths, cut }) => self.put_files_on_clipboard(paths, cut, cx),
             Ok(Outcome::Plan(plan)) => {
                 self.making = self.making(plan.id, &inv.args);
+                crate::finishing::ran(cx, plan.id, self.window_id);
                 self.apply_user_plan(plan, window, cx);
             }
             Err(e) if skwir_core::command::wants_clipboard(&e) => {
@@ -2281,8 +2305,7 @@ impl Shell {
     /// (`lib.rs`, `wind_down`).
     pub(crate) fn stop_and_quit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         crate::finishing::stopping(cx);
-        self.leave(window, cx);
-        window.remove_window();
+        self.close_every_window(window, cx);
     }
 
     /// The window is about to close (its close button, Quit): what it asks
@@ -2299,8 +2322,43 @@ impl Shell {
         }
         self.decline_held();
         self.left = true;
-        self.work.borrow().shown_in(None);
-        crate::finishing::left(cx);
+        // What it played stops with it (ADR-122), and the desktop's
+        // controls let go of it.
+        self.let_go_of_player();
+        self.app.thumbnails.forget_asker(self.thumb_asker());
+        crate::finishing::left(cx, self.window_id);
+        if crate::finishing::window_count(cx) == 0 {
+            self.work.borrow().shown_in(None);
+        }
+    }
+
+    /// The window's close button, or Ctrl+Shift+W: with other windows up,
+    /// this one and its tabs go, Reopen closed tab bringing them back
+    /// (ADR-122); the last one leaves as ADR-115 says, what runs going on
+    /// without it.
+    pub(crate) fn close_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if crate::finishing::window_count(cx) > 1
+            && let Err(error) = self.app.close_window(self.window_id)
+        {
+            tracing::warn!("a window closes: {error:#}");
+        }
+        self.leave(window, cx);
+    }
+
+    /// Quit's windows: every one goes, this one first, none forgotten by
+    /// what is remembered for the next start (`finishing::closed`).
+    pub(crate) fn close_every_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let others = crate::finishing::others(cx, self.window_id);
+        self.leave(window, cx);
+        window.remove_window();
+        for other in others {
+            cx.defer(move |cx| {
+                let _ = other.update(cx, |shell, window, cx| {
+                    shell.leave(window, cx);
+                    window.remove_window();
+                });
+            });
+        }
     }
 
     /// What the window took to ask and was not answered: Cancel each.
@@ -2977,6 +3035,10 @@ impl Shell {
             "peek" => self.peek_command(window, cx),
             "peek_close" => self.close_peek(window, cx),
             "quit" => self.quit(window, cx),
+            "close_window" => {
+                self.close_window(window, cx);
+                window.remove_window();
+            }
             // Declared (`commands.rs`) but carried out nowhere: a mistake
             // the test of the declarations catches.
             other => self.set_status(format!("ui.{other} is not carried out here"), true, cx),
@@ -3083,10 +3145,11 @@ impl Shell {
         self.backlog = report.backlog;
         self.sync_views();
         self.sync_keymap(cx);
-        self.drain_executor(cx);
-        self.tell_desktop();
-        self.take_asked(window, cx);
-        for n in self.app.take_notifications() {
+        // What the program took from the core for this window
+        // (`finishing::deliver`).
+        let inbox = std::mem::take(&mut self.inbox);
+        self.take_plans(inbox.taken, cx);
+        for n in inbox.notifications {
             let error = matches!(n.level, NotifyLevel::Error | NotifyLevel::Warning);
             match (n.setting, n.action) {
                 (Some(key), _) if error => self.set_status_about(n.text, &key, cx),
@@ -3115,7 +3178,7 @@ impl Shell {
         // asked. One the dialog open would take (Settings, the F1
         // overview, About) waits, with those after it, until it closes:
         // the caller was told it reached the window.
-        self.front_waiting.extend(self.app.take_front_requests());
+        self.front_waiting.extend(inbox.front);
         while let Some(request) = self.front_waiting.front()
             && self.takes_now(&request.name)
         {
@@ -3223,13 +3286,11 @@ impl Shell {
         if let Some(settings) = self.settings.clone() {
             settings.update(cx, |settings, cx| settings.sync(window, cx));
         }
-        let proposals = self.app.take_proposals();
-        if !proposals.is_empty() {
-            self.add_reviews(proposals, window, cx);
+        if !inbox.proposals.is_empty() {
+            self.add_reviews(inbox.proposals, window, cx);
         }
-        let questions = self.app.take_questions();
-        if !questions.is_empty() {
-            self.add_questions(questions, cx);
+        if !inbox.questions.is_empty() {
+            self.add_questions(inbox.questions, cx);
         }
         // A question whose asker stopped waiting (a connection cancelled
         // meanwhile) is no longer asked.
@@ -3242,13 +3303,12 @@ impl Shell {
         if self.reviews.len() != before {
             cx.notify();
         }
-        let clashes = self.app.take_clash_questions();
-        if !clashes.is_empty() {
-            self.add_clash_questions(clashes, cx);
+        if !inbox.clashes.is_empty() {
+            self.add_clash_questions(inbox.clashes, cx);
         }
-        self.secrets.extend(self.app.take_secret_questions());
+        self.secrets.extend(inbox.secrets);
         self.ask_secrets(window, cx);
-        self.forms.extend(self.app.take_forms());
+        self.forms.extend(inbox.forms);
         self.ask_forms(window, cx);
         self.sync_review_focus(window, cx);
         self.sync_map_tiles(window, cx);
@@ -3606,6 +3666,24 @@ pub fn lane_of<P: AsRef<std::path::Path>>(paths: impl IntoIterator<Item = P>) ->
     })
 }
 
+/// How a window starts (`finishing::open_window`): the shape it takes, if
+/// any (its own, the window it was made from, the one used last), whether
+/// it is split as that was, and what its first frame is timed from.
+pub(crate) struct Start {
+    pub(crate) shape: Option<crate::session::Session>,
+    pub(crate) split: bool,
+    pub(crate) first_frame: FirstFrame,
+}
+
+/// What a pane's window carries to the window its tab moves to (ADR-122):
+/// what it shows its files as, and the bars above and under them. The rest
+/// of its state is its window's (its views are made in it).
+pub(crate) struct Carried {
+    pub(crate) view_id: &'static str,
+    pub(crate) quick_filters_on: bool,
+    pub(crate) timeline: crate::timeline::TimelineState,
+}
+
 /// What a window's first frame is timed from: the process's start for the
 /// program's first window (what `just idle-pss` reads), its opening for one
 /// opened again (from the tray, by a later launch).
@@ -3663,7 +3741,7 @@ impl Render for Shell {
         // Thumbnails count frames drawn, not wakes: a request not asked for
         // a few frames is let go, and a wake that draws nothing (a worker
         // done) would let go of what the next frame still wants.
-        self.app.thumbnails.tick();
+        self.app.thumbnails.tick_for(self.thumb_asker());
         for image in self.thumbs.begin_frame(self.app.thumbnails.budget()) {
             cx.drop_image(image, Some(window));
         }

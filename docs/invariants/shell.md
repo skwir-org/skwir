@@ -2,7 +2,8 @@
 
 Read this before changing the window in `crates/ui`: toolbars, colors
 and fonts, popups, the top rows, menus, drops, feedback, the sidebar,
-keys, tabs, the terminal panel, the player. Binding, like `AGENTS.md`.
+keys, tabs, windows, the terminal panel, the player. Binding, like
+`AGENTS.md`.
 Views are in [views.md](views.md); what locations decide, in
 [locations.md](locations.md).
 
@@ -1391,22 +1392,84 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
 - Per-pane plugin state ends with `location_lifetime`, which dormancy
   ends too.
 - Tabs are remembered only with `core.startup = last`
-  (`core.last_tabs`); only the shown tab opens at startup. Each pane
-  comes back showing its location filtered as it was (`SavedTab::filters`,
-  read again by the filter's reader, ADR-109); its history is not kept.
+  (`core.last_windows`, each window's); only each window's shown tab
+  opens at startup. Each pane comes back showing its location filtered
+  as it was (`SavedTab::filters`, read again by the filter's reader,
+  ADR-109); its history is not kept.
+
+## Windows (ADR-122)
+
+- **One program, many windows.** The core holds the windows
+  (`Workspace::windows`, `WindowTabs`): each its tabs and the tab it
+  shows; one is active, where a command naming no pane acts. A gpui
+  window draws one core window (`Shell::window_id`); `finishing.rs` is
+  the program, holding every window, and follows the core's
+  (`follow_windows`): a window the core made opens (`window.new`, a tab
+  moved out, a window reopened), one it closed goes, one a command made
+  active comes forward. Never open or close a gpui window for a core
+  window by hand: change the core and let the program follow.
+- **The program takes, each window draws.** A wake is taken once
+  (`finishing::woken`): what the executor says of plans goes to the
+  window that ran each one (`finishing::ran`, recorded by `Shell::run`),
+  else to the active window; a window's command asked from elsewhere
+  (`request_front`) to the window of the pane it names, else the active;
+  notifications, reviews, questions, clashes, secrets and forms to the
+  active window; then each window syncs (`Shell::sync`, which takes its
+  `inbox`). The desktop is told once for the program (looked at while one
+  window has the focus), and what it asks (a notice clicked, Pause all)
+  is answered there. A shell never takes a program-wide queue of the
+  core's.
+- **What is one, what is each window's.** One for the program: the
+  queue, the History and Undo, Activity's work (`Work`), the shelf, cut
+  files, settings, the keymap, the player, the agents' channel, the
+  presence while no window is up. One Settings dialog: asked in another
+  window, the one open comes forward (`finishing::settings_elsewhere`).
+  Each window: its tabs, split, sidebar, preview, terminal panel, address
+  field, palette, toasts, its shape (`Workspace::set_shape`, kept with
+  its tabs), its thumbnails' frames (`Shell::thumb_asker`: a window
+  drawing never makes another's requests stale).
+- **The player is one**: a play started in a window claims it
+  (`finishing::claim_player`), the window that played before stopping;
+  the desktop's controls steer the window that plays
+  (`finishing::steers_player`); closing that window stops it.
+- **A pane is a window's.** `Shell::pane` and the panes it draws are its
+  window's; this window's active pane is `Shell::window_pane`, never
+  `Workspace::active_id` (the active window's). A tab moved to another
+  window is drawn there anew, carrying what its panes show their files
+  as (`Carried`: the view, Quick filters, the timeline), given before any
+  window follows (`give_away_moved`): a `PaneUi` is made in its window
+  and never moves.
+- **Opening and closing.** Ctrl+N (`window.new`) opens a window on the
+  folder shown, shaped as its window (unsplit); Open in New Window on a
+  folder (`window.open`) or a sidebar place (`sidebar::open_in_window`),
+  Move to New Window on a tab of a window with more than one. Closing a
+  window (its button, Ctrl+Shift+W, `ui.close_window`) with others up
+  closes the core's window, its tabs kept to be reopened together
+  (Ctrl+Shift+T); the last one leaves as ADR-115 says. Quit closes every
+  window (`Shell::close_every_window`), none forgotten.
+- **Remembered as they change**: the program records every window's tabs
+  and shape for the next start (`finishing::record_windows`, at most
+  every 2 s, saved on a worker), so a window closed alone is forgotten
+  and a crash loses none. A new window takes its own shape (restored,
+  reopened), else its source window's, else `ui.session`, the shape of
+  the window used last.
+- A wake redraws every window (the catch-all `notify` after each sync):
+  a film playing in one window redraws the others at its rate. Telling
+  which windows a wake concerns waits for wakers of their own.
 
 ## What the window remembers
 
-- The last window's shape (view, split and share, sidebar width and
-  sections, preview place and size, archive-member placement, Properties'
-  folds, the types shown as their source, the active pane's Quick
-  filters and timeline, what it measures and counts, which every pane
-  starts with, zoom, Usage's levels and mode, column widths) is
-  application data, not preference:
-  `session.rs` keeps it under one key, written only when it changes. A
-  new pane opens in the current pane's view. The tabs, each pane's
-  location and filter, are remembered with `core.startup = last` (Tabs,
-  above).
+- A window's shape (view, split and share, sidebar width and sections,
+  preview place and size, archive-member placement, Properties' folds,
+  the types shown as their source, the active pane's Quick filters and
+  timeline, what it measures and counts, which every pane starts with,
+  zoom, Usage's levels and mode, column widths) is application data, not
+  preference: `session.rs` keeps it with the window's tabs
+  (`Workspace::set_shape`) and, for the window used last, under one key
+  (`ui.session`) that a new window without another to take from starts
+  with, written only when it changes. A new pane opens in the current
+  pane's view. The windows' tabs, each pane's location and filter, are
+  remembered with `core.startup = last` (Tabs and Windows, above).
 - **Edges** dragged to size an area are one element (`elements/edge.rs`):
   double click restores the default; shared room via `edge::share`,
   which holds the edge where the areas ship (a split's middle) while the

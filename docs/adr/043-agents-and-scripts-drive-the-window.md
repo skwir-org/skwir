@@ -5,6 +5,9 @@ begun before Phase 5b's gate, which needs a Mac and a Windows machine;
 PLAN.md records the deviation). Built (`control` plugin).
 Decision 5 amended by ADR-085 (2026-10-23): separate agent and script
 endpoints determine authority; request metadata never grants it.
+Amended 2026-11-07 by ADR-122: the windows are one program's, so the
+channel reaches every window; a window's command goes to the window of
+the pane it names, else the active one (`window.list` says which).
 
 ## Context
 

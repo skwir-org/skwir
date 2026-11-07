@@ -112,6 +112,7 @@ pub fn asset(path: &str) -> Option<&'static [u8]> {
         "bookmark-filled",
         "folder",
         "tab-new",
+        "window-new",
         "terminal",
         "lock",
         "archive",

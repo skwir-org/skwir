@@ -29,8 +29,6 @@ use gpui::{
 };
 use skwir_core::op::{PlanId, Transfer};
 
-use skwir_platform::desktop::Asked;
-
 use crate::controls::{self, ButtonStyle};
 use crate::elements::adaptive::Fit;
 use crate::elements::popover::PopoverAnchor;
@@ -40,7 +38,6 @@ use crate::theme::Theme;
 use crate::toast::{
     Action, Running, Toast, Tone, bar, capitalized, pace, sending, share, waiting_words,
 };
-use crate::work::{Seen, Watched};
 
 /// Activity's popup, as `Shell::toggle_popup` and `toolbar_menu` know it.
 pub const POPUP: &str = "activity";
@@ -512,13 +509,6 @@ impl Shell {
     /// What runs and is shown as a card (`Work::under_way`).
     pub(crate) fn under_way(&self) -> Under {
         self.work.borrow().under_way(&self.app)
-    }
-
-    /// Wake once at `at`, when the strip changes by itself (an action
-    /// joined to show, a tint to end): `work::wake_after`, whose wake's
-    /// sync asks `Work::watch` again, which gives the next.
-    pub(crate) fn strip_wake_at(&mut self, at: std::time::Instant, cx: &mut Context<Self>) {
-        crate::work::wake_after(&self.work, &self.app, at, cx);
     }
 
     /// Whether Activity's popup is open.
@@ -2272,69 +2262,12 @@ impl Shell {
 }
 
 impl Shell {
-    /// How the desktop is told while this window is up (`work.rs`).
-    pub(crate) fn watched(&self) -> Watched {
-        Watched {
-            seen: if self.window_active {
-                Seen::LookedAt
-            } else {
-                Seen::Away
-            },
-            notify: self.prefs.notify_desktop,
-            keep_awake: self.prefs.keep_awake,
-        }
-    }
-
     /// The window has the focus again, or lost it: looked at again, what
     /// the desktop was told is taken back.
     pub(crate) fn window_activated(&mut self, active: bool) {
         self.window_active = active;
         if active {
             self.work.borrow_mut().looked_at();
-        }
-    }
-
-    /// The taskbar's entry, the machine kept awake, the session's end held
-    /// off, as what runs goes (`Work::tell`).
-    pub(crate) fn tell_desktop(&mut self) {
-        let under = self.under_way();
-        let watched = self.watched();
-        self.work.borrow_mut().tell(&self.app, &under, watched);
-    }
-
-    /// What the desktop asked: a notice or the presence clicked brings the
-    /// window forward, with the token the desktop gave where it gave one,
-    /// and opens Activity; its menu pauses, lets go on or stops what runs
-    /// (`finishing::act`).
-    pub(crate) fn take_asked(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let mut token = None;
-        let mut shown = false;
-        let asked = self.work.borrow().take_asked();
-        for asked in asked {
-            match asked {
-                Asked::Notice(clicked) => {
-                    shown = true;
-                    token = clicked.token.or(token);
-                }
-                Asked::Open { token: given } => {
-                    shown = true;
-                    token = given.or(token);
-                }
-                Asked::PauseAll | Asked::GoOn => {
-                    crate::finishing::act(&self.app, &self.work.borrow(), &asked);
-                }
-                Asked::StopAll => {
-                    self.stop_and_quit(window, cx);
-                    return;
-                }
-            }
-        }
-        if !shown {
-            return;
-        }
-        window.activate_window_with_token(token.as_deref());
-        if !self.activity_open() && !self.activity_tray_shown() {
-            self.toggle_activity(&serde_json::json!({}), window, cx);
         }
     }
 }

@@ -591,6 +591,14 @@ pub fn open_in_tab(place: &Place) -> Invocation {
     }
 }
 
+/// What opens `place` in a window of its own (ADR-122), for a place that is
+/// a location shown with the pane's lens: one its owner opens itself (a
+/// volume mounted first) or that is kept as it was shown has none.
+pub fn open_in_window(place: &Place) -> Option<Invocation> {
+    (place.activate.is_none() && matches!(place.opens, Opens::Lensed))
+        .then(|| Invocation::new("window.new").with("location", place.location.arg()))
+}
+
 /// Share of the volume in use, 0 to 1.
 pub fn used_fraction(free: u64, total: u64) -> f32 {
     if total == 0 {

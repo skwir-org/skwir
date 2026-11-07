@@ -438,6 +438,9 @@ impl Shell {
     /// Keep playing on, the track is pinned, which moves the pin from any
     /// other; off, another pinned track stops.
     pub(crate) fn media_started(&mut self, cx: &mut Context<Self>) {
+        // One plays in the program: what another window played stops, the
+        // player now this one's (ADR-122).
+        crate::finishing::claim_player(cx, self.window_id);
         if self.preview_is_pinned() {
             return;
         }
@@ -446,6 +449,31 @@ impl Shell {
         } else if self.set_pin(None).is_some() {
             cx.notify();
         }
+    }
+
+    /// The window leaves: the desktop's controls let go of what it played.
+    pub(crate) fn let_go_of_player(&mut self) {
+        if self.player.published {
+            self.player.published = false;
+            self.app.player.publish(None);
+        }
+    }
+
+    /// Another window started playing (`finishing::claim_player`): the
+    /// pinned track stops, the panel's pauses, and the controls the
+    /// desktop shows are the other window's.
+    pub(crate) fn stop_playing(&mut self, cx: &mut Context<Self>) {
+        if self.set_pin(None).is_some() {
+            cx.notify();
+        }
+        if let Some(session) = &self.preview.media.session
+            && self.preview.media.state.playing()
+            && let Err(error) = session.control(skwir_core::media::Control::Play(false))
+        {
+            tracing::debug!("the panel's media did not pause: {error:#}");
+        }
+        self.player.engaged = None;
+        self.player.was_playing = false;
     }
 
     /// Pin the track in the panel: its session belongs to the window now.
@@ -956,8 +984,12 @@ impl Shell {
             self.player_step(1, window, cx);
         }
 
-        for request in self.app.player.take_requests() {
-            self.player_request(request, window, cx);
+        // The desktop's controls (media keys, MPRIS) steer the window that
+        // plays, else the one in use.
+        if crate::finishing::steers_player(cx, self.window_id) {
+            for request in self.app.player.take_requests() {
+                self.player_request(request, window, cx);
+            }
         }
         // The dock's More goes with the dock: it steers the pin from there.
         if !self.dock_shown()

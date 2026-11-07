@@ -977,11 +977,11 @@ pub(crate) fn register(app: &crate::App) {
         SettingSpec::choice(
             STARTUP,
             "Open at startup",
-            "Where a new window starts when no folder is given on the command line.",
+            "What Skwir opens when it starts with no folder given on the command line.",
             "folder",
             &[
                 ("folder", "A chosen folder"),
-                ("last", "The folders and tabs left open"),
+                ("last", "The windows and tabs left open"),
             ],
         )
         .section("Startup")

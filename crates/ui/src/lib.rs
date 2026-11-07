@@ -272,7 +272,7 @@ fn wind_down(app: &App) {
     }
 }
 
-/// Note where the window is, for "open the folders and tabs left open".
+/// Note where the windows are, for "open the windows and tabs left open".
 pub(crate) fn remember_location(app: &App) {
     skwir_core::tabs::remember(app);
 }

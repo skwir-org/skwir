@@ -529,10 +529,7 @@ impl Shell {
                 // Asked and answered: applied as it is.
                 Confirmed::Apply(plan) => self.app.apply_whole(plan),
                 // Finished without the window (`finishing.rs`).
-                Confirmed::Quit => {
-                    self.leave(window, cx);
-                    window.remove_window();
-                }
+                Confirmed::Quit => self.close_every_window(window, cx),
             }
             cx.notify();
         }

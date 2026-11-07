@@ -32,9 +32,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+use std::collections::HashMap;
+
 use gpui::{App, AppContext, Global, WindowHandle};
 use parking_lot::Mutex;
 use skwir_core::Location;
+use skwir_core::op::PlanId;
+use skwir_core::workspace::{PaneId, WindowId};
 use skwir_platform::desktop::{Asked, Presence, Standing};
 use skwir_platform::handover::{Opening, TakingOver};
 
@@ -54,8 +58,23 @@ pub(crate) struct Finishing {
     app: Arc<skwir_core::App>,
     keymap: keymap::Keymap,
     started: Instant,
-    /// The window up, if any: none from the moment it leaves.
-    window: Option<WindowHandle<Shell>>,
+    /// The windows up, each the core's window it draws (ADR-122), in the
+    /// order they opened: a window leaves the list the moment it leaves.
+    windows: Vec<(WindowId, WindowHandle<Shell>)>,
+    /// The core's active window as the program last brought it forward:
+    /// one a command made active since is brought forward.
+    raised: Option<WindowId>,
+    /// The window each plan it ran was asked from: what the plan says
+    /// goes there (its toast, what it made), else to the active window.
+    plans: HashMap<PlanId, WindowId>,
+    /// The window whose player plays, if one does: one plays at a time.
+    pub(crate) player: Option<WindowId>,
+    /// What one window carries to another of a pane moved there with its
+    /// tab: taken by the window that shows it next (`Shell::sync_tabs`).
+    pub(crate) carried: HashMap<PaneId, crate::shell::Carried>,
+    /// When the windows were last recorded for the next start, and whether
+    /// a record waits for a timer (`record_windows`).
+    recording: Recording,
     /// What runs and what was said of it, for the program's life: the
     /// window's shell shares it while one is up.
     work: Rc<RefCell<Work>>,
@@ -82,9 +101,10 @@ pub(crate) struct Finishing {
 
 impl Global for Finishing {}
 
-/// Start the program's life: its state, the loop taking the core's wakes,
-/// what ends it, then its window, showing `initial` (else the tabs left
-/// open).
+/// Start the program's life: what it reads once for every window, its
+/// state, the loop taking the core's wakes, what ends it, then a window
+/// for each of the core's (the windows left, restored, else one), the
+/// active pane showing `initial`.
 pub(crate) fn start(
     cx: &mut App,
     app: Arc<skwir_core::App>,
@@ -100,11 +120,17 @@ pub(crate) fn start(
     #[cfg(unix)]
     end_on_signals(&app, &ending);
     let work = Rc::new(RefCell::new(Work::new(&app)));
+    prepare(&app, cx);
     cx.set_global(Finishing {
         app,
         keymap,
         started,
-        window: None,
+        windows: Vec::new(),
+        raised: None,
+        plans: HashMap::new(),
+        player: None,
+        carried: HashMap::new(),
+        recording: Recording::default(),
         work,
         stopping: false,
         quitting: false,
@@ -122,7 +148,137 @@ pub(crate) fn start(
     })
     .detach();
     listen(cx, wakes);
-    open(cx, initial, None, false);
+    let state = cx.global::<Finishing>();
+    // The tab left stays drawn until the tab shown is ready (`tabs.rs`).
+    state.app.hold_tabs(true);
+    show(cx, initial, None, false);
+}
+
+/// What the program reads once, whatever windows it opens: the settings the
+/// window declares, the themes and fonts offered, owner names.
+fn prepare(app: &Arc<skwir_core::App>, cx: &mut App) {
+    crate::settings::declare(app);
+    // The themes the user added to bat and the fonts installed, on a
+    // worker: then a script or an agent can choose one before the
+    // settings ever open.
+    skwir_platform::highlight::added::keep_in(app.cache.namespace("grammars"));
+    // The WebAssembly grammars the tree-sitter helper compiles, kept in the
+    // cache rather than compiled at each start (ADR-110).
+    skwir_platform::tree_sitter::keep_compiled_in(
+        app.cache.namespace("wasmtime").folder("tree-sitter"),
+    );
+    crate::settings::list_code_themes(app);
+    crate::settings::list_fonts(app, cx.text_system().clone());
+    crate::session::declare(app);
+    // Owner and group names for Properties: two small files, but a read can
+    // block, so not here.
+    let wake = app.waker_handle();
+    app.scheduler.spawn(
+        skwir_core::scheduler::Priority::Background,
+        "user-names",
+        app.lifetime().child(),
+        {
+            let cache = app.cache.root().to_owned();
+            move || {
+                skwir_platform::users::load();
+                // Members a killed process extracted for its previews.
+                crate::preview::sweep_members(&cache);
+                wake();
+            }
+        },
+    );
+}
+
+/// Show the program's windows, none being up: one for each of the core's
+/// (those left, restored at start or asleep since the last closed), the
+/// active one last so that it has the focus; the active pane showing
+/// `initial`; the tabs each shows opened. `token` brings the window
+/// forward; `activity` opens Activity in it.
+fn show(cx: &mut App, initial: Option<Location>, token: Option<String>, activity: bool) {
+    let state = cx.global::<Finishing>();
+    // A later launch starts its own Skwir again.
+    stop_taking_over(state);
+    let app = Arc::clone(&state.app);
+    let (windows, active) = {
+        let ws = app.workspace.read();
+        let ids: Vec<WindowId> = ws.windows().iter().map(|w| w.id).collect();
+        (ids, ws.active_window_id())
+    };
+    // A folder asked for is shown alone, as the window last left was split.
+    let split = initial.is_some();
+    let mut order: Vec<WindowId> = windows.into_iter().filter(|w| *w != active).collect();
+    order.push(active);
+    let mut any = false;
+    for id in order {
+        let mine = id == active;
+        any |= open_window(
+            cx,
+            id,
+            split && mine,
+            token.clone().filter(|_| mine),
+            activity && mine,
+        );
+    }
+    if !any {
+        // Still without one: later launches taken over again, the presence
+        // kept, the program ended if nothing keeps it.
+        let state = cx.global::<Finishing>();
+        if state.opened {
+            take_over(state);
+            sync(cx);
+        }
+        return;
+    }
+    if let Some(location) = initial {
+        let pane = app.workspace.read().active_id();
+        if let Err(error) = app.navigate(pane, &location) {
+            say_in_active(cx, format!("{error:#}"));
+        }
+    }
+    // Tabs restored, or asleep while no window was up, open the one each
+    // window shows, now that the listings have a window to wake.
+    if let Err(error) = app.resume_tabs() {
+        say_in_active(cx, format!("{error:#}"));
+    }
+    // Scripts and agents reach the windows from now on: what they ask
+    // comes after what they start on.
+    app.set_window_shown();
+    cx.global_mut::<Finishing>().raised = Some(active);
+}
+
+/// Say `text` as an error in the active window's status.
+fn say_in_active(cx: &mut App, text: String) {
+    if let Some(window) = active_handle(cx) {
+        let _ = window.update(cx, |shell, _, cx| shell.set_status(text, true, cx));
+    }
+}
+
+/// The window the core says is active, else the one opened last.
+pub(crate) fn active_handle(cx: &App) -> Option<WindowHandle<Shell>> {
+    let state = cx.global::<Finishing>();
+    let active = state.app.workspace.read().active_window_id();
+    state
+        .windows
+        .iter()
+        .find(|(id, _)| *id == active)
+        .or(state.windows.last())
+        .map(|(_, handle)| *handle)
+}
+
+/// How many windows are up.
+pub(crate) fn window_count(cx: &App) -> usize {
+    cx.try_global::<Finishing>()
+        .map_or(0, |state| state.windows.len())
+}
+
+/// The windows up other than `id`.
+pub(crate) fn others(cx: &App, id: WindowId) -> Vec<WindowHandle<Shell>> {
+    cx.global::<Finishing>()
+        .windows
+        .iter()
+        .filter(|(other, _)| *other != id)
+        .map(|(_, handle)| *handle)
+        .collect()
 }
 
 /// Wake-up, not polling: the core signals, the window's shell applies what
@@ -173,42 +329,409 @@ fn woken(cx: &mut App) -> bool {
         reopen(cx, Some(opening), false);
     }
     let state = cx.global::<Finishing>();
-    match state.window {
-        Some(window) => window
+    if state.windows.is_empty() {
+        // No window since one was up: the program takes it in.
+        if state.opened {
+            sync(cx);
+        }
+        return false;
+    }
+    follow_windows(cx);
+    deliver(cx);
+    let windows: Vec<WindowHandle<Shell>> = cx
+        .global::<Finishing>()
+        .windows
+        .iter()
+        .map(|(_, handle)| *handle)
+        .collect();
+    // What a pane moved to another window carries there, given before any
+    // window follows the tabs, taken by the one that shows it.
+    for window in &windows {
+        let _ = window.update(cx, |shell, _, cx| shell.give_away_moved(cx));
+    }
+    let mut backlog = false;
+    for window in windows {
+        backlog |= window
             .update(cx, |shell, window, cx| {
                 shell.sync(window, cx);
                 cx.notify();
                 shell.backlog()
             })
-            .unwrap_or(false),
-        // No window since one was up: the program takes it in.
-        None if state.opened => {
-            sync(cx);
-            false
+            .unwrap_or(false);
+    }
+    cx.global_mut::<Finishing>().carried.clear();
+    record_windows(cx);
+    backlog
+}
+
+/// What panes moved to another window carry there (`Shell::give_away_moved`).
+pub(crate) fn carry(cx: &mut App, moved: Vec<(PaneId, crate::shell::Carried)>) {
+    if !moved.is_empty() && cx.has_global::<Finishing>() {
+        cx.global_mut::<Finishing>().carried.extend(moved);
+    }
+}
+
+/// What of `panes` came from another window carries (`carry`).
+pub(crate) fn take_carried(
+    cx: &mut App,
+    panes: &[PaneId],
+) -> HashMap<PaneId, crate::shell::Carried> {
+    if !cx.has_global::<Finishing>() {
+        return HashMap::new();
+    }
+    let carried = &mut cx.global_mut::<Finishing>().carried;
+    panes
+        .iter()
+        .filter_map(|id| carried.remove(id).map(|c| (*id, c)))
+        .collect()
+}
+
+/// The windows follow the core's (ADR-122): one it made (`window.new`, a
+/// tab moved out, a window reopened) opens; one it closed (`window.close`,
+/// its last tab closed) goes; one a command made active comes forward.
+fn follow_windows(cx: &mut App) {
+    let state = cx.global::<Finishing>();
+    let (core, active) = {
+        let ws = state.app.workspace.read();
+        let ids: Vec<WindowId> = ws.windows().iter().map(|w| w.id).collect();
+        (ids, ws.active_window_id())
+    };
+    let gone: Vec<WindowHandle<Shell>> = state
+        .windows
+        .iter()
+        .filter(|(id, _)| !core.contains(id))
+        .map(|(_, handle)| *handle)
+        .collect();
+    let new: Vec<WindowId> = core
+        .iter()
+        .copied()
+        .filter(|id| !state.windows.iter().any(|(up, _)| up == id))
+        .collect();
+    for window in gone {
+        let _ = window.update(cx, |shell, window, cx| {
+            shell.leave(window, cx);
+            window.remove_window();
+        });
+    }
+    for id in new {
+        open_window(cx, id, false, None, false);
+    }
+    let state = cx.global::<Finishing>();
+    if state.raised != Some(active)
+        && let Some((_, window)) = state.windows.iter().find(|(id, _)| *id == active)
+    {
+        let window = *window;
+        cx.global_mut::<Finishing>().raised = Some(active);
+        let _ = window.update(cx, |_, window, _| window.activate_window());
+    }
+}
+
+/// What a window takes in at its next sync, the program having taken it
+/// from the core (`deliver`): each window what its own asked, the active
+/// one the rest.
+#[derive(Default)]
+pub(crate) struct Inbox {
+    /// What the plans it ran did (`Work::take`).
+    pub(crate) taken: Vec<crate::work::Taken>,
+    pub(crate) notifications: Vec<skwir_core::app::Notification>,
+    /// Its commands asked from elsewhere (an agent, a script).
+    pub(crate) front: Vec<skwir_core::command::Invocation>,
+    pub(crate) proposals: Vec<skwir_core::op::Plan>,
+    pub(crate) questions: Vec<skwir_core::app::Question>,
+    pub(crate) clashes: Vec<skwir_core::app::ClashQuestion>,
+    pub(crate) secrets: Vec<skwir_core::app::SecretQuestion>,
+    pub(crate) forms: Vec<skwir_core::form::Asked>,
+}
+
+/// Take in what the core sent and asked, once for the program, and hand
+/// each window its part: what a plan did to the window that ran it (else
+/// the active one), a window's command to the window of the pane it names,
+/// the rest to the active window. Then tell the desktop, and do what it
+/// asked.
+fn deliver(cx: &mut App) {
+    let state = cx.global_mut::<Finishing>();
+    let app = Arc::clone(&state.app);
+    let active = app.workspace.read().active_window_id();
+    let mut inboxes: HashMap<WindowId, Inbox> = HashMap::new();
+    let watched = watched(cx);
+    let state = cx.global_mut::<Finishing>();
+    let shared = Rc::clone(&state.work);
+    let (asked, wake) = {
+        let mut work = state.work.borrow_mut();
+        let events = app.executor.events().clone();
+        while let Ok(event) = events.try_recv() {
+            let taken = work.take(&app, event, watched);
+            let plan = match &taken {
+                crate::work::Taken::Nothing => continue,
+                crate::work::Taken::Step(progress) => progress.plan,
+                crate::work::Taken::WaitsForServer(plan)
+                | crate::work::Taken::Ended { plan, .. } => *plan,
+            };
+            let window = if matches!(taken, crate::work::Taken::Ended { .. }) {
+                state.plans.remove(&plan)
+            } else {
+                state.plans.get(&plan).copied()
+            };
+            let window = window
+                .filter(|w| state.windows.iter().any(|(up, _)| up == w))
+                .unwrap_or(active);
+            inboxes.entry(window).or_default().taken.push(taken);
         }
-        None => false,
+        work.sync_stopped(&app);
+        work.settle(&app);
+        // What joined is shown and announced as its time comes, the
+        // program woken then (ADR-114, amended 2026-11-03).
+        let wake = work.watch(&app, Instant::now());
+        let under = work.under_way(&app);
+        work.tell(&app, &under, watched);
+        (work.take_asked(), wake)
+    };
+    if let Some(at) = wake {
+        crate::work::wake_after(&shared, &app, at, cx);
+    }
+    let inbox = inboxes.entry(active).or_default();
+    inbox.notifications = app.take_notifications();
+    inbox.proposals = app.take_proposals();
+    inbox.questions = app.take_questions();
+    inbox.clashes = app.take_clash_questions();
+    inbox.secrets = app.take_secret_questions();
+    inbox.forms = app.take_forms();
+    for request in app.take_front_requests() {
+        // Asked for a pane: the window that shows it.
+        let window = request
+            .args
+            .get("pane")
+            .and_then(|pane| serde_json::from_value::<PaneId>(pane.clone()).ok())
+            .and_then(|pane| app.workspace.read().window_of(pane))
+            .unwrap_or(active);
+        inboxes.entry(window).or_default().front.push(request);
+    }
+    let windows = cx.global::<Finishing>().windows.clone();
+    for (id, window) in windows {
+        if let Some(inbox) = inboxes.remove(&id) {
+            let _ = window.update(cx, |shell, _, _| shell.inbox.take_in(inbox));
+        }
+    }
+    answer_desktop(cx, asked);
+}
+
+impl Inbox {
+    /// Add what `more` holds after what this holds.
+    pub(crate) fn take_in(&mut self, more: Inbox) {
+        self.taken.extend(more.taken);
+        self.notifications.extend(more.notifications);
+        self.front.extend(more.front);
+        self.proposals.extend(more.proposals);
+        self.questions.extend(more.questions);
+        self.clashes.extend(more.clashes);
+        self.secrets.extend(more.secrets);
+        self.forms.extend(more.forms);
+    }
+}
+
+/// How the desktop is told while windows are up: looked at while one of
+/// them has the focus.
+fn watched(cx: &App) -> Watched {
+    let state = cx.global::<Finishing>();
+    let looked_at = state.windows.iter().any(|(_, handle)| {
+        handle
+            .read(cx)
+            .is_ok_and(crate::shell::Shell::is_window_active)
+    });
+    let switch = |key: &str| state.app.settings.get::<bool>(key).unwrap_or(true);
+    Watched {
+        seen: if looked_at {
+            crate::work::Seen::LookedAt
+        } else {
+            crate::work::Seen::Away
+        },
+        notify: switch(crate::settings::NOTIFY_DESKTOP_KEY),
+        keep_awake: switch(crate::settings::KEEP_AWAKE_KEY),
+    }
+}
+
+/// What the desktop asked while windows are up: a notice or the presence
+/// clicked brings the active window forward, with the token the desktop
+/// gave where it gave one, and opens Activity there; its menu pauses, lets
+/// go on or stops what runs.
+fn answer_desktop(cx: &mut App, asked: Vec<Asked>) {
+    let mut token = None;
+    let mut shown = false;
+    for asked in asked {
+        match asked {
+            Asked::Notice(clicked) => {
+                shown = true;
+                token = clicked.token.or(token);
+            }
+            Asked::Open { token: given } => {
+                shown = true;
+                token = given.or(token);
+            }
+            Asked::PauseAll | Asked::GoOn => {
+                let state = cx.global::<Finishing>();
+                act(&state.app, &state.work.borrow(), &asked);
+            }
+            Asked::StopAll => {
+                if let Some(window) = active_handle(cx) {
+                    let _ = window.update(cx, Shell::stop_and_quit);
+                }
+                return;
+            }
+        }
+    }
+    if shown && let Some(window) = active_handle(cx) {
+        let _ = window.update(cx, |shell, window, cx| {
+            window.activate_window_with_token(token.as_deref());
+            if !shell.activity_open() && !shell.activity_tray_shown() {
+                shell.toggle_activity(&serde_json::json!({}), window, cx);
+            }
+        });
+    }
+}
+
+/// When the windows were recorded last (`record_windows`).
+#[derive(Default)]
+struct Recording {
+    at: Option<Instant>,
+    /// A timer records them again once `RECORD_EVERY` passed.
+    timer: bool,
+}
+
+/// How long the windows wait to be recorded again for the next start: as
+/// they change, never more often.
+const RECORD_EVERY: Duration = Duration::from_secs(2);
+
+/// Record every window's tabs and shape for the next start, as they
+/// change (ADR-122): Quit keeps every window, a window closed alone is
+/// forgotten, a crash loses none. At most every `RECORD_EVERY`: a change
+/// within it is recorded when it ends, by a timer.
+fn record_windows(cx: &mut App) {
+    let state = cx.global_mut::<Finishing>();
+    let now = Instant::now();
+    if let Some(at) = state.recording.at
+        && now.duration_since(at) < RECORD_EVERY
+    {
+        if !state.recording.timer {
+            state.recording.timer = true;
+            let wait = RECORD_EVERY.saturating_sub(now.duration_since(at));
+            cx.spawn(async move |cx| {
+                cx.background_executor().timer(wait).await;
+                cx.update(|cx| {
+                    cx.global_mut::<Finishing>().recording.timer = false;
+                    record_windows(cx);
+                });
+            })
+            .detach();
+        }
+        return;
+    }
+    state.recording.at = Some(now);
+    let app = Arc::clone(&state.app);
+    if skwir_core::tabs::record(&app) {
+        let weak = app.weak();
+        app.scheduler.spawn(
+            skwir_core::scheduler::Priority::Background,
+            "ui-windows-save",
+            app.lifetime().child(),
+            move || {
+                if let Some(app) = weak.upgrade()
+                    && let Err(error) = app.settings.save()
+                {
+                    tracing::warn!("cannot remember the windows: {error:#}");
+                }
+            },
+        );
+    }
+}
+
+/// Window `id` started playing: the player is its own, what another window
+/// played stops (one plays in the program, ADR-122).
+pub(crate) fn claim_player(cx: &mut App, id: WindowId) {
+    if !cx.has_global::<Finishing>() {
+        return;
+    }
+    let state = cx.global_mut::<Finishing>();
+    let before = state.player.replace(id);
+    let Some(before) = before.filter(|before| *before != id) else {
+        return;
+    };
+    let Some(window) = state
+        .windows
+        .iter()
+        .find(|(up, _)| *up == before)
+        .map(|(_, handle)| *handle)
+    else {
+        return;
+    };
+    // Not within the window that claims: the other is updated after.
+    cx.defer(move |cx| {
+        let _ = window.update(cx, |shell, _, cx| shell.stop_playing(cx));
+    });
+}
+
+/// Whether window `id` takes the desktop's requests to the player: the
+/// window that plays, else the one in use.
+pub(crate) fn steers_player(cx: &App, id: WindowId) -> bool {
+    let Some(state) = cx.try_global::<Finishing>() else {
+        return true;
+    };
+    match state.player {
+        Some(playing) if state.windows.iter().any(|(up, _)| *up == playing) => playing == id,
+        _ => state.app.workspace.read().active_window_id() == id,
+    }
+}
+
+/// The window other than `id` whose Settings dialog is open, if one is:
+/// there is one dialog in the program.
+pub(crate) fn settings_elsewhere(cx: &App, id: WindowId) -> Option<WindowHandle<Shell>> {
+    let state = cx.try_global::<Finishing>()?;
+    state
+        .windows
+        .iter()
+        .filter(|(up, _)| *up != id)
+        .map(|(_, handle)| *handle)
+        .find(|handle| handle.read(cx).is_ok_and(Shell::settings_open))
+}
+
+/// Window `id` came forward by the user's hand: the program has nothing
+/// more to bring forward.
+pub(crate) fn raised(cx: &mut App, id: WindowId) {
+    if cx.has_global::<Finishing>() {
+        cx.global_mut::<Finishing>().raised = Some(id);
+    }
+}
+
+/// A plan the window `window` asked for: what it does goes there.
+pub(crate) fn ran(cx: &mut App, plan: PlanId, window: WindowId) {
+    if cx.has_global::<Finishing>() {
+        cx.global_mut::<Finishing>().plans.insert(plan, window);
     }
 }
 
 /// A signal asked the program to end: what runs stops, as Stop and quit
-/// does, the window (if up) closing first, as it does then: it is not
-/// left frozen on screen while plans take back what they were in the
-/// middle of, and its tabs are remembered (`closed`).
+/// does, the windows (if up) closing first, as they do then: none is left
+/// frozen on screen while plans take back what they were in the middle
+/// of, and their tabs are remembered (`closed`).
 fn end(cx: &mut App) {
-    let window = cx.global::<Finishing>().window;
-    let closed = window.is_some_and(|window| window.update(cx, Shell::stop_and_quit).is_ok());
+    let closed =
+        active_handle(cx).is_some_and(|window| window.update(cx, Shell::stop_and_quit).is_ok());
     if !closed {
         quit(cx);
     }
 }
 
-/// The window is about to close (`Shell::leave`): from now on the
-/// program takes in what the core sends, the window's shell taking
-/// nothing more. An action stopped before is let go: the window showed it.
-pub(crate) fn left(cx: &mut App) {
+/// Window `id` is about to close (`Shell::leave`): from now on its shell
+/// takes nothing more. The last one left, the program takes in what the
+/// core sends, an action stopped before let go: the window showed it.
+pub(crate) fn left(cx: &mut App, id: WindowId) {
     let state = cx.global_mut::<Finishing>();
-    state.window = None;
-    state.work.borrow_mut().stopped = None;
+    state.windows.retain(|(up, _)| *up != id);
+    if state.player == Some(id) {
+        state.player = None;
+    }
+    if state.windows.is_empty() {
+        state.work.borrow_mut().stopped = None;
+    }
 }
 
 /// Stop and quit was asked: the window closing ends the program, the
@@ -236,8 +759,9 @@ fn keeps(app: &skwir_core::App, work: &Work) -> bool {
 /// which it then finishes without a window.
 fn closed(cx: &mut App) {
     let state = cx.global_mut::<Finishing>();
-    // Gone without leaving (`left`): what it showed is let go all the same.
-    if state.window.take().is_some() {
+    // Gone without leaving (`left`): what they showed is let go all the same.
+    if !state.windows.is_empty() {
+        state.windows.clear();
         state.work.borrow_mut().stopped = None;
     }
     if state.quitting {
@@ -435,9 +959,10 @@ fn presence(work: &Work, under: &Under, asks: bool) -> Presence {
     }
 }
 
-/// Open the window again: one asked by the presence or a notice
-/// (`activity`: Activity opens with it), a later launch handed over (its
-/// folder shown), the Dock clicked. One up already comes forward.
+/// Open the windows again: asked by the presence or a notice (`activity`:
+/// Activity opens with it), a later launch handed over (its folder
+/// shown), the Dock clicked. With windows up, the active one comes
+/// forward.
 pub(crate) fn reopen(cx: &mut App, opening: Option<Opening>, activity: bool) {
     let state = cx.global::<Finishing>();
     let app = Arc::clone(&state.app);
@@ -450,7 +975,7 @@ pub(crate) fn reopen(cx: &mut App, opening: Option<Opening>, activity: bool) {
         ),
         None => (None, None),
     };
-    if let Some(window) = state.window {
+    if let Some(window) = active_handle(cx) {
         let _ = window.update(cx, |shell, window, cx| {
             window.activate_window_with_token(token.as_deref());
             if let Some(location) = initial
@@ -461,16 +986,25 @@ pub(crate) fn reopen(cx: &mut App, opening: Option<Opening>, activity: bool) {
         });
         return;
     }
-    open(cx, initial, token, activity);
+    show(cx, initial, token, activity);
 }
 
-/// Open the window, showing `initial` (else the tabs left open), sharing
-/// what runs, which the program finished without one. One that cannot
-/// open leaves the program as it was, without a window.
-fn open(cx: &mut App, initial: Option<Location>, token: Option<String>, activity: bool) {
-    let state = cx.global_mut::<Finishing>();
-    // A later launch starts its own Skwir again.
-    stop_taking_over(state);
+/// How far a window opened beside others is put from the one opened
+/// before it, where the system lets a window say where it goes.
+const CASCADE: f32 = 32.;
+
+/// Open a window drawing the core's window `id`, shaped as it was left
+/// (restored, reopened), else as the window it was made from, else as the
+/// window used last; `split` splits it as that was. What runs is shared:
+/// the program finished it without a window. Whether it opened.
+fn open_window(
+    cx: &mut App,
+    id: WindowId,
+    split: bool,
+    token: Option<String>,
+    activity: bool,
+) -> bool {
+    let state = cx.global::<Finishing>();
     let (app, keymap) = (Arc::clone(&state.app), state.keymap.clone());
     // The first window is timed from the process's start, one opened again
     // from now: the program may have run for hours without one.
@@ -486,7 +1020,38 @@ fn open(cx: &mut App, initial: Option<Location>, token: Option<String>, activity
         }
     };
     let work = Rc::clone(&state.work);
-    let bounds = gpui::Bounds::centered(None, gpui::size(gpui::px(1200.), gpui::px(800.)), cx);
+    let (own, from) = {
+        let ws = app.workspace.read();
+        let window = ws.window(id);
+        (
+            window.and_then(|w| w.shape().cloned()),
+            window.and_then(skwir_core::workspace::WindowTabs::made_from),
+        )
+    };
+    let source = from.and_then(|from| {
+        state
+            .windows
+            .iter()
+            .find(|(up, _)| *up == from)
+            .map(|(_, handle)| *handle)
+    });
+    let shape = own
+        .and_then(crate::session::from_value)
+        .or_else(|| source.and_then(|h| h.read(cx).ok().map(Shell::session)))
+        .or_else(|| crate::session::restore(&app));
+    let start = crate::shell::Start {
+        shape,
+        split,
+        first_frame,
+    };
+    let size = gpui::size(gpui::px(1200.), gpui::px(800.));
+    let mut bounds = gpui::Bounds::centered(None, size, cx);
+    let up = state.windows.len();
+    if up > 0 {
+        let step = gpui::px(CASCADE * up as f32);
+        bounds.origin.x += step;
+        bounds.origin.y += step;
+    }
     let opened = cx.open_window(
         gpui::WindowOptions {
             window_bounds: Some(gpui::WindowBounds::Windowed(bounds)),
@@ -497,19 +1062,15 @@ fn open(cx: &mut App, initial: Option<Location>, token: Option<String>, activity
             app_id: Some(skwir_core::APP_ID.into()),
             ..Default::default()
         },
-        |window, cx| cx.new(|cx| Shell::new(app, initial, first_frame, keymap, work, window, cx)),
+        |window, cx| cx.new(|cx| Shell::new(app, id, start, keymap, work, window, cx)),
     );
     let window = match opened {
         Ok(window) => window,
         // At start, nothing can go on without it.
         Err(error) if !cx.global::<Finishing>().opened => panic!("open window: {error:#}"),
         Err(error) => {
-            // Still without one: later launches taken over again, the
-            // presence kept, the program ended if nothing keeps it.
-            tracing::error!("the window could not open again: {error:#}");
-            take_over(cx.global::<Finishing>());
-            sync(cx);
-            return;
+            tracing::error!("a window could not open: {error:#}");
+            return false;
         }
     };
     tracing::debug!(
@@ -518,7 +1079,7 @@ fn open(cx: &mut App, initial: Option<Location>, token: Option<String>, activity
         "window opened"
     );
     let state = cx.global_mut::<Finishing>();
-    state.window = Some(window);
+    state.windows.push((id, window));
     state.opened = true;
     if state.shown.take().is_some() {
         state.work.borrow().present(None);
@@ -539,6 +1100,7 @@ fn open(cx: &mut App, initial: Option<Location>, token: Option<String>, activity
             });
         }
     });
+    true
 }
 
 /// macOS asks whether the program may quit (Quit from the Dock, logging
@@ -557,10 +1119,10 @@ pub(crate) fn may_quit(cx: &mut App) -> bool {
         cx.global_mut::<Finishing>().quitting = true;
         return true;
     }
-    if cx.global::<Finishing>().window.is_none() {
-        open(cx, None, None, false);
+    if cx.global::<Finishing>().windows.is_empty() {
+        show(cx, None, None, false);
     }
-    if let Some(window) = cx.global::<Finishing>().window {
+    if let Some(window) = active_handle(cx) {
         let _ = window.update(cx, |shell, window, cx| {
             window.activate_window();
             shell.quit(window, cx);

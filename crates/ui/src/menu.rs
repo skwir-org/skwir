@@ -902,7 +902,14 @@ impl Shell {
             MenuItem::new("tab", title, icon, order, command)
         };
         let tab_args = serde_json::json!({ "tab": tab });
-        let items = vec![
+        // A tab alone in its window is a window already.
+        let alone = {
+            let ws = self.app.workspace.read();
+            ws.window_of_tab(tab)
+                .and_then(|w| ws.window(w))
+                .is_none_or(|w| w.tabs().len() < 2)
+        };
+        let mut items = vec![
             item(
                 "Close Tab",
                 skwir_core::command::Invocation::with_args("tab.close", &tab_args),
@@ -922,6 +929,17 @@ impl Shell {
                 "revert",
             ),
         ];
+        if !alone {
+            items.push(item(
+                "Move to New Window",
+                skwir_core::command::Invocation::with_args(
+                    "tab.move",
+                    &serde_json::json!({ "tab": tab, "new_window": true }),
+                ),
+                250,
+                "window-new",
+            ));
+        }
         self.menu = Some(MenuState::open(position, items, window, cx));
         cx.notify();
     }
@@ -966,6 +984,9 @@ impl Shell {
                 2,
                 "tab-new",
             ));
+            if let Some(open) = crate::sidebar::open_in_window(place) {
+                items.push(item("Open in New Window", open, 2, "window-new"));
+            }
         }
         items.extend(place.menu.iter().cloned());
         // What the sources of places' menus answer for it (a tag's pill:

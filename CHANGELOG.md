@@ -79,6 +79,20 @@
   a sort by rating waits for what it sorts by, a sort by size does not. A
   file whose name several types claim gets its Opens with with the rest, and
   with Properties alone at all.
+- **Several windows**: Ctrl+N (or More › New window) opens a window on the
+  folder shown, looking as the window it came from; a folder's and a place's
+  menus have Open in New Window, a tab's Move to New Window. The windows are one
+  Skwir: one queue, so two copies to one disk still take turns; one History, so
+  Ctrl+Z in any window undoes the last thing done anywhere; one Activity, one
+  player (a play started in another window moves there, and stops with its
+  window), one Settings dialog. Each window has its own tabs, split, panels and
+  look; what an action did is shown, and its toast said, in the window that
+  asked. Ctrl+Shift+W closes a window, as Ctrl+W does its last tab while
+  another is open; Ctrl+Shift+T brings it back with its tabs. With At startup
+  set to come back, every window comes back as it was, remembered as it
+  changes: Quit keeps them all, a window closed alone is forgotten. Agents and
+  scripts reach every window (`window.new`, `window.close`, `window.select`,
+  `window.list`, `window.open`; `tab.move` to a window or a new one).
 - **Quick filters and the timeline are each pane's**: both are in the View
   menu, side by side, and act on the pane it hangs from, so the panes of a
   split each have their own, and the timeline stays under its pane rather than

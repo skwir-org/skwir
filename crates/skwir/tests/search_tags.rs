@@ -321,7 +321,7 @@ fn a_search_s_hits_are_read_whole_once_asked_for() {
     std::fs::write(root.join("a note.txt"), b"a").unwrap();
     std::fs::write(root.join("b photo.png"), b"b").unwrap();
     std::fs::write(root.join("b photo.png.xmp"), b"<x:xmpmeta/>").unwrap();
-    if skwir_core::fs::xattr::set(&root.join("a note.txt"), "user.xdg.tags", b"work").is_err() {
+    if skwir_core::fs::xattr::set(root.join("a note.txt"), "user.xdg.tags", b"work").is_err() {
         eprintln!("skipped: no user extended attributes here");
         return;
     }

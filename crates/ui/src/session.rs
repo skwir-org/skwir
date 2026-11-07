@@ -151,26 +151,37 @@ impl Shell {
         }
     }
 
-    /// Remember the shape, if it changed. Called after the handful of actions
-    /// that change it, never per frame.
+    /// Remember the shape, if it changed: this window's, kept with its tabs
+    /// (`Workspace::set_shape`, ADR-122), and, as the window used last,
+    /// the shape a new window takes (`SESSION_KEY`). Called after the
+    /// handful of actions that change it and as the window comes forward,
+    /// never per frame.
     pub(crate) fn remember_session(&mut self) {
-        // Nothing is written before the last window's shape was read: the
+        // Nothing is written before the window's shape was read: the
         // tabs are put in place (and present themselves) before the shape
         // is restored, and writing then would replace it with defaults.
         let Some(stored) = &self.stored_session else {
             return;
         };
         let session = self.session();
-        if session == *stored {
-            return;
-        }
-        self.stored_session = Some(session.clone());
-        match toml::Value::try_from(&session) {
-            Ok(value) => {
-                self.app.settings.set(SESSION_KEY, value);
-                self.save_settings_later();
+        let value = match toml::Value::try_from(&session) {
+            Ok(value) => value,
+            Err(error) => {
+                tracing::warn!("cannot record the window's shape: {error:#}");
+                return;
             }
-            Err(error) => tracing::warn!("cannot record the window's shape: {error:#}"),
+        };
+        if session != *stored {
+            self.stored_session = Some(session.clone());
+            self.app
+                .workspace
+                .write()
+                .set_shape(self.window_id, Some(value.clone()));
+        }
+        let used = self.app.workspace.read().active_window_id() == self.window_id;
+        if used && self.app.settings.get::<Session>(SESSION_KEY).as_ref() != Some(&session) {
+            self.app.settings.set(SESSION_KEY, value);
+            self.save_settings_later();
         }
     }
 }
@@ -231,6 +242,13 @@ pub fn restore(app: &skwir_core::App) -> Option<Session> {
         .get::<Session>(SESSION_KEY)?
         .written()
         .upgraded();
+    (session != Session::default()).then_some(session)
+}
+
+/// A window's shape as the core keeps it with its tabs (ADR-122,
+/// `Workspace::set_shape`).
+pub fn from_value(value: toml::Value) -> Option<Session> {
+    let session = value.try_into::<Session>().ok()?.written().upgraded();
     (session != Session::default()).then_some(session)
 }
 

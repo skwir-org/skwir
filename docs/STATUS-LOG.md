@@ -12322,3 +12322,47 @@ drag left the window and came back; the name lost outside the window.
   --check`. Not checked: `just release-check`, X11 with a compositor,
   KWin's or Hyprland's blur, Peek and the whole screen in a window (they
   stay opaque by their grounds), macOS and Windows.
+
+## 2026-11-07: Windows of one program (ADR-122)
+
+- **Step 1, the core** (52c16bb3): `Workspace` holds windows
+  (`WindowTabs`); tabs sleep window by window; `window.new/close/select/
+  list`, `tab.move` with `window` or `new_window`; tabs and windows in
+  one closed list; `core.last_windows`, `core.last_tabs` read as one
+  window. `crates/core/tests/windows.rs` (7 tests). A lock held across
+  `tab.close`'s window close hung two tests until fixed.
+- **Step 2, the UI**: `finishing.rs` holds `windows`, `follow_windows`,
+  `deliver` (plans by `finishing::ran`, front requests by their pane,
+  the rest to the active window), `record_windows` (2 s); `Shell` has
+  `window_id` and an `inbox`; `Shell::new` lost the program's setup
+  (`finishing::prepare`); `sync_tabs` follows its own window, panes moved
+  away carry their view, Quick filters and timeline (`Carried`); the
+  player claimed by the window that plays; one Settings dialog;
+  `Thumbnails::tick_for`/`take_for`/`forget_asker` by `Asker` (core test
+  `a_window_drawing_never_makes_another_window_s_request_stale`);
+  `window.open` in ops-basic's folder menu, Ctrl+N; `ui.close_window`,
+  Ctrl+Shift+W; the tab menu's Move to New Window; the place menu's Open
+  in New Window; More › New window; `window-new.svg` drawn for Skwir.
+- **Seen** on Xvfb :95 (debug build, scratch XDG folders, no session
+  bus, `core.startup = last`): Ctrl+N opened a second window on Home,
+  set 32 px from the first; navigating and Ctrl+T in it left the first
+  as it was (one tab, Home); Ctrl+Shift+W closed it, Ctrl+Shift+T from
+  the first brought it back with both tabs; Ctrl+W twice on it closed a
+  tab then the window, Ctrl+Shift+T brought the window back; the state
+  file held both windows' tabs and shapes within 2 s; Quit, then a start
+  without an argument, opened both windows where they were; F3 split one
+  window only; closing the second then the first ended the program, and
+  the next start opened the first alone; a folder made in the second
+  window (Ctrl+Shift+N) was selected and toasted there; Ctrl+Z in the
+  first window took it away. A tab shown in the grid, moved by the
+  palette's "Move the tab to a new window", opened a third window still
+  in the grid, its window left with one tab in the list. Settings opened
+  in the third window, then asked in the first: the first opened none,
+  the third's stayed open (brought forward is not seen without a window
+  manager on Xvfb).
+- **Checked:** skwir-core (671), skwir-ui and ops-basic tests, skwir's
+  plugins_toggle, places_kept, tags_location, timeline_query, settings;
+  clippy on core, ui, ops-basic and skwir (all targets); rustfmt on the
+  files touched. Not checked: the player across windows (no media
+  helper run), the tab menu's row itself, a window's close button under
+  a window manager, `just a11y-check`, macOS and Windows.

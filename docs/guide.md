@@ -31,6 +31,16 @@ work where the keyboard is, by topic.
   the keys dimmer. General › Tabs lists them in the sidebar instead,
   above the places; they come back above the files while the sidebar is
   hidden.
+- **Windows.** `Ctrl+N` (or More › New window) opens a window on the
+  folder shown, looking as this one does; a folder's or a place's menu
+  has Open in New Window, a tab's Move to New Window. Each window has its
+  own tabs, split and panels; what you do in one shows its result there,
+  and `Ctrl+Z` in any window undoes the last thing you did anywhere: one
+  History, one queue, one player for all of them. `Ctrl+Shift+W` closes a
+  window (`Ctrl+W` on its last tab too, while another is open);
+  `Ctrl+Shift+T` brings it back with its tabs. Quit closes them all, and
+  with General › At startup set to come back, every window comes back as
+  it was; a window you closed yourself does not.
 - **More** (the sidebar's button, or the pane's row when the sidebar is
   hidden) holds what has no button, and Layout: where the split and the
   preview go, or Automatic, which follows the window's shape. Undo and
