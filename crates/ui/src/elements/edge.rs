@@ -42,12 +42,53 @@ pub fn edge<T: 'static>(
     reset: impl Fn(&mut Shell) + 'static,
     cx: &mut Context<Shell>,
 ) -> Stateful<Div> {
+    let el = dragged(div().id(id).absolute().top_0(), drag, reset, cx);
+    match side {
+        Side::Left => el.left_0().h_full().w(px(THICKNESS)),
+        Side::Right => el.right_0().h_full().w(px(THICKNESS)),
+        Side::Top => el.left_0().w_full().h(px(THICKNESS)),
+    }
+    .cursor(cursor(side))
+}
+
+/// The edge between two cards (`Theme::cards`, ADR-123): the gutter
+/// itself, a room of its own between them (`frame::GUTTER` across, as long
+/// as they are) rather than a strip over a border, which their rounded
+/// corners would cut; the card on `side` of it is the one it sizes.
+pub fn gutter<T: 'static>(
+    id: impl Into<ElementId>,
+    side: Side,
+    drag: T,
+    reset: impl Fn(&mut Shell) + 'static,
+    cx: &mut Context<Shell>,
+) -> Stateful<Div> {
+    let across = px(crate::elements::frame::GUTTER);
+    let el = dragged(div().id(id).flex_none().rounded_full(), drag, reset, cx);
+    match side {
+        Side::Left | Side::Right => el.w(across).h_full(),
+        Side::Top => el.h(across).w_full(),
+    }
+    .cursor(cursor(side))
+}
+
+fn cursor(side: Side) -> gpui::CursorStyle {
+    if side == Side::Top {
+        gpui::CursorStyle::ResizeUpDown
+    } else {
+        gpui::CursorStyle::ResizeLeftRight
+    }
+}
+
+/// `el` as an edge: the handle's color under the pointer, the press its
+/// own, `drag` while dragged, `reset` on a double click.
+fn dragged<T: 'static>(
+    el: Stateful<Div>,
+    drag: T,
+    reset: impl Fn(&mut Shell) + 'static,
+    cx: &mut Context<Shell>,
+) -> Stateful<Div> {
     let hover = cx.global::<Theme>().handle;
-    let el = div()
-        .id(id)
-        .absolute()
-        .top_0()
-        .hover(move |style| style.bg(hover))
+    el.hover(move |style| style.bg(hover))
         // The press is the edge's: nothing under it starts a band or
         // selects. A drag starts clean, measured from where it was pressed
         // (`Shell::edge_pressed`): a release missed outside the window
@@ -67,17 +108,7 @@ pub fn edge<T: 'static>(
                 cx.notify();
             }
         }))
-        .on_drag(drag, |_, _, _, cx| cx.new(|_| Nothing));
-    match side {
-        Side::Left => el.left_0().h_full().w(px(THICKNESS)),
-        Side::Right => el.right_0().h_full().w(px(THICKNESS)),
-        Side::Top => el.left_0().w_full().h(px(THICKNESS)),
-    }
-    .cursor(if side == Side::Top {
-        gpui::CursorStyle::ResizeUpDown
-    } else {
-        gpui::CursorStyle::ResizeLeftRight
-    })
+        .on_drag(drag, |_, _, _, cx| cx.new(|_| Nothing))
 }
 
 /// An area's share of the room it splits with another, one for each way

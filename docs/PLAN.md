@@ -792,6 +792,22 @@ Ctrl+W closes the last window, a play pauses another window's, windows
 come back where they were and as big (gpui patch 0051 for X11), and a
 wake draws only the windows it concerns. Checks in `docs/STATUS-LOG.md` (2026-11-07, "Windows of one program").
 
+## The window's areas as cards (2026-11-07)
+
+ADR-123, asked by the user after four directions drawn on a canvas: an
+experiment behind Settings › Appearance › Cards (`ui.cards`, off). The
+panes, the preview and the terminal are rounded cards on the window's
+frame, a token of every look under both grounds (`frame`, giving way to
+the text drawn on it), apart by 8 px gutters that are the edges dragged;
+the sidebar and the tabs lie on the frame; no lines between areas; the
+active pane of a split wears the accent's ring. The frame is painted
+once, around rounded holes while the window lets the desktop through
+(ADR-119). Two gpui patches: 0053, rounded content masks (a rounded
+element that hides its overflow keeps its content within its arcs, every
+primitive, on wgpu, Direct3D 11 and Metal), and 0054, `Window::tiling`
+(no gutter on an edge that meets another window). Checks in
+`docs/STATUS-LOG.md` (2026-11-07, "The window's areas as cards").
+
 ## What is left
 
 Gathered on 2026-10-20 from the notes of this plan and of
@@ -809,6 +825,13 @@ dragged between windows needs gpui to carry a drag out of a window on
 every system (the pointer's grab on X11 and Windows, a dragging session
 on macOS; Wayland's own) before it comes back (ADR-122, Rejected).
 macOS's UI is not compiled.
+
+**Cards** (ADR-123, 2026-11-07): the user's to try and keep or drop; if
+kept, the default and the ADR's status change. Not seen on Hyprland nor
+under a compositor's blur; a pixel's seam along each card's arcs while
+the window lets the desktop through. Metal's shaders (gpui 0053) are
+compiled nowhere here, and Direct3D's only by DXC (Wine's compiler takes
+neither gpui's shaders nor these). 3D models keep a rectangular clip.
 
 **Planned** (in the sections below): Indexing and AI (Phase 7, designed
 2026-10-26: ADR-089 to ADR-095); [Grammars and

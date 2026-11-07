@@ -11,6 +11,7 @@ pub mod chips;
 pub mod clip;
 pub mod columns;
 pub mod edge;
+pub mod frame;
 pub mod halo;
 pub mod map;
 pub mod marquee;

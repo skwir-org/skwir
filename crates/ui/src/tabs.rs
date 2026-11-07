@@ -590,12 +590,12 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
             .flex_none()
             .h(sized(STRIP_HEIGHT))
             .w_full()
-            .bg(theme.window_surface())
-            .border_b_1()
-            .border_color(theme.border)
+            // On the frame as cards (`Theme::cards`), which paints it.
+            .when_some(theme.chrome_ground(), gpui::Styled::bg)
+            .when(theme.lines(), |d| d.border_b_1().border_color(theme.border))
             .child(crate::elements::adaptive::AdaptiveRow {
                 variants,
-                height: STRIP_HEIGHT - 1.,
+                height: STRIP_HEIGHT - theme.line_width(),
                 chosen: None,
             })
             .into_any_element(),
@@ -709,9 +709,8 @@ fn row(
             .flex_none()
             .h(sized(STRIP_HEIGHT))
             .w_full()
-            .bg(theme.window_surface())
-            .border_b_1()
-            .border_color(theme.border),
+            .when_some(theme.chrome_ground(), gpui::Styled::bg)
+            .when(theme.lines(), |d| d.border_b_1().border_color(theme.border)),
     }
     .into_any_element()
 }

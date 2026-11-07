@@ -74,6 +74,8 @@ pub const CODE_TEXT_SIZE_KEY: &str = "ui.code_text_size";
 pub const OPACITY_KEY: &str = "ui.background_opacity";
 pub const FILES_OPACITY_KEY: &str = "ui.files_background_opacity";
 pub const PREVIEW_OPACITY_KEY: &str = "ui.preview_background_opacity";
+/// The window's areas drawn as cards on its frame (ADR-123).
+pub const CARDS_KEY: &str = "ui.cards";
 /// The least opacity a ground takes: below it, text over a light
 /// background behind a dark look would no longer read.
 pub const OPACITY_LEAST: i64 = 50;
@@ -440,6 +442,18 @@ fn fonts_from_spec() -> SettingSpec {
 
 /// The theme's look: Automatic (the desktop's preference, saying the look
 /// it comes to once the window resolved it), Light or Dark.
+/// `ui.cards`: the window's areas as cards on its frame, or apart by
+/// lines (ADR-123).
+fn cards_spec() -> SettingSpec {
+    SettingSpec::toggle(
+        CARDS_KEY,
+        "Cards",
+        "Draw the panes, the preview and the terminal as rounded cards on the window's frame, apart by a gutter rather than by lines; the sidebar and the tabs lie on the frame. The pane commands act on, while the window is split, wears a ring of the accent. The gutter between two cards is the edge to drag.",
+        false,
+    )
+    .essential()
+}
+
 fn theme_spec() -> SettingSpec {
     SettingSpec::choice(
         THEME_KEY,
@@ -1397,6 +1411,7 @@ pub(crate) fn list_icon_themes(app: &Arc<App>) {
 /// never see them.
 pub fn declare(app: &App) {
     app.settings.declare(theme_spec());
+    app.settings.declare(cards_spec());
     // 0.3.0's Desktop colors switch, read for the fonts, then the colors.
     if skwir_platform::desktop_style::FONTS {
         crate::desktop_style::keep_own_fonts(&app.settings);

@@ -1256,8 +1256,8 @@ pub fn render(
             .flex_none()
             .flex()
             .flex_col()
-            .border_t_1()
-            .border_color(theme.border)
+            // A card's band (`Theme::cards`): no line over it.
+            .when(theme.lines(), |d| d.border_t_1().border_color(theme.border))
             .bg(theme.window_surface())
             .child(controls)
             .child(chart_area)

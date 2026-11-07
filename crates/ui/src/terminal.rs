@@ -592,7 +592,8 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         let foot = f32::from(event.bounds.bottom());
-        let pointer = f32::from(event.event.position.y);
+        // As a card, the pointer is in the middle of the gutter above it.
+        let pointer = f32::from(event.event.position.y) + half_gutter(cx);
         self.terminal.height =
             Some((foot - pointer).clamp(MIN_HEIGHT, self.terminal_height_limit(window)));
         cx.notify();
@@ -684,66 +685,94 @@ impl Shell {
                 grid.tip().map(|tip| crate::toolbar::tooltip(tip, cx))
             }
         };
-        let edge = crate::elements::edge::edge(
+        // As a card (`Theme::cards`), its edge is the gutter above it
+        // (`terminal_gutter`), which its rounded corners would cut here.
+        let edge = theme.lines().then(|| {
+            crate::elements::edge::edge(
+                "terminal-resize",
+                crate::elements::edge::Side::Top,
+                HeightHandle,
+                |this| this.terminal.height = None,
+                cx,
+            )
+        });
+        let (tint, ring) = (theme.drop_target, theme.accent);
+        // To assistive technology, a terminal: its screen as text, the
+        // cursor as the caret, read out only while a screen reader listens.
+        let shown = self.a11y.then(|| Arc::clone(&self.terminal.screen));
+        let panel = div()
+            .id("terminal-panel")
+            .role(gpui::Role::Terminal)
+            .aria_label("Terminal")
+            .when_some(shown, |d, screen| {
+                let titled = (!screen.title.is_empty()).then(|| screen.title.clone());
+                d.when_some(titled, StatefulInteractiveElement::aria_description)
+                    .a11y_synthetic_children(move |builder| read_out(&screen, builder))
+            })
+            // Files dropped here are typed at the prompt, quoted: a
+            // drop asks nothing here, as nothing is copied or moved.
+            .drag_over::<DragPayload>(move |s, _, _, _| s.bg(tint).border_color(ring))
+            .on_drop(cx.listener(|this, payload: &DragPayload, window, cx| {
+                cx.stop_propagation();
+                let paths: Vec<PathBuf> = this
+                    .app
+                    .selected_refs(payload.pane)
+                    .into_iter()
+                    .map(|entry| entry.path)
+                    .collect();
+                this.terminal_type_paths(&paths, window, cx);
+            }))
+            .drag_over::<ExternalPaths>(move |s, _, _, _| s.bg(tint).border_color(ring))
+            .on_drop(cx.listener(|this, paths: &ExternalPaths, window, cx| {
+                cx.stop_propagation();
+                this.terminal_type_paths(paths.paths(), window, cx);
+            }))
+            .track_focus(&self.terminal.focus)
+            .key_context(keymap::TERMINAL)
+            .optional_tooltip(tip)
+            .on_key_down(cx.listener(Self::on_terminal_key))
+            .relative()
+            .flex_none()
+            .w_full()
+            .h(px(height))
+            .when(theme.lines(), |d| d.border_t_1().border_color(theme.border))
+            .when(theme.cards, |d| d.rounded_xl().overflow_hidden())
+            // The terminal's area: the window's own ground, its cells
+            // painting only the backgrounds programs ask for.
+            .bg(theme.window_bg())
+            .cursor(CursorStyle::IBeam)
+            .children(grid)
+            .children(edge)
+            // Where the keyboard's menu stands when the cursor is not
+            // drawn: above the panel.
+            .children(self.host_area_marker(MenuHost::Terminal));
+        Some(if theme.cards {
+            crate::elements::frame::card(&self.frame_cards, None, panel).into_any_element()
+        } else {
+            panel.into_any_element()
+        })
+    }
+
+    /// The terminal's edge as a card (`Theme::cards`): the gutter above it.
+    pub(crate) fn terminal_gutter(&self, cx: &mut Context<Self>) -> AnyElement {
+        crate::elements::edge::gutter(
             "terminal-resize",
             crate::elements::edge::Side::Top,
             HeightHandle,
             |this| this.terminal.height = None,
             cx,
-        );
-        let (tint, ring) = (theme.drop_target, theme.accent);
-        // To assistive technology, a terminal: its screen as text, the
-        // cursor as the caret, read out only while a screen reader listens.
-        let shown = self.a11y.then(|| Arc::clone(&self.terminal.screen));
-        Some(
-            div()
-                .id("terminal-panel")
-                .role(gpui::Role::Terminal)
-                .aria_label("Terminal")
-                .when_some(shown, |d, screen| {
-                    let titled = (!screen.title.is_empty()).then(|| screen.title.clone());
-                    d.when_some(titled, StatefulInteractiveElement::aria_description)
-                        .a11y_synthetic_children(move |builder| read_out(&screen, builder))
-                })
-                // Files dropped here are typed at the prompt, quoted: a
-                // drop asks nothing here, as nothing is copied or moved.
-                .drag_over::<DragPayload>(move |s, _, _, _| s.bg(tint).border_color(ring))
-                .on_drop(cx.listener(|this, payload: &DragPayload, window, cx| {
-                    cx.stop_propagation();
-                    let paths: Vec<PathBuf> = this
-                        .app
-                        .selected_refs(payload.pane)
-                        .into_iter()
-                        .map(|entry| entry.path)
-                        .collect();
-                    this.terminal_type_paths(&paths, window, cx);
-                }))
-                .drag_over::<ExternalPaths>(move |s, _, _, _| s.bg(tint).border_color(ring))
-                .on_drop(cx.listener(|this, paths: &ExternalPaths, window, cx| {
-                    cx.stop_propagation();
-                    this.terminal_type_paths(paths.paths(), window, cx);
-                }))
-                .track_focus(&self.terminal.focus)
-                .key_context(keymap::TERMINAL)
-                .optional_tooltip(tip)
-                .on_key_down(cx.listener(Self::on_terminal_key))
-                .relative()
-                .flex_none()
-                .w_full()
-                .h(px(height))
-                .border_t_1()
-                .border_color(theme.border)
-                // The terminal's area: the window's own ground, its cells
-                // painting only the backgrounds programs ask for.
-                .bg(theme.window_bg())
-                .cursor(CursorStyle::IBeam)
-                .children(grid)
-                .child(edge)
-                // Where the keyboard's menu stands when the cursor is not
-                // drawn: above the panel.
-                .children(self.host_area_marker(MenuHost::Terminal))
-                .into_any_element(),
         )
+        .into_any_element()
+    }
+}
+
+/// Half the gutter between two cards, the pointer's way from its middle
+/// to the card it sizes; none apart by lines.
+pub(crate) fn half_gutter(cx: &gpui::App) -> f32 {
+    if cx.global::<Theme>().cards {
+        crate::elements::frame::GUTTER / 2.
+    } else {
+        0.
     }
 }
 

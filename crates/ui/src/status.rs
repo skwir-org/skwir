@@ -208,9 +208,13 @@ pub(crate) fn render(
         .gap_4()
         .px_2()
         .text_body()
-        .border_t_1()
-        .border_color(theme.border)
-        .bg(theme.window_surface())
+        // A card's foot (`Theme::cards`): on its files' ground, no line.
+        .when(theme.lines(), |d| d.border_t_1().border_color(theme.border))
+        .bg(if theme.cards {
+            theme.window_bg()
+        } else {
+            theme.window_surface()
+        })
         .text_color(theme.text_muted)
         .child(items);
     if let Some((text, tip)) = as_of {

@@ -910,10 +910,11 @@ pub fn sidebar_header(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
         .items_center()
         .gap(sized(2.))
         .px(sized(6.))
-        .bg(theme.window_surface())
-        .border_b_1()
-        .border_r_1()
-        .border_color(theme.border)
+        // On the frame as cards (`Theme::cards`), which paints it.
+        .when_some(theme.chrome_ground(), gpui::Styled::bg)
+        .when(theme.lines(), |d| {
+            d.border_b_1().border_r_1().border_color(theme.border)
+        })
         .child(toggle)
         .child(div().flex_1())
         .child(more)
@@ -1036,9 +1037,10 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
                 }
                 None => Address::Text,
             },
+            // As cards, the ring says which pane is active.
             edge: if focused {
                 theme.accent
-            } else if active {
+            } else if active && theme.lines() {
                 theme.border
             } else {
                 theme.surface
@@ -1095,8 +1097,8 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
         .px(sized(6.))
         .w_full()
         .flex_none()
-        .border_b_1()
-        .border_color(theme.border)
+        // A card's band over its files (`Theme::cards`): no line under it.
+        .when(theme.lines(), |d| d.border_b_1().border_color(theme.border))
         .bg(theme.window_surface())
         .child(AdaptiveRow {
             variants: row_variants(shell.prefs.view_buttons_shown, row.ends.toggles)
@@ -1106,7 +1108,7 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
                     pane_row(shell, &row, wide, labeled, anchors, cx)
                 })
                 .collect(),
-            height: PANE_ROW_HEIGHT - 1.,
+            height: PANE_ROW_HEIGHT - theme.line_width(),
             chosen: None,
         });
     if let Some(kind) = row.menu_open

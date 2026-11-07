@@ -183,6 +183,25 @@ pub fn readable(fg: Hsla, grounds: &[Hsla], ratio: f32) -> Hsla {
     })
 }
 
+/// `color` made darker than each of `grounds` by `ratio` at least, as
+/// `readable` would move it but only down, its hue kept: what lies under
+/// them (the window's frame under its cards). Black where nothing darker
+/// stands that far from the darkest of them.
+pub fn below(color: Hsla, grounds: &[Hsla], ratio: f32) -> Hsla {
+    let aim = ratio * 1.002;
+    let under = grounds
+        .iter()
+        .map(|g| (luminance(*g) + 0.05) / aim - 0.05)
+        .fold(1., f32::min);
+    if luminance(color) <= under {
+        color
+    } else if under <= 0. {
+        gpui::black().opacity(color.a)
+    } else {
+        at_luminance(Oklab::of(color), color.a, under, false)
+    }
+}
+
 /// `fg` made to read at `ratio` on the fill `ground`, and the fill: `fg`
 /// moved as `readable` moves it, and when even black or white falls
 /// short (a fill of middle lightness), the fill moved away from it until
@@ -253,6 +272,24 @@ mod tests {
 
     fn hex(value: u32) -> Hsla {
         rgb(value).into()
+    }
+
+    #[test]
+    fn below_is_darker_than_every_ground_by_the_ratio() {
+        for grounds in [
+            [hex(0xfafafa), hex(0xf0f0f0)],
+            [hex(0x1e1e1e), hex(0x262626)],
+        ] {
+            let frame = below(grounds[0], &grounds, 1.08);
+            for ground in grounds {
+                assert!(luminance(frame) < luminance(ground));
+                assert!(ratio(frame, ground) >= 1.08, "{}", ratio(frame, ground));
+            }
+            // Not much further.
+            assert!(grounds.iter().any(|g| ratio(frame, *g) < 1.1));
+        }
+        // Nothing darker than black: black.
+        assert_eq!(below(hex(0x050505), &[hex(0x050505)], 1.08), gpui::black());
     }
 
     fn close(a: Hsla, b: Hsla) -> bool {

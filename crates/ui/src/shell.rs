@@ -434,6 +434,10 @@ pub struct Shell {
     /// (`sidebar_drawn_width`; 0 when it is not): drawn, its header holds
     /// the window's toggle and More (`corner_at`).
     pub(crate) sidebar_drawn: f32,
+    /// Where the window's cards are this frame (`Theme::cards`): written
+    /// as they are laid out, the frame painted around them
+    /// (`elements::frame`).
+    pub(crate) frame_cards: crate::elements::frame::Cards,
     /// Where More hangs from this frame, wherever its button is.
     pub(crate) more_anchor: crate::elements::popover::PopoverAnchor,
     /// Counts the presses of a mouse button in the window, and which popup
@@ -771,6 +775,7 @@ impl Shell {
             dismissed: None,
             held: None,
             sidebar_drawn: 0.,
+            frame_cards: crate::elements::frame::Cards::default(),
             more_anchor: crate::elements::popover::PopoverAnchor::default(),
             search_menu: None,
             settings: None,
@@ -3691,9 +3696,11 @@ impl Shell {
         self.pane = saved;
         // Split panes are told apart by the edge they share: the left one
         // side by side, the top one stacked. The active pane's is the accent.
+        // As cards (`Theme::cards`), by the gutter between them (`render`),
+        // the active one wearing the ring.
         let stacked = self.layout.stacked();
-        let edge = divider.then(|| split_edge(stacked, cx));
-        div()
+        let edge = (divider && theme.lines()).then(|| split_edge(stacked, cx));
+        let pane = div()
             .relative()
             .flex_1()
             // Shares of the room left once each pane is laid out from
@@ -3718,11 +3725,12 @@ impl Shell {
                     this.navigate_history(Some(id), "forward", window, cx);
                 }),
             )
-            .when(self.is_split(), |d| {
+            .when(self.is_split() && theme.lines(), |d| {
                 d.when(stacked, gpui::Styled::border_t_1)
                     .when(!stacked, gpui::Styled::border_l_1)
                     .border_color(if active { theme.accent } else { theme.border })
             })
+            .when(theme.cards, |d| d.rounded_xl().overflow_hidden())
             .child(address_bar)
             .children(narrow)
             .children(banner)
@@ -3730,8 +3738,13 @@ impl Shell {
             .children(strip)
             .children(tray)
             .child(footer)
-            .children(edge)
-            .into_any_element()
+            .children(edge);
+        if theme.cards {
+            let ring = (self.is_split() && active).then_some(theme.ring);
+            crate::elements::frame::card(&self.frame_cards, ring, pane).into_any_element()
+        } else {
+            pane.into_any_element()
+        }
     }
 
     /// The edge between split panes follows the pointer across the room
@@ -3750,6 +3763,10 @@ impl Shell {
         } else {
             (ev.event.position.x - ev.bounds.left(), ev.bounds.size.width)
         };
+        // As cards, the panes share the room the gutter between them
+        // leaves, the pointer at the gutter's middle.
+        let gutter = px(2. * crate::terminal::half_gutter(cx));
+        let (along, size) = (along - gutter / 2., size - gutter);
         let keep = if stacked {
             crate::preview::PANE_KEEP_HEIGHT
         } else {
@@ -3836,6 +3853,21 @@ fn split_edge(stacked: bool, cx: &mut Context<Shell>) -> gpui::AnyElement {
     .into_any_element()
 }
 
+/// The same edge between split panes drawn as cards (`Theme::cards`): the
+/// gutter between them.
+fn split_gutter(stacked: bool, cx: &mut Context<Shell>) -> gpui::AnyElement {
+    use crate::elements::edge::{Side, gutter};
+    let side = if stacked { Side::Top } else { Side::Left };
+    gutter(
+        "split-resize",
+        side,
+        SplitResize,
+        |this| this.split_share = SPLIT_SHARE,
+        cx,
+    )
+    .into_any_element()
+}
+
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if let Some(first) = self.first_frame.take() {
@@ -3901,6 +3933,11 @@ impl Render for Shell {
                 (true, 0) => Some(self.split_share),
                 (true, _) => Some(1. - self.split_share),
             };
+            // As cards, the gutter between them is the edge (`render_pane`
+            // draws it on the second pane's border otherwise).
+            if index > 0 && theme.cards {
+                columns.push(split_gutter(stacked, cx));
+            }
             columns.push(self.render_pane(id, share, index > 0, window, cx));
         }
         self.sync_title(window);
@@ -3911,6 +3948,8 @@ impl Render for Shell {
         };
         let panel = preview::render_panel(self, bottom, limit, self.dock_height_limit(window), cx);
         let terminal = self.render_terminal(window, cx);
+        // As cards, the terminal's edge is the gutter above it.
+        let terminal_gutter = (theme.cards && terminal.is_some()).then(|| self.terminal_gutter(cx));
         // Not deferred: GPUI cannot nest deferred draws and the dialog's own
         // dropdowns are. It is the last overlay, so it paints above the rest.
         let settings = self
@@ -3989,51 +4028,56 @@ impl Render for Shell {
             // behind the window shows through as much as they let it.
             .text_color(theme.text)
             .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .flex_1()
-                    .min_h_0()
-                    .w_full()
-                    .children(side)
-                    // The panes and the preview: a row with the panel at the
-                    // right edge, a column with it at the bottom; the panes
-                    // among themselves, side by side or stacked.
-                    .child(
-                        div()
-                            .flex()
-                            .flex_1()
-                            .min_w_0()
-                            .min_h_0()
-                            .when(bottom, gpui::Styled::flex_col)
-                            // The tabs over the panes they arrange, and the
-                            // terminal under them, whose top edge is dragged
-                            // within this column.
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .min_h_0()
-                                    .on_drag_move(cx.listener(Self::on_terminal_height_drag))
-                                    .children(strip)
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .flex_1()
-                                            .min_w_0()
-                                            .min_h_0()
-                                            .when(stacked, gpui::Styled::flex_col)
-                                            // The edge between split panes is
-                                            // dragged within these bounds.
-                                            .on_drag_move(cx.listener(Self::on_split_drag))
-                                            .children(columns),
-                                    )
-                                    .children(terminal),
-                            )
-                            .children(panel),
-                    ),
+                self.framed(
+                    &theme,
+                    window,
+                    div()
+                        .flex()
+                        .flex_row()
+                        .flex_1()
+                        .min_h_0()
+                        .w_full()
+                        .children(side)
+                        // The panes and the preview: a row with the panel at the
+                        // right edge, a column with it at the bottom; the panes
+                        // among themselves, side by side or stacked.
+                        .child(
+                            div()
+                                .flex()
+                                .flex_1()
+                                .min_w_0()
+                                .min_h_0()
+                                .when(bottom, gpui::Styled::flex_col)
+                                // The tabs over the panes they arrange, and the
+                                // terminal under them, whose top edge is dragged
+                                // within this column.
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .min_h_0()
+                                        .on_drag_move(cx.listener(Self::on_terminal_height_drag))
+                                        .children(strip)
+                                        .child(
+                                            div()
+                                                .flex()
+                                                .flex_1()
+                                                .min_w_0()
+                                                .min_h_0()
+                                                .when(stacked, gpui::Styled::flex_col)
+                                                // The edge between split panes is
+                                                // dragged within these bounds.
+                                                .on_drag_move(cx.listener(Self::on_split_drag))
+                                                .children(columns),
+                                        )
+                                        .children(terminal_gutter)
+                                        .children(terminal),
+                                )
+                                .children(panel),
+                        ),
+                ),
             )
             .children(about)
             .children(sequence)
@@ -4051,6 +4095,54 @@ impl Render for Shell {
             self.pane = pane;
         }
         self.resize_hook(root, cx)
+    }
+}
+
+impl Shell {
+    /// The gutter around the cards at each of the window's edges: none
+    /// where the window meets another window or the screen's edge
+    /// (`Window::tiling`) or the sidebar stands, none apart by lines.
+    pub(crate) fn frame_inset(&self, theme: &Theme, window: &Window) -> gpui::Edges<f32> {
+        if !theme.cards {
+            return gpui::Edges::default();
+        }
+        let tiling = window.tiling();
+        let gutter = |tiled: bool| {
+            if tiled {
+                0.
+            } else {
+                crate::elements::frame::GUTTER
+            }
+        };
+        gpui::Edges {
+            top: gutter(tiling.top),
+            right: gutter(tiling.right),
+            bottom: gutter(tiling.bottom),
+            left: gutter(tiling.left || self.sidebar_drawn > 0.),
+        }
+    }
+
+    /// The window's areas as they are drawn: as cards (`Theme::cards`,
+    /// ADR-123), on the frame, which leaves a gutter around them where the
+    /// window meets neither another window nor the screen's edge
+    /// (`Window::tiling`) and the sidebar does not stand; else as they are.
+    fn framed(&self, theme: &Theme, window: &Window, areas: gpui::Div) -> gpui::AnyElement {
+        if !theme.cards {
+            return areas.into_any_element();
+        }
+        let inset = self.frame_inset(theme, window);
+        let areas = areas
+            .pt(px(inset.top))
+            .pr(px(inset.right))
+            .pb(px(inset.bottom))
+            .pl(px(inset.left));
+        crate::elements::frame::frame(
+            &self.frame_cards,
+            theme.window_frame(),
+            theme.opacity.see_through(),
+            areas,
+        )
+        .into_any_element()
     }
 }
 

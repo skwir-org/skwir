@@ -705,8 +705,12 @@ pub fn render(
     let no_order: std::sync::Arc<[serde_json::Value]> = std::sync::Arc::new([]);
 
     // The sidebar's ground under a drop's tint, which takes its place
-    // while a drag is over it.
-    let drop_tint = theme.window_surface().blend(theme.drop_target);
+    // while a drag is over it; on the frame (`Theme::cards`), which paints
+    // its ground, a tint of it.
+    let drop_tint = match theme.chrome_ground() {
+        Some(ground) => ground.blend(theme.drop_target),
+        None => crate::color::overlay(theme.frame, theme.frame.blend(theme.drop_target)),
+    };
     let a11y = shell.a11y;
     // A tree for assistive technology: each group an item of the first
     // level, its places under it, the keys' cursor the active descendant.
@@ -724,9 +728,8 @@ pub fn render(
         .track_focus(&shell.sidebar_keys.focus)
         .key_context(crate::keymap::SIDEBAR)
         .on_any_mouse_down(|_, window, _| window.prevent_default())
-        .border_r_1()
-        .border_color(theme.border)
-        .bg(theme.window_surface())
+        .when(theme.lines(), |d| d.border_r_1().border_color(theme.border))
+        .when_some(theme.chrome_ground(), gpui::Styled::bg)
         .py_1()
         // A folder dropped beside the rows becomes a bookmark; a drop on a
         // row is that row's and never reaches here.

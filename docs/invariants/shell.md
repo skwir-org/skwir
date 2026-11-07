@@ -124,7 +124,12 @@ Views are in [views.md](views.md); what locations decide, in
   `theme::Opacity::chosen`, whole while the desktop asks for more
   contrast; the window asks the system to blur what is behind it while
   any lets it through, `shell::show_behind`, and says it is opaque
-  otherwise). A container of areas (the shell's root,
+  otherwise). As cards (`Theme::cards`, ADR-123) the frame is one more
+  ground, the chrome's opacity: painted once by `elements::frame` around
+  the cards (holes where they are while the window lets the desktop
+  through, under them while it is whole), and what lies on it (the
+  sidebar and its header, the tab strip) paints none
+  (`Theme::chrome_ground`). A container of areas (the shell's root,
   the pane's column, the preview panel) paints nothing; an area that
   shows a tint where a drag is over it lays it on its ground
   (`window_bg().blend(drop_target)`). A band laid on an area (an
@@ -360,6 +365,23 @@ of bars, split or not.
   split only.
 - Closing a split closes the pane `core.close_split` names
   (`layout::CloseSplit`); Split's tooltip says which.
+- **Cards (ADR-123, `ui.cards`).** Each pane, the preview panel and the
+  terminal are cards on the window's frame: rounded (`rounded_xl`),
+  keeping what they hold within their corners (their own
+  `overflow_hidden`: gpui clips to a rounded element's arcs, patch 0053),
+  each wrapped in `frame::card` so the frame knows where to leave its
+  hole. Nothing in a card draws an edge of the window's layout: the edge
+  between two cards is the gutter between them (`edge::gutter`, 8 px,
+  inserted by the shell between the panes, above the terminal, and by
+  the preview before its card), since a strip on a card's border would
+  be cut by its corners. The gutter around the cards goes where the
+  window meets another window or the screen's edge (`Window::tiling`,
+  patch 0054), and on the left where the sidebar stands. No line between
+  areas (`Theme::lines`): a bar is a band of `surface` over its card, a
+  pane's footer lies on its files' ground; a bar's row is then as tall as
+  the bar (`Theme::line_width`). The pane commands act on wears the ring
+  (`Theme::ring`, outside its card) while the window is split. Apart by
+  lines, the window is drawn as before.
 
 ## The address field (`omnibox.rs`, ADR-070, ADR-098)
 

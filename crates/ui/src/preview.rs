@@ -5045,8 +5045,12 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let total = f32::from(window.viewport_size().width);
-        let x = f32::from(ev.event.position.x);
+        // As a card, its right edge is the frame's, the pointer in the
+        // middle of the gutter at its left.
+        let theme = cx.global::<Theme>().clone();
+        let total =
+            f32::from(window.viewport_size().width) - self.frame_inset(&theme, window).right;
+        let x = f32::from(ev.event.position.x) + crate::terminal::half_gutter(cx);
         self.preview.width = (total - x).clamp(MIN_WIDTH, self.preview_width_limit(window));
         cx.notify();
     }
@@ -5059,8 +5063,10 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let bottom = f32::from(window.viewport_size().height);
-        let y = f32::from(ev.event.position.y);
+        let theme = cx.global::<Theme>().clone();
+        let bottom =
+            f32::from(window.viewport_size().height) - self.frame_inset(&theme, window).bottom;
+        let y = f32::from(ev.event.position.y) + crate::terminal::half_gutter(cx);
         self.preview.height =
             Some((bottom - y).clamp(MIN_HEIGHT, self.preview_height_limit(window)));
         cx.notify();
@@ -6425,22 +6431,21 @@ pub fn render_panel(
     }
     let theme = cx.global::<Theme>().clone();
     // Its edge toward the panes; a double click gives it its own size back.
-    let handle = if bottom {
-        crate::elements::edge::edge(
-            "preview-resize",
-            crate::elements::edge::Side::Top,
-            ResizeHeightHandle,
-            |this| this.preview.height = None,
-            cx,
-        )
-    } else {
-        crate::elements::edge::edge(
-            "preview-resize",
-            crate::elements::edge::Side::Left,
-            ResizeHandle,
-            |this| this.preview.width = DEFAULT_WIDTH,
-            cx,
-        )
+    // As a card (`Theme::cards`), the gutter beside it, which its rounded
+    // corners would cut inside it.
+    let (height, width) = (
+        |this: &mut Shell| this.preview.height = None,
+        |this: &mut Shell| this.preview.width = DEFAULT_WIDTH,
+    );
+    let handle = {
+        use crate::elements::edge::{Side, edge, gutter};
+        let id = "preview-resize";
+        match (bottom, theme.cards) {
+            (true, false) => edge(id, Side::Top, ResizeHeightHandle, height, cx),
+            (true, true) => gutter(id, Side::Top, ResizeHeightHandle, height, cx),
+            (false, false) => edge(id, Side::Left, ResizeHandle, width, cx),
+            (false, true) => gutter(id, Side::Left, ResizeHandle, width, cx),
+        }
     };
     // While peek shows the preview, the panel is only a picture of it: the
     // kept rows, which take the keyboard, are drawn in peek alone.
@@ -6496,11 +6501,10 @@ pub fn render_panel(
             .h(sized(crate::address::PANE_ROW_HEIGHT))
             .px(sized(6.))
             .bg(theme.window_surface())
-            .border_b_1()
-            .border_color(theme.border)
+            .when(theme.lines(), |d| d.border_b_1().border_color(theme.border))
             .child(crate::elements::adaptive::AdaptiveRow {
                 variants,
-                height: crate::address::PANE_ROW_HEIGHT - 1.,
+                height: crate::address::PANE_ROW_HEIGHT - theme.line_width(),
                 chosen: None,
             })
     });
@@ -6526,20 +6530,35 @@ pub fn render_panel(
         panel
             .w_full()
             .h(px(shell.preview_panel_height().min(limit)))
-            .border_t_1()
+            .when(theme.lines(), gpui::Styled::border_t_1)
     } else {
         panel
             .w(px(shell.preview.width.min(limit)))
             .h_full()
-            .border_l_1()
+            .when(theme.lines(), gpui::Styled::border_l_1)
     };
+    let panel = panel
+        .flex_col()
+        .children(bar)
+        .child(content.flex_1().min_h_0().w_full())
+        .children(crate::dock::render(shell, dock_limit, cx));
+    if !theme.cards {
+        return Some(panel.child(handle).into_any_element());
+    }
+    // A card, the gutter before it its edge.
+    let card = crate::elements::frame::card(
+        &shell.frame_cards,
+        None,
+        panel.rounded_xl().overflow_hidden(),
+    );
     Some(
-        panel
-            .flex_col()
-            .children(bar)
-            .child(content.flex_1().min_h_0().w_full())
-            .children(crate::dock::render(shell, dock_limit, cx))
+        div()
+            .flex()
+            .flex_none()
+            .when(bottom, |d| d.flex_col().w_full())
+            .when(!bottom, gpui::Styled::h_full)
             .child(handle)
+            .child(card)
             .into_any_element(),
     )
 }

@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **Cards** (Settings › Appearance, off by default, an experiment): the panes,
+  the preview and the terminal are drawn as rounded cards on the window's
+  frame, a shade under both of its grounds, apart by a gutter rather than by
+  lines; the sidebar and the tabs lie on the frame. The pane commands act on
+  wears a ring of the accent while the window is split. The gutter between two
+  cards is the edge to drag, lit under the pointer. Where the window meets
+  another or the screen's edge (a tiling compositor, maximized), the cards go
+  to that edge. With the window see-through, the frame lets the desktop
+  through as the bars do, each ground painted once.
+- **Rounded corners keep what they hold**: a folder's pictures in the grid, the
+  board's pictures, the dock's cover and the Settings dialog's content stop at
+  their rounded corners instead of showing square ones past them.
 - **The line between split panes snaps to the middle**: dragged within 12 px
   of it, it goes there and stays until the pointer moves on, so the panes are
   even again without a double click. The line between Properties and the

@@ -12798,3 +12798,72 @@ amended).
   menu following to the one button), Space on it turns them on again,
   the keyboard staying there, Down to the views and Up back. Not
   heard through a screen reader (`just a11y-check` not run).
+
+## 2026-11-07: The window's areas as cards (ADR-123)
+
+- **Asked:** after a canvas of four directions drawn for the user, the
+  recommendation built: pane cards with a ring, behind a setting, the
+  frame painted once, rounded clipping and the edges flush where the
+  window is tiled (gpui), an ADR.
+- **Built:**
+  - gpui 0053, rounded content masks: `ContentMask::rounded_bounds` and
+    `corner_radii` (`ContentMask::new` for a rectangle), from
+    `Style::overflow_mask` of an element hidden along both axes with
+    rounded corners (inside its border); masks intersected keep the inner
+    rounded rectangle; every primitive's fragment takes the rounded
+    rectangle's coverage, skipped while every radius is zero; the WebGL
+    decoders' strides and the record-size tests follow; Direct3D's
+    records carry the mask's fields one by one.
+  - gpui 0054, `PlatformWindow::tiling` / `Window::tiling`: Wayland's
+    tiled states whoever draws the decorations, every edge maximized or
+    on the whole screen elsewhere.
+  - `Theme::frame` (under both grounds by `CHROME`, giving way to `text`;
+    `color::below`) and `ring` (the accent guarded on the frame);
+    `Theme::cards` from `ui.cards` (Appearance, essential, off),
+    `Theme::as_cards` guarding the muted text on the frame only then;
+    `window_frame`, `chrome_ground`, `lines`, `line_width`.
+  - `elements::frame`: `Frame` paints the frame once, around the
+    `Card`s laid out in it (an even-odd path of rounded holes while the
+    window lets the desktop through, a quad under them while whole), then
+    the ring of the card commands act on; `edge::gutter`, the edge as the
+    gutter between two cards (the split, the terminal, the preview).
+  - The shell: the areas framed with a gutter where the window does not
+    meet another (`Shell::framed`), the panes, the terminal and the
+    preview panel cards; the sidebar, its header and the tab strip on the
+    frame; no line under the bars, over the footer and the timeline, on
+    the sidebar's right, the terminal's top or the preview's side; the
+    address field's line only while it has the keyboard; a pane's footer
+    on its files' ground.
+- **Seen** on Xvfb :95 (debug build, lavapipe, a synthetic home; screen
+  shots kept out of the repository): the dark and light looks with one
+  pane; a split side by side and stacked, the active pane ringed; the
+  preview at the right and, the window made tall, at the bottom; the
+  terminal under the panes; two tabs on the frame, the shown one a pill;
+  the split's gutter lit under the pointer. Grounds sampled with the
+  chrome at 70 % and the files at 60 % (Xvfb shows an ARGB window's
+  premultiplied values): the sidebar and the margins 162 (the frame's 232
+  at 70 %), the files and the footer 150 (250 at 60 %), a bar 168 (240 at
+  70 %), outside a card's arc 162: nothing painted twice. A pixel's seam
+  along the arcs while see-through (two antialiased edges meeting). On a
+  headless sway 1.12, the window tiled, the cards met its top, right and
+  bottom edges, the sidebar at its left.
+- **Checked:** `just gpui-check gpui_wgpu` (55 passed, among them naga's
+  validation of the storage, WebGL and subpixel shaders, the record
+  sizes, the quad's fixed WebGL layout, and
+  `headless_renderer_clips_to_a_rounded_content_mask` on lavapipe) and
+  `just gpui-check gpui` (128 passed, the two new `style::tests` of the
+  mask among them). Every HLSL entry point compiled with DXC 1.10
+  (`-T vs_6_0`, `ps_6_0`), as gpui's own did; under Wine, `D3DCompile`
+  (vkd3d) refuses gpui's shaders as they were and as they are ("Struct
+  store rhs is not HLSL_IR_LOAD"), so the Windows renderer was not run.
+  Metal: compiled nowhere (the macOS build of skwir type-checks,
+  `cargo check --target aarch64-apple-darwin -p skwir` in
+  `tools/package/macos.sh`'s environment, and the stitched shader's
+  header carries the mask's new fields). Both patches applied in order
+  with `git apply` to a copy of the vendored tree as committed and gave
+  it back to the byte. fmt; clippy on skwir-ui; its tests (566 passed,
+  among them the frame under both grounds of every palette, giving way
+  in Solarized's, Everforest's and Tokyo Night's light looks only,
+  `color::below`, and the guard groups on the frame); `just check-cross`
+  green. `just prune` twice (9.8 → 16.6 GB, 8.6 → 15.9 GB free).
+  `just release-check` not run.
