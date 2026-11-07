@@ -147,6 +147,7 @@ fn view_control(
     wide: bool,
     anchor: &PopoverAnchor,
     open: Option<&'static str>,
+    holes: &crate::elements::ground::Holes,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
     let choosing = open == Some(VIEW_BUTTONS);
@@ -211,7 +212,8 @@ fn view_control(
         .rounded_lg()
         .border_1()
         .border_color(theme.border)
-        .bg(theme.bg)
+        // A part of the row, as the field is.
+        .bg(theme.bg.opacity(theme.opacity.interface))
         .capture_any_mouse_down(choose)
         .when(choosing, |d| d.child(anchor.marker()));
     for spec in toolbar_views(views, current, &shell.view_buttons) {
@@ -226,7 +228,7 @@ fn view_control(
         .flex_none()
         .items_center()
         .gap(sized(2.))
-        .child(group)
+        .child(crate::elements::ground::hole(holes, gpui::rems(0.5), group))
         .child(
             menu(
                 "view-options",
@@ -953,6 +955,9 @@ enum Address {
 
 /// What a pane's row shows, read once for both of its variants.
 struct PaneRow {
+    /// The parts of the row that lie in its band (the field, the view
+    /// buttons' group), holes in its ground (`elements::ground`).
+    holes: crate::elements::ground::Holes,
     back: bool,
     forward: bool,
     /// Up, while the row has it (`ui.up_button`): whether there is a
@@ -1006,6 +1011,7 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
         let active = shell.window_pane_of(&ws) == shell.pane;
         let focused = shell.ui().address.read(cx).is_focused(window);
         PaneRow {
+            holes: crate::elements::ground::Holes::default(),
             back: pane.is_some_and(|p| p.history_pos > 0),
             forward: pane.is_some_and(|p| p.history_pos + 1 < p.history.len()),
             up: shell
@@ -1043,7 +1049,8 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
             } else if active && theme.lines() {
                 theme.border
             } else {
-                theme.surface
+                // None: the field's own ground runs to its edge.
+                gpui::transparent_black()
             },
             location,
             filter,
@@ -1102,7 +1109,6 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
         .flex_none()
         // A card's band over its files (`Theme::cards`): no line under it.
         .when(theme.lines(), |d| d.border_b_1().border_color(theme.border))
-        .when(!notched, |d| d.bg(theme.bar_ground(shell.lowered())))
         // The raised pane's row, underlined in the accent (`render_pane`);
         // the band's alone where notches cut it.
         .when(!notched && shell.drawn_raised == Some(true), |d| {
@@ -1149,7 +1155,14 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
     if let Some(panel) = crate::nav_menu::panel(shell, shell.pane, cx) {
         bar = bar.child(nav_anchor.popup(panel));
     }
-    bar.into_any_element()
+    // Its ground, once, around the field and the view buttons' group; the
+    // band's between the notches paints its own.
+    if notched {
+        bar.into_any_element()
+    } else {
+        crate::elements::ground::ground(&row.holes, theme.bar_ground(shell.lowered()), bar)
+            .into_any_element()
+    }
 }
 
 /// Whether Up goes anywhere from `shown`, as the `up` command goes: a
@@ -1338,7 +1351,9 @@ fn pane_row(
         .rounded_md()
         .border_1()
         .border_color(row.edge)
-        .bg(theme.bg)
+        // A part of the row: its own ground at the row's opacity, a hole
+        // in the row's (`elements::ground`).
+        .bg(theme.bg.opacity(theme.opacity.interface))
         .key_context(context)
         .child(address)
         // The field's card stands around all of it (`popup_around`).
@@ -1462,8 +1477,19 @@ fn pane_row(
                     .render(shell, cx),
             )
         })
-        .child(field)
-        .child(view_control(shell, wide, anchor, row.menu_open, cx));
+        .child(crate::elements::ground::hole(
+            &row.holes,
+            gpui::rems(0.375),
+            field,
+        ))
+        .child(view_control(
+            shell,
+            wide,
+            anchor,
+            row.menu_open,
+            &row.holes,
+            cx,
+        ));
     for (i, (tool, pane)) in row.tools.iter().enumerate() {
         let mut args = tool.command.args.clone();
         if let (Some(args), Some(pane)) = (args.as_object_mut(), pane) {
@@ -1504,17 +1530,23 @@ fn pane_row(
         .flex_1()
         .min_w_0()
         .px(sized(6.))
-        .bg(theme.bar_ground(shell.lowered()))
         .when(shell.drawn_raised == Some(true), |d| {
             d.child(underline(&theme))
-        })
-        .when(start.is_some(), gpui::Styled::rounded_tl_xl)
-        .when(end.is_some(), gpui::Styled::rounded_tr_xl);
+        });
+    let (from_start, to_end) = (start.is_some(), end.is_some());
     div()
         .size_full()
         .flex()
         .children(start)
-        .child(band)
+        // Its ground, rounded where a notch ends it, once around its parts.
+        .child(
+            crate::elements::ground::ground(&row.holes, theme.bar_ground(shell.lowered()), band)
+                .rounded(gpui::Corners {
+                    top_left: gpui::rems(if from_start { 0.75 } else { 0. }),
+                    top_right: gpui::rems(if to_end { 0.75 } else { 0. }),
+                    ..gpui::Corners::default()
+                }),
+        )
         .children(end)
         .into_any_element()
 }

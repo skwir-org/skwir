@@ -438,6 +438,10 @@ pub struct Shell {
     /// as they are laid out, the frame painted around them
     /// (`elements::frame`).
     pub(crate) frame_cards: crate::elements::frame::Cards,
+    /// The parts of the tab strip and of the sidebar this frame (the tab
+    /// shown), holes in their grounds apart by lines (`elements::ground`).
+    pub(crate) strip_holes: crate::elements::ground::Holes,
+    pub(crate) sidebar_holes: crate::elements::ground::Holes,
     /// While a pane is drawn as a card of a split (`render_pane`), whether
     /// it is the one commands act on (raised) or not (lowered).
     pub(crate) drawn_raised: Option<bool>,
@@ -780,6 +784,8 @@ impl Shell {
             sidebar_drawn: 0.,
             frame_cards: crate::elements::frame::Cards::default(),
             drawn_raised: None,
+            strip_holes: crate::elements::ground::Holes::default(),
+            sidebar_holes: crate::elements::ground::Holes::default(),
             more_anchor: crate::elements::popover::PopoverAnchor::default(),
             search_menu: None,
             settings: None,
@@ -1217,6 +1223,21 @@ impl Shell {
         let r = f(self);
         self.pane = saved;
         r
+    }
+
+    /// Where the parts of the chrome around the panes (the strip's, the
+    /// sidebar's) leave holes in its ground: in the frame as cards, which is
+    /// their ground there, else in the area's own (`area`).
+    pub(crate) fn chrome_holes(
+        &self,
+        theme: &Theme,
+        area: &crate::elements::ground::Holes,
+    ) -> crate::elements::ground::Holes {
+        if theme.cards {
+            self.frame_cards.holes().clone()
+        } else {
+            area.clone()
+        }
     }
 
     /// Whether the pane drawn is lowered: as cards, a split's pane commands

@@ -16,6 +16,9 @@
   between two cards is the edge to drag, lit under the pointer. With the window
   see-through, the frame lets the desktop through as the bars do, each ground
   painted once.
+- **See-through fields**: with the window's background let through, the address
+  field, the view buttons and the tab shown let it through as their bar does,
+  instead of staying solid.
 - **Rounded corners keep what they hold**: a folder's pictures in the grid, the
   board's pictures, the dock's cover and the Settings dialog's content stop at
   their rounded corners instead of showing square ones past them.

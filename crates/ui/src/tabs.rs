@@ -585,21 +585,20 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
         .map(|labeled| row(shell, &labels, shown, Some(labeled), cx))
         .collect();
     let theme = cx.global::<Theme>().clone();
-    Some(
+    Some(grounded(
+        shell,
+        &theme,
         div()
             .flex_none()
             .h(sized(STRIP_HEIGHT))
             .w_full()
-            // On the frame as cards (`Theme::cards`), which paints it.
-            .when_some(theme.chrome_ground(), gpui::Styled::bg)
             .when(theme.lines(), |d| d.border_b_1().border_color(theme.border))
             .child(crate::elements::adaptive::AdaptiveRow {
                 variants,
                 height: STRIP_HEIGHT - theme.line_width(),
                 chosen: None,
-            })
-            .into_any_element(),
-    )
+            }),
+    ))
 }
 
 /// The tabs and the button that opens another, after the sidebar toggle
@@ -704,15 +703,27 @@ fn row(
     });
     let line = div().flex().children(corner).child(strip);
     match toggles {
-        Some(toggles) => line.size_full().child(toggles),
-        None => line
-            .flex_none()
-            .h(sized(STRIP_HEIGHT))
-            .w_full()
-            .when_some(theme.chrome_ground(), gpui::Styled::bg)
-            .when(theme.lines(), |d| d.border_b_1().border_color(theme.border)),
+        Some(toggles) => line.size_full().child(toggles).into_any_element(),
+        None => grounded(
+            shell,
+            &theme,
+            line.flex_none()
+                .h(sized(STRIP_HEIGHT))
+                .w_full()
+                .when(theme.lines(), |d| d.border_b_1().border_color(theme.border)),
+        ),
     }
-    .into_any_element()
+}
+
+/// The strip's ground, once, around the tab shown (`elements::ground`):
+/// none on the frame as cards (`Theme::cards`), which paints it.
+fn grounded(shell: &Shell, theme: &Theme, strip: gpui::Div) -> AnyElement {
+    match theme.chrome_ground() {
+        Some(color) => {
+            crate::elements::ground::ground(&shell.strip_holes, color, strip).into_any_element()
+        }
+        None => strip.into_any_element(),
+    }
 }
 
 /// A tab in the strip: a pill floating in it, the tab shown a card in the
@@ -763,7 +774,12 @@ fn tab(
         .text_body()
         .text_color(color)
         .cursor_pointer()
-        .when(shown, |d| d.bg(theme.bg).border_color(theme.border))
+        // A part of the strip: its own ground at the strip's opacity, a
+        // hole in the strip's (`elements::ground`).
+        .when(shown, |d| {
+            d.bg(theme.bg.opacity(theme.opacity.interface))
+                .border_color(theme.border)
+        })
         .when(!shown, |d| {
             d.border_color(gpui::transparent_black())
                 .hover(move |s| s.bg(hover))
@@ -803,7 +819,11 @@ fn tab(
     if let Some(folder) = label.folder.clone() {
         el = crate::dnd::droppable_dir(el, folder, cx);
     }
-    el.into_any_element()
+    if !shown {
+        return el.into_any_element();
+    }
+    let holes = shell.chrome_holes(&theme, &shell.strip_holes);
+    crate::elements::ground::hole(&holes, gpui::rems(0.375), el).into_any_element()
 }
 
 /// Whether tab `id` shows its ×: the tab shown and the one under the
@@ -1000,7 +1020,7 @@ fn sidebar_row(
             gpui::transparent_black()
         })
         .cursor_pointer()
-        .when(shown, |d| d.bg(theme.bg))
+        .when(shown, |d| d.bg(theme.bg.opacity(theme.opacity.interface)))
         .when(!shown, |d| d.hover(move |s| s.bg(hover)))
         .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), cx))
         .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
@@ -1038,7 +1058,11 @@ fn sidebar_row(
     if let Some(folder) = label.folder.clone() {
         el = crate::dnd::droppable_dir(el, folder, cx);
     }
-    el.into_any_element()
+    if !shown {
+        return el.into_any_element();
+    }
+    let holes = shell.chrome_holes(&theme, &shell.sidebar_holes);
+    crate::elements::ground::hole(&holes, gpui::rems(0.375), el).into_any_element()
 }
 
 /// The row after the sidebar's tabs that opens another, as the strip's +.

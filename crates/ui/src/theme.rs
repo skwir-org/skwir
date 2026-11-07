@@ -30,10 +30,12 @@
 //!   (an alternate row, a column's header, a code block, a notice, a bar
 //!   a view draws in the files) tints its ground (`on_bg`,
 //!   `color::overlay`), as `hover` does, and lets through what the ground
-//!   lets through. What is drawn on an area as a thing of its own (a
-//!   picture, a page, a selection, a field, a card, a chip) and what is
-//!   drawn over the window (a menu, a dialog, Peek, the whole screen)
-//!   keeps `bg` and `surface`, opaque. A part both draw is handed the
+//!   lets through. A part of a bar in a ground of its own (the address
+//!   field, the view buttons' group, the tab shown) paints it at the bar's
+//!   opacity in a hole of the bar's ground (`elements::ground`). What is
+//!   drawn on an area as a thing of its own (a picture, a page, a
+//!   selection, a chip) and what is drawn over the window (a menu, a
+//!   dialog, Peek, the whole screen) keeps `bg` and `surface`, opaque. A part both draw is handed the
 //!   grounds it paints (`Grounds`).
 //! - color: the fields of [`Theme`]. `accent_text` is the accent written
 //!   as text (a link, a key, what is chosen on `term`); `accent` marks and
@@ -1270,6 +1272,12 @@ impl Theme {
         } else {
             self.window_surface()
         }
+    }
+
+    /// What the chrome around the panes shows where it is whole (the tab
+    /// strip, the sidebar): the frame as cards, else `surface`.
+    pub fn chrome_color(&self) -> Hsla {
+        if self.cards { self.frame } else { self.surface }
     }
 }
 

@@ -40,7 +40,15 @@ pub const GUTTER: f32 = 6.;
 /// Where the cards are this frame: written as they are laid out, read by
 /// the frame as it paints.
 #[derive(Clone, Default)]
-pub struct Cards(Rc<RefCell<Laid>>);
+pub struct Cards(Rc<RefCell<Laid>>, crate::elements::ground::Holes);
+
+impl Cards {
+    /// The parts lying on the frame as things of it (the tab shown, as
+    /// cards), holes in it as a card is (`ground::hole`).
+    pub fn holes(&self) -> &crate::elements::ground::Holes {
+        &self.1
+    }
+}
 
 #[derive(Default)]
 struct Laid {
@@ -243,6 +251,7 @@ impl Element for Frame {
             laid.frame = bounds;
             laid.cards.clear();
         }
+        self.cards.1.clear();
         self.child.prepaint(window, cx);
     }
 
@@ -257,7 +266,8 @@ impl Element for Frame {
         cx: &mut App,
     ) {
         let placed = self.cards.0.borrow().cards.clone();
-        paint_ground(bounds, &placed, self.ground, self.cut, window);
+        let holes = self.cards.1.laid();
+        paint_ground(bounds, &placed, &holes, self.ground, self.cut, window);
         for card in &placed {
             paint_fillets(card, window);
         }
@@ -270,11 +280,12 @@ impl Element for Frame {
 fn paint_ground(
     bounds: Bounds<Pixels>,
     cards: &[Placed],
+    holes: &[(Bounds<Pixels>, Corners<Pixels>)],
     ground: Hsla,
     cut: bool,
     window: &mut Window,
 ) {
-    if !cut || cards.is_empty() {
+    if !cut || (cards.is_empty() && holes.is_empty()) {
         window.paint_quad(gpui::fill(bounds, ground));
         return;
     }
@@ -285,6 +296,9 @@ fn paint_ground(
     for card in cards {
         outline(&mut path, card);
     }
+    for (hole, corners) in holes {
+        rounded_rect(&mut path, *hole, *corners);
+    }
     match path.build() {
         Ok(path) => window.paint_path(path, ground),
         // Nothing painted rather than a ground twice under the cards.
@@ -294,7 +308,11 @@ fn paint_ground(
 
 /// A closed rectangle, each corner rounded by its radius, held to half its
 /// shorter side.
-fn rounded_rect(path: &mut PathBuilder, bounds: Bounds<Pixels>, corners: Corners<Pixels>) {
+pub(crate) fn rounded_rect(
+    path: &mut PathBuilder,
+    bounds: Bounds<Pixels>,
+    corners: Corners<Pixels>,
+) {
     let most = (bounds.size.width / 2.).min(bounds.size.height / 2.);
     let r = corners.map(|radius| (*radius).min(most).max(px(0.)));
     let (left, top) = (bounds.left(), bounds.top());

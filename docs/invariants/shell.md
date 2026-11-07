@@ -138,11 +138,15 @@ Views are in [views.md](views.md); what locations decide, in
   its ground (`Theme::on_bg`, `color::overlay`, as `hover` does) rather
   than laying a second ground on it, and lets through what the ground
   lets through (`docs/invariants/previews.md`, Surfaces and colours);
-  `toolbar::row` paints none of its own. What is drawn on an area as a
-  thing of its own (a picture, a page, a selection, a field, a card, a
-  chip) and what is drawn over the window (menus, popovers, tooltips,
-  toasts, dialogs, Peek, the whole screen) keeps `bg` and `surface`,
-  opaque; so does Activity standing above the footer, its popover kept
+  `toolbar::row` paints none of its own. A part of a bar drawn in a
+  ground of its own (the address field and the view buttons' group in a
+  pane's row, the tab shown in the strip or the sidebar's list) paints
+  it at its bar's opacity, in a hole of the bar's ground: the bar paints
+  around it once (`elements::ground`; the frame, as cards, around the
+  tab shown). What is drawn on an area as a thing of its own (a picture,
+  a page, a selection, a chip, a card's mark) and what is drawn over the
+  window (menus, popovers, tooltips, toasts, dialogs, Peek, the whole
+  screen) keeps `bg` and `surface`, opaque; so does Activity standing above the footer, its popover kept
   open, read at a glance whatever is behind. A part drawn both in the
   panel and over the window (a preview's content area, Properties, a
   container's kept rows) is handed the grounds it paints

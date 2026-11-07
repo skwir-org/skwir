@@ -12930,3 +12930,31 @@ amended).
   of every palette, never lighter than the pane's own); `just
   check-cross` green. `just release-check` not run.
 
+## 2026-11-07: A bar's parts let the desktop through (ADR-119 amended)
+
+- **Asked:** the tab shown and the address field stayed whole with every
+  ground let through; was it so before, and is it right? Yes, by
+  ADR-119's rule (fields, cards, chips stay whole); not right for parts
+  of a bar. The user agreed to the recommendation, then to its
+  structural version once the tint fell short in the light look.
+- **Built:** `elements::ground` (`ground` paints an area's color once
+  around the `hole`s laid out in it, an even-odd path while it lets the
+  desktop through, a quad under them while whole; `Ground::rounded` for
+  a band's own corners); the frame takes holes too (`Cards::holes`, the
+  tab shown as cards). The pane's row (or its band between notches)
+  paints around the field and the view buttons' group, each at the row's
+  opacity (`PaneRow::holes`); the tab strip and the sidebar around the
+  tab shown (`Shell::strip_holes`, `sidebar_holes`, `chrome_holes`); the
+  sidebar's drop tint laid on its ground (`color::overlay`). An unfocused
+  field's line is gone (transparent). A tint (`Theme::on`) was tried
+  first and taken out.
+- **Seen** on Xvfb :95, the light look, two tabs, as cards and apart by
+  lines, whole and with the chrome at 70 % and the files at 60 %: whole,
+  the field and the tab 250 as before; let through, the field, the view
+  buttons' group behind its buttons and the tab 175, the bars, the strip
+  and the sidebar 168, the frame 162, the chosen view button whole (213).
+  The tint had read 226 (field) and 235 (tab) there; in the dark look 21
+  and 23 beside a bar of 27. At a field's corner, the seam: 148 between
+  168 and 175.
+- **Checked:** fmt; clippy on skwir-ui; its tests (567 passed).
+

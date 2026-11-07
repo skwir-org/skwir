@@ -704,13 +704,10 @@ pub fn render(
         .collect();
     let no_order: std::sync::Arc<[serde_json::Value]> = std::sync::Arc::new([]);
 
-    // The sidebar's ground under a drop's tint, which takes its place
-    // while a drag is over it; on the frame (`Theme::cards`), which paints
-    // its ground, a tint of it.
-    let drop_tint = match theme.chrome_ground() {
-        Some(ground) => ground.blend(theme.drop_target),
-        None => crate::color::overlay(theme.frame, theme.frame.blend(theme.drop_target)),
-    };
+    // A drop's tint while a drag is over it, laid on the sidebar's ground
+    // (its own, or the frame as cards), which is painted once below it.
+    let ground = theme.chrome_color();
+    let drop_tint = crate::color::overlay(ground, ground.blend(theme.drop_target));
     let a11y = shell.a11y;
     // A tree for assistive technology: each group an item of the first
     // level, its places under it, the keys' cursor the active descendant.
@@ -729,7 +726,6 @@ pub fn render(
         .key_context(crate::keymap::SIDEBAR)
         .on_any_mouse_down(|_, window, _| window.prevent_default())
         .when(theme.lines(), |d| d.border_r_1().border_color(theme.border))
-        .when_some(theme.chrome_ground(), gpui::Styled::bg)
         .py_1()
         // A folder dropped beside the rows becomes a bookmark; a drop on a
         // row is that row's and never reaches here.
@@ -1132,12 +1128,25 @@ pub fn render(
         .flex()
         .flex_col()
         .child(header)
-        .child(div().relative().flex_1().min_h_0().child(column).child(
-            crate::elements::scrollbar::vertical(
-                "sidebar-scrollbar",
-                crate::elements::scrollbar::Scrolls::Offset(shell.sidebar_scroll.clone()),
-            ),
-        ))
+        // Its ground, once, around the tab shown when the tabs are listed
+        // here (`elements::ground`); the frame's as cards.
+        .child(
+            div()
+                .relative()
+                .flex_1()
+                .min_h_0()
+                .child(match theme.chrome_ground() {
+                    Some(color) => {
+                        crate::elements::ground::ground(&shell.sidebar_holes, color, column)
+                            .into_any_element()
+                    }
+                    None => column.into_any_element(),
+                })
+                .child(crate::elements::scrollbar::vertical(
+                    "sidebar-scrollbar",
+                    crate::elements::scrollbar::Scrolls::Offset(shell.sidebar_scroll.clone()),
+                )),
+        )
         .child(edge)
         // Where a menu the keys opened hangs when its row is not drawn:
         // outside the scrolled column, whose height it would add to.

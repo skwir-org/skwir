@@ -143,3 +143,29 @@ kind of preview, bands as tints (Amendments).
   (the paper past the page's end the same as above it), its contents
   pinned and Properties above it. Not checked: X11 with a compositor,
   KWin's or Hyprland's blur, macOS and Windows.
+
+### 2026-11-07: a bar's parts as see-through as the bar
+
+- **Seen** (the user, trying ADR-123's cards with every ground let
+  through): the address field and the tab shown stayed whole, slabs on
+  the bars and the frame, the tab no longer of its card's material.
+- **Tried first:** each a tint of its ground (`color::overlay`), as the
+  bands of the amendment above. In the dark look they let through about
+  as much as their bar (76 % and 71 % against 70 %); in the light look,
+  lighter than the ground under them, a tint can lighten only by laying
+  white, and they hid 90 % and 94 %.
+- **Decided:** a part of a bar drawn in a ground of its own (the address
+  field and the view buttons' group in a pane's row, the tab shown in the
+  strip and in the sidebar's list) paints that ground at its bar's
+  opacity, and the bar paints its own around it, once (`elements::ground`:
+  `ground` around the `hole`s laid out in it; the frame, as cards, around
+  the tab shown). What marks a state on it (the chosen view, a
+  selection, a tag's chip) stays whole.
+- **Consequences:** whole, nothing changes but an unfocused field, whose
+  line in the bar's color is gone: its ground runs to its edge, a pixel
+  wider on each side. Let through, the field and the tab read their
+  ground's opacity (175 for `#fafafa` at 70 %, beside the bar's 168, on
+  Xvfb), in either look, as cards or apart by lines. Where a part's
+  rounded corner meets the bar's ground, the two antialiased edges let a
+  pixel's seam through, as the cards' corners did.
+
