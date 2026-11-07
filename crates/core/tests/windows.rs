@@ -487,3 +487,52 @@ fn tabs_kept_before_there_were_windows_come_back_as_one() {
     );
     assert!(!skwir_core::tabs::record(&app), "nothing more to write");
 }
+
+/// A wake says what it is for (ADR-122): every window when it says
+/// nothing (the queue, the tasks, a plugin's), the window a window's waker
+/// names, the pane whose listing sent it; taking it leaves nothing.
+#[test]
+fn a_wake_says_what_it_is_for() {
+    let dir = home_tempdir();
+    tree(dir.path());
+    let app = app(dir.path());
+    let wakes = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    app.set_waker(Some({
+        let wakes = std::sync::Arc::clone(&wakes);
+        std::sync::Arc::new(move || {
+            wakes.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        })
+    }));
+    navigate(&app, dir.path());
+    let pane = active(&app);
+    assert!(app.pump_until_complete(pane, WAIT));
+    let window = active_window(&app);
+    let _ = app.take_woken();
+
+    // One window's waker: that window alone.
+    let before = wakes.load(std::sync::atomic::Ordering::Relaxed);
+    (app.window_waker(window))();
+    assert!(wakes.load(std::sync::atomic::Ordering::Relaxed) > before);
+    let woken = app.take_woken();
+    assert!(woken.windows.contains(&window));
+    assert!(!woken.all);
+    assert_eq!(app.take_woken(), skwir_core::app::Woken::default());
+
+    // What says nothing, the tasks' included: every window.
+    app.wake();
+    assert!(app.take_woken().all);
+    let task = app.tasks.start("a task", skwir_core::CancelToken::new());
+    assert!(app.take_woken().all);
+    drop(task);
+
+    // A file come into the folder shown: its pane.
+    let _ = app.take_woken();
+    std::fs::write(dir.path().join("arrived.txt"), b"new").unwrap();
+    let deadline = std::time::Instant::now() + WAIT;
+    let mut panes = std::collections::HashSet::new();
+    while !panes.contains(&pane) && std::time::Instant::now() < deadline {
+        panes.extend(app.take_woken().panes);
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(panes.contains(&pane), "the listing woke its pane");
+}

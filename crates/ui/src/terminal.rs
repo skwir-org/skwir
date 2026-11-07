@@ -255,7 +255,7 @@ impl Shell {
             },
             palette: palette(theme),
         };
-        let waker = self.app.waker_handle();
+        let waker = self.waker();
         self.terminal.opening = true;
         tracing::debug!("terminal: starting a shell");
         // The shell starts in the folder: a remote's, in its lane.

@@ -22,7 +22,18 @@ use crate::plugin::PluginHost;
 use crate::registry::Registry;
 use crate::scheduler::{Priority, Scheduler};
 use crate::settings::Settings;
-use crate::workspace::{PaneId, StepFilter, Workspace};
+use crate::workspace::{PaneId, StepFilter, WindowId, Workspace};
+
+/// What the wakes since the UI last took them are for (`App::take_woken`,
+/// ADR-122): every window, or the windows and panes named. A source that
+/// says nothing (`App::wake`, `waker_handle`) is for every window, so
+/// nothing a window shows waits for a draw it was not given.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Woken {
+    pub all: bool,
+    pub windows: std::collections::HashSet<WindowId>,
+    pub panes: std::collections::HashSet<PaneId>,
+}
 
 /// Severity of a [`Notification`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -264,6 +275,8 @@ pub struct App {
     /// Shared with every `waker_handle`, so a handle taken before the UI
     /// installs its hook still reaches it.
     waker: Arc<RwLock<Option<Waker>>>,
+    /// What the wakes since the UI last took them are for (`take_woken`).
+    woken: Arc<parking_lot::Mutex<Woken>>,
     batch_size: usize,
     /// Cancelled on drop: stops every background task started by this app.
     lifetime: CancelToken,
@@ -340,6 +353,7 @@ impl App {
             terminals: crate::terminal::Terminals::default(),
             providers: RwLock::new(HashMap::new()),
             waker: Arc::default(),
+            woken: Arc::default(),
             batch_size: config.batch_size,
             lifetime,
         });
@@ -577,20 +591,48 @@ impl App {
 
     /// Install the UI wake hook: called (from any thread) whenever listing or
     /// executor events are queued, so the UI can `pump` instead of polling.
+    /// The queue, the tasks and the thumbnails wake every window (theirs
+    /// mark what they are for, `waker_handle`); a thumbnail asked for one
+    /// wakes that one (`Thumbnails::wake_asker_with`).
     pub fn set_waker(&self, waker: Option<Waker>) {
-        self.executor.set_waker(waker.clone());
-        self.thumbnails.set_waker(waker.clone());
-        self.tasks.set_waker(waker.clone());
+        let any = waker.is_some();
         *self.waker.write() = waker;
+        let marked = any.then(|| self.waker_handle());
+        self.executor.set_waker(marked.clone());
+        self.thumbnails.set_waker(marked.clone());
+        self.tasks.set_waker(marked);
     }
 
     /// A callable wake hook for background work that outlives the borrow of
     /// `App`. It calls the hook installed when it is called, not when it was
     /// taken: plugins take theirs at registration, before the UI installs
-    /// one (a no-op while none is).
+    /// one (a no-op while none is). What it wakes is for every window.
     pub fn waker_handle(&self) -> Waker {
-        let waker = Arc::clone(&self.waker);
+        self.marking_waker(|woken| woken.all = true)
+    }
+
+    /// A wake hook for what one window shows alone (its preview, its
+    /// player, its terminal): it draws, the others do not (ADR-122).
+    pub fn window_waker(&self, window: WindowId) -> Waker {
+        self.marking_waker(move |woken| {
+            woken.windows.insert(window);
+        })
+    }
+
+    /// A wake hook for what one pane shows (its listing): the window it is
+    /// in when the wake is taken draws, wherever its tab went since.
+    pub fn pane_waker(&self, pane: PaneId) -> Waker {
+        self.marking_waker(move |woken| {
+            woken.panes.insert(pane);
+        })
+    }
+
+    /// A wake hook that marks what it is for, then calls the hook installed
+    /// then.
+    fn marking_waker(&self, mark: impl Fn(&mut Woken) + Send + Sync + 'static) -> Waker {
+        let (waker, woken) = (Arc::clone(&self.waker), Arc::clone(&self.woken));
         Arc::new(move || {
+            mark(&mut woken.lock());
             let hook = waker.read().clone();
             if let Some(hook) = hook {
                 hook();
@@ -600,11 +642,19 @@ impl App {
 
     /// Invoke the wake hook, if any, with no lock held (as
     /// [`Self::waker_handle`]): a hook may set the waker or wake again.
+    /// What it wakes is for every window.
     pub fn wake(&self) {
+        self.woken.lock().all = true;
         let hook = self.waker.read().clone();
         if let Some(hook) = hook {
             hook();
         }
+    }
+
+    /// What the wakes since the last call were for, and from now nothing:
+    /// the UI draws the windows they concern (ADR-122).
+    pub fn take_woken(&self) -> Woken {
+        std::mem::take(&mut *self.woken.lock())
     }
 
     // ------------------------------------------------------------ providers
@@ -865,6 +915,22 @@ impl App {
 
     /// `open_location`, what an agent's call may open checked already.
     fn open_admitted(&self, location: &Location) -> anyhow::Result<Arc<dyn OpenLocation>> {
+        self.open_waking(location, self.waker_handle())
+    }
+
+    /// `location` opened for `pane`, what an agent's call may open checked:
+    /// what it sends wakes the pane's window alone (ADR-122).
+    fn open_for(&self, pane: PaneId, location: &Location) -> anyhow::Result<Arc<dyn OpenLocation>> {
+        self.agent_may_open(location)?;
+        self.open_waking(location, self.pane_waker(pane))
+    }
+
+    /// `location` opened, what it sends waking with `waker`.
+    fn open_waking(
+        &self,
+        location: &Location,
+        waker: Waker,
+    ) -> anyhow::Result<Arc<dyn OpenLocation>> {
         let provider = self
             .provider(&location.scheme)
             .ok_or_else(|| anyhow::anyhow!("no provider for scheme `{}`", location.scheme))?;
@@ -874,7 +940,7 @@ impl App {
                 scheduler: self.scheduler.clone(),
                 cancel: self.lifetime.child(),
                 batch_size: self.batch_size,
-                waker: Some(self.waker_handle()),
+                waker: Some(waker),
                 metadata: Arc::clone(&self.metadata),
                 fields: Arc::clone(&self.fields),
                 hints: Arc::clone(&self.hints),
@@ -1355,7 +1421,10 @@ impl App {
             .take_kept(&location);
         let (open, listing) = match kept {
             Some(kept) => kept,
-            None => (self.open_admitted(&location)?, self.new_listing(&location)),
+            None => (
+                self.open_waking(&location, self.pane_waker(pane))?,
+                self.new_listing(&location),
+            ),
         };
         let mut ws = self.workspace.write();
         let p = ws
@@ -1394,7 +1463,7 @@ impl App {
             p.keep_only(wanted)
         };
         for location in missing {
-            match self.open_location(&location) {
+            match self.open_for(pane, &location) {
                 Ok(open) => {
                     let listing = self.new_listing(&location);
                     if let Some(p) = self.workspace.write().pane_mut(pane) {
@@ -2257,7 +2326,7 @@ impl App {
             None => return,
         };
         for location in missing {
-            match self.open_location(&location) {
+            match self.open_for(pane, &location) {
                 Ok(open) => {
                     let listing = self.new_listing(&location);
                     if let Some(p) = self.workspace.write().pane_mut(pane) {

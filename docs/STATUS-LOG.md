@@ -12509,3 +12509,24 @@ The user's follow-ups to ADR-122 after its four steps.
   `a_place_survives_the_state_file_and_a_hand_that_breaks_it`. Not
   checked: Windows and macOS (gpui's own placement, compiled only),
   GNOME's, KDE's or a tiling window manager on X11, Hyprland.
+- **A wake draws only the windows it concerns**: every wake notified
+  every window's shell, so a film playing in one window drew the others
+  at its rate. A wake now says what it is for (`App::take_woken`):
+  `App::wake` and `waker_handle` every window (the queue, the tasks,
+  settings, plugins: never wrong, only costly); `App::window_waker` one
+  window (`Shell::waker`: its media sessions, previews, readers,
+  terminal, map tiles); `App::pane_waker` a pane, given to the listings
+  a pane opens, keeps and opens in place; `Thumbnails::wake_asker_with`
+  the windows that asked for a picture (a flight keeps every asker). The
+  program syncs every window, then draws the windows concerned, a
+  pane's by where its tab is, and those whose panes the pump moved.
+  **Measured** on Xvfb :95 (debug build, `ZED_MEASUREMENTS=1`, frames
+  drawn by both windows in 10 s, a 25 fps film playing in one): 250
+  frames with the fix, 250 with one window alone, 463 with the old
+  "every window" put back for the comparison (lavapipe drew both, not
+  quite twice). Idle: 0. **Seen**: a file made in the folder the other
+  window showed appeared there while the film played; that window's grid
+  drew the films' thumbnails. **Checked:** clippy on skwir-core,
+  skwir-ui and skwir for Linux and Windows; skwir-core's and
+  skwir-ui's tests (1233 together), new: `a_wake_says_what_it_is_for`,
+  `a_picture_wakes_the_windows_that_asked_for_it`.

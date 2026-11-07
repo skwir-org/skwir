@@ -890,7 +890,7 @@ impl Shell {
         scroll.pending = Some((number, cancel.clone()));
         let generation = scroll.generation;
         let tx = scroll.tx.clone();
-        let wake = self.app.waker_handle();
+        let wake = self.waker();
         self.app.scheduler.spawn(
             Priority::Visible,
             "document-scroll-page",

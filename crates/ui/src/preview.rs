@@ -2632,7 +2632,7 @@ impl Shell {
                 picture_source: None,
                 page_side: None,
             });
-            self.app.wake();
+            (self.waker())();
             return;
         };
         // What is read of the file, shared by every step (ADR-101).
@@ -2670,7 +2670,7 @@ impl Shell {
         let nested_tx = self.preview.nested_tx.clone();
         let members = members_dir(self.app.cache.root());
         let previews = Arc::clone(&self.app.previews);
-        let wake = self.app.waker_handle();
+        let wake = self.waker();
         let is_dir = entry.is_dir();
         // The file's own name, while its type is not settled: the worker
         // reads the bytes to settle it, once.
@@ -3316,7 +3316,7 @@ impl Shell {
         };
         let slot = Arc::new(parking_lot::Mutex::new(AheadSlot::Asking));
         let previews = Arc::clone(&self.app.previews);
-        let wake = self.app.waker_handle();
+        let wake = self.waker();
         let job = Arc::clone(&slot);
         let token = cancel.clone();
         self.app.scheduler.spawn_in(
@@ -3663,7 +3663,7 @@ impl Shell {
         let fields = Arc::clone(&self.app.fields);
         let path = path.to_path_buf();
         let name = entry.type_name().to_owned();
-        let wake = self.app.waker_handle();
+        let wake = self.waker();
         // The reading before is for another file, or another version.
         if let Some(before) = self.preview.fields_cancel.take() {
             before.cancel();
@@ -3794,7 +3794,7 @@ impl Shell {
         let cancel = self.app.lifetime().child();
         self.preview.sources_cancel = Some(cancel.clone());
         let tx = self.preview.sources_tx.clone();
-        let wake = self.app.waker_handle();
+        let wake = self.waker();
         let weak = self.app.weak();
         let target = skwir_core::op::EntryRef::new(entry.file(), path);
         self.app.scheduler.spawn_in(
@@ -4430,7 +4430,7 @@ impl Shell {
             generation,
         });
         let tx = self.preview.count_tx.clone();
-        let wake = self.app.waker_handle();
+        let wake = self.waker();
         let lane = paths
             .first()
             .map_or(skwir_core::scheduler::Lane::SHARED, |p| {

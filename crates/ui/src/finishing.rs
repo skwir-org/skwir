@@ -328,6 +328,10 @@ fn woken(cx: &mut App) -> bool {
         end(cx);
         return false;
     }
+    // What woke it, taken before anything is applied: a wake that comes
+    // while the windows sync is for the next pass.
+    let app = Arc::clone(&state.app);
+    let woken = app.take_woken();
     let openings = std::mem::take(&mut *state.openings.lock());
     for opening in openings {
         reopen(cx, Some(opening), false);
@@ -342,26 +346,38 @@ fn woken(cx: &mut App) -> bool {
     }
     follow_windows(cx);
     deliver(cx);
-    let windows: Vec<WindowHandle<Shell>> = cx
-        .global::<Finishing>()
-        .windows
-        .iter()
-        .map(|(_, handle)| *handle)
-        .collect();
+    let windows: Vec<(WindowId, WindowHandle<Shell>)> = cx.global::<Finishing>().windows.clone();
     // What a pane moved to another window carries there, given before any
     // window follows the tabs, taken by the one that shows it.
-    for window in &windows {
+    for (_, window) in &windows {
         let _ = window.update(cx, |shell, _, cx| shell.give_away_moved(cx));
     }
+    // Every window takes in what the core sent; the windows it concerns
+    // draw (ADR-122): all of them for a wake that says nothing, the window
+    // a wake names, and the windows of the panes that woke or whose
+    // listings moved, wherever their tabs are now. A film playing in one
+    // draws that one alone.
     let mut backlog = false;
-    for window in windows {
-        backlog |= window
-            .update(cx, |shell, window, cx| {
-                shell.sync(window, cx);
-                cx.notify();
-                shell.backlog()
-            })
-            .unwrap_or(false);
+    let mut panes = woken.panes;
+    for (_, window) in &windows {
+        let _ = window.update(cx, |shell, window, cx| {
+            shell.sync(window, cx);
+            backlog |= shell.backlog();
+            panes.extend(shell.take_pumped());
+        });
+    }
+    let concerned: std::collections::HashSet<WindowId> = {
+        let ws = app.workspace.read();
+        panes
+            .iter()
+            .filter_map(|pane| ws.window_of(*pane))
+            .chain(woken.windows.iter().copied())
+            .collect()
+    };
+    for (id, window) in windows {
+        if woken.all || concerned.contains(&id) {
+            let _ = window.update(cx, |_, _, cx| cx.notify());
+        }
     }
     cx.global_mut::<Finishing>().carried.clear();
     record_windows(cx);

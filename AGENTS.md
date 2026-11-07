@@ -393,6 +393,15 @@ working in an area, also read that area's rules (see
   (a handle calls the hook installed when it is called, so one taken at
   registration works). `Complete` ends the initial listing; updates and
   removals may still follow.
+- **A wake says what it is for** (ADR-122): what one window shows alone
+  (its preview, its player, its terminal, its readers, its map tiles)
+  wakes with `Shell::waker` (`App::window_waker`); a pane's listing
+  wakes its pane (`App::pane_waker`, given by `open_in`); a thumbnail
+  its asker's window. Only the windows a wake concerns draw
+  (`finishing::woken`), and every one for a wake that says nothing
+  (`App::wake`, `waker_handle`): a source that names no window is never
+  wrong, only costly. Name the window where a source is one window's and
+  wakes often.
 - A wake applies what the core sent (`Shell::sync`), then asks for a
   draw; it never leaves the applying to the draw. A window the
   compositor is not showing (another workspace, minimized) is never asked

@@ -784,9 +784,10 @@ a tab; macOS's Finder openings handed in (compiled only). **Step 4**:
 tabs dragged between windows and out of them, then withdrawn: gpui
 carries a drag between windows on Wayland alone, and the gesture did
 something else on each system; what stays of gpui patch 0050 lets a
-window last used by keyboard take a drop. Deviation: a wake still
-redraws every window (a film in one redraws the others at its rate).
-Checks in `docs/STATUS-LOG.md` (2026-11-07, "Windows of one program").
+window last used by keyboard take a drop. Follow-ups the same day:
+Ctrl+W closes the last window, a play pauses another window's, windows
+come back where they were and as big (gpui patch 0051 for X11), and a
+wake draws only the windows it concerns. Checks in `docs/STATUS-LOG.md` (2026-11-07, "Windows of one program").
 
 ## What is left
 
@@ -795,9 +796,9 @@ Gathered on 2026-10-20 from the notes of this plan and of
 may have covered one: check the source before starting it. Work that
 closes an item removes its line; work that leaves one adds it here.
 
-**Windows** (ADR-122, 2026-11-07): a wake redraws every window;
-telling which windows a wake concerns needs wakers of their own (media
-frames, previews, thumbnails by asker). A window's place on Windows and
+**Windows** (ADR-122, 2026-11-07): what answers one question
+(`latest::Latest`, a note, a search, a picture's colors) still wakes
+every window once. A window's place on Windows and
 macOS is gpui's, as Zed has it, compiled only (X11's checked under
 openbox and with no window manager, gpui patch 0051; not under GNOME's
 or KDE's). A tab

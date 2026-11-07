@@ -246,6 +246,8 @@ struct Flight {
     asked: u64,
     /// Who asked it last: a window (`Asker`), its frames its own.
     asker: Asker,
+    /// Everyone who asked it, woken when it lands (`Thumbnails::wake_for`).
+    askers: Vec<Asker>,
     /// The best priority it was asked with.
     priority: Priority,
     cancel: CancelToken,
@@ -338,6 +340,10 @@ pub struct Thumbnails {
     state: Mutex<State>,
     scheduler: Scheduler,
     waker: Mutex<Option<Waker>>,
+    /// What wakes each asker that said how (a window, ADR-122): a picture
+    /// it asked for wakes it alone; one asked by another, or by anyone,
+    /// wakes everyone (`waker`).
+    asker_wakers: Mutex<HashMap<Asker, Waker>>,
     /// Stops every queued and running request when the owner goes away.
     lifetime: CancelToken,
 }
@@ -369,12 +375,23 @@ impl Thumbnails {
             }),
             scheduler,
             waker: Mutex::new(None),
+            asker_wakers: Mutex::new(HashMap::new()),
             lifetime,
         })
     }
 
     pub fn set_waker(&self, waker: Option<Waker>) {
         *self.waker.lock() = waker;
+    }
+
+    /// What wakes `asker` when a picture it asked for lands, or, `None`,
+    /// the waker that wakes everyone.
+    pub fn wake_asker_with(&self, asker: Asker, waker: Option<Waker>) {
+        let mut wakers = self.asker_wakers.lock();
+        match waker {
+            Some(waker) => wakers.insert(asker, waker),
+            None => wakers.remove(&asker),
+        };
     }
 
     /// Bytes of decoded images the thumbnails shown may take, as the user
@@ -469,6 +486,7 @@ impl Thumbnails {
     /// `asker` draws no more (a window closed): what it asked for and no
     /// one else did since is cancelled, and its frames forgotten.
     pub fn forget_asker(&self, asker: Asker) {
+        self.asker_wakers.lock().remove(&asker);
         let mut s = self.state.lock();
         s.frames.remove(&asker);
         for flight in s.in_flight.values().filter(|f| f.asker == asker) {
@@ -534,6 +552,9 @@ impl Thumbnails {
             if let Some(flight) = s.in_flight.get_mut(&key) {
                 flight.asked = frame;
                 flight.asker = asker;
+                if !flight.askers.contains(&asker) {
+                    flight.askers.push(asker);
+                }
                 flight.priority = flight.priority.min(priority);
                 return ThumbState::Pending;
             }
@@ -565,6 +586,7 @@ impl Thumbnails {
             Flight {
                 asked: frame,
                 asker,
+                askers: vec![asker],
                 priority,
                 cancel: self.lifetime.child(),
                 made,
@@ -830,9 +852,12 @@ impl Thumbnails {
                 p.store(&req, img);
             }
         }
+        let mut askers = Vec::new();
         let evicted = {
             let mut s = self.state.lock();
-            s.in_flight.remove(&key);
+            if let Some(flight) = s.in_flight.remove(&key) {
+                askers = flight.askers;
+            }
             match produced {
                 Some((_, img)) => {
                     s.decoded += 1;
@@ -861,7 +886,7 @@ impl Thumbnails {
             }
         };
         drop(evicted);
-        self.wake();
+        self.wake_for(&askers);
         true
     }
 
@@ -870,6 +895,22 @@ impl Thumbnails {
         let waker = self.waker.lock().clone();
         if let Some(w) = waker {
             w();
+        }
+    }
+
+    /// Wake those who asked for a picture that landed: each by its own
+    /// waker, everyone when one has none.
+    fn wake_for(&self, askers: &[Asker]) {
+        let own: Option<Vec<Waker>> = {
+            let wakers = self.asker_wakers.lock();
+            askers
+                .iter()
+                .map(|asker| wakers.get(asker).cloned())
+                .collect()
+        };
+        match own {
+            Some(own) if !own.is_empty() => own.iter().for_each(|wake| wake()),
+            _ => self.wake(),
         }
     }
 }
@@ -1020,6 +1061,64 @@ mod tests {
         t.forget_asker(b);
         assert_eq!(cancelled(&t, 1), Some(true), "its window closed");
         release.send(()).ok();
+    }
+
+    /// A picture two windows asked for wakes both, each by its own waker
+    /// and nothing else; one asked by a window that said no waker wakes
+    /// everyone (ADR-122).
+    #[test]
+    fn a_picture_wakes_the_windows_that_asked_for_it() {
+        let t = Thumbnails::new(Scheduler::new(2));
+        let slow = Fake::new("slow", Stage::Generate, true);
+        let (release, wait) = std::sync::mpsc::channel::<()>();
+        *slow.during.lock() = Some(Box::new(move || {
+            let _ = wait.recv_timeout(Duration::from_secs(10));
+        }));
+        t.register("core", slow);
+        let count = || Arc::new(AtomicUsize::new(0));
+        let waker = |n: &Arc<AtomicUsize>| -> Waker {
+            let n = Arc::clone(n);
+            Arc::new(move || {
+                n.fetch_add(1, Ordering::Relaxed);
+            })
+        };
+        let (a, b, everyone) = (count(), count(), count());
+        t.set_waker(Some(waker(&everyone)));
+        t.wake_asker_with(Asker(1), Some(waker(&a)));
+        t.wake_asker_with(Asker(2), Some(waker(&b)));
+        assert!(matches!(
+            t.get_for(Asker(1), req(1), Priority::Visible),
+            ThumbState::Pending
+        ));
+        assert!(matches!(
+            t.get_for(Asker(2), req(1), Priority::Visible),
+            ThumbState::Pending
+        ));
+        release.send(()).ok();
+        // The next picture is made without waiting.
+        drop(release);
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while b.load(Ordering::Relaxed) == 0 && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(
+            (
+                a.load(Ordering::Relaxed),
+                b.load(Ordering::Relaxed),
+                everyone.load(Ordering::Relaxed)
+            ),
+            (1, 1, 0)
+        );
+
+        // Asked by a window that said nothing: everyone.
+        assert!(matches!(
+            t.get_for(Asker(9), req(2), Priority::Visible),
+            ThumbState::Pending
+        ));
+        while everyone.load(Ordering::Relaxed) == 0 && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(everyone.load(Ordering::Relaxed), 1);
     }
 
     #[test]

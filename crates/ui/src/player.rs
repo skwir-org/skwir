@@ -653,7 +653,7 @@ impl Shell {
             let (previews, tx, wake) = (
                 Arc::clone(&self.app.previews),
                 self.player.queue_tx.clone(),
-                self.app.waker_handle(),
+                self.waker(),
             );
             let (targets, current) = (queue.targets.clone(), path.to_owned());
             let members = crate::preview::members_dir(self.app.cache.root());
@@ -736,7 +736,7 @@ impl Shell {
         let (previews, tx, wake) = (
             Arc::clone(&self.app.previews),
             self.player.tx.clone(),
-            self.app.waker_handle(),
+            self.waker(),
         );
         let job = self.app.lifetime().child();
         if let Some(before) = self.player.opening.replace(job.clone()) {
@@ -805,7 +805,7 @@ impl Shell {
         let (previews, tx, wake) = (
             Arc::clone(&self.app.previews),
             self.player.cover_tx.clone(),
-            self.app.waker_handle(),
+            self.waker(),
         );
         let directory = self
             .app

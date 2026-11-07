@@ -1492,9 +1492,17 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   (`finishing::reopen`). With none up, the windows come back (ADR-115).
   macOS: `on_open_urls` hands the Finder's and the Dock's openings in;
   a launch from a terminal is a program of its own there.
-- A wake redraws every window (the catch-all `notify` after each sync):
-  a film playing in one window redraws the others at its rate. Telling
-  which windows a wake concerns waits for wakers of their own.
+- **A wake draws the windows it concerns** (`finishing::woken`): every
+  window syncs, then draws if the wake was for all (`App::wake`, an
+  unnamed `waker_handle`: the queue, the tasks, settings, plugins), named
+  it (`App::window_waker`, `Shell::waker`: its media sessions, previews,
+  readers, terminal, map tiles; `Thumbnails::wake_asker_with`: a picture
+  it asked for), or named a pane in it (`App::pane_waker`: the pane's
+  listings, kept and opened in place included), or if the pump moved a
+  pane in it (`PumpReport::panes_changed`, `Shell::take_pumped`), its
+  tab wherever it is now. A thumbnail asked by two windows wakes both
+  (`Flight::askers`). What answers one question (`latest::Latest`)
+  wakes every window, once.
 
 ## What the window remembers
 

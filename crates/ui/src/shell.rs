@@ -342,6 +342,9 @@ pub struct Shell {
     pub prefs: Preferences,
     /// Listing events were left for the next sync (`PumpReport::backlog`).
     backlog: bool,
+    /// The panes, any window's, whose listings the last sync's pump moved:
+    /// their windows draw (`finishing::woken`).
+    pumped: Vec<skwir_core::workspace::PaneId>,
     /// Preferences changed from the toolbars and not saved yet
     /// (`settings::remember`).
     pub(crate) unsaved: std::collections::BTreeMap<String, String>,
@@ -678,7 +681,7 @@ impl Shell {
             skwir_core::workspace::WindowTabs::active_pane,
         );
         let map_tiles = std::rc::Rc::new(std::cell::RefCell::new(
-            crate::map_tiles::TileStore::new(&app),
+            crate::map_tiles::TileStore::new(&app, app.window_waker(window_id)),
         ));
         let mut shell = Shell {
             app,
@@ -717,6 +720,7 @@ impl Shell {
             prefs: Preferences::default(),
             unsaved: std::collections::BTreeMap::new(),
             backlog: false,
+            pumped: Vec::new(),
             sidebar_sections: crate::sidebar::Sections::default(),
             arranged_places: std::cell::RefCell::default(),
             roots: crate::sidebar::Roots::default(),
@@ -809,6 +813,11 @@ impl Shell {
         shell.restore_session(shape, split, window, cx);
         // The taskbar's button shows the progress of the window used.
         shell.work.borrow().shown_in(Some(window));
+        // A thumbnail this window asked for wakes it alone (`leave` forgets).
+        shell
+            .app
+            .thumbnails
+            .wake_asker_with(shell.thumb_asker(), Some(shell.waker()));
         shell
     }
 
@@ -835,6 +844,13 @@ impl Shell {
     /// requests asked, never another window's (ADR-122).
     pub(crate) fn thumb_asker(&self) -> skwir_core::thumbs::Asker {
         skwir_core::thumbs::Asker(u64::from(self.window_id.0) + 1)
+    }
+
+    /// What wakes this window alone, for what it shows alone (its preview,
+    /// its player, its terminal, its readers): the others do not draw
+    /// (ADR-122, `finishing::woken`).
+    pub(crate) fn waker(&self) -> skwir_core::location::Waker {
+        self.app.window_waker(self.window_id)
     }
 
     /// Put the window back the way it was left: the same view, the same
@@ -2279,6 +2295,11 @@ impl Shell {
         self.backlog
     }
 
+    /// The panes whose listings the last sync's pump moved, taken.
+    pub(crate) fn take_pumped(&mut self) -> Vec<skwir_core::workspace::PaneId> {
+        std::mem::take(&mut self.pumped)
+    }
+
     /// Quit (ADR-115). While something runs or waits its turn, ask: Skwir
     /// finishes it without its window (the answer Enter gives, and Quit
     /// again), or stops now. With nothing under way, quit at once: an
@@ -3193,6 +3214,7 @@ impl Shell {
         let t0 = Instant::now();
         let report = self.app.pump_report();
         self.backlog = report.backlog;
+        self.pumped.extend_from_slice(&report.panes_changed);
         self.sync_views();
         self.sync_keymap(cx);
         // What the program took from the core for this window

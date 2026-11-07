@@ -146,7 +146,9 @@ ADR-115 (one process for every window; launches always handed over).
   holds a pane resolves its window from it (the pane-ownership rule).
 - The UI's program (`finishing.rs`) holds every window; a wake is taken
   once and handed to each window, whose shell keeps only its own panes'
-  state.
+  state. A wake says what it is for (`App::take_woken`: every window, a
+  window, a pane), and only the windows it concerns draw: a film playing
+  in one draws that one alone.
 - An extra window costs its panes' listings, its surface and its atlas,
   not a program.
 - A window opens where it was and as big (point 7), 1200 × 800 when

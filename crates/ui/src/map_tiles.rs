@@ -119,11 +119,13 @@ pub struct TileStore {
 }
 
 impl TileStore {
-    pub fn new(app: &Arc<skwir_core::App>) -> TileStore {
+    /// The window's tiles, their arrival waking it with `wake` (its own,
+    /// `Shell::waker`).
+    pub fn new(app: &Arc<skwir_core::App>, wake: skwir_core::location::Waker) -> TileStore {
         let (tx, rx) = flume::unbounded();
         TileStore {
             tiles: Arc::clone(&app.tiles),
-            wake: app.waker_handle(),
+            wake,
             tx,
             rx,
             entries: HashMap::new(),

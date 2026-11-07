@@ -473,7 +473,7 @@ impl Shell {
             let (generation, tx) = (reader.locating, reader.located.0.clone());
             let cancel = reader.lifetime.child();
             let text = anchor.text.clone();
-            let wake = self.app.waker_handle();
+            let wake = self.waker();
             self.app.scheduler.spawn(
                 Priority::Visible,
                 "document-locate",
