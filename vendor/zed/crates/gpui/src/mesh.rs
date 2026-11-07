@@ -1011,6 +1011,7 @@ mod tests {
             bounds: pixels(100.5, 50., 300., 200.),
             content_mask: ContentMask {
                 bounds: pixels(0., 0., 800., 150.),
+                ..Default::default()
             },
             mesh,
             view,

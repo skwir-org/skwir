@@ -652,7 +652,7 @@ impl gpui::Element for Cut {
         let (top, bottom) = (f32::from(bounds.top()), f32::from(bounds.bottom()));
         let end = px(end.max(top).min(bottom));
         let shown = Bounds::from_corners(bounds.origin, point(bounds.right(), end));
-        window.with_content_mask(Some(gpui::ContentMask { bounds: shown }), |window| {
+        window.with_content_mask(Some(gpui::ContentMask::new(shown)), |window| {
             self.child.paint(window, cx);
         });
     }

@@ -489,7 +489,7 @@ impl Element for BarChart {
     ) {
         let colors = self.colors;
         let laid = Rc::clone(&prepaint.laid);
-        window.with_content_mask(Some(ContentMask { bounds }), |window| {
+        window.with_content_mask(Some(ContentMask::new(bounds)), |window| {
             let span = |(a, b): (usize, usize)| {
                 let (first, last) = (laid.slots.get(a)?, laid.slots.get(b)?);
                 Some(Bounds::new(

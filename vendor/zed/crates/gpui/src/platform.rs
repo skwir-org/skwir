@@ -1426,6 +1426,16 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn window_decorations(&self) -> Decorations {
         Decorations::Server
     }
+    /// Which edges of the window meet another window or the screen's edge, whoever draws its
+    /// decorations: those the compositor says are tiled where it says so (Wayland), all of them
+    /// while the window is maximized or covers the screen.
+    fn tiling(&self) -> Tiling {
+        match self.window_decorations() {
+            Decorations::Client { tiling } => tiling,
+            Decorations::Server if self.is_maximized() || self.is_fullscreen() => Tiling::tiled(),
+            Decorations::Server => Tiling::default(),
+        }
+    }
     fn set_app_id(&mut self, _app_id: &str) {}
     /// Keep the screen on and the session from going idle (no screen saver,
     /// no blanking, no lock) while `inhibited`. Ignored where unsupported.

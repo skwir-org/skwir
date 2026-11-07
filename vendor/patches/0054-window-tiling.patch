@@ -1,0 +1,65 @@
+0054 window-tiling: `Window::tiling` says which edges of the window meet another window or the screen's edge whoever draws its decorations: as the compositor configured it on Wayland (server-side decorations too, where `window_decorations` says none), every edge while maximized or on the whole screen elsewhere
+
+diff --git a/crates/gpui/src/platform.rs b/crates/gpui/src/platform.rs
+index 4dfb4cf..e7c4d86 100644
+--- a/crates/gpui/src/platform.rs
++++ b/crates/gpui/src/platform.rs
+@@ -1426,6 +1426,16 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
+     fn window_decorations(&self) -> Decorations {
+         Decorations::Server
+     }
++    /// Which edges of the window meet another window or the screen's edge, whoever draws its
++    /// decorations: those the compositor says are tiled where it says so (Wayland), all of them
++    /// while the window is maximized or covers the screen.
++    fn tiling(&self) -> Tiling {
++        match self.window_decorations() {
++            Decorations::Client { tiling } => tiling,
++            Decorations::Server if self.is_maximized() || self.is_fullscreen() => Tiling::tiled(),
++            Decorations::Server => Tiling::default(),
++        }
++    }
+     fn set_app_id(&mut self, _app_id: &str) {}
+     /// Keep the screen on and the session from going idle (no screen saver,
+     /// no blanking, no lock) while `inhibited`. Ignored where unsupported.
+diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
+index cd020c0..bc81f77 100644
+--- a/crates/gpui/src/window.rs
++++ b/crates/gpui/src/window.rs
+@@ -22,7 +22,7 @@ use crate::{
+     SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle,
+     Style, SubpixelSprite, Subscription, SystemWindowTab, SystemWindowTabController, TabStopMap,
+     Task, TextInputConfiguration, TextInputStateChange, TextRenderingMode, TextStyle,
+-    TextStyleRefinement, ThermalState, TransformationMatrix, Underline, UnderlineStyle,
++    TextStyleRefinement, ThermalState, Tiling, TransformationMatrix, Underline, UnderlineStyle,
+     WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
+     WindowInsets, WindowOptions, WindowParams, WindowTextSystem, WindowVisibility, point,
+     prelude::*, px, rems, size, transparent_black,
+@@ -3111,6 +3111,12 @@ impl Window {
+         self.platform_window.window_decorations()
+     }
+ 
++    /// Returns which edges of the window meet another window or the screen's edge, whoever draws
++    /// its decorations (`PlatformWindow::tiling`): a window can then draw its content to them.
++    pub fn tiling(&self) -> Tiling {
++        self.platform_window.tiling()
++    }
++
+     /// Returns whether this window is resizable.
+     pub fn is_resizable(&self) -> bool {
+         self.is_resizable
+diff --git a/crates/gpui_linux/src/linux/wayland/window.rs b/crates/gpui_linux/src/linux/wayland/window.rs
+index a53cd27..68190cc 100644
+--- a/crates/gpui_linux/src/linux/wayland/window.rs
++++ b/crates/gpui_linux/src/linux/wayland/window.rs
+@@ -2206,6 +2206,11 @@ impl PlatformWindow for WaylandWindow {
+         state.surface.commit();
+     }
+ 
++    fn tiling(&self) -> Tiling {
++        // As the compositor configured it, server-side decorations or not.
++        self.borrow().tiling
++    }
++
+     fn window_decorations(&self) -> Decorations {
+         let state = self.borrow();
+         match state.decorations {

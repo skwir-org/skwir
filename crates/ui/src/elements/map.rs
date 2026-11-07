@@ -1986,10 +1986,10 @@ impl Element for Map {
     ) {
         let colors = self.colors;
         let line_h = label_line(window);
-        window.with_content_mask(Some(ContentMask { bounds }), |window| {
+        window.with_content_mask(Some(ContentMask::new(bounds)), |window| {
             window.paint_quad(gpui::fill(bounds, colors.paper));
             for tile in &prepaint.tiles {
-                window.with_content_mask(Some(ContentMask { bounds: tile.clip }), |window| {
+                window.with_content_mask(Some(ContentMask::new(tile.clip)), |window| {
                     if let Err(error) = window.paint_image(
                         tile.bounds,
                         tile.bounds,
@@ -2122,7 +2122,7 @@ impl Element for Map {
                         inner.origin - point(px((w - side) / 2.), px((h - side) / 2.)),
                         size(px(w), px(h)),
                     );
-                    window.with_content_mask(Some(ContentMask { bounds: inner }), |window| {
+                    window.with_content_mask(Some(ContentMask::new(inner)), |window| {
                         let _ = window.paint_image(
                             cover,
                             cover,

@@ -4,8 +4,8 @@ use anyhow::{Context as _, Result};
 use bytemuck::{Pod, Zeroable};
 use collections::FxHashMap;
 use gpui::{
-    AtlasTextureId, Background, Bounds, DevicePixels, GpuSpecs, Path, Point, PrimitiveBatch,
-    ScaledPixels, Scene, Size, get_gamma_correction_ratios,
+    AtlasTextureId, Background, Bounds, Corners, DevicePixels, GpuSpecs, Path, Point,
+    PrimitiveBatch, ScaledPixels, Scene, Size, get_gamma_correction_ratios,
 };
 use log::warn;
 #[cfg(not(target_family = "wasm"))]
@@ -85,6 +85,8 @@ impl From<Bounds<ScaledPixels>> for PodBounds {
 struct SurfaceParams {
     bounds: PodBounds,
     content_mask: PodBounds,
+    content_mask_rounded_bounds: PodBounds,
+    content_mask_corner_radii: [f32; 4],
 }
 
 #[repr(C)]
@@ -110,6 +112,8 @@ struct PathRasterizationVertex {
     st_position: Point<f32>,
     color: Background,
     bounds: Bounds<ScaledPixels>,
+    rounded_bounds: Bounds<ScaledPixels>,
+    corner_radii: Corners<ScaledPixels>,
 }
 
 pub struct WgpuSurfaceConfig {
@@ -1865,6 +1869,8 @@ impl WgpuRendererCore {
                 st_position: v.st_position,
                 color: path.color,
                 bounds,
+                rounded_bounds: path.content_mask.rounded_bounds,
+                corner_radii: path.content_mask.corner_radii,
             }));
         }
 
@@ -2721,7 +2727,7 @@ mod tests {
             order: 0,
             border_style: BorderStyle::Solid,
             bounds,
-            content_mask: ContentMask { bounds },
+            content_mask: ContentMask::new(bounds),
             background: color.into(),
             border_color: color,
             corner_radii: Corners::default(),
@@ -2765,6 +2771,38 @@ mod tests {
         assert_pixel(&image, 24, 16, RED);
         assert_pixel(&image, 40, 16, BLUE);
         assert_pixel(&image, 56, 16, BLUE);
+        Ok(())
+    }
+
+    /// A content mask with rounded corners keeps what is drawn within their arcs, and the rest of
+    /// the mask whole; a mask whose radii are all zero changes nothing.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn headless_renderer_clips_to_a_rounded_content_mask() -> anyhow::Result<()> {
+        let mut renderer = WgpuHeadlessRenderer::new()?;
+        let mut scene = Scene::default();
+        let mut quad = solid_quad(0.0, 0.0, 32.0, 32.0, gpui::red());
+        quad.content_mask.rounded_bounds = quad.bounds;
+        quad.content_mask.corner_radii = Corners::all(ScaledPixels(12.0));
+        scene.insert_primitive(quad);
+        let mut square = solid_quad(32.0, 0.0, 32.0, 32.0, gpui::blue());
+        square.content_mask.rounded_bounds = square.bounds;
+        scene.insert_primitive(square);
+        scene.finish();
+
+        let image = renderer.render_scene_to_image(&scene, device_size(64, 32))?;
+        // Outside the arcs, at each corner.
+        for (x, y) in [(1, 1), (30, 1), (30, 30), (1, 30)] {
+            assert_pixel(&image, x, y, BLACK);
+        }
+        // Inside them, and along the straight edges between them.
+        for (x, y) in [(16, 16), (16, 0), (31, 16), (16, 31), (0, 16), (5, 5)] {
+            assert_pixel(&image, x, y, RED);
+        }
+        // Unrounded: every corner pixel drawn.
+        for (x, y) in [(32, 0), (63, 0), (63, 31), (32, 31)] {
+            assert_pixel(&image, x, y, BLUE);
+        }
         Ok(())
     }
 
@@ -2930,7 +2968,7 @@ mod tests {
         gpui::PaintMesh {
             order: 0,
             bounds,
-            content_mask: ContentMask { bounds: mask },
+            content_mask: ContentMask::new(mask),
             mesh: mesh.clone(),
             view: straight_ahead(),
         }
@@ -3229,14 +3267,14 @@ mod tests {
 
     #[test]
     fn webgl_record_sizes_match_shader_word_strides() {
-        assert_eq!(std::mem::size_of::<Quad>(), 40 * 4);
-        assert_eq!(std::mem::size_of::<Shadow>(), 28 * 4);
-        assert_eq!(std::mem::size_of::<PathRasterizationVertex>(), 26 * 4);
+        assert_eq!(std::mem::size_of::<Quad>(), 48 * 4);
+        assert_eq!(std::mem::size_of::<Shadow>(), 36 * 4);
+        assert_eq!(std::mem::size_of::<PathRasterizationVertex>(), 34 * 4);
         assert_eq!(std::mem::size_of::<PathSprite>(), 4 * 4);
-        assert_eq!(std::mem::size_of::<Underline>(), 16 * 4);
-        assert_eq!(std::mem::size_of::<MonochromeSprite>(), 28 * 4);
-        assert_eq!(std::mem::size_of::<SubpixelSprite>(), 28 * 4);
-        assert_eq!(std::mem::size_of::<PolychromeSprite>(), 24 * 4);
+        assert_eq!(std::mem::size_of::<Underline>(), 24 * 4);
+        assert_eq!(std::mem::size_of::<MonochromeSprite>(), 36 * 4);
+        assert_eq!(std::mem::size_of::<SubpixelSprite>(), 36 * 4);
+        assert_eq!(std::mem::size_of::<PolychromeSprite>(), 32 * 4);
     }
 
     #[test]
@@ -3264,6 +3302,22 @@ mod tests {
                         width: 7.0.into(),
                         height: 8.0.into(),
                     },
+                },
+                rounded_bounds: Bounds {
+                    origin: Point {
+                        x: 34.0.into(),
+                        y: 35.0.into(),
+                    },
+                    size: Size {
+                        width: 36.0.into(),
+                        height: 37.0.into(),
+                    },
+                },
+                corner_radii: Corners {
+                    top_left: 38.0.into(),
+                    top_right: 39.0.into(),
+                    bottom_right: 40.0.into(),
+                    bottom_left: 41.0.into(),
                 },
             },
             background: linear_gradient(
@@ -3323,6 +3377,14 @@ mod tests {
                 6.0_f32.to_bits(),
                 7.0_f32.to_bits(),
                 8.0_f32.to_bits(),
+                34.0_f32.to_bits(),
+                35.0_f32.to_bits(),
+                36.0_f32.to_bits(),
+                37.0_f32.to_bits(),
+                38.0_f32.to_bits(),
+                39.0_f32.to_bits(),
+                40.0_f32.to_bits(),
+                41.0_f32.to_bits(),
                 1,
                 1,
                 0,

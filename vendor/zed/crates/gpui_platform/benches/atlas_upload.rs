@@ -219,7 +219,7 @@ fn tile_scene(tile: AtlasTile) -> Scene {
             ScaledPixels(tile.bounds.size.height.0 as f32),
         ),
     };
-    let content_mask = ContentMask { bounds };
+    let content_mask = ContentMask::new(bounds);
     let mut scene = Scene::default();
     match tile.texture_id.kind {
         AtlasTextureKind::Monochrome => scene.insert_primitive(MonochromeSprite {

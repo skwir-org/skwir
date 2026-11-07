@@ -653,7 +653,7 @@ impl Element for UniformGrid {
                 }
                 let items_range = (visible.start * cols)..((visible.end * cols).min(item_count));
                 let items = render_items(items_range.clone(), cols, window, cx);
-                let content_mask = ContentMask { bounds };
+                let content_mask = ContentMask::new(bounds);
                 window.with_content_mask(Some(content_mask), |window| {
                     for (mut item, ix) in items.into_iter().zip(items_range) {
                         let (x, y) = slots.origin(ix);

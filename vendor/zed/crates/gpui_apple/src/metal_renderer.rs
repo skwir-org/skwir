@@ -3,7 +3,7 @@ use crate::metal_meshes::MeshPass;
 use anyhow::{Context as _, Result};
 use block2::RcBlock;
 use gpui::{
-    AtlasTextureId, Background, Bounds, ContentMask, DevicePixels, Mesh, MeshPreparation,
+    AtlasTextureId, Background, Bounds, ContentMask, Corners, DevicePixels, Mesh, MeshPreparation,
     PaintSurface, Path, Point, PrimitiveBatch, ScaledPixels, Scene, Size, point, size,
 };
 #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
@@ -158,6 +158,8 @@ pub struct PathRasterizationVertex {
     pub st_position: Point<f32>,
     pub color: Background,
     pub bounds: Bounds<ScaledPixels>,
+    pub rounded_bounds: Bounds<ScaledPixels>,
+    pub corner_radii: Corners<ScaledPixels>,
 }
 
 impl MetalRenderer {
@@ -933,6 +935,8 @@ impl MetalRenderer {
                 st_position: v.st_position,
                 color: path.color,
                 bounds: path.bounds.intersect(&path.content_mask.bounds),
+                rounded_bounds: path.content_mask.rounded_bounds,
+                corner_radii: path.content_mask.corner_radii,
             }));
         }
         let vertex_instance_bindings = writer.write(&vertices)?;
@@ -1941,7 +1945,7 @@ mod tests {
         scene.insert_primitive(PaintSurface {
             order: 0,
             bounds,
-            content_mask: ContentMask { bounds },
+            content_mask: ContentMask::new(bounds),
             image_buffer: image_buffer.clone(),
         });
         drop(image_buffer);

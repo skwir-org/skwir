@@ -85,6 +85,8 @@ carry: the script takes it from the Inter release Skwir's packages pin
 | `0050-drop-is-the-pointers` | A drag the platform brings into a window counts as the pointer's, so a window last used by keyboard takes its drop | — |
 | `0052-inferred-list-measures-at-its-width` | A list sized by its items (`ListSizingBehavior::Infer`) whose width is set measures them at the width they are drawn at, so items that wrap make it as tall as they are: a width it says from its first frame, its parent's (`w_full`) once drawn at it, that first frame asking for another; Zed's measured them at their own width, and a row that wraps was cut under a scrollbar (the Undo history, 2026-11-07) | — |
 | `0051-x11-window-place` | X11: a window opens where it is asked (program-specified position, static gravity, no 2 px nudge but at 0, 0), maximized or on the whole screen as asked before it maps (`_NET_WM_STATE` written), and says where it is on the root window, a resize included | — |
+| `0053-rounded-content-mask` | An element with rounded corners that hides its overflow keeps what it holds within its corners (`ContentMask::rounded_bounds`, `corner_radii`), on wgpu, Direct3D 11 and Metal | — |
+| `0054-window-tiling` | `Window::tiling`: the edges that meet another window or the screen's, whoever draws the decorations (Wayland's tiled states with server-side ones too) | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
 
@@ -851,6 +853,63 @@ opened where they were left, to the pixel, across restarts; a window moved
 and resized at once was read where it went; one maximized (wmctrl) opened
 maximized and went back to its own size and place. Not checked under
 GNOME's, KDE's or a tiling window manager.
+
+### 0053: Rounded content masks
+
+Skwir draws its window's areas as rounded cards (ADR-123), whose content
+(a terminal's cell backgrounds, a page, a film, a selected row) must stop
+at their corners. gpui's content mask was a rectangle ("only rectangular
+content masks are supported"): a rounded element that hid its overflow
+let its children's corners show past its arcs.
+
+- **The mask holds a rounded rectangle** beside its bounds:
+  `ContentMask::rounded_bounds` and `corner_radii`, all zero by default
+  (`ContentMask::new`), which draws as before. Masks intersected keep the
+  intersection of their bounds and the rounded rectangle of the one with
+  rounded corners, the smaller of two (the one inside): a mask holds one,
+  so an outer rounded mask's corners are not kept inside an inner one's.
+- **Where one comes from**: `Style::overflow_mask` of an element hidden
+  along both axes with rounded corners, inside its border as CSS clips
+  (each radius less the wider of its two borders, held to half the inner
+  size). Hidden along one axis, or square, the mask stays a rectangle.
+- **Every primitive keeps to it** (quads, shadows, paths as rasterized,
+  underlines, monochrome, subpixel and polychrome sprites, surfaces): the
+  vertex stage hands the rounded rectangle on, flat, and the fragment's
+  alpha is the rounded rectangle's coverage (`quad_sdf`, antialiased over
+  a pixel), skipped while every radius is zero. Meshes (0033) keep their
+  rectangle.
+- **The records grow by 32 bytes** (a mask is 12 words): the WebGL
+  decoders read the new strides (the quad's fixed decoder 12 texels), and
+  `webgl_record_sizes_match_shader_word_strides` and the quad layout test
+  say so. Direct3D's records carry the mask's fields one by one, laid out
+  as gpui's struct.
+
+Checked: `just gpui-check` (naga validates the storage, WebGL and
+subpixel variants; a headless render on lavapipe clips a quad's four
+corners and keeps a square mask's: `headless_renderer_clips_to_a_rounded_content_mask`;
+the mask's tests in `style::tests`). Every HLSL entry point compiles
+with Microsoft's DXC (`-T vs_6_0`, `ps_6_0`), as the original did; Wine's
+`D3DCompile` (vkd3d) compiles neither the original nor this one ("Struct
+store rhs is not HLSL_IR_LOAD"), so the Windows renderer is unchecked
+under Wine. Metal is written as the others and compiled nowhere.
+
+### 0054: A window's tiling
+
+A window drawn as cards keeps a gutter around them where it floats, and
+draws them to its edges where it meets another window or the screen's
+edge (ADR-123). gpui said which edges were tiled only through
+`Window::window_decorations`, and only with client-side decorations:
+Skwir asks for the server's, and saw none, though Wayland's compositor
+sends the tiled states either way (`xdg_toplevel`'s `tiled_*`, version 2).
+
+- `PlatformWindow::tiling`, by default the client decorations' tiling,
+  else every edge while the window is maximized or on the whole screen,
+  else none; Wayland's is the tiling the compositor configured.
+- `Window::tiling` asks it.
+
+Checked on a headless sway 1.12: a tiled window drew its cards to its
+top, right and bottom edges (the sidebar held its left). Not checked:
+Hyprland, GNOME's and KDE's tiling, X11 (maximized), macOS and Windows.
 
 ## Adding or changing a patch
 

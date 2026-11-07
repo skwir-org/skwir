@@ -476,7 +476,7 @@ impl Element for Rows {
             seen.set(None);
         }
         let mut elements = Vec::with_capacity(laid.len());
-        window.with_content_mask(Some(ContentMask { bounds }), |window| {
+        window.with_content_mask(Some(ContentMask::new(bounds)), |window| {
             for (mut element, y, _) in laid {
                 element.prepaint_at(point(bounds.origin.x, bounds.origin.y + px(y)), window, cx);
                 elements.push(element);
@@ -516,7 +516,7 @@ impl Element for Rows {
         window: &mut Window,
         cx: &mut App,
     ) {
-        window.with_content_mask(Some(ContentMask { bounds }), |window| {
+        window.with_content_mask(Some(ContentMask::new(bounds)), |window| {
             for row in &mut prepaint.rows {
                 row.paint(window, cx);
             }

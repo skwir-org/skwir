@@ -760,6 +760,7 @@ mod tests {
             bounds: pixels_at(quarter, quarter, 2. * quarter, 2. * quarter),
             content_mask: ContentMask {
                 bounds: pixels_at(0., 0., SIDE as f32, SIDE as f32),
+                ..Default::default()
             },
             mesh: Arc::clone(&mesh),
             view: MeshView {
@@ -885,7 +886,7 @@ mod tests {
             order: 0,
             border_style: BorderStyle::Solid,
             bounds: at,
-            content_mask: ContentMask { bounds: at },
+            content_mask: ContentMask::new(at),
             background: color.into(),
             border_color: color,
             corner_radii: Corners::default(),
@@ -913,6 +914,7 @@ mod tests {
             bounds: bounds(quarter, quarter, 2. * quarter, 2. * quarter),
             content_mask: ContentMask {
                 bounds: bounds(0., 0., SIDE as f32, SIDE as f32),
+                ..Default::default()
             },
             mesh: Arc::clone(&mesh),
             view: MeshView {

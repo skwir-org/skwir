@@ -532,7 +532,7 @@ impl Element for Treemap {
     ) {
         let style = self.style;
         let (_, s) = label_metrics(window);
-        window.with_content_mask(Some(ContentMask { bounds }), |window| {
+        window.with_content_mask(Some(ContentMask::new(bounds)), |window| {
             for b in prepaint.blocks.iter() {
                 let (tile, corners) = (b.tile, Corners::all(b.radius));
                 let none = Edges::default();
@@ -572,9 +572,7 @@ impl Element for Treemap {
                     ));
                 }
                 // Labels stay inside their tile.
-                let mask = ContentMask {
-                    bounds: inset(tile, px(2.)),
-                };
+                let mask = ContentMask::new(inset(tile, px(2.)));
                 window.with_content_mask(Some(mask), |window| {
                     let line_height = px((LINE * s) as f32);
                     for (line, origin) in [&b.name, &b.detail].into_iter().flatten() {

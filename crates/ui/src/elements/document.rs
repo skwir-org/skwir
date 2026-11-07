@@ -147,7 +147,7 @@ impl Element for DocumentElement {
             gpui::CursorStyle::IBeam
         };
         window.set_cursor_style(cursor, &prepaint.hitbox);
-        window.with_content_mask(Some(ContentMask { bounds }), |window| {
+        window.with_content_mask(Some(ContentMask::new(bounds)), |window| {
             let _ = window.paint_image(
                 image_bounds,
                 image_bounds,

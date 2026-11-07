@@ -650,6 +650,8 @@ impl DirectXRenderer {
                 st_position: v.st_position,
                 color: path.color,
                 bounds: path.clipped_bounds(),
+                rounded_bounds: path.content_mask.rounded_bounds,
+                corner_radii: path.content_mask.corner_radii,
             }));
         }
 
@@ -1315,6 +1317,8 @@ struct PathRasterizationSprite {
     st_position: Point<f32>,
     color: Background,
     bounds: Bounds<ScaledPixels>,
+    rounded_bounds: Bounds<ScaledPixels>,
+    corner_radii: Corners<ScaledPixels>,
 }
 
 #[derive(Clone, Copy)]

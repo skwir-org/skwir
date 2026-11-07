@@ -1164,7 +1164,7 @@ impl Element for TextElement {
         let scroll_x = prepaint.scroll_x;
         // A line longer than the field is clipped to it, never drawn over
         // what sits beside the field.
-        window.with_content_mask(Some(gpui::ContentMask { bounds }), |window| {
+        window.with_content_mask(Some(gpui::ContentMask::new(bounds)), |window| {
             if let Some(selection) = prepaint.selection.take() {
                 window.paint_quad(selection);
             }

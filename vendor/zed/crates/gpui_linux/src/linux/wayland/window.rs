@@ -2206,6 +2206,11 @@ impl PlatformWindow for WaylandWindow {
         state.surface.commit();
     }
 
+    fn tiling(&self) -> Tiling {
+        // As the compositor configured it, server-side decorations or not.
+        self.borrow().tiling
+    }
+
     fn window_decorations(&self) -> Decorations {
         let state = self.borrow();
         match state.decorations {

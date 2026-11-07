@@ -727,11 +727,37 @@ impl Style {
                         point(bounds.origin.x, min.y),
                         point(bounds.bottom_right().x, max.y),
                     ),
-                    // both hidden
-                    (false, false) => Bounds::from_corners(min, max),
+                    // both hidden: within the corners too, as CSS clips to the inside of a
+                    // rounded border.
+                    (false, false) => {
+                        let inner = Bounds::from_corners(min, max);
+                        let outer = self
+                            .corner_radii
+                            .to_pixels(rem_size)
+                            .clamp_radii_for_quad_size(bounds.size);
+                        let inset = Edges {
+                            top: min.y - bounds.origin.y,
+                            right: bounds.bottom_right().x - max.x,
+                            bottom: bounds.bottom_right().y - max.y,
+                            left: min.x - bounds.origin.x,
+                        };
+                        let corner_radii = Corners {
+                            top_left: outer.top_left - inset.top.max(inset.left),
+                            top_right: outer.top_right - inset.top.max(inset.right),
+                            bottom_right: outer.bottom_right - inset.bottom.max(inset.right),
+                            bottom_left: outer.bottom_left - inset.bottom.max(inset.left),
+                        }
+                        .map(|radius| (*radius).max(Pixels::ZERO))
+                        .clamp_radii_for_quad_size(inner.size);
+                        return Some(ContentMask {
+                            bounds: inner,
+                            rounded_bounds: inner,
+                            corner_radii,
+                        });
+                    }
                 };
 
-                Some(ContentMask { bounds })
+                Some(ContentMask::new(bounds))
             }
         }
     }
@@ -1389,6 +1415,75 @@ mod tests {
     use super::*;
 
     use util_macros::perf;
+
+    /// An element with rounded corners that hides its overflow keeps its children within its
+    /// corners, inside its border; one that hides it along one axis, or has square corners, only
+    /// within its bounds.
+    #[test]
+    fn a_rounded_element_masks_its_corners() {
+        let bounds = Bounds::new(point(px(10.), px(20.)), size(px(100.), px(60.)));
+        let mut style = Style {
+            overflow: point(Overflow::Hidden, Overflow::Hidden),
+            corner_radii: Corners::all(px(12.)).map(|radius| (*radius).into()),
+            ..Style::default()
+        };
+        let mask = style.overflow_mask(bounds, px(16.)).unwrap();
+        assert_eq!(mask.bounds, bounds);
+        assert_eq!(mask.rounded_bounds, bounds);
+        assert_eq!(mask.corner_radii, Corners::all(px(12.)));
+
+        // Within a 2 px border, the inner corners are as much smaller.
+        style.border_widths = Edges::all(px(2.).into());
+        style.border_color = Some(red());
+        let mask = style.overflow_mask(bounds, px(16.)).unwrap();
+        let inner = Bounds::new(point(px(12.), px(22.)), size(px(96.), px(56.)));
+        assert_eq!((mask.bounds, mask.rounded_bounds), (inner, inner));
+        assert_eq!(mask.corner_radii, Corners::all(px(10.)));
+
+        // A radius larger than half the element is held to it.
+        style.corner_radii = Corners::all(px(100.)).map(|radius| (*radius).into());
+        let mask = style.overflow_mask(bounds, px(16.)).unwrap();
+        assert_eq!(mask.corner_radii, Corners::all(px(28.)));
+
+        style.overflow = point(Overflow::Visible, Overflow::Hidden);
+        assert!(!style.overflow_mask(bounds, px(16.)).unwrap().is_rounded());
+        style.overflow = point(Overflow::Hidden, Overflow::Hidden);
+        style.corner_radii = Corners::default();
+        assert!(!style.overflow_mask(bounds, px(16.)).unwrap().is_rounded());
+    }
+
+    /// Masks intersected keep their rectangles' intersection and the rounded rectangle of the
+    /// one inside: a rectangle within a rounded mask stays clipped by its corners.
+    #[test]
+    fn intersected_masks_keep_the_inner_rounded_rectangle() {
+        let card = Bounds::new(point(px(0.), px(0.)), size(px(200.), px(100.)));
+        let rounded = ContentMask {
+            bounds: card,
+            rounded_bounds: card,
+            corner_radii: Corners::all(px(12.)),
+        };
+        let list = ContentMask::new(Bounds::new(point(px(0.), px(40.)), size(px(200.), px(60.))));
+        for mask in [list.intersect(&rounded), rounded.intersect(&list)] {
+            assert_eq!(mask.bounds, list.bounds);
+            assert_eq!(mask.rounded_bounds, card);
+            assert_eq!(mask.corner_radii, Corners::all(px(12.)));
+        }
+
+        let chip = Bounds::new(point(px(10.), px(50.)), size(px(40.), px(20.)));
+        let inner = ContentMask {
+            bounds: chip,
+            rounded_bounds: chip,
+            corner_radii: Corners::all(px(4.)),
+        };
+        for mask in [inner.intersect(&rounded), rounded.intersect(&inner)] {
+            assert_eq!(mask.rounded_bounds, chip);
+            assert_eq!(mask.corner_radii, Corners::all(px(4.)));
+        }
+
+        let plain = list.intersect(&ContentMask::new(card));
+        assert!(!plain.is_rounded());
+        assert_eq!(plain, ContentMask::new(list.bounds));
+    }
 
     #[perf]
     fn test_basic_highlight_style_combination() {

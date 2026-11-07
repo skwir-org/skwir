@@ -516,7 +516,7 @@ impl Element for TerminalGrid {
             },
             cx,
         );
-        window.with_content_mask(Some(gpui::ContentMask { bounds }), |window| {
+        window.with_content_mask(Some(gpui::ContentMask::new(bounds)), |window| {
             for (bounds, color) in frame.backgrounds.drain(..) {
                 window.paint_quad(gpui::fill(bounds, color));
             }
