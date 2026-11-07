@@ -741,6 +741,22 @@ impl App {
         Ok((window, tab, pane))
     }
 
+    /// A new window showing `location` as it is, asked from outside (a
+    /// launch, ADR-122): no pane's sort or lens; made from the active
+    /// window, whose shape it takes, and made active.
+    pub fn open_window(&self, location: Location) -> anyhow::Result<(WindowId, TabId, PaneId)> {
+        let (window, tab, pane) = {
+            let mut ws = self.workspace.write();
+            let from = ws.active_window_id();
+            let (window, tab, panes) =
+                ws.add_window(Some(from), vec![(location, SortSpec::default())]);
+            ws.set_active_window(window);
+            (window, tab, panes[0])
+        };
+        self.resume_shown()?;
+        Ok((window, tab, pane))
+    }
+
     /// Move tab `tab` to `window` (a new window made from its own when
     /// `None`), at `to` (last when `None`), shown there, the window made
     /// active. The tab shown there before is left; a tab alone in its

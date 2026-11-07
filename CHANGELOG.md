@@ -93,6 +93,13 @@
   changes: Quit keeps them all, a window closed alone is forgotten. Agents and
   scripts reach every window (`window.new`, `window.close`, `window.select`,
   `window.list`, `window.open`; `tab.move` to a window or a new one).
+- **Skwir started again opens in the one running**: a launcher, a browser's
+  Show in Folder or `skwir ~/Documents` opens a window there, on the folder
+  asked, rather than a second Skwir that knows nothing of the first; with
+  General › Open folders from other programs in set to A tab, it opens as a tab
+  of the window used last, and Skwir started with no folder brings that window
+  forward. Only a Skwir of the same build, with the same settings, on the same
+  display takes a launch; `skwir --new-instance` starts one of its own.
 - **Quick filters and the timeline are each pane's**: both are in the View
   menu, side by side, and act on the pane it hangs from, so the panes of a
   split each have their own, and the timeline stays under its pane rather than

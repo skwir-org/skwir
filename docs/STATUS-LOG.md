@@ -12366,3 +12366,29 @@ drag left the window and came back; the name lost outside the window.
   files touched. Not checked: the player across windows (no media
   helper run), the tab menu's row itself, a window's close button under
   a window manager, `just a11y-check`, macOS and Windows.
+- **Step 3, launches**: `handover::Instance` (FNV-1a over the build, the
+  settings and state files, `WAYLAND_DISPLAY`, `DISPLAY`) names the bus
+  name, the marker and the pipe; `keep_apart` for `--new-instance`;
+  `finishing::take_over` once at start, kept until quit; `reopen` opens a
+  window (`App::open_window`) or a tab (`ui.launch_opens`); macOS's
+  `on_open_urls` pushes openings (compiled only).
+- **Seen** on Xvfb :95 on a private session bus (a `dbus-daemon` with a
+  config of only `<listen>`, no service folders), debug build: the first
+  Skwir wrote `running-c59e4d5debe1daeb` in its runtime folder; a launch
+  with `~/tröisième` ended at once (exit 0) and the first opened a fourth
+  window on it; with `launch_opens = "tab"` written in the settings file,
+  a launch with `~/it's a folder` opened a tab of the window used last,
+  and a bare launch opened nothing more; `--new-instance` started a
+  Skwir of its own with its window and no marker; one with another
+  `XDG_CONFIG_HOME` started its own (marker `running-e0a0d6f8aa36376b`),
+  and a launch with that folder went to it, not to the first; stopped by
+  SIGTERM, it took its marker back; Quit took the first's.
+- **Checked:** skwir-platform, skwir-core, skwir-ui (1662) and skwir's
+  settings, plugins_toggle, cli tests; new: `an_instance_is_its_build_
+  files_and_display`, `a_launch_goes_to_its_own_instance_alone`; clippy
+  on those crates; Windows clippy (`cargo-zigbuild`, platform, core, ui,
+  skwir, all targets) and macOS clippy (core, platform); Windows'
+  hand-over tests under Wine (11). Not checked: a desktop launcher's
+  activation token on Wayland, a launch while the program finishes with
+  no window (the path ADR-115 checked is unchanged but for its key),
+  macOS's Finder openings.

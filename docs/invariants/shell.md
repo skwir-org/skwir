@@ -936,8 +936,9 @@ of bars, split or not.
   a window the program takes the executor's events in as the window
   did, tells the desktop every end, however short, shows its presence
   (`Desktop::presence`: the tray's or notification area's icon, else a
-  notice that stays; the Dock on macOS), and takes later launches over
-  (`skwir_platform::handover`); its panes sleep. The window opened again
+  notice that stays; the Dock on macOS); its panes sleep. A later launch,
+  handed over, opens the windows again (ADR-122: the program takes
+  launches over for its life). The window opened again
   shows `Work` as it stands. Closing, the window answers Cancel to what
   it was asking (`Shell::leave`), and an action stopped it showed is let
   go; from then on its shell takes nothing (`Shell::sync`), though gpui
@@ -1453,6 +1454,19 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   and a crash loses none. A new window takes its own shape (restored,
   reopened), else its source window's, else `ui.session`, the shape of
   the window used last.
+- **Launches come to the running program** (`skwir_platform::handover`,
+  taken over from start to quit, `finishing::take_over`): only a launch
+  of the same build, settings and state files, and display
+  (`handover::Instance::here`, which keys the bus name, the marker and
+  the pipe), so a test's window with folders of its own never opens in
+  the user's; `--new-instance` keeps a launch apart
+  (`handover::keep_apart`). With windows up a launch opens a window on
+  its folder (`App::open_window`: as it is, no pane's lens, shaped as the
+  window used last), else, with `ui.launch_opens` = `tab`, a tab of the
+  window in use, a bare launch then bringing that window forward
+  (`finishing::reopen`). With none up, the windows come back (ADR-115).
+  macOS: `on_open_urls` hands the Finder's and the Dock's openings in;
+  a launch from a terminal is a program of its own there.
 - A wake redraws every window (the catch-all `notify` after each sync):
   a film playing in one window redraws the others at its rate. Telling
   which windows a wake concerns waits for wakers of their own.

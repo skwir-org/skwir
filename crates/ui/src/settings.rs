@@ -103,6 +103,11 @@ pub const QUICK_FILTERS_FORMER_KEY: &str = "ui.quick_filters";
 const NARROW_FOLDERS_FORMER_KEY: &str = "ui.narrow_folders";
 /// Whether the tabs are listed for a window that has only one tab.
 pub const SINGLE_TAB_KEY: &str = "ui.single_tab";
+/// Where a folder another program opens in Skwir goes while Skwir runs
+/// (ADR-122): `window` (the default) or `tab`.
+pub const LAUNCH_OPENS_KEY: &str = "ui.launch_opens";
+/// `LAUNCH_OPENS_KEY`'s value for a tab of the window in use.
+pub const LAUNCH_IN_TAB: &str = "tab";
 /// Where the tabs are listed: the strip above the files, or the sidebar
 /// (`Shell::strip_shown`).
 pub const TABS_AT_KEY: &str = "ui.tabs_at";
@@ -1422,6 +1427,17 @@ pub fn declare(app: &App) {
     )
     .essential());
     app.settings.declare(
+        SettingSpec::choice(
+            LAUNCH_OPENS_KEY,
+            "Open folders from other programs in",
+            "Where a folder goes that another program opens in Skwir while it runs: Show in Folder from a browser, a launcher, skwir and a folder typed in a terminal. A new window opens on it; a tab opens it in the window used last, and Skwir started again with no folder brings that window forward.",
+            "window",
+            &[("window", "A new window"), (LAUNCH_IN_TAB, "A tab")],
+        )
+        .page(page::GENERAL)
+        .section("Startup"),
+    );
+    app.settings.declare(
         SettingSpec::toggle(
             SINGLE_TAB_KEY,
             "Show a lone tab",
@@ -1944,7 +1960,7 @@ static BUILTIN: [Builtin; 12] = [
         owner: Some(CORE_OWNER),
         title: "General",
         icon: "sliders",
-        intro: "What skwir does at startup, with tabs, the split and the address, with what you drag and drop, and while an action runs. Changes apply as you make them.",
+        intro: "What skwir does at startup and with folders other programs open, with tabs, the split and the address, with what you drag and drop, and while an action runs. Changes apply as you make them.",
         when_used: false,
         sections: &[
             "Startup",

@@ -777,9 +777,13 @@ is its own (a plan's toast and what it made to the window that ran it),
 follows the core's windows; Ctrl+N, Open in New Window, Move to New
 Window, Ctrl+Shift+W; one player and one Settings dialog; thumbnails
 stale by their own window's frames; windows recorded as they change.
-Deviation: a wake still redraws every window (a film in one redraws the
-others at its rate). Checks in `docs/STATUS-LOG.md` (2026-11-07,
-"Windows of one program").
+**Step 3**: launches taken over for the program's life, only by a Skwir
+of the same build, settings, state and display (`handover::Instance`);
+`--new-instance`; "Open folders from other programs in" a new window or
+a tab; macOS's Finder openings handed in (compiled only). Deviation: a
+wake still redraws every window (a film in one redraws the others at its
+rate). Checks in `docs/STATUS-LOG.md` (2026-11-07, "Windows of one
+program").
 
 ## What is left
 

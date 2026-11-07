@@ -135,3 +135,12 @@ ADR-115 (one process for every window; launches always handed over).
   their own window's frames (`thumbs::Asker`). Questions go to the
   window in use (they say no plan); a wake redraws every window, a
   deviation `docs/PLAN.md` records. Checked on Xvfb (`docs/STATUS-LOG.md`).
+- 2026-11-07, step 3: launches taken over for the program's life
+  (`finishing::take_over` at start), keyed by `handover::Instance::here`
+  (FNV-1a of the build, the settings and state files, `WAYLAND_DISPLAY`
+  and `DISPLAY`): the bus name `org.skwir.skwir.I<key>`, the marker
+  `running-<key>`, the pipe `org.skwir.skwir.running-<key>-…`;
+  `--new-instance` (`handover::keep_apart`); `ui.launch_opens`;
+  `App::open_window` (a launch's folder as it is); macOS's
+  `on_open_urls` (compiled only). Checked on Xvfb on a bus of its own;
+  Windows' hand-over tests under Wine.

@@ -13,6 +13,10 @@
 //! than start a Skwir that knows nothing of what this one finishes. It
 //! takes back what runs, `Earlier` and the stopped strip with it.
 //!
+//! The program takes later launches over for its whole life (ADR-122), not
+//! only while it finishes: with windows up, a launch opens a window on what
+//! it asks (or a tab, `settings::LAUNCH_OPENS_KEY`), as one program's.
+//!
 //! Quit asks while something is under way (`Shell::quit`): finish without
 //! the window, or stop now. Logging out or shutting down is held off
 //! meanwhile (`Work::tell`); on macOS the system asks first
@@ -89,7 +93,7 @@ pub(crate) struct Finishing {
     /// Counts the times taking over started or stopped.
     round: Arc<AtomicU64>,
     /// The launches handed over, for the next wake.
-    openings: Arc<Mutex<Vec<Opening>>>,
+    openings: Openings,
     /// A signal asked the program to end.
     ending: Arc<AtomicBool>,
     /// The presence shown, while no window is up.
@@ -111,6 +115,7 @@ pub(crate) fn start(
     keymap: keymap::Keymap,
     started: Instant,
     wakes: flume::Receiver<()>,
+    openings: Openings,
     initial: Option<Location>,
 ) {
     // The program ends when nothing keeps it (`closed`), not with its last
@@ -136,7 +141,7 @@ pub(crate) fn start(
         quitting: false,
         taking: Arc::default(),
         round: Arc::default(),
-        openings: Arc::default(),
+        openings,
         ending,
         shown: None,
         opened: false,
@@ -152,6 +157,8 @@ pub(crate) fn start(
     // The tab left stays drawn until the tab shown is ready (`tabs.rs`).
     state.app.hold_tabs(true);
     show(cx, initial, None, false);
+    // Later launches of this Skwir (ADR-122) come here, for its life.
+    take_over(cx.global::<Finishing>());
 }
 
 /// What the program reads once, whatever windows it opens: the settings the
@@ -196,8 +203,6 @@ fn prepare(app: &Arc<skwir_core::App>, cx: &mut App) {
 /// forward; `activity` opens Activity in it.
 fn show(cx: &mut App, initial: Option<Location>, token: Option<String>, activity: bool) {
     let state = cx.global::<Finishing>();
-    // A later launch starts its own Skwir again.
-    stop_taking_over(state);
     let app = Arc::clone(&state.app);
     let (windows, active) = {
         let ws = app.workspace.read();
@@ -220,11 +225,9 @@ fn show(cx: &mut App, initial: Option<Location>, token: Option<String>, activity
         );
     }
     if !any {
-        // Still without one: later launches taken over again, the presence
-        // kept, the program ended if nothing keeps it.
-        let state = cx.global::<Finishing>();
-        if state.opened {
-            take_over(state);
+        // Still without one: the presence kept, the program ended if
+        // nothing keeps it.
+        if cx.global::<Finishing>().opened {
             sync(cx);
         }
         return;
@@ -425,6 +428,10 @@ fn follow_windows(cx: &mut App) {
         let _ = window.update(cx, |_, window, _| window.activate_window());
     }
 }
+
+/// The launches handed over (and, on macOS, what the Finder opens), for
+/// the next wake.
+pub(crate) type Openings = Arc<Mutex<Vec<Opening>>>;
 
 /// What a window takes in at its next sync, the program having taken it
 /// from the core (`deliver`): each window what its own asked, the active
@@ -775,7 +782,6 @@ fn closed(cx: &mut App) {
     }
     tracing::info!("the window closed: finishing what runs without it");
     app.suspend_panes();
-    take_over(state);
     sync(cx);
 }
 
@@ -959,34 +965,64 @@ fn presence(work: &Work, under: &Under, asks: bool) -> Presence {
     }
 }
 
-/// Open the windows again: asked by the presence or a notice (`activity`:
-/// Activity opens with it), a later launch handed over (its folder
-/// shown), the Dock clicked. With windows up, the active one comes
-/// forward.
+/// Open the windows again, or one more: asked by the presence or a notice
+/// (`activity`: Activity opens with it), the Dock clicked, or a later
+/// launch handed over. With no window up, the windows come back, the
+/// active pane showing the launch's folder. With windows up, a launch
+/// opens a window on its folder (the startup folder when it gave none),
+/// or, as `LAUNCH_OPENS_KEY` says, a tab of the window in use, a bare
+/// launch then bringing that window forward (ADR-122); anything else
+/// brings the window in use forward.
 pub(crate) fn reopen(cx: &mut App, opening: Option<Opening>, activity: bool) {
     let state = cx.global::<Finishing>();
     let app = Arc::clone(&state.app);
-    let (initial, token) = match opening {
+    let (initial, token, launched) = match opening {
         Some(opening) => (
             opening
                 .location
                 .map(|arg| crate::location_of(&app, &arg, &opening.cwd)),
             opening.token,
+            // A notice clicked, the presence asked: no launch.
+            !activity,
         ),
-        None => (None, None),
+        None => (None, None, false),
     };
-    if let Some(window) = active_handle(cx) {
-        let _ = window.update(cx, |shell, window, cx| {
+    let Some(window) = active_handle(cx) else {
+        show(cx, initial, token, activity);
+        return;
+    };
+    let in_tab = app
+        .settings
+        .get::<String>(crate::settings::LAUNCH_OPENS_KEY)
+        .is_some_and(|opens| opens == crate::settings::LAUNCH_IN_TAB);
+    if !launched || (in_tab && initial.is_none()) {
+        let _ = window.update(cx, |_, window, _| {
             window.activate_window_with_token(token.as_deref());
-            if let Some(location) = initial
-                && let Err(error) = shell.app.navigate(shell.pane, &location)
-            {
-                shell.set_status(format!("{error:#}"), true, cx);
-            }
         });
         return;
     }
-    show(cx, initial, token, activity);
+    if in_tab && let Some(location) = initial {
+        // What another program asks is shown as it is, with no pane's lens.
+        let _ = window.update(cx, |shell, window, cx| {
+            let pane = shell.window_pane();
+            if let Err(error) = shell.app.new_tab_as_kept(Some(pane), location, None, true) {
+                shell.set_status(format!("{error:#}"), true, cx);
+            }
+            window.activate_window_with_token(token.as_deref());
+        });
+        return;
+    }
+    let location = initial.unwrap_or_else(|| {
+        let home = skwir_core::os_path::home().unwrap_or_else(|| std::path::PathBuf::from("/"));
+        Location::from_path(skwir_core::settings::startup_folder(&app.settings, &home))
+    });
+    match app.open_window(location) {
+        Ok((id, _, _)) => {
+            open_window(cx, id, false, token, false);
+            cx.global_mut::<Finishing>().raised = Some(id);
+        }
+        Err(error) => say_in_active(cx, format!("{error:#}")),
+    }
 }
 
 /// How far a window opened beside others is put from the one opened

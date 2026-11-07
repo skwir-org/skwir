@@ -7,6 +7,9 @@
 
 mod gpu;
 
+/// The argument that makes a launch a program of its own (ADR-122).
+const NEW_INSTANCE: &str = "--new-instance";
+
 use std::time::Instant;
 
 use skwir_core::app::AppConfig;
@@ -56,13 +59,21 @@ fn main() -> anyhow::Result<()> {
     attach_console();
     // `skwir mcp` and `skwir cmd` (ADR-043), before anything logs: their
     // standard output is the protocol, or the JSON a script reads.
-    let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+    let mut args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
     if let Some(code) = skwir::cli::run(&args) {
         std::process::exit(code);
     }
-    // A Skwir finishing what runs without its window takes this launch
-    // over: it opens its window again, showing what this was asked to
-    // (ADR-115). Where none is, this costs a look at one file.
+    // A program of its own: no launch handed to another Skwir, none taken
+    // over by this one (ADR-122).
+    let before = args.len();
+    args.retain(|arg| arg != NEW_INSTANCE);
+    if args.len() != before {
+        skwir_platform::handover::keep_apart();
+    }
+    // The running Skwir of this build, these settings and this display
+    // takes this launch over: it opens a window on what this was asked to,
+    // or its windows again while it finishes what runs without one
+    // (ADR-115, ADR-122). Where none is, this costs a look at one file.
     let cwd = std::env::current_dir().unwrap_or_default();
     let opening = skwir_platform::handover::Opening {
         location: args.first().cloned(),

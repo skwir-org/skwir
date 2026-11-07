@@ -40,7 +40,11 @@ work where the keyboard is, by topic.
   window (`Ctrl+W` on its last tab too, while another is open);
   `Ctrl+Shift+T` brings it back with its tabs. Quit closes them all, and
   with General › At startup set to come back, every window comes back as
-  it was; a window you closed yourself does not.
+  it was; a window you closed yourself does not. Skwir started again (a
+  launcher, `skwir ~/Documents`, a browser's Show in Folder) opens a
+  window in the Skwir already running, or a tab with General › Open
+  folders from other programs in; `skwir --new-instance` starts one of its
+  own.
 - **More** (the sidebar's button, or the pane's row when the sidebar is
   hidden) holds what has no button, and Layout: where the split and the
   preview go, or Automatic, which follows the window's shape. Undo and
@@ -694,7 +698,7 @@ Settings are grouped by subject, whichever plugin brings them:
 
 | Page | What it sets |
 | --- | --- |
-| General | What Skwir does at startup, with tabs, the split and the path above the files, and with what you drag and drop |
+| General | What Skwir does at startup and with folders other programs open in it, with tabs, the split and the path above the files, and with what you drag and drop |
 | Appearance | How it looks: theme, your desktop's colors or Skwir's palettes, the font, the text's size (the whole window's, and the file views' of their own), icons, dates |
 | Folders and views | The grid, the list's columns, thumbnails |
 | Tags and notes | The tags the sidebar suggests, tags kept when copying, companion files, and where tags, ratings and comments are read and written |

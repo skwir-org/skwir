@@ -214,6 +214,27 @@ pub fn run_from(app: Arc<App>, initial: Option<Location>, started: Instant) -> a
     let application = gpui_platform::application().with_assets(icons::FsAssets);
     // macOS: the Dock's icon clicked with no window up (ADR-115).
     application.on_reopen(|cx| finishing::reopen(cx, None, false));
+    // macOS: folders the Finder or the Dock opens in the running program
+    // (ADR-122), handed in as a launch's are, at the next wake.
+    let openings: finishing::Openings = Arc::default();
+    {
+        let (openings, wake) = (Arc::clone(&openings), app.waker_handle());
+        application.on_open_urls(move |urls| {
+            let opened: Vec<skwir_platform::handover::Opening> = urls
+                .iter()
+                .filter_map(|url| skwir_platform::uri::local_path_of(url))
+                .map(|path| skwir_platform::handover::Opening {
+                    location: Some(path.into_os_string()),
+                    cwd: std::path::PathBuf::new(),
+                    token: None,
+                })
+                .collect();
+            if !opened.is_empty() {
+                openings.lock().extend(opened);
+                wake();
+            }
+        });
+    }
     // macOS: Quit from the Dock, a log out, a restart, asked first while
     // something is under way (gpui patch 0044).
     application.on_should_quit(finishing::may_quit);
@@ -244,7 +265,7 @@ pub fn run_from(app: Arc<App>, initial: Option<Location>, started: Instant) -> a
         })
         .detach();
         // The window, and what outlives it (ADR-115).
-        finishing::start(cx, app, keymap, started, wake_rx, initial);
+        finishing::start(cx, app, keymap, started, wake_rx, openings, initial);
     });
     Ok(())
 }

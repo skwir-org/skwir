@@ -4,7 +4,11 @@ Status: accepted 2026-11-02 with the user, from a comparison of what file
 managers and browsers do; built the same day, as `docs/PLAN.md` ("What
 runs outlives the window") records: checked on Linux in a window of its
 own, on a session bus of its own; Windows tried under Wine, Windows and
-macOS otherwise compiled only.
+macOS otherwise compiled only. Amended 2026-11-07 by ADR-122: Skwir's
+windows are one program's, which takes later launches over for its whole
+life, not only while it finishes (decision 4), keyed by its build,
+settings, state and display; the rejection of one process for every
+window is withdrawn there.
 
 ## Context
 

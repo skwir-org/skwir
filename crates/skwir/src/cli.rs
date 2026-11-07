@@ -15,7 +15,10 @@ const USAGE: &str = "usage: skwir cmd [--apply] <command> [<arguments, a JSON ob
 const HELP: &str = "\
 skwir, a file manager
 
-usage: skwir [<folder>]        open a window on the folder (the last one, or home)
+usage: skwir [<folder>]        open a window on the folder (the last one, or home),
+                               in the skwir already running if one is
+       skwir --new-instance [<folder>]
+                               the same, in a skwir of its own
        skwir cmd [--apply] <command> [<arguments, a JSON object>]
                                run a command in the open window, print its result
        skwir mcp               serve an agent's MCP to the open window

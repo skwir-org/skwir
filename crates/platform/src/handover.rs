@@ -1,50 +1,114 @@
-//! A Skwir finishing without its window takes later launches over
-//! (ADR-115).
+//! A running Skwir takes later launches over (ADR-115, ADR-122).
 //!
-//! Closing Skwir's last window does not stop what it does (a copy, a
-//! move): the window goes, and the process stays without one until its
-//! actions end, then exits by itself. Skwir runs one process per window,
-//! so a later launch would start a second Skwir that knows nothing of the
-//! copy the first is finishing. While it finishes, the first takes later
-//! launches over ([`take_over`]): a launch hands it what it was asked to
-//! open and the desktop's token to bring a window forward ([`hand_over`],
-//! before anything else of the program starts), then exits, and the
-//! finishing Skwir opens its window again. Otherwise every launch is a
-//! process of its own.
+//! Skwir's windows are one program's (ADR-122): a later launch hands the
+//! running Skwir what it was asked to open and the desktop's token to bring
+//! a window forward ([`hand_over`], before anything else of the program
+//! starts), then exits, and the running Skwir opens a window for it (or a
+//! tab), or, finishing what runs without a window (ADR-115), its windows
+//! again. Only to a Skwir of the same build, reading the same settings and
+//! state, on the same display ([`Instance`]): another is a program of its
+//! own, so a window started with other folders (a test's, another user's
+//! profile) never opens in this one. [`keep_apart`] makes this launch a
+//! program of its own (`--new-instance`).
 //!
-//! - Linux: the name `org.skwir.skwir` on the session bus, held while
+//! - Linux: a name on the session bus, `org.skwir.skwir.I<key>`, held while
 //!   taking over, its object `/org/skwir/skwir` serving
 //!   `org.skwir.skwir.Finishing.Open(ay location, ay cwd, s token)` on
 //!   the program's one connection (`crate::bus`), and served again
 //!   there when the session's bus is started again. A path travels as its
 //!   bytes; an empty location or token is none. Once the name is held, a
-//!   marker, `$XDG_RUNTIME_DIR/skwir/finishing`, holds the finishing
-//!   Skwir's pid: a launch where none finishes stats it and does nothing
+//!   marker, `$XDG_RUNTIME_DIR/skwir/running-<key>`, holds the running
+//!   Skwir's pid: a launch where none runs stats it and does nothing
 //!   more (no connection, no thread). Where it is there, the launch asks
 //!   on a connection of its own, given up on after two seconds, as the
 //!   shared one waits for good.
 //! - Windows: a named pipe of the user's in this session,
-//!   `\\.\pipe\org.skwir.skwir.finishing-<session>-<SID>`, its first
+//!   `\\.\pipe\org.skwir.skwir.running-<key>-<session>-<SID>`, its first
 //!   instance made by the Skwir that takes over: only the user opens it,
 //!   and no other machine reaches it (`crate::windows::pipe`). A launch
 //!   lets that Skwir bring its window forward
 //!   (`AllowSetForegroundWindow`), as Windows has no token to hand; its
 //!   message is told beside the code that reads it (`frame`).
 //! - macOS: `LaunchServices` brings the running application forward instead
-//!   of starting another, and the UI follows gpui's `on_reopen`: nothing
-//!   is handed over here.
+//!   of starting another, and the UI follows gpui's `on_reopen` and
+//!   `on_open_urls`: nothing is handed over here, and a launch from a
+//!   terminal is a program of its own.
 //!
-//! A launch is handed over only once the finishing Skwir answered. One
-//! that does not answer within two seconds (stopped, or gone and its
-//! marker left after a crash) is given up on, and the launch goes on as a
-//! process of its own; a marker that is not this Skwir's is never
-//! removed.
+//! A launch is handed over only once the running Skwir answered. One that
+//! does not answer within two seconds (stopped, or gone and its marker
+//! left after a crash) is given up on, and the launch goes on as a process
+//! of its own; a marker that is not this Skwir's is never removed.
 
 use std::ffi::OsString;
 use std::path::PathBuf;
 use std::sync::Arc;
 #[cfg(any(target_os = "linux", windows))]
 use std::time::Duration;
+
+/// Which Skwir a launch is for (ADR-122): one of the same build, reading
+/// the same settings and state, on the same display. Its key names the bus
+/// name, the marker and the pipe.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Instance {
+    key: String,
+}
+
+impl Instance {
+    /// The instance `parts` make (each one's bytes, in order): a hash,
+    /// written as 16 hexadecimal digits.
+    #[must_use]
+    pub fn of(parts: &[&std::ffi::OsStr]) -> Instance {
+        // FNV-1a, 64 bits: the same for every build on every system.
+        let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+        for part in parts {
+            for byte in part.as_encoded_bytes().iter().chain([&0xff]) {
+                hash ^= u64::from(*byte);
+                hash = hash.wrapping_mul(0x0100_0000_01b3);
+            }
+        }
+        Instance {
+            key: format!("{hash:016x}"),
+        }
+    }
+
+    /// This program's: its build (`process::build`), the settings and
+    /// state files it reads, the display it draws on (Wayland's and
+    /// X11's, as they are set).
+    #[must_use]
+    pub fn here() -> Instance {
+        let build = crate::process::build().unwrap_or_default();
+        let settings = skwir_core::settings::Settings::default_path();
+        let state = skwir_core::settings::Settings::default_state_path().unwrap_or_default();
+        let wayland = std::env::var_os("WAYLAND_DISPLAY").unwrap_or_default();
+        let x11 = std::env::var_os("DISPLAY").unwrap_or_default();
+        Instance::of(&[
+            build.as_ref(),
+            settings.as_os_str(),
+            state.as_os_str(),
+            &wayland,
+            &x11,
+        ])
+    }
+
+    /// Its key: 16 hexadecimal digits.
+    #[must_use]
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+}
+
+/// This launch is a program of its own (`--new-instance`): it hands
+/// itself to no one, and takes no later launch over.
+pub fn keep_apart() {
+    APART.store(true, std::sync::atomic::Ordering::Release);
+}
+
+/// Set by [`keep_apart`].
+static APART: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn apart() -> bool {
+    APART.load(std::sync::atomic::Ordering::Acquire)
+}
 
 /// What a later launch asks of the Skwir it hands itself to.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -84,22 +148,32 @@ pub fn launch_token() -> Option<String> {
     }
 }
 
-/// Hand `opening` to a Skwir finishing without its window, if one is
+/// Hand `opening` to the running Skwir of this [`Instance`], if one is
 /// there: whether it took it (this launch then ends). Called before
 /// anything else of the program, so where none is it costs almost
 /// nothing: a stat on Linux, a pipe not found on Windows; no bus
-/// connection, no thread. A finishing Skwir that does not answer within
-/// two seconds is given up on (false). Always false on macOS and other
-/// systems.
+/// connection, no thread. A Skwir that does not answer within two seconds
+/// is given up on (false). Always false on macOS and other systems, and
+/// once [`keep_apart`] was asked.
 pub fn hand_over(opening: &Opening) -> bool {
+    if apart() {
+        return false;
+    }
     #[cfg(target_os = "linux")]
     {
-        linux::marker()
-            .is_some_and(|marker| linux::hand_over_at(&marker, linux::patient_session, opening))
+        let instance = Instance::here();
+        linux::marker(&instance).is_some_and(|marker| {
+            linux::hand_over_at(
+                &marker,
+                &linux::name(&instance),
+                linux::patient_session,
+                opening,
+            )
+        })
     }
     #[cfg(windows)]
     {
-        pipe::name().is_some_and(|name| pipe::hand_over_to(&name, opening))
+        pipe::name(&Instance::here()).is_some_and(|name| pipe::hand_over_to(&name, opening))
     }
     #[cfg(not(any(target_os = "linux", windows)))]
     {
@@ -113,20 +187,30 @@ pub fn hand_over(opening: &Opening) -> bool {
 /// bus's on Linux, the pipe's on Windows), before the launch is answered;
 /// it must return at once, make no call on the session bus, and never
 /// drop the [`TakingOver`] (which waits for it). `None` where this cannot
-/// be: another Skwir takes them already, no session bus or runtime folder
-/// (Linux), on macOS and other systems.
+/// be: another Skwir of this instance takes them already, no session bus
+/// or runtime folder (Linux), on macOS and other systems, once
+/// [`keep_apart`] was asked.
 ///
 /// Waits for the bus's answer to the name asked (Linux): call it on a
 /// worker.
 #[must_use]
 pub fn take_over(taken: impl Fn(Opening) + Send + Sync + 'static) -> Option<TakingOver> {
+    if apart() {
+        return None;
+    }
     #[cfg(target_os = "linux")]
     {
-        linux::take_over_with(crate::bus::session, linux::marker()?, taken)
+        let instance = Instance::here();
+        linux::take_over_with(
+            crate::bus::session,
+            linux::marker(&instance)?,
+            linux::name(&instance),
+            taken,
+        )
     }
     #[cfg(windows)]
     {
-        pipe::take_over_at(pipe::name()?, taken)
+        pipe::take_over_at(pipe::name(&Instance::here())?, taken)
     }
     #[cfg(not(any(target_os = "linux", windows)))]
     {
@@ -220,8 +304,9 @@ mod linux {
     use zbus::blocking::Connection;
     use zbus::fdo::{RequestNameFlags, RequestNameReply};
 
-    use super::{Gate, Opening, PATIENCE, TakingOver};
+    use super::{Gate, Instance, Opening, PATIENCE, TakingOver};
 
+    /// What the bus name of an instance begins with.
     pub(super) const NAME: &str = "org.skwir.skwir";
     pub(super) const PATH: &str = "/org/skwir/skwir";
     /// As [`Finishing`] is declared.
@@ -229,9 +314,20 @@ mod linux {
     /// The most a marker holds: a pid and a line's end.
     const MARKER_BOUND: u64 = 32;
 
-    /// Where a finishing Skwir says so: in the session's runtime folder.
-    pub(super) fn marker() -> Option<PathBuf> {
-        skwir_core::xdg::runtime_dir().map(|runtime| runtime.join("skwir").join("finishing"))
+    /// Where the running Skwir of `instance` says so: in the session's
+    /// runtime folder.
+    pub(super) fn marker(instance: &Instance) -> Option<PathBuf> {
+        skwir_core::xdg::runtime_dir().map(|runtime| {
+            runtime
+                .join("skwir")
+                .join(format!("running-{}", instance.key()))
+        })
+    }
+
+    /// The bus name the running Skwir of `instance` holds: an element of
+    /// a name never begins with a digit.
+    pub(super) fn name(instance: &Instance) -> String {
+        format!("{NAME}.I{}", instance.key())
     }
 
     /// A session connection of its own, whose calls are given up on
@@ -247,6 +343,7 @@ mod linux {
     /// bus `connect` connects to, made only when the marker is there.
     pub(super) fn hand_over_at(
         marker: &Path,
+        name: &str,
         connect: impl FnOnce() -> zbus::Result<Connection>,
         opening: &Opening,
     ) -> bool {
@@ -260,7 +357,7 @@ mod linux {
             // bus (were a service file to name it), and a stale marker
             // costs no failed call.
             let dbus = zbus::blocking::fdo::DBusProxy::new(&bus)?;
-            if !dbus.name_has_owner(NAME.try_into()?)? {
+            if !dbus.name_has_owner(name.try_into()?)? {
                 return Ok(false);
             }
             let location = opening
@@ -270,7 +367,7 @@ mod linux {
             let cwd = opening.cwd.as_os_str().as_encoded_bytes();
             let token = opening.token.as_deref().unwrap_or_default();
             bus.call_method(
-                Some(NAME),
+                Some(name),
                 PATH,
                 Some(INTERFACE),
                 "Open",
@@ -333,6 +430,7 @@ mod linux {
     pub(super) fn take_over_with<E: std::fmt::Display>(
         connect: impl FnMut() -> Result<Connection, E> + Send + 'static,
         marker: PathBuf,
+        name: String,
         taken: impl Fn(Opening) + Send + Sync + 'static,
     ) -> Option<TakingOver> {
         let gate = Gate::new(taken);
@@ -349,7 +447,7 @@ mod linux {
                         // What the bus that ended had is let go of first
                         // (its marker, ours, written again once served).
                         drop(served.take());
-                        served = Served::on(bus, &gate, &marker);
+                        served = Served::on(bus, &gate, &marker, &name);
                         if let Some(first) = first.take() {
                             let _ = first.send(served.is_some());
                         }
@@ -378,13 +476,14 @@ mod linux {
     struct Served {
         bus: Connection,
         marker: PathBuf,
+        name: String,
     }
 
     impl Served {
         /// Served on `bus`, or `None` where it cannot be: another Skwir
         /// holds the name, this connection serves it already (a second
         /// [`super::take_over`] of this Skwir), no marker can be written.
-        fn on(bus: &Connection, gate: &Arc<Gate>, marker: &Path) -> Option<Served> {
+        fn on(bus: &Connection, gate: &Arc<Gate>, marker: &Path, name: &str) -> Option<Served> {
             let objects = bus.object_server();
             match objects.at(PATH, Finishing(Arc::clone(gate))) {
                 Ok(true) => {}
@@ -397,7 +496,7 @@ mod linux {
                     return None;
                 }
             }
-            let named = bus.request_name_with_flags(NAME, RequestNameFlags::DoNotQueue.into());
+            let named = bus.request_name_with_flags(name, RequestNameFlags::DoNotQueue.into());
             if !matches!(named, Ok(RequestNameReply::PrimaryOwner)) {
                 tracing::debug!(?named, "another Skwir takes later launches over");
                 let _ = objects.remove::<Finishing, _>(PATH);
@@ -406,6 +505,7 @@ mod linux {
             let served = Served {
                 bus: bus.clone(),
                 marker: marker.to_owned(),
+                name: name.to_owned(),
             };
             if let Err(error) = write_marker(marker) {
                 // Dropped: neither the name nor the object kept.
@@ -420,7 +520,7 @@ mod linux {
         fn drop(&mut self) {
             // The name first: a launch that finds the marker meanwhile
             // finds no one holds it.
-            let _ = self.bus.release_name(NAME);
+            let _ = self.bus.release_name(self.name.as_str());
             let _ = self.bus.object_server().remove::<Finishing, _>(PATH);
             let_go_of_marker(&self.marker);
         }
@@ -485,14 +585,15 @@ mod pipe {
     /// The pipe of this user in this session: another user's, or this
     /// user's in another session (a second sign-in, a remote desktop),
     /// is not this one.
-    pub(super) fn name() -> Option<OsString> {
+    pub(super) fn name(instance: &super::Instance) -> Option<OsString> {
         let sid = crate::windows::user_sid()?;
         let mut session = 0u32;
         // SAFETY: this process's id, and an out value.
         if unsafe { ProcessIdToSessionId(std::process::id(), &raw mut session) } == 0 {
             return None;
         }
-        Some(format!(r"\\.\pipe\org.skwir.skwir.finishing-{session}-{sid}").into())
+        let key = instance.key();
+        Some(format!(r"\\.\pipe\org.skwir.skwir.running-{key}-{session}-{sid}").into())
     }
 
     /// The pipe opened as a client that lets the server know who it is,
@@ -999,7 +1100,7 @@ mod frame_tests {
 
 #[cfg(all(test, target_os = "linux"))]
 mod linux_tests {
-    use super::linux::{NAME, hand_over_at, take_over_with};
+    use super::linux::{hand_over_at, take_over_with};
     use super::*;
     use std::io::BufRead;
     use std::os::unix::ffi::OsStringExt;
@@ -1089,6 +1190,10 @@ mod linux_tests {
         }
     }
 
+    /// The bus name the tests' Skwir holds, as an instance's is
+    /// (`linux::name`).
+    const HELD: &str = "org.skwir.skwir.Itest";
+
     type Told = Arc<parking_lot::Mutex<Vec<Opening>>>;
 
     fn taker() -> (Told, impl Fn(Opening) + Send + Sync + 'static) {
@@ -1101,7 +1206,7 @@ mod linux_tests {
         let bus = connector(address)().unwrap();
         zbus::blocking::fdo::DBusProxy::new(&bus)
             .unwrap()
-            .name_has_owner(NAME.try_into().unwrap())
+            .name_has_owner(HELD.try_into().unwrap())
             .unwrap()
     }
 
@@ -1134,6 +1239,35 @@ mod linux_tests {
         };
     }
 
+    /// A launch is handed only to a Skwir of its own instance: another
+    /// one's name, even behind the same marker, takes nothing.
+    #[test]
+    fn a_launch_goes_to_its_own_instance_alone() {
+        let folder = folder();
+        let listen = format!("unix:dir={}", folder.path().display());
+        let bus = bus_or_skip!(folder.path(), &listen);
+        let marker = folder.path().join("skwir").join("running-test");
+        let (told, taken) = taker();
+        let taking =
+            take_over_with(connector(&bus.address), marker.clone(), HELD.into(), taken).unwrap();
+        let other = "org.skwir.skwir.Iother";
+        assert!(!hand_over_at(
+            &marker,
+            other,
+            patient(&bus.address),
+            &opening()
+        ));
+        assert!(told.lock().is_empty());
+        assert!(hand_over_at(
+            &marker,
+            HELD,
+            patient(&bus.address),
+            &opening()
+        ));
+        assert_eq!(told.lock().len(), 1);
+        drop(taking);
+    }
+
     /// Where no Skwir finishes, a launch makes no connection.
     #[test]
     fn without_a_marker_a_launch_connects_to_nothing() {
@@ -1141,6 +1275,7 @@ mod linux_tests {
         let connected = AtomicBool::new(false);
         let handed = hand_over_at(
             &folder.path().join("skwir").join("finishing"),
+            HELD,
             || {
                 connected.store(true, Ordering::SeqCst);
                 Err(zbus::Error::Unsupported)
@@ -1161,14 +1296,15 @@ mod linux_tests {
         let bus = bus_or_skip!(folder.path(), &listen);
         let marker = folder.path().join("skwir").join("finishing");
         let (told, taken) = taker();
-        let taking = take_over_with(connector(&bus.address), marker.clone(), taken).unwrap();
+        let taking =
+            take_over_with(connector(&bus.address), marker.clone(), HELD.into(), taken).unwrap();
         assert!(held(&bus.address));
         assert_eq!(
             std::fs::read_to_string(&marker).unwrap().trim(),
             std::process::id().to_string()
         );
         let first = opening();
-        assert!(hand_over_at(&marker, patient(&bus.address), &first));
+        assert!(hand_over_at(&marker, HELD, patient(&bus.address), &first));
         assert_eq!(
             *told.lock(),
             std::slice::from_ref(&first),
@@ -1179,7 +1315,7 @@ mod linux_tests {
             cwd: PathBuf::from("/"),
             token: None,
         };
-        assert!(hand_over_at(&marker, patient(&bus.address), &bare));
+        assert!(hand_over_at(&marker, HELD, patient(&bus.address), &bare));
         assert_eq!(*told.lock(), [first, bare]);
         drop(taking);
     }
@@ -1194,7 +1330,12 @@ mod linux_tests {
         let marker = folder.path().join("finishing");
         std::fs::write(&marker, "4194304\n").unwrap();
         let started = Instant::now();
-        assert!(!hand_over_at(&marker, patient(&bus.address), &opening()));
+        assert!(!hand_over_at(
+            &marker,
+            HELD,
+            patient(&bus.address),
+            &opening()
+        ));
         assert!(started.elapsed() < PATIENCE, "not waited out");
         assert_eq!(std::fs::read_to_string(&marker).unwrap(), "4194304\n");
     }
@@ -1209,16 +1350,23 @@ mod linux_tests {
         let bus = bus_or_skip!(folder.path(), &listen);
         let marker = folder.path().join("skwir").join("finishing");
         let (told, taken) = taker();
-        let taking = take_over_with(connector(&bus.address), marker.clone(), taken).unwrap();
+        let taking =
+            take_over_with(connector(&bus.address), marker.clone(), HELD.into(), taken).unwrap();
         assert!(held(&bus.address));
         drop(taking);
         assert!(!held(&bus.address), "the name let go of");
         assert!(!marker.exists(), "the marker removed");
-        assert!(!hand_over_at(&marker, patient(&bus.address), &opening()));
+        assert!(!hand_over_at(
+            &marker,
+            HELD,
+            patient(&bus.address),
+            &opening()
+        ));
         assert!(told.lock().is_empty());
 
         let (_, taken) = taker();
-        let taking = take_over_with(connector(&bus.address), marker.clone(), taken).unwrap();
+        let taking =
+            take_over_with(connector(&bus.address), marker.clone(), HELD.into(), taken).unwrap();
         std::fs::write(&marker, "4194304\n").unwrap();
         drop(taking);
         assert!(!held(&bus.address));
@@ -1234,9 +1382,15 @@ mod linux_tests {
         let bus = bus_or_skip!(folder.path(), &listen);
         let marker = folder.path().join("skwir").join("finishing");
         let (told, taken) = taker();
-        let taking = take_over_with(connector(&bus.address), marker.clone(), taken).unwrap();
+        let taking =
+            take_over_with(connector(&bus.address), marker.clone(), HELD.into(), taken).unwrap();
         taking.stop_aside();
-        assert!(!hand_over_at(&marker, patient(&bus.address), &opening()));
+        assert!(!hand_over_at(
+            &marker,
+            HELD,
+            patient(&bus.address),
+            &opening()
+        ));
         assert!(told.lock().is_empty(), "nothing taken once stopped");
         until("the name let go of", &|| !held(&bus.address));
         until("the marker removed", &|| !marker.exists());
@@ -1259,25 +1413,39 @@ mod linux_tests {
             take_over_with(
                 move || Ok::<_, zbus::Error>(shared.clone()),
                 marker.clone(),
+                HELD.into(),
                 taken,
             )
             .unwrap()
         };
         let (_, other) = taker();
-        assert!(take_over_with(connector(&bus.address), marker.clone(), other).is_none());
+        assert!(
+            take_over_with(connector(&bus.address), marker.clone(), HELD.into(), other).is_none()
+        );
         let (_, again) = taker();
         let same = {
             let shared = shared.clone();
             move || Ok::<_, zbus::Error>(shared.clone())
         };
-        assert!(take_over_with(same, marker.clone(), again).is_none());
-        assert!(hand_over_at(&marker, patient(&bus.address), &opening()));
+        assert!(take_over_with(same, marker.clone(), HELD.into(), again).is_none());
+        assert!(hand_over_at(
+            &marker,
+            HELD,
+            patient(&bus.address),
+            &opening()
+        ));
         assert_eq!(told.lock().len(), 1, "the first still takes them");
         drop(first);
 
         let (told, taken) = taker();
-        let second = take_over_with(connector(&bus.address), marker.clone(), taken).unwrap();
-        assert!(hand_over_at(&marker, patient(&bus.address), &opening()));
+        let second =
+            take_over_with(connector(&bus.address), marker.clone(), HELD.into(), taken).unwrap();
+        assert!(hand_over_at(
+            &marker,
+            HELD,
+            patient(&bus.address),
+            &opening()
+        ));
         assert_eq!(told.lock().len(), 1);
         drop(second);
     }
@@ -1292,13 +1460,14 @@ mod linux_tests {
         let first = bus_or_skip!(folder.path(), &address);
         let marker = folder.path().join("skwir").join("finishing");
         let (told, taken) = taker();
-        let taking = take_over_with(connector(&address), marker.clone(), taken).unwrap();
-        assert!(hand_over_at(&marker, patient(&address), &opening()));
+        let taking =
+            take_over_with(connector(&address), marker.clone(), HELD.into(), taken).unwrap();
+        assert!(hand_over_at(&marker, HELD, patient(&address), &opening()));
 
         drop(first);
         let _second = daemon(folder.path(), &address).unwrap();
         until("taken over on the new bus", &|| {
-            hand_over_at(&marker, patient(&address), &opening())
+            hand_over_at(&marker, HELD, patient(&address), &opening())
         });
         assert_eq!(told.lock().len(), 2);
         drop(taking);
@@ -1350,9 +1519,13 @@ mod windows_tests {
 
     #[test]
     fn the_pipe_is_the_users_in_this_session() {
-        let name = pipe::name().unwrap().into_string().unwrap();
+        let instance = Instance::of(&["test".as_ref()]);
+        let name = pipe::name(&instance).unwrap().into_string().unwrap();
         let sid = crate::windows::user_sid().unwrap();
-        assert!(name.starts_with(r"\\.\pipe\org.skwir.skwir.finishing-"));
+        assert!(name.starts_with(&format!(
+            r"\\.\pipe\org.skwir.skwir.running-{}-",
+            instance.key()
+        )));
         assert!(name.ends_with(&format!("-{sid}")), "{name}");
     }
 
@@ -1466,5 +1639,42 @@ mod windows_tests {
         assert!(pipe::hand_over_to(&pipe, &opening()));
         assert_eq!(told.lock().len(), 1);
         drop(first);
+    }
+}
+
+#[cfg(test)]
+mod instance_tests {
+    use super::Instance;
+
+    /// An instance is its parts, each in its place: the same parts the
+    /// same key on every build, other parts or the same in another order
+    /// another key; a key a bus name can end with.
+    #[test]
+    fn an_instance_is_its_build_files_and_display() {
+        let of =
+            |parts: &[&str]| Instance::of(&parts.iter().map(AsRef::as_ref).collect::<Vec<_>>());
+        let here = of(&[
+            "0.3.1 abc",
+            "/x/settings.toml",
+            "/x/state.toml",
+            "wayland-1",
+            ":0",
+        ]);
+        assert_eq!(here.key().len(), 16);
+        assert!(here.key().chars().all(|c| c.is_ascii_hexdigit()));
+        assert_eq!(
+            here,
+            of(&[
+                "0.3.1 abc",
+                "/x/settings.toml",
+                "/x/state.toml",
+                "wayland-1",
+                ":0"
+            ])
+        );
+        let test = of(&["0.3.1 abc", "/t/settings.toml", "/t/state.toml", "", ":95"]);
+        assert_ne!(here, test, "other folders, another display");
+        assert_ne!(of(&["ab", "c"]), of(&["a", "bc"]), "parts kept apart");
+        assert_eq!(of(&[]).key(), "cbf29ce484222325");
     }
 }
