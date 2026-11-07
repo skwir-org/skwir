@@ -279,9 +279,13 @@ of bars, split or not.
   - The View menu hangs from the active pane's row: every view as a tile
     (Buttons… at the end of their title), the sort keys with the direction
     on the Sort by row in the key's words, what is shown (hidden files,
-    Quick filters, Fill thumbnails…), and the size on one row. More holds the
-    panels without a button (Timeline, Terminal) and the layout's
-    settings, one row each (`address::layout_values`).
+    Quick filters and the timeline, Fill thumbnails…), and the size on one
+    row. What it shows of a pane is that pane's: its view, sort, hidden
+    files, Quick filters above its files and the timeline under them
+    (`PaneUi::quick_filters_on`, `PaneUi::timeline`), which a pane made
+    from it (a split, a tab) takes. More holds the window's panel without
+    a button (Terminal) and the layout's settings, one row each
+    (`address::layout_values`).
   - Two `AdaptiveRow` variants: all buttons while the address keeps
     `FIELD_MIN`, else one button opening the View menu. The address has
     no width of its own when variants are measured.
@@ -325,8 +329,8 @@ of bars, split or not.
 
 ### Layout
 
-- More's Layout group (`ui.layout`) places the timeline, the terminal,
-  the split, the preview, and an archive member's preview. Split and
+- More's Layout group (`ui.layout`) places the terminal, the split, the
+  preview, and an archive member's preview. Split and
   preview default to Automatic, decided in `Shell::render` from the
   window's size (`layout.rs`). Shift+F3 splits the other way, for that
   split only.
@@ -1395,8 +1399,9 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
 
 - The last window's shape (view, split and share, sidebar width and
   sections, preview place and size, archive-member placement, Properties'
-  folds, the types shown as their source, timeline and what it measures
-  and counts, zoom, Usage's levels and mode, column widths) is
+  folds, the types shown as their source, the active pane's Quick
+  filters and timeline, what it measures and counts, which every pane
+  starts with, zoom, Usage's levels and mode, column widths) is
   application data, not preference:
   `session.rs` keeps it under one key, written only when it changes. A
   new pane opens in the current pane's view. The tabs, each pane's
@@ -1429,6 +1434,12 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
 
 ## The timeline strip (`timeline.rs`)
 
+- Each pane has its own (`PaneUi::timeline`), under its files, shown or
+  put away from the View menu or Ctrl+Shift+L (`ui.timeline`), acting on
+  the active pane: it never moves to another pane, and a split shows two
+  places' dates side by side. What it measures and the time it counts
+  are its own; a pane made from another takes them (`TimelineState::like`).
+  A pane gone dormant counts again when shown.
 - The width pressed is the width shown (`Histogram::bucket`). Unpicked,
   the bars are the finest that show every date (`fits`); a width picked
   holds while the pane shows what it showed then (a `Zoom` ends with
@@ -1444,12 +1455,17 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   are chosen in prepaint from each bar's rank, the finest level whose
   labels all have room. Bars are dated on the plugin's calendar
   (`Calendar::system`), so a label is the bar's period.
-- A bar's click, or a drag across bars, searches their period in one
-  term of the time counted (`modified:`, `created:`, `accessed:`,
-  `taken:`; `timeline.select`); in a search, it refines that term
-  (`query.refine`), so a bar of a bar's files is a click away and Back
-  returns. Only a folder's subtree is walked: a search lists what it
-  lists.
+- A bar's click, or a drag across bars, shows their period in one term
+  of the time counted (`modified:`, `created:`, `accessed:`, `taken:`;
+  `timeline.select`). Over a folder counted alone, by a time its listing
+  knows, it is the pane's lens (`query.narrow`), as Quick filters' year
+  is: kept as the pane goes until taken off, a bar again in place of the
+  one before. Over the subtree, or by pictures' clocks, which a lens
+  cannot decide, it is a search, which Back leaves; in a search, it
+  refines that term (`query.refine`), so a bar of a bar's files is a
+  click away. A folder's bars count its own files: its lens shows the
+  folders inside whatever it keeps, so a bar counts what it shows. Only
+  a folder's subtree is walked: a search lists what it lists.
 - What the strip keeps of a visit (`timeline::Visit`, ending with
   `location_lifetime`): the width picked, its window, the keys' bar and
   where a range began, bars kept by their first instant so a count again

@@ -94,9 +94,12 @@ pub const UNFOLDED_KEY: &str = "ui.settings_unfolded";
 /// The views given a button beside the address, or whose button was
 /// taken away (`address::ViewButtons`): made from the buttons' own menu.
 pub const VIEW_BUTTONS_KEY: &str = "ui.view_buttons";
-/// Whether Quick filters show above the files (`quick_filters.rs`).
-pub const QUICK_FILTERS_KEY: &str = "ui.quick_filters";
-/// What `QUICK_FILTERS_KEY` was named until Narrow by became Quick filters.
+/// Whether Quick filters showed above the files, a setting until each pane
+/// had its own (2026-11-07): read once into the window's shape
+/// (`session::former_quick_filters`), then forgotten.
+pub const QUICK_FILTERS_FORMER_KEY: &str = "ui.quick_filters";
+/// What `QUICK_FILTERS_FORMER_KEY` was named until Narrow by became Quick
+/// filters.
 const NARROW_FOLDERS_FORMER_KEY: &str = "ui.narrow_folders";
 /// Whether the tabs are listed for a window that has only one tab.
 pub const SINGLE_TAB_KEY: &str = "ui.single_tab";
@@ -368,7 +371,7 @@ fn opacity_spec(ground: Ground) -> SettingSpec {
         Ground::Preview => (
             PREVIEW_OPACITY_KEY,
             "Preview background opacity",
-            "How much a preview hides what is behind the window, whatever it shows: text, a table, music, the room around a picture, a page or a film, and Properties beside it; at 100 % it hides it.",
+            "How much a preview hides what is behind the window, whatever it shows. That is text, a table, music, the room around a picture, a page or a film, and Properties beside it; at 100 % it hides it.",
         ),
     };
     SettingSpec::integer(
@@ -1469,20 +1472,10 @@ pub fn declare(app: &App) {
         .page(page::GENERAL)
         .section("Actions"),
     );
-    // Narrow folders, as 0.2 named it, is Quick filters (ADR-107).
+    // Narrow folders, as 0.2 named it, is Quick filters (ADR-107), which
+    // the window keeps for each pane since (`session::former_quick_filters`).
     app.settings
-        .rename(NARROW_FOLDERS_FORMER_KEY, QUICK_FILTERS_KEY);
-    app.settings.declare(
-        SettingSpec::toggle(
-            QUICK_FILTERS_KEY,
-            "Quick filters",
-            "Show Quick filters above the files: their kinds, the years they were modified and their tags, each with how many files, to show only those. A choice stays as you go to other folders and searches, until you take it off. A search with a tag and a tag's folder offer them whatever this says.",
-            false,
-        )
-        .page(page::VIEWS)
-        .section("Folders")
-        .essential(),
-    );
+        .rename(NARROW_FOLDERS_FORMER_KEY, QUICK_FILTERS_FORMER_KEY);
     app.settings.declare(
         SettingSpec::toggle(
             GRID_FILL_KEY,
@@ -1978,9 +1971,9 @@ static BUILTIN: [Builtin; 12] = [
         owner: None,
         title: "Folders and views",
         icon: "grid",
-        intro: "How a folder shows its files: Quick filters above them, the grid, the list's columns, and the thumbnails drawn for them.",
+        intro: "How a folder shows its files: the grid, the list's columns, and the thumbnails drawn for them.",
         when_used: true,
-        sections: &["Folders", "Grid", "List columns", "Thumbnails"],
+        sections: &["Grid", "List columns", "Thumbnails"],
     },
     Builtin {
         page: Page::Notes,
@@ -3956,28 +3949,35 @@ mod tests {
         );
     }
 
+    /// Narrow folders turned on in 0.2 is Quick filters turned on (ADR-107),
+    /// as the setting that followed it is: read once into the window's
+    /// shape, then forgotten.
+    #[test]
+    fn narrow_folders_turned_on_is_quick_filters_turned_on() {
+        for (file, said) in [
+            ("[ui]\nnarrow_folders = true\n", Some(true)),
+            ("[ui]\nquick_filters = true\n", Some(true)),
+            ("[ui]\nquick_filters = false\n", Some(false)),
+            ("", None),
+        ] {
+            let tmp = tempfile::tempdir().unwrap();
+            let path = tmp.path().join("settings.toml");
+            std::fs::write(&path, file).unwrap();
+            let app = App::new(skwir_core::app::AppConfig {
+                settings_path: Some(path),
+                ..skwir_core::app::AppConfig::ephemeral(tmp.path())
+            })
+            .unwrap();
+            declare(&app);
+            assert_eq!(crate::session::former_quick_filters(&app), said, "{file}");
+            assert_eq!(crate::session::former_quick_filters(&app), None, "{file}");
+        }
+    }
+
     /// A page shows its settings by subject (ADR-072), its sections in the
     /// order it lists them, each section's settings as they were declared:
     /// Theme first, the list's columns in the order they stand. Declared
     /// again, a setting keeps its place.
-    /// Narrow folders turned on in 0.2 is Quick filters turned on (ADR-107).
-    #[test]
-    fn narrow_folders_turned_on_is_quick_filters_turned_on() {
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("settings.toml");
-        std::fs::write(&path, "[ui]\nnarrow_folders = true\n").unwrap();
-        let app = App::new(skwir_core::app::AppConfig {
-            settings_path: Some(path),
-            ..skwir_core::app::AppConfig::ephemeral(tmp.path())
-        })
-        .unwrap();
-        declare(&app);
-        assert_eq!(
-            app.settings.get::<bool>(super::QUICK_FILTERS_KEY),
-            Some(true)
-        );
-    }
-
     #[test]
     fn a_page_shows_its_settings_by_subject_as_declared() {
         let tmp = tempfile::tempdir().unwrap();
@@ -4043,10 +4043,7 @@ mod tests {
                 .iter()
                 .any(|(section, key)| section == "Tabs" && key == TABS_AT_KEY)
         );
-        assert_eq!(
-            sections(&specs, &Page::Views),
-            ["Folders", "Grid", "List columns"]
-        );
+        assert_eq!(sections(&specs, &Page::Views), ["Grid", "List columns"]);
         let columns: Vec<String> = page(&specs, &Page::Views)
             .into_iter()
             .filter(|(section, _)| section == "List columns")

@@ -242,9 +242,11 @@ and `notes.agree` are core `notes.*` commands.
   kinds once it is listed and their years once every file's metadata is
   in, each with how many files it keeps, what the lens sets already not
   offered; a click changes the lens (`query.narrow`), Alt+click leaves a
-  tag out. Asked for (`ui.quick_filters`), over any location, it always
-  shows and says why it offers nothing; over a search with a tag and a
-  tag's place it shows by itself, with something to offer. Its count runs
+  tag out, as a bar of a folder's timeline sets its time. Asked for, by
+  each pane (`ui.quick_filters`, `PaneUi::quick_filters_on`, kept as it
+  goes and taken by a pane made from it; no setting), over any location,
+  it always shows and says why it offers nothing; over a search with a
+  tag and a tag's place it shows by itself, with something to offer. Its count runs
   on a worker once per change of the listing, at most every 500 ms while
   it streams, a count under way answering before another is asked;
   another filter, the bar shown or hidden, or the listing complete counts

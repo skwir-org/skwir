@@ -1,18 +1,22 @@
 //! skwir plugin: timeline. Files by modification time as a histogram the
-//! UI renders as a scrubbable bar chart; a bucket becomes a `query:`
-//! location (`modified>=start modified<end in:dir`) when selected.
+//! UI renders as a scrubbable bar chart; a bucket selected shows its
+//! files: the pane's lens (`modified:2026-07`, ADR-107) over a folder
+//! counted alone, as Quick filters' year is, else a `query:` location.
 //!
 //! Commands: `timeline.histogram { pane?, bucket?, from?, until?, subtree? }`
 //! returns the buckets for the pane's listing (hydrated entries only; the
 //! UI hydrates everything first) or, with `subtree`, the [`SubtreeStatus`]
 //! of a background walk of the pane's folder, which `timeline.status {
 //! pane? }` returns until the walk is done. `timeline.select { start, end,
-//! pane?, subtree? }` navigates to the matching query, or refines the
-//! pane's search to the period.
+//! pane?, subtree?, date? }` filters a folder to the period through its lens
+//! (by a time its listing knows, the folder alone), else navigates to the
+//! matching query, or refines the pane's search to the period.
 //!
-//! What a bar counts is what clicking it shows: the entries the query lists
-//! (files, folders and links, hidden ones only when the pane shows hidden
-//! entries), from the listing (`depth:1`) or from the whole subtree.
+//! What a bar counts is what clicking it shows: a folder's own files, which
+//! its lens keeps (the folders inside show whatever it keeps), or the
+//! entries the query lists (files, folders and links, hidden ones only when
+//! the pane shows hidden entries), from a search's listing or from the
+//! whole subtree.
 //!
 //! Buckets are periods of the user's calendar (`skwir_platform::calendar`),
 //! like the query language's dates: days from local midnight, daylight
@@ -843,9 +847,17 @@ impl TimelinePlugin {
         window: Window,
     ) -> anyhow::Result<Histogram> {
         let key = date.listed().unwrap_or(keys::MODIFIED);
+        // A folder's bar is its lens (`timeline.select`), which shows the
+        // folders inside whatever it keeps: its files alone are counted, as
+        // Quick filters count them. A search lists what matches, folders
+        // included.
+        let files_only = app.pane_dir(pane).is_ok();
         let mut unknown = 0;
         let mut dated: Vec<(SystemTime, u64, bool)> = Vec::new();
         Self::each_shown(app, pane, false, |e, selected, _| {
+            if files_only && e.is_dir() {
+                return;
+            }
             // A folder weighs nothing here, as in a walk: its files do.
             let bytes = if e.is_dir() {
                 0
@@ -1127,7 +1139,7 @@ impl Plugin for TimelinePlugin {
                 ID, Topic::Find,
                 "timeline.select",
                 "Show files from a period",
-                "Navigate to a query for files modified (or created, accessed, taken) in [start, end), or narrow the pane's search to them",
+                "Show the files modified (or created, accessed, taken) in [start, end): a folder's own, by a time it lists, through its lens (`query.narrow`), kept as the pane goes elsewhere until taken off; its subtree, or by when pictures were taken, as a search; a search's, by narrowing it",
                 move |a, app| {
                     let pane = app.pane_or_active(a.pane);
                     let (last_subtree, last_date) = t
@@ -1155,14 +1167,26 @@ impl Plugin for TimelinePlugin {
                         )?);
                     };
                     let subtree = a.subtree.unwrap_or(last_subtree);
-                    // One term, which a bar of the search then replaces
-                    // (`query.refine`): never two that a refine would
-                    // leave one of.
-                    let mut expr = format!(
-                        "{}:{}",
-                        date.word(),
-                        period_words(day(a.start), day(a.end))
-                    );
+                    let period = period_words(day(a.start), day(a.end));
+                    // The folder's own files, by a time its listing knows:
+                    // its lens (ADR-107), as Quick filters' year is, kept
+                    // as the pane goes elsewhere until taken off; a bar
+                    // again sets it in place of this one.
+                    if !subtree && date.listed().is_some() {
+                        return app.dispatch(&Invocation::try_with_args(
+                            "query.narrow",
+                            &serde_json::json!({
+                                "facet": date.word(),
+                                "value": period,
+                                "pane": pane,
+                            }),
+                        )?);
+                    }
+                    // What a lens cannot decide (the subtree, a picture's
+                    // clock) is a search, in one term, which a bar of the
+                    // search then replaces (`query.refine`): never two that
+                    // a refine would leave one of.
+                    let mut expr = format!("{}:{period}", date.word());
                     if !subtree {
                         expr.push_str(" depth:1");
                     }
@@ -1571,6 +1595,49 @@ mod tests {
             (&bars[0]["count"], &bars[0]["selected"]),
             (&1.into(), &1.into())
         );
+    }
+
+    /// A folder's bars count its own files: a bar is its lens, which shows
+    /// the folders inside whatever it keeps.
+    #[test]
+    fn a_folders_bars_count_its_files_alone() {
+        use skwir_core::app::AppConfig;
+        use skwir_core::location::Location;
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("r");
+        std::fs::create_dir_all(root.join("inner folder")).unwrap();
+        std::fs::write(root.join("a.txt"), b"text").unwrap();
+        let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+        app.plugins.add(Arc::new(TimelinePlugin::default()), &app);
+        let pane = app.workspace.read().active_id();
+        app.navigate(pane, &Location::from_path(&root)).unwrap();
+        assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+        let ids = app.workspace.read().pane(pane).unwrap().order();
+        assert_eq!(ids.len(), 2);
+        app.dispatch(&Invocation::with_args(
+            "hydrate",
+            &serde_json::json!({ "ids": ids, "pane": pane }),
+        ))
+        .unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let h = loop {
+            let h = match app
+                .dispatch(&Invocation::new("timeline.histogram"))
+                .unwrap()
+            {
+                Outcome::Value(v) => v,
+                other => panic!("timeline.histogram: {other:?}"),
+            };
+            if h["unknown"] == 0 && h["total"] != 0 {
+                break h;
+            }
+            assert!(std::time::Instant::now() < deadline, "never hydrated");
+            app.pump();
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        assert_eq!(h["total"], 1, "{h}");
+        let bars = h["bars"].as_array().unwrap();
+        assert_eq!((bars.len(), &bars[0]["count"]), (1, &1.into()), "{h}");
     }
 
     #[test]

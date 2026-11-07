@@ -79,6 +79,16 @@
   a sort by rating waits for what it sorts by, a sort by size does not. A
   file whose name several types claim gets its Opens with with the rest, and
   with Properties alone at all.
+- **Quick filters and the timeline are each pane's**: both are in the View
+  menu, side by side, and act on the pane it hangs from, so the panes of a
+  split each have their own, and the timeline stays under its pane rather than
+  following the active one. A split or a tab takes them from the pane it comes
+  from; the window remembers them as it remembers the view. The timeline left
+  More, and Quick filters left Settings (on there, they come on in the panes).
+  A timeline bar of a folder's own files now filters the folder as Quick
+  filters' year does, the filter kept as you go until taken off with its ×,
+  and its bars count the folder's files alone; over its folders inside, or by
+  when pictures were taken, a bar still opens a search.
 - **What plays stays in sight**: a track kept playing goes under Properties
   when Preview is turned off, where it used to vanish while still playing, and
   to the footer's strip when both are off. A click on it there, or on the

@@ -1,10 +1,11 @@
 //! What the window looked like, so the next one looks the same.
 //!
 //! A preference is something the user chose in Settings; this is not that. It
-//! is the shape of the last window — which view each pane showed, whether it
-//! was split and how, whether the preview, the timeline and the terminal were
-//! open, where the preview was and how big, how the sidebar's groups were
-//! arranged — kept as application data under one key and
+//! is the shape of the last window — which view the panes showed, with Quick
+//! filters and the timeline or without (the active pane's, which every pane
+//! starts with), whether it was split and how, whether the preview and the
+//! terminal were open, where the preview was and how big, how the sidebar's
+//! groups were arranged — kept as application data under one key and
 //! restored at startup. Nothing here is worth a dialog, and all of it is annoying to set
 //! up again every morning.
 //!
@@ -77,6 +78,9 @@ pub struct Session {
     pub source_types: crate::preview::SourceTypes,
     /// The types whose models open turned in 3D, or by their picture.
     pub turned_types: crate::preview::TurnedTypes,
+    /// The active pane's Quick filters asked for above its files.
+    pub quick_filters: bool,
+    /// The active pane's timeline shown under its files.
     pub timeline: bool,
     /// Whether its bars measure sizes rather than files.
     pub timeline_size: bool,
@@ -126,9 +130,10 @@ impl Shell {
             properties_folds: self.preview.properties_folds.clone(),
             source_types: self.preview.source_types.clone(),
             turned_types: self.preview.turned_types.clone(),
-            timeline: self.timeline.open,
-            timeline_size: self.timeline.measure == crate::timeline::Measure::Size,
-            timeline_date: crate::timeline::DATES[self.timeline.date].0.to_owned(),
+            quick_filters: self.ui().quick_filters_on,
+            timeline: self.timeline().open,
+            timeline_size: self.timeline().measure == crate::timeline::Measure::Size,
+            timeline_date: crate::timeline::DATES[self.timeline().date].0.to_owned(),
             player_height: self.player.height,
             activity_pinned: self.activity.pinned,
             terminal: self.terminal.open,
@@ -229,6 +234,16 @@ pub fn restore(app: &skwir_core::App) -> Option<Session> {
     (session != Session::default()).then_some(session)
 }
 
+/// Quick filters as Settings kept them, before each pane had its own (a
+/// switch under Folders and views until 2026-11-07): `Some` once, while the
+/// file still says it, which is forgotten from then on.
+pub fn former_quick_filters(app: &skwir_core::App) -> Option<bool> {
+    let key = crate::settings::QUICK_FILTERS_FORMER_KEY;
+    let value = app.settings.get::<toml::Value>(key)?;
+    app.settings.unset(key);
+    Some(value.as_bool() == Some(true))
+}
+
 pub fn declare(app: &skwir_core::App) {
     app.settings
         .declare(skwir_core::settings::SettingSpec::state(
@@ -252,6 +267,8 @@ mod tests {
                 split_panes,
                 preview_at: Preview::Bottom,
                 preview_height: 300.,
+                quick_filters: true,
+                timeline: true,
                 ..Session::default()
             };
             let value = toml::Value::try_from(&session).unwrap();

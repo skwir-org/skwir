@@ -1,6 +1,6 @@
 //! Exercise the command used by timeline bar clicks with the real query provider.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
 
@@ -8,6 +8,8 @@ use skwir_core::app::{App, AppConfig};
 use skwir_core::command::Invocation;
 use skwir_core::location::Location;
 
+/// A bar of a folder's subtree is a search of the folder, its path given
+/// whole whatever its name holds.
 #[test]
 fn timeline_selection_preserves_paths_and_filters_the_period() {
     let tmp = tempfile::tempdir().unwrap();
@@ -58,7 +60,7 @@ fn timeline_selection_preserves_paths_and_filters_the_period() {
         assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
         app.dispatch(&Invocation::with_args(
             "timeline.select",
-            &BTreeMap::from([("start", start), ("end", end)]),
+            &serde_json::json!({ "start": start, "end": end, "subtree": true }),
         ))
         .unwrap_or_else(|e| panic!("{dirname:?}: {e:#}"));
         assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
@@ -83,11 +85,11 @@ fn timeline_selection_preserves_paths_and_filters_the_period() {
     }
 }
 
-/// A bar of a search's timeline narrows that search: a month of a folder,
-/// then a day of that month, its root and depth kept; a change of its
-/// lens (ADR-107), made in place, which Back does not undo: it shows the
-/// folder as it was left, filtered by nothing (ADR-109), and Forward the
-/// search with its day.
+/// A bar of a search's timeline narrows that search: a month of a folder's
+/// own files, then a day of that month, its root and depth kept; a change
+/// of its lens (ADR-107), made in place, which Back does not undo: it shows
+/// the folder as it was left, filtered by nothing (ADR-109), and Forward
+/// the search with its day.
 #[test]
 fn a_bar_of_a_search_refines_it() {
     let tmp = tempfile::tempdir().unwrap();
@@ -138,8 +140,20 @@ fn a_bar_of_a_search_refines_it() {
     };
     app.navigate(pane, &Location::from_path(&root)).unwrap();
     assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
-    // July, in the folder: what it holds itself.
-    select(day(2026, 7, 1), day(2026, 8, 1));
+    // July, searched in the folder: what it holds itself.
+    app.dispatch(
+        &Invocation::try_with_args(
+            "query.search",
+            &serde_json::json!({
+                "expr": "modified:2026-07 depth:1",
+                "root": skwir_core::os_path::PathArg::from(root.clone()),
+                "pane": pane,
+            }),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
     assert_eq!(
         names(),
         BTreeSet::from(["first.jpg".into(), "second.jpg".into()])
@@ -150,7 +164,7 @@ fn a_bar_of_a_search_refines_it() {
     let location = app.pane_location(pane).unwrap();
     assert_eq!(location.scheme.as_ref(), "query");
     let query = skwir_plugin_query::lang::parse(&location.rest).unwrap();
-    assert_eq!(query.root, root);
+    assert_eq!((&query.root, query.depth), (&root, Some(1)));
     // The day in place of the month, not beside it.
     assert!(
         location.rest.contains("modified:2026-07-01") && !location.rest.contains("2026-07 "),
@@ -185,6 +199,135 @@ fn a_bar_of_a_search_refines_it() {
         "{:?}",
         p.lens()
     );
+}
+
+/// A bar of a folder's own files is its lens (ADR-107), as Quick filters'
+/// year is: the folder stays shown, its files of the period alone and the
+/// folders inside whatever it keeps; a bar again sets its period in place
+/// of the first; the lens stays as the pane goes to another folder, until
+/// taken off.
+#[test]
+fn a_bar_of_a_folder_is_its_lens() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+    app.plugins
+        .add(Arc::new(skwir_plugin_query::QueryPlugin::default()), &app);
+    app.plugins.add(
+        Arc::new(skwir_plugin_timeline::TimelinePlugin::default()),
+        &app,
+    );
+    let pane = app.workspace.read().active_id();
+    let cal = skwir_platform::calendar::Calendar::system();
+    let day = |y, m, d| skwir_platform::calendar::days_from_civil(y, m, d);
+    let secs = |day: i64| {
+        cal.day_start(day)
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    };
+    let root = tmp.path().join("d'Example (3)");
+    let other = tmp.path().join("other place");
+    std::fs::create_dir_all(root.join("inner")).unwrap();
+    std::fs::create_dir_all(&other).unwrap();
+    for (path, modified) in [
+        (root.join("june.jpg"), secs(day(2026, 6, 30))),
+        (root.join("first.jpg"), secs(day(2026, 7, 1))),
+        (root.join("second.jpg"), secs(day(2026, 7, 2)) + 60),
+        (other.join("same day.jpg"), secs(day(2026, 7, 1)) + 3600),
+        (other.join("may.jpg"), secs(day(2026, 5, 3))),
+    ] {
+        std::fs::File::create(path)
+            .unwrap()
+            .set_modified(UNIX_EPOCH + Duration::from_secs(modified))
+            .unwrap();
+    }
+    // What the pane shows, once it shows `want`: its files read, as the
+    // window asks for those a lens waits for (`quick_filters.rs`).
+    let shown = |want: &[&str]| -> BTreeSet<String> {
+        let want: BTreeSet<String> = want.iter().map(|n| (*n).to_owned()).collect();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+            let ids: Vec<_> = {
+                let ws = app.workspace.read();
+                let p = ws.pane(pane).unwrap();
+                p.listing
+                    .iter()
+                    .filter(|e| !e.metadata.is_filled())
+                    .map(|e| e.id)
+                    .collect()
+            };
+            if !ids.is_empty() {
+                app.dispatch(&Invocation::with_args(
+                    "hydrate",
+                    &serde_json::json!({ "ids": ids, "pane": pane }),
+                ))
+                .unwrap();
+            }
+            let names: BTreeSet<String> = {
+                let ws = app.workspace.read();
+                let p = ws.pane(pane).unwrap();
+                p.order()
+                    .iter()
+                    .filter_map(|id| p.entry(*id))
+                    .map(|e| e.name_str().into_owned())
+                    .collect()
+            };
+            if names == want || std::time::Instant::now() > deadline {
+                break names;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    };
+    let lens = || {
+        let ws = app.workspace.read();
+        ws.pane(pane).unwrap().lens().map(|l| l.words.clone())
+    };
+    let select = |start: i64, end: i64| {
+        app.dispatch(&Invocation::with_args(
+            "timeline.select",
+            &serde_json::json!({ "start": secs(start), "end": secs(end), "subtree": false }),
+        ))
+        .unwrap();
+    };
+    app.navigate(pane, &Location::from_path(&root)).unwrap();
+    assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+    // July: the folder still, its files of July and the folder inside.
+    select(day(2026, 7, 1), day(2026, 8, 1));
+    assert_eq!(
+        shown(&["first.jpg", "inner", "second.jpg"]),
+        BTreeSet::from(["first.jpg".into(), "inner".into(), "second.jpg".into()])
+    );
+    assert_eq!(app.pane_location(pane), Some(Location::from_path(&root)));
+    assert!(
+        lens().is_some_and(|words| words.contains("modified:2026-07")),
+        "{:?}",
+        lens()
+    );
+    // Its first day, in place of the month.
+    select(day(2026, 7, 1), day(2026, 7, 2));
+    assert_eq!(
+        shown(&["first.jpg", "inner"]),
+        BTreeSet::from(["first.jpg".into(), "inner".into()])
+    );
+    let words = lens().unwrap();
+    assert!(
+        words.contains("modified:2026-07-01") && words.matches("modified").count() == 1,
+        "{words}"
+    );
+    // Kept as the pane goes elsewhere.
+    app.navigate(pane, &Location::from_path(&other)).unwrap();
+    assert_eq!(
+        shown(&["same day.jpg"]),
+        BTreeSet::from(["same day.jpg".into()])
+    );
+    // Taken off, as Quick filters' choices are.
+    app.dispatch(&Invocation::new("query.narrow")).unwrap();
+    assert_eq!(
+        shown(&["may.jpg", "same day.jpg"]),
+        BTreeSet::from(["may.jpg".into(), "same day.jpg".into()])
+    );
+    assert_eq!(lens(), None);
 }
 
 /// Answers a picture's clock from the digits the file holds.

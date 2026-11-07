@@ -65,6 +65,12 @@ pub struct PaneUi {
     pub weight: crate::weight::Weight,
     /// What Quick filters offer over what it shows.
     pub quick_filters: crate::quick_filters::QuickFilters,
+    /// Quick filters asked for above its files (`ui.quick_filters`),
+    /// wherever it goes: they show by themselves where the location offers
+    /// them (a tag's place, a search with a tag) whatever this says.
+    pub quick_filters_on: bool,
+    /// Its timeline strip, under its files (`timeline.rs`).
+    pub timeline: TimelineState,
     /// The chips of the search it shows (`search_bar`).
     pub chips: crate::search_bar::Chips,
     /// What narrows the folder it shows, as the same chips (`search_bar`).
@@ -112,6 +118,8 @@ impl PaneUi {
         }
         self.usage = UsageState::default();
         self.loading = crate::loading::State::default();
+        // Its strip counts again when it is shown again, as it was asked.
+        self.timeline = self.timeline.like();
     }
 }
 
@@ -194,8 +202,6 @@ pub struct Preferences {
     pub friendly_dates: bool,
     /// `ui.grid_fill`: thumbnails cropped to their box.
     pub grid_fill: bool,
-    /// `ui.quick_filters`: Quick filters above the files.
-    pub quick_filters: bool,
     /// `ui.single_tab`: the tab of a window that has only one is drawn.
     pub single_tab: bool,
     /// `ui.tabs_at`: the tabs are listed in the sidebar, not the strip.
@@ -237,7 +243,6 @@ impl Default for Preferences {
         Self {
             friendly_dates: true,
             grid_fill: false,
-            quick_filters: false,
             single_tab: false,
             tabs_in_sidebar: false,
             full_path: false,
@@ -427,7 +432,6 @@ pub struct Shell {
     /// Plans proposed by background work, oldest first; the front is shown.
     pub reviews: VecDeque<crate::review::Review>,
     pub review_focus: Option<crate::review::ReviewFocus>,
-    pub timeline: TimelineState,
     /// The tiles maps are drawn on, while a map is shown (`map_tiles`).
     pub(crate) map_tiles: std::rc::Rc<std::cell::RefCell<crate::map_tiles::TileStore>>,
     pub(crate) map_notes: crate::map_preview::Notes,
@@ -755,7 +759,6 @@ impl Shell {
             theme_revision: 0,
             reviews: VecDeque::new(),
             review_focus: None,
-            timeline: TimelineState::default(),
             map_tiles,
             map_notes: crate::map_preview::Notes::default(),
             map_views: std::collections::HashSet::new(),
@@ -828,7 +831,15 @@ impl Shell {
     /// the same panels. The view waits for `sync_views`, which is what
     /// decides which views this build and its plugins actually have.
     fn restore_session(&mut self, split: bool, window: &mut Window, cx: &mut Context<Self>) {
+        // Quick filters turned on in Settings, before each pane had its own.
+        let former = crate::session::former_quick_filters(&self.app);
+        if former.is_some() {
+            self.save_settings_later();
+        }
         let Some(session) = crate::session::restore(&self.app) else {
+            for pane in &mut self.panes {
+                pane.quick_filters_on = former == Some(true);
+            }
             self.stored_session = Some(self.session());
             return;
         };
@@ -882,14 +893,20 @@ impl Shell {
         if session.player_height > 0. {
             self.player.height = session.player_height;
         }
-        self.timeline.open = session.timeline;
-        if session.timeline_size {
-            self.timeline.measure = timeline::Measure::Size;
-        }
-        self.timeline.date = timeline::DATES
+        // What the panes show above and under their files, as the active
+        // one showed it; a pane made later takes the active one's.
+        let date = timeline::DATES
             .iter()
             .position(|(word, _)| *word == session.timeline_date)
             .unwrap_or(0);
+        for pane in &mut self.panes {
+            pane.quick_filters_on = session.quick_filters || former == Some(true);
+            pane.timeline.open = session.timeline;
+            if session.timeline_size {
+                pane.timeline.measure = timeline::Measure::Size;
+            }
+            pane.timeline.date = date;
+        }
         // Its shell starts on a worker at the first sync.
         self.terminal.open = session.terminal && self.app.terminals.provider().is_some();
         if session.terminal_height > 0. {
@@ -998,6 +1015,8 @@ impl Shell {
             omni: None,
             weight: crate::weight::Weight::default(),
             quick_filters: crate::quick_filters::QuickFilters::default(),
+            quick_filters_on: false,
+            timeline: TimelineState::default(),
             chips: crate::search_bar::Chips::default(),
             filters: crate::search_bar::Filters::default(),
             place: crate::trail::Shown::default(),
@@ -1813,13 +1832,14 @@ impl Shell {
         crate::settings::remember(self, crate::settings::GRID_FILL_KEY, on, cx);
     }
 
-    /// `ui.quick_filters`: Quick filters above the files, a preference
-    /// like Fill thumbnails.
+    /// `ui.quick_filters`: Quick filters above the pane's files, or not,
+    /// as it shows its view: the pane's own, remembered with the window's
+    /// shape (`session.rs`).
     fn toggle_quick_filters(&mut self, cx: &mut Context<Self>) {
-        self.prefs.quick_filters = !self.prefs.quick_filters;
+        let ui = self.ui_mut();
+        ui.quick_filters_on = !ui.quick_filters_on;
+        self.remember_session();
         cx.notify();
-        let on = self.prefs.quick_filters.to_string();
-        crate::settings::remember(self, crate::settings::QUICK_FILTERS_KEY, on, cx);
     }
 
     /// `ui.printed_pages`: count a book by chapters or by printed pages. A
@@ -3126,7 +3146,6 @@ impl Shell {
             // What the window saves itself is read as it stands, a change
             // still waiting its turn included (`settings::remember`).
             self.prefs.grid_fill = self.switch(crate::settings::GRID_FILL_KEY, false);
-            self.prefs.quick_filters = self.switch(crate::settings::QUICK_FILTERS_KEY, false);
             self.prefs.single_tab = self
                 .app
                 .settings
@@ -3350,7 +3369,7 @@ impl Shell {
                 shell.sync_usage(cx);
             });
         }
-        self.sync_timeline(cx);
+        self.sync_timelines(cx);
         self.sync_tallies(cx);
         self.sync_terminal(window, cx);
     }
@@ -3454,11 +3473,7 @@ impl Shell {
         self.sync_lent_hydration();
         let narrow = crate::quick_filters::render(self, cx);
         let file_area = self.pane_container(body, said, cx);
-        let strip = if active {
-            timeline::render(self, window, cx)
-        } else {
-            None
-        };
+        let strip = timeline::render(self, active, window, cx);
         // Its footer; the last pane's ends with the window's own state.
         self.sync_weight(window, cx);
         let last = self.panes.last().map(|p| p.id) == Some(id);

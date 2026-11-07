@@ -150,11 +150,17 @@ impl Shell {
             Some(left) => left.iter().map(|p| p.id).collect(),
             None => current.clone(),
         };
-        // A new pane opens in the view the active one shows.
-        let view = if self.panes.is_empty() {
-            crate::view::LIST
+        // A new pane opens in the view the active one shows, with its
+        // Quick filters and its timeline shown or not.
+        let (view, quick_filters, timeline) = if self.panes.is_empty() {
+            (
+                crate::view::LIST,
+                false,
+                crate::timeline::TimelineState::default(),
+            )
         } else {
-            self.ui().view_id
+            let ui = self.ui();
+            (ui.view_id, ui.quick_filters_on, ui.timeline.like())
         };
         let mut pool: HashMap<PaneId, crate::shell::PaneUi> = self
             .panes
@@ -170,6 +176,8 @@ impl Shell {
                 if ui.views.contains_key(view) {
                     ui.view_id = view;
                 }
+                ui.quick_filters_on = quick_filters;
+                ui.timeline = timeline.like();
                 ui
             });
             panes.push(ui);

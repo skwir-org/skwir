@@ -1,10 +1,11 @@
 //! Quick filters: a bar of what the files shown can be filtered to, each
 //! with how many files it keeps, a choice changing the pane's lens
 //! (ADR-107, the query plugin's `query.narrow`), kept as the pane shows
-//! other locations until taken off. Shown when asked for
-//! (`ui.quick_filters`, the View menu's Quick filters) over any location,
-//! and by itself over a search with a tag every match has and over a
-//! tag's place: there it walks the tags as folders are walked.
+//! other locations until taken off. Shown when asked for over any location
+//! (`ui.quick_filters`, the View menu's Quick filters: each pane's own,
+//! `PaneUi::quick_filters_on`, kept as it goes and taken by a pane made
+//! from it), and by itself over a search with a tag every match has and
+//! over a tag's place: there it walks the tags as folders are walked.
 //!
 //! It offers the tags within each tag the location has (`Places` →
 //! `France`), the other tags its files have, their kinds once the listing
@@ -300,7 +301,7 @@ impl Shell {
             )
         };
         let shown = self.app.commands.get("query.narrow").is_some()
-            && (self.prefs.quick_filters || !tags.is_empty() || own.is_some());
+            && (self.ui().quick_filters_on || !tags.is_empty() || own.is_some());
         if !shown && !reads {
             if self.ui().quick_filters.key.is_some() {
                 self.ui_mut().quick_filters = QuickFilters::default();
@@ -628,7 +629,7 @@ fn why_empty(quick: &QuickFilters) -> String {
 pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let quick = &shell.ui().quick_filters;
     let offer = &quick.offer;
-    if !quick.shown || (offer.is_empty() && !shell.prefs.quick_filters) {
+    if !quick.shown || (offer.is_empty() && !shell.ui().quick_filters_on) {
         return None;
     }
     let theme = cx.global::<Theme>().clone();

@@ -1,6 +1,11 @@
-//! Timeline strip: a histogram of when files changed, under the file area.
-//! The plugin counts it (`timeline.histogram`), on a worker: a count reads
-//! every file the pane shows, which the window's thread does not wait for.
+//! Timeline strip: a histogram of when files changed, under a pane's
+//! files. Each pane has its own (`PaneUi::timeline`), shown from the View
+//! menu or Ctrl+Shift+L (`ui.timeline`), as Quick filters above them are:
+//! it stays under its pane, and a split shows two places' dates side by
+//! side. A pane made from another (a split, a tab) shows it as that one
+//! does. The plugin counts it (`timeline.histogram`), on a worker: a count
+//! reads every file the pane shows, which the window's thread does not
+//! wait for.
 //!
 //! The bars are the finest that show every date until the user picks a
 //! width (`ui.timeline_bucket`), which holds while the pane shows what it
@@ -26,7 +31,6 @@ use serde::Deserialize;
 use skwir_core::cancel::CancelToken;
 use skwir_core::command::{Invocation, Outcome};
 use skwir_core::location::Location;
-use skwir_core::workspace::PaneId;
 use skwir_platform::calendar::{Calendar, Period, civil_from_days};
 
 use crate::elements::bars::{self, BarColors, bar_chart};
@@ -196,7 +200,6 @@ pub enum Measure {
 /// Bars are kept by their first instant: a count again or a window moved
 /// finds them where they are.
 struct Visit {
-    pane: PaneId,
     /// Ends when the pane shows something else.
     lifetime: CancelToken,
     bucket: Option<usize>,
@@ -213,6 +216,9 @@ struct Asked {
     anchor: Option<Anchor>,
 }
 
+/// A pane's strip (`PaneUi::timeline`): whether it shows, what it counts
+/// and how, and what it counted. Each pane has its own, so a split shows
+/// two places' dates side by side, and a strip stays under its pane.
 #[derive(Default)]
 pub struct TimelineState {
     pub open: bool,
@@ -228,11 +234,12 @@ pub struct TimelineState {
     focus: Option<FocusHandle>,
     /// Where the time's popup hangs.
     dates: PopoverAnchor,
-    visits: Vec<Visit>,
+    /// What it keeps of the pane's visit to the place it shows.
+    visit: Option<Visit>,
     /// The histogram's bars as the chart draws them, made once for each
     /// and each measure: the chart lays out again only for new ones.
     chart: Option<Rc<Vec<bars::Bar>>>,
-    computed_for: Option<(PaneId, u64, Option<usize>, Option<Anchor>, bool, usize)>,
+    computed_for: Option<(u64, Option<usize>, Option<Anchor>, bool, usize)>,
     /// Which files it counted: the listing, its names, and what the pane
     /// shows of them (hidden files, the filter and the narrowing, the
     /// folders opened in place). Sorted again, they are the same files.
@@ -252,6 +259,20 @@ pub struct TimelineState {
     /// (`crate::wakes`): it ends with a wake of its own, so a draw the
     /// pointer asked never asks it again.
     status_after: Option<u64>,
+}
+
+impl TimelineState {
+    /// The strip of a pane made from this one's (a split, a tab): shown,
+    /// counting and measuring as this one does, nothing counted yet.
+    pub fn like(&self) -> Self {
+        Self {
+            open: self.open,
+            subtree: self.subtree,
+            measure: self.measure,
+            date: self.date,
+            ..Self::default()
+        }
+    }
 }
 
 /// How often the bars are counted again while dates come in.
@@ -375,11 +396,22 @@ fn holds(b: &Bar) -> String {
 }
 
 impl Shell {
+    /// The strip of the pane commands act on.
+    pub fn timeline(&self) -> &TimelineState {
+        &self.ui().timeline
+    }
+
+    fn timeline_mut(&mut self) -> &mut TimelineState {
+        &mut self.ui_mut().timeline
+    }
+
+    /// `ui.timeline`: the strip under the pane's files, shown or put away.
     pub fn toggle_timeline(&mut self, cx: &mut Context<Self>) {
-        self.timeline.open = !self.timeline.open;
-        self.timeline.computed_for = None;
-        self.timeline.hover = None;
-        if self.timeline.open {
+        let t = self.timeline_mut();
+        t.open = !t.open;
+        t.computed_for = None;
+        t.hover = None;
+        if t.open {
             self.hydrate_for_timeline();
         }
         self.remember_session();
@@ -389,7 +421,8 @@ impl Shell {
     /// Where the chart's keys go, while the strip is open: a part F6 goes
     /// round (`focus_next_part`).
     pub fn timeline_focus(&self) -> Option<FocusHandle> {
-        self.timeline.focus.clone().filter(|_| self.timeline.open)
+        let t = self.timeline();
+        t.focus.clone().filter(|_| t.open)
     }
 
     /// Ask for the metadata of every entry the timeline cannot date yet.
@@ -414,20 +447,22 @@ impl Shell {
 
     /// What the strip keeps of the pane's visit, if anything.
     fn timeline_visit(&self) -> Option<&Visit> {
-        self.timeline
-            .visits
-            .iter()
-            .find(|v| v.pane == self.pane && !v.lifetime.is_cancelled())
+        self.timeline()
+            .visit
+            .as_ref()
+            .filter(|v| !v.lifetime.is_cancelled())
     }
 
     /// The same, kept from now on.
     fn timeline_visit_mut(&mut self) -> Option<&mut Visit> {
-        let pane = self.pane;
-        self.timeline.visits.retain(|v| !v.lifetime.is_cancelled());
-        if !self.timeline.visits.iter().any(|v| v.pane == pane) {
-            let lifetime = self.app.workspace.read().pane(pane)?.location_lifetime();
-            self.timeline.visits.push(Visit {
-                pane,
+        if self.timeline_visit().is_none() {
+            let lifetime = self
+                .app
+                .workspace
+                .read()
+                .pane(self.pane)?
+                .location_lifetime();
+            self.timeline_mut().visit = Some(Visit {
                 lifetime,
                 bucket: None,
                 anchor: None,
@@ -435,7 +470,7 @@ impl Shell {
                 from: None,
             });
         }
-        self.timeline.visits.iter_mut().find(|v| v.pane == pane)
+        self.timeline_mut().visit.as_mut()
     }
 
     /// Show bars of `bucket` for what the pane shows, until it shows
@@ -446,7 +481,7 @@ impl Shell {
         };
         // A window moved along: the new bars end where it does.
         let anchor = self
-            .timeline
+            .timeline()
             .histogram
             .as_ref()
             .filter(|h| h.windowed())
@@ -455,14 +490,15 @@ impl Shell {
         if let Some(visit) = self.timeline_visit_mut() {
             visit.bucket = Some(i);
             visit.anchor = anchor;
-            self.timeline.panned = 0;
+            self.timeline_mut().panned = 0;
             cx.notify();
         }
     }
 
     pub fn timeline_toggle_subtree(&mut self, cx: &mut Context<Self>) {
-        self.timeline.subtree = !self.timeline.subtree;
-        self.timeline.computed_for = None;
+        let t = self.timeline_mut();
+        t.subtree = !t.subtree;
+        t.computed_for = None;
         cx.notify();
     }
 
@@ -473,13 +509,10 @@ impl Shell {
             "files" => Measure::Files,
             _ => return,
         };
-        if measure != self.timeline.measure {
-            self.timeline.measure = measure;
-            self.timeline.chart = self
-                .timeline
-                .histogram
-                .as_ref()
-                .map(|h| chart_of(h, measure));
+        let t = self.timeline_mut();
+        if measure != t.measure {
+            t.measure = measure;
+            t.chart = t.histogram.as_ref().map(|h| chart_of(h, measure));
             self.remember_session();
             cx.notify();
         }
@@ -488,10 +521,11 @@ impl Shell {
     /// `ui.timeline_date`: which time the bars count.
     pub fn timeline_set_date(&mut self, date: &str, cx: &mut Context<Self>) {
         if let Some(i) = DATES.iter().position(|(word, _)| *word == date)
-            && i != self.timeline.date
+            && i != self.timeline().date
         {
-            self.timeline.date = i;
-            self.timeline.computed_for = None;
+            let t = self.timeline_mut();
+            t.date = i;
+            t.computed_for = None;
             self.remember_session();
             cx.notify();
         }
@@ -501,14 +535,15 @@ impl Shell {
     /// as there are dates: from the bars shown, and the moves not counted
     /// yet.
     pub fn timeline_pan(&mut self, by: i64, cx: &mut Context<Self>) {
-        let Some(h) = self.timeline.histogram.as_ref().filter(|h| h.windowed()) else {
+        let t = self.timeline();
+        let Some(h) = t.histogram.as_ref().filter(|h| h.windowed()) else {
             return;
         };
         let Some(last) = h.bars.len().checked_sub(1) else {
             return;
         };
         let n = i64::try_from(last).unwrap_or(i64::MAX);
-        let shift = (self.timeline.panned + by).clamp(
+        let shift = (t.panned + by).clamp(
             if h.before == 0 { 0 } else { -n },
             if h.after == 0 { 0 } else { n },
         );
@@ -522,7 +557,7 @@ impl Shell {
             && visit.anchor != Some(anchor)
         {
             visit.anchor = Some(anchor);
-            self.timeline.panned = shift;
+            self.timeline_mut().panned = shift;
             cx.notify();
         }
     }
@@ -530,7 +565,7 @@ impl Shell {
     /// `ui.timeline_pan`: half a window earlier or later.
     pub fn timeline_pan_toward(&mut self, toward: &str, cx: &mut Context<Self>) {
         let half = self
-            .timeline
+            .timeline()
             .histogram
             .as_ref()
             .map_or(1, |h| i64::try_from(h.bars.len() / 2).unwrap_or(1).max(1));
@@ -551,7 +586,7 @@ impl Shell {
         extend: bool,
         cx: &mut Context<Self>,
     ) {
-        let Some(h) = &self.timeline.histogram else {
+        let Some(h) = &self.timeline().histogram else {
             return;
         };
         let Some(last) = h.bars.len().checked_sub(1) else {
@@ -566,7 +601,7 @@ impl Shell {
             (Some("first"), _) => 0,
             (Some("last"), _) => index(last),
             // The first key lands on the bar under the pointer, else the last.
-            (_, None) => index(self.timeline.hover.unwrap_or(last)),
+            (_, None) => index(self.timeline().hover.unwrap_or(last)),
             (_, Some(at)) => index(at) + by,
         };
         let clamped = usize::try_from(target.max(0)).unwrap_or(0).min(last);
@@ -595,7 +630,7 @@ impl Shell {
     /// The bars chosen, first and last: from where a range began to the
     /// keys' bar, or that bar alone.
     fn timeline_chosen(&self) -> Option<(usize, usize)> {
-        let h = self.timeline.histogram.as_ref()?;
+        let h = self.timeline().histogram.as_ref()?;
         let visit = self.timeline_visit()?;
         let cursor = h.bar_of(visit.cursor?)?;
         let from = visit.from.and_then(|t| h.bar_of(t)).unwrap_or(cursor);
@@ -604,7 +639,7 @@ impl Shell {
 
     /// `ui.timeline_list`: show the files of the bars chosen.
     pub fn timeline_list(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((start, end)) = self.timeline.histogram.as_ref().and_then(|h| {
+        let Some((start, end)) = self.timeline().histogram.as_ref().and_then(|h| {
             let visit = self.timeline_visit()?;
             h.span(visit.from, visit.cursor?, &Calendar::system())
         }) else {
@@ -614,8 +649,8 @@ impl Shell {
             "start": start,
             "end": end,
             "pane": self.pane,
-            "subtree": self.timeline.subtree && self.timeline_in_folder(),
-            "date": DATES[self.timeline.date].0,
+            "subtree": self.timeline().subtree && self.timeline_in_folder(),
+            "date": DATES[self.timeline().date].0,
         });
         self.run("timeline.select", args, window, cx);
     }
@@ -648,19 +683,27 @@ impl Shell {
     }
 
     fn bar_start(&self, i: usize) -> Option<u64> {
-        Some(self.timeline.histogram.as_ref()?.bars.get(i)?.start)
+        Some(self.timeline().histogram.as_ref()?.bars.get(i)?.start)
+    }
+
+    /// Each pane's strip, counted again where its listing changed.
+    pub fn sync_timelines(&mut self, cx: &mut Context<Self>) {
+        for id in self.panes.iter().map(|p| p.id).collect::<Vec<_>>() {
+            self.with_pane(id, |shell| shell.sync_timeline(cx));
+        }
     }
 
     /// Recompute when the listing changed (hydration lands as events), and
     /// poll a count in the background while it runs.
-    pub fn sync_timeline(&mut self, cx: &mut Context<Self>) {
-        if !self.timeline.open {
+    fn sync_timeline(&mut self, cx: &mut Context<Self>) {
+        if !self.timeline().open {
             return;
         }
-        if self.timeline.focus.is_none() {
-            self.timeline.focus = Some(cx.focus_handle());
+        if self.timeline().focus.is_none() {
+            let focus = cx.focus_handle();
+            self.timeline_mut().focus = Some(focus);
         }
-        if let Some((asked, answer)) = self.timeline.asked.take() {
+        if let Some((asked, answer)) = self.timeline_mut().asked.take() {
             self.take_histogram(asked, answer, cx);
         }
         // What the bars count: the files' dates and names and which are
@@ -685,43 +728,55 @@ impl Shell {
         }) else {
             return;
         };
-        self.timeline.visits.retain(|v| !v.lifetime.is_cancelled());
+        if self
+            .timeline()
+            .visit
+            .as_ref()
+            .is_some_and(|v| v.lifetime.is_cancelled())
+        {
+            self.timeline_mut().visit = None;
+        }
         let (bucket, anchor) = self
             .timeline_visit()
             .map_or((None, None), |v| (v.bucket, v.anchor));
-        let subtree = self.timeline.subtree && self.timeline_in_folder();
-        let date = self.timeline.date;
-        let key = (self.pane, version, bucket, anchor, subtree, date);
-        let other_files = self.timeline.counted != Some(shown);
+        let subtree = self.timeline().subtree && self.timeline_in_folder();
+        let date = self.timeline().date;
+        let key = (version, bucket, anchor, subtree, date);
+        let other_files = self.timeline().counted != Some(shown);
         // Dates arriving batch after batch, or the selection moving:
         // counted at most every `RECOUNT`, and once more after the last.
         let dates_only =
-            self.timeline
+            self.timeline()
                 .computed_for
-                .is_some_and(|(pane, _, bucket, anchor, subtree, date)| {
-                    (pane, bucket, anchor, subtree, date) == (key.0, key.2, key.3, key.4, key.5)
+                .is_some_and(|(_, bucket, anchor, subtree, date)| {
+                    (bucket, anchor, subtree, date) == (key.1, key.2, key.3, key.4)
                 })
                 && !other_files;
         if dates_only
-            && self.timeline.computed_for != Some(key)
-            && let Some(at) = self.timeline.counted_at
+            && self.timeline().computed_for != Some(key)
+            && let Some(at) = self.timeline().counted_at
             && at.elapsed() < RECOUNT
         {
-            if self.timeline.recount.is_none() {
+            if self.timeline().recount.is_none() {
                 let wait = RECOUNT.saturating_sub(at.elapsed());
-                self.timeline.recount = Some(cx.spawn(async move |this, cx| {
+                let pane = self.pane;
+                let recount = cx.spawn(async move |this, cx| {
                     cx.background_executor().timer(wait).await;
                     let _ = this.update(cx, |shell, cx| {
-                        shell.timeline.recount = None;
+                        if let Some(ui) = shell.pane_ui_mut(pane) {
+                            ui.timeline.recount = None;
+                        }
                         cx.notify();
                     });
-                }));
+                });
+                self.timeline_mut().recount = Some(recount);
             }
             return;
         }
-        if self.timeline.computed_for != Some(key) || other_files {
-            self.timeline.counted_at = Some(std::time::Instant::now());
-            self.timeline.counted = Some(shown);
+        if self.timeline().computed_for != Some(key) || other_files {
+            let t = self.timeline_mut();
+            t.counted_at = Some(std::time::Instant::now());
+            t.counted = Some(shown);
             // Entries without metadata need it before they count; dates
             // coming in are the answers to what was asked already.
             if !dates_only {
@@ -748,7 +803,8 @@ impl Shell {
                 background: subtree || date == TAKEN,
                 anchor,
             };
-            self.timeline.asked.ask(
+            let t = self.timeline_mut();
+            t.asked.ask(
                 &app,
                 lane,
                 &lifetime,
@@ -763,22 +819,22 @@ impl Shell {
                     (asked, answer)
                 },
             );
-            self.timeline.computed_for = Some(key);
+            t.computed_for = Some(key);
         }
         // A count in the background tells it has ended by waking the
         // window: asked once a wake came since it was last asked, never at
         // each draw (the pointer over the bars). Read before asking, so a
         // count ending meanwhile is asked again.
         let wakes = crate::wakes();
-        if self.timeline.scanning && self.timeline.status_after != Some(wakes) {
-            self.timeline.status_after = Some(wakes);
+        if self.timeline().scanning && self.timeline().status_after != Some(wakes) {
+            self.timeline_mut().status_after = Some(wakes);
             if let Some(v) = self.query_value(
                 "timeline.status",
                 serde_json::json!({ "pane": self.pane }),
                 cx,
             ) && let Ok(s) = serde_json::from_value::<SubtreeStatus>(v)
             {
-                self.timeline.scanning = s.scanning;
+                self.timeline_mut().scanning = s.scanning;
                 if let Some(h) = s.histogram {
                     self.set_histogram(Some(h));
                 }
@@ -797,21 +853,21 @@ impl Shell {
     ) {
         // The bars of the window moved to: moves count from them now.
         if self.timeline_visit().and_then(|v| v.anchor) == asked.anchor {
-            self.timeline.panned = 0;
+            self.timeline_mut().panned = 0;
         }
         match answer {
             Ok(Some(v)) if asked.background => {
                 // The count runs in the plugin; `timeline.status` follows it.
                 match serde_json::from_value::<SubtreeStatus>(v) {
                     Ok(status) => {
-                        self.timeline.scanning = status.scanning;
+                        self.timeline_mut().scanning = status.scanning;
                         self.set_histogram(status.histogram);
                     }
                     Err(e) => tracing::warn!("timeline.histogram: {e}"),
                 }
             }
             Ok(Some(v)) => {
-                self.timeline.scanning = false;
+                self.timeline_mut().scanning = false;
                 match serde_json::from_value::<Histogram>(v) {
                     Ok(h) => self.set_histogram(Some(h)),
                     Err(e) => tracing::warn!("timeline.histogram: {e}"),
@@ -827,17 +883,18 @@ impl Shell {
     }
 
     fn set_histogram(&mut self, h: Option<Histogram>) {
+        let t = self.timeline_mut();
         // The same bars keep their chart, and so what it laid out.
-        if h == self.timeline.histogram {
+        if h == t.histogram {
             return;
         }
-        self.timeline.chart = h.as_ref().map(|h| chart_of(h, self.timeline.measure));
+        t.chart = h.as_ref().map(|h| chart_of(h, t.measure));
         if h.as_ref()
-            .is_none_or(|h| self.timeline.hover.is_some_and(|i| i >= h.bars.len()))
+            .is_none_or(|h| t.hover.is_some_and(|i| i >= h.bars.len()))
         {
-            self.timeline.hover = None;
+            t.hover = None;
         }
-        self.timeline.histogram = h;
+        t.histogram = h;
     }
 }
 
@@ -910,11 +967,12 @@ fn info(t: &TimelineState, focused_bar: Option<usize>) -> String {
 fn controls(
     shell: &Shell,
     folder: bool,
+    active: bool,
     focused_bar: Option<usize>,
     theme: &Theme,
     cx: &mut Context<Shell>,
 ) -> gpui::Div {
-    let t = &shell.timeline;
+    let t = shell.timeline();
     let shown = t.histogram.as_ref().and_then(Histogram::shown);
     let fits = t.histogram.as_ref().and_then(Histogram::fits);
     let windowed = t.histogram.as_ref().is_some_and(Histogram::windowed);
@@ -996,10 +1054,12 @@ fn controls(
                 .h(sized(22.)),
         );
     }
-    let open = shell
-        .toolbar_menu
-        .as_ref()
-        .is_some_and(|menu| menu.kind == DATES_MENU);
+    // The time's popup is the active pane's: its button opened it.
+    let open = active
+        && shell
+            .toolbar_menu
+            .as_ref()
+            .is_some_and(|menu| menu.kind == DATES_MENU);
     controls = controls.child(
         Button::new(
             "tl-date",
@@ -1034,7 +1094,7 @@ fn dates_popup(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<
         .filter(|menu| menu.kind == DATES_MENU)?;
     let mut rows = div().flex().flex_col().gap_1();
     for (i, (word, label)) in DATES.iter().enumerate() {
-        let chosen = i == shell.timeline.date;
+        let chosen = i == shell.timeline().date;
         rows = rows.child(
             Button::new(
                 format!("tl-date-{word}"),
@@ -1051,18 +1111,26 @@ fn dates_popup(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<
     }
     let panel = toolbar::menu_panel(popup, "ui.toolbar_menu", theme, cx).child(rows);
     // The strip is at the foot of the window: no room below it.
-    Some(shell.timeline.dates.popup_above_for(
+    Some(shell.timeline().dates.popup_above_for(
         &crate::elements::adaptive::Chosen::default(),
         vec![panel.into_any_element()],
     ))
 }
 
-pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option<AnyElement> {
-    if !shell.timeline.open {
+/// The strip of the pane drawn (`shell.pane`), when it is open; `active`
+/// when that pane is the one commands act on.
+pub fn render(
+    shell: &Shell,
+    active: bool,
+    window: &Window,
+    cx: &mut Context<Shell>,
+) -> Option<AnyElement> {
+    if !shell.timeline().open {
         return None;
     }
     let theme = cx.global::<Theme>().clone();
-    let t = &shell.timeline;
+    let t = shell.timeline();
+    let pane = shell.pane;
     let folder = shell.timeline_in_folder();
     let focus = t.focus.clone();
     let focused = focus.as_ref().is_some_and(|f| f.is_focused(window));
@@ -1074,7 +1142,7 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
         .zip(shell.timeline_visit().and_then(|v| v.cursor))
         .and_then(|(h, t)| h.bar_of(t));
     let focused_bar = cursor.filter(|_| focused);
-    let controls = controls(shell, folder, focused_bar, &theme, cx);
+    let controls = controls(shell, folder, active, focused_bar, &theme, cx);
 
     let mut chart_area = div()
         .id("timeline-chart")
@@ -1088,7 +1156,6 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
         chart_area = chart_area.track_focus(focus);
     }
     if let (Some(h), Some(chart)) = (&t.histogram, &t.chart) {
-        let pane = shell.pane;
         let colors = BarColors {
             bar: theme.chart,
             marked: theme.accent,
@@ -1110,7 +1177,9 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
             colors,
             move |i, _, cx| {
                 hovered.update(cx, |shell, cx| {
-                    shell.timeline.hover = i;
+                    if let Some(ui) = shell.pane_ui_mut(pane) {
+                        ui.timeline.hover = i;
+                    }
                     cx.notify();
                 });
             },
@@ -1180,6 +1249,9 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
     }
     Some(
         div()
+            // Each pane draws its own: its controls and bars are told
+            // apart by its id.
+            .id(("timeline", pane.0 as usize))
             .w_full()
             .flex_none()
             .flex()
@@ -1189,7 +1261,7 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
             .bg(theme.window_surface())
             .child(controls)
             .child(chart_area)
-            .children(dates_popup(shell, &theme, cx))
+            .children(dates_popup(shell, &theme, cx).filter(|_| active))
             .into_any_element(),
     )
 }
@@ -1207,6 +1279,33 @@ mod tests {
             selected: 0,
             selected_bytes: 0,
         }
+    }
+
+    /// A pane made from another (a split, a tab) shows its strip, counts
+    /// and measures as that one does, and has counted nothing yet.
+    #[test]
+    fn a_pane_made_from_another_shows_its_strip_as_that_one_does() {
+        let t = TimelineState {
+            open: true,
+            subtree: true,
+            scanning: true,
+            measure: Measure::Size,
+            date: TAKEN,
+            histogram: Some(Histogram::default()),
+            hover: Some(2),
+            computed_for: Some((1, None, None, true, TAKEN)),
+            panned: 3,
+            ..TimelineState::default()
+        };
+        let like = t.like();
+        assert_eq!(
+            (like.open, like.subtree, like.measure, like.date),
+            (true, true, Measure::Size, TAKEN)
+        );
+        assert!(!like.scanning && like.histogram.is_none() && like.hover.is_none());
+        assert!(like.computed_for.is_none() && like.panned == 0 && like.visit.is_none());
+        let shut = TimelineState::default().like();
+        assert!(!shut.open && shut.measure == Measure::Files && shut.date == 0);
     }
 
     #[test]

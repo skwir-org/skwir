@@ -1498,7 +1498,7 @@ pub fn declare_all(app: &App) {
         Topic::Find,
         "ui.quick_filters",
         "Toggle Quick filters",
-        "Show Quick filters above the files of any location: their kinds, years and tags, each with how many files, a choice filtering the pane until taken off",
+        "Show Quick filters above the active pane's files, wherever it goes: their kinds, years and tags, each with how many files, a choice filtering the pane until taken off",
     );
     none(
         Topic::Preview,
@@ -1999,7 +1999,7 @@ pub fn declare_all(app: &App) {
         Topic::View,
         "ui.timeline",
         "Timeline",
-        "Show or hide the timeline",
+        "Show or hide the timeline under the active pane's files, wherever it goes: when they changed, a bar for each period, a bar pressed showing only its files",
     );
     declare::<Bucket>(
         app,

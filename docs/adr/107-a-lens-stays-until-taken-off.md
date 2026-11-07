@@ -7,7 +7,9 @@ Amended by ADR-109 (2026-10-31): Back, Forward and the field's step
 taken back show a step as it was last shown, its filter or its terms
 whole (rule 2's "Back brings back nothing" and this record's
 amendment on Back and Forward no longer hold); a saved or recent
-search opens as it was kept (rule 4).
+search opens as it was kept (rule 4). Amended 2026-11-07: Quick filters
+and the timeline are each pane's, from the View menu, no longer a
+setting (rule 11); a bar of a folder's timeline is its lens (below).
 Amends ADR-098 (words typed over a folder, the pills after the trail)
 and retires the folder narrowing of 2026-10-03 (`workspace::Narrowed`).
 
@@ -136,3 +138,31 @@ says it never does, and stay where it was taken off:
 - **`ui.narrow_folders`**, released in 0.2.0, is renamed
   `ui.quick_filters` (`Settings::rename`): rule 11's key keeps what was
   set.
+
+### 2026-11-07: each pane's Quick filters and timeline, a folder's bar its lens
+
+The user asked why the timeline was in More, under the active pane
+wherever it went, and why Quick filters showed over both panes of a
+split. Both bars count one pane's files and change what that pane shows,
+so they are the pane's, as its view and its sort are:
+
+- **Quick filters asked for are each pane's** (`PaneUi::quick_filters_on`),
+  no longer a setting: the View menu (`ui.quick_filters`) turns the
+  active pane's on and off, a pane made from another (a split, a tab)
+  takes its, and the window's shape (`session.rs`) keeps the active
+  pane's, which every pane starts with. Rule 11's setting is read once
+  into it and forgotten (`session::former_quick_filters`), 0.2's
+  `ui.narrow_folders` with it. Where a location offers them by itself (a
+  tag's place, a search with a tag) they show whatever this says.
+- **So is the timeline** (`PaneUi::timeline`), beside them in the View
+  menu, out of More, which keeps the window's panel (the terminal) and
+  the layout: each strip stays under its own pane, what it measures and
+  counts its own.
+- **A bar of a folder counted alone, by a time its listing knows**
+  (modified, created, accessed), **is the folder's lens**, as Quick
+  filters' year is (`query.narrow`, `timeline.select`): kept as the pane
+  goes elsewhere until taken off, a bar again in place of the one before.
+  What a lens cannot decide stays a search: the subtree, a picture's
+  clock; a search's bar still refines it. A folder's bars count its files
+  alone, as Quick filters count them: the lens shows the folders inside
+  whatever it keeps, so a bar counts what pressing it shows.

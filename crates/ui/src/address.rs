@@ -364,17 +364,31 @@ fn view_options(shell: &Shell) -> Vec<MenuPart> {
         }
     }
     // The kinds, years and tags of the files shown, to filter by
-    // (`quick_filters.rs`), wherever the query plugin can.
+    // (`quick_filters.rs`), wherever the query plugin can; and when they
+    // changed, under them, wherever the timeline's can. Both the pane's
+    // own, as its view is.
     if shell.app.commands.get("query.narrow").is_some() {
         show.push(menu_item(
             Button::new(
                 "menu-quick-filters",
                 "",
-                "Offer the kinds, years and tags of the files above them, each with how many files, to show only those until taken off",
+                "Offer the kinds, years and tags of this pane's files above them, each with how many files, to show only those until taken off",
                 "ui.quick_filters",
             )
-            .active(shell.prefs.quick_filters),
+            .active(shell.ui().quick_filters_on),
             "Quick filters",
+        ));
+    }
+    if shell.app.commands.get("timeline.histogram").is_some() {
+        show.push(menu_item(
+            Button::new(
+                "menu-timeline",
+                "",
+                "Show when this pane's files changed under them, a bar for each day, week, month or year; a bar pressed shows only its files",
+                "ui.timeline",
+            )
+            .active(shell.timeline().open),
+            "Timeline",
         ));
     }
     // Only the grid draws thumbnails in a box.
@@ -539,23 +553,25 @@ fn view_buttons_menu(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
     vec![("View buttons", rows)]
 }
 
-/// More's layout: the panels without a button of their own, checked
-/// while open, then where the split's panes, the preview and a file of an
-/// archive go, each a setting on one row.
+/// More's layout: the window's panel without a button of its own (the
+/// terminal), checked while open, then where the split's panes, the
+/// preview and a file of an archive go, each a setting on one row. What a
+/// pane shows above and under its files (Quick filters, the timeline) is
+/// the View menu's, as its view is.
 fn layout_parts(shell: &Shell) -> Vec<MenuPart> {
-    let mut parts = vec![MenuPart::Row(menu_item(
-        Button::new("menu-timeline", "", "Timeline", "ui.timeline").active(shell.timeline.open),
-        "Timeline",
-    ))];
+    let mut parts = Vec::new();
     // The terminal is a plugin's: without it, nothing says it exists.
     if shell.app.terminals.provider().is_some() {
-        parts.push(MenuPart::Row(menu_item(
-            Button::new("menu-terminal", "", "Terminal", "ui.terminal").active(shell.terminal.open),
-            "Terminal",
-        )));
+        parts.extend([
+            MenuPart::Row(menu_item(
+                Button::new("menu-terminal", "", "Terminal", "ui.terminal")
+                    .active(shell.terminal.open),
+                "Terminal",
+            )),
+            MenuPart::Line,
+        ]);
     }
     parts.extend([
-        MenuPart::Line,
         MenuPart::Choice("Split".into(), layout_values(shell, "panes")),
         MenuPart::Choice("Preview".into(), layout_values(shell, "preview")),
         MenuPart::Choice("File in an archive".into(), layout_values(shell, "member")),

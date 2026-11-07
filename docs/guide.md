@@ -187,16 +187,21 @@ names and details have a text size of their own, from 80 to 200 %
   is drawn offline from data Skwir carries; a background that downloads
   tiles (OpenStreetMap, a server you add) is used only once you choose it
   in Settings › Pictures and media › Maps.
-- **Timeline** (`Ctrl+Shift+L`) shows when files changed, one bar per
-  period: the finest that shows every date, labelled where there is
-  room, each bar's count above it when there is room for all. Pick day,
-  week, month or year for this place; when there are too many bars for
-  the strip, a part of them shows, and the wheel over the bars or the
-  arrows move along. Click a bar to list its files, or drag across bars
-  to list them all; in that list, a bar narrows it further (a year, then
-  a day), and Back goes back up. A few files dated far from all the
-  others (a camera's clock set wrong) are counted aside rather than
-  stretching the bars.
+- **Timeline** (View › Timeline, `Ctrl+Shift+L`) shows when a pane's files
+  changed, under them, one bar per period: the finest that shows every
+  date, labelled where there is room, each bar's count above it when there
+  is room for all. Each pane has its own, so a split compares two places.
+  Pick day, week, month or year for this place; when there are too many
+  bars for the strip, a part of them shows, and the wheel over the bars or
+  the arrows move along. Click a bar to show only its files, or drag across
+  bars to show them all: in a folder, that filters it as Quick filters' year
+  does, the filter kept as you go until taken off with its ×, and a bar
+  again shows another period instead; over the folders inside (**subtree**)
+  or by when pictures were taken, it lists them as a search, where a bar
+  narrows it further (a year, then a day) and Back goes back up. A
+  folder's bars count its files: the folders inside show whatever the
+  filter keeps. A few files dated far from all the others (a camera's
+  clock set wrong) are counted aside rather than stretching the bars.
   - **files** or **size**: bars as tall as their number of files, or as
     what they weigh, to see when the space went.
   - The time menu counts files by when they were modified, created, last
@@ -404,7 +409,9 @@ it, **+ Filter** adds one, and the text can be typed as is:
 - Over a search with tags, a bar of Quick filters offers what it can
   narrow to (the tags within, the files' kinds and years), each with a
   count; a choice is a filter that stays as you go. View › Quick filters
-  shows the bar everywhere, and says why when it has nothing to offer.
+  shows the bar above the pane's files wherever it goes (each pane its
+  own, as the timeline under them), and says why when it has nothing to
+  offer.
 - A search uses the desktop's indexes where they run (Baloo, plocate) to
   go faster, and always checks the files themselves. A search of `/` by
   name alone is plocate's answer where it is installed, as its database
@@ -679,7 +686,7 @@ Settings are grouped by subject, whichever plugin brings them:
 | --- | --- |
 | General | What Skwir does at startup, with tabs, the split and the path above the files, and with what you drag and drop |
 | Appearance | How it looks: theme, your desktop's colors or Skwir's palettes, the font, the text's size (the whole window's, and the file views' of their own), icons, dates |
-| Folders and views | Quick filters, the grid, the list's columns, thumbnails |
+| Folders and views | The grid, the list's columns, thumbnails |
 | Tags and notes | The tags the sidebar suggests, tags kept when copying, companion files, and where tags, ratings and comments are read and written |
 | Reading | How documents, books, comics, Markdown, text and code read, and the engine that reads each kind |
 | Pictures and media | The slideshow, audio and video playback, 3D models, the maps' background |
