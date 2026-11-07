@@ -1495,7 +1495,7 @@ impl Shell {
         said: Option<String>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let ground = cx.global::<Theme>().window_bg();
+        let ground = cx.global::<Theme>().files_ground(self.lowered());
         // Its ground under a drop's tint, which takes the place of the
         // ground while a drag is over it.
         let tint = ground.blend(cx.global::<Theme>().drop_target);

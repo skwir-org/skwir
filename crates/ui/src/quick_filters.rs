@@ -667,7 +667,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
             d
         })
         // Over the files, on their ground.
-        .bg(theme.window_bg())
+        .bg(theme.files_ground(shell.lowered()))
         .border_b_1()
         .border_color(theme.border);
     let mut n = 0usize;

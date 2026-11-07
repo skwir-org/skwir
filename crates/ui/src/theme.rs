@@ -16,7 +16,8 @@
 //!   (`in_look`). `text_muted` is for secondary facts (line numbers,
 //!   captions), never for the data. `frame` is the window's ground under
 //!   its cards (`cards`, ADR-123), under both grounds by `CHROME`, giving
-//!   way to the text drawn on it; `ring` marks the card commands act on.
+//!   way to the text drawn on it; `sunken_bg` and `sunken_surface` are a
+//!   split's other pane's grounds, a step down towards it.
 //! - the window's own grounds: each of the window's areas (the files, the
 //!   terminal; a preview's paper or letterbox; the bars, the sidebar, the
 //!   tabs, the panel's bars, the dock) paints its ground once,
@@ -80,7 +81,7 @@
 //!   never gpui's scale or a literal.
 //! - spacing: multiples of 4 px; rows are 26 px, controls 28 px, bars 42 px
 //!   (a pane's row, the sidebar's header, the tab strip: their edges meet),
-//!   the gutter between the window's cards 8 px (`frame::GUTTER`),
+//!   the gutter between the window's cards 6 px (`frame::GUTTER`, the user's),
 //!   at 100 %: a length that holds text is scaled with its part
 //!   (`sizes::Scale`).
 //!
@@ -121,9 +122,11 @@ pub struct Theme {
     /// both grounds, darker than the darker by `CHROME`, so a card stands
     /// above it in either look. The sidebar and the tabs are drawn on it.
     pub frame: Hsla,
-    /// Around the card commands act on, while the panes are split
-    /// (`cards`): the accent, read as a mark on `frame`.
-    pub ring: Hsla,
+    /// The grounds of a split's pane commands do not act on, as cards
+    /// (`as_cards`): `bg` and `surface` a step down towards `frame`, as far
+    /// as the text drawn on them still reads; `bg` and `surface` otherwise.
+    pub sunken_bg: Hsla,
+    pub sunken_surface: Hsla,
     /// A code block, an inline code span or a table header, on `bg`.
     pub code_bg: Hsla,
     /// Alternate rows of a table or of a byte dump, on `bg`.
@@ -731,6 +734,29 @@ fn frame(bg: Hsla, surface: Hsla, text: Hsla, hover: Hsla, ratio: f32) -> Hsla {
         .unwrap_or(darker)
 }
 
+/// How far a lowered pane's grounds step towards the frame (`as_cards`).
+const SUNKEN: f32 = 0.4;
+
+/// `from` moved `share` of the way to `to` in Oklab, or as far as `ok`
+/// still holds, in sixteenths of it; `from` where no step does.
+fn toward(from: Hsla, to: Hsla, share: f32, ok: impl Fn(Hsla) -> bool) -> Hsla {
+    let (a, b) = (Oklab::of(from), Oklab::of(to));
+    (1..=16)
+        .rev()
+        .map(|step| {
+            #[allow(clippy::cast_precision_loss)] // a step of sixteen
+            let at = share * step as f32 / 16.;
+            Oklab {
+                l: a.l + (b.l - a.l) * at,
+                a: a.a + (b.a - a.a) * at,
+                b: a.b + (b.b - a.b) * at,
+            }
+            .to_hsla(from.a)
+        })
+        .find(|color| ok(*color))
+        .unwrap_or(from)
+}
+
 /// `fg` made to read at `ratio` on each of `grounds` (`color::readable`),
 /// said when even black or white cannot.
 fn guarded(name: &str, fg: Hsla, grounds: &[Hsla], ratio: f32) -> Hsla {
@@ -833,7 +859,8 @@ impl Theme {
             bg,
             surface,
             frame,
-            ring: guarded("ring", accent, &[frame], mark_ratio),
+            sunken_bg: bg,
+            sunken_surface: surface,
             code_bg,
             zebra,
             hover,
@@ -1211,7 +1238,38 @@ impl Theme {
             on[1],
         ];
         self.text_muted = guarded("text_muted", self.text_muted, &grounds, text_ratio);
+        // A step down towards the frame, two fifths of the way, giving way
+        // to the text drawn there as the frame does.
+        let (text, muted, hover) = (self.text, self.text_muted, self.hover);
+        let reads = |ground: Hsla| {
+            [text, muted]
+                .iter()
+                .all(|t| color::reads(*t, &[ground, ground.blend(hover)], text_ratio))
+        };
+        self.sunken_bg = toward(self.bg, self.frame, SUNKEN, reads);
+        self.sunken_surface = toward(self.surface, self.frame, SUNKEN, reads);
         self.cards = true;
+    }
+
+    /// The ground of the files of the pane drawn: a step down where it is
+    /// a split's pane commands do not act on (`lowered`, as cards).
+    pub fn files_ground(&self, lowered: bool) -> Hsla {
+        if lowered {
+            self.sunken_bg.opacity(self.opacity.files)
+        } else {
+            self.window_bg()
+        }
+    }
+
+    /// The ground of the bars of the pane drawn (its row, its footer, its
+    /// timeline, a banner): a step down where it is lowered, as
+    /// `files_ground`.
+    pub fn bar_ground(&self, lowered: bool) -> Hsla {
+        if lowered {
+            self.sunken_surface.opacity(self.opacity.interface)
+        } else {
+            self.window_surface()
+        }
     }
 }
 
@@ -1305,7 +1363,6 @@ mod tests {
             on("accent", t.accent, &[t.bg, t.surface], mark, false),
             on("accent_text", t.accent_text, &termed, text, false),
             on("surface", t.surface, &[t.bg], CHROME, false),
-            on("ring", t.ring, &[t.frame], mark, false),
             on(
                 "text",
                 t.text,
@@ -1436,14 +1493,25 @@ mod tests {
                     t.frame.to_rgb()
                 );
             }
-            // As cards, the muted text reads on it too.
+            // As cards, the muted text reads on it too, and both on a split's
+            // other pane, a step down, but never above the pane's own.
             let mut cards = t.clone();
             cards.as_cards();
-            assert!(color::reads(
-                cards.text_muted,
-                &[cards.frame, cards.frame.blend(cards.hover)],
-                4.5
-            ));
+            for ground in [cards.frame, cards.sunken_bg, cards.sunken_surface] {
+                for text in [cards.text, cards.text_muted] {
+                    assert!(color::reads(
+                        text,
+                        &[ground, ground.blend(cards.hover)],
+                        4.5
+                    ));
+                }
+            }
+            for (sunken, ground) in [
+                (cards.sunken_bg, cards.bg),
+                (cards.sunken_surface, cards.surface),
+            ] {
+                assert!(color::luminance(sunken) <= color::luminance(ground) + 1e-4);
+            }
         }
         // Solarized's, Everforest's and Tokyo Night's light looks, whose
         // text reads only just on their own chrome (Solarized's at 4.13:1

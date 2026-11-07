@@ -12867,3 +12867,66 @@ amended).
   `color::below`, and the guard groups on the frame); `just check-cross`
   green. `just prune` twice (9.8 → 16.6 GB, 8.6 → 15.9 GB free).
   `just release-check` not run.
+
+## 2026-11-07: Cards, as tried (ADR-123 amended)
+
+- **Asked**, trying the first build (f0998011) on their own desktop:
+  the gutter kept even where the window was tiled, to see it (a temporary
+  edit, taken back); then the panes, the terminal and the preview run to
+  the window's edges but at the top, as Firefox's Nova seemed to (the
+  coverage found describes a page framed in a rounded container, Zen's
+  way, not this; browsers today run the page to the sides and the
+  bottom); the gutter at 6 px; Split, Properties and Preview always on
+  the frame, the row's band ending at them with a rounded corner and
+  coming down to the files with a concave one, the preview's card under
+  them; the same for the sidebar's toggle and More when it is put away;
+  Raised and Underline to mark the active pane, then no shadow; the
+  footers in the rows' tint.
+- **Built:**
+  - `frame::card` keeps a card's content within its corners itself (a
+    rounded content mask pushed around its child, no `overflow_hidden`),
+    its corners square where an edge lies on the frame's
+    (`frame::corners`, `on_edges`), round elsewhere; `Shell::frame_inset`
+    keeps the top's gutter alone, gone tiled.
+  - `frame::notch`: an element of a card's top row that tells the frame
+    it is a notch of the card laid out last (at its start or its end, the
+    nearer); the frame's hole is the card's outline less its notches
+    (`frame::outline`: a rounded corner where the band ends, a concave one
+    down to the files, the files' corner square on the window's edge), and
+    the frame paints each concave corner's fillet in the band's ground
+    (`paint_fillets`). `address::pane_row`, as cards with the window's
+    buttons in the row (`notched`), draws the band as a part of its own
+    between them (`address::on_frame`), its separators gone.
+  - The preview at the right, as a card: its bar a row of the frame above
+    its card (`chrome_ground`, none).
+  - `Theme::sunken_bg`, `sunken_surface` (`as_cards`: two fifths of the
+    way to the frame, `theme::toward`, as far as the text and the muted
+    text read there), `files_ground`, `bar_ground`; `Shell::drawn_raised`
+    set while a split's pane is drawn, `Shell::lowered` asked by the
+    files' ground (`pane_container`), the row, Quick filters, the loading
+    banner, the timeline and the footer; the raised pane's row underlined
+    (`address::underline`, 2 px of the accent).
+  - The footer a band of `bar_ground`; `frame::GUTTER` 6 px; the ring and
+    `Theme::ring` removed, and the raised pane's shadow on the frame,
+    tried and removed.
+- **Seen** on Xvfb :95 (debug build, lavapipe, a synthetic home; screen
+  shots kept out of the repository): the split with the preview and the
+  terminal, their corners square on the window's edges and round at the
+  gutters; one pane alone; a notch at the end of the rightmost pane's row
+  (zoomed: the rounded end of the band, the concave fillet), with the
+  notched pane active and its underline ending with the band; the sidebar
+  put away, its toggle and More in a notch at the first pane's start; the
+  preview at the right, its card's top level with the files' (y 76 both);
+  the light look raised and lowered (the other pane's files `#1b`, rows
+  `#20` in the dark look, from `#1e` and `#26`). Grounds sampled with the
+  chrome at 70 % and the files at 60 %: frame 162, a band 168, the files
+  and lowered footers as their grounds, a notch's fillet 168 (once). The
+  gutters dragged: the split's middle followed the pointer to half a
+  pixel (599.5 for 600), the terminal's too (449.5 for 450). Not seen
+  again on a headless sway since the first build.
+- **Checked:** fmt; clippy on skwir-ui; its tests (567 passed, among them
+  `frame::tests::a_card_is_square_on_the_window_s_edge` and the frame's
+  test extended: the text and the muted text read on the lowered grounds
+  of every palette, never lighter than the pane's own); `just
+  check-cross` green. `just release-check` not run.
+

@@ -257,7 +257,8 @@ of bars, split or not.
   labels show where there is room (`address::panel_toggles`). A panel at
   the bottom has no bar. Properties and Preview are the panel's two
   switches, the panel there while either is on (ADR-058, decision 8,
-  [previews.md](previews.md), "Header and Properties").
+  [previews.md](previews.md), "Header and Properties"). As cards, wherever they are, these and the sidebar's toggle and More
+  lie on the frame ("Cards" under Layout).
 - **Tab strip** (`tabs.rs`): shown while the tabs are listed (two or
   more, or one with `ui.single_tab`) and not by the sidebar drawn this
   frame (`Shell::strip_shown`). With `ui.tabs_at` = sidebar, the tabs
@@ -366,22 +367,33 @@ of bars, split or not.
 - Closing a split closes the pane `core.close_split` names
   (`layout::CloseSplit`); Split's tooltip says which.
 - **Cards (ADR-123, `ui.cards`).** Each pane, the preview panel and the
-  terminal are cards on the window's frame: rounded (`rounded_xl`),
-  keeping what they hold within their corners (their own
-  `overflow_hidden`: gpui clips to a rounded element's arcs, patch 0053),
-  each wrapped in `frame::card` so the frame knows where to leave its
-  hole. Nothing in a card draws an edge of the window's layout: the edge
-  between two cards is the gutter between them (`edge::gutter`, 8 px,
-  inserted by the shell between the panes, above the terminal, and by
-  the preview before its card), since a strip on a card's border would
-  be cut by its corners. The gutter around the cards goes where the
-  window meets another window or the screen's edge (`Window::tiling`,
-  patch 0054), and on the left where the sidebar stands. No line between
-  areas (`Theme::lines`): a bar is a band of `surface` over its card, a
-  pane's footer lies on its files' ground; a bar's row is then as tall as
-  the bar (`Theme::line_width`). The pane commands act on wears the ring
-  (`Theme::ring`, outside its card) while the window is split. Apart by
-  lines, the window is drawn as before.
+  terminal are cards on the window's frame, each wrapped in `frame::card`,
+  which keeps what it holds within its corners (a rounded content mask,
+  gpui patch 0053) and tells the frame where to leave its hole. A card
+  runs to the window's edge wherever it meets it; only the top keeps a
+  gutter (`Shell::frame_inset`), gone where the window meets another there
+  (`Window::tiling`, patch 0054). A card's corners are found from where it
+  is laid out, never listed by arrangement: round where it stands apart,
+  square where an edge is on the window's. Nothing in a card draws an edge
+  of the window's layout: the edge between two cards is the gutter between
+  them (`edge::gutter`, 6 px, inserted by the shell between the panes and
+  above the terminal, by the preview before its card), measured from its
+  middle, since a strip on a card's border would be cut by its corners. No
+  line between areas (`Theme::lines`): a pane's row and its footer are
+  bands of `surface` over its card; a bar's row is then as tall as the bar
+  (`Theme::line_width`). While the window is split, the pane commands act
+  on has its row underlined in the accent and the other's grounds step
+  down (`Shell::lowered`, `Theme::files_ground`, `bar_ground`): what paints
+  a pane's ground asks them, never `window_bg` or `window_surface`. Apart
+  by lines, the window is drawn as before.
+- **As cards, the window's buttons lie on the frame**, never in a card:
+  Split, Properties and Preview, and the sidebar's toggle and More while
+  the sidebar is put away (`toggles_at`, `corner_at` unchanged). In a pane's
+  row they are a notch of its card (`frame::notch`, `address::on_frame`):
+  the band ends before them, rounded, and comes down to the files with a
+  concave corner whose fillet the frame paints in the band's ground. Above
+  the preview at the right, its bar is a row of the frame and its card
+  starts under it, level with the files.
 
 ## The address field (`omnibox.rs`, ADR-070, ADR-098)
 

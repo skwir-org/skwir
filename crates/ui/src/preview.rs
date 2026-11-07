@@ -6500,7 +6500,9 @@ pub fn render_panel(
             // As tall as a pane's row at every text size (ADR-117).
             .h(sized(crate::address::PANE_ROW_HEIGHT))
             .px(sized(6.))
-            .bg(theme.window_surface())
+            // As a card, above it on the frame (`Theme::cards`): the
+            // window's buttons, never a card's.
+            .when_some(theme.chrome_ground(), gpui::Styled::bg)
             .when(theme.lines(), |d| d.border_b_1().border_color(theme.border))
             .child(crate::elements::adaptive::AdaptiveRow {
                 variants,
@@ -6537,6 +6539,11 @@ pub fn render_panel(
             .h_full()
             .when(theme.lines(), gpui::Styled::border_l_1)
     };
+    let (bar, above) = if theme.cards {
+        (None, bar)
+    } else {
+        (bar, None)
+    };
     let panel = panel
         .flex_col()
         .children(bar)
@@ -6545,12 +6552,19 @@ pub fn render_panel(
     if !theme.cards {
         return Some(panel.child(handle).into_any_element());
     }
-    // A card, the gutter before it its edge.
-    let card = crate::elements::frame::card(
-        &shell.frame_cards,
-        None,
-        panel.rounded_xl().overflow_hidden(),
-    );
+    // A card, the gutter before it its edge, the window's buttons above it
+    // at the right: its top level with the files' under the panes' rows.
+    let card = crate::elements::frame::card(&shell.frame_cards, panel);
+    let card = match above {
+        Some(above) => div()
+            .h_full()
+            .flex()
+            .flex_col()
+            .child(above)
+            .child(div().flex_1().min_h_0().flex().child(card))
+            .into_any_element(),
+        None => card.into_any_element(),
+    };
     Some(
         div()
             .flex()

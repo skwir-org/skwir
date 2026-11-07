@@ -736,7 +736,6 @@ impl Shell {
             .w_full()
             .h(px(height))
             .when(theme.lines(), |d| d.border_t_1().border_color(theme.border))
-            .when(theme.cards, |d| d.rounded_xl().overflow_hidden())
             // The terminal's area: the window's own ground, its cells
             // painting only the backgrounds programs ask for.
             .bg(theme.window_bg())
@@ -747,7 +746,7 @@ impl Shell {
             // drawn: above the panel.
             .children(self.host_area_marker(MenuHost::Terminal));
         Some(if theme.cards {
-            crate::elements::frame::card(&self.frame_cards, None, panel).into_any_element()
+            crate::elements::frame::card(&self.frame_cards, panel).into_any_element()
         } else {
             panel.into_any_element()
         })

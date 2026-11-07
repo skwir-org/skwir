@@ -1258,7 +1258,7 @@ pub fn render(
             .flex_col()
             // A card's band (`Theme::cards`): no line over it.
             .when(theme.lines(), |d| d.border_t_1().border_color(theme.border))
-            .bg(theme.window_surface())
+            .bg(theme.bar_ground(shell.lowered()))
             .child(controls)
             .child(chart_area)
             .children(dates_popup(shell, &theme, cx).filter(|_| active))

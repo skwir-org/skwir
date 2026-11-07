@@ -1090,16 +1090,24 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
     let nav_anchor = PopoverAnchor::default();
     let chip_anchor = PopoverAnchor::default();
     let omni_anchor = PopoverAnchor::default();
+    // As a card, what the row holds of the window's lies in notches on the
+    // frame (`pane_row`), the band painted by its own part.
+    let notched = notched(&theme, row.ends);
     let mut bar = div()
         .id(("pane-address", shell.pane.0 as usize))
         .tab_group()
         .relative()
-        .px(sized(6.))
+        .when(!notched, |d| d.px(sized(6.)))
         .w_full()
         .flex_none()
         // A card's band over its files (`Theme::cards`): no line under it.
         .when(theme.lines(), |d| d.border_b_1().border_color(theme.border))
-        .bg(theme.window_surface())
+        .when(!notched, |d| d.bg(theme.bar_ground(shell.lowered())))
+        // The raised pane's row, underlined in the accent (`render_pane`);
+        // the band's alone where notches cut it.
+        .when(!notched && shell.drawn_raised == Some(true), |d| {
+            d.child(underline(&theme))
+        })
         .child(AdaptiveRow {
             variants: row_variants(shell.prefs.view_buttons_shown, row.ends.toggles)
                 .into_iter()
@@ -1430,13 +1438,19 @@ fn pane_row(
         }
     }
     let theme = cx.global::<Theme>().clone();
+    let notched = notched(&theme, row.ends);
     let mut line = div().size_full().flex().items_center().gap(sized(3.));
+    let mut start = None;
     if row.ends.corner {
         let [toggle, more] = corner(shell, cx);
-        line = line
-            .child(toggle)
-            .child(more)
-            .child(toolbar::separator(&theme));
+        if notched {
+            start = Some(on_frame(shell, &theme, [toggle, more]));
+        } else {
+            line = line
+                .child(toggle)
+                .child(more)
+                .child(toolbar::separator(&theme));
+        }
     }
     line = line
         .child(history_button(shell, row, false, nav_anchor, cx))
@@ -1467,15 +1481,78 @@ fn pane_row(
             .render(shell, cx),
         );
     }
+    let mut end = None;
     if row.ends.toggles {
         let [split, properties, preview] = panel_toggles(shell, labeled, cx);
-        line = line
-            .child(toolbar::separator(&theme))
-            .child(split)
-            .child(properties)
-            .child(preview);
+        if notched {
+            end = Some(on_frame(shell, &theme, [split, properties, preview]));
+        } else {
+            line = line
+                .child(toolbar::separator(&theme))
+                .child(split)
+                .child(properties)
+                .child(preview);
+        }
     }
-    line.into_any_element()
+    if !notched {
+        return line.into_any_element();
+    }
+    // The band between the notches: the card's ground, rounded where a
+    // notch ends it.
+    let band = line
+        .relative()
+        .flex_1()
+        .min_w_0()
+        .px(sized(6.))
+        .bg(theme.bar_ground(shell.lowered()))
+        .when(shell.drawn_raised == Some(true), |d| {
+            d.child(underline(&theme))
+        })
+        .when(start.is_some(), gpui::Styled::rounded_tl_xl)
+        .when(end.is_some(), gpui::Styled::rounded_tr_xl);
+    div()
+        .size_full()
+        .flex()
+        .children(start)
+        .child(band)
+        .children(end)
+        .into_any_element()
+}
+
+/// The line under the raised pane's row (`render_pane`): the accent, two
+/// pixels, along the row's foot.
+fn underline(theme: &Theme) -> gpui::Div {
+    div()
+        .absolute()
+        .left_0()
+        .right_0()
+        .bottom_0()
+        .h(px(2.))
+        .bg(theme.accent)
+}
+
+/// Whether a pane's row, as a card (`Theme::cards`), leaves what it holds
+/// of the window's (`Ends`) on the frame, in notches of its card.
+fn notched(theme: &Theme, ends: Ends) -> bool {
+    theme.cards && (ends.corner || ends.toggles)
+}
+
+/// The window's buttons a pane's row holds, on the frame in a notch of its
+/// card (`frame::notch`), the band's fillet beside them.
+fn on_frame<const N: usize>(shell: &Shell, theme: &Theme, buttons: [AnyElement; N]) -> AnyElement {
+    crate::elements::frame::notch(
+        &shell.frame_cards,
+        theme.bar_ground(shell.lowered()),
+        div()
+            .flex_none()
+            .h_full()
+            .flex()
+            .items_center()
+            .gap(sized(2.))
+            .px(sized(6.))
+            .children(buttons),
+    )
+    .into_any_element()
 }
 
 /// What the field's Search button says over `location`, as Ctrl+F does

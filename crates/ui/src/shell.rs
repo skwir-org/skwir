@@ -438,6 +438,9 @@ pub struct Shell {
     /// as they are laid out, the frame painted around them
     /// (`elements::frame`).
     pub(crate) frame_cards: crate::elements::frame::Cards,
+    /// While a pane is drawn as a card of a split (`render_pane`), whether
+    /// it is the one commands act on (raised) or not (lowered).
+    pub(crate) drawn_raised: Option<bool>,
     /// Where More hangs from this frame, wherever its button is.
     pub(crate) more_anchor: crate::elements::popover::PopoverAnchor,
     /// Counts the presses of a mouse button in the window, and which popup
@@ -776,6 +779,7 @@ impl Shell {
             held: None,
             sidebar_drawn: 0.,
             frame_cards: crate::elements::frame::Cards::default(),
+            drawn_raised: None,
             more_anchor: crate::elements::popover::PopoverAnchor::default(),
             search_menu: None,
             settings: None,
@@ -1213,6 +1217,12 @@ impl Shell {
         let r = f(self);
         self.pane = saved;
         r
+    }
+
+    /// Whether the pane drawn is lowered: as cards, a split's pane commands
+    /// do not act on, its grounds a step down (`Theme::files_ground`).
+    pub(crate) fn lowered(&self) -> bool {
+        self.drawn_raised == Some(false)
     }
 
     pub fn is_split(&self) -> bool {
@@ -3598,6 +3608,9 @@ impl Shell {
         let theme = cx.global::<Theme>().clone();
         // The pane commands act on among those drawn.
         let active = saved == id;
+        // As cards, a split's pane commands act on is raised, the other
+        // lowered, while its parts are built (`Shell::lowered`).
+        self.drawn_raised = (theme.cards && self.is_split()).then_some(active);
         self.sync_roots();
         crate::trail::sync(self);
         // After the trail's sync, which says whether it is a search.
@@ -3694,10 +3707,12 @@ impl Shell {
             file_area
         };
         self.pane = saved;
+        self.drawn_raised = None;
         // Split panes are told apart by the edge they share: the left one
         // side by side, the top one stacked. The active pane's is the accent.
         // As cards (`Theme::cards`), by the gutter between them (`render`),
-        // the active one wearing the ring.
+        // the other's grounds a step down and the active one's row
+        // underlined in the accent.
         let stacked = self.layout.stacked();
         let edge = (divider && theme.lines()).then(|| split_edge(stacked, cx));
         let pane = div()
@@ -3730,7 +3745,6 @@ impl Shell {
                     .when(!stacked, gpui::Styled::border_l_1)
                     .border_color(if active { theme.accent } else { theme.border })
             })
-            .when(theme.cards, |d| d.rounded_xl().overflow_hidden())
             .child(address_bar)
             .children(narrow)
             .children(banner)
@@ -3740,8 +3754,7 @@ impl Shell {
             .child(footer)
             .children(edge);
         if theme.cards {
-            let ring = (self.is_split() && active).then_some(theme.ring);
-            crate::elements::frame::card(&self.frame_cards, ring, pane).into_any_element()
+            crate::elements::frame::card(&self.frame_cards, pane).into_any_element()
         } else {
             pane.into_any_element()
         }
@@ -4099,33 +4112,30 @@ impl Render for Shell {
 }
 
 impl Shell {
-    /// The gutter around the cards at each of the window's edges: none
-    /// where the window meets another window or the screen's edge
-    /// (`Window::tiling`) or the sidebar stands, none apart by lines.
+    /// The gutter around the cards at each of the window's edges: at the
+    /// top alone, where the frame's own row is (the tabs, the sidebar's
+    /// header) and the cards hang below it, as a browser's page under its
+    /// toolbar, unless the window meets another there (`Window::tiling`);
+    /// elsewhere the cards run to the window's edge (`frame::card` squares
+    /// their corners there). None apart by lines.
     pub(crate) fn frame_inset(&self, theme: &Theme, window: &Window) -> gpui::Edges<f32> {
         if !theme.cards {
             return gpui::Edges::default();
         }
         let tiling = window.tiling();
-        let gutter = |tiled: bool| {
-            if tiled {
+        gpui::Edges {
+            top: if tiling.top {
                 0.
             } else {
                 crate::elements::frame::GUTTER
-            }
-        };
-        gpui::Edges {
-            top: gutter(tiling.top),
-            right: gutter(tiling.right),
-            bottom: gutter(tiling.bottom),
-            left: gutter(tiling.left || self.sidebar_drawn > 0.),
+            },
+            ..gpui::Edges::default()
         }
     }
 
     /// The window's areas as they are drawn: as cards (`Theme::cards`,
-    /// ADR-123), on the frame, which leaves a gutter around them where the
-    /// window meets neither another window nor the screen's edge
-    /// (`Window::tiling`) and the sidebar does not stand; else as they are.
+    /// ADR-123), on the frame, a gutter above them (`frame_inset`); else as
+    /// they are.
     fn framed(&self, theme: &Theme, window: &Window, areas: gpui::Div) -> gpui::AnyElement {
         if !theme.cards {
             return areas.into_any_element();

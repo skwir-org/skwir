@@ -208,13 +208,9 @@ pub(crate) fn render(
         .gap_4()
         .px_2()
         .text_body()
-        // A card's foot (`Theme::cards`): on its files' ground, no line.
+        // A card's foot (`Theme::cards`): a band as its row is, no line.
         .when(theme.lines(), |d| d.border_t_1().border_color(theme.border))
-        .bg(if theme.cards {
-            theme.window_bg()
-        } else {
-            theme.window_surface()
-        })
+        .bg(theme.bar_ground(shell.lowered()))
         .text_color(theme.text_muted)
         .child(items);
     if let Some((text, tip)) = as_of {
