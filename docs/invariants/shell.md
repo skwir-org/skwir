@@ -1429,10 +1429,18 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   field, palette, toasts, its shape (`Workspace::set_shape`, kept with
   its tabs), its thumbnails' frames (`Shell::thumb_asker`: a window
   drawing never makes another's requests stale).
-- **The player is one**: a play started in a window claims it
-  (`finishing::claim_player`), the window that played before stopping;
-  the desktop's controls steer the window that plays
-  (`finishing::steers_player`); closing that window stops it.
+- **One plays at a time**: whatever starts playing in a window (a
+  button, a key, the dock, the desktop's controls, the next track)
+  claims the player (`finishing::claim_player`): at once from the
+  panel's Play (`Shell::media_started`), else as its session says it
+  plays (`SeenPlaying::window`, followed from the sessions' state, never
+  from what was asked, so the updates before a pause took are no new
+  start). The window that played before pauses where it is, pin and
+  panel (`Shell::pause_playing`), and plays on from there when started
+  again. The desktop's controls steer, and are told what plays by, the
+  window that started playing last (`finishing::steers_player`,
+  `publish_now_playing`): another's paused track never covers it.
+  Closing a window stops what it plays.
 - **A pane is a window's.** `Shell::pane` and the panes it draws are its
   window's; this window's active pane is `Shell::window_pane`, never
   `Workspace::active_id` (the active window's). A tab moved to another

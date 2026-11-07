@@ -36,7 +36,9 @@ work where the keyboard is, by topic.
   has Open in New Window, a tab's Move to New Window. Each window has its
   own tabs, split and panels. What you do in a window shows its result there,
   and `Ctrl+Z` in any window undoes the last thing you did anywhere: one
-  History, one queue, one player for all of them. `Ctrl+Shift+W` closes a
+  History, one queue for all of them. One plays at a time: playing in a
+  window pauses what another plays, which goes on from there when you
+  play it again. `Ctrl+Shift+W` closes a
   window (`Ctrl+W` on its last tab too);
   `Ctrl+Shift+T` brings it back with its tabs. Quit closes them all, and
   with General › At startup set to come back, every window comes back as

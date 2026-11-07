@@ -292,9 +292,8 @@ pub struct PlayerState {
     /// playing it: a file manager announces itself as a player only once it
     /// is one, and stops being one when told to stop.
     engaged: Option<PathBuf>,
-    /// Whether the preview was playing when last looked at: it is starting to
-    /// play that engages, so a Stop still being carried out does not undo itself.
-    was_playing: bool,
+    /// What played when last looked at: it is starting to play that counts.
+    seen: SeenPlaying,
     /// Pictures the dock drew and will not draw again (a cover, a film's
     /// frame, a pin let go of): given back to the atlas at the next sync,
     /// where a window is at hand (`drop_image` runs in update code, never
@@ -306,6 +305,21 @@ pub struct PlayerState {
     /// of its own and drew its cover.
     opening: Option<CancelToken>,
     covering: Option<CancelToken>,
+}
+
+/// What played when the window last looked (`Shell::sync_player`), from
+/// what the sessions say, never from what was asked: a pause asked is
+/// still playing until its session says so, and the updates before then
+/// are not a new start.
+#[derive(Clone, Copy, Debug, Default)]
+struct SeenPlaying {
+    /// The preview's audio: starting to play engages it, so a Stop still
+    /// being carried out does not undo itself.
+    preview: bool,
+    /// Anything of the window's, the pin or the panel: starting to play,
+    /// however asked, makes the player this window's
+    /// (`finishing::claim_player`).
+    window: bool,
 }
 
 impl Default for PlayerState {
@@ -326,7 +340,7 @@ impl Default for PlayerState {
             queue_rx,
             published: false,
             engaged: None,
-            was_playing: false,
+            seen: SeenPlaying::default(),
             height: crate::dock::COMPACT,
             tint: std::cell::Cell::new(None),
             flash: None,
@@ -438,8 +452,9 @@ impl Shell {
     /// Keep playing on, the track is pinned, which moves the pin from any
     /// other; off, another pinned track stops.
     pub(crate) fn media_started(&mut self, cx: &mut Context<Self>) {
-        // One plays in the program: what another window played stops, the
-        // player now this one's (ADR-122).
+        // One plays in the program: what another window plays pauses, the
+        // player now this one's (ADR-122). At once, as asked; whatever
+        // starts otherwise claims it as its session says so (`sync_player`).
         crate::finishing::claim_player(cx, self.window_id);
         if self.preview_is_pinned() {
             return;
@@ -459,21 +474,41 @@ impl Shell {
         }
     }
 
-    /// Another window started playing (`finishing::claim_player`): the
-    /// pinned track stops, the panel's pauses, and the controls the
-    /// desktop shows are the other window's.
-    pub(crate) fn stop_playing(&mut self, cx: &mut Context<Self>) {
-        if self.set_pin(None).is_some() {
-            cx.notify();
+    /// Another window started playing (`finishing::claim_player`): what
+    /// plays here pauses where it is, the pin and the panel alike, and
+    /// plays on from there when started again, which takes the player back.
+    /// The controls the desktop shows are the other window's meanwhile
+    /// (`publish_now_playing`).
+    pub(crate) fn pause_playing(&mut self, cx: &mut Context<Self>) {
+        let pinned = self
+            .player
+            .pinned
+            .as_ref()
+            .filter(|pinned| pinned.state.playing())
+            .map(|pinned| &pinned.session);
+        let panel = self
+            .preview
+            .media
+            .session
+            .as_ref()
+            .filter(|_| self.preview.media.state.playing());
+        for session in pinned.into_iter().chain(panel) {
+            if let Err(error) = session.control(Control::Play(false)) {
+                tracing::debug!("what played did not pause: {error:#}");
+            }
         }
-        if let Some(session) = &self.preview.media.session
-            && self.preview.media.state.playing()
-            && let Err(error) = session.control(skwir_core::media::Control::Play(false))
-        {
-            tracing::debug!("the panel's media did not pause: {error:#}");
-        }
-        self.player.engaged = None;
-        self.player.was_playing = false;
+        self.player.published = false;
+        cx.notify();
+    }
+
+    /// Whether anything of the window's plays: the pin, or the panel's
+    /// session.
+    fn plays_here(&self) -> bool {
+        self.player
+            .pinned
+            .as_ref()
+            .is_some_and(|pinned| pinned.state.playing())
+            || (self.preview.media.session.is_some() && self.preview.media.state.playing())
     }
 
     /// Pin the track in the panel: its session belongs to the window now.
@@ -984,8 +1019,17 @@ impl Shell {
             self.player_step(1, window, cx);
         }
 
+        // Started here, however it was (a key, the dock, the desktop's
+        // controls, the next track): the player is this window's, and what
+        // another window plays pauses (ADR-122).
+        let plays = self.plays_here();
+        if plays && !self.player.seen.window {
+            crate::finishing::claim_player(cx, self.window_id);
+        }
+        self.player.seen.window = plays;
+
         // The desktop's controls (media keys, MPRIS) steer the window that
-        // plays, else the one in use.
+        // played last, else the one in use.
         if crate::finishing::steers_player(cx, self.window_id) {
             for request in self.app.player.take_requests() {
                 self.player_request(request, window, cx);
@@ -1001,7 +1045,7 @@ impl Shell {
             self.close_popup(window, cx);
             cx.notify();
         }
-        self.publish_now_playing();
+        self.publish_now_playing(cx);
     }
 
     /// ↑ and ↓ over the player: the volume, a step at a time, of whatever
@@ -1138,17 +1182,23 @@ impl Shell {
         }
     }
 
-    fn publish_now_playing(&mut self) {
+    fn publish_now_playing(&mut self, cx: &gpui::App) {
         let pinned = self.player.pinned.is_some();
         if !pinned {
             let path = self.preview.playing_path();
             let playing = self.preview.media.state.playing() && self.media_is_audio();
-            if playing && !self.player.was_playing {
+            if playing && !self.player.seen.preview {
                 self.player.engaged = path;
             } else if self.player.engaged != path {
                 self.player.engaged = None;
             }
-            self.player.was_playing = playing;
+            self.player.seen.preview = playing;
+        }
+        // One window speaks to the desktop's controls: the one they steer.
+        // Another's paused track would cover what plays there.
+        if !crate::finishing::steers_player(cx, self.window_id) {
+            self.player.published = false;
+            return;
         }
         let announced = pinned || self.player.engaged.is_some();
         let track = match &self.player.pinned {

@@ -12458,3 +12458,21 @@ The user's follow-ups to ADR-122 after its four steps.
   Ctrl+W again closed the window and the program ended; started again,
   the window came back on its folder. **Checked:** clippy on skwir-ui and
   skwir-core, their tests (1229).
+- **A play in one window pauses another's**, which goes on from where it
+  was when played again (the user's refinement of "one player"): the
+  window that played before pauses its pin and its panel
+  (`Shell::pause_playing`, in place of `stop_playing`, which let go of
+  the pin); whatever starts playing claims the player, at once from the
+  panel's Play, else as its session says it plays (`SeenPlaying::window`,
+  from the sessions' state, so a pause not yet taken is no new start);
+  only the window the desktop's controls steer publishes what plays.
+  **Seen** on Xvfb :95 (two windows side by side, two silent test films
+  made with ffmpeg's `testsrc`): the left played to 0:06; Play on the
+  right paused it at 0:06; Play on the left went on from 0:06 and paused
+  the right at 0:18; Ctrl+Shift+W on the left stopped its film (its media
+  worker ended) and the right went on from 0:18 when played. A film kept
+  playing in the dock (Keep playing, another file selected) paused at
+  1:01 when a new window played; the dock's own button (`ui.player`, no
+  `media_started`) took the player back and paused the new window at
+  0:04. Not checked: the desktop's media keys (no session bus there).
+  **Checked:** clippy on skwir-ui and skwir, skwir-ui's tests (558).

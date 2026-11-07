@@ -71,7 +71,8 @@ pub(crate) struct Finishing {
     /// The window each plan it ran was asked from: what the plan says
     /// goes there (its toast, what it made), else to the active window.
     plans: HashMap<PlanId, WindowId>,
-    /// The window whose player plays, if one does: one plays at a time.
+    /// The window that started playing last, while it is up: one plays at
+    /// a time, what another played paused (`claim_player`).
     pub(crate) player: Option<WindowId>,
     /// What one window carries to another of a pane moved there with its
     /// tab: taken by the window that shows it next (`Shell::sync_tabs`).
@@ -651,8 +652,8 @@ fn record_windows(cx: &mut App) {
     }
 }
 
-/// Window `id` started playing: the player is its own, what another window
-/// played stops (one plays in the program, ADR-122).
+/// Window `id` started playing: the player is its own, and what another
+/// window plays pauses where it is (one plays in the program, ADR-122).
 pub(crate) fn claim_player(cx: &mut App, id: WindowId) {
     if !cx.has_global::<Finishing>() {
         return;
@@ -672,12 +673,12 @@ pub(crate) fn claim_player(cx: &mut App, id: WindowId) {
     };
     // Not within the window that claims: the other is updated after.
     cx.defer(move |cx| {
-        let _ = window.update(cx, |shell, _, cx| shell.stop_playing(cx));
+        let _ = window.update(cx, |shell, _, cx| shell.pause_playing(cx));
     });
 }
 
-/// Whether window `id` takes the desktop's requests to the player: the
-/// window that plays, else the one in use.
+/// Whether window `id` takes the desktop's requests to the player and
+/// tells it what plays: the window that played last, else the one in use.
 pub(crate) fn steers_player(cx: &App, id: WindowId) -> bool {
     let Some(state) = cx.try_global::<Finishing>() else {
         return true;

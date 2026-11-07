@@ -63,8 +63,13 @@ ADR-115 (one process for every window; launches always handed over).
    window undoes the last action asked anywhere: the files are shared),
    Activity (every window's strip shows the same work), the shelf, cut
    files, settings, the agents' channel, the presence while no window is
-   up, and the player: one plays at a time, a play started in another
-   window moves it there, and closing the window holding it stops it.
+   up, and the player: one plays at a time. A play started in a window
+   pauses what another plays, where it is; started again there, it plays
+   on from that point and pauses the first in turn. The desktop's
+   controls steer the window that started playing last; closing a window
+   stops what it plays. (Built first as one player moving between
+   windows, the other's track let go of; changed the same day at the
+   user's word.)
    **Each window's own**: its tabs, split, sidebar, preview, terminal
    panel, address field, palette, toasts. What answers an action (its
    toast, its question) goes to the window that asked, else to the active
