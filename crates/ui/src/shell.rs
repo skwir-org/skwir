@@ -61,6 +61,11 @@ pub struct PaneUi {
     pub loading: crate::loading::State,
     /// The address field while it is typed in (`omnibox.rs`).
     pub omni: Option<crate::omnibox::Omni>,
+    /// The list of the address card's rows, kept from one opening to the
+    /// next: it knows the width it was drawn at, where gpui measures rows
+    /// that wrap (an inferred list), so the card is as tall as they are
+    /// from its first frame.
+    pub card_rows: crate::omnibox::Listed,
     /// What the files it shows weigh, for its footer (`weight.rs`).
     pub weight: crate::weight::Weight,
     /// What Quick filters offer over what it shows.
@@ -1077,6 +1082,7 @@ impl Shell {
             usage: UsageState::default(),
             loading: crate::loading::State::default(),
             omni: None,
+            card_rows: crate::omnibox::Listed::default(),
             weight: crate::weight::Weight::default(),
             quick_filters: crate::quick_filters::QuickFilters::default(),
             quick_filters_on: false,

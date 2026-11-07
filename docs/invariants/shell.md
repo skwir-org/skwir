@@ -491,7 +491,11 @@ of bars, split or not.
   row, a strip of buttons whole. The row the arrows reach is brought into
   view with what it is (`Omni::reveal`); rows for another text start
   from their top, and rows that come later for the same stay where they
-  were scrolled.
+  were scrolled. A strip that wraps (Add a term, Search in) counts as
+  tall as it is drawn: the list takes the card's width (`w_full`) and is
+  kept from one opening to the next (`PaneUi::card_rows`), so it knows
+  that width; the first opening in a window, or the first after the
+  field's width changed, takes one frame more (`views.md`, Scrolling).
 - **`?` alone** lists what the field takes: the shell's grammar (a path,
   a place's address from the schemes providers open, `@`, words, `>`)
   and the query plugin's terms with examples; Enter or Tab writes how the
@@ -901,7 +905,10 @@ of bars, split or not.
   (`history::undo_held`). The rows are read again only when
   `Executor::history_version` moves, once for the History, Earlier and
   the toast (`history::Read`, each row by the plans that made it), and
-  only those in view are built (a `gpui::list`); the keys walk the rows
+  only those in view are built (a `gpui::list`, which says its width,
+  `history::WIDTH`, so a line that wraps counts in its height from the
+  first frame: `views.md`, Scrolling); a name longer than the line wraps
+  in it. The keys walk the rows
   read, so one out of view is reached too and comes into view. Undo,
   Redo and "Undo both" from it leave it open, its rows saying what each
   became; no toast is drawn while it is open, and one said meanwhile

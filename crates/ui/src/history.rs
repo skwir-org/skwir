@@ -40,6 +40,11 @@ pub const POPUP: &str = "undo-history";
 /// A row's height until it is measured: one line, as most are.
 const ROW_HINT: f32 = 28.;
 
+/// The History's width, at 100 %. Its rows' list says it: gpui measures
+/// an inferred list's rows at the width it says, so a line that wraps
+/// there counts in its height from the first frame.
+const WIDTH: f32 = 420.;
+
 /// What is measured beyond the rows in view.
 const OVERDRAW: f32 = 60.;
 
@@ -555,6 +560,7 @@ fn popover(shell: &mut Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<
             }),
         )
         .with_sizing_behavior(gpui::ListSizingBehavior::Infer)
+        .w(sized(WIDTH))
         .min_h_0();
         div()
             .id("undo-history-rows")
@@ -579,7 +585,9 @@ fn popover(shell: &mut Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<
         .aria_label("Undo history")
         // Its rows scroll, in their list.
         .overflow_hidden()
-        .w(sized(420.))
+        // As wide as its rows' list, which says how wide (`WIDTH`).
+        .w_auto()
+        .min_w(sized(WIDTH))
         .max_h(sized(520.))
         .p_0()
         .gap_0()
@@ -697,6 +705,9 @@ fn history_row(
                         .role(gpui::Role::Link)
                         .when(a11y, |d| d.aria_label(format!("Go to {named}")))
                         .track_focus(&link)
+                        // A name longer than the line wraps there, rather
+                        // than running past the History's edge.
+                        .min_w_0()
                         .px_0p5()
                         .rounded_sm()
                         .border_1()

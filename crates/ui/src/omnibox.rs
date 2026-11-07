@@ -219,8 +219,10 @@ pub struct Omni {
     held: Option<Held>,
 }
 
-/// The list of a field's rows: only those in view are built.
-struct Listed(gpui::ListState);
+/// The list of a field's rows: only those in view are built. A clone is
+/// the same list.
+#[derive(Clone)]
+pub struct Listed(gpui::ListState);
 
 impl Default for Listed {
     fn default() -> Self {
@@ -750,6 +752,7 @@ impl Shell {
             }
         };
         let mut omni = Omni::default();
+        omni.list = self.ui().card_rows.clone();
         omni.scope = scope;
         omni.edited = given || (filters_search && !initial.is_empty());
         omni.depth = depth;
@@ -3510,6 +3513,9 @@ pub fn dropdown(
         }),
     )
     .with_sizing_behavior(gpui::ListSizingBehavior::Infer)
+    // As wide as the card: gpui measures the rows at the width the list
+    // was drawn at, kept from one opening to the next (`PaneUi::card_rows`).
+    .w_full()
     .min_h_0();
     let list = crate::modal::options("omnibox-rows", "Suggestions", rows.len(), shell.a11y)
         .flex()

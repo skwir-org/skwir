@@ -102,6 +102,12 @@
 - **The folder you came from is selected wherever you go up**: a place of the
   trail, two levels up or more, the sidebar's, the columns view's, as Alt+Up
   already did; a hidden folder left no longer turns hidden files on.
+- **The Undo history shows why an Undo waits, whole**: the end of the line
+  under an action held by a later one ("first: it touched what this did") was
+  hidden under a scrollbar once it wrapped, and a long name ran past the
+  History's edge; it now wraps and the History is as tall as it. The address
+  card's rows of buttons (Add a term, Search in) are no longer cut when they
+  wrap either.
 - **Skwir started again opens in the one running**: a launcher, a browser's
   Show in Folder or `skwir ~/Documents` opens a window there, on the folder
   asked, rather than a second Skwir that knows nothing of the first; with

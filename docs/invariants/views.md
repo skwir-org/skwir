@@ -366,6 +366,14 @@ around the views is in [shell.md](shell.md).
 - A `gpui::list` measures only what it renders: give it a height estimate
   (`ListState::reset_with_uniform_height`), or the bar
   describes only the rows on screen.
+- A `gpui::list` as tall as its rows (`ListSizingBehavior::Infer`, a
+  popup's) sets its width, so rows that wrap count as tall as they are
+  drawn (gpui 0052): one it says (`w(sized(..))`, the History's
+  `history::WIDTH`) from the first frame; its parent's (`w_full()`, the
+  address card's) once drawn at it, so keep its `ListState` from one
+  showing to the next (`PaneUi::card_rows`): only a first showing, or the
+  first at a new width, takes one frame more. One whose width is its rows'
+  measures them unwrapped, and a row that wraps is cut under a scrollbar.
 - The gutter takes the pointer only while it holds a bar.
 - Wrapping a scrolling element to overlay a bar must keep its flex
   context (a body that grew in a column needs a column), or it silently

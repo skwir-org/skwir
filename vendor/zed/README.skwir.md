@@ -83,6 +83,7 @@ carry: the script takes it from the Inter release Skwir's packages pin
 | `0048-glyph-rasterization-public` | `TextSystem::raster_bounds` and `rasterize_glyph` public | — |
 | `0049-drag-icon-scale` | A drag icon drawn at a scale is shown at its logical size (Wayland: a viewport, or the buffer's scale) | — |
 | `0050-drop-is-the-pointers` | A drag the platform brings into a window counts as the pointer's, so a window last used by keyboard takes its drop | — |
+| `0052-inferred-list-measures-at-its-width` | A list sized by its items (`ListSizingBehavior::Infer`) whose width is set measures them at the width they are drawn at, so items that wrap make it as tall as they are: a width it says from its first frame, its parent's (`w_full`) once drawn at it, that first frame asking for another; Zed's measured them at their own width, and a row that wraps was cut under a scrollbar (the Undo history, 2026-11-07) | — |
 | `0051-x11-window-place` | X11: a window opens where it is asked (program-specified position, static gravity, no 2 px nudge but at 0, 0), maximized or on the whole screen as asked before it maps (`_NET_WM_STATE` written), and says where it is on the root window, a resize included | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.

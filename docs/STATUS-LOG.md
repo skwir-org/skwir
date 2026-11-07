@@ -12563,3 +12563,43 @@ breadcrumb asks for it as well (KUrlNavigator's `urlSelectionRequested`).
   rerun, 197), new: `a_folder_above_gone_to_has_the_way_back_down_selected`
   (two levels up, a folder beside, `select` winning, a hidden folder),
   `a_tag_above_gone_to_has_the_way_back_down_selected`.
+
+## 2026-11-07: An inferred list is as tall as its rows (gpui 0052)
+
+The user saw the Undo history cut: under an action held by a later one,
+the end of the line saying why ("first: it touched what this did") was
+hidden under a scrollbar. A `gpui::list` sized by its rows
+(`ListSizingBehavior::Infer`) measured them at their own width, laid out
+on one line, before its parent gave it a width: a row that wraps where it
+is drawn was taller than counted, every frame. Found by a headless gpui
+probe (a column 200 px wide, rows of two 150 px boxes: the list stayed
+40 px over three frames, its rows 80 px). The address card's rows of
+buttons (Add a term, Search in) were cut the same way.
+
+- **gpui 0052**: a list sized by its rows whose width is set measures them
+  at the width they are drawn at: a width it says from its first frame
+  (the last width it was drawn at under that one, when its parent narrowed
+  it), its parent's (`w_full`) once drawn at it, that first frame asking
+  for one more (`request_animation_frame`) only when its rows are another
+  height there. A list whose width is its rows' measures them at their
+  own, as Zed's does.
+- **Without a frame that jumps**, as the user asked when told the first
+  proposal (always measured at the last width) would correct itself a
+  frame late: the History's list says its width (`history::WIDTH`, the
+  popup as wide as it), so it is right from its first frame; the address
+  card's takes the card's width and its `ListState` is kept from one
+  opening to the next (`PaneUi::card_rows`), so only its first opening in
+  a window, or the first after the field's width changed, takes one frame
+  more, and only when a strip wraps.
+- **A name longer than the line** in the History's link (the action that
+  holds an Undo) ran past the popup's edge, its text never shrinking below
+  its whole width; it shrinks to the line now (`min_w_0`) and wraps.
+- **Seen** on Xvfb :95 (debug build, a synthetic tree, the actions run by
+  `skwir cmd --apply`): a file moved, then renamed to a name longer than a
+  line, showed the Move's whole reason in the History, the name on two
+  lines, no scrollbar; Ctrl+F's card showed Add a term on two lines,
+  whole, its second opening. The one frame of a first opening was not
+  seen on screen; the tests count it. **Checked:** gpui's list tests
+  (42, four new: a width said, a parent's, a width said that the parent
+  narrows, a width of its rows; the first three fail without the patch);
+  clippy on skwir-ui and skwir; skwir-ui's tests (560).

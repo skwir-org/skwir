@@ -37,8 +37,9 @@ VARIABLE = ("inter", "InterVariable.ttf", "Inter-4.1.zip")
 PATCHED = {"async-process", "async-task", "calloop", "khronos-egl"}
 RUNS = [
     ("gpui", ["--no-default-features", "--features", "wayland,x11"], [
-        # Upstream's lists, and their height hints kept across a width
-        # change and the first layout (0040).
+        # Upstream's lists, their height hints kept across a width change
+        # and the first layout (0040), and an inferred list as tall as its
+        # items where they are drawn (0052).
         "elements::list", "elements::div::scroll_axis_tests",
         "text_system::line_wrapper", "text_system::line_layout", "style::tests",
         # Upstream's, and what an action sees of a key held down (0032).

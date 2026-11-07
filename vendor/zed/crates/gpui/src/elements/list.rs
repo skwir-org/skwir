@@ -8,10 +8,10 @@
 //! If all of your elements are the same height, see [`crate::UniformList`] for a simpler API
 
 use crate::{
-    AnyElement, App, AvailableSpace, Bounds, ContentMask, DispatchPhase, Edges, Element, EntityId,
-    FocusHandle, GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId, IntoElement,
-    Overflow, Pixels, Point, ScrollDelta, ScrollEvent, Size, Style, StyleRefinement, Styled,
-    Window, point, px, size,
+    AnyElement, App, AvailableSpace, Bounds, ContentMask, DefiniteLength, DispatchPhase, Edges,
+    Element, EntityId, FocusHandle, GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId,
+    IntoElement, Length, Overflow, Pixels, Point, ScrollDelta, ScrollEvent, Size, Style,
+    StyleRefinement, Styled, Window, point, px, size,
 };
 use collections::VecDeque;
 use refineable::Refineable as _;
@@ -73,6 +73,11 @@ struct StateInner {
     measuring_behavior: ListMeasuringBehavior,
     item_measurement_ready: Option<Box<dyn Fn(usize, &App) -> bool>>,
     follow_state: FollowState,
+    /// An inferred list's last layout: the width its items were measured at
+    /// (`None`: their own) and the height they made, until it is drawn.
+    inferred: Option<(Option<Pixels>, Pixels)>,
+    /// The width the list said it was when it was last drawn.
+    last_stated_width: Option<Pixels>,
 }
 
 #[derive(Clone, Copy)]
@@ -173,6 +178,13 @@ pub struct ListScrollEvent {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ListSizingBehavior {
     /// The list should calculate its size based on the size of its items.
+    ///
+    /// A list whose width is set measures its items at the width they are
+    /// drawn at, so items that wrap make it as tall as they are: a width it
+    /// says (`w(px(..))`, `w(rems(..))`) from its first frame, a width its
+    /// parent gives (`w_full()`) once it was drawn at it, the first frame
+    /// asking for another if its items are taller there. A list whose width
+    /// is its items' measures them at their own width.
     Infer,
     /// The list should not calculate a fixed size.
     #[default]
@@ -325,6 +337,8 @@ impl ListState {
             measuring_behavior: ListMeasuringBehavior::default(),
             item_measurement_ready: None,
             follow_state: FollowState::default(),
+            inferred: None,
+            last_stated_width: None,
         })));
         state.splice(0..0, item_count);
         state
@@ -1502,8 +1516,28 @@ impl Element for List {
                         window.rem_size(),
                     );
 
+                    // Items are measured at the width they will be drawn at,
+                    // as far as it is known before layout: the width the
+                    // list was last drawn at under the width it says now
+                    // (which its parent may have narrowed), else the width it
+                    // says, else the width its parent gave it last. A list
+                    // whose width is its items' measures them at their own.
+                    let last_width = state.last_layout_bounds.map(|bounds| bounds.size.width);
+                    let width = match style.size.width {
+                        Length::Definite(DefiniteLength::Absolute(stated)) => {
+                            let stated = stated.to_pixels(window.rem_size());
+                            if state.last_stated_width == Some(stated) {
+                                last_width
+                            } else {
+                                Some(stated)
+                            }
+                        }
+                        Length::Definite(DefiniteLength::Fraction(_)) => last_width,
+                        _ => None,
+                    };
+
                     let layout_response = state.layout_items(
-                        None,
+                        width,
                         available_height,
                         &padding,
                         &mut self.render_item,
@@ -1514,6 +1548,7 @@ impl Element for List {
 
                     let summary = state.items.summary();
                     let total_height = summary.height;
+                    state.inferred = Some((width, total_height));
 
                     window.request_measured_layout(
                         style,
@@ -1607,8 +1642,25 @@ impl Element for List {
             }
         };
 
+        // Measured at another width than they are drawn at (an inferred
+        // list's first frame, or a new width), items that are another height
+        // here made the list another height than theirs: the next frame
+        // infers it from the heights measured here, at this width.
+        if let Some((width, height)) = state.inferred.take()
+            && width != Some(bounds.size.width)
+            && state.items.summary().height != height
+        {
+            window.request_animation_frame();
+        }
+
         state.last_layout_bounds = Some(bounds);
         state.last_padding = Some(padding);
+        state.last_stated_width = match style.size.width {
+            Length::Definite(DefiniteLength::Absolute(stated)) => {
+                Some(stated.to_pixels(window.rem_size()))
+            }
+            _ => None,
+        };
         ListPrepaintState { hitbox, layout }
     }
 
@@ -1761,8 +1813,8 @@ mod test {
 
     use crate::{
         self as gpui, AnyElement, AppContext, Bounds, Context, Element, FollowMode,
-        InteractiveElement, IntoElement, ListOffset, ListState, Pixels, Render, Styled,
-        TestAppContext, VisualTestContext, Window, canvas, div, list, point, px, size,
+        InteractiveElement, IntoElement, ListOffset, ListState, ParentElement, Pixels, Render,
+        Styled, TestAppContext, VisualTestContext, Window, canvas, div, list, point, px, size,
     };
 
     #[gpui::test]
@@ -2158,6 +2210,145 @@ mod test {
             view.into_any_element()
         });
         assert_eq!(state.max_offset_for_scrollbar().y, px(4800.));
+    }
+
+    /// Two boxes of 150px in a row that wraps: 20px tall at its own width,
+    /// 40px under 300px.
+    fn wrapping_item() -> AnyElement {
+        div()
+            .w_full()
+            .flex()
+            .flex_wrap()
+            .child(div().w(px(150.)).h(px(20.)))
+            .child(div().w(px(150.)).h(px(20.)))
+            .into_any()
+    }
+
+    /// An inferred list of wrapping items, in the tree `around` puts it in.
+    struct InferredView {
+        state: ListState,
+        around: fn(super::List) -> AnyElement,
+    }
+
+    impl Render for InferredView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            (self.around)(
+                list(self.state.clone(), |_, _, _| wrapping_item())
+                    .with_sizing_behavior(crate::ListSizingBehavior::Infer),
+            )
+        }
+    }
+
+    /// Draws `view` in a window of 400 x 400; returns the list's height,
+    /// what of its items it leaves below, and the frames asked for since.
+    fn draw_inferred(
+        cx: &mut VisualTestContext,
+        view: &gpui::Entity<InferredView>,
+        state: &ListState,
+    ) -> (Pixels, Pixels, usize) {
+        let view = view.clone();
+        cx.draw(point(px(0.), px(0.)), size(px(400.), px(400.)), |_, _| {
+            view.into_any_element()
+        });
+        let asked = cx.update(|window, cx| window.simulate_next_frame(cx));
+        (
+            state.viewport_bounds().size.height,
+            state.max_offset_for_scrollbar().y,
+            asked,
+        )
+    }
+
+    #[gpui::test]
+    fn test_inferred_list_of_a_stated_width_is_as_tall_as_its_items_there(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let state = ListState::new(2, crate::ListAlignment::Top, px(100.));
+        let view = cx.update(|_, cx| {
+            cx.new(|_| InferredView {
+                state: state.clone(),
+                around: |list| {
+                    div()
+                        .flex()
+                        .flex_col()
+                        .items_start()
+                        .child(list.w(px(200.)))
+                        .into_any()
+                },
+            })
+        });
+
+        // Measured at 200px from the first frame: two lines each, none
+        // hidden, no frame more.
+        assert_eq!(draw_inferred(cx, &view, &state), (px(80.), px(0.), 0));
+    }
+
+    #[gpui::test]
+    fn test_inferred_list_its_parent_sizes_is_as_tall_as_its_items_once_drawn(
+        cx: &mut TestAppContext,
+    ) {
+        let cx = cx.add_empty_window();
+        let state = ListState::new(2, crate::ListAlignment::Top, px(100.));
+        let view = cx.update(|_, cx| {
+            cx.new(|_| InferredView {
+                state: state.clone(),
+                around: |list| {
+                    div()
+                        .w(px(200.))
+                        .flex()
+                        .flex_col()
+                        .child(list.w_full())
+                        .into_any()
+                },
+            })
+        });
+
+        // The first frame measures the items at their own width, and asks
+        // for another, which measures them at the width they were drawn at.
+        assert_eq!(draw_inferred(cx, &view, &state).2, 1);
+        assert_eq!(draw_inferred(cx, &view, &state), (px(80.), px(0.), 0));
+
+        // An item come since is measured there in the frame that draws it.
+        state.splice(2..2, 1);
+        assert_eq!(draw_inferred(cx, &view, &state), (px(120.), px(0.), 0));
+    }
+
+    #[gpui::test]
+    fn test_inferred_list_its_parent_narrows_is_as_tall_as_its_items_there(
+        cx: &mut TestAppContext,
+    ) {
+        let cx = cx.add_empty_window();
+        let state = ListState::new(2, crate::ListAlignment::Top, px(100.));
+        let view = cx.update(|_, cx| {
+            cx.new(|_| InferredView {
+                state: state.clone(),
+                around: |list| {
+                    div()
+                        .w(px(200.))
+                        .flex()
+                        .child(list.w(px(320.)).min_w_0())
+                        .into_any()
+                },
+            })
+        });
+
+        // Said 320px, drawn at 200px: one frame more, then none.
+        assert_eq!(draw_inferred(cx, &view, &state).2, 1);
+        assert_eq!(draw_inferred(cx, &view, &state), (px(80.), px(0.), 0));
+        assert_eq!(draw_inferred(cx, &view, &state), (px(80.), px(0.), 0));
+    }
+
+    #[gpui::test]
+    fn test_inferred_list_of_its_items_width_takes_their_width(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let state = ListState::new(2, crate::ListAlignment::Top, px(100.));
+        let view = cx.update(|_, cx| {
+            cx.new(|_| InferredView {
+                state: state.clone(),
+                around: |list| div().flex().child(list).into_any(),
+            })
+        });
+
+        assert_eq!(draw_inferred(cx, &view, &state), (px(40.), px(0.), 0));
+        assert_eq!(state.viewport_bounds().size.width, px(300.));
     }
 
     #[gpui::test]
