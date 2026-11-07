@@ -503,9 +503,15 @@ fn deliver(cx: &mut App) {
         }
         work.sync_stopped(&app);
         work.settle(&app);
-        // What joined is shown and announced as its time comes, the
-        // program woken then (ADR-114, amended 2026-11-03).
-        let wake = work.watch(&app, Instant::now());
+        // What joined is shown and announced as its time comes, and
+        // unfolds Activity where it was asked once it lasted, the program
+        // woken then (ADR-114, amended 2026-11-03 and 2026-11-07).
+        let askers = crate::work::Askers {
+            ran: &state.plans,
+            front: active,
+            unfold_after: unfold_after(&app),
+        };
+        let wake = work.watch(&app, Instant::now(), Some(askers));
         let under = work.under_way(&app);
         work.tell(&app, &under, watched);
         (work.take_asked(), wake)
@@ -555,6 +561,16 @@ impl Inbox {
 
 /// How the desktop is told while windows are up: looked at while one of
 /// them has the focus.
+/// After how long an action a window asked unfolds Activity there
+/// (`ui.activity_unfold_ms`).
+fn unfold_after(app: &skwir_core::App) -> std::time::Duration {
+    let ms = app
+        .settings
+        .get::<i64>(crate::settings::ACTIVITY_UNFOLD_KEY)
+        .unwrap_or(crate::settings::ACTIVITY_UNFOLD_DEFAULT);
+    std::time::Duration::from_millis(u64::try_from(ms).unwrap_or(0))
+}
+
 fn watched(cx: &App) -> Watched {
     let state = cx.global::<Finishing>();
     let looked_at = state.windows.iter().any(|(_, handle)| {
@@ -853,8 +869,8 @@ fn sync(cx: &mut App) {
         }
         work.settle(&app);
         // What joined counts as its time comes, the program woken then
-        // (`work::wake_after`); nothing is tinted here.
-        let wake = work.watch(&app, std::time::Instant::now());
+        // (`work::wake_after`); nothing is tinted nor unfolds here.
+        let wake = work.watch(&app, std::time::Instant::now(), None);
         let under = work.under_way(&app);
         work.card(&under);
         work.sync_stopped(&app);

@@ -172,6 +172,35 @@ and macOS otherwise compiled only.
    keyboard and Escape gives it back to the files. A click on the strip or
    on Activity pinned leaves the keyboard where it was, as a click on the
    cards in the toasts did.
+
+   Amended 2026-11-07 (the user's choice, from a canvas of mock-ups
+   comparing the popover opened by itself with Activity unfolded above
+   the footer): the strip alone hid what a long action needed to be
+   followed (its bar, speed, time left and buttons) behind a click, and
+   **Activity unfolds for a long action**, unpinned windows included.
+   - The user first asked for the popover to open as a long action
+     starts, the strip taken by a chevron beside the pin. Left out: it
+     covered the last rows again for as long as the action ran, the
+     reason for this ADR; as a popup it took the keyboard (a paste
+     followed by arrows sent them to Activity) and closed at the next
+     click elsewhere; and a long action is not known as it starts.
+   - Instead, once an action asked in the window has been under way,
+     waiting or running, for 1.5 s (`ui.activity_unfold_ms`, a slider
+     from 0.5 to 5 s among General's More settings, written in seconds:
+     `SettingSpec::unit_of`), Activity stands above the footer as it did
+     pinned: taking room, not covering the files, never taking the
+     keyboard, and staying for the spell of work. The strip announces
+     the action first (amended 2026-11-03), and anything quicker the
+     strip says alone, so the list's foot does not jump for a quick
+     copy.
+   - Only where it was asked: in the window that ran its command (a
+     reviewed proposal's too), else the window in front as it joined (an
+     undo, a retry, a script's, whose window the core does not say).
+     Other windows keep the strip.
+   - **Its chevron folds it into the strip**, remembered with the
+     window's shape (`activity_folded`); the popup's pin unfolds it
+     again. What windows remembered before (`activity_pinned`, off by
+     default) is not read: every window takes the new default.
 4. **Answers stay toasts**, one at a time, at the last pane's lower right,
    above the strip (or Activity pinned): there the list shows sizes and
    dates rather than names. On the whole screen, over the preview, as

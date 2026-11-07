@@ -108,6 +108,14 @@
   History's edge; it now wraps and the History is as tall as it. The address
   card's rows of buttons (Add a term, Search in) are no longer cut when they
   wrap either.
+- **Activity unfolds for a long action**: an action you asked that is still
+  going after 1.5 s (a slider among General's More settings, from 0.5 to 5 s)
+  opens Activity above the footer of its window, with its bar, speed, time
+  left, Pause and Cancel. It takes room rather than covering the files and
+  leaves the keyboard where it is; quicker actions, and those of other
+  windows, stay in the footer's strip. Its chevron folds it into the strip for
+  that window, remembered; the pin of Activity opened from the strip unfolds it
+  again. Every window, pinned before or not, starts unfolded.
 - **The sidebar's free space stays current**: a drive's "free of" and its bar
   were measured at start and when drives came and went, so a Skwir open for
   hours showed the morning's numbers, even after copying gigabytes onto the

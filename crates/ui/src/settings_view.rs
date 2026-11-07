@@ -753,13 +753,7 @@ impl SettingsView {
         );
         let at = crate::settings::slider_at(&row.spec, value);
         let (min, max) = row.spec.constraints.integer_range.unwrap_or((0, 0));
-        let written = |value: i64| {
-            if row.spec.unit.is_empty() {
-                value.to_string()
-            } else {
-                format!("{value} {}", row.spec.unit)
-            }
-        };
+        let written = |value: i64| row.spec.written(value);
         let said = written(value);
         // The value's room is the longest end's, its figures all as wide
         // (tabular): the knob's value changing moves nothing.

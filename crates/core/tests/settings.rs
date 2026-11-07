@@ -365,6 +365,34 @@ fn queued_save_is_exclusive_and_revalidates_after_plugin_disable() {
     assert_eq!(app.settings.get::<String>("sample.engine"), None);
 }
 
+/// A value is written in its unit, a slider of milliseconds in seconds:
+/// what is kept stays the whole number agents and scripts read.
+#[test]
+fn a_value_is_written_in_its_unit() {
+    let budget = SettingSpec::integer("sample.budget", "Budget", "d", 64, (4, 4096)).unit("MB");
+    assert_eq!(budget.written(64), "64 MB");
+    let bare = SettingSpec::integer("sample.count", "Count", "d", 3, (0, 9));
+    assert_eq!(bare.written(3), "3");
+    let wait = SettingSpec::integer("sample.wait_ms", "Wait", "d", 1500, (0, 5000))
+        .step(250)
+        .unit_of("s", 1000)
+        .slider();
+    assert_eq!(wait.unit, "s");
+    assert_eq!(wait.constraints.per_unit, 1000);
+    for (value, written) in [
+        (1500, "1.5 s"),
+        (1000, "1 s"),
+        (500, "0.5 s"),
+        (250, "0.25 s"),
+        (0, "0 s"),
+        (5000, "5 s"),
+        (1005, "1.005 s"),
+        (-1500, "-1.5 s"),
+    ] {
+        assert_eq!(wait.written(value), written, "{value}");
+    }
+}
+
 #[test]
 fn builders_describe_controls_and_the_schema_serializes_for_agents() {
     let budget = SettingSpec::integer("sample.budget", "Budget", "d", 64, (4, 4096))

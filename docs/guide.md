@@ -71,9 +71,14 @@ work where the keyboard is, by topic.
   few seconds of it tell, with Pause and Cancel; Cancel all over the
   whole queue; what waits its turn, each with Cancel; and Earlier, what
   failed, was cancelled or cannot be undone this session, with Retry, and
-  the messages toasts gave (what was done is in the Undo history). Its
-  pin keeps it above the footer while something runs, three cards high
-  at most, Earlier folded to a line at its foot. Onto a server that
+  the messages toasts gave (what was done is in the Undo history). An
+  action you asked that lasts (1.5 s, Unfold Activity after in General's
+  More settings) unfolds Activity above the footer of its window until
+  nothing is left to show, three cards high at most, Earlier folded to a
+  line at its foot: it takes room rather than covering the files, and
+  leaves the keyboard where it is. Its chevron folds it into the
+  footer's strip for that window; the pin in Activity opened from the
+  strip unfolds it again. Onto a server that
   takes what is copied after (rclone's caches), a copy first says "then
   sent to the server", then the sending's own speed and time left.
   Cancel stops an action within a second or two, even in the

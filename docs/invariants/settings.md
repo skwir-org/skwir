@@ -223,7 +223,9 @@ The key is the owner's; the page is the subject's (ADR-072).
   in a rem of its own on the list's one left edge, its row as tall as
   it needs. The control itself stays at the dialog's size.
 - **A slider** (`SettingSpec::slider`, `controls::slider`) is a whole
-  number's track and knob, its value written after it in tabular
+  number's track and knob, its value written after it in its unit
+  (`SettingSpec::written`: a slider of milliseconds says "1.5 s",
+  `unit_of`, its key saying what it keeps: `_ms`) in tabular
   figures, in the room of its longest end, so moving it moves nothing
   else. Its knob stops at the steps. Held, it follows the pointer over
   the whole window, worn as it moves wherever its owner wears what is

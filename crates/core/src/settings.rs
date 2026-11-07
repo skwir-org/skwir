@@ -327,6 +327,10 @@ pub struct SettingConstraints {
     /// rather than typed (`SettingSpec::slider`): a value seen as it
     /// changes. Its value stays a number for agents and scripts.
     pub slider: bool,
+    /// How many of the value make one `unit` where it is written
+    /// (`SettingSpec::unit_of`): 1000 for milliseconds written in seconds.
+    /// 0 or 1: the value is counted in its unit.
+    pub per_unit: i64,
     /// The fields of a [`SettingKind::Records`] setting's records.
     pub fields: Vec<RecordField>,
     /// What one record is called ("tile server"), for "Add tile server".
@@ -641,6 +645,48 @@ impl SettingSpec {
     pub fn unit(mut self, unit: &str) -> Self {
         unit.clone_into(&mut self.unit);
         self
+    }
+
+    /// Written in `unit`, `per` of the value making one, a power of ten: a
+    /// slider of milliseconds that says "1.5 s" (`unit_of("s", 1000)`).
+    /// The value stays the whole number kept, for agents and scripts; the
+    /// key says what it counts (`_ms`).
+    #[must_use]
+    pub fn unit_of(mut self, unit: &str, per: i64) -> Self {
+        debug_assert!(
+            per >= 1 && 10_i64.pow(per.ilog10()) == per,
+            "{}: a unit is a power of ten of the value",
+            self.key
+        );
+        unit.clone_into(&mut self.unit);
+        self.constraints.per_unit = per.max(1);
+        self
+    }
+
+    /// `value` as it is written, in its unit (`unit_of`): "64 MB", "1.5 s".
+    #[must_use]
+    pub fn written(&self, value: i64) -> String {
+        let per = self.constraints.per_unit.max(1);
+        let number = if per == 1 {
+            value.to_string()
+        } else {
+            let (whole, part) = (value.abs() / per, value.abs() % per);
+            let sign = if value < 0 { "-" } else { "" };
+            if part == 0 {
+                format!("{sign}{whole}")
+            } else {
+                // The part's digits, as many as `per` has places, without
+                // the zeros ending them.
+                let places = per.ilog10() as usize;
+                let part = format!("{part:0places$}");
+                format!("{sign}{whole}.{}", part.trim_end_matches('0'))
+            }
+        };
+        if self.unit.is_empty() {
+            number
+        } else {
+            format!("{number} {}", self.unit)
+        }
     }
 
     #[must_use]

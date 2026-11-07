@@ -46,7 +46,7 @@ pub const POPUP: &str = "activity";
 /// hold, newest first.
 pub(crate) const EARLIER: usize = 20;
 
-/// The most Activity pinned takes above the footer, its heading included:
+/// The most Activity standing takes above the footer, its heading included:
 /// about three running actions' cards; what it holds beyond scrolls.
 const TRAY_MOST: f32 = 260.;
 
@@ -161,9 +161,16 @@ struct StripFocus {
 /// `Work`'s (`work.rs`), which outlives the window.
 #[derive(Default)]
 pub struct ActivityState {
-    /// Activity stands above the footer while something is under way,
-    /// rather than opening over the files (remembered with the window).
-    pub pinned: bool,
+    /// Activity folded into the footer's strip by its chevron: it opens
+    /// over the files when asked, never by itself (remembered with the
+    /// window). Unfolded, as by default, it stands above the footer once
+    /// an action the window asked lasted (ADR-114, amended 2026-11-07).
+    pub folded: bool,
+    /// Activity unfolded for this spell of work: an action the window
+    /// asked lasted `ui.activity_unfold_ms` (`Work::unfolds_in`), or it was
+    /// unfolded by hand. Kept until it has nothing to show, so that it
+    /// never folds and unfolds between the actions of a spell.
+    stands: bool,
     anchor: PopoverAnchor,
     /// Each card's Pause and Cancel, by plan; each task's Cancel.
     cards: HashMap<PlanId, (FocusHandle, FocusHandle)>,
@@ -178,21 +185,21 @@ pub struct ActivityState {
     cancel_all: Option<FocusHandle>,
     strip: Option<StripFocus>,
     pin: Option<FocusHandle>,
-    /// Earlier unfolded at the foot of Activity pinned
+    /// Earlier unfolded at the foot of Activity standing
     /// (`ui.activity_earlier`), and the button that folds it.
     earlier_unfolded: bool,
     fold: Option<FocusHandle>,
-    /// What `ui.activity` gives the keyboard to while pinned and shown.
+    /// What `ui.activity` gives the keyboard to while it stands.
     tray: Option<FocusHandle>,
     /// What brings the button the keyboard reaches into view: in the
-    /// popup, made again as it opens (it opens at its top), and pinned.
+    /// popup, made again as it opens (it opens at its top), and standing.
     popup_reveal: Reveal,
     tray_reveal: Reveal,
 }
 
 /// What brings the button the keyboard reaches into view in Activity's
 /// rows, which scroll under its heading: the popup's, at most 520 px, and
-/// the pinned tray's, at most `TRAY_MOST`. Toolbar popups do it by their
+/// the standing tray's, at most `TRAY_MOST`. Toolbar popups do it by their
 /// rows' key context (`toolbar::RevealRow`); Activity's buttons are its
 /// own.
 #[derive(Clone, Default)]
@@ -528,17 +535,41 @@ impl Shell {
             || self.app.executor.queued() > 0
     }
 
-    /// Whether Activity stands above the footer as `under` runs: pinned,
-    /// with something to show, unless it is open as a popup, which stays
-    /// where it opened until it is closed (the strip draws it).
+    /// Whether Activity stands above the footer as `under` runs: unfolded
+    /// for this spell (`sync_unfolded`), with something to show, unless it
+    /// is open as a popup, which stays where it opened until it is closed
+    /// (the strip draws it).
     pub(crate) fn activity_tray_shown_for(&self, under: &Under) -> bool {
-        self.activity.pinned && !self.activity_open() && self.activity_holds(under)
+        self.activity_stands() && self.activity_holds(under)
     }
 
     /// `activity_tray_shown_for` what runs now, for what is asked between
     /// frames (a command, the desktop).
     pub(crate) fn activity_tray_shown(&self) -> bool {
-        self.activity.pinned && !self.activity_open() && self.activity_holds(&self.under_way())
+        self.activity_stands() && self.activity_holds(&self.under_way())
+    }
+
+    fn activity_stands(&self) -> bool {
+        !self.activity.folded && self.activity.stands && !self.activity_open()
+    }
+
+    /// Before each frame of the last pane: Activity unfolds above its
+    /// footer once an action this window asked has lasted
+    /// `ui.activity_unfold_ms`, where it was asked and nowhere else
+    /// (`Work::unfolds_in`; ADR-114, amended 2026-11-07), and stays for the
+    /// spell of work, until it has nothing to show. Quicker ones, and
+    /// those asked elsewhere, the strip says alone.
+    pub(crate) fn sync_unfolded(&mut self, under: &Under) {
+        if !self.activity_holds(under) {
+            self.activity.stands = false;
+        } else if !self.activity.stands
+            && self
+                .work
+                .borrow()
+                .unfolds_in(self.window_id, std::time::Instant::now())
+        {
+            self.activity.stands = true;
+        }
     }
 
     /// `ui.activity`: open Activity above its strip, or close it (`args`:
@@ -574,20 +605,25 @@ impl Shell {
         cx.notify();
     }
 
-    /// `ui.activity_pin`: Activity stands above the footer while something
-    /// is under way, or opens over the files when asked.
+    /// `ui.activity_pin`: fold Activity into the footer's strip, where it
+    /// opens over the files when asked, or unfold it again, to stand above
+    /// the footer once an action asked here lasted.
     pub(crate) fn toggle_activity_pin(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.activity.pinned = !self.activity.pinned;
+        self.activity.folded = !self.activity.folded;
         self.remember_session();
-        // Pinned with something to show, it stands where the popup was.
-        if self.activity.pinned && self.activity_open() && self.activity_holds(&self.under_way()) {
-            self.close_popup(window, cx);
+        // Unfolded by hand with something to show, it stands at once,
+        // where the popup was.
+        if !self.activity.folded && self.activity_holds(&self.under_way()) {
+            self.activity.stands = true;
+            if self.activity_open() {
+                self.close_popup(window, cx);
+            }
         }
         cx.notify();
     }
 
     /// `ui.activity_earlier`: unfold Earlier at the foot of Activity
-    /// pinned, or fold it again.
+    /// standing, or fold it again.
     pub(crate) fn toggle_activity_earlier(&mut self, cx: &mut Context<Self>) {
         self.activity.earlier_unfolded = !self.activity.earlier_unfolded;
         cx.notify();
@@ -1040,7 +1076,7 @@ fn strip_buttons(
 
 /// The strip at the end of the last pane's footer, as `under` runs: what
 /// runs, how far, and the way to Activity, opened above it; `None` while
-/// there is nothing to say, or while Activity, pinned, says it above.
+/// there is nothing to say, or while Activity, standing, says it above.
 pub fn strip(
     shell: &mut Shell,
     under: &Under,
@@ -1270,7 +1306,7 @@ fn popover(
         return None;
     }
     let reveal = shell.activity.popup_reveal.clone();
-    let heading = heading(shell, theme, cx);
+    let heading = heading(shell, false, theme, cx);
     let body = body(shell, under, Shows::All, &reveal, theme, cx);
     let popup = shell.toolbar_menu.as_ref()?;
     let panel = crate::toolbar::popup_panel(popup, "ui.activity", theme, cx)
@@ -1290,8 +1326,9 @@ fn popover(
     ))
 }
 
-/// Activity pinned, above the last pane's footer while something is under
-/// way (`under`): what runs and waits, taking room rather than covering
+/// Activity standing above the last pane's footer, unfolded for this spell
+/// of work (`Shell::sync_unfolded`) while something is under way
+/// (`under`): what runs and waits, taking room rather than covering
 /// the files, `TRAY_MOST` high at most (half the pane, in a low one),
 /// scrolled beyond.
 pub fn tray(
@@ -1309,7 +1346,7 @@ pub fn tray(
         .get_or_insert_with(|| cx.focus_handle().tab_stop(false))
         .clone();
     let reveal = shell.activity.tray_reveal.clone();
-    let heading = heading(shell, theme, cx);
+    let heading = heading(shell, true, theme, cx);
     let body = body(shell, under, Shows::Pinned, &reveal, theme, cx);
     Some(
         div()
@@ -1333,7 +1370,7 @@ pub fn tray(
             .flex_col()
             .border_t_1()
             .border_color(theme.border)
-            // Opaque whatever the files' ground: Activity pinned is its
+            // Opaque whatever the files' ground: Activity standing is its
             // popover kept open, read at a glance over any background.
             .bg(theme.bg)
             .text_color(theme.text)
@@ -1352,7 +1389,7 @@ pub fn tray(
 
 /// Activity's `body`, scrolled by `reveal` (which brings the button the
 /// keyboard reaches into view) beside its scrollbar: in the popup, and
-/// pinned.
+/// standing.
 fn scrolled(id: &'static str, body: Vec<AnyElement>, reveal: &Reveal) -> AnyElement {
     div()
         .relative()
@@ -1381,22 +1418,55 @@ fn scrolled(id: &'static str, body: Vec<AnyElement>, reveal: &Reveal) -> AnyElem
 enum Shows {
     /// All it keeps: in the popup.
     All,
-    /// Pinned: the action an error stopped, which the tray stands for
+    /// Standing: the action an error stopped, which the tray stands for
     /// while its Retry waits (`Work::stopped`), and the rest folded at its
     /// foot, a line until unfolded (`ui.activity_earlier`).
     Pinned,
 }
 
-/// Activity's name and its pin, above its rows, which scroll beneath it.
-fn heading(shell: &mut Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
-    let pinned = shell.activity.pinned;
-    let pin = shell.activity.pin.get_or_insert_with(|| stop(cx)).clone();
-    let pin_tip: SharedString = if pinned {
-        "Let Activity close"
+/// Activity's name and what folds it, above its rows, which scroll
+/// beneath it: standing above the footer (`standing`), its chevron folds
+/// it into the strip; in the popup, its pin, pressed while it is unfolded,
+/// folds it, and unfolds it again (ADR-114, amended 2026-11-07).
+fn heading(
+    shell: &mut Shell,
+    standing: bool,
+    theme: &Theme,
+    cx: &mut Context<Shell>,
+) -> AnyElement {
+    let unfolded = !shell.activity.folded;
+    let focus = shell.activity.pin.get_or_insert_with(|| stop(cx)).clone();
+    let button = if standing {
+        controls::icon_button(
+            "activity-fold",
+            "chevron",
+            "Fold into the footer",
+            &focus,
+            theme,
+        )
+        .tooltip(|_, cx| crate::toolbar::tooltip("Fold Activity into the footer".into(), cx))
     } else {
-        "Keep Activity open above the footer while something runs"
-    }
-    .into();
+        let tip: SharedString = if unfolded {
+            "Fold Activity into the footer"
+        } else {
+            "Unfold Activity above the footer when an action lasts"
+        }
+        .into();
+        controls::icon_button(
+            "activity-pin",
+            "pin",
+            "Unfold above the footer",
+            &focus,
+            theme,
+        )
+        .aria_toggled(if unfolded {
+            gpui::Toggled::True
+        } else {
+            gpui::Toggled::False
+        })
+        .when(unfolded, |d| d.bg(theme.selection_bg))
+        .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), cx))
+    };
     div()
         .flex()
         .flex_none()
@@ -1411,27 +1481,16 @@ fn heading(shell: &mut Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
                 .text_color(theme.text_muted)
                 .child("Activity"),
         )
-        .child(
-            controls::icon_button("activity-pin", "pin", "Keep open", &pin, theme)
-                .size(px(24.))
-                .aria_toggled(if pinned {
-                    gpui::Toggled::True
-                } else {
-                    gpui::Toggled::False
-                })
-                .when(pinned, |d| d.bg(theme.selection_bg))
-                .tooltip(move |_, cx| crate::toolbar::tooltip(pin_tip.clone(), cx))
-                .press(
-                    |this, window, cx| {
-                        this.run("ui.activity_pin", serde_json::json!({}), window, cx);
-                    },
-                    cx,
-                ),
-        )
+        .child(button.size(px(24.)).press(
+            |this, window, cx| {
+                this.run("ui.activity_pin", serde_json::json!({}), window, cx);
+            },
+            cx,
+        ))
         .into_any_element()
 }
 
-/// What Activity holds under its heading, in the popup or pinned, as
+/// What Activity holds under its heading, in the popup or standing, as
 /// `under` runs: the cards of what runs, what waits, and what of `Earlier`
 /// it `shows`; `reveal` brings the button the keyboard reaches into view.
 fn body(
@@ -1605,7 +1664,7 @@ fn body(
     parts
 }
 
-/// Earlier folded at the foot of Activity pinned, `count` answers: a line
+/// Earlier folded at the foot of Activity standing, `count` answers: a line
 /// that unfolds them (`ui.activity_earlier`), its chevron a disclosure's,
 /// as a sidebar group's: right while folded, down unfolded.
 fn earlier_fold(

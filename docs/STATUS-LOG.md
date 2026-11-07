@@ -12648,3 +12648,48 @@ copy's own room check asks the drive itself and was never misled.
   plugins; their tests (823; skwir-ui and the binary, 566) and
   `plugins_toggle`. Idle CPU with the pace running was not measured: one
   wake of a thread a minute.
+
+## 2026-11-07: Activity unfolds for a long action
+
+The user asked whether Activity's popover should open as a long action
+starts, with a chevron to send it to the footer. Weighed against
+ADR-114's rules, the popover covered the last rows for as long as the
+action ran (why the toasts were docked), took the keyboard, closed at
+the next click and opened before anything said the action was long. The
+user chose the alternative from a canvas of mock-ups (an interactive
+window with the threshold as a lever, split panes, folded, and the
+popover by itself): Activity *pinned*, unfolded by default (ADR-114,
+amended).
+
+- **When**: once an action asked in the window has been under way,
+  waiting or running, for `ui.activity_unfold_ms` (1500, a slider from
+  0.5 to 5 s among General's More settings), Activity stands above the
+  last pane's footer for the spell of work (`Shell::sync_unfolded`,
+  latched until nothing is left to show). `Work::watch` notes each
+  action's window as it joins (`Askers`: the window that ran its
+  command, `finishing::ran`, now a reviewed proposal's too, else the
+  window in front) and wakes the program as one's time comes;
+  `Work::unfolds_in` answers for a window.
+- **The fold**: the chevron in Activity's heading folds it into the
+  strip (`ui.activity_pin`, the window's `activity_folded`); the popup's
+  pin unfolds it, standing at once. The old `activity_pinned` is not
+  read: every window starts unfolded, as the user chose.
+- **A slider in seconds**: `SettingSpec::unit_of("s", 1000)` and
+  `SettingSpec::written` write the milliseconds kept as "1.5 s".
+- **Seen** on Xvfb :95 (debug build, synthetic home, copies started by
+  `skwir cmd --apply copy`, so asked from no window: the one in front):
+  20 000 small files copied in under a second, said by the strip alone;
+  100 000 announced on the tint from 0.8 s and unfolded by 2.0 s, gone
+  at the end with the answer's toast. Pause on its card, the chevron's
+  tooltip and fold (strip back, "paused at 90 %", `activity_folded =
+  true`), the popup's pin (tooltip, Activity standing at once), a copy
+  while folded staying in the strip at 2.6 s. The slider said 1.5 s,
+  then 2 s and 0.5 s (2000, 500 in settings.toml), and at 0.5 s the
+  one-second copy unfolded by 0.7 s.
+- **Checked:** a test of where and when an action unfolds (its window
+  only, the window in front for one of no known window, nothing without
+  a window, the wake time), one of values written in their unit; clippy
+  on skwir-core and skwir-ui; their tests (1237) and the binary's (197;
+  five failed while the disk was full, 85 MB free, and passed once
+  `just prune` freed 17.9 GB). Two windows asking at once were not
+  driven in a window: the unit test covers which window unfolds.

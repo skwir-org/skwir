@@ -78,7 +78,7 @@ pub const MAP: &str = "MapPreview";
 pub const MODEL: &str = "ModelPreview";
 /// The pinned player's dock.
 pub const PLAYER: &str = "Player";
-/// Activity pinned above the footer, once `ui.activity` gave it the
+/// Activity standing above the footer, once `ui.activity` gave it the
 /// keyboard (`activity::tray`): Escape gives the keyboard back.
 pub const ACTIVITY: &str = "Activity";
 pub const REVIEW: &str = "Review";
@@ -2825,7 +2825,7 @@ mod tests {
         assert_eq!(title(serde_json::json!({})), None);
     }
 
-    /// Activity pinned is a place the keyboard reaches and leaves: Escape
+    /// Activity standing is a place the keyboard reaches and leaves: Escape
     /// there gives it back to the files.
     #[test]
     fn pinned_activity_is_a_place_left_by_escape() {

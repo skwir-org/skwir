@@ -406,7 +406,10 @@ in as many words as the footer has room for. A click or Ctrl+Shift+J
 opens Activity above it: each action's card, what waits, and Earlier,
 this session's answers with Undo or Retry. Pinned, Activity stands
 above the footer while something runs, taking room rather than
-covering the files. An action an error stopped stays in the strip,
+covering the files; since 2026-11-07 (the user's choice from a canvas
+of mock-ups) it unfolds there by default once an action asked in the
+window lasted 1.5 s (`ui.activity_unfold_ms`), its chevron folding it
+into the strip. An action an error stopped stays in the strip,
 red, until retried, seen or dismissed. One answer at a time, at the
 last pane's lower right. A long action that ends, stops or waits for its
 server while the window is in the background is a notification, taken

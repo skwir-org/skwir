@@ -261,7 +261,11 @@ impl Shell {
         match self.reviews.front().map(Review::applicable) {
             Some(Some(true)) => match self.take_review() {
                 // Checked again when its turn comes: all or nothing.
-                Some(Review::Plan { plan, .. }) => self.app.apply_whole(plan),
+                Some(Review::Plan { plan, .. }) => {
+                    // Asked here: what it does goes to this window.
+                    crate::finishing::ran(cx, plan.id, self.window_id);
+                    self.app.apply_whole(plan);
+                }
                 Some(Review::Question(question)) if !self.app.answer(question.id, true) => {
                     let said = match question.asker {
                         Asker::Agent => "The agent stopped waiting: nothing was run",

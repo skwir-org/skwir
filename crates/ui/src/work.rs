@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 use parking_lot::Mutex;
 use skwir_core::App;
 use skwir_core::op::{Change, ExecEvent, PlanId, RunKind};
+use skwir_core::workspace::WindowId;
 use skwir_platform::desktop::{Asked, Desktop, Kind, Notice, Presence, Progress, State};
 
 use crate::activity::{Ended, Stopped, Under, summary};
@@ -75,6 +76,13 @@ pub(crate) struct Work {
     joined: HashMap<PlanId, Instant>,
     /// Those announced, while under way.
     announced: HashSet<PlanId>,
+    /// The window each action under way was asked in, as first seen while
+    /// windows are up (`Askers`): Activity unfolds there once it lasted
+    /// (ADR-114, amended 2026-11-07).
+    asked_in: HashMap<PlanId, WindowId>,
+    /// After how long they unfold it (`ui.activity_unfold_ms`), as the
+    /// last `watch` was told; `None` without a window.
+    unfold_after: Option<Duration>,
     /// The light actions waiting since `SHOWN_AFTER` or more: counted
     /// among what waits, as they will be once they start.
     late_waiting: usize,
@@ -136,6 +144,17 @@ pub(crate) const SHOWN_AFTER: Duration = Duration::from_millis(300);
 
 /// How long the strip announces an action that joined, on its tint.
 pub(crate) const ANNOUNCED_FOR: Duration = Duration::from_secs(2);
+
+/// Who asked what joins, while windows are up, and after how long Activity
+/// unfolds there (`ui.activity_unfold_ms`): the window that ran its
+/// command (`finishing::ran`), else the one in front, where an undo, a
+/// retry or a script's action was asked from.
+#[derive(Clone, Copy)]
+pub(crate) struct Askers<'a> {
+    pub ran: &'a HashMap<PlanId, WindowId>,
+    pub front: WindowId,
+    pub unfold_after: Duration,
+}
 
 /// An action the strip announces: its own sentence on a tint, said once to
 /// a screen reader, until `until`.
@@ -331,10 +350,18 @@ impl Work {
     /// waiting or started is noted as first seen; one still under way
     /// `SHOWN_AFTER` after it joined is shown (counted, as one of several
     /// steps is at once) and announced once, the latest of them on the
-    /// strip's tint for `ANNOUNCED_FOR`. What is no longer under way is let
-    /// go of. Returns when the strip changes next by itself, to wake the
-    /// window then. `now` is the caller's, a test's own.
-    pub(crate) fn watch(&mut self, app: &App, now: Instant) -> Option<Instant> {
+    /// strip's tint for `ANNOUNCED_FOR`. Each is noted with the window that
+    /// asked it, while windows are up (`askers`): it unfolds Activity there
+    /// once it lasted their `unfold_after` (`unfolds_in`). What is no longer
+    /// under way is let go of. Returns when the strip or Activity changes
+    /// next by itself, to wake the window then. `now` is the caller's, a
+    /// test's own.
+    pub(crate) fn watch(
+        &mut self,
+        app: &App,
+        now: Instant,
+        askers: Option<Askers<'_>>,
+    ) -> Option<Instant> {
         let running: HashSet<PlanId> = self.running.iter().map(|r| r.plan).collect();
         // Not yet told started: the plans waiting, as ids alone.
         let waits: HashMap<PlanId, bool> = app
@@ -345,15 +372,29 @@ impl Work {
             .collect();
         for plan in running.iter().chain(waits.keys()) {
             self.joined.entry(*plan).or_insert(now);
+            if let Some(askers) = askers {
+                self.asked_in
+                    .entry(*plan)
+                    .or_insert_with(|| askers.ran.get(plan).copied().unwrap_or(askers.front));
+            }
         }
         let under = |plan: &PlanId| running.contains(plan) || waits.contains_key(plan);
         self.joined.retain(|plan, _| under(plan));
         self.announced.retain(|plan| under(plan));
+        self.asked_in.retain(|plan, _| under(plan));
+        self.unfold_after = askers.map(|askers| askers.unfold_after);
         let mut next: Option<Instant> = None;
         let mut sooner = |at: Instant| next = Some(next.map_or(at, |next| next.min(at)));
         let mut newest: Option<(Instant, PlanId)> = None;
         self.late_waiting = 0;
         for (&plan, &at) in &self.joined {
+            // Activity unfolds then where it was asked, once.
+            if let Some(after) = self.unfold_after
+                && self.asked_in.contains_key(&plan)
+                && now < at + after
+            {
+                sooner(at + after);
+            }
             let due = at + SHOWN_AFTER;
             if now < due {
                 sooner(due);
@@ -381,6 +422,19 @@ impl Work {
             _ => self.announce = None,
         }
         next
+    }
+
+    /// Whether an action asked in `window` has been under way, waiting or
+    /// running, for `unfold_after` or more by `now`: Activity unfolds there
+    /// (`Shell::sync_unfolded`). Never without a window.
+    pub(crate) fn unfolds_in(&self, window: WindowId, now: Instant) -> bool {
+        let Some(after) = self.unfold_after else {
+            return false;
+        };
+        self.asked_in
+            .iter()
+            .filter(|&(_, asker)| *asker == window)
+            .any(|(plan, _)| self.joined.get(plan).is_some_and(|&at| now >= at + after))
     }
 
     /// The actions of this spell of work that ended (`Spell`).
@@ -917,11 +971,11 @@ mod tests {
             counted(slow, "rename it's a.txt", 1, false),
             LOOKED_AT,
         );
-        assert_eq!(work.watch(&app, t0), Some(t0 + SHOWN_AFTER));
-        assert_eq!(work.watch(&app, t0 + ms(100)), Some(t0 + SHOWN_AFTER));
+        assert_eq!(work.watch(&app, t0, None), Some(t0 + SHOWN_AFTER));
+        assert_eq!(work.watch(&app, t0 + ms(100), None), Some(t0 + SHOWN_AFTER));
         assert!(!work.counting.contains(&slow) && work.announce.is_none());
         let at = t0 + SHOWN_AFTER;
-        assert_eq!(work.watch(&app, at), Some(at + ANNOUNCED_FOR));
+        assert_eq!(work.watch(&app, at, None), Some(at + ANNOUNCED_FOR));
         assert!(work.counting.contains(&slow), "shown once it lasted");
         assert_eq!(
             work.announce,
@@ -933,23 +987,93 @@ mod tests {
         // Another joins meanwhile: its time comes before the tint ends.
         work.take(&app, counted(later, "rename b.txt", 1, false), LOOKED_AT);
         let second = t0 + ms(1000);
-        assert_eq!(work.watch(&app, second), Some(second + SHOWN_AFTER));
+        assert_eq!(work.watch(&app, second, None), Some(second + SHOWN_AFTER));
         let due = second + SHOWN_AFTER;
-        assert_eq!(work.watch(&app, due), Some(due + ANNOUNCED_FOR));
+        assert_eq!(work.watch(&app, due, None), Some(due + ANNOUNCED_FOR));
         assert_eq!(work.announce.map(|a| a.plan), Some(later), "the latest");
         // One that ends before its time is never shown nor announced.
         work.take(&app, counted(quick, "rename c.txt", 1, false), LOOKED_AT);
-        work.watch(&app, due + ms(10));
+        work.watch(&app, due + ms(10), None);
         work.take(&app, finished(quick, 1, None), LOOKED_AT);
-        work.watch(&app, due + ms(500));
+        work.watch(&app, due + ms(500), None);
         assert!(!work.counting.contains(&quick));
         assert_eq!(work.announce.map(|a| a.plan), Some(later));
         // The tint ends; nothing more to wake for.
-        assert_eq!(work.watch(&app, due + ANNOUNCED_FOR), None);
+        assert_eq!(work.watch(&app, due + ANNOUNCED_FOR, None), None);
         assert!(work.announce.is_none());
         // Each announced once: still running, neither is announced again.
-        assert_eq!(work.watch(&app, due + ANNOUNCED_FOR + ms(500)), None);
+        assert_eq!(work.watch(&app, due + ANNOUNCED_FOR + ms(500), None), None);
         assert!(work.announce.is_none());
+    }
+
+    /// An action unfolds Activity in the window that asked it once it lasted
+    /// `unfold_after` (ADR-114, amended 2026-11-07), and in no other; one
+    /// whose window is not known (an undo, a retry, a script's) in the
+    /// window in front as it joined. The program is woken then, and nothing
+    /// unfolds without a window.
+    #[test]
+    fn an_action_unfolds_activity_where_it_was_asked_once_it_lasted() {
+        use std::collections::HashMap;
+        use std::time::Instant;
+
+        use skwir_core::workspace::WindowId;
+
+        use super::{Askers, SHOWN_AFTER};
+        let (_tmp, app) = app();
+        let mut work = Work::default();
+        let t0 = Instant::now();
+        let ms = |n: u64| Duration::from_millis(n);
+        let (here, there) = (WindowId(1), WindowId(2));
+        let (copy, undo) = (PlanId(31), PlanId(32));
+        let ran = HashMap::from([(copy, there)]);
+        let askers = Askers {
+            ran: &ran,
+            front: here,
+            unfold_after: ms(1500),
+        };
+        work.take(
+            &app,
+            counted(copy, "copy 3 items to “Backup”", 3, true),
+            LOOKED_AT,
+        );
+        assert_eq!(work.watch(&app, t0, Some(askers)), Some(t0 + SHOWN_AFTER));
+        assert_eq!(
+            work.watch(&app, t0 + SHOWN_AFTER, Some(askers)),
+            Some(t0 + ms(1500))
+        );
+        assert!(!work.unfolds_in(there, t0 + ms(1499)));
+        // Its window's: asked from there, though the other is in front.
+        assert!(work.unfolds_in(there, t0 + ms(1500)));
+        assert!(!work.unfolds_in(here, t0 + ms(1500)));
+        // Asked from no window known: the one in front as it joined, even
+        // once another comes to the front.
+        let t1 = t0 + ms(2000);
+        work.take(&app, counted(undo, "undo rename “a”", 1, true), LOOKED_AT);
+        let front_then = Askers {
+            front: here,
+            ..askers
+        };
+        work.watch(&app, t1, Some(front_then));
+        let front_now = Askers {
+            front: there,
+            ..askers
+        };
+        assert_eq!(
+            work.watch(&app, t1 + ms(500), Some(front_now)),
+            Some(t1 + ms(1500))
+        );
+        assert!(work.unfolds_in(here, t1 + ms(1500)));
+        // Ended, it unfolds nothing more.
+        work.take(&app, finished(undo, 1, None), LOOKED_AT);
+        work.take(&app, finished(copy, 3, None), LOOKED_AT);
+        assert_eq!(work.watch(&app, t1 + ms(1600), Some(front_now)), None);
+        assert!(!work.unfolds_in(here, t1 + ms(1600)));
+        assert!(!work.unfolds_in(there, t1 + ms(1600)));
+        // Without a window, nothing unfolds.
+        let late = PlanId(33);
+        work.take(&app, counted(late, "copy “b”", 1, true), LOOKED_AT);
+        work.watch(&app, t1, None);
+        assert!(!work.unfolds_in(here, t1 + ms(5000)));
     }
 
     /// One timer at a time wakes the program for the strip (ADR-114): a

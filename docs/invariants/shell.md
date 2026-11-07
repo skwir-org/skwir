@@ -137,7 +137,7 @@ Views are in [views.md](views.md); what locations decide, in
   thing of its own (a picture, a page, a selection, a field, a card, a
   chip) and what is drawn over the window (menus, popovers, tooltips,
   toasts, dialogs, Peek, the whole screen) keeps `bg` and `surface`,
-  opaque; so does Activity pinned above the footer, its popover kept
+  opaque; so does Activity standing above the footer, its popover kept
   open, read at a glance whatever is behind. A part drawn both in the
   panel and over the window (a preview's content area, Properties, a
   container's kept rows) is handed the grounds it paints
@@ -852,18 +852,30 @@ of bars, split or not.
   every answer a toast says that is no action's (a print's, a message);
   an action done and kept by the journal is the History's alone
   (`Work::ended`); a message said again as the last one was is that one,
-  moved to now (`activity::keep`). Its heading (name and pin) stays
-  while its rows scroll beneath it, beside a scrollbar. Pinned
-  (`ui.activity_pin`, remembered with the window's shape), Activity
-  stands above the last pane's footer while something is under way,
-  waits or stopped, at most `TRAY_MOST` (260 px, about three cards; half
+  moved to now (`activity::keep`). Its heading (its name, and what
+  folds it) stays while its rows scroll beneath it, beside a scrollbar.
+  **Activity unfolds for a long action** (ADR-114, amended 2026-11-07):
+  once an action asked in this window has been under way, waiting or
+  running, for `ui.activity_unfold_ms` (1.5 s by default, a slider in
+  General's Actions), it stands above the last pane's footer, taking
+  room rather than covering the files, never taking the keyboard, and
+  stays for the spell of work, until nothing runs, waits or stopped
+  (`Shell::sync_unfolded`, `Work::unfolds_in`; the program woken then,
+  by the strip's one timer). An action is asked in the window that ran
+  its command (`finishing::ran`, a reviewed proposal's too), else in the
+  window in front as it joined (an undo, a retry, a script's). Quicker
+  ones, and those of other windows, the strip says alone. Its chevron
+  folds it into the strip (`ui.activity_pin`, remembered with the
+  window's shape: `activity_folded`); the popup's pin, pressed while it
+  is folded, unfolds it, standing at once with something to show.
+  Standing, it is at most `TRAY_MOST` (260 px, about three cards; half
   a low pane) and scrolled beyond, and the strip steps aside; it shows
   the action an error stopped and folds the rest of Earlier at its foot,
   a line until unfolded (`ui.activity_earlier`). Open as a popup, it
-  stays where it opened until closed. Pinned,
+  stays where it opened until closed. Standing,
   it is a place of its own (`keymap::ACTIVITY`): `ui.activity` gives it
   the keyboard, Escape gives it back to the files. A click on the strip
-  or on Activity pinned leaves the keyboard where it was, so the keys go
+  or on Activity standing leaves the keyboard where it was, so the keys go
   on acting on the pane. What is under way is read once a frame
   (`Shell::under_way`, passed to the strip, Activity and the footer).
   The button the keyboard reaches in Activity scrolls into view, once,
@@ -914,7 +926,7 @@ of bars, split or not.
   became; no toast is drawn while it is open, and one said meanwhile
   keeps its time, which begins once it is drawn.
 - **One answer at a time** (`toast.rs`), over the files at the last
-  pane's lower right, above the strip or Activity pinned, where the list
+  pane's lower right, above the strip or Activity standing, where the list
   shows sizes and dates rather than names; over the preview on the whole
   screen. Not while Activity or the History is open: one said meanwhile
   is held back and drawn once it closes, for its time.

@@ -1906,8 +1906,8 @@ pub fn declare_all(app: &App) {
     none(
         Topic::Window,
         "ui.activity_pin",
-        "Keep Activity open",
-        "Keep Activity open above the footer while something runs, taking room rather than covering the files; again to let it close",
+        "Fold or unfold Activity",
+        "Fold Activity into the footer's strip of this window, where it opens over the files when asked; again to unfold it, standing above the footer, taking room rather than covering the files, once an action asked in the window lasted (Unfold Activity after, 1.5 s by default) (ADR-114)",
     );
     none(
         Topic::Window,

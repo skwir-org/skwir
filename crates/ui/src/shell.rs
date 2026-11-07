@@ -929,7 +929,7 @@ impl Shell {
         self.preview.source_types = session.source_types;
         self.preview.turned_types = session.turned_types;
         self.layout.split = session.split_panes;
-        self.activity.pinned = session.activity_pinned;
+        self.activity.folded = session.activity_folded;
         if session.player_height > 0. {
             self.player.height = session.player_height;
         }
@@ -3622,6 +3622,9 @@ impl Shell {
         let last = self.panes.last().map(|p| p.id) == Some(id);
         // What runs, read once a frame for the footer and Activity.
         let under = last.then(|| self.under_way());
+        if let Some(under) = &under {
+            self.sync_unfolded(under);
+        }
         let footer = status::render(self, under.as_ref(), cx);
         // The window's own, with its state: Activity pinned above the
         // footer, and the last answer over the files at their lower right,
