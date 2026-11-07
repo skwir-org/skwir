@@ -389,10 +389,6 @@ pub(crate) struct WaylandClientState {
     compose_state: Option<xkb::compose::State>,
     drag: DragState,
     external_drag: Option<ExternalDrag>,
-    // SKWIR: the offer of a drag of this application's own between its
-    // windows (`ExternalDragPayload::Within`), known by its type before it
-    // enters one of them.
-    within_offer: Option<ObjectId>,
     click: ClickState,
     repeat: KeyRepeat,
     pub modifiers: Modifiers,
@@ -520,14 +516,6 @@ where
 pub(crate) enum DataSourceKind {
     Clipboard,
     Drag,
-}
-
-/// SKWIR: the type a drag between this application's own windows is offered
-/// as (`ExternalDragPayload::Within`): it names this process, so another
-/// application, gpui's or not, never takes it for its own.
-fn within_mime_type() -> &'static str {
-    static TYPE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    TYPE.get_or_init(|| format!("application/x-gpui-within-{}", std::process::id()))
 }
 
 pub(crate) struct ExternalDrag {
@@ -838,31 +826,20 @@ impl WaylandClientStatePtr {
             return false;
         };
 
-        // SKWIR: files as a URI list; a drag between this application's own
-        // windows as a type naming this process, which no other offers.
-        let (offered, bytes, icon) = match payload {
-            ExternalDragPayload::Files(paths) => {
-                let uri_list = file_uri_list(paths);
-                if uri_list.is_empty() {
-                    return false;
-                }
-                (
-                    FILE_LIST_MIME_TYPE.to_string(),
-                    uri_list.into_bytes(),
-                    paths.icon(),
-                )
-            }
-            ExternalDragPayload::Within(drag) => {
-                (within_mime_type().to_string(), Vec::new(), drag.icon())
-            }
-        };
+        let ExternalDragPayload::Files(paths) = payload;
+        let uri_list = file_uri_list(paths);
+        if uri_list.is_empty() {
+            return false;
+        }
 
         let serial = state.serial_tracker.get(SerialKind::MousePress);
         let source =
             data_device_manager.create_data_source(&state.globals.qh, DataSourceKind::Drag);
-        source.offer(offered);
+        source.offer(FILE_LIST_MIME_TYPE.to_string());
         source.set_actions(DndAction::Copy | DndAction::Move);
-        let icon = icon.and_then(|image| Some((DragIcon::new(&state.globals, image)?, image)));
+        let icon = paths
+            .icon()
+            .and_then(|image| Some((DragIcon::new(&state.globals, image)?, image)));
         data_device.start_drag(
             Some(&source),
             surface,
@@ -875,7 +852,7 @@ impl WaylandClientStatePtr {
 
         let previous = state.external_drag.replace(ExternalDrag {
             source,
-            bytes,
+            bytes: uri_list.into_bytes(),
             window,
             icon: icon.map(|(icon, _)| icon),
         });
@@ -1277,7 +1254,6 @@ impl WaylandConnection {
                 uri_read_generation: 0,
             },
             external_drag: None,
-            within_offer: None,
             click: ClickState {
                 last_click: Instant::now(),
                 last_mouse_button: None,
@@ -3151,26 +3127,6 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                     const ACTIONS: DndAction = DndAction::Copy;
                     data_offer.set_actions(ACTIONS, ACTIONS);
 
-                    // SKWIR: this application's own drag, from one of its
-                    // windows: nothing to read, the window takes the drag
-                    // back as it was (`App::restore_platform_drag`).
-                    if state.within_offer.take() == Some(data_offer.id()) {
-                        data_offer.accept(serial, Some(within_mime_type().to_string()));
-                        let position = Point::new(x.into(), y.into());
-                        let input = state.drag.complete_uri_read(
-                            uri_read_generation,
-                            data_offer,
-                            drag_window,
-                            position,
-                            gpui::ExternalPaths(SmallVec::new()),
-                        );
-                        drop(state);
-                        if let Some((drag_window, input)) = input {
-                            drag_window.handle_input(input);
-                        }
-                        return;
-                    }
-
                     let pipe = Pipe::new().unwrap();
                     data_offer.receive(FILE_LIST_MIME_TYPE.to_string(), unsafe {
                         BorrowedFd::borrow_raw(pipe.write.as_raw_fd())
@@ -3285,10 +3241,6 @@ impl Dispatch<wl_data_offer::WlDataOffer, ()> for WaylandClientStatePtr {
         let mut state = client.borrow_mut();
 
         if let wl_data_offer::Event::Offer { mime_type } = event {
-            // SKWIR: a drag of this application's own, between its windows.
-            if mime_type == within_mime_type() {
-                state.within_offer = Some(data_offer.id());
-            }
             // Drag and drop
             if mime_type == FILE_LIST_MIME_TYPE {
                 let serial = state.serial_tracker.get(SerialKind::DataDevice);

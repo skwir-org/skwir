@@ -3838,21 +3838,6 @@ impl Render for Shell {
 
         let root = div()
             .key_context(keymap::ROOT)
-            // A tab dragged from another window (ADR-122), dropped
-            // anywhere a gap of the tabs did not take it, joins this
-            // window's tabs, last.
-            .on_drop(
-                cx.listener(|this, drag: &crate::tabs::TabDrag, window, cx| {
-                    if drag.window != this.window_id {
-                        this.run(
-                            "tab.move",
-                            serde_json::json!({ "tab": drag.tab, "window": this.window_id }),
-                            window,
-                            cx,
-                        );
-                    }
-                }),
-            )
             .capture_action(cx.listener(Self::capture_run_command))
             .on_action(cx.listener(Self::on_run_command))
             .capture_key_up(cx.listener(|this, event: &gpui::KeyUpEvent, window, cx| {

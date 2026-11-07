@@ -781,12 +781,12 @@ stale by their own window's frames; windows recorded as they change.
 of the same build, settings, state and display (`handover::Instance`);
 `--new-instance`; "Open folders from other programs in" a new window or
 a tab; macOS's Finder openings handed in (compiled only). **Step 4**:
-tabs dragged between windows and out of them (gpui patch 0050, which also
-lets a window last used by keyboard take a drop). Deviations: a wake still
-redraws every window (a film in one redraws the others at its rate); a
-tab is carried between windows on Wayland only (X11: released outside its
-window it becomes one; Windows and macOS: it stays). Checks in
-`docs/STATUS-LOG.md` (2026-11-07, "Windows of one program").
+tabs dragged between windows and out of them, then withdrawn: gpui
+carries a drag between windows on Wayland alone, and the gesture did
+something else on each system; what stays of gpui patch 0050 lets a
+window last used by keyboard take a drop. Deviation: a wake still
+redraws every window (a film in one redraws the others at its rate).
+Checks in `docs/STATUS-LOG.md` (2026-11-07, "Windows of one program").
 
 ## What is left
 
@@ -799,11 +799,10 @@ closes an item removes its line; work that leaves one adds it here.
 telling which windows a wake concerns needs wakers of their own (media
 frames, previews, thumbnails by asker). Each window's position is not
 remembered (its size neither: a window opens at 1200 × 800). A tab
-dragged onto another window is taken on Wayland only: X11 (XDND of the
-program's own, or the pointer's root position), Windows (OLE) and macOS
-(an `NSDraggingSession` of the program's type) carry none; the
-`ExternalDragPayload::Within` there would close it. macOS's UI is not
-compiled (gpui_macos's change of 0050 included).
+dragged between windows needs gpui to carry a drag out of a window on
+every system (the pointer's grab on X11 and Windows, a dragging session
+on macOS; Wayland's own) before it comes back (ADR-122, Rejected).
+macOS's UI is not compiled.
 
 **Planned** (in the sections below): Indexing and AI (Phase 7, designed
 2026-10-26: ADR-089 to ADR-095); [Grammars and

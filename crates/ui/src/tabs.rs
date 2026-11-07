@@ -50,15 +50,11 @@ use crate::theme::Theme;
 /// does.
 pub const HOLD: std::time::Duration = std::time::Duration::from_millis(150);
 
-/// A tab being dragged along the strip, to put it elsewhere: along its
-/// window's tabs, among another window's (ADR-122), or out of every window.
+/// A tab being dragged along the strip, to put it elsewhere.
 #[derive(Clone, Copy, Debug)]
 pub struct TabDrag {
     pub tab: TabId,
-    /// Where it is among its window's tabs.
     pub index: usize,
-    /// The window it is in.
-    pub window: skwir_core::workspace::WindowId,
 }
 
 /// What the strip draws for one tab, read when the tabs or what they show
@@ -248,31 +244,6 @@ impl Shell {
         {
             let ws = self.app.workspace.read();
             self.tab_splits.retain(|tab, _| ws.tab(*tab).is_some());
-        }
-    }
-
-    /// A tab of this window's dragged out of every window (ADR-122): it
-    /// becomes a window of its own, unless it is alone in this one, which
-    /// stays as it is.
-    pub(crate) fn tab_out_of_windows(
-        &mut self,
-        tab: TabId,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let alone = {
-            let ws = self.app.workspace.read();
-            ws.window_of_tab(tab)
-                .and_then(|w| ws.window(w))
-                .is_none_or(|w| w.tabs().len() < 2)
-        };
-        if !alone {
-            self.run(
-                "tab.move",
-                serde_json::json!({ "tab": tab, "new_window": true }),
-                window,
-                cx,
-            );
         }
     }
 
@@ -764,15 +735,11 @@ fn tab(
     let tip = label.tip.clone();
     let hover = theme.hover;
     let a11y = shell.a11y;
-    let drag = TabDrag {
-        tab: id,
-        index,
-        window: shell.window_id,
-    };
+    let drag = TabDrag { tab: id, index };
     let spoken = label.spoken();
     let dragged = spoken.clone();
     // The tab shown is the selected one; its full location describes it.
-    let el = div()
+    let mut el = div()
         .id(("tab", id.0 as usize))
         .role(gpui::Role::Tab)
         .when(a11y, |d| {
@@ -824,21 +791,16 @@ fn tab(
                 this.open_tab_menu(id, event.position, window, cx);
             }),
         )
+        .on_drag(drag, move |_, position, _, cx| {
+            cx.new(|_| crate::dnd::DragPreview::named(dragged.clone(), position))
+        })
         .child(icon(shell, label, 14., color, &theme))
         .child(title(label, (color, theme.text_muted), &theme))
         .when(closes(shell, id, shown, count), |d| {
             d.child(close(id, 18., cx))
         })
-        .child(gap(index, count, true, gpui::Axis::Horizontal, shell, cx))
-        .child(gap(
-            index + 1,
-            count,
-            false,
-            gpui::Axis::Horizontal,
-            shell,
-            cx,
-        ));
-    let mut el = dragged_tab(el, drag, dragged, cx);
+        .child(gap(index, count, true, gpui::Axis::Horizontal, cx))
+        .child(gap(index + 1, count, false, gpui::Axis::Horizontal, cx));
     if let Some(folder) = label.folder.clone() {
         el = crate::dnd::droppable_dir(el, folder, cx);
     }
@@ -1007,7 +969,7 @@ fn sidebar_row(
     let a11y = shell.a11y;
     let spoken = label.spoken();
     let dragged = spoken.clone();
-    let el = div()
+    let mut el = div()
         .id(("sidebar-tab", id.0 as usize))
         .role(gpui::Role::TreeItem)
         .when(a11y, |d| {
@@ -1063,27 +1025,17 @@ fn sidebar_row(
                 this.open_tab_menu(id, event.position, window, cx);
             }),
         )
+        .on_drag(TabDrag { tab: id, index }, move |_, position, _, cx| {
+            cx.new(|_| crate::dnd::DragPreview::named(dragged.clone(), position))
+        })
         .children(shell.host_marker(crate::menu::MenuHost::Sidebar, marked))
         .child(icon(shell, label, 16., theme.text_muted, &theme))
         .child(title(label, (theme.text, theme.text_muted), &theme))
         .when(closes(shell, id, shown, count), |d| {
             d.child(close(id, 20., cx))
         })
-        .child(gap(index, count, true, gpui::Axis::Vertical, shell, cx))
-        .child(gap(
-            index + 1,
-            count,
-            false,
-            gpui::Axis::Vertical,
-            shell,
-            cx,
-        ));
-    let drag = TabDrag {
-        tab: id,
-        index,
-        window: shell.window_id,
-    };
-    let mut el = dragged_tab(el, drag, dragged, cx);
+        .child(gap(index, count, true, gpui::Axis::Vertical, cx))
+        .child(gap(index + 1, count, false, gpui::Axis::Vertical, cx));
     if let Some(folder) = label.folder.clone() {
         el = crate::dnd::droppable_dir(el, folder, cx);
     }
@@ -1138,11 +1090,8 @@ fn gap(
     count: usize,
     first: bool,
     axis: gpui::Axis,
-    shell: &Shell,
     cx: &mut Context<Shell>,
 ) -> gpui::Div {
-    // A tab from another window may go in any gap (ADR-122).
-    let mine = shell.window_id;
     let edge = cx.global::<Theme>().accent;
     let zone = div().absolute();
     let zone = match (axis, first) {
@@ -1152,7 +1101,7 @@ fn gap(
         (gpui::Axis::Vertical, false) => zone.left_0().right_0().h(gpui::relative(0.5)).bottom_0(),
     };
     zone.drag_over::<TabDrag>(move |s, drag, _, _| {
-        if drag.window == mine && (drag.index == before || drag.index + 1 == before) {
+        if drag.index == before || drag.index + 1 == before {
             return s;
         }
         match (axis, first) {
@@ -1165,15 +1114,6 @@ fn gap(
     })
     .on_drop(cx.listener(move |this, drag: &TabDrag, window, cx| {
         cx.stop_propagation();
-        if drag.window != this.window_id {
-            this.run(
-                "tab.move",
-                serde_json::json!({ "tab": drag.tab, "window": this.window_id, "to": before }),
-                window,
-                cx,
-            );
-            return;
-        }
         if let Some(to) = move_target(drag.index, before, count) {
             this.run(
                 "tab.move",
@@ -1183,35 +1123,6 @@ fn gap(
             );
         }
     }))
-}
-
-/// `el`, a tab, dragged (ADR-122): drawn under the pointer by its name
-/// inside the window; out of it, carried by the compositor to the
-/// program's other windows under a folder and its name (gpui patch 0050),
-/// where a gap of their tabs takes it; dropped outside every window, its
-/// own window (`Shell::tab_out_of_windows`).
-fn dragged_tab<E: StatefulInteractiveElement>(
-    el: E,
-    drag: TabDrag,
-    name: String,
-    cx: &mut Context<Shell>,
-) -> E {
-    let shell = cx.weak_entity();
-    let shown = name.clone();
-    el.on_drag(drag, move |_, position, _, cx| {
-        cx.new(|_| crate::dnd::DragPreview::named(shown.clone(), position))
-    })
-    .external_drag_payload(move |_: &TabDrag, window, cx| {
-        let icon = crate::dnd::tab_drag_icon(&name, window, cx);
-        Some(gpui::ExternalDragPayload::Within(
-            gpui::WithinDrag::new().with_icon(icon),
-        ))
-    })
-    .on_drag_dropped_outside(move |drag: &TabDrag, window, cx| {
-        let _ = shell.update(cx, |shell, cx| {
-            shell.tab_out_of_windows(drag.tab, window, cx);
-        });
-    })
 }
 
 /// Where a tab at `from` goes when dropped in the gap before `before`

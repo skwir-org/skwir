@@ -93,14 +93,8 @@
   changes: Quit keeps them all, a window closed alone is forgotten. Agents and
   scripts reach every window (`window.new`, `window.close`, `window.select`,
   `window.list`, `window.open`; `tab.move` to a window or a new one).
-- **Tabs dragged between windows**: a tab dragged onto another window joins its
-  tabs, where it is dropped among them; dropped outside every window, it
-  becomes a window of its own. Files dragged from one window to another are
-  moved or copied as between split panes. A window last used with the keyboard
-  now takes what is dropped on it from another application too. On X11 a tab
-  released outside its window becomes a window wherever it lands; on Windows
-  and macOS a tab stays in its window when dragged out (Move to New Window does
-  it).
+- **A window last used with the keyboard takes a drop**: files dragged onto it
+  from another application landed on nothing.
 - **Skwir started again opens in the one running**: a launcher, a browser's
   Show in Folder or `skwir ~/Documents` opens a window there, on the folder
   asked, rather than a second Skwir that knows nothing of the first; with

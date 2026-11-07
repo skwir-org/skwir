@@ -82,7 +82,7 @@ carry: the script takes it from the Inter release Skwir's packages pin
 | `0047-platform-draws-its-drag` | A drag the platform carries, come back to its source window, is not drawn there again | — |
 | `0048-glyph-rasterization-public` | `TextSystem::raster_bounds` and `rasterize_glyph` public | — |
 | `0049-drag-icon-scale` | A drag icon drawn at a scale is shown at its logical size (Wayland: a viewport, or the buffer's scale) | — |
-| `0050-drag-within-windows` | A drag carried by the platform goes to whichever of the application's windows it enters, taken back as it was (`ExternalDragPayload::Within`: an application's own type on Wayland); one no window takes, or released outside its window where the platform does not carry it (X11), ends dropped outside them (`on_drag_dropped_outside`); a drag coming in counts as the pointer's, so a window last used by keyboard takes its drop | — |
+| `0050-drop-is-the-pointers` | A drag the platform brings into a window counts as the pointer's, so a window last used by keyboard takes its drop | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
 
@@ -806,41 +806,18 @@ logical coordinates. It extends 0001 (a patch of its own rather than a
 change of 0001, made by hand). Checked on a headless sway at 2 and 1.25: the
 name under the icon as sharp outside the window as inside, the same size.
 
-### 0050: Drags between an application's windows
+### 0050: A drop is the pointer's
 
-Skwir's windows are one program's (ADR-122), and a tab moves from one to
-another by a drag. Upstream takes a drag the platform carries back only in
-the window it left (`RestoredInSourceWindow`); any other window of the
-application saw only the files it offered. Now:
+A window counts no hitbox as hovered while its last input was the keyboard
+(`HitboxId::is_hovered`), and a drag the platform brings in (files from
+another application) moves no pointer of the window's own: dropped on a
+window last used by keyboard, it landed on nothing. `FileDropEvent::Entered`,
+`Pending` and `Submit` now set the window's input modality to the mouse.
+Found while a tab was dragged between two of Skwir's windows (a drag later
+withdrawn, ADR-122: the platforms do not all carry one); the drop from
+another application has the same cause.
 
-- **Any window takes it back** (`PlatformOwnedDragState::Restored(window)`):
-  the drag, carried by the platform, becomes the active drag again in the
-  window it enters, its value as it was; leaving, it is handed back. No
-  window draws it while the platform does (`platform_draws_drag`). A drag
-  of files between two windows is then the application's own drag there
-  too, not paths read back.
-- **`ExternalDragPayload::Within`**: a drag only the application's windows
-  take. On Wayland the data source offers one type,
-  `application/x-gpui-within-<pid>`, which no other application takes for
-  its own; a window entered with it accepts it and is told `Entered` at
-  once, nothing read through a pipe. macOS and the other platforms do not
-  carry it: the drag stays in its window.
-- **Dropped outside** (`on_drag_dropped_outside`): told to the drag's source
-  when the platform ends a drag no window took back (dropped on nothing, or
-  on another application), and when a drag the platform does not carry
-  (X11) is released outside its window.
-- **A drag coming in is the pointer's**: `Entered`, `Pending` and `Submit`
-  set the window's input modality to the mouse. Before, a window last used
-  by keyboard counted no hitbox as hovered (`HitboxId::is_hovered`), and a
-  drop from elsewhere, files included, landed on nothing.
-
-Tests: upstream's `file_drag_is_promoted_once_and_restored_in_source_window`
-expects the drag's own value in the other windows now;
-`a_drag_within_the_application_goes_to_the_window_it_enters` covers a drop in
-another window last used by keyboard, a drag taken by none, and one released
-outside its window. Checked on a headless sway (a tab between two windows,
-into a gap of the other's tabs, onto its files, out of both) and on Xvfb (a tab
-released outside its window).
+Test: `a_drop_lands_in_a_window_last_used_by_keyboard`.
 
 ## Adding or changing a patch
 

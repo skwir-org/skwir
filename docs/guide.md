@@ -34,9 +34,7 @@ work where the keyboard is, by topic.
 - **Windows.** `Ctrl+N` (or More › New window) opens a window on the
   folder shown, looking as this one does; a folder's or a place's menu
   has Open in New Window, a tab's Move to New Window. Each window has its
-  own tabs, split and panels. Drag a tab to another window's tabs to
-  move it there, or out of every window to make it a window of its own.
-  What you do in a window shows its result there,
+  own tabs, split and panels. What you do in a window shows its result there,
   and `Ctrl+Z` in any window undoes the last thing you did anywhere: one
   History, one queue, one player for all of them. `Ctrl+Shift+W` closes a
   window (`Ctrl+W` on its last tab too, while another is open);

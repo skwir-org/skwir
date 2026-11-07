@@ -1,0 +1,81 @@
+0050 drop-is-the-pointers: a drag the platform brings into a window counts as the pointer's, so a window last used by keyboard takes its drop
+
+diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
+index 6bab2511..5c5b2dce 100644
+--- a/crates/gpui/src/window.rs
++++ b/crates/gpui/src/window.rs
+@@ -5751,6 +5751,14 @@ impl Window {
+         self.last_input_modality = match &event {
+             PlatformInput::KeyDown(_) => InputModality::Keyboard,
+             PlatformInput::MouseMove(_) | PlatformInput::MouseDown(_) => InputModality::Mouse,
++            // SKWIR: a drag the platform brings in moves the pointer: a window
++            // last used by keyboard sees what is under it, or no drop would
++            // ever land there.
++            PlatformInput::FileDrop(
++                FileDropEvent::Entered { .. }
++                | FileDropEvent::Pending { .. }
++                | FileDropEvent::Submit { .. },
++            ) => InputModality::Mouse,
+             PlatformInput::Touch(_) => InputModality::Touch,
+             _ => self.last_input_modality,
+         };
+@@ -9041,6 +9049,59 @@ mod tests {
+         }
+     }
+ 
++    /// SKWIR: files dropped from another application on a window last used
++    /// by keyboard land where they are dropped: the drag coming in is the
++    /// pointer's, so what is under it counts as hovered.
++    #[gpui::test]
++    fn a_drop_lands_in_a_window_last_used_by_keyboard(cx: &mut TestAppContext) {
++        struct DropView(Rc<Cell<usize>>);
++
++        impl Render for DropView {
++            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
++                let dropped = self.0.clone();
++                div()
++                    .size_full()
++                    .on_drop(move |_: &ExternalPaths, _, _| dropped.set(dropped.get() + 1))
++            }
++        }
++
++        let dropped = Rc::new(Cell::new(0));
++        let window: AnyWindowHandle = cx
++            .add_window({
++                let dropped = dropped.clone();
++                move |_, _| DropView(dropped)
++            })
++            .into();
++        let at = point(px(30.), px(30.));
++        cx.update_window(window, |_, window, cx| {
++            window.draw(cx).clear(cx);
++            window.dispatch_event(
++                PlatformInput::KeyDown(KeyDownEvent {
++                    keystroke: Keystroke::parse("down").expect("valid keystroke"),
++                    is_held: false,
++                    prefer_character_input: false,
++                }),
++                cx,
++            );
++            assert!(window.last_input_was_keyboard());
++            window.dispatch_event(
++                FileDropEvent::Entered {
++                    position: at,
++                    paths: ExternalPaths([PathBuf::from("/dropped")].into_iter().collect()),
++                }
++                .to_platform_input(),
++                cx,
++            );
++            assert!(!window.last_input_was_keyboard());
++            window.dispatch_event(
++                FileDropEvent::Submit { position: at }.to_platform_input(),
++                cx,
++            );
++        })
++        .unwrap();
++        assert_eq!(dropped.get(), 1);
++    }
++
+     #[gpui::test]
+     fn file_drag_is_promoted_once_and_restored_in_source_window(cx: &mut TestAppContext) {
+         struct Drag {

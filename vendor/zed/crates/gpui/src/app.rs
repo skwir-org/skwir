@@ -865,11 +865,9 @@ struct PlatformOwnedDrag {
 
 enum PlatformOwnedDragState {
     Suspended(AnyDrag),
-    // A drop consumes `active_drag` before the platform ends the dragging session, so this
+    // A source-window drop consumes `active_drag` before AppKit ends the dragging session, so this
     // marker can outlive the active drag and is cleaned up by `FileDropEvent::Ended`.
-    // SKWIR: restored in whichever of the application's windows the drag entered, its source or
-    // another (`ExternalDragPayload::Within`, a file drag between two windows).
-    Restored(WindowId),
+    RestoredInSourceWindow,
 }
 
 /// Contains the state of the full application, and passed as a reference to a variety of callbacks.
@@ -3090,9 +3088,9 @@ impl App {
     pub fn stop_active_drag(&mut self, window: &mut Window) -> bool {
         if self.active_drag.is_some() {
             self.active_drag = None;
-            let window_id = window.window_handle().window_id();
             if self.platform_owned_drag.as_ref().is_some_and(|drag| {
-                matches!(&drag.state, PlatformOwnedDragState::Restored(id) if *id == window_id)
+                drag.source_window == window.window_handle().window_id()
+                    && matches!(&drag.state, PlatformOwnedDragState::RestoredInSourceWindow)
             }) {
                 self.platform_owned_drag = None;
             }
@@ -3114,29 +3112,27 @@ impl App {
         true
     }
 
-    /// Whether the drag under way is one the platform carries: handed to it
-    /// as it left its window, and come back into one of the application's.
-    /// The platform draws its image wherever the pointer is, over every
-    /// window: none draws it again.
-    pub(crate) fn platform_draws_drag(&self) -> bool {
-        self.platform_owned_drag
-            .as_ref()
-            .is_some_and(|drag| matches!(&drag.state, PlatformOwnedDragState::Restored(_)))
+    /// Whether the drag under way in `window` is one the platform carries:
+    /// handed to it as it left the window, and come back. The platform
+    /// draws its image wherever the pointer is, this window included.
+    pub(crate) fn platform_draws_drag(&self, window: WindowId) -> bool {
+        self.platform_owned_drag.as_ref().is_some_and(|drag| {
+            drag.source_window == window
+                && matches!(&drag.state, PlatformOwnedDragState::RestoredInSourceWindow)
+        })
     }
 
-    /// SKWIR: take the drag the platform carries back in `window`, whichever
-    /// of the application's windows it entered: its source, or another
-    /// (only one drag is carried at a time).
-    pub(crate) fn restore_platform_drag(&mut self, window: WindowId) -> bool {
-        let Some(platform_drag) = self.platform_owned_drag.as_mut() else {
+    pub(crate) fn restore_platform_drag(&mut self, source_window: WindowId) -> bool {
+        let Some(platform_drag) = self
+            .platform_owned_drag
+            .as_mut()
+            .filter(|drag| drag.source_window == source_window)
+        else {
             return false;
         };
-        if !matches!(&platform_drag.state, PlatformOwnedDragState::Suspended(_)) {
-            return false;
-        }
         let state = std::mem::replace(
             &mut platform_drag.state,
-            PlatformOwnedDragState::Restored(window),
+            PlatformOwnedDragState::RestoredInSourceWindow,
         );
         let PlatformOwnedDragState::Suspended(drag) = state else {
             return false;
@@ -3145,10 +3141,11 @@ impl App {
         true
     }
 
-    pub(crate) fn hand_restored_drag_to_platform(&mut self, window: WindowId) -> bool {
-        let Some(platform_drag) = self.platform_owned_drag.as_mut().filter(
-            |drag| matches!(&drag.state, PlatformOwnedDragState::Restored(id) if *id == window),
-        ) else {
+    pub(crate) fn hand_restored_drag_to_platform(&mut self, source_window: WindowId) -> bool {
+        let Some(platform_drag) = self.platform_owned_drag.as_mut().filter(|drag| {
+            drag.source_window == source_window
+                && matches!(&drag.state, PlatformOwnedDragState::RestoredInSourceWindow)
+        }) else {
             return false;
         };
         let Some(drag) = self.active_drag.take() else {
@@ -3156,24 +3153,6 @@ impl App {
         };
         platform_drag.state = PlatformOwnedDragState::Suspended(drag);
         true
-    }
-
-    /// SKWIR: as the platform ends the drag `source_window` handed it, what
-    /// to call if no window of the application took it back (dropped
-    /// outside them, or on another application): the drag's
-    /// `dropped_outside`. `None` once a window holds it, or took it.
-    pub(crate) fn take_dropped_outside(
-        &mut self,
-        source_window: WindowId,
-    ) -> Option<DroppedOutside> {
-        let drag = self
-            .platform_owned_drag
-            .as_mut()
-            .filter(|drag| drag.source_window == source_window)?;
-        match &mut drag.state {
-            PlatformOwnedDragState::Suspended(drag) => drag.dropped_outside.take(),
-            PlatformOwnedDragState::Restored(_) => None,
-        }
     }
 
     pub(crate) fn end_platform_drag(&mut self, source_window: WindowId) -> bool {
@@ -3656,16 +3635,7 @@ pub struct AnyDrag {
     /// Resolves the payload to offer the platform if the drag leaves the window.
     /// Invoked at most once per drag gesture, at promotion time.
     pub external_payload_source: Option<ExternalDragPayloadSource>,
-
-    /// SKWIR: what to call when the drag ends outside the application's
-    /// windows: released outside its window, or carried by the platform and
-    /// taken by none of them.
-    pub dropped_outside: Option<DroppedOutside>,
 }
-
-/// SKWIR: what a drag does when it ends outside the application's windows
-/// ([`AnyDrag::dropped_outside`]).
-pub type DroppedOutside = Box<dyn FnOnce(&mut Window, &mut App) + 'static>;
 
 /// Lazily resolves the payload handed to the platform when an internal drag is
 /// promoted to a native drag session.

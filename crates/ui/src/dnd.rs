@@ -182,25 +182,6 @@ pub struct FilesIcon {
     image: Arc<RenderImage>,
 }
 
-/// What a tab dragged out of its window shows under the pointer, which the
-/// compositor draws (ADR-122): a folder and the tab's name under it, as a
-/// drag of one folder shows.
-pub(crate) fn tab_drag_icon(
-    name: &str,
-    window: &Window,
-    cx: &gpui::App,
-) -> Arc<gpui::ExternalDragIcon> {
-    let theme = cx.global::<Theme>().clone();
-    let mut look = crate::dragicon::DragLook {
-        count: 1,
-        layout: crate::dragicon::Layout::Single,
-        cards: vec![crate::dragicon::Card::folder()],
-    };
-    let icon = look.drawn();
-    let named = crate::dragname::Name::of(name.to_owned(), &theme, window, cx);
-    Arc::new(crate::dragname::picture(&icon, &named, &theme, window, cx))
-}
-
 /// The floating preview under the cursor: what is dragged, named, and for
 /// files their icon above the name.
 pub struct DragPreview {

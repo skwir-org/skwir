@@ -12430,3 +12430,20 @@ drag left the window and came back; the name lost outside the window.
   are taken in (`Shell::sync`). Not checked: macOS's gpui (not compiled),
   a file drag between two windows in the window, Wayland on a real GPU or
   on Hyprland, `just release-check`, `just smoke`.
+
+## 2026-11-07: Windows, follow-ups
+
+The user's follow-ups to ADR-122 after its four steps.
+
+- **Tabs no longer dragged between windows**: gpui carried the drag out of
+  a window on Wayland alone, so the gesture moved a tab there, made a
+  window on X11 and did nothing on Windows and macOS; the user asked for
+  it to go rather than differ by system. Skwir's side of step 4 is undone
+  (`TabDrag::window`, `tabs::dragged_tab`, the root's drop, `Shell::
+  tab_out_of_windows`, `dnd::tab_drag_icon`); gpui patch 0050 keeps only
+  what fixed drops from other applications: a drag the platform brings in
+  is the pointer's (`vendor/patches/0050-drop-is-the-pointers.patch`).
+  **Checked:** `just gpui-check gpui` (122, with the new
+  `a_drop_lands_in_a_window_last_used_by_keyboard`, which fails without
+  the fix); clippy on skwir-ui and skwir; skwir-ui's tests (558). A tab's
+  drag along its own window's tabs is the code of step 3, unchanged.

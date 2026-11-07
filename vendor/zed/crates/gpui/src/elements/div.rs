@@ -17,15 +17,14 @@
 
 use crate::{
     Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, BackGestureEvent, Bounds, ClickEvent,
-    DispatchPhase, Display, DroppedOutside, Element, ElementId, Entity, EntityId,
-    ExternalDragPayload, ExternalDragPayloadSource, FileDropEvent, FocusHandle, Global,
-    GlobalElementId, Hitbox, HitboxBehavior, HitboxId, InspectorElementId, IntoElement, IsZero,
-    KeyContext, KeyDownEvent, KeyUpEvent, KeyboardButton, KeyboardClickEvent, LayoutId,
-    LongPressEvent, ModifiersChangedEvent, MouseButton, MouseClickEvent, MouseDownEvent,
-    MouseExitEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent, OngoingScroll, Overflow,
-    ParentElement, PinchEvent, Pixels, Point, Render, ScrollEvent, SharedString, Size, Style,
-    StyleRefinement, Styled, Task, TooltipId, TouchPhase, Visibility, Window, WindowControlArea,
-    point, px, size,
+    DispatchPhase, Display, Element, ElementId, Entity, EntityId, ExternalDragPayload,
+    ExternalDragPayloadSource, FileDropEvent, FocusHandle, Global, GlobalElementId, Hitbox,
+    HitboxBehavior, HitboxId, InspectorElementId, IntoElement, IsZero, KeyContext, KeyDownEvent,
+    KeyUpEvent, KeyboardButton, KeyboardClickEvent, LayoutId, LongPressEvent,
+    ModifiersChangedEvent, MouseButton, MouseClickEvent, MouseDownEvent, MouseExitEvent,
+    MouseMoveEvent, MousePressureEvent, MouseUpEvent, OngoingScroll, Overflow, ParentElement,
+    PinchEvent, Pixels, Point, Render, ScrollEvent, SharedString, Size, Style, StyleRefinement,
+    Styled, Task, TooltipId, TouchPhase, Visibility, Window, WindowControlArea, point, px, size,
 };
 use collections::HashMap;
 use gpui_util::ResultExt;
@@ -656,38 +655,7 @@ impl Interactivity {
                 constructor(value.downcast_ref().unwrap(), offset, window, cx).into()
             }),
             external_payload: None,
-            dropped_outside: None,
         });
-    }
-
-    /// SKWIR: registers what to do when a drag started by this element ends
-    /// outside the application's windows: released outside its window, or
-    /// carried by the platform ([`ExternalDragPayload::Within`]) and taken by
-    /// none of them. Must be called after [`Self::on_drag`], with the same
-    /// dragged value type `T`.
-    pub fn on_drag_dropped_outside<T>(
-        &mut self,
-        listener: impl Fn(&T, &mut Window, &mut App) + 'static,
-    ) where
-        Self: Sized,
-        T: 'static,
-    {
-        let Some(drag_listener) = self.drag_listener.as_mut() else {
-            debug_assert!(
-                false,
-                "on_drag_dropped_outside must be called after on_drag"
-            );
-            return;
-        };
-        debug_assert!(
-            drag_listener.value.as_ref().type_id() == TypeId::of::<T>(),
-            "on_drag_dropped_outside must use the same dragged value type as on_drag"
-        );
-        drag_listener.dropped_outside = Some(Rc::new(move |value, window, cx| {
-            if let Some(value) = value.downcast_ref::<T>() {
-                listener(value, window, cx);
-            }
-        }));
     }
 
     /// Registers a callback resolving a payload to offer the platform if a drag started by this
@@ -1799,22 +1767,6 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self
     }
 
-    /// SKWIR: what to do when a drag started by this element ends outside
-    /// the application's windows. Must be called after [`Self::on_drag`],
-    /// with the same dragged value type `T`.
-    /// The fluent API equivalent to [`Interactivity::on_drag_dropped_outside`].
-    fn on_drag_dropped_outside<T>(
-        mut self,
-        listener: impl Fn(&T, &mut Window, &mut App) + 'static,
-    ) -> Self
-    where
-        Self: Sized,
-        T: 'static,
-    {
-        self.interactivity().on_drag_dropped_outside(listener);
-        self
-    }
-
     /// Bind the given callback on the hover start and end events of this element. Note that the boolean
     /// passed to the callback is true when the hover starts and false when it ends.
     /// Transitions caused by layout changes under a stationary mouse also invoke the callback.
@@ -1947,11 +1899,7 @@ pub(crate) struct DragListener {
     value: Arc<dyn Any>,
     render: Box<dyn Fn(&dyn Any, Point<Pixels>, &mut Window, &mut App) -> AnyView + 'static>,
     external_payload: Option<ExternalDragPayloadResolver>,
-    /// SKWIR: what to call when the drag ends outside the application's windows.
-    dropped_outside: Option<DroppedOutsideListener>,
 }
-
-type DroppedOutsideListener = Rc<dyn Fn(&dyn Any, &mut Window, &mut App) + 'static>;
 
 type ExternalDragPayloadResolver =
     Box<dyn Fn(&dyn Any, &mut Window, &mut App) -> Option<ExternalDragPayload> + 'static>;
@@ -3212,19 +3160,12 @@ impl Interactivity {
                                     })
                                         as ExternalDragPayloadSource
                                 });
-                            let dropped_outside = listener.dropped_outside.map(|outside| {
-                                let value = listener.value.clone();
-                                Box::new(move |window: &mut Window, cx: &mut App| {
-                                    outside(value.as_ref(), window, cx)
-                                }) as DroppedOutside
-                            });
                             cx.active_drag = Some(AnyDrag {
                                 view: drag,
                                 value: listener.value,
                                 cursor_offset,
                                 cursor_style: drag_cursor_style,
                                 external_payload_source,
-                                dropped_outside,
                             });
                             pending_mouse_down.take();
                             window.refresh();

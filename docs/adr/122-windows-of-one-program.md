@@ -68,9 +68,8 @@ ADR-115 (one process for every window; launches always handed over).
    one; one Settings dialog is open at a time.
 4. **Opening windows**: Ctrl+N opens a window on the folder shown, shaped
    as the window it came from; Open in New Window on a folder or a place,
-   Move to New Window on a tab; a tab dragged out of every window becomes
-   one, dragged onto another window's tabs moves there. Ctrl+Shift+W
-   closes a window.
+   Move to New Window on a tab (a tab is not dragged between windows: see
+   Rejected). Ctrl+Shift+W closes a window.
 5. **Launches go to the running Skwir**, whether or not a window is up
    (ADR-115's hand-over, always on): a launch hands it its location, its
    folder and the desktop's activation token, then ends. Only to a Skwir
@@ -107,6 +106,14 @@ ADR-115 (one process for every window; launches always handed over).
   same files.
 - **Tabs per side of a split, windows per side** (ADR-018's Total
   Commander model): rejected there for the other pane's sake, still.
+- **Tabs dragged between windows and out of them** (browsers): built,
+  then withdrawn the same day (step 4 below). gpui carries a drag out of
+  a window on Wayland alone, so a tab moved between windows there, became
+  a window wherever it was released on X11, and stayed in its window on
+  Windows and macOS: one gesture doing three things by system. Move to
+  New Window and `tab.move` do it everywhere. Carrying the drag on every
+  system (the pointer's grab on X11 and Windows, a dragging session on
+  macOS) would bring it back.
 
 ## Consequences
 
@@ -144,12 +151,9 @@ ADR-115 (one process for every window; launches always handed over).
   `App::open_window` (a launch's folder as it is); macOS's
   `on_open_urls` (compiled only). Checked on Xvfb on a bus of its own;
   Windows' hand-over tests under Wine.
-- 2026-11-07, step 4: gpui patch 0050 (a drag the platform carries goes
-  to whichever window it enters; `ExternalDragPayload::Within`, a type of
-  the process's own on Wayland; `on_drag_dropped_outside`; a drag coming
-  in is the pointer's, so a window last used by keyboard takes its drop);
-  `TabDrag::window`, `tabs::dragged_tab`, the root's drop of another
-  window's tab, `Shell::tab_out_of_windows`. Checked on a headless sway
-  and on Xvfb. Windows and macOS carry no drag between windows: a tab
-  dragged out stays in its window there (Move to New Window); on X11 a tab
-  released outside its window becomes one wherever it is released.
+- 2026-11-07, step 4: tabs dragged between windows (gpui patch 0050:
+  `ExternalDragPayload::Within`, `on_drag_dropped_outside`), checked on a
+  headless sway and on Xvfb, then withdrawn at the user's word, its
+  behaviour differing by system (Rejected). What stays of 0050: a drag
+  the platform brings in is the pointer's, so a window last used by
+  keyboard takes a drop from another application.
