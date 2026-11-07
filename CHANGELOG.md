@@ -2,8 +2,9 @@
 
 ## Unreleased
 
-- **Cards** (Settings › Appearance, off by default, an experiment): the panes,
-  the preview and the terminal are drawn as cards on the window's frame, a
+- **Cards, the new look** (Settings › Appearance › Cards, on by default; off
+  gives the window of earlier versions, apart by lines): the panes,
+  the preview's parts and the terminal are drawn as cards on the window's frame, a
   shade under both of its grounds, apart by a 6 px gutter rather than by
   lines; the sidebar and the tabs lie on the frame. The cards run to the
   window's edges, the top excepted, where the frame's own row is, square where

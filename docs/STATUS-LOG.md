@@ -13017,3 +13017,19 @@ amended).
   tall as it says over the reason's card.
 - **Checked:** fmt; clippy on skwir-ui; its tests (567).
 
+## 2026-11-07: Cards kept, the default (ADR-123 accepted)
+
+- **Decided** (the user): keep Cards, accept ADR-123, make it the
+  default; asked whether to keep the look apart by lines as a choice.
+  Kept (my recommendation): it works and stays as it was; it is not
+  grown, an area added is designed as a card first; asked again after a
+  release or two.
+- **Built:** `settings::CARDS_DEFAULT` (true), read by the switch's spec
+  and `Theme::resolve`; the switch's description says what off gives.
+  ADR-123's status and a "Kept, the default" amendment; the ADR index,
+  PLAN, CHANGELOG and shell.md say so. The README's screenshots made
+  again (`tools/screenshots/readme.py --skwir target/debug/skwir`, the
+  debug build in place of a release one: the disk had 10 GB), looked at
+  before committing.
+- **Checked:** fmt; clippy on skwir-ui; its tests (567).
+

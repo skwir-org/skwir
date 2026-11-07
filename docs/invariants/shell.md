@@ -389,7 +389,9 @@ of bars, split or not.
   on has its row underlined in the accent and the other's grounds step
   down (`Shell::lowered`, `Theme::files_ground`, `bar_ground`): what paints
   a pane's ground asks them, never `window_bg` or `window_surface`. Apart
-  by lines, the window is drawn as before.
+  by lines, the window is drawn as before: kept working, not grown. An
+  area added is designed as a card first, and given the lines look only
+  as far as it needs to work there (ADR-123, "Kept, the default").
 - **As cards, the preview panel is cards** (`preview::cards_under`), never
   one: Properties with the header, the preview with its toolbar, a
   container's kept rows and its member (`members::split`), the pinned

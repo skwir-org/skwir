@@ -795,7 +795,8 @@ wake draws only the windows it concerns. Checks in `docs/STATUS-LOG.md` (2026-11
 ## The window's areas as cards (2026-11-07)
 
 ADR-123, asked by the user after four directions drawn on a canvas: an
-experiment behind Settings › Appearance › Cards (`ui.cards`, off). The
+experiment behind Settings › Appearance › Cards (`ui.cards`), the default
+since the same evening. The
 panes, the preview and the terminal are cards on the window's frame, a
 token of every look under both grounds (`frame`, giving way to the text
 drawn on it), apart by 6 px gutters that are the edges dragged, running
@@ -829,12 +830,12 @@ every system (the pointer's grab on X11 and Windows, a dragging session
 on macOS; Wayland's own) before it comes back (ADR-122, Rejected).
 macOS's UI is not compiled.
 
-**Cards** (ADR-123, 2026-11-07): the user's to keep or drop; if kept,
-the default and the ADR's status change. Not seen under a compositor's
-blur, nor what Hyprland says of a tiled window's top; a pixel's seam along
-each card's arcs and notches while the window lets the desktop through. Metal's shaders (gpui 0053) are
-compiled nowhere here, and Direct3D's only by DXC (Wine's compiler takes
-neither gpui's shaders nor these). 3D models keep a rectangular clip.
+**Cards** (ADR-123, the default since 2026-11-07): whether the look apart
+by lines stays a choice is asked again after a release or two. Not seen
+under a compositor's blur, nor what Hyprland says of a tiled window's top.
+Metal's shaders (gpui 0053, 0055) are compiled nowhere here, and
+Direct3D's only by DXC (Wine's compiler takes neither gpui's shaders nor
+these). 3D models keep a rectangular clip.
 
 **Planned** (in the sections below): Indexing and AI (Phase 7, designed
 2026-10-26: ADR-089 to ADR-095); [Grammars and

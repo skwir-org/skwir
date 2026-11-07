@@ -1214,7 +1214,7 @@ impl Theme {
         if app
             .settings
             .get::<bool>(crate::settings::CARDS_KEY)
-            .unwrap_or(false)
+            .unwrap_or(crate::settings::CARDS_DEFAULT)
         {
             theme.as_cards();
         }

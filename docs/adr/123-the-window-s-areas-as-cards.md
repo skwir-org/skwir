@@ -1,8 +1,9 @@
 # ADR-123: The window's areas as cards
 
-Status: accepted 2026-11-07 with the user as an experiment behind a
-switch (`ui.cards`, off), built on Linux; macOS and Windows compiled
-only; amended the same evening as tried (Amendments). Amends ADR-071
+Status: accepted 2026-11-07 with the user, the default since that
+evening (`ui.cards`, on; off, the window apart by lines as before);
+built on Linux, macOS and Windows compiled only; amended the same
+evening as tried (Amendments). Amends ADR-071
 (tokens of a look: `frame`, `sunken_bg`, `sunken_surface`) and ADR-119
 (the frame is one of the window's grounds).
 
@@ -35,9 +36,10 @@ only; amended the same evening as tried (Amendments). Amends ADR-071
 
 ## Decision
 
-1. **One switch, off by default.** Settings › Appearance › Cards
-   (`ui.cards`, essential): the window as cards on its frame, or as it
-   was, apart by lines. Off, the window is drawn as before.
+1. **One switch, on by default** (since the amendment "Kept, the
+   default"). Settings › Appearance › Cards (`ui.cards`, essential): the
+   window as cards on its frame, or as it was, apart by lines. Off, the
+   window is drawn as before.
 2. **The frame is a token of the look.** `frame` lies under both
    grounds, darker than the darker by `CHROME` (1.08:1), its hue kept:
    under the bars' gray in a light look, under the files in a dark one
@@ -188,4 +190,18 @@ preview's bar, inside the cards. Tried by the user the same evening:
   chrome's, what it shows the preview's.
 - **Consequences:** a gutter more (6 px) between each two of them; no
   line inside the panel. Peek, drawn over the window, keeps its own.
+
+### 2026-11-07: kept, the default
+
+- **Decided** (the user, having tried every step): Cards is kept and is
+  the default (`settings::CARDS_DEFAULT`); this record is accepted as
+  such.
+- **The look apart by lines stays a choice**, the same switch off: some
+  prefer a denser window or the one they knew, and a look taken away in
+  the release that changes it is the hardest way to change it (Firefox's
+  islands drew requests to turn them off, Mozilla Connect, 2026-03). It
+  is kept working, not grown: an area added from now on is designed as a
+  card first, and given the lines look only as far as it needs to work
+  there. Whether to keep the choice is asked again after a release or
+  two, from what is said of it.
 
