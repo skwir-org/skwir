@@ -93,7 +93,9 @@ pub fn write(path: &Path, raw: &Raw) -> std::io::Result<()> {
 
 /// Replace the file at `target` with `bytes` whole (a reader sees the old
 /// one or the new one), creating its folder if needed and keeping the
-/// mode of the file it replaces.
+/// mode and the hidden mark of the file it replaces. A file or folder it
+/// makes that a dot hides (`._x`, `.ts`) takes the hidden mark
+/// (`fs::hidden::made`): what is replaced so is a companion.
 ///
 /// # Errors
 /// When it cannot be written.
@@ -101,7 +103,7 @@ pub fn replace(target: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let dir = target
         .parent()
         .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::InvalidInput))?;
-    std::fs::create_dir_all(dir)?;
+    crate::fs::hidden::create_dir_all(dir)?;
     let name = target.file_name().unwrap_or_default().to_string_lossy();
     let prefix = format!(".{name}.");
     let mut builder = tempfile::Builder::new();
@@ -113,12 +115,20 @@ pub fn replace(target: &Path, bytes: &[u8]) -> std::io::Result<()> {
         builder.permissions(std::fs::Permissions::from_mode(0o666));
     }
     let staged = builder.tempfile_in(dir)?;
-    if let Ok(metadata) = std::fs::metadata(target) {
-        std::fs::set_permissions(staged.path(), metadata.permissions())?;
-    }
+    let existed = match std::fs::metadata(target) {
+        Ok(metadata) => {
+            std::fs::set_permissions(staged.path(), metadata.permissions())?;
+            true
+        }
+        Err(_) => false,
+    };
     let mut staged = staged;
     staged.write_all(bytes)?;
-    crate::fs::file::take_place(staged, target)
+    crate::fs::file::take_place(staged, target)?;
+    if !existed {
+        crate::fs::hidden::made(target);
+    }
+    Ok(())
 }
 
 /// The bytes at each of `keys` now, once each.

@@ -2655,9 +2655,86 @@ mod tests {
         run(Box::new(edit));
         assert!(stick.join("._plain.txt").exists());
         assert_eq!(read_tags(&plain), ["new"]);
+        // Hidden where the volume keeps the mark (FAT, exFAT); a FUSE
+        // mount keeps none.
+        for aside in ["._plain.txt", "._it's tagged.txt"] {
+            match skwir_core::fs::hidden::is_set(&stick.join(aside)) {
+                Ok(hidden) => assert!(hidden, "{aside}"),
+                Err(e) => assert_eq!(e.kind(), std::io::ErrorKind::Unsupported, "{e}"),
+            }
+        }
         app.executor.undo_blocking(app.lifetime()).unwrap();
         assert!(!stick.join("._plain.txt").exists());
         std::fs::remove_dir_all(&stick).unwrap();
+    }
+
+    /// Windows keeps no attributes on any volume, and lists none of them
+    /// where a Mac keeps `._` files: an edit starts one beside the file,
+    /// hidden as its dot hides it elsewhere, read back as the file's notes,
+    /// taken back by Undo and made again, hidden, by Redo; a copy keeps
+    /// them beside the copy.
+    #[cfg(windows)]
+    #[test]
+    fn on_windows_notes_are_kept_beside_the_file() {
+        let tmp = home_tempdir();
+        let dir = tmp.path().join("d");
+        std::fs::create_dir(&dir).unwrap();
+        let file = dir.join("it's plain.txt");
+        std::fs::write(&file, b"x").unwrap();
+        assert!(!skwir_core::fs::xattr::kept_in(&dir));
+        let (app, _) = app_in(tmp.path(), &dir, &["it's plain.txt"]);
+        let run = |op: Box<dyn skwir_core::op::Operation>| {
+            let mut plan = Plan::new("op");
+            plan.steps.push(op);
+            let r = app.executor.execute_blocking(&plan, app.lifetime());
+            assert!(r.error.is_none(), "{:?}", r.error);
+        };
+        let edit = app
+            .notes
+            .edit(EntryRef::from_path(&file).unwrap())
+            .tags(vec!["work".into(), "Été".into()]);
+        run(Box::new(edit));
+        let aside = dir.join("._it's plain.txt");
+        assert!(aside.exists());
+        assert!(skwir_core::fs::hidden::is_set(&aside).unwrap());
+        assert_eq!(read_tags(&file), ["work", "Été"]);
+        // An edit of what is there keeps the file and its mark.
+        let more = app
+            .notes
+            .edit(EntryRef::from_path(&file).unwrap())
+            .tags(vec!["work".into(), "Été".into(), "more".into()]);
+        run(Box::new(more));
+        assert_eq!(read_tags(&file), ["work", "Été", "more"]);
+        assert!(skwir_core::fs::hidden::is_set(&aside).unwrap());
+        // Both edits undone: no `._` file is left. Redone: it is made
+        // again, hidden.
+        for undone in ["the second edit", "the first edit"] {
+            let r = app.executor.undo_blocking(app.lifetime()).unwrap();
+            assert!(r.error.is_none(), "{undone}: {:?}", r.error);
+        }
+        assert!(!aside.exists());
+        assert!(read_tags(&file).is_empty());
+        for redone in ["the first edit", "the second edit"] {
+            let r = app.executor.redo_blocking(app.lifetime()).unwrap();
+            assert!(r.error.is_none(), "{redone}: {:?}", r.error);
+        }
+        assert_eq!(read_tags(&file), ["work", "Été", "more"]);
+        assert!(skwir_core::fs::hidden::is_set(&aside).unwrap());
+        // Copied: the notes go beside the copy. (Not undone: a copy's undo
+        // trashes it, and Wine has no shell's trash.)
+        let other = tmp.path().join("other");
+        std::fs::create_dir(&other).unwrap();
+        run(Box::new(skwir_core::op::Copy {
+            entry: EntryRef::from_path(&file).unwrap(),
+            dest_dir: other.clone(),
+            new_name: None,
+            preserve_attributes: true,
+        }));
+        assert!(skwir_core::fs::hidden::is_set(&other.join("._it's plain.txt")).unwrap());
+        assert_eq!(
+            read_tags(&other.join("it's plain.txt")),
+            ["work", "Été", "more"]
+        );
     }
 
     // Extended attributes: Unix's.

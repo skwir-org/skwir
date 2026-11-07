@@ -14,7 +14,7 @@ registered in `App::notes` by its plugin); all share one model,
 
 | Plugin | Stores |
 | --- | --- |
-| `tags` | `user.*` attributes (`xdg.rs`, Dolphin's keys); a Mac's Finder attributes, under whichever name they reached Linux (`finder.rs`); `._` files on volumes without attributes (`appledouble.rs`, which also keeps the desktop's attributes as `xdg.tags`) |
+| `tags` | `user.*` attributes (`xdg.rs`, Dolphin's keys); a Mac's Finder attributes, under whichever name they reached Linux (`finder.rs`); `._` files where a Mac keeps them and on every volume that keeps no attributes, all of Windows' (`appledouble.rs`, which also keeps the desktop's attributes as `xdg.tags`) |
 | `xmp` | sidecars `x.jpg.xmp`, and Adobe's `x.xmp` while its stem is its file's alone, edited in place so unknown content stays; embedded XMP, read for Properties only |
 | `tagspaces` | `.ts/x.json`, a folder's `.ts/tsm.json` (exact color kept, read as the palette's nearest), `.ts/tsi.json` as a search hint |
 | `name-tags` | `name[a b].ext` (TagSpaces, read only where a `.ts` folder exists); `name -- a b.ext` (filetags, off until asked) |
@@ -44,6 +44,13 @@ registered in `App::notes` by its plugin); all share one model,
   the policy allows: those holding the file's notes, those set to create,
   and where the file's attributes are refused, the store its folder
   already uses, else AppleDouble.
+- Whether a volume keeps attributes is asked of it, as a copy asks it by
+  writing: `xattr::kept_in` reads one of the folder's, which the kernel
+  answers by the handler a write goes to (Linux lists none, without
+  refusing, where a volume keeps none). Every volume refuses them on
+  Windows. A list of filesystems (`filesystem::apple_double`) only adds
+  the volumes where a Mac's `._` files are read; it never decides where
+  notes can be kept.
 - Its inverse (`restore_notes`) puts back each store's exact bytes, and
   refuses if another application changed them since.
 - A `._` file is rewritten whole as macOS lays it out, keeping every
@@ -168,6 +175,15 @@ registered in `App::notes` by its plugin); all share one model,
   file (`._` copied whole or created); where attributes are kept, a `._`
   file's are taken in. A copy fails only when nothing can keep them.
   Copies keep every `user.*` attribute (ADR-006).
+- **Hidden as a dot hides it.** What Skwir makes for a companion that a
+  dot hides on Unix (a `._x` started, written again by an undo or placed
+  by a copy; a `.ts` folder made) takes the system's hidden mark where
+  its volume keeps one (`fs::hidden::made`, `fs::hidden::create_dir_all`:
+  Windows' attribute; FAT's and exFAT's from Linux too), so Explorer
+  hides it as a Mac and Linux do. A sidecar a person handles
+  (`x.jpg.xmp`) is never marked, nor a file another program made. A file
+  replaced whole keeps the mark it had (`file::take_place`). Best effort:
+  a volume without the mark leaves it as it was.
 - **What is beside a file is read with its metadata**
   (`companions::BesideProvider`, core's, run wherever a folder's files
   are filled: a folder shown, the Trash, Recent, the shelf, a search's

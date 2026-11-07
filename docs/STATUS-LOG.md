@@ -13109,3 +13109,58 @@ amended).
   following of a scheme named anew and of Omarchy's swap).
 - **Not checked:** a real Caelestia, Dux Shell or Omarchy session;
   qtengine and hyprqt6engine installed.
+
+
+## 2026-11-08: Notes beside files on every volume
+
+- **Asked** (the user): a diagram of how Skwir chooses where to keep a
+  file's notes; then, for the gap it showed, "build steps 1-5", with
+  Windows' hidden mark for what Skwir makes beside a file, and the same
+  mark set from Linux on FAT and exFAT, tried on udisks loop mounts.
+- **Found** by reading the code: AppleDouble applied only where
+  `filesystem::apple_double` named the volume (Linux's `statfs` numbers
+  alone: false on every other system), while copies asked the volume by
+  writing. On Windows, where every volume refuses attributes, an edit of
+  a file with no sidecar failed ("its volume keeps no notes…"), and the
+  `._` file a copy placed there was never read. PORTING.md said both
+  "never AppleDouble" and "else AppleDouble". The bindfs fixture of the
+  refusing-volume test is FUSE, which the list names, so the tests
+  passed by the list.
+- **Built** (ADR-027 and ADR-028 amended):
+  - `xattr::kept_in(dir)`: one attribute of the folder read, which the
+    kernel answers by the handler a write goes to (a listing does not
+    tell: Linux lists none, without refusing, on vfat); no on Windows.
+    AppleDouble applies where the list names the volume or where
+    `kept_in` says no. The second pass on a write's own refusal planned
+    beside it was left out: the read and the write make one lookup.
+  - `fs::hidden`: Windows' attribute (`win::hidden`, `win::hide`), FAT's
+    and exFAT's from Linux (`FAT_IOCTL_GET_ATTRIBUTES`/`SET`, rustix's
+    ioctl, one narrow `unsafe` each), nothing on macOS. `made` marks
+    what a dot hides; `create_dir_all` the folders it makes so (`.ts`);
+    `worn_by` lets `file::take_place` keep a replaced file's mark (a
+    rename puts the staged file's attributes in place; tempfile's `keep`
+    clears every attribute on Windows, so the mark is set after it).
+  - Marked: a `._x` AppleDouble starts (`appledouble::write`), one a
+    copy places whole (`transfer_attributes`), one `raw::replace` makes
+    (an undo's or a redo's), a `.ts` made by `raw::replace` or
+    `rename_along`. Not an XMP sidecar.
+  - Tests: `kept_in` of the home folder (yes on Unix, no on Windows) and
+    of a refusing volume; the mark set, not set on a plain name, kept by
+    `take_place`, on Windows and on FAT and exFAT; on a volume without
+    it, nothing fails; the refusing-volume test checks the `._` files'
+    mark; a Windows test of an edit, a second edit, undo and redo and a
+    copy, each `._` hidden and read back.
+  - notes.md, AGENTS.md (`take_place`), PORTING.md §5, PLAN.md.
+- **Seen** on 64 MB vfat and exFAT images loop-mounted by udisks (no
+  prompt; unmounted and deleted after): the ignored tests pass on both;
+  a file given the bit by the drivers' call reads `H` in its directory
+  entry from the image (mtools' `mattrib`), a plain one not.
+- **Checked:** rustfmt; clippy on skwir-core and skwir-plugin-tags for
+  Linux, Windows and macOS (Zig); their tests on Linux (759 passed, the
+  ignored ones run against both mounts) and under Wine (544 run, 543
+  passed; the new Windows test failed on the copy's undo, which trashes
+  the copy where Wine has no shell's trash, and passes run again with
+  the copy left undone). Not `just release-check`.
+- **Not checked:** Windows itself; a stick read by a Mac or Windows; an
+  exFAT driver before Linux 6.7 (the call is refused, nothing marked);
+  macOS (compiled only).

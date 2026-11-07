@@ -214,6 +214,20 @@ pub fn list_deref(path: impl AsRef<Path>) -> io::Result<Vec<OsString>> {
     read(path, || imp::list_deref(path))
 }
 
+/// Whether the volume holding the folder `dir` keeps extended attributes,
+/// as a write there would find: asked by reading one of the folder's,
+/// which the kernel answers by the same handler a write goes to (a
+/// listing would not tell: Linux lists none, without refusing, where a
+/// volume keeps none). Every volume refuses them on Windows. One call on
+/// the folder, through a link to it: ask once per folder, on a worker (in
+/// its remote's lane). Where it cannot tell (an unreadable folder), yes,
+/// as a write is then tried.
+pub fn kept_in(dir: &Path) -> bool {
+    /// Any name the user may set: what is asked is the volume.
+    const ASKED: &str = "user.xdg.tags";
+    !matches!(get_deref(dir, ASKED), Err(error) if refused(&error))
+}
+
 /// Whether what carries a file elsewhere (a copy, an archive made of it,
 /// one extracted) keeps its attribute `name`: on Linux the user's
 /// (`user.*`); on macOS, whose names have no namespace, every one but
@@ -228,5 +242,37 @@ pub fn kept(name: &OsStr) -> bool {
         )
     } else {
         name.as_encoded_bytes().starts_with(b"user.")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The home folder's volume keeps attributes on Linux and macOS;
+    /// Windows keeps none anywhere.
+    #[test]
+    fn a_folder_says_whether_its_volume_keeps_attributes() {
+        let base = dirs::home_dir().unwrap().join(".cache").join("skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let tmp = tempfile::Builder::new()
+            .prefix("xattr-kept-")
+            .tempdir_in(base)
+            .unwrap();
+        assert_eq!(kept_in(tmp.path()), cfg!(unix));
+    }
+
+    /// `SKWIR_NO_XATTR_DIR=<folder>` on a volume refusing them (a FAT
+    /// stick, `bindfs --xattr-none`): `cargo nextest run -p skwir-core
+    /// --run-ignored only refusing`.
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "needs a folder on a volume without attributes"]
+    fn a_folder_on_a_volume_refusing_attributes_says_so() {
+        let dir = std::path::PathBuf::from(
+            std::env::var_os("SKWIR_NO_XATTR_DIR").expect("SKWIR_NO_XATTR_DIR"),
+        );
+        assert!(set(&dir, "user.test", b"x").is_err_and(|e| refused(&e)));
+        assert!(!kept_in(&dir));
     }
 }

@@ -200,10 +200,13 @@ Left:
 - `tags/finder.rs` **(c)**: Finder tags as Linux sees them; the native name
   is already under `cfg(target_os = "macos")`.
 - `tags/appledouble.rs`, `core/companions.rs`: `._` files.
-  `platform/filesystem.rs` `statfs` magic is Linux's; **(u)** elsewhere:
-  never AppleDouble, change times never trusted.
-- Windows refuses every attribute, so by the notes policy an edit goes to
-  the store the folder already uses, else AppleDouble (not exercised).
+  `platform/filesystem.rs` `statfs` magic is Linux's: elsewhere it names
+  no volume where a Mac's `._` files are read, and change times are
+  never trusted **(u)**.
+- Windows refuses every attribute (`xattr::kept_in` answers no for every
+  folder), so AppleDouble applies on every volume: an edit goes to the
+  store the folder already uses, else a `._` file, with Windows' hidden
+  mark (`fs::hidden`). Run under Wine (2026-11-08); not on Windows.
 - xmp, tagspaces, name-tags: portable.
 
 ## 6. Volumes, places, bookmarks (step F)

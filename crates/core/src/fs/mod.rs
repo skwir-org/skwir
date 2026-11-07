@@ -3,6 +3,7 @@
 pub mod count;
 pub mod dir;
 pub mod file;
+pub mod hidden;
 mod hydrate;
 mod path_provider;
 pub mod reach;

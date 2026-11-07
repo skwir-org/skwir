@@ -290,12 +290,13 @@ fn along_conflict(ctx: &StepContext, along: &[Along]) -> Option<StepStatus> {
 }
 
 /// Rename each companion to its place (making a companions' folder, `.ts`,
-/// where needed); on a failure, put back those moved and fail.
+/// where needed, hidden as on Unix: `fs::hidden::create_dir_all`); on a
+/// failure, put back those moved and fail.
 fn rename_along(along: &[Along]) -> anyhow::Result<()> {
     for (done, a) in along.iter().enumerate() {
         let result =
             a.to.parent()
-                .map_or(Ok(()), std::fs::create_dir_all)
+                .map_or(Ok(()), crate::fs::hidden::create_dir_all)
                 .map_err(anyhow::Error::from)
                 .and_then(|()| rename_noreplace(&a.from, &a.to));
         if let Err(e) = result {
@@ -2611,6 +2612,8 @@ fn transfer_attributes(src: &Path, dst: &Path, ctx: &StepContext) -> anyhow::Res
         // Small: counted at once, and written out with the rest
         // (`StepContext::write_out`).
         copy_recursive_with_attributes(&a.from, &a.to, false, &Pace::at_once(), ctx)?;
+        // Made here for the copy: hidden as its dot hides it on Unix.
+        crate::fs::hidden::made(&a.to);
     }
     if (aside.is_empty() || !own.is_empty()) && !rules.keep_attributes(dst, &own)? {
         anyhow::bail!(

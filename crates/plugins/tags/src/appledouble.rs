@@ -19,9 +19,10 @@
 //! 120  records, then the values, then the resource fork
 //! ```
 //!
-//! Read wherever a Mac writes them (`skwir_platform::filesystem`). A file
-//! laid out otherwise (other entries, an older writer) is read but never
-//! written: what we would write back could lose what we do not know.
+//! Read wherever a Mac writes them (`skwir_platform::filesystem`) and
+//! wherever the volume keeps no attributes ([`applies`]). A file laid out
+//! otherwise (other entries, an older writer) is read but never written:
+//! what we would write back could lose what we do not know.
 
 use std::ffi::{OsStr, OsString};
 use std::io::{self, Write as _};
@@ -82,13 +83,18 @@ pub struct AppleDouble {
 pub(crate) static EVERYWHERE: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
-/// Whether a Mac keeps the attributes of files in `dir` in `._` files.
+/// Whether `._` files keep the attributes of files in `dir`: where a Mac
+/// keeps them so (`filesystem::apple_double`, whose files are read
+/// there), and wherever the volume keeps none itself, as a write there
+/// would find (`xattr::kept_in`: a volume that list leaves out, every
+/// volume on Windows), where one is the container started (ADR-027) and
+/// a copy keeps them (ADR-028).
 pub fn applies(dir: &Path) -> bool {
     #[cfg(test)]
     if EVERYWHERE.load(std::sync::atomic::Ordering::Relaxed) {
         return true;
     }
-    skwir_platform::filesystem::apple_double(dir)
+    skwir_platform::filesystem::apple_double(dir) || !skwir_core::fs::xattr::kept_in(dir)
 }
 
 /// The `._` file beside `path`.
@@ -351,7 +357,9 @@ fn beside(path: &Path) -> Beside {
 }
 
 /// Write `ad` as the sidecar of `path`, replacing it whole: a Mac reading
-/// it meanwhile sees the old one or the new one.
+/// it meanwhile sees the old one or the new one. One started takes the
+/// hidden mark where its volume keeps one (Windows, FAT, exFAT), as its
+/// dot hides it on a Mac and Linux; one replaced keeps the mark it had.
 pub fn write(path: &Path, ad: &AppleDouble) -> io::Result<()> {
     let bytes = ad.encode().ok_or_else(|| {
         io::Error::new(
@@ -368,11 +376,19 @@ pub fn write(path: &Path, ad: &AppleDouble) -> io::Result<()> {
         .suffix(".tmp")
         .tempfile_in(dir)?;
     // The staged file is private; the one it replaces keeps its mode.
-    if let Ok(metadata) = std::fs::metadata(&aside) {
-        std::fs::set_permissions(staged.path(), metadata.permissions())?;
-    }
+    let existed = match std::fs::metadata(&aside) {
+        Ok(metadata) => {
+            std::fs::set_permissions(staged.path(), metadata.permissions())?;
+            true
+        }
+        Err(_) => false,
+    };
     staged.write_all(&bytes)?;
-    skwir_platform::file::take_place(staged, &aside)
+    skwir_platform::file::take_place(staged, &aside)?;
+    if !existed {
+        skwir_core::fs::hidden::made(&aside);
+    }
+    Ok(())
 }
 
 /// The file a `._` name is the companion of: `x` for `._x`, kept by the

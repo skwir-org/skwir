@@ -391,6 +391,44 @@ pub(crate) fn free_space(path: &Path) -> Option<u64> {
     (ok != 0).then_some(free)
 }
 
+/// The attributes `SetFileAttributesW` takes; the others (a folder's, a
+/// link's, compression) are the file's nature, not marks to set.
+const SETTABLE: u32 = fs::FILE_ATTRIBUTE_READONLY
+    | fs::FILE_ATTRIBUTE_HIDDEN
+    | fs::FILE_ATTRIBUTE_SYSTEM
+    | fs::FILE_ATTRIBUTE_ARCHIVE
+    | fs::FILE_ATTRIBUTE_NOT_CONTENT_INDEXED
+    | fs::FILE_ATTRIBUTE_OFFLINE;
+
+/// Whether `path` itself (never a link's target) wears the hidden mark.
+pub fn hidden(path: &Path) -> io::Result<bool> {
+    use std::os::windows::fs::MetadataExt;
+    Ok(std::fs::symlink_metadata(path)?.file_attributes() & fs::FILE_ATTRIBUTE_HIDDEN != 0)
+}
+
+/// Give `path` itself the hidden mark, keeping its other marks.
+pub fn hide(path: &Path) -> io::Result<()> {
+    use std::os::windows::fs::MetadataExt;
+    let meta = std::fs::symlink_metadata(path)?;
+    if meta.is_symlink() {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "a link"));
+    }
+    let now = meta.file_attributes();
+    if now & fs::FILE_ATTRIBUTE_HIDDEN != 0 {
+        return Ok(());
+    }
+    let wide = wide(path);
+    // SAFETY: a NUL-terminated UTF-16 string that outlives the call.
+    let done = unsafe {
+        fs::SetFileAttributesW(wide.as_ptr(), (now & SETTABLE) | fs::FILE_ATTRIBUTE_HIDDEN)
+    };
+    if done == 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
 /// `path` as Windows takes it: UTF-16, ending in a NUL.
 fn wide(path: &Path) -> Vec<u16> {
     use std::os::windows::ffi::OsStrExt;

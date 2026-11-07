@@ -188,3 +188,31 @@ Decided:
 - The tags index learns an edited file where the plan left it
   (`op::Follow`): a rename after an edit, here or in "Tags out of
   Name", left it reading the name gone.
+
+### 2026-11-08: a volume without attributes is the volume's word
+
+"On a volume without attributes, the store created is the one the folder
+already uses, else AppleDouble" was read from a list: AppleDouble kept
+notes only where `filesystem::apple_double` named the volume, a list of
+Linux's filesystem numbers that says where a Mac writes `._` files.
+Copies asked the volume itself, by writing (ADR-006: "real xattr
+operations decide support"). Off Linux the list names nothing, so on
+Windows, where every volume refuses attributes, an edit of a file with no
+sidecar failed ("its volume keeps no notes…"), and the `._` file a copy
+placed there was never read. The same held for any Linux volume the list
+leaves out that refuses `user.*`.
+
+Decided:
+
+- **The volume is asked.** `xattr::kept_in(dir)` reads one attribute of
+  the folder: the kernel answers a read by the handler a write goes to,
+  which a volume without attributes lacks (a listing would not tell:
+  Linux lists none there without refusing). Windows answers no for every
+  folder. AppleDouble applies where the list names the volume (a Mac's
+  files are read there) or where `kept_in` says no.
+- No second pass on a write's own refusal: the read is answered by the
+  same lookup the write makes, so the two cannot disagree on a kernel's
+  volume; a FUSE program answering a read and refusing a write leaves the
+  edit failing as before, saying so.
+- The `._` files Skwir makes carry the system's hidden mark where the
+  volume keeps one (ADR-028, 2026-11-08).

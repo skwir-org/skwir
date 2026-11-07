@@ -256,7 +256,8 @@ working in an area, also read that area's rules (see
   rather than truncating it.
   A file replaced whole is written beside it and put in its place with
   `file::take_place`: Windows refuses a plain replace of a file anyone
-  has open.
+  has open, and the file in place keeps the hidden mark of the one it
+  replaced (`fs::hidden`).
 - **Entries arrive before metadata.** Treat missing fields as unknown,
   request hydration in batches, and react to `Updated` events; never stat
   rows while rendering. A hydration answers every id it is given:

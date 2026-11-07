@@ -812,6 +812,20 @@ primitive, on wgpu, Direct3D 11 and Metal), and 0054, `Window::tiling`
 (no gutter on an edge that meets another window). Checks in
 `docs/STATUS-LOG.md` (2026-11-07, "The window's areas as cards").
 
+## Notes beside files on every volume (2026-11-08)
+
+Found while drawing how notes are stored, asked by the user: on Windows
+an edit of a file with no sidecar failed, and the `._` files copies
+placed there were never read, because AppleDouble applied only where a
+list of Linux's filesystems named the volume, while copies asked the
+volume. Now the volume is asked (`xattr::kept_in`, ADR-027 amended), on
+every system; and what Skwir makes for a companion that a dot hides on
+Unix (`._x`, `.ts`) takes the system's hidden mark where the volume
+keeps one, Windows' and FAT's and exFAT's from Linux (`fs::hidden`,
+ADR-028 amended), a file replaced whole keeping its mark
+(`file::take_place`). Checks in `docs/STATUS-LOG.md` (2026-11-08,
+"Notes beside files on every volume").
+
 ## What is left
 
 Gathered on 2026-10-20 from the notes of this plan and of
@@ -836,6 +850,17 @@ under a compositor's blur, nor what Hyprland says of a tiled window's top.
 Metal's shaders (gpui 0053, 0055) are compiled nowhere here, and
 Direct3D's only by DXC (Wine's compiler takes neither gpui's shaders nor
 these). 3D models keep a rectangular clip.
+
+**Notes beside files** (ADR-027 and ADR-028 amended, 2026-11-08): run
+under Wine and on vfat and exFAT loop mounts, never on Windows itself
+nor read by a Mac. Where a download came from is not read on Windows
+(its `Zone.Identifier` stream's `HostUrl` and `ReferrerUrl`, a field
+read on demand for Properties, ADR-023): Wine has no alternate streams
+to try it on. The hidden mark is not set from Linux on NTFS (ntfs3's
+`system.dos_attrib`), never needed for a `._` file there, which keeps
+attributes, but a `.ts` folder made there shows on Windows; macOS's
+own hidden flag is neither set nor kept by `take_place`. Linux's copies
+carry no DOS attributes but for what Skwir makes.
 
 **Planned** (in the sections below): Indexing and AI (Phase 7, designed
 2026-10-26: ADR-089 to ADR-095); [Grammars and

@@ -168,14 +168,21 @@ pub fn read_regular_text(path: &Path, limit: u64) -> io::Result<String> {
 /// the reader keeping the old file (POSIX semantics, Windows 10 1709 on),
 /// which a reader that shares no deletion still refuses, and Wine always:
 /// there it is tried again while the reader lets go, for [`HELD_FOR`].
+/// The file in place keeps the hidden mark of the one it replaced
+/// (`fs::hidden`: Windows', FAT's): a sidecar hidden stays hidden.
 /// Call from a worker.
 ///
 /// # Errors
 /// When it cannot take the place: `staged` is removed then.
 pub fn take_place(staged: tempfile::NamedTempFile, target: &Path) -> io::Result<()> {
+    let hidden = crate::fs::hidden::worn_by(target, staged.as_file());
     // Kept first: on Windows that takes off the temporary mark it was made
-    // with, which the file in place must not keep.
+    // with, which the file in place must not keep (and every other: the
+    // hidden mark is given after).
     let staged = staged.into_temp_path().keep().map_err(|e| e.error)?;
+    if hidden && let Err(error) = crate::fs::hidden::set(&staged) {
+        tracing::debug!(%error, path = %target.display(), "the hidden mark was not kept");
+    }
     let mut waited = std::time::Duration::ZERO;
     let mut wait = std::time::Duration::from_millis(10);
     loop {

@@ -89,3 +89,35 @@ files record none. (Not built.)
 - Not covered: other tools (`cp`, `mv`, other file managers, sync
   services) move files without companions; a companion deleted
   elsewhere takes its notes.
+
+## Amendments
+
+### 2026-11-08: hidden as a dot hides them
+
+Windows' Explorer shows `._x` files beside every file a Mac or Skwir
+tagged on a stick, and a person tidying them away deletes the notes
+(ADR-027's limits). Windows hides what wears the hidden attribute, which
+FAT and exFAT keep in a file's entry, and which Linux's vfat and exFAT
+drivers set (`FAT_IOCTL_SET_ATTRIBUTES`; exFAT's since Linux 6.7).
+
+Decided:
+
+- **What Skwir makes for a companion that a dot hides on Unix takes the
+  mark** where its volume keeps one: a `._x` started (an edit, a copy
+  keeping attributes beside the copy), placed whole by a copy or written
+  again by an undo or a redo, and a `.ts` folder made for a companion
+  (`fs::hidden::made`, `fs::hidden::create_dir_all`). On Windows on
+  every volume; from Linux on FAT and exFAT; macOS makes its own `._`
+  files.
+- **Not a sidecar a person handles.** An XMP sidecar keeps no dot and no
+  mark: photographers move `x.jpg.xmp` with their pictures by hand,
+  which they could not see to do. A file another program made is never
+  marked: that would be editing it.
+- **A file replaced whole keeps its mark** (`file::take_place`): a
+  rename puts the staged file's attributes in place, so a `._x` hidden,
+  or a sidecar a person hid, would otherwise show again at the next
+  edit.
+- Best effort: a volume without the mark (ext4, NTFS from Linux, exFAT
+  through FUSE or before Linux 6.7) leaves files as they were, and no
+  edit or copy fails for it. Linux's copies carry no DOS attributes
+  otherwise: only what Skwir makes is marked.
