@@ -612,8 +612,9 @@ const RECORD_EVERY: Duration = Duration::from_secs(2);
 /// Record every window's tabs and shape for the next start, as they
 /// change (ADR-122): Quit keeps every window, a window closed alone is
 /// forgotten, a crash loses none. At most every `RECORD_EVERY`: a change
-/// within it is recorded when it ends, by a timer.
-fn record_windows(cx: &mut App) {
+/// within it is recorded when it ends, by a timer. Each wake asks, and
+/// what changes with no wake (a window moved) asks too.
+pub(crate) fn record_windows(cx: &mut App) {
     let state = cx.global_mut::<Finishing>();
     let now = Instant::now();
     if let Some(at) = state.recording.at
@@ -1026,14 +1027,15 @@ pub(crate) fn reopen(cx: &mut App, opening: Option<Opening>, activity: bool) {
     }
 }
 
-/// How far a window opened beside others is put from the one opened
-/// before it, where the system lets a window say where it goes.
+/// How far a window opened beside another is put from it, where the
+/// system lets a window say where it goes.
 const CASCADE: f32 = 32.;
 
-/// Open a window drawing the core's window `id`, shaped as it was left
-/// (restored, reopened), else as the window it was made from, else as the
-/// window used last; `split` splits it as that was. What runs is shared:
-/// the program finished it without a window. Whether it opened.
+/// Open a window drawing the core's window `id`, shaped and placed as it
+/// was left (restored, reopened), else as the window it was made from,
+/// else as the window used last (`Placement::opening`); `split` splits it
+/// as that was. What runs is shared: the program finished it without a
+/// window. Whether it opened.
 fn open_window(
     cx: &mut App,
     id: WindowId,
@@ -1072,26 +1074,49 @@ fn open_window(
             .find(|(up, _)| *up == from)
             .map(|(_, handle)| *handle)
     });
-    let shape = own
-        .and_then(crate::session::from_value)
-        .or_else(|| source.and_then(|h| h.read(cx).ok().map(Shell::session)))
-        .or_else(|| crate::session::restore(&app));
+    // Its own shape, where it was (restored, reopened; a step from the
+    // others when it never said where); else the window it comes from, set
+    // a step from it; else the window used last, a step from it while
+    // windows are up, where it was when none is.
+    let up = !state.windows.is_empty();
+    let (shape, cascade) = match own.and_then(crate::session::from_value) {
+        Some(own) => {
+            let placed = own
+                .window
+                .as_ref()
+                .is_some_and(|window| window.at.is_some());
+            (Some(own), up && !placed)
+        }
+        None => match source.and_then(|h| h.read(cx).ok().map(Shell::session)) {
+            Some(source) => (Some(source), true),
+            None => (crate::session::restore(&app), up),
+        },
+    };
+    let placement = shape
+        .as_ref()
+        .and_then(|shape| shape.window.clone())
+        .unwrap_or(crate::session::Placement {
+            width: 1200.,
+            height: 800.,
+            maximized: false,
+            at: None,
+        });
+    let (displays, primary) = crate::session::Screen::all(cx);
+    let opening = placement.opening(
+        if cascade { CASCADE } else { 0. },
+        &displays,
+        primary.as_ref(),
+    );
     let start = crate::shell::Start {
         shape,
         split,
         first_frame,
+        placed: opening.asked,
     };
-    let size = gpui::size(gpui::px(1200.), gpui::px(800.));
-    let mut bounds = gpui::Bounds::centered(None, size, cx);
-    let up = state.windows.len();
-    if up > 0 {
-        let step = gpui::px(CASCADE * up as f32);
-        bounds.origin.x += step;
-        bounds.origin.y += step;
-    }
     let opened = cx.open_window(
         gpui::WindowOptions {
-            window_bounds: Some(gpui::WindowBounds::Windowed(bounds)),
+            window_bounds: Some(opening.bounds),
+            display_id: opening.display,
             titlebar: Some(gpui::TitlebarOptions {
                 title: Some("skwir".into()),
                 ..Default::default()

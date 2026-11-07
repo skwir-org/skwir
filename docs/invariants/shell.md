@@ -1467,6 +1467,18 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   and a crash loses none. A new window takes its own shape (restored,
   reopened), else its source window's, else `ui.session`, the shape of
   the window used last.
+- **Where a window was and how big** is in its shape
+  (`session::Placement`, ADR-122 point 7): its size as a window,
+  whether it was maximized, and its place with the display it was on (a
+  uuid and the display's bounds, in the coordinates gpui gives both on
+  that system). `Shell::window_moved` follows the bounds and remembers
+  them once they settle (500 ms), recording the windows itself: a move
+  wakes nothing. Maximized or on the whole screen, a window keeps the
+  windowed size and place it had before (`Placement::of`): X11 says only
+  the bounds it has. `Placement::opening` places a window: its place
+  while its display is there as it was, else centered on the main
+  display, its size fitted; a step from the window it comes from
+  (`finishing::CASCADE`). Wayland ignores a place asked.
 - **Launches come to the running program** (`skwir_platform::handover`,
   taken over from start to quit, `finishing::take_over`): only a launch
   of the same build, settings and state files, and display
@@ -1486,7 +1498,7 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
 
 ## What the window remembers
 
-- A window's shape (view, split and share, sidebar width and sections,
+- A window's shape (where it was and how big, view, split and share, sidebar width and sections,
   preview place and size, archive-member placement, Properties' folds,
   the types shown as their source, the active pane's Quick filters and
   timeline, what it measures and counts, which every pane starts with,

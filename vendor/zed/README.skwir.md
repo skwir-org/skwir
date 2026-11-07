@@ -83,6 +83,7 @@ carry: the script takes it from the Inter release Skwir's packages pin
 | `0048-glyph-rasterization-public` | `TextSystem::raster_bounds` and `rasterize_glyph` public | — |
 | `0049-drag-icon-scale` | A drag icon drawn at a scale is shown at its logical size (Wayland: a viewport, or the buffer's scale) | — |
 | `0050-drop-is-the-pointers` | A drag the platform brings into a window counts as the pointer's, so a window last used by keyboard takes its drop | — |
+| `0051-x11-window-place` | X11: a window opens where it is asked (program-specified position, static gravity, no 2 px nudge but at 0, 0), maximized or on the whole screen as asked before it maps (`_NET_WM_STATE` written), and says where it is on the root window, a resize included | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
 
@@ -818,6 +819,37 @@ withdrawn, ADR-122: the platforms do not all carry one); the drop from
 another application has the same cause.
 
 Test: `a_drop_lands_in_a_window_last_used_by_keyboard`.
+
+### 0051: A window's place on X11
+
+Skwir opens a window where it was (ADR-122). On X11 gpui could not:
+
+- **Where it opens**: no `WM_NORMAL_HINTS` position was given, so a
+  window manager placed it as it liked (openbox put a window asked at
+  50, 40 at 350, 157). The hints now give the position as the program's
+  with static gravity, the ICCCM's way of saying that the window itself,
+  not its frame, goes there: what `bounds` reads.
+- **No drift**: every window was created 2 px right of where it was
+  asked, a workaround for one opened at the default position (GNOME on
+  Ubuntu 22); one opened where it was left moved 2 px at each opening.
+  Created where asked; the check below it still moves one at 0, 0.
+- **Where it is**: a real `ConfigureNotify` says where the window is in
+  its parent, the window manager's frame, and gpui dropped the origin of
+  a resize; a synthetic one (the manager's, after a move) says where it
+  is on the root window. A real one's origin is now asked of the server
+  (`X11WindowStatePtr::root_origin`, `TranslateCoordinates`), a resize's
+  included.
+- **Maximized as asked**: gpui asks a window opened maximized (or on the
+  whole screen) to be so before it maps it, by a client message, which a
+  window manager takes only for a window it manages: it opened windowed.
+  Asked before mapping, the state is written as the window's
+  `_NET_WM_STATE` when it maps (`unmapped_states`), as the EWMH says.
+
+Checked on Xvfb under openbox 3.6 and with no window manager: windows
+opened where they were left, to the pixel, across restarts; a window moved
+and resized at once was read where it went; one maximized (wmctrl) opened
+maximized and went back to its own size and place. Not checked under
+GNOME's, KDE's or a tiling window manager.
 
 ## Adding or changing a patch
 

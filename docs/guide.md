@@ -40,7 +40,9 @@ work where the keyboard is, by topic.
   window pauses what another plays, which goes on from there when you
   play it again. `Ctrl+Shift+W` closes a
   window (`Ctrl+W` on its last tab too);
-  `Ctrl+Shift+T` brings it back with its tabs. Quit closes them all, and
+  `Ctrl+Shift+T` brings it back with its tabs, where it was. Windows come
+  back as big as they were, and where they were except on Wayland, where
+  the desktop places them. Quit closes them all, and
   with General › At startup set to come back, every window comes back as
   it was; a window you closed yourself does not. Skwir started again (a
   launcher, `skwir ~/Documents`, a browser's Show in Folder) opens a

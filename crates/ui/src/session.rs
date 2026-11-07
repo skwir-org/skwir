@@ -98,6 +98,211 @@ pub struct Session {
     /// The list's detail columns dragged to another width than their own,
     /// by `Column::key`.
     pub column_widths: std::collections::BTreeMap<String, f32>,
+    /// Where the window was and how big (ADR-122).
+    pub window: Option<Placement>,
+}
+
+/// Where a window was and how big, as file managers and browsers keep it
+/// (ADR-122): its size and whether it was maximized, on every system; its
+/// place, on the display it was on, where the system says where a window
+/// is and lets it say where it goes (X11, Windows, macOS: Wayland's
+/// compositor places windows itself and says nothing of where).
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Placement {
+    /// Its size as a window, not maximized nor on the whole screen, in
+    /// logical pixels.
+    pub width: f32,
+    pub height: f32,
+    #[serde(default)]
+    pub maximized: bool,
+    /// Its place, where the system says it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<At>,
+}
+
+/// A window's place on a display, in the coordinates the system gave for
+/// both: it holds while that display is there as it was.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct At {
+    pub x: f32,
+    pub y: f32,
+    /// The display (`PlatformDisplay::uuid`).
+    pub display: String,
+    /// The display's bounds then: x, y, width, height.
+    pub display_bounds: [f32; 4],
+}
+
+/// How small a window opens, whatever was written.
+const SMALLEST: (f32, f32) = (360., 240.);
+
+impl Placement {
+    /// Where `window` is now and how big, as gpui says; maximized or on
+    /// the whole screen, the size and place it had as a window `before`,
+    /// which it goes back to: X11 says only the bounds it has.
+    pub fn of(window: &gpui::Window, before: Option<&Placement>, cx: &gpui::App) -> Placement {
+        let (bounds, maximized) = match window.window_bounds() {
+            gpui::WindowBounds::Windowed(bounds) => (bounds, false),
+            gpui::WindowBounds::Maximized(bounds) => match before {
+                Some(before) => {
+                    return Placement {
+                        maximized: true,
+                        ..before.clone()
+                    };
+                }
+                None => (bounds, true),
+            },
+            gpui::WindowBounds::Fullscreen(bounds) => match before {
+                Some(before) => return before.clone(),
+                None => (bounds, false),
+            },
+        };
+        let at = window.display(cx).and_then(|display| {
+            let uuid = display.uuid().ok()?;
+            Some(At {
+                x: f32::from(bounds.origin.x),
+                y: f32::from(bounds.origin.y),
+                display: uuid.to_string(),
+                display_bounds: bounds_of(display.bounds()),
+            })
+        });
+        Placement {
+            width: f32::from(bounds.size.width),
+            height: f32::from(bounds.size.height),
+            maximized,
+            at,
+        }
+    }
+
+    /// The bounds a window opens with, taking this placement, and the
+    /// display it opens on: its own place while its display is there as it
+    /// was, else centered on the main display; `cascade` sets it a step
+    /// down and right of it, back to the display's corner where that
+    /// leaves it (a window made beside the one it comes from). Its size
+    /// fits on the display. Where the system places windows itself, it
+    /// does so whatever is asked.
+    pub fn opening(&self, cascade: f32, displays: &[Screen], primary: Option<&Screen>) -> Opening {
+        use gpui::{Bounds, point, px, size};
+        let kept = self.at.as_ref().and_then(|at| {
+            let display = displays.iter().find(|display| {
+                display.uuid.as_deref() == Some(at.display.as_str())
+                    && bounds_of(display.bounds)
+                        .iter()
+                        .zip(at.display_bounds)
+                        .all(|(now, then)| (now - then).abs() < 0.5)
+            })?;
+            Some((display, point(px(at.x), px(at.y))))
+        });
+        let display = kept.as_ref().map(|(display, _)| *display).or(primary);
+        let room = display.map(|display| display.visible);
+        let fits = |wanted: f32, smallest: f32, room: Option<f32>| {
+            let wanted = if wanted.is_finite() { wanted } else { 0. };
+            let at_most = room.unwrap_or(f32::MAX).max(smallest);
+            wanted.clamp(smallest, at_most)
+        };
+        let window = size(
+            px(fits(
+                self.width,
+                SMALLEST.0,
+                room.map(|r| f32::from(r.size.width)),
+            )),
+            px(fits(
+                self.height,
+                SMALLEST.1,
+                room.map(|r| f32::from(r.size.height)),
+            )),
+        );
+        let origin = match (&kept, room) {
+            (Some((_, origin)), _) => *origin,
+            (None, Some(room)) => room.center() - point(window.width / 2., window.height / 2.),
+            (None, None) => point(px(0.), px(0.)),
+        };
+        let mut bounds = Bounds::new(origin, window);
+        if cascade > 0. {
+            bounds.origin += point(px(cascade), px(cascade));
+            if let Some(room) = room
+                && (bounds.right() > room.right() || bounds.bottom() > room.bottom())
+            {
+                bounds.origin = room.origin;
+            }
+        }
+        let asked = Placement {
+            width: f32::from(bounds.size.width),
+            height: f32::from(bounds.size.height),
+            maximized: self.maximized,
+            at: display.and_then(|display| {
+                Some(At {
+                    x: f32::from(bounds.origin.x),
+                    y: f32::from(bounds.origin.y),
+                    display: display.uuid.clone()?,
+                    display_bounds: bounds_of(display.bounds),
+                })
+            }),
+        };
+        Opening {
+            bounds: if self.maximized {
+                gpui::WindowBounds::Maximized(bounds)
+            } else {
+                gpui::WindowBounds::Windowed(bounds)
+            },
+            display: display.map(|display| display.id),
+            asked,
+        }
+    }
+}
+
+/// How a window opens (`Placement::opening`).
+#[derive(Clone, Debug)]
+pub struct Opening {
+    pub bounds: gpui::WindowBounds,
+    pub display: Option<gpui::DisplayId>,
+    /// The placement that asks, which the window keeps while it opens
+    /// maximized (`Placement::of`).
+    pub asked: Placement,
+}
+
+/// What `Placement::opening` needs of a display, read from gpui's
+/// (`Screen::all`).
+#[derive(Clone, Debug)]
+pub struct Screen {
+    pub id: gpui::DisplayId,
+    /// `PlatformDisplay::uuid`, where the system names it.
+    pub uuid: Option<String>,
+    pub bounds: gpui::Bounds<gpui::Pixels>,
+    /// Without the desktop's panels and docks.
+    pub visible: gpui::Bounds<gpui::Pixels>,
+}
+
+impl Screen {
+    fn of(display: &dyn gpui::PlatformDisplay) -> Screen {
+        Screen {
+            id: display.id(),
+            uuid: display.uuid().ok().map(|uuid| uuid.to_string()),
+            bounds: display.bounds(),
+            visible: display.visible_bounds(),
+        }
+    }
+
+    /// The displays, and the main one.
+    pub fn all(cx: &gpui::App) -> (Vec<Screen>, Option<Screen>) {
+        let all = cx
+            .displays()
+            .iter()
+            .map(|display| Screen::of(&**display))
+            .collect();
+        (
+            all,
+            cx.primary_display().map(|display| Screen::of(&*display)),
+        )
+    }
+}
+
+fn bounds_of(bounds: gpui::Bounds<gpui::Pixels>) -> [f32; 4] {
+    [
+        f32::from(bounds.origin.x),
+        f32::from(bounds.origin.y),
+        f32::from(bounds.size.width),
+        f32::from(bounds.size.height),
+    ]
 }
 
 impl Shell {
@@ -148,6 +353,7 @@ impl Shell {
                     )
                 })
                 .collect(),
+            window: Some(self.placement.clone()),
         }
     }
 
@@ -221,6 +427,16 @@ impl Session {
             share(value);
         }
         self.column_widths.retain(|_, width| width.is_finite());
+        // A place that is no number is no place; a size is fitted where it
+        // opens (`Placement::opening`).
+        if let Some(window) = &mut self.window
+            && window
+                .at
+                .as_ref()
+                .is_some_and(|at| !(at.x.is_finite() && at.y.is_finite()))
+        {
+            window.at = None;
+        }
         self
     }
 
@@ -319,6 +535,118 @@ mod tests {
             (sparse.panes, sparse.preview_at),
             (Panes::Auto, Preview::Auto)
         );
+    }
+
+    fn rect(x: f32, y: f32, width: f32, height: f32) -> gpui::Bounds<gpui::Pixels> {
+        gpui::Bounds::new(
+            gpui::point(gpui::px(x), gpui::px(y)),
+            gpui::size(gpui::px(width), gpui::px(height)),
+        )
+    }
+
+    fn screen(id: u64, name: &str, bounds: gpui::Bounds<gpui::Pixels>) -> Screen {
+        Screen {
+            id: gpui::DisplayId::new(id),
+            uuid: Some(name.to_owned()),
+            bounds,
+            visible: bounds,
+        }
+    }
+
+    #[test]
+    fn a_window_opens_where_it_was_while_its_display_is_there() {
+        let main = screen(1, "main", rect(0., 0., 1920., 1080.));
+        let side = screen(2, "side", rect(1920., 0., 1280., 1024.));
+        let displays = [main.clone(), side.clone()];
+        let on_side = Placement {
+            width: 800.,
+            height: 600.,
+            maximized: false,
+            at: Some(At {
+                x: 2000.,
+                y: 100.,
+                display: "side".into(),
+                display_bounds: [1920., 0., 1280., 1024.],
+            }),
+        };
+        let windowed = |bounds: gpui::WindowBounds| match bounds {
+            gpui::WindowBounds::Windowed(bounds) => bounds,
+            other => panic!("not windowed: {other:?}"),
+        };
+
+        // Where it was, on its display.
+        let opened = on_side.opening(0., &displays, Some(&main));
+        assert_eq!(windowed(opened.bounds), rect(2000., 100., 800., 600.));
+        assert_eq!(opened.display, Some(side.id));
+        assert_eq!(opened.asked, on_side);
+
+        // A step from it; past the display's edge, back to its corner.
+        let opened = on_side.opening(32., &displays, Some(&main));
+        assert_eq!(windowed(opened.bounds), rect(2032., 132., 800., 600.));
+        let low = Placement {
+            at: Some(At {
+                y: 420.,
+                ..on_side.at.clone().unwrap()
+            }),
+            ..on_side.clone()
+        };
+        let opened = low.opening(32., &displays, Some(&main));
+        assert_eq!(windowed(opened.bounds), rect(1920., 0., 800., 600.));
+
+        // The display gone, or no longer as it was: centered on the main one.
+        let opened = on_side.opening(0., std::slice::from_ref(&main), Some(&main));
+        assert_eq!(windowed(opened.bounds), rect(560., 240., 800., 600.));
+        assert_eq!(opened.display, Some(main.id));
+        assert_eq!(
+            opened.asked.at.map(|at| at.display),
+            Some("main".to_owned())
+        );
+        let moved = screen(2, "side", rect(0., 1080., 1280., 1024.));
+        let opened = on_side.opening(0., &[main.clone(), moved], Some(&main));
+        assert_eq!(opened.display, Some(main.id));
+
+        // Its size fits the display; what is no size is the smallest.
+        let huge = Placement {
+            width: 5000.,
+            height: f32::NAN,
+            maximized: true,
+            at: None,
+        };
+        let opened = huge.opening(0., &displays, Some(&main));
+        let gpui::WindowBounds::Maximized(bounds) = opened.bounds else {
+            panic!("not maximized: {:?}", opened.bounds);
+        };
+        assert_eq!(bounds.size, rect(0., 0., 1920., 240.).size);
+    }
+
+    #[test]
+    fn a_place_survives_the_state_file_and_a_hand_that_breaks_it() {
+        let session = Session {
+            window: Some(Placement {
+                width: 900.,
+                height: 700.,
+                maximized: true,
+                at: Some(At {
+                    x: 10.,
+                    y: 20.,
+                    display: "a display".into(),
+                    display_bounds: [0., 0., 1920., 1080.],
+                }),
+            }),
+            ..Session::default()
+        };
+        let value = toml::Value::try_from(&session).unwrap();
+        assert_eq!(value.try_into::<Session>().unwrap(), session);
+        // Written before windows were placed: no place, as before.
+        let before: Session = toml::from_str("split = true").unwrap();
+        assert_eq!(before.window, None);
+        let edited: Session = toml::from_str(
+            "[window]\nwidth = 900.0\nheight = 700.0\n\
+             [window.at]\nx = nan\ny = 3.0\ndisplay = \"d\"\ndisplay_bounds = [0.0, 0.0, 10.0, 10.0]",
+        )
+        .unwrap();
+        let edited = edited.written();
+        assert_eq!(edited.window.map(|window| window.at), Some(None));
     }
 
     #[test]

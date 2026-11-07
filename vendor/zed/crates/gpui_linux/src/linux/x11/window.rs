@@ -289,6 +289,11 @@ pub struct X11WindowState {
     hovered: bool,
     force_render_after_recovery: bool,
     fullscreen: bool,
+    /// SKWIR: `_NET_WM_STATE` atoms asked before the window was mapped,
+    /// written as its property when it maps (`map_window`): a window
+    /// manager takes a client message only for a window it manages, and a
+    /// window opened maximized was not.
+    unmapped_states: Option<Vec<u32>>,
     client_side_decorations_supported: bool,
     decorations: WindowDecorations,
     edge_constraints: Option<EdgeConstraints>,
@@ -543,7 +548,7 @@ impl X11WindowState {
                     visual.depth,
                     x_window,
                     visual_set.root,
-                    bounds.origin.x.0 + 2,
+                    bounds.origin.x.0,
                     bounds.origin.y.0,
                     bounds.size.width.0,
                     bounds.size.height.0
@@ -553,7 +558,10 @@ impl X11WindowState {
                 visual.depth,
                 x_window,
                 visual_set.root,
-                (bounds.origin.x.0 + 2) as i16,
+                // SKWIR: where it was asked. Created 2 px right of it, a
+                // window opened where one was left moved 2 px at each
+                // opening; the one at the default position is moved below.
+                bounds.origin.x.0 as i16,
                 bounds.origin.y.0 as i16,
                 bounds.size.width.0 as u16,
                 bounds.size.height.0 as u16,
@@ -788,6 +796,17 @@ impl X11WindowState {
             // This prevents the window from being resized larger than what the GPU can render.
             let max_texture_size = renderer.max_texture_size();
             let mut size_hints = WmSizeHints::new();
+            // SKWIR: the window goes where it is asked, its own top left
+            // there and its frame around it (static gravity, the ICCCM's),
+            // as `bounds` reads it: without the hint a window manager
+            // places it as it likes, and one opened where it was left would
+            // be anywhere.
+            size_hints.position = Some((
+                x11rb::properties::WmSizeHintsSpecification::ProgramSpecified,
+                bounds.origin.x.0,
+                bounds.origin.y.0,
+            ));
+            size_hints.win_gravity = Some(xproto::Gravity::STATIC);
             if let Some(size) = params.window_min_size {
                 size_hints.min_size =
                     Some((f32::from(size.width) as i32, f32::from(size.height) as i32));
@@ -849,6 +868,7 @@ impl X11WindowState {
                 hovered: false,
                 force_render_after_recovery: false,
                 fullscreen: false,
+                unmapped_states: Some(Vec::new()),
                 maximized_vertical: false,
                 maximized_horizontal: false,
                 hidden: false,
@@ -993,6 +1013,23 @@ impl X11Window {
         prop1: u32,
         prop2: u32,
     ) -> anyhow::Result<()> {
+        // SKWIR: not mapped yet, the window says it in its property
+        // (`map_window`), as the EWMH asks of a window not managed yet.
+        if let Some(asked) = self.0.state.borrow_mut().unmapped_states.as_mut() {
+            let WmHintPropertyState::Toggle = wm_hint_property_state;
+            for atom in [prop1, prop2] {
+                if atom == u32::from(xproto::AtomEnum::NONE) {
+                    continue;
+                }
+                match asked.iter().position(|had| *had == atom) {
+                    Some(at) => {
+                        asked.remove(at);
+                    }
+                    None => asked.push(atom),
+                }
+            }
+            return Ok(());
+        }
         let state = self.0.state.borrow();
         let message = ClientMessageEvent::new(
             32,
@@ -1069,6 +1106,19 @@ impl X11Window {
 }
 
 impl X11WindowStatePtr {
+    /// SKWIR: where the window's top left is on its root window, asked of
+    /// the server (a real ConfigureNotify says where it is in its parent).
+    pub fn root_origin(&self) -> Option<(i16, i16)> {
+        let root = self.state.borrow().x_root_window;
+        let reply = self
+            .xcb
+            .translate_coordinates(self.x_window, root, 0, 0)
+            .ok()?
+            .reply()
+            .ok()?;
+        Some((reply.dst_x, reply.dst_y))
+    }
+
     pub fn should_close(&self) -> bool {
         let mut cb = self.callbacks.borrow_mut();
         if let Some(mut should_close) = cb.should_close.take() {
@@ -1310,7 +1360,9 @@ impl X11WindowStatePtr {
         bounds.map(|b| b.scale(scale_factor))
     }
 
-    pub fn set_bounds(&self, bounds: Bounds<i32>) -> anyhow::Result<()> {
+    /// SKWIR: `rooted` says whether `bounds.origin` is on the root window
+    /// (a synthetic event's, or translated), else it is kept as it was.
+    pub fn set_bounds(&self, bounds: Bounds<i32>, rooted: bool) -> anyhow::Result<()> {
         let (is_resize, content_size, scale_factor) = {
             let mut state = self.state.borrow_mut();
             let bounds = bounds.map(|f| px(f as f32 / state.scale_factor));
@@ -1318,12 +1370,14 @@ impl X11WindowStatePtr {
             let is_resize = bounds.size.width != state.bounds.size.width
                 || bounds.size.height != state.bounds.size.height;
 
-            // If it's a resize event (only width/height changed), we ignore `bounds.origin`
-            // because it contains wrong values.
-            if is_resize {
-                state.bounds.size = bounds.size;
-            } else {
+            // SKWIR: a window manager's frame makes a real event's origin
+            // its place in the frame: only one on the root window is taken,
+            // a resize's included (dragged by its top left, the window
+            // moved too).
+            if rooted {
                 state.bounds = bounds;
+            } else {
+                state.bounds.size = bounds.size;
             }
 
             let gpu_size = query_render_extent(&self.xcb, self.x_window)?;
@@ -1643,6 +1697,22 @@ impl PlatformWindow for X11Window {
     }
 
     fn map_window(&mut self) -> anyhow::Result<()> {
+        // SKWIR: what was asked before mapping (maximized, the whole
+        // screen) is the window's state as the window manager first sees it.
+        let asked = self.0.state.borrow_mut().unmapped_states.take();
+        if let Some(asked) = asked.filter(|asked| !asked.is_empty()) {
+            let property = self.0.state.borrow().atoms._NET_WM_STATE;
+            check_reply(
+                || "X11 ChangeProperty for _NET_WM_STATE failed.",
+                self.0.xcb.change_property32(
+                    xproto::PropMode::REPLACE,
+                    self.0.x_window,
+                    property,
+                    xproto::AtomEnum::ATOM,
+                    &asked,
+                ),
+            )?;
+        }
         check_reply(
             || "X11 MapWindow failed.",
             self.0.xcb.map_window(self.0.x_window),
@@ -1700,22 +1770,23 @@ impl PlatformWindow for X11Window {
     }
 
     fn zoom(&self) {
-        let state = self.0.state.borrow();
+        // SKWIR: the state let go of first, which `set_wm_hints` may change.
+        let atoms = self.0.state.borrow().atoms;
         self.set_wm_hints(
             || "X11 SendEvent to maximize a window failed.",
             WmHintPropertyState::Toggle,
-            state.atoms._NET_WM_STATE_MAXIMIZED_VERT,
-            state.atoms._NET_WM_STATE_MAXIMIZED_HORZ,
+            atoms._NET_WM_STATE_MAXIMIZED_VERT,
+            atoms._NET_WM_STATE_MAXIMIZED_HORZ,
         )
         .log_err();
     }
 
     fn toggle_fullscreen(&self) {
-        let state = self.0.state.borrow();
+        let atoms = self.0.state.borrow().atoms;
         self.set_wm_hints(
             || "X11 SendEvent to fullscreen a window failed.",
             WmHintPropertyState::Toggle,
-            state.atoms._NET_WM_STATE_FULLSCREEN,
+            atoms._NET_WM_STATE_FULLSCREEN,
             xproto::AtomEnum::NONE.into(),
         )
         .log_err();

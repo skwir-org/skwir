@@ -86,7 +86,10 @@
   Ctrl+Z in any window undoes the last thing done anywhere; one Activity; one
   plays at a time (a play started in a window pauses another's where it is, to
   go on from there when played again; closing a window stops what it plays);
-  one Settings dialog. Each window has its own tabs, split, panels and
+  one Settings dialog. Each window comes back where it was and as big,
+  maximized if it was (where it was only where the system lets a program
+  say: not on Wayland, whose compositor places windows), and a new window
+  takes the size of the one it comes from, a step from it. Each window has its own tabs, split, panels and
   look; what an action did is shown, and its toast said, in the window that
   asked. Ctrl+Shift+W closes a window, as Ctrl+W does on its last tab (the
   last window too, as its close button does); Ctrl+Shift+T brings it back with its tabs. With At startup

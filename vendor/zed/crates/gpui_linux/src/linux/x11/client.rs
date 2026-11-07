@@ -1079,19 +1079,28 @@ impl X11Client {
                 }
             }
             Event::ConfigureNotify(event) => {
+                // SKWIR: a window manager's synthetic event says where the
+                // window is on the root window; a real one, where it is in
+                // its parent (the manager's frame): asked of the root window.
+                let window = self.get_window(event.window)?;
+                let synthetic = event.response_type & 0x80 != 0;
+                let (x, y, rooted) = match (synthetic, window.root_origin()) {
+                    (true, _) => (event.x, event.y, true),
+                    (false, Some((x, y))) => (x, y, true),
+                    (false, None) => (event.x, event.y, false),
+                };
                 let bounds = Bounds {
                     origin: Point {
-                        x: event.x.into(),
-                        y: event.y.into(),
+                        x: x.into(),
+                        y: y.into(),
                     },
                     size: Size {
                         width: event.width.into(),
                         height: event.height.into(),
                     },
                 };
-                let window = self.get_window(event.window)?;
                 window
-                    .set_bounds(bounds)
+                    .set_bounds(bounds, rooted)
                     .context("X11: Failed to set window bounds")
                     .log_err();
             }

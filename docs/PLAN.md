@@ -797,8 +797,10 @@ closes an item removes its line; work that leaves one adds it here.
 
 **Windows** (ADR-122, 2026-11-07): a wake redraws every window;
 telling which windows a wake concerns needs wakers of their own (media
-frames, previews, thumbnails by asker). Each window's position is not
-remembered (its size neither: a window opens at 1200 × 800). A tab
+frames, previews, thumbnails by asker). A window's place on Windows and
+macOS is gpui's, as Zed has it, compiled only (X11's checked under
+openbox and with no window manager, gpui patch 0051; not under GNOME's
+or KDE's). A tab
 dragged between windows needs gpui to carry a drag out of a window on
 every system (the pointer's grab on X11 and Windows, a dragging session
 on macOS; Wayland's own) before it comes back (ADR-122, Rejected).

@@ -515,6 +515,11 @@ pub struct Shell {
     /// `None` until the last window's shape was read (`restore_session`):
     /// until then nothing is written.
     pub(crate) stored_session: Option<crate::session::Session>,
+    /// Where the window is and how big (`Session::window`), followed as it
+    /// moves and is resized, and remembered once it stays a moment
+    /// (`window_moved`).
+    pub(crate) placement: crate::session::Placement,
+    placement_wait: Option<gpui::Task<()>>,
     /// Scroll position of the sidebar, so it can have a scrollbar.
     pub sidebar_scroll: gpui::ScrollHandle,
     /// The sidebar's keyboard (F6): its focus and its cursor.
@@ -554,6 +559,7 @@ impl Shell {
             shape,
             split,
             first_frame,
+            placed,
         } = start;
         let theme = Theme::resolve(&app, window.appearance(), cx.text_system());
         tracing::info!(
@@ -577,6 +583,7 @@ impl Shell {
             cx.notify();
         }));
         subs.push(cx.observe_pending_input(window, Self::on_pending_input));
+        subs.push(cx.observe_window_bounds(window, Self::window_moved));
         // A server does not say what changed on it: the folders shown on a
         // remote are read again as the window comes back (ADR-077).
         subs.push(cx.observe_window_activation(window, |this, window, cx| {
@@ -787,6 +794,8 @@ impl Shell {
             front_waiting: VecDeque::new(),
             links: crate::links::LinkState::default(),
             stored_session: None,
+            placement: crate::session::Placement::of(window, Some(&placed), cx),
+            placement_wait: None,
             sidebar_scroll: gpui::ScrollHandle::new(),
             sidebar_keys: crate::sidebar::Keys::new(cx.focus_handle()),
             first_frame: Some(first_frame),
@@ -943,6 +952,22 @@ impl Shell {
         }
         self.stored_session = Some(self.session());
         self.keep_shape();
+    }
+
+    /// The window moved or was resized: where it is now, remembered once it
+    /// stays half a second, not at each step of a drag.
+    fn window_moved(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.placement = crate::session::Placement::of(window, Some(&self.placement), cx);
+        self.placement_wait = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(500))
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.remember_session();
+                // No wake records it: moving a window wakes nothing.
+                crate::finishing::record_windows(cx);
+            });
+        }));
     }
 
     /// The shape this window starts with, kept with its tabs from the
@@ -3700,6 +3725,9 @@ pub(crate) struct Start {
     pub(crate) shape: Option<crate::session::Session>,
     pub(crate) split: bool,
     pub(crate) first_frame: FirstFrame,
+    /// Where and how big it was asked to open: what it keeps while it opens
+    /// maximized (`Placement::of`).
+    pub(crate) placed: crate::session::Placement,
 }
 
 /// What a pane's window carries to the window its tab moves to (ADR-122):

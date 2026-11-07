@@ -98,6 +98,22 @@ ADR-115 (one process for every window; launches always handed over).
    (`core.last_tabs`) come back as one window and are forgotten once
    windows are written. The shape a new window takes without a window to
    take it from stays `ui.session`, the last used window's.
+7. **Where a window was and how big** is part of its shape, as file
+   managers and browsers keep it: its size as a window and whether it was
+   maximized on every system; its place on its display where the system
+   says where a window is and lets it say where it goes (X11, Windows,
+   macOS), Wayland's compositor placing windows itself. A window comes
+   back as it was (maximized, it keeps the size it goes back to), its
+   place held while its display is there as it was, else centered on the
+   main display, its size fitted to the display. One made from another
+   (Ctrl+N, Open in New Window, a tab moved out) takes that window's size,
+   a step down and right of it (32 px, back to the display's corner past
+   its edge); one with no window to take from takes the window used
+   last's, a step from it while windows are up. Remembered as a move or a
+   resize settles, not at each step of a drag. Nautilus and Thunar keep
+   the last size alone, Dolphin its size and, where the system lets it,
+   its place; Finder, Explorer and the browsers each window's size and
+   place.
 
 ## Rejected
 
@@ -133,9 +149,10 @@ ADR-115 (one process for every window; launches always handed over).
   state.
 - An extra window costs its panes' listings, its surface and its atlas,
   not a program.
-- A window opens at 1200 × 800, set a little apart from the one before
-  where the system lets it say where it goes (not on Wayland): neither
-  its size nor its position is remembered yet.
+- A window opens where it was and as big (point 7), 1200 × 800 when
+  nothing says otherwise. On X11 gpui asked no place and read a place
+  in its window manager's frame: gpui patch 0051 asks it, reads it on
+  the root window, and opens a window maximized as asked.
 
 ## Built
 
@@ -165,3 +182,9 @@ ADR-115 (one process for every window; launches always handed over).
   behaviour differing by system (Rejected). What stays of 0050: a drag
   the platform brings in is the pointer's, so a window last used by
   keyboard takes a drop from another application.
+- 2026-11-07, follow-ups: Ctrl+W on the last tab of the last window
+  closes it (`Shell::closes_last_window`); a play started in a window
+  pauses another's (`Shell::pause_playing`, `SeenPlaying`); where a
+  window was and how big (`session::Placement`, `Placement::opening`,
+  `Shell::window_moved`; gpui patch 0051 for X11). Checked on Xvfb, with
+  openbox and without a window manager, and on a headless sway.

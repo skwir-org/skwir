@@ -12476,3 +12476,36 @@ The user's follow-ups to ADR-122 after its four steps.
   `media_started`) took the player back and paused the new window at
   0:04. Not checked: the desktop's media keys (no session bus there).
   **Checked:** clippy on skwir-ui and skwir, skwir-ui's tests (558).
+- **Where a window was and how big** (ADR-122 point 7): what file managers
+  do was looked up first: Nautilus and Thunar keep the last window's size
+  and whether it was maximized, not its place (GNOME leaves placing to
+  the window manager); Dolphin its size per screen and, on X11 and
+  Windows, its place; Finder, Explorer and the browsers each window's
+  size and place in their session. Skwir now keeps, in each window's
+  shape, its size as a window, whether it was maximized, and its place
+  with the display it was on (`session::Placement`); it opens there
+  while that display is there as it was, else centered on the main
+  display, its size fitted (`Placement::opening`, unit-tested); a window
+  made from another takes its size a step from it. Found on the way, in
+  gpui's X11 backend (patch 0051): no position was asked of the window
+  manager (openbox placed windows as it liked), every window was created
+  2 px right of where it was asked (a drift at each restore), a resize's
+  origin was dropped, and a window opened maximized opened windowed (the
+  request sent before the window mapped). And in Skwir: a move wakes
+  nothing, so the windows were not recorded until something else woke
+  them (`Shell::window_moved` records them); X11 says only a maximized
+  window's maximized bounds, so a window keeps the windowed ones it had
+  (`Placement::of`). **Seen** on Xvfb :95 (debug build): with no window
+  manager, two windows moved and resized by xdotool came back to the
+  pixel across two restarts; under openbox, windows came back where they
+  were (900 × 700 at 101, 100; 800 × 600 at 1, 395), one moved and resized
+  at once (700 × 500 at 400, 300) too, Ctrl+N opened a window of the same
+  size 32 px down and right, one maximized with wmctrl came back maximized
+  and, un-maximized, went back to 640 × 480 at 600, 250. On a headless
+  sway 1.12 (floating windows), a window resized to 720 × 520 came back
+  at that size, placed by sway. **Checked:** clippy on skwir-ui and
+  skwir, for Linux and Windows; skwir-ui's tests (560), among them
+  `a_window_opens_where_it_was_while_its_display_is_there` and
+  `a_place_survives_the_state_file_and_a_hand_that_breaks_it`. Not
+  checked: Windows and macOS (gpui's own placement, compiled only),
+  GNOME's, KDE's or a tiling window manager on X11, Hyprland.
