@@ -5151,7 +5151,7 @@ fn under_card(
     }
     let body = body(shell, theme, interactive, grounds, cx);
     let body = if kept {
-        crate::members::split(body, wide, shell, grounds, cx)
+        crate::members::split(body, wide, None, shell, grounds, cx)
     } else {
         body
     };
@@ -5175,6 +5175,103 @@ fn under_card(
         } else {
             body
         })
+        .into_any_element()
+}
+
+/// What `under_card` holds, as cards on the frame (`Theme::cards`, ADR-123),
+/// the header (`heading`) heading the first: Properties' (the header
+/// with it), the preview's (its toolbar and content), or a container's kept
+/// rows and its member's (`members::split`). Each pair is apart by a
+/// gutter that is the edge between them; with nothing to preview, Properties
+/// as tall as it says and the reason under it, apart by a gutter alone.
+#[allow(clippy::too_many_arguments)] // `under_card`'s, and the header
+fn cards_under(
+    shell: &Shell,
+    theme: &Theme,
+    previews: bool,
+    interactive: bool,
+    wide: bool,
+    grounds: crate::theme::Grounds,
+    heading: AnyElement,
+    cx: &mut Context<Shell>,
+) -> AnyElement {
+    use crate::properties::Room;
+    let kept = interactive && shell.preview.parked().is_some();
+    let room = crate::properties::room(shell, previews, wide);
+    // Properties fills its card, which takes the room's size.
+    let inner = match room {
+        Room::Panel | Room::Beside => Room::Panel,
+        Room::Whole | Room::Above => Room::Whole,
+    };
+    let details = Some(())
+        .filter(|()| interactive || matches!(room, Room::Panel | Room::Whole))
+        .and_then(|()| crate::properties::render(shell, theme, inner, grounds, cx));
+    // A card's header or toolbar is a band of the chrome, what it holds at
+    // the preview's opacity.
+    let (chrome, read) = (theme.opacity.interface, theme.opacity.preview);
+    let banded = gpui::Corners {
+        top_left: chrome,
+        top_right: chrome,
+        bottom_right: read,
+        bottom_left: read,
+    };
+    let column = || div().min_h_0().min_w_0().flex().flex_col();
+    if !previews {
+        let card = column().flex_1().child(heading);
+        let card = match details {
+            Some(details) => card.child(details),
+            None => card.child(div().flex_1().bg(grounds.read)),
+        };
+        return crate::elements::frame::card(&shell.frame_cards, banded, card).into_any_element();
+    }
+    let body = body(shell, theme, interactive, grounds, cx);
+    let Some(details) = details else {
+        return if kept {
+            crate::members::split(body, wide, Some(heading), shell, grounds, cx)
+        } else {
+            let card = column().flex_1().child(heading).child(body);
+            crate::elements::frame::card(&shell.frame_cards, banded, card).into_any_element()
+        };
+    };
+    let share = shell.preview.properties_share.get(room == Room::Beside);
+    let top = column().child(heading).child(details);
+    let top = match room {
+        Room::Above => top.flex_initial().max_h(gpui::relative(share)),
+        Room::Beside => top.flex_none().h_full().w(gpui::relative(share)),
+        Room::Whole | Room::Panel => top.flex_initial(),
+    };
+    let rest = if kept {
+        crate::members::split(body, wide, None, shell, grounds, cx)
+    } else {
+        let card = column().relative().flex_1().child(body);
+        crate::elements::frame::card(&shell.frame_cards, banded, card).into_any_element()
+    };
+    let over = matches!(room, Room::Above | Room::Beside);
+    let beside = room == Room::Beside;
+    let between = if over {
+        crate::properties::gutter(room, cx)
+    } else {
+        div()
+            .flex_none()
+            .h(px(crate::elements::frame::GUTTER))
+            .into_any_element()
+    };
+    div()
+        .flex_1()
+        .min_h_0()
+        .min_w_0()
+        .flex()
+        .when(!beside, gpui::Styled::flex_col)
+        .when(over, |d| {
+            d.on_drag_move(cx.listener(Shell::on_properties_drag))
+        })
+        .child(crate::elements::frame::card(
+            &shell.frame_cards,
+            banded,
+            top,
+        ))
+        .child(between)
+        .child(rest)
         .into_any_element()
 }
 
@@ -6450,26 +6547,40 @@ pub fn render_panel(
     // While peek shows the preview, the panel is only a picture of it: the
     // kept rows, which take the keyboard, are drawn in peek alone.
     let interactive = !shell.preview.peek;
-    let body = under_card(
-        shell,
-        &theme,
-        shell.preview.preview_on,
-        interactive,
-        bottom,
-        theme.preview_grounds(),
-        cx,
-    );
-    let content = div()
-        .flex()
-        .flex_col()
-        .child(header(
+    let heading = header(shell, &theme, false, Some(theme.window_surface()), cx);
+    // As cards, what it holds is cards of their own, the header heading the
+    // first (`cards_under`).
+    let content = if theme.cards {
+        cards_under(
             shell,
             &theme,
-            false,
-            Some(theme.window_surface()),
+            shell.preview.preview_on,
+            interactive,
+            bottom,
+            theme.preview_grounds(),
+            heading,
             cx,
-        ))
-        .child(body);
+        )
+    } else {
+        let body = under_card(
+            shell,
+            &theme,
+            shell.preview.preview_on,
+            interactive,
+            bottom,
+            theme.preview_grounds(),
+            cx,
+        );
+        div()
+            .flex()
+            .flex_col()
+            .child(heading)
+            .child(body)
+            .flex_1()
+            .min_h_0()
+            .w_full()
+            .into_any_element()
+    };
     // At the right, the panel's own bar mirrors the sidebar's header: as
     // tall as a pane's row, their edges meeting, with Split, Properties and
     // Preview at the window's edge (`Shell::toggles_at`), saying their
@@ -6545,30 +6656,25 @@ pub fn render_panel(
         (bar, None)
     };
     let dock = crate::dock::render(shell, dock_limit, cx);
-    // How opaque the card is at its corners: its header at the top, at its
-    // foot what it shows, or the dock.
-    let foot = if dock.is_some() {
-        theme.opacity.interface
-    } else {
-        theme.opacity.preview
-    };
-    let under = gpui::Corners {
-        top_left: theme.opacity.interface,
-        top_right: theme.opacity.interface,
-        bottom_right: foot,
-        bottom_left: foot,
-    };
-    let panel = panel
-        .flex_col()
-        .children(bar)
-        .child(content.flex_1().min_h_0().w_full())
-        .children(dock);
+    let panel = panel.flex_col().children(bar).child(content);
     if !theme.cards {
-        return Some(panel.child(handle).into_any_element());
+        return Some(panel.children(dock).child(handle).into_any_element());
     }
-    // A card, the gutter before it its edge, the window's buttons above it
-    // at the right: its top level with the files' under the panes' rows.
-    let card = crate::elements::frame::card(&shell.frame_cards, under, panel);
+    // The pinned player a card of its own, under a gutter that is its edge.
+    let panel = match dock {
+        Some(dock) => panel
+            .child(shell.dock_gutter(cx))
+            .child(crate::elements::frame::card(
+                &shell.frame_cards,
+                gpui::Corners::all(theme.opacity.interface),
+                dock,
+            )),
+        None => panel,
+    };
+    // The gutter before it its edge, the window's buttons above it at the
+    // right: its first card's top level with the files' under the panes'
+    // rows.
+    let card = panel;
     let card = match above {
         Some(above) => div()
             .h_full()

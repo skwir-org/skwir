@@ -12992,3 +12992,28 @@ amended).
   `under`; 0055 applied with `git apply` on the vendored tree as
   committed gives it back; fmt; clippy on skwir-ui; its tests (567).
 
+## 2026-11-07: The preview panel's parts as cards (ADR-123 amended)
+
+- **Asked:** Properties and the preview as two cards; the pinned player
+  too; built "all of it", the archive view's split included.
+- **Built:** `preview::cards_under` (as cards, in place of `under_card`
+  and the panel's one card): Properties' card with the header (sized by
+  the room, Properties filling it: `Room::Whole` or `Panel` inside), the
+  preview's with its toolbar, `members::split` as two cards (the header
+  heading the kept rows while Properties is off), the pinned player under
+  `Shell::dock_gutter`; `properties::gutter`; the member's edge a gutter;
+  the drags (Properties', the member's, the dock's) measured from the
+  gutter's middle; no line in Properties, the kept rows or the dock as
+  cards. Each card's `under`: the chrome's where a header, toolbar or bar
+  is, the preview's where what it shows is.
+- **Seen** on Xvfb :95, the dark look, a synthetic home with an archive
+  (made with bsdtar) and a tone (a WAV written by Python's `wave`):
+  Properties over a picture's preview, two cards; the archive's listing
+  with a member open, three cards (Properties, the rows, the member), then
+  two with Properties off, the header heading the rows; a track played
+  and the selection moved, the pinned player a card under its gutter;
+  the panel at the bottom (the window made taller than wide), the header
+  and Properties a card at the preview's left; a folder, Properties as
+  tall as it says over the reason's card.
+- **Checked:** fmt; clippy on skwir-ui; its tests (567).
+

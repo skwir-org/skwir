@@ -52,8 +52,9 @@ only; amended the same evening as tried (Amendments). Amends ADR-071
    frame, as far as its text still reads. Apart by lines, no token
    changes.
 3. **What is a card**: each pane (its row, its files, its timeline, its
-   footer), the preview panel (its header, content and dock) and the
-   terminal. A card keeps what it holds within its corners
+   footer), each part of the preview panel (Properties with the header,
+   the preview with its toolbar, a container's kept rows and the member
+   it shows, the pinned player) and the terminal. A card keeps what it holds within its corners
    (`frame::card`, a rounded content mask: gpui patch 0053). Its row and
    its footer are bands of `surface` over it, no line between them and
    the files. The sidebar, its header and the tab strip lie on the frame
@@ -168,3 +169,23 @@ preview's bar, inside the cards. Tried by the user the same evening:
   trying raised and underlined with a shadow on the frame, whose shadow
   the user had removed;
 - the footers are bands, as the rows are.
+
+### 2026-11-07: the preview panel's parts as cards
+
+- **Asked** (the user): Properties and the preview as two cards, the
+  design's language; then the pinned player too.
+- **Decided:** what the panel holds is cards of their own, each pair
+  apart by a gutter that is the edge dragged between them, measured from
+  its middle (`preview::cards_under`): Properties with the header heading
+  it, over the preview (beside it with the panel at the bottom, the
+  header then as narrow as its column); the preview with its toolbar; a
+  container's kept rows and its member's preview (`members::split`), the
+  header heading the rows while Properties is off; the pinned player
+  (`dock`) under the gutter that is its edge. The header heads the first
+  card, whichever it is. With nothing to preview, Properties as tall as
+  it says and the reason under it, apart by a gutter alone. Each says how
+  opaque it is at its corners: a header, a toolbar or a bar is the
+  chrome's, what it shows the preview's.
+- **Consequences:** a gutter more (6 px) between each two of them; no
+  line inside the panel. Peek, drawn over the window, keeps its own.
+

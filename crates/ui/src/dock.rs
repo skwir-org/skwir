@@ -94,9 +94,22 @@ impl Shell {
     ) {
         // The panel reaches the window's foot, at the right or the bottom.
         let bottom = f32::from(window.viewport_size().height);
-        let y = f32::from(ev.event.position.y);
+        // As a card, the pointer in the middle of the gutter above it.
+        let y = f32::from(ev.event.position.y) + crate::terminal::half_gutter(cx);
         self.player.height = (bottom - y).clamp(COMPACT, self.dock_height_limit(window));
         cx.notify();
+    }
+
+    /// The dock's edge as a card (`Theme::cards`): the gutter above it.
+    pub(crate) fn dock_gutter(&self, cx: &mut Context<Self>) -> AnyElement {
+        crate::elements::edge::gutter(
+            "dock-resize",
+            crate::elements::edge::Side::Top,
+            DockHandle,
+            |this| this.player.height = COMPACT,
+            cx,
+        )
+        .into_any_element()
     }
 
     /// Whether the dock is drawn: a pin, the panel open, and no preview
@@ -296,8 +309,8 @@ pub fn render(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Option<AnyE
         .h(px(height))
         .flex()
         .flex_col()
-        .border_t_1()
-        .border_color(theme.border)
+        // As cards, a card of its own under a gutter (`dock_gutter`).
+        .when(theme.lines(), |d| d.border_t_1().border_color(theme.border))
         // One of the panel's parts: the window's own ground.
         .bg(theme.window_surface())
         .key_context(crate::keymap::PLAYER);
@@ -315,7 +328,7 @@ pub fn render(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Option<AnyE
             .children(caption)
             .child(transport)
             .children(menu)
-            .child(handle)
+            .when(theme.lines(), |d| d.child(handle))
             .into_any_element(),
     )
 }

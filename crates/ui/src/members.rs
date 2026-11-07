@@ -93,6 +93,7 @@ pub fn title(shell: &Shell) -> Option<(String, Option<String>)> {
 pub fn split(
     body: AnyElement,
     wide: bool,
+    top: Option<AnyElement>,
     shell: &Shell,
     grounds: crate::theme::Grounds,
     cx: &mut Context<Shell>,
@@ -100,6 +101,8 @@ pub fn split(
     let Some(parked) = shown(shell) else {
         return body;
     };
+    let cards = cx.global::<Theme>().cards;
+    let headed = top.is_some();
     let beside = shell.layout.member.beside(wide);
     let share = shell.preview.members_share.get(beside);
     let theme = cx.global::<Theme>().clone();
@@ -115,14 +118,17 @@ pub fn split(
             d.w(relative(share))
                 .h_full()
                 .min_w(px(keep(&theme, true)))
-                .border_r_1()
+                .when(!cards, gpui::Styled::border_r_1)
         })
         .when(!beside, |d| {
             d.h(relative(share))
                 .w_full()
                 .min_h(px(keep(&theme, false)))
-                .border_b_1()
+                .when(!cards, gpui::Styled::border_b_1)
         })
+        // As cards, the header heads the container's card when it is the
+        // panel's first (`preview::cards_under`).
+        .children(top)
         .child(inspector::parked(shell, &theme, grounds, cx));
     // The body grew in the panel's column; it keeps a column of its own,
     // and room to be looked at however the panel narrows. Its focus handle
@@ -140,33 +146,75 @@ pub fn split(
         .flex()
         .flex_col()
         .child(body)
-        .child(edge(beside, cx));
-    div()
+        .when(!cards, |d| d.child(edge(beside, cx)));
+    let split = div()
         .key_context(keymap::MEMBER)
         .flex_1()
         .min_h_0()
         .min_w_0()
         .flex()
         .when(!beside, gpui::Styled::flex_col)
-        .on_drag_move(cx.listener(Shell::on_members_drag))
-        .child(container)
-        .child(member)
+        .on_drag_move(cx.listener(Shell::on_members_drag));
+    if !cards {
+        return split.child(container).child(member).into_any_element();
+    }
+    // Two cards, the gutter between them the edge dragged: the kept rows
+    // and the member's preview, each on its ground at the preview's
+    // opacity, the member's bar a band of the chrome.
+    let (chrome, read) = (theme.opacity.interface, theme.opacity.preview);
+    let card = |under: gpui::Corners<f32>, child: gpui::Stateful<gpui::Div>| {
+        crate::elements::frame::card(&shell.frame_cards, under, child)
+    };
+    let top_under = if headed { chrome } else { read };
+    split
+        .child(card(
+            gpui::Corners {
+                top_left: top_under,
+                top_right: top_under,
+                bottom_right: read,
+                bottom_left: read,
+            },
+            container,
+        ))
+        .child(edge(beside, cx))
+        .child(card(
+            gpui::Corners {
+                top_left: chrome,
+                top_right: chrome,
+                bottom_right: read,
+                bottom_left: read,
+            },
+            member,
+        ))
         .into_any_element()
 }
 
 /// The draggable edge at the start of the member's preview, over the
 /// border that sets it apart from the container.
 fn edge(beside: bool, cx: &mut Context<Shell>) -> AnyElement {
-    use crate::elements::edge::{Side, edge};
+    use crate::elements::edge::{Side, edge, gutter};
     let side = if beside { Side::Left } else { Side::Top };
-    edge(
-        "preview-members-resize",
-        side,
-        MembersResize { beside },
-        move |this| this.preview.members_share.set(beside, SHARE),
-        cx,
-    )
-    .into_any_element()
+    let reset = move |this: &mut Shell| this.preview.members_share.set(beside, SHARE);
+    // As cards, the gutter between the container's card and the member's.
+    if cx.global::<Theme>().cards {
+        gutter(
+            "preview-members-resize",
+            side,
+            MembersResize { beside },
+            reset,
+            cx,
+        )
+        .into_any_element()
+    } else {
+        edge(
+            "preview-members-resize",
+            side,
+            MembersResize { beside },
+            reset,
+            cx,
+        )
+        .into_any_element()
+    }
 }
 
 impl Shell {
@@ -186,6 +234,9 @@ impl Shell {
         } else {
             (ev.event.position.y - ev.bounds.top(), ev.bounds.size.height)
         };
+        // As cards, the pointer at the middle of the gutter between them.
+        let half = gpui::px(crate::terminal::half_gutter(cx));
+        let (along, size) = (along - half, size - half * 2.);
         if let Some(share) =
             crate::elements::edge::share(f32::from(along), f32::from(size), keep, SHARE)
         {

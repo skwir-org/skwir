@@ -1728,18 +1728,21 @@ pub fn render(
         .min_h_0()
         .bg(grounds.read)
         .border_color(theme.border);
+    // As cards, the card around it takes the room's size
+    // (`preview::cards_under`), and a gutter sets it apart.
+    let lines = theme.lines();
     let section = match room {
         Room::Panel => section.flex_1(),
-        Room::Whole => section.flex_initial().border_b_1(),
+        Room::Whole => section.flex_initial().when(lines, gpui::Styled::border_b_1),
         Room::Above => section
             .flex_initial()
             .max_h(gpui::relative(share))
-            .border_b_1(),
+            .when(lines, gpui::Styled::border_b_1),
         Room::Beside => section
             .flex_none()
             .h_full()
             .w(gpui::relative(share))
-            .border_r_1(),
+            .when(lines, gpui::Styled::border_r_1),
     };
     let several = !preview.selection_summary.is_empty();
     let count = preview.count.as_ref().map(|c| (c.now, c.running));
@@ -2139,6 +2142,21 @@ pub fn edged(body: AnyElement, room: Room, cx: &mut Context<Shell>) -> AnyElemen
         .into_any_element()
 }
 
+/// The same edge as cards (`Theme::cards`): the gutter between Properties'
+/// card and the preview's.
+pub fn gutter(room: Room, cx: &mut Context<Shell>) -> AnyElement {
+    use crate::elements::edge::{Side, gutter};
+    let beside = room == Room::Beside;
+    gutter(
+        "properties-resize",
+        if beside { Side::Left } else { Side::Top },
+        PropertiesResize { beside },
+        move |this| this.preview.properties_share.set(beside, SHARE),
+        cx,
+    )
+    .into_any_element()
+}
+
 /// Marker for dragging the edge between Properties and the preview; it
 /// knows which way the edge runs.
 #[derive(Clone)]
@@ -2163,6 +2181,9 @@ impl Shell {
         } else {
             (ev.event.position.y - ev.bounds.top(), ev.bounds.size.height)
         };
+        // As cards, the pointer at the middle of the gutter between them.
+        let half = gpui::px(crate::terminal::half_gutter(cx));
+        let (along, size) = (along - half, size - half * 2.);
         if let Some(share) =
             crate::elements::edge::share(f32::from(along), f32::from(size), keep, SHARE)
         {

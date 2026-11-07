@@ -390,6 +390,13 @@ of bars, split or not.
   down (`Shell::lowered`, `Theme::files_ground`, `bar_ground`): what paints
   a pane's ground asks them, never `window_bg` or `window_surface`. Apart
   by lines, the window is drawn as before.
+- **As cards, the preview panel is cards** (`preview::cards_under`), never
+  one: Properties with the header, the preview with its toolbar, a
+  container's kept rows and its member (`members::split`), the pinned
+  player; the header heads the first. The edges between them (Properties',
+  the member's, the dock's) are gutters (`properties::gutter`,
+  `Shell::dock_gutter`), and what sizes itself by the room (Properties'
+  share) does so on the card around it.
 - **As cards, the window's buttons lie on the frame**, never in a card:
   Split, Properties and Preview, and the sidebar's toggle and More while
   the sidebar is put away (`toggles_at`, `corner_at` unchanged). In a pane's
