@@ -4884,6 +4884,15 @@ impl Shell {
         self.panel_switched(window, cx);
     }
 
+    /// The Preview switch on, for a press that asks to see something only
+    /// the preview shows (the pinned track, `player_reveal`).
+    pub(crate) fn preview_switch_on(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.preview.preview_on {
+            self.preview.preview_on = true;
+            self.panel_switched(window, cx);
+        }
+    }
+
     pub fn open_peek(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.preview.peek_press = None;
         if self.cursor_id().is_none() {

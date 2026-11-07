@@ -2,7 +2,9 @@
 
 Status: accepted, 2026-10-13. Built. Amended 2026-11-06 (decision 8: the
 panel is two switches, Preview and Properties; decision 9: what comes
-later fills in, it never moves what is shown).
+later fills in, it never moves what is shown) and 2026-11-07 (decision 8:
+the pinned player in one place whatever the switches; showing the track
+turns Preview on).
 
 ## Context
 
@@ -121,7 +123,16 @@ later fills in, it never moves what is shown).
      the cursor, not what is shown, not the press before. So two presses
      leave the window as it was, from a closed panel or an open one, on
      a file, a folder or a pipe; and the menu's item says Hide Properties
-     exactly while the switch is on.
+     exactly while the switch is on. One press turns Preview on as well
+     (amended 2026-11-07): asking to see the track playing (a click on
+     the pinned player, the footer's strip, the desktop's Raise), which
+     only the preview shows (`Shell::player_reveal`); it never turns
+     Preview off, nor Properties.
+   - The pinned player is drawn in one place whatever the switches
+     (`player::PinPlace`, amended 2026-11-07, the user's report: with
+     Properties on, turning Preview off took the track playing from the
+     window): the preview while it shows the track, else the dock at the
+     panel's foot, under Properties alone too, else the footer's strip.
    - What the panel shows follows from the two and what is shown:
      Preview alone shows the preview, or, with nothing to preview, the
      type's icon under the card and why there is none; Properties alone

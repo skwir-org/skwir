@@ -288,26 +288,34 @@ binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
 
 ## The dock
 
-- `dock.rs` is the pinned player at the foot of the preview panel: cover or
-  film, spectrum meter, transport, seek bar, More and close.
+- `dock.rs` is the pinned player at the foot of the side panel, under the
+  preview or under Properties alone: cover or film, spectrum meter,
+  transport, seek bar, More and close.
 - Its height is dragged on its top edge and remembered with the window's
   shape: decided in render, never measured. Below `TALL_FROM` it is a row,
   above it the halo figure. A film takes the height it gets (`VIDEO_HEIGHT`
   in a compact dock).
-- It steps aside while the panel shows the pinned session or is opening a
-  track that will (`Shell::dock_shown`). With the panel closed, the last
-  pane's footer keeps a strip of the controls.
+- The pin is drawn in one place, always one (`player::PinPlace`, from the
+  panel's switches and what the preview shows): the preview while it shows
+  the pinned session or is opening a track that will; else the dock,
+  wherever the panel is open, Properties alone included, which plays
+  nothing, the track selected or not; with the panel closed, a strip of the
+  controls in the last pane's footer. Whatever is switched, the pin never
+  goes from the window while it plays.
 - Only its picture answers clicks as a player (`Flash::Dock`), and stops the
   click there: a film's frame, not its letterbox (`picture::OnPicture`, from
   `ObjectFit::get_bounds` in prepaint); the cover or file icon; in the tall
   dock only the cover's disc (`halo::OnDisc`, tested against the circle).
   Each occludes the hover beneath it (the letterbox's, the figure's).
-- Any other click outside the transport shows the track in the panel, still
-  playing.
-- Full screen is the panel's: a double click on a film, its Fullscreen button
-  and F (`PlayerRequest::Fullscreen`, `Shell::player_fullscreen`) reveal the
-  track in the panel, which goes fullscreen once it shows the session
-  (`fullscreen_wanted`, forgotten when the pin changes).
+- Any other click outside the transport, and the footer strip's title, shows
+  the track (`Shell::player_reveal`): Preview on, the one place it is seen as
+  it plays (a press of the user's, which may turn the switch: ADR-058,
+  decision 8), and its folder in the pane, the file selected, still playing.
+  The desktop's Raise does the same.
+- Full screen is the preview's: a double click on a film, its Fullscreen
+  button and F (`PlayerRequest::Fullscreen`, `Shell::player_fullscreen`)
+  reveal the track there, Preview off or on, which goes fullscreen once it
+  shows the session (`fullscreen_wanted`, forgotten when the pin changes).
 - The transport has four `AdaptiveRow` forms, each moving one more item to
   More in the panel bar's order: Mute, a film's Fullscreen, then Previous,
   Next and the times. The narrowest keeps Play, seek bar, More and close.

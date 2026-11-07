@@ -1508,6 +1508,9 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   `App::player`; others (media keys via a plugin, scripts, agents) leave a
   `PlayerRequest`, taken at the next wake.
 - A pinned player (`player.rs`) keeps playing while the selection moves,
-  in the dock at the preview panel's foot (`dock.rs`); with the panel
-  closed, a strip in the last pane's footer. Playback rules:
+  drawn in one place whatever the panel's switches (`PinPlace`): the
+  preview when it shows the track; else the dock at the panel's foot
+  (`dock.rs`), under the preview or under Properties alone; with the panel
+  closed, a strip in the last pane's footer. A click that shows the track
+  (the dock, the strip's title) turns Preview on. Playback rules:
   [media.md](media.md).

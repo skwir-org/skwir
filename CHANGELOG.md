@@ -79,6 +79,11 @@
   a sort by rating waits for what it sorts by, a sort by size does not. A
   file whose name several types claim gets its Opens with with the rest, and
   with Properties alone at all.
+- **What plays stays in sight**: a track kept playing goes under Properties
+  when Preview is turned off, where it used to vanish while still playing, and
+  to the footer's strip when both are off. A click on it there, or on the
+  strip's title, turns Preview on and shows the track as it plays; a film's
+  Fullscreen goes there too, Preview off or on.
 - **The player's seek bar** has a knob, and a drag that leaves the bar still
   moves it: let go anywhere, it seeks there.
 - **Sliders in Settings**: a setting judged as it changes can be a slider

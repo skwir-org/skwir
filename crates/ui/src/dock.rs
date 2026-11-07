@@ -27,8 +27,10 @@
 //!
 //! The height is a remembered preference, not a measured size, so the form
 //! is chosen here in render, as the panel's width is. The dock steps aside
-//! while the panel shows the pinned session itself, and gives way to the
-//! last pane's footer's strip while the panel is closed.
+//! while the preview shows the pinned session itself, and gives way to the
+//! last pane's footer's strip while the panel is closed (`PinPlace`); with
+//! Properties alone it stays at their foot. Showing the track turns
+//! Preview on (`Shell::player_reveal`).
 use crate::sizes::TextSizes;
 use crate::sizes::sized;
 use std::rc::Rc;
@@ -97,19 +99,11 @@ impl Shell {
         cx.notify();
     }
 
-    /// Whether the dock is drawn: a pin, the panel open, and the panel
-    /// showing something other than the pinned session itself, nor on its
-    /// way to it (the pin went on to the next track and the selection
-    /// follows) or to a track about to take its place (a step, Play on
-    /// selection): the dock would only flash in between.
+    /// Whether the dock is drawn: a pin, the panel open, and no preview
+    /// there showing the pinned session (`PinPlace`). With Properties
+    /// alone it is drawn whatever is selected, the track itself included.
     pub fn dock_shown(&self) -> bool {
-        let Some(pinned) = &self.player.pinned else {
-            return false;
-        };
-        self.preview.panel_open()
-            && !self.preview_is_pinned()
-            && self.preview.autoplay.is_none()
-            && self.preview.playing_path().as_ref() != Some(&pinned.path)
+        self.pin_place() == Some(crate::player::PinPlace::Dock)
     }
 }
 

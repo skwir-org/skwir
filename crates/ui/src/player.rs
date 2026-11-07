@@ -2,12 +2,14 @@
 //!
 //! A preview dies with the selection, and its media session with it. Pinned,
 //! the session belongs to the window instead: browsing goes on, the music
-//! (or the film) too, and the dock at the foot of the preview panel
-//! (`dock.rs`) holds it: cover or picture, visualizer, transport. With the
-//! panel closed the last pane's footer keeps a strip of the controls instead. The
-//! panel shows the same session again whenever its file is selected, and
-//! the dock steps aside while it does; there is never a second player for
-//! one file, and never two playing at once.
+//! (or the film) too, and the pin is drawn in one place, always one
+//! (`PinPlace`): the preview when it shows the pin's file, there being
+//! never a second player for one file; else the dock at the panel's foot
+//! (`dock.rs`: cover or picture, visualizer, transport), under the preview
+//! or under Properties alone; with the panel closed, a strip of the
+//! controls in the last pane's footer. Never two play at once. What shows
+//! the track (`Shell::player_reveal`) turns Preview on, the one place it is
+//! seen as it plays.
 //!
 //! Whichever plays, pinned or previewed, is published as core's
 //! `playing::NowPlaying`, and what others ask of it (`PlayerRequest`: the
@@ -340,7 +342,49 @@ fn same(a: &Arc<dyn MediaSession>, b: &Arc<dyn MediaSession>) -> bool {
     std::ptr::addr_eq(Arc::as_ptr(a), Arc::as_ptr(b))
 }
 
+/// Where the pin is drawn: one place, whatever the panel's switches.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PinPlace {
+    /// The preview shows its session, or is on its way to: the pin went on
+    /// to the next track and the selection follows, or a track about to
+    /// take its place is selected (a step, Play on selection). The dock
+    /// would only flash in between.
+    Preview,
+    /// The dock at the panel's foot, under the preview or under
+    /// Properties alone, which plays nothing.
+    Dock,
+    /// The last pane's footer: the panel is closed.
+    Strip,
+}
+
+impl PinPlace {
+    /// `previews`: the preview is read (Preview on, or peek). `has_it`: the
+    /// preview shows the pin's session or is on its way to it.
+    pub fn of(panel_open: bool, previews: bool, has_it: bool) -> Self {
+        if !panel_open {
+            PinPlace::Strip
+        } else if previews && has_it {
+            PinPlace::Preview
+        } else {
+            PinPlace::Dock
+        }
+    }
+}
+
 impl Shell {
+    /// Where the pin is drawn, `None` without one.
+    pub fn pin_place(&self) -> Option<PinPlace> {
+        let pinned = self.player.pinned.as_ref()?;
+        let has_it = self.preview_is_pinned()
+            || self.preview.autoplay.is_some()
+            || self.preview.playing_path().as_ref() == Some(&pinned.path);
+        Some(PinPlace::of(
+            self.preview.panel_open(),
+            self.preview.previews(),
+            has_it,
+        ))
+    }
+
     /// Pin `pin`, or let go of the pin: whatever was being opened for the
     /// old one is now late. Returns the pin that was.
     fn set_pin(&mut self, pin: Option<Pinned>) -> Option<Pinned> {
@@ -1023,10 +1067,11 @@ impl Shell {
         }
     }
 
-    /// A film on the whole screen, which is the panel's: one the panel
-    /// shows goes there at once; a pinned one the dock shows is shown in
-    /// the panel first (its folder, the file selected) and goes there once
-    /// the panel shows it (`fullscreen_wanted`). Music has nothing to show.
+    /// A film on the whole screen, which is the preview's: one the preview
+    /// shows goes there at once; a pinned one elsewhere (the dock, the
+    /// footer's strip) is shown in the preview first (`player_reveal`) and
+    /// goes there once the preview shows it (`fullscreen_wanted`). Music
+    /// has nothing to show.
     pub fn player_fullscreen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.preview.fullscreen.is_some() || self.preview_is_pinned() {
             if !self.media_is_audio() {
@@ -1039,14 +1084,16 @@ impl Shell {
             .pinned
             .as_ref()
             .is_some_and(|pinned| pinned.video)
-            && self.preview.preview_on
         {
             self.player.fullscreen_wanted = true;
             self.player_reveal(window, cx);
         }
     }
 
-    /// Show the playing track in the pane: its folder, and the file selected.
+    /// Show the playing track: Preview on, where it is seen as it plays,
+    /// and in the pane its folder, the file selected. A press of the
+    /// user's (the pin's title or picture, the footer's strip, the
+    /// desktop's Raise), so it may turn the switch (ADR-058, decision 8).
     pub fn player_reveal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(path) = self
             .player
@@ -1054,6 +1101,7 @@ impl Shell {
             .as_ref()
             .map(|pinned| pinned.path.clone())
         {
+            self.preview_switch_on(window, cx);
             self.reveal_path(self.pane, &path, window, cx);
         }
     }
@@ -1126,14 +1174,15 @@ impl Shell {
     }
 }
 
-/// The pin in the last pane's footer while the preview panel is closed and the dock
-/// with it: what plays, and the three controls that matter.
+/// The pin in the last pane's footer while the panel is closed and the dock
+/// with it (`PinPlace::Strip`): what plays, and the three controls that
+/// matter. Its title shows the track, in the preview.
 pub fn render_status(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let pinned = shell
         .player
         .pinned
         .as_ref()
-        .filter(|_| !shell.preview.panel_open())?;
+        .filter(|_| shell.pin_place() == Some(PinPlace::Strip))?;
     let state = &pinned.state;
     let title = crate::media::track_title(state, &pinned.path);
     let title = if state.artist.is_empty() {
@@ -1214,7 +1263,21 @@ pub(crate) fn request(
 
 #[cfg(test)]
 mod tests {
-    use super::{Continue, shuffled, step};
+    use super::{Continue, PinPlace, shuffled, step};
+
+    #[test]
+    fn the_pin_is_drawn_in_one_place_whatever_the_switches() {
+        for has_it in [false, true] {
+            // Both switches off: the footer's strip.
+            assert_eq!(PinPlace::of(false, false, has_it), PinPlace::Strip);
+            // Properties alone plays nothing: the dock under it, the
+            // track selected or not.
+            assert_eq!(PinPlace::of(true, false, has_it), PinPlace::Dock);
+        }
+        // Preview on: the preview's player for the track, else the dock.
+        assert_eq!(PinPlace::of(true, true, true), PinPlace::Preview);
+        assert_eq!(PinPlace::of(true, true, false), PinPlace::Dock);
+    }
 
     #[test]
     fn a_shuffle_plays_every_track_once_starting_with_the_one_playing() {
