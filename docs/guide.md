@@ -726,13 +726,18 @@ A plugin from outside Skwir with options of its own has a page of its
 own, listed under the others.
 
 On Linux, Skwir wears the colors your desktop's settings name: on
-Plasma its color scheme, on LXQt its palette, elsewhere the colors of
-the GTK theme your desktop names (adw-gtk3, Materia and most others; a
-theme whose styles are compiled into a resource file, as Arc's are,
-names none Skwir can read), else GTK's own theme, else the color scheme
-qt6ct or qt5ct gives Qt's applications; with the accent color your
-desktop's settings name (GNOME's, or any desktop whose settings portal
-says one). It follows them when you change them there. Appearance ›
+Plasma its color scheme, on LXQt its palette, on Omarchy its theme,
+elsewhere the colors of the GTK theme your desktop names (adw-gtk3,
+Materia and most others; a theme whose styles are compiled into a
+resource file, as Arc's are, names none Skwir can read), else GTK's own
+theme, each with your own GTK style sheet laid over it as GTK lays it
+(`~/.config/gtk-3.0/gtk.css`, else `gtk-4.0`'s: where desktop shells
+such as Noctalia, Caelestia and Dux Shell write their colors), else the
+color scheme qt6ct, qt5ct, qtengine or hyprqt6engine gives Qt's
+applications; with the accent color your desktop's settings name
+(GNOME's, or any desktop whose settings portal says one). It follows
+them when you change them there, and when a shell writes its colors
+again (a new wallpaper). Appearance ›
 **Colors from** chooses: Automatic, GTK's or Qt's alone, as when you
 set them up apart, or one of Skwir's palettes, each drawn beside its
 name as a small window in its colors; Automatic says which it took

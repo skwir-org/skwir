@@ -520,7 +520,7 @@ fn colors_from_spec(app: &App) -> SettingSpec {
     } else if cfg!(windows) {
         "Where skwir takes its colors: Windows' accent, or one of skwir's palettes. Automatic wears skwir's colors with the accent you chose in Windows' settings, or a contrast theme's colors while one is on. A palette keeps its own accent and brings its code and terminal colors, each in a light look and a dark one. A contrast theme's need for more contrast is followed whatever is chosen."
     } else {
-        "Where skwir takes its colors: your desktop's, or one of skwir's palettes. Automatic reads your desktop's own (Plasma's color scheme, LXQt's palette, the GTK theme GNOME, MATE, Cinnamon or Xfce names), else GTK's theme, else the color scheme of qt6ct or qt5ct; GTK or Qt reads that toolkit's alone. A palette keeps its own accent and brings its code and terminal colors, each in a light look and a dark one. More contrast, when your desktop asks for it, is followed whatever is chosen."
+        "Where skwir takes its colors: your desktop's, or one of skwir's palettes. Automatic reads your desktop's own (Plasma's color scheme, LXQt's palette, Omarchy's theme, the GTK theme GNOME, MATE, Cinnamon or Xfce names), else GTK's colors (its theme, with your own GTK style sheet over it, where a desktop shell such as Noctalia, Caelestia or Dux Shell writes its colors), else the color scheme of qt6ct, qt5ct, qtengine or hyprqt6engine; GTK or Qt reads that toolkit's alone. A palette keeps its own accent and brings its code and terminal colors, each in a light look and a dark one. More contrast, when your desktop asks for it, is followed whatever is chosen."
     };
     SettingSpec::choice(COLORS_FROM_KEY, "Colors from", description, "auto", &pairs)
         .essential()

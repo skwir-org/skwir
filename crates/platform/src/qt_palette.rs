@@ -1,18 +1,22 @@
 //! The colors Qt's applications are given outside Plasma (ADR-071,
-//! amended 2026-11-05: Colors from): qt5ct's or qt6ct's color scheme, and
-//! LXQt's palette. Plasma's own scheme is `kde_scheme`'s.
+//! amended 2026-11-05: Colors from; 2026-11-07: the platform themes after
+//! qt6ct): the color scheme of the platform theme `QT_QPA_PLATFORMTHEME`
+//! names (qt5ct, qt6ct, qtengine, hyprqt6engine), and LXQt's palette.
+//! Plasma's own scheme is `kde_scheme`'s.
 //!
 //! qt5ct and qt6ct name a scheme while their custom palette is on
 //! (`[Appearance] custom_palette`, `color_scheme_path`): a file of their
 //! own, its `[ColorScheme] active_colors` a list of the palette's colors
 //! in Qt's order of roles (`QPalette::ColorRole`), or a KDE `.colors`
-//! scheme, which qt6ct reads too. LXQt keeps its palette in `lxqt.conf`
-//! (`[Palette] window_color`, `base_color`…), Qt making what it leaves
-//! out from the window's color (`lxqt-qtplugin`).
+//! scheme, which qt6ct reads too. qtengine (`theme.colorScheme` of its
+//! JSON) and hyprqt6engine (`theme:color_scheme`) name a KDE scheme
+//! alone. LXQt keeps its palette in `lxqt.conf` (`[Palette]
+//! window_color`, `base_color`…), Qt making what it leaves out from the
+//! window's color (`lxqt-qtplugin`).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use crate::desktop_settings::keyfile_value;
+use crate::desktop_settings::{QtSettings, hyprlang_value, keyfile_value};
 use crate::desktop_style::{Scheme, over};
 
 /// The roles of a Qt palette, as `active_colors` lists them.
@@ -28,23 +32,44 @@ mod role {
     pub const ACCENT: usize = 21;
 }
 
-/// The scheme qt5ct's or qt6ct's file (`conf`, its text) names, while its
-/// custom palette is on.
-pub(crate) fn qt_ct(conf: &str) -> Option<Scheme> {
-    let on = keyfile_value(conf, "Appearance", "custom_palette")?;
-    if !on.eq_ignore_ascii_case("true") {
-        return None;
-    }
-    let path = keyfile_value(conf, "Appearance", "color_scheme_path")?;
-    let path = Path::new(&path);
-    if !path.is_absolute() {
-        return None;
-    }
-    let text = crate::file::read_regular_text(path, crate::file::DESKTOP_FILE).ok()?;
-    if path
-        .extension()
-        .is_some_and(|e| e.eq_ignore_ascii_case("colors"))
-    {
+/// The color scheme file a platform theme's settings name, an absolute
+/// path: qt5ct's and qt6ct's while their custom palette is on, qtengine's
+/// (`~` its user's `home`, as it reads it), hyprqt6engine's.
+pub(crate) fn scheme_path(settings: &QtSettings, home: Option<&Path>) -> Option<PathBuf> {
+    let text = settings.text.as_str();
+    let named = match settings.program {
+        "qtengine" => {
+            let json: serde_json::Value = serde_json::from_str(text).ok()?;
+            let named = json.get("theme")?.get("colorScheme")?.as_str()?;
+            match (named.strip_prefix('~'), home) {
+                (Some(""), Some(home)) => home.to_path_buf(),
+                (Some(rest), Some(home)) if rest.starts_with('/') => home.join(&rest[1..]),
+                _ => PathBuf::from(named),
+            }
+        }
+        "hyprqt6engine" => PathBuf::from(hyprlang_value(text, "theme:color_scheme")?),
+        _ => {
+            let on = keyfile_value(text, "Appearance", "custom_palette")?;
+            if !on.eq_ignore_ascii_case("true") {
+                return None;
+            }
+            PathBuf::from(keyfile_value(text, "Appearance", "color_scheme_path")?)
+        }
+    };
+    named.is_absolute().then_some(named)
+}
+
+/// The scheme a platform theme's settings name: the file `scheme_path`
+/// says, a KDE scheme (one of qt5ct's or qt6ct's own unless it is a
+/// `.colors`).
+pub(crate) fn of_settings(settings: &QtSettings, home: Option<&Path>) -> Option<Scheme> {
+    let path = scheme_path(settings, home)?;
+    let text = crate::file::read_regular_text(&path, crate::file::DESKTOP_FILE).ok()?;
+    let kde = !matches!(settings.program, "qt5ct" | "qt6ct")
+        || path
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("colors"));
+    if kde {
         // A KDE scheme alone: nothing of Breeze's fills it in.
         crate::kde_scheme::scheme_of(&[text], &[])
     } else {
@@ -184,6 +209,16 @@ mod tests {
                 path.display()
             )
         };
+        let qt_ct = |text: &str| {
+            of_settings(
+                &QtSettings {
+                    program: "qt6ct",
+                    path: folder.path().join("qt6ct.conf"),
+                    text: text.to_owned(),
+                },
+                None,
+            )
+        };
         let darker = qt_ct(&conf("true", &own)).expect("its own scheme");
         assert_eq!(darker.bg, rgb(0x3d, 0x3d, 0x3d));
         let solarized = qt_ct(&conf("true", &kde)).expect("a KDE scheme");
@@ -193,6 +228,61 @@ mod tests {
         assert!(qt_ct(&conf("false", &own)).is_none());
         assert!(qt_ct("[Appearance]\ncustom_palette=true\n").is_none());
         assert!(qt_ct(&conf("true", Path::new("relative.conf"))).is_none());
+    }
+
+    #[test]
+    fn qtengine_and_hyprqt6engine_name_a_kde_scheme() {
+        let folder = tempfile::tempdir().unwrap();
+        let home = folder.path().join("home");
+        std::fs::create_dir_all(home.join(".config/qtengine")).unwrap();
+        let kde = home.join(".config/qtengine/shell.colors");
+        std::fs::write(
+            &kde,
+            "[Colors:View]\nBackgroundNormal=#1b1b1f\nForegroundNormal=#e4e2e6\n\
+             [Colors:Window]\nBackgroundNormal=#202024\n\
+             [Colors:Selection]\nBackgroundNormal=#b0c6ff\nForegroundNormal=#002d6e\n",
+        )
+        .unwrap();
+        let settings = |program: &'static str, text: String| QtSettings {
+            program,
+            path: folder.path().join("settings"),
+            text,
+        };
+        // qtengine's JSON, its path from the user's home as qtengine
+        // takes it, or written whole.
+        let engine = |named: &str| {
+            settings(
+                "qtengine",
+                format!("{{\"theme\": {{\"colorScheme\": \"{named}\", \"style\": \"Darkly\"}}}}"),
+            )
+        };
+        for named in [
+            "~/.config/qtengine/shell.colors",
+            &kde.display().to_string(),
+        ] {
+            let scheme = of_settings(&engine(named), Some(&home)).expect(named);
+            assert_eq!(scheme.bg, rgb(0x1b, 0x1b, 0x1f));
+            assert_eq!(scheme.surface, rgb(0x20, 0x20, 0x24));
+            assert_eq!(scheme.accent, Some(rgb(0xb0, 0xc6, 0xff)));
+            assert!(scheme.is_dark());
+        }
+        assert_eq!(scheme_path(&engine("~/x.colors"), None), None, "no home");
+        assert_eq!(scheme_path(&engine("relative.colors"), Some(&home)), None);
+        assert_eq!(
+            scheme_path(&settings("qtengine", "not json".into()), None),
+            None
+        );
+        // hyprqt6engine's, in a block or by its whole name, the last one.
+        let hypr = settings(
+            "hyprqt6engine",
+            format!(
+                "# The theme ## its colors\ntheme {{\n    color_scheme = /elsewhere.colors\n    \
+                 style = Fusion # a comment\n}}\ntheme:color_scheme = {}\n",
+                kde.display()
+            ),
+        );
+        assert_eq!(scheme_path(&hypr, None).as_deref(), Some(kde.as_path()));
+        assert!(of_settings(&hypr, None).is_some_and(|s| s.is_dark()));
     }
 
     #[test]

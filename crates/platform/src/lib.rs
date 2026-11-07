@@ -62,6 +62,8 @@ pub mod media;
 pub mod mime;
 pub mod model;
 pub mod mp4;
+#[cfg(target_os = "linux")]
+mod omarchy;
 pub mod open;
 pub mod package;
 pub mod picture;

@@ -15,7 +15,9 @@ then Skwir's palettes, twelve, among its values; then step 5, and
 macOS's own colors read), and by ADR-119 (2026-11-06: the window's
 grounds may let the desktop through; the contrast guarded is on the
 theme's own grounds, and the window stays whole while more contrast is
-asked).
+asked); 2026-11-07 (the user's own GTK sheet over the theme, the Qt
+platform themes after qt6ct, Omarchy's theme: the desktop shells of
+Hyprland and its kind).
 
 ## Context
 
@@ -505,3 +507,90 @@ asked).
   leaves a taken palette worn; no list is hidden while its preview stays
   (`docs/invariants/settings.md`). Swatches are made again only when the
   desktop's colors, the system's look or `ui.theme` change.
+- 2026-11-07, **the desktop shells.** The user asked how Omarchy and the
+  shells drawn over Hyprland and its kind (Noctalia, Caelestia, Dux
+  Shell, which was DankMaterialShell) say their colors, whether Skwir
+  took them as it takes GTK's and Qt's, and whether it could; then, told
+  what each writes, "go ahead with 1-3". What each writes, read in their
+  sources that day:
+
+  | | GTK | Qt | Its own |
+  |---|---|---|---|
+  | Noctalia | `gtk-{3,4}.0/noctalia.css`, imported at the end of `gtk.css`; adw-gtk3 named | qt5ct's and qt6ct's `colors/noctalia.conf`; a KDE scheme applied to `kdeglobals` | its own |
+  | Caelestia | `gtk-{3,4}.0/gtk.css` written whole; adw-gtk3-dark named, whatever the look | qtengine (`qtengine/config.json` naming its `.colors`); qt5ct and qt6ct before | `scheme.json` |
+  | Dux Shell | `gtk-{3,4}.0/dank-colors.css`, linked or imported from `gtk.css`; adw-gtk3 named | qt5ct's and qt6ct's `colors/matugen.conf`; a KDE scheme where Plasma's tool is there | `dms-colors.json` |
+  | Omarchy | none: GTK's built-in Adwaita named | none | `colors.toml` |
+
+  The look reached Skwir already (the portal's `color-scheme`, which each
+  sets), and on the reference session Noctalia's accent (its portal is
+  Plasma's, which reads the `kdeglobals` Noctalia writes). Their colors
+  did not: Skwir read the theme GTK's settings name (adw-gtk3's own
+  grays), never the sheet laid over it, and Qt's platform themes but
+  qt5ct and qt6ct. So, reading where the shells write for every
+  application rather than their own palettes, which three formats each
+  moving (Dux Shell renamed itself that month; Caelestia moved its Qt
+  colors to qtengine) would tie Skwir to:
+  1. **The user's own GTK sheet** (`gtk_theme::UserSheet`): GTK 3's
+     `gtk.css`, else GTK 4's (libadwaita's) where GTK 3's defines no
+     color, laid over the theme's sheets as GTK lays a sheet of higher
+     priority, or read alone where no theme read is named (GTK's
+     built-in Adwaita). A name's last definition is the one looked up,
+     so a theme naming its colors by reference (adw-gtk3's
+     `theme_base_color` is `@view_bg_color`) takes the user's. Its
+     imports are read within the home folder. The user's sheet is one
+     look's: laid over a theme's light and dark sheets, both come out
+     the same look, and that look keeps the first. Point 4's GTK column
+     takes libadwaita's names where GTK 3's are not named
+     (`view_bg_color`, `window_bg_color`, `view_fg_color`), its accent
+     libadwaita's `accent_bg_color` before `theme_selected_bg_color`
+     (adw-gtk3's are one color), and a selection only as a ground and
+     its text named together (Caelestia names a tint of its accent with
+     a text it never defines: the selection is derived from the
+     accent). On the reference session Automatic went from adw-gtk3's
+     `#ffffff`, `#fafafb` and `#3584e4` to Noctalia's `#faf9f9` and
+     `#416165`.
+  2. **The Qt platform themes after qt6ct** (`desktop_settings::
+     qt_settings`): qtengine (`QTENGINE_CONFIG`, then `qtengine/
+     config.json` in the configuration folders: `theme.colorScheme`, `~`
+     the home folder, and its fonts, `theme.font` and `theme.fontFixed`)
+     and hyprqt6engine (`hypr/hyprqt6engine.conf` there and in
+     `/etc/xdg`: `theme:color_scheme`, `theme:font`, `theme:font_size`,
+     `theme:font_fixed`, `theme:font_fixed_size`, read as hyprlang
+     writes them, its variables and `source`d files not followed), each
+     where the program looks, as `QT_QPA_PLATFORMTHEME` names it. Both
+     name a KDE scheme, read as qt6ct's `.colors` is. A font they leave
+     out is unnamed: the program's own default is no choice of the
+     user's.
+  3. **Omarchy's theme** (`omarchy`): where Omarchy's session runs
+     (`OMARCHY_PATH`, which it exports to every program; a state folder
+     left by an Omarchy no longer run says nothing then), the desktop's
+     own scheme, as Plasma's and LXQt's: `colors.toml` of
+     `~/.local/state/omarchy/current/theme`, else of `~/.config/
+     omarchy/current/theme` (where it was until 2026), read as Omarchy
+     reads it (a line a key, its value quoted or not; `bg`, `fg` and the
+     terminal's `color0`… where the newer names are missing).
+     `background` is `bg`, `dark_background` `surface` (else the
+     ground, which the theme sets apart), `foreground` `text`,
+     `dark_foreground` `text_muted`, `muted` `border`, `accent`, `red`,
+     `yellow`, `green` the outcomes. Its `selection` is not read: it is
+     what a terminal or an editor marks text with (Omarchy's own VS Code
+     theme marks a list's chosen rows with the accent), so the selection
+     is derived from the accent. Colors from's Automatic says
+     "Automatic (Omarchy)".
+  - **Followed as written** (point 9): the files a reading names are
+    asked again after each reading (`Own::followed`), so what a file
+    names now is followed where it is: a shell rewrites the file it
+    imports (`noctalia.css`, `dank-colors.css`) or the scheme its Qt
+    settings name, not `gtk.css` or those settings. Followed: both
+    `gtk.css` and what the one read imports, the platform theme's
+    settings and the scheme they name, Omarchy's `current` folder (its
+    `theme`, removed and the next renamed to it).
+  - **Checked:** the readers on fixtures written as each shell writes
+    (synthetic colors); the following on a scheme named anew and on
+    Omarchy's swap; on Xvfb, with no portal, a test window wearing a
+    sheet imported from `gtk.css` (`#f7f1e3`, its green accent) and
+    another once only the imported file was written again (`#eef2fb`),
+    then Omarchy's dark theme (`#1d1a17`) and its light one put in its
+    place (`#eff1f5`); on the reference session, a reading through the
+    platform (Noctalia's colors, above). Not checked: a real Caelestia,
+    Dux Shell or Omarchy session, qtengine and hyprqt6engine installed.

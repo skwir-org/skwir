@@ -17,6 +17,11 @@
   between two cards is the edge to drag, lit under the pointer. With the window
   see-through, the frame lets the desktop through as the bars do, each ground
   painted once.
+- **The colors of Hyprland's desktop shells**: Automatic colors now wear the GTK
+  style sheet laid over your theme (`~/.config/gtk-3.0/gtk.css`, else GTK 4's),
+  where Noctalia, Caelestia and Dux Shell write their colors, and follow it as
+  they write it again (a new wallpaper); the color schemes of qtengine and
+  hyprqt6engine beside qt6ct's; and, on Omarchy, its theme.
 - **See-through fields**: with the window's background let through, the address
   field, the view buttons and the tab shown let it through as their bar does,
   instead of staying solid.

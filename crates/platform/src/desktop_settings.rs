@@ -5,7 +5,7 @@
 //! interface font (`desktop_style`) are read here alike. Each answer is a
 //! program asked or a file read: on a worker, never while drawing.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
@@ -103,19 +103,142 @@ pub(crate) fn lxqt_conf() -> Option<String> {
     config_text("lxqt/lxqt.conf")
 }
 
-/// The file Qt's applications take their fonts from outside Plasma and
-/// LXQt, as `QT_QPA_PLATFORMTHEME` names its program (`qt5ct`, `qt6ct`),
-/// the other's when it has none: the program's name and the file's text.
-pub(crate) fn qt_ct() -> Option<(&'static str, String)> {
+/// The settings of the Qt platform theme that gives Qt's applications
+/// their fonts and colors outside Plasma and LXQt, as
+/// `QT_QPA_PLATFORMTHEME` names it (ADR-071, amended 2026-11-07): qt5ct's
+/// or qt6ct's (the other's when it has none), qtengine's or
+/// hyprqt6engine's, each found where the program looks for it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct QtSettings {
+    /// `qt5ct`, `qt6ct`, `qtengine` or `hyprqt6engine`.
+    pub(crate) program: &'static str,
+    pub(crate) path: PathBuf,
+    pub(crate) text: String,
+}
+
+/// Where the Qt platform themes look for their settings.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct QtFolders {
+    pub(crate) config_home: Option<PathBuf>,
+    /// `$HOME/.config`, which qtengine and hyprqt6engine look in after
+    /// `XDG_CONFIG_HOME`.
+    pub(crate) home_config: Option<PathBuf>,
+    pub(crate) config_dirs: Vec<PathBuf>,
+    /// `QTENGINE_CONFIG`, which qtengine reads first.
+    pub(crate) qtengine: Option<PathBuf>,
+}
+
+impl QtFolders {
+    fn of_session() -> Self {
+        QtFolders {
+            config_home: crate::xdg::config_home(),
+            home_config: skwir_core::os_path::home().map(|home| home.join(".config")),
+            config_dirs: crate::xdg::config_dirs(),
+            qtengine: std::env::var_os("QTENGINE_CONFIG")
+                .map(PathBuf::from)
+                .filter(|path| path.is_absolute()),
+        }
+    }
+
+    /// The files `program` reads its settings from, in the order it looks:
+    /// qt5ct and qt6ct the configuration folder's alone; qtengine
+    /// `QTENGINE_CONFIG`, then the configuration folders
+    /// (`configmanager.cpp`); hyprqt6engine those folders' `hypr`, then
+    /// `/etc/xdg`'s (hyprutils' `findConfig`).
+    fn candidates(&self, program: &str) -> Vec<PathBuf> {
+        let folders = || {
+            self.config_home
+                .iter()
+                .chain(&self.home_config)
+                .chain(&self.config_dirs)
+                .cloned()
+        };
+        match program {
+            "qtengine" => self
+                .qtengine
+                .iter()
+                .cloned()
+                .chain(folders().map(|folder| folder.join("qtengine/config.json")))
+                .collect(),
+            "hyprqt6engine" => folders()
+                .chain(std::iter::once(PathBuf::from("/etc/xdg")))
+                .map(|folder| folder.join("hypr/hyprqt6engine.conf"))
+                .collect(),
+            ct => self
+                .config_home
+                .iter()
+                .map(|folder| folder.join(format!("{ct}/{ct}.conf")))
+                .collect(),
+        }
+    }
+}
+
+/// The Qt platform theme's settings this session names.
+pub(crate) fn qt_settings() -> Option<QtSettings> {
     let named = std::env::var("QT_QPA_PLATFORMTHEME").ok()?;
-    let order: [&'static str; 2] = match named.trim().to_ascii_lowercase().as_str() {
-        "qt6ct" => ["qt6ct", "qt5ct"],
-        "qt5ct" => ["qt5ct", "qt6ct"],
+    qt_settings_in(&named, &QtFolders::of_session())
+}
+
+/// The settings of the platform theme `named` (`QT_QPA_PLATFORMTHEME`'s
+/// value), found in `folders`.
+pub(crate) fn qt_settings_in(named: &str, folders: &QtFolders) -> Option<QtSettings> {
+    let programs: &[&'static str] = match named.trim().to_ascii_lowercase().as_str() {
+        "qt6ct" => &["qt6ct", "qt5ct"],
+        "qt5ct" => &["qt5ct", "qt6ct"],
+        "qtengine" => &["qtengine"],
+        "hyprqt6engine" => &["hyprqt6engine"],
         _ => return None,
     };
-    order
-        .into_iter()
-        .find_map(|program| Some((program, config_text(&format!("{program}/{program}.conf"))?)))
+    programs.iter().find_map(|&program| {
+        folders.candidates(program).into_iter().find_map(|path| {
+            let text = crate::file::read_regular_text(&path, crate::file::DESKTOP_FILE).ok()?;
+            Some(QtSettings {
+                program,
+                path,
+                text,
+            })
+        })
+    })
+}
+
+/// The value of `key` (`theme:color_scheme`) in a Hyprland ecosystem
+/// program's settings (`hyprlang`), the last that names it: written in a
+/// category's block (`theme { color_scheme = … }`) or by its whole name;
+/// `#` begins a comment, `##` writes one. Variables and `source`d files
+/// are not followed.
+pub(crate) fn hyprlang_value(text: &str, key: &str) -> Option<String> {
+    let mut open: Vec<String> = Vec::new();
+    let mut found = None;
+    for line in text.lines() {
+        let mut kept = String::new();
+        let mut chars = line.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c == '#' {
+                if chars.peek() == Some(&'#') {
+                    chars.next();
+                } else {
+                    break;
+                }
+            }
+            kept.push(c);
+        }
+        let line = kept.trim();
+        if line == "}" {
+            open.pop();
+        } else if let Some(category) = line.strip_suffix('{') {
+            open.push(category.trim().to_owned());
+        } else if let Some((name, value)) = line.split_once('=') {
+            let whole: Vec<&str> = open
+                .iter()
+                .map(String::as_str)
+                .chain(std::iter::once(name.trim()))
+                .collect();
+            if whole.join(":") == key {
+                found = Some(value.trim().to_owned());
+            }
+        }
+    }
+    found.filter(|value| !value.is_empty())
 }
 
 /// Plasma's `kdeglobals` as `KConfig` cascades them, each as text: the
@@ -219,6 +342,89 @@ mod tests {
         );
         assert_eq!(keyfile_value(text, "Icons", "Theme"), None);
         assert_eq!(keyfile_value(text, "Icons", "Absent"), None);
+    }
+
+    #[test]
+    fn a_qt_platform_theme_s_settings_are_found_where_it_looks() {
+        let dir = tempfile::tempdir().unwrap();
+        let at = |relative: &str| dir.path().join(relative);
+        let write = |relative: &str, text: &str| {
+            std::fs::create_dir_all(at(relative).parent().unwrap()).unwrap();
+            std::fs::write(at(relative), text).unwrap();
+        };
+        let folders = QtFolders {
+            config_home: Some(at("config")),
+            home_config: Some(at("home/.config")),
+            config_dirs: vec![at("system")],
+            qtengine: None,
+        };
+        let found = |named: &str, folders: &QtFolders| {
+            qt_settings_in(named, folders).map(|s| (s.program, s.path))
+        };
+        // Nothing written: none, and none for a theme not read here.
+        assert_eq!(found("qt6ct", &folders), None);
+        write("config/qt6ct/qt6ct.conf", "[Appearance]\n");
+        write("config/kvantum/kvantum.kvconfig", "");
+        assert_eq!(found("gtk3", &folders), None);
+        // qt5ct named, qt6ct's taken where qt5ct has none; its own first.
+        assert_eq!(
+            found("qt5ct", &folders),
+            Some(("qt6ct", at("config/qt6ct/qt6ct.conf")))
+        );
+        write("config/qt5ct/qt5ct.conf", "[Appearance]\n");
+        assert_eq!(found(" QT5CT ", &folders).unwrap().0, "qt5ct");
+        // qtengine and hyprqt6engine in the system's folders, then the
+        // user's, then (qtengine) the file QTENGINE_CONFIG names.
+        write("system/qtengine/config.json", "{}");
+        write("system/hypr/hyprqt6engine.conf", "");
+        assert_eq!(
+            found("qtengine", &folders),
+            Some(("qtengine", at("system/qtengine/config.json")))
+        );
+        assert_eq!(
+            found("hyprqt6engine", &folders),
+            Some(("hyprqt6engine", at("system/hypr/hyprqt6engine.conf")))
+        );
+        write("home/.config/qtengine/config.json", "{}");
+        write("config/hypr/hyprqt6engine.conf", "");
+        assert_eq!(
+            found("qtengine", &folders).unwrap().1,
+            at("home/.config/qtengine/config.json")
+        );
+        assert_eq!(
+            found("hyprqt6engine", &folders).unwrap().1,
+            at("config/hypr/hyprqt6engine.conf")
+        );
+        write("elsewhere.json", "{}");
+        let named = QtFolders {
+            qtengine: Some(at("elsewhere.json")),
+            ..folders.clone()
+        };
+        assert_eq!(found("qtengine", &named).unwrap().1, at("elsewhere.json"));
+    }
+
+    #[test]
+    fn hyprlang_s_values_are_read_by_their_whole_name() {
+        let text = "general {\n  gaps = 4\n}\n\
+                    theme {\n  font = Noto Sans   # the interface's\n  font_size = 11\n\
+                      nested {\n    key = deep\n  }\n  color = ##fff\n}\n\
+                    theme:font_size = 12\n# theme:font = commented\n";
+        assert_eq!(
+            hyprlang_value(text, "theme:font").as_deref(),
+            Some("Noto Sans")
+        );
+        assert_eq!(
+            hyprlang_value(text, "theme:font_size").as_deref(),
+            Some("12")
+        );
+        assert_eq!(
+            hyprlang_value(text, "theme:nested:key").as_deref(),
+            Some("deep")
+        );
+        assert_eq!(hyprlang_value(text, "theme:color").as_deref(), Some("#fff"));
+        assert_eq!(hyprlang_value(text, "general:gaps").as_deref(), Some("4"));
+        assert_eq!(hyprlang_value(text, "gaps"), None);
+        assert_eq!(hyprlang_value("theme {\n  font =\n}\n", "theme:font"), None);
     }
 
     #[cfg(unix)]

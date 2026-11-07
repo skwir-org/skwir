@@ -76,10 +76,13 @@ Views are in [views.md](views.md); what locations decide, in
   drawing; the first frame draws what was read last (the cache). A
   reading that differs from what was said wakes the window; one that
   does not, nothing. It follows the portal's signals and the files the
-  colors and fonts come from (`kdeglobals`, `lxqt.conf`, qt5ct's and
-  qt6ct's, GTK's `settings.ini`; their folders watched, access
-  dropped), Windows' registry keys (the accent, a contrast theme), never
-  a timer. macOS tells only AppKit's own windows: what it says is read
+  colors and fonts come from (`kdeglobals`, `lxqt.conf`, the Qt
+  platform theme's settings and the scheme they name, GTK's
+  `settings.ini`, the user's GTK sheets and what they import, the
+  folder of Omarchy's theme; their folders watched, access dropped),
+  asked again after each reading (`Own::followed`), so a file named
+  anew is followed where it is now; Windows' registry keys (the
+  accent, a contrast theme), never a timer. macOS tells only AppKit's own windows: what it says is read
   again on a worker when the window's look changes or it is activated
   (`desktop_style::read_again`, `FOLLOWED`), each reading worn in the
   order it was asked; what is kept for the next start is written only
@@ -90,7 +93,12 @@ Views are in [views.md](views.md); what locations decide, in
   starts (`NameOwnerChanged`). Windows' keys are watched before the
   first reading. A source that names nothing is never said to be where
   the fonts or colors come from. Toolkits
-  are never loaded: a GTK theme is read as the colors its sheet names.
+  are never loaded: a GTK theme is read as the colors its sheet names,
+  the user's own sheet laid over it as GTK lays it (`gtk_theme::
+  UserSheet`: GTK 3's `gtk.css`, else GTK 4's), libadwaita's names read
+  where GTK 3's are not named; a desktop shell is read where it writes
+  for the toolkits, never from a palette of its own (Omarchy, which
+  writes for none, excepted: `omarchy`).
 - The fonts are the theme's tokens (`font`, `reading_font`,
   `code_font`), resolved with it, read where they are drawn. A view
   gpui draws on its own, outside the window's text style (a tooltip,
@@ -102,7 +110,8 @@ Views are in [views.md](views.md); what locations decide, in
   read apart too (`gtk`, `qt`), and `ui.fonts_from` chooses Automatic
   (the desktop's own, then GTK's in GTK's order: on Wayland the
   portal's, else GSettings', before `settings.ini`, on X11 after it;
-  then Qt's: qt6ct's or qt5ct's, their files followed; Plasma's
+  then Qt's: the platform theme's, qt6ct, qt5ct, qtengine or
+  hyprqt6engine, their files followed; Plasma's
   `kdeglobals` as KConfig cascades them; macOS's and Windows' interface
   font), Skwir's own, or GTK's or Qt's alone
   (`desktop_style::Source`, as Colors from's), apart from Colors from;

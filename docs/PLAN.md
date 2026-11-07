@@ -121,7 +121,7 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
 | [Release 0.1: Linux](#release-01-linux) | released 2026-10-13 (0.1.0) | — |
 | [Names indexed by skwird](#names-indexed-by-skwird) | C built 2026-10-20; A, B and D wait for skwird (ADR-050) | — |
 | [Remote folders](#remote-folders) | A to F built and checked on Linux 2026-10-21 (ADR-077); G's list for the night of 2026-10-23 built (ADR-080 amended, ADR-084); devices listed before they are mounted 2026-10-26 (ADR-096); what is left in G | — |
-| [Colors and font from the desktop](#colors-and-font-from-the-desktop) | A to D and the fonts by role built 2026-10-19 and 20; E (macOS, Windows) and Skwir's palettes (F) built 2026-11-05 (ADR-071, ADR-073) | — |
+| [Colors and font from the desktop](#colors-and-font-from-the-desktop) | A to D and the fonts by role built 2026-10-19 and 20; E (macOS, Windows) and Skwir's palettes (F) built 2026-11-05; the desktop shells' colors (G) 2026-11-07 (ADR-071, ADR-073) | — |
 | [Indexing and AI (Phase 7)](#indexing-and-ai-phase-7) | designed and accepted 2026-10-26 (ADR-089 to ADR-095, `docs/indexing-and-ai.md`); nothing built | ~10 weeks |
 | [Phase 8: Polish and release](#phase-8-polish-and-release) | planned, ongoing | — |
 
@@ -2365,7 +2365,7 @@ after Release 0.1 and after skwird's phase 1.
 
 ADR-071, ADR-073. Steps A and B built 2026-10-19 (Linux's portal), C and
 D on 2026-10-20 (Plasma's scheme, GTK3 themes), E (macOS, Windows) and F
-(Skwir's palettes) on 2026-11-05. The fonts by role (ADR-073) built 2026-10-19. How each step was built and
+(Skwir's palettes) on 2026-11-05, G (the desktop shells) on 2026-11-07. The fonts by role (ADR-073) built 2026-10-19. How each step was built and
 checked: `docs/STATUS-LOG.md`, "Colors and font from the desktop".
 
 **Goal:** Skwir wears what the user chose on their desktop (the accent,
@@ -2419,6 +2419,16 @@ its own, every color readable on what it is drawn on.
   on the gallery (its cards are mouse targets; the dropdown is
   announced), macOS and Windows (compiled only), the terminal panel in
   each palette.
+- **G. The desktop shells' colors** (ADR-071's amendment of
+  2026-11-07): the user's own GTK sheet laid over the theme as GTK lays
+  it (what Noctalia, Caelestia and Dux Shell write), libadwaita's names
+  read where GTK 3's are not; qtengine's and hyprqt6engine's schemes and
+  fonts beside qt6ct's; Omarchy's `colors.toml` as its desktop's own;
+  what a file names followed where it names it now. **Built
+  2026-11-07.** Checked on Xvfb and through the platform on the
+  reference session (`docs/STATUS-LOG.md`, 2026-11-07). Not checked: a
+  real Caelestia, Dux Shell or Omarchy session, qtengine and
+  hyprqt6engine installed.
 - **Fonts by role (ADR-073).** Three choices, Automatic or a family:
   `ui.font` (Appearance), `reading.font` (Reading › Text), `ui.code_font`
   (Reading › Code); Automatic is the desktop's font while Desktop colors

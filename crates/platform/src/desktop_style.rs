@@ -7,8 +7,13 @@
 //! On Linux the accent and the contrast are the settings portal's
 //! (`org.freedesktop.appearance`, over D-Bus). The color scheme is
 //! Plasma's (`kde_scheme`: `kdeglobals`, followed as Plasma replaces it)
-//! on Plasma, elsewhere the GTK3 theme the desktop names (`gtk_theme`),
-//! read again when it names another. The fonts are read where the
+//! on Plasma, LXQt's palette on LXQt, Omarchy's theme where Omarchy's
+//! session runs (`omarchy`), elsewhere the GTK3 theme the desktop names
+//! with the user's own GTK sheet over it (`gtk_theme`: what a desktop
+//! shell writes there), then the scheme of the Qt platform theme
+//! `QT_QPA_PLATFORMTHEME` names (`qt_palette`: qt5ct, qt6ct, qtengine,
+//! hyprqt6engine); each file read followed as it is written or replaced,
+//! and what it names followed where it names it now. The fonts are read where the
 //! desktop keeps them (`desktop_settings`: `GSettings`, `kdeglobals`,
 //! xfconf, LXQt's `lxqt.conf`), then GTK's (`settings.ini`, then the
 //! portal's `org.gnome.desktop.interface`, which it answers outside GNOME
@@ -598,7 +603,8 @@ mod imp {
             Named::default()
         }
         /// The fonts Qt's applications are given where they are not the
-        /// desktop's own (`qt_is_own`): qt6ct's or qt5ct's.
+        /// desktop's own (`qt_is_own`): the platform theme's
+        /// (`desktop::qt_settings`).
         fn qt_fonts(&self) -> Named {
             Named::default()
         }
@@ -626,8 +632,8 @@ mod imp {
             None
         }
         /// The colors its own settings name: Plasma's scheme, LXQt's
-        /// palette, or the GTK3 theme GNOME's, MATE's, Cinnamon's or Xfce's
-        /// settings name, read by `theme`.
+        /// palette, the GTK3 theme GNOME's, MATE's, Cinnamon's or Xfce's
+        /// settings name, read by `theme`, or Omarchy's theme.
         fn own_colors(&self, theme: &dyn Fn(&str) -> Schemes) -> Painted;
         /// The GTK3 theme GTK's own settings name (`settings.ini`, GTK 3's
         /// before GTK 4's, as the themes read are GTK 3's).
@@ -652,18 +658,27 @@ mod imp {
         fn qt_is_own(&self) -> bool {
             false
         }
-        /// The colors Qt's applications are given elsewhere: qt6ct's or
-        /// qt5ct's scheme.
+        /// The colors Qt's applications are given elsewhere: the scheme of
+        /// the platform theme `QT_QPA_PLATFORMTHEME` names.
         fn qt_colors(&self) -> Painted {
             Painted::default()
         }
-        /// The colors of the GTK3 theme `name` (`gtk_theme::schemes`).
+        /// The colors of the GTK3 theme `name` with the user's own sheet
+        /// laid over it, or of that sheet alone where `name` names no
+        /// theme read (`gtk_theme::schemes`).
         fn theme(&self, name: &str) -> Schemes {
-            crate::gtk_theme::schemes(name, &crate::gtk_theme::folders())
+            crate::gtk_theme::schemes(
+                name,
+                &crate::gtk_theme::folders(),
+                crate::gtk_theme::UserSheet::this_user().as_ref(),
+            )
         }
         /// The files it says a change in by writing or replacing them
-        /// (Plasma's `kdeglobals`, LXQt's `lxqt.conf`, qt5ct's and qt6ct's
-        /// files, GTK's `settings.ini`), each followed in its folder.
+        /// (Plasma's `kdeglobals`, LXQt's `lxqt.conf`, the Qt platform
+        /// theme's settings and the scheme they name, GTK's `settings.ini`,
+        /// the user's GTK sheets and what they import, the folder of
+        /// Omarchy's theme), each followed in its folder: asked again after
+        /// each reading, as what a file names may have moved.
         fn followed(&self) -> Vec<PathBuf>;
     }
 
@@ -743,14 +758,13 @@ mod imp {
         }
 
         fn qt_colors(&self) -> Painted {
-            match desktop::qt_ct() {
-                Some((program, text)) => Painted::one(
-                    crate::qt_palette::qt_ct(&text),
-                    if program == "qt6ct" {
-                        "Qt (qt6ct)"
-                    } else {
-                        "Qt (qt5ct)"
-                    },
+            match desktop::qt_settings() {
+                Some(settings) => Painted::one(
+                    crate::qt_palette::of_settings(
+                        &settings,
+                        skwir_core::os_path::home().as_deref(),
+                    ),
+                    qt_source(settings.program),
                 ),
                 None => Painted::default(),
             }
@@ -760,12 +774,13 @@ mod imp {
             let Some(config) = crate::xdg::config_home() else {
                 return Vec::new();
             };
+            let home = skwir_core::os_path::home();
             let desktop = match desktop::chosen() {
                 Some(Chosen::Kde) => crate::kde_scheme::user_file(),
                 Some(Chosen::Lxqt) => Some(config.join("lxqt/lxqt.conf")),
                 _ => None,
             };
-            desktop
+            let mut files: Vec<PathBuf> = desktop
                 .into_iter()
                 .chain(
                     [
@@ -776,7 +791,29 @@ mod imp {
                     ]
                     .map(|file| config.join(file)),
                 )
-                .collect()
+                .collect();
+            // The scheme a Qt platform theme names, which a shell writes
+            // again in its place (Noctalia's for qt6ct, Caelestia's for
+            // qtengine), and the settings that name it.
+            if !self.qt_is_own()
+                && let Some(settings) = desktop::qt_settings()
+            {
+                files.extend(crate::qt_palette::scheme_path(&settings, home.as_deref()));
+                files.push(settings.path);
+            }
+            // The user's GTK sheets and the files they import, which a shell
+            // writes again (Noctalia's `noctalia.css`, Dux Shell's
+            // `dank-colors.css`).
+            if let Some(sheet) = crate::gtk_theme::UserSheet::this_user() {
+                files.extend(sheet.files());
+            }
+            // Omarchy's theme, which it puts in place whole.
+            if crate::omarchy::is_session()
+                && let Some(home) = &home
+            {
+                files.extend(crate::omarchy::themes(home));
+            }
+            files
         }
     }
 
@@ -922,8 +959,10 @@ mod imp {
                 own.gtk_theme().or(portal_theme)
             }
         });
+        // Read named none too: the user's own sheet colors GTK's
+        // applications over GTK's built-in theme.
         let gtk_colors = Painted {
-            schemes: gtk_theme.as_deref().map(theme).unwrap_or_default(),
+            schemes: theme(gtk_theme.as_deref().unwrap_or_default()),
             from: Some("GTK"),
         };
         let own_colors = own.own_colors(&theme);
@@ -947,6 +986,18 @@ mod imp {
         changed: Mutex<Box<dyn FnMut(DesktopStyle) + Send>>,
         /// Whether a reading runs, and whether it reads once more after.
         reading: Mutex<Option<bool>>,
+        /// The files followed, `None` where the system gives no watcher.
+        files: Mutex<Option<Files>>,
+    }
+
+    /// The files followed: those `Own::followed` named at the last
+    /// reading, each by its folder and name, and the folders watched.
+    struct Files {
+        settled: skwir_core::fs::Settled,
+        /// Read by the watcher's thread for each event, apart from the
+        /// rest so a reading never holds what it waits on.
+        wanted: Arc<Mutex<Vec<(PathBuf, std::ffi::OsString)>>>,
+        watched: Vec<PathBuf>,
     }
 
     impl Following {
@@ -968,7 +1019,45 @@ mod imp {
                 (self.changed.lock().unwrap_or_else(PoisonError::into_inner))(now);
             }
             drop(said);
+            // What the files read now name (another scheme, a sheet
+            // imported) followed from now on.
+            self.follow(&self.own.followed());
             skwir_core::scheduler::release_now();
+        }
+
+        /// Follow `files` from now on, in place of those followed before;
+        /// whether any of their folders is watched. A folder not there is
+        /// not, until a reading names it again once it is.
+        fn follow(&self, files: &[PathBuf]) -> bool {
+            let mut followed = self.files.lock().unwrap_or_else(PoisonError::into_inner);
+            let Some(followed) = followed.as_mut() else {
+                return false;
+            };
+            let wanted: Vec<(PathBuf, std::ffi::OsString)> = files
+                .iter()
+                .filter_map(|file| {
+                    Some((file.parent()?.to_path_buf(), file.file_name()?.to_owned()))
+                })
+                .collect();
+            let mut folders: Vec<PathBuf> =
+                wanted.iter().map(|(folder, _)| folder.clone()).collect();
+            *followed
+                .wanted
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner) = wanted;
+            folders.sort();
+            folders.dedup();
+            for folder in folders {
+                if followed.watched.contains(&folder) {
+                    continue;
+                }
+                if followed.settled.watch(&folder) {
+                    followed.watched.push(folder);
+                } else {
+                    tracing::debug!("{} is read, not followed", folder.display());
+                }
+            }
+            !followed.watched.is_empty()
         }
 
         /// [`Following::read_again`] on a thread of its own, as a listener
@@ -1024,8 +1113,9 @@ mod imp {
             said: Mutex::new(None),
             changed: Mutex::new(Box::new(changed)),
             reading: Mutex::new(None),
+            files: Mutex::new(None),
         });
-        let files = follow_files(&following, &following.own.followed(), stop);
+        let files = follow_files(&following, stop);
         let mut read = false;
         crate::bus::keep(connect, stop, |bus| {
             *following.bus.lock().unwrap_or_else(PoisonError::into_inner) = Some(bus.clone());
@@ -1044,38 +1134,32 @@ mod imp {
         if !read {
             following.read_soon();
         }
-        if files.is_some() {
+        if files {
             // No bus, the files are followed still.
             let _ = stop.subscribe().receiver().recv();
         }
     }
 
-    /// Follow `files` being written or replaced, each in its folder
-    /// (access dropped, as `fs::Settled` does), reading again once their
-    /// writes settle. A folder not there is not followed.
-    fn follow_files(
-        following: &Arc<Following>,
-        files: &[PathBuf],
-        stop: &CancelToken,
-    ) -> Option<skwir_core::fs::Settled> {
-        let wanted: Vec<(PathBuf, std::ffi::OsString)> = files
-            .iter()
-            .filter_map(|file| Some((file.parent()?.to_path_buf(), file.file_name()?.to_owned())))
-            .collect();
-        if wanted.is_empty() {
-            return None;
-        }
+    /// Follow the files `following`'s desktop names being written or
+    /// replaced, each in its folder (access dropped, as `fs::Settled`
+    /// does), reading again once their writes settle; whether any is.
+    fn follow_files(following: &Arc<Following>, stop: &CancelToken) -> bool {
         let weak = Arc::downgrade(following);
         let stop = stop.clone();
-        let relevant = wanted.clone();
-        let mut settled = skwir_core::fs::Settled::start(
+        let wanted = Arc::new(Mutex::new(Vec::<(PathBuf, std::ffi::OsString)>::new()));
+        let relevant = Arc::clone(&wanted);
+        let settled = skwir_core::fs::Settled::start(
             "skwir-desktop-files",
             SETTLE,
             move |path| {
-                relevant.iter().any(|(folder, name)| {
-                    path.file_name() == Some(name.as_os_str())
-                        && path.parent() == Some(folder.as_path())
-                })
+                relevant
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .iter()
+                    .any(|(folder, name)| {
+                        path.file_name() == Some(name.as_os_str())
+                            && path.parent() == Some(folder.as_path())
+                    })
             },
             move || {
                 let Some(following) = weak.upgrade().filter(|_| !stop.is_cancelled()) else {
@@ -1084,19 +1168,19 @@ mod imp {
                 following.read_soon();
                 true
             },
-        )?;
-        let mut folders: Vec<&PathBuf> = wanted.iter().map(|(folder, _)| folder).collect();
-        folders.sort();
-        folders.dedup();
-        let mut followed = false;
-        for folder in folders {
-            if settled.watch(folder) {
-                followed = true;
-            } else {
-                tracing::debug!("{} is read, not followed", folder.display());
-            }
-        }
-        followed.then_some(settled)
+        );
+        let Some(settled) = settled else {
+            return false;
+        };
+        *following
+            .files
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(Files {
+            settled,
+            wanted,
+            watched: Vec::new(),
+        });
+        following.follow(&following.own.followed())
     }
 
     /// Read again at each change the portal on `bus` says of what is read,
@@ -1326,10 +1410,7 @@ mod imp {
     /// takes it.
     fn own_colors(theme: &dyn Fn(&str) -> Schemes) -> Painted {
         let gtk = |named: Option<String>, from: &'static str| Painted {
-            schemes: desktop::forced_gtk_theme()
-                .or(named)
-                .map(|name| theme(&name))
-                .unwrap_or_default(),
+            schemes: theme(&desktop::forced_gtk_theme().or(named).unwrap_or_default()),
             from: Some(from),
         };
         match desktop::chosen() {
@@ -1340,6 +1421,8 @@ mod imp {
             ),
             Some(Chosen::GSettings(schema)) => gtk(desktop::own_gtk_theme(), schema_name(schema)),
             Some(Chosen::Xfce) => gtk(desktop::own_gtk_theme(), "Xfce"),
+            // Omarchy's session names Hyprland, its colors its own.
+            None if crate::omarchy::is_session() => Painted::one(crate::omarchy::read(), "Omarchy"),
             None => Painted::default(),
         }
     }
@@ -1353,15 +1436,70 @@ mod imp {
         }
     }
 
-    /// qt6ct's or qt5ct's fonts, as `QT_QPA_PLATFORMTHEME` names it (on
+    /// The fonts of the Qt platform theme `QT_QPA_PLATFORMTHEME` names (on
     /// Plasma and LXQt, Qt's are the desktop's own: `Own::qt_is_own`).
     fn qt_fonts() -> Named {
-        match desktop::qt_ct() {
-            Some(("qt6ct", text)) => {
-                qt_named(Some(&text), "Fonts", ("general", "fixed"), "Qt (qt6ct)")
+        desktop::qt_settings().map_or_else(Named::default, |settings| qt_settings_named(&settings))
+    }
+
+    /// Where a platform theme's colors and fonts are said to come from.
+    fn qt_source(program: &str) -> &'static str {
+        match program {
+            "qt6ct" => "Qt (qt6ct)",
+            "qtengine" => "Qt (qtengine)",
+            "hyprqt6engine" => "Qt (hyprqt6engine)",
+            _ => "Qt (qt5ct)",
+        }
+    }
+
+    /// The fonts a platform theme's settings name, as each writes them:
+    /// qt5ct's and qt6ct's as Qt writes a font, qtengine's
+    /// (`theme.font`, `theme.fontFixed`) and hyprqt6engine's
+    /// (`theme:font`, `theme:font_fixed`) a family and a size in points.
+    /// What they leave out is unnamed: the program's own default is no
+    /// choice of the user's.
+    pub(super) fn qt_settings_named(settings: &desktop::QtSettings) -> Named {
+        let from = qt_source(settings.program);
+        let text = settings.text.as_str();
+        let (interface, fixed) = match settings.program {
+            "qtengine" => {
+                let json: serde_json::Value = serde_json::from_str(text).unwrap_or_default();
+                let font = |key: &str| {
+                    let font = json.get("theme")?.get(key)?;
+                    let family = font.get("family")?.as_str()?.trim();
+                    let size = font.get("size").and_then(serde_json::Value::as_f64);
+                    (!family.is_empty()).then(|| (family.to_owned(), size))
+                };
+                (font("font"), font("fontFixed"))
             }
-            Some((_, text)) => qt_named(Some(&text), "Fonts", ("general", "fixed"), "Qt (qt5ct)"),
-            None => Named::default(),
+            "hyprqt6engine" => {
+                let font = |family: &str, size: &str| {
+                    let size = desktop::hyprlang_value(text, size).and_then(|s| s.parse().ok());
+                    Some((desktop::hyprlang_value(text, family)?, size))
+                };
+                (
+                    font("theme:font", "theme:font_size"),
+                    font("theme:font_fixed", "theme:font_fixed_size"),
+                )
+            }
+            _ => return qt_named(Some(text), "Fonts", ("general", "fixed"), from),
+        };
+        let px = |font: &Option<(String, Option<f64>)>| {
+            let size = font
+                .as_ref()?
+                .1
+                .filter(|size| *size > 0. && size.is_finite())?;
+            // A size in points, a few dozen at most: exact as an f32.
+            #[allow(clippy::cast_possible_truncation)]
+            Some(super::points(size as f32))
+        };
+        Named {
+            interface_px: px(&interface),
+            monospace_px: px(&fixed),
+            interface: interface.map(|(family, _)| family),
+            monospace: fixed.map(|(family, _)| family),
+            from: Some(from),
+            ..Named::default()
         }
     }
 }
@@ -1943,7 +2081,7 @@ mod tests {
             }
 
             fn theme(&self, name: &str) -> Schemes {
-                crate::gtk_theme::schemes(name, &self.themes)
+                crate::gtk_theme::schemes(name, &self.themes, None)
             }
 
             fn followed(&self) -> Vec<PathBuf> {
@@ -2288,7 +2426,7 @@ mod tests {
             }
 
             fn theme(&self, name: &str) -> Schemes {
-                crate::gtk_theme::schemes(name, std::slice::from_ref(&self.themes))
+                crate::gtk_theme::schemes(name, std::slice::from_ref(&self.themes), None)
             }
 
             fn followed(&self) -> Vec<PathBuf> {
@@ -2752,6 +2890,192 @@ general=@Variant(\0\0\0@\0\0\0\x12\0N\0o\0t\0o\0 \0S\0\x61\0n\0s@$\0\0\0\0\0\0\x
             // Written in place, as qt6ct saves it: read again.
             std::fs::write(&conf, fonts(12)).unwrap();
             assert_eq!(next().font_px, Some(16.));
+            stop.cancel();
+            following.join().unwrap();
+        }
+
+        #[test]
+        fn qtengine_s_and_hyprqt6engine_s_fonts_are_a_family_and_its_points() {
+            let close = |a: Option<f32>, b: f32| a.is_some_and(|a| (a - b).abs() < 1e-3);
+            let settings =
+                |program: &'static str, text: &str| crate::desktop_settings::QtSettings {
+                    program,
+                    path: PathBuf::from("/settings"),
+                    text: text.into(),
+                };
+            let engine = imp::qt_settings_named(&settings(
+                "qtengine",
+                r#"{"theme": {"font": {"family": "Inter", "size": 11, "weight": -1},
+                    "fontFixed": {"family": "Iosevka"}}}"#,
+            ));
+            assert_eq!(engine.interface.as_deref(), Some("Inter"));
+            assert!(close(engine.interface_px, 11. * 96. / 72.));
+            assert_eq!(engine.monospace.as_deref(), Some("Iosevka"));
+            assert_eq!(engine.monospace_px, None, "no size said");
+            assert_eq!(engine.from, Some("Qt (qtengine)"));
+            let hypr = imp::qt_settings_named(&settings(
+                "hyprqt6engine",
+                "theme {\n  font = Noto Sans\n  font_size = 10\n  font_fixed = Hack\n  \
+                 font_fixed_size = 9\n}\n",
+            ));
+            assert_eq!(hypr.interface.as_deref(), Some("Noto Sans"));
+            assert!(close(hypr.interface_px, 10. * 96. / 72.));
+            assert_eq!(hypr.monospace.as_deref(), Some("Hack"));
+            assert!(close(hypr.monospace_px, 12.));
+            assert_eq!(hypr.from, Some("Qt (hyprqt6engine)"));
+            // Said nothing, or not JSON: none, the program's own default
+            // being no choice of the user's.
+            for (program, text) in [("qtengine", "{}"), ("qtengine", "{"), ("hyprqt6engine", "")] {
+                let none = imp::qt_settings_named(&settings(program, text));
+                assert_eq!((none.interface, none.monospace), (None, None), "{program}");
+            }
+            // qt6ct's, as Qt writes a font.
+            let ct = imp::qt_settings_named(&settings(
+                "qt6ct",
+                "[Fonts]\ngeneral=\"Fira Sans,12,-1,5,400,0,0,0,0,0\"\n",
+            ));
+            assert_eq!(ct.interface.as_deref(), Some("Fira Sans"));
+            assert_eq!(ct.from, Some("Qt (qt6ct)"));
+        }
+
+        /// A settings file that names a scheme file by its path (as qt6ct
+        /// names a shell's scheme), each read again at each reading.
+        struct Naming(PathBuf);
+
+        impl imp::Own for Naming {
+            fn fonts(&self) -> imp::Named {
+                imp::Named::default()
+            }
+
+            fn own_colors(&self, _: &dyn Fn(&str) -> Schemes) -> imp::Painted {
+                let scheme = std::fs::read_to_string(&self.0)
+                    .ok()
+                    .and_then(|named| std::fs::read_to_string(named.trim()).ok())
+                    .and_then(|text| crate::kde_scheme::scheme_of(&[text], &[]));
+                imp::Painted::one(scheme, "Plasma")
+            }
+
+            fn followed(&self) -> Vec<PathBuf> {
+                let named = std::fs::read_to_string(&self.0).unwrap_or_default();
+                vec![self.0.clone(), PathBuf::from(named.trim())]
+            }
+        }
+
+        /// A scheme of one look, its ground's red `red`.
+        fn kde(red: u8) -> String {
+            format!(
+                "[Colors:View]\nBackgroundNormal={red},255,255\nForegroundNormal=35,38,41\n\
+                 [Colors:Window]\nBackgroundNormal=239,240,241\n"
+            )
+        }
+
+        #[test]
+        fn what_a_file_names_is_followed_where_it_names_it_now() {
+            let dir = tempfile::tempdir().unwrap();
+            let conf = dir.path().join("settings/qt6ct.conf");
+            let (first, second) = (
+                dir.path().join("schemes/one.colors"),
+                dir.path().join("elsewhere/two.colors"),
+            );
+            for file in [&conf, &first, &second] {
+                std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            }
+            std::fs::write(&first, kde(200)).unwrap();
+            std::fs::write(&second, kde(100)).unwrap();
+            std::fs::write(&conf, first.display().to_string()).unwrap();
+            let (sent, got) = mpsc::channel();
+            let stop = CancelToken::new();
+            let following = {
+                let stop = stop.clone();
+                let desktop = Arc::new(Naming(conf.clone()));
+                std::thread::spawn(move || {
+                    imp::follow_on(
+                        handed(Vec::new()),
+                        desktop,
+                        move |style| sent.send(style).unwrap(),
+                        &stop,
+                    );
+                })
+            };
+            let red =
+                |style: DesktopStyle| (style.schemes.light.unwrap().bg[0] * 255.).round() as u8;
+            let next = || red(got.recv_timeout(Duration::from_secs(10)).unwrap());
+            assert_eq!(next(), 200);
+            // The scheme written again in its place, the settings unchanged
+            // (as a shell writes its scheme): read again.
+            std::fs::write(&first, kde(210)).unwrap();
+            assert_eq!(next(), 210);
+            // The settings name another, in a folder not followed before:
+            // read, then followed there.
+            std::fs::write(&conf, second.display().to_string()).unwrap();
+            assert_eq!(next(), 100);
+            std::fs::write(&second, kde(110)).unwrap();
+            assert_eq!(next(), 110);
+            // The one named before is no longer followed.
+            std::fs::write(&first, kde(220)).unwrap();
+            assert!(got.recv_timeout(Duration::from_millis(800)).is_err());
+            stop.cancel();
+            following.join().unwrap();
+        }
+
+        /// Omarchy's theme under a home folder of the test's own.
+        struct Omarchy(PathBuf);
+
+        impl imp::Own for Omarchy {
+            fn fonts(&self) -> imp::Named {
+                imp::Named::default()
+            }
+
+            fn own_colors(&self, _: &dyn Fn(&str) -> Schemes) -> imp::Painted {
+                imp::Painted::one(crate::omarchy::read_in(&self.0), "Omarchy")
+            }
+
+            fn followed(&self) -> Vec<PathBuf> {
+                crate::omarchy::themes(&self.0).into()
+            }
+        }
+
+        #[test]
+        fn omarchy_s_theme_is_followed_as_another_is_put_in_its_place() {
+            let home = tempfile::tempdir().unwrap();
+            let [current, _] = crate::omarchy::themes(home.path());
+            let state = current.parent().unwrap().to_path_buf();
+            let theme = |name: &str, background: &str, foreground: &str| {
+                let folder = state.join(name);
+                std::fs::create_dir_all(&folder).unwrap();
+                std::fs::write(
+                    folder.join("colors.toml"),
+                    format!("background = \"{background}\"\nforeground = \"{foreground}\"\n"),
+                )
+                .unwrap();
+                folder
+            };
+            theme("theme", "#ffffff", "#111111");
+            let (sent, got) = mpsc::channel();
+            let stop = CancelToken::new();
+            let following = {
+                let stop = stop.clone();
+                let desktop = Arc::new(Omarchy(home.path().to_path_buf()));
+                std::thread::spawn(move || {
+                    imp::follow_on(
+                        handed(Vec::new()),
+                        desktop,
+                        move |style| sent.send(style).unwrap(),
+                        &stop,
+                    );
+                })
+            };
+            let next = || got.recv_timeout(Duration::from_secs(10)).unwrap();
+            let first = next();
+            assert_eq!(first.colors_from.as_deref(), Some("Omarchy"));
+            assert!(first.schemes.light.is_some());
+            // As omarchy-theme-set does: the next theme made beside it, the
+            // theme removed, the next one renamed to it.
+            let next_theme = theme("next-theme", "#1b1c27", "#aab2d5");
+            std::fs::remove_dir_all(&current).unwrap();
+            std::fs::rename(&next_theme, &current).unwrap();
+            let changed = next();
+            assert!(changed.schemes.dark.is_some() && changed.schemes.light.is_none());
             stop.cancel();
             following.join().unwrap();
         }

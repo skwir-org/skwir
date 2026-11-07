@@ -5,6 +5,16 @@
 //! only the colors a theme names. A theme whose sheet lives only in a
 //! compiled `gtk.gresource` (Arc's), or GTK's built-in Adwaita, names none
 //! here. Read on the desktop style's thread, never while drawing.
+//!
+//! Over the theme, the user's own sheet (`UserSheet`, ADR-071 amended
+//! 2026-11-07), as GTK lays it over every theme: what a desktop shell
+//! writes there (Noctalia, Caelestia, Dux Shell, a matugen template)
+//! colors every GTK application whatever its theme. GTK takes a name's
+//! last definition when a color is looked up, so a theme's colors named
+//! by reference (adw-gtk3's `theme_base_color` is `@view_bg_color`) take
+//! the user's; where the theme names none, the names libadwaita draws
+//! with (`view_bg_color`, `window_bg_color`, `accent_bg_color`…) are read
+//! as its colors are.
 
 // Colors are written as CSS writes them, `0xrrggbb`.
 #![allow(clippy::unreadable_literal)]
@@ -43,12 +53,27 @@ pub(crate) fn folders() -> Vec<PathBuf> {
 /// The schemes of the theme `theme` names (`Name`, or `Name:dark` as
 /// `GTK_THEME` asks for its dark variant), the first of `folders` that
 /// holds it: its sheet's, and its dark variant's (`gtk-dark.css`) beside
-/// it unless the dark one alone was asked for.
-pub(crate) fn schemes(theme: &str, folders: &[PathBuf]) -> Schemes {
+/// it unless the dark one alone was asked for; each with `user`'s sheet
+/// laid over it, or `user`'s alone where no theme of `folders` is named
+/// so (GTK's built-in Adwaita, or `theme` empty: none named).
+///
+/// The user's sheet is one look's (a shell writes it again when its look
+/// changes): laid over a theme's light sheet and its dark one alike, the
+/// two come out one look and that look keeps the first.
+pub(crate) fn schemes(theme: &str, folders: &[PathBuf], user: Option<&UserSheet>) -> Schemes {
+    let user = user.map(UserSheet::read).filter(|sheet| !sheet.is_empty());
+    let mut schemes = Schemes::default();
+    let mut add = |sheet: Sheet| {
+        if let Some(scheme) = sheet.scheme() {
+            schemes.add(scheme);
+        }
+    };
     let (name, variant) = theme.trim().split_once(':').unwrap_or((theme.trim(), ""));
     let dark_only = variant.eq_ignore_ascii_case("dark");
-    let mut schemes = Schemes::default();
     let Some((root, gtk)) = find(name, folders) else {
+        if let Some(user) = user {
+            add(user);
+        }
         return schemes;
     };
     let (light, dark) = (gtk.join("gtk.css"), gtk.join("gtk-dark.css"));
@@ -59,11 +84,77 @@ pub(crate) fn schemes(theme: &str, folders: &[PathBuf]) -> Schemes {
         &[&light, &dark]
     };
     for sheet in sheets.iter().filter(|sheet| sheet.is_file()) {
-        if let Some(scheme) = Sheet::read(sheet, &root).scheme() {
-            schemes.add(scheme);
-        }
+        let sheet = Sheet::read(sheet, &root);
+        add(match &user {
+            Some(user) => sheet.under(user),
+            None => sheet,
+        });
     }
     schemes
+}
+
+/// The style sheet GTK lays over every theme for its user: `gtk.css` of
+/// GTK 3's configuration folder, else GTK 4's (libadwaita's) where GTK
+/// 3's defines no color, the GTK 3 themes read here being GTK 3's. Its
+/// imports are read within `root`, the user's home folder: a shell's own
+/// file beside it (`noctalia.css`, `dank-colors.css`), a template's
+/// output elsewhere in the home folder, never what lies outside it.
+#[derive(Clone, Debug)]
+pub(crate) struct UserSheet {
+    /// GTK 3's folder, then GTK 4's.
+    pub(crate) folders: [PathBuf; 2],
+    pub(crate) root: PathBuf,
+}
+
+impl UserSheet {
+    /// This user's: under the configuration folder, read within the home
+    /// folder.
+    pub(crate) fn this_user() -> Option<Self> {
+        let config = crate::xdg::config_home()?;
+        // The home folder holds the configuration folder but where it is
+        // moved elsewhere.
+        let root = skwir_core::os_path::home()
+            .filter(|home| config.starts_with(home))
+            .unwrap_or_else(|| config.clone());
+        Some(UserSheet {
+            folders: [config.join("gtk-3.0"), config.join("gtk-4.0")],
+            root,
+        })
+    }
+
+    /// What it defines now: GTK 3's sheet's, else GTK 4's.
+    fn read(&self) -> Sheet {
+        self.read_with_files().0
+    }
+
+    /// `read`, with every file it opened.
+    fn read_with_files(&self) -> (Sheet, Vec<PathBuf>) {
+        let mut files = Vec::new();
+        for folder in &self.folders {
+            let sheet = Sheet::read(&folder.join("gtk.css"), &self.root);
+            files.extend(sheet.files.iter().cloned());
+            if !sheet.is_empty() {
+                return (sheet, files);
+            }
+        }
+        (Sheet::default(), files)
+    }
+
+    /// The files a reading looks at, to follow: both `gtk.css`, there or
+    /// not, and what the one read imports.
+    pub(crate) fn files(&self) -> Vec<PathBuf> {
+        let mut files: Vec<PathBuf> = self
+            .folders
+            .iter()
+            .map(|folder| folder.join("gtk.css"))
+            .collect();
+        for file in self.read_with_files().1 {
+            if !files.contains(&file) {
+                files.push(file);
+            }
+        }
+        files
+    }
 }
 
 /// The folder of the theme `name` and its GTK3 folder, in the first of
@@ -88,9 +179,11 @@ fn find(name: &str, folders: &[PathBuf]) -> Option<(PathBuf, PathBuf)> {
 /// was given, in order. The last is the one used; one that names itself
 /// takes the one before (adw-gtk3 writes `@define-color warning_color
 /// @warning_color;` after defining it).
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct Sheet {
     defined: HashMap<String, Vec<String>>,
+    /// The files read, in order.
+    files: Vec<PathBuf>,
 }
 
 impl Sheet {
@@ -102,6 +195,25 @@ impl Sheet {
         sheet
     }
 
+    /// Whether it defines no color.
+    fn is_empty(&self) -> bool {
+        self.defined.is_empty()
+    }
+
+    /// This sheet with `top`'s definitions after its own, as GTK lays a
+    /// sheet of a higher priority over another: a name `top` defines is
+    /// `top`'s, and one that names itself there takes this one's.
+    fn under(mut self, top: &Sheet) -> Sheet {
+        for (name, definitions) in &top.defined {
+            self.defined
+                .entry(name.clone())
+                .or_default()
+                .extend(definitions.iter().cloned());
+        }
+        self.files.extend(top.files.iter().cloned());
+        self
+    }
+
     fn load(&mut self, file: &Path, root: &Path, seen: &mut HashSet<PathBuf>) {
         let file = lexical(file);
         if !file.starts_with(root) || seen.len() >= SHEETS || !seen.insert(file.clone()) {
@@ -110,6 +222,7 @@ impl Sheet {
         let Ok(text) = crate::file::read_regular_text(&file, SHEET) else {
             return;
         };
+        self.files.push(file.clone());
         let text = without_comments(&text);
         let mut rest = text.as_str();
         while let Some(at) = rest.find('@') {
@@ -151,35 +264,46 @@ impl Sheet {
         .named(name)
     }
 
-    /// The scheme of point 4's GTK3 column, when the theme names what is
-    /// read on, in what, and its chrome.
+    /// The scheme of point 4's GTK3 column, when the sheet names what is
+    /// read on, in what, and its chrome: by GTK 3's names, else by those
+    /// libadwaita draws with (a sheet a shell writes for GTK 4 alone).
     pub(crate) fn scheme(&self) -> Option<Scheme> {
         let opaque = |color: Rgba| [color[0], color[1], color[2]];
-        let bg = opaque(self.color("theme_base_color")?);
-        let on_bg = |name: &str| self.color(name).map(|color| over(color, bg));
+        let first = |names: &[&str]| names.iter().find_map(|name| self.color(name));
+        let bg = opaque(first(&["theme_base_color", "view_bg_color"])?);
+        let on_bg = |names: &[&str]| first(names).map(|color| over(color, bg));
         // The chrome is the window's, even where a theme after
         // libadwaita's names a sidebar of its own: adw-gtk3's #ebebed on
         // #ffffff was too strong; a window as light as what is read
         // (its #fafafb) is set apart by the theme (`CHROME`, ADR-071).
-        let surface = on_bg("theme_bg_color")?;
-        let selection_bg = on_bg("theme_selected_bg_color");
-        let selection = selection_bg.zip(
-            self.color("theme_selected_fg_color")
-                .zip(selection_bg)
-                .map(|(fg, ground)| over(fg, ground)),
-        );
+        let surface = on_bg(&["theme_bg_color", "window_bg_color"])?;
+        // A selection is a ground and its text named together: GTK 3's
+        // pair, else libadwaita's accent and the text on it. One that
+        // names its ground alone (Caelestia's, a tint of its accent)
+        // names none, and the selection is derived from the accent.
+        let pair = |ground: &str, text: &str| {
+            let ground = on_bg(&[ground])?;
+            Some((ground, over(self.color(text)?, ground)))
+        };
+        let selection = if self.color("theme_selected_bg_color").is_some() {
+            pair("theme_selected_bg_color", "theme_selected_fg_color")
+        } else {
+            pair("accent_bg_color", "accent_fg_color")
+        };
         Some(Scheme {
             bg,
             surface,
-            text: on_bg("theme_text_color")?,
+            text: on_bg(&["theme_text_color", "view_fg_color"])?,
             text_muted: None,
             zebra: None,
-            border: on_bg("borders"),
-            accent: selection_bg,
+            border: on_bg(&["borders"]),
+            // libadwaita's accent where the sheets name it (adw-gtk3's
+            // selection is the same color), else the selection's ground.
+            accent: on_bg(&["accent_bg_color", "theme_selected_bg_color"]),
             selection,
-            error: on_bg("error_color"),
-            warning: on_bg("warning_color"),
-            success: on_bg("success_color"),
+            error: on_bg(&["error_color"]),
+            warning: on_bg(&["warning_color"]),
+            success: on_bg(&["success_color"]),
         })
     }
 }
@@ -653,7 +777,7 @@ mod tests {
                 ("gtk-3.0/gtk-dark.css", &full("#1e1e1e", "white")),
             ],
         );
-        let both = schemes("Both", &folders);
+        let both = schemes("Both", &folders, None);
         let light = both.light.clone().expect("its own sheet");
         assert!(!light.is_dark());
         assert_eq!(light.bg, [1.; 3]);
@@ -670,7 +794,7 @@ mod tests {
         assert!(both.dark.as_ref().is_some_and(Scheme::is_dark));
 
         // Its dark variant alone, as GTK_THEME asks for it.
-        let dark = schemes("Both:dark", &folders);
+        let dark = schemes("Both:dark", &folders, None);
         assert_eq!((dark.light, dark.dark), (None, both.dark));
 
         // The user's own copy, in a newer GTK folder, is the one read.
@@ -679,7 +803,7 @@ mod tests {
             "Both",
             &[("gtk-3.20/gtk.css", &full("#fafafa", "#101010"))],
         );
-        let user = schemes("Both", &folders);
+        let user = schemes("Both", &folders, None);
         assert!(near(user.light.unwrap().bg, 0xfafafa));
         assert_eq!(user.dark, None);
 
@@ -689,7 +813,7 @@ mod tests {
             "Night",
             &[("gtk-3.0/gtk.css", &full("#202020", "#eeeeee"))],
         );
-        let night = schemes("Night", &folders);
+        let night = schemes("Night", &folders, None);
         assert!(night.light.is_none() && night.dark.is_some());
     }
 
@@ -718,7 +842,7 @@ mod tests {
             )],
         );
         theme(dir.path(), "Window", &[("gtk-3.0/gtk.css", &named(""))]);
-        let surface = |name| schemes(name, &folders).light.unwrap().surface;
+        let surface = |name| schemes(name, &folders, None).light.unwrap().surface;
         for name in ["Sidebar", "Header", "Window"] {
             assert!(near(surface(name), 0xf2f2f2), "{name}: the window's");
         }
@@ -745,8 +869,212 @@ mod tests {
             &[("gtk-3.0/gtk.css", "@define-color theme_base_color #fff;")],
         );
         for name in ["Compiled", "Partial", "Adwaita", "", "..", "a/b"] {
-            assert!(schemes(name, &folders).is_empty(), "{name:?}");
+            assert!(schemes(name, &folders, None).is_empty(), "{name:?}");
         }
+    }
+
+    /// A theme after libadwaita's (adw-gtk3's way): its GTK 3 names by
+    /// reference to libadwaita's.
+    fn adwaita_like(view: &str, window: &str, text: &str) -> String {
+        format!(
+            "@define-color accent_bg_color #3584e4;\n\
+             @define-color accent_fg_color #ffffff;\n\
+             @define-color window_bg_color {window};\n\
+             @define-color view_bg_color {view};\n\
+             @define-color view_fg_color {text};\n\
+             @define-color theme_bg_color @window_bg_color;\n\
+             @define-color theme_base_color @view_bg_color;\n\
+             @define-color theme_text_color @view_fg_color;\n\
+             @define-color theme_selected_bg_color @accent_bg_color;\n\
+             @define-color theme_selected_fg_color @accent_fg_color;\n"
+        )
+    }
+
+    /// A user's configuration folder in `home`, its files by name under it.
+    fn user(home: &Path, files: &[(&str, &str)]) -> UserSheet {
+        let config = home.join("config");
+        for (file, text) in files {
+            let path = config.join(file);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        UserSheet {
+            folders: [config.join("gtk-3.0"), config.join("gtk-4.0")],
+            root: home.to_path_buf(),
+        }
+    }
+
+    /// A sheet in libadwaita's names, as a shell writes it.
+    fn shell_sheet(view: &str, window: &str, text: &str, accent: &str) -> String {
+        format!(
+            "@define-color accent_bg_color {accent};\n\
+             @define-color accent_fg_color #ffffff;\n\
+             @define-color window_bg_color {window};\n\
+             @define-color view_bg_color {view};\n\
+             @define-color view_fg_color {text};\n"
+        )
+    }
+
+    #[test]
+    fn the_user_s_sheet_is_laid_over_the_theme_its_references_taking_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let folders = [dir.path().join("themes")];
+        theme(
+            &folders[0],
+            "Adw",
+            &[
+                (
+                    "gtk-3.0/gtk.css",
+                    &adwaita_like("#ffffff", "#fafafb", "#333334"),
+                ),
+                (
+                    "gtk-3.0/gtk-dark.css",
+                    &adwaita_like("#1d1d20", "#222226", "#ffffff"),
+                ),
+            ],
+        );
+        // As Noctalia writes it: an import at the end of gtk.css.
+        let sheet = user(
+            &dir.path().join("home"),
+            &[
+                (
+                    "gtk-3.0/gtk.css",
+                    ".widget { color: red; }\n@import url(\"shell.css\");\n",
+                ),
+                (
+                    "gtk-3.0/shell.css",
+                    &shell_sheet("#faf9f9", "#eeeeed", "#1a1c1c", "#416165"),
+                ),
+            ],
+        );
+        let worn = schemes("Adw", &folders, Some(&sheet));
+        let light = worn.light.expect("the user's look");
+        assert!(near(light.bg, 0xfaf9f9) && near(light.surface, 0xeeeeed));
+        assert!(near(light.text, 0x1a1c1c));
+        assert!(near(light.accent.unwrap(), 0x416165));
+        let (ground, text) = light.selection.unwrap();
+        assert!(near(ground, 0x416165) && near(text, 0xffffff));
+        // Over the dark sheet too it is one look: the light one's, alone.
+        assert_eq!(worn.dark, None);
+        // The theme alone: its two looks, its own colors.
+        let theirs = schemes("Adw", &folders, None);
+        assert!(near(theirs.light.unwrap().bg, 0xffffff));
+        assert!(theirs.dark.is_some());
+
+        // A sheet that names the accent alone recolors both looks.
+        let accent = user(
+            &dir.path().join("accent"),
+            &[("gtk-3.0/gtk.css", "@define-color accent_bg_color #e01b24;")],
+        );
+        let both = schemes("Adw", &folders, Some(&accent));
+        for scheme in [both.light.unwrap(), both.dark.unwrap()] {
+            assert!(near(scheme.accent.unwrap(), 0xe01b24));
+        }
+    }
+
+    #[test]
+    fn libadwaita_s_names_give_the_colors_where_no_theme_does() {
+        let dir = tempfile::tempdir().unwrap();
+        let folders = [dir.path().join("themes")];
+        let home = dir.path().join("home");
+        // GTK 4's sheet alone, no theme read (GTK's built-in Adwaita, or
+        // none named).
+        let sheet = user(
+            &home,
+            &[(
+                "gtk-4.0/gtk.css",
+                &shell_sheet("#1b1b1f", "#202024", "#e4e2e6", "#b0c6ff"),
+            )],
+        );
+        for name in ["Adwaita", ""] {
+            let worn = schemes(name, &folders, Some(&sheet));
+            let dark = worn.dark.expect("GTK 4's sheet");
+            assert!(near(dark.bg, 0x1b1b1f) && near(dark.accent.unwrap(), 0xb0c6ff));
+            assert_eq!(worn.light, None);
+        }
+        // GTK 3's, naming no color, gives way to GTK 4's; naming any, it
+        // is the one read.
+        std::fs::create_dir_all(home.join("config/gtk-3.0")).unwrap();
+        std::fs::write(home.join("config/gtk-3.0/gtk.css"), "button { margin: 0; }").unwrap();
+        assert!(schemes("", &folders, Some(&sheet)).dark.is_some());
+        std::fs::write(
+            home.join("config/gtk-3.0/gtk.css"),
+            shell_sheet("#fbfaed", "#dbdbce", "#1b1c15", "#586420"),
+        )
+        .unwrap();
+        let three = schemes("", &folders, Some(&sheet));
+        assert!(three.dark.is_none() && near(three.light.unwrap().bg, 0xfbfaed));
+        // No sheet and no theme: nothing.
+        let none = user(&dir.path().join("empty"), &[]);
+        assert!(schemes("", &folders, Some(&none)).is_empty());
+    }
+
+    #[test]
+    fn a_selection_that_names_its_ground_alone_is_derived() {
+        let dir = tempfile::tempdir().unwrap();
+        // As Caelestia writes it: a tint of the accent, its text a color
+        // the sheet never defines.
+        let sheet = user(
+            dir.path(),
+            &[(
+                "gtk-3.0/gtk.css",
+                &format!(
+                    "{}@define-color accent_color #586420;\n\
+                     @define-color theme_selected_bg_color alpha(@accent_color, 0.15);\n\
+                     @define-color theme_selected_fg_color @primary;\n",
+                    shell_sheet("#fbfaed", "#dbdbce", "#1b1c15", "#586420")
+                ),
+            )],
+        );
+        let light = schemes("", &[], Some(&sheet)).light.unwrap();
+        assert!(
+            near(light.accent.unwrap(), 0x586420),
+            "the accent, not its tint"
+        );
+        assert_eq!(light.selection, None);
+    }
+
+    #[test]
+    fn the_user_s_imports_stay_in_the_home_folder_and_are_followed() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("outside.css"),
+            "@define-color view_bg_color #ff0000;",
+        )
+        .unwrap();
+        let home = dir.path().join("home");
+        let sheet = user(
+            &home,
+            &[
+                (
+                    "gtk-3.0/gtk.css",
+                    &format!(
+                        "@import url(\"colors/shell.css\");\n\
+                         @import url(\"../../../outside.css\");\n{}",
+                        shell_sheet("#faf9f9", "#eeeeed", "#1a1c1c", "#416165")
+                    ),
+                ),
+                (
+                    "gtk-3.0/colors/shell.css",
+                    "@define-color view_bg_color #fafafa;",
+                ),
+            ],
+        );
+        let light = schemes("", &[], Some(&sheet)).light.unwrap();
+        // The import first, gtk.css's own after it: gtk.css's.
+        assert!(
+            near(light.bg, 0xfaf9f9),
+            "never what is outside the home folder"
+        );
+        let config = home.join("config");
+        assert_eq!(
+            sheet.files(),
+            [
+                config.join("gtk-3.0/gtk.css"),
+                config.join("gtk-4.0/gtk.css"),
+                config.join("gtk-3.0/colors/shell.css"),
+            ]
+        );
     }
 
     #[test]

@@ -13056,3 +13056,56 @@ amended).
   settings file, both at 10.0 px a cell. Before, with Liberation Mono and
   Noto Sans Mono chosen, the family followed and the size was 13/14.
 - **Checked:** rustfmt; skwir built; skwir-ui's size and terminal tests.
+
+
+## 2026-11-07: The desktop shells' colors
+
+- **Asked** (the user): how Omarchy and the shells drawn over Hyprland
+  (Noctalia, Caelestia, Dux Shell, which was DankMaterialShell) say
+  their colors, whether Skwir took them as it takes GTK's and Qt's, and
+  whether it could; then "go ahead with 1-3".
+- **Found** in their sources: Noctalia, Caelestia and Dux Shell write
+  their colors in libadwaita's names into the user's own GTK sheet
+  (`~/.config/gtk-{3,4}.0/gtk.css`, or a file it imports) and name
+  adw-gtk3; their Qt colors go to qt5ct or qt6ct (Noctalia, Dux Shell),
+  qtengine (Caelestia) or a KDE scheme. Omarchy writes for no toolkit:
+  its theme's `colors.toml` is the one place. Skwir read the GTK theme
+  named and never the sheet over it, so on the reference session it
+  wore adw-gtk3's own `#ffffff`, `#fafafb` and `#3584e4`, with
+  Noctalia's accent (`#416165`) from Plasma's portal, which reads the
+  `kdeglobals` Noctalia writes.
+- **Built** (ADR-071 amended):
+  - `gtk_theme::UserSheet`: GTK 3's `gtk.css`, else GTK 4's, its imports
+    within the home folder, laid over the theme's sheets (`Sheet::under`)
+    or read alone where no theme is read; `Sheet::scheme` takes
+    libadwaita's names after GTK 3's, its accent `accent_bg_color`
+    first, a selection only as a ground and its text named together.
+  - `desktop_settings::qt_settings`: the platform theme
+    `QT_QPA_PLATFORMTHEME` names and its settings, found where qtengine
+    and hyprqt6engine look (`QtFolders::candidates`), beside qt5ct's and
+    qt6ct's; `hyprlang_value`; `qt_palette::scheme_path` and
+    `of_settings`; their fonts (`qt_settings_named`).
+  - `omarchy`: `colors.toml` of the theme Omarchy applies, where its
+    session runs (`OMARCHY_PATH`), the desktop's own scheme.
+  - Following: `Own::followed` asked again after each reading
+    (`Following::follow`), so the file a shell writes again (an import,
+    a Qt scheme) and Omarchy's `current/theme` swapped are followed.
+  - Colors from's description, the guide, shell.md and the module docs
+    say so.
+- **Seen** on Xvfb :95 with no session bus (so no portal and no theme
+  named), the debug build: a sheet imported from `gtk.css` worn (the
+  file view `#f7f1e3`, its accent `#2f6f4e`), and once only the
+  imported file was written again, without a restart, `#eef2fb` and
+  `#6a3fc8`. With `OMARCHY_PATH` set and a theme in the test home's
+  `.local/state/omarchy/current/theme`: its dark ground `#1d1a17` and
+  orange accent (Theme on Automatic; forced light, Skwir's own grays with
+  its accent, as point 7 says); the theme removed and the next renamed
+  to it, the window went to `#eff1f5`. On the reference session, a
+  reading through `desktop_style::read` (an example program, removed
+  after): Automatic is GTK's, Noctalia's `#faf9f9`, `#1a1c1c` and
+  `#416165`.
+- **Checked:** rustfmt; clippy on skwir-platform; its tests (the readers
+  on fixtures written as each shell writes, with synthetic colors; the
+  following of a scheme named anew and of Omarchy's swap).
+- **Not checked:** a real Caelestia, Dux Shell or Omarchy session;
+  qtengine and hyprqt6engine installed.
