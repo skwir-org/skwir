@@ -214,7 +214,7 @@ pub enum Topic {
     Find,
     /// Tags, ratings, comments, a picture's position.
     Notes,
-    /// Tabs and the split.
+    /// Windows, tabs and the split.
     Tabs,
     /// How the files are shown and which panels are: views, columns,
     /// zoom, sort, the sidebar, the preview panel, the timeline.

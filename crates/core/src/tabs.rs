@@ -19,9 +19,15 @@ use crate::entry::EntryId;
 use crate::location::{Location, SortSpec};
 use crate::os_path::PathArg;
 use crate::settings::{STARTUP, SettingSpec};
-use crate::workspace::{PaneId, Selection, StepLeft, TabId};
+use crate::workspace::{PaneId, Selection, StepLeft, TabId, WindowId};
 
-/// Application data: the tabs the window showed when it closed.
+/// Application data: the windows shown and their tabs, as they were
+/// last (ADR-122).
+pub const LAST_WINDOWS: &str = "core.last_windows";
+
+/// Application data before there were windows: the tabs the window showed
+/// when it closed. Read when `LAST_WINDOWS` is not there yet, removed once
+/// it is written.
 pub const LAST_TABS: &str = "core.last_tabs";
 
 /// Whether tabs not shown let go of their listings (the default), or all
@@ -37,6 +43,9 @@ enum Filtered {
     Kept(Option<(Arc<str>, Option<crate::workspace::ReadFilter>)>),
 }
 
+/// What filtered a pane, read as it was left (ADR-109).
+type LeftFilter = Option<(Arc<str>, Option<crate::workspace::ReadFilter>)>;
+
 /// How many closed tabs can be reopened.
 const CLOSED_KEPT: usize = 16;
 
@@ -44,10 +53,32 @@ const CLOSED_KEPT: usize = 16;
 /// selection, in the tab's order.
 #[derive(Clone, Debug)]
 struct ClosedTab {
-    serial: u64,
     index: usize,
     panes: Vec<ClosedPane>,
     active: usize,
+}
+
+/// What a close took away, as it can come back: a tab, back in its window
+/// (else the active one), or a window, its tabs and shape (ADR-122).
+#[derive(Clone, Debug)]
+enum ClosedItem {
+    Tab {
+        window: WindowId,
+        tab: ClosedTab,
+    },
+    Window {
+        tabs: Vec<ClosedTab>,
+        shown: usize,
+        shape: Option<toml::Value>,
+        from: Option<WindowId>,
+    },
+}
+
+/// What reopening a close brought back.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reopened {
+    Tab(TabId),
+    Window(WindowId),
 }
 
 #[derive(Clone, Debug)]
@@ -69,10 +100,11 @@ impl ClosedPane {
     }
 }
 
-/// The tabs closed last, newest last.
+/// The tabs and windows closed last, newest last, each with the serial
+/// that reopens it.
 #[derive(Default)]
 pub struct Closed {
-    tabs: VecDeque<ClosedTab>,
+    items: VecDeque<(u64, ClosedItem)>,
     next: u64,
 }
 
@@ -103,14 +135,64 @@ fn filters_none(filters: &[String]) -> bool {
     filters.iter().all(String::is_empty)
 }
 
+/// The windows as the state keeps them (ADR-122): each one's tabs and
+/// shape, and the one in use.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SavedWindows {
+    pub windows: Vec<SavedWindow>,
+    /// Index of the window in use.
+    pub active: usize,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SavedWindow {
+    pub tabs: Vec<SavedTab>,
+    /// Index of the tab shown.
+    pub shown: usize,
+    /// What the UI kept of its shape (`Workspace::set_shape`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shape: Option<toml::Value>,
+}
+
+impl From<SavedTabs> for SavedWindows {
+    /// Tabs kept before there were windows: one window's.
+    fn from(saved: SavedTabs) -> Self {
+        SavedWindows {
+            windows: vec![SavedWindow {
+                tabs: saved.tabs,
+                shown: saved.shown,
+                shape: None,
+            }],
+            active: 0,
+        }
+    }
+}
+
 /// A tab as `tab.list` reports it.
 #[derive(Clone, Debug, Serialize, JsonSchema)]
 pub struct TabInfo {
     pub id: TabId,
+    /// The window it is in.
+    pub window: WindowId,
     pub title: String,
     pub panes: Vec<PaneInfo>,
     pub active: PaneId,
+    /// Shown in its window.
     pub shown: bool,
+}
+
+/// A window as `window.list` reports it.
+#[derive(Clone, Debug, Serialize, JsonSchema)]
+pub struct WindowInfo {
+    pub id: WindowId,
+    /// Its tabs, in order.
+    pub tabs: Vec<TabId>,
+    /// The tab it shows.
+    pub shown: TabId,
+    /// The window commands act in when they name no pane.
+    pub active: bool,
 }
 
 #[derive(Clone, Debug, Serialize, JsonSchema)]
@@ -159,15 +241,17 @@ impl App {
         let sleep = self.tabs_sleep();
         {
             let mut ws = self.workspace.write();
-            if ws.active_tab().id != tab {
-                let left = ws.active_tab().panes.clone();
-                anyhow::ensure!(ws.set_active_tab(tab), "no such tab");
-                // Without sleep every tab stays listed: nothing to let go of.
-                if sleep && ws.holding {
-                    ws.leaving.extend(left);
-                } else if sleep {
-                    suspend(&mut ws, left);
-                }
+            let window = ws
+                .window_of_tab(tab)
+                .ok_or_else(|| anyhow::anyhow!("no such tab"))?;
+            let left = ws
+                .window(window)
+                .map(crate::workspace::WindowTabs::shown)
+                .filter(|shown| shown.id != tab)
+                .map(|shown| shown.panes.clone());
+            if let Some(left) = left {
+                ws.set_active_tab(tab);
+                leave(&mut ws, window, left, sleep);
             }
         }
         self.resume_shown()
@@ -197,10 +281,31 @@ impl App {
     /// The tabs left are no longer drawn: suspend their panes, those of the
     /// tab shown excepted (it may be the one left, shown again).
     pub fn settle_tabs(&self) {
+        let windows: Vec<WindowId> = self
+            .workspace
+            .read()
+            .windows()
+            .iter()
+            .map(|w| w.id)
+            .collect();
+        for window in windows {
+            self.settle_window(window);
+        }
+    }
+
+    /// `window`'s tab left is no longer drawn: suspend its panes, those of
+    /// a tab shown excepted (it may be the one left, shown again, or moved
+    /// to another window).
+    pub fn settle_window(&self, window: WindowId) {
         let sleep = self.tabs_sleep();
         let mut ws = self.workspace.write();
-        let shown = ws.active_tab().panes.clone();
-        let leaving = std::mem::take(&mut ws.leaving);
+        let Some(leaving) = ws
+            .window_mut(window)
+            .map(|w| std::mem::take(&mut w.leaving))
+        else {
+            return;
+        };
+        let shown = shown_panes(&ws);
         let asleep = leaving
             .into_iter()
             .filter(|id| sleep && !shown.contains(id));
@@ -230,13 +335,8 @@ impl App {
         let sleep = self.tabs_sleep();
         if sleep {
             let mut ws = self.workspace.write();
-            let keep: Vec<PaneId> = ws
-                .active_tab()
-                .panes
-                .iter()
-                .chain(ws.leaving.iter())
-                .copied()
-                .collect();
+            let mut keep = shown_panes(&ws);
+            keep.extend(ws.windows().iter().flat_map(|w| w.leaving.iter().copied()));
             let asleep: Vec<PaneId> = ws
                 .panes()
                 .iter()
@@ -262,10 +362,10 @@ impl App {
         self.wake();
     }
 
-    /// Open the locations of the shown tab's dormant panes: at startup, when
-    /// a tab is shown, after the shown tab closed.
+    /// Open the locations of the dormant panes of the tab each window
+    /// shows: at startup, when a tab is shown, after a shown tab closed.
     pub fn resume_shown(&self) -> anyhow::Result<()> {
-        let panes = self.workspace.read().active_tab().panes.clone();
+        let panes = shown_panes(&self.workspace.read());
         let mut failed = None;
         for pane in panes {
             if let Err(error) = self.resume(pane) {
@@ -360,6 +460,8 @@ impl App {
         let (tab, pane) = {
             let mut ws = self.workspace.write();
             let from = from.unwrap_or_else(|| ws.active_id());
+            // In the window of the pane it opens from.
+            let window = ws.window_of(from).unwrap_or_else(|| ws.active_window_id());
             let source = ws.pane(from);
             let sort = source.map(|p| p.sort).unwrap_or_default();
             let lens = source.and_then(|p| p.lens().cloned());
@@ -371,11 +473,11 @@ impl App {
                     .ok_or_else(|| anyhow::anyhow!("the pane shows nothing to open in a tab"))?,
             };
             let at = if show {
-                ws.tabs().len()
+                ws.window(window).map_or(0, |w| w.tabs().len())
             } else {
-                ws.beside_position()
+                ws.beside_position(window)
             };
-            let (tab, panes) = ws.add_dormant_tab(at, vec![(location, sort)]);
+            let (tab, panes) = ws.add_dormant_tab_in(window, at, vec![(location, sort)]);
             if let Some(p) = ws.pane_mut(panes[0]) {
                 match filtered {
                     Filtered::Kept(filter) => p.filter_as_left(filter),
@@ -398,24 +500,87 @@ impl App {
         Ok((tab, pane))
     }
 
-    /// Close tab `tab`; the last tab stays. Returns the serial that reopens
-    /// it and its title, or `None` when it was the last tab.
+    /// Close tab `tab`; the last tab of a window stays. Returns the serial
+    /// that reopens it and its title, or `None` when it was its window's
+    /// last tab.
     pub fn close_tab(&self, tab: TabId) -> anyhow::Result<Option<(u64, String)>> {
-        let (index, closed, panes, was_shown) = {
+        let (window, index, closed, panes, was_shown) = {
             let mut ws = self.workspace.write();
-            anyhow::ensure!(ws.tab(tab).is_some(), "no such tab");
-            let was_shown = ws.active_tab().id == tab;
+            let window = ws
+                .window_of_tab(tab)
+                .ok_or_else(|| anyhow::anyhow!("no such tab"))?;
+            let was_shown = ws.window(window).is_some_and(|w| w.shown().id == tab);
             let Some((index, closed, panes)) = ws.close_tab(tab) else {
                 return Ok(None);
             };
-            (index, closed, panes, was_shown)
+            (window, index, closed, panes, was_shown)
         };
-        let active = closed
+        let (record, title) = self.closed_record(index, &closed, &by_id(&panes));
+        // Dropping the panes closes their locations: outside the lock.
+        drop(panes);
+        let serial = self.keep_closed(record.map(|tab| ClosedItem::Tab { window, tab }));
+        if was_shown {
+            self.resume_shown()?;
+        } else {
+            self.wake();
+        }
+        Ok(Some((serial, title)))
+    }
+
+    /// Close window `window`, its tabs kept to be reopened together
+    /// (`reopen_tab`). Returns the serial that reopens it, or `None` for
+    /// the last window, which only the UI closes (ADR-115).
+    pub fn close_window(&self, window: WindowId) -> anyhow::Result<Option<u64>> {
+        let (closed, panes) = {
+            let mut ws = self.workspace.write();
+            anyhow::ensure!(ws.window(window).is_some(), "no such window");
+            let Some((_, closed, panes)) = ws.close_window(window) else {
+                return Ok(None);
+            };
+            (closed, panes)
+        };
+        let panes_by_id = by_id(&panes);
+        let mut tabs = Vec::new();
+        let mut shown = 0;
+        for (index, tab) in closed.tabs().iter().enumerate() {
+            if let (Some(record), _) = self.closed_record(index, tab, &panes_by_id) {
+                if tab.id == closed.shown().id {
+                    shown = tabs.len();
+                }
+                tabs.push(record);
+            }
+        }
+        drop(panes_by_id);
+        drop(panes);
+        let item = (!tabs.is_empty()).then(|| ClosedItem::Window {
+            tabs,
+            shown,
+            shape: closed.shape().cloned(),
+            from: closed.made_from(),
+        });
+        let serial = self.keep_closed(item);
+        self.wake();
+        Ok(Some(serial))
+    }
+
+    /// What of `tab`, closed from position `index`, can come back, and its
+    /// title: each pane with a history, from `panes`.
+    fn closed_record(
+        &self,
+        index: usize,
+        tab: &crate::workspace::Tab,
+        panes: &std::collections::HashMap<PaneId, &crate::workspace::Pane>,
+    ) -> (Option<ClosedTab>, String) {
+        let in_order: Vec<&crate::workspace::Pane> = tab
             .panes
             .iter()
-            .position(|p| *p == closed.active)
+            .filter_map(|id| panes.get(id).copied())
+            .collect();
+        let active = in_order
+            .iter()
+            .position(|p| p.id == tab.active)
             .unwrap_or(0);
-        let record: Vec<ClosedPane> = panes
+        let record: Vec<ClosedPane> = in_order
             .iter()
             .filter(|p| !p.history.is_empty())
             .map(|p| ClosedPane {
@@ -426,57 +591,113 @@ impl App {
                 selection: p.kept_selection().clone(),
             })
             .collect();
-        let title = panes
+        let title = in_order
             .get(active)
-            .or_else(|| panes.first())
+            .or_else(|| in_order.first())
             .and_then(|p| p.shown())
             .map(|location| self.location_title(location))
             .unwrap_or_default();
-        // Dropping the panes closes their locations: outside the lock.
-        drop(panes);
-        let serial = {
-            let mut closed = self.closed_tabs.lock();
-            closed.next += 1;
-            let serial = closed.next;
-            if !record.is_empty() {
-                closed.tabs.push_back(ClosedTab {
-                    serial,
-                    index,
-                    active: active.min(record.len() - 1),
-                    panes: record,
-                });
-                while closed.tabs.len() > CLOSED_KEPT {
-                    closed.tabs.pop_front();
-                }
-            }
-            serial
-        };
-        if was_shown {
-            self.resume_shown()?;
-        } else {
-            self.wake();
-        }
-        Ok(Some((serial, title)))
+        let record = (!record.is_empty()).then(|| ClosedTab {
+            index,
+            active: active.min(record.len() - 1),
+            panes: record,
+        });
+        (record, title)
     }
 
-    /// Open again the tab closed with `serial`, or the one closed last,
-    /// where it was, and show it. `None` when there is none to reopen.
-    pub fn reopen_tab(&self, serial: Option<u64>) -> anyhow::Result<Option<TabId>> {
+    /// Keep `item` to be reopened, if there is one: the serial that
+    /// reopens it.
+    fn keep_closed(&self, item: Option<ClosedItem>) -> u64 {
+        let mut closed = self.closed_tabs.lock();
+        closed.next += 1;
+        let serial = closed.next;
+        if let Some(item) = item {
+            closed.items.push_back((serial, item));
+            while closed.items.len() > CLOSED_KEPT {
+                closed.items.pop_front();
+            }
+        }
+        serial
+    }
+
+    /// Open again the tab or window closed with `serial`, or the one closed
+    /// last, where it was, and show it: a tab in its window (else the
+    /// active one), a window made active. `None` when there is none to
+    /// reopen.
+    pub fn reopen_tab(&self, serial: Option<u64>) -> anyhow::Result<Option<Reopened>> {
         let closed = {
             let mut closed = self.closed_tabs.lock();
             let at = match serial {
-                Some(serial) => closed.tabs.iter().position(|t| t.serial == serial),
-                None => closed.tabs.len().checked_sub(1),
+                Some(serial) => closed.items.iter().position(|(s, _)| *s == serial),
+                None => closed.items.len().checked_sub(1),
             };
-            at.and_then(|at| closed.tabs.remove(at))
+            at.and_then(|at| closed.items.remove(at))
         };
-        let Some(closed) = closed else {
+        let Some((_, closed)) = closed else {
             return Ok(None);
         };
-        // What filtered each pane's step shown, read before the
-        // workspace's lock: the reader is a plugin's.
-        let filters: Vec<_> = closed
-            .panes
+        match closed {
+            ClosedItem::Tab { window, tab } => {
+                // What filtered each pane's step shown, read before the
+                // workspace's lock: the reader is a plugin's.
+                let filters = self.closed_filters(&tab);
+                let id = {
+                    let mut ws = self.workspace.write();
+                    let window = ws
+                        .window(window)
+                        .map_or_else(|| ws.active_window_id(), |w| w.id);
+                    let (id, ids) = ws.add_dormant_tab_in(window, tab.index, closed_panes(&tab));
+                    fill_closed(&mut ws, id, &ids, tab, filters);
+                    id
+                };
+                self.select_tab(id)?;
+                Ok(Some(Reopened::Tab(id)))
+            }
+            ClosedItem::Window {
+                tabs,
+                shown,
+                shape,
+                from,
+            } => {
+                let filters: Vec<_> = tabs.iter().map(|tab| self.closed_filters(tab)).collect();
+                let window = {
+                    let mut ws = self.workspace.write();
+                    let mut window = None;
+                    let mut shown_tab = None;
+                    for (i, (tab, filters)) in tabs.into_iter().zip(filters).enumerate() {
+                        let panes = closed_panes(&tab);
+                        let (id, ids) = match window {
+                            None => {
+                                let (w, id, ids) = ws.add_window(from, panes);
+                                window = Some(w);
+                                (id, ids)
+                            }
+                            Some(w) => ws.add_dormant_tab_in(w, usize::MAX, panes),
+                        };
+                        fill_closed(&mut ws, id, &ids, tab, filters);
+                        if i == shown || shown_tab.is_none() {
+                            shown_tab = Some(id);
+                        }
+                    }
+                    let window = window.expect("a window is kept with a tab");
+                    if let Some(tab) = shown_tab {
+                        ws.set_active_tab(tab);
+                    }
+                    ws.set_shape(window, shape);
+                    ws.set_active_window(window);
+                    window
+                };
+                self.resume_shown()?;
+                Ok(Some(Reopened::Window(window)))
+            }
+        }
+    }
+
+    /// What filtered each pane of `tab` at the step it showed, read as it
+    /// was left (ADR-109). Not under the workspace's lock: the reader is a
+    /// plugin's.
+    fn closed_filters(&self, tab: &ClosedTab) -> Vec<LeftFilter> {
+        tab.panes
             .iter()
             .map(|p| {
                 p.steps
@@ -484,62 +705,116 @@ impl App {
                     .and_then(StepLeft::filter)
                     .and_then(|filter| self.read_as_left(filter))
             })
-            .collect();
-        let tab = {
-            let mut ws = self.workspace.write();
-            let (tab, ids) = ws.add_dormant_tab(
-                closed.index,
-                closed
-                    .panes
-                    .iter()
-                    .map(|p| (p.history[p.pos()].clone(), p.sort))
-                    .collect(),
-            );
-            for ((id, record), filter) in ids.iter().zip(closed.panes).zip(filters) {
-                if let Some(p) = ws.pane_mut(*id) {
-                    p.history_pos = record.pos();
-                    p.history = record.history;
-                    p.set_steps_left(record.steps);
-                    p.filter_as_left(filter);
-                    p.set_restore(Some(record.selection));
-                }
-            }
-            if let (Some(t), Some(active)) = (ws.tab_mut(tab), ids.get(closed.active)) {
-                t.active = *active;
-            }
-            tab
-        };
-        self.select_tab(tab)?;
-        Ok(Some(tab))
+            .collect()
     }
 
-    /// Every tab, in order, for scripts and agents.
+    /// A new window showing `location`, or what `from` (the active pane
+    /// when `None`) shows, with its sort and its lens, made from `from`'s
+    /// window and made active (ADR-122).
+    pub fn new_window(
+        &self,
+        from: Option<PaneId>,
+        location: Option<Location>,
+    ) -> anyhow::Result<(WindowId, TabId, PaneId)> {
+        let (window, tab, pane) = {
+            let mut ws = self.workspace.write();
+            let from = from.unwrap_or_else(|| ws.active_id());
+            let made_from = ws.window_of(from);
+            let source = ws.pane(from);
+            let sort = source.map(|p| p.sort).unwrap_or_default();
+            let lens = source.and_then(|p| p.lens().cloned());
+            let location = match location {
+                Some(location) => location,
+                None => source
+                    .and_then(|p| p.shown())
+                    .cloned()
+                    .ok_or_else(|| anyhow::anyhow!("the pane shows nothing to open in a window"))?,
+            };
+            let (window, tab, panes) = ws.add_window(made_from, vec![(location, sort)]);
+            if let Some(p) = ws.pane_mut(panes[0]) {
+                p.carry(lens);
+            }
+            ws.set_active_window(window);
+            (window, tab, panes[0])
+        };
+        self.resume_shown()?;
+        Ok((window, tab, pane))
+    }
+
+    /// Move tab `tab` to `window` (a new window made from its own when
+    /// `None`), at `to` (last when `None`), shown there, the window made
+    /// active. The tab shown there before is left; a tab alone in its
+    /// window takes the window with it. What it moved to.
+    pub fn move_tab_to_window(
+        &self,
+        tab: TabId,
+        window: Option<WindowId>,
+        to: Option<usize>,
+    ) -> anyhow::Result<WindowId> {
+        let sleep = self.tabs_sleep();
+        let window = {
+            let mut ws = self.workspace.write();
+            match window {
+                Some(window) => {
+                    let left = ws.window(window).map(|w| w.shown().panes.clone());
+                    ws.move_tab_to_window(tab, window, to)
+                        .map_err(|e| anyhow::anyhow!(e))?;
+                    leave(&mut ws, window, left.unwrap_or_default(), sleep);
+                    window
+                }
+                None => ws.tab_to_new_window(tab).map_err(|e| anyhow::anyhow!(e))?,
+            }
+        };
+        self.resume_shown()?;
+        Ok(window)
+    }
+
+    /// Every window, for scripts and agents.
+    pub fn window_list(&self) -> Vec<WindowInfo> {
+        let ws = self.workspace.read();
+        let active = ws.active_window_id();
+        ws.windows()
+            .iter()
+            .map(|w| WindowInfo {
+                id: w.id,
+                tabs: w.tabs().iter().map(|t| t.id).collect(),
+                shown: w.shown().id,
+                active: w.id == active,
+            })
+            .collect()
+    }
+
+    /// Every tab, window after window, in order, for scripts and agents.
     pub fn tab_list(&self) -> Vec<TabInfo> {
         let rows: Vec<_> = {
             let ws = self.workspace.read();
-            let shown = ws.active_tab().id;
-            ws.tabs()
+            ws.windows()
                 .iter()
-                .map(|tab| {
-                    let panes: Vec<PaneInfo> = tab
-                        .panes
-                        .iter()
-                        .filter_map(|id| ws.pane(*id))
-                        .map(|p| PaneInfo {
-                            id: p.id,
-                            location: p.shown().cloned(),
-                            dormant: p.is_dormant(),
-                        })
-                        .collect();
-                    let location = ws.pane(tab.active).and_then(|p| p.shown()).cloned();
-                    (tab.id, panes, tab.active, tab.id == shown, location)
+                .flat_map(|w| {
+                    let shown = w.shown().id;
+                    let ws = &ws;
+                    w.tabs().iter().map(move |tab| {
+                        let panes: Vec<PaneInfo> = tab
+                            .panes
+                            .iter()
+                            .filter_map(|id| ws.pane(*id))
+                            .map(|p| PaneInfo {
+                                id: p.id,
+                                location: p.shown().cloned(),
+                                dormant: p.is_dormant(),
+                            })
+                            .collect();
+                        let location = ws.pane(tab.active).and_then(|p| p.shown()).cloned();
+                        (tab.id, w.id, panes, tab.active, tab.id == shown, location)
+                    })
                 })
                 .collect()
         };
         // Titles read the places registry: not under the workspace lock.
         rows.into_iter()
-            .map(|(id, panes, active, shown, location)| TabInfo {
+            .map(|(id, window, panes, active, shown, location)| TabInfo {
                 id,
+                window,
                 title: location
                     .map(|l| self.location_title(&l))
                     .unwrap_or_default(),
@@ -551,74 +826,111 @@ impl App {
     }
 
     /// Put the tabs of `saved` in place of the workspace's one untouched
-    /// tab, dormant: `resume_shown` opens the shown one once the UI is there
-    /// to be woken. Returns false when there was nothing to restore.
+    /// tab, dormant, in one window: as `restore_windows`.
     pub fn restore_tabs(&self, saved: &SavedTabs) -> bool {
+        self.restore_windows(&SavedWindows::from(saved.clone()))
+    }
+
+    /// Put the windows of `saved` in place of the workspace's one untouched
+    /// window, their tabs dormant: `resume_shown` opens the shown ones once
+    /// the UI is there to be woken. Returns false when there was nothing to
+    /// restore.
+    pub fn restore_windows(&self, saved: &SavedWindows) -> bool {
         // What filtered each pane, read before the workspace's lock: the
         // reader is a plugin's (ADR-109).
-        let filters: Vec<Vec<_>> = saved
-            .tabs
+        let filters: Vec<Vec<Vec<LeftFilter>>> = saved
+            .windows
             .iter()
-            .map(|tab| {
-                tab.filters
+            .map(|window| {
+                window
+                    .tabs
                     .iter()
-                    .take(2)
-                    .map(|text| {
-                        self.kept_filter(Some(text))
-                            .and_then(|filter| self.read_as_left(&filter))
+                    .map(|tab| {
+                        tab.filters
+                            .iter()
+                            .take(2)
+                            .map(|text| {
+                                self.kept_filter(Some(text))
+                                    .and_then(|filter| self.read_as_left(&filter))
+                            })
+                            .collect()
                     })
                     .collect()
             })
             .collect();
         let mut ws = self.workspace.write();
-        let Some(first) = ws.tabs().first().map(|t| t.id) else {
+        let first_window = ws.active_window_id();
+        let Some(first_tab) = ws.tabs().first().map(|t| t.id) else {
             return false;
         };
-        let mut shown = None;
-        let mut restored = 0;
-        for (i, (saved_tab, filters)) in saved.tabs.iter().zip(filters).enumerate() {
-            if saved_tab.panes.is_empty() {
-                continue;
+        let mut first_used = false;
+        let mut restored = Vec::new();
+        for (i, (saved_window, filters)) in saved.windows.iter().zip(filters).enumerate() {
+            let into = (!first_used).then_some(first_window);
+            if let Some(window) = restore_window(&mut ws, into, saved_window, filters) {
+                first_used |= window == first_window;
+                restored.push((i, window));
             }
-            let at = ws.tabs().len();
-            let (tab, ids) = ws.add_dormant_tab(
-                at,
-                saved_tab
-                    .panes
-                    .iter()
-                    .take(2)
-                    .map(|l| (l.clone(), SortSpec::default()))
-                    .collect(),
-            );
-            for (id, filter) in ids.iter().zip(filters) {
-                if let Some(p) = ws.pane_mut(*id) {
-                    p.filter_as_left(filter);
-                }
-            }
-            if let (Some(t), Some(active)) = (ws.tab_mut(tab), ids.get(saved_tab.active)) {
-                t.active = *active;
-            }
-            if i == saved.shown || shown.is_none() {
-                shown = Some(tab);
-            }
-            restored += 1;
         }
-        let Some(shown) = shown else {
+        let Some(&(_, first)) = restored.first() else {
             return false;
         };
-        ws.set_active_tab(shown);
-        ws.close_tab(first);
+        let active = restored
+            .iter()
+            .find(|(i, _)| *i == saved.active)
+            .map_or(first, |(_, window)| *window);
+        ws.set_active_window(active);
+        if first_used {
+            ws.close_tab(first_tab);
+        } else {
+            ws.close_window(first_window);
+        }
         drop(ws);
-        tracing::debug!(tabs = restored, "restored the last window's tabs");
+        tracing::debug!(windows = restored.len(), "restored the last windows");
         true
     }
 
-    /// The window's tabs, as `LAST_TABS` keeps them.
+    /// The active window's tabs, as `LAST_TABS` kept them.
     pub fn saved_tabs(&self) -> SavedTabs {
         let ws = self.workspace.read();
-        let mut saved = SavedTabs::default();
-        let shown = ws.active_tab().id;
-        for tab in ws.tabs() {
+        let window = self.saved_window(&ws, ws.active_window());
+        SavedTabs {
+            tabs: window.tabs,
+            shown: window.shown,
+        }
+    }
+
+    /// Every window, as `LAST_WINDOWS` keeps them: those that show nothing
+    /// left out.
+    pub fn saved_windows(&self) -> SavedWindows {
+        let ws = self.workspace.read();
+        let active = ws.active_window_id();
+        let mut saved = SavedWindows::default();
+        for window in ws.windows() {
+            let kept = self.saved_window(&ws, window);
+            if kept.tabs.is_empty() {
+                continue;
+            }
+            if window.id == active {
+                saved.active = saved.windows.len();
+            }
+            saved.windows.push(kept);
+        }
+        saved
+    }
+
+    /// `window`'s tabs and shape, as the state keeps them.
+    fn saved_window(
+        &self,
+        ws: &crate::workspace::Workspace,
+        window: &crate::workspace::WindowTabs,
+    ) -> SavedWindow {
+        let mut saved = SavedWindow {
+            shape: window.shape().cloned(),
+            ..SavedWindow::default()
+        };
+        let shown = window.shown().id;
+        for tab in window.tabs() {
             let mut panes = Vec::new();
             let mut filters = Vec::new();
             let mut active = 0;
@@ -658,6 +970,115 @@ impl App {
     }
 }
 
+/// Put the tabs of `saved` into `into`, or a new window when `None`,
+/// dormant, with what filtered each pane, its shown tab and its shape: the
+/// window they went to, `None` when it had no tab to restore.
+fn restore_window(
+    ws: &mut crate::workspace::Workspace,
+    mut into: Option<WindowId>,
+    saved: &SavedWindow,
+    filters: Vec<Vec<LeftFilter>>,
+) -> Option<WindowId> {
+    let mut shown = None;
+    for (i, (saved_tab, filters)) in saved.tabs.iter().zip(filters).enumerate() {
+        if saved_tab.panes.is_empty() {
+            continue;
+        }
+        let panes: Vec<(Location, SortSpec)> = saved_tab
+            .panes
+            .iter()
+            .take(2)
+            .map(|l| (l.clone(), SortSpec::default()))
+            .collect();
+        let (tab, ids) = if let Some(window) = into {
+            ws.add_dormant_tab_in(window, usize::MAX, panes)
+        } else {
+            let (window, tab, ids) = ws.add_window(None, panes);
+            into = Some(window);
+            (tab, ids)
+        };
+        for (id, filter) in ids.iter().zip(filters) {
+            if let Some(p) = ws.pane_mut(*id) {
+                p.filter_as_left(filter);
+            }
+        }
+        if let (Some(t), Some(active)) = (ws.tab_mut(tab), ids.get(saved_tab.active)) {
+            t.active = *active;
+        }
+        if i == saved.shown || shown.is_none() {
+            shown = Some(tab);
+        }
+    }
+    let shown = shown?;
+    ws.set_active_tab(shown);
+    let window = into?;
+    ws.set_shape(window, saved.shape.clone());
+    Some(window)
+}
+
+/// `panes` by their id.
+fn by_id(
+    panes: &[crate::workspace::Pane],
+) -> std::collections::HashMap<PaneId, &crate::workspace::Pane> {
+    panes.iter().map(|p| (p.id, p)).collect()
+}
+
+/// Where each pane of closed `tab` was, and its sort: what its pane opens
+/// again.
+fn closed_panes(tab: &ClosedTab) -> Vec<(Location, SortSpec)> {
+    tab.panes
+        .iter()
+        .map(|p| (p.history[p.pos()].clone(), p.sort))
+        .collect()
+}
+
+/// Give the panes `ids` of reopened tab `id` what closed `tab` kept: their
+/// histories, filters and selections, and its active pane.
+fn fill_closed(
+    ws: &mut crate::workspace::Workspace,
+    id: TabId,
+    ids: &[PaneId],
+    tab: ClosedTab,
+    filters: Vec<LeftFilter>,
+) {
+    for ((pane, record), filter) in ids.iter().zip(tab.panes).zip(filters) {
+        if let Some(p) = ws.pane_mut(*pane) {
+            p.history_pos = record.pos();
+            p.history = record.history;
+            p.set_steps_left(record.steps);
+            p.filter_as_left(filter);
+            p.set_restore(Some(record.selection));
+        }
+    }
+    if let (Some(t), Some(active)) = (ws.tab_mut(id), ids.get(tab.active)) {
+        t.active = *active;
+    }
+}
+
+/// The panes of the tab each window shows.
+fn shown_panes(ws: &crate::workspace::Workspace) -> Vec<PaneId> {
+    ws.windows()
+        .iter()
+        .flat_map(|w| w.shown().panes.iter().copied())
+        .collect()
+}
+
+/// `window`'s tab of `left` is no longer shown: its panes sleep, now or,
+/// while a UI still draws it (`hold_tabs`), once it settles. Without sleep
+/// every tab stays listed: nothing to let go of.
+fn leave(ws: &mut crate::workspace::Workspace, window: WindowId, left: Vec<PaneId>, sleep: bool) {
+    if !sleep {
+        return;
+    }
+    if ws.holding
+        && let Some(w) = ws.window_mut(window)
+    {
+        w.leaving.extend(left);
+    } else {
+        suspend(ws, left);
+    }
+}
+
 /// Let `panes` go to sleep (`Pane::suspend`), under the lock.
 fn suspend(ws: &mut crate::workspace::Workspace, panes: impl IntoIterator<Item = PaneId>) {
     for id in panes {
@@ -667,24 +1088,42 @@ fn suspend(ws: &mut crate::workspace::Workspace, panes: impl IntoIterator<Item =
     }
 }
 
-/// The tabs to open at startup: the last window's, when the startup
-/// preference is to come back to it and it had any.
-pub fn last_tabs(settings: &crate::settings::Settings) -> Option<SavedTabs> {
+/// The windows to open at startup: those left, when the startup
+/// preference is to come back to them and they had tabs. Tabs kept before
+/// there were windows are one window's.
+pub fn last_windows(settings: &crate::settings::Settings) -> Option<SavedWindows> {
     if settings.get::<String>(STARTUP).as_deref() != Some("last") {
         return None;
     }
     settings
-        .get::<SavedTabs>(LAST_TABS)
-        .filter(|saved| !saved.tabs.is_empty())
+        .get::<SavedWindows>(LAST_WINDOWS)
+        .filter(|saved| saved.windows.iter().any(|w| !w.tabs.is_empty()))
+        .or_else(|| {
+            settings
+                .get::<SavedTabs>(LAST_TABS)
+                .filter(|saved| !saved.tabs.is_empty())
+                .map(SavedWindows::from)
+        })
 }
 
-/// Record where the window is, for the next start: the active pane's
-/// folder and the tabs. Writes the settings file on the calling thread:
-/// for the moment the application closes, not for a UI callback.
-pub fn remember(app: &App) {
+/// The tabs to open at startup, in one window: as `last_windows`.
+pub fn last_tabs(settings: &crate::settings::Settings) -> Option<SavedTabs> {
+    last_windows(settings).and_then(|saved| {
+        let window = saved.windows.into_iter().nth(saved.active)?;
+        Some(SavedTabs {
+            tabs: window.tabs,
+            shown: window.shown,
+        })
+    })
+}
+
+/// Record where the windows are, for the next start: the active pane's
+/// folder and every window's tabs and shape. Only sets the values: whether
+/// any changed, for the caller to save (`remember` saves at once).
+pub fn record(app: &App) -> bool {
     let settings = &app.settings;
     if settings.get::<String>(STARTUP).as_deref() != Some("last") {
-        return;
+        return false;
     }
     // A remote folder is kept by its tab's address, which connects
     // again (ADR-077); its mount's path may name nothing next time.
@@ -697,15 +1136,31 @@ pub fn remember(app: &App) {
         .filter(|folder| crate::fs::reach::of(folder).is_none());
     let mut changed =
         folder.is_some_and(|folder| crate::settings::remember_location(settings, &folder));
-    let saved = app.saved_tabs();
-    if settings.get::<SavedTabs>(LAST_TABS).as_ref() != Some(&saved)
+    let saved = app.saved_windows();
+    if settings.get::<SavedWindows>(LAST_WINDOWS).as_ref() != Some(&saved)
         && let Ok(value) = toml::Value::try_from(&saved)
     {
-        settings.set(LAST_TABS, value);
+        settings.set(LAST_WINDOWS, value);
         changed = true;
     }
-    if changed && let Err(error) = settings.save() {
-        tracing::warn!("cannot remember the window's tabs: {error:#}");
+    // Kept before there were windows: what replaced it is written.
+    if settings
+        .get::<toml::Value>(LAST_TABS)
+        .is_some_and(|v| v.as_table().is_none_or(|t| !t.is_empty()))
+    {
+        settings.unset(LAST_TABS);
+        changed = true;
+    }
+    changed
+}
+
+/// Record where the windows are (`record`) and save it on the calling
+/// thread: for the moment the application closes, not for a UI callback.
+pub fn remember(app: &App) {
+    if record(app)
+        && let Err(error) = app.settings.save()
+    {
+        tracing::warn!("cannot remember the windows: {error:#}");
     }
 }
 
@@ -771,12 +1226,38 @@ pub struct MoveTabArgs {
     /// The tab; the one shown when omitted.
     #[serde(default)]
     pub tab: Option<TabId>,
-    /// The position to put it at, from 0.
+    /// The position to put it at, from 0 (in `window`, last there when
+    /// omitted).
     #[serde(default)]
     pub to: Option<usize>,
     /// Steps to move it by, instead of `to`.
     #[serde(default)]
     pub delta: Option<i64>,
+    /// Another window to move it to, shown there.
+    #[serde(default)]
+    pub window: Option<WindowId>,
+    /// Move it to a new window of its own.
+    #[serde(default)]
+    pub new_window: bool,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct NewWindowArgs {
+    /// What the window shows: a path or `scheme:rest`; what `pane` shows
+    /// when omitted.
+    #[serde(default)]
+    pub location: Option<PathArg>,
+    /// The pane it opens from: its location, sort and lens, and the shape
+    /// of its window. The active pane when omitted.
+    #[serde(default)]
+    pub pane: Option<PaneId>,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct WindowArg {
+    /// The window; the active one when omitted.
+    #[serde(default)]
+    pub window: Option<WindowId>,
 }
 
 #[derive(Debug, Default, Deserialize, JsonSchema)]
@@ -803,8 +1284,13 @@ fn tab_position(len: usize, from: usize, index: Option<i64>, delta: Option<i64>)
 pub(crate) fn register(app: &App) {
     let c = &app.commands;
     app.settings.declare(SettingSpec::state(
+        LAST_WINDOWS,
+        "The windows shown last and their tabs",
+        toml::Value::Table(toml::map::Map::new()),
+    ));
+    app.settings.declare(SettingSpec::state(
         LAST_TABS,
-        "The tabs shown when the window was last closed",
+        "The tabs shown when the window was last closed, before there were windows",
         toml::Value::Table(toml::map::Map::new()),
     ));
 
@@ -884,7 +1370,7 @@ pub(crate) fn register(app: &App) {
         Topic::Tabs,
         "tab.close",
         "Close tab",
-        "Close a tab (the one shown by default); the last tab stays. The notification offers Undo",
+        "Close a tab (the one shown by default); the notification offers Undo. A window's last tab closes the window while another is open; the last tab of the last window stays",
         |a, app| {
             let tab = a
                 .tab
@@ -896,6 +1382,14 @@ pub(crate) fn register(app: &App) {
                     "Undo",
                     Invocation::with_args("tab.reopen", &serde_json::json!({ "closed": serial })),
                 );
+            } else {
+                // Its window's last: the window goes, as in browsers;
+                // Reopen closed tab brings it back whole. (The lock is let
+                // go first: closing takes it.)
+                let window = app.workspace.read().window_of_tab(tab);
+                if let Some(window) = window {
+                    app.close_window(window)?;
+                }
             }
             Ok(Outcome::Done)
         },
@@ -907,9 +1401,12 @@ pub(crate) fn register(app: &App) {
         Topic::Tabs,
         "tab.reopen",
         "Reopen closed tab",
-        "Open again the tab closed last, or the one a close reported, with its history",
+        "Open again the tab or window closed last, or the one a close reported, with its history",
         |a, app| match app.reopen_tab(a.closed)? {
-            Some(tab) => Ok(Outcome::Value(serde_json::json!({ "tab": tab }))),
+            Some(Reopened::Tab(tab)) => Ok(Outcome::Value(serde_json::json!({ "tab": tab }))),
+            Some(Reopened::Window(window)) => {
+                Ok(Outcome::Value(serde_json::json!({ "window": window })))
+            }
             None => Ok(Outcome::Done),
         },
     )
@@ -920,7 +1417,7 @@ pub(crate) fn register(app: &App) {
         Topic::Tabs,
         "tab.select",
         "Show tab",
-        "Show a tab: by id, by position (negative from the right) or by steps from the one shown",
+        "Show a tab: by id, or among the active window's tabs by position (negative from the right) or by steps from the one shown",
         |a, app| {
             let tab = if let Some(tab) = a.tab {
                 tab
@@ -969,8 +1466,15 @@ pub(crate) fn register(app: &App) {
         Topic::Tabs,
         "tab.move",
         "Move tab",
-        "Put a tab at another position, or move it by steps",
+        "Put a tab at another position, or move it by steps; or move it to another window, or a new one",
         |a, app| {
+            if a.window.is_some() || a.new_window {
+                let tab = a
+                    .tab
+                    .unwrap_or_else(|| app.workspace.read().active_tab().id);
+                let window = app.move_tab_to_window(tab, a.window, a.to)?;
+                return Ok(Outcome::Value(serde_json::json!({ "window": window })));
+            }
             let mut ws = app.workspace.write();
             let tab = a.tab.unwrap_or_else(|| ws.active_tab().id);
             let from = ws
@@ -997,6 +1501,10 @@ pub(crate) fn register(app: &App) {
             .in_family("Move the tab"),
         Form::new(serde_json::json!({ "delta": 1 }), "Move the tab right")
             .in_family("Move the tab"),
+        Form::new(
+            serde_json::json!({ "new_window": true }),
+            "Move the tab to a new window",
+        ),
     ]);
     moving.repeats(|args| args.get("delta").is_some());
     moving.shows();
@@ -1005,10 +1513,74 @@ pub(crate) fn register(app: &App) {
         "core", Topic::Tabs,
         "tab.list",
         "List tabs",
-        "The tabs in order: each one's panes, their locations, which pane is active and which tab is shown",
+        "The tabs in order, window after window: each one's window, panes, their locations, which pane is active and whether its window shows it",
         |_, app| Ok(Outcome::Value(serde_json::to_value(app.tab_list())?)),
     )
         .data();
+
+    c.register::<NewWindowArgs, _>(
+        "core",
+        Topic::Tabs,
+        "window.new",
+        "New window",
+        "Open a window showing a location, or what the pane shows, shaped as the pane's window; it becomes the active window",
+        |a, app| {
+            let location = a.location.map(|l| Location::parse_os(l.as_os_str()));
+            let (window, tab, pane) = app.new_window(a.pane, location)?;
+            Ok(Outcome::Value(
+                serde_json::json!({ "window": window, "tab": tab, "pane": pane }),
+            ))
+        },
+    )
+    .shows();
+
+    c.register::<WindowArg, _>(
+        "core",
+        Topic::Tabs,
+        "window.close",
+        "Close window",
+        "Close a window (the active one by default) and its tabs, which Reopen closed tab brings back; the last window closes only by its own close button or Quit",
+        |a, app| {
+            let window = a
+                .window
+                .unwrap_or_else(|| app.workspace.read().active_window_id());
+            match app.close_window(window)? {
+                Some(serial) => Ok(Outcome::Value(serde_json::json!({ "closed": serial }))),
+                None => anyhow::bail!("The last window closes with its close button or Quit"),
+            }
+        },
+    )
+    .shows();
+
+    c.register::<WindowArg, _>(
+        "core",
+        Topic::Tabs,
+        "window.select",
+        "Go to window",
+        "Make a window the active one, brought forward",
+        |a, app| {
+            let window = a
+                .window
+                .ok_or_else(|| anyhow::anyhow!("which window: `window` is needed"))?;
+            anyhow::ensure!(
+                app.workspace.write().set_active_window(window),
+                "no such window"
+            );
+            app.wake();
+            Ok(Outcome::Done)
+        },
+    )
+    .shows();
+
+    c.register::<crate::command::NoArgs, _>(
+        "core",
+        Topic::Tabs,
+        "window.list",
+        "List windows",
+        "The windows: each one's tabs, the tab it shows, and which is active",
+        |_, app| Ok(Outcome::Value(serde_json::to_value(app.window_list())?)),
+    )
+    .data();
 }
 
 #[cfg(test)]

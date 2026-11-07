@@ -1,7 +1,10 @@
 # ADR-018: Tabs
 
 Status: accepted, 2026-09-26. Built. Amended 2026-09-26 (budget, holding
-the tab left, optional dormancy) and 2026-09-29 (no window row).
+the tab left, optional dormancy) and 2026-09-29 (no window row); amended
+2026-11-07 by ADR-122: tabs are a window's, each window showing one; a
+window's last tab closes the window while another is open; tabs move
+between windows.
 
 ## Context
 

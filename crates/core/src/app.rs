@@ -4292,7 +4292,9 @@ mod tests {
         app.navigate(pane, &b).unwrap();
         run("filter", serde_json::json!({ "text": "y", "pane": pane }));
         app.close_tab(tab).unwrap();
-        let tab = app.reopen_tab(None).unwrap().expect("a tab to reopen");
+        let Some(crate::tabs::Reopened::Tab(tab)) = app.reopen_tab(None).unwrap() else {
+            panic!("a tab to reopen");
+        };
         let pane = app.workspace.read().tab(tab).unwrap().active;
         assert_eq!(shown(pane), at(&b, Some("y")));
         run("back", serde_json::json!({ "pane": pane }));
