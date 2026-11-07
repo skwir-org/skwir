@@ -13033,3 +13033,26 @@ amended).
   before committing.
 - **Checked:** fmt; clippy on skwir-ui; its tests (567).
 
+
+## 2026-11-07: The terminal at the code's size
+
+- **Asked** (the user): the terminal's font and size did not follow the
+  code font.
+- **Found:** the family did: the grid takes `Theme::code_font` each
+  frame, and a live change of `ui.code_font` showed at once. The size did
+  not: the terminal was drawn at 13 px times Code's scale, a constant from
+  before ADR-117, when code was a fixed 14 px. So it stayed 13/14 of the
+  code view's code: 12.4 px where the desktop names a 10 pt monospace
+  (13.3 px), which the code view and the desktop's own terminal write at.
+- **Built:** the grid's size is `Sizes::body(Part::Code)`, a named size,
+  so `sizes::tests::every_place_names_a_text_size` no longer lists it
+  among the sizes written as they are. The line stays 1.25 of it (17 px
+  at 13.3 px). shell.md's terminal section says so; the byte view keeps
+  its smaller size (`inspector::bytes_size`).
+- **Seen** on Xvfb :93, a test bus with a stand-in settings portal naming
+  Hack 10 and Noto Sans 10, Automatic fonts: the code view and the
+  terminal draw `    let iiii = "WWWW mmmm` in Hack at the same glyph
+  positions (8.0 px a cell); with Code text changed to 125 % in the
+  settings file, both at 10.0 px a cell. Before, with Liberation Mono and
+  Noto Sans Mono chosen, the family followed and the size was 13/14.
+- **Checked:** rustfmt; skwir built; skwir-ui's size and terminal tests.

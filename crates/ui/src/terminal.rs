@@ -35,14 +35,12 @@ use crate::elements::terminal::{Colors, GridState, TerminalGrid};
 use crate::keymap;
 use crate::menu::MenuHost;
 use crate::shell::Shell;
+use crate::sizes::Part;
 use crate::theme::Theme;
 
 /// The panel's height until its edge is dragged, and the least it keeps.
 const DEFAULT_HEIGHT: f32 = 240.;
 const MIN_HEIGHT: f32 = 90.;
-/// The terminal's text at 100 %: a little smaller than code (14 px), drawn
-/// at the code's scale (ADR-117).
-const FONT_SIZE: f32 = 13.;
 
 pub struct TerminalState {
     pub open: bool,
@@ -661,7 +659,9 @@ impl Shell {
                 screen: Arc::clone(&self.terminal.screen),
                 focus: self.terminal.focus.clone(),
                 font,
-                font_size: px(FONT_SIZE * theme.sizes.scale(crate::sizes::Part::Code).0),
+                // Code's size, as the code view writes it: the desktop's
+                // monospace size at 100 %, as its own terminal is (ADR-117).
+                font_size: theme.sizes.body(Part::Code),
                 colors: Colors {
                     fg: theme.text,
                     bg: theme.bg,

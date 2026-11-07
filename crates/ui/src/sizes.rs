@@ -414,12 +414,6 @@ mod tests {
             "a choice's picture (`form::drawn`), drawn at its own size as a picture is",
         ),
         (
-            "terminal.rs",
-            "px(FONT_SIZE*theme.sizes.scale(crate::sizes::Part::Code).0)",
-            1,
-            "the terminal at Code's size, its cells a step below code's as bytes are",
-        ),
-        (
             "elements/terminal.rs",
             "self.font_size",
             1,

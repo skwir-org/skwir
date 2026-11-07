@@ -1707,6 +1707,11 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
 
 - It draws core's `terminal::Screen` and sends `terminal::Input`; the VT
   engine (`alacritty_terminal`) stays inside the `terminal` plugin.
+- It is written in the code font at Code's size (`Sizes::body(Part::Code)`),
+  the size the code view writes its code at: the desktop's monospace size
+  at 100 %, as the desktop's own terminal is. Never a size of its own
+  scaled beside it: a 13 px from before code followed the desktop
+  (ADR-117) left it 7 % smaller than the code until 2026-11-07.
 - The session's threads parse, build screens (at most one per 8 ms) and
   wake the app; the UI thread only compares a revision. The shell starts
   on a worker.

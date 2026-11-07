@@ -23,6 +23,9 @@
 - **Rounded corners keep what they hold**: a folder's pictures in the grid, the
   board's pictures, the dock's cover and the Settings dialog's content stop at
   their rounded corners instead of showing square ones past them.
+- **The terminal is written at the code's size**: the desktop's monospace size
+  at 100 %, as the code view and the desktop's own terminal write it, and Code
+  text's percentage of it. It was drawn about 7 % smaller.
 - **The line between split panes snaps to the middle**: dragged within 12 px
   of it, it goes there and stays until the pointer moves on, so the panes are
   even again without a double click. The line between Properties and the
