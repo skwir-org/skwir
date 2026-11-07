@@ -37,7 +37,8 @@ evening as tried (Amendments). Amends ADR-071
 ## Decision
 
 1. **One switch, on by default** (since the amendment "Kept, the
-   default"). Settings › Appearance › Cards (`ui.cards`, essential): the
+   default"). Settings › Appearance › Cards (`ui.cards`, under More
+   settings since it is the default): the
    window as cards on its frame, or as it was, apart by lines. Off, the
    window is drawn as before.
 2. **The frame is a token of the look.** `frame` lies under both
@@ -204,4 +205,7 @@ preview's bar, inside the cards. Tried by the user the same evening:
   card first, and given the lines look only as far as it needs to work
   there. Whether to keep the choice is asked again after a release or
   two, from what is said of it.
+- **The switch under More settings** (ADR-072): a detail of the look for
+  the few who change it, as the opacities are; found by the settings'
+  search, and shown unfolded once changed.
 

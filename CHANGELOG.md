@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- **Cards, the new look** (Settings › Appearance › Cards, on by default; off
+- **Cards, the new look** (on by default; Settings › Appearance › More settings › Cards off
   gives the window of earlier versions, apart by lines): the panes,
   the preview's parts and the terminal are drawn as cards on the window's frame, a
   shade under both of its grounds, apart by a 6 px gutter rather than by

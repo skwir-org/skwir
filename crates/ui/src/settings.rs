@@ -452,7 +452,8 @@ fn cards_spec() -> SettingSpec {
         "Draw the panes, the preview's parts and the terminal as cards on the window's frame, apart by a gutter rather than by lines; the sidebar, the tabs and the window's buttons lie on the frame. While the window is split, the active pane's row is underlined and the other pane a shade darker. The gutter between two cards is the edge to drag. Off, the window's areas are apart by lines, as in earlier versions.",
         CARDS_DEFAULT,
     )
-    .essential()
+    // A detail of the look now that it is the default, under More
+    // settings (ADR-072); shown there unfolded once it is changed.
 }
 
 /// The theme's look: Automatic (the desktop's preference, saying the look
