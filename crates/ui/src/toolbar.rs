@@ -221,6 +221,10 @@ enum Shape {
     /// One value among a popup's tiles (`MenuPart::Tiles`): its icon
     /// over its name, filled when chosen.
     Tile,
+    /// A group's name in a popup menu that turns the group on or off
+    /// (`MenuPart::Heading`): the name in a heading's words, a switch at
+    /// its end, the whole of it pressed.
+    Switch,
 }
 impl Button {
     pub fn new(
@@ -272,6 +276,14 @@ impl Button {
     /// stays open once it is chosen.
     pub fn tile(mut self) -> Self {
         self.shape = Shape::Tile;
+        self.keeps_open = true;
+        self
+    }
+    /// A menu's heading that turns its group on or off, `active` while on
+    /// (`MenuPart::Heading`); the popup stays open once it is pressed, the
+    /// group's rows following.
+    pub fn switch(mut self) -> Self {
+        self.shape = Shape::Switch;
         self.keeps_open = true;
         self
     }
@@ -338,6 +350,7 @@ impl Button {
         let keeps_open = self.keeps_open;
         let menu = self.shape == Shape::MenuRow;
         let (segment, tiled) = (self.shape == Shape::Segment, self.shape == Shape::Tile);
+        let switch = self.shape == Shape::Switch;
         // A value of a setting, filled when chosen rather than highlighted.
         let value = segment || tiled;
         let now = self.now && !self.active;
@@ -388,6 +401,8 @@ impl Button {
             // `MenuPart::Tiles`), checked when chosen (ADR-099).
             .role(if menu {
                 gpui::Role::MenuItem
+            } else if switch {
+                gpui::Role::Switch
             } else if value {
                 gpui::Role::RadioButton
             } else {
@@ -407,10 +422,12 @@ impl Button {
                             d.aria_toggled(active.into())
                         }
                     })
+                    // A switch says it is off too.
+                    .when(switch && !active, |d| d.aria_toggled(false.into()))
                     .when(dropdown, |d| d.aria_expanded(open))
             })
             .relative()
-            .h(sized(if menu { MENU_ROW } else { 30. }))
+            .h(sized(if menu || switch { MENU_ROW } else { 30. }))
             // Its icon keeps its size and its padding grows with the text:
             // an icon alone is as wide as that, not as tall as the row, so a
             // bar's parts take no more room than they hold (ADR-117).
@@ -419,7 +436,7 @@ impl Button {
             .px(sized(6.))
             .flex()
             .items_center()
-            .when(!menu, gpui::Styled::justify_center)
+            .when(!menu && !switch, gpui::Styled::justify_center)
             .gap(sized(6.))
             .rounded_md()
             .border_1()
@@ -438,6 +455,15 @@ impl Button {
                     .text_body()
                     .text_color(theme.text)
             })
+            // A heading's words, the switch at the row's end.
+            .when(switch, |d| {
+                d.w_full()
+                    .justify_between()
+                    .px_2()
+                    .gap_4()
+                    .text_small()
+                    .text_color(theme.text_muted)
+            })
             .when(segment, |d| d.h(sized(22.)).min_w(px(26.)).gap(sized(4.)))
             .when(tiled, |d| {
                 d.h(sized(52.))
@@ -451,7 +477,7 @@ impl Button {
             .focusable()
             .tab_index(0)
             .tab_stop(enabled)
-            .when(self.active && !menu && !value, |d| {
+            .when(self.active && !menu && !value && !switch, |d| {
                 d.bg(theme.selection_bg).text_color(theme.selection_text)
             })
             .when(self.active && value, |d| {
@@ -461,7 +487,7 @@ impl Button {
             .when_some(tint, |d, (fill, edge, _, _)| {
                 d.bg(fill).border_color(edge).text_color(theme.text)
             })
-            .when(enabled && !menu, |d| {
+            .when(enabled && !menu && !switch, |d| {
                 d.cursor_pointer()
                     .when(!(value && active), |d| {
                         d.hover(|s| match tint {
@@ -471,7 +497,7 @@ impl Button {
                     })
                     .focus(|s| s.border_color(theme.accent))
             })
-            .when(enabled && menu, |d| {
+            .when(enabled && (menu || switch), |d| {
                 d.cursor_pointer()
                     .hover(|s| s.bg(theme.selection_bg).text_color(theme.selection_text))
                     .focus(|s| s.bg(theme.selection_bg).text_color(theme.selection_text))
@@ -519,7 +545,7 @@ impl Button {
             // A label too long for a menu keeps both ends, as names do.
             .children(label.map(|label| {
                 div()
-                    .when(menu, gpui::Styled::flex_1)
+                    .when(menu || switch, gpui::Styled::flex_1)
                     .min_w_0()
                     .overflow_hidden()
                     .text_ellipsis_middle()
@@ -540,6 +566,9 @@ impl Button {
                 menu && self.active && !self.icon.is_empty() && self.icon != "check",
                 |d| d.child(menu_glyph("check", &group, &theme).size(px(14.))),
             )
+            .when(switch, |d| {
+                d.child(crate::controls::pill(self.active, &theme))
+            })
             .when(self.shape == Shape::Dropdown, |d| {
                 d.gap(sized(2.)).child(
                     svg()
@@ -955,6 +984,11 @@ pub fn menu_panel(
 pub enum MenuPart {
     /// A group's name, with a button at its end (View's Buttons…).
     Title(SharedString, Option<Button>),
+    /// A group's name that turns the group on or off (`Button::switch`):
+    /// the whole heading is pressed, its switch at its end, and the
+    /// group's rows wait, dimmed, while it is off. On and off is
+    /// otherwise a check on a row.
+    Heading(Button),
     /// A line between groups.
     Line,
     /// A row (`Button::menu`).
@@ -988,6 +1022,7 @@ pub fn menu_parts(
                 .child(title)
                 .children(button.map(|button| button.render(shell, cx).h(sized(22.))))
                 .into_any_element(),
+            MenuPart::Heading(button) => button.render(shell, cx).mt_1().into_any_element(),
             MenuPart::Line => div()
                 .flex_none()
                 .my_1()

@@ -109,9 +109,10 @@
   card's rows of buttons (Add a term, Search in) are no longer cut when they
   wrap either.
 - **Up beside Back and Forward, and the view buttons put away**: the view
-  buttons' menu (their right-click, or View › Buttons…) now starts with Show
-  view buttons; off, one button stands for them, the view shown, and opens the
-  View menu, as in a narrow pane, its right-click giving the menu back. Under
+  buttons' menu (their right-click, or View › Buttons…) has a switch in its
+  View buttons heading; off, one button stands for them, the view shown, and
+  opens the View menu, as in a narrow pane, its right-click giving the menu
+  back. Under
   Navigation buttons, Up adds an arrow after Back and Forward that goes to the
   folder above (or the place before in a tag's trail), as Alt+Up does,
   dimmed at the top. Both are also in Settings › General › Address; Up is

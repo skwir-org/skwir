@@ -12787,3 +12787,14 @@ amended).
   where Up goes (a folder, the root, a trail's places, the folder a
   trail is of, nothing read yet). fmt; clippy on skwir-ui; its tests
   (564 passed). `just prune` once, at 4.9 GB free (17 GB after).
+- **Then, asked:** the switch for all the view buttons as a switch at
+  the end of the View buttons heading rather than a row. Built:
+  `MenuPart::Heading` and `Button::switch` (role Switch, named by the
+  heading's words, said off too; the whole heading pressed, the popup
+  kept open), the switch's pill shared with the dialogs'
+  (`controls::pill`); the rule in the shell's: a switch only heads a
+  group, a single thing on or off stays a check. Seen on Xvfb :95: the
+  heading's words clicked turn the buttons off (the rows dimmed, the
+  menu following to the one button), Space on it turns them on again,
+  the keyboard staying there, Down to the views and Up back. Not
+  heard through a screen reader (`just a11y-check` not run).

@@ -49,22 +49,28 @@ pub fn switch(
         .border_color(gpui::transparent_black())
         .focus(move |s| s.border_color(accent))
         .cursor_pointer()
+        .child(pill(on, theme))
+}
+
+/// A switch as it is drawn, on or off: what `switch` holds, and what a
+/// menu's heading that turns its group on or off ends with
+/// (`toolbar::Button::switch`).
+pub fn pill(on: bool, theme: &Theme) -> Div {
+    div()
+        .relative()
+        .flex_none()
+        .w(px(36.))
+        .h(px(20.))
+        .rounded_full()
+        .bg(if on { theme.accent } else { theme.border })
         .child(
             div()
-                .relative()
-                .w(px(36.))
-                .h(px(20.))
+                .absolute()
+                .top(px(3.))
+                .left(px(if on { 19. } else { 3. }))
+                .size(px(14.))
                 .rounded_full()
-                .bg(if on { theme.accent } else { theme.border })
-                .child(
-                    div()
-                        .absolute()
-                        .top(px(3.))
-                        .left(px(if on { 19. } else { 3. }))
-                        .size(px(14.))
-                        .rounded_full()
-                        .bg(gpui::white()),
-                ),
+                .bg(gpui::white()),
         )
 }
 

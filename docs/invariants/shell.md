@@ -217,6 +217,12 @@ Views are in [views.md](views.md); what locations decide, in
   row under the pointer or the keyboard highlighted, and what is on said
   by a check, never by the highlight. Its rows are `Button::menu`; a
   context menu's rows (`menu::render`) keep the same metrics.
+- **A switch only heads a group.** What turns a whole group of a popup
+  on or off is its heading (`MenuPart::Heading`, `Button::switch`): the
+  group's name, a switch at its end, the whole heading pressed, a stop
+  of the arrows like any row, named by the group to a screen reader and
+  said on or off; the group's rows wait under it, dimmed, while it is
+  off. A single thing on or off stays a check on its row.
 - Toolbar popup rows are buttons: arrows walk them, Home/End reach the
   ends (`ui.toolbar_first`, `ui.toolbar_last`). The row reached scrolls
   into view in prepaint (`toolbar::RevealRow`, read from the focused
@@ -282,8 +288,8 @@ of bars, split or not.
     role's. The view shown always keeps its button, so the group never
     goes and always says which view is shown.
   - The buttons' menu holds the row's buttons: whether the views have
-    any (`ui.view_buttons_shown`), which views do, and whether Up is
-    there. With the view buttons off, the row has only the variant of one
+    any (`ui.view_buttons_shown`, the switch of the View buttons
+    heading), which views do, and whether Up is there (a check). With the view buttons off, the row has only the variant of one
     button (`address::row_variants`), which still says the view shown,
     and its right-click and Menu key open the same menu, so they come
     back from where they went; the views' rows wait there, dimmed, as

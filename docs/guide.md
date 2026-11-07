@@ -19,9 +19,9 @@ work where the keyboard is, by topic.
 - **Panes.** Each pane has its own row: Back, Forward, the address, and
   the view buttons. Right-click them (or `Menu` on one, or View ›
   Buttons…) to choose which views have one, to put them all away behind
-  one button that opens the View menu (Show view buttons), or to add Up
-  after Forward (Navigation buttons › Up; also in General › Address). `F3` (or `Ctrl+Shift+D`)
-  splits the window or joins it, `Shift+F3` splits the other way, `Tab`
+  one button that opens the View menu (the switch in their heading), or
+  to add Up after Forward (Navigation buttons › Up; both also in General
+  › Address). `F3` (or `Ctrl+Shift+D`) splits the window or joins it, `Shift+F3` splits the other way, `Tab`
   switches pane. Drag the line between the panes to give either more
   room: brought near the middle, it stays there, and a double click
   shares evenly again. General says which pane closing the split closes.

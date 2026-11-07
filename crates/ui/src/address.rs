@@ -517,57 +517,49 @@ fn grid_captions_menu(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
     vec![("Under names", rows)]
 }
 
-/// The pane row's buttons: whether the views have them at all, then which
-/// views have one, each checked or not, and the buttons skwir comes with
-/// once others were chosen; then whether Up stands after Back and
-/// Forward. The view shown keeps its button while it is shown, checked or
-/// not; with the buttons off, one button stands for them all and the
-/// views' rows wait, dimmed, as chosen. A row keeps the menu open, for
-/// the next; Default buttons closes it.
+/// The pane row's buttons: the views', under a heading whose switch says
+/// whether they have any (`MenuPart::Heading`), each view checked or not,
+/// and the buttons skwir comes with once others were chosen; then whether
+/// Up stands after Back and Forward. The view shown keeps its button while
+/// it is shown, checked or not; with the buttons off, one button stands
+/// for them all and the views' rows wait, dimmed, as chosen. A row keeps
+/// the menu open, for the next; Default buttons closes it.
 fn view_buttons_menu(shell: &Shell) -> Vec<MenuPart> {
     let chosen = &shell.view_buttons;
     let shown = shell.prefs.view_buttons_shown;
-    // A switch's row stays, open, as its check changes: gpui keeps a
+    // A row stays, open, as its check or switch changes: gpui keeps a
     // tooltip as it was built, so it says what the row is about, never
     // what pressing it does now.
-    let switch = |id: &'static str, on: bool, tip: &'static str, command: &'static str| {
-        Button::new(id, if on { "check" } else { "" }, tip, command)
-            .args(serde_json::json!({ "on": !on }))
-            .active(on)
-            .keeps_open()
-    };
-    let all = menu_item(
-        switch(
-            "view-buttons-shown",
-            shown,
-            "Whether the views have buttons beside the address; off, one button, the view shown, opens the View menu",
-            "ui.view_buttons_shown",
-        ),
-        "Show view buttons",
-    );
-    let mut views: Vec<Button> = shell
-        .available_views()
-        .into_iter()
-        .map(|spec| {
-            let pinned = chosen.pinned(&spec);
-            let tip = format!("Whether the {} view has a button", spec.title);
-            menu_item(
-                Button::new(
-                    format!("view-button-{}", spec.id),
-                    if pinned { "check" } else { "" },
-                    tip,
-                    "ui.view_button",
-                )
-                .args(serde_json::json!({ "id": spec.id, "on": !pinned }))
-                .active(pinned)
-                .enabled(shown)
-                .keeps_open(),
-                spec.title.clone(),
+    let all = Button::new(
+        "view-buttons-shown",
+        "",
+        "Whether the views have buttons beside the address; off, one button, the view shown, opens the View menu",
+        "ui.view_buttons_shown",
+    )
+    .args(serde_json::json!({ "on": !shown }))
+    .active(shown)
+    .label("View buttons")
+    .switch();
+    let mut parts = vec![MenuPart::Heading(all)];
+    parts.extend(shell.available_views().into_iter().map(|spec| {
+        let pinned = chosen.pinned(&spec);
+        let tip = format!("Whether the {} view has a button", spec.title);
+        MenuPart::Row(menu_item(
+            Button::new(
+                format!("view-button-{}", spec.id),
+                if pinned { "check" } else { "" },
+                tip,
+                "ui.view_button",
             )
-        })
-        .collect();
+            .args(serde_json::json!({ "id": spec.id, "on": !pinned }))
+            .active(pinned)
+            .enabled(shown)
+            .keeps_open(),
+            spec.title.clone(),
+        ))
+    }));
     if !chosen.is_default() {
-        views.push(
+        parts.push(MenuPart::Row(
             menu_item(
                 Button::new(
                     "view-buttons-reset",
@@ -578,27 +570,23 @@ fn view_buttons_menu(shell: &Shell) -> Vec<MenuPart> {
                 "Default buttons",
             )
             .enabled(shown),
-        );
+        ));
     }
-    let up = menu_item(
-        switch(
-            "up-button",
-            shell.prefs.up_button,
-            "Whether Up stands after Back and Forward: it goes to the folder that holds this one, as Alt+Up does",
-            "ui.up_button",
-        ),
-        "Up",
-    );
-    // The switch for them all stands apart from the views it holds back.
-    let mut parts = vec![
-        MenuPart::Title("View buttons".into(), None),
-        MenuPart::Row(all),
-        MenuPart::Line,
-    ];
-    parts.extend(views.into_iter().map(MenuPart::Row));
+    let up = shell.prefs.up_button;
     parts.extend([
         MenuPart::Title("Navigation buttons".into(), None),
-        MenuPart::Row(up),
+        MenuPart::Row(menu_item(
+            Button::new(
+                "up-button",
+                if up { "check" } else { "" },
+                "Whether Up stands after Back and Forward: it goes to the folder that holds this one, as Alt+Up does",
+                "ui.up_button",
+            )
+            .args(serde_json::json!({ "on": !up }))
+            .active(up)
+            .keeps_open(),
+            "Up",
+        )),
     ]);
     parts
 }
