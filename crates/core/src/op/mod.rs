@@ -307,12 +307,19 @@ pub enum Change {
 }
 
 /// A step in the user's words: what it will do, as the review lists it
-/// ("place “a.jpg” at 10.12000, 20.12000"), and what it did, as the toast
-/// says it ("Placed “a.jpg” at 10.12000, 20.12000").
+/// ("place “a.jpg” at 10.12000, 20.12000"), what it did, as the toast
+/// says it ("Placed “a.jpg” at 10.12000, 20.12000"), and what its check
+/// found when it was done already (`StepStatus::AlreadyDone`), which the
+/// toast says instead ("“a.jpg” was already at 10.12000, 20.12000"):
+/// never that it did what it found done.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Words {
     pub will: String,
     pub did: String,
+    /// Empty in words written before it was said: then the toast says it
+    /// as it says a change without words.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub already: String,
 }
 
 impl fmt::Display for Change {
@@ -689,18 +696,25 @@ pub trait Operation: Send + Sync + fmt::Debug {
 /// `steps` as each says it is once what it reads is read
 /// ([`Operation::unfolds`]), before anything checks them: what the dry run
 /// and the review show is what is applied, and Undo takes back each step
-/// with its own inverse. `None` when none unfolds. A step that panics
-/// stays itself, for its check to fail.
+/// with its own inverse. `None` when none unfolds; else the steps, and
+/// where each of `steps` begins among them. A step that panics stays
+/// itself, for its check to fail.
 pub(crate) fn unfold(
     steps: &[Box<dyn Operation>],
     ctx: &StepContext,
-) -> Option<Vec<Box<dyn Operation>>> {
-    let mut out: Option<Vec<Box<dyn Operation>>> = None;
+) -> Option<(Vec<Box<dyn Operation>>, Vec<usize>)> {
+    let mut out: Option<(Vec<Box<dyn Operation>>, Vec<usize>)> = None;
     for (i, step) in steps.iter().enumerate() {
         match guarded(|| Ok(step.unfolds(ctx))).ok().flatten() {
-            Some(more) => out.get_or_insert_with(|| steps[..i].to_vec()).extend(more),
+            Some(more) => {
+                let (out, starts) =
+                    out.get_or_insert_with(|| (steps[..i].to_vec(), (0..i).collect()));
+                starts.push(out.len());
+                out.extend(more);
+            }
             None => {
-                if let Some(out) = &mut out {
+                if let Some((out, starts)) = &mut out {
+                    starts.push(out.len());
                     out.push(step.clone());
                 }
             }
@@ -935,6 +949,75 @@ pub struct Items {
     /// plan is done; not said with the plan's events (the toast counts).
     #[serde(skip)]
     pub placed: Vec<PathBuf>,
+    /// Which of the plan's steps are each item's, in order (`count` of
+    /// them): what a run counts by item, done or found done already
+    /// ([`Tally`]). Empty where the plan's steps are not the ones they
+    /// were made for (what a retry has left): then nothing is counted.
+    #[serde(skip)]
+    pub steps: Vec<ItemSteps>,
+}
+
+impl Items {
+    /// Each item's steps among the `steps` of its plan, as a range, and
+    /// what says it; `None` where they are not known for them.
+    fn each(&self, steps: usize) -> Option<Vec<(std::ops::Range<usize>, &ItemSaid)>> {
+        let fits = self.steps.len() == self.count
+            && self
+                .steps
+                .windows(2)
+                .all(|two| two[0].start <= two[1].start)
+            && self.steps.last().is_none_or(|last| last.start <= steps);
+        fits.then(|| {
+            let ends = self.steps.iter().skip(1).map(|item| item.start);
+            self.steps
+                .iter()
+                .zip(ends.chain(std::iter::once(steps)))
+                .map(|(item, end)| (item.start..end, &item.said))
+                .collect()
+        })
+    }
+}
+
+/// Where an item's steps are among its plan's ([`Items::steps`]): from
+/// `start` to the next item's.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ItemSteps {
+    pub start: usize,
+    pub said: ItemSaid,
+}
+
+/// What says an item, done or found done ([`Tally`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ItemSaid {
+    /// Its own step, by its index among the plan's: the copy of a
+    /// replace, after the trash of what it replaces.
+    Step(usize),
+    /// The change asked, where no step of its own says it: a folder
+    /// merged into one there, said by the steps that fill it.
+    Asked(Change),
+}
+
+/// What a run came to, by its plan's items (`Plan::items`, else each step
+/// an item): those it did (a step of theirs applied), and those it found
+/// done already (every step of theirs, `StepStatus::AlreadyDone`). What
+/// its answer says ("Copied 3 items to Docs; 2 were already there", "“a”
+/// was already extracted to Downloads"), never that it did what it found
+/// done. Counted for a run of the user's action from its start, not for
+/// what a retry had left.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct Tally {
+    pub done: Counted,
+    pub already: Counted,
+}
+
+/// Items of a [`Tally`]: how many, and the first, as its step says it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct Counted {
+    pub count: usize,
+    pub first: Option<Change>,
+    /// The name the user knows the first one's file by, where its path
+    /// says another (an item of a trash, `Progress::named`).
+    pub named: Option<String>,
 }
 
 /// Serialized plan.
@@ -1048,28 +1131,47 @@ impl Plan {
         companions: &Arc<crate::companions::Companions>,
     ) -> std::borrow::Cow<'_, [Box<dyn Operation>]> {
         let ctx = StepContext::detached().with_companions(Arc::clone(companions));
-        unfold(&self.steps, &ctx).map_or(std::borrow::Cow::Borrowed(&self.steps[..]), Into::into)
+        unfold(&self.steps, &ctx)
+            .map_or(std::borrow::Cow::Borrowed(&self.steps[..]), |(steps, _)| {
+                steps.into()
+            })
     }
 
     /// The same plan with its steps unfolded ([`unfold`]), when one is:
     /// then its items are the steps it was asked as, which the toast
-    /// counts, unless settling names its own.
+    /// counts, each said by the first step it unfolds to, unless settling
+    /// names its own.
     pub(crate) fn unfold(self, ctx: &StepContext) -> Plan {
-        let Some(steps) = unfold(&self.steps, ctx) else {
+        let Some((steps, starts)) = unfold(&self.steps, ctx) else {
             return self;
         };
-        let items = self.items.or_else(|| {
+        // Its items said already (what a retry has left), its steps are not
+        // theirs any more.
+        let items = if let Some(mut items) = self.items {
+            items.steps.clear();
+            Some(items)
+        } else {
             let asked: Vec<Change> = self.steps.iter().map(|step| step.describe()).collect();
             let placed = asked
                 .iter()
                 .filter_map(Change::placed)
                 .map(Path::to_path_buf);
-            Some(Box::new(Items {
-                placed: placed.collect(),
-                count: asked.len(),
-                first: asked.into_iter().next()?,
-            }))
-        });
+            let each = starts
+                .into_iter()
+                .map(|start| ItemSteps {
+                    start,
+                    said: ItemSaid::Step(start),
+                })
+                .collect();
+            asked.first().cloned().map(|first| {
+                Box::new(Items {
+                    placed: placed.collect(),
+                    count: asked.len(),
+                    first,
+                    steps: each,
+                })
+            })
+        };
         Plan {
             steps,
             items,
@@ -1188,6 +1290,7 @@ mod tests {
             words: Some(Words {
                 will: "place “a.jpg” at 10, 20".into(),
                 did: "Placed “a.jpg” at 10, 20".into(),
+                already: "“a.jpg” was already at 10, 20".into(),
             }),
         };
         assert_eq!(placed.within(dir).to_string(), "place “a.jpg” at 10, 20");

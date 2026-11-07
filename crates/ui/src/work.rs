@@ -532,6 +532,7 @@ impl Work {
                 said,
                 moved,
                 ran,
+                tally,
             } => {
                 let done = error.is_none() && !cancelled;
                 let counts = self.counting.remove(&plan);
@@ -577,6 +578,7 @@ impl Work {
                         said: &said,
                         moved,
                         ran,
+                        tally: tally.as_deref(),
                     },
                 );
                 let mut actions = toast::finished_actions(
@@ -932,6 +934,7 @@ mod tests {
             said: Vec::new(),
             moved: 0,
             ran: Duration::from_millis(30),
+            tally: None,
         }
     }
 
@@ -948,6 +951,7 @@ mod tests {
             said: Vec::new(),
             moved,
             ran: Duration::from_millis(30),
+            tally: None,
         }
     }
 

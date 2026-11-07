@@ -12693,3 +12693,65 @@ amended).
   five failed while the disk was full, 85 MB free, and passed once
   `just prune` freed 17.9 GB). Two windows asking at once were not
   driven in a window: the unit test covers which window unfolds.
+
+## 2026-11-07: What was found done is said so
+
+- **Asked:** extracting an archive a second time said "Extracted …" at
+  once, though nothing was extracted. The user chose the answer over a
+  Replace question: a folder that differs from what the archive would
+  make is already a name taken, asked about (ADR-054), so the question
+  would only ever offer to make the same folder again. Every other
+  action of the class goes with it.
+- **The cause:** a step whose check finds its work in place
+  (`StepStatus::AlreadyDone`) was counted `skipped`, which the toast
+  never read: it worded the plan's items as asked, so the second
+  extraction said "Extracted", a paste of identical files "Copied 0
+  items to Docs" (or "Copied 5 items" with 2 of them there), a cut
+  pasted in place "Moved", an undo of what was put back by hand
+  "Undid", a tag a file had "Tagged".
+- **The fix, once for every step:** the executor counts a run's items
+  done apart from those found done (`op::Tally` in
+  `ExecEvent::Finished`, `executor::tally`), by item: a plan's items
+  are its steps, else `Plan::items`, which now say which steps are each
+  item's (`Items::steps`, `ItemSteps`, `ItemSaid`: from `clash::settle`,
+  where a replace's trash and copy are one item said by its copy, and
+  from `Plan::unfold`). A step found done at, or under, what an applied
+  step of the same run acted on (a file inside a folder the plan
+  trashed first, which a search or a folder opened in place can select
+  with it; a file asked twice) is the run's own doing, counted done
+  (`Came::Ours`). Not counted for what a retry had left, whose steps
+  done may be its first run's (`Items::steps` cleared there).
+  `op::Words` gains `already`, written by every step that words itself
+  (extract, compress, notes edits, tags' browse and pins, positions,
+  access, Reduce Size, Save as PDF). The toast says all of it found as
+  information, with no Undo and Show as for what is made
+  (`toast::found_done`), and some of it after what was done
+  (`found_done_too`); Activity's Earlier and the desktop notice say the
+  same sentence.
+- **Seen** on Xvfb :95 (debug build, synthetic home and files): Extract
+  Here from the menu twice ("Extracted “it's photos.zip” to work" with
+  Undo, then "“it's photos.zip” was already extracted to work", no
+  Undo, the folder selected); one note pasted into Docs, then all three
+  ("Copied 2 items to Docs; “draft two.txt” was already there"), then
+  again ("3 items were already in Docs"); a rename by `skwir cmd`, put
+  back with `mv`, then Ctrl+Z ("Already undone: rename to renamed
+  one.txt"); a cut pasted into its own folder ("“draft three.txt” was
+  already in Docs"); a tag added twice ("“draft two.txt” was already
+  tagged draft"). The Undo history lists none of the found ones.
+- **Checked:** tests of the tally (each step an item, items of several
+  steps, a file in a folder deleted before it and a file asked twice
+  counted done, not counted without them), of the toast's sentences (extract,
+  several archives, copies, trash, rename, undo, some done, a long one,
+  what the steps said, an error), of an archive extracted again as the
+  window applies it, and the notes edit's words; the settled plan's
+  items test now expects each item's steps. fmt; clippy on skwir-core,
+  skwir-ui and the archives, tags, geo, shrink and print plugins; their
+  tests and the binary's: 1716 of 1718 passed in the full run, the two
+  rclone form tests of `remote_configs` failing near their 30 s while
+  everything ran at once, then passing alone (14 of 14). After the
+  same-run rule: clippy on skwir-core, skwir-ui and archives, and the
+  tests of core, ui, archives and tags again (1353 passed), the
+  extraction tests with the helper required. The disk filled three
+  times during the builds (3.1 GB, then 0 MB free): `just prune` each
+  time, 16 to 17.5 GB free after. A trash of a file gone was not
+  driven in a window (a test says its sentence).

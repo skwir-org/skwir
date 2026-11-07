@@ -32,9 +32,24 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   have put another file at its name (a swap). What a batch found of a
   step's source holds for that step alone: a later step of the run
   naming the same file, which that step moved, finds it where it went.
-- A step that changes metadata states its words (`op::Words`: what it
-  will do, for the review; what it did, for the toast). What a plan left
-  out goes in its note (`Plan::with_note`), never in its title.
+- A step that changes metadata, or makes what its kind cannot say (an
+  archive extracted), states its words (`op::Words`: what it will do,
+  for the review; what it did, for the toast; what its check found when
+  it was done already, which the toast says instead: "“a.zip” was
+  already extracted to Downloads"). What a plan left out goes in its
+  note (`Plan::with_note`), never in its title.
+- **What a run found done it never says it did.** The executor counts a
+  run's items done (a step of theirs applied) apart from those found
+  done (each step of theirs `StepStatus::AlreadyDone`) in
+  `ExecEvent::Finished`'s `tally` (`op::Tally`), each side's first by
+  its item's change. A plan's items are its steps, else `Plan::items`,
+  whose `steps` say which steps are each item's (`Items::steps`, from
+  `clash::settle` and `Plan::unfold`: the trash and the copy of a
+  replace are one item, said by the copy). A step found done at what an
+  applied step of the same run acted on, or under it (a file in a folder
+  it trashed, a file asked twice), was done by the run: counted done. A
+  run of what a retry had left is not counted: what it finds done may be
+  its first run's.
 - **A long step shows how far it went.** A plan's card shows a single
   step only when it announces its work: a step whose work runs elsewhere
   (a helper, on a worker) announces its bytes once it knows them, in its

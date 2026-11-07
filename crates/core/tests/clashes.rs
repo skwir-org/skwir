@@ -11,7 +11,7 @@ use std::time::{Duration, Instant, SystemTime};
 use common::*;
 use skwir_core::app::{App, ClashQuestion};
 use skwir_core::op::clash::{Act, Answer, Choice, FileChoice, FolderChoice, Policy};
-use skwir_core::op::{Change, ExecEvent, Items, StepStatus};
+use skwir_core::op::{Change, ExecEvent, ItemSaid, ItemSteps, Items, StepStatus};
 
 /// A scratch tree for one test; what it left in the trash is purged when
 /// it ends (nextest gives each test process a trash of its own).
@@ -1339,6 +1339,18 @@ fn a_plan_settled_says_what_was_asked() {
             },
             count: 2,
             placed: vec![root.join("dest/a.txt"), root.join("dest/b.txt")],
+            // Each item the trash of what it replaces, then its copy,
+            // which says it.
+            steps: vec![
+                ItemSteps {
+                    start: 0,
+                    said: ItemSaid::Step(1),
+                },
+                ItemSteps {
+                    start: 2,
+                    said: ItemSaid::Step(3),
+                },
+            ],
         })
     );
     assert_eq!(read(&root.join("dest/c.txt")), "kept");

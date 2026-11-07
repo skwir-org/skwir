@@ -179,6 +179,7 @@ impl op::Effect for Extract {
             words: Some(Words {
                 will: format!("extract “{archive}” to {into}"),
                 did: format!("extracted “{archive}” to {into}"),
+                already: format!("“{archive}” was already extracted to {into}"),
             }),
         }
     }

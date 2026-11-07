@@ -279,21 +279,23 @@ pub fn drop(
     };
     crate::per_entry(files, title, |r| {
         let name = name_of(&r.path);
-        let (will, did) = match source.as_ref().and_then(|s| s.tag.as_deref()) {
+        let (will, did, already) = match source.as_ref().and_then(|s| s.tag.as_deref()) {
             Some(from) => (
                 format!("move “{name}” from “{from}” to “{tag}”"),
                 format!("moved “{name}” from “{from}” to “{tag}”"),
+                format!("“{name}” was already in “{tag}”"),
             ),
             None => (
                 format!("give “{name}” the tag “{tag}”"),
                 format!("gave “{name}” the tag “{tag}”"),
+                format!("“{name}” already had the tag “{tag}”"),
             ),
         };
         Some(
             app.notes
                 .edit(r)
                 .change_tags(change.clone())
-                .saying(will, did),
+                .saying(will, did, already),
         )
     })
 }
@@ -335,21 +337,23 @@ pub fn untag(
     let change = taken(&address);
     crate::per_entry(files, title, |r| {
         let name = name_of(&r.path);
-        let (will, did) = match &address.tag {
+        let (will, did, already) = match &address.tag {
             Some(tag) => (
                 format!("remove the tag “{tag}” from “{name}”"),
                 format!("removed the tag “{tag}” from “{name}”"),
+                format!("the tag “{tag}” was already off “{name}”"),
             ),
             None => (
                 format!("remove the tags of “{name}”"),
                 format!("removed the tags of “{name}”"),
+                format!("“{name}” already had no tags"),
             ),
         };
         let edit = match &change {
             Some(change) => app.notes.edit(r).change_tags(change.clone()),
             None => app.notes.edit(r).tags(Vec::new()),
         };
-        Some(edit.saying(will, did))
+        Some(edit.saying(will, did, already))
     })
 }
 

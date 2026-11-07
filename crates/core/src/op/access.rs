@@ -419,24 +419,27 @@ impl super::Effect for SetAccess {
         } else {
             ("", "")
         };
-        let (will, did) = match (&self.mode, self.group) {
+        let (will, did, already) = match (&self.mode, self.group) {
             (Some(mode), None) => (
                 format!("change who may use “{name}”{inside} ({mode})"),
                 format!("changed who may use “{name}”{inside}"),
+                format!("who may use “{name}”{inside} was already as asked"),
             ),
             (None, Some(_)) => (
                 format!("change the group of “{name}”{of_inside}"),
                 format!("changed the group of “{name}”{of_inside}"),
+                format!("the group of “{name}”{of_inside} was already as asked"),
             ),
             _ => (
                 format!("change the access and group of “{name}”{of_inside}"),
                 format!("changed the access and group of “{name}”{of_inside}"),
+                format!("the access and group of “{name}”{of_inside} were already as asked"),
             ),
         };
         Change::Metadata {
             path: self.entry.path.clone(),
             field: "access".into(),
-            words: Some(Words { will, did }),
+            words: Some(Words { will, did, already }),
         }
     }
 
@@ -934,6 +937,7 @@ impl super::Effect for AccessBack {
             words: Some(Words {
                 will: format!("put back who may use “{name}”{more}"),
                 did: format!("put back who may use “{name}”{more}"),
+                already: format!("who may use “{name}”{more} was already as before"),
             }),
         }
     }

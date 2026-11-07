@@ -942,24 +942,27 @@ impl skwir_core::op::Kind for SetPosition {
 impl skwir_core::op::Effect for SetPosition {
     fn describe(&self) -> Change {
         let name = display_name(&self.entry.path);
-        let (will, did) = match &self.to {
+        let (will, did, already) = match &self.to {
             Location::At(p) => (
                 format!("place “{name}” at {:.5}, {:.5}", p.lat, p.lon),
                 format!("placed “{name}” at {:.5}, {:.5}", p.lat, p.lon),
+                format!("“{name}” was already at {:.5}, {:.5}", p.lat, p.lon),
             ),
             Location::None => (
                 format!("remove the location of “{name}”"),
                 format!("removed the location of “{name}”"),
+                format!("“{name}” already had no location"),
             ),
             Location::Tags(_) => (
                 format!("restore the location of “{name}”"),
                 format!("restored the location of “{name}”"),
+                format!("the location of “{name}” was already back"),
             ),
         };
         Change::Metadata {
             path: self.entry.path.clone(),
             field: keys::POSITION.into(),
-            words: Some(skwir_core::op::Words { will, did }),
+            words: Some(skwir_core::op::Words { will, did, already }),
         }
     }
     fn check(&self, ctx: &StepContext) -> StepStatus {

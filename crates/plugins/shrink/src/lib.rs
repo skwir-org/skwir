@@ -467,6 +467,7 @@ impl op::Effect for ShrinkCopy {
             words: Some(Words {
                 will: format!("make “{copy}”, a smaller copy of “{what}”"),
                 did: format!("made “{copy}”, a smaller copy of “{what}”"),
+                already: format!("“{copy}” was already a smaller copy of “{what}”"),
             }),
         }
     }

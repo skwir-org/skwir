@@ -171,10 +171,11 @@ impl SetNotes {
         }
     }
 
-    /// What it says it will do and did, in place of what its fields say.
+    /// What it says it will do, did, and found done already, in place of
+    /// what its fields say.
     #[must_use]
-    pub fn saying(mut self, will: String, did: String) -> Self {
-        self.words = Some(Words { will, did });
+    pub fn saying(mut self, will: String, did: String, already: String) -> Self {
+        self.words = Some(Words { will, did, already });
         self
     }
 
@@ -280,8 +281,11 @@ impl SetNotes {
         out
     }
 
-    fn words(&self) -> (String, String, &'static str) {
+    /// What it says it will do, did, and found done already, and the
+    /// field it is about.
+    fn words(&self) -> (Words, &'static str) {
         let name = name_of(&self.entry.path);
+        let said = |will: String, did: String, already: String| Words { will, did, already };
         if let Some(words) = &self.words {
             let field = if self.tags.is_some() || self.change_tags.is_some() {
                 keys::TAGS
@@ -290,36 +294,42 @@ impl SetNotes {
             } else {
                 keys::COMMENT
             };
-            return (words.will.clone(), words.did.clone(), field);
+            return (words.clone(), field);
         }
         if self.sync {
             return (
-                format!("make the notes of “{name}” agree"),
-                format!("made the notes of “{name}” agree"),
+                said(
+                    format!("make the notes of “{name}” agree"),
+                    format!("made the notes of “{name}” agree"),
+                    format!("the notes of “{name}” already agreed"),
+                ),
                 keys::TAGS,
             );
         }
         if let Some(change) = &self.change_tags {
-            // Each part said both ways at once: a name or a tag may hold
+            // Each part said every way at once: a name or a tag may hold
             // any word.
-            let mut said: Vec<(String, String)> = Vec::new();
+            let mut parts: Vec<Words> = Vec::new();
             for r in &change.rename {
-                said.push(match &r.to {
-                    Some(to) => (
+                parts.push(match &r.to {
+                    Some(to) => said(
                         format!("rename the tag “{}” to “{to}” on “{name}”", r.from),
                         format!("renamed the tag “{}” to “{to}” on “{name}”", r.from),
+                        format!("the tag “{}” was already “{to}” on “{name}”", r.from),
                     ),
-                    None => (
+                    None => said(
                         format!("take {} off “{name}”", r.from),
                         format!("took {} off “{name}”", r.from),
+                        format!("{} was already off “{name}”", r.from),
                     ),
                 });
             }
             if !change.add.is_empty() {
                 let added = change.add.join(", ");
-                said.push((
+                parts.push(said(
                     format!("tag “{name}” {added}"),
                     format!("tagged “{name}” {added}"),
+                    format!("“{name}” was already tagged {added}"),
                 ));
             }
             let taken: Vec<&str> = change
@@ -329,27 +339,49 @@ impl SetNotes {
                 .map(String::as_str)
                 .collect();
             if !taken.is_empty() {
+                let were = if taken.len() == 1 { "was" } else { "were" };
                 let taken = taken.join(", ");
-                said.push((
+                parts.push(said(
                     format!("take {taken} off “{name}”"),
                     format!("took {taken} off “{name}”"),
+                    format!("{taken} {were} already off “{name}”"),
                 ));
             }
-            let (will, did): (Vec<String>, Vec<String>) = said.into_iter().unzip();
-            return (will.join(" and "), did.join(" and "), keys::TAGS);
+            let joined = |part: fn(&Words) -> &String| {
+                parts
+                    .iter()
+                    .map(part)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(" and ")
+            };
+            return (
+                said(
+                    joined(|w| &w.will),
+                    joined(|w| &w.did),
+                    joined(|w| &w.already),
+                ),
+                keys::TAGS,
+            );
         }
         if let Some(tags) = &self.tags {
             return if tags.is_empty() {
                 (
-                    format!("remove the tags of “{name}”"),
-                    format!("removed the tags of “{name}”"),
+                    said(
+                        format!("remove the tags of “{name}”"),
+                        format!("removed the tags of “{name}”"),
+                        format!("“{name}” already had no tags"),
+                    ),
                     keys::TAGS,
                 )
             } else {
                 let tags = tags.join(", ");
                 (
-                    format!("tag “{name}” {tags}"),
-                    format!("tagged “{name}” {tags}"),
+                    said(
+                        format!("tag “{name}” {tags}"),
+                        format!("tagged “{name}” {tags}"),
+                        format!("“{name}” was already tagged {tags}"),
+                    ),
                     keys::TAGS,
                 )
             };
@@ -357,26 +389,38 @@ impl SetNotes {
         if let Field::Set(rating) = self.rating_to() {
             return match rating {
                 Some(r) => (
-                    format!("rate “{name}” {}", stars(r)),
-                    format!("rated “{name}” {}", stars(r)),
+                    said(
+                        format!("rate “{name}” {}", stars(r)),
+                        format!("rated “{name}” {}", stars(r)),
+                        format!("“{name}” was already rated {}", stars(r)),
+                    ),
                     keys::RATING,
                 ),
                 None => (
-                    format!("remove the rating of “{name}”"),
-                    format!("removed the rating of “{name}”"),
+                    said(
+                        format!("remove the rating of “{name}”"),
+                        format!("removed the rating of “{name}”"),
+                        format!("“{name}” already had no rating"),
+                    ),
                     keys::RATING,
                 ),
             };
         }
         match self.comment_to() {
             Field::Set(Some(_)) | Field::Left => (
-                format!("set the comment of “{name}”"),
-                format!("set the comment of “{name}”"),
+                said(
+                    format!("set the comment of “{name}”"),
+                    format!("set the comment of “{name}”"),
+                    format!("“{name}” already had that comment"),
+                ),
                 keys::COMMENT,
             ),
             Field::Set(None) => (
-                format!("remove the comment of “{name}”"),
-                format!("removed the comment of “{name}”"),
+                said(
+                    format!("remove the comment of “{name}”"),
+                    format!("removed the comment of “{name}”"),
+                    format!("“{name}” already had no comment"),
+                ),
                 keys::COMMENT,
             ),
         }
@@ -411,11 +455,11 @@ impl Operation for SetNotes {
         serde_json::to_value(self).expect("serializable")
     }
     fn describe(&self) -> Change {
-        let (will, did, field) = self.words();
+        let (words, field) = self.words();
         Change::Metadata {
             path: self.entry.path.clone(),
             field: field.into(),
-            words: Some(Words { will, did }),
+            words: Some(words),
         }
     }
     /// Where the policy updates a store in names and the file's name holds
@@ -624,7 +668,7 @@ impl Operation for SetNotes {
                 each,
             },
         );
-        let (_, _, field) = self.words();
+        let (_, field) = self.words();
         Ok(Some(Box::new(RestoreNotes {
             entry: EntryRef::new(self.entry.id, path).with_only_name(self.entry.only_name),
             field: field.to_owned(),
@@ -735,6 +779,7 @@ impl Operation for RestoreNotes {
             words: Some(Words {
                 will: format!("put back the notes of “{name}”"),
                 did: format!("put back the notes of “{name}”"),
+                already: format!("the notes of “{name}” were already back"),
             }),
         }
     }
@@ -822,18 +867,24 @@ mod tests {
         };
         let edit = SetNotes::new(Arc::new(NoteStores::default()), entry, Policy::default())
             .change_tags(change);
-        let (will, did, _) = edit.words();
+        let (words, _) = edit.words();
         let name = "take rename tag “x”.txt";
         assert_eq!(
-            will,
+            words.will,
             format!(
                 "rename the tag “a” to “b” on “{name}” and rename the tag “c” to “d” on “{name}” and tag “{name}” new and take old off “{name}”"
             )
         );
         assert_eq!(
-            did,
+            words.did,
             format!(
                 "renamed the tag “a” to “b” on “{name}” and renamed the tag “c” to “d” on “{name}” and tagged “{name}” new and took old off “{name}”"
+            )
+        );
+        assert_eq!(
+            words.already,
+            format!(
+                "the tag “a” was already “b” on “{name}” and the tag “c” was already “d” on “{name}” and “{name}” was already tagged new and old was already off “{name}”"
             )
         );
     }

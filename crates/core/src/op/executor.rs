@@ -65,6 +65,80 @@ fn named(change: &Change) -> Option<String> {
     Some(name.to_string_lossy().into_owned())
 }
 
+/// What a step came to in a run, for its plan's [`Tally`](super::Tally).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Came {
+    Applied,
+    /// Its check found it done (`StepStatus::AlreadyDone`) before the run.
+    Already,
+    /// Its check found it done by a step of the run before it: what it
+    /// acts on, or a folder above it, an applied step's.
+    Ours,
+    /// Anything else: it found it had nothing to make and said why
+    /// (`Unneeded`), or it did not run.
+    Other,
+}
+
+/// What a run came to by its plan's items (`Plan::items`, else each step
+/// an item), from what each step `came` to: an item done where one of its
+/// steps applied or was done by the run, found done where each of them
+/// was before it. Each side's first is
+/// said by its item's change, its file named as the user knows it: for
+/// the first step applied, as read before it applied (`first_applied`).
+/// `None` where it is not known which steps are whose.
+fn tally(
+    plan: &Plan,
+    came: &[Came],
+    first_applied: Option<&(usize, Option<String>)>,
+) -> Option<super::Tally> {
+    use super::{Counted, ItemSaid};
+    if came.len() != plan.steps.len() {
+        return None;
+    }
+    let mut tally = super::Tally::default();
+    let mut count = |steps: std::ops::Range<usize>, said: &ItemSaid| {
+        let of = &came[steps];
+        let side = if of.iter().any(|c| matches!(c, Came::Applied | Came::Ours)) {
+            &mut tally.done
+        } else if !of.is_empty() && of.iter().all(|c| *c == Came::Already) {
+            &mut tally.already
+        } else {
+            return;
+        };
+        side.count += 1;
+        if side.first.is_some() {
+            return;
+        }
+        let (change, own) = match said {
+            ItemSaid::Step(at) => (plan.steps.get(*at).map(|step| step.describe()), Some(*at)),
+            ItemSaid::Asked(change) => (Some(change.clone()), None),
+        };
+        // Applied, its record may be gone: as read before it applied.
+        let name = match (first_applied, own) {
+            (Some((at, read)), Some(own)) if *at == own => read.clone(),
+            _ => change.as_ref().and_then(self::named),
+        };
+        *side = Counted {
+            count: side.count,
+            first: change,
+            named: name,
+        };
+    };
+    match plan.items.as_deref() {
+        Some(items) => {
+            for (steps, said) in items.each(plan.steps.len())? {
+                count(steps, said);
+            }
+        }
+        None => {
+            for at in 0..plan.steps.len() {
+                count(at..at + 1, &ItemSaid::Step(at));
+            }
+        }
+    }
+    Some(tally)
+}
+
 /// Executor events, consumed by the UI (and tests) without blocking.
 #[derive(Clone, Debug, Serialize)]
 pub enum ExecEvent {
@@ -111,6 +185,10 @@ pub enum ExecEvent {
         /// out: what its answer says of a long copy (ADR-113).
         moved: u64,
         ran: Duration,
+        /// Its items done and found done already, for one that ran to its
+        /// end from its start (not what a retry had left): what its answer
+        /// says, never that it did what it found done.
+        tally: Option<Box<super::Tally>>,
     },
     /// The server the plan `plan` stopped on does not answer: it goes on
     /// by itself once it does (ADR-080, 9).
@@ -1376,7 +1454,7 @@ enum Named {
 /// (`Executor::settle`).
 enum Settling {
     /// It goes on, these steps in place of its own where they differ.
-    Steps(Option<super::clash::Settled>),
+    Steps(Option<Box<super::clash::Settled>>),
     /// A name taken, and no one to ask: what it says.
     Refused(String),
     /// The user cancelled.
@@ -1561,7 +1639,7 @@ impl Executor {
             };
             settle(&plan.steps, &answer, &ctx())
         };
-        Settling::Steps(settled.changed.then_some(settled))
+        Settling::Steps(settled.changed.then(|| Box::new(settled)))
     }
 
     /// What a volume has free, as `free` says: for a test.
@@ -3541,6 +3619,7 @@ impl Executor {
             said: Vec::new(),
             moved: 0,
             ran: Duration::ZERO,
+            tally: None,
         });
         ExecResult {
             applied: 0,
@@ -3568,6 +3647,7 @@ impl Executor {
             said: Vec::new(),
             moved: 0,
             ran: Duration::ZERO,
+            tally: None,
         });
         ExecResult {
             applied: 0,
@@ -3704,6 +3784,11 @@ impl Executor {
                 let mut rest = Plan::with_steps(plan.title.clone(), plan.steps[at..].to_vec());
                 rest.on_conflict = plan.on_conflict;
                 rest.items.clone_from(&plan.items);
+                // Its items say the whole action; its steps are only what
+                // is left of theirs.
+                if let Some(items) = &mut rest.items {
+                    items.steps.clear();
+                }
                 // Stopped on the same server again, it counts on.
                 let tries = if server.is_some() && server == waits.server {
                     waits.tries
@@ -3884,6 +3969,7 @@ impl Executor {
                     said: Vec::new(),
                     moved: 0,
                     ran: Duration::ZERO,
+                    tally: None,
                 });
                 return Some(ExecResult {
                     applied: 0,
@@ -4090,6 +4176,16 @@ impl Executor {
         let mut cancelled = false;
         // What the steps said, each once (several booklets fold alike).
         let (mut said, mut heard) = (Vec::new(), std::collections::HashSet::new());
+        // What each step came to, for what the run says of its items, and
+        // the name the user knows the first applied one's file by, read
+        // before it takes the record.
+        let mut came = Vec::with_capacity(plan.steps.len());
+        let mut first_applied = None;
+        // What its applied steps acted on: a step found done at one of
+        // them, or under one (a file in a folder it trashed, a file asked
+        // twice), was done by this run, not before it.
+        let mut acted_on: std::collections::HashSet<std::path::PathBuf> =
+            std::collections::HashSet::new();
         // Its speed is measured from here, its sizing and checks done.
         meter.begin(total);
         for (i, step) in plan.steps.iter().enumerate() {
@@ -4122,21 +4218,36 @@ impl Executor {
                 });
             let mut err = None;
             let mut holds = false;
+            let mut step_came = Came::Other;
+            if matches!(status, StepStatus::Pending { .. }) && first_applied.is_none() {
+                let own = if i == 0 {
+                    named.clone()
+                } else {
+                    self::named(&change)
+                };
+                first_applied = Some((i, own));
+            }
             match &status {
                 StepStatus::AlreadyDone => {
                     skipped += 1;
                     holds = true;
+                    let ours = change
+                        .subject()
+                        .is_some_and(|on| on.ancestors().any(|at| acted_on.contains(at)));
+                    step_came = if ours { Came::Ours } else { Came::Already };
                 }
                 StepStatus::Conflict { reason } => err = Some(reason.clone()),
                 StepStatus::Pending { .. } => match super::guarded(|| step.apply(&ctx)) {
                     Ok(Some(inv)) => {
                         applied += 1;
                         holds = true;
+                        step_came = Came::Applied;
                         inverses.push(inv);
                     }
                     Ok(None) => {
                         applied += 1;
                         holds = true;
+                        step_came = Came::Applied;
                         complete = false;
                     }
                     // The step stopped midway and undid its own partial work:
@@ -4157,6 +4268,12 @@ impl Executor {
                     }
                 },
             }
+            if step_came == Came::Applied
+                && let Some(on) = change.subject()
+            {
+                acted_on.insert(on.to_path_buf());
+            }
+            came.push(step_came);
             if holds {
                 held.push(change.clone());
             }
@@ -4280,6 +4397,12 @@ impl Executor {
         // Told finished, it runs no more: Pause, Resume and Cancel asked
         // as its end is read find nothing.
         drop(listed);
+        // Counted for a run of the user's action from its start, to its
+        // end: a retry's steps already done may be its own first run's.
+        let tally = (origin == plan.id && result.error.is_none() && !cancelled)
+            .then(|| tally(plan, &came, first_applied.as_ref()))
+            .flatten()
+            .map(Box::new);
         self.emit(ExecEvent::Finished {
             plan: plan.id,
             applied,
@@ -4291,6 +4414,7 @@ impl Executor {
             said,
             moved: meter.done.load(Ordering::Relaxed),
             ran: meter.ran(),
+            tally,
         });
         if !held.is_empty() {
             for observer in self.observers.all() {
@@ -6478,5 +6602,110 @@ mod tests {
         let again = executor.execute_blocking(&plan, &CancelToken::new());
         assert_eq!((again.applied, again.skipped), (0, 200), "already done");
         assert_eq!(READ.load(Ordering::Relaxed) - before, 1, "one listing");
+    }
+
+    /// A run counts what it found done already apart from what it did, by
+    /// the plan's items: never as done. Each step an item, then each item
+    /// its own steps, one done where any of them applied; not counted
+    /// where its steps are not known for its items.
+    #[test]
+    fn a_run_counts_what_it_found_done_already_apart() {
+        use super::super::{Delete, EntryRef, ItemSaid, ItemSteps, Items, Tally};
+        let base = dirs::home_dir().unwrap().join(".cache/skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let tmp = tempfile::tempdir_in(base).unwrap();
+        let name = |n: &str| tmp.path().join(n);
+        let make = |names: &[&str]| {
+            for n in names {
+                std::fs::write(name(n), b"").unwrap();
+            }
+        };
+        let delete = |n: &str| -> Box<dyn Operation> {
+            Box::new(Delete {
+                entry: EntryRef::from_path(name(n)).unwrap(),
+            })
+        };
+        let gone = |n: &str| Some(Change::Delete { path: name(n) });
+        let executor = Executor::new(Scheduler::new(2));
+        let tally_of = |plan: &Plan| -> Option<Tally> {
+            executor.execute_blocking(plan, &CancelToken::new());
+            let seen = events_until(
+                &executor,
+                |e| matches!(e, ExecEvent::Finished { plan: p, .. } if *p == plan.id),
+            );
+            match seen.last() {
+                Some(ExecEvent::Finished { tally, .. }) => tally.as_deref().cloned(),
+                _ => unreachable!(),
+            }
+        };
+        make(&["it's a.txt", "b.txt", "c.txt"]);
+        let plan = Plan::with_steps(
+            "delete",
+            vec![delete("it's a.txt"), delete("b.txt"), delete("c.txt")],
+        );
+        std::fs::remove_file(name("b.txt")).unwrap();
+        let tally = tally_of(&plan).expect("counted");
+        assert_eq!((tally.done.count, tally.already.count), (2, 1));
+        assert_eq!(tally.done.first, gone("it's a.txt"));
+        assert_eq!(tally.already.first, gone("b.txt"));
+        // Again, all of it was.
+        let tally = tally_of(&plan).expect("counted");
+        assert_eq!((tally.done.count, tally.already.count), (0, 3));
+        assert_eq!(tally.already.first, gone("it's a.txt"));
+        assert_eq!(tally.done.first, None);
+        // Two items: the first of one step, found gone; the second of two,
+        // one gone and one there, done, said by its last step.
+        make(&["it's a.txt", "b.txt", "c.txt"]);
+        let mut plan = Plan::with_steps(
+            "delete",
+            vec![delete("it's a.txt"), delete("b.txt"), delete("c.txt")],
+        );
+        for n in ["it's a.txt", "b.txt"] {
+            std::fs::remove_file(name(n)).unwrap();
+        }
+        plan.items = Some(Box::new(Items {
+            first: Change::Delete {
+                path: name("it's a.txt"),
+            },
+            count: 2,
+            placed: Vec::new(),
+            steps: vec![
+                ItemSteps {
+                    start: 0,
+                    said: ItemSaid::Step(0),
+                },
+                ItemSteps {
+                    start: 1,
+                    said: ItemSaid::Step(2),
+                },
+            ],
+        }));
+        let tally = tally_of(&plan).expect("counted");
+        assert_eq!((tally.done.count, tally.already.count), (1, 1));
+        assert_eq!(tally.done.first, gone("c.txt"));
+        assert_eq!(tally.already.first, gone("it's a.txt"));
+        // A file in a folder deleted before it, and a file asked twice:
+        // done by the run, not found done.
+        std::fs::create_dir(name("it's in")).unwrap();
+        make(&["it's in/d.txt", "e.txt"]);
+        let nested = Plan::with_steps(
+            "delete",
+            vec![
+                Box::new(super::super::Delete {
+                    entry: EntryRef::from_path(name("it's in")).unwrap(),
+                }) as Box<dyn Operation>,
+                delete("it's in/d.txt"),
+                delete("e.txt"),
+                delete("e.txt"),
+            ],
+        );
+        let tally = tally_of(&nested).expect("counted");
+        assert_eq!((tally.done.count, tally.already.count), (4, 0));
+        // Its steps not known for its items (what a retry has left): not
+        // counted.
+        if let Some(items) = &mut plan.items {
+            items.steps.clear();
+        }
+        assert_eq!(tally_of(&plan), None);
     }
 }

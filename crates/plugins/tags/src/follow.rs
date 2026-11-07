@@ -175,11 +175,11 @@ fn write(app: &App, ctx: &Ctx, to: &Settings) -> anyhow::Result<Settings> {
     Ok(before)
 }
 
-fn change(root: &std::path::Path, will: String, did: String) -> Change {
+fn change(root: &std::path::Path, will: String, did: String, already: String) -> Change {
     Change::Metadata {
         path: root.to_path_buf(),
         field: PINNED.into(),
-        words: Some(Words { will, did }),
+        words: Some(Words { will, did, already }),
     }
 }
 
@@ -271,21 +271,25 @@ impl Operation for Follow {
                 &self.root,
                 format!("pin “{to}” where {from} was"),
                 format!("pinned “{to}” where {from} was"),
+                format!("“{to}” was already pinned where {from} was"),
             ),
             Some(to) if colors && !pins => change(
                 &self.root,
                 format!("give “{to}” the color {from} had"),
                 format!("gave “{to}” the color {from} had"),
+                format!("“{to}” already had the color {from} had"),
             ),
             Some(to) => change(
                 &self.root,
                 format!("keep “{to}” pinned and colored as {from} were"),
                 format!("kept “{to}” pinned and colored as {from} were"),
+                format!("“{to}” was already pinned and colored as {from} were"),
             ),
             None => change(
                 &self.root,
                 format!("unpin {from}"),
                 format!("unpinned {from}"),
+                format!("{from} was already unpinned"),
             ),
         }
     }
@@ -353,6 +357,7 @@ impl Operation for Restore {
             &self.root,
             "put the pinned tags and their colors back".into(),
             "put the pinned tags and their colors back".into(),
+            "the pinned tags and their colors were already back".into(),
         )
     }
     fn check(&self, _: &StepContext) -> StepStatus {

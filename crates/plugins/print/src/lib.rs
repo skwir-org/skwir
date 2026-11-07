@@ -1381,6 +1381,7 @@ impl op::Effect for MakePdf {
             words: Some(Words {
                 will: format!("save {what} as “{pdf}” in “{folder}”"),
                 did: format!("saved {what} as “{pdf}” in “{folder}”"),
+                already: format!("{what} was already saved as “{pdf}” in “{folder}”"),
             }),
         }
     }

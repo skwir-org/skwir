@@ -263,7 +263,7 @@ fn settle_names(steps: &[Box<dyn Operation>], answer: &Answer, ctx: &StepContext
         clashes: Vec::new(),
         changed: false,
     };
-    let (mut count, mut first, mut placed) = (0, None, Vec::new());
+    let (mut count, mut first, mut placed, mut each) = (0, None, Vec::new(), Vec::new());
     for (i, step) in steps.iter().enumerate() {
         let asked = step.describe();
         let before = walk.out.len();
@@ -287,12 +287,23 @@ fn settle_names(steps: &[Box<dyn Operation>], answer: &Answer, ctx: &StepContext
             _ => None,
         };
         let made = matches!(asked, Change::Create { .. });
-        let own = done.iter().map(|s| s.describe()).find(|c| {
-            matches!(c, Change::Copy { from: f, .. } | Change::Move { from: f, .. }
-                | Change::Link { from: f, .. } if Some(f) == from.as_ref())
-                || made && matches!(c, Change::Create { .. })
+        let own = done
+            .iter()
+            .map(|s| s.describe())
+            .enumerate()
+            .find(|(_, c)| {
+                matches!(c, Change::Copy { from: f, .. } | Change::Move { from: f, .. }
+                    | Change::Link { from: f, .. } if Some(f) == from.as_ref())
+                    || made && matches!(c, Change::Create { .. })
+            });
+        let (said, item) = match own {
+            Some((at, own)) => (super::ItemSaid::Step(before + at), own),
+            None => (super::ItemSaid::Asked(asked.clone()), asked),
+        };
+        each.push(super::ItemSteps {
+            start: before,
+            said,
         });
-        let item = own.unwrap_or(asked);
         placed.extend(item.placed().map(Path::to_path_buf));
         first.get_or_insert(item);
     }
@@ -304,6 +315,7 @@ fn settle_names(steps: &[Box<dyn Operation>], answer: &Answer, ctx: &StepContext
             first,
             count,
             placed,
+            steps: each,
         }),
     }
 }

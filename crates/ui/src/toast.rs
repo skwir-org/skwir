@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use gpui::{Animation, AnimationExt, AnyElement, Context, div, prelude::*, px};
-use skwir_core::op::{Change, PlanId, RunKind, Transfer};
+use skwir_core::op::{Change, Counted, PlanId, RunKind, Tally, Transfer};
 
 use crate::controls::{self, ButtonStyle};
 use crate::format;
@@ -535,8 +535,12 @@ impl Shell {
 /// which `Started` could not say yet; else what it was asked), as far as
 /// its steps went when cut short; what stopped it; or that it was
 /// cancelled, before anything was done (a question about names taken
-/// answered Cancel) or after. What the steps said follows; alone when
-/// they did nothing else (a smaller copy not made).
+/// answered Cancel) or after. What it found done already it says it
+/// found (`tally`), never that it did it: alone when it did nothing else
+/// ("“photos.zip” was already extracted to Downloads"), else after what it
+/// did ("Copied 3 items to Docs; 2 were already there"). What the steps
+/// said follows; alone when they did nothing else (a smaller copy not
+/// made).
 pub(crate) fn ended(running: Running, end: End<'_>) -> (String, Tone) {
     let End {
         applied,
@@ -547,13 +551,35 @@ pub(crate) fn ended(running: Running, end: End<'_>) -> (String, Tone) {
         said,
         moved,
         ran,
+        tally,
     } = end;
     let said = said.join(". ");
-    let nothing_else = applied == 0 && error.is_none() && !cancelled;
-    let (mut text, tone) = ended_as(running, applied, error, cancelled, items, kept_in);
+    let already = tally.filter(|t| t.already.count > 0 && error.is_none() && !cancelled);
+    let nothing_else = applied == 0 && error.is_none() && !cancelled && already.is_none();
+    let (title, run) = (running.title.clone(), running.run);
+    let (mut text, tone) = match already {
+        Some(tally) if tally.done.count == 0 => {
+            (found_done(&title, run, &tally.already), Tone::Info)
+        }
+        Some(tally) => (
+            describe(
+                &title,
+                run,
+                tally.done.first.as_ref(),
+                tally.done.named.as_deref(),
+                tally.done.count,
+                kept_in,
+            ),
+            Tone::Success,
+        ),
+        None => ended_as(running, applied, error, cancelled, items, kept_in),
+    };
     // A long one says how much it moved, in how long (ADR-113).
     if tone == Tone::Success && moved > 0 && ran >= AVERAGED_FROM {
         text = format!("{text} ({} in {})", format::size(moved), format::took(ran));
+    }
+    if let Some(tally) = already.filter(|t| t.done.count > 0) {
+        text = format!("{text}; {}", found_done_too(run, &tally.already));
     }
     match (said.is_empty(), nothing_else) {
         (true, _) => (text, tone),
@@ -564,6 +590,122 @@ pub(crate) fn ended(running: Running, end: End<'_>) -> (String, Tone) {
 
 /// From how long a plan ran its toast says what it moved in that time.
 const AVERAGED_FROM: Duration = Duration::from_secs(5);
+
+/// What a plan that found all it was asked done already says
+/// (`Tally::already`): its item by name where there is one, else how
+/// many, as its change says it ("“photos.zip” was already extracted to
+/// Downloads", "3 items were already in Docs").
+pub fn found_done(title: &str, run: RunKind, found: &Counted) -> String {
+    let (first, count) = (found.first.as_ref(), found.count);
+    let quoted = quoting(first, found.named.as_deref());
+    let one = count == 1;
+    let many = format::count(count, "item");
+    match first {
+        _ if run == RunKind::Undo => {
+            format!(
+                "Already undone: {}",
+                title.strip_prefix("undo ").unwrap_or(title)
+            )
+        }
+        // In the folder, under the name it would have had there.
+        Some(Change::Copy { to, .. } | Change::Move { to, .. }) if one => {
+            format!("{} was already in {}", quoted(to), folder_of(to))
+        }
+        Some(Change::Copy { to, .. } | Change::Move { to, .. }) => {
+            format!("{many} were already in {}", folder_of(to))
+        }
+        Some(Change::Link { from, to }) if one => {
+            format!(
+                "A link to {} was already in {}",
+                quoted(from),
+                folder_of(to)
+            )
+        }
+        Some(Change::Link { to, .. }) => format!(
+            "{} were already in {}",
+            format::count(count, "link"),
+            folder_of(to)
+        ),
+        Some(Change::Trash { path } | Change::Delete { path } | Change::Remove { path }) if one => {
+            format!("{} was already gone", quoted(path))
+        }
+        Some(Change::Trash { .. } | Change::Delete { .. } | Change::Remove { .. }) => {
+            format!("{many} were already gone")
+        }
+        Some(Change::Restore { path }) if one => format!("{} was already restored", quoted(path)),
+        Some(Change::Restore { .. }) => format!("{many} were already restored"),
+        Some(Change::Rename { from, to }) if one => {
+            format!("{} was already named {}", quoted(from), quoted(to))
+        }
+        Some(Change::Rename { .. }) => format!("{many} already had their names"),
+        Some(Change::Swap { a, b }) if one => {
+            format!("{} and {} were already swapped", quoted(a), quoted(b))
+        }
+        // A step that says what it found says it best.
+        Some(
+            Change::Create {
+                words: Some(words), ..
+            }
+            | Change::Metadata {
+                words: Some(words), ..
+            },
+        ) if one && !words.already.is_empty() => capitalized(&words.already),
+        Some(Change::Create {
+            path,
+            directory: true,
+            ..
+        }) if one => format!("Folder {} was already there", quoted(path)),
+        Some(Change::Create { path, .. }) if one => format!("{} was already there", quoted(path)),
+        Some(Change::Metadata { path, .. }) if one => {
+            format!("{} was already as asked", quoted(path))
+        }
+        _ => format!("{}: already done", capitalized(title)),
+    }
+}
+
+/// What a plan that did some of what it was asked says, after what it
+/// did, of what it found done already (`Tally::already`): "Copied 3
+/// items to Docs; 2 were already there".
+pub fn found_done_too(run: RunKind, found: &Counted) -> String {
+    let (first, count) = (found.first.as_ref(), found.count);
+    let quoted = quoting(first, found.named.as_deref());
+    let one = count == 1;
+    let was = |what: String, how: &str| format!("{what} was already {how}");
+    let were = |how: &str| format!("{count} were already {how}");
+    match first {
+        _ if run == RunKind::Undo => "part of it was already undone".to_owned(),
+        Some(Change::Copy { to, .. } | Change::Move { to, .. }) if one => was(quoted(to), "there"),
+        Some(Change::Link { from, .. }) if one => {
+            was(format!("a link to {}", quoted(from)), "there")
+        }
+        Some(Change::Copy { .. } | Change::Move { .. } | Change::Link { .. }) => were("there"),
+        Some(Change::Trash { path } | Change::Delete { path } | Change::Remove { path }) if one => {
+            was(quoted(path), "gone")
+        }
+        Some(Change::Trash { .. } | Change::Delete { .. } | Change::Remove { .. }) => were("gone"),
+        Some(Change::Restore { path }) if one => was(quoted(path), "restored"),
+        Some(Change::Restore { .. }) => were("restored"),
+        Some(Change::Rename { from, to }) if one => {
+            was(quoted(from), &format!("named {}", quoted(to)))
+        }
+        Some(Change::Rename { .. }) => format!("{count} already had their names"),
+        Some(Change::Swap { a, b }) if one => {
+            format!("{} and {} were already swapped", quoted(a), quoted(b))
+        }
+        Some(
+            Change::Create {
+                words: Some(words), ..
+            }
+            | Change::Metadata {
+                words: Some(words), ..
+            },
+        ) if one && !words.already.is_empty() => words.already.clone(),
+        Some(Change::Create { path, .. }) if one => was(quoted(path), "there"),
+        Some(Change::Metadata { path, .. }) if one => was(quoted(path), "as asked"),
+        _ if one => "1 was already done".to_owned(),
+        _ => were("done"),
+    }
+}
 
 /// How a plan ended, as `ExecEvent::Finished` says it, for its toast.
 #[derive(Default)]
@@ -577,6 +719,8 @@ pub(crate) struct End<'a> {
     pub said: &'a [String],
     pub moved: u64,
     pub ran: Duration,
+    /// Its items done and found done already (`ExecEvent::Finished`).
+    pub tally: Option<&'a Tally>,
 }
 
 /// What the toast of `running`, ended, says of what was done (`ended`).
@@ -921,6 +1065,7 @@ mod tests {
             },
             count: 1,
             placed: vec![PathBuf::from("/example/it's here/a.txt")],
+            steps: Vec::new(),
         };
         assert_eq!(
             ended(
@@ -960,6 +1105,173 @@ mod tests {
         );
     }
 
+    /// What a plan found done already it says it found, never that it did
+    /// it: alone, by name or by count, as information; after what it did,
+    /// what it did said by what it did. An extraction says it in its
+    /// step's words; a copy, a trash, a rename and an undo by their kind.
+    #[test]
+    fn a_plan_says_what_it_found_done_already() {
+        use skwir_core::op::{Counted, Plan, Tally, Words};
+        fn end(tally: &Tally) -> End<'_> {
+            End {
+                tally: Some(tally),
+                ..End::default()
+            }
+        }
+        let running =
+            |title: &str, run: RunKind| Running::for_test(Plan::new(title).id, title, run, 1);
+        let counted = |first: Change, count: usize| Counted {
+            count,
+            first: Some(first),
+            named: None,
+        };
+        let copy = |name: &str| Change::Copy {
+            from: PathBuf::from("/example").join(name),
+            to: PathBuf::from("/example/it's here").join(name),
+        };
+        let extracted = Change::Create {
+            path: PathBuf::from("/example/Downloads/photos"),
+            directory: true,
+            words: Some(Words {
+                will: "extract “photos.zip” to Downloads".into(),
+                did: "extracted “photos.zip” to Downloads".into(),
+                already: "“photos.zip” was already extracted to Downloads".into(),
+            }),
+        };
+        let all = |found: Counted| Tally {
+            done: Counted::default(),
+            already: found,
+        };
+        let cases = [
+            (
+                "extract “photos.zip”",
+                RunKind::Apply,
+                all(counted(extracted.clone(), 1)),
+                "“photos.zip” was already extracted to Downloads",
+            ),
+            (
+                "extract 2 archives",
+                RunKind::Apply,
+                all(counted(extracted, 2)),
+                "Extract 2 archives: already done",
+            ),
+            (
+                "copy to /example/it's here",
+                RunKind::Apply,
+                all(counted(copy("a.txt"), 1)),
+                "“a.txt” was already in it's here",
+            ),
+            (
+                "copy to /example/it's here",
+                RunKind::Apply,
+                all(counted(copy("a.txt"), 3)),
+                "3 items were already in it's here",
+            ),
+            (
+                "trash “it's.txt”",
+                RunKind::Apply,
+                all(counted(
+                    Change::Trash {
+                        path: PathBuf::from("/example/it's.txt"),
+                    },
+                    1,
+                )),
+                "“it's.txt” was already gone",
+            ),
+            (
+                "rename “a.txt”",
+                RunKind::Apply,
+                all(counted(
+                    Change::Rename {
+                        from: PathBuf::from("/example/a.txt"),
+                        to: PathBuf::from("/example/b.txt"),
+                    },
+                    1,
+                )),
+                "“a.txt” was already named “b.txt”",
+            ),
+            (
+                "undo rename “a.txt” to “b.txt”",
+                RunKind::Undo,
+                all(counted(
+                    Change::Rename {
+                        from: PathBuf::from("/example/b.txt"),
+                        to: PathBuf::from("/example/a.txt"),
+                    },
+                    1,
+                )),
+                "Already undone: rename “a.txt” to “b.txt”",
+            ),
+        ];
+        for (title, run, tally, said) in &cases {
+            assert_eq!(
+                ended(running(title, *run), end(tally)),
+                ((*said).to_owned(), Tone::Info),
+                "{title}"
+            );
+        }
+        // Some done: said by what was done, then what was found.
+        let some = |done: usize, found: usize| Tally {
+            done: counted(copy("a.txt"), done),
+            already: counted(copy("b.txt"), found),
+        };
+        let copying = || running("copy to /example/it's here", RunKind::Apply);
+        assert_eq!(
+            ended(copying(), end(&some(3, 2))),
+            (
+                "Copied 3 items to it's here; 2 were already there".to_owned(),
+                Tone::Success
+            )
+        );
+        assert_eq!(
+            ended(copying(), end(&some(1, 1))).0,
+            "Copied “a.txt” to it's here; “b.txt” was already there"
+        );
+        // A long one says what it moved after what it did.
+        let (moved, ran) = (3_000_000, Duration::from_secs(6));
+        assert_eq!(
+            ended(
+                copying(),
+                End {
+                    moved,
+                    ran,
+                    ..end(&some(3, 2))
+                }
+            )
+            .0,
+            format!(
+                "Copied 3 items to it's here ({} in {}); 2 were already there",
+                crate::format::size(moved),
+                crate::format::took(ran)
+            )
+        );
+        // What the steps said follows.
+        let said = ["Fold each sheet in half".to_owned()];
+        assert_eq!(
+            ended(
+                copying(),
+                End {
+                    said: &said,
+                    ..end(&all(counted(copy("a.txt"), 1)))
+                }
+            ),
+            (
+                "“a.txt” was already in it's here. Fold each sheet in half".to_owned(),
+                Tone::Info
+            )
+        );
+        // Stopped by an error, it says that, as before.
+        let failed = ended(
+            copying(),
+            End {
+                error: Some("disk full".into()),
+                ..end(&some(1, 1))
+            },
+        );
+        assert_eq!(failed.1, Tone::Error);
+        assert!(!failed.0.contains("already"), "{}", failed.0);
+    }
+
     /// What the steps said follows what was done, in the plan's own toast:
     /// nothing covers it, nor does it cover the Undo. Said alone when the
     /// steps did nothing else.
@@ -976,6 +1288,7 @@ mod tests {
                 words: Some(skwir_core::op::Words {
                     will: "save “it's.md” as “it's (booklet).pdf”".into(),
                     did: "saved “it's.md” as “it's (booklet).pdf”".into(),
+                    already: "“it's (booklet).pdf” was already saved".into(),
                 }),
             }),
             first_named: None,

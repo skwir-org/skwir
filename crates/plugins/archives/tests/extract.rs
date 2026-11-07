@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use serde_json::json;
 use skwir_core::app::{App, AppConfig};
 use skwir_core::command::{Invocation, Outcome};
-use skwir_core::op::{Change, Plan, StepStatus};
+use skwir_core::op::{Change, ExecEvent, Plan, StepStatus, Tally};
 
 /// The libarchive helper: `SKWIR_ARCHIVE_WORKER`, else the one built into
 /// the target folder this test runs from (its binary sits in `deps`).
@@ -509,4 +509,54 @@ fn an_extraction_is_done_only_while_it_is_as_extracted() {
         .set_modified(later)
         .unwrap();
     assert!(matches!(status(), StepStatus::Conflict { .. }));
+}
+
+/// Extracted again as the window applies it, its name settled, an archive
+/// whose folder holds what it lists is found extracted, never said
+/// extracted again: its run counts it found done, said in its step's
+/// words, and nothing done.
+#[test]
+fn an_archive_extracted_again_is_found_extracted() {
+    if !with_archive_worker() {
+        return;
+    }
+    let tmp = scratch();
+    let app = app(tmp.path());
+    let dest = tmp.path().join("it's here");
+    std::fs::create_dir(&dest).unwrap();
+    let archive = tmp.path().join("it's photos.zip");
+    write_zip(&archive, &[("a.txt", b"a"), ("b.txt", b"b")]);
+    let tally = |plan: Plan| -> Tally {
+        let id = plan.id;
+        app.apply_whole(plan);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        loop {
+            match app.executor.events().recv_deadline(deadline).unwrap() {
+                ExecEvent::Finished {
+                    plan, error, tally, ..
+                } if plan == id => {
+                    assert!(error.is_none(), "{error:?}");
+                    break *tally.expect("counted");
+                }
+                _ => {}
+            }
+        }
+    };
+    let first = tally(extract(&app, &archive, &dest));
+    assert_eq!((first.done.count, first.already.count), (1, 0));
+    let again = tally(extract(&app, &archive, &dest));
+    assert_eq!((again.done.count, again.already.count), (0, 1));
+    let Some(Change::Create {
+        path,
+        words: Some(words),
+        ..
+    }) = &again.already.first
+    else {
+        panic!("said by its step: {:?}", again.already.first);
+    };
+    assert_eq!(path, &dest.join("it's photos"));
+    assert_eq!(
+        words.already,
+        "“it's photos.zip” was already extracted to it's here"
+    );
 }

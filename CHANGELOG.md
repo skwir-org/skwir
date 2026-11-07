@@ -108,6 +108,15 @@
   History's edge; it now wraps and the History is as tall as it. The address
   card's rows of buttons (Add a term, Search in) are no longer cut when they
   wrap either.
+- **What was already done is said so**: extracting an archive again whose
+  folder holds what it lists, pasting a copy where the same one is, moving a
+  file into the folder it is in, trashing a file already gone, tagging a file
+  with a tag it has, or undoing what you had put back by hand no longer says
+  it did it: the notice says “photos.zip” was already extracted to Downloads,
+  with Show and no Undo. An action that did part of it says both: "Copied 3
+  items to Docs; 2 were already there" (it said "Copied 5 items", or "Copied
+  0 items" when all were). A folder that differs from what it would make is
+  asked about as a name taken, as before.
 - **Activity unfolds for a long action**: an action you asked that is still
   going after 1.5 s (a slider among General's More settings, from 0.5 to 5 s)
   opens Activity above the footer of its window, with its bar, speed, time

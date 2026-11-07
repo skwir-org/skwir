@@ -161,6 +161,7 @@ impl op::Effect for Compress {
             words: Some(Words {
                 will: format!("compress {what} as “{archive}”"),
                 did: format!("compressed {what} as “{archive}”"),
+                already: format!("“{archive}” already held {what}"),
             }),
         }
     }

@@ -796,6 +796,19 @@ of bars, split or not.
   Create`: a PDF, an archive, a folder) in a folder no pane shows offers
   Show first (`toast::made_alone`, `navigate` with `select`): what it
   made in a folder shown is selected there instead (`Shell::made`).
+- **What was found done is never said done.** An action that finds its
+  work in place (an archive extracted again, a copy pasted where it is
+  whole, a file trashed that is gone, a tag a file has, an undo of what
+  was put back by hand) answers from the run's `tally`
+  (`docs/invariants/operations.md`, "What a run found done"): all of it
+  found, it says so, by name or count, as information and with no Undo
+  ("“photos.zip” was already extracted to Downloads", "3 items were
+  already in Docs", "Already undone: …", `toast::found_done`); some of
+  it, after what was done ("Copied 3 items to Docs; 2 were already
+  there", `toast::found_done_too`). What was made is offered to Show
+  as when it is made. Never a question: Replace would make what is
+  there again, and a folder that differs from what it would make is a
+  name taken, asked about as one (ADR-054).
 - **What runs is docked, never over the files** (`activity.rs`,
   ADR-114). Work under way is the window's state: a strip at the end of
   the last pane's footer, before Undo, says how far it has gone in as
