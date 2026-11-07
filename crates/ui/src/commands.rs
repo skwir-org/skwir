@@ -554,6 +554,8 @@ const SHOWS: &[&str] = &[
     "ui.grid_caption",
     "ui.view_button",
     "ui.view_buttons_reset",
+    "ui.view_buttons_shown",
+    "ui.up_button",
     "ui.zoom",
     "ui.text_size",
     "ui.grid_fill",
@@ -858,7 +860,7 @@ const KEY_FORMS: &[(&str, &str, &str)] = &[
     (
         "ui.toolbar_menu",
         r#"{"kind":"view_buttons"}"#,
-        "Choose which views have a button",
+        "Choose the row's buttons: the views', Up",
     ),
     // What the preview plays, and the pinned player.
     ("ui.media_control", r#"{"action":"play"}"#, "Play or pause"),
@@ -1474,6 +1476,20 @@ pub fn declare_all(app: &App) {
         "ui.view_buttons_reset",
         "Default view buttons",
         "Give a button to the views that show the files as listed (list, grid, columns), and no other",
+    );
+    declare::<On>(
+        app,
+        Topic::View,
+        "ui.view_buttons_shown",
+        "Show view buttons",
+        "Show the views' buttons beside the address, or one button for them, the view shown, that opens the View menu",
+    );
+    declare::<On>(
+        app,
+        Topic::View,
+        "ui.up_button",
+        "Show the Up button",
+        "Show Up after Back and Forward on each pane's row, or leave it to the trail and Alt+Up",
     );
     declare::<Dir>(
         app,

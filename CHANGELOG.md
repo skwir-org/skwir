@@ -108,6 +108,14 @@
   History's edge; it now wraps and the History is as tall as it. The address
   card's rows of buttons (Add a term, Search in) are no longer cut when they
   wrap either.
+- **Up beside Back and Forward, and the view buttons put away**: the view
+  buttons' menu (their right-click, or View › Buttons…) now starts with Show
+  view buttons; off, one button stands for them, the view shown, and opens the
+  View menu, as in a narrow pane, its right-click giving the menu back. Under
+  Navigation buttons, Up adds an arrow after Back and Forward that goes to the
+  folder above (or the place before in a tag's trail), as Alt+Up does,
+  dimmed at the top. Both are also in Settings › General › Address; Up is
+  off and the view buttons on until you choose otherwise.
 - **What was already done is said so**: extracting an archive again whose
   folder holds what it lists, pasting a copy where the same one is, moving a
   file into the folder it is in, trashing a file already gone, tagging a file

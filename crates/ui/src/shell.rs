@@ -213,6 +213,11 @@ pub struct Preferences {
     pub tabs_in_sidebar: bool,
     /// `ui.full_path`: a folder's trail starts at the root.
     pub full_path: bool,
+    /// `ui.view_buttons_shown`: the views have buttons beside the
+    /// address; off, one button, the view shown, opens the View menu.
+    pub view_buttons_shown: bool,
+    /// `ui.up_button`: Up stands after Back and Forward.
+    pub up_button: bool,
     /// `ui.printed_pages`: a book's position counts its printed pages.
     pub printed_pages: bool,
     /// `ui.wrap_lines`: a text's long lines wrap to the panel, else go on
@@ -251,6 +256,8 @@ impl Default for Preferences {
             single_tab: false,
             tabs_in_sidebar: false,
             full_path: false,
+            view_buttons_shown: true,
+            up_button: false,
             printed_pages: false,
             wrap_lines: true,
             text_continuous: true,
@@ -2872,6 +2879,25 @@ impl Shell {
             "view_buttons_reset" => {
                 self.save_view_buttons(crate::address::ViewButtons::default(), cx);
             }
+            "view_buttons_shown" => {
+                let on = args
+                    .get("on")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(!self.prefs.view_buttons_shown);
+                self.prefs.view_buttons_shown = on;
+                cx.notify();
+                let key = crate::settings::VIEW_BUTTONS_SHOWN_KEY;
+                crate::settings::remember(self, key, on.to_string(), cx);
+            }
+            "up_button" => {
+                let on = args
+                    .get("on")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(!self.prefs.up_button);
+                self.prefs.up_button = on;
+                cx.notify();
+                crate::settings::remember(self, crate::settings::UP_BUTTON_KEY, on.to_string(), cx);
+            }
             "grid_fill" => self.toggle_grid_fill(cx),
             "quick_filters" => self.toggle_quick_filters(cx),
             "full_width" => self.toggle_full_width(cx),
@@ -3278,6 +3304,9 @@ impl Shell {
             // What the window saves itself is read as it stands, a change
             // still waiting its turn included (`settings::remember`).
             self.prefs.grid_fill = self.switch(crate::settings::GRID_FILL_KEY, false);
+            self.prefs.view_buttons_shown =
+                self.switch(crate::settings::VIEW_BUTTONS_SHOWN_KEY, true);
+            self.prefs.up_button = self.switch(crate::settings::UP_BUTTON_KEY, false);
             self.prefs.single_tab = self
                 .app
                 .settings

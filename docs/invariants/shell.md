@@ -253,19 +253,23 @@ of bars, split or not.
   are the sidebar's first group and the panes' rows are the window's
   top; a sidebar put away or a window too narrow for it gives the strip
   back, so the tabs are always in sight.
-- **Pane row** (`render_address`): Back, Forward; the address (trail or
-  edited text), ending with Search, the keep-in-sidebar button and then one
-  button per other way to see the folder (`registry::Aspect`, e.g. Tags,
-  Alt+G), last so it stays under the pointer; then the view buttons and
-  the View menu.
+- **Pane row** (`render_address`): Back, Forward, and Up where the user
+  asked for it; the address (trail or edited text), ending with Search,
+  the keep-in-sidebar button and then one button per other way to see the
+  folder (`registry::Aspect`, e.g. Tags, Alt+G), last so it stays under
+  the pointer; then the view buttons and the View menu.
   - Search is Ctrl+F (`ui.search`), the one sign in sight that the field
     searches: there while the trail is, where Ctrl+F has a folder, a tag
     or Recent to look in or a search to edit, and something searches
     (`address::search_title`). Typed in, the field's token wears its
     magnifier, and the card's switch says Ctrl+Shift+F. Never a second
     field: the address is where words look (ADR-098).
-  - No Up button (the trail's parent segment, Alt+Up) and no New Folder
-    button (the folder's menu, Ctrl+Shift+N): each has a way in sight.
+  - No Up button by default (the trail's parent segment, Alt+Up) and no
+    New Folder button (the folder's menu, Ctrl+Shift+N): each has a way in
+    sight. Up comes after Forward with `ui.up_button` (the buttons' menu,
+    Settings › General › Address), pressed only where the `up` command
+    goes somewhere (`address::goes_up`), read from the trail shown, never
+    from its provider while drawing.
   - View buttons are the `ViewRole::Listing` views (list, grid,
     columns). `Alternate` (tree, board) and `Lens` (Usage) views get a
     button only while shown. The view states its role, never the shell.
@@ -277,6 +281,13 @@ of bars, split or not.
     where it differs from the role, so a view added later comes with its
     role's. The view shown always keeps its button, so the group never
     goes and always says which view is shown.
+  - The buttons' menu holds the row's buttons: whether the views have
+    any (`ui.view_buttons_shown`), which views do, and whether Up is
+    there. With the view buttons off, the row has only the variant of one
+    button (`address::row_variants`), which still says the view shown,
+    and its right-click and Menu key open the same menu, so they come
+    back from where they went; the views' rows wait there, dimmed, as
+    chosen.
   - The View menu hangs from the active pane's row: every view as a tile
     (Buttons… at the end of their title), the sort keys with the direction
     on the Sort by row in the key's words, what is shown (hidden files,
@@ -288,8 +299,9 @@ of bars, split or not.
     a button (Terminal) and the layout's settings, one row each
     (`address::layout_values`).
   - Two `AdaptiveRow` variants: all buttons while the address keeps
-    `FIELD_MIN`, else one button opening the View menu. The address has
-    no width of its own when variants are measured.
+    `FIELD_MIN`, else one button opening the View menu (only that one
+    with the view buttons off). The address has no width of its own when
+    variants are measured.
 
 ### The trail
 

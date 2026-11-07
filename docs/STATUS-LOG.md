@@ -12755,3 +12755,35 @@ amended).
   times during the builds (3.1 GB, then 0 MB free): `just prune` each
   time, 16 to 17.5 GB free after. A trash of a file gone was not
   driven in a window (a test says its sentence).
+
+## 2026-11-07: Up and the view buttons, each the user's to show
+
+- **Asked:** a switch in the view buttons' menu to put them away
+  entirely, as a narrow pane does, and an entry to show an Up arrow
+  beside Back and Forward.
+- **Built:** two settings in General › Address, `ui.view_buttons_shown`
+  (on by default) and `ui.up_button` (off), each a command
+  (`ui.view_buttons_shown`, `ui.up_button`, `{ on }`, in the palette and
+  among what an agent may run) and a row of the buttons' menu, which now
+  holds the row's buttons: View buttons (Show view buttons, a line, each
+  view, dimmed while they are off, Default buttons) and Navigation
+  buttons (Up).
+  - With the buttons off, the row's variants are only those of the one
+    button (`address::row_variants`), which keeps the view shown's icon;
+    its right-click and the Menu key open the buttons' menu, as the group
+    did, so the buttons come back from where they went.
+  - Up stands after Forward, runs the core's `up`, and is pressed only
+    where it goes somewhere (`address::goes_up`: a folder's parent, else
+    the trail shown's parent, read in `trail::sync`, never from the
+    provider while drawing).
+  - The shell rules said there was no Up button: now none by default.
+- **Seen** on Xvfb :95 (debug build, synthetic home): Up turned on from
+  the buttons' right-click, then the buttons off, the menu following to
+  hang from the one button; Up from `it's here` to `work`, the folder
+  left selected; the buttons' menu from the one button's right-click; at
+  `/`, Up dimmed, both choices kept after a restart; the buttons back on
+  from there; Up from Tags to Home; both switches in General › Address.
+- **Checked:** tests of the variants with and without the buttons and of
+  where Up goes (a folder, the root, a trail's places, the folder a
+  trail is of, nothing read yet). fmt; clippy on skwir-ui; its tests
+  (564 passed). `just prune` once, at 4.9 GB free (17 GB after).

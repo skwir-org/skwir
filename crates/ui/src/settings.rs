@@ -94,6 +94,11 @@ pub const UNFOLDED_KEY: &str = "ui.settings_unfolded";
 /// The views given a button beside the address, or whose button was
 /// taken away (`address::ViewButtons`): made from the buttons' own menu.
 pub const VIEW_BUTTONS_KEY: &str = "ui.view_buttons";
+/// Whether the views have buttons beside the address at all: off, one
+/// button, the view shown, opens the View menu, as in a narrow pane.
+pub const VIEW_BUTTONS_SHOWN_KEY: &str = "ui.view_buttons_shown";
+/// Whether Up stands after Back and Forward on each pane's row.
+pub const UP_BUTTON_KEY: &str = "ui.up_button";
 /// Whether Quick filters showed above the files, a setting until each pane
 /// had its own (2026-11-07): read once into the window's shape
 /// (`session::former_quick_filters`), then forgotten.
@@ -1469,6 +1474,26 @@ pub fn declare(app: &App) {
             "Show the full path",
             "Show a folder's whole path above its files, from the root, each folder under its own name: / › home › someone › Documents › 2026. Off starts it at the deepest folder of the sidebar that holds it, under the sidebar's name: Documents › 2026, a drive's name for a folder on a drive.",
             false,
+        )
+        .page(page::GENERAL)
+        .section("Address"),
+    );
+    app.settings.declare(
+        SettingSpec::toggle(
+            UP_BUTTON_KEY,
+            "Show an Up button",
+            "Show Up after Back and Forward: it goes to the folder that holds the one shown, or to the place before it in its trail, as Alt+Up does. Off, the trail's segment before the last goes there.",
+            false,
+        )
+        .page(page::GENERAL)
+        .section("Address"),
+    );
+    app.settings.declare(
+        SettingSpec::toggle(
+            VIEW_BUTTONS_SHOWN_KEY,
+            "Show view buttons",
+            "Show a button for each view beside the address: list, grid, columns, and any other given one from the buttons' menu. Off, one button stands for them, the view shown, and opens the View menu, as in a pane too narrow for them; its right-click still chooses the buttons.",
+            true,
         )
         .page(page::GENERAL)
         .section("Address"),

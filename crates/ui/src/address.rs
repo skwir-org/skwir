@@ -47,8 +47,9 @@ impl Shell {
 }
 
 const VIEW_OPTIONS: &str = "view_options";
-/// Which views have a button: the buttons' right-click, the Menu key on
-/// one, or the View menu's Buttons row.
+/// The pane row's buttons (which views have one, whether Up is there):
+/// the view buttons' right-click, the Menu key on one, the same on the one
+/// button that stands for them, or the View menu's Buttons row.
 const VIEW_BUTTONS: &str = "view_buttons";
 /// What the grid's tiles say under their names: the View menu's Under
 /// names row, in the grid.
@@ -158,23 +159,47 @@ fn view_control(
     };
     let views = shell.available_views();
     let current = shell.ui().view_id;
-    if !wide {
-        let shown = views.iter().find(|s| &*s.id == current);
-        return menu(
-            "view-menu",
-            shown.map_or_else(|| "list".into(), view_icon),
-            match shown {
-                Some(spec) => format!("{} view, sort, hidden files and zoom", spec.title),
-                None => "Views, sort, hidden files and zoom".into(),
-            },
-        )
-        .render(shell, cx)
-        .into_any_element();
-    }
-    let theme = cx.global::<Theme>().clone();
     let pane = shell.pane;
     // Right-clicked, or the Menu key on one of them, the buttons say which
-    // views have one, as the list's header says which columns it shows.
+    // views have one, as the list's header says which columns it shows;
+    // the one button that stands for them says it too. Taken on its way
+    // in: a button takes the keyboard on any press before its row hears
+    // of it, and the popup must take it from what had it, not from the
+    // button.
+    let choose = cx.listener(move |this, ev: &gpui::MouseDownEvent, window, cx| {
+        if ev.button != gpui::MouseButton::Right {
+            return;
+        }
+        cx.stop_propagation();
+        window.prevent_default();
+        this.activate_pane(pane, cx);
+        this.run(
+            "ui.toolbar_menu",
+            serde_json::json!({ "kind": VIEW_BUTTONS }),
+            window,
+            cx,
+        );
+    });
+    if !wide {
+        let shown = views.iter().find(|s| &*s.id == current);
+        return div()
+            .key_context(keymap::VIEW_BUTTONS)
+            .flex_none()
+            .capture_any_mouse_down(choose)
+            .child(
+                menu(
+                    "view-menu",
+                    shown.map_or_else(|| "list".into(), view_icon),
+                    match shown {
+                        Some(spec) => format!("{} view, sort, hidden files and zoom", spec.title),
+                        None => "Views, sort, hidden files and zoom".into(),
+                    },
+                )
+                .render(shell, cx),
+            )
+            .into_any_element();
+    }
+    let theme = cx.global::<Theme>().clone();
     let mut group = div()
         .id(("view-buttons", pane.0 as usize))
         .key_context(keymap::VIEW_BUTTONS)
@@ -187,25 +212,7 @@ fn view_control(
         .border_1()
         .border_color(theme.border)
         .bg(theme.bg)
-        // Taken on its way in: a button takes the keyboard on any press
-        // before its row hears of it, and the popup must take it from
-        // what had it, not from the button.
-        .capture_any_mouse_down(
-            cx.listener(move |this, ev: &gpui::MouseDownEvent, window, cx| {
-                if ev.button != gpui::MouseButton::Right {
-                    return;
-                }
-                cx.stop_propagation();
-                window.prevent_default();
-                this.activate_pane(pane, cx);
-                this.run(
-                    "ui.toolbar_menu",
-                    serde_json::json!({ "kind": VIEW_BUTTONS }),
-                    window,
-                    cx,
-                );
-            }),
-        )
+        .capture_any_mouse_down(choose)
         .when(choosing, |d| d.child(anchor.marker()));
     for spec in toolbar_views(views, current, &shell.view_buttons) {
         group = group.child(
@@ -256,7 +263,7 @@ fn view_options(shell: &Shell) -> Vec<MenuPart> {
     let buttons = Button::new(
         "menu-view-buttons",
         "",
-        "Choose which views have a button beside the address",
+        "Choose the buttons beside the address: which views have one, and whether Up stands after Back and Forward",
         "ui.toolbar_menu",
     )
     .args(serde_json::json!({ "kind": VIEW_BUTTONS }))
@@ -510,20 +517,39 @@ fn grid_captions_menu(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
     vec![("Under names", rows)]
 }
 
-/// Which views have a button beside the address, each checked or not, and
-/// the buttons skwir comes with once others were chosen. The view shown
-/// keeps its button while it is shown, checked or not. A view's row keeps
-/// the menu open, for the next; Default buttons closes it.
-fn view_buttons_menu(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
+/// The pane row's buttons: whether the views have them at all, then which
+/// views have one, each checked or not, and the buttons skwir comes with
+/// once others were chosen; then whether Up stands after Back and
+/// Forward. The view shown keeps its button while it is shown, checked or
+/// not; with the buttons off, one button stands for them all and the
+/// views' rows wait, dimmed, as chosen. A row keeps the menu open, for
+/// the next; Default buttons closes it.
+fn view_buttons_menu(shell: &Shell) -> Vec<MenuPart> {
     let chosen = &shell.view_buttons;
-    let mut rows: Vec<Button> = shell
+    let shown = shell.prefs.view_buttons_shown;
+    // A switch's row stays, open, as its check changes: gpui keeps a
+    // tooltip as it was built, so it says what the row is about, never
+    // what pressing it does now.
+    let switch = |id: &'static str, on: bool, tip: &'static str, command: &'static str| {
+        Button::new(id, if on { "check" } else { "" }, tip, command)
+            .args(serde_json::json!({ "on": !on }))
+            .active(on)
+            .keeps_open()
+    };
+    let all = menu_item(
+        switch(
+            "view-buttons-shown",
+            shown,
+            "Whether the views have buttons beside the address; off, one button, the view shown, opens the View menu",
+            "ui.view_buttons_shown",
+        ),
+        "Show view buttons",
+    );
+    let mut views: Vec<Button> = shell
         .available_views()
         .into_iter()
         .map(|spec| {
             let pinned = chosen.pinned(&spec);
-            // The row stays, open, as its check changes: gpui keeps a
-            // tooltip as it was built, so it says what the row is about,
-            // never what pressing it does now.
             let tip = format!("Whether the {} view has a button", spec.title);
             menu_item(
                 Button::new(
@@ -534,23 +560,47 @@ fn view_buttons_menu(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
                 )
                 .args(serde_json::json!({ "id": spec.id, "on": !pinned }))
                 .active(pinned)
+                .enabled(shown)
                 .keeps_open(),
                 spec.title.clone(),
             )
         })
         .collect();
     if !chosen.is_default() {
-        rows.push(menu_item(
-            Button::new(
-                "view-buttons-reset",
-                "revert",
-                "Back to the buttons skwir comes with",
-                "ui.view_buttons_reset",
-            ),
-            "Default buttons",
-        ));
+        views.push(
+            menu_item(
+                Button::new(
+                    "view-buttons-reset",
+                    "revert",
+                    "Back to the buttons skwir comes with",
+                    "ui.view_buttons_reset",
+                ),
+                "Default buttons",
+            )
+            .enabled(shown),
+        );
     }
-    vec![("View buttons", rows)]
+    let up = menu_item(
+        switch(
+            "up-button",
+            shell.prefs.up_button,
+            "Whether Up stands after Back and Forward: it goes to the folder that holds this one, as Alt+Up does",
+            "ui.up_button",
+        ),
+        "Up",
+    );
+    // The switch for them all stands apart from the views it holds back.
+    let mut parts = vec![
+        MenuPart::Title("View buttons".into(), None),
+        MenuPart::Row(all),
+        MenuPart::Line,
+    ];
+    parts.extend(views.into_iter().map(MenuPart::Row));
+    parts.extend([
+        MenuPart::Title("Navigation buttons".into(), None),
+        MenuPart::Row(up),
+    ]);
+    parts
 }
 
 /// More's layout: the window's panel without a button of its own (the
@@ -916,6 +966,9 @@ enum Address {
 struct PaneRow {
     back: bool,
     forward: bool,
+    /// Up, while the row has it (`ui.up_button`): whether there is a
+    /// place above the one shown.
+    up: Option<bool>,
     address: Address,
     /// The field's edge: focused, the active pane's, or none.
     edge: gpui::Hsla,
@@ -942,14 +995,16 @@ struct Ends {
     toggles: bool,
 }
 
-/// A pane's row: Back and Forward, the address (a trail of folders, or the
-/// text being edited) with the button that keeps it in the sidebar, then
-/// how the pane shows its folder. Up is the trail's parent segment, or
-/// Alt+Up.
+/// A pane's row: Back and Forward, Up after them where the user asked for
+/// it (`ui.up_button`; else the trail's parent segment, or Alt+Up), the
+/// address (a trail of folders, or the text being edited) with the button
+/// that keeps it in the sidebar, then how the pane shows its folder.
 ///
 /// Variants chosen in prepaint by `AdaptiveRow`: the view buttons while
 /// the address keeps `FIELD_MIN`, else the one button that opens the View
-/// menu; a row holding Split first tries it with its label. The address counts as `FIELD_MIN` when a variant is measured
+/// menu, which is all there is with the buttons off
+/// (`ui.view_buttons_shown`); a row holding Split first tries it with its
+/// label. The address counts as `FIELD_MIN` when a variant is measured
 /// (its content has no width of its own) and takes the rest when drawn.
 pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> AnyElement {
     let theme = cx.global::<Theme>().clone();
@@ -964,6 +1019,10 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
         PaneRow {
             back: pane.is_some_and(|p| p.history_pos > 0),
             forward: pane.is_some_and(|p| p.history_pos + 1 < p.history.len()),
+            up: shell
+                .prefs
+                .up_button
+                .then(|| goes_up(location.as_ref(), shell.ui().place.trail.as_ref())),
             // Every location as a trail (a folder's from the sidebar's
             // place that holds it); a search as the trail of the folder it
             // looks in, its pills after it (ADR-098).
@@ -1052,10 +1111,8 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
         .border_color(theme.border)
         .bg(theme.window_surface())
         .child(AdaptiveRow {
-            // The toggles' labels go first, the view buttons next.
-            variants: [(true, true), (true, false), (false, false)]
+            variants: row_variants(shell.prefs.view_buttons_shown, row.ends.toggles)
                 .into_iter()
-                .filter(|&(_, labeled)| !labeled || row.ends.toggles)
                 .map(|(wide, labeled)| {
                     let anchors = [&anchor, &nav_anchor, &chip_anchor, &omni_anchor];
                     pane_row(shell, &row, wide, labeled, anchors, cx)
@@ -1069,7 +1126,7 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
     {
         let mut panel = toolbar::menu_panel(popup, "ui.toolbar_menu", &theme, cx);
         let parts = match kind {
-            VIEW_BUTTONS => titled(view_buttons_menu(shell)),
+            VIEW_BUTTONS => view_buttons_menu(shell),
             GRID_CAPTIONS => titled(grid_captions_menu(shell)),
             _ => view_options(shell),
         };
@@ -1095,6 +1152,38 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
         bar = bar.child(nav_anchor.popup(panel));
     }
     bar.into_any_element()
+}
+
+/// Whether Up goes anywhere from `shown`, as the `up` command goes: a
+/// folder to the one holding it, another place to the one before it in
+/// its `trail`, as read for the place shown (`trail::sync`), never asked
+/// of its provider again while drawing.
+fn goes_up(shown: Option<&Location>, trail: Option<&skwir_core::location::Trail>) -> bool {
+    match shown.map(Location::path) {
+        Some(Some(path)) => path.parent().is_some(),
+        Some(None) => trail
+            .and_then(skwir_core::location::Trail::parent)
+            .is_some(),
+        None => false,
+    }
+}
+
+/// A pane row's variants, richest first, each whether it has the view
+/// buttons (`wide`) and whether Split and the panel's switches say their
+/// names (`labeled`, only where the row holds them, `toggles`): the
+/// labels go first, the view buttons next. With the buttons off
+/// (`buttons`), no variant has them: the one button is all there is.
+fn row_variants(buttons: bool, toggles: bool) -> Vec<(bool, bool)> {
+    let variants: &[(bool, bool)] = if buttons {
+        &[(true, true), (true, false), (false, false)]
+    } else {
+        &[(false, true), (false, false)]
+    };
+    variants
+        .iter()
+        .copied()
+        .filter(|&(_, labeled)| !labeled || toggles)
+        .collect()
 }
 
 /// Back or Forward: its right button, or a long press as in a browser,
@@ -1362,6 +1451,13 @@ fn pane_row(
     line = line
         .child(history_button(shell, row, false, nav_anchor, cx))
         .child(history_button(shell, row, true, nav_anchor, cx))
+        .when_some(row.up, |line, above| {
+            line.child(
+                Button::new("up", "up", "Up one level", "up")
+                    .enabled(above)
+                    .render(shell, cx),
+            )
+        })
         .child(field)
         .child(view_control(shell, wide, anchor, row.menu_open, cx));
     for (i, (tool, pane)) in row.tools.iter().enumerate() {
@@ -1795,7 +1891,9 @@ fn breadcrumbs(
 
 #[cfg(test)]
 mod tests {
-    use super::{ViewButtons, ViewSpec, crumbs, tool_pane, toolbar_views, undo_words};
+    use super::{
+        ViewButtons, ViewSpec, crumbs, goes_up, row_variants, tool_pane, toolbar_views, undo_words,
+    };
     use crate::sidebar::Root;
     use skwir_core::location::{Location, ToolPane};
     use skwir_core::workspace::PaneId;
@@ -1913,6 +2011,51 @@ mod tests {
         let usage = spec("usage");
         assert!(!ViewButtons::default().with(&usage, false).pinned(&usage));
         assert!(ViewButtons::default().with(&usage, false).is_default());
+    }
+
+    /// With the view buttons off, no variant of the row has them, and the
+    /// toggles' labels are tried first only where the row holds them.
+    #[test]
+    fn the_row_without_view_buttons_has_the_one_button_only() {
+        assert_eq!(
+            row_variants(true, true),
+            [(true, true), (true, false), (false, false)]
+        );
+        assert_eq!(row_variants(true, false), [(true, false), (false, false)]);
+        assert_eq!(row_variants(false, true), [(false, true), (false, false)]);
+        assert_eq!(row_variants(false, false), [(false, false)]);
+    }
+
+    /// Up goes where the `up` command would: a folder's to the one holding
+    /// it, never above the root; another place's to the place before it in
+    /// its trail, or to the folder it is of, from its first place.
+    #[test]
+    fn up_is_pressed_only_where_there_is_somewhere_to_go() {
+        use skwir_core::location::{Crumb, Trail};
+        let folder = Location::from_path("/x/photos");
+        assert!(goes_up(Some(&folder), None));
+        assert!(!goes_up(Some(&Location::from_path("/")), None));
+        assert!(!goes_up(None, None));
+        let tag = |name: &str| Location::new("tag", name);
+        let deep = Trail {
+            crumbs: vec![
+                Crumb::new("Places", tag("places")),
+                Crumb::new("France", tag("places/france")),
+            ],
+            ..Trail::default()
+        };
+        assert!(goes_up(Some(&tag("places/france")), Some(&deep)));
+        let first = Trail {
+            crumbs: vec![Crumb::new("Places", tag("places"))],
+            ..Trail::default()
+        };
+        assert!(!goes_up(Some(&tag("places")), Some(&first)));
+        let of_a_folder = Trail {
+            base: Some(PathBuf::from("/x")),
+            ..first
+        };
+        assert!(goes_up(Some(&tag("places")), Some(&of_a_folder)));
+        assert!(!goes_up(Some(&tag("places")), None), "nothing read yet");
     }
 
     fn root(path: &str, name: &str) -> Root {

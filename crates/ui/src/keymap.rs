@@ -118,8 +118,9 @@ pub const SLIDESHOW: &str = "Slideshow";
 /// The sidebar while it has the keyboard (F6): the arrows walk its groups
 /// and places (`sidebar.rs`).
 pub const SIDEBAR: &str = "Sidebar";
-/// A pane's view buttons, one of which has the keyboard: the Menu key
-/// says which views have one (`address::view_control`).
+/// A pane's view buttons, one of which has the keyboard, or the one
+/// button that stands for them: the Menu key says which views have one
+/// and whether Up stands after Back and Forward (`address::view_control`).
 pub const VIEW_BUTTONS: &str = "ViewButtons";
 /// The timeline's bars, once clicked or reached by F6: the arrows go
 /// from bar to bar, Enter lists the bars chosen (`timeline.rs`).
