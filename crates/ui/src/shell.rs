@@ -3173,18 +3173,6 @@ impl Shell {
                 _ => self.set_status(n.text, error, cx),
             }
         }
-        // The window's commands asked from elsewhere (an agent, a
-        // script): run as if pressed, on the active pane, in the order
-        // asked. One the dialog open would take (Settings, the F1
-        // overview, About) waits, with those after it, until it closes:
-        // the caller was told it reached the window.
-        self.front_waiting.extend(inbox.front);
-        while let Some(request) = self.front_waiting.front()
-            && self.takes_now(&request.name)
-        {
-            let request = self.front_waiting.pop_front().expect("one waits");
-            self.run(&request.name, request.args, window, cx);
-        }
         self.pending = self.app.pending.get();
         self.sync_clipboard_files(cx);
         // What the theme is made of (`theme_inputs_of`), counted up, never
@@ -3282,6 +3270,20 @@ impl Shell {
         }
         if self.type_names.absorb() | self.icons.absorb() {
             cx.notify();
+        }
+        // The window's commands asked from elsewhere (an agent, a
+        // script): run as if pressed, on the active pane, in the order
+        // asked, once what changed in the settings is taken in (a command
+        // asked after a setting changed acts with it). One the dialog
+        // open would take (Settings, the F1 overview, About) waits, with
+        // those after it, until it closes: the caller was told it reached
+        // the window.
+        self.front_waiting.extend(inbox.front);
+        while let Some(request) = self.front_waiting.front()
+            && self.takes_now(&request.name)
+        {
+            let request = self.front_waiting.pop_front().expect("one waits");
+            self.run(&request.name, request.args, window, cx);
         }
         if let Some(settings) = self.settings.clone() {
             settings.update(cx, |settings, cx| settings.sync(window, cx));
@@ -3836,6 +3838,21 @@ impl Render for Shell {
 
         let root = div()
             .key_context(keymap::ROOT)
+            // A tab dragged from another window (ADR-122), dropped
+            // anywhere a gap of the tabs did not take it, joins this
+            // window's tabs, last.
+            .on_drop(
+                cx.listener(|this, drag: &crate::tabs::TabDrag, window, cx| {
+                    if drag.window != this.window_id {
+                        this.run(
+                            "tab.move",
+                            serde_json::json!({ "tab": drag.tab, "window": this.window_id }),
+                            window,
+                            cx,
+                        );
+                    }
+                }),
+            )
             .capture_action(cx.listener(Self::capture_run_command))
             .on_action(cx.listener(Self::on_run_command))
             .capture_key_up(cx.listener(|this, event: &gpui::KeyUpEvent, window, cx| {

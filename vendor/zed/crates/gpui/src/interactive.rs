@@ -727,6 +727,39 @@ impl ExternalPaths {
 pub enum ExternalDragPayload {
     /// Real on-disk paths, handed to the platform as an outbound file drag.
     Files(FileDragPaths),
+    /// SKWIR: a drag only this application's windows take (a tab moved from
+    /// one to another): the platform carries it between them, under its
+    /// icon where it draws one, and offers other applications nothing. The
+    /// window it enters takes the drag back as it was; dropped anywhere
+    /// else, its source hears it ended outside them
+    /// ([`crate::StatefulInteractiveElement::on_drag_dropped_outside`]).
+    Within(WithinDrag),
+}
+
+/// SKWIR: what the platform carries of a drag between an application's own
+/// windows ([`ExternalDragPayload::Within`]): the image shown under the
+/// pointer, if any.
+#[derive(Debug, Clone, Default, Eq, PartialEq)]
+pub struct WithinDrag(Option<Arc<ExternalDragIcon>>);
+
+impl WithinDrag {
+    /// A drag between the application's windows, shown as the platform
+    /// shows one without an image.
+    pub fn new() -> Self {
+        Self(None)
+    }
+
+    /// The same drag, shown under the pointer by `icon` where the platform
+    /// draws a drag's image (Wayland).
+    pub fn with_icon(mut self, icon: Arc<ExternalDragIcon>) -> Self {
+        self.0 = Some(icon);
+        self
+    }
+
+    /// The image shown under the pointer, if the caller gave one.
+    pub fn icon(&self) -> Option<&ExternalDragIcon> {
+        self.0.as_deref()
+    }
 }
 
 /// Paths handed to the platform for a native file drag. Directory metadata is

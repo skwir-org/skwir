@@ -2217,7 +2217,11 @@ impl PlatformWindow for MacWindow {
     }
 
     fn start_external_drag(&self, payload: &ExternalDragPayload) -> bool {
-        let ExternalDragPayload::Files(paths) = payload;
+        // SKWIR: a drag between the application's windows is not handed to
+        // AppKit: it stays in its window.
+        let ExternalDragPayload::Files(paths) = payload else {
+            return false;
+        };
         if paths.entries().is_empty() {
             log::warn!("start_external_drag declined: no paths");
             return false;

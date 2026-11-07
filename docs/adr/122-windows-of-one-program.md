@@ -144,3 +144,12 @@ ADR-115 (one process for every window; launches always handed over).
   `App::open_window` (a launch's folder as it is); macOS's
   `on_open_urls` (compiled only). Checked on Xvfb on a bus of its own;
   Windows' hand-over tests under Wine.
+- 2026-11-07, step 4: gpui patch 0050 (a drag the platform carries goes
+  to whichever window it enters; `ExternalDragPayload::Within`, a type of
+  the process's own on Wayland; `on_drag_dropped_outside`; a drag coming
+  in is the pointer's, so a window last used by keyboard takes its drop);
+  `TabDrag::window`, `tabs::dragged_tab`, the root's drop of another
+  window's tab, `Shell::tab_out_of_windows`. Checked on a headless sway
+  and on Xvfb. Windows and macOS carry no drag between windows: a tab
+  dragged out stays in its window there (Move to New Window); on X11 a tab
+  released outside its window becomes one wherever it is released.

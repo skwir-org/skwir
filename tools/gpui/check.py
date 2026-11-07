@@ -50,6 +50,10 @@ RUNS = [
         "mesh::",
         # Upstream's tooltips, and a press before one shows (0038).
         "elements::div::tests::tooltip",
+        # Upstream's drag handed to the platform, and a drag carried
+        # between the application's windows or ended outside them (0050).
+        "window::tests::file_drag_is_promoted",
+        "window::tests::a_drag_within_the_application",
     ]),
     # All of them: the atlas (an upload to a removed texture), the context,
     # the renderer and the text system (a variable face's weights, 0045).

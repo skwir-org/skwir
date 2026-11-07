@@ -3800,7 +3800,7 @@ impl Window {
         } else if let Some(active_drag) = cx.active_drag.take() {
             // A drag the platform carries is drawn by it, over this window
             // too: drawn here as well, it would be seen twice.
-            if !cx.platform_draws_drag(self.handle.window_id()) {
+            if !cx.platform_draws_drag() {
                 let mut element = active_drag.view.clone().into_any_element();
                 let offset = self.mouse_position() - active_drag.cursor_offset;
                 element.prepaint_as_root(offset, AvailableSpace::min_size(), self, cx);
@@ -5751,6 +5751,14 @@ impl Window {
         self.last_input_modality = match &event {
             PlatformInput::KeyDown(_) => InputModality::Keyboard,
             PlatformInput::MouseMove(_) | PlatformInput::MouseDown(_) => InputModality::Mouse,
+            // SKWIR: a drag the platform brings in moves the pointer: a window
+            // last used by keyboard sees what is under it, or no drop would
+            // ever land there.
+            PlatformInput::FileDrop(
+                FileDropEvent::Entered { .. }
+                | FileDropEvent::Pending { .. }
+                | FileDropEvent::Submit { .. },
+            ) => InputModality::Mouse,
             PlatformInput::Touch(_) => InputModality::Touch,
             _ => self.last_input_modality,
         };
@@ -5808,14 +5816,17 @@ impl Window {
             PlatformInput::FileDrop(file_drop) => match file_drop {
                 FileDropEvent::Entered { position, paths } => {
                     self.mouse_position = position;
-                    let source_window = self.handle.window_id();
-                    if !cx.restore_platform_drag(source_window) && cx.active_drag.is_none() {
+                    // SKWIR: a drag of this application's, from this window or
+                    // another, is taken back as it was.
+                    let window_id = self.handle.window_id();
+                    if !cx.restore_platform_drag(window_id) && cx.active_drag.is_none() {
                         cx.active_drag = Some(AnyDrag {
                             value: Arc::new(paths.clone()),
                             view: cx.new(|_| paths).into(),
                             cursor_offset: position,
                             cursor_style: None,
                             external_payload_source: None,
+                            dropped_outside: None,
                         });
                     }
                     PlatformInput::MouseMove(MouseMoveEvent {
@@ -5850,7 +5861,13 @@ impl Window {
                     PlatformInput::FileDrop(FileDropEvent::Exited)
                 }
                 FileDropEvent::Ended => {
+                    // SKWIR: taken by none of the application's windows, it
+                    // ended outside them.
+                    let outside = cx.take_dropped_outside(self.handle.window_id());
                     cx.end_platform_drag(self.handle.window_id());
+                    if let Some(outside) = outside {
+                        outside(self, cx);
+                    }
                     self.refresh();
                     PlatformInput::FileDrop(FileDropEvent::Ended)
                 }
@@ -6132,11 +6149,23 @@ impl Window {
                 // If this was a mouse move event, redraw the window so that the
                 // active drag can follow the mouse cursor.
                 self.refresh();
-            } else if event.is::<MouseUpEvent>() {
+            } else if let Some(up) = event.downcast_ref::<MouseUpEvent>() {
                 // If this was a mouse up event, cancel the active drag and redraw
-                // the window.
+                // the window. SKWIR: released outside the window, a drag the
+                // platform did not carry (X11) ended outside it.
+                let outside = (!Bounds::new(Point::default(), self.viewport_size)
+                    .contains(&up.position))
+                .then(|| {
+                    cx.active_drag
+                        .as_mut()
+                        .and_then(|drag| drag.dropped_outside.take())
+                })
+                .flatten();
                 cx.active_drag = None;
                 self.refresh();
+                if let Some(outside) = outside {
+                    outside(self, cx);
+                }
             }
         }
 
@@ -9041,6 +9070,211 @@ mod tests {
         }
     }
 
+    /// SKWIR: what a drag between the application's windows saw: where it
+    /// was dropped (the window's name) and how often it ended outside them.
+    #[derive(Default)]
+    struct WithinSeen {
+        dropped_in: RefCell<Vec<&'static str>>,
+        outside: Cell<usize>,
+    }
+
+    /// SKWIR: a view whose element drags a `u32` the platform carries between
+    /// the application's windows, and takes one dropped on it.
+    struct WithinView {
+        name: &'static str,
+        seen: Rc<WithinSeen>,
+    }
+
+    impl Render for WithinView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let name = self.name;
+            div()
+                .id("within-drag")
+                .size_full()
+                .on_drag(7u32, |_, _, _, cx| cx.new(|_| Empty))
+                .external_drag_payload(|_: &u32, _, _| {
+                    Some(ExternalDragPayload::Within(crate::WithinDrag::new()))
+                })
+                .on_drag_dropped_outside({
+                    let seen = self.seen.clone();
+                    move |_: &u32, _, _| seen.outside.set(seen.outside.get() + 1)
+                })
+                .on_drop({
+                    let seen = self.seen.clone();
+                    move |_: &u32, _, _| seen.dropped_in.borrow_mut().push(name)
+                })
+        }
+    }
+
+    /// SKWIR: press, then move far enough to start the drag in `window`.
+    fn press_and_drag(window: &mut Window, cx: &mut crate::App) {
+        window.draw(cx).clear(cx);
+        window.dispatch_event(
+            MouseDownEvent {
+                position: point(px(10.), px(10.)),
+                button: MouseButton::Left,
+                modifiers: Default::default(),
+                click_count: 1,
+                first_mouse: false,
+            }
+            .to_platform_input(),
+            cx,
+        );
+        window.dispatch_event(
+            MouseMoveEvent {
+                position: point(px(20.), px(20.)),
+                pressed_button: Some(MouseButton::Left),
+                modifiers: Default::default(),
+            }
+            .to_platform_input(),
+            cx,
+        );
+        assert!(cx.active_drag.is_some());
+    }
+
+    /// SKWIR: the pointer, still pressed, leaves `window`.
+    fn leave(window: &mut Window, cx: &mut crate::App) {
+        window.dispatch_event(
+            MouseMoveEvent {
+                position: point(px(-1.), px(20.)),
+                pressed_button: Some(MouseButton::Left),
+                modifiers: Default::default(),
+            }
+            .to_platform_input(),
+            cx,
+        );
+    }
+
+    /// SKWIR: a drag the platform carries between the application's windows
+    /// is taken back, as it was, by another of them, which takes its drop
+    /// even when the keyboard was used there last;
+    /// one no window took ends outside them, told to its source once; one
+    /// the platform does not carry, released outside its window, too.
+    #[gpui::test]
+    fn a_drag_within_the_application_goes_to_the_window_it_enters(cx: &mut TestAppContext) {
+        let seen = Rc::new(WithinSeen::default());
+        let window = |cx: &mut TestAppContext, name: &'static str, seen: &Rc<WithinSeen>| {
+            let seen = seen.clone();
+            let window: AnyWindowHandle =
+                cx.add_window(move |_, _| WithinView { name, seen }).into();
+            cx.test_window(window).set_start_external_drag_result(true);
+            window
+        };
+        let source = window(cx, "source", &seen);
+        let other = window(cx, "other", &seen);
+
+        // Into the other window, dropped there.
+        cx.update_window(source, |_, window, cx| {
+            press_and_drag(window, cx);
+            leave(window, cx);
+            assert!(cx.active_drag.is_none(), "the platform carries it");
+        })
+        .unwrap();
+        let at = point(px(30.), px(30.));
+        cx.update_window(other, |_, window, cx| {
+            window.draw(cx).clear(cx);
+            // Last used by keyboard: the drag coming in is the pointer's.
+            window.dispatch_event(
+                PlatformInput::KeyDown(KeyDownEvent {
+                    keystroke: Keystroke::parse("down").expect("valid keystroke"),
+                    is_held: false,
+                    prefer_character_input: false,
+                }),
+                cx,
+            );
+            window.dispatch_event(
+                FileDropEvent::Entered {
+                    position: at,
+                    paths: ExternalPaths(Default::default()),
+                }
+                .to_platform_input(),
+                cx,
+            );
+            assert!(
+                cx.active_drag
+                    .as_ref()
+                    .is_some_and(|drag| drag.value.downcast_ref::<u32>() == Some(&7))
+            );
+            assert!(!window.last_input_was_keyboard());
+            window.dispatch_event(
+                FileDropEvent::Submit { position: at }.to_platform_input(),
+                cx,
+            );
+        })
+        .unwrap();
+        cx.update_window(source, |_, window, cx| {
+            window.dispatch_event(FileDropEvent::Ended.to_platform_input(), cx);
+        })
+        .unwrap();
+        assert_eq!(seen.dropped_in.borrow().as_slice(), ["other"]);
+        assert_eq!(seen.outside.get(), 0, "a window took it");
+
+        // Through the other window and out again, taken by none.
+        cx.update_window(source, |_, window, cx| {
+            press_and_drag(window, cx);
+            leave(window, cx);
+        })
+        .unwrap();
+        cx.update_window(other, |_, window, cx| {
+            window.dispatch_event(
+                FileDropEvent::Entered {
+                    position: at,
+                    paths: ExternalPaths(Default::default()),
+                }
+                .to_platform_input(),
+                cx,
+            );
+            window.dispatch_event(FileDropEvent::Exited.to_platform_input(), cx);
+            assert!(cx.active_drag.is_none());
+        })
+        .unwrap();
+        cx.update_window(source, |_, window, cx| {
+            window.dispatch_event(FileDropEvent::Ended.to_platform_input(), cx);
+            window.dispatch_event(FileDropEvent::Ended.to_platform_input(), cx);
+        })
+        .unwrap();
+        assert_eq!(seen.outside.get(), 1, "ended outside, told once");
+        assert_eq!(seen.dropped_in.borrow().len(), 1);
+
+        // Not carried by the platform: released outside its window.
+        cx.test_window(source).set_start_external_drag_result(false);
+        cx.update_window(source, |_, window, cx| {
+            press_and_drag(window, cx);
+            leave(window, cx);
+            assert!(cx.active_drag.is_some(), "still the window's");
+            window.dispatch_event(
+                crate::MouseUpEvent {
+                    position: point(px(-1.), px(20.)),
+                    button: MouseButton::Left,
+                    modifiers: Default::default(),
+                    click_count: 1,
+                }
+                .to_platform_input(),
+                cx,
+            );
+            assert!(cx.active_drag.is_none());
+        })
+        .unwrap();
+        assert_eq!(seen.outside.get(), 2);
+
+        // Released inside it, over nothing that takes it: not outside.
+        cx.update_window(source, |_, window, cx| {
+            press_and_drag(window, cx);
+            window.dispatch_event(
+                crate::MouseUpEvent {
+                    position: point(px(30.), px(30.)),
+                    button: MouseButton::Left,
+                    modifiers: Default::default(),
+                    click_count: 1,
+                }
+                .to_platform_input(),
+                cx,
+            );
+        })
+        .unwrap();
+        assert_eq!(seen.outside.get(), 2);
+    }
+
     #[gpui::test]
     fn file_drag_is_promoted_once_and_restored_in_source_window(cx: &mut TestAppContext) {
         struct Drag {
@@ -9160,9 +9394,11 @@ mod tests {
                 cx,
             );
             assert!(
+                // SKWIR: taken back as it was by whichever of the
+                // application's windows it enters.
                 cx.active_drag
                     .as_ref()
-                    .is_some_and(|drag| drag.value.downcast_ref::<ExternalPaths>().is_some())
+                    .is_some_and(|drag| drag.value.downcast_ref::<PathBuf>().is_some())
             );
             window.dispatch_event(FileDropEvent::Exited.to_platform_input(), cx);
             assert!(cx.active_drag.is_none());
@@ -9193,9 +9429,11 @@ mod tests {
                 cx,
             );
             assert!(
+                // SKWIR: taken back as it was by whichever of the
+                // application's windows it enters.
                 cx.active_drag
                     .as_ref()
-                    .is_some_and(|drag| drag.value.downcast_ref::<ExternalPaths>().is_some())
+                    .is_some_and(|drag| drag.value.downcast_ref::<PathBuf>().is_some())
             );
             assert_eq!(first_destination_exit_count.get(), 1);
             assert_eq!(second_destination_exit_count.get(), 0);

@@ -916,6 +916,15 @@ pub struct Card {
 }
 
 impl Card {
+    /// A folder, drawn as its glyph: what a tab dragged out of its window
+    /// shows (ADR-122).
+    pub fn folder() -> Card {
+        Card {
+            is_dir: true,
+            ..Card::default()
+        }
+    }
+
     fn face(&self) -> Face<'_> {
         let thumb = self.thumb.as_ref().and_then(Bitmap::of_picture);
         let icon = || self.icon.as_ref().and_then(Bitmap::of_image);

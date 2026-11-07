@@ -12392,3 +12392,41 @@ drag left the window and came back; the name lost outside the window.
   activation token on Wayland, a launch while the program finishes with
   no window (the path ADR-115 checked is unchanged but for its key),
   macOS's Finder openings.
+- **Step 4, tabs dragged between windows**: gpui patch 0050
+  (`vendor/patches/0050-drag-within-windows.patch`, README.skwir.md
+  "0050"): `PlatformOwnedDragState::Restored(window)` in place of
+  `RestoredInSourceWindow`, `ExternalDragPayload::Within` (Wayland offers
+  `application/x-gpui-within-<pid>`, accepted at the enter, nothing read),
+  `AnyDrag::dropped_outside` and `on_drag_dropped_outside` (the platform
+  ending a drag none took back; a drag not carried released outside its
+  window), `Entered`/`Pending`/`Submit` setting the mouse modality. Skwir:
+  `TabDrag::window`, `tabs::dragged_tab`, the root's drop of another
+  window's tab (last), `Shell::tab_out_of_windows`,
+  `dnd::tab_drag_icon` (a folder and the tab's name).
+- **Found on the way**: a window last used by keyboard (Ctrl+T there)
+  ignored every drop from the platform: `HitboxId::is_hovered` refuses
+  hover under keyboard modality, and the platform's drag events left the
+  modality as it was. Seen as a tab dropped from the right window into
+  the left landing on nothing, traced (temporary `eprintln!`s) to a drop
+  delivered with the drag restored and no hitbox hovered; fixed in 0050.
+- **Seen** on a headless sway 1.12 (pixman, lavapipe, 1280 × 860, the
+  windows floating side by side, a virtual pointer and keyboard): a tab
+  dragged from the left window onto the right one, which had a single
+  tab and no strip, joined its tabs, last (`tab.move` to window 1); one
+  dragged from the right window into a gap of the left one's tabs went
+  there (`"to": 1`), the compositor drawing the folder and the name under
+  the pointer meanwhile; one dropped below both windows became a third
+  window (`new_window`). On Xvfb :95 (X11, no window manager), a tab
+  pressed and released below its window became a second window.
+- **Checked:** `just gpui-check gpui` (123, with
+  `a_drag_within_the_application_goes_to_the_window_it_enters` and
+  upstream's drag test adjusted) and `gpui_linux` (6); skwir-ui's tests
+  (558) and clippy on skwir-ui and skwir; Windows clippy of skwir-ui and
+  skwir with the patched gpui; `just a11y-check --skwir target/debug/skwir`
+  passed twice after one fix: its first run failed at "listed in the
+  sidebar, the tabs are its first group", `settings.apply` and the
+  `ui.focus_sidebar` after it taken in one sync, the command run before the
+  setting was read; a window's asked commands now run after the settings
+  are taken in (`Shell::sync`). Not checked: macOS's gpui (not compiled),
+  a file drag between two windows in the window, Wayland on a real GPU or
+  on Hyprland, `just release-check`, `just smoke`.

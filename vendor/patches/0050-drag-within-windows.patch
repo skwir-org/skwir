@@ -1,0 +1,787 @@
+0050 drag-within-windows: a drag the platform carries goes to whichever of the application's windows it enters, one taken by none ends dropped outside them, and a drag coming in counts as the pointer's
+
+diff --git a/crates/gpui/src/app.rs b/crates/gpui/src/app.rs
+index fde7872f..1ccf89e8 100644
+--- a/crates/gpui/src/app.rs
++++ b/crates/gpui/src/app.rs
+@@ -865,9 +865,11 @@ struct PlatformOwnedDrag {
+ 
+ enum PlatformOwnedDragState {
+     Suspended(AnyDrag),
+-    // A source-window drop consumes `active_drag` before AppKit ends the dragging session, so this
++    // A drop consumes `active_drag` before the platform ends the dragging session, so this
+     // marker can outlive the active drag and is cleaned up by `FileDropEvent::Ended`.
+-    RestoredInSourceWindow,
++    // SKWIR: restored in whichever of the application's windows the drag entered, its source or
++    // another (`ExternalDragPayload::Within`, a file drag between two windows).
++    Restored(WindowId),
+ }
+ 
+ /// Contains the state of the full application, and passed as a reference to a variety of callbacks.
+@@ -3088,9 +3090,9 @@ impl App {
+     pub fn stop_active_drag(&mut self, window: &mut Window) -> bool {
+         if self.active_drag.is_some() {
+             self.active_drag = None;
++            let window_id = window.window_handle().window_id();
+             if self.platform_owned_drag.as_ref().is_some_and(|drag| {
+-                drag.source_window == window.window_handle().window_id()
+-                    && matches!(&drag.state, PlatformOwnedDragState::RestoredInSourceWindow)
++                matches!(&drag.state, PlatformOwnedDragState::Restored(id) if *id == window_id)
+             }) {
+                 self.platform_owned_drag = None;
+             }
+@@ -3112,27 +3114,29 @@ impl App {
+         true
+     }
+ 
+-    /// Whether the drag under way in `window` is one the platform carries:
+-    /// handed to it as it left the window, and come back. The platform
+-    /// draws its image wherever the pointer is, this window included.
+-    pub(crate) fn platform_draws_drag(&self, window: WindowId) -> bool {
+-        self.platform_owned_drag.as_ref().is_some_and(|drag| {
+-            drag.source_window == window
+-                && matches!(&drag.state, PlatformOwnedDragState::RestoredInSourceWindow)
+-        })
++    /// Whether the drag under way is one the platform carries: handed to it
++    /// as it left its window, and come back into one of the application's.
++    /// The platform draws its image wherever the pointer is, over every
++    /// window: none draws it again.
++    pub(crate) fn platform_draws_drag(&self) -> bool {
++        self.platform_owned_drag
++            .as_ref()
++            .is_some_and(|drag| matches!(&drag.state, PlatformOwnedDragState::Restored(_)))
+     }
+ 
+-    pub(crate) fn restore_platform_drag(&mut self, source_window: WindowId) -> bool {
+-        let Some(platform_drag) = self
+-            .platform_owned_drag
+-            .as_mut()
+-            .filter(|drag| drag.source_window == source_window)
+-        else {
++    /// SKWIR: take the drag the platform carries back in `window`, whichever
++    /// of the application's windows it entered: its source, or another
++    /// (only one drag is carried at a time).
++    pub(crate) fn restore_platform_drag(&mut self, window: WindowId) -> bool {
++        let Some(platform_drag) = self.platform_owned_drag.as_mut() else {
+             return false;
+         };
++        if !matches!(&platform_drag.state, PlatformOwnedDragState::Suspended(_)) {
++            return false;
++        }
+         let state = std::mem::replace(
+             &mut platform_drag.state,
+-            PlatformOwnedDragState::RestoredInSourceWindow,
++            PlatformOwnedDragState::Restored(window),
+         );
+         let PlatformOwnedDragState::Suspended(drag) = state else {
+             return false;
+@@ -3141,11 +3145,10 @@ impl App {
+         true
+     }
+ 
+-    pub(crate) fn hand_restored_drag_to_platform(&mut self, source_window: WindowId) -> bool {
+-        let Some(platform_drag) = self.platform_owned_drag.as_mut().filter(|drag| {
+-            drag.source_window == source_window
+-                && matches!(&drag.state, PlatformOwnedDragState::RestoredInSourceWindow)
+-        }) else {
++    pub(crate) fn hand_restored_drag_to_platform(&mut self, window: WindowId) -> bool {
++        let Some(platform_drag) = self.platform_owned_drag.as_mut().filter(
++            |drag| matches!(&drag.state, PlatformOwnedDragState::Restored(id) if *id == window),
++        ) else {
+             return false;
+         };
+         let Some(drag) = self.active_drag.take() else {
+@@ -3155,6 +3158,24 @@ impl App {
+         true
+     }
+ 
++    /// SKWIR: as the platform ends the drag `source_window` handed it, what
++    /// to call if no window of the application took it back (dropped
++    /// outside them, or on another application): the drag's
++    /// `dropped_outside`. `None` once a window holds it, or took it.
++    pub(crate) fn take_dropped_outside(
++        &mut self,
++        source_window: WindowId,
++    ) -> Option<DroppedOutside> {
++        let drag = self
++            .platform_owned_drag
++            .as_mut()
++            .filter(|drag| drag.source_window == source_window)?;
++        match &mut drag.state {
++            PlatformOwnedDragState::Suspended(drag) => drag.dropped_outside.take(),
++            PlatformOwnedDragState::Restored(_) => None,
++        }
++    }
++
+     pub(crate) fn end_platform_drag(&mut self, source_window: WindowId) -> bool {
+         if !self
+             .platform_owned_drag
+@@ -3635,8 +3656,17 @@ pub struct AnyDrag {
+     /// Resolves the payload to offer the platform if the drag leaves the window.
+     /// Invoked at most once per drag gesture, at promotion time.
+     pub external_payload_source: Option<ExternalDragPayloadSource>,
++
++    /// SKWIR: what to call when the drag ends outside the application's
++    /// windows: released outside its window, or carried by the platform and
++    /// taken by none of them.
++    pub dropped_outside: Option<DroppedOutside>,
+ }
+ 
++/// SKWIR: what a drag does when it ends outside the application's windows
++/// ([`AnyDrag::dropped_outside`]).
++pub type DroppedOutside = Box<dyn FnOnce(&mut Window, &mut App) + 'static>;
++
+ /// Lazily resolves the payload handed to the platform when an internal drag is
+ /// promoted to a native drag session.
+ pub type ExternalDragPayloadSource =
+diff --git a/crates/gpui/src/elements/div.rs b/crates/gpui/src/elements/div.rs
+index 3e8c1b1f..eec33404 100644
+--- a/crates/gpui/src/elements/div.rs
++++ b/crates/gpui/src/elements/div.rs
+@@ -17,14 +17,15 @@
+ 
+ use crate::{
+     Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, BackGestureEvent, Bounds, ClickEvent,
+-    DispatchPhase, Display, Element, ElementId, Entity, EntityId, ExternalDragPayload,
+-    ExternalDragPayloadSource, FileDropEvent, FocusHandle, Global, GlobalElementId, Hitbox,
+-    HitboxBehavior, HitboxId, InspectorElementId, IntoElement, IsZero, KeyContext, KeyDownEvent,
+-    KeyUpEvent, KeyboardButton, KeyboardClickEvent, LayoutId, LongPressEvent,
+-    ModifiersChangedEvent, MouseButton, MouseClickEvent, MouseDownEvent, MouseExitEvent,
+-    MouseMoveEvent, MousePressureEvent, MouseUpEvent, OngoingScroll, Overflow, ParentElement,
+-    PinchEvent, Pixels, Point, Render, ScrollEvent, SharedString, Size, Style, StyleRefinement,
+-    Styled, Task, TooltipId, TouchPhase, Visibility, Window, WindowControlArea, point, px, size,
++    DispatchPhase, Display, DroppedOutside, Element, ElementId, Entity, EntityId,
++    ExternalDragPayload, ExternalDragPayloadSource, FileDropEvent, FocusHandle, Global,
++    GlobalElementId, Hitbox, HitboxBehavior, HitboxId, InspectorElementId, IntoElement, IsZero,
++    KeyContext, KeyDownEvent, KeyUpEvent, KeyboardButton, KeyboardClickEvent, LayoutId,
++    LongPressEvent, ModifiersChangedEvent, MouseButton, MouseClickEvent, MouseDownEvent,
++    MouseExitEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent, OngoingScroll, Overflow,
++    ParentElement, PinchEvent, Pixels, Point, Render, ScrollEvent, SharedString, Size, Style,
++    StyleRefinement, Styled, Task, TooltipId, TouchPhase, Visibility, Window, WindowControlArea,
++    point, px, size,
+ };
+ use collections::HashMap;
+ use gpui_util::ResultExt;
+@@ -655,9 +656,40 @@ impl Interactivity {
+                 constructor(value.downcast_ref().unwrap(), offset, window, cx).into()
+             }),
+             external_payload: None,
++            dropped_outside: None,
+         });
+     }
+ 
++    /// SKWIR: registers what to do when a drag started by this element ends
++    /// outside the application's windows: released outside its window, or
++    /// carried by the platform ([`ExternalDragPayload::Within`]) and taken by
++    /// none of them. Must be called after [`Self::on_drag`], with the same
++    /// dragged value type `T`.
++    pub fn on_drag_dropped_outside<T>(
++        &mut self,
++        listener: impl Fn(&T, &mut Window, &mut App) + 'static,
++    ) where
++        Self: Sized,
++        T: 'static,
++    {
++        let Some(drag_listener) = self.drag_listener.as_mut() else {
++            debug_assert!(
++                false,
++                "on_drag_dropped_outside must be called after on_drag"
++            );
++            return;
++        };
++        debug_assert!(
++            drag_listener.value.as_ref().type_id() == TypeId::of::<T>(),
++            "on_drag_dropped_outside must use the same dragged value type as on_drag"
++        );
++        drag_listener.dropped_outside = Some(Rc::new(move |value, window, cx| {
++            if let Some(value) = value.downcast_ref::<T>() {
++                listener(value, window, cx);
++            }
++        }));
++    }
++
+     /// Registers a callback resolving a payload to offer the platform if a drag started by this
+     /// element leaves the window. It is invoked at most once per drag gesture, when the pointer
+     /// exits the viewport. Must be called after [`Self::on_drag`], with the same dragged value
+@@ -1767,6 +1799,22 @@ pub trait StatefulInteractiveElement: InteractiveElement {
+         self
+     }
+ 
++    /// SKWIR: what to do when a drag started by this element ends outside
++    /// the application's windows. Must be called after [`Self::on_drag`],
++    /// with the same dragged value type `T`.
++    /// The fluent API equivalent to [`Interactivity::on_drag_dropped_outside`].
++    fn on_drag_dropped_outside<T>(
++        mut self,
++        listener: impl Fn(&T, &mut Window, &mut App) + 'static,
++    ) -> Self
++    where
++        Self: Sized,
++        T: 'static,
++    {
++        self.interactivity().on_drag_dropped_outside(listener);
++        self
++    }
++
+     /// Bind the given callback on the hover start and end events of this element. Note that the boolean
+     /// passed to the callback is true when the hover starts and false when it ends.
+     /// Transitions caused by layout changes under a stationary mouse also invoke the callback.
+@@ -1899,8 +1947,12 @@ pub(crate) struct DragListener {
+     value: Arc<dyn Any>,
+     render: Box<dyn Fn(&dyn Any, Point<Pixels>, &mut Window, &mut App) -> AnyView + 'static>,
+     external_payload: Option<ExternalDragPayloadResolver>,
++    /// SKWIR: what to call when the drag ends outside the application's windows.
++    dropped_outside: Option<DroppedOutsideListener>,
+ }
+ 
++type DroppedOutsideListener = Rc<dyn Fn(&dyn Any, &mut Window, &mut App) + 'static>;
++
+ type ExternalDragPayloadResolver =
+     Box<dyn Fn(&dyn Any, &mut Window, &mut App) -> Option<ExternalDragPayload> + 'static>;
+ 
+@@ -3160,12 +3212,19 @@ impl Interactivity {
+                                     })
+                                         as ExternalDragPayloadSource
+                                 });
++                            let dropped_outside = listener.dropped_outside.map(|outside| {
++                                let value = listener.value.clone();
++                                Box::new(move |window: &mut Window, cx: &mut App| {
++                                    outside(value.as_ref(), window, cx)
++                                }) as DroppedOutside
++                            });
+                             cx.active_drag = Some(AnyDrag {
+                                 view: drag,
+                                 value: listener.value,
+                                 cursor_offset,
+                                 cursor_style: drag_cursor_style,
+                                 external_payload_source,
++                                dropped_outside,
+                             });
+                             pending_mouse_down.take();
+                             window.refresh();
+diff --git a/crates/gpui/src/interactive.rs b/crates/gpui/src/interactive.rs
+index 396e13df..c03e79dc 100644
+--- a/crates/gpui/src/interactive.rs
++++ b/crates/gpui/src/interactive.rs
+@@ -727,6 +727,39 @@ impl ExternalPaths {
+ pub enum ExternalDragPayload {
+     /// Real on-disk paths, handed to the platform as an outbound file drag.
+     Files(FileDragPaths),
++    /// SKWIR: a drag only this application's windows take (a tab moved from
++    /// one to another): the platform carries it between them, under its
++    /// icon where it draws one, and offers other applications nothing. The
++    /// window it enters takes the drag back as it was; dropped anywhere
++    /// else, its source hears it ended outside them
++    /// ([`crate::StatefulInteractiveElement::on_drag_dropped_outside`]).
++    Within(WithinDrag),
++}
++
++/// SKWIR: what the platform carries of a drag between an application's own
++/// windows ([`ExternalDragPayload::Within`]): the image shown under the
++/// pointer, if any.
++#[derive(Debug, Clone, Default, Eq, PartialEq)]
++pub struct WithinDrag(Option<Arc<ExternalDragIcon>>);
++
++impl WithinDrag {
++    /// A drag between the application's windows, shown as the platform
++    /// shows one without an image.
++    pub fn new() -> Self {
++        Self(None)
++    }
++
++    /// The same drag, shown under the pointer by `icon` where the platform
++    /// draws a drag's image (Wayland).
++    pub fn with_icon(mut self, icon: Arc<ExternalDragIcon>) -> Self {
++        self.0 = Some(icon);
++        self
++    }
++
++    /// The image shown under the pointer, if the caller gave one.
++    pub fn icon(&self) -> Option<&ExternalDragIcon> {
++        self.0.as_deref()
++    }
+ }
+ 
+ /// Paths handed to the platform for a native file drag. Directory metadata is
+diff --git a/crates/gpui/src/platform/test/window.rs b/crates/gpui/src/platform/test/window.rs
+index 4a8ccc67..fc20d13a 100644
+--- a/crates/gpui/src/platform/test/window.rs
++++ b/crates/gpui/src/platform/test/window.rs
+@@ -610,6 +610,8 @@ impl PlatformWindow for TestWindow {
+             crate::ExternalDragPayload::Files(paths) => {
+                 state.external_drag_files.extend_from_slice(paths.entries());
+             }
++            // SKWIR: carried between the application's windows, no files.
++            crate::ExternalDragPayload::Within(_) => {}
+         }
+         state.start_external_drag_result
+     }
+diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
+index 6bab2511..09a0db59 100644
+--- a/crates/gpui/src/window.rs
++++ b/crates/gpui/src/window.rs
+@@ -3800,7 +3800,7 @@ impl Window {
+         } else if let Some(active_drag) = cx.active_drag.take() {
+             // A drag the platform carries is drawn by it, over this window
+             // too: drawn here as well, it would be seen twice.
+-            if !cx.platform_draws_drag(self.handle.window_id()) {
++            if !cx.platform_draws_drag() {
+                 let mut element = active_drag.view.clone().into_any_element();
+                 let offset = self.mouse_position() - active_drag.cursor_offset;
+                 element.prepaint_as_root(offset, AvailableSpace::min_size(), self, cx);
+@@ -5751,6 +5751,14 @@ impl Window {
+         self.last_input_modality = match &event {
+             PlatformInput::KeyDown(_) => InputModality::Keyboard,
+             PlatformInput::MouseMove(_) | PlatformInput::MouseDown(_) => InputModality::Mouse,
++            // SKWIR: a drag the platform brings in moves the pointer: a window
++            // last used by keyboard sees what is under it, or no drop would
++            // ever land there.
++            PlatformInput::FileDrop(
++                FileDropEvent::Entered { .. }
++                | FileDropEvent::Pending { .. }
++                | FileDropEvent::Submit { .. },
++            ) => InputModality::Mouse,
+             PlatformInput::Touch(_) => InputModality::Touch,
+             _ => self.last_input_modality,
+         };
+@@ -5808,14 +5816,17 @@ impl Window {
+             PlatformInput::FileDrop(file_drop) => match file_drop {
+                 FileDropEvent::Entered { position, paths } => {
+                     self.mouse_position = position;
+-                    let source_window = self.handle.window_id();
+-                    if !cx.restore_platform_drag(source_window) && cx.active_drag.is_none() {
++                    // SKWIR: a drag of this application's, from this window or
++                    // another, is taken back as it was.
++                    let window_id = self.handle.window_id();
++                    if !cx.restore_platform_drag(window_id) && cx.active_drag.is_none() {
+                         cx.active_drag = Some(AnyDrag {
+                             value: Arc::new(paths.clone()),
+                             view: cx.new(|_| paths).into(),
+                             cursor_offset: position,
+                             cursor_style: None,
+                             external_payload_source: None,
++                            dropped_outside: None,
+                         });
+                     }
+                     PlatformInput::MouseMove(MouseMoveEvent {
+@@ -5850,7 +5861,13 @@ impl Window {
+                     PlatformInput::FileDrop(FileDropEvent::Exited)
+                 }
+                 FileDropEvent::Ended => {
++                    // SKWIR: taken by none of the application's windows, it
++                    // ended outside them.
++                    let outside = cx.take_dropped_outside(self.handle.window_id());
+                     cx.end_platform_drag(self.handle.window_id());
++                    if let Some(outside) = outside {
++                        outside(self, cx);
++                    }
+                     self.refresh();
+                     PlatformInput::FileDrop(FileDropEvent::Ended)
+                 }
+@@ -6132,11 +6149,23 @@ impl Window {
+                 // If this was a mouse move event, redraw the window so that the
+                 // active drag can follow the mouse cursor.
+                 self.refresh();
+-            } else if event.is::<MouseUpEvent>() {
++            } else if let Some(up) = event.downcast_ref::<MouseUpEvent>() {
+                 // If this was a mouse up event, cancel the active drag and redraw
+-                // the window.
++                // the window. SKWIR: released outside the window, a drag the
++                // platform did not carry (X11) ended outside it.
++                let outside = (!Bounds::new(Point::default(), self.viewport_size)
++                    .contains(&up.position))
++                .then(|| {
++                    cx.active_drag
++                        .as_mut()
++                        .and_then(|drag| drag.dropped_outside.take())
++                })
++                .flatten();
+                 cx.active_drag = None;
+                 self.refresh();
++                if let Some(outside) = outside {
++                    outside(self, cx);
++                }
+             }
+         }
+ 
+@@ -9041,6 +9070,211 @@ mod tests {
+         }
+     }
+ 
++    /// SKWIR: what a drag between the application's windows saw: where it
++    /// was dropped (the window's name) and how often it ended outside them.
++    #[derive(Default)]
++    struct WithinSeen {
++        dropped_in: RefCell<Vec<&'static str>>,
++        outside: Cell<usize>,
++    }
++
++    /// SKWIR: a view whose element drags a `u32` the platform carries between
++    /// the application's windows, and takes one dropped on it.
++    struct WithinView {
++        name: &'static str,
++        seen: Rc<WithinSeen>,
++    }
++
++    impl Render for WithinView {
++        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
++            let name = self.name;
++            div()
++                .id("within-drag")
++                .size_full()
++                .on_drag(7u32, |_, _, _, cx| cx.new(|_| Empty))
++                .external_drag_payload(|_: &u32, _, _| {
++                    Some(ExternalDragPayload::Within(crate::WithinDrag::new()))
++                })
++                .on_drag_dropped_outside({
++                    let seen = self.seen.clone();
++                    move |_: &u32, _, _| seen.outside.set(seen.outside.get() + 1)
++                })
++                .on_drop({
++                    let seen = self.seen.clone();
++                    move |_: &u32, _, _| seen.dropped_in.borrow_mut().push(name)
++                })
++        }
++    }
++
++    /// SKWIR: press, then move far enough to start the drag in `window`.
++    fn press_and_drag(window: &mut Window, cx: &mut crate::App) {
++        window.draw(cx).clear(cx);
++        window.dispatch_event(
++            MouseDownEvent {
++                position: point(px(10.), px(10.)),
++                button: MouseButton::Left,
++                modifiers: Default::default(),
++                click_count: 1,
++                first_mouse: false,
++            }
++            .to_platform_input(),
++            cx,
++        );
++        window.dispatch_event(
++            MouseMoveEvent {
++                position: point(px(20.), px(20.)),
++                pressed_button: Some(MouseButton::Left),
++                modifiers: Default::default(),
++            }
++            .to_platform_input(),
++            cx,
++        );
++        assert!(cx.active_drag.is_some());
++    }
++
++    /// SKWIR: the pointer, still pressed, leaves `window`.
++    fn leave(window: &mut Window, cx: &mut crate::App) {
++        window.dispatch_event(
++            MouseMoveEvent {
++                position: point(px(-1.), px(20.)),
++                pressed_button: Some(MouseButton::Left),
++                modifiers: Default::default(),
++            }
++            .to_platform_input(),
++            cx,
++        );
++    }
++
++    /// SKWIR: a drag the platform carries between the application's windows
++    /// is taken back, as it was, by another of them, which takes its drop
++    /// even when the keyboard was used there last;
++    /// one no window took ends outside them, told to its source once; one
++    /// the platform does not carry, released outside its window, too.
++    #[gpui::test]
++    fn a_drag_within_the_application_goes_to_the_window_it_enters(cx: &mut TestAppContext) {
++        let seen = Rc::new(WithinSeen::default());
++        let window = |cx: &mut TestAppContext, name: &'static str, seen: &Rc<WithinSeen>| {
++            let seen = seen.clone();
++            let window: AnyWindowHandle =
++                cx.add_window(move |_, _| WithinView { name, seen }).into();
++            cx.test_window(window).set_start_external_drag_result(true);
++            window
++        };
++        let source = window(cx, "source", &seen);
++        let other = window(cx, "other", &seen);
++
++        // Into the other window, dropped there.
++        cx.update_window(source, |_, window, cx| {
++            press_and_drag(window, cx);
++            leave(window, cx);
++            assert!(cx.active_drag.is_none(), "the platform carries it");
++        })
++        .unwrap();
++        let at = point(px(30.), px(30.));
++        cx.update_window(other, |_, window, cx| {
++            window.draw(cx).clear(cx);
++            // Last used by keyboard: the drag coming in is the pointer's.
++            window.dispatch_event(
++                PlatformInput::KeyDown(KeyDownEvent {
++                    keystroke: Keystroke::parse("down").expect("valid keystroke"),
++                    is_held: false,
++                    prefer_character_input: false,
++                }),
++                cx,
++            );
++            window.dispatch_event(
++                FileDropEvent::Entered {
++                    position: at,
++                    paths: ExternalPaths(Default::default()),
++                }
++                .to_platform_input(),
++                cx,
++            );
++            assert!(
++                cx.active_drag
++                    .as_ref()
++                    .is_some_and(|drag| drag.value.downcast_ref::<u32>() == Some(&7))
++            );
++            assert!(!window.last_input_was_keyboard());
++            window.dispatch_event(
++                FileDropEvent::Submit { position: at }.to_platform_input(),
++                cx,
++            );
++        })
++        .unwrap();
++        cx.update_window(source, |_, window, cx| {
++            window.dispatch_event(FileDropEvent::Ended.to_platform_input(), cx);
++        })
++        .unwrap();
++        assert_eq!(seen.dropped_in.borrow().as_slice(), ["other"]);
++        assert_eq!(seen.outside.get(), 0, "a window took it");
++
++        // Through the other window and out again, taken by none.
++        cx.update_window(source, |_, window, cx| {
++            press_and_drag(window, cx);
++            leave(window, cx);
++        })
++        .unwrap();
++        cx.update_window(other, |_, window, cx| {
++            window.dispatch_event(
++                FileDropEvent::Entered {
++                    position: at,
++                    paths: ExternalPaths(Default::default()),
++                }
++                .to_platform_input(),
++                cx,
++            );
++            window.dispatch_event(FileDropEvent::Exited.to_platform_input(), cx);
++            assert!(cx.active_drag.is_none());
++        })
++        .unwrap();
++        cx.update_window(source, |_, window, cx| {
++            window.dispatch_event(FileDropEvent::Ended.to_platform_input(), cx);
++            window.dispatch_event(FileDropEvent::Ended.to_platform_input(), cx);
++        })
++        .unwrap();
++        assert_eq!(seen.outside.get(), 1, "ended outside, told once");
++        assert_eq!(seen.dropped_in.borrow().len(), 1);
++
++        // Not carried by the platform: released outside its window.
++        cx.test_window(source).set_start_external_drag_result(false);
++        cx.update_window(source, |_, window, cx| {
++            press_and_drag(window, cx);
++            leave(window, cx);
++            assert!(cx.active_drag.is_some(), "still the window's");
++            window.dispatch_event(
++                crate::MouseUpEvent {
++                    position: point(px(-1.), px(20.)),
++                    button: MouseButton::Left,
++                    modifiers: Default::default(),
++                    click_count: 1,
++                }
++                .to_platform_input(),
++                cx,
++            );
++            assert!(cx.active_drag.is_none());
++        })
++        .unwrap();
++        assert_eq!(seen.outside.get(), 2);
++
++        // Released inside it, over nothing that takes it: not outside.
++        cx.update_window(source, |_, window, cx| {
++            press_and_drag(window, cx);
++            window.dispatch_event(
++                crate::MouseUpEvent {
++                    position: point(px(30.), px(30.)),
++                    button: MouseButton::Left,
++                    modifiers: Default::default(),
++                    click_count: 1,
++                }
++                .to_platform_input(),
++                cx,
++            );
++        })
++        .unwrap();
++        assert_eq!(seen.outside.get(), 2);
++    }
++
+     #[gpui::test]
+     fn file_drag_is_promoted_once_and_restored_in_source_window(cx: &mut TestAppContext) {
+         struct Drag {
+@@ -9160,9 +9394,11 @@ mod tests {
+                 cx,
+             );
+             assert!(
++                // SKWIR: taken back as it was by whichever of the
++                // application's windows it enters.
+                 cx.active_drag
+                     .as_ref()
+-                    .is_some_and(|drag| drag.value.downcast_ref::<ExternalPaths>().is_some())
++                    .is_some_and(|drag| drag.value.downcast_ref::<PathBuf>().is_some())
+             );
+             window.dispatch_event(FileDropEvent::Exited.to_platform_input(), cx);
+             assert!(cx.active_drag.is_none());
+@@ -9193,9 +9429,11 @@ mod tests {
+                 cx,
+             );
+             assert!(
++                // SKWIR: taken back as it was by whichever of the
++                // application's windows it enters.
+                 cx.active_drag
+                     .as_ref()
+-                    .is_some_and(|drag| drag.value.downcast_ref::<ExternalPaths>().is_some())
++                    .is_some_and(|drag| drag.value.downcast_ref::<PathBuf>().is_some())
+             );
+             assert_eq!(first_destination_exit_count.get(), 1);
+             assert_eq!(second_destination_exit_count.get(), 0);
+diff --git a/crates/gpui_linux/src/linux/wayland/client.rs b/crates/gpui_linux/src/linux/wayland/client.rs
+index 84076ac4..9ddfcdad 100644
+--- a/crates/gpui_linux/src/linux/wayland/client.rs
++++ b/crates/gpui_linux/src/linux/wayland/client.rs
+@@ -389,6 +389,10 @@ pub(crate) struct WaylandClientState {
+     compose_state: Option<xkb::compose::State>,
+     drag: DragState,
+     external_drag: Option<ExternalDrag>,
++    // SKWIR: the offer of a drag of this application's own between its
++    // windows (`ExternalDragPayload::Within`), known by its type before it
++    // enters one of them.
++    within_offer: Option<ObjectId>,
+     click: ClickState,
+     repeat: KeyRepeat,
+     pub modifiers: Modifiers,
+@@ -518,6 +522,14 @@ pub(crate) enum DataSourceKind {
+     Drag,
+ }
+ 
++/// SKWIR: the type a drag between this application's own windows is offered
++/// as (`ExternalDragPayload::Within`): it names this process, so another
++/// application, gpui's or not, never takes it for its own.
++fn within_mime_type() -> &'static str {
++    static TYPE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
++    TYPE.get_or_init(|| format!("application/x-gpui-within-{}", std::process::id()))
++}
++
+ pub(crate) struct ExternalDrag {
+     source: wl_data_source::WlDataSource,
+     bytes: Vec<u8>,
+@@ -826,20 +838,31 @@ impl WaylandClientStatePtr {
+             return false;
+         };
+ 
+-        let ExternalDragPayload::Files(paths) = payload;
+-        let uri_list = file_uri_list(paths);
+-        if uri_list.is_empty() {
+-            return false;
+-        }
++        // SKWIR: files as a URI list; a drag between this application's own
++        // windows as a type naming this process, which no other offers.
++        let (offered, bytes, icon) = match payload {
++            ExternalDragPayload::Files(paths) => {
++                let uri_list = file_uri_list(paths);
++                if uri_list.is_empty() {
++                    return false;
++                }
++                (
++                    FILE_LIST_MIME_TYPE.to_string(),
++                    uri_list.into_bytes(),
++                    paths.icon(),
++                )
++            }
++            ExternalDragPayload::Within(drag) => {
++                (within_mime_type().to_string(), Vec::new(), drag.icon())
++            }
++        };
+ 
+         let serial = state.serial_tracker.get(SerialKind::MousePress);
+         let source =
+             data_device_manager.create_data_source(&state.globals.qh, DataSourceKind::Drag);
+-        source.offer(FILE_LIST_MIME_TYPE.to_string());
++        source.offer(offered);
+         source.set_actions(DndAction::Copy | DndAction::Move);
+-        let icon = paths
+-            .icon()
+-            .and_then(|image| Some((DragIcon::new(&state.globals, image)?, image)));
++        let icon = icon.and_then(|image| Some((DragIcon::new(&state.globals, image)?, image)));
+         data_device.start_drag(
+             Some(&source),
+             surface,
+@@ -852,7 +875,7 @@ impl WaylandClientStatePtr {
+ 
+         let previous = state.external_drag.replace(ExternalDrag {
+             source,
+-            bytes: uri_list.into_bytes(),
++            bytes,
+             window,
+             icon: icon.map(|(icon, _)| icon),
+         });
+@@ -1254,6 +1277,7 @@ impl WaylandConnection {
+                 uri_read_generation: 0,
+             },
+             external_drag: None,
++            within_offer: None,
+             click: ClickState {
+                 last_click: Instant::now(),
+                 last_mouse_button: None,
+@@ -3127,6 +3151,26 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
+                     const ACTIONS: DndAction = DndAction::Copy;
+                     data_offer.set_actions(ACTIONS, ACTIONS);
+ 
++                    // SKWIR: this application's own drag, from one of its
++                    // windows: nothing to read, the window takes the drag
++                    // back as it was (`App::restore_platform_drag`).
++                    if state.within_offer.take() == Some(data_offer.id()) {
++                        data_offer.accept(serial, Some(within_mime_type().to_string()));
++                        let position = Point::new(x.into(), y.into());
++                        let input = state.drag.complete_uri_read(
++                            uri_read_generation,
++                            data_offer,
++                            drag_window,
++                            position,
++                            gpui::ExternalPaths(SmallVec::new()),
++                        );
++                        drop(state);
++                        if let Some((drag_window, input)) = input {
++                            drag_window.handle_input(input);
++                        }
++                        return;
++                    }
++
+                     let pipe = Pipe::new().unwrap();
+                     data_offer.receive(FILE_LIST_MIME_TYPE.to_string(), unsafe {
+                         BorrowedFd::borrow_raw(pipe.write.as_raw_fd())
+@@ -3241,6 +3285,10 @@ impl Dispatch<wl_data_offer::WlDataOffer, ()> for WaylandClientStatePtr {
+         let mut state = client.borrow_mut();
+ 
+         if let wl_data_offer::Event::Offer { mime_type } = event {
++            // SKWIR: a drag of this application's own, between its windows.
++            if mime_type == within_mime_type() {
++                state.within_offer = Some(data_offer.id());
++            }
+             // Drag and drop
+             if mime_type == FILE_LIST_MIME_TYPE {
+                 let serial = state.serial_tracker.get(SerialKind::DataDevice);
+diff --git a/crates/gpui_macos/src/window.rs b/crates/gpui_macos/src/window.rs
+index 2c1c8972..5e475c81 100644
+--- a/crates/gpui_macos/src/window.rs
++++ b/crates/gpui_macos/src/window.rs
+@@ -2217,7 +2217,11 @@ impl PlatformWindow for MacWindow {
+     }
+ 
+     fn start_external_drag(&self, payload: &ExternalDragPayload) -> bool {
+-        let ExternalDragPayload::Files(paths) = payload;
++        // SKWIR: a drag between the application's windows is not handed to
++        // AppKit: it stays in its window.
++        let ExternalDragPayload::Files(paths) = payload else {
++            return false;
++        };
+         if paths.entries().is_empty() {
+             log::warn!("start_external_drag declined: no paths");
+             return false;

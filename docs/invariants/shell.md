@@ -1448,6 +1448,18 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   closes the core's window, its tabs kept to be reopened together
   (Ctrl+Shift+T); the last one leaves as ADR-115 says. Quit closes every
   window (`Shell::close_every_window`), none forgotten.
+- **A tab dragged** (`tabs::dragged_tab`, gpui patch 0050) carries its
+  window (`TabDrag::window`). Out of its window the compositor carries it
+  (`ExternalDragPayload::Within`, under a folder and its name,
+  `dnd::tab_drag_icon`) to the program's other windows, which take it in
+  a gap of their tabs, at that place, or anywhere else, last (the root's
+  `on_drop`); dropped outside every window
+  (`on_drag_dropped_outside`), a tab not alone in its window becomes a
+  window of its own (`Shell::tab_out_of_windows`). On X11, where gpui
+  carries no drag out of its window, a tab released outside it becomes a
+  window, wherever it was released. A drag of files between two windows
+  is the program's own drag there too (`DragPayload`, the source pane
+  read from the workspace), as between split panes.
 - **Remembered as they change**: the program records every window's tabs
   and shape for the next start (`finishing::record_windows`, at most
   every 2 s, saved on a worker), so a window closed alone is forgotten
