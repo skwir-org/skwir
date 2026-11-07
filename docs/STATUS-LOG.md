@@ -12958,3 +12958,37 @@ amended).
   168 and 175.
 - **Checked:** fmt; clippy on skwir-ui; its tests (567 passed).
 
+## 2026-11-07: No seam along a see-through curve (gpui 0055)
+
+- **Asked:** whether the pixel's seam along the cards' and the parts'
+  rounded corners could go, then (after "would it hamper perf?": no, a few
+  small pieces a frame while see-through, nothing whole) to fix it.
+- **Built:** gpui patch 0055: `Window::paint_around` (an inset shadow
+  without blur, the exact complement of a quad, told the opacity of what
+  is in the hole through `Shadow::under`, the record's former padding:
+  coverage `(1 − c) / (1 − under · c)`), `Window::snap_to_device_pixels`.
+  The frame's and the areas' grounds, while see-through, are paths with
+  straight edges on whole device pixels (cards, notches with their
+  concave squares, parts' rectangles), and their curves pieces in each
+  corner's square: `frame::paint_card_corners`, `paint_fillets` (a disc
+  of the frame, the band's complement around it), `ground::paint_around`
+  (an area's own rounded corners as a quad in their square, its parts'
+  through `paint_corners_around`). Cards, notches and parts are laid on
+  whole device pixels, a card's radius too (`ground::snap_length`); each
+  card says how opaque it is at its corners (`frame::card`'s `under`:
+  the chrome's for a pane, the files' for the terminal, the preview's at
+  its foot unless the dock is there), each part its own ground's
+  (`ground::hole`).
+- **Seen** on Xvfb :95, the light look, the chrome at 70 % and the files
+  at 60 %: a field's corner from 168 to 175 through 169, 170, 172, 174
+  (148 before); a card's corner from the frame's 162 to the band's 168;
+  a notch's rounded end and its concave fillet likewise; the tab shown
+  apart by lines from the strip's 168 up to its border. Never under the
+  lower of the two.
+- **Checked:** `just gpui-check gpui_wgpu` (56 passed, the new seam test
+  among them); every HLSL entry point compiles with DXC; `just
+  check-cross`; the macOS build of skwir type-checks
+  (`tools/package/macos.sh`'s environment), its shader bindings carrying
+  `under`; 0055 applied with `git apply` on the vendored tree as
+  committed gives it back; fmt; clippy on skwir-ui; its tests (567).
+

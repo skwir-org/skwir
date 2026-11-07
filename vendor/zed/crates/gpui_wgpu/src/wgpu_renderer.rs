@@ -2774,6 +2774,49 @@ mod tests {
         Ok(())
     }
 
+    /// A ground painted around a rounded quad (an inset shadow, blur 0, told the quad's
+    /// opacity: `Shadow::under`) meets the quad drawn over it without a seam: along the arc,
+    /// each pixel is as covered as the two make it. Told nothing, the two let what is behind
+    /// through where their edges meet.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn headless_renderer_paints_around_a_rounded_quad_without_a_seam() -> anyhow::Result<()> {
+        let white = Hsla {
+            h: 0.,
+            s: 0.,
+            l: 1.,
+            a: 0.5,
+        };
+        let draw = |under: f32| -> anyhow::Result<image::RgbaImage> {
+            let mut renderer = WgpuHeadlessRenderer::new()?;
+            let mut scene = Scene::default();
+            let mut quad = solid_quad(0.0, 0.0, 32.0, 32.0, white);
+            quad.corner_radii = Corners::all(ScaledPixels(12.0));
+            scene.insert_primitive(gpui::Shadow {
+                order: 0,
+                blur_radius: ScaledPixels(0.),
+                bounds: quad.bounds,
+                corner_radii: quad.corner_radii,
+                content_mask: quad.content_mask,
+                color: white,
+                element_bounds: scaled_bounds(0.0, 0.0, 16.0, 16.0),
+                element_corner_radii: Corners::default(),
+                inset: 1,
+                under,
+            });
+            scene.insert_primitive(quad);
+            scene.finish();
+            renderer.render_scene_to_image(&scene, device_size(16, 16))
+        };
+        let spread = |image: &image::RgbaImage| {
+            let values = image.pixels().map(|pixel| i32::from(pixel.0[0]));
+            values.clone().max().unwrap_or(0) - values.min().unwrap_or(0)
+        };
+        assert!(spread(&draw(0.5)?) <= 2, "one even tone along the arc");
+        assert!(spread(&draw(0.)?) > 8, "a seam where nothing is told");
+        Ok(())
+    }
+
     /// A content mask with rounded corners keeps what is drawn within their arcs, and the rest of
     /// the mask whole; a mask whose radii are all zero changes nothing.
     #[cfg(target_os = "linux")]

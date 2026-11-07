@@ -105,11 +105,11 @@ only; amended the same evening as tried (Amendments). Amends ADR-071
 
 - As cards, the files lose only the gutters: 6 px between the panes, 6
   between them and the preview or the terminal, and 6 at the top.
-- While the window lets the desktop through, the seam where the frame's
-  hole meets a card's arc lets a little of what is behind through, a
-  pixel wide along each rounded corner and each notch's curves: two
-  antialiased edges meet there, each painted once. Whole, the frame is
-  painted under the cards and there is no seam.
+- While the window lets the desktop through, the frame's curves beside a
+  card's rounded corners and a notch's are the exact complement of the
+  card's, told how opaque the card is there (gpui patch 0055,
+  `Window::paint_around`): no seam where they meet. Its straight edges
+  are a path on whole device pixels, as quads are drawn.
 - **With the switch off too**, a rounded element that hides its overflow
   now keeps its content within its corners (0053), as it always asked:
   the pictures of a folder's grid tile and the board's cards, the dock's

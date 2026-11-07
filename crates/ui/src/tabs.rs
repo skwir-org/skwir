@@ -823,7 +823,8 @@ fn tab(
         return el.into_any_element();
     }
     let holes = shell.chrome_holes(&theme, &shell.strip_holes);
-    crate::elements::ground::hole(&holes, gpui::rems(0.375), el).into_any_element()
+    crate::elements::ground::hole(&holes, gpui::rems(0.375), theme.opacity.interface, el)
+        .into_any_element()
 }
 
 /// Whether tab `id` shows its ×: the tab shown and the one under the
@@ -1062,7 +1063,8 @@ fn sidebar_row(
         return el.into_any_element();
     }
     let holes = shell.chrome_holes(&theme, &shell.sidebar_holes);
-    crate::elements::ground::hole(&holes, gpui::rems(0.375), el).into_any_element()
+    crate::elements::ground::hole(&holes, gpui::rems(0.375), theme.opacity.interface, el)
+        .into_any_element()
 }
 
 /// The row after the sidebar's tabs that opens another, as the strip's +.

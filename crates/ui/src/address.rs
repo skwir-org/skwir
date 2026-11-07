@@ -228,7 +228,12 @@ fn view_control(
         .flex_none()
         .items_center()
         .gap(sized(2.))
-        .child(crate::elements::ground::hole(holes, gpui::rems(0.5), group))
+        .child(crate::elements::ground::hole(
+            holes,
+            gpui::rems(0.5),
+            theme.opacity.interface,
+            group,
+        ))
         .child(
             menu(
                 "view-options",
@@ -1480,6 +1485,7 @@ fn pane_row(
         .child(crate::elements::ground::hole(
             &row.holes,
             gpui::rems(0.375),
+            theme.opacity.interface,
             field,
         ))
         .child(view_control(

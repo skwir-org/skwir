@@ -86,6 +86,7 @@ carry: the script takes it from the Inter release Skwir's packages pin
 | `0052-inferred-list-measures-at-its-width` | A list sized by its items (`ListSizingBehavior::Infer`) whose width is set measures them at the width they are drawn at, so items that wrap make it as tall as they are: a width it says from its first frame, its parent's (`w_full`) once drawn at it, that first frame asking for another; Zed's measured them at their own width, and a row that wraps was cut under a scrollbar (the Undo history, 2026-11-07) | — |
 | `0051-x11-window-place` | X11: a window opens where it is asked (program-specified position, static gravity, no 2 px nudge but at 0, 0), maximized or on the whole screen as asked before it maps (`_NET_WM_STATE` written), and says where it is on the root window, a resize included | — |
 | `0053-rounded-content-mask` | An element with rounded corners that hides its overflow keeps what it holds within its corners (`ContentMask::rounded_bounds`, `corner_radii`), on wgpu, Direct3D 11 and Metal | — |
+| `0055-paint-around` | `Window::paint_around`: a color outside a rounded rectangle, the complement of a quad there told how opaque it is (`Shadow::under`), so two see-through grounds meet without a seam; `Window::snap_to_device_pixels` | — |
 | `0054-window-tiling` | `Window::tiling`: the edges that meet another window or the screen's, whoever draws the decorations (Wayland's tiled states with server-side ones too) | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
@@ -910,6 +911,36 @@ sends the tiled states either way (`xdg_toplevel`'s `tiled_*`, version 2).
 Checked on a headless sway 1.12: a tiled window drew its cards to its
 top, right and bottom edges (the sidebar held its left). Not checked:
 Hyprland, GNOME's and KDE's tiling, X11 (maximized), macOS and Windows.
+
+### 0055: Painting around a rounded rectangle
+
+Skwir's window lets what is behind it through its grounds (ADR-119),
+each painted once: a ground with a rounded part in it (a card on the
+frame, a field in a bar) is painted around a hole the part's shape. Where
+the two antialiased edges met along a curve, a pixel half in each got
+the ground at half its opacity, then the part at half over it: drawn one
+over the other, they let a quarter of what is behind through at their
+middle, a seam (148 between 168 and 175 on Xvfb).
+
+- **`Window::paint_around(bounds, hole, radii, color, under)`** paints
+  `color` over `bounds` outside the rounded rectangle `hole`: an inset
+  shadow with no blur, the exact complement of a quad of that shape (the
+  same `quad_sdf`, the same half pixel), both snapped as quads are.
+- **`Shadow::under`**, the inset shadow's former padding: how opaque what
+  is drawn in the hole is, before or after. The complement's coverage is
+  `(1 − c) / (1 − under · c)` where the hole's is `c`, so the two add up
+  to the pixel as one ground would; 0 gives the plain complement, as
+  before, which `paint_inset_shadows` keeps.
+- **`Window::snap_to_device_pixels`**: a shape laid out on whole device
+  pixels as quads are drawn, so the straight edges of a path around them
+  meet them exactly.
+
+Checked: `just gpui-check gpui_wgpu`
+(`headless_renderer_paints_around_a_rounded_quad_without_a_seam`: a
+translucent rounded quad over its complement told its opacity leaves the
+arc one tone, within 2 levels; told nothing, more than 8); every HLSL
+entry point compiles with DXC; the macOS build type-checks, the shader
+bindings carrying `under`. Metal compiled nowhere.
 
 ## Adding or changing a patch
 

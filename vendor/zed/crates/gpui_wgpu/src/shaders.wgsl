@@ -996,7 +996,8 @@ struct Shadow {
     element_corner_radii: Corners,
     // 0 = drop shadow, 1 = inset shadow.
     inset: u32,
-    pad: u32, // align to 8 bytes
+    // The opacity of what is drawn in an inset shadow's hole (`Shadow::under`).
+    under: f32,
 }
 
 struct ShadowVarying {
@@ -1076,7 +1077,10 @@ fn fs_shadow(input: ShadowVarying) -> @location(0) vec4<f32> {
     if (shadow.inset != 0u) {
         // The inset shadow is the complement of the (blurred) hole rect, clipped to the element.
         // `saturate(0.5 - d)` gives a 1-pixel antialiased edge: d <= -0.5 -> 1, d >= 0.5 -> 0.
-        alpha = 1.0 - alpha;
+        // Where what is drawn in the hole (at opacity `under`) meets this edge, each pixel is
+        // as covered as the two make it, not less: drawn one over the other, two complementary
+        // antialiased edges would let a quarter of what is behind through at their middle.
+        alpha = (1.0 - alpha) / max(1.0 - shadow.under * alpha, 1e-4);
         let element_distance = quad_sdf(input.position.xy, shadow.element_bounds,
                                         shadow.element_corner_radii);
         alpha *= saturate(0.5 - element_distance);

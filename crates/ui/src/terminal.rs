@@ -746,7 +746,12 @@ impl Shell {
             // drawn: above the panel.
             .children(self.host_area_marker(MenuHost::Terminal));
         Some(if theme.cards {
-            crate::elements::frame::card(&self.frame_cards, panel).into_any_element()
+            crate::elements::frame::card(
+                &self.frame_cards,
+                gpui::Corners::all(theme.opacity.files),
+                panel,
+            )
+            .into_any_element()
         } else {
             panel.into_any_element()
         })

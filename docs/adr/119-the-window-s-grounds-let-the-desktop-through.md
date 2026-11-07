@@ -166,6 +166,6 @@ kind of preview, bands as tints (Amendments).
   wider on each side. Let through, the field and the tab read their
   ground's opacity (175 for `#fafafa` at 70 %, beside the bar's 168, on
   Xvfb), in either look, as cards or apart by lines. Where a part's
-  rounded corner meets the bar's ground, the two antialiased edges let a
-  pixel's seam through, as the cards' corners did.
+  rounded corner meets the bar's ground, the bar's curve is the exact
+  complement of the part's, told its opacity (gpui patch 0055): no seam.
 

@@ -6544,17 +6544,31 @@ pub fn render_panel(
     } else {
         (bar, None)
     };
+    let dock = crate::dock::render(shell, dock_limit, cx);
+    // How opaque the card is at its corners: its header at the top, at its
+    // foot what it shows, or the dock.
+    let foot = if dock.is_some() {
+        theme.opacity.interface
+    } else {
+        theme.opacity.preview
+    };
+    let under = gpui::Corners {
+        top_left: theme.opacity.interface,
+        top_right: theme.opacity.interface,
+        bottom_right: foot,
+        bottom_left: foot,
+    };
     let panel = panel
         .flex_col()
         .children(bar)
         .child(content.flex_1().min_h_0().w_full())
-        .children(crate::dock::render(shell, dock_limit, cx));
+        .children(dock);
     if !theme.cards {
         return Some(panel.child(handle).into_any_element());
     }
     // A card, the gutter before it its edge, the window's buttons above it
     // at the right: its top level with the files' under the panes' rows.
-    let card = crate::elements::frame::card(&shell.frame_cards, panel);
+    let card = crate::elements::frame::card(&shell.frame_cards, under, panel);
     let card = match above {
         Some(above) => div()
             .h_full()

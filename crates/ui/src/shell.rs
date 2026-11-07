@@ -3775,7 +3775,13 @@ impl Shell {
             .child(footer)
             .children(edge);
         if theme.cards {
-            crate::elements::frame::card(&self.frame_cards, pane).into_any_element()
+            crate::elements::frame::card(
+                &self.frame_cards,
+                // Its row and its foot, bands of the chrome, at every corner.
+                gpui::Corners::all(theme.opacity.interface),
+                pane,
+            )
+            .into_any_element()
         } else {
             pane.into_any_element()
         }

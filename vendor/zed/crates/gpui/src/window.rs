@@ -4703,7 +4703,7 @@ impl Window {
                 element_bounds,
                 element_corner_radii,
                 inset: 0,
-                pad: 0,
+                under: 0.,
             });
         }
     }
@@ -4748,9 +4748,63 @@ impl Window {
                 element_bounds,
                 element_corner_radii,
                 inset: 1,
-                pad: 0,
+                under: 0.,
             });
         }
+    }
+
+    /// Paint `color` over `bounds` outside the rounded rectangle `hole`: the exact complement of
+    /// a quad of that shape, antialiased along its arcs as the quad is, both snapped to device
+    /// pixels as quads are. `under` is the opacity of what is painted in the hole, before or after:
+    /// where the two antialiased edges meet, each pixel is as covered as the two make it, as one
+    /// surface would be, rather than letting a little of what is behind through. A ground with a
+    /// rounded part in it, both letting what is behind the window through, is painted so without a
+    /// seam along the part's corners.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
+    pub fn paint_around(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        hole: Bounds<Pixels>,
+        hole_corner_radii: Corners<Pixels>,
+        color: impl Into<Hsla>,
+        under: f32,
+    ) {
+        self.invalidator.debug_assert_paint();
+
+        let scale_factor = self.scale_factor();
+        let content_mask = self.snapped_content_mask();
+        let opacity = self.element_opacity();
+        let hole_corner_radii = hole_corner_radii.clamp_radii_for_quad_size(hole.size);
+        self.next_frame.scene.insert_primitive(Shadow {
+            order: 0,
+            blur_radius: ScaledPixels(0.),
+            bounds: self.snap_bounds(hole),
+            content_mask,
+            corner_radii: hole_corner_radii.scale(scale_factor),
+            color: color.into().opacity(opacity),
+            element_bounds: self.snap_bounds(bounds),
+            element_corner_radii: Corners::default(),
+            inset: 1,
+            under: under.clamp(0., 1.),
+        });
+    }
+
+    /// `bounds` with each edge on a whole device pixel, as quads are drawn: what a shape painted
+    /// beside a quad (a path around it, `paint_around`) is laid out at to meet it exactly.
+    pub fn snap_to_device_pixels(&self, bounds: Bounds<Pixels>) -> Bounds<Pixels> {
+        let snapped = self.snap_bounds(bounds);
+        let scale_factor = self.scale_factor();
+        Bounds::from_corners(
+            point(
+                px(snapped.origin.x.0 / scale_factor),
+                px(snapped.origin.y.0 / scale_factor),
+            ),
+            point(
+                px(snapped.bottom_right().x.0 / scale_factor),
+                px(snapped.bottom_right().y.0 / scale_factor),
+            ),
+        )
     }
 
     fn largest_border_interior(quad: &Quad) -> Bounds<ScaledPixels> {

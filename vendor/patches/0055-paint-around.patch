@@ -1,0 +1,233 @@
+0055 paint-around: `Window::paint_around` paints a color outside a rounded rectangle, the exact complement of a quad drawn there, told the opacity of what is in the hole (`Shadow::under`, the inset shadow's former padding): where the two antialiased edges meet, each pixel is as covered as the two make it, so a see-through ground and a see-through part meet without a seam; `Window::snap_to_device_pixels` lays a shape on whole device pixels as quads are
+
+diff --git a/crates/gpui/src/scene.rs b/crates/gpui/src/scene.rs
+index 9be4e929..1917a0f7 100644
+--- a/crates/gpui/src/scene.rs
++++ b/crates/gpui/src/scene.rs
+@@ -618,7 +618,10 @@ pub struct Shadow {
+     pub element_corner_radii: Corners<ScaledPixels>,
+     /// 0 = drop shadow (rendered outside the element), 1 = inset shadow (rendered inside).
+     pub inset: u32,
+-    pub pad: u32, // align to 8 bytes
++    /// For an inset shadow, the opacity of what is drawn in its hole, before or after it
++    /// (`Window::paint_around`): their antialiased edges then add up to a whole pixel where they
++    /// meet. 0 for none, the plain complement.
++    pub under: f32,
+ }
+ 
+ impl From<Shadow> for Primitive {
+diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
+index bc81f777..a786f1d9 100644
+--- a/crates/gpui/src/window.rs
++++ b/crates/gpui/src/window.rs
+@@ -4703,7 +4703,7 @@ impl Window {
+                 element_bounds,
+                 element_corner_radii,
+                 inset: 0,
+-                pad: 0,
++                under: 0.,
+             });
+         }
+     }
+@@ -4748,11 +4748,65 @@ impl Window {
+                 element_bounds,
+                 element_corner_radii,
+                 inset: 1,
+-                pad: 0,
++                under: 0.,
+             });
+         }
+     }
+ 
++    /// Paint `color` over `bounds` outside the rounded rectangle `hole`: the exact complement of
++    /// a quad of that shape, antialiased along its arcs as the quad is, both snapped to device
++    /// pixels as quads are. `under` is the opacity of what is painted in the hole, before or after:
++    /// where the two antialiased edges meet, each pixel is as covered as the two make it, as one
++    /// surface would be, rather than letting a little of what is behind through. A ground with a
++    /// rounded part in it, both letting what is behind the window through, is painted so without a
++    /// seam along the part's corners.
++    ///
++    /// This method should only be called as part of the paint phase of element drawing.
++    pub fn paint_around(
++        &mut self,
++        bounds: Bounds<Pixels>,
++        hole: Bounds<Pixels>,
++        hole_corner_radii: Corners<Pixels>,
++        color: impl Into<Hsla>,
++        under: f32,
++    ) {
++        self.invalidator.debug_assert_paint();
++
++        let scale_factor = self.scale_factor();
++        let content_mask = self.snapped_content_mask();
++        let opacity = self.element_opacity();
++        let hole_corner_radii = hole_corner_radii.clamp_radii_for_quad_size(hole.size);
++        self.next_frame.scene.insert_primitive(Shadow {
++            order: 0,
++            blur_radius: ScaledPixels(0.),
++            bounds: self.snap_bounds(hole),
++            content_mask,
++            corner_radii: hole_corner_radii.scale(scale_factor),
++            color: color.into().opacity(opacity),
++            element_bounds: self.snap_bounds(bounds),
++            element_corner_radii: Corners::default(),
++            inset: 1,
++            under: under.clamp(0., 1.),
++        });
++    }
++
++    /// `bounds` with each edge on a whole device pixel, as quads are drawn: what a shape painted
++    /// beside a quad (a path around it, `paint_around`) is laid out at to meet it exactly.
++    pub fn snap_to_device_pixels(&self, bounds: Bounds<Pixels>) -> Bounds<Pixels> {
++        let snapped = self.snap_bounds(bounds);
++        let scale_factor = self.scale_factor();
++        Bounds::from_corners(
++            point(
++                px(snapped.origin.x.0 / scale_factor),
++                px(snapped.origin.y.0 / scale_factor),
++            ),
++            point(
++                px(snapped.bottom_right().x.0 / scale_factor),
++                px(snapped.bottom_right().y.0 / scale_factor),
++            ),
++        )
++    }
++
+     fn largest_border_interior(quad: &Quad) -> Bounds<ScaledPixels> {
+         let radii = &quad.corner_radii;
+         let widths = &quad.border_widths;
+diff --git a/crates/gpui_apple/src/shaders.metal b/crates/gpui_apple/src/shaders.metal
+index 9f104ae4..f240207a 100644
+--- a/crates/gpui_apple/src/shaders.metal
++++ b/crates/gpui_apple/src/shaders.metal
+@@ -553,7 +553,10 @@ fragment float4 shadow_fragment(ShadowFragmentInput input [[stage_in]],
+   if (shadow.inset != 0u) {
+     // The inset shadow is the complement of the (blurred) hole rect, clipped to the element.
+     // `saturate(0.5 - d)` gives a 1-pixel antialiased edge: d <= -0.5 -> 1, d >= 0.5 -> 0.
+-    alpha = 1. - alpha;
++    // Where what is drawn in the hole (at opacity `under`) meets this edge, each pixel is
++    // as covered as the two make it, not less: drawn one over the other, two complementary
++    // antialiased edges would let a quarter of what is behind through at their middle.
++    alpha = (1. - alpha) / max(1. - shadow.under * alpha, 1e-4);
+     float element_distance = quad_sdf(input.position.xy, shadow.element_bounds,
+                                       shadow.element_corner_radii);
+     alpha *= saturate(0.5 - element_distance);
+diff --git a/crates/gpui_wgpu/src/shaders.wgsl b/crates/gpui_wgpu/src/shaders.wgsl
+index b1a989e1..4d8d6d45 100644
+--- a/crates/gpui_wgpu/src/shaders.wgsl
++++ b/crates/gpui_wgpu/src/shaders.wgsl
+@@ -996,7 +996,8 @@ struct Shadow {
+     element_corner_radii: Corners,
+     // 0 = drop shadow, 1 = inset shadow.
+     inset: u32,
+-    pad: u32, // align to 8 bytes
++    // The opacity of what is drawn in an inset shadow's hole (`Shadow::under`).
++    under: f32,
+ }
+ 
+ struct ShadowVarying {
+@@ -1076,7 +1077,10 @@ fn fs_shadow(input: ShadowVarying) -> @location(0) vec4<f32> {
+     if (shadow.inset != 0u) {
+         // The inset shadow is the complement of the (blurred) hole rect, clipped to the element.
+         // `saturate(0.5 - d)` gives a 1-pixel antialiased edge: d <= -0.5 -> 1, d >= 0.5 -> 0.
+-        alpha = 1.0 - alpha;
++        // Where what is drawn in the hole (at opacity `under`) meets this edge, each pixel is
++        // as covered as the two make it, not less: drawn one over the other, two complementary
++        // antialiased edges would let a quarter of what is behind through at their middle.
++        alpha = (1.0 - alpha) / max(1.0 - shadow.under * alpha, 1e-4);
+         let element_distance = quad_sdf(input.position.xy, shadow.element_bounds,
+                                         shadow.element_corner_radii);
+         alpha *= saturate(0.5 - element_distance);
+diff --git a/crates/gpui_wgpu/src/shaders_webgl.wgsl b/crates/gpui_wgpu/src/shaders_webgl.wgsl
+index 9d603d36..22befd11 100644
+--- a/crates/gpui_wgpu/src/shaders_webgl.wgsl
++++ b/crates/gpui_wgpu/src/shaders_webgl.wgsl
+@@ -214,7 +214,7 @@ fn load_shadow(instance_id: u32) -> Shadow {
+         read_bounds(&cursor),
+         read_corners(&cursor),
+         read_word(&cursor),
+-        read_word(&cursor),
++        read_f32(&cursor),
+     );
+ }
+ 
+diff --git a/crates/gpui_wgpu/src/wgpu_renderer.rs b/crates/gpui_wgpu/src/wgpu_renderer.rs
+index eda0f128..3911f50e 100644
+--- a/crates/gpui_wgpu/src/wgpu_renderer.rs
++++ b/crates/gpui_wgpu/src/wgpu_renderer.rs
+@@ -2774,6 +2774,49 @@ mod tests {
+         Ok(())
+     }
+ 
++    /// A ground painted around a rounded quad (an inset shadow, blur 0, told the quad's
++    /// opacity: `Shadow::under`) meets the quad drawn over it without a seam: along the arc,
++    /// each pixel is as covered as the two make it. Told nothing, the two let what is behind
++    /// through where their edges meet.
++    #[cfg(target_os = "linux")]
++    #[test]
++    fn headless_renderer_paints_around_a_rounded_quad_without_a_seam() -> anyhow::Result<()> {
++        let white = Hsla {
++            h: 0.,
++            s: 0.,
++            l: 1.,
++            a: 0.5,
++        };
++        let draw = |under: f32| -> anyhow::Result<image::RgbaImage> {
++            let mut renderer = WgpuHeadlessRenderer::new()?;
++            let mut scene = Scene::default();
++            let mut quad = solid_quad(0.0, 0.0, 32.0, 32.0, white);
++            quad.corner_radii = Corners::all(ScaledPixels(12.0));
++            scene.insert_primitive(gpui::Shadow {
++                order: 0,
++                blur_radius: ScaledPixels(0.),
++                bounds: quad.bounds,
++                corner_radii: quad.corner_radii,
++                content_mask: quad.content_mask,
++                color: white,
++                element_bounds: scaled_bounds(0.0, 0.0, 16.0, 16.0),
++                element_corner_radii: Corners::default(),
++                inset: 1,
++                under,
++            });
++            scene.insert_primitive(quad);
++            scene.finish();
++            renderer.render_scene_to_image(&scene, device_size(16, 16))
++        };
++        let spread = |image: &image::RgbaImage| {
++            let values = image.pixels().map(|pixel| i32::from(pixel.0[0]));
++            values.clone().max().unwrap_or(0) - values.min().unwrap_or(0)
++        };
++        assert!(spread(&draw(0.5)?) <= 2, "one even tone along the arc");
++        assert!(spread(&draw(0.)?) > 8, "a seam where nothing is told");
++        Ok(())
++    }
++
+     /// A content mask with rounded corners keeps what is drawn within their arcs, and the rest of
+     /// the mask whole; a mask whose radii are all zero changes nothing.
+     #[cfg(target_os = "linux")]
+diff --git a/crates/gpui_windows/src/shaders.hlsl b/crates/gpui_windows/src/shaders.hlsl
+index 49bdeb44..f878de43 100644
+--- a/crates/gpui_windows/src/shaders.hlsl
++++ b/crates/gpui_windows/src/shaders.hlsl
+@@ -904,7 +904,8 @@ struct Shadow {
+     Bounds element_bounds;
+     Corners element_corner_radii;
+     uint inset;
+-    uint pad; // align to 8 bytes
++    // The opacity of what is drawn in an inset shadow's hole (`Shadow::under`).
++    float under;
+ };
+ 
+ struct ShadowVertexOutput {
+@@ -987,7 +988,10 @@ float4 shadow_fragment(ShadowFragmentInput input): SV_TARGET {
+     if (shadow.inset != 0u) {
+         // The inset shadow is the complement of the (blurred) hole rect, clipped to the element.
+         // `saturate(0.5 - d)` gives a 1-pixel antialiased edge: d <= -0.5 -> 1, d >= 0.5 -> 0.
+-        alpha = 1.0 - alpha;
++        // Where what is drawn in the hole (at opacity `under`) meets this edge, each pixel is
++        // as covered as the two make it, not less: drawn one over the other, two complementary
++        // antialiased edges would let a quarter of what is behind through at their middle.
++        alpha = (1.0 - alpha) / max(1.0 - shadow.under * alpha, 1e-4);
+         float element_distance = quad_sdf(input.position.xy, shadow.element_bounds,
+                                           shadow.element_corner_radii);
+         alpha *= saturate(0.5 - element_distance);

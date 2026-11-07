@@ -214,7 +214,7 @@ fn load_shadow(instance_id: u32) -> Shadow {
         read_bounds(&cursor),
         read_corners(&cursor),
         read_word(&cursor),
-        read_word(&cursor),
+        read_f32(&cursor),
     );
 }
 

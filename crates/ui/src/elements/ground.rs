@@ -6,26 +6,42 @@
 //! around them (`ground`), so the desktop shows through both as through
 //! the area, never through two grounds laid one on the other. Whole, the
 //! area paints under them too: nothing shows through to tell.
+//!
+//! Where a part's rounded corner meets the area's ground, the area's curve
+//! is the exact complement of the part's, told how opaque the part is
+//! (`Window::paint_around`, gpui patch 0055): two edges antialiased apart
+//! would let a seam of what is behind through. The straight edges are a
+//! path on whole device pixels, where quads are drawn.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, Bounds, Corners, Element, ElementId, FillOptions, FillRule, GlobalElementId,
-    Hsla, InspectorElementId, IntoElement, LayoutId, PathBuilder, PathStyle, Pixels, Rems, Window,
+    AnyElement, App, Bounds, ContentMask, Corners, Element, ElementId, FillOptions, FillRule,
+    GlobalElementId, Hsla, InspectorElementId, IntoElement, LayoutId, PathBuilder, PathStyle,
+    Pixels, Rems, Window, point, px, size,
 };
 
-/// Where the parts of an area are this frame, each a rounded rectangle:
-/// written as they are laid out, read as the area paints.
+/// Where the parts of an area are this frame: written as they are laid
+/// out, read as the area paints.
 #[derive(Clone, Default)]
-pub struct Holes(Rc<RefCell<Vec<(Bounds<Pixels>, Corners<Pixels>)>>>);
+pub struct Holes(Rc<RefCell<Vec<Laid>>>);
+
+/// A part as it is laid out: its rounded rectangle, on whole device
+/// pixels, and how opaque its own ground is.
+#[derive(Clone, Copy)]
+pub struct Laid {
+    pub bounds: Bounds<Pixels>,
+    pub corners: Corners<Pixels>,
+    pub under: f32,
+}
 
 impl Holes {
     pub(crate) fn clear(&self) {
         self.0.borrow_mut().clear();
     }
 
-    pub(crate) fn laid(&self) -> Vec<(Bounds<Pixels>, Corners<Pixels>)> {
+    pub(crate) fn laid(&self) -> Vec<Laid> {
         self.0.borrow().clone()
     }
 }
@@ -51,11 +67,13 @@ impl Ground {
 }
 
 /// `child` as a part of the area `holes` is of: a hole in its ground where
-/// it is laid out, rounded by `radius` as its own corners are.
-pub fn hole(holes: &Holes, radius: Rems, child: impl IntoElement) -> Hole {
+/// it is laid out, rounded by `radius` as its own corners are; `under` is
+/// how opaque its own ground is.
+pub fn hole(holes: &Holes, radius: Rems, under: f32, child: impl IntoElement) -> Hole {
     Hole {
         holes: holes.clone(),
         radius,
+        under,
         child: child.into_any_element(),
     }
 }
@@ -70,6 +88,7 @@ pub struct Ground {
 pub struct Hole {
     holes: Holes,
     radius: Rems,
+    under: f32,
     child: AnyElement,
 }
 
@@ -134,10 +153,10 @@ impl Element for Ground {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let rem = window.rem_size();
+        let bounds = window.snap_to_device_pixels(bounds);
         let corners = self
             .corners
-            .map(|radius| radius.to_pixels(rem))
+            .map(|radius| snap_length(radius.to_pixels(window.rem_size()), window))
             .clamp_radii_for_quad_size(bounds.size);
         paint_around(bounds, corners, &self.holes.laid(), self.color, window);
         self.child.paint(window, cx);
@@ -175,11 +194,14 @@ impl Element for Hole {
         window: &mut Window,
         cx: &mut App,
     ) {
+        // As the part's quad is drawn: on whole device pixels, its radius
+        // as it is written.
         let radius = self.radius.to_pixels(window.rem_size());
-        self.holes
-            .0
-            .borrow_mut()
-            .push((bounds, Corners::all(radius)));
+        self.holes.0.borrow_mut().push(Laid {
+            bounds: window.snap_to_device_pixels(bounds),
+            corners: Corners::all(radius),
+            under: self.under,
+        });
         self.child.prepaint(window, cx);
     }
 
@@ -197,12 +219,14 @@ impl Element for Hole {
     }
 }
 
-/// `color` over `bounds`, around `holes` while it lets what is behind
-/// through, under them too while it is whole.
+/// `color` over `bounds`, rounded by `corners`: around `holes` while it
+/// lets what is behind through, its straight edges a path, its own rounded
+/// corners each a quad in its corner's square, the holes' each the
+/// complement of the part there; under them too while it is whole.
 fn paint_around(
     bounds: Bounds<Pixels>,
     corners: Corners<Pixels>,
-    holes: &[(Bounds<Pixels>, Corners<Pixels>)],
+    holes: &[Laid],
     color: Hsla,
     window: &mut Window,
 ) {
@@ -210,16 +234,135 @@ fn paint_around(
         window.paint_quad(gpui::fill(bounds, color).corner_radii(corners));
         return;
     }
+    let squares: Vec<(Toward, Bounds<Pixels>)> = Toward::ALL
+        .into_iter()
+        .filter(|corner| corner.of(corners) > px(0.))
+        .map(|corner| {
+            (
+                corner,
+                corner_square(bounds, corner, corner.of(corners), window),
+            )
+        })
+        .collect();
     let mut path = PathBuilder::fill().with_style(PathStyle::Fill(
         FillOptions::default().with_fill_rule(FillRule::EvenOdd),
     ));
-    crate::elements::frame::rounded_rect(&mut path, bounds, corners);
-    for (hole, corners) in holes {
-        crate::elements::frame::rounded_rect(&mut path, *hole, *corners);
+    less_corner_squares(&mut path, bounds, &squares);
+    for hole in holes {
+        crate::elements::frame::rounded_rect(&mut path, hole.bounds, Corners::default());
     }
     match path.build() {
         Ok(path) => window.paint_path(path, color),
         // Nothing painted rather than a ground twice under the parts.
         Err(error) => tracing::warn!("cannot shape an area's ground: {error}"),
     }
+    for (_, square) in squares {
+        window.with_content_mask(Some(ContentMask::new(square)), |window| {
+            window.paint_quad(gpui::fill(bounds, color).corner_radii(corners));
+        });
+    }
+    for hole in holes {
+        paint_corners_around(hole, color, window);
+    }
+}
+
+/// `bounds` as a closed path, less the squares of its rounded corners
+/// (`squares`), which their quads paint. Clockwise.
+fn less_corner_squares(
+    path: &mut PathBuilder,
+    bounds: Bounds<Pixels>,
+    squares: &[(Toward, Bounds<Pixels>)],
+) {
+    let side = |corner: Toward| {
+        squares
+            .iter()
+            .find(|(of, _)| *of == corner)
+            .map_or(px(0.), |(_, square)| square.size.width)
+    };
+    let (l, t, r, b) = (bounds.left(), bounds.top(), bounds.right(), bounds.bottom());
+    let (tl, tr) = (side(Toward::TopLeft), side(Toward::TopRight));
+    let (br, bl) = (side(Toward::BottomRight), side(Toward::BottomLeft));
+    path.move_to(point(l + tl, t));
+    path.line_to(point(r - tr, t));
+    path.line_to(point(r - tr, t + tr));
+    path.line_to(point(r, t + tr));
+    path.line_to(point(r, b - br));
+    path.line_to(point(r - br, b - br));
+    path.line_to(point(r - br, b));
+    path.line_to(point(l + bl, b));
+    path.line_to(point(l + bl, b - bl));
+    path.line_to(point(l, b - bl));
+    path.line_to(point(l, t + tl));
+    path.line_to(point(l + tl, t + tl));
+    path.close();
+}
+
+/// A ground's curves around a part: in the square of each of its rounded
+/// corners, the complement of the part, told how opaque the part is.
+pub(crate) fn paint_corners_around(hole: &Laid, color: Hsla, window: &mut Window) {
+    for corner in Toward::ALL {
+        let radius = corner.of(hole.corners);
+        if radius > px(0.) {
+            let square = corner_square(hole.bounds, corner, radius, window);
+            window.paint_around(square, hole.bounds, hole.corners, color, hole.under);
+        }
+    }
+}
+
+/// A corner of a rectangle.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Toward {
+    TopLeft,
+    TopRight,
+    BottomRight,
+    BottomLeft,
+}
+
+impl Toward {
+    pub const ALL: [Toward; 4] = [
+        Toward::TopLeft,
+        Toward::TopRight,
+        Toward::BottomRight,
+        Toward::BottomLeft,
+    ];
+
+    /// Its radius among `corners`.
+    pub fn of(self, corners: Corners<Pixels>) -> Pixels {
+        match self {
+            Toward::TopLeft => corners.top_left,
+            Toward::TopRight => corners.top_right,
+            Toward::BottomRight => corners.bottom_right,
+            Toward::BottomLeft => corners.bottom_left,
+        }
+    }
+}
+
+/// The square at `rect`'s `corner` that holds its arc of `radius`, inside
+/// it, on whole device pixels.
+pub fn corner_square(
+    rect: Bounds<Pixels>,
+    corner: Toward,
+    radius: Pixels,
+    window: &Window,
+) -> Bounds<Pixels> {
+    let scale = window.scale_factor();
+    let side = px((f32::from(radius) * scale).ceil() / scale)
+        .min(rect.size.width)
+        .min(rect.size.height);
+    let x = match corner {
+        Toward::TopLeft | Toward::BottomLeft => rect.left(),
+        Toward::TopRight | Toward::BottomRight => rect.right() - side,
+    };
+    let y = match corner {
+        Toward::TopLeft | Toward::TopRight => rect.top(),
+        Toward::BottomRight | Toward::BottomLeft => rect.bottom() - side,
+    };
+    Bounds::new(point(x, y), size(side, side))
+}
+
+/// `length` on whole device pixels: a radius the shapes beside it meet
+/// exactly.
+pub fn snap_length(length: Pixels, window: &Window) -> Pixels {
+    let scale = window.scale_factor();
+    px((f32::from(length) * scale).round() / scale)
 }

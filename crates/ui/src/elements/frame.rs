@@ -18,6 +18,12 @@
 //! (`notch`): the row's band ends before it with a rounded corner, and its
 //! edge comes down to the files with a concave one, its fillet painted in
 //! the band's ground.
+//!
+//! While the window lets what is behind it through, the frame's straight
+//! edges are a path on whole device pixels, as quads are drawn, and its
+//! curves each the exact complement of the card's corner beside it, told
+//! how opaque the card is there (`Window::paint_around`, gpui patch 0055):
+//! no seam where they meet.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -25,7 +31,7 @@ use std::rc::Rc;
 use gpui::{
     AnyElement, App, Bounds, ContentMask, Corners, Element, ElementId, FillOptions, FillRule,
     GlobalElementId, Hsla, InspectorElementId, IntoElement, LayoutId, PathBuilder, PathStyle,
-    Pixels, Window, point, px,
+    Pixels, Window, point, px, size,
 };
 
 /// How far a card's corners are rounded where it stands apart:
@@ -67,6 +73,9 @@ struct Placed {
     on_edge: [bool; 2],
     /// The notches of its top row: at its start and at its end.
     notches: [Option<Notch>; 2],
+    /// How opaque its ground is at each corner (its row's, its foot's):
+    /// what the frame's curve beside it is told (`Window::paint_around`).
+    under: Corners<f32>,
 }
 
 /// Where a notch is cut from a card's top row, and the ground of the band
@@ -96,10 +105,12 @@ pub fn frame(cards: &Cards, ground: Hsla, cut: bool, child: impl IntoElement) ->
 }
 
 /// `child` as a card of the frame: its content kept within its corners,
-/// and a hole in the frame where it is laid out.
-pub fn card(cards: &Cards, child: impl IntoElement) -> Card {
+/// and a hole in the frame where it is laid out; `under` is how opaque its
+/// ground is at each corner, so the frame meets it there without a seam.
+pub fn card(cards: &Cards, under: Corners<f32>, child: impl IntoElement) -> Card {
     Card {
         cards: cards.clone(),
+        under,
         child: child.into_any_element(),
     }
 }
@@ -113,6 +124,7 @@ pub struct Frame {
 
 pub struct Card {
     cards: Cards,
+    under: Corners<f32>,
     child: AnyElement,
 }
 
@@ -172,6 +184,8 @@ impl Element for NotchOf {
         window: &mut Window,
         cx: &mut App,
     ) {
+        // On whole device pixels, as the card and its band are.
+        let bounds = window.snap_to_device_pixels(bounds);
         // The card it is in prepaints before what it holds: the last laid.
         if let Some(card) = self.cards.0.borrow_mut().cards.last_mut() {
             let end = (card.bounds.right() - bounds.right()).abs()
@@ -269,18 +283,22 @@ impl Element for Frame {
         let holes = self.cards.1.laid();
         paint_ground(bounds, &placed, &holes, self.ground, self.cut, window);
         for card in &placed {
-            paint_fillets(card, window);
+            paint_fillets(card, self.ground, self.cut, window);
         }
         self.child.paint(window, cx);
     }
 }
 
-/// The frame's ground over `bounds`: around `cards` when `cut`, else
-/// under them too.
+/// The frame's ground over `bounds`. While it lets what is behind through
+/// (`cut`), around the cards and the parts lying on it (`holes`): its
+/// straight edges a path on whole device pixels, its curves each the
+/// complement of a card's or a part's corner, told how opaque that is
+/// (`Window::paint_around`), so the two meet without a seam. Whole, under
+/// them all.
 fn paint_ground(
     bounds: Bounds<Pixels>,
     cards: &[Placed],
-    holes: &[(Bounds<Pixels>, Corners<Pixels>)],
+    holes: &[crate::elements::ground::Laid],
     ground: Hsla,
     cut: bool,
     window: &mut Window,
@@ -294,20 +312,26 @@ fn paint_ground(
     ));
     rounded_rect(&mut path, bounds, Corners::default());
     for card in cards {
-        outline(&mut path, card);
+        square_outline(&mut path, card);
     }
-    for (hole, corners) in holes {
-        rounded_rect(&mut path, *hole, *corners);
+    for hole in holes {
+        rounded_rect(&mut path, hole.bounds, Corners::default());
     }
     match path.build() {
         Ok(path) => window.paint_path(path, ground),
         // Nothing painted rather than a ground twice under the cards.
         Err(error) => tracing::warn!("cannot shape the window's frame: {error}"),
     }
+    for card in cards {
+        paint_card_corners(card, ground, window);
+    }
+    for hole in holes {
+        crate::elements::ground::paint_corners_around(hole, ground, window);
+    }
 }
 
-/// A closed rectangle, each corner rounded by its radius, held to half its
-/// shorter side.
+/// `rect` as a closed path, its corners rounded by `corners`, each held to
+/// half its shorter side.
 pub(crate) fn rounded_rect(
     path: &mut PathBuilder,
     bounds: Bounds<Pixels>,
@@ -334,95 +358,163 @@ pub(crate) fn rounded_rect(
     path.close();
 }
 
-/// A card's outline: a rounded rectangle, less its notches (`notch`),
-/// each a rounded corner where the row's band ends and a concave one where
-/// its edge comes down to the files. Clockwise.
-fn outline(path: &mut PathBuilder, card: &Placed) {
+/// A card's shape, its corners square, as a hole of the frame's path:
+/// its rectangle, or with notches its band, what is under them, and the
+/// square of each concave corner (`paint_fillets` paints those), on whole
+/// device pixels. Clockwise.
+fn square_outline(path: &mut PathBuilder, card: &Placed) {
     if !card.notched() {
-        rounded_rect(path, card.bounds, card.corners);
+        rounded_rect(path, card.bounds, Corners::default());
         return;
     }
     let (left, top) = (card.bounds.left(), card.bounds.top());
     let (right, bottom) = (card.bounds.right(), card.bounds.bottom());
-    let (r, c) = (card.radius, card.corners);
-    // The files' corner under a notch: square on the window's edge.
-    let under = |on_edge: bool| if on_edge { px(0.) } else { r };
-    let [on_left, on_right] = card.on_edge;
-    let arc = |path: &mut PathBuilder, radius: Pixels, sweep: bool, to| {
-        if radius > px(0.) {
-            path.arc_to(point(radius, radius), px(0.), false, sweep, to);
-        }
-    };
+    let r = card.radius;
     let [start, end] = card.notches;
     let start = start.map(|n| (n.bounds.right(), n.bounds.bottom()));
     let end = end.map(|n| (n.bounds.left(), n.bounds.bottom()));
-    // Along the top, from the start notch's band to the end notch's.
-    let (from, top_left) = start.map_or((left, c.top_left), |(x, _)| (x, r));
-    let (to, top_right) = end.map_or((right, c.top_right), |(x, _)| (x, r));
-    path.move_to(point(from + top_left, top));
-    path.line_to(point(to - top_right, top));
-    arc(path, top_right, true, point(to, top + top_right));
-    if let Some((x, low)) = end {
-        let corner = under(on_right);
-        path.line_to(point(x, low - r));
-        arc(path, r, false, point(x + r, low));
-        path.line_to(point(right - corner, low));
-        arc(path, corner, true, point(right, low + corner));
+    path.move_to(point(start.map_or(left, |(x, _)| x), top));
+    match end {
+        Some((x, low)) => {
+            path.line_to(point(x, top));
+            path.line_to(point(x, low - r));
+            path.line_to(point(x + r, low - r));
+            path.line_to(point(x + r, low));
+            path.line_to(point(right, low));
+        }
+        None => path.line_to(point(right, top)),
     }
-    path.line_to(point(right, bottom - c.bottom_right));
-    arc(
-        path,
-        c.bottom_right,
-        true,
-        point(right - c.bottom_right, bottom),
-    );
-    path.line_to(point(left + c.bottom_left, bottom));
-    arc(
-        path,
-        c.bottom_left,
-        true,
-        point(left, bottom - c.bottom_left),
-    );
-    if let Some((x, low)) = start {
-        let corner = under(on_left);
-        path.line_to(point(left, low + corner));
-        arc(path, corner, true, point(left + corner, low));
-        path.line_to(point(x - r, low));
-        arc(path, r, false, point(x, low - r));
-        path.line_to(point(x, top + top_left));
-    } else {
-        path.line_to(point(left, top + top_left));
+    path.line_to(point(right, bottom));
+    path.line_to(point(left, bottom));
+    match start {
+        Some((x, low)) => {
+            path.line_to(point(left, low));
+            path.line_to(point(x - r, low));
+            path.line_to(point(x - r, low - r));
+            path.line_to(point(x, low - r));
+        }
+        None => path.line_to(point(left, top)),
     }
-    arc(path, top_left, true, point(from + top_left, top));
     path.close();
 }
 
-/// The fillets of a card's notches: the band's ground between its edge
-/// coming down and the files, under the concave corner.
-fn paint_fillets(card: &Placed, window: &mut Window) {
+/// The frame's curves beside a card's rounded corners: in the square of
+/// each, the complement of the rectangle the corner rounds (the card, its
+/// band beside a notch, what is under a notch), told how opaque the card
+/// is there.
+fn paint_card_corners(card: &Placed, ground: Hsla, window: &mut Window) {
+    use crate::elements::ground::{Toward, corner_square};
+    let b = card.bounds;
+    let (r, c, under) = (card.radius, card.corners, card.under);
+    let [on_left, on_right] = card.on_edge;
+    let [start, end] = card.notches;
+    let around = |rect: Bounds<Pixels>,
+                  corners: Corners<Pixels>,
+                  corner: Toward,
+                  opacity: f32,
+                  window: &mut Window| {
+        let radius = corner.of(corners);
+        if radius > px(0.) {
+            let square = corner_square(rect, corner, radius, window);
+            window.paint_around(square, rect, corners, ground, opacity);
+        }
+    };
+    if !card.notched() {
+        around(b, c, Toward::TopLeft, under.top_left, window);
+        around(b, c, Toward::TopRight, under.top_right, window);
+        around(b, c, Toward::BottomRight, under.bottom_right, window);
+        around(b, c, Toward::BottomLeft, under.bottom_left, window);
+        return;
+    }
+    // The band, between the notches, over what is under them.
+    let low = start
+        .iter()
+        .chain(end.iter())
+        .map(|n| n.bounds.bottom())
+        .fold(b.top(), Pixels::max);
+    let band = Bounds::from_corners(
+        point(start.map_or(b.left(), |n| n.bounds.right()), b.top()),
+        point(end.map_or(b.right(), |n| n.bounds.left()), low),
+    );
+    let band_corners = Corners {
+        top_left: if start.is_some() { r } else { c.top_left },
+        top_right: if end.is_some() { r } else { c.top_right },
+        ..Corners::default()
+    };
+    around(band, band_corners, Toward::TopLeft, under.top_left, window);
+    around(
+        band,
+        band_corners,
+        Toward::TopRight,
+        under.top_right,
+        window,
+    );
+    // Under the notches: its corner beside one is square on the window's
+    // edge, round elsewhere.
+    let body = Bounds::from_corners(point(b.left(), low), b.bottom_right());
+    let under_notch = |notch: bool, on_edge: bool| if notch && !on_edge { r } else { px(0.) };
+    let body_corners = Corners {
+        top_left: under_notch(start.is_some(), on_left),
+        top_right: under_notch(end.is_some(), on_right),
+        ..c
+    };
+    around(
+        body,
+        body_corners,
+        Toward::TopLeft,
+        under.bottom_left,
+        window,
+    );
+    around(
+        body,
+        body_corners,
+        Toward::TopRight,
+        under.bottom_right,
+        window,
+    );
+    around(
+        body,
+        body_corners,
+        Toward::BottomRight,
+        under.bottom_right,
+        window,
+    );
+    around(
+        body,
+        body_corners,
+        Toward::BottomLeft,
+        under.bottom_left,
+        window,
+    );
+}
+
+/// The fillets of a card's notches: in the square of each concave corner,
+/// the band's ground around a disc of the frame, the band told how opaque
+/// the frame is (nothing while it is whole and under it all), so the two
+/// meet without a seam.
+fn paint_fillets(card: &Placed, frame: Hsla, cut: bool, window: &mut Window) {
     let r = card.radius;
     for (index, notch) in card.notches.iter().enumerate() {
         let Some(notch) = notch else { continue };
         let low = notch.bounds.bottom();
-        let mut path = PathBuilder::fill();
-        if index == 0 {
-            // At the start: the band's left edge, the fillet left of it.
+        // At the start, the band's left edge, the fillet left of it; at
+        // the end, its right edge, the fillet right of it.
+        let (square_left, disc_left) = if index == 0 {
             let x = notch.bounds.right();
-            path.move_to(point(x, low - r));
-            path.line_to(point(x, low));
-            path.line_to(point(x - r, low));
-            path.arc_to(point(r, r), px(0.), false, false, point(x, low - r));
+            (x - r, x - 2. * r)
         } else {
             let x = notch.bounds.left();
-            path.move_to(point(x, low - r));
-            path.line_to(point(x, low));
-            path.line_to(point(x + r, low));
-            path.arc_to(point(r, r), px(0.), false, true, point(x, low - r));
+            (x, x)
+        };
+        let square = Bounds::new(point(square_left, low - r), size(r, r));
+        let disc = Bounds::new(point(disc_left, low - 2. * r), size(2. * r, 2. * r));
+        if cut {
+            window.with_content_mask(Some(ContentMask::new(square)), |window| {
+                window.paint_quad(gpui::fill(disc, frame).corner_radii(Corners::all(r)));
+            });
         }
-        path.close();
-        if let Ok(path) = path.build() {
-            window.paint_path(path, notch.ground);
-        }
+        let under = if cut { frame.a } else { 0. };
+        window.paint_around(square, disc, Corners::all(r), notch.ground, under);
     }
 }
 
@@ -483,7 +575,13 @@ impl Element for Card {
         window: &mut Window,
         cx: &mut App,
     ) -> Corners<Pixels> {
-        let radius = gpui::rems(RADIUS_REMS).to_pixels(window.rem_size());
+        // On whole device pixels, its radius too, as the quads it holds are
+        // drawn: the frame's straight edges meet them exactly.
+        let radius = crate::elements::ground::snap_length(
+            gpui::rems(RADIUS_REMS).to_pixels(window.rem_size()),
+            window,
+        );
+        let bounds = window.snap_to_device_pixels(bounds);
         let corners = {
             let mut laid = self.cards.0.borrow_mut();
             let corners = corners(bounds, laid.frame, radius);
@@ -494,6 +592,7 @@ impl Element for Card {
                 radius,
                 on_edge: [left, right],
                 notches: [None, None],
+                under: self.under,
             });
             corners
         };
@@ -512,7 +611,7 @@ impl Element for Card {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let mask = mask(bounds, *corners);
+        let mask = mask(window.snap_to_device_pixels(bounds), *corners);
         window.with_content_mask(Some(mask), |window| self.child.paint(window, cx));
     }
 }

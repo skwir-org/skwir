@@ -618,7 +618,10 @@ pub struct Shadow {
     pub element_corner_radii: Corners<ScaledPixels>,
     /// 0 = drop shadow (rendered outside the element), 1 = inset shadow (rendered inside).
     pub inset: u32,
-    pub pad: u32, // align to 8 bytes
+    /// For an inset shadow, the opacity of what is drawn in its hole, before or after it
+    /// (`Window::paint_around`): their antialiased edges then add up to a whole pixel where they
+    /// meet. 0 for none, the plain complement.
+    pub under: f32,
 }
 
 impl From<Shadow> for Primitive {
