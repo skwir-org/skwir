@@ -21,6 +21,7 @@
 
 use crate::sizes::TextSizes;
 use crate::sizes::sized;
+use crate::theme::Chosen;
 use std::collections::{BTreeMap, HashMap};
 
 use gpui::{AnyElement, Context, ExternalPaths, MouseButton, SharedString, div, prelude::*, px};
@@ -996,9 +997,7 @@ pub fn render(
                 gpui::transparent_black()
             })
             .when(busy.is_none(), gpui::Styled::cursor_pointer)
-            .when(is_current, |d| {
-                d.bg(theme.selection_bg).text_color(theme.selection_text)
-            })
+            .when(is_current, |d| d.chosen(&theme))
             .when(!is_current, |d| d.hover(move |s| s.bg(hover)))
             .on_click(cx.listener({
                 let busy = busy.is_some();

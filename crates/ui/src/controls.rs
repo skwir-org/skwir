@@ -9,6 +9,7 @@
 
 use crate::sizes::TextSizes;
 use crate::sizes::sized;
+use crate::theme::Chosen;
 use gpui::{
     AnyElement, Div, Entity, FocusHandle, SharedString, Stateful, div, prelude::*, px, svg,
 };
@@ -119,9 +120,7 @@ pub fn segment(
         .text_body()
         .whitespace_nowrap()
         .cursor_pointer()
-        .when(selected, |d| {
-            d.bg(theme.selection_bg).text_color(theme.selection_text)
-        })
+        .when(selected, |d| d.chosen(theme))
         .when(!selected, |d| {
             d.text_color(theme.text_muted).hover(move |s| s.bg(hover))
         })

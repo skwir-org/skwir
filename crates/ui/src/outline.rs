@@ -6,6 +6,7 @@
 //! way, and kept in view as the reader moves.
 use crate::sizes::TextSizes;
 use crate::sizes::sized;
+use crate::theme::Chosen;
 use std::cell::Cell;
 use std::sync::Arc;
 
@@ -248,9 +249,7 @@ fn row(
         // shown, which is the selection's colors.
         .border_1()
         .border_color(gpui::transparent_black())
-        .when(at.current, |d| {
-            d.bg(theme.selection_bg).text_color(theme.selection_text)
-        })
+        .when(at.current, |d| d.chosen(theme))
         .when(command.is_some(), |d| {
             d.cursor_pointer()
                 .tab_index(0)

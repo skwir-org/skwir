@@ -11,6 +11,7 @@
 //! draws its own shape around these (a row, a tile, a card), never its
 //! own copy of them.
 
+use crate::theme::Chosen;
 use std::path::PathBuf;
 
 use gpui::{AnyElement, Context, Div, Stateful, prelude::*};
@@ -111,9 +112,7 @@ pub fn highlight(el: Stateful<Div>, look: &Look, theme: &Theme) -> Stateful<Div>
             (false, Some(ring)) => theme.tag(ring),
             (false, None) => gpui::transparent_black(),
         })
-        .when(look.selected, |d| {
-            d.bg(theme.selection_bg).text_color(theme.selection_text)
-        })
+        .when(look.selected, |d| d.chosen(theme))
         .when_some(look.ring.filter(|_| !look.selected), |d, ring| {
             d.bg(theme.tag_fill(ring))
         })

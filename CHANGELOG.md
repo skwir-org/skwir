@@ -24,6 +24,14 @@
   they write it again (a new wallpaper); the color schemes of qtengine and
   hyprqt6engine beside qt6ct's; and, on Omarchy, its theme. Where the sheet names
   a sidebar color of its own (Noctalia's, adw-gtk3's), the cards lie on it.
+- **Selected text reads on a dark selection**: where the desktop's selection is
+  dark in a light look (Noctalia's), the text selected in a field, a preview,
+  the code view, an inspection's table or bytes and the terminal is written in
+  the selection's own text color, as Dolphin writes it, instead of staying dark
+  on it; a line pointed at and a drop's target are a fainter band there, so
+  their text still reads. A button that is on, under the pointer, turns its
+  icon back with its words, instead of leaving a white icon on the hover's
+  light ground.
 - **See-through fields**: with the window's background let through, the address
   field, the view buttons and the tab shown let it through as their bar does,
   instead of staying solid.

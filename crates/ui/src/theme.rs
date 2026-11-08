@@ -49,8 +49,12 @@
 //! - color: the fields of [`Theme`]. `accent_text` is the accent written
 //!   as text (a link, a key, what is chosen on `term`); `accent` marks and
 //!   fills. State colors are tokens too: `hover`, laid over whatever is
-//!   under the pointer on any ground, `selection_*` for what is chosen,
-//!   `success`/`warning`/`error` for outcomes, `scrim` behind a dialog,
+//!   under the pointer on any ground, `selection_*` for what is chosen
+//!   (`selection_bg` under it, its text always `selection_text`, which
+//!   reads there: `Chosen::chosen`, or a run of text recolored where only
+//!   part of it is chosen; never `text` left on a desktop's selection,
+//!   which may be dark in a light look), `success`/`warning`/`error` for
+//!   outcomes, `scrim` behind a dialog,
 //!   `stage` behind a picture, a page or a film on the whole screen,
 //!   `find_*` for what a find found in text,
 //!   `drop_target` under a drag, `on_accent` for text and glyphs on an
@@ -181,7 +185,9 @@ pub struct Theme {
     /// in either look, as a cinema's or a slide projector's.
     pub stage: Hsla,
     /// A line or row pointed at without being chosen: the line clicked in
-    /// the code view, the setting a link named.
+    /// the code view, the setting a link named. The selection's ground at
+    /// half its opacity, or less where `text` and `text_muted`, drawn on it
+    /// as they are, would not read on it laid on `bg` and `surface`.
     pub highlight: Hsla,
     /// An edge that is dragged (the preview panel's side, the dock's top)
     /// under the pointer.
@@ -204,7 +210,9 @@ pub struct Theme {
     pub find_match: Hsla,
     pub find_current: Hsla,
     pub find_current_text: Hsla,
-    /// A folder, row or place that a drag would drop into.
+    /// A folder, row or place that a drag would drop into: the selection's
+    /// ground at 60 %, or less where the text on it would not read, as
+    /// `highlight`.
     pub drop_target: Hsla,
     /// Text and glyphs on an `accent` fill: white, or dark on a light
     /// accent.
@@ -917,6 +925,24 @@ impl Theme {
         let termed = [grounds.as_slice(), &[bg.blend(term), surface.blend(term)]].concat();
         let accent_text = guarded("accent_text", accent, &termed, text_ratio);
         let outcome = |name, color| guarded(name, color, &[bg, surface], text_ratio);
+        // The selection's ground laid on what it is on as a band (a line
+        // pointed at, a drop's target), at most `most` opaque, less where the
+        // text and the muted text drawn there as they are would not read (a
+        // desktop's selection dark in a light look), in twentieths.
+        let band = |most: f32| {
+            (1..=20)
+                .rev()
+                .map(|step| {
+                    #[allow(clippy::cast_precision_loss)] // a step of twenty
+                    selection_bg.opacity(most.min(step as f32 / 20.))
+                })
+                .find(|band| {
+                    [text, text_muted].iter().all(|t| {
+                        color::reads(*t, &[bg.blend(*band), surface.blend(*band)], text_ratio)
+                    })
+                })
+                .unwrap_or_else(|| selection_bg.opacity(0.))
+        };
 
         Theme {
             bg,
@@ -941,7 +967,7 @@ impl Theme {
             warning: outcome("warning", base.warning),
             scrim: kept.scrim,
             stage: kept.stage,
-            highlight: selection_bg.opacity(0.5),
+            highlight: band(0.5),
             handle: accent.opacity(0.35),
             band: accent.opacity(0.14),
             band_edge: accent.opacity(0.8),
@@ -951,7 +977,7 @@ impl Theme {
             find_match: kept.find_match,
             find_current: kept.find_current,
             find_current_text: kept.find_current_text,
-            drop_target: selection_bg.opacity(0.6),
+            drop_target: band(0.6),
             on_accent,
             block_text: kept.block_text,
             tags: kept.tags,
@@ -1367,6 +1393,18 @@ impl Theme {
     }
 }
 
+/// What is chosen (a row, a chip, a highlighted item), drawn so:
+/// `selection_bg` under it and its text `selection_text`, which the guard
+/// keeps reading there. A desktop's selection may be dark in a light look
+/// (Noctalia's), where `text` left on it does not read.
+pub trait Chosen: gpui::Styled + Sized {
+    fn chosen(self, theme: &Theme) -> Self {
+        self.bg(theme.selection_bg).text_color(theme.selection_text)
+    }
+}
+
+impl<T: gpui::Styled> Chosen for T {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1747,6 +1785,43 @@ mod tests {
             (lines.bar, lines.sunken_bar),
             (lines.surface, lines.surface)
         );
+    }
+
+    /// A desktop's selection dark in a light look (Noctalia's teal, its
+    /// text white): what is chosen is written in its own text color, and
+    /// a line pointed at is a fainter band, on which the text and the
+    /// muted text still read.
+    #[test]
+    fn a_dark_selection_is_written_on_in_its_own_color() {
+        let color = |value: u32| Hsla::from(rgb(value));
+        let base = Base {
+            bg: color(0xfaf9f9),
+            surface: color(0xeeeeed),
+            text: color(0x1a1c1c),
+            selection: Some((color(0x416165), color(0xffffff))),
+            ..Base::own(false)
+        };
+        let theme = Theme::derive(&base, Contrast::Normal);
+        assert!(color::reads(
+            theme.selection_text,
+            &[theme.selection_bg],
+            4.5
+        ));
+        assert!(!color::reads(theme.text, &[theme.selection_bg], 4.5));
+        assert!(theme.drop_target.a < 0.6);
+        assert!(theme.highlight.a < 0.5);
+        for t in [theme.text, theme.text_muted] {
+            let on = [
+                theme.bg.blend(theme.highlight),
+                theme.surface.blend(theme.highlight),
+            ];
+            assert!(color::reads(t, &on, 4.5));
+        }
+        // Skwir's own light look keeps its bands; its dark one's muted text
+        // read on neither at half and more (0.4 each).
+        let (light, dark) = (Theme::light(), Theme::dark());
+        assert!((light.highlight.a - 0.5).abs() < 1e-3 && (light.drop_target.a - 0.6).abs() < 1e-3);
+        assert!(dark.highlight.a < 0.5 && dark.drop_target.a < 0.6);
     }
 
     #[test]

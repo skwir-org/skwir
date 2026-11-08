@@ -32,6 +32,7 @@
 //!   (saving then asks whether to replace it, `op::clash`); where the PDF
 //!   goes when no folder or no name is typed; that a folder alone is
 //!   held; else the field's help.
+use crate::theme::Chosen;
 use std::collections::HashMap;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -793,9 +794,7 @@ pub(super) fn popover(
             .flex()
             .flex_col()
             .cursor_pointer()
-            .when(highlighted, |d| {
-                d.bg(theme.selection_bg).text_color(theme.selection_text)
-            })
+            .when(highlighted, |d| d.chosen(theme))
             .when(!highlighted, |d| d.hover(|s| s.bg(theme.hover)))
             .child(div().text_body().child(folder.title.clone()))
             .when(!folder.detail.is_empty(), |d| {

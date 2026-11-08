@@ -30,6 +30,8 @@ pub struct MarkdownStyle {
     pub text_muted: Hsla,
     pub link: Hsla,
     pub selection_bg: Hsla,
+    /// What is selected is written in it, on `selection_bg` (`Chosen`).
+    pub selection_text: Hsla,
     pub border: Hsla,
     pub body_size: f32,
     pub line_height: f32,
@@ -121,6 +123,7 @@ impl MarkdownStyle {
             text_muted: theme.text_muted,
             link: theme.accent_text,
             selection_bg: theme.selection_bg,
+            selection_text: theme.selection_text,
             border: theme.border,
             body_size,
             line_height: if reading { 1.5 } else { 1.35 },

@@ -6,6 +6,7 @@
 
 use crate::sizes::TextSizes;
 use crate::sizes::sized;
+use crate::theme::Chosen;
 use gpui::{
     AnyElement, ClickEvent, Context, Entity, Focusable, MouseButton, SharedString, Window, div,
     prelude::*, px, relative,
@@ -396,9 +397,7 @@ impl SettingsView {
                     } else {
                         gpui::transparent_black()
                     })
-                    .when(selected, |d| {
-                        d.bg(theme.selection_bg).text_color(theme.selection_text)
-                    })
+                    .when(selected, |d| d.chosen(theme))
                     .when(!selected, |d| d.hover(move |s| s.bg(hover)))
                     .when(!icon.is_empty(), |d| {
                         d.child(controls::glyph(
@@ -1073,9 +1072,7 @@ impl SettingsView {
                                     .gap_2()
                                     .rounded_sm()
                                     .cursor_pointer()
-                                    .when(highlighted, |d| {
-                                        d.bg(theme.selection_bg).text_color(theme.selection_text)
-                                    })
+                                    .when(highlighted, |d| d.chosen(&theme))
                                     .child(div().w(px(14.)).flex_none().when(
                                         *choice == value,
                                         |d| {

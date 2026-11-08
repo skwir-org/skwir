@@ -82,9 +82,12 @@ working in an area, also read that area's rules (see
 - **Tokens.** Colors, radii, shadows and fonts come from `theme.rs` (its
   header lists the scales). State colors are tokens too (`hover`,
   `selection_*`, `success`/`warning`/`error`, `scrim`); never derive one
-  locally. A new color token is derived in `Theme::derive` from the
-  look's `Base`, its contrast guarded, or kept as Skwir's (`Kept`) when no
-  desktop's colors change what it means (ADR-071). A font is a role
+  locally. Text on `selection_bg` is `selection_text`, always
+  (`theme::Chosen::chosen`; a run recolored where part of a text is
+  chosen): a desktop's selection may be dark in a light look. A new
+  color token is derived in `Theme::derive` from the look's `Base`, its
+  contrast guarded, or kept as Skwir's (`Kept`) when no desktop's colors
+  change what it means (ADR-071). A font is a role
   (`theme.font`, `reading_font`, `code_font`, ADR-073), read where it is
   drawn and never copied: a change shows at once. A text size is a named
   size (`sizes::TextSizes`: Body by default, for all text you read or

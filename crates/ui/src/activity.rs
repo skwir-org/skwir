@@ -18,6 +18,7 @@
 
 use crate::sizes::TextSizes;
 use crate::sizes::sized;
+use crate::theme::Chosen;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
@@ -1210,9 +1211,7 @@ pub fn strip(
             .border_color(gpui::transparent_black())
             .cursor_pointer()
             .text_color(if error { theme.error } else { theme.text })
-            .when(tinted, |d| {
-                d.bg(theme.selection_bg).text_color(theme.selection_text)
-            })
+            .when(tinted, |d| d.chosen(theme))
             .hover({
                 let hover = theme.hover;
                 move |s| s.bg(hover)

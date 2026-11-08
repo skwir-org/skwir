@@ -1100,6 +1100,9 @@ impl Element for TextElement {
             runs
         };
 
+        // What is selected is written in the selection's own text color, on
+        // the selection painted under it (`Chosen`).
+        let runs = selected_runs(runs, &selected_range, theme.selection_text);
         let font_size = style.font_size.to_pixels(window.rem_size());
         let line = window
             .text_system()
@@ -1359,6 +1362,42 @@ fn kept_before(styles: &mut Vec<(Range<usize>, Paint)>, at: usize) {
 /// `run` cut where `styles` draw parts of `text` otherwise. The styles are
 /// taken in order of their start; one that overlaps the one before, or
 /// does not fall on character boundaries, is left out.
+/// `runs` with what lies in `range` (bytes of the text they cover) written
+/// as selected: in `color`, and on nothing but the selection painted under
+/// it (a term's tint would hide it).
+fn selected_runs(runs: Vec<TextRun>, range: &Range<usize>, color: gpui::Hsla) -> Vec<TextRun> {
+    if range.is_empty() {
+        return runs;
+    }
+    let mut out = Vec::with_capacity(runs.len() + 2);
+    let mut at = 0;
+    for run in runs {
+        let (start, end) = (at, at + run.len);
+        at = end;
+        // Its parts before the range, within it, after it.
+        let cuts = [
+            start,
+            range.start.clamp(start, end),
+            range.end.clamp(start, end),
+            end,
+        ];
+        for (part, ends) in cuts.windows(2).enumerate() {
+            if ends[1] > ends[0] {
+                let mut piece = TextRun {
+                    len: ends[1] - ends[0],
+                    ..run.clone()
+                };
+                if part == 1 {
+                    piece.color = color;
+                    piece.background_color = None;
+                }
+                out.push(piece);
+            }
+        }
+    }
+    out
+}
+
 fn styled_runs(run: &TextRun, text: &str, styles: &[(Range<usize>, Paint)]) -> Vec<TextRun> {
     let mut sorted: Vec<&(Range<usize>, Paint)> = styles.iter().collect();
     sorted.sort_by_key(|(range, _)| range.start);
@@ -1404,8 +1443,37 @@ fn styled_runs(run: &TextRun, text: &str, styles: &[(Range<usize>, Paint)]) -> V
 #[cfg(test)]
 mod tests {
     use super::{
-        History, autoscroll_x, scrolled, snapped, typed_at, unit_at, units, utf16_to_utf8,
+        History, autoscroll_x, scrolled, selected_runs, snapped, typed_at, unit_at, units,
+        utf16_to_utf8,
     };
+
+    /// What is selected is written in the selection's text color, on the
+    /// selection alone, cut out of the runs it falls in; the rest is as it
+    /// was (a term's tint, its color).
+    #[test]
+    fn the_selected_text_is_written_in_the_selection_s_color() {
+        let run = |len, color: gpui::Hsla| gpui::TextRun {
+            len,
+            font: gpui::font("Inter"),
+            color,
+            background_color: Some(gpui::red()),
+            underline: None,
+            strikethrough: None,
+            position: gpui::RunPosition::Baseline,
+        };
+        let (a, b, on) = (gpui::black(), gpui::blue(), gpui::white());
+        let runs = selected_runs(vec![run(5, a), run(5, b)], &(3..7), on);
+        let parts: Vec<_> = runs
+            .iter()
+            .map(|r| (r.len, r.color, r.background_color.is_some()))
+            .collect();
+        assert_eq!(
+            parts,
+            [(3, a, true), (2, on, false), (2, on, false), (3, b, true)]
+        );
+        // Nothing selected: the runs as they were.
+        assert_eq!(selected_runs(vec![run(5, a)], &(2..2), on).len(), 1);
+    }
 
     #[test]
     fn styles_cut_the_run_where_they_fall_and_leave_out_what_does_not_fit() {

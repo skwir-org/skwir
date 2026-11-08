@@ -16,6 +16,7 @@
 //! Wider than the pane, the columns scroll sideways, as Finder's do, and
 //! follow their right end, where the folder shown is (`follow_end`).
 
+use crate::theme::Chosen;
 use std::cell::{Cell, RefCell};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -393,9 +394,7 @@ fn side_column(
                     .items_center()
                     .gap_2()
                     .px_2()
-                    .when(is_on_path, |d| {
-                        d.bg(theme.selection_bg).text_color(theme.selection_text)
-                    })
+                    .when(is_on_path, |d| d.chosen(&theme))
                     .when(!is_on_path, |d| d.hover(|s| s.bg(theme.hover)))
                     // Cut, it is dimmed here as in the pane's own column.
                     .when(

@@ -4,7 +4,7 @@ use crate::{
     elements::zoom_wheel::{self, Zoomed},
     preview::{PreviewContent, PreviewPhase},
     shell::Shell,
-    theme::Theme,
+    theme::{Chosen, Theme},
     toolbar::Button,
 };
 use gpui::{AnyElement, Context, ListAlignment, ListState, Window, div, prelude::*, px};
@@ -3986,7 +3986,7 @@ pub fn content(
                 a11y,
             );
             if chosen {
-                row = row.bg(theme.selection_bg);
+                row = row.chosen(theme);
             }
             row.into_any_element()
         }
@@ -4424,7 +4424,7 @@ pub(crate) fn hex_row(
         .py(px(1.))
         .whitespace_nowrap()
         .when(index % 2 == 1, |d| d.bg(theme.on_bg(theme.zebra)))
-        .when(selected, |d| d.bg(theme.selection_bg))
+        .when(selected, |d| d.chosen(theme))
         .when(!selected, |d| d.hover(|d| d.bg(theme.hover)));
     for (column, cell) in row.cells.iter().enumerate() {
         line = line.child(
@@ -4433,7 +4433,7 @@ pub(crate) fn hex_row(
                 .w(px(column_width(None, InspectionKind::Hex, column, size)))
                 .flex_none()
                 .when(column < 2, |d| d.border_r_1().border_color(theme.border))
-                .child(hex_cell(cell, column, theme)),
+                .child(hex_cell(cell, column, selected, theme)),
         );
     }
     line.cursor_pointer().on_click(move |_, window, cx| {
@@ -4472,10 +4472,12 @@ pub(crate) fn said_hex(
         .into_any_element()
 }
 
-fn hex_cell(text: &str, column: usize, theme: &Theme) -> AnyElement {
+fn hex_cell(text: &str, column: usize, selected: bool, theme: &Theme) -> AnyElement {
     // Offsets and bytes are the data; only what stands for nothing is dimmed:
-    // zero bytes, and the dot of an unprintable one.
+    // zero bytes, and the dot of an unprintable one. Selected, the row's
+    // text is the selection's, all of it.
     let highlights = match column {
+        _ if selected => Vec::new(),
         0 => Vec::new(),
         1 => text
             .match_indices("00")

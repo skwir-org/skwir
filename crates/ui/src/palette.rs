@@ -3,6 +3,7 @@
 
 use crate::sizes::TextSizes;
 use crate::sizes::sized;
+use crate::theme::Chosen;
 use std::sync::OnceLock;
 
 use gpui::{AnyElement, Context, Entity, Subscription, Window, div, prelude::*};
@@ -651,9 +652,7 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                     .items_center()
                     .gap_3()
                     .cursor_pointer()
-                    .when(hl, |d| {
-                        d.bg(theme.selection_bg).text_color(theme.selection_text)
-                    })
+                    .when(hl, |d| d.chosen(&theme))
                     .when(!hl, |d| d.hover(|s| s.bg(theme.hover)))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         if let Some(p) = &mut this.palette {

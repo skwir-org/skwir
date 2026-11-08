@@ -42,6 +42,8 @@ pub struct Colors {
     pub bg: Hsla,
     pub ansi: [Hsla; 16],
     pub selection: Hsla,
+    /// What is selected is written in it, on `selection` (`Chosen`).
+    pub on_selection: Hsla,
     /// A link's underline, and a label's fill.
     pub link: Hsla,
     /// A label's text, on `link`.
@@ -209,6 +211,38 @@ fn style_font(font: &Font, attrs: Attrs) -> Font {
     font
 }
 
+/// `run` cut where the columns `span` selects (first to last) begin and
+/// end, each part said selected or not. An ASCII run is a column a byte;
+/// anything else is a character alone in its run, selected where it
+/// starts (the terminal's `Line::push`).
+fn selection_parts(run: &Run, span: Option<(u16, u16)>) -> Vec<(Run, bool)> {
+    let end = run.col + run.cells;
+    let Some((from, to)) = span.filter(|&(from, to)| to >= run.col && from < end) else {
+        return vec![(run.clone(), false)];
+    };
+    if !run.text.is_ascii() || run.text.len() != usize::from(run.cells) {
+        return vec![(run.clone(), (from..=to).contains(&run.col))];
+    }
+    let cuts = [run.col, from.max(run.col), (to + 1).min(end), end];
+    cuts.windows(2)
+        .enumerate()
+        .filter(|(_, ends)| ends[1] > ends[0])
+        .map(|(part, ends)| {
+            let (a, b) = (
+                usize::from(ends[0] - run.col),
+                usize::from(ends[1] - run.col),
+            );
+            let piece = Run {
+                col: ends[0],
+                cells: ends[1] - ends[0],
+                text: run.text[a..b].to_owned(),
+                style: run.style,
+            };
+            (piece, part == 1)
+        })
+        .collect()
+}
+
 impl TerminalGrid {
     fn text_run(&self, run: &Run, color: Hsla) -> TextRun {
         let attrs = run.style.attrs;
@@ -339,26 +373,8 @@ impl Element for TerminalGrid {
         // fits, and the next screen fills the rest.
         let mut backgrounds = Vec::new();
         let mut text = Vec::new();
-        for (row, runs) in self.screen.lines.iter().enumerate().take(usize::from(rows)) {
-            let row = row as u16;
-            for run in runs.iter().filter(|run| run.col < cols) {
-                let cells = run.cells.min(cols - run.col);
-                if run.style.bg != Color::Background {
-                    backgrounds.push((
-                        geometry.cell_bounds(row, run.col, cells),
-                        self.colors.of(run.style.bg),
-                    ));
-                }
-                if run.text.trim().is_empty() {
-                    continue;
-                }
-                let origin = geometry.cell_bounds(row, run.col, cells).origin;
-                text.push((
-                    origin,
-                    self.shape(window, run, self.foreground(run), cell.width),
-                ));
-            }
-        }
+        // The columns selected on each row, first to last.
+        let mut selected = vec![None; usize::from(rows)];
         if let Some(selection) = self.screen.selection {
             let (start, end) = (selection.start, selection.end);
             for row in start.0..=end.0.min(rows.saturating_sub(1)) {
@@ -371,12 +387,45 @@ impl Element for TerminalGrid {
                     )
                 };
                 if from <= to && from < cols {
-                    let cells = to.min(cols - 1) - from + 1;
+                    selected[usize::from(row)] = Some((from, to.min(cols - 1)));
+                }
+            }
+        }
+        for (row, runs) in self.screen.lines.iter().enumerate().take(usize::from(rows)) {
+            let span = selected[row];
+            let row = row as u16;
+            for run in runs.iter().filter(|run| run.col < cols) {
+                let cells = run.cells.min(cols - run.col);
+                if run.style.bg != Color::Background {
                     backgrounds.push((
-                        geometry.cell_bounds(row, from, cells),
-                        self.colors.selection,
+                        geometry.cell_bounds(row, run.col, cells),
+                        self.colors.of(run.style.bg),
                     ));
                 }
+                if run.text.trim().is_empty() {
+                    continue;
+                }
+                // What is selected is written in the selection's color.
+                for (part, chosen) in selection_parts(run, span) {
+                    if part.text.trim().is_empty() {
+                        continue;
+                    }
+                    let origin = geometry.cell_bounds(row, part.col, part.cells).origin;
+                    let color = if chosen {
+                        self.colors.on_selection
+                    } else {
+                        self.foreground(&part)
+                    };
+                    text.push((origin, self.shape(window, &part, color, cell.width)));
+                }
+            }
+        }
+        for (row, span) in selected.iter().enumerate() {
+            if let Some((from, to)) = *span {
+                backgrounds.push((
+                    geometry.cell_bounds(row as u16, from, to - from + 1),
+                    self.colors.selection,
+                ));
             }
         }
 
@@ -786,5 +835,50 @@ impl gpui::InputHandler for Typing {
         _: &mut App,
     ) -> Option<usize> {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Run, selection_parts};
+
+    /// A run is cut where the selection begins and ends, its middle said
+    /// selected; a character alone in its run (a wide one) is selected
+    /// where it starts.
+    #[test]
+    fn a_run_is_cut_where_the_selection_begins_and_ends() {
+        let style = skwir_core::terminal::Style::default();
+        let run = Run {
+            col: 2,
+            cells: 6,
+            text: "abcdef".into(),
+            style,
+        };
+        let parts = |span| {
+            selection_parts(&run, span)
+                .into_iter()
+                .map(|(part, chosen)| (part.col, part.text, chosen))
+                .collect::<Vec<_>>()
+        };
+        let part = |col, text: &str, chosen| (col, text.to_owned(), chosen);
+        assert_eq!(
+            parts(Some((4, 5))),
+            [
+                part(2, "ab", false),
+                part(4, "cd", true),
+                part(6, "ef", false)
+            ]
+        );
+        assert_eq!(parts(None), [part(2, "abcdef", false)]);
+        assert_eq!(parts(Some((0, 1))), [part(2, "abcdef", false)]);
+        assert_eq!(parts(Some((0, 30))), [part(2, "abcdef", true)]);
+        let wide = Run {
+            col: 3,
+            cells: 2,
+            text: "漢".into(),
+            style,
+        };
+        assert!(selection_parts(&wide, Some((3, 3)))[0].1);
+        assert!(!selection_parts(&wide, Some((4, 9)))[0].1);
     }
 }

@@ -13350,3 +13350,53 @@ amended).
   dark; every palette's a step from its frame at least); the UI's and
   platform's tests. Not seen in a window: a color, painted as already
   seen.
+
+## 2026-11-08: Text on the selection in the selection's color
+
+- **Reported** (the user, on Noctalia's colors): text selected in a field
+  was dark on a dark highlight, where Dolphin writes it light.
+  Noctalia's selection is its accent (`#416165`) and white
+  (`accent_bg_color`, `accent_fg_color`); Skwir's own is light blue
+  under dark text, which hid the bug.
+- **Cause, a class:** `selection_text`, the desktop's text on a
+  selection (guarded to read there), was worn by rows and chips, but
+  five places laid `selection_bg` under text left in its own color: a
+  field's selection (`input.rs`), a preview's selected text, shared by
+  the text and code views (`inspector_text.rs`), an inspection table's
+  chosen row and the bytes view's selected row (`inspector.rs`), the
+  terminal's selection (`elements/terminal.rs`). And two bands of the
+  selection laid under text as it is, `highlight` (a line pointed at,
+  50 %) and `drop_target` (60 %): muted text on Noctalia's read at about
+  2.3:1.
+- **Built:** `theme::Chosen::chosen` (the ground and its text together),
+  every pair moved onto it (15 files); a field's runs cut at the
+  selection and written in `selection_text`, a term's tint dropped there
+  (`input::selected_runs`); a preview's selected text in it; the chosen
+  rows `chosen`, the bytes' muted and accent marks dropped while
+  selected; the terminal's runs cut at the selection's columns
+  (`selection_parts`: an ASCII run a column a byte, any other character
+  alone), written in `Colors::on_selection`. `highlight` and
+  `drop_target` at most 50 % and 60 %, less (in twentieths) where `text`
+  or `text_muted` would not read on them over `bg` and `surface`:
+  Skwir's own light look keeps 50 % and 60 %; its dark one's muted text
+  did not read there either, now 40 % each. The rule in theme.rs's header
+  and AGENTS.md ("Tokens").
+- **Then** (the user): a button that is on, under the pointer, kept its
+  icon in `selection_text` (white on Noctalia's) while the hover laid the
+  hover's light ground in place of the selection's and wrote its words
+  in `text`: a toolbar button's icon is an `svg`, which paints in its own
+  color only. Every toolbar button is a group now, and an icon of one
+  that is on goes back to an icon's color (`text_muted`) under the
+  pointer (`group_hover`), as its words do. The other chosen rows (the
+  sidebar's, the pickers', Settings') are hovered only when not chosen.
+- **Seen** on Xvfb with a sheet of libadwaita names (Noctalia's accent):
+  the address field's text selected, white on the teal; the Preview
+  button on, teal with a white icon, and under the pointer light with
+  its icon gray.
+- **Checked:** fmt; clippy on skwir-ui; tests (`selected_runs`,
+  `selection_parts`, `a_dark_selection_is_written_on_in_its_own_color`);
+  the UI's and platform's tests (1018). One run failed
+  `desktop::linux_tests::the_presence_is_an_item_in_the_tray` (1.96 s,
+  under load; the platform is not changed here); it passed alone five
+  times and in two more full runs. Not seen in a window: the preview's,
+  the tables', the bytes' and the terminal's selections.

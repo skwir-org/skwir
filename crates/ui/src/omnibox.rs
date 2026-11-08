@@ -63,6 +63,7 @@
 
 use crate::sizes::TextSizes;
 use crate::sizes::sized;
+use crate::theme::Chosen;
 use std::collections::HashMap;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -3417,9 +3418,7 @@ fn draw_piece(shell: &Shell, ix: usize, text: &str, cx: &mut Context<Shell>) -> 
             .gap(sized(10.))
             .rounded_md()
             .cursor_pointer()
-            .when(highlighted, |r| {
-                r.bg(theme.selection_bg).text_color(theme.selection_text)
-            })
+            .when(highlighted, |r| r.chosen(&theme))
             .when(!highlighted, |r| r.hover(move |s| s.bg(hover)))
             .when(error && !highlighted, |r| r.text_color(theme.error))
             // The field keeps the keyboard: the row acts on the press,

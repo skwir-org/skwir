@@ -667,6 +667,7 @@ impl Shell {
                     bg: theme.bg,
                     ansi: theme.terminal,
                     selection: theme.selection_bg,
+                    on_selection: theme.selection_text,
                     link: theme.accent,
                     on_link: theme.on_accent,
                 },

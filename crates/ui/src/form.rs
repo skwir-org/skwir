@@ -18,6 +18,7 @@
 mod save;
 
 use crate::sizes::TextSizes;
+use crate::theme::Chosen;
 use gpui::{
     AnyElement, Context, Entity, FocusHandle, SharedString, Subscription, Window, div, prelude::*,
     relative,
@@ -1567,9 +1568,7 @@ fn list_of(
             .flex()
             .flex_col()
             .cursor_pointer()
-            .when(highlighted, |d| {
-                d.bg(theme.selection_bg).text_color(theme.selection_text)
-            })
+            .when(highlighted, |d| d.chosen(theme))
             .when(!highlighted, |d| d.hover(|s| s.bg(theme.hover)))
             .child(div().text_body().child(choice.title.clone()))
             .when(!choice.detail.is_empty(), |d| {

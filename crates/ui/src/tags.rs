@@ -19,6 +19,7 @@
 
 use crate::sizes::TextSizes;
 use crate::sizes::sized;
+use crate::theme::Chosen;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -1185,9 +1186,7 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
             .items_center()
             .gap_2()
             .cursor_pointer()
-            .when(hl, |d| {
-                d.bg(theme.selection_bg).text_color(theme.selection_text)
-            })
+            .when(hl, |d| d.chosen(&theme))
             .when(!hl, |d| d.hover(|s| s.bg(theme.hover)))
             .on_click(cx.listener({
                 let shown = shown.clone();

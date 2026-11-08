@@ -1,6 +1,7 @@
 //! Shared command-backed toolbar buttons, bundled symbolic icons and popovers.
 use crate::sizes::TextSizes;
 use crate::sizes::sized;
+use crate::theme::Chosen;
 use crate::{keymap::RunCommand, shell::Shell, theme::Theme};
 use gpui::{
     AnyView, App, Context, Div, FocusHandle, Render, ScrollHandle, SharedString, Stateful, Window,
@@ -444,16 +445,13 @@ impl Button {
             .text_body()
             .whitespace_nowrap()
             .text_color(theme.text_muted)
+            // What it holds follows it under the pointer (its icon).
+            .group(group.clone())
             // A popup's row, as a context menu's (`menu::render`): the
             // window's text, the row under the pointer or the keyboard
             // highlighted, what is on said by a check, not a fill.
             .when(menu, |d| {
-                d.group(group.clone())
-                    .w_full()
-                    .px_2()
-                    .gap_2()
-                    .text_body()
-                    .text_color(theme.text)
+                d.w_full().px_2().gap_2().text_body().text_color(theme.text)
             })
             // A heading's words, the switch at the row's end.
             .when(switch, |d| {
@@ -478,7 +476,7 @@ impl Button {
             .tab_index(0)
             .tab_stop(enabled)
             .when(self.active && !menu && !value && !switch, |d| {
-                d.bg(theme.selection_bg).text_color(theme.selection_text)
+                d.chosen(&theme)
             })
             .when(self.active && value, |d| {
                 d.bg(theme.term).text_color(theme.accent_text)
@@ -499,8 +497,8 @@ impl Button {
             })
             .when(enabled && (menu || switch), |d| {
                 d.cursor_pointer()
-                    .hover(|s| s.bg(theme.selection_bg).text_color(theme.selection_text))
-                    .focus(|s| s.bg(theme.selection_bg).text_color(theme.selection_text))
+                    .hover(|s| s.chosen(&theme))
+                    .focus(|s| s.chosen(&theme))
             })
             .when(!enabled, |d| d.opacity(0.35))
             .tooltip(move |_, cx| {
@@ -532,6 +530,14 @@ impl Button {
                             (true, false) => theme.selection_text,
                             (false, _) => theme.text_muted,
                         })
+                        // On, under the pointer the button leaves the
+                        // selection's ground for the hover's (its words for
+                        // the text): its icon goes back to an icon's color,
+                        // as it is off.
+                        .when(
+                            self.active && tint.is_none() && !value && enabled && !switch,
+                            |d| d.group_hover(group.clone(), |s| s.text_color(theme.text_muted)),
+                        )
                         .size(px(if tiled {
                             18.
                         } else if segment {

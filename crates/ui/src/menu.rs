@@ -3,6 +3,7 @@
 
 use crate::sizes::TextSizes;
 use crate::sizes::sized;
+use crate::theme::Chosen;
 use std::collections::HashMap;
 use std::ffi::OsStr;
 
@@ -1773,9 +1774,7 @@ fn row_element(
         .gap_2()
         .rounded_md()
         .cursor_pointer()
-        .when(lit, |d| {
-            d.bg(theme.selection_bg).text_color(theme.selection_text)
-        })
+        .when(lit, |d| d.chosen(theme))
         .when(open, |d| d.child(menu.sub_row.marker()))
         .on_mouse_move(cx.listener({
             let row = row.clone();

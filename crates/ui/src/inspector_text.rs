@@ -271,8 +271,11 @@ pub fn styled(
                     highlight.color = Some(style.find_current_text);
                 }
             }
+            // Selected, it is written in the selection's color, whatever
+            // colored it (a link, a find, code's own colors).
             if selection.contains(&start) {
                 highlight.background_color = Some(style.selection_bg);
+                highlight.color = Some(style.selection_text);
             }
             (start - range.start..end - range.start, highlight)
         })
