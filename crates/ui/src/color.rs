@@ -202,6 +202,28 @@ pub fn below(color: Hsla, grounds: &[Hsla], ratio: f32) -> Hsla {
     }
 }
 
+/// The color on the way from `from` to `to` (in Oklab) that stands
+/// `ratio` from `from` by contrast, at `from`'s opacity; `to` where even it
+/// stands nearer: a ground a set step from another, towards a third (a
+/// card's bars, from the files towards the window's frame).
+pub fn along(from: Hsla, to: Hsla, ratio: f32) -> Hsla {
+    let (a, b, y) = (Oklab::of(from), Oklab::of(to), luminance(from));
+    let at = |share: f32| a.mix(b, share).to_hsla(from.a);
+    if contrast(y, luminance(to)) <= ratio {
+        return at(1.);
+    }
+    let (mut near, mut far) = (0f32, 1f32);
+    for _ in 0..24 {
+        let share = f32::midpoint(near, far);
+        if contrast(y, luminance(at(share))) < ratio {
+            near = share;
+        } else {
+            far = share;
+        }
+    }
+    at(far)
+}
+
 /// `fg` made to read at `ratio` on the fill `ground`, and the fill: `fg`
 /// moved as `readable` moves it, and when even black or white falls
 /// short (a fill of middle lightness), the fill moved away from it until
@@ -290,6 +312,27 @@ mod tests {
         }
         // Nothing darker than black: black.
         assert_eq!(below(hex(0x050505), &[hex(0x050505)], 1.08), gpui::black());
+    }
+
+    #[test]
+    fn along_stands_the_ratio_from_where_it_starts() {
+        for (from, to) in [
+            (hex(0xfafafa), hex(0xefefef)),
+            (hex(0xfaf9f9), hex(0xeeeeed)),
+            (hex(0x1e1e1e), hex(0x303030)),
+            (hex(0xfbfaed), hex(0xdbdbce)),
+        ] {
+            let m = along(from, to, 1.07);
+            let (yf, yt, y) = (luminance(from), luminance(to), luminance(m));
+            assert!(yf.min(yt) <= y && y <= yf.max(yt));
+            assert!((ratio(m, from) - 1.07).abs() < 0.002, "{}", ratio(m, from));
+            // Its hue on the way: a warm gray towards a warm gray.
+            let (lf, lt, lm) = (Oklab::of(from), Oklab::of(to), Oklab::of(m));
+            assert!(lm.b >= lf.b.min(lt.b) - 1e-3 && lm.b <= lf.b.max(lt.b) + 1e-3);
+        }
+        // Where the way is shorter than the ratio: its end.
+        let to = hex(0xf6f6f6);
+        assert!(close(along(hex(0xfafafa), to, 1.07), to));
     }
 
     fn close(a: Hsla, b: Hsla) -> bool {

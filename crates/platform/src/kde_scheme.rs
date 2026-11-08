@@ -76,6 +76,7 @@ pub(crate) fn scheme_of(kdeglobals: &[String], data: &[PathBuf]) -> Option<Schem
         error: on_bg("Colors:View", "ForegroundNegative"),
         warning: on_bg("Colors:View", "ForegroundNeutral"),
         success: on_bg("Colors:View", "ForegroundPositive"),
+        sidebar: None,
     })
 }
 

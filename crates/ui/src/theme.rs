@@ -15,13 +15,22 @@
 //!   (`reading.code_appearance`) is drawn with that look's tokens
 //!   (`in_look`). `text_muted` is for secondary facts (line numbers,
 //!   captions), never for the data. `frame` is the window's ground under
-//!   its cards (`cards`, ADR-123), under both grounds by `CHROME`, giving
-//!   way to the text drawn on it; `sunken_bg` and `sunken_surface` are a
-//!   split's other pane's grounds, a step down towards it.
+//!   its cards (`cards`, ADR-123), a step under the files' ground: the
+//!   desktop's own sidebar color where it names one under `bg`, else the
+//!   chrome's own gray in a light look, `CHROME` under `bg` in a dark one,
+//!   giving way to the text drawn on it. `bar` is the ground of the bars
+//!   (a pane's row and footer, the preview panel's): `surface`, but as
+//!   cards in a light look (its chrome under `bg`) `BAR` (1.07:1) under
+//!   `bg` towards the frame, which lies far enough under `bg` to leave
+//!   the bars `EDGE` (1.025:1) above it at least (`ROOM`). As cards,
+//!   each card is outlined on the frame in `card_edge`, the `border` the
+//!   lines between areas were drawn in, in either look. `sunken_bg` and
+//!   `sunken_bar` are a split's other pane's grounds, a step down
+//!   towards the frame.
 //! - the window's own grounds: each of the window's areas (the files, the
 //!   terminal; a preview's paper or letterbox; the bars, the sidebar, the
 //!   tabs, the panel's bars, the dock) paints its ground once,
-//!   `window_bg`, `preview_grounds` or `window_surface`, over nothing
+//!   `window_bg`, `preview_grounds` or `window_bar`, over nothing
 //!   else of the window: what is behind the window shows through them as
 //!   much as their opacity lets it (`Opacity`). As cards, the frame
 //!   (`window_frame`) is painted once around them (`elements::frame`),
@@ -120,15 +129,30 @@ use crate::color::{self, Oklab};
 pub struct Theme {
     pub bg: Hsla,
     pub surface: Hsla,
-    /// The window's frame, around and between its cards (`cards`): under
-    /// both grounds, darker than the darker by `CHROME`, so a card stands
-    /// above it in either look. The sidebar and the tabs are drawn on it.
+    /// The window's frame, around and between its cards (`cards`): a step
+    /// under the files' ground (`bg`), so a card stands above it in either
+    /// look: the desktop's own sidebar color where it names one under
+    /// `bg`, else in a light look the chrome's own gray (`surface`), far
+    /// enough under `bg` to leave the bars their room (`frame`). The
+    /// sidebar and the tabs are drawn on it.
     pub frame: Hsla,
+    /// The ground of the bars of the window's areas (a pane's row and
+    /// footer, the preview panel's header and toolbar): `surface`, but as
+    /// cards (`as_cards`) in a light look, whose chrome lies under `bg`,
+    /// the gray `BAR` under `bg` towards the frame (`color::along`), `EDGE`
+    /// above the frame at least, so a card's bars stand apart from both.
+    pub bar: Hsla,
     /// The grounds of a split's pane commands do not act on, as cards
-    /// (`as_cards`): `bg` and `surface` a step down towards `frame`, as far
-    /// as the text drawn on them still reads; `bg` and `surface` otherwise.
+    /// (`as_cards`): `bg` and `bar` a step down towards `frame`, as far as
+    /// the text drawn on them still reads; `bg` and `bar` otherwise.
     pub sunken_bg: Hsla,
-    pub sunken_surface: Hsla,
+    pub sunken_bar: Hsla,
+    /// The outline of each card on the frame, as cards (`as_cards`), in
+    /// either look, as Dolphin outlines its views: `border`, the color the
+    /// lines between areas were drawn in apart by lines (a desktop's own
+    /// where it names one), kept `CHROME` apart from the frame at least.
+    /// None apart by lines.
+    pub card_edge: Option<Hsla>,
     /// A code block, an inline code span or a table header, on `bg`.
     pub code_bg: Hsla,
     /// Alternate rows of a table or of a byte dump, on `bg`.
@@ -248,7 +272,7 @@ pub struct Theme {
     /// read where it is drawn, as the fonts are.
     pub sizes: crate::sizes::Sizes,
     /// How much of the window's own grounds hides what is behind it
-    /// (`window_bg`, `window_surface`).
+    /// (`window_bg`, `window_bar`).
     pub opacity: Opacity,
     /// The window's areas are cards on its frame (`ui.cards`, ADR-123):
     /// the panes, the preview and the terminal rounded and apart, the
@@ -531,6 +555,10 @@ pub struct Base {
     /// The sixteen colors a terminal's programs name, where the look has
     /// its own (a community palette's, `palettes.rs`); else `Kept`'s.
     pub terminal: Option<[Hsla; 16]>,
+    /// The sidebar's own ground, where the desktop's scheme names one
+    /// apart from its window's (libadwaita's `sidebar_bg_color`): the
+    /// frame where it lies under the files (`frame`).
+    pub sidebar: Option<Hsla>,
 }
 
 impl Base {
@@ -699,27 +727,59 @@ impl Kept {
     }
 }
 
-/// The window's frame under its cards (ADR-123): under both grounds, as far
-/// below the darker as the chrome stands from what is read (`CHROME`), in a
-/// light look under the bars' gray, in a dark one under the files' ground,
-/// its hue kept. It gives way to the text drawn on it (the sidebar's, the
-/// tabs'), as a fill under text does: no darker than `text` reads on at
-/// `ratio`, a pointer's `hover` laid on it, and never above the darker
-/// ground, where it reads already. The muted text drawn there moves
-/// instead, while the window is drawn as cards (`Theme::as_cards`).
-fn frame(bg: Hsla, surface: Hsla, text: Hsla, hover: Hsla, ratio: f32) -> Hsla {
-    let darker = if color::luminance(surface) < color::luminance(bg) {
-        surface
-    } else {
-        bg
+/// How far a card's bars stand from the files in a light look
+/// (`Theme::as_cards`): between the 1.09:1 of the bars that lay on the
+/// chrome's gray and the 1.045:1 of bars halfway to a frame as light as
+/// it, as the user found the toolbar too close to the files (2026-11-08).
+const BAR: f32 = 1.07;
+
+/// How far a card's bars stand from the frame at least: little, as the
+/// card's outline sets its edge apart (`card_edge`); at 1.045:1, without
+/// one, the frame was darker than the desktop's and the header still
+/// blended into the sidebar and the tabs (the user, 2026-11-08).
+const EDGE: f32 = 1.025;
+
+/// How far the frame of a light look lies under the files at least: room
+/// for the bars between (`BAR`, `EDGE`).
+const ROOM: f32 = BAR * EDGE;
+
+/// The window's frame under its cards (ADR-123, amended 2026-11-08): a step
+/// under the files' ground, as a desktop's window lies under its view. The
+/// sidebar's own color where the desktop names one under the files
+/// (`sidebar`, libadwaita's, ADR-071 amended 2026-11-08); else, in a light
+/// look, whose chrome lies under the files, the chrome's own gray
+/// (`surface`: the desktop's window color, under `bg` by `CHROME` at
+/// least), the sidebar's as it was apart by lines. Either lies `ROOM` under
+/// the files at least, so the bars fit between (`Theme::as_cards`). In a
+/// dark look, whose chrome is lighter than the files, it is as far under
+/// them as the chrome stands from what is read (`CHROME`), its hue kept.
+/// It gives way to the text drawn on it (the sidebar's, the tabs') as a
+/// fill under text does: no darker than `text` reads on at `ratio`, a
+/// pointer's `hover` laid on it, and never above the desktop's own color
+/// where the text reads on that, nor above the files' ground. The muted
+/// text drawn there moves instead, while the window is drawn as cards.
+fn frame(
+    bg: Hsla,
+    surface: Hsla,
+    sidebar: Option<Hsla>,
+    text: Hsla,
+    hover: Hsla,
+    ratio: f32,
+) -> Hsla {
+    let under = |color: Hsla| color::luminance(color) < color::luminance(bg);
+    let (own, below) = match sidebar.filter(|sidebar| under(*sidebar)) {
+        Some(sidebar) => (sidebar, color::below(sidebar, &[bg], ROOM)),
+        None if under(surface) => (surface, color::below(surface, &[bg], ROOM)),
+        None => (bg, color::below(bg, &[bg, surface], CHROME)),
     };
     let reads = |frame: Hsla| color::reads(text, &[frame, frame.blend(hover)], ratio);
-    let below = color::below(darker, &[bg, surface], CHROME);
     if reads(below) {
         return below;
     }
-    // From the darker ground, the furthest step down they read on.
-    let (from, to) = (Oklab::of(darker), Oklab::of(below));
+    // From the desktop's own where the text reads on it, else from the
+    // files' ground, the furthest step down they read on.
+    let start = if reads(own) { own } else { bg };
+    let (from, to) = (Oklab::of(start), Oklab::of(below));
     (1..=16)
         .rev()
         .map(|step| {
@@ -730,14 +790,15 @@ fn frame(bg: Hsla, surface: Hsla, text: Hsla, hover: Hsla, ratio: f32) -> Hsla {
                 a: from.a + (to.a - from.a) * at,
                 b: from.b + (to.b - from.b) * at,
             }
-            .to_hsla(darker.a)
+            .to_hsla(start.a)
         })
         .find(|frame| reads(*frame))
-        .unwrap_or(darker)
+        .unwrap_or(start)
 }
 
-/// How far a lowered pane's grounds step towards the frame (`as_cards`).
-const SUNKEN: f32 = 0.4;
+/// How far a lowered pane's grounds step towards the frame (`as_cards`):
+/// halfway, the frame lying near the files as cards (`ROOM`).
+const SUNKEN: f32 = 0.5;
 
 /// `from` moved `share` of the way to `to` in Oklab, or as far as `ok`
 /// still holds, in sixteenths of it; `from` where no step does.
@@ -852,7 +913,7 @@ impl Theme {
         let text = guarded("text", base.text, &grounds, text_ratio);
         let text_muted = base.text_muted.unwrap_or_else(|| step(steps.text_muted));
         let text_muted = guarded("text_muted", text_muted, &grounds, text_ratio);
-        let frame = frame(bg, surface, text, hover, text_ratio);
+        let frame = frame(bg, surface, base.sidebar, text, hover, text_ratio);
         let termed = [grounds.as_slice(), &[bg.blend(term), surface.blend(term)]].concat();
         let accent_text = guarded("accent_text", accent, &termed, text_ratio);
         let outcome = |name, color| guarded(name, color, &[bg, surface], text_ratio);
@@ -861,8 +922,10 @@ impl Theme {
             bg,
             surface,
             frame,
+            bar: surface,
             sunken_bg: bg,
-            sunken_surface: surface,
+            sunken_bar: surface,
+            card_edge: None,
             code_bg,
             zebra,
             hover,
@@ -949,7 +1012,7 @@ impl Theme {
         Grounds {
             read: self.bg.opacity(self.opacity.preview),
             letterbox: self.surface.opacity(self.opacity.preview),
-            chrome: self.window_surface(),
+            chrome: self.window_bar(),
         }
     }
 
@@ -962,11 +1025,11 @@ impl Theme {
         }
     }
 
-    /// `surface` where it is the window's own ground: the chrome's areas
-    /// (the bars, the sidebar, the tabs, the preview panel's bars) each
-    /// paint it once, as `window_bg`.
-    pub fn window_surface(&self) -> Hsla {
-        self.surface.opacity(self.opacity.interface)
+    /// `bar` where it is the window's own ground: the chrome's areas (the
+    /// bars, the preview panel's bars; apart by lines the sidebar and the
+    /// tabs too) each paint it once, as `window_bg`.
+    pub fn window_bar(&self) -> Hsla {
+        self.bar.opacity(self.opacity.interface)
     }
 
     /// `frame` where it is the window's own ground, at the chrome's
@@ -976,11 +1039,18 @@ impl Theme {
         self.frame.opacity(self.opacity.interface)
     }
 
+    /// `card_edge` drawn on the frame, at the frame's opacity: a line of
+    /// it, as what is written there.
+    pub fn window_card_edge(&self) -> Option<Hsla> {
+        self.card_edge
+            .map(|edge| edge.opacity(self.opacity.interface))
+    }
+
     /// The ground the chrome around the cards paints (the sidebar, its
     /// header, the tab strip): none on the frame (`cards`), else
-    /// `window_surface`.
+    /// `window_bar`.
     pub fn chrome_ground(&self) -> Option<Hsla> {
-        (!self.cards).then(|| self.window_surface())
+        (!self.cards).then(|| self.window_bar())
     }
 
     /// Whether the window draws lines between its areas: not between
@@ -1222,34 +1292,50 @@ impl Theme {
     }
 
     /// The look drawn as cards on the window's frame (`ui.cards`,
-    /// ADR-123): the muted text the sidebar and the tabs write on the
-    /// frame read there too, a pointer's hover laid on it; moved where it
-    /// does not, as the guard moves a color (`Theme::derive`). Only then:
-    /// apart by lines, the window is drawn as before.
+    /// ADR-123): in a light look, whose chrome lies under the files, the
+    /// bars lie between the frame (the chrome's gray, or the desktop's
+    /// sidebar) and the files, `BAR` under the files and `EDGE` above the
+    /// frame at least (`color::along`), so a card's bars stand apart from
+    /// both; the text
+    /// and the muted text the sidebar and the tabs write on the frame read
+    /// there and on the bars, a pointer's hover laid on them, moved where
+    /// they do not, as the guard moves a color (`Theme::derive`). Only
+    /// then: apart by lines, the window is drawn as before.
     pub fn as_cards(&mut self) {
         let (text_ratio, _) = self.desktop.contrast.ratios();
-        let on = [self.frame, self.frame.blend(self.hover)];
+        if color::luminance(self.surface) < color::luminance(self.bg) {
+            // A set step under the files, the card's edge on the frame what
+            // is left: `EDGE` at least, where the frame gave way to text.
+            let room = color::ratio(self.frame, self.bg);
+            self.bar = color::along(self.bg, self.frame, BAR.min(room / EDGE).max(1.));
+        }
+        // The card's edge drawn on the frame, in either look, as the lines
+        // between areas were.
+        self.card_edge = Some(color::readable(self.border, &[self.frame], CHROME));
+        let hover = self.hover;
         let grounds = [
             self.bg,
             self.surface,
+            self.bar,
             self.code_bg,
             self.zebra,
-            self.bg.blend(self.hover),
-            self.surface.blend(self.hover),
-            on[0],
-            on[1],
-        ];
+            self.frame,
+        ]
+        .into_iter()
+        .flat_map(|ground| [ground, ground.blend(hover)])
+        .collect::<Vec<_>>();
+        self.text = guarded("text", self.text, &grounds, text_ratio);
         self.text_muted = guarded("text_muted", self.text_muted, &grounds, text_ratio);
-        // A step down towards the frame, two fifths of the way, giving way
-        // to the text drawn there as the frame does.
-        let (text, muted, hover) = (self.text, self.text_muted, self.hover);
+        // A step down towards the frame, halfway, giving way to the text
+        // drawn there as the frame does.
+        let (text, muted) = (self.text, self.text_muted);
         let reads = |ground: Hsla| {
             [text, muted]
                 .iter()
                 .all(|t| color::reads(*t, &[ground, ground.blend(hover)], text_ratio))
         };
         self.sunken_bg = toward(self.bg, self.frame, SUNKEN, reads);
-        self.sunken_surface = toward(self.surface, self.frame, SUNKEN, reads);
+        self.sunken_bar = toward(self.bar, self.frame, SUNKEN, reads);
         self.cards = true;
     }
 
@@ -1268,9 +1354,9 @@ impl Theme {
     /// `files_ground`.
     pub fn bar_ground(&self, lowered: bool) -> Hsla {
         if lowered {
-            self.sunken_surface.opacity(self.opacity.interface)
+            self.sunken_bar.opacity(self.opacity.interface)
         } else {
-            self.window_surface()
+            self.window_bar()
         }
     }
 
@@ -1452,6 +1538,7 @@ mod tests {
                 warning: gray(0, 255),
                 success: gray(0, 255),
                 terminal: None,
+                sidebar: (case % 3 == 1).then(|| gray(0, 255)),
             };
             for contrast in [Contrast::Normal, Contrast::More] {
                 let theme = Theme::derive(&base, contrast);
@@ -1465,15 +1552,44 @@ mod tests {
                         g.name
                     );
                 }
+                // As cards, the text and the muted text read on every ground
+                // they are guarded on, a sidebar's frame among them.
+                let mut cards = theme.clone();
+                cards.as_cards();
+                let (ratio, _) = contrast.ratios();
+                let grounds = [
+                    cards.bg,
+                    cards.surface,
+                    cards.bar,
+                    cards.code_bg,
+                    cards.zebra,
+                    cards.frame,
+                ]
+                .into_iter()
+                .flat_map(|ground| [ground, ground.blend(cards.hover)])
+                .collect::<Vec<_>>();
+                let could = [gpui::black(), gpui::white()]
+                    .iter()
+                    .any(|c| color::reads(*c, &grounds, ratio));
+                for text in [cards.text, cards.text_muted] {
+                    assert!(
+                        color::reads(text, &grounds, ratio) || !could,
+                        "case {case}, cards, {contrast:?}: {base:?}"
+                    );
+                }
             }
         }
     }
 
-    /// The frame lies under both grounds, as far below the darker as the
-    /// chrome stands from what is read, wherever anything darker can: a
-    /// card stands above it in either look (ADR-123).
+    /// The frame lies a step under the files' ground and under the
+    /// chrome's: the chrome's own gray where that lies under the files (a
+    /// light look), `ROOM` under them at least, else `CHROME` under them.
+    /// As cards, a card's bars stand `BAR` from the files and `EDGE` from
+    /// the frame at least; apart by lines, nothing moves (ADR-123, amended
+    /// 2026-11-08).
     #[test]
-    fn the_frame_lies_under_both_grounds() {
+    fn the_frame_lies_a_step_under_the_files() {
+        let y = color::luminance;
         let mut themes = vec![Theme::light(), Theme::dark()];
         themes.extend(
             crate::palettes::PALETTES
@@ -1482,30 +1598,59 @@ mod tests {
                 .flatten()
                 .map(|base| Theme::derive(&base, Contrast::Normal)),
         );
-        let mut gave_way = 0;
         for t in &themes {
-            let mut apart = true;
             for ground in [t.bg, t.surface] {
-                let (frame, ground) = (color::luminance(t.frame), color::luminance(ground));
-                assert!(frame <= ground, "{:?} under {ground}", t.frame.to_rgb());
-                let reach = (ground + 0.05) / CHROME - 0.05;
-                apart &= reach < 0. || color::contrast(frame, ground) >= CHROME;
-            }
-            // Less only where the text drawn on it would read no more.
-            if !apart {
-                gave_way += 1;
-                let below = color::below(t.frame, &[t.bg, t.surface], CHROME);
                 assert!(
-                    !color::reads(t.text, &[below, below.blend(t.hover)], 4.5),
-                    "{:?}",
+                    y(t.frame) <= y(ground),
+                    "{:?} under {ground}",
                     t.frame.to_rgb()
                 );
             }
-            // As cards, the muted text reads on it too, and both on a split's
-            // other pane, a step down, but never above the pane's own.
+            let chrome_under = y(t.surface) < y(t.bg);
+            // `ROOM` under the files in a light look, `CHROME` in a dark
+            // one; less only where the text drawn on it would read no more,
+            // never above the chrome's gray where the text reads on that.
+            // Nothing lies under a black ground.
+            let room = if chrome_under { ROOM } else { CHROME };
+            let reach = (y(t.bg) + 0.05) / room - 0.05;
+            if reach >= 0. && color::ratio(t.frame, t.bg) < room - 1e-3 {
+                let below = color::below(t.frame, &[t.bg], room);
+                assert!(
+                    !color::reads(t.text, &[below, below.blend(t.hover)], 4.5),
+                    "frame {:06x} on {:06x}",
+                    color::hex(t.frame),
+                    color::hex(t.bg)
+                );
+            }
+            assert_eq!(
+                (t.bar, t.sunken_bg, t.sunken_bar),
+                (t.surface, t.bg, t.surface)
+            );
             let mut cards = t.clone();
             cards.as_cards();
-            for ground in [cards.frame, cards.sunken_bg, cards.sunken_surface] {
+            assert_eq!(cards.frame, t.frame);
+            // The bars `BAR` from the files and `EDGE` from the frame where
+            // it has the room; in a dark look the chrome's gray, further.
+            let (to_frame, to_files) = (
+                color::ratio(cards.bar, cards.frame),
+                color::ratio(cards.bar, cards.bg),
+            );
+            if chrome_under {
+                let room = color::ratio(cards.frame, cards.bg);
+                let aimed = BAR.min(room / EDGE);
+                assert!((to_files - aimed).abs() < 0.003, "{to_files} for {aimed}");
+                assert!(to_frame >= EDGE.min(room) - 0.003, "{to_frame}");
+            } else {
+                assert_eq!(cards.bar, cards.surface);
+                assert!(to_frame >= CHROME - 0.003 && to_files >= CHROME - 0.003);
+            }
+            // The text and the muted text read on each ground the cards add,
+            // a hover laid on it; a split's other pane is a step down, never
+            // above the pane's own.
+            // Outlined in the lines' color, a step apart from the frame.
+            let edge = cards.card_edge.expect("cards are outlined");
+            assert!(color::ratio(edge, cards.frame) >= CHROME - 0.003);
+            for ground in [cards.frame, cards.bar, cards.sunken_bg, cards.sunken_bar] {
                 for text in [cards.text, cards.text_muted] {
                     assert!(color::reads(
                         text,
@@ -1514,20 +1659,94 @@ mod tests {
                     ));
                 }
             }
-            for (sunken, ground) in [
-                (cards.sunken_bg, cards.bg),
-                (cards.sunken_surface, cards.surface),
-            ] {
-                assert!(color::luminance(sunken) <= color::luminance(ground) + 1e-4);
+            for (sunken, ground) in [(cards.sunken_bg, cards.bg), (cards.sunken_bar, cards.bar)] {
+                assert!(y(sunken) <= y(ground) + 1e-4);
+                assert!(y(sunken) >= y(cards.frame) - 1e-4);
             }
         }
-        // Solarized's, Everforest's and Tokyo Night's light looks, whose
-        // text reads only just on their own chrome (Solarized's at 4.13:1
-        // as written): their bars lie flush with the frame.
-        assert!(gave_way <= 3, "{gave_way} frames gave way to their text");
-        // Skwir's own: about the frames the proposals were drawn with.
-        assert!((0x15..=0x17).contains(&(color::hex(Theme::dark().frame) >> 16)));
-        assert!((0xe7..=0xe9).contains(&(color::hex(Theme::light().frame) >> 16)));
+        // Skwir's own: the dark frame as it was drawn, the light one under
+        // the chrome's gray (#f0f0f0), stepped down to make room, the bars
+        // and the other pane's files between.
+        let channel = |color: Hsla| color::hex(color) >> 16;
+        assert!((0x15..=0x17).contains(&channel(Theme::dark().frame)));
+        let mut light = Theme::light();
+        light.as_cards();
+        assert!((0xee..=0xf0).contains(&channel(light.frame)));
+        assert!((0xf1..=0xf3).contains(&channel(light.bar)));
+        assert!((0xf3..=0xf6).contains(&channel(light.sunken_bg)));
+        // Its cards outlined in the lines' color, `border`: darker than
+        // the frame in the light look, lighter in the dark one, as the
+        // lines were; the look apart by lines none.
+        let edge = light.card_edge.expect("a light look's cards are outlined");
+        assert_eq!(edge, light.border);
+        assert!(color::luminance(edge) < color::luminance(light.frame));
+        let mut dark = Theme::dark();
+        dark.as_cards();
+        let edge = dark.card_edge.expect("a dark look's cards are outlined");
+        assert_eq!(edge, dark.border);
+        assert!(color::luminance(edge) > color::luminance(dark.frame));
+        assert_eq!(Theme::light().card_edge, None);
+    }
+
+    /// A desktop's own sidebar color is the frame where it lies under the
+    /// files, `ROOM` under them at least, the bars between it and them; a
+    /// dark look's, lighter than its files, is not (ADR-071 and ADR-123,
+    /// amended 2026-11-08).
+    #[test]
+    fn a_desktop_s_sidebar_is_the_frame_under_the_files() {
+        let color = |value: u32| Hsla::from(rgb(value));
+        let base = |[bg, surface, text]: [u32; 3], sidebar: Option<u32>, dark| Base {
+            dark,
+            bg: color(bg),
+            surface: color(surface),
+            text: color(text),
+            sidebar: sidebar.map(color),
+            ..Base::own(dark)
+        };
+        let cards = |base: &Base| {
+            let mut theme = Theme::derive(base, Contrast::Normal);
+            theme.as_cards();
+            theme
+        };
+        let fits = |t: &Theme| {
+            let (to_frame, to_files) = (color::ratio(t.bar, t.frame), color::ratio(t.bar, t.bg));
+            (to_files - BAR).abs() < 0.003 && to_frame >= EDGE - 0.003
+        };
+        // A shell's sheet (Noctalia's colors): the window as light as the
+        // view, the sidebar apart, as Dolphin's window under its view.
+        let shell = [0xfaf9f9, 0xfaf9f9, 0x1a1c1c];
+        // Its sidebar (1.105:1) leaves the bars their room: worn as it is.
+        let worn = cards(&base(shell, Some(0xeeeeed), false));
+        assert_eq!(color::hex(worn.frame), 0xeeeeed);
+        assert!(fits(&worn));
+        // Without it, the chrome's gray, as the window is set apart, moved
+        // down to the room the bars take: lighter than the sidebar's.
+        let without = cards(&base(shell, None, false));
+        assert!(color::luminance(without.frame) <= color::luminance(without.surface));
+        assert!((color::ratio(without.frame, without.bg) - ROOM).abs() < 0.003);
+        assert!(color::luminance(without.frame) > color::luminance(worn.frame));
+        assert!(fits(&without));
+        // adw-gtk3's, its sidebar 1.19:1 under its view.
+        let adw = cards(&base([0xffffff, 0xfafafb, 0x333334], Some(0xebebed), false));
+        assert_eq!(color::hex(adw.frame), 0xebebed);
+        assert!(fits(&adw));
+        // A sidebar nearer the files than the room the bars take is moved
+        // to it.
+        let near = cards(&base([0xffffff, 0xf0f0f0, 0x202020], Some(0xfcfcfc), false));
+        assert!(color::ratio(near.frame, near.bg) >= ROOM - 0.003);
+        assert!(fits(&near));
+        // adw-gtk3-dark's sidebar, lighter than its files: the frame stays
+        // a step under them, the bars the chrome's.
+        let night = [0x1d1d20, 0x242428, 0xffffff];
+        let dark = cards(&base(night, Some(0x2e2e32), true));
+        assert_eq!(dark.frame, cards(&base(night, None, true)).frame);
+        assert_eq!(dark.bar, dark.surface);
+        // Apart by lines, nothing else moves: the bars are the chrome's.
+        let lines = Theme::derive(&base(shell, Some(0xeeeeed), false), Contrast::Normal);
+        assert_eq!(
+            (lines.bar, lines.sunken_bar),
+            (lines.surface, lines.surface)
+        );
     }
 
     #[test]
@@ -1654,6 +1873,7 @@ mod tests {
                 warning: color(warning),
                 success: color(success),
                 terminal: None,
+                sidebar: None,
             };
             for contrast in [Contrast::Normal, Contrast::More] {
                 let theme = Theme::derive(&base, contrast);

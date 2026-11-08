@@ -17,7 +17,9 @@ grounds may let the desktop through; the contrast guarded is on the
 theme's own grounds, and the window stays whole while more contrast is
 asked); 2026-11-07 (the user's own GTK sheet over the theme, the Qt
 platform themes after qt6ct, Omarchy's theme: the desktop shells of
-Hyprland and its kind).
+Hyprland and its kind); 2026-11-08 (a GTK sheet's own sidebar color the
+frame the cards lie on, ADR-123; the files followed before they are
+read).
 
 ## Context
 
@@ -335,7 +337,11 @@ Hyprland and its kind).
     #242428 on #1d1d20 dark. Its sidebar's own color
     (`sidebar_bg_color`, #ebebed; #2e2e32 dark, 1.19:1 and 1.24:1) was
     worn first; "it's too strong", the user said, so the chrome stays
-    the window's, set apart.
+    the window's, set apart. As cards (ADR-123, amended 2026-11-08),
+    the frame is the sidebar's own color where it lies under `bg`, else
+    in a light look this chrome's gray, and a card's bars lie between
+    it and `bg`, 1.07:1 under `bg` (amended 2026-11-08, the
+    sidebar's color).
   - **`hover` is laid over what it is on**, translucent: the way from
     `bg` to its step carried to the edge of sRGB, at the opacity that
     shows the step on `bg` (`color::overlay`), so on the darker chrome
@@ -578,7 +584,8 @@ Hyprland and its kind).
      is derived from the accent. Colors from's Automatic says
      "Automatic (Omarchy)".
   - **Followed as written** (point 9): the files a reading names are
-    asked again after each reading (`Own::followed`), so what a file
+    asked again before each reading (`Own::followed`; after it until
+    2026-11-08, when a write between the two was lost), so what a file
     names now is followed where it is: a shell rewrites the file it
     imports (`noctalia.css`, `dank-colors.css`) or the scheme its Qt
     settings name, not `gtk.css` or those settings. Followed: both
@@ -594,3 +601,52 @@ Hyprland and its kind).
     place (`#eff1f5`); on the reference session, a reading through the
     platform (Noctalia's colors, above). Not checked: a real Caelestia,
     Dux Shell or Omarchy session, qtengine and hyprqt6engine installed.
+- 2026-11-08, **a sheet's own sidebar color, the cards' frame.** With
+  the cards made lighter (ADR-123, "Lighter"), the frame of a light look
+  was the chrome's gray: a GTK sheet's window color, set apart from its
+  view by `CHROME`. The user asked to close the gap the shells leave
+  there and see the difference.
+  - **The gap:** a sheet after libadwaita's names its sidebar apart from
+    its window (`sidebar_bg_color`). Noctalia's names its window as
+    light as its view (`#faf9f9`) and its sidebar `#eeeeed`, as Dolphin's
+    window lies under its view; that color was never read, so the frame
+    was the window's color set apart, `#f1f0f0`.
+  - **Decided:** `sidebar_bg_color` is read from GTK sheets (the
+    theme's, the user's laid over it, `gtk_theme::Sheet::scheme`) as a
+    scheme's `sidebar`, carried into the look's `Base`. It is the frame
+    the cards lie on where it lies under what is read, far enough
+    under it for the bars between (ADR-123's `ROOM`, 1.097:1), giving
+    way to the text drawn on it as the frame does; a card's bars lie
+    between it and the files. The chrome stays
+    the window's (2026-10-27): the bars of the look apart by lines, the
+    sidebar there, menus and dialogs keep `surface`. "Too strong" was
+    the sidebar's color worn as the whole chrome; here it is only the
+    ground the cards lie on. A dark look's sidebar, lighter than its
+    view (adw-gtk3-dark's `#2e2e32` on `#1d1d20`), is not the frame: a
+    card stands above the ground it lies on, so the frame stays a step
+    under the files.
+  - **Consequences:** with Noctalia's sheet the frame is its sidebar's
+    `#eeeeed` (1.105:1 under the files), Dolphin's window gray, the
+    bars 1.07:1 under the files, about `#f2f1f1`, each card outlined in
+    the border derived from it, `#d7d7d7` (ADR-123, "Lighter": a darker
+    frame was tried for the header's edge and set aside for the
+    outline). adw-gtk3's own sheet
+    names `#ebebed` under `#ffffff`: its light frame is that, 1.19:1
+    under the files, where it was `#f6f6f7`, as GNOME's own
+    applications draw their sidebars; its bars about `#f7f7f7`. Plasma's
+    scheme, Qt's palettes, Omarchy's theme, macOS and Windows name no
+    sidebar: unchanged. Skwir's palettes name none either.
+  - **Also:** the files a reading names are followed before it is
+    read, no longer after. A test of a scheme named anew failed about
+    one run in three under load: the next write to it came between the
+    reading and the watch, and was lost. A shell naming a scheme and
+    then writing it could lose the same write.
+  - **Checked:** the sidebar read from a theme and taken from the user's
+    sheet over it, a header bar's color not taken for it; the frame from
+    a sidebar (Noctalia's, adw-gtk3's), moved to a step where nearer, a
+    dark look's not taken, nothing else moved apart by lines; 400
+    random schemes, a third with a sidebar, whose text and muted text
+    read on every ground of the cards where any color could; the
+    following test passed five combined runs of the UI's and the
+    platform's tests (it had failed two of four). Not checked in a
+    window: the user checks on their own desktop.

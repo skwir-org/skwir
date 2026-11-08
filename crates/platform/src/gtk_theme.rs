@@ -274,8 +274,10 @@ impl Sheet {
         let on_bg = |names: &[&str]| first(names).map(|color| over(color, bg));
         // The chrome is the window's, even where a theme after
         // libadwaita's names a sidebar of its own: adw-gtk3's #ebebed on
-        // #ffffff was too strong; a window as light as what is read
-        // (its #fafafb) is set apart by the theme (`CHROME`, ADR-071).
+        // #ffffff was too strong for the bars; a window as light as what
+        // is read (its #fafafb) is set apart by the theme (`CHROME`,
+        // ADR-071). The sidebar's own is the frame the cards lie on, where
+        // it lies under what is read (ADR-071, amended 2026-11-08).
         let surface = on_bg(&["theme_bg_color", "window_bg_color"])?;
         // A selection is a ground and its text named together: GTK 3's
         // pair, else libadwaita's accent and the text on it. One that
@@ -304,6 +306,7 @@ impl Sheet {
             error: on_bg(&["error_color"]),
             warning: on_bg(&["warning_color"]),
             success: on_bg(&["success_color"]),
+            sidebar: on_bg(&["sidebar_bg_color"]),
         })
     }
 }
@@ -817,6 +820,9 @@ mod tests {
         assert!(night.light.is_none() && night.dark.is_some());
     }
 
+    /// The chrome is the window's whatever the theme names; its sidebar's
+    /// own is read beside it, for the frame the cards lie on (ADR-071,
+    /// amended 2026-11-08), and the user's sheet's takes its place.
     #[test]
     fn the_chrome_is_the_window_s_where_a_theme_names_a_sidebar() {
         let dir = tempfile::tempdir().unwrap();
@@ -846,6 +852,19 @@ mod tests {
         for name in ["Sidebar", "Header", "Window"] {
             assert!(near(surface(name), 0xf2f2f2), "{name}: the window's");
         }
+        let sidebar = |name| schemes(name, &folders, None).light.unwrap().sidebar;
+        assert!(near(sidebar("Sidebar").unwrap(), 0xe0e0e0));
+        assert_eq!(sidebar("Header"), None, "a header bar's is not a sidebar's");
+        assert_eq!(sidebar("Window"), None);
+        let sheet = user(
+            &dir.path().join("home"),
+            &[(
+                "gtk-3.0/gtk.css",
+                "@define-color sidebar_bg_color #eeeeed;\n",
+            )],
+        );
+        let worn = schemes("Sidebar", &folders, Some(&sheet)).light.unwrap();
+        assert!(near(worn.sidebar.unwrap(), 0xeeeeed) && near(worn.surface, 0xf2f2f2));
     }
 
     #[test]

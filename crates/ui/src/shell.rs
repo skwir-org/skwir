@@ -4064,7 +4064,7 @@ impl Render for Shell {
             .font_family(theme.font.clone())
             .text_body()
             // Nothing painted under the window's areas: each paints its own
-            // ground once (`Theme::window_bg`, `window_surface`), so what is
+            // ground once (`Theme::window_bg`, `window_bar`), so what is
             // behind the window shows through as much as they let it.
             .text_color(theme.text)
             .child(
@@ -4176,6 +4176,7 @@ impl Shell {
         crate::elements::frame::frame(
             &self.frame_cards,
             theme.window_frame(),
+            theme.window_card_edge(),
             theme.opacity.see_through(),
             areas,
         )

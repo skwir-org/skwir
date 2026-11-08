@@ -297,6 +297,7 @@ fn base(scheme: &Scheme) -> Base {
         warning: scheme.warning.map_or(own.warning, hsla),
         success: scheme.success.map_or(own.success, hsla),
         terminal: None,
+        sidebar: scheme.sidebar.map(hsla),
     }
 }
 
@@ -531,6 +532,7 @@ mod tests {
             error: Some(channels(0xda4453)),
             warning: Some(channels(0xf67400)),
             success: Some(channels(0x27ae60)),
+            sidebar: None,
         }
     }
 

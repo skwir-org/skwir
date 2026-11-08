@@ -3,9 +3,10 @@
 Status: accepted 2026-11-07 with the user, the default since that
 evening (`ui.cards`, on; off, the window apart by lines as before);
 built on Linux, macOS and Windows compiled only; amended the same
-evening as tried (Amendments). Amends ADR-071
-(tokens of a look: `frame`, `sunken_bg`, `sunken_surface`) and ADR-119
-(the frame is one of the window's grounds).
+evening as tried, and on 2026-11-08 lighter, its cards outlined
+(Amendments). Amends ADR-071
+(tokens of a look: `frame`, `bar`, `sunken_bg`, `sunken_bar`) and
+ADR-119 (the frame is one of the window's grounds).
 
 ## Context
 
@@ -41,25 +42,33 @@ evening as tried (Amendments). Amends ADR-071
    settings since it is the default): the
    window as cards on its frame, or as it was, apart by lines. Off, the
    window is drawn as before.
-2. **The frame is a token of the look.** `frame` lies under both
-   grounds, darker than the darker by `CHROME` (1.08:1), its hue kept:
-   under the bars' gray in a light look, under the files in a dark one
-   (`color::below`; Skwir's own: `#e8e8e8`, `#161616`). It gives way to
-   the text drawn on it (the sidebar's, the tabs'): never darker than
-   `text` reads on at its ratio, a hover laid on it. Three palettes'
-   light looks, whose text reads only just on their own chrome
-   (Solarized, Everforest, Tokyo Night), keep their frame on their
-   chrome. As cards (`Theme::as_cards`), the muted text is guarded on
-   the frame too, and a split's other pane has grounds of its own,
-   `sunken_bg` and `sunken_surface`: two fifths of the way towards the
-   frame, as far as its text still reads. Apart by lines, no token
-   changes.
+2. **The frame is a token of the look** (as amended 2026-11-08,
+   "Lighter"). `frame` lies a step under the files' ground and under
+   the chrome's. Where the desktop names a sidebar color of its own
+   under the files (a GTK sheet's `sidebar_bg_color`, ADR-071 amended
+   2026-11-08), it is that. Else, in a light look, whose chrome lies
+   under the files, it is the chrome's own gray (`surface`, the
+   desktop's window color, which `CHROME` keeps 1.08:1 at least under
+   `bg`). Either lies `ROOM` (1.097:1) under the files at least, room
+   for the bars between. In a dark look, whose chrome is lighter than
+   the files, it is `CHROME` under the files, its hue kept
+   (`color::below`). It gives way to the text drawn on it (the
+   sidebar's, the tabs'): never darker than `text` reads on at its
+   ratio, a hover laid on it. Skwir's own: `#efefef`, `#161616`. As
+   cards (`Theme::as_cards`), the bars (`bar`) of a light look lie
+   `BAR` (1.07:1) under the files towards the frame (`color::along`,
+   Skwir's own `#f2f2f2`) and `EDGE` (1.025:1) above it at least, the
+   card's edge drawn by its outline (point 7); in a dark look they stay
+   `surface`. The text and the muted text are guarded on
+   the frame and the bars too, and a split's other pane has grounds of
+   its own, `sunken_bg` and `sunken_bar`: halfway towards the frame, as
+   far as its text still reads. Apart by lines, no token changes.
 3. **What is a card**: each pane (its row, its files, its timeline, its
    footer), each part of the preview panel (Properties with the header,
    the preview with its toolbar, a container's kept rows and the member
    it shows, the pinned player) and the terminal. A card keeps what it holds within its corners
    (`frame::card`, a rounded content mask: gpui patch 0053). Its row and
-   its footer are bands of `surface` over it, no line between them and
+   its footer are bands of `bar` over it, no line between them and
    the files. The sidebar, its header and the tab strip lie on the frame
    and paint no ground (their drop tint lays on it); the tab shown is a
    pill of the files' ground.
@@ -89,9 +98,18 @@ evening as tried (Amendments). Amends ADR-071
    while the window is whole, around holes the cards' shapes while it
    lets the desktop through (an even-odd path), so each ground keeps its
    own opacity.
-7. **Gutters, not lines**: 6 px (`frame::GUTTER`), between cards and at
-   the top, an exception to the theme's multiples of 4 by the user's
-   choice. The gutter between two cards is the edge dragged between them
+7. **Gutters, not lines between areas**: 6 px (`frame::GUTTER`),
+   between cards and at the top, an exception to the theme's multiples
+   of 4 by the user's choice. Each card is outlined, in either look (as
+   amended 2026-11-08, "Then, an outline"): a ring a device pixel wide
+   on the frame just outside the card's shape, its notches followed, in
+   `border`, the color the lines between areas were drawn in (a
+   desktop's own where it names one), kept `CHROME` apart from the frame
+   at least (`Theme::card_edge`, `frame::paint_outline`), drawn within
+   the window, so not where a card meets its edge. It is the card's edge,
+   not a line between two areas: two cards keep the gutter's frame
+   between their outlines, and a gutter under the pointer shows the
+   handle over both. The gutter between two cards is the edge dragged between them
    (`edge::gutter`): the split, the terminal's top, the preview's side,
    each with the handle's color under the pointer, a double click back
    to the size it ships with, measured from the gutter's middle. Between
@@ -99,7 +117,7 @@ evening as tried (Amendments). Amends ADR-071
    it apart, and its edge stays its own.
 8. **The pane commands act on** while the window is split: its row
    underlined in the accent (2 px along the band's foot), the other
-   pane's grounds a step down (`sunken_bg`, `sunken_surface`: its files,
+   pane's grounds a step down (`sunken_bg`, `sunken_bar`: its files,
    row, Quick filters, banner, timeline and footer). Apart by lines, the
    accent line stays.
 9. **No shadow.** Nothing new casts one: menus and popovers keep
@@ -209,3 +227,104 @@ preview's bar, inside the cards. Tried by the user the same evening:
   the few who change it, as the opacities are; found by the settings'
   search, and shown unfolded once changed.
 
+
+### 2026-11-08: lighter
+
+- **Asked** (the user, beside Dolphin): the window's tint too dark
+  since the cards; lighten it and the other grounds with it, keeping
+  the look.
+- **As it stands** (points 2 and 7; the bullets below are the way
+  there, tried the same day): in a light look the frame is the
+  desktop's sidebar color (a GTK sheet's, ADR-071) or its window gray,
+  at least `ROOM` (1.097:1) under the files; the bars `BAR` (1.07:1)
+  under the files and `EDGE` (1.025:1) above the frame at least; the
+  other pane halfway towards the frame; each card outlined in `border`,
+  in both looks. With Noctalia's colors: frame `#eeeeed`, as Dolphin's
+  window, bars about `#f2f1f1`, files `#faf9f9`, outline `#d7d7d7`.
+- **Measured** (Skwir's own light look, split): four grays where
+  Dolphin has two. The frame (`#e7e7e7`) stood 1.19:1 under the files
+  (`#fafafa`), the bars `#f0f0f0`, the other pane's files `#f2f2f2`;
+  Dolphin's window `#eeeeed` stands 1.10:1 under its view `#faf9f9`.
+- **Why**: the frame lay a step under the darker of a card's grounds. In
+  a light look that is the bars, thin bands, so the frame lay two steps
+  under the files, most of the card, and the sidebar darker than any
+  chrome had been. In a dark look the darker is the files: one step,
+  which is why only the light look was heavy. With a desktop's colors
+  as Plasma's lay them (`#faf9f9`, `#eeeeed`) the rule gave `#e5e5e4`.
+- **Decided**: the frame a step under the files (point 2): in a light
+  look the chrome's own gray, so the sidebar and the tabs lie on the
+  desktop's window color as Dolphin's do (`#eeeeed` there, `#f0f0f0`
+  Skwir's own), and the bars give way to it, as far from it as from
+  the files (`bar`, `#f4f3f3`, `#f5f5f5`). The other pane steps
+  halfway towards the frame (two fifths before), which keeps it
+  visible now the frame is nearer: its files about the bars' gray. The
+  dark look keeps its frame, its bars and its files; only its other
+  pane steps that much further (`#1a1a1a` files, `#1e1e1e` bars, for
+  `#1b1b1b` and `#202020`).
+- **Consequences**: within a card, the bars stand from the files at
+  about 1.04:1, not `CHROME`: the card's edge on the frame sets the
+  chrome apart, the bars only within it. In a light look the other
+  pane's row stands from the frame by about 1.02:1, its field and its
+  buttons kept on their own ground. The look apart by lines is drawn as
+  before (`bar` is `surface` there). A theme's sidebar color
+  (libadwaita's `sidebar_bg_color`) was not read yet: it is the frame
+  since ADR-071's amendment of the same day.
+- **Checked** on Xvfb (lavapipe), the window split with the preview, in
+  Skwir's own light and dark looks and with two desktop sheets (Plasma's
+  pair, and libadwaita names with the window as light as the view); the
+  grounds sampled before and after: as above, and `#f1f0f0` frame,
+  `#f5f4f4` bars where the window is as light as the view.
+- **Then, the toolbar** (the user, the same day, on their desktop): the
+  bars halfway stood only 1.045:1 to 1.05:1 from the files, too close.
+  They are set by what they are told apart from instead: `BAR`
+  (1.07:1) under the files, between the 1.09:1 they had and the
+  halfway's, and `EDGE` (1.025:1) above the frame at least, which keeps
+  the card's corners where its bars meet the frame. The frame keeps the
+  desktop's color where that leaves the room (`ROOM`, 1.097:1: Noctalia's
+  `#eeeeed`, adw-gtk3's `#ebebed`) and steps down where it does not
+  (Skwir's own `#f0f0f0` to `#efefef`). Bars: Skwir's own `#f2f2f2`,
+  Noctalia's about `#f2f1f1`; the card's edge on the frame 1.027:1 and
+  1.032:1. A halfway step back (the frame darker again for every desktop)
+  and the bars on the frame (Dolphin's, the islands direction, the card's
+  top and corners gone) were set aside.
+- **Then, the header** (the user, the same day): at 1.025:1 from the
+  frame the card's header blended into the sidebar and the tabs. With
+  grays alone the two edges share what lies between the frame and the
+  files, so the frame steps down: `EDGE` 1.045:1, the header's edge as
+  it was with the bars halfway, `ROOM` 1.118:1 (1.185:1 before the
+  cards were made lighter). Skwir's own frame `#ededed`; Noctalia's
+  sidebar (1.105:1) is nearer than the room and moves down too, about
+  `#ececeb`; adw-gtk3's `#ebebed` (1.19:1) stays. The bars stay 1.07:1
+  under the files. Tried first, as one constant: better, still blended,
+  the user said, and Noctalia's own gray lost.
+- **Then, an outline** (the user, the same day: keep Noctalia's gray,
+  outline the cards): Dolphin outlines its views, a 1 px `#e5e5e4` on
+  its `#eeeeed` (1.09:1, measured on the user's screenshot), and that
+  is how it keeps two grays. Each card of a light look is outlined so
+  (point 7), `CHROME` under the frame: with Noctalia's sheet
+  `#e5e5e4`, Dolphin's own; Skwir's own `#e7e7e7` on `#efefef`. The
+  card's edge no longer comes from the grays, so `EDGE` is 1.025:1
+  again and `ROOM` 1.097:1: Noctalia's sidebar `#eeeeed` is the frame
+  once more, the bars 1.07:1 under the files. A dark look's cards stand
+  apart already (bars above the files, the frame under them) and have
+  none. Checked on Xvfb: the outline a crisp device pixel on the
+  frame, Dolphin's `#e5e5e4` with Noctalia's colors, `#e7e7e7` with
+  Skwir's; round at the corners standing apart; along a notch's band,
+  its concave fillet and under its buttons, at both ends (the sidebar
+  put away, the preview off); none at the window's bottom; two between
+  split panes with the frame between; none in the dark look. Not
+  checked: while the window lets the desktop through (the ring is laid
+  on the frame at its opacity, as what is written there).
+- **Then, darker and in both looks** (the user, having tried it): a
+  step darker, two of the chrome's steps under the frame (`OUTLINE`,
+  1.166:1): Noctalia's about `#dddddc`, Skwir's own `#dedede`; and in
+  the dark look too, by the same rule, as far under its frame as black
+  lets it (Skwir's own: black under `#161616`, 1.16:1).
+- **Then, the lines' color** (the user asked whether the outline stood
+  as the lines before the cards did; it did not: 1.17:1 on the frame
+  where the lines' `border` stood 1.25:1 on the chrome, and dark where
+  they were light): the outline is `border`, in both looks. Skwir's own
+  light `#d8d8d8` on `#efefef` (1.24:1), Noctalia's sheet `#d7d7d7`
+  (derived: it names no `borders`) on `#eeeeed` (1.24:1), Skwir's own
+  dark `#3a3a3a` on `#161616` (1.59:1), lighter than the frame and the
+  cards, as the dark look's lines were. `OUTLINE` is gone.

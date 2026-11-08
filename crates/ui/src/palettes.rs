@@ -71,6 +71,7 @@ impl Look {
             warning: color(self.warning),
             success: color(self.success),
             terminal: self.terminal.map(|colors| colors.map(color)),
+            sidebar: None,
         }
     }
 }

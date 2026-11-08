@@ -43,7 +43,7 @@ kind of preview, bands as tints (Amendments).
    Each is a slider (`SettingSpec::slider`), the knob's value worn as it
    moves and saved once let go.
 2. **Only the grounds.** Each of the window's areas paints its ground
-   once, at its opacity (`Theme::window_bg`, `window_surface`), over
+   once, at its opacity (`Theme::window_bg`, `window_bar`), over
    nothing else of the window (`docs/invariants/shell.md`). Text, icons,
    pictures, rows, fields, cards and selections are drawn on it as they
    are, opaque; so is everything drawn over the window: menus,

@@ -78,6 +78,7 @@ pub(crate) fn scheme_of(text: &str) -> Option<Scheme> {
         error: color(&["red", "color1"]),
         warning: color(&["yellow", "color3"]),
         success: color(&["green", "color2"]),
+        sidebar: None,
     })
 }
 

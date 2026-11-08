@@ -13164,3 +13164,189 @@ amended).
 - **Not checked:** Windows itself; a stick read by a Mac or Windows; an
   exFAT driver before Linux 6.7 (the call is refused, nothing marked);
   macOS (compiled only).
+
+## 2026-11-08: Cards, lighter (ADR-123 amended)
+
+- **Asked** (the user, a screenshot of Dolphin beside skwir): the tint
+  too dark since the cards; lighten it and the other grounds with it,
+  keeping the look.
+- **Measured** on that screenshot: Dolphin two grays (window `#eeeeed`,
+  view `#faf9f9`, 1.10:1); skwir in its own light look four (frame
+  `#e7e7e7`, bars `#f0f0f0`, the other pane's files `#f2f2f2`, files
+  `#fafafa`; frame to files 1.19:1). The frame lay a step under the
+  bars, so two under the files.
+- **Built:** `theme::frame` a step under the files: the chrome's gray
+  where it lies under them (a light look), else `CHROME` under them as
+  before. A token `bar` for the bars (`surface`, but as cards in a light
+  look `color::between` the frame and the files, as far from either),
+  painted by `window_bar` (was `window_surface`) and `bar_ground`;
+  `sunken_surface` is `sunken_bar`, and the other pane steps halfway
+  (`SUNKEN` 0.5, was 0.4). `as_cards` guards the text and the muted text
+  on the frame and the bars. Menus, dialogs and Peek keep `surface`; the
+  look apart by lines is unchanged (`bar` is `surface` there). Tests:
+  `color::between`, `the_frame_lies_a_step_under_the_files` (every
+  palette, both looks). ADR-123 point 2 and an amendment "Lighter",
+  ADR-071's chrome note, ADR-119 and shell.md's names, the ADR index,
+  PLAN, CHANGELOG; the README's light screenshot made again (the debug
+  build), looked at.
+- **Seen** on Xvfb (lavapipe), split with the preview, grounds sampled
+  before and after (frame, active files, its bars, the other pane's
+  files and bars):
+  - Skwir's light: `#e7e7e7` `#fafafa` `#f0f0f0` `#f2f2f2` `#ededed`
+    became `#f0f0f0` `#fafafa` `#f5f5f5` `#f5f5f5` `#f2f2f2`;
+  - a sheet with Plasma's pair (`#faf9f9`, `#eeeeed`): `#e5e5e4` …
+    became `#eeeeed` (Dolphin's) `#faf9f9` `#f4f3f3` `#f4f3f3`
+    `#f1f1f0`;
+  - libadwaita names, the window as light as the view: frame `#f1f0f0`,
+    bars `#f5f4f4`;
+  - Skwir's dark: frame `#161616`, files `#1e1e1e`, bars `#262626` as
+    before; the other pane `#1a1a1a` and `#1e1e1e` (were `#1b1b1b`,
+    `#202020`).
+- **Not checked:** the user's own desktop; see-through grounds (the
+  tokens change, not how they are painted); the other palettes in a
+  window (the test covers their contrast).
+
+## 2026-11-08: A sheet's own sidebar color, the cards' frame (ADR-071 amended)
+
+- **Asked** (the user): close the gap the lighter cards left. A shell's
+  GTK sheet names its sidebar apart (Noctalia's `sidebar_bg_color`
+  `#eeeeed`, its window as light as its view, `#faf9f9`), which was not
+  read: the frame was the window's color set apart, `#f1f0f0`.
+- **Built:** `Scheme::sidebar` (platform, `#[serde(default)]`, so a
+  style kept from an earlier run still reads), read by
+  `gtk_theme::Sheet::scheme` from `sidebar_bg_color`, `None` from every
+  other reader; `Base::sidebar`; `theme::frame` takes it where it lies
+  under `bg`, at least `CHROME` under it, giving way to text; the bars
+  `color::between` the frame and `bg` in a light look. The chrome
+  (`surface`) is unchanged. ADR-071's amendment, ADR-123 point 2, the
+  ADR index, PLAN, CHANGELOG, theme.rs's header.
+- **Fixed on the way:** the desktop style's reading followed what the
+  files name after reading them; it follows them first now
+  (`Following::read_again`). `what_a_file_names_is_followed_where_it_names_it_now`
+  failed in 2 of 4 runs of the UI's and the platform's tests together
+  (10 s waiting for the scheme written after it was named), passed
+  alone; with the order changed, 5 of 5. shell.md and ADR-071 say
+  "before each reading".
+- **Checked:** fmt; clippy on skwir-platform and skwir-ui; their tests
+  (1015 together, five runs); new: the sidebar read and taken from the
+  user's sheet, a header bar's not; the frame from a sidebar (Noctalia's
+  `#eeeeed`, adw-gtk3's `#ebebed`), moved to a step where nearer, a dark
+  look's lighter one not taken, the look apart by lines unchanged; the
+  random schemes, a third with a sidebar, read on every cards ground.
+- **Not checked:** in a window (the user checks on their desktop);
+  `just check-cross` (every constructor of `Scheme` and `Base` was
+  found by name, whatever system gates it).
+
+## 2026-11-08: The cards' toolbar a set step from the files (ADR-123 amended)
+
+- **Asked** (the user, on their desktop): the toolbar too close to the
+  files; a step back, or a better idea. Halfway between the frame and
+  the files, the bars stood 1.045:1 (Skwir's own) to 1.05:1 (Noctalia's)
+  from them; before the cards were made lighter, 1.09:1.
+- **Built:** the bars of a light look as cards are `BAR` (1.07:1) under
+  the files towards the frame (`color::along`, in place of
+  `color::between`), and `EDGE` (1.025:1) above the frame at least; the
+  frame lies `ROOM` (their product, 1.097:1) under the files at least,
+  the desktop's sidebar or window color moved down only where it is
+  nearer, and where the text would not read there, from the desktop's
+  own color rather than from the files'. ADR-123 point 2 and its
+  "Lighter" amendment ("Then, the toolbar"), ADR-071's notes.
+- **Values** (as computed by the rule): Skwir's own frame `#efefef`
+  (was `#f0f0f0`), bars `#f2f2f2` (`#f5f5f5`), the card's edge on the
+  frame 1.027:1; Noctalia's frame `#eeeeed`, bars about `#f2f1f1`, edge
+  1.032:1; adw-gtk3's frame `#ebebed`, bars about `#f7f7f7`, edge
+  1.11:1. Dark looks unchanged.
+- **Checked:** fmt; clippy on skwir-ui; `color::along` (the ratio from
+  where it starts, its hue on the way, its end where the way is
+  shorter); the frame test (every palette: `ROOM` or `CHROME` under the
+  files unless the text would not read there, or the ground is black;
+  the bars at `BAR` and `EDGE`); the sidebar test (Noctalia's,
+  adw-gtk3's, a near one, the window alone). Not seen in a window here:
+  the user checks on their desktop.
+
+## 2026-11-08: The cards' header apart from the frame (ADR-123 amended)
+
+- **Asked** (the user): with the bars 1.07:1 from the files, the card's
+  header blended into the sidebar and the tabs (1.027:1 to 1.032:1
+  from the frame). The two edges share what lies between the frame and
+  the files; with grays alone, the frame steps down or one edge gives.
+  Offered: a slightly darker frame (one constant), or an outline on
+  each card as Dolphin draws its views (1 px `#e5e5e4` on `#eeeeed` in
+  the user's screenshot). The user: the frame first.
+- **Built:** `EDGE` 1.045 (was 1.025), so `ROOM` 1.118:1. Computed by
+  the rule: Skwir's own frame `#ededed` (`#efefef` before, `#e7e7e7`
+  before the cards were made lighter), bars `#f2f2f2`; a shell's sidebar
+  nearer than the room (Noctalia's `#eeeeed`, 1.105:1) moved down, about
+  `#ececeb`, the same as without it; adw-gtk3's `#ebebed` kept. The
+  sidebar test says so. ADR-123 ("Then, the header"), ADR-071's notes.
+- **Checked:** fmt; the theme and color tests (23); clippy and the UI's
+  and platform's tests below. Not seen in a window here: the user
+  checks on their desktop.
+
+## 2026-11-08: The cards outlined (ADR-123 amended)
+
+- **Asked** (the user): with the frame darker (`EDGE` 1.045), the header
+  was better but still blended; keep Noctalia's own gray and outline the
+  cards, as Dolphin outlines its views (1 px `#e5e5e4` on `#eeeeed` in
+  the user's screenshot).
+- **Built:** `Theme::card_edge`, set by `as_cards` in a light look (the
+  bars lie close to the frame there), `CHROME` under the frame; None in
+  a dark look and apart by lines. `elements::frame::paint_outline`: the
+  card's shape grown by a device pixel and the shape itself, filled
+  even-odd (`shape`: the rounded rectangle, or with notches the band
+  rounded beside each, its edge, the concave fillet and what is under
+  the notch), painted after the frame's ground and fillets, within the
+  frame's bounds, so an edge on the window's falls outside and is not
+  drawn; at the frame's opacity (`window_card_edge`). `EDGE` back to
+  1.025 (`ROOM` 1.097:1): Noctalia's `#eeeeed` is the frame again.
+  ADR-123 points 2 and 7 and "Then, an outline", ADR-071's notes,
+  shell.md, the ADR index, CHANGELOG.
+- **Seen** on Xvfb (lavapipe, scale 1), split, with Plasma's pair as a
+  GTK sheet: the outline `#e5e5e4` one pixel wide just outside each
+  card, between the panes `#e5e5e4`, four pixels of `#eeeeed`,
+  `#e5e5e4`; none at the window's bottom; round at the cards' corners;
+  with the sidebar put away and the preview off, along both notches'
+  bands, their fillets and under their buttons. Skwir's own light look:
+  `#e7e7e7` on `#efefef`. Dark: none (`#161616` across the gutter).
+- **Checked:** fmt; clippy on skwir-ui; the theme, color and frame tests
+  (the edge `CHROME` under the frame in a light look, none in a dark
+  one or before `as_cards`; Noctalia's sidebar the frame again); the
+  UI's and platform's tests. Not checked: the outline while the window
+  lets the desktop through; at a scale of 2.
+
+## 2026-11-08: The cards' outline darker, in both looks (ADR-123 amended)
+
+- **Asked** (the user, having tried the outline): a step darker, and in
+  the dark look too.
+- **Built:** `OUTLINE` (`CHROME`², 1.166:1) under the frame, in place of
+  `CHROME`; `card_edge` set by `as_cards` in either look. Computed:
+  Noctalia's sheet about `#dddddc` on `#eeeeed`, Skwir's own light
+  `#dedede` on `#efefef`, Skwir's own dark black on `#161616` (1.16:1,
+  as far as black lets it). The painting is the one checked before.
+  ADR-123 point 7 and "Then, darker and in both looks", ADR-071's note,
+  shell.md, the ADR index, CHANGELOG.
+- **Checked:** fmt; clippy on skwir-ui; the theme, color and frame tests
+  (the light edge `OUTLINE` under the frame, the dark one under it by
+  more than `CHROME`, none before `as_cards`); the UI's and platform's
+  tests. Not seen in a window: a color, painted as already seen; the
+  user checks on their desktop.
+
+## 2026-11-08: The cards' outline in the lines' color (ADR-123 amended)
+
+- **Asked** (the user): whether the outline stood as the lines before
+  the cards. No: the lines' `border` stood 1.25:1 on the chrome and
+  1.37:1 on the files (Skwir's own light `#d8d8d8`; dark `#3a3a3a`,
+  lighter than its grounds), the outline 1.17:1 on the frame (dark:
+  black, darker than its grounds). The user: try the lines' color.
+- **Built:** `card_edge` is `border` kept `CHROME` from the frame
+  (`color::readable`), in both looks; `OUTLINE` removed. Computed:
+  Skwir's own light `#d8d8d8` on `#efefef` (1.24:1), Noctalia's sheet
+  `#d7d7d7` on `#eeeeed` (1.24:1; the sheet names no `borders`, so the
+  border is derived), Skwir's own dark `#3a3a3a` on `#161616` (1.59:1).
+  A desktop's `borders` (GTK's, Plasma's) now outlines the cards too.
+  ADR-123 point 7 and "Then, the lines' color", ADR-071's note.
+- **Checked:** fmt; clippy on skwir-ui; the theme, color and frame tests
+  (Skwir's edge is its `border`, darker than the frame light, lighter
+  dark; every palette's a step from its frame at least); the UI's and
+  platform's tests. Not seen in a window: a color, painted as already
+  seen.

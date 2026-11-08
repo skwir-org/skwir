@@ -80,8 +80,9 @@ Views are in [views.md](views.md); what locations decide, in
   platform theme's settings and the scheme they name, GTK's
   `settings.ini`, the user's GTK sheets and what they import, the
   folder of Omarchy's theme; their folders watched, access dropped),
-  asked again after each reading (`Own::followed`), so a file named
-  anew is followed where it is now; Windows' registry keys (the
+  asked again before each reading (`Own::followed`), so a file named
+  anew is followed where it is now, and a write to it once named is
+  never missed; Windows' registry keys (the
   accent, a contrast theme), never a timer. macOS tells only AppKit's own windows: what it says is read
   again on a worker when the window's look changes or it is activated
   (`desktop_style::read_again`, `FOLLOWED`), each reading worn in the
@@ -126,7 +127,7 @@ Views are in [views.md](views.md); what locations decide, in
   else of the window (`Theme::window_bg` for the files, the terminal,
   the files' Quick filters; `Theme::preview_grounds` for what a preview
   shows, its paper or its letterbox whatever the kind, and Properties
-  beside it; `window_surface` for the bars, the sidebar and its header,
+  beside it; `window_bar` for the bars, the sidebar and its header,
   the tab strip, the timeline, the footer, the preview panel's bars and
   dock), so that what is behind the window shows through them as much
   as their opacity lets it (ADR-119: Appearance's three sliders,
@@ -391,13 +392,18 @@ of bars, split or not.
   of the window's layout: the edge between two cards is the gutter between
   them (`edge::gutter`, 6 px, inserted by the shell between the panes and
   above the terminal, by the preview before its card), measured from its
-  middle, since a strip on a card's border would be cut by its corners. No
+  middle, since a strip on a card's border would be cut by its corners.
+  The cards are outlined, in either look, a device pixel on the frame
+  just outside each card's shape (`Theme::card_edge`, painted by
+  `elements::frame` within the window, so not on the window's edge): the
+  card's edge, not a line between areas. No
   line between areas (`Theme::lines`): a pane's row and its footer are
-  bands of `surface` over its card; a bar's row is then as tall as the bar
-  (`Theme::line_width`). While the window is split, the pane commands act
+  bands of `bar` over its card (`Theme::bar`: in a light look between
+  the frame, the chrome's gray, and the files); a bar's row is then as
+  tall as the bar (`Theme::line_width`). While the window is split, the pane commands act
   on has its row underlined in the accent and the other's grounds step
   down (`Shell::lowered`, `Theme::files_ground`, `bar_ground`): what paints
-  a pane's ground asks them, never `window_bg` or `window_surface`. Apart
+  a pane's ground asks them, never `window_bg` or `window_bar`. Apart
   by lines, the window is drawn as before: kept working, not grown. An
   area added is designed as a card first, and given the lines look only
   as far as it needs to work there (ADR-123, "Kept, the default").

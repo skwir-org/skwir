@@ -6547,7 +6547,7 @@ pub fn render_panel(
     // While peek shows the preview, the panel is only a picture of it: the
     // kept rows, which take the keyboard, are drawn in peek alone.
     let interactive = !shell.preview.peek;
-    let heading = header(shell, &theme, false, Some(theme.window_surface()), cx);
+    let heading = header(shell, &theme, false, Some(theme.window_bar()), cx);
     // As cards, what it holds is cards of their own, the header heading the
     // first (`cards_under`).
     let content = if theme.cards {

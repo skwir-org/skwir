@@ -5,8 +5,9 @@
 - **Cards, the new look** (on by default; Settings › Appearance › More settings › Cards off
   gives the window of earlier versions, apart by lines): the panes,
   the preview's parts and the terminal are drawn as cards on the window's frame, a
-  shade under both of its grounds, apart by a 6 px gutter rather than by
-  lines; the sidebar and the tabs lie on the frame. The cards run to the
+  shade under the files (in a light look the desktop's own window color, the
+  cards' bars between the two), each card outlined by a pixel, apart by a 6 px
+  gutter rather than by lines; the sidebar and the tabs lie on the frame. The cards run to the
   window's edges, the top excepted, where the frame's own row is, square where
   they meet them and rounded where they stand apart; on a tiled window the top
   gutter goes too. Split, Properties and Preview, and the sidebar's toggle and
@@ -21,7 +22,8 @@
   style sheet laid over your theme (`~/.config/gtk-3.0/gtk.css`, else GTK 4's),
   where Noctalia, Caelestia and Dux Shell write their colors, and follow it as
   they write it again (a new wallpaper); the color schemes of qtengine and
-  hyprqt6engine beside qt6ct's; and, on Omarchy, its theme.
+  hyprqt6engine beside qt6ct's; and, on Omarchy, its theme. Where the sheet names
+  a sidebar color of its own (Noctalia's, adw-gtk3's), the cards lie on it.
 - **See-through fields**: with the window's background let through, the address
   field, the view buttons and the tab shown let it through as their bar does,
   instead of staying solid.

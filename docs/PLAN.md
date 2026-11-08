@@ -804,7 +804,11 @@ to the window's edges but at the top; the sidebar, the tabs and the
 window's buttons lie on the frame (the buttons in notches of a pane's
 row, or above the preview); no lines between areas; the active pane of a
 split underlined, the other a step down. Amended the same evening as the
-user tried it. The frame is painted
+user tried it, and made lighter on 2026-11-08 (the frame a step under the
+files: in a light look the desktop's window gray, or a GTK sheet's own
+sidebar color (ADR-071 amended), the bars between it and the files, as
+Dolphin's two grays, each card outlined in the lines' `border`). The
+frame is painted
 once, around rounded holes while the window lets the desktop through
 (ADR-119). Two gpui patches: 0053, rounded content masks (a rounded
 element that hides its overflow keeps its content within its arcs, every

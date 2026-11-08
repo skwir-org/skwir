@@ -24,6 +24,11 @@
 //! curves each the exact complement of the card's corner beside it, told
 //! how opaque the card is there (`Window::paint_around`, gpui patch 0055):
 //! no seam where they meet.
+//!
+//! Each card is outlined (`Theme::card_edge`), as Dolphin draws its views:
+//! a ring a device pixel wide on the frame, just outside the card's shape,
+//! its notches followed (`paint_outline`), drawn within the window, so it
+//! is not where the card meets the window's edge.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -94,11 +99,19 @@ impl Placed {
 
 /// The frame under `child`: `ground` painted once around the cards laid
 /// out in it, as holes (`cut`) while what is behind the window shows
-/// through, else under them all (whole, nothing shows between them).
-pub fn frame(cards: &Cards, ground: Hsla, cut: bool, child: impl IntoElement) -> Frame {
+/// through, else under them all (whole, nothing shows between them); each
+/// card outlined in `edge`, where the look has one.
+pub fn frame(
+    cards: &Cards,
+    ground: Hsla,
+    edge: Option<Hsla>,
+    cut: bool,
+    child: impl IntoElement,
+) -> Frame {
     Frame {
         cards: cards.clone(),
         ground,
+        edge,
         cut,
         child: child.into_any_element(),
     }
@@ -118,6 +131,7 @@ pub fn card(cards: &Cards, under: Corners<f32>, child: impl IntoElement) -> Card
 pub struct Frame {
     cards: Cards,
     ground: Hsla,
+    edge: Option<Hsla>,
     cut: bool,
     child: AnyElement,
 }
@@ -285,6 +299,11 @@ impl Element for Frame {
         for card in &placed {
             paint_fillets(card, self.ground, self.cut, window);
         }
+        if let Some(edge) = self.edge {
+            for card in &placed {
+                paint_outline(card, edge, bounds, window);
+            }
+        }
         self.child.paint(window, cx);
     }
 }
@@ -394,6 +413,115 @@ fn square_outline(path: &mut PathBuilder, card: &Placed) {
             path.line_to(point(x, low - r));
         }
         None => path.line_to(point(left, top)),
+    }
+    path.close();
+}
+
+/// A card's outline (`Theme::card_edge`): a ring a device pixel wide on
+/// the frame, between its shape grown by that pixel and its shape, drawn
+/// within the frame's `bounds` (the window's), so it is not where the card
+/// meets the window's edge; what lies on the frame beside it (a notch's
+/// buttons) is drawn over it.
+fn paint_outline(card: &Placed, edge: Hsla, bounds: Bounds<Pixels>, window: &mut Window) {
+    let pixel = px(1. / window.scale_factor());
+    let mut path = PathBuilder::fill().with_style(PathStyle::Fill(
+        FillOptions::default().with_fill_rule(FillRule::EvenOdd),
+    ));
+    shape(&mut path, card, pixel);
+    shape(&mut path, card, px(0.));
+    match path.build() {
+        Ok(path) => window.with_content_mask(Some(ContentMask::new(bounds)), |window| {
+            window.paint_path(path, edge);
+        }),
+        Err(error) => tracing::warn!("cannot shape a card's outline: {error}"),
+    }
+}
+
+/// A card's shape, its corners as it rounds them, grown by `grow` on every
+/// side: its rounded rectangle, or with notches its band (rounded beside
+/// each notch), the band's edge down to the concave fillet into the
+/// files, and what is under the notch, rounded at its corner unless that is
+/// on the window's edge. Clockwise.
+fn shape(path: &mut PathBuilder, card: &Placed, grow: Pixels) {
+    let grown = |radius: Pixels| {
+        if radius > px(0.) {
+            radius + grow
+        } else {
+            px(0.)
+        }
+    };
+    if !card.notched() {
+        rounded_rect(
+            path,
+            card.bounds.dilate(grow),
+            card.corners.map(|c| grown(*c)),
+        );
+        return;
+    }
+    let b = card.bounds;
+    let (r, c) = (card.radius, card.corners);
+    let [on_left, on_right] = card.on_edge;
+    let (left, top, right, bottom) = (
+        b.left() - grow,
+        b.top() - grow,
+        b.right() + grow,
+        b.bottom() + grow,
+    );
+    // A convex corner of `radius` (its center `radius` in from the
+    // card's), grown; a concave one shrinks by as much.
+    let convex = |path: &mut PathBuilder, radius: Pixels, to| {
+        if radius > px(0.) {
+            let radius = radius + grow;
+            path.arc_to(point(radius, radius), px(0.), false, true, to);
+        }
+    };
+    let concave = |path: &mut PathBuilder, to| {
+        let radius = r - grow;
+        path.arc_to(point(radius, radius), px(0.), false, false, to);
+    };
+    // How far in from the card's edge a corner of `radius` ends: out by
+    // `grow` where it is square, at the grown shape's corner.
+    let at = |radius: Pixels| if radius > px(0.) { radius } else { -grow };
+    let [start, end] = card.notches;
+    // The band's top, from beside the notch at its start (or the card's
+    // corner) to beside the one at its end.
+    match start {
+        Some(notch) => path.move_to(point(notch.bounds.right() + r, top)),
+        None => path.move_to(point(b.left() + at(c.top_left), top)),
+    }
+    if let Some(notch) = end {
+        let (x, low) = (notch.bounds.left(), notch.bounds.bottom());
+        path.line_to(point(x - r, top));
+        convex(path, r, point(x + grow, b.top() + r));
+        path.line_to(point(x + grow, low - r));
+        concave(path, point(x + r, low - grow));
+        let corner = if on_right { px(0.) } else { r };
+        path.line_to(point(b.right() - at(corner), low - grow));
+        convex(path, corner, point(right, low + corner));
+    } else {
+        path.line_to(point(b.right() - at(c.top_right), top));
+        convex(path, c.top_right, point(right, b.top() + c.top_right));
+    }
+    path.line_to(point(right, b.bottom() - at(c.bottom_right)));
+    convex(
+        path,
+        c.bottom_right,
+        point(b.right() - c.bottom_right, bottom),
+    );
+    path.line_to(point(b.left() + at(c.bottom_left), bottom));
+    convex(path, c.bottom_left, point(left, b.bottom() - c.bottom_left));
+    if let Some(notch) = start {
+        let (x, low) = (notch.bounds.right(), notch.bounds.bottom());
+        let corner = if on_left { px(0.) } else { r };
+        path.line_to(point(left, low + at(corner)));
+        convex(path, corner, point(b.left() + corner, low - grow));
+        path.line_to(point(x - r, low - grow));
+        concave(path, point(x - grow, low - r));
+        path.line_to(point(x - grow, b.top() + r));
+        convex(path, r, point(x + r, top));
+    } else {
+        path.line_to(point(left, b.top() + at(c.top_left)));
+        convex(path, c.top_left, point(b.left() + c.top_left, top));
     }
     path.close();
 }

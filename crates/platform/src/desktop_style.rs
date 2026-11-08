@@ -165,6 +165,12 @@ pub struct Scheme {
     pub warning: Option<Rgb>,
     #[serde(default)]
     pub success: Option<Rgb>,
+    /// The sidebar's own ground, where the scheme names one apart from
+    /// its window's (libadwaita's `sidebar_bg_color`): the window's frame
+    /// under its cards where it lies under what is read (ADR-071, amended
+    /// 2026-11-08; ADR-123). The chrome stays `surface`.
+    #[serde(default)]
+    pub sidebar: Option<Rgb>,
 }
 
 impl Scheme {
@@ -273,6 +279,7 @@ fn system_scheme(colors: &SystemColors) -> Scheme {
         error: Some(on(colors.red)),
         warning: Some(on(colors.orange)),
         success: Some(on(colors.green)),
+        sidebar: None,
     }
 }
 
@@ -306,6 +313,7 @@ fn contrast_scheme(
         error: None,
         warning: None,
         success: None,
+        sidebar: None,
     }
 }
 
@@ -677,8 +685,8 @@ mod imp {
         /// (Plasma's `kdeglobals`, LXQt's `lxqt.conf`, the Qt platform
         /// theme's settings and the scheme they name, GTK's `settings.ini`,
         /// the user's GTK sheets and what they import, the folder of
-        /// Omarchy's theme), each followed in its folder: asked again after
-        /// each reading, as what a file names may have moved.
+        /// Omarchy's theme), each followed in its folder: asked again
+        /// before each reading, as what a file names may have moved.
         fn followed(&self) -> Vec<PathBuf>;
     }
 
@@ -1005,6 +1013,12 @@ mod imp {
         /// reading freed (a theme's sheets) is given back before the
         /// thread waits again, which may be for hours.
         fn read_again(&self) {
+            // What the files name now (another scheme, a sheet imported)
+            // followed before they are read: a write after this is told
+            // and read again, one before it is in this reading. Followed
+            // after, a write between the two was lost (a shell naming a
+            // scheme, then writing it).
+            self.follow(&self.own.followed());
             let bus = self
                 .bus
                 .lock()
@@ -1019,9 +1033,6 @@ mod imp {
                 (self.changed.lock().unwrap_or_else(PoisonError::into_inner))(now);
             }
             drop(said);
-            // What the files read now name (another scheme, a sheet
-            // imported) followed from now on.
-            self.follow(&self.own.followed());
             skwir_core::scheduler::release_now();
         }
 
@@ -2364,6 +2375,7 @@ mod tests {
                     error: None,
                     warning: None,
                     success: None,
+                    sidebar: None,
                 });
                 schemes
             }

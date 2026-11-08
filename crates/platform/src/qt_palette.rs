@@ -106,6 +106,7 @@ pub(crate) fn palette(active_colors: &str) -> Option<Scheme> {
         error: None,
         warning: None,
         success: None,
+        sidebar: None,
     })
 }
 
@@ -135,6 +136,7 @@ pub(crate) fn lxqt(conf: &str) -> Option<Scheme> {
         error: None,
         warning: None,
         success: None,
+        sidebar: None,
     })
 }
 

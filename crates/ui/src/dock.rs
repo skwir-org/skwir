@@ -312,7 +312,7 @@ pub fn render(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Option<AnyE
         // As cards, a card of its own under a gutter (`dock_gutter`).
         .when(theme.lines(), |d| d.border_t_1().border_color(theme.border))
         // One of the panel's parts: the window's own ground.
-        .bg(theme.window_surface())
+        .bg(theme.window_bar())
         .key_context(crate::keymap::PLAYER);
     if let Some(focus) = &shell.player.focus {
         let clicked = focus.clone();
