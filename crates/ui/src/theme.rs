@@ -53,8 +53,10 @@
 //!   (`selection_bg` under it, its text always `selection_text`, which
 //!   reads there: `Chosen::chosen`, or a run of text recolored where only
 //!   part of it is chosen; never `text` left on a desktop's selection,
-//!   which may be dark in a light look), `success`/`warning`/`error` for
-//!   outcomes, `scrim` behind a dialog,
+//!   which may be dark in a light look; a mark on it too, a check or a
+//!   box, never the accent, which may be the selection's own color: a
+//!   fill of `selection_text` with `selection_bg` on it),
+//!   `success`/`warning`/`error` for outcomes, `scrim` behind a dialog,
 //!   `stage` behind a picture, a page or a film on the whole screen,
 //!   `find_*` for what a find found in text,
 //!   `drop_target` under a drag, `on_accent` for text and glyphs on an

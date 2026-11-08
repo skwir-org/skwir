@@ -13400,3 +13400,19 @@ amended).
   under load; the platform is not changed here); it passed alone five
   times and in two more full runs. Not seen in a window: the preview's,
   the tables', the bytes' and the terminal's selections.
+- **Then** (the user): the Tags dialog's check box, on the highlighted
+  row, blended into it: the box is the accent (filled) or muted
+  (empty), and a desktop's accent may be its selection's color
+  (Noctalia's is). On a chosen row `mark_box` is drawn in the
+  selection's own colors: its border `selection_text`, filled with it,
+  the tick in `selection_bg`. The other checks on rows (Settings'
+  choices and records) are on rows hovered, not chosen, or switch to
+  `selection_text` already. The rule in theme.rs's header and AGENTS.md
+  covers marks. Not seen in a window: the test home has no tags.
+- **Then** (the user): the View menu's chevron stayed muted on its
+  button, chosen while the menu is open. A toolbar button's glyphs (its
+  icon, a dropdown's chevron) are drawn by one rule now (`glyph` in
+  `Button::render`): its words' color as it is on or off, an icon's
+  under the pointer where the hover takes it off the selection. Seen on
+  Xvfb with Noctalia's accent: the View menu open, its sliders and its
+  chevron white on the teal.

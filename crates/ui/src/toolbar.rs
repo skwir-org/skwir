@@ -396,6 +396,22 @@ impl Button {
         let revealed = cx
             .try_global::<RevealRow>()
             .is_some_and(|reveal| reveal.row.as_ref() == Some(&id));
+        // A glyph of the button (its icon, a dropdown's chevron), in its
+        // words' color as it is on or off. On, under the pointer the button
+        // leaves the selection's ground for the hover's (its words for the
+        // text): its glyphs go back to an icon's color, as it is off.
+        let on = self.active && tint.is_none();
+        let off_under_pointer = on && !value && enabled && !switch;
+        let glyph = |svg: gpui::Svg| {
+            svg.text_color(match (on, value) {
+                (true, true) => theme.accent_text,
+                (true, false) => theme.selection_text,
+                (false, _) => theme.text_muted,
+            })
+            .when(off_under_pointer, |d| {
+                d.group_hover(group.clone(), |s| s.text_color(theme.text_muted))
+            })
+        };
         let button = div()
             .id(self.id)
             // A setting's value is one of a radio group (`MenuPart::Choice`,
@@ -523,21 +539,7 @@ impl Button {
                 d.child(if menu {
                     menu_glyph(&self.icon, &group, &theme).size(px(16.))
                 } else {
-                    svg()
-                        .path(format!("toolbar/{}.svg", self.icon))
-                        .text_color(match (self.active && tint.is_none(), value) {
-                            (true, true) => theme.accent_text,
-                            (true, false) => theme.selection_text,
-                            (false, _) => theme.text_muted,
-                        })
-                        // On, under the pointer the button leaves the
-                        // selection's ground for the hover's (its words for
-                        // the text): its icon goes back to an icon's color,
-                        // as it is off.
-                        .when(
-                            self.active && tint.is_none() && !value && enabled && !switch,
-                            |d| d.group_hover(group.clone(), |s| s.text_color(theme.text_muted)),
-                        )
+                    glyph(svg().path(format!("toolbar/{}.svg", self.icon)))
                         .size(px(if tiled {
                             18.
                         } else if segment {
@@ -577,9 +579,7 @@ impl Button {
             })
             .when(self.shape == Shape::Dropdown, |d| {
                 d.gap(sized(2.)).child(
-                    svg()
-                        .path("toolbar/chevron.svg")
-                        .text_color(theme.text_muted)
+                    glyph(svg().path("toolbar/chevron.svg"))
                         .size(px(10.))
                         .flex_none(),
                 )

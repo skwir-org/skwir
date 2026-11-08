@@ -31,7 +31,10 @@
   on it; a line pointed at and a drop's target are a fainter band there, so
   their text still reads. A button that is on, under the pointer, turns its
   icon back with its words, instead of leaving a white icon on the hover's
-  light ground.
+  light ground; a menu button's chevron (View's) takes its icon's color while
+  its menu is open; the Tags dialog's check box on the highlighted row is
+  drawn in the selection's colors instead of the accent, which may be the
+  selection's own.
 - **See-through fields**: with the window's background let through, the address
   field, the view buttons and the tab shown let it through as their bar does,
   instead of staying solid.

@@ -1111,30 +1111,35 @@ impl Shell {
     }
 }
 
-/// The check box of a mark: ticked, a dash for some, empty.
-fn mark_box(mark: Mark, theme: &Theme) -> Div {
+/// The check box of a mark: ticked, a dash for some, empty. On a row
+/// that is chosen (`chosen`) it is drawn in the selection's own colors,
+/// its fill `selection_text` and its tick the selection's ground: the
+/// accent may be the selection's color (a desktop's), where a box of it
+/// would not show.
+fn mark_box(mark: Mark, chosen: bool, theme: &Theme) -> Div {
     let filled = mark != Mark::None;
+    let (fill, on_fill, empty) = if chosen {
+        (
+            theme.selection_text,
+            theme.selection_bg,
+            theme.selection_text,
+        )
+    } else {
+        (theme.accent, theme.on_accent, theme.text_muted)
+    };
     div()
         .flex_none()
         .size(px(16.))
         .rounded_sm()
         .border_1()
-        .border_color(if filled {
-            theme.accent
-        } else {
-            theme.text_muted
-        })
-        .when(filled, |d| d.bg(theme.accent))
+        .border_color(if filled { fill } else { empty })
+        .when(filled, |d| d.bg(fill))
         .flex()
         .items_center()
         .justify_center()
         .child(match mark {
-            Mark::All => controls::glyph("check", theme.on_accent, 12.).into_any_element(),
-            Mark::Some => div()
-                .w(px(8.))
-                .h(px(2.))
-                .bg(theme.on_accent)
-                .into_any_element(),
+            Mark::All => controls::glyph("check", on_fill, 12.).into_any_element(),
+            Mark::Some => div().w(px(8.)).h(px(2.)).bg(on_fill).into_any_element(),
             Mark::None => div().into_any_element(),
         })
 }
@@ -1225,7 +1230,7 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                     (Mark::All, _) => "added".into(),
                     (Mark::None, _) => "removed".into(),
                 };
-                line.child(mark_box(tag.mark, &theme))
+                line.child(mark_box(tag.mark, hl, &theme))
                     .child(
                         // The dot opens the tag's colors; the row stays
                         // as it is.
