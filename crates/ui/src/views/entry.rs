@@ -60,7 +60,14 @@ impl Look {
 
     /// Its picture when it has no thumbnail, `size` px (`icons::entry_picture`).
     pub fn picture(&self, size: f32, theme: &Theme) -> AnyElement {
-        icons::entry_picture(self.icon.as_ref(), self.is_dir, size, self.mark(), theme)
+        icons::entry_picture(
+            self.icon.as_ref(),
+            self.is_dir,
+            size,
+            self.mark(),
+            self.selected,
+            theme,
+        )
     }
 }
 
@@ -107,7 +114,9 @@ impl Shell {
 /// around it and its tint under it.
 pub fn highlight(el: Stateful<Div>, look: &Look, theme: &Theme) -> Stateful<Div> {
     el.border_1()
+        // The cursor's ring is a mark: on the selection, in its text.
         .border_color(match (look.cursor, look.ring) {
+            (true, _) if look.selected => theme.selection_text,
             (true, _) => theme.accent,
             (false, Some(ring)) => theme.tag(ring),
             (false, None) => gpui::transparent_black(),

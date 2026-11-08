@@ -1161,6 +1161,7 @@ pub fn render(
             marked: theme.accent,
             column: theme.hover,
             chosen: theme.selection_bg,
+            on_chosen: theme.selection_text,
             cursor: theme.accent,
             text: theme.text_muted,
             tick: theme.border,

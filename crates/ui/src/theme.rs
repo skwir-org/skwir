@@ -50,12 +50,16 @@
 //!   as text (a link, a key, what is chosen on `term`); `accent` marks and
 //!   fills. State colors are tokens too: `hover`, laid over whatever is
 //!   under the pointer on any ground, `selection_*` for what is chosen
-//!   (`selection_bg` under it, its text always `selection_text`, which
-//!   reads there: `Chosen::chosen`, or a run of text recolored where only
-//!   part of it is chosen; never `text` left on a desktop's selection,
-//!   which may be dark in a light look; a mark on it too, a check or a
-//!   box, never the accent, which may be the selection's own color: a
-//!   fill of `selection_text` with `selection_bg` on it),
+//!   (`selection_bg` under it, and everything drawn on it in
+//!   `selection_text`, which reads there: `Chosen::chosen`, a ground whose
+//!   ink its words, icons, shortcuts and chevrons are drawn in whatever
+//!   color they name, or a run of text recolored where only part of it is
+//!   chosen; never `text`, a muted icon or the accent left on a desktop's
+//!   selection, which may be dark in a light look, or the accent itself;
+//!   what is no ink is chosen where it is drawn: a mark drawn as a shape,
+//!   a box, a dot, a bar or a ring, in `selection_text`, a box's tick a
+//!   fill of `selection_text` with `selection_bg` on it, a picture asked
+//!   in `icons::Ink::beside`),
 //!   `success`/`warning`/`error` for outcomes, `scrim` behind a dialog,
 //!   `stage` behind a picture, a page or a film on the whole screen,
 //!   `find_*` for what a find found in text,
@@ -1396,12 +1400,19 @@ impl Theme {
 }
 
 /// What is chosen (a row, a chip, a highlighted item), drawn so:
-/// `selection_bg` under it and its text `selection_text`, which the guard
-/// keeps reading there. A desktop's selection may be dark in a light look
-/// (Noctalia's), where `text` left on it does not read.
+/// `selection_bg` under it, and everything drawn on it in `selection_text`,
+/// which the guard keeps reading there: its words, its icons, its muted
+/// shortcut and its chevron alike, whatever color each names (gpui's
+/// `Styled::ground`). A desktop's selection may be dark in a light look,
+/// or the accent itself (Noctalia's), where `text`, a muted icon or the
+/// accent left on it does not read. What has a background of its own on
+/// it (a tag's chip, a field) keeps its own colors, and so does all of it
+/// under the pointer once a hover's background replaces the selection's.
+/// Marks drawn as shapes (a box's border, a dot) are not ink: they are
+/// chosen in `selection_text` where they are drawn.
 pub trait Chosen: gpui::Styled + Sized {
     fn chosen(self, theme: &Theme) -> Self {
-        self.bg(theme.selection_bg).text_color(theme.selection_text)
+        self.ground(theme.selection_bg, theme.selection_text)
     }
 }
 

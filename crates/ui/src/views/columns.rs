@@ -351,6 +351,7 @@ fn side_column(
                     row.is_dir,
                     f32::from(icon_px),
                     mark,
+                    is_on_path,
                     &theme,
                 );
                 // Where a press goes: from a column above, where a folder

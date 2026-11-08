@@ -608,11 +608,8 @@ pub fn row(
 ) -> Stateful<Div> {
     let ix = r.ix;
     let look = &r.look;
-    let muted = if look.selected {
-        theme.selection_text
-    } else {
-        theme.text_muted
-    };
+    // Drawn in the selection's ink where chosen (`Chosen`).
+    let muted = theme.text_muted;
     let scale = files_scale(theme);
     let height = row_height(shell.row_zoom, scale);
     let icon = look.picture(icon_px(shell.row_zoom), theme);

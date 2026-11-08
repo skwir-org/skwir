@@ -1202,11 +1202,8 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                     }
                 }
             }));
-        let muted = if hl {
-            theme.selection_text
-        } else {
-            theme.text_muted
-        };
+        // Drawn in the selection's ink where chosen (`Chosen`).
+        let muted = theme.text_muted;
         let line = match &shown {
             Shown::New(tags) => line
                 .child(controls::glyph("plus", muted, 14.))

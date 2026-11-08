@@ -47,6 +47,9 @@ pub struct BarColors {
     pub column: Hsla,
     /// Behind the bars chosen.
     pub chosen: Hsla,
+    /// What is drawn on the bars chosen, in place of the colors here: the
+    /// selection's text (`Chosen`), the bars in it as faint as `bar`.
+    pub on_chosen: Hsla,
     /// Around the bar the keys are on, and under today's.
     pub cursor: Hsla,
     pub text: Hsla,
@@ -228,13 +231,14 @@ struct Laid {
     /// and the bar drawn in it.
     slots: Vec<Bounds<Pixels>>,
     bars: Vec<Bounds<Pixels>>,
-    /// The marked part of each bar that has one.
-    marks: Vec<Bounds<Pixels>>,
+    /// The marked part of each bar that has one, by its bar.
+    marks: Vec<(usize, Bounds<Pixels>)>,
     /// Labels with where they are drawn, and the ticks of those that
     /// begin at their bar.
     labels: Vec<(gpui::Point<Pixels>, ShapedLine)>,
     ticks: Vec<Bounds<Pixels>>,
-    tallies: Vec<(gpui::Point<Pixels>, ShapedLine)>,
+    /// The counts said, by their bar.
+    tallies: Vec<(usize, gpui::Point<Pixels>, ShapedLine)>,
     /// From one bar to the next.
     pitch: f32,
     left: Pixels,
@@ -342,9 +346,12 @@ fn lay_out(bars: &[Bar], colors: BarColors, bounds: Bounds<Pixels>, window: &Win
         let b = &bars[i];
         if b.marked > 0 && b.value > 0 {
             let part = (h * (b.marked.min(b.value) as f32 / b.value as f32)).max(1.);
-            marks.push(Bounds::new(
-                point(slot.origin.x, floor - px(part)),
-                size(px(w), px(part)),
+            marks.push((
+                i,
+                Bounds::new(
+                    point(slot.origin.x, floor - px(part)),
+                    size(px(w), px(part)),
+                ),
             ));
         }
         if say_tallies && let Some(tally) = &tallies[i] {
@@ -352,7 +359,7 @@ fn lay_out(bars: &[Bar], colors: BarColors, bounds: Bounds<Pixels>, window: &Win
                 bar.origin.x + (bar.size.width - tally.width) / 2.,
                 bar.origin.y - px(tally_line),
             );
-            said.push((at, tally.clone()));
+            said.push((i, at, tally.clone()));
         }
         slots.push(slot);
         drawn.push(bar);
@@ -509,12 +516,28 @@ impl Element for BarChart {
             if let Some(slot) = self.hovered.and_then(|i| laid.slots.get(i)) {
                 window.paint_quad(gpui::fill(*slot, colors.column).corner_radii(px(2.)));
             }
-            for bar in laid.bars.iter().filter(|bar| bar.size.height > px(0.)) {
+            // On the bars chosen, what is drawn is the selection's: the
+            // accent the bars are drawn in may be its own color.
+            let on_chosen = |i: usize| self.chosen.is_some_and(|(a, b)| (a..=b).contains(&i));
+            let faint = colors.bar.a;
+            for (i, bar) in
+                (laid.bars.iter().enumerate()).filter(|(_, bar)| bar.size.height > px(0.))
+            {
                 let radius = if bar.size.width >= px(4.) { 2. } else { 0. };
-                window.paint_quad(gpui::fill(*bar, colors.bar).corner_radii(px(radius)));
+                let color = if on_chosen(i) {
+                    colors.on_chosen.opacity(faint)
+                } else {
+                    colors.bar
+                };
+                window.paint_quad(gpui::fill(*bar, color).corner_radii(px(radius)));
             }
-            for mark in &laid.marks {
-                window.paint_quad(gpui::fill(*mark, colors.marked));
+            for (i, mark) in &laid.marks {
+                let color = if on_chosen(*i) {
+                    colors.on_chosen
+                } else {
+                    colors.marked
+                };
+                window.paint_quad(gpui::fill(*mark, color));
             }
             for tick in &laid.ticks {
                 window.paint_quad(gpui::fill(*tick, colors.tick));
@@ -526,19 +549,36 @@ impl Element for BarChart {
                     colors.cursor,
                 ));
             }
-            if let Some(slot) = self.cursor.and_then(|i| laid.slots.get(i)) {
+            if let Some((i, slot)) = self.cursor.and_then(|i| Some((i, laid.slots.get(i)?))) {
                 window.paint_quad(gpui::outline(
                     *slot,
-                    colors.cursor,
+                    if on_chosen(i) {
+                        colors.on_chosen
+                    } else {
+                        colors.cursor
+                    },
                     gpui::BorderStyle::Solid,
                 ));
             }
-            let lines = (laid.labels.iter().map(|l| (l, laid.label_line)))
-                .chain(laid.tallies.iter().map(|t| (t, laid.tally_line)));
-            for ((at, text), height) in lines {
-                if let Err(error) =
+            let lines = (laid
+                .labels
+                .iter()
+                .map(|(at, text)| (None, at, text, laid.label_line)))
+            .chain(
+                laid.tallies
+                    .iter()
+                    .map(|(i, at, text)| (Some(*i), at, text, laid.tally_line)),
+            );
+            for (bar, at, text, height) in lines {
+                let paint = |window: &mut Window, cx: &mut App| {
                     text.paint(*at, px(height), gpui::TextAlign::Left, None, window, cx)
-                {
+                };
+                let painted = if bar.is_some_and(on_chosen) {
+                    window.with_element_ink(Some(colors.on_chosen), |window| paint(window, cx))
+                } else {
+                    paint(window, cx)
+                };
+                if let Err(error) = painted {
                     tracing::debug!(%error, "chart label");
                 }
             }

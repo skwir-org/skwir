@@ -29,6 +29,7 @@ use crate::settings_keys::{
 };
 use crate::settings_records::{Record, records};
 use crate::settings_view::{Edge, card_row, revert_slot};
+use crate::theme::Chosen;
 use crate::theme::Theme;
 
 /// The height of every row of the list, a caption's too: the same for
@@ -692,7 +693,7 @@ impl SettingsView {
             } else {
                 gpui::transparent_black()
             })
-            .when(adding, |d| d.bg(theme.selection_bg))
+            .when(adding, |d| d.chosen(theme))
             .cursor_pointer()
             .hover(move |s| s.bg(hover))
             .child(controls::glyph("plus", theme.text_muted, 14.))
@@ -828,12 +829,12 @@ impl SettingsView {
             } else {
                 gpui::transparent_black()
             })
-            .when(edited, |d| d.bg(theme.selection_bg))
+            .when(edited, |d| d.chosen(theme))
             .cursor_pointer()
-            .hover(move |s| s.bg(hover))
+            .when(!edited, |d| d.hover(move |s| s.bg(hover)))
             .child(caps(&chip.keys, !chip.runs(), theme))
             .when(chip.record.is_some(), |d| {
-                d.child(div().size(px(6.)).rounded_full().bg(accent))
+                d.child(controls::mark(accent).flex_none().size(px(6.)))
             })
             .when(conditions && !chip.conditions.is_empty(), |d| {
                 d.child(

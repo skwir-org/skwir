@@ -496,6 +496,24 @@ pub trait Styled: Sized {
         self
     }
 
+    /// Sets the background color of this element to `ground`, and draws what is inside it (text,
+    /// icons, underlines) in `ink` while it is on that ground, whatever color each names: a
+    /// selected row's words, its icons and its shortcut in the selection's text color. Where a
+    /// later style gives the element another background (a hover's), and inside any element with
+    /// a background of its own, each takes its own color again.
+    fn ground(mut self, ground: impl Into<Hsla>, ink: impl Into<Hsla>) -> Self
+    where
+        Self: Sized,
+    {
+        let ground = ground.into();
+        self.style().background = Some(ground.into());
+        self.style().ink = Some(crate::Ink {
+            ground,
+            color: ink.into(),
+        });
+        self
+    }
+
     /// Sets the border style of the element.
     fn border_dashed(mut self) -> Self {
         self.style().border_style = Some(BorderStyle::Dashed);

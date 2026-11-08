@@ -68,14 +68,16 @@ pub fn row(
             div()
                 .size(px(ICON_SIZE))
                 .rounded_sm()
-                .bg(if row.branch {
+                .bg(if selected {
+                    theme.selection_text
+                } else if row.branch {
                     theme.accent
                 } else {
                     theme.text_muted
                 })
                 .into_any_element()
         },
-        |pic| icons::element(pic, ICON_SIZE, icons::Ink::of(theme, theme.text_muted)),
+        |pic| icons::element(pic, ICON_SIZE, icons::Ink::beside(theme, selected)),
     );
     let mut name = div()
         .min_w_0()
@@ -123,17 +125,9 @@ pub fn row(
                 .child(status.clone()),
         );
     }
-    let size = column(
-        scale.f(SIZE_WIDTH),
-        if selected {
-            theme.selection_text
-        } else {
-            theme.text
-        },
-        height,
-    )
-    .text_right()
-    .child(row.bytes.map_or_else(|| "—".into(), format::size));
+    let size = column(scale.f(SIZE_WIDTH), theme.text, height)
+        .text_right()
+        .child(row.bytes.map_or_else(|| "—".into(), format::size));
     div()
         .h(px(height))
         .w_full()
@@ -142,6 +136,5 @@ pub fn row(
         .px_2()
         .text_body()
         .when(!selected, |d| d.hover(|d| d.bg(theme.hover)))
-        .when(selected, |d| d.text_color(theme.selection_text))
         .child(line(name, NAME_MIN, height, scale).child(size))
 }

@@ -625,11 +625,8 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
         for row_ix in p.picker.shown(p.filtered.len()) {
             let item = &p.items[p.filtered[row_ix]];
             let hl = row_ix == p.picker.highlighted;
-            let muted = if hl {
-                theme.selection_text
-            } else {
-                theme.text_muted
-            };
+            // Drawn in the selection's ink where chosen (`Chosen`).
+            let muted = theme.text_muted;
             let name = item.name.clone();
             let option = modal::option(
                 div().id(crate::elements::known_by("cmd", p.filtered[row_ix])),

@@ -554,10 +554,14 @@ fn pill_row(
                 _ => None,
             })
             .and_then(|tag| toolbar::Tint::of(&tag, &shell.tag_colors));
+        // What the pill draws beside its words (its ×, a tag's categories)
+        // in their color: on the selection's ground (`Chosen`), as its
+        // words, in its ink; under the pointer, the hover's in its place,
+        // in the text they name.
         let ink = if tint.is_some() {
             theme.text_muted
         } else {
-            theme.selection_text
+            theme.text
         };
         let tip = if chip.is_scope() {
             depth_tip(shell, chip, folder)

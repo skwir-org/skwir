@@ -17,7 +17,8 @@ use crate::toolbar::tooltip;
 
 /// The × that takes a pill away: `remove` run on the pane being drawn, as
 /// the pointer's shortcut for what the keyboard does otherwise, in `ink`,
-/// the pill's text color. It is as tall as the pill's text, which grows
+/// the pill's text color (the selection's ink drawing it while the pill is
+/// chosen, `Chosen`). It is as tall as the pill's text, which grows
 /// with the text size (ADR-117); its glyph keeps its size.
 pub fn clear(
     shell: &Shell,

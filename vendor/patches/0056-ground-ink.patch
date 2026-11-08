@@ -1,0 +1,228 @@
+0056 ground-ink: `Styled::ground(ground, ink)` sets a background and draws what is inside the element (text, icons, underlines) in `ink` while it is on that ground, whatever color each names (`Style::ink`, `Window::element_ink`, `with_element_ink`); under an opaque background of its own, a hover's in place of the ground included, each takes its own color again, under a see-through one its parent's ink
+
+diff --git a/crates/gpui/src/style.rs b/crates/gpui/src/style.rs
+index 4703d4e4..56f4c788 100644
+--- a/crates/gpui/src/style.rs
++++ b/crates/gpui/src/style.rs
+@@ -300,6 +300,10 @@ pub struct Style {
+     /// The opacity of this element
+     pub opacity: Option<f32>,
+ 
++    /// The ink everything inside this element is drawn in while its background is the ground the
++    /// ink was given with ([`Styled::ground`]).
++    pub ink: Option<Ink>,
++
+     /// The grid columns of this element
+     /// Roughly equivalent to the Tailwind `grid-cols-<number>`
+     pub grid_cols: Option<GridTemplate>,
+@@ -817,7 +821,10 @@ impl Style {
+ 
+         window.paint_inset_shadows(bounds, corner_radii, &self.box_shadow);
+ 
+-        continuation(window, cx);
++        match self.ink_inside() {
++            Some(ink) => window.with_element_ink(ink, |window| continuation(window, cx)),
++            None => continuation(window, cx),
++        }
+ 
+         if self.is_border_visible() {
+             let border_widths = self.border_widths.to_pixels(rem_size);
+@@ -839,6 +846,26 @@ impl Style {
+         }
+     }
+ 
++    /// The ink what is inside this element is drawn in: the ink of its ground while it is on that
++    /// ground (`Some(Some(ink))`); the colors each names on an opaque background of its own, a
++    /// field's or a hover's over its ground (`Some(None)`); its parent's where it has none, or one
++    /// that lets the ground under it through, a tint (`None`).
++    pub fn ink_inside(&self) -> Option<Option<Hsla>> {
++        let background = self.background.as_ref().and_then(Fill::color)?;
++        let opaque = match background.tag {
++            BackgroundTag::Solid => background.solid.a >= 1.,
++            BackgroundTag::LinearGradient => {
++                background.colors.iter().all(|stop| stop.color.a >= 1.)
++            }
++            BackgroundTag::PatternSlash | BackgroundTag::Checkerboard => false,
++        };
++        match self.ink {
++            Some(ink) if background == Background::from(ink.ground) => Some(Some(ink.color)),
++            _ if opaque => Some(None),
++            _ => None,
++        }
++    }
++
+     fn is_border_visible(&self) -> bool {
+         self.border_color
+             .is_some_and(|color| !color.is_transparent())
+@@ -887,6 +914,7 @@ impl Default for Style {
+             text: TextStyleRefinement::default(),
+             mouse_cursor: None,
+             opacity: None,
++            ink: None,
+             grid_rows: None,
+             grid_cols: None,
+             grid_location: None,
+@@ -926,6 +954,18 @@ pub struct StrikethroughStyle {
+     pub color: Option<Hsla>,
+ }
+ 
++/// The ink of a ground: the color text, icons and lines inside an element are drawn in while its
++/// background is that ground, whatever color they name (a selected row's text, its icons, its
++/// shortcut and its chevron alike). Set with [`Styled::ground`].
++#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
++pub struct Ink {
++    /// The background the ink is drawn on. Where a later style gives the element another one (a
++    /// hover's), what is inside it takes its own colors again.
++    pub ground: Hsla,
++    /// The color everything inside is drawn in.
++    pub color: Hsla,
++}
++
+ /// The kinds of fill that can be applied to a shape.
+ #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+ pub enum Fill {
+@@ -1416,6 +1456,31 @@ mod tests {
+ 
+     use util_macros::perf;
+ 
++    /// What is inside an element on its ground is drawn in its ink; under an opaque background of
++    /// its own (a field's, a hover's in place of the ground) in the colors it names; under none,
++    /// or one that lets the ground through (a tint), in its parent's ink.
++    #[test]
++    fn what_is_on_a_ground_is_drawn_in_its_ink() {
++        let (ground, ink, hover) = (blue(), yellow(), green());
++        let mut style = Style::default();
++        assert_eq!(style.ink_inside(), None);
++        style.background = Some(red().into());
++        assert_eq!(style.ink_inside(), Some(None));
++        style.background = Some(red().opacity(0.3).into());
++        assert_eq!(style.ink_inside(), None);
++        style.background = Some(ground.into());
++        style.ink = Some(Ink { ground, color: ink });
++        assert_eq!(style.ink_inside(), Some(Some(ink)));
++        let mut hovered = StyleRefinement::default();
++        hovered.background = Some(hover.into());
++        style.refine(&hovered);
++        assert_eq!(style.ink_inside(), Some(None));
++        style.background = Some(crate::transparent_black().into());
++        assert_eq!(style.ink_inside(), None);
++        style.background = None;
++        assert_eq!(style.ink_inside(), None);
++    }
++
+     /// An element with rounded corners that hides its overflow keeps its children within its
+     /// corners, inside its border; one that hides it along one axis, or has square corners, only
+     /// within its bounds.
+diff --git a/crates/gpui/src/styled.rs b/crates/gpui/src/styled.rs
+index aa77a20a..ce48db56 100644
+--- a/crates/gpui/src/styled.rs
++++ b/crates/gpui/src/styled.rs
+@@ -496,6 +496,24 @@ pub trait Styled: Sized {
+         self
+     }
+ 
++    /// Sets the background color of this element to `ground`, and draws what is inside it (text,
++    /// icons, underlines) in `ink` while it is on that ground, whatever color each names: a
++    /// selected row's words, its icons and its shortcut in the selection's text color. Where a
++    /// later style gives the element another background (a hover's), and inside any element with
++    /// a background of its own, each takes its own color again.
++    fn ground(mut self, ground: impl Into<Hsla>, ink: impl Into<Hsla>) -> Self
++    where
++        Self: Sized,
++    {
++        let ground = ground.into();
++        self.style().background = Some(ground.into());
++        self.style().ink = Some(crate::Ink {
++            ground,
++            color: ink.into(),
++        });
++        self
++    }
++
+     /// Sets the border style of the element.
+     fn border_dashed(mut self) -> Self {
+         self.style().border_style = Some(BorderStyle::Dashed);
+diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
+index a786f1d9..2d18e02c 100644
+--- a/crates/gpui/src/window.rs
++++ b/crates/gpui/src/window.rs
+@@ -1241,6 +1241,7 @@ pub struct Window {
+     pub(crate) rendered_entity_stack: Vec<EntityId>,
+     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
+     pub(crate) element_opacity: f32,
++    pub(crate) element_ink: Option<Hsla>,
+     pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
+     pub(crate) requested_autoscroll: Option<Bounds<Pixels>>,
+     /// The [`TextInputConfiguration`] most recently forwarded to the platform
+@@ -2209,6 +2210,7 @@ impl Window {
+             element_offset_stack: Vec::new(),
+             content_mask_stack: Vec::new(),
+             element_opacity: 1.0,
++            element_ink: None,
+             requested_autoscroll: None,
+             last_text_input_configuration: None,
+             focused_text_input: None,
+@@ -3381,8 +3383,9 @@ impl Window {
+             pad: 0,
+             bounds: self.underline_bounds(origin, width, style),
+             content_mask: self.snapped_content_mask(),
+-            color: style
+-                .color
++            color: self
++                .element_ink
++                .or(style.color)
+                 .unwrap_or_default()
+                 .opacity(self.element_opacity()),
+             thickness: self.snap_stroke(style.thickness),
+@@ -4332,6 +4335,22 @@ impl Window {
+         result
+     }
+ 
++    /// Draws what `f` paints of text, icons and lines in `ink`, whatever color each names, or
++    /// with `None` in its own colors (an element with a background of its own, [`Style::ink`]).
++    pub fn with_element_ink<R>(&mut self, ink: Option<Hsla>, f: impl FnOnce(&mut Self) -> R) -> R {
++        self.invalidator.debug_assert_paint_or_prepaint();
++        let previous = mem::replace(&mut self.element_ink, ink);
++        let result = f(self);
++        self.element_ink = previous;
++        result
++    }
++
++    /// The ink text, icons and lines are drawn in here, whatever color they name: that of the
++    /// ground they are on ([`Styled::ground`]), if any.
++    pub fn element_ink(&self) -> Option<Hsla> {
++        self.element_ink
++    }
++
+     pub(crate) fn with_element_opacity<R>(
+         &mut self,
+         opacity: Option<f32>,
+@@ -4980,7 +4999,11 @@ impl Window {
+             bounds,
+             content_mask: self.snapped_content_mask(),
+             thickness: self.snap_stroke(style.thickness),
+-            color: style.color.unwrap_or_default().opacity(opacity),
++            color: self
++                .element_ink
++                .or(style.color)
++                .unwrap_or_default()
++                .opacity(opacity),
+             wavy: false.into(),
+         });
+     }
+@@ -5003,6 +5026,7 @@ impl Window {
+     ) -> Result<()> {
+         self.invalidator.debug_assert_paint();
+ 
++        let color = self.element_ink.unwrap_or(color);
+         let element_opacity = self.element_opacity();
+         let scale_factor = self.scale_factor();
+         let glyph_origin = origin.scale(scale_factor);
+@@ -5166,6 +5190,7 @@ impl Window {
+     ) -> Result<()> {
+         self.invalidator.debug_assert_paint();
+ 
++        let color = self.element_ink.unwrap_or(color);
+         let element_opacity = self.element_opacity();
+         let bounds = self.snap_bounds(bounds);
+ 

@@ -53,25 +53,72 @@ pub fn switch(
         .child(pill(on, theme))
 }
 
+/// A mark drawn as a shape on what holds it (a dot), fully rounded: in
+/// `color`, or in the ink of the ground it is on (`Chosen`), as text and
+/// icons are, which a shape is not by itself. Read where it paints, so it
+/// follows a ground chosen under the pointer or the keyboard too. A mark
+/// on a ground of its own (a bar's fill on its track) keeps its color, as
+/// its track is what it is read on. Sized by its caller.
+pub fn mark(color: gpui::Hsla) -> gpui::Canvas<()> {
+    gpui::canvas(
+        |_, _, _| {},
+        move |bounds, (), window, _| {
+            let color = window.element_ink().unwrap_or(color);
+            let radius = bounds.size.width.min(bounds.size.height) / 2.;
+            window.paint_quad(gpui::fill(bounds, color).corner_radii(radius));
+        },
+    )
+}
+
 /// A switch as it is drawn, on or off: what `switch` holds, and what a
 /// menu's heading that turns its group on or off ends with
 /// (`toolbar::Button::switch`).
+///
+/// A mark, not ink: drawn where it paints, so that on what is chosen (a
+/// menu's heading under the pointer or the keyboard, `Chosen`) a switch
+/// that is on is the selection's text with its knob in the selection's
+/// ground, as a box's check is, instead of the accent, which may be the
+/// selection's own color. What is chosen there is known only then.
 pub fn pill(on: bool, theme: &Theme) -> Div {
+    let (accent, off, ground) = (theme.accent, theme.border, theme.selection_bg);
+    let round = |window: &mut gpui::Window, bounds: gpui::Bounds<gpui::Pixels>, color| {
+        window.paint_quad(gpui::fill(bounds, color).corner_radii(bounds.size.height / 2.));
+    };
     div()
         .relative()
         .flex_none()
         .w(px(36.))
         .h(px(20.))
-        .rounded_full()
-        .bg(if on { theme.accent } else { theme.border })
         .child(
-            div()
-                .absolute()
-                .top(px(3.))
-                .left(px(if on { 19. } else { 3. }))
-                .size(px(14.))
-                .rounded_full()
-                .bg(gpui::white()),
+            gpui::canvas(
+                |_, _, _| {},
+                move |bounds, (), window, _| {
+                    let track = match window.element_ink() {
+                        Some(ink) if on => ink,
+                        _ if on => accent,
+                        _ => off,
+                    };
+                    round(window, bounds, track);
+                },
+            )
+            .absolute()
+            .size_full(),
+        )
+        .child(
+            gpui::canvas(
+                |_, _, _| {},
+                move |bounds, (), window, _| {
+                    let knob = match window.element_ink() {
+                        Some(_) if on => ground,
+                        _ => gpui::white(),
+                    };
+                    round(window, bounds, knob);
+                },
+            )
+            .absolute()
+            .top(px(3.))
+            .left(px(if on { 19. } else { 3. }))
+            .size(px(14.)),
         )
 }
 

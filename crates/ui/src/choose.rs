@@ -311,11 +311,8 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
             );
         }
         previous = section;
-        let muted = if hl {
-            theme.selection_text
-        } else {
-            theme.text_muted
-        };
+        // Drawn in the selection's ink where chosen (`Chosen`).
+        let muted = theme.text_muted;
         let named = a11y.then(|| choice.title.clone().into());
         list = list.child(
             modal::option(
@@ -340,11 +337,9 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                 this.choose_submit(window, cx);
             }))
             .child(match icon {
-                Some(pic) => crate::icons::themed(
-                    &pic,
-                    ICON_PX,
-                    crate::icons::Ink::of(&theme, theme.text_muted),
-                ),
+                Some(pic) => {
+                    crate::icons::themed(&pic, ICON_PX, crate::icons::Ink::beside(&theme, hl))
+                }
                 None => div().size(px(ICON_PX)).flex_none().into_any_element(),
             })
             .child(crate::elements::clip::clipped(

@@ -29,6 +29,7 @@ use skwir_core::{EntryId, Location};
 
 use crate::dnd;
 use crate::shell::Shell;
+use crate::theme::Chosen;
 use crate::theme::Theme;
 use crate::thumbs::ThumbView;
 use crate::view::{Nav, PaneView};
@@ -480,16 +481,16 @@ fn card_element(
         .rounded_md()
         .border_1()
         .border_color(match (look.cursor, look.ring) {
+            (true, _) if look.selected => theme.selection_text,
             (true, _) => theme.accent,
             (false, Some(ring)) => theme.tag(ring),
             (false, None) => theme.border,
         })
-        .bg(match (look.selected, look.ring) {
-            (true, _) => theme.selection_bg,
-            (false, Some(ring)) => theme.tag_fill(ring),
-            (false, None) => theme.surface,
+        .map(|d| match (look.selected, look.ring) {
+            (true, _) => d.chosen(theme),
+            (false, Some(ring)) => d.bg(theme.tag_fill(ring)),
+            (false, None) => d.bg(theme.surface),
         })
-        .when(look.selected, |d| d.text_color(theme.selection_text))
         .when(!look.selected, |d| d.hover(|s| s.bg(theme.hover)))
         .child(picture)
         .child(

@@ -82,10 +82,15 @@ working in an area, also read that area's rules (see
 - **Tokens.** Colors, radii, shadows and fonts come from `theme.rs` (its
   header lists the scales). State colors are tokens too (`hover`,
   `selection_*`, `success`/`warning`/`error`, `scrim`); never derive one
-  locally. Text on `selection_bg` is `selection_text`, always
-  (`theme::Chosen::chosen`; a run recolored where part of a text is
-  chosen), and so is a mark on it (a check, a box), never the accent: a
-  desktop's selection may be dark in a light look, or the accent itself. A new
+  locally. What is drawn on `selection_bg` is `selection_text`, always:
+  a desktop's selection may be dark in a light look, or the accent
+  itself. Make what is chosen a ground (`theme::Chosen::chosen`, gpui's
+  `Styled::ground`): its words, icons, shortcuts and chevrons are drawn
+  in its ink whatever color they name, so never pick their colors by
+  whether it is chosen. What is no ink is chosen where it is drawn, in
+  `selection_text`, never the accent: a mark drawn as a shape (a box, a
+  dot, a bar, a ring), a picture (`icons::Ink::beside`), a run recolored
+  where part of a text is chosen. A new
   color token is derived in `Theme::derive` from the look's `Base`, its
   contrast guarded, or kept as Skwir's (`Kept`) when no desktop's colors
   change what it means (ADR-071). A font is a role

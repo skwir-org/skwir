@@ -392,23 +392,16 @@ impl SettingsView {
                     .rounded_md()
                     .cursor_pointer()
                     .border_1()
+                    // The focus's ring, a mark on the selection: its text.
                     .border_color(if selected && nav_focused {
-                        theme.accent
+                        theme.selection_text
                     } else {
                         gpui::transparent_black()
                     })
                     .when(selected, |d| d.chosen(theme))
                     .when(!selected, |d| d.hover(move |s| s.bg(hover)))
                     .when(!icon.is_empty(), |d| {
-                        d.child(controls::glyph(
-                            icon,
-                            if selected {
-                                theme.selection_text
-                            } else {
-                                theme.text_muted
-                            },
-                            15.,
-                        ))
+                        d.child(controls::glyph(icon, theme.text_muted, 15.))
                     })
                     .child(crate::elements::clip::clipped(
                         div().id("page-title").flex_1().min_w_0().truncate(),
@@ -418,11 +411,7 @@ impl SettingsView {
                         d.child(
                             div()
                                 .text_small()
-                                .text_color(if selected {
-                                    theme.selection_text
-                                } else {
-                                    theme.accent
-                                })
+                                .text_color(theme.accent)
                                 .child(modified.to_string()),
                         )
                     })
@@ -1073,17 +1062,11 @@ impl SettingsView {
                                     .rounded_sm()
                                     .cursor_pointer()
                                     .when(highlighted, |d| d.chosen(&theme))
-                                    .child(div().w(px(14.)).flex_none().when(
-                                        *choice == value,
-                                        |d| {
-                                            let tick = if highlighted {
-                                                theme.selection_text
-                                            } else {
-                                                theme.accent
-                                            };
-                                            d.child(controls::glyph("check", tick, 14.))
-                                        },
-                                    ))
+                                    .child(
+                                        div().w(px(14.)).flex_none().when(*choice == value, |d| {
+                                            d.child(controls::glyph("check", theme.accent, 14.))
+                                        }),
+                                    )
                                     .children(
                                         pictures
                                             .get(kept)

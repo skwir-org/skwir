@@ -216,6 +216,18 @@ impl Ink {
         }
     }
 
+    /// An icon's ink beside text: muted, or on what is chosen the
+    /// selection's text on its ground. A raster is drawn in the ink it was
+    /// asked in, not the ink of the ground under it (`Chosen`), so a picture
+    /// on a chosen row is asked in this one.
+    pub fn beside(theme: &crate::theme::Theme, chosen: bool) -> Ink {
+        if chosen {
+            Ink::of(theme, theme.selection_text).on(theme.selection_bg)
+        } else {
+            Ink::of(theme, theme.text_muted)
+        }
+    }
+
     /// Drawn on `ground` (a chosen row's selection) instead.
     #[must_use]
     pub fn on(self, ground: Hsla) -> Ink {
@@ -1221,21 +1233,25 @@ pub fn marked(
 
 /// An entry's picture at `size` px when it has no thumbnail: its theme
 /// icon, else a square (a folder's in the accent) until the theme answers;
-/// marked (`marked`). The one every view draws.
+/// marked (`marked`). The one every view draws, `chosen` where the entry is
+/// (on the selection, `Ink::beside`).
 pub fn entry_picture(
     icon: Option<&Pic>,
     is_dir: bool,
     size: f32,
     mark: Mark,
+    chosen: bool,
     theme: &crate::theme::Theme,
 ) -> AnyElement {
     let picture = match icon {
-        Some(icon) => element(icon, size, Ink::of(theme, theme.text_muted)),
+        Some(icon) => element(icon, size, Ink::beside(theme, chosen)),
         None => div()
             .size(px(size))
             .flex_none()
             .rounded_sm()
-            .bg(if is_dir {
+            .bg(if chosen {
+                theme.selection_text
+            } else if is_dir {
                 theme.accent
             } else {
                 theme.text_muted

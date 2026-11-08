@@ -1463,7 +1463,7 @@ fn heading(
         } else {
             gpui::Toggled::False
         })
-        .when(unfolded, |d| d.bg(theme.selection_bg))
+        .when(unfolded, |d| d.chosen(theme))
         .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), cx))
     };
     div()

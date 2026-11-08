@@ -434,6 +434,7 @@ fn cell(
             look.is_dir,
             icon_px,
             icons::Mark::None,
+            look.selected,
             theme,
         ),
     };
@@ -527,11 +528,8 @@ fn caption_lines(
     act: crate::tags::TagAct,
 ) -> gpui::Div {
     let look = &row.look;
-    let muted = if look.selected {
-        theme.selection_text
-    } else {
-        theme.text_muted
-    };
+    // Drawn in the selection's ink where chosen (`Chosen`).
+    let muted = theme.text_muted;
     div()
         .w_full()
         .flex()

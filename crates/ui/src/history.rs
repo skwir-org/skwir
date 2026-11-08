@@ -31,6 +31,7 @@ use crate::elements::popover::PopoverAnchor;
 use crate::format;
 use crate::keymap::RunCommand;
 use crate::shell::Shell;
+use crate::theme::Chosen as _;
 use crate::theme::Theme;
 use crate::toast::{Action, capitalized};
 
@@ -489,7 +490,7 @@ pub fn undo_control(
         .cursor_pointer()
         .hover(move |s| s.bg(hover))
         .focus(move |s| s.border_color(accent))
-        .when(open, |d| d.bg(theme.selection_bg))
+        .when(open, |d| d.chosen(theme))
         .tooltip(move |_, cx| crate::toolbar::tooltip(history_tip.clone(), cx))
         // A chevron points where its menu opens: up to the History,
         // down to fold it back.

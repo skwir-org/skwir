@@ -14,6 +14,7 @@ use skwir_core::location::AsOf;
 
 use crate::format;
 use crate::shell::Shell;
+use crate::theme::Chosen;
 use crate::theme::Theme;
 use crate::toast::{Action, Toast, Tone};
 
@@ -256,8 +257,7 @@ pub(crate) fn render(
                 .flex_none()
                 .px_1()
                 .rounded_sm()
-                .bg(theme.selection_bg)
-                .text_color(theme.selection_text)
+                .chosen(&theme)
                 .child(text),
         );
     }
@@ -331,8 +331,7 @@ pub(crate) fn render(
                 .px_2()
                 .rounded_md()
                 .when(open.is_some(), gpui::Styled::cursor_pointer)
-                .bg(theme.selection_bg)
-                .text_color(theme.selection_text)
+                .chosen(&theme)
                 .hover(|s| s.bg(theme.hover))
                 .on_click(cx.listener(move |this, _, window, cx| {
                     if let Some(open) = &open {

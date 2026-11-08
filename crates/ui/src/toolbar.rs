@@ -381,7 +381,6 @@ impl Button {
             .map(crate::elements::clip::text)
             .map_or((None, None), |(label, clip)| (Some(label), Some(clip)));
         let id = self.id.clone();
-        let group = self.id.clone();
         let clicked = id.clone();
         // A tag's colors: the fill and the edge, then under the pointer.
         let tint = self.tint.map(|tint| {
@@ -396,20 +395,15 @@ impl Button {
         let revealed = cx
             .try_global::<RevealRow>()
             .is_some_and(|reveal| reveal.row.as_ref() == Some(&id));
-        // A glyph of the button (its icon, a dropdown's chevron), in its
-        // words' color as it is on or off. On, under the pointer the button
-        // leaves the selection's ground for the hover's (its words for the
-        // text): its glyphs go back to an icon's color, as it is off.
-        let on = self.active && tint.is_none();
-        let off_under_pointer = on && !value && enabled && !switch;
+        // A glyph of the button (its icon, a dropdown's chevron): a value's
+        // accent on `term` while chosen, else an icon's color, drawn in the
+        // selection's ink while the button is on it (`Chosen`).
+        let on_term = self.active && value && tint.is_none();
         let glyph = |svg: gpui::Svg| {
-            svg.text_color(match (on, value) {
-                (true, true) => theme.accent_text,
-                (true, false) => theme.selection_text,
-                (false, _) => theme.text_muted,
-            })
-            .when(off_under_pointer, |d| {
-                d.group_hover(group.clone(), |s| s.text_color(theme.text_muted))
+            svg.text_color(if on_term {
+                theme.accent_text
+            } else {
+                theme.text_muted
             })
         };
         let button = div()
@@ -461,8 +455,6 @@ impl Button {
             .text_body()
             .whitespace_nowrap()
             .text_color(theme.text_muted)
-            // What it holds follows it under the pointer (its icon).
-            .group(group.clone())
             // A popup's row, as a context menu's (`menu::render`): the
             // window's text, the row under the pointer or the keyboard
             // highlighted, what is on said by a check, not a fill.
@@ -528,16 +520,14 @@ impl Button {
             // and says it is on with a check there.
             .when(menu && self.icon.is_empty(), |d| {
                 d.child(if self.active {
-                    menu_glyph("check", &group, &theme)
-                        .size(px(16.))
-                        .into_any_element()
+                    menu_glyph("check", &theme).size(px(16.)).into_any_element()
                 } else {
                     div().size(px(16.)).flex_none().into_any_element()
                 })
             })
             .when(!self.icon.is_empty(), |d| {
                 d.child(if menu {
-                    menu_glyph(&self.icon, &group, &theme).size(px(16.))
+                    menu_glyph(&self.icon, &theme).size(px(16.))
                 } else {
                     glyph(svg().path(format!("toolbar/{}.svg", self.icon)))
                         .size(px(if tiled {
@@ -566,13 +556,12 @@ impl Button {
                     .pl_6()
                     .text_small()
                     .text_color(theme.text_muted)
-                    .group_hover(group.clone(), |s| s.text_color(theme.selection_text))
                     .child(keys)
             }))
             // On, with an icon of its own: the check after the words.
             .when(
                 menu && self.active && !self.icon.is_empty() && self.icon != "check",
-                |d| d.child(menu_glyph("check", &group, &theme).size(px(14.))),
+                |d| d.child(menu_glyph("check", &theme).size(px(14.))),
             )
             .when(switch, |d| {
                 d.child(crate::controls::pill(self.active, &theme))
@@ -654,14 +643,13 @@ impl Button {
 /// menu's (`menu::render`) alike.
 pub(crate) const MENU_ROW: f32 = 28.;
 
-/// A bundled icon on a menu's row, muted until the row under the pointer
-/// (its `group`) is highlighted.
-pub(crate) fn menu_glyph(icon: &str, group: &SharedString, theme: &Theme) -> gpui::Svg {
+/// A bundled icon on a menu's row, muted: drawn in the selection's ink
+/// while the row is highlighted (`Chosen`).
+pub(crate) fn menu_glyph(icon: &str, theme: &Theme) -> gpui::Svg {
     svg()
         .path(format!("toolbar/{icon}.svg"))
         .flex_none()
         .text_color(theme.text_muted)
-        .group_hover(group.clone(), |s| s.text_color(theme.selection_text))
 }
 
 /// How long a press is held before it is a long press: GTK's default

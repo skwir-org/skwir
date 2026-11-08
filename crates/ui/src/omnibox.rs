@@ -3305,11 +3305,8 @@ fn draw_piece(shell: &Shell, ix: usize, text: &str, cx: &mut Context<Shell>) -> 
             Some(detail) => format!("{}, {detail}", d.title).into(),
             None => d.title.clone().into(),
         });
-        let muted = if highlighted {
-            theme.selection_text
-        } else {
-            theme.text_muted
-        };
+        // Drawn in the selection's ink while highlighted (`Chosen`).
+        let muted = theme.text_muted;
         let click = cx.listener(
             move |this: &mut Shell, _: &gpui::MouseDownEvent, window, cx| {
                 cx.stop_propagation();
@@ -3365,9 +3362,7 @@ fn draw_piece(shell: &Shell, ix: usize, text: &str, cx: &mut Context<Shell>) -> 
             .cursor_pointer()
             .text_body()
             .when(highlighted, |b| {
-                b.bg(theme.selection_bg)
-                    .text_color(theme.selection_text)
-                    .border_color(theme.selection_bg)
+                b.chosen(&theme).border_color(theme.selection_bg)
             })
             .when(!highlighted, |b| b.hover(move |s| s.bg(hover)))
             .on_mouse_down(gpui::MouseButton::Left, click)

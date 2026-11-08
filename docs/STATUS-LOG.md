@@ -13416,3 +13416,89 @@ amended).
   under the pointer where the hover takes it off the selection. Seen on
   Xvfb with Noctalia's accent: the View menu open, its sliders and its
   chevron white on the teal.
+
+## 2026-11-08: What is chosen draws all it holds in the selection's ink (gpui 0056)
+
+- **Reported** (the user): the footer's Undo history chevron stayed
+  muted on its button, chosen while the history is open: the fourth of
+  the class this day, after a field's selected text, a toolbar button's
+  icon under the pointer, the Tags dialog's box and the View menu's
+  chevron.
+- **Cause, structural:** a ground's text color reached its words, never
+  its icons (gpui's `svg` paints only in the color it names) nor a muted
+  shortcut or detail beside them, which name their own. Each builder
+  chose those colors by whether its row was chosen, and missed whenever
+  the row was chosen some other way: a menu's row lit while its submenu
+  is open (`muted` followed `highlighted` only), a popup's row the
+  keyboard is on (the toolbar's `group_hover` followed the pointer only),
+  a button chosen while its popup is open (the Undo history's chevron,
+  Activity's pin), and every place that laid `selection_bg` by hand
+  rather than through `Chosen`.
+- **Built:** gpui patch 0056 (`vendor/zed/README.skwir.md`):
+  `Styled::ground(ground, ink)` sets the background and draws what is
+  inside the element (glyphs, icons, underlines) in `ink` while it is on
+  that ground, whatever color each names; under an opaque background of
+  its own (a field's, a hover's in place of the ground) each takes its
+  own color again, under a tint (a tag's chip) its parent's ink.
+  `Window::with_element_ink` / `element_ink` for what paints itself.
+  `theme::Chosen::chosen` is that ground (`selection_bg`, ink
+  `selection_text`), no longer setting the text color: under a hover the
+  words go back to the text around them.
+- **Moved onto it** (laid `selection_bg` by hand): the Undo history's
+  chevron (`history.rs`), Activity's pin, the shortcut editor's Add
+  button and a shortcut being edited, the footer's "as the cursor moves"
+  label and tallies (their text stayed `selection_text` on the hover's
+  light ground), a picture choice selected (`form.rs`), the omnibox's
+  highlighted strip button, a board's selected card (its muted lines),
+  the sidebar's eject under the pointer (a muted icon on it). Colors
+  chosen by hand for what is now ink, dropped: the context menu's and
+  the omnibox's `muted`, the palette's, the chooser's, the Tags dialog's,
+  the list's and the grid's, the archive rows', Settings' page icons,
+  count and choice tick, the sidebar's busy glyph and words, and the
+  toolbar's `glyph` and `menu_glyph`, its keys, its groups.
+- **What is no ink, chosen where it is drawn** (the accent may be the
+  selection's own color, as Noctalia's is): the cursor's ring on a
+  selected file (every view, `entry::highlight`, the board), the
+  sidebar's ring on the place shown and its square waiting for an icon,
+  Settings' focus ring on its page, a picture's square waiting for its
+  icon: `selection_text`. A shortcut's record dot is a mark that reads
+  the ink where it paints (`controls::mark`). A bar's fill keeps its
+  color: it lies on its track, an opaque ground of its own, not on the
+  selection (the sidebar's free space, Activity's progress). The timeline's bars in the
+  range chosen (`chart`, the accent at 60 %, vanished on its band), their
+  marked parts, the cursor's ring and their counts
+  (`BarColors::on_chosen`, the counts drawn under `with_element_ink`).
+  A switch (`controls::pill`) reads the ink where it paints: on a menu's
+  heading under the pointer or the keyboard, the track is the selection's
+  text and the knob its ground. Pictures are rasters drawn in the ink
+  asked: `icons::Ink::beside(theme, chosen)` for a file's picture on a
+  selected row (a desktop color scheme's icons), an archive's row, the
+  chooser's application and the sidebar's place.
+- **Seen** on Xvfb with Noctalia's colors (a GTK sheet's): the Undo
+  history open, its chevron white on the teal; Compress's row with its
+  submenu entered, its icon and chevron white; the View button with its
+  menu open and the row under the pointer, its shortcut white; the row
+  the keyboard is on in View's Buttons menu, its check white; the
+  heading's switch under the pointer, a white track and a teal knob; the
+  eject under the pointer; a selected row's muted columns white; the
+  timeline's chosen day, its bar light and its count white. In Skwir's
+  own light look: the cursor's ring on a selected row navy (the
+  selection's text) where it was the accent.
+- **Then** (the user): under the pointer, a search's pill in the trail
+  (`Modified: <7d`) turned its words dark and left its × white on the
+  hover's light ground: the × and a tag's categories were handed
+  `selection_text` by hand (`search_bar::pill_row`'s `ink`, missed in
+  the sweep). They name the pill's text now (`text`, `text_muted` on a
+  tag's tint), which the ground's ink draws white while it is chosen.
+  Seen on Xvfb with Noctalia's colors: the pill white on the teal, under
+  the pointer its words and × dark, on the × dark on its own hover. The
+  sweep's bars set back: Activity's strip keeps its hover while tinted,
+  where a white fill would have lain on the hover's light track.
+- **Checked:** fmt; clippy on skwir-ui (all targets); `just gpui-check
+  gpui -- style::tests` (129, the new
+  `what_is_on_a_ground_is_drawn_in_its_ink` among them); skwir-ui's
+  tests, 571 of 572: `settings::tests::a_page_shows_its_settings_by_subject_as_declared`
+  fails on a "Searches" subject another session's uncommitted work in
+  `crates/core` adds, not this change. Not seen in a window: the
+  board, the shortcut editor, Activity's pin, the omnibox's strip, the
+  archive and the chooser's pictures, a tag's chip on a lit menu row.

@@ -88,6 +88,7 @@ carry: the script takes it from the Inter release Skwir's packages pin
 | `0053-rounded-content-mask` | An element with rounded corners that hides its overflow keeps what it holds within its corners (`ContentMask::rounded_bounds`, `corner_radii`), on wgpu, Direct3D 11 and Metal | — |
 | `0055-paint-around` | `Window::paint_around`: a color outside a rounded rectangle, the complement of a quad there told how opaque it is (`Shadow::under`), so two see-through grounds meet without a seam; `Window::snap_to_device_pixels` | — |
 | `0054-window-tiling` | `Window::tiling`: the edges that meet another window or the screen's, whoever draws the decorations (Wayland's tiled states with server-side ones too) | — |
+| `0056-ground-ink` | `Styled::ground`: a background whose ink everything inside is drawn in while the element is on it (text, icons, underlines), whatever color each names; an opaque background of its own, a hover's in its place, gives each its own color back (`Style::ink`, `Window::with_element_ink`) | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
 
@@ -941,6 +942,42 @@ translucent rounded quad over its complement told its opacity leaves the
 arc one tone, within 2 levels; told nothing, more than 8); every HLSL
 entry point compiles with DXC; the macOS build type-checks, the shader
 bindings carrying `under`. Metal compiled nowhere.
+
+### 0056: A ground's ink
+
+A desktop's selection may be dark in a light look, or the accent itself
+(Noctalia's): what is drawn on it must be drawn in its text color. gpui
+draws each glyph and icon in the color it names, and an icon names its
+own (an `svg` inherits nothing): a selected row's words followed its text
+color, its muted shortcut, its icons and its chevron did not. Skwir
+chose their colors where it knew the row was chosen, and missed one each
+time a row was chosen some other way (a submenu open, the keyboard on a
+popup's row, a button whose menu is open, 2026-11-08).
+
+- **`Styled::ground(ground, ink)`** sets the background to `ground` and
+  `Style::ink` to the pair: while the element's background is that ground,
+  what is painted inside it, its own text included, is drawn in `ink`.
+- **`Style::paint`** draws what is inside an element (its continuation)
+  in its ground's ink while it is on it; in the colors each names under an
+  opaque background of its own (a field's, a tag's solid chip, a hover's
+  over the ground: the refined background is no longer the ground); in its
+  parent's under none, or under one that lets the ground through (a tint).
+  `Style::ink_inside` says which.
+- **`Window::with_element_ink` / `element_ink`**: the ink in force, which
+  `paint_glyph`, `paint_svg`, underlines and strikethroughs paint in,
+  whatever color they are given. A deferred draw (a popover, a tooltip)
+  is painted outside the tree, in its own colors. A quad is not ink: a
+  mark drawn as a shape (a box's border, a dot, a bar) is chosen where it
+  is drawn.
+
+Checked: `just gpui-check gpui -- style::tests`
+(`what_is_on_a_ground_is_drawn_in_its_ink`: a ground's ink, an opaque
+background of its own, a tint, a hover's in place of the ground, none);
+on Xvfb with Noctalia's colors, the footer's Undo history chevron, a
+menu's row whose submenu is open, the View button with its menu open
+and the rows of that menu, an eject button under the pointer, all white
+on the teal; the gpui crate type-checks. Not checked: Windows and macOS
+(the change is in gpui's shared code, no platform's).
 
 ## Adding or changing a patch
 

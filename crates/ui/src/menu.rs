@@ -1666,11 +1666,8 @@ fn row_element(
     theme: &Theme,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
-    let muted = if at.highlighted {
-        theme.selection_text
-    } else {
-        theme.text_muted
-    };
+    // Drawn in the selection's ink while the row is lit (`Chosen`).
+    let muted = theme.text_muted;
     let (title, icon, keys) = match &row {
         Row::Item(index) => {
             let item = &menu.items[*index];

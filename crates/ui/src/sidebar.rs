@@ -913,27 +913,21 @@ pub fn render(
             Some(path) => crate::icons::themed(
                 &path,
                 ICON_PX,
-                if is_current {
-                    crate::icons::Ink::of(&theme, theme.selection_text).on(theme.selection_bg)
-                } else {
-                    crate::icons::Ink::of(&theme, theme.text_muted)
-                },
+                crate::icons::Ink::beside(&theme, is_current),
             ),
-            None if busy.is_some() => controls::glyph(
-                "busy",
-                if is_current {
-                    theme.selection_text
-                } else {
-                    theme.accent
-                },
-                ICON_PX,
-            )
-            .into_any_element(),
+            None if busy.is_some() => {
+                controls::glyph("busy", theme.accent, ICON_PX).into_any_element()
+            }
+            // A shape, not ink: chosen in the selection's text.
             None => div()
                 .size(px(10.))
                 .mx(px(3.))
                 .rounded_sm()
-                .bg(theme.text_muted)
+                .bg(if is_current {
+                    theme.selection_text
+                } else {
+                    theme.text_muted
+                })
                 .flex_none()
                 .into_any_element(),
         };
@@ -953,11 +947,7 @@ pub fn render(
                 div()
                     .text_small()
                     .truncate()
-                    .text_color(if is_current {
-                        theme.selection_text
-                    } else {
-                        theme.text_muted
-                    })
+                    .text_color(theme.text_muted)
                     .child(busy.clone()),
             );
         } else if let Some((free, total)) = place.space {
@@ -991,10 +981,11 @@ pub fn render(
             .gap_2()
             .rounded_md()
             .border_1()
-            .border_color(if at_cursor {
-                theme.accent
-            } else {
-                gpui::transparent_black()
+            // The cursor's ring is a mark: on the selection, in its text.
+            .border_color(match (at_cursor, is_current) {
+                (true, true) => theme.selection_text,
+                (true, false) => theme.accent,
+                (false, _) => gpui::transparent_black(),
             })
             .when(busy.is_none(), gpui::Styled::cursor_pointer)
             .when(is_current, |d| d.chosen(&theme))
@@ -1065,7 +1056,6 @@ pub fn render(
         row = rings_its_files(row, &place.location, cx);
         row = row.optional_tooltip(clip.tooltip(tip));
         if let Some(eject) = place.eject.clone().filter(|_| busy.is_none()) {
-            let hover = theme.selection_bg;
             row = row.child(
                 div()
                     .id(crate::elements::known_by("eject", i))
@@ -1077,7 +1067,7 @@ pub fn render(
                     .items_center()
                     .justify_center()
                     .rounded_sm()
-                    .hover(move |s| s.bg(hover))
+                    .hover(|s| s.chosen(&theme))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         cx.stop_propagation();
                         this.run(&eject.name, eject.args.clone(), window, cx);

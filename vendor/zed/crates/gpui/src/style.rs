@@ -300,6 +300,10 @@ pub struct Style {
     /// The opacity of this element
     pub opacity: Option<f32>,
 
+    /// The ink everything inside this element is drawn in while its background is the ground the
+    /// ink was given with ([`Styled::ground`]).
+    pub ink: Option<Ink>,
+
     /// The grid columns of this element
     /// Roughly equivalent to the Tailwind `grid-cols-<number>`
     pub grid_cols: Option<GridTemplate>,
@@ -817,7 +821,10 @@ impl Style {
 
         window.paint_inset_shadows(bounds, corner_radii, &self.box_shadow);
 
-        continuation(window, cx);
+        match self.ink_inside() {
+            Some(ink) => window.with_element_ink(ink, |window| continuation(window, cx)),
+            None => continuation(window, cx),
+        }
 
         if self.is_border_visible() {
             let border_widths = self.border_widths.to_pixels(rem_size);
@@ -836,6 +843,26 @@ impl Style {
         #[cfg(debug_assertions)]
         if self.debug_below {
             cx.remove_global::<DebugBelow>();
+        }
+    }
+
+    /// The ink what is inside this element is drawn in: the ink of its ground while it is on that
+    /// ground (`Some(Some(ink))`); the colors each names on an opaque background of its own, a
+    /// field's or a hover's over its ground (`Some(None)`); its parent's where it has none, or one
+    /// that lets the ground under it through, a tint (`None`).
+    pub fn ink_inside(&self) -> Option<Option<Hsla>> {
+        let background = self.background.as_ref().and_then(Fill::color)?;
+        let opaque = match background.tag {
+            BackgroundTag::Solid => background.solid.a >= 1.,
+            BackgroundTag::LinearGradient => {
+                background.colors.iter().all(|stop| stop.color.a >= 1.)
+            }
+            BackgroundTag::PatternSlash | BackgroundTag::Checkerboard => false,
+        };
+        match self.ink {
+            Some(ink) if background == Background::from(ink.ground) => Some(Some(ink.color)),
+            _ if opaque => Some(None),
+            _ => None,
         }
     }
 
@@ -887,6 +914,7 @@ impl Default for Style {
             text: TextStyleRefinement::default(),
             mouse_cursor: None,
             opacity: None,
+            ink: None,
             grid_rows: None,
             grid_cols: None,
             grid_location: None,
@@ -924,6 +952,18 @@ pub struct StrikethroughStyle {
 
     /// The color of the strikethrough.
     pub color: Option<Hsla>,
+}
+
+/// The ink of a ground: the color text, icons and lines inside an element are drawn in while its
+/// background is that ground, whatever color they name (a selected row's text, its icons, its
+/// shortcut and its chevron alike). Set with [`Styled::ground`].
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct Ink {
+    /// The background the ink is drawn on. Where a later style gives the element another one (a
+    /// hover's), what is inside it takes its own colors again.
+    pub ground: Hsla,
+    /// The color everything inside is drawn in.
+    pub color: Hsla,
 }
 
 /// The kinds of fill that can be applied to a shape.
@@ -1415,6 +1455,31 @@ mod tests {
     use super::*;
 
     use util_macros::perf;
+
+    /// What is inside an element on its ground is drawn in its ink; under an opaque background of
+    /// its own (a field's, a hover's in place of the ground) in the colors it names; under none,
+    /// or one that lets the ground through (a tint), in its parent's ink.
+    #[test]
+    fn what_is_on_a_ground_is_drawn_in_its_ink() {
+        let (ground, ink, hover) = (blue(), yellow(), green());
+        let mut style = Style::default();
+        assert_eq!(style.ink_inside(), None);
+        style.background = Some(red().into());
+        assert_eq!(style.ink_inside(), Some(None));
+        style.background = Some(red().opacity(0.3).into());
+        assert_eq!(style.ink_inside(), None);
+        style.background = Some(ground.into());
+        style.ink = Some(Ink { ground, color: ink });
+        assert_eq!(style.ink_inside(), Some(Some(ink)));
+        let mut hovered = StyleRefinement::default();
+        hovered.background = Some(hover.into());
+        style.refine(&hovered);
+        assert_eq!(style.ink_inside(), Some(None));
+        style.background = Some(crate::transparent_black().into());
+        assert_eq!(style.ink_inside(), None);
+        style.background = None;
+        assert_eq!(style.ink_inside(), None);
+    }
 
     /// An element with rounded corners that hides its overflow keeps its children within its
     /// corners, inside its border; one that hides it along one axis, or has square corners, only

@@ -34,7 +34,15 @@
   light ground; a menu button's chevron (View's) takes its icon's color while
   its menu is open; the Tags dialog's check box on the highlighted row is
   drawn in the selection's colors instead of the accent, which may be the
-  selection's own.
+  selection's own. Whatever is chosen draws all it holds in the selection's
+  text color, whichever way it came to be chosen: the Undo history's chevron
+  while it is open, a menu's row while its submenu is open, a popup's row the
+  keyboard is on, Activity's pin, a shortcut being edited, a board's card, the
+  sidebar's eject under the pointer, the cursor's ring on a selected file, the
+  timeline's bars and counts in the range chosen, and the icons of a desktop's
+  color scheme on a selected row; and under the pointer, a search's pill
+  turns its × dark with its words instead of leaving it white on the hover's
+  light ground.
 - **See-through fields**: with the window's background let through, the address
   field, the view buttons and the tab shown let it through as their bar does,
   instead of staying solid.

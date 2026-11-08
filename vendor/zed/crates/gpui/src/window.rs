@@ -1241,6 +1241,7 @@ pub struct Window {
     pub(crate) rendered_entity_stack: Vec<EntityId>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
     pub(crate) element_opacity: f32,
+    pub(crate) element_ink: Option<Hsla>,
     pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
     pub(crate) requested_autoscroll: Option<Bounds<Pixels>>,
     /// The [`TextInputConfiguration`] most recently forwarded to the platform
@@ -2209,6 +2210,7 @@ impl Window {
             element_offset_stack: Vec::new(),
             content_mask_stack: Vec::new(),
             element_opacity: 1.0,
+            element_ink: None,
             requested_autoscroll: None,
             last_text_input_configuration: None,
             focused_text_input: None,
@@ -3381,8 +3383,9 @@ impl Window {
             pad: 0,
             bounds: self.underline_bounds(origin, width, style),
             content_mask: self.snapped_content_mask(),
-            color: style
-                .color
+            color: self
+                .element_ink
+                .or(style.color)
                 .unwrap_or_default()
                 .opacity(self.element_opacity()),
             thickness: self.snap_stroke(style.thickness),
@@ -4332,6 +4335,22 @@ impl Window {
         result
     }
 
+    /// Draws what `f` paints of text, icons and lines in `ink`, whatever color each names, or
+    /// with `None` in its own colors (an element with a background of its own, [`Style::ink`]).
+    pub fn with_element_ink<R>(&mut self, ink: Option<Hsla>, f: impl FnOnce(&mut Self) -> R) -> R {
+        self.invalidator.debug_assert_paint_or_prepaint();
+        let previous = mem::replace(&mut self.element_ink, ink);
+        let result = f(self);
+        self.element_ink = previous;
+        result
+    }
+
+    /// The ink text, icons and lines are drawn in here, whatever color they name: that of the
+    /// ground they are on ([`Styled::ground`]), if any.
+    pub fn element_ink(&self) -> Option<Hsla> {
+        self.element_ink
+    }
+
     pub(crate) fn with_element_opacity<R>(
         &mut self,
         opacity: Option<f32>,
@@ -4980,7 +4999,11 @@ impl Window {
             bounds,
             content_mask: self.snapped_content_mask(),
             thickness: self.snap_stroke(style.thickness),
-            color: style.color.unwrap_or_default().opacity(opacity),
+            color: self
+                .element_ink
+                .or(style.color)
+                .unwrap_or_default()
+                .opacity(opacity),
             wavy: false.into(),
         });
     }
@@ -5003,6 +5026,7 @@ impl Window {
     ) -> Result<()> {
         self.invalidator.debug_assert_paint();
 
+        let color = self.element_ink.unwrap_or(color);
         let element_opacity = self.element_opacity();
         let scale_factor = self.scale_factor();
         let glyph_origin = origin.scale(scale_factor);
@@ -5166,6 +5190,7 @@ impl Window {
     ) -> Result<()> {
         self.invalidator.debug_assert_paint();
 
+        let color = self.element_ink.unwrap_or(color);
         let element_opacity = self.element_opacity();
         let bounds = self.snap_bounds(bounds);
 

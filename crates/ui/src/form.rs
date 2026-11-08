@@ -1374,11 +1374,7 @@ fn choice_row(
             .rounded_md()
             .border_1()
             .cursor_pointer()
-            .when(selected, |d| {
-                d.border_color(theme.accent)
-                    .bg(theme.selection_bg)
-                    .text_color(theme.selection_text)
-            })
+            .when(selected, |d| d.border_color(theme.accent).chosen(theme))
             .when(!selected, |d| {
                 d.border_color(theme.border).hover(move |s| s.bg(hover))
             })
