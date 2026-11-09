@@ -11,7 +11,7 @@ use common::{active, app, home_tempdir, navigate, select};
 use skwir_core::App;
 use skwir_core::command::{Invocation, Outcome};
 use skwir_core::location::Location;
-use skwir_core::tabs::{LAST_TABS, SavedTabs};
+use skwir_core::tabs::{LAST_WINDOWS, SavedWindows};
 use skwir_core::workspace::{PaneId, TabId};
 
 const WAIT: Duration = Duration::from_secs(10);
@@ -321,26 +321,26 @@ fn the_window_tabs_come_back_dormant_but_the_one_shown() {
         "tab.new",
         serde_json::json!({ "location": "query:kind:image", "show": false }),
     );
-    let saved = app.saved_tabs();
-    assert_eq!(saved.tabs.len(), 3);
-    assert_eq!(saved.shown, 1);
+    let saved = app.saved_windows();
+    assert_eq!(saved.windows[0].tabs.len(), 3);
+    assert_eq!(saved.windows[0].shown, 1);
 
-    // What the settings file keeps reads back the same.
+    // What the state file keeps reads back the same.
     let value = toml::Value::try_from(&saved).unwrap();
-    assert_eq!(value.clone().try_into::<SavedTabs>().unwrap(), saved);
+    assert_eq!(value.clone().try_into::<SavedWindows>().unwrap(), saved);
 
     // Only a window that comes back to where it was restores its tabs.
     let settings = &app.settings;
-    settings.set(LAST_TABS, value);
-    assert!(skwir_core::tabs::last_tabs(settings).is_none());
+    settings.set(LAST_WINDOWS, value);
+    assert!(skwir_core::tabs::last_windows(settings).is_none());
     settings.set(
         skwir_core::settings::STARTUP,
         toml::Value::String("last".into()),
     );
-    let saved = skwir_core::tabs::last_tabs(settings).expect("tabs to restore");
+    let saved = skwir_core::tabs::last_windows(settings).expect("tabs to restore");
 
     let next = common::app(dir.path());
-    assert!(next.restore_tabs(&saved));
+    assert!(next.restore_windows(&saved));
     assert_eq!(tabs(&next).len(), 3);
     let shown_pane = active(&next);
     assert_eq!(
@@ -388,9 +388,9 @@ fn a_split_tab_keeps_its_panes_and_its_active_one() {
         "a pane of a tab not shown is not made active behind its back"
     );
     assert!(is_dormant(&app, left) && is_dormant(&app, right));
-    let saved = app.saved_tabs();
-    assert_eq!(saved.tabs[0].panes.len(), 2);
-    assert_eq!(saved.tabs[0].active, 1);
+    let saved = app.saved_windows();
+    assert_eq!(saved.windows[0].tabs[0].panes.len(), 2);
+    assert_eq!(saved.windows[0].tabs[0].active, 1);
 
     run(&app, "tab.select", serde_json::json!({ "tab": split }));
     assert_eq!(active(&app), right, "the tab's active pane is active again");

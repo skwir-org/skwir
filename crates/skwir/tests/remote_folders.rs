@@ -158,8 +158,11 @@ fn an_address_opens_its_mounted_folder_and_the_window_keeps_it_by_its_address() 
     assert!(app.shows_thumbnail(&folder.join("hello.txt"), Some(5)));
     let kept = app.address_of(&shown).expect("kept by its address");
     assert_eq!(kept.to_string(), address);
-    let saved = app.saved_tabs();
-    assert_eq!(saved.tabs[0].panes[0], kept, "a tab keeps the address");
+    let saved = app.saved_windows();
+    assert_eq!(
+        saved.windows[0].tabs[0].panes[0], kept,
+        "a tab keeps the address"
+    );
     let place = app
         .registry
         .places

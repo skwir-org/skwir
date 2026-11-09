@@ -83,9 +83,9 @@ fn the_last_window_s_tabs_come_back_filtered() {
         &serde_json::json!({ "text": null, "pane": other }),
     );
 
-    let saved = app.saved_tabs();
+    let saved = app.saved_windows();
     let value = toml::Value::try_from(&saved).unwrap();
-    let tabs = value["tabs"].as_array().unwrap();
+    let tabs = value["windows"][0]["tabs"].as_array().unwrap();
     assert!(tabs[0].get("filters").is_some());
     assert!(
         tabs[1].get("filters").is_none(),
@@ -93,7 +93,7 @@ fn the_last_window_s_tabs_come_back_filtered() {
     );
 
     let next = app_in(&tmp.path().join("state again"));
-    assert!(next.restore_tabs(&value.try_into().unwrap()));
+    assert!(next.restore_windows(&value.try_into().unwrap()));
     next.resume_shown().unwrap();
     let pane = next.workspace.read().active_id();
     assert!(next.pump_until_complete(pane, WAIT));

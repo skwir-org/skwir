@@ -326,6 +326,62 @@ fn tabs_move_between_windows_and_out_to_new_ones() {
     assert_eq!(active_window(&app), first);
 }
 
+/// What the windows record for the next start is no change of a setting:
+/// what depends on the settings (the theme, the keymap, the privacy rules)
+/// is not worked out again at each folder changed.
+#[test]
+fn recording_the_windows_moves_no_setting() {
+    let dir = home_tempdir();
+    tree(dir.path());
+    let app = app(dir.path());
+    app.settings.set(
+        skwir_core::settings::STARTUP,
+        toml::Value::String("last".into()),
+    );
+    navigate(&app, dir.path());
+    let before = app.settings.revision();
+    assert!(
+        skwir_core::tabs::record(&app),
+        "the windows are recorded for the first time"
+    );
+    assert_eq!(app.settings.revision(), before);
+    assert!(app.settings.get::<SavedWindows>(LAST_WINDOWS).is_some());
+}
+
+#[test]
+fn closing_the_active_window_goes_to_the_one_used_before_it() {
+    let dir = home_tempdir();
+    tree(dir.path());
+    let app = app(dir.path());
+    navigate(&app, dir.path());
+    let first = active_window(&app);
+    let new_window = |app: &App| -> WindowId {
+        let v = value(app, "window.new", serde_json::json!({}));
+        id(&v, "window")
+    };
+    let second = new_window(&app);
+    let third = new_window(&app);
+    for window in [first, second, first, third] {
+        run(
+            &app,
+            "window.select",
+            serde_json::json!({ "window": window }),
+        );
+    }
+    assert_eq!(active_window(&app), third);
+    // The order they were made in would give the second, which took its
+    // place; the first was used after it.
+    run(&app, "window.close", serde_json::json!({ "window": third }));
+    assert_eq!(active_window(&app), first);
+    // A window that is not active going changes nothing.
+    run(
+        &app,
+        "window.close",
+        serde_json::json!({ "window": second }),
+    );
+    assert_eq!(active_window(&app), first);
+}
+
 #[test]
 fn the_active_pane_is_in_the_active_window() {
     let dir = home_tempdir();
@@ -463,7 +519,11 @@ fn tabs_kept_before_there_were_windows_come_back_as_one() {
         "tab.new",
         serde_json::json!({ "location": dir.path().join("it's a folder") }),
     );
-    let before: SavedTabs = app.saved_tabs();
+    let window = app.saved_windows().windows.remove(0);
+    let before = SavedTabs {
+        tabs: window.tabs,
+        shown: window.shown,
+    };
     let settings = &app.settings;
     settings.set(
         skwir_core::settings::STARTUP,

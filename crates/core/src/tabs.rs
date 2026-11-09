@@ -874,12 +874,6 @@ impl App {
             .collect()
     }
 
-    /// Put the tabs of `saved` in place of the workspace's one untouched
-    /// tab, dormant, in one window: as `restore_windows`.
-    pub fn restore_tabs(&self, saved: &SavedTabs) -> bool {
-        self.restore_windows(&SavedWindows::from(saved.clone()))
-    }
-
     /// Put the windows of `saved` in place of the workspace's one untouched
     /// window, their tabs dormant: `resume_shown` opens the shown ones once
     /// the UI is there to be woken. Returns false when there was nothing to
@@ -937,16 +931,6 @@ impl App {
         drop(ws);
         tracing::debug!(windows = restored.len(), "restored the last windows");
         true
-    }
-
-    /// The active window's tabs, as `LAST_TABS` kept them.
-    pub fn saved_tabs(&self) -> SavedTabs {
-        let ws = self.workspace.read();
-        let window = self.saved_window(&ws, ws.active_window());
-        SavedTabs {
-            tabs: window.tabs,
-            shown: window.shown,
-        }
     }
 
     /// Every window, as `LAST_WINDOWS` keeps them: those that show nothing
@@ -1153,17 +1137,6 @@ pub fn last_windows(settings: &crate::settings::Settings) -> Option<SavedWindows
                 .filter(|saved| !saved.tabs.is_empty())
                 .map(SavedWindows::from)
         })
-}
-
-/// The tabs to open at startup, in one window: as `last_windows`.
-pub fn last_tabs(settings: &crate::settings::Settings) -> Option<SavedTabs> {
-    last_windows(settings).and_then(|saved| {
-        let window = saved.windows.into_iter().nth(saved.active)?;
-        Some(SavedTabs {
-            tabs: window.tabs,
-            shown: window.shown,
-        })
-    })
 }
 
 /// Record where the windows are, for the next start: the active pane's
