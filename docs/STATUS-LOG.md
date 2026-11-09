@@ -13654,7 +13654,7 @@ alone, so the type never reached the colorer.
 - Content cannot replace the name: `file` 5.48 on 14 source files with their names
   removed got 4 right (JSON, Python, C, C++), 8 plain text, and called Rust and
   Go C source.
-- **Measured** (a throwaway test, the installed database): 55 extensions descend
+- **Measured** (a throwaway test, the installed database): 54 extensions descend
   from XML with no grammar by name, `.xsl`, `.xliff`, `.atom`, `.rdf`, `.xul`
   among them; each now colors as XML.
 - OFX 1.x is SGML, not XML, and stays plain text.
@@ -13665,3 +13665,24 @@ alone, so the type never reached the colorer.
   tests, the 30 of `skwir-ui`'s preview, `extended_previews` and `any_file`;
   clippy on the touched crates, Linux and Windows.
 - **Not checked:** in a window: the token is the one a `.xml` file has.
+
+## 2026-11-09: A text's magic is read in its own encoding
+
+The database's text rules are written for files that start with `<?xml` or `#!`,
+at offset 0: a UTF-8 mark or UTF-16 hid them, and such a file was `text/plain`.
+`file` 5.48 decodes before its text rules and got both right. `mime::magic` asks
+the database of the decoded text where the head has a mark and is text, then of
+the bytes as before; `identify`, `by_content` and `settle` go through it.
+
+- A mark alone stays `text/plain`: decoded it is empty, and the database calls an
+  empty file `application/x-zerosize`.
+- Not added: XML with no declaration, or after a blank line. It would be a format
+  rule beside the database, `file` does not attempt it, and the OFX of #8 has the
+  declaration.
+- **Checked:** `a_text_s_magic_is_read_in_its_own_encoding` (a UTF-8 mark, UTF-16
+  both ways, a script, a mark alone, bytes that only begin like one) and
+  `xml_behind_a_byte_order_mark_is_read_as_xml` (the wired previews, the text
+  decoded); the platform crate's 451 tests, `extended_previews` and `any_file`;
+  clippy on the touched crates, Linux and Windows.
+- **Not checked:** under Wine, the disk being nearly full; no line of it differs by
+  system.

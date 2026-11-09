@@ -211,6 +211,33 @@ fn a_file_that_is_xml_is_read_as_xml_whatever_its_name() {
     let older = "OFXHEADER:100\nDATA:OFXSGML\n\n<OFX>\n<CODE>0\n</OFX>\n";
     assert_eq!(language("older.ofx", older).as_deref(), Some("ofx"));
 }
+/// A byte order mark or UTF-16 hides nothing of what a file declares.
+#[test]
+fn xml_behind_a_byte_order_mark_is_read_as_xml() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = app(tmp.path());
+    let declared = "<?xml version=\"1.0\"?>\n<OFX>été</OFX>\n";
+    let utf8 = [b"\xEF\xBB\xBF", declared.as_bytes()].concat();
+    let utf16: Vec<u8> = [0xFF, 0xFE]
+        .into_iter()
+        .chain(declared.encode_utf16().flat_map(u16::to_le_bytes))
+        .collect();
+    let source = InspectRequest {
+        source: true,
+        ..InspectRequest::default()
+    };
+    for (name, bytes) in [("marked.ofx", utf8), ("wide.ofx", utf16)] {
+        let path = tmp.path().join(name);
+        std::fs::write(&path, bytes).unwrap();
+        let shown = inspect(&app, &path, &source);
+        assert_eq!(shown.blocks[1].text, "<OFX>été</OFX>", "{name}");
+        assert_eq!(
+            shown.text.unwrap().language.as_deref(),
+            Some("xml"),
+            "{name}"
+        );
+    }
+}
 #[test]
 fn csv_quoted_newlines_and_structured_code() {
     let tmp = tempfile::tempdir().unwrap();

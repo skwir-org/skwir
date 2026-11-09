@@ -201,7 +201,7 @@ pub fn identify<S: FileSource + ?Sized>(name: &OsStr, file: &S) -> Option<Mime> 
     // more precise than one of those: magic that names another kind of
     // file altogether does not outvote an extension several types share.
     let sniffed = head(file)
-        .and_then(|head| database::magic(&head))
+        .and_then(|head| magic(&head))
         .filter(|m| candidates.iter().any(|c| database::is_a(m, c)));
     sniffed.or_else(|| database::representative(candidates))
 }
@@ -219,7 +219,25 @@ pub fn by_content<S: FileSource + ?Sized>(file: &S) -> Option<Mime> {
     let head = head(file)?;
     // There is no magic for text/plain: what it does not know is text or
     // binary by the bytes.
-    Some(database::magic(&head).unwrap_or_else(|| text_or_binary(&head)))
+    Some(magic(&head).unwrap_or_else(|| text_or_binary(&head)))
+}
+
+/// What the database's magic says of a file's first bytes, a text's read
+/// in its own encoding. Its rules for text (`<?xml`, `#!`) are written for
+/// files that start with those characters, which a byte order mark or
+/// UTF-16 hides; `file` decodes before its text rules too. Only what is
+/// text is decoded, and a text that says nothing keeps the bytes' answer.
+fn magic(head: &[u8]) -> Option<Mime> {
+    if encoding_rs::Encoding::for_bom(head).is_some() && crate::inspection::is_text(head) {
+        let (text, _) = crate::inspection::decode(head);
+        // Nothing past the mark is no empty file (`application/x-zerosize`).
+        if !text.is_empty()
+            && let Some(found) = database::magic(text.as_bytes())
+        {
+            return Some(found);
+        }
+    }
+    database::magic(head)
 }
 
 /// Bytes read to decide what a file without a known name holds. The
@@ -1096,10 +1114,7 @@ fn refine(said: Option<Mime>, known: Vec<Mime>) -> Claims {
 /// (a workbook renamed `.csv` is an OLE file), else the `known` that does
 /// (text is `text/csv`), else `said`, as it does by name alone.
 fn settle(said: Mime, known: &[Mime], head: &[u8]) -> Mime {
-    for found in [database::magic(head), Some(text_or_binary(head))]
-        .iter()
-        .flatten()
-    {
+    for found in [magic(head), Some(text_or_binary(head))].iter().flatten() {
         let agrees = |m: &Mime| database::is_a(m, found) || database::is_a(found, m);
         if agrees(&said) {
             return said;
@@ -1405,6 +1420,54 @@ mod tests {
         )
         .unwrap();
         assert_eq!(by_content(&fifo), None, "a FIFO is refused, not waited on");
+    }
+
+    /// What a text declares is read past its mark and in its encoding.
+    #[test]
+    fn a_text_s_magic_is_read_in_its_own_encoding() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = |name: &str, bytes: &[u8]| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, bytes).unwrap();
+            by_content(&path).map(|m| m.0)
+        };
+        let marked = |mark: &[u8], text: &[u8]| [mark, text].concat();
+        let xml = "<?xml version=\"1.0\"?>\n<a>été</a>\n";
+        let wide = |to_bytes: fn(u16) -> [u8; 2]| {
+            xml.encode_utf16().flat_map(to_bytes).collect::<Vec<u8>>()
+        };
+        let is_xml = Some("application/xml".to_owned());
+        assert_eq!(
+            file("a.cfg", &marked(b"\xEF\xBB\xBF", xml.as_bytes())),
+            is_xml
+        );
+        assert_eq!(
+            file("b.cfg", &marked(b"\xFF\xFE", &wide(u16::to_le_bytes))),
+            is_xml
+        );
+        assert_eq!(
+            file("c.cfg", &marked(b"\xFE\xFF", &wide(u16::to_be_bytes))),
+            is_xml
+        );
+        assert_eq!(
+            file("d.cfg", &marked(b"\xEF\xBB\xBF", b"#!/bin/sh\necho hi\n")),
+            Some(unalias(&Mime("application/x-shellscript".into())).0),
+            "not only XML"
+        );
+        // A text that says nothing is text, a mark alone no empty file.
+        assert_eq!(
+            file("e.cfg", &marked(b"\xEF\xBB\xBF", b"a = 1\n")),
+            Some("text/plain".to_owned())
+        );
+        assert_eq!(
+            file("f.cfg", b"\xEF\xBB\xBF"),
+            Some("text/plain".to_owned())
+        );
+        // Bytes that only begin like a mark are not read as a text.
+        assert_eq!(
+            file("g.cfg", b"\xFF\xFE\x00\x00\x01\x02"),
+            Some("application/octet-stream".to_owned())
+        );
     }
 
     #[test]

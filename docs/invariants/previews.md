@@ -122,6 +122,9 @@ A name that says nothing is not a binary file.
   never a guess from the name. It is all the hex preview accepts.
 - A declared type counts only as far as the bytes agree
   (`preview::compute`): text is read as text whatever its name.
+- The database's magic is asked through `mime::magic`, which reads a
+  text with a byte order mark in its own encoding: its rules for text
+  (`<?xml`, `#!`) are written for files starting with those characters.
 - A name the system's registry and the database contradict each other
   about is ambiguous, and the bytes the panel reads first settle it
   (ADR-037, amended; `mime::identify`): with Excel installed Windows

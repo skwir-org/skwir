@@ -5,6 +5,8 @@
 - **XML under another name is colored as XML** (#8): a `.ofx` that declares
   itself XML, a dialect such as `.xliff`, `.xsl`, `.atom` or `.rdf`, or a file
   with no extension. A name a grammar knows keeps its colors.
+- **Files in UTF-16 or with a byte order mark** are recognized by what they
+  declare: XML, and scripts by their `#!` line.
 - **CSV files separated by semicolons** (#9), tabs or pipes show as their
   columns: the separator is read from the file, a `sep=` first line included,
   and the preview's details name it.
