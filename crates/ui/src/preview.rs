@@ -210,6 +210,20 @@ struct PreviewResult {
 }
 
 /// Facts shown in the header, read from the entry's metadata.
+/// How far an entry's type is settled.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Typing {
+    /// Not yet: a name several types claim (`*.ogg`) gives the most
+    /// general of them until the worker reads the file (`mime::identify`).
+    #[default]
+    Unsettled,
+    /// The name alone decides it, or the bytes were read.
+    Settled,
+    /// The worker tried and could not (the file cannot be read, or its
+    /// bytes say nothing): what waits for the type goes on without it.
+    Unreadable,
+}
+
 #[derive(Clone, Default)]
 pub struct Info {
     pub name: String,
@@ -217,10 +231,8 @@ pub struct Info {
     /// (`typenames::fallback_of`).
     pub type_fallback: String,
     pub mime: Option<String>,
-    /// Whether `mime` is settled: the name alone decides it, or the bytes
-    /// were read. A name several types claim (`*.ogg`) gives the most
-    /// general of them until the worker reads the file (`mime::identify`).
-    pub identified: bool,
+    /// How far `mime` is settled.
+    pub typing: Typing,
     pub size: Option<String>,
     pub modified: Option<String>,
     pub is_dir: bool,
@@ -646,10 +658,11 @@ pub struct PreviewState {
     sources_tx: flume::Sender<(u64, Vec<crate::properties::SourceRow>)>,
     sources_rx: flume::Receiver<(u64, Vec<crate::properties::SourceRow>)>,
     /// The type the preview's worker read of the bytes, said as soon as it
-    /// is, with its request's generation: what waits for the type (a
-    /// source's rows) does not wait for the preview to be drawn.
-    typed_tx: flume::Sender<(u64, String)>,
-    typed_rx: flume::Receiver<(u64, String)>,
+    /// is, with its request's generation (none, if it could not): what
+    /// waits for the type (a source's rows) does not wait for the preview
+    /// to be drawn, nor for good.
+    typed_tx: flume::Sender<(u64, Option<String>)>,
+    typed_rx: flume::Receiver<(u64, Option<String>)>,
     /// A count of what folders hold, asked for.
     pub count: Option<Counting>,
     count_generation: u64,
@@ -1909,8 +1922,13 @@ impl Shell {
             self.preview.properties_at = None;
             let app = Arc::clone(&self.app);
             self.type_names.request(&app);
-            let identified = entry.inode_type().is_some()
-                || (mime.is_some() && !skwir_platform::mime::ambiguous(entry.type_name()));
+            let typing = if entry.inode_type().is_some()
+                || (mime.is_some() && !skwir_platform::mime::ambiguous(entry.type_name()))
+            {
+                Typing::Settled
+            } else {
+                Typing::Unsettled
+            };
             let picture = mime
                 .as_deref()
                 .is_some_and(crate::fullscreen::is_picture_type);
@@ -1918,7 +1936,7 @@ impl Shell {
                 name: entry.name_str().into_owned(),
                 type_fallback: crate::typenames::fallback_of(&entry),
                 mime,
-                identified,
+                typing,
                 size: None,
                 modified: None,
                 is_dir: entry.is_dir(),
@@ -1985,8 +2003,13 @@ impl Shell {
             // for a batch of metadata, which would blank them meanwhile.
             let file = (key.path.clone(), version.modified, version.size);
             if self.preview.fields_for.as_ref() != Some(&file) {
+                let another = self
+                    .preview
+                    .fields_for
+                    .as_ref()
+                    .is_none_or(|(before, ..)| *before != file.0);
                 self.preview.fields_for = Some(file);
-                self.read_fields(&entry, &key.path, here);
+                self.read_fields(&entry, &key.path, here, another);
             }
             self.preview.neighbours = match self.media_kind() {
                 Some(kind) => self.neighbours(id, |entry| crate::media::is_track(entry, kind)),
@@ -2049,7 +2072,10 @@ impl Shell {
         // for it are asked now, not once the preview is drawn.
         while let Ok((generation, mime)) = self.preview.typed_rx.try_recv() {
             if generation == self.preview.generation {
-                self.settle_type(mime);
+                match mime {
+                    Some(mime) => self.settle_type(mime),
+                    None => self.preview.info.typing = Typing::Unreadable,
+                }
             }
         }
         self.ask_sources(&entry, &key.path);
@@ -2282,7 +2308,7 @@ impl Shell {
     /// read them (`typed_rx`), and with its first result. A member the panel
     /// went down into resolved its own type when it was extracted.
     fn settle_type(&mut self, sniffed: String) {
-        if self.preview.info.identified || !self.preview.nested.is_empty() {
+        if self.preview.info.typing == Typing::Settled || !self.preview.nested.is_empty() {
             return;
         }
         let mime = skwir_platform::mime::Mime(sniffed);
@@ -2290,7 +2316,7 @@ impl Shell {
         self.type_names.request(&Arc::clone(&self.app));
         self.preview.info.picture = crate::fullscreen::is_picture_type(&mime.0);
         self.preview.info.mime = Some(mime.0);
-        self.preview.info.identified = true;
+        self.preview.info.typing = Typing::Settled;
     }
 
     /// A result for the current request.
@@ -2679,8 +2705,8 @@ impl Shell {
         let is_dir = entry.is_dir();
         // The file's own name, while its type is not settled: the worker
         // reads the bytes to settle it, once.
-        let unsettled =
-            (!is_dir && !self.preview.info.identified).then(|| entry.type_name().to_owned());
+        let unsettled = (!is_dir && self.preview.info.typing != Typing::Settled)
+            .then(|| entry.type_name().to_owned());
         let session = self.preview.reader.session.clone();
         let picture_side = self.preview.picture_side;
         // A film's picture is asked to fit the box it is shown in, or at
@@ -2789,9 +2815,21 @@ impl Shell {
                 // `application/octet-stream` request means binary bytes. A
                 // member went down into was identified when extracted.
                 if !is_dir && (request.mime.is_none() || (own && unsettled.is_some())) {
+                    // Said at once, not with the preview: what waits for
+                    // the type (a source's rows) need not wait for it to
+                    // be drawn. And said if it cannot be typed, or it would
+                    // wait for good.
+                    let say = |mime: Option<String>| {
+                        if !cancel.is_cancelled() && typed_tx.send((generation, mime)).is_ok() {
+                            wake();
+                        }
+                    };
                     let held = match request.held() {
                         Ok(held) => held,
-                        Err(error) => return fail(error.into()),
+                        Err(error) => {
+                            say(None);
+                            return fail(error.into());
+                        }
                     };
                     request.mime = match unsettled.as_deref().filter(|_| own) {
                         Some(name) => skwir_platform::mime::identify(name, &held),
@@ -2799,15 +2837,7 @@ impl Shell {
                     }
                     .map(|m| m.to_string());
                     sniffed.replace(request.mime.clone());
-                    // Said at once, not with the preview: what waits for
-                    // the type (a source's rows) need not wait for it to be
-                    // drawn.
-                    if let Some(mime) = request.mime.clone()
-                        && !cancel.is_cancelled()
-                        && typed_tx.send((generation, mime)).is_ok()
-                    {
-                        wake();
-                    }
+                    say(request.mime.clone());
                 }
                 // A type shown as its source opens on it (`SourceTypes`):
                 // the file's own type, settled now, before a plugin from
@@ -3629,33 +3659,38 @@ impl Shell {
     /// `skwir_core::fields`), what the system adds to its mode
     /// (`skwir_platform::access`) and the flags it keeps, what it takes on
     /// its drive, and the drive (not for the folder shown, `here`, which
-    /// has its own), read on a worker; what was shown for another entry
-    /// goes at once, and a late answer for it is dropped.
+    /// has its own), read on a worker. What was shown for `another` entry
+    /// goes at once; a file that changed keeps what it showed until the
+    /// answer replaces it (ADR-058, 9), and a late answer for either is
+    /// dropped.
     fn read_fields(
         &mut self,
         entry: &skwir_core::entry::Entry,
         path: &std::path::Path,
         here: bool,
+        another: bool,
     ) {
         self.preview.fields_generation += 1;
-        self.preview.fields.clear();
-        self.preview.access.clear();
-        // What every reading answers keeps its place, labelled and empty,
-        // until it does: the room a file takes, after its size, and the
-        // drive it is on (the folder shown has its own, `Here`).
-        self.preview.general = if entry.is_dir() {
-            Vec::new()
-        } else {
-            vec![crate::properties::Row::reserved("On disk")]
-        };
-        self.preview.volume = (!here).then(|| crate::properties::Group {
-            folded: true,
-            ..crate::properties::Group::new(
-                "Volume",
-                vec![crate::properties::Row::reserved("Volume")],
-            )
-        });
-        self.preview.read_only = false;
+        if another {
+            self.preview.fields.clear();
+            self.preview.access.clear();
+            // What every reading answers keeps its place, labelled and empty,
+            // until it does: the room a file takes, after its size, and the
+            // drive it is on (the folder shown has its own, `Here`).
+            self.preview.general = if entry.is_dir() {
+                Vec::new()
+            } else {
+                vec![crate::properties::Row::reserved("On disk")]
+            };
+            self.preview.volume = (!here).then(|| crate::properties::Group {
+                folded: true,
+                ..crate::properties::Group::new(
+                    "Volume",
+                    vec![crate::properties::Row::reserved("Volume")],
+                )
+            });
+            self.preview.read_only = false;
+        }
         // A folder, a pipe, a device: no file to read a field of. Their
         // access is read all the same: without opening anything.
         let shown = if entry.inode_type().is_some() {
@@ -3739,7 +3774,8 @@ impl Shell {
     /// (their commands may read the file): again when the file changes or
     /// a source says its answers did. Rows of another file go at once, the
     /// rows the sources said they answer kept in place, empty, until they
-    /// do; a source's new answer replaces its old one when it comes.
+    /// do; a file that changed keeps its rows meanwhile, a source's new
+    /// answer replacing its old one when it comes.
     fn ask_sources(&mut self, entry: &skwir_core::entry::Entry, path: &std::path::Path) {
         let sources = self.app.registry.property_sources.all();
         let revision = sources.iter().fold(
@@ -3751,32 +3787,40 @@ impl Shell {
         let Some((at, modified, size)) = self.preview.fields_for.clone() else {
             return;
         };
-        // Another file, or the file changed: the rows of the last go, and
-        // what was asked for it with them (its answer would land here).
-        // Each row a source said it answers keeps its place, labelled and
-        // empty, until it does (`properties::places`).
+        // Another file, or the file changed: what was asked goes (its
+        // answer would land here). Another file's rows go too, each row a
+        // source said it answers keeping its place, labelled and empty,
+        // until it does (`properties::places`); a file that changed keeps
+        // what it showed until the answer (ADR-058, 9).
         let file = (at.clone(), modified, size);
         if self.preview.sources_of.as_ref() != Some(&file) {
+            let another = self
+                .preview
+                .sources_of
+                .as_ref()
+                .is_none_or(|(before, ..)| *before != file.0);
             self.preview.sources_of = Some(file);
             self.preview.sources_asked = None;
             self.preview.sources_generation += 1;
             if let Some(before) = self.preview.sources_cancel.take() {
                 before.cancel();
             }
-            self.preview.plugin_rows = crate::properties::places(&sources, entry, path);
+            if another {
+                self.preview.plugin_rows = crate::properties::places(&sources, entry, path);
+            }
         }
         // A source that takes the entry's type waits for the preview to
         // settle it from what it read (ADR-101), rather than read the file
         // again to type it: asked at the next sync once it is. With
-        // Properties alone no preview reads it: the source is asked at
-        // once without the type, and reads the head itself, once.
-        let typed = self
-            .preview
-            .info
-            .identified
+        // Properties alone no preview reads it, and one that could not type
+        // it (`Typing::Unreadable`) has nothing to wait for: the source is asked
+        // at once without the type, and reads the head itself, once.
+        let typing = self.preview.info.typing;
+        let typed = (typing == Typing::Settled)
             .then(|| self.preview.info.mime.clone())
             .flatten();
         if typed.is_none()
+            && typing != Typing::Unreadable
             && !entry.is_dir()
             && self.preview.previews()
             && sources.iter().any(|source| source.typed)

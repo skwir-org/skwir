@@ -184,7 +184,8 @@ turns Preview on).
      as it is read, so a source waiting for it (Opens with, for a name
      several types claim) fills in with the rest; with Properties alone,
      where no preview reads it, the source is asked without it at once
-     and reads the head itself.
+     and reads the head itself, as where the worker could not type it
+     (a file it cannot read).
    - A row that comes only sometimes is read where everything of its kind
      is: what is beside a file (its companions, the file a companion
      belongs to) is read with its metadata, by core, for every rule and
