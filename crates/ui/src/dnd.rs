@@ -174,9 +174,10 @@ pub struct DragPayload {
 
 /// The icon of the files a drag carries (`dragicon.rs`): drawn under the
 /// pointer in the window, and handed to the compositor when the drag leaves
-/// it, so crossing the window's edge changes nothing. Kept until the next
-/// drag of files, or the icon that replaces it, which lets go of its
-/// texture.
+/// it, so crossing the window's edge changes nothing. Kept for the drag's
+/// length: its view let go of it when the drag ended, however it ended
+/// (`DragPreview::let_go`), and each icon that replaced it lets go of the
+/// one before.
 pub struct FilesIcon {
     icon: Arc<gpui::ExternalDragIcon>,
     image: Arc<RenderImage>,
@@ -226,6 +227,29 @@ impl DragPreview {
         }) {
             self.icon = Some(icon);
         }
+    }
+
+    /// The drag ended, its view gone: dropped, cancelled, ended by the
+    /// compositor, or with its window. What it drew goes with it, the
+    /// atlas's tile too: a window that drew one is drawn afresh as a drag
+    /// ends. Asked of the very icon this view shows, so a drag begun since
+    /// keeps its own.
+    fn let_go(&mut self, cx: &mut gpui::App) {
+        let (Some(shell), Some((image, _))) = (self.shell.take(), self.icon.take()) else {
+            return;
+        };
+        // A shell gone took its icon with it.
+        let _ = shell.update(cx, |shell, cx| {
+            if shell
+                .files_icon
+                .as_ref()
+                .is_some_and(|kept| Arc::ptr_eq(&kept.image, &image))
+                && let Some(last) = shell.files_icon.take()
+            {
+                tracing::trace!("the drag's picture let go of");
+                cx.drop_image(last.image, None);
+            }
+        });
     }
 }
 
@@ -755,13 +779,17 @@ pub fn draggable(el: Stateful<Div>, pane: PaneId, cx: &mut Context<Shell>) -> St
                     (label, icon, waits.then_some(look))
                 })
                 .unwrap_or_default();
-            cx.new(|_| DragPreview {
-                count,
-                label,
-                position,
-                icon,
-                look,
-                shell: Some(shell.clone()),
+            cx.new(|cx| {
+                cx.on_release(|preview: &mut DragPreview, cx| preview.let_go(cx))
+                    .detach();
+                DragPreview {
+                    count,
+                    label,
+                    position,
+                    icon,
+                    look,
+                    shell: Some(shell.clone()),
+                }
             })
         },
     )

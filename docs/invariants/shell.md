@@ -834,7 +834,9 @@ of bars, split or not.
   in; a badge counts them, the mosaic's last quarter says how many more.
   One file is its picture alone in every layout. It never asks the
   core's thumbnails: the window takes what it draws out of them
-  (`Thumbnails::take`).
+  (`Thumbnails::take`). The picture is kept for the drag's length: its
+  view let go (`on_release`, `DragPreview::let_go`) whether the drag was
+  dropped, cancelled, ended by the compositor or left with its window.
 - **A drag's name is under its icon, as the grid writes names**
   (`dragname.rs`): centred on the accent's pill, up to three lines at
   most `dragname::WIDTH` wide, a longer one keeping its first lines and
