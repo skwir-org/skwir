@@ -150,7 +150,9 @@ search's walk does not reach).
 - The rules are made once per settings revision and environment
   generation, for searches and for privacy alike (`App::left_out`,
   `App::privacy`): a catalog costs about 5 ms to make (release build),
-  which a check per path paid before.
+  which a check per path paid before. A listed path is found by the
+  ancestors of what is asked, and what the listed paths resolve to and the
+  mounts are shared by every check for a second (`permissions::Seen`).
 - Asking the login shell runs the user's shell files, which may do more
   than export (start an agent, print): rarely, on a worker, with
   `SKWIR_RESOLVING_ENVIRONMENT=1` set for a file that wants to skip

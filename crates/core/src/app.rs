@@ -361,7 +361,7 @@ pub struct App {
     /// The rules as the settings and the environment said them when last
     /// made (`left_out`, `privacy`): made again once either changed.
     left_out: parking_lot::Mutex<Option<(Ruled, Arc<crate::walks::LeftOut>)>>,
-    private: parking_lot::Mutex<Option<(Ruled, Arc<crate::exclusions::Rule>)>>,
+    private: parking_lot::Mutex<Option<(Ruled, crate::permissions::Privacy)>>,
     providers: RwLock<HashMap<Arc<str>, (Arc<str>, Arc<dyn LocationProvider>)>>,
     /// Shared with every `waker_handle`, so a handle taken before the UI
     /// installs its hook still reaches it.
@@ -2363,18 +2363,20 @@ impl App {
     /// its lane.
     pub fn privacy(&self) -> crate::permissions::Privacy {
         let now = self.ruled();
-        let rule = {
+        let privacy = {
             let mut kept = self.private.lock();
             match kept.as_ref() {
-                Some((at, rule)) if *at == now => Arc::clone(rule),
+                Some((at, privacy)) if *at == now => privacy.clone(),
                 _ => {
-                    let rule = Arc::new(self.catalog().rule(crate::exclusions::Role::Agents));
-                    *kept = Some((now, Arc::clone(&rule)));
-                    rule
+                    let privacy = crate::permissions::Privacy::ruled(
+                        self.catalog().rule(crate::exclusions::Role::Agents),
+                    );
+                    *kept = Some((now, privacy.clone()));
+                    privacy
                 }
             }
         };
-        crate::permissions::Privacy::shared(rule).looked_at_by(self.scheduler.clone())
+        privacy.looked_at_by(self.scheduler.clone())
     }
 
     /// What the rules are made from now.

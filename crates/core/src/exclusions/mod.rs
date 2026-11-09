@@ -1506,6 +1506,8 @@ pub struct Rule {
     files: Side,
     /// The exact paths as written, for those who resolve or quote them.
     listed: Vec<PathBuf>,
+    /// The same: whether a path is under one is asked of its ancestors.
+    listed_set: HashSet<PathBuf>,
     beside: Vec<BesideRule>,
     holding: Vec<OsString>,
     fingerprint: u64,
@@ -1682,6 +1684,7 @@ impl Rule {
         Rule {
             folders: folders.made(),
             files: files.made(),
+            listed_set: listed.iter().cloned().collect(),
             listed,
             beside,
             holding,
@@ -1698,6 +1701,7 @@ impl Rule {
             said.push(format!("path:{}", path.display()));
             rule.folders.paths.insert(folded(path.as_os_str()));
             rule.files.paths.insert(folded(path.as_os_str()));
+            rule.listed_set.insert(path.clone());
             rule.listed.push(path);
         }
         said.sort();
@@ -1773,6 +1777,13 @@ impl Rule {
     /// The exact paths it lists, as written.
     pub fn listed(&self) -> &[PathBuf] {
         &self.listed
+    }
+
+    /// Whether `path` is one of the paths it lists or under one: one lookup
+    /// for each folder above it, however many it lists.
+    pub fn lists(&self, path: &Path) -> bool {
+        path.ancestors()
+            .any(|folder| self.listed_set.contains(folder))
     }
 
     /// Whether `dir`, whose names are `names` (read already: a count

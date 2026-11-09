@@ -13,9 +13,10 @@
 //! - **What an agent may run**: a command's [`Effect`](crate::command::Effect),
 //!   read by [`for_agent`].
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
 
@@ -155,6 +156,31 @@ pub struct Privacy {
     /// Where a path on a remote is looked at, in its lane ([`Checker`]):
     /// none, and it is looked at where it is asked.
     workers: Option<Scheduler>,
+    /// What every [`Checker`] of this privacy starts from.
+    seen: Arc<Seen>,
+}
+
+/// How long what [`Seen`] holds stands for: a provider from outside asks
+/// of each file with a checker of its own, which would otherwise resolve
+/// every listed path for each one. A link made that long ago is seen.
+const SEEN_FOR: Duration = Duration::from_secs(1);
+
+/// What the system says now that does not depend on the path asked: the
+/// listed paths resolved and the mounts. Read without a lock held, so a
+/// remote that stops answering holds no one else.
+#[derive(Default)]
+struct Seen {
+    folders: Mutex<Option<(Instant, Arc<HashSet<PathBuf>>)>>,
+    here: Mutex<Option<(Instant, Arc<Here>)>>,
+}
+
+impl Seen {
+    fn fresh<T: Clone>(slot: &Mutex<Option<(Instant, T)>>) -> Option<T> {
+        slot.lock()
+            .as_ref()
+            .filter(|(at, _)| Instant::now().saturating_duration_since(*at) < SEEN_FOR)
+            .map(|(_, held)| held.clone())
+    }
 }
 
 impl std::fmt::Debug for Privacy {
@@ -182,14 +208,10 @@ impl Privacy {
 
     /// Private as `rule` says.
     pub fn ruled(rule: Rule) -> Privacy {
-        Privacy::shared(Arc::new(rule))
-    }
-
-    /// Private as `rule` says, a rule kept (`App::privacy`).
-    pub fn shared(rule: Arc<Rule>) -> Privacy {
         Privacy {
-            rule,
+            rule: Arc::new(rule),
             workers: None,
+            seen: Arc::default(),
         }
     }
 
@@ -339,12 +361,12 @@ pub struct Checker<'a> {
     privacy: &'a Privacy,
     marked: Arc<Mutex<HashMap<PathBuf, bool>>>,
     /// Resolve lazily: taking a Privacy snapshot itself never reads disk.
-    resolved_folders: Option<Arc<Vec<PathBuf>>>,
+    resolved_folders: Option<Arc<HashSet<PathBuf>>>,
     /// The lanes of the remotes that did not answer in time.
     unanswered: Vec<Lane>,
     /// The mounts, read once: what a lookup would reach another machine
     /// for ([`Checker::reaches_elsewhere`]).
-    here: Option<Here>,
+    here: Option<Arc<Here>>,
 }
 
 impl Checker<'_> {
@@ -354,7 +376,7 @@ impl Checker<'_> {
     /// its resolved target.
     pub fn holds(&mut self, path: &Path) -> bool {
         let rule = &self.privacy.rule;
-        if rule.listed().iter().any(|folder| path.starts_with(folder)) || named_on(rule, path) {
+        if rule.lists(path) || named_on(rule, path) {
             return true;
         }
         if rule.is_empty() {
@@ -370,7 +392,7 @@ impl Checker<'_> {
             self.privacy.clone(),
             Arc::clone(&self.marked),
             path.to_owned(),
-            self.here().clone(),
+            self.here(),
         );
         self.answered(path, move || {
             looks_private(&privacy, &folders, &marked, &here, &asked)
@@ -383,25 +405,32 @@ impl Checker<'_> {
     /// read, a server that does not answer) holds what is under it as it
     /// is written, checked first: nothing reached through it could be
     /// resolved either. It never makes every path private.
-    fn resolved_folders(&mut self) -> Arc<Vec<PathBuf>> {
+    fn resolved_folders(&mut self) -> Arc<HashSet<PathBuf>> {
         if let Some(folders) = &self.resolved_folders {
             return Arc::clone(folders);
         }
-        let mut folders = Vec::new();
+        if let Some(folders) = Seen::fresh(&self.privacy.seen.folders) {
+            return Arc::clone(self.resolved_folders.insert(folders));
+        }
+        let mut folders = HashSet::new();
         for folder in self.privacy.rule.listed().to_vec() {
             if self.reaches_elsewhere(&folder) {
                 continue;
             }
             let asked = folder.clone();
             match self.answered(&folder, move || resolved_name(&asked)) {
-                Some(Ok(resolved)) => folders.push(resolved),
+                Some(Ok(resolved)) => {
+                    folders.insert(resolved);
+                }
                 Some(Err(error)) => {
                     tracing::debug!("a private folder cannot be resolved: {error}");
                 }
                 None => {}
             }
         }
-        Arc::clone(self.resolved_folders.insert(Arc::new(folders)))
+        let folders = Arc::new(folders);
+        *self.privacy.seen.folders.lock() = Some((Instant::now(), Arc::clone(&folders)));
+        Arc::clone(self.resolved_folders.insert(folders))
     }
 
     /// What `look` says of `path`: here, where it is on no remote, the
@@ -457,8 +486,17 @@ impl Checker<'_> {
         !self.here().holds(&path, Path::new(LOCAL_ROOT))
     }
 
-    fn here(&mut self) -> &Here {
-        self.here.get_or_insert_with(Here::now)
+    fn here(&mut self) -> Arc<Here> {
+        if let Some(here) = &self.here {
+            return Arc::clone(here);
+        }
+        let seen = &self.privacy.seen;
+        let here = Seen::fresh(&seen.here).unwrap_or_else(|| {
+            let here = Arc::new(Here::now());
+            *seen.here.lock() = Some((Instant::now(), Arc::clone(&here)));
+            here
+        });
+        Arc::clone(self.here.insert(here))
     }
 
     /// Refuse what an agent's call would open or read at `path` (ADR-044):
@@ -527,12 +565,14 @@ impl Checker<'_> {
         {
             return Some(path);
         }
-        if let Some(folder) = self
-            .privacy
-            .rule
-            .listed()
-            .iter()
-            .find(|folder| holds_folder(text, folder))
+        // A text with no separator holds no path: most of a listing's.
+        if text.contains(['/', '\\'])
+            && let Some(folder) = self
+                .privacy
+                .rule
+                .listed()
+                .iter()
+                .find(|folder| holds_folder(text, folder))
         {
             return Some(folder.clone());
         }
@@ -615,7 +655,7 @@ fn named_as_it_is(rule: &Rule, path: &Path) -> bool {
 /// a rule names, or a marked one.
 fn looks_private(
     privacy: &Privacy,
-    folders: &[PathBuf],
+    folders: &HashSet<PathBuf>,
     marks: &Mutex<HashMap<PathBuf, bool>>,
     here: &Here,
     path: &Path,
@@ -628,7 +668,7 @@ fn looks_private(
     let Ok(resolved) = resolved_name(path) else {
         return true;
     };
-    if folders.iter().any(|folder| resolved.starts_with(folder))
+    if resolved.ancestors().any(|folder| folders.contains(folder))
         || named_on(&privacy.rule, &resolved)
         || named_as_it_is(&privacy.rule, &resolved)
     {
@@ -842,7 +882,7 @@ mod tests {
         /// A checker that takes the mounts as `here` says them.
         fn checker_in(&self, here: Here) -> Checker<'_> {
             Checker {
-                here: Some(here),
+                here: Some(Arc::new(here)),
                 ..self.checker()
             }
         }
@@ -1327,5 +1367,62 @@ mod tests {
                 "plan": WITHHELD,
             })
         );
+    }
+
+    /// A check per file (a plugin from outside's) starts from what the
+    /// last one resolved, and sees a link changed once that has aged.
+    #[cfg(unix)]
+    #[test]
+    fn what_a_link_resolves_to_is_shared_and_looked_at_again() {
+        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tmp.path().canonicalize().unwrap();
+        let (first, second) = (tmp.join("it's first"), tmp.join("second ü"));
+        std::fs::create_dir(&first).unwrap();
+        std::fs::create_dir(&second).unwrap();
+        let link = tmp.join("keys");
+        std::os::unix::fs::symlink(&first, &link).unwrap();
+        let privacy = Privacy::folders([link.clone()]);
+        assert!(privacy.holds(&first.join("a key")));
+        assert!(!privacy.holds(&second.join("a key")));
+
+        let aged = |by_seconds: i64| {
+            let seen = privacy.seen.folders.lock();
+            let (_, folders) = seen.as_ref().expect("resolved once").clone();
+            drop(seen);
+            let now = Instant::now();
+            let at = if by_seconds >= 0 {
+                now + Duration::from_secs(by_seconds.unsigned_abs())
+            } else {
+                now.checked_sub(Duration::from_secs(by_seconds.unsigned_abs()))
+                    .unwrap()
+            };
+            *privacy.seen.folders.lock() = Some((at, Arc::clone(&folders)));
+            folders
+        };
+
+        // Within the time it stands for, nothing is resolved again.
+        let held = aged(3600);
+        std::fs::remove_file(&link).unwrap();
+        std::os::unix::fs::symlink(&second, &link).unwrap();
+        let again = privacy.checker().resolved_folders();
+        assert!(Arc::ptr_eq(&held, &again));
+
+        // Aged, it is: the link's new target is private, the old one not.
+        aged(-2);
+        assert!(privacy.holds(&second.join("a key")));
+        assert!(!privacy.holds(&first.join("a key")));
+    }
+
+    #[test]
+    fn a_path_is_under_what_is_listed_however_it_is_written() {
+        let folder = PathBuf::from("/home/someone/.ssh");
+        let privacy = Privacy::folders([folder.clone()]);
+        let rule = privacy.rule();
+        assert!(rule.lists(&folder));
+        assert!(rule.lists(Path::new("/home/someone/.ssh/")));
+        assert!(rule.lists(Path::new("/home/someone/.ssh/keys/it's ü")));
+        assert!(rule.lists(Path::new("/home//someone/.ssh/x")));
+        assert!(!rule.lists(Path::new("/home/someone/.sshkeys")));
+        assert!(!rule.lists(Path::new("/home/someone")));
     }
 }
