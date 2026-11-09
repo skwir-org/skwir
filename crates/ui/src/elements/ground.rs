@@ -28,12 +28,27 @@ use gpui::{
 pub struct Holes(Rc<RefCell<Vec<Laid>>>);
 
 /// A part as it is laid out: its rounded rectangle, on whole device
-/// pixels, and how opaque its own ground is.
+/// pixels, what of it is not clipped away (a tab scrolled under the
+/// sidebar's header), and how opaque its own ground is.
 #[derive(Clone, Copy)]
 pub struct Laid {
     pub bounds: Bounds<Pixels>,
+    pub shown: Bounds<Pixels>,
     pub corners: Corners<Pixels>,
     pub under: f32,
+}
+
+impl Laid {
+    /// The square of `corner` of its shape, as far as it is shown: none
+    /// where the corner is square, or clipped away.
+    fn square(&self, corner: Toward, scale: f32) -> Option<Bounds<Pixels>> {
+        let radius = corner.of(self.corners);
+        if radius <= px(0.) {
+            return None;
+        }
+        let square = square_at(self.bounds, corner, radius, scale).intersect(&self.shown);
+        (!square.is_empty()).then_some(square)
+    }
 }
 
 impl Holes {
@@ -195,13 +210,18 @@ impl Element for Hole {
         cx: &mut App,
     ) {
         // As the part's quad is drawn: on whole device pixels, its radius
-        // as it is written.
+        // as it is written. Only what is shown is a hole: a part clipped
+        // away (scrolled under a header) paints nothing of its own there.
         let radius = self.radius.to_pixels(window.rem_size());
-        self.holes.0.borrow_mut().push(Laid {
-            bounds: window.snap_to_device_pixels(bounds),
-            corners: Corners::all(radius),
-            under: self.under,
-        });
+        let shown = window.snap_to_device_pixels(bounds.intersect(&window.content_mask().bounds));
+        if !shown.is_empty() {
+            self.holes.0.borrow_mut().push(Laid {
+                bounds: window.snap_to_device_pixels(bounds),
+                shown,
+                corners: Corners::all(radius),
+                under: self.under,
+            });
+        }
         self.child.prepaint(window, cx);
     }
 
@@ -249,7 +269,7 @@ fn paint_around(
     ));
     less_corner_squares(&mut path, bounds, &squares);
     for hole in holes {
-        crate::elements::frame::rounded_rect(&mut path, hole.bounds, Corners::default());
+        crate::elements::frame::rounded_rect(&mut path, hole.shown, Corners::default());
     }
     match path.build() {
         Ok(path) => window.paint_path(path, color),
@@ -298,12 +318,11 @@ fn less_corner_squares(
 }
 
 /// A ground's curves around a part: in the square of each of its rounded
-/// corners, the complement of the part, told how opaque the part is.
+/// corners, as far as it is shown, the complement of the part, told how
+/// opaque the part is.
 pub(crate) fn paint_corners_around(hole: &Laid, color: Hsla, window: &mut Window) {
     for corner in Toward::ALL {
-        let radius = corner.of(hole.corners);
-        if radius > px(0.) {
-            let square = corner_square(hole.bounds, corner, radius, window);
+        if let Some(square) = hole.square(corner, window.scale_factor()) {
             window.paint_around(square, hole.bounds, hole.corners, color, hole.under);
         }
     }
@@ -345,7 +364,10 @@ pub fn corner_square(
     radius: Pixels,
     window: &Window,
 ) -> Bounds<Pixels> {
-    let scale = window.scale_factor();
+    square_at(rect, corner, radius, window.scale_factor())
+}
+
+fn square_at(rect: Bounds<Pixels>, corner: Toward, radius: Pixels, scale: f32) -> Bounds<Pixels> {
     let side = px((f32::from(radius) * scale).ceil() / scale)
         .min(rect.size.width)
         .min(rect.size.height);
@@ -365,4 +387,37 @@ pub fn corner_square(
 pub fn snap_length(length: Pixels, window: &Window) -> Pixels {
     let scale = window.scale_factor();
     px((f32::from(length) * scale).round() / scale)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Laid, Toward};
+    use gpui::{Bounds, Corners, point, px, size};
+
+    /// A tab scrolled under the sidebar's header is a hole only as far as
+    /// it is shown: the corners clipped away have no curve to paint, and
+    /// one the header cuts through keeps what is left of its square.
+    #[test]
+    fn a_part_clipped_away_leaves_no_hole_there() {
+        let bounds = Bounds::new(point(px(10.), px(100.)), size(px(100.), px(40.)));
+        let shown_from = |top: f32| Laid {
+            bounds,
+            shown: Bounds::from_corners(point(px(10.), px(top)), bounds.bottom_right()),
+            corners: Corners::all(px(8.)),
+            under: 1.,
+        };
+        // Its top corners wholly under the header.
+        let clipped = shown_from(110.);
+        assert!(clipped.square(Toward::TopLeft, 1.).is_none());
+        assert!(clipped.square(Toward::TopRight, 1.).is_none());
+        assert!(clipped.square(Toward::BottomLeft, 1.).is_some());
+        // The header through them: what is left of their square.
+        let square = shown_from(104.).square(Toward::TopRight, 1.).unwrap();
+        assert_eq!(square.top(), px(104.));
+        assert_eq!(square.bottom(), px(108.));
+        assert_eq!(square.left(), px(102.));
+        // Not clipped, the whole of it.
+        let whole = shown_from(100.).square(Toward::TopLeft, 1.).unwrap();
+        assert_eq!(whole.size, size(px(8.), px(8.)));
+    }
 }

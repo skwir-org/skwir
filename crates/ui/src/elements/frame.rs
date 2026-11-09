@@ -335,7 +335,7 @@ fn paint_ground(
         square_outline(&mut path, card);
     }
     for hole in holes {
-        rounded_rect(&mut path, hole.bounds, Corners::default());
+        rounded_rect(&mut path, hole.shown, Corners::default());
     }
     match path.build() {
         Ok(path) => window.paint_path(path, ground),
