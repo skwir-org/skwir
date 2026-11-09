@@ -25,7 +25,7 @@
 //! what we would write back could lose what we do not know.
 
 use std::ffi::{OsStr, OsString};
-use std::io::{self, Write as _};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -356,10 +356,12 @@ fn beside(path: &Path) -> Beside {
     }
 }
 
-/// Write `ad` as the sidecar of `path`, replacing it whole: a Mac reading
-/// it meanwhile sees the old one or the new one. One started takes the
-/// hidden mark where its volume keeps one (Windows, FAT, exFAT), as its
-/// dot hides it on a Mac and Linux; one replaced keeps the mark it had.
+/// Write `ad` as the sidecar of `path`, replacing it whole, as an undo
+/// puts one back (`raw::replace`): a Mac reading it meanwhile sees the
+/// old one or the new one, one replaced keeps its mode and its hidden
+/// mark, and one started is made as any file there is (what the umask
+/// allows), with the hidden mark where its volume keeps one (Windows, FAT,
+/// exFAT), as its dot hides it on a Mac and Linux.
 pub fn write(path: &Path, ad: &AppleDouble) -> io::Result<()> {
     let bytes = ad.encode().ok_or_else(|| {
         io::Error::new(
@@ -368,27 +370,7 @@ pub fn write(path: &Path, ad: &AppleDouble) -> io::Result<()> {
         )
     })?;
     let aside = sidecar(path).ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?;
-    let dir = aside
-        .parent()
-        .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?;
-    let mut staged = tempfile::Builder::new()
-        .prefix(PREFIX)
-        .suffix(".tmp")
-        .tempfile_in(dir)?;
-    // The staged file is private; the one it replaces keeps its mode.
-    let existed = match std::fs::metadata(&aside) {
-        Ok(metadata) => {
-            std::fs::set_permissions(staged.path(), metadata.permissions())?;
-            true
-        }
-        Err(_) => false,
-    };
-    staged.write_all(&bytes)?;
-    skwir_platform::file::take_place(staged, &aside)?;
-    if !existed {
-        skwir_core::fs::hidden::made(&aside);
-    }
-    Ok(())
+    skwir_core::notes::raw::replace(&aside, &bytes)
 }
 
 /// The file a `._` name is the companion of: `x` for `._x`, kept by the
@@ -893,6 +875,35 @@ pub(crate) mod tests {
             std::fs::read(sidecar(&file).unwrap()).unwrap(),
             b"a stray file"
         );
+    }
+
+    /// A sidecar started is made as any file there is, whichever way it
+    /// is written (an edit, or an undo or redo of it), and one replaced
+    /// keeps its mode: a group's folder on a volume with modes stays
+    /// readable by the group, and undo gives back what was there.
+    #[cfg(unix)]
+    #[test]
+    fn a_sidecar_is_made_as_any_file_there_is_and_keeps_its_mode() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let tmp = tempfile::tempdir().unwrap();
+        let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        let file = tmp.path().join("it's a.txt");
+        std::fs::write(&file, b"x").unwrap();
+        let plain = tmp.path().join("made in place");
+        std::fs::write(&plain, b"").unwrap();
+        let ad = AppleDouble::parse(&as_a_mac_writes(&[("org.example.a", b"1")])).unwrap();
+
+        write(&file, &ad).unwrap();
+        let aside = sidecar(&file).unwrap();
+        assert_eq!(mode(&aside), mode(&plain), "an edit");
+
+        let other = tmp.path().join("._other");
+        skwir_core::notes::raw::replace(&other, b"bytes").unwrap();
+        assert_eq!(mode(&other), mode(&plain), "an undo or a redo");
+
+        std::fs::set_permissions(&aside, std::fs::Permissions::from_mode(0o640)).unwrap();
+        write(&file, &ad).unwrap();
+        assert_eq!(mode(&aside), 0o640, "replaced");
     }
 
     #[test]

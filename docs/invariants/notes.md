@@ -54,7 +54,8 @@ registered in `App::notes` by its plugin); all share one model,
 - Its inverse (`restore_notes`) puts back each store's exact bytes, and
   refuses if another application changed them since.
 - A `._` file is rewritten whole as macOS lays it out, keeping every
-  other attribute and its mode; one laid out otherwise, unreadable or
+  other attribute and its mode, through what an undo puts one back with
+  (`raw::replace`: one started gets what the umask allows); one laid out otherwise, unreadable or
   larger than an undo keeps (`SIDE_FILE_LIMIT`) is never written, and
   its store says which (`Wrote::Refused`): an edit no store keeps says
   that, not that the volume keeps no notes. A
