@@ -470,11 +470,15 @@ fn offers(
     let documents = documents();
     let other = other_folder(app, pane);
     // The folders chosen before, those still folders (a server that
-    // answers slowly keeps its own).
+    // answers slowly keeps its own), asked together so that the dialog
+    // waits for one of them at most.
     let (opens, recent) = dialog::kept_folders(app, last);
-    let there = |folder: &PathBuf| is_folder(app, folder, cancel) != Some(false);
-    let opens = opens.filter(there);
-    let recent: Vec<PathBuf> = recent.into_iter().filter(there).collect();
+    let mut asked: Vec<PathBuf> = opens.iter().cloned().collect();
+    asked.extend(recent.iter().cloned());
+    let mut answers = asked_together(app, &asked, cancel, holds_a_folder).into_iter();
+    let mut there = |_: &PathBuf| answers.next() != Some(Some(false));
+    let opens = opens.filter(&mut there);
+    let recent: Vec<PathBuf> = recent.into_iter().filter(&mut there).collect();
     let places = sidebar_folders(app);
     if args.layout == Arrange::Listing {
         let (location, filter) = shown(app, pane)?;
@@ -613,8 +617,52 @@ fn counted(app: &App, entry: &EntryRef, cancel: &CancelToken) -> Option<u32> {
 fn is_folder(app: &App, path: &Path, cancel: &CancelToken) -> Option<bool> {
     let asked = path.to_owned();
     soon(app, path, "print-folder", cancel, move |_| {
-        Some(std::fs::metadata(&asked).is_ok_and(|meta| meta.is_dir()))
+        Some(holds_a_folder(&asked))
     })
+}
+
+/// Whether `path` is a folder, the wait the system makes. On a worker, in
+/// its lane.
+fn holds_a_folder(path: &Path) -> bool {
+    std::fs::metadata(path).is_ok_and(|meta| meta.is_dir())
+}
+
+/// What `work` tells of each of `paths`, all asked at once and waited for
+/// together, `COUNTING` at most in all: those on one server wait for each
+/// other in its lane, never the dialog for each in turn. `None` where it
+/// was not told in time. In the order of `paths`.
+fn asked_together(
+    app: &App,
+    paths: &[PathBuf],
+    cancel: &CancelToken,
+    work: impl Fn(&Path) -> bool + Clone + Send + 'static,
+) -> Vec<Option<bool>> {
+    let (said, heard) = std::sync::mpsc::channel();
+    let working = cancel.child();
+    for (at, path) in paths.iter().enumerate() {
+        let (said, asked, work) = (said.clone(), path.clone(), work.clone());
+        app.scheduler.spawn_in(
+            skwir_core::fs::reach::lane(path),
+            Priority::Normal,
+            "print-folder",
+            working.clone(),
+            move || {
+                let _ = said.send((at, work(&asked)));
+            },
+        );
+    }
+    drop(said);
+    let mut answers = vec![None; paths.len()];
+    let until = std::time::Instant::now() + COUNTING;
+    for _ in paths {
+        let left = until.saturating_duration_since(std::time::Instant::now());
+        let Ok((at, told)) = heard.recv_timeout(left) else {
+            break;
+        };
+        answers[at] = Some(told);
+    }
+    working.cancel();
+    answers
 }
 
 /// What `work` answers, run in the lane of `path`, if it answers within
@@ -1645,6 +1693,39 @@ fn smaller_pdf(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Remembered folders on a server that stopped answering cost the
+    /// dialog one wait, however many they are; the others are told, each
+    /// in its place.
+    #[test]
+    fn folders_that_do_not_answer_cost_one_wait_together() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        let named = |name: &str| PathBuf::from(format!("/example/{name}"));
+        let hung = ["hung a", "hung b", "hung c", "hung d", "hung e"];
+        let mut asked: Vec<PathBuf> = vec![named("a folder"), named("no folder")];
+        asked.extend(hung.iter().map(|name| named(name)));
+
+        let release = CancelToken::new();
+        let released = release.clone();
+        let started = std::time::Instant::now();
+        let answers = asked_together(&app, &asked, &CancelToken::new(), move |path| {
+            while path.to_string_lossy().contains("hung") && !released.is_cancelled() {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            path.ends_with("a folder")
+        });
+        let waited = started.elapsed();
+        release.cancel();
+
+        assert_eq!(answers[..2], [Some(true), Some(false)]);
+        assert!(answers[2..].iter().all(Option::is_none));
+        assert!(
+            waited < COUNTING * 4,
+            "{waited:?} for {} folders that do not answer",
+            hung.len()
+        );
+    }
 
     #[test]
     fn a_pdf_is_named_after_its_file() {
