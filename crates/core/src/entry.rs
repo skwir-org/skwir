@@ -577,6 +577,12 @@ pub struct Entry {
     /// Mac's `UF_HIDDEN` flag. Read where the listing or a stat says it;
     /// a name starting with a dot hides too ([`Entry::is_hidden`]).
     pub hidden: bool,
+    /// Inside a hidden folder below the place listing it: set by a
+    /// location that lists files of many folders (a tag's place), never by
+    /// a stat, which keeps it. Hidden as the folder is
+    /// ([`Entry::is_hidden`]), so the place shows with hidden files off
+    /// what a search without `hidden:true` would find (ADR-125).
+    pub in_hidden_folder: bool,
     /// Its name's order key, worked out as its provider sends it.
     pub(crate) name_key: NameKey,
 }
@@ -610,6 +616,7 @@ impl Entry {
             target: None,
             metadata: Metadata::default(),
             hidden: false,
+            in_hidden_folder: false,
             name_key: NameKey::default(),
         }
     }
@@ -631,9 +638,10 @@ impl Entry {
     }
 
     /// Whether the entry is left out while hidden files are: its name
-    /// starts with a dot, or the system marks it hidden.
+    /// starts with a dot, the system marks it hidden, or the place listing
+    /// it found it inside a hidden folder.
     pub fn is_hidden(&self) -> bool {
-        self.hidden || self.name.as_encoded_bytes().starts_with(b".")
+        self.hidden || self.in_hidden_folder || self.name.as_encoded_bytes().starts_with(b".")
     }
 
     pub fn name_str(&self) -> std::borrow::Cow<'_, str> {

@@ -33,6 +33,8 @@ pub mod command;
 pub mod companions;
 pub mod document;
 pub mod entry;
+pub mod environment;
+pub mod exclusions;
 pub mod fields;
 pub mod folders;
 pub mod form;
@@ -72,6 +74,7 @@ pub mod terminal;
 pub mod testing;
 pub mod thumbs;
 pub mod tiles;
+pub mod walks;
 pub mod workspace;
 pub mod xdg;
 

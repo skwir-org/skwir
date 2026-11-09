@@ -21,6 +21,7 @@ use skwir_core::location::{
 };
 use skwir_core::op::Change;
 use skwir_core::scheduler::{Lane, Priority};
+use skwir_core::walks::{Below, LeftOut};
 
 use crate::lang::{self, Candidate, Late, Query, Verdict};
 
@@ -239,7 +240,12 @@ impl LocationProvider for QueryProvider {
             "query root {} is not an absolute path",
             query.root.display()
         );
-        let open = QueryLocation::open(location.clone(), query, &ctx, &self.lifetime);
+        let app = self.app.clone();
+        let rule: Rule = Arc::new(move || {
+            app.upgrade()
+                .map_or_else(|| Arc::new(LeftOut::none()), |app| app.left_out())
+        });
+        let open = QueryLocation::open(location.clone(), query, &ctx, &self.lifetime, rule);
         let mut searches = self.open.0.lock();
         // The searches closed since are let go of here too, not only when
         // a plan runs: each search typed is one.
@@ -250,10 +256,15 @@ impl LocationProvider for QueryProvider {
     }
 }
 
+/// What walks leave out now (`App::left_out`), asked when a run starts.
+type Rule = Arc<dyn Fn() -> Arc<LeftOut> + Send + Sync>;
+
 pub struct Shared {
     ctx: OpenContext,
     tx: EventSink,
     root: PathBuf,
+    /// What its walks leave out below the root (ADR-125).
+    rule: Rule,
     /// A remote reached through an alias is known by the opened folder's
     /// device. Keep its lane for every later read, including hydration.
     lane: Mutex<Lane>,
@@ -731,6 +742,7 @@ impl QueryLocation {
         query: Query,
         ctx: &OpenContext,
         plugin: &CancelToken,
+        rule: Rule,
     ) -> Arc<Self> {
         let (tx, rx) = ctx.channel();
         let lifetime = ctx.cancel.linked(plugin);
@@ -738,6 +750,7 @@ impl QueryLocation {
             ctx: ctx.clone(),
             tx,
             root: query.root.clone(),
+            rule,
             lane: Mutex::new(reach::lane(&query.root)),
             real_root: Mutex::new(None),
             results: Mutex::default(),
@@ -1002,19 +1015,11 @@ fn consider(
 struct Reached {
     real_root: PathBuf,
     folders: HashMap<PathBuf, bool>,
+    /// What the walk leaves out below the root.
+    below: Arc<Below>,
 }
 
-/// The network mounts below `root` (not `root` itself), which a walk of
-/// it never enters (ADR-077), from the mount table in memory: what an
-/// index names under one is left out as the walk leaves it, before
-/// anything there is read.
-pub(crate) fn mounts_below(root: &Path) -> Vec<PathBuf> {
-    reach::all()
-        .iter()
-        .filter(|r| r.point != root && r.point.starts_with(root))
-        .map(|r| r.point.clone())
-        .collect()
-}
+pub(crate) use skwir_core::walks::mounts_below;
 
 /// Whether Windows marks `path`, or a folder of it below `root`, hidden:
 /// what the walk (the `ignore` crate) leaves out there beside a name's dot
@@ -1044,15 +1049,18 @@ fn marked_hidden(_: &Path, _: &Path, _: &mut HashMap<PathBuf, bool>) -> bool {
     false
 }
 
-/// Reject paths the walk cannot reach before any filesystem read: hidden
-/// names, excess depth, and a network mount anywhere below the root.
-fn in_walk<'a>(q: &Query, path: &'a Path) -> Option<&'a Path> {
+/// Reject paths the walk cannot reach: hidden names, excess depth, a
+/// network mount anywhere below the root, and a folder on the way the walk
+/// leaves out (`below`, a cache's tag read once a folder).
+fn in_walk<'a>(q: &Query, below: &Below, path: &'a Path) -> Option<&'a Path> {
     let relative = path.strip_prefix(&q.root).ok()?;
     if !crate::plocate::visible(relative, q.hidden, q.depth)
         || path
             .ancestors()
             .take_while(|above| *above != q.root)
             .any(reach::is_point)
+        || below.stops_above(path).is_some()
+        || below.leaves_out_path(path)
     {
         return None;
     }
@@ -1116,6 +1124,27 @@ impl Shared {
         }
     }
 
+    /// Say how many folders this run left out below the root
+    /// (`ListingEvent::LeftOut`), none included: never silently (ADR-125).
+    fn left_out(&self, cancel: &CancelToken, folders: usize) {
+        let _walk = self.walk.lock();
+        if !cancel.is_cancelled() {
+            self.tx.send(ListingEvent::LeftOut(folders));
+        }
+    }
+
+    /// What a run of `q` leaves out below its root: the list's folders
+    /// (none with `excluded:yes`), a cache's tag read only where the root
+    /// is this machine's.
+    fn below(&self, q: &Query) -> Arc<Below> {
+        let rule = if q.excluded {
+            Arc::new(LeftOut::none())
+        } else {
+            (self.rule)()
+        };
+        Arc::new(rule.below(&q.root, self.lane().is_shared()))
+    }
+
     fn run(&self, q: &Query, cancel: &CancelToken) {
         // What a plan's changes are compared with (`touched_by`), read here,
         // in the root's lane.
@@ -1127,14 +1156,16 @@ impl Shared {
             batch_size: self.ctx.batch_size.max(1),
         };
         let deferred = Deferred::new(self, q, &batcher);
+        let below = self.below(q);
         // What an index says may match, considered first; the walk skips it.
         let hinted = {
-            let hinted = self.hinted(q, cancel, &batcher, &deferred);
+            let hinted = self.hinted(q, &below, cancel, &batcher, &deferred);
             deferred.finish();
             batcher.flush();
             hinted
         };
-        if let Some(located) = crate::plocate::try_locate(q, cancel) {
+        if let Some(located) = crate::plocate::try_locate(q, &below, cancel) {
+            self.left_out(cancel, located.left_out);
             self.rests_on(
                 cancel,
                 Some(AsOf {
@@ -1158,7 +1189,8 @@ impl Shared {
             }
         } else {
             self.rests_on(cancel, None);
-            Self::walk_below(q, &q.root, &hinted, &batcher, &deferred);
+            let left_out = Self::walk_below(q, &q.root, &below, &hinted, &batcher, &deferred);
+            self.left_out(cancel, left_out);
         }
         deferred.finish();
         batcher.finish();
@@ -1166,18 +1198,45 @@ impl Shared {
 
     /// Stream a subtree by the same rules as the initial walk. Depth is
     /// always relative to the search root, even for an arriving folder.
+    /// Returns how many folders it left out below the root (`left`): a
+    /// folder left out is not entered, but found itself.
     fn walk_below(
         q: &Query,
         root: &Path,
+        left: &Arc<Below>,
         checked: &HashSet<PathBuf>,
         batcher: &Batcher<'_>,
         deferred: &Deferred<'_>,
-    ) {
+    ) -> usize {
         if batcher.cancel.is_cancelled() {
-            return;
+            return 0;
         }
         let below = root.strip_prefix(&q.root).unwrap().components().count();
         let search_root = q.root.clone();
+        let skipped: Arc<Mutex<Vec<PathBuf>>> = Arc::default();
+        let mounts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let filter = {
+            let (left, skipped, mounts) =
+                (Arc::clone(left), Arc::clone(&skipped), Arc::clone(&mounts));
+            move |dent: &ignore::DirEntry| {
+                let path = dent.path();
+                if path == search_root || !dent.file_type().is_some_and(|t| t.is_dir()) {
+                    return true;
+                }
+                // A network mount below the folder searched is not
+                // entered: a search of one walks it from its own folder
+                // (ADR-077).
+                if reach::is_point(path) {
+                    mounts.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    return false;
+                }
+                if left.leaves_out(path) {
+                    skipped.lock().push(path.to_path_buf());
+                    return false;
+                }
+                true
+            }
+        };
         let mut builder = ignore::WalkBuilder::new(root);
         builder
             .hidden(!q.hidden)
@@ -1188,10 +1247,9 @@ impl Shared {
             .parents(false)
             .follow_links(false)
             .max_depth(q.depth.map(|depth| depth.saturating_sub(below)))
-            // A network mount below the folder searched is not entered:
-            // a search of one walks it from its own folder (ADR-077).
-            .filter_entry(move |dent| dent.path() == search_root || !reach::is_point(dent.path()));
+            .filter_entry(filter);
         let cancel = batcher.cancel;
+        let files_out = std::sync::atomic::AtomicUsize::new(0);
         let visit = |result: Result<ignore::DirEntry, ignore::Error>, statter: &mut Statter| {
             if cancel.is_cancelled() {
                 return ignore::WalkState::Quit;
@@ -1209,6 +1267,11 @@ impl Shared {
             if checked.contains(path) {
                 return ignore::WalkState::Continue;
             }
+            // A folder is left out by the filter above.
+            if !dent.file_type().is_some_and(|t| t.is_dir()) && left.leaves_out_file(path) {
+                files_out.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                return ignore::WalkState::Continue;
+            }
             let known = Known::Kind(kind_of(dent.file_type()));
             consider(q, path, (name, known), batcher, deferred, statter);
             ignore::WalkState::Continue
@@ -1218,21 +1281,39 @@ impl Shared {
         // own threads would ask its server as many at once as this
         // machine has cores, outside the lane, and a server that stops
         // answering would hold threads no one stands in for.
-        if !batcher.shared.lane().is_shared() {
+        if batcher.shared.lane().is_shared() {
+            let visit = &visit;
+            builder.build_parallel().run(|| {
+                // The walking thread's stats, through the folder it is in.
+                let mut statter = Statter::default();
+                Box::new(move |result| visit(result, &mut statter))
+            });
+        } else {
             let mut statter = Statter::default();
             for result in builder.build() {
                 if matches!(visit(result, &mut statter), ignore::WalkState::Quit) {
-                    return;
+                    return 0;
                 }
             }
-            return;
         }
-        let visit = &visit;
-        builder.build_parallel().run(|| {
-            // The walking thread's stats, through the folder it is in.
-            let mut statter = Statter::default();
-            Box::new(move |result| visit(result, &mut statter))
-        });
+        // The folders left out, found themselves (`name:node_modules`).
+        let skipped = std::mem::take(&mut *skipped.lock());
+        let mut statter = Statter::default();
+        for path in &skipped {
+            if cancel.is_cancelled() {
+                return 0;
+            }
+            if checked.contains(path) {
+                continue;
+            }
+            if let Some(name) = path.file_name() {
+                let known = Known::Kind(EntryKind::Directory);
+                consider(q, path, (name, known), batcher, deferred, &mut statter);
+            }
+        }
+        skipped.len()
+            + mounts.load(std::sync::atomic::Ordering::Relaxed)
+            + files_out.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Consider the files the indexes name for the query's tag (ADR-026),
@@ -1242,6 +1323,7 @@ impl Shared {
     fn hinted(
         &self,
         q: &Query,
+        below: &Below,
         cancel: &CancelToken,
         batcher: &Batcher<'_>,
         deferred: &Deferred<'_>,
@@ -1275,6 +1357,8 @@ impl Shared {
             };
             if !crate::plocate::visible(relative, q.hidden, q.depth)
                 || unreached.iter().any(|point| real.starts_with(point))
+                || below.stops_above(&q.root.join(relative)).is_some()
+                || below.leaves_out_path(&q.root.join(relative))
             {
                 continue;
             }
@@ -1387,6 +1471,7 @@ impl Shared {
         let mut reached = Reached {
             real_root,
             folders: HashMap::new(),
+            below: self.below(&q),
         };
         for (path, was) in again {
             if cancel.is_cancelled() {
@@ -1466,7 +1551,12 @@ impl Shared {
                 continue;
             }
             if path != q.root {
-                let Some(relative) = in_walk(q, &path) else {
+                // A folder left out is found itself (the change that
+                // brought it is checked), never walked.
+                if reached.below.leaves_out(&path) {
+                    continue;
+                }
+                let Some(relative) = in_walk(q, &reached.below, &path) else {
                     continue;
                 };
                 // Canonical parents reject traversal through symlinks;
@@ -1484,7 +1574,8 @@ impl Shared {
             }) {
                 continue;
             }
-            Self::walk_below(q, &path, checked, &batcher, &deferred);
+            let below = Arc::clone(&reached.below);
+            Self::walk_below(q, &path, &below, checked, &batcher, &deferred);
             previous = Some(path);
         }
         deferred.finish();
@@ -1502,7 +1593,7 @@ impl Shared {
         statter: &mut Statter,
         reached: &mut Reached,
     ) -> Option<Entry> {
-        let relative = in_walk(q, path)?;
+        let relative = in_walk(q, &reached.below, path)?;
         let dir = path.parent()?;
         if !reached.reaches(dir, relative.parent()?) {
             return None;
@@ -1610,7 +1701,8 @@ mod tests {
             companions: Arc::default(),
         };
         let query = lang::parse(&location.rest).unwrap();
-        let open = QueryLocation::open(location.clone(), query, &ctx, &CancelToken::new());
+        let rule: Rule = Arc::new(|| Arc::new(LeftOut::none()));
+        let open = QueryLocation::open(location.clone(), query, &ctx, &CancelToken::new(), rule);
         (open, location)
     }
 
@@ -1629,6 +1721,7 @@ mod tests {
                 | ListingEvent::Renamed(_)
                 | ListingEvent::Changed
                 | ListingEvent::AsOf(_)
+                | ListingEvent::LeftOut(_)
                 | ListingEvent::Redirect(_)
                 | ListingEvent::Moved(_) => {}
             }

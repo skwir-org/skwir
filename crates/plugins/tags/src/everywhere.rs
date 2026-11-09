@@ -43,15 +43,16 @@ fn gather(files: &mut Vec<Found>, seen: &mut HashSet<PathBuf>, found: Vec<Found>
 }
 
 /// The files under `root` (the home folder when `None`) tagged `tag`,
-/// with their ids and the tags the search read of them, as it finds them.
-/// Blocks until it completes: call on a worker.
+/// hidden ones included, as its tag places count them, with their ids and
+/// the tags the search read of them, as it finds them. Blocks until it
+/// completes: call on a worker.
 fn tagged(
     app: &App,
     tag: &str,
     root: Option<&PathBuf>,
     cancel: &CancelToken,
 ) -> anyhow::Result<Vec<Found>> {
-    let mut args = serde_json::json!({ "facet": "tag", "value": tag });
+    let mut args = serde_json::json!({ "facet": "tag", "value": tag, "hidden": true });
     if let Some(root) = root {
         args["root"] = serde_json::json!(PathArg::from(root.as_path()));
     }
@@ -77,7 +78,10 @@ fn tagged(
                     }
                 }
             }
-            Ok(ListingEvent::Removed(ids)) => found.retain(|(id, _)| !ids.contains(id)),
+            Ok(ListingEvent::Removed(ids)) => {
+                let gone: std::collections::HashSet<_> = ids.into_iter().collect();
+                found.retain(|(id, _)| !gone.contains(id));
+            }
             Ok(ListingEvent::Complete) => break Ok(found.into_iter().map(|(_, f)| f).collect()),
             Ok(ListingEvent::Error(e)) => break Err(anyhow::anyhow!("{e}")),
             Ok(_) | Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
@@ -360,7 +364,7 @@ fn start_all(
                 _ => format!(" {merged} had two of these names: they keep it once."),
             };
             let note =
-                format!("{files} in {place}; hidden files and folders are left out.{merged}");
+                format!("{files} in {place}; what your exclusions leave out is left out.{merged}");
             app.propose(plan.with_note(note));
         },
     );

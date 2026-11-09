@@ -1885,6 +1885,7 @@ impl SettingsView {
             }
         }
         found += self.keys_found(query, items, theme, window, cx);
+        found += self.exclusions_found(query, items, theme, cx);
         if found == 0 {
             Self::note(items, format!("Nothing matches “{query}”."), theme);
         }
@@ -1967,6 +1968,15 @@ impl Render for SettingsView {
                         content = Some(self.keys_list(window, cx));
                     }
                 }
+                Page::Exclusions => {
+                    toolbar = Some(self.exclusions_toolbar(&theme, window, cx));
+                    content = Some(self.exclusions_list(&theme, window, cx));
+                }
+                // Its private folders are the Exclusions page's, on Agents.
+                Page::Privacy => {
+                    self.privacy_folders(&mut items, &theme, cx);
+                    self.page_rows(&Page::Privacy, &mut items, &theme, window, cx);
+                }
                 Page::Plugin(id) => self.page_plugin(id, &mut items, &theme, window, cx),
                 page => {
                     if self.page_rows(page, &mut items, &theme, window, cx) == 0 {
@@ -1989,6 +1999,12 @@ impl Render for SettingsView {
         let bar = self.key_editor_bar(&theme, window, cx);
         let close = self.handle("close", cx);
         self.stop(&close, None, None);
+        // What the Exclusions page has open over the dialog takes Tab alone.
+        let modal = if self.page == Page::Exclusions && query.is_empty() {
+            self.exclusions_modal(&theme, window, cx)
+        } else {
+            None
+        };
         // The save's status follows the title, in the line it already
         // takes: a save never narrows the subtitle.
         let status = if self.saving() {
@@ -2116,7 +2132,8 @@ impl Render for SettingsView {
                     .children(toolbar)
                     .child(content)
                     .children(bar),
-            );
+            )
+            .children(modal);
         // The backdrop closes the dialog: nothing is lost, every change is
         // already applied.
         div()

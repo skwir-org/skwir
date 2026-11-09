@@ -125,9 +125,13 @@ registered in `App::notes` by its plugin); all share one model,
   for review. Under home, the tag's pin and color follow as a step of the
   same plan (`follow.rs`), so Undo restores them.
 - **Counting** (`count.rs`): a tag location teaches the index every
-  tagged file under its folder but the network mounts below it
-  (remote.md, "Walks"), covering the folder as of the count's
-  start. Shown again, even after a restart, it lists the counts at once,
+  tagged file under its folder, hidden ones included, but what a walk
+  leaves out below it (`walks::Below`, ADR-125: the exclusions kept from
+  searches, a trash, the network mounts, remote.md "Walks"), covering the
+  folder as of the count's start. A folder left out is not entered, but
+  its own tags are read; one left out by a marker or beside its tool's
+  file is known to the index (`TagIndex::mark_caches`), so what a pane
+  taught it of what it holds is left out of its answers too. Shown again, even after a restart, it lists the counts at once,
   then checks: only files (and companions) whose change time moved, plus
   folders not seen before (by device, inode and path) and filesystems
   whose change times do not tell (`filesystem::change_times_tell`:
@@ -139,16 +143,30 @@ registered in `App::notes` by its plugin); all share one model,
   a year filtering a tag's place is the pane's, kept as it goes elsewhere,
   and tested on each file's tags as the listing holds them.
 - A check compares with the folders seen by the count that covers it: a
-  folder above's, whose count never walked a hidden folder below it, so
-  a folder in one is read whole.
-- **Hidden** is one thing for the walk, the counts and what tag places
-  list: a name's dot, or Windows' mark (`fs::is_hidden`), which only the
-  walk can tell. A count forgets what a pane taught the index of a file
-  or a folder so marked, and of everything in that folder.
+  folder above's, whose count never walked a folder it left out below it,
+  so a folder in one is read whole.
+- **Left out, not hidden** (ADR-125): what the counts and the tag places
+  leave out is the exclusions kept from searches, decided below the
+  place's folder; hidden entries are counted and listed, and the pane's
+  Show hidden files decides what shows. A place marks an entry inside a
+  hidden folder below its own (`Entry::in_hidden_folder`, set in `relist`
+  and through `fs::hydrate_paths_with`, never by a stat), so with hidden
+  files off it shows what a `tag:` search without `hidden:true` finds.
+  The index answers at read time without what is left out below the root
+  asked (`State::left_out`: the rules' names and paths, the caches
+  found, the mounts), and keeps it: a count of such a folder uses it.
+  A file a rule names is not learned, whoever teaches it
+  (`TagIndex::learn`), and a count forgets one it knew.
+- **The rules' fingerprint** is kept with the home counts and the
+  coverage (`Meta::rule`): read under another (another list, 0.3.1's dot
+  rule), the home counts are made again from the pieces and every folder
+  is counted again: a check would not read a file it skipped before in a
+  folder it walked. A place's per-run memo keys on it too.
 - **The sidebar's suggestions** are the home folder's tags as its tag
-  places count them (`TagIndex::top`): none from hidden folders or the
-  network mounts below it. Its counts are kept between pieces, and the
-  mounts' pieces alone are read to take theirs out.
+  places count them (`TagIndex::top`): none from what walks leave out
+  below it. Its counts are kept between pieces, without what the rules
+  name; the network mounts' and the caches' pieces alone are read to take
+  theirs out.
 - The tags offered while one is typed (`vocabulary.rs`) are at most
   2,000; past that it forgets a tenth at a time, the tags only ever seen
   first (the least recently seen first), and the tags the user gave only

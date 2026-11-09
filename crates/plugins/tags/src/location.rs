@@ -592,9 +592,10 @@ pub fn place_id(tag: &str) -> EntryId {
 struct Scope {
     /// A count or a check of it runs.
     running: bool,
-    /// Counted or checked since skwir started: what the index says of it
-    /// holds.
-    done: bool,
+    /// Counted or checked since skwir started, under what walks left out
+    /// then (`LeftOut::fingerprint`): what the index says of it holds
+    /// while they leave out the same.
+    done: Option<u64>,
     /// A plan changed something under it while its count ran: what the
     /// count read before may be older than what the index learned from
     /// the plan, so it is checked again once the count ends (cheaply: by
@@ -665,10 +666,12 @@ impl Places {
         let Some(app) = self.app.upgrade() else {
             return;
         };
+        // Another list of folders left out: counted again.
+        let rule = app.left_out().fingerprint();
         {
             let mut scopes = self.scopes.lock();
             let scope = scopes.entry(root.to_path_buf()).or_default();
-            if scope.running || (scope.done && !again) {
+            if scope.running || (scope.done == Some(rule) && !again) {
                 return;
             }
             scope.running = true;
@@ -701,7 +704,7 @@ impl Places {
                 }
                 let touched = this.scopes.lock().get_mut(&root).is_some_and(|scope| {
                     scope.running = false;
-                    scope.done = true;
+                    scope.done = Some(rule);
                     std::mem::take(&mut scope.touched)
                 });
                 if touched {
@@ -728,7 +731,11 @@ impl Places {
     /// started: what the index says of them holds. A tag location of it
     /// is complete then; until, it shows what the index knew, checking.
     fn done(&self, root: &Path) -> bool {
-        self.scopes.lock().get(root).is_some_and(|s| s.done)
+        let rule = self.app.upgrade().map(|app| app.left_out().fingerprint());
+        self.scopes
+            .lock()
+            .get(root)
+            .is_some_and(|s| s.done.is_some() && s.done == rule)
     }
 
     /// `tags.counted`: whether `root`'s tags are being counted, and as of
@@ -883,9 +890,17 @@ impl Open {
         let known: HashSet<PathBuf> = self.sent.lock().files.values().cloned().collect();
         let mut new_files: Vec<(PathBuf, Entry)> = Vec::new();
         let mut gone_paths: Vec<PathBuf> = Vec::new();
+        // Each folder asked once whether it is hidden (Windows' mark).
+        let mut marked = HashMap::new();
         for path in contents.files.iter().filter(|p| !known.contains(*p)) {
             match entry_at(path) {
-                Some(entry) => new_files.push((path.clone(), entry)),
+                Some(mut entry) => {
+                    // Hidden as the folder it is in, below the place's
+                    // own: shown as a search without hidden files finds it.
+                    entry.in_hidden_folder =
+                        skwir_core::fs::hidden::below(path, &self.root, &mut marked);
+                    new_files.push((path.clone(), entry));
+                }
                 None => gone_paths.push(path.clone()),
             }
         }
@@ -1063,13 +1078,29 @@ impl OpenLocation for Open {
                 let sink = self.sink.clone();
                 let metadata = Arc::clone(&self.ctx.metadata);
                 let cancel = self.ctx.cancel.child();
+                let root = self.root.clone();
                 self.ctx.scheduler.spawn_in(
                     lane,
                     priority,
                     "tags.location.stat",
                     cancel.clone(),
                     move || {
-                        skwir_core::fs::hydrate_paths(&items, &metadata, &sink, &cancel);
+                        // What a stat does not say: the folder it is in
+                        // hidden below the place's own.
+                        let mut marked = HashMap::new();
+                        skwir_core::fs::hydrate_paths_with(
+                            &items,
+                            &metadata,
+                            &sink,
+                            &cancel,
+                            |dir, entries| {
+                                let hidden = dir != root
+                                    && skwir_core::fs::hidden::within(dir, &root, &mut marked);
+                                for entry in entries {
+                                    entry.in_hidden_folder = hidden;
+                                }
+                            },
+                        );
                     },
                 );
             }

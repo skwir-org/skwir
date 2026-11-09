@@ -192,9 +192,19 @@ control plugin's `run`:
 - Every plugin declares what it may do (`Plugin::capabilities`: read what
   files hold, write, network, run programs), truthfully for a built-in
   one; the Plugins page shows it. A new plugin declares its own.
-- Private folders (`permissions::Privacy`, the Privacy page: `~/.ssh` and
-  its like, and any folder holding a `.private` file) never reach an agent
-  or a plugin from outside. Check with `App::privacy()` wherever such code
+- Private folders (`permissions::Privacy`: the exclusions kept from
+  agents, ADR-125, edited on the Exclusions page: `~/.ssh` and its like, the
+  user's own, names, globs and regexes on every folder of a path and of
+  files on the path itself, each saying which it names (`*.kdbx`; a
+  Python environment named `.env` is no file of keys, told by the disk
+  only where just one kind is named, what cannot be looked at staying
+  private), and any folder holding a marker: `.private`, or what a
+  keyring or a profile always holds, wherever it was moved or copied)
+  never reach an agent or a plugin from
+  outside. Only the user lowers privacy: a settings change that would
+  take the agents role from a folder is refused to an agent's call
+  (`exclusions::refuse_exposure` in `settings.apply`), and asked about
+  in the dialog. Check with `App::privacy()` wherever such code
   is handed a file; it resolves links and reads markers, so call it off
   the window's thread. Check both the given name and its resolved target,
   including aliases of configured private folders and marked ancestors.

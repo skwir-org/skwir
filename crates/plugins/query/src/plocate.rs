@@ -37,13 +37,20 @@ pub struct Located {
     pub paths: Vec<PathBuf>,
     /// The oldest of its databases' updates: what the answer is as of.
     pub updated: Option<SystemTime>,
+    /// The folders its answer named that the walk would leave out
+    /// (`walks::Below`), what they held not kept.
+    pub left_out: usize,
 }
 
 /// Candidate paths from `plocate`, or `None` when it does not apply: not
 /// installed, root is not `/`, the query is not an AND of name substrings,
 /// or the database could not answer, in time and in a bounded answer (the
 /// walk is used instead). Stops with the search.
-pub fn try_locate(q: &Query, cancel: &CancelToken) -> Option<Located> {
+pub fn try_locate(
+    q: &Query,
+    below: &skwir_core::walks::Below,
+    cancel: &CancelToken,
+) -> Option<Located> {
     if q.root != Path::new("/") {
         return None;
     }
@@ -52,15 +59,40 @@ pub fn try_locate(q: &Query, cancel: &CancelToken) -> Option<Located> {
     let paths = locate_with(&bin, &patterns, q.case_sensitive, cancel)?;
     // What a walk of `/` would not enter, its database may have indexed.
     let unreached = crate::provider::mounts_below(&q.root);
+    let (kept, left) = left_out(
+        paths.into_iter().filter(|p| {
+            visible(p, q.hidden, q.depth) && !unreached.iter().any(|point| p.starts_with(point))
+        }),
+        |p| {
+            below
+                .stops_above(p)
+                .or_else(|| below.leaves_out_path(p).then(|| p.to_path_buf()))
+        },
+    );
     Some(Located {
-        paths: paths
-            .into_iter()
-            .filter(|p| {
-                visible(p, q.hidden, q.depth) && !unreached.iter().any(|point| p.starts_with(point))
-            })
-            .collect(),
+        paths: kept,
         updated: updated(&databases(&bin, cancel)),
+        left_out: left,
     })
+}
+
+/// `paths` less those the walk leaves out (`stops_above`: the folder it
+/// would stop at, or the file itself), and how many there were.
+fn left_out(
+    paths: impl Iterator<Item = PathBuf>,
+    stops_above: impl Fn(&Path) -> Option<PathBuf>,
+) -> (Vec<PathBuf>, usize) {
+    let mut folders = std::collections::HashSet::new();
+    let kept = paths
+        .filter(|p| match stops_above(p) {
+            Some(folder) => {
+                folders.insert(folder);
+                false
+            }
+            None => true,
+        })
+        .collect();
+    (kept, folders.len())
 }
 
 /// The databases `bin` reads when given none, as plocate (and mlocate

@@ -37,7 +37,7 @@ struct KeyInfo {
 
 /// Every key the parser knows, in the order they are offered: what is
 /// asked most first.
-static KEYS: [KeyInfo; 20] = [
+static KEYS: [KeyInfo; 21] = [
     key("kind", "grid", "image, video, document…", false),
     key(
         "modified",
@@ -67,6 +67,12 @@ static KEYS: [KeyInfo; 20] = [
     key("in", "folder", "a folder, \"~/My Files\"", true),
     key("depth", "layers", "how deep: 2", true),
     key("hidden", "eye", "true, false", true),
+    key(
+        "excluded",
+        "folder",
+        "what your exclusions leave out too: true, false",
+        true,
+    ),
     key("case", "code", "sensitive, insensitive", true),
 ];
 
@@ -657,7 +663,7 @@ fn values(
                 .collect()
         }
         "type" => words(&["file", "dir", "symlink"]),
-        "hidden" => words(&["true", "false"]),
+        "hidden" | "excluded" => words(&["true", "false"]),
         "case" => words(&["sensitive", "insensitive"]),
         "tag" => {
             let mut found = Vec::new();

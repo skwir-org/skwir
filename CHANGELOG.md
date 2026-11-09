@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+- **Exclusions, one list of what Skwir treats apart** (#6): Settings ›
+  Exclusions lists the folders tools fill with what they manage themselves, by kind
+  (version control, project environments, build output, toolchains and
+  packages by language, editors, containers, games, AI models and agents,
+  caches, the system's), about 280 on Linux from research across
+  ecosystems, with what each holds, and about 245 secrets kept from agents:
+  keys and key files wherever they are, tools' sign-ins, browsers' and mail
+  clients' profiles, password managers, wallets, messaging apps, shell
+  histories. Each kind is kept
+  from searches (and tag counts and the timeline), from agents, or both, by a
+  switch; each folder by a tick; your own folders go in Skwir's kinds or
+  yours, as a name (`node_modules`), a path, a pattern (`*.log`,
+  `cmake-build-*`, `~/Projects/*/out`, `regex:…`) of files, folders or both, a name only beside the file of the tool
+  that makes it (`target` beside `Cargo.toml`), or a folder holding a marker
+  (`CACHEDIR.TAG`, `.private`). What you change is kept as what differs, so
+  what a later version adds reaches you; the private folders of 0.3.1 are
+  read among them. Only you can make a private folder readable: an agent
+  asking is refused. A path may start at a variable (`$CARGO_HOME/registry`,
+  `${CARGO_HOME:-~/.cargo}/registry`), and Skwir's follow the variables their
+  tools read, those your login shell exports included; keyrings, password
+  stores and browser profiles are found by what they hold, wherever they
+  are.
+- **Hidden files in tag places** (#6): a tagged `~/.config` is listed in its
+  tag's place; Show hidden files decides what shows, a file inside a hidden
+  folder too, as a search without `hidden:true` finds it. A place or a folder
+  with only hidden files says so, with Show hidden files.
+- **Searches say what they walked past**: "· 3 excluded" in the
+  footer; the where pill's **Excluded files and folders** (`excluded:true`) searches
+  them too, as a search of such a folder itself does. A trash is never
+  walked.
 - **The Nix package in variants** (#7): the closure is about 1 GB, not 3 GB
   (the Rust toolchain no longer rides along); `minimal` (270 MiB) carries no
   optional helper, `full` every reader; `.override { withMedia = false; }`

@@ -54,10 +54,31 @@ pub fn hydrate_paths(
     sink: &EventSink,
     cancel: &CancelToken,
 ) -> Vec<EntryId> {
+    hydrate_paths_with(items, metadata, sink, cancel, |_, _| {})
+}
+
+/// [`hydrate_paths`], `mark` given each folder's entries found, and the
+/// folder, before they are sent: what the location says of an entry that
+/// no stat does (`Entry::in_hidden_folder`).
+pub fn hydrate_paths_with(
+    items: &[(EntryId, PathBuf)],
+    metadata: &MetadataProviders,
+    sink: &EventSink,
+    cancel: &CancelToken,
+    mut mark: impl FnMut(&Path, &mut [Entry]),
+) -> Vec<EntryId> {
+    let folders: crate::hashing::Map<EntryId, &Path> = items
+        .iter()
+        .filter_map(|(id, path)| Some((*id, path.parent()?)))
+        .collect();
     let mut updated = Vec::with_capacity(items.len());
     let mut gone = Vec::new();
     let mut answered = crate::hashing::Set::default();
     let read = read_paths(items, metadata, cancel, |mut found, mut went| {
+        // One folder's at a time.
+        if let Some(dir) = found.first().and_then(|e| folders.get(&e.id)) {
+            mark(dir, &mut found);
+        }
         answered.extend(found.iter().map(|e| e.id).chain(went.iter().copied()));
         updated.append(&mut found);
         gone.append(&mut went);

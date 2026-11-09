@@ -122,6 +122,57 @@ pub fn pill(on: bool, theme: &Theme) -> Div {
         )
 }
 
+/// A box's check, as it is drawn: filled with its tick when on, an
+/// outline when off. A picture: 16 px at every text size (ADR-117).
+pub fn check_box(on: bool, theme: &Theme) -> Div {
+    div()
+        .flex_none()
+        .size(px(16.))
+        .rounded_sm()
+        .border_1()
+        .border_color(if on { theme.accent } else { theme.text_muted })
+        .when(on, |d| d.bg(theme.accent))
+        .flex()
+        .items_center()
+        .justify_center()
+        .when(on, |d| d.child(icon("check", theme.on_accent, 12.)))
+}
+
+/// A single thing on or off: a check and its words, the whole of it
+/// pressed (a switch only heads a group, `docs/invariants/shell.md`).
+pub fn check(
+    id: impl Into<SharedString>,
+    label: impl Into<SharedString>,
+    on: bool,
+    focus: &FocusHandle,
+    theme: &Theme,
+) -> Stateful<Div> {
+    let (accent, hover) = (theme.accent, theme.hover);
+    let label = label.into();
+    div()
+        .id(id.into())
+        .role(gpui::Role::CheckBox)
+        .aria_label(label.clone())
+        .aria_toggled(toggled(on))
+        .track_focus(focus)
+        .flex_none()
+        .h(sized(HEIGHT))
+        .px_2()
+        .flex()
+        .items_center()
+        .gap(sized(6.))
+        .rounded_md()
+        .border_1()
+        .border_color(gpui::transparent_black())
+        .text_body()
+        .whitespace_nowrap()
+        .cursor_pointer()
+        .hover(move |s| s.bg(hover))
+        .focus(move |s| s.border_color(accent))
+        .child(check_box(on, theme))
+        .child(label)
+}
+
 /// The frame of a segmented choice; fill it with [`segment`]s.
 pub fn segmented(id: impl Into<SharedString>, focus: &FocusHandle, theme: &Theme) -> Stateful<Div> {
     let accent = theme.accent;

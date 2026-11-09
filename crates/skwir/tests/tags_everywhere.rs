@@ -81,12 +81,14 @@ fn a_tag_is_renamed_on_every_file_after_review_and_the_sidebar_follows() {
     let root = tmp.path().join("it's home");
     std::fs::create_dir_all(root.join("sub/deeper")).unwrap();
     std::fs::create_dir_all(root.join(".hidden")).unwrap();
+    std::fs::create_dir_all(root.join("node_modules")).unwrap();
     let files = [
         ("a.txt", &["Work", "x"][..]),
         ("it's b.txt", &["work", "Job"][..]),
         ("c.txt", &["other"][..]),
         ("sub/deeper/d.txt", &["WORK"][..]),
         (".hidden/e.txt", &["work"][..]),
+        ("node_modules/f.txt", &["work"][..]),
     ];
     for (name, t) in files {
         std::fs::write(root.join(name), b"x").unwrap();
@@ -109,9 +111,13 @@ fn a_tag_is_renamed_on_every_file_after_review_and_the_sidebar_follows() {
     .unwrap();
     let plan = proposal(&app);
     assert_eq!(plan.title, "rename the tag “work” to “Job”");
-    assert_eq!(plan.steps.len(), 3, "a, b and d; not the hidden one");
+    assert_eq!(
+        plan.steps.len(),
+        4,
+        "a, b, d and the hidden one, as the tag's place counts them; not one in a folder searches leave out"
+    );
     let note = plan.note.clone().unwrap();
-    assert!(note.starts_with("3 files in"), "{note}");
+    assert!(note.starts_with("4 files in"), "{note}");
     assert!(note.contains("1 already had “Job”"), "{note}");
     // Nothing changed before it was applied.
     assert_eq!(at("a.txt"), ["Work", "x"]);
@@ -121,7 +127,8 @@ fn a_tag_is_renamed_on_every_file_after_review_and_the_sidebar_follows() {
     assert_eq!(at("a.txt"), ["Job", "x"]);
     assert_eq!(at("it's b.txt"), ["Job"]);
     assert_eq!(at("sub/deeper/d.txt"), ["Job"]);
-    assert_eq!(at(".hidden/e.txt"), ["work"]);
+    assert_eq!(at(".hidden/e.txt"), ["Job"]);
+    assert_eq!(at("node_modules/f.txt"), ["work"]);
     // The index learned what the search read and what the plan wrote.
     until(&app, "the sidebar", || {
         (sidebar(&app) == ["Job", "other", "x"]).then_some(())

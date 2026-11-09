@@ -75,6 +75,20 @@ pub fn empty_folder(new_folder_keys: Option<&str>) -> Placeholder {
     }
 }
 
+/// What is here is hidden, and hidden files are off.
+pub fn only_hidden(show_keys: Option<&str>) -> Placeholder {
+    Placeholder {
+        icon: "eye-off",
+        title: "Only hidden files here".to_owned(),
+        detail: match show_keys {
+            Some(keys) => format!("Show hidden files to see them ({keys})."),
+            None => "Show hidden files to see them.".to_owned(),
+        },
+        action: Some(("Show hidden files", "toggle_hidden")),
+        problem: false,
+    }
+}
+
 /// A location that is no folder, with nothing to list: what it says of
 /// itself (`LocationProvider::empty_state`, read with its glyph in
 /// `trail.rs`), never words chosen here by its scheme.
@@ -150,6 +164,14 @@ pub fn of(shell: &Shell, pane: PaneId) -> Option<Placeholder> {
             action: Some(("Show everything", "filter")),
             problem: false,
         });
+    }
+    // Nothing shown, nothing filtered out, yet entries there: hidden ones
+    // only, with hidden files off. Said, with the way to see them, rather
+    // than what the place says empty (a tag's place listing only a hidden
+    // folder, a folder of dot files).
+    if !state.sort.show_hidden && !state.listing.is_empty() {
+        let keys = shell.keys_for("toggle_hidden", &serde_json::Value::Null);
+        return Some(only_hidden(keys.as_deref()));
     }
     if state.location()?.is_path() {
         let keys = shell.keys_for("ui.mkdir_prompt", &serde_json::Value::Null);

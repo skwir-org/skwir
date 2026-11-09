@@ -142,6 +142,9 @@ fn without_window(
     // them with no window open.
     skwir_ui::settings::declare(&app);
     skwir_ui::session::declare(&app);
+    // What the window's run learned of the login shell, for the private
+    // folders a path starting at a variable names.
+    skwir_platform::shell_environment::follow(&app);
     let invocation = Invocation {
         name: name.into(),
         args: Value::Object(arguments),

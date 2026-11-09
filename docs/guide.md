@@ -420,6 +420,7 @@ it, **+ Filter** adds one, and the text can be typed as is:
 | `content:"it's here"`, `content:/re+gex/i` | files containing text or a regex |
 | `near:45.0,6.0~5km` | files made near a point (a picture's position) |
 | `in:"~/My Files"`, `depth:2`, `hidden:true` | where and how deep to look |
+| `excluded:true` | in the folders searches leave out too (`node_modules`, tool stores) |
 | `a OR b`, `NOT a`, `(a b)` | either, not, together |
 
 - While you type, the address colors the terms it understands, completes
@@ -444,6 +445,15 @@ it, **+ Filter** adds one, and the text can be typed as is:
   was at its last update: the footer says when (`as of Yesterday 03:00`),
   and a file made or renamed since is not found. Search a folder to walk
   it.
+- A search walks past the folders tools fill with what they manage
+  themselves (`node_modules`, `.git`, `~/.cargo/registry`, caches, the
+  Trash): Settings › Exclusions lists them, by kind, each with what it
+  holds, and lets you add your own files and folders (a name, a path, a
+  pattern such as `*.log` or `cmake-build-*`, a name only where a tool's
+  file is beside it, as `target` beside `Cargo.toml`) or turn skwir's
+  off. The footer says how many it walked past; the where pill's
+  Excluded files and folders, or `excluded:true`, searches them too, and
+  so does a search of an excluded folder itself.
 
 ## Tags, ratings and comments
 
@@ -469,7 +479,8 @@ and the comment.
   `Places/France` and `Places`: a search for `Places` finds it. A
   category can hold one tag at a time (Status: Draft, Done).
 - **Tags are places.** `tags:/` lists every tag in your home folder, each
-  a folder of its files. `Alt+G`, or the Tags button at the end of the
+  a folder of its files: hidden ones too, shown when hidden files are
+  (`Ctrl+H`), outside the folders searches leave out. `Alt+G`, or the Tags button at the end of the
   address, shows the tags of the folder you are in (and back).
   - Drop files on a tag to tag them; `Delete` takes the tag off the
     selected files.
@@ -718,12 +729,44 @@ Settings are grouped by subject, whichever plugin brings them:
 | Pictures and media | The slideshow, audio and video playback, 3D models, the maps' background |
 | Terminal | The terminal's shell and history, and the shell commands on the selection run in |
 | Network | Every server of the sidebar's Network section (added, edited and removed as from their menus), where those added by their address are kept, and the tools that open an address, in the order tried |
-| Privacy | Folders that never leave the machine |
+| Privacy | What leaves the machine; what agents never see is on Exclusions |
+| Exclusions | The files and folders skwir leaves out, by kind: of searches and tag counts, of what agents see |
 | Plugins | Every plugin, on or off, what it may do and what it needs |
 | Keyboard | Every action and its keys, changed where they are listed |
 
 A plugin from outside Skwir with options of its own has a page of its
 own, listed under the others.
+
+**Exclusions** lists the files and folders Skwir leaves out, in
+categories (Secrets, Version control, Build output, Toolchains…), for
+one role at a time: **Excluded from** Searches and tags (never walked
+by searches, tag counts and the timeline) or Agents (never named or read
+for an agent, a plugin from outside or a model). It opens with every
+category folded, a heading each with its counts and its switch: a click
+on a heading folds or unfolds it, a typed filter and **Changed** show
+what they find unfolded, and Privacy's **Exclusions…** opens it on
+Agents with Secrets unfolded. A category's switch turns its exclusions
+on or off for that role; an exclusion's tick does it for one, and one
+whose category is off says so. A change is saved as you make it and
+said under the list; tick or switch again to take it back. Skwir's
+exclusions can be unticked, moved to another category or duplicated
+into one of yours, never changed; **Changed** shows what differs, each
+with Reset. A row's menu (its ⋯, a right click, the Menu key) is the
+window's: **Move to** opens beside it as you rest on it. **Add…** takes
+a name, a path, a pattern (`cmake-build-*`, or `regex:` over the path
+written with `~`), a name beside a file (`target` beside `Cargo.toml`)
+or the file a folder holds (`.nosearch`), and says what it means and
+whether it is on this computer; **Only on this computer** hides the paths
+that are not. A path may start at a variable, as your shell writes one
+(`$CARGO_HOME/registry`, or `${CARGO_HOME:-~/.cargo}/registry` with what
+stands for it unset), and Skwir's own follow the variables their tools
+read: those your login shell exports too, which Skwir asks it for once
+its files change (**Read your shell's variables**). Keyrings, password
+stores and browsers' profiles are told by what they hold, wherever you
+moved or copied them. Letting agents read what is excluded from them asks
+first, and an agent may never do it. The arrows walk the list, Left and
+Right fold, Space turns a switch or a tick, Delete removes one of yours,
+and the Menu key opens a row's menu.
 
 On Linux, Skwir wears the colors your desktop's settings name: on
 Plasma its color scheme, on LXQt its palette, on Omarchy its theme,

@@ -830,6 +830,26 @@ ADR-028 amended), a file replaced whole keeping its mark
 (`file::take_place`). Checks in `docs/STATUS-LOG.md` (2026-11-08,
 "Notes beside files on every volume").
 
+## Exclusions: files and folders treated apart (2026-11-08)
+
+Issue #6 (a tagged `~/.config` never showed in its tag's place), grown with
+the user into ADR-125: one list, Settings › Exclusions, of files and folders
+in categories, each excluded from roles (searches and tags, agents, the index
+when it is built), that replaces the rule of the dot in tag places and walks,
+and the private folders of ADR-044. skwir's own ship in `builtin.toml` (654
+entries in all; on Linux about 280 tool stores and 245 secrets), stored as
+what the user changed, never a copy. An entry is a pattern (a name, a path, a
+glob, `regex:`, or a path starting at a variable, `$CARGO_HOME/registry`),
+naming files, folders or both, or a name beside its tool's file, or a folder
+holding a marker. Tools' homes follow the variables each documents (192
+bases), those the login shell exports included (asked on a worker, again only
+once its files change, only the names used kept); a secret a variable moved
+stays private where it was. Keyrings, password stores and browser profiles
+are found by what they hold, wherever they were copied. Hidden entries are
+walked, and shown by the pane's switch; a search says how many it walked past
+(`excluded:yes` walks them). Checks in `docs/STATUS-LOG.md` (2026-11-08,
+"Exclusions").
+
 ## The Nix package in variants (2026-11-08)
 
 Issue #7 (a 3 GB closure), ADR-124: nixpkgs' manner, `callPackage` and
@@ -845,6 +865,14 @@ Gathered on 2026-10-20 from the notes of this plan and of
 `docs/STATUS-LOG.md`, each as recorded on the date it gives. Later work
 may have covered one: check the source before starting it. Work that
 closes an item removes its line; work that leaves one adds it here.
+
+**Exclusions** (ADR-125, 2026-11-08): the Index role has no reader until
+the index is built. Changed by you does not list what changed of the
+exclusions. Their list has no sticky heading while it scrolls, and its
+sub-headings are not in the screen reader's tree. `KUBECONFIG`'s later files
+are not covered (a list's first folder only). Plugins do not ship exclusions
+yet. 21 entries and several variables rest on source code or inference, each
+marked where it is written (`# unverified`, ADR-125's research).
 
 **Windows** (ADR-122, 2026-11-07): what answers one question
 (`latest::Latest`, a note, a search, a picture's colors) still wakes

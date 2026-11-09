@@ -8,7 +8,6 @@
 //! extension says nothing, and its file is counted with the others.
 use std::collections::{BTreeMap, HashMap};
 use std::ffi::{OsStr, OsString};
-use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -187,18 +186,10 @@ impl Places {
     }
 }
 
-/// The name of the file that says its folder is a cache.
-pub(crate) const CACHEDIR_TAG: &str = "CACHEDIR.TAG";
-const SIGNATURE: &[u8] = b"Signature: 8a477f597d28d172789f06886806bc55";
-
-/// Whether the `CACHEDIR.TAG` at `path` begins as the convention says: a
-/// file of that name and nothing more is not one.
-pub(crate) fn tags_a_cache(path: &Path) -> bool {
-    let mut head = [0; SIGNATURE.len()];
-    skwir_core::fs::file::open_regular(path)
-        .and_then(|mut file| file.read_exact(&mut head))
-        .is_ok_and(|()| head == SIGNATURE)
-}
+/// The file that says its folder is a cache, and the test of its
+/// signature: core's, which the walks that leave caches out ask too
+/// (`skwir_core::walks`, ADR-125).
+pub(crate) use skwir_core::walks::{CACHEDIR_TAG, tags_a_cache};
 
 #[cfg(test)]
 mod tests {
@@ -233,20 +224,5 @@ mod tests {
         assert_eq!(types.of(OsStr::new(".bashrc")), None, "a hidden file's dot");
         assert_eq!(types.0.len(), 3);
         assert_eq!(types.of(OsStr::new("other.mkv")), Some(Kind::Video));
-    }
-
-    #[test]
-    fn only_a_signed_tag_makes_a_cache() {
-        let tmp = tempfile::tempdir().unwrap();
-        let tag = tmp.path().join(CACHEDIR_TAG);
-        std::fs::write(
-            &tag,
-            b"Signature: 8a477f597d28d172789f06886806bc55\n# a tool\n",
-        )
-        .unwrap();
-        assert!(tags_a_cache(&tag));
-        std::fs::write(&tag, b"Signature: none").unwrap();
-        assert!(!tags_a_cache(&tag));
-        assert!(!tags_a_cache(tmp.path()), "a folder of that name");
     }
 }

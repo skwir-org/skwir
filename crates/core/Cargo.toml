@@ -11,7 +11,9 @@ rust-version.workspace = true
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+globset.workspace = true
 toml.workspace = true
+regex.workspace = true
 tempfile.workspace = true
 rustix = { workspace = true, features = ["fs", "time", "thread", "event", "process", "try_close"] }
 crossbeam-channel.workspace = true

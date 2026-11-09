@@ -2306,7 +2306,11 @@ impl Shell {
     /// from elsewhere, which waits for the dialog to close.
     fn takes_now(&self, name: &str) -> bool {
         if self.settings.is_some() {
-            name.starts_with("ui.settings") || name == "ui.list_move"
+            // A menu the dialog opened (a Exclusions page row's) is walked by
+            // the menu's keys, above it.
+            name.starts_with("ui.settings")
+                || name == "ui.list_move"
+                || (self.menu.is_some() && name.starts_with("ui.menu_"))
         } else if self.shortcuts.is_some() {
             matches!(name, "ui.shortcuts" | "ui.settings")
         } else if self.about.is_some() {

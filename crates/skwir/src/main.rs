@@ -103,6 +103,10 @@ fn main() -> anyhow::Result<()> {
     for plugin in skwir::plugins() {
         app.plugins.add(plugin, &app);
     }
+    // The variables the exclusions' paths start from, as the login shell
+    // exports them too (ADR-125): kept from the last run, asked again on a
+    // worker once the shell's files change.
+    skwir_platform::shell_environment::follow(&app);
 
     // A location on the command line wins: one a plugin opens (`trash:`,
     // `tags:/family`), else a folder. Otherwise the startup preference: a

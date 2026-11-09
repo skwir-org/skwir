@@ -57,6 +57,9 @@ pub mod page {
     /// their address are kept, and the tools that open an address.
     pub const NETWORK: &str = "network";
     pub const PRIVACY: &str = "privacy";
+    /// The folders skwir treats apart, and what each is kept from:
+    /// searches, agents (ADR-125).
+    pub const EXCLUSIONS: &str = "exclusions";
     pub const KEYBOARD: &str = "keyboard";
 }
 
@@ -278,6 +281,10 @@ pub struct SettingSpec {
     /// The file it is kept in: the settings, or apart from them
     /// (`SettingSpec::state`, `SettingSpec::data`).
     pub store: Store,
+    /// Drawn by its page's own editor (`drawn_by_page`): never a row, yet
+    /// taken by `settings.apply` (its value as JSON) and checked in a file.
+    #[serde(default)]
+    pub page_drawn: bool,
     #[serde(skip)]
     pub validator: Option<Validator>,
     /// When its key was first declared in this process, which
@@ -418,6 +425,7 @@ impl SettingSpec {
             },
             restart_required: false,
             store: Store::Settings,
+            page_drawn: false,
             validator: None,
             order: 0,
         }
@@ -482,6 +490,17 @@ impl SettingSpec {
             Ok(())
         });
         spec.kind = SettingKind::Command;
+        spec
+    }
+
+    /// A preference whose page draws it with an editor of its own (the
+    /// exclusions' tables, ADR-125): kept in the settings file, as any
+    /// preference, checked by its owner (`validate_with`), never drawn as
+    /// a row.
+    pub fn drawn_by_page(key: &str, title: &str, description: &str, default: toml::Value) -> Self {
+        let mut spec = Self::new(key, title, description, default);
+        spec.kind = SettingKind::Data;
+        spec.page_drawn = true;
         spec
     }
 
@@ -903,7 +922,7 @@ impl SettingSpec {
             kind(&self.default),
             kind(value)
         );
-        if !self.editable() {
+        if !self.editable() && !self.page_drawn {
             return Ok(());
         }
         self.parse_beside(&Self::format_value(value), Beside::File)
@@ -933,12 +952,23 @@ impl SettingSpec {
 
     fn parse_beside(&self, text: &str, beside: Beside<'_>) -> anyhow::Result<toml::Value> {
         anyhow::ensure!(
-            self.editable(),
+            self.editable() || self.page_drawn,
             "{} is managed by its owning commands",
             self.key
         );
         let value = match self.default {
             _ if self.kind == SettingKind::Records => self.parse_records(text, beside)?,
+            // A table or a list its page draws, as JSON (`format_value`).
+            toml::Value::Table(_) | toml::Value::Array(_) if self.page_drawn => {
+                let json: serde_json::Value =
+                    serde_json::from_str(if text.trim().is_empty() { "null" } else { text })
+                        .map_err(|error| anyhow::anyhow!("expected JSON: {error}"))?;
+                match json {
+                    serde_json::Value::Null => self.default.clone(),
+                    json => toml::Value::try_from(json)
+                        .map_err(|error| anyhow::anyhow!("not a value a file holds: {error}"))?,
+                }
+            }
             toml::Value::String(_) => toml::Value::String(text.into()),
             toml::Value::Boolean(_) => toml::Value::Boolean(
                 text.trim()
@@ -1146,7 +1176,9 @@ pub(crate) fn register(app: &crate::App) {
                 // A headless command cannot claim it saved those values.
                 anyhow::bail!("{reason}");
             }
-            app.settings.validate(&args.changes)?;
+            let read = app.settings.validate(&args.changes)?;
+            // Only the user lowers privacy (ADR-125).
+            crate::exclusions::refuse_exposure(&app.settings, &read)?;
             let mut status = app.settings.status.lock();
             anyhow::ensure!(
                 status.1 != SaveState::Saving,

@@ -111,7 +111,11 @@ ADR-077 (which revises ADR-021).
   learned there (the points below the root, from `reach::all`): a
   search's hints and plocate's answer, the tags index's counts and tag
   locations leave out what a pane shown there taught them. Usage asks
-  before measuring a remote.
+  before measuring a remote. On a remote a walk never looks up the folder
+  rules' markers or siblings (`walks::Below` without probing, ADR-125):
+  each would ask the server once a folder; names, paths and patterns
+  still apply, and a count reading a folder's names tells its markers
+  among them.
 - **Extended attributes** a FUSE remote refused (`xattr::refused`:
   sshfs, rclone, GVfs's bridge, which on an iPhone looks each file up
   first) are not asked of it again while it stays mounted

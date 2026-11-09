@@ -93,6 +93,10 @@ and `notes.agree` are core `notes.*` commands.
 - Its listing is the tags index (`TagIndex::files_under`): at once where a
   count covered the folder, then checked; counted on a first visit. It
   lists again when the index changes; F5 checks. Counting: [notes.md](notes.md).
+- It lists hidden entries, and marks one inside a hidden folder below its
+  own (`Entry::in_hidden_folder`): the pane's Show hidden files decides
+  what shows, as a `tag:` search without `hidden:true` finds it; a place
+  with only hidden entries says "Only hidden files here" (ADR-125).
 - Verbs (`browse.rs`): a drop or paste tags the files, removing the tag
   they were dragged from (`tags.drop`); tags dropped move inside; Delete
   untags (a selected tag is removed from every file, a plan to review:
@@ -145,6 +149,20 @@ and `notes.agree` are core `notes.*` commands.
   is filled on a worker and appears whole: a provider whose listing
   never completes, or completes only once every slow source answered,
   says it streams, or it shows nothing until then.
+- **What a search's walk leaves out** (ADR-125): below its root, the
+  exclusions kept from searches (`walks::Below`: names, paths, globs,
+  regexes, beside, markers), a trash and the network mounts; a folder
+  left out is found itself (`name:node_modules`), never entered, and a
+  file a rule names is not found (`Below::leaves_out_file`; a path whose
+  kind is not known, `leaves_out_path`, looked at only where its name
+  says it may be). A walk that knows the rule names no file asks nothing
+  of a file (`Below::names_files`).
+  `excluded:yes` (the "Excluded files and folders" choice of the where pill) walks
+  the rules' folders, never a trash nor a mount; `hidden:` keeps its
+  meaning. The index's hints, plocate's answer and what a change brings
+  are left out alike (`Below::stops_above`, `in_walk`). Each run says how
+  many files and folders it walked past (`ListingEvent::LeftOut`, the footer's "·
+  N excluded", `entries`' `excluded`), none included.
 - **A hit the walk stat-ed is hydrated, not filled**: its size and dates
   are the walk's, its tags, rating and what is beside it are read as a
   folder's rows are, when a view asks for them (`Metadata::is_filled`,

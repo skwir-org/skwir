@@ -1,0 +1,6573 @@
+# The exclusions skwir ships (ADR-125), read by `exclusions/mod.rs`: the
+# files and folders skwir treats apart, in categories. A category's
+# switches say which roles they are excluded from: `searches` (searches,
+# tag counts and the timeline never look at them below the folder they
+# look in), `agents` (never named, listed or read for an agent, a plugin
+# from outside or a model) and `index` (never harvested by an index). Ids
+# become `skwir.<id>`.
+#
+# An entry's `pattern` is a name, anywhere (`node_modules`); a path, from
+# `~` or `/`, or from the base `under` names (empty, the base itself; see
+# below: the XDG folders, the tools' homes), which follows its variable;
+# or a glob of either (`*` within a name, `**` across names). `names =
+# "files"` says it names files (`*.kdbx`); without it, folders. `beside`
+# asks for a sibling, a name or a glob; `holding`, instead of `pattern`, a
+# file a folder holds. `systems` limits an entry to some systems; without
+# it, it holds on every one. In a category kept from agents, an entry a
+# variable moved stays excluded where it was too.
+#
+# A tool's folder is listed whole only where nobody writes in it: where
+# settings, credentials or the user's own files sit beside the store, the
+# store's subfolders are listed (~/.cargo/registry, never ~/.cargo). A name
+# is a tool's own; an ordinary word (target, obj) comes only with the
+# sibling that says which tool made it. What people commit and patch by
+# hand beside their project (vendor, Pods, bower_components) is never
+# excluded: a search of the project finds their changes there.
+
+# The folders entries are written under (`under`), each a path that
+# starts at the variable that moves it, with what stands for it unset
+# (`${NAME:-default}`, the shell's syntax; a list's first folder). The
+# variables are skwir's own environment's, else the login shell's.
+
+[[base]]
+name = "data"
+path = "${XDG_DATA_HOME:-~/.local/share}"
+
+[[base]]
+name = "config"
+path = "${XDG_CONFIG_HOME:-~/.config}"
+
+[[base]]
+name = "state"
+path = "${XDG_STATE_HOME:-~/.local/state}"
+
+[[base]]
+name = "cache"
+path = "${XDG_CACHE_HOME:-~/.cache}"
+
+# Where the session's sockets and keys of the moment live; none where the
+# system has none.
+[[base]]
+name = "runtime"
+path = "$XDG_RUNTIME_DIR"
+
+# The tools' homes, from each tool's own documentation.
+
+# Rust
+# source: https://rust-lang.github.io/rustup/environment-variables.html
+[[base]]
+name = "rustup"
+path = "${RUSTUP_HOME:-~/.rustup}"
+
+# source: https://doc.rust-lang.org/cargo/guide/cargo-home.html
+[[base]]
+name = "cargo"
+path = "${CARGO_HOME:-~/.cargo}"
+
+# Go
+# source: https://pkg.go.dev/cmd/go ("new packages are always downloaded into the first directory in the list")
+[[base]]
+name = "gopath"
+path = "${GOPATH:-~/go}"
+
+# source: https://go.dev/ref/mod#environment-variables
+[[base]]
+name = "gomodcache"
+path = "${GOMODCACHE:-${GOPATH:-~/go}/pkg/mod}"
+
+# source: https://pkg.go.dev/cmd/go (default is covered by the cache folders)
+[[base]]
+name = "gocache"
+path = "${GOCACHE}"
+
+# JavaScript
+# source: https://docs.npmjs.com/cli/v11/using-npm/config (npm_config_*, case-insensitive)
+[[base]]
+name = "npm-cache"
+path = "${npm_config_cache:-${NPM_CONFIG_CACHE:-~/.npm}}"
+systems = ["linux", "macos"]
+
+# source: https://docs.npmjs.com/cli/v11/using-npm/config
+[[base]]
+name = "npm-userconfig"
+path = "${npm_config_userconfig:-${NPM_CONFIG_USERCONFIG:-~/.npmrc}}"
+
+# source: https://pnpm.io/settings/store and https://pnpm.io/settings/other
+[[base]]
+name = "pnpm"
+path = "${PNPM_HOME:-${XDG_DATA_HOME:-~/.local/share}/pnpm}"
+systems = ["linux"]
+
+# source: https://pnpm.io/settings/store
+[[base]]
+name = "pnpm-moved"
+path = "${PNPM_HOME}"
+systems = ["macos", "windows"]
+
+# source: https://bun.sh/docs/install/cache
+[[base]]
+name = "bun-cache"
+path = "${BUN_INSTALL_CACHE_DIR:-~/.bun/install/cache}"
+
+# source: https://yarnpkg.com/configuration/yarnrc (globalFolder; "prefix the names and write them in snake case")
+[[base]]
+name = "yarn-global"
+path = "${YARN_GLOBAL_FOLDER:-~/.yarn/berry}"
+
+# source: https://classic.yarnpkg.com/en/docs/cli/cache
+[[base]]
+name = "yarn-cache"
+path = "${YARN_CACHE_FOLDER}"
+
+# source: https://github.com/nvm-sh/nvm
+[[base]]
+name = "nvm"
+path = "${NVM_DIR:-~/.nvm}"
+
+# source: https://github.com/Schniz/fnm/blob/master/docs/commands.md ([env: FNM_DIR])
+[[base]]
+name = "fnm"
+path = "${FNM_DIR:-${XDG_DATA_HOME:-~/.local/share}/fnm}"
+systems = ["linux"]
+
+# source: https://docs.volta.sh/advanced/installers
+[[base]]
+name = "volta"
+path = "${VOLTA_HOME:-~/.volta}"
+systems = ["linux", "macos"]
+
+# source: https://docs.volta.sh/advanced/installers
+[[base]]
+name = "volta-moved"
+path = "${VOLTA_HOME}"
+systems = ["windows"]
+
+# source: https://github.com/nodejs/corepack
+[[base]]
+name = "corepack"
+path = "${COREPACK_HOME}"
+
+# source: https://docs.deno.com/runtime/reference/env_variables/
+[[base]]
+name = "deno"
+path = "${DENO_DIR}"
+
+# source: https://dart.dev/tools/pub/environment-variables
+[[base]]
+name = "pub-cache"
+path = "${PUB_CACHE:-~/.pub-cache}"
+
+# source: https://dart.dev/tools/pub/environment-variables
+[[base]]
+name = "pub-cache-moved"
+path = "${PUB_CACHE}"
+
+# Python
+# source: https://pip.pypa.io/en/stable/topics/configuration/ (PIP_<UPPER_LONG_NAME>, so --cache-dir)
+[[base]]
+name = "pip-cache"
+path = "${PIP_CACHE_DIR}"
+
+# source: https://docs.astral.sh/uv/concepts/cache/
+[[base]]
+name = "uv-cache"
+path = "${UV_CACHE_DIR}"
+
+# source: https://docs.astral.sh/uv/reference/environment/
+[[base]]
+name = "uv-python"
+path = "${UV_PYTHON_INSTALL_DIR}"
+
+# source: https://docs.astral.sh/uv/reference/environment/
+[[base]]
+name = "uv-tools"
+path = "${UV_TOOL_DIR}"
+
+# source: https://docs.astral.sh/uv/reference/environment/ (default as the list has it)
+[[base]]
+name = "uv-credentials"
+path = "${UV_CREDENTIALS_DIR:-${XDG_DATA_HOME:-~/.local/share}/uv/credentials}"
+systems = ["linux", "macos"]
+
+# source: https://docs.astral.sh/uv/reference/environment/ (default as the list has it)
+[[base]]
+name = "uv-credentials-windows"
+path = "${UV_CREDENTIALS_DIR:-${APPDATA:-~/AppData/Roaming}/uv/data/credentials}"
+systems = ["windows"]
+
+# source: https://python-poetry.org/docs/configuration/
+[[base]]
+name = "poetry-config"
+path = "${POETRY_CONFIG_DIR:-${XDG_CONFIG_HOME:-~/.config}/pypoetry}"
+systems = ["linux"]
+
+# source: https://python-poetry.org/docs/configuration/
+[[base]]
+name = "poetry-config-macos"
+path = "${POETRY_CONFIG_DIR:-~/Library/Application Support/pypoetry}"
+systems = ["macos"]
+
+# source: https://python-poetry.org/docs/configuration/
+[[base]]
+name = "poetry-config-windows"
+path = "${POETRY_CONFIG_DIR:-${APPDATA:-~/AppData/Roaming}/pypoetry}"
+systems = ["windows"]
+
+# source: https://python-poetry.org/docs/configuration/ ("If POETRY_HOME is set, it will be given higher priority")
+[[base]]
+name = "poetry-data"
+path = "${POETRY_HOME:-${POETRY_DATA_DIR:-${XDG_DATA_HOME:-~/.local/share}/pypoetry}}"
+systems = ["linux"]
+
+# source: https://python-poetry.org/docs/configuration/
+[[base]]
+name = "poetry-cache"
+path = "${POETRY_CACHE_DIR}"
+
+# source: https://github.com/pyenv/pyenv
+[[base]]
+name = "pyenv"
+path = "${PYENV_ROOT:-~/.pyenv}"
+systems = ["linux", "macos"]
+
+# source: https://docs.conda.io/projects/conda/en/latest/user-guide/configuration/settings.html
+# delimiter: https://docs.conda.io/projects/conda/en/latest/configuration.html ("env var string delimiter: ','")
+[[base]]
+name = "conda-pkgs"
+path = "${CONDA_PKGS_DIRS:-~/.conda/pkgs}"
+separator = ","
+
+# source: https://docs.conda.io/projects/conda/en/latest/user-guide/configuration/settings.html
+[[base]]
+name = "conda-envs"
+path = "${CONDA_ENVS_PATH:-~/.conda/envs}"
+
+# source: https://mamba.readthedocs.io/en/latest/installation/micromamba-installation.html
+[[base]]
+name = "micromamba"
+path = "${MAMBA_ROOT_PREFIX:-~/micromamba}"
+
+# source: https://pipx.pypa.io/latest/reference/environment-variables.html
+[[base]]
+name = "pipx"
+path = "${PIPX_HOME:-${XDG_DATA_HOME:-~/.local/share}/pipx}"
+systems = ["linux"]
+
+# source: https://hatch.pypa.io/latest/config/hatch/
+[[base]]
+name = "hatch-data"
+path = "${HATCH_DATA_DIR:-${XDG_DATA_HOME:-~/.local/share}/hatch}"
+systems = ["linux"]
+
+# source: https://hatch.pypa.io/latest/config/hatch/
+[[base]]
+name = "hatch-cache"
+path = "${HATCH_CACHE_DIR}"
+
+# source: https://pdm-project.org/latest/reference/configuration/
+[[base]]
+name = "pdm-cache"
+path = "${PDM_CACHE_DIR}"
+
+# source: https://virtualenvwrapper.readthedocs.io/en/latest/install.html
+[[base]]
+name = "workon-home"
+path = "${WORKON_HOME:-~/.virtualenvs}"
+
+# source: https://pipenv.pypa.io/en/latest/virtualenv.html
+[[base]]
+name = "pipenv-venvs"
+path = "${WORKON_HOME:-~/.local/share/virtualenvs}"
+systems = ["linux", "macos"]
+
+# source: https://ipython.readthedocs.io/en/stable/config/intro.html
+[[base]]
+name = "ipython"
+path = "${IPYTHONDIR:-~/.ipython}"
+
+# JVM
+# source: https://docs.gradle.org/current/userguide/directory_layout.html
+[[base]]
+name = "gradle"
+path = "${GRADLE_USER_HOME:-~/.gradle}"
+
+# source: https://maven.apache.org/tools/wrapper/
+[[base]]
+name = "maven-user"
+path = "${MAVEN_USER_HOME:-~/.m2}"
+
+# source: https://sdkman.io/install/
+[[base]]
+name = "sdkman"
+path = "${SDKMAN_DIR:-~/.sdkman}"
+
+# source: https://get-coursier.io/docs/cache
+[[base]]
+name = "coursier"
+path = "${COURSIER_CACHE}"
+
+# source: https://github.com/JetBrains/kotlin/blob/master/kotlin-native/HACKING.md
+[[base]]
+name = "konan"
+path = "${KONAN_DATA_DIR:-~/.konan}"
+
+# .NET
+# source: https://learn.microsoft.com/en-us/dotnet/core/tools/dotnet-environment-variables
+# replaces the home: source code https://source.dot.net/Microsoft.DotNet.Configurer/src/sdk/src/Common/CliFolderPathCalculatorCore.cs.html
+[[base]]
+name = "dotnet-cli-home"
+path = "${DOTNET_CLI_HOME:-~}"
+
+# source code: https://source.dot.net/Microsoft.DotNet.Configurer/src/sdk/src/Common/CliFolderPathCalculatorCore.cs.html
+[[base]]
+name = "dotnet-cli-home-moved"
+path = "${DOTNET_CLI_HOME}"
+
+# source: https://learn.microsoft.com/en-us/dotnet/core/tools/dotnet-environment-variables
+[[base]]
+name = "dotnet-root"
+path = "${DOTNET_ROOT}"
+
+# source: https://learn.microsoft.com/en-us/nuget/consume-packages/managing-the-global-packages-and-cache-folders
+# DOTNET_CLI_HOME: source code https://raw.githubusercontent.com/NuGet/NuGet.Client/dev/src/NuGet.Core/NuGet.Common/PathUtil/NuGetEnvironment.cs
+[[base]]
+name = "nuget-packages"
+path = "${NUGET_PACKAGES:-${DOTNET_CLI_HOME:-~}/.nuget/packages}"
+
+# source: https://learn.microsoft.com/en-us/nuget/consume-packages/managing-the-global-packages-and-cache-folders
+[[base]]
+name = "nuget-http-cache"
+path = "${NUGET_HTTP_CACHE_PATH}"
+
+# source: https://learn.microsoft.com/en-us/nuget/consume-packages/managing-the-global-packages-and-cache-folders
+[[base]]
+name = "nuget-plugins-cache"
+path = "${NUGET_PLUGINS_CACHE_PATH}"
+
+# Ruby and PHP
+# source: https://guides.rubygems.org/environment-variables.md
+[[base]]
+name = "gem-home"
+path = "${GEM_HOME}"
+
+# source: https://guides.rubygems.org/environment-variables.md
+[[base]]
+name = "gem-specs"
+path = "${GEM_SPEC_CACHE:-~/.gem/specs}"
+
+# source: https://github.com/rbenv/rbenv
+[[base]]
+name = "rbenv"
+path = "${RBENV_ROOT:-~/.rbenv}"
+
+# source: https://manpages.ubuntu.com/manpages/noble/man1/bundle-config.1.html
+[[base]]
+name = "bundle-cache"
+path = "${BUNDLE_USER_CACHE:-${BUNDLE_USER_HOME:-~/.bundle}/cache}"
+
+# source: https://manpages.ubuntu.com/manpages/noble/man1/bundle-config.1.html
+[[base]]
+name = "bundle-config"
+path = "${BUNDLE_USER_CONFIG:-${BUNDLE_USER_HOME:-~/.bundle}/config}"
+
+# source: https://getcomposer.org/doc/03-cli.md
+[[base]]
+name = "composer"
+path = "${COMPOSER_HOME:-~/.composer}"
+systems = ["linux", "macos"]
+
+# source: https://getcomposer.org/doc/03-cli.md
+[[base]]
+name = "composer-xdg"
+path = "${COMPOSER_HOME:-${XDG_CONFIG_HOME:-~/.config}/composer}"
+systems = ["linux"]
+
+# source: https://getcomposer.org/doc/03-cli.md
+[[base]]
+name = "composer-windows"
+path = "${COMPOSER_HOME:-${APPDATA:-~/AppData/Roaming}/Composer}"
+systems = ["windows"]
+
+# source: https://getcomposer.org/doc/03-cli.md
+[[base]]
+name = "composer-cache"
+path = "${COMPOSER_CACHE_DIR:-${COMPOSER_HOME:-~/.composer}/cache}"
+systems = ["linux", "macos"]
+
+# Haskell, OCaml, Julia, Elixir, others
+# source: https://www.haskell.org/ghcup/guide/config
+[[base]]
+name = "ghcup"
+path = "${GHCUP_INSTALL_BASE_PREFIX:-~}"
+systems = ["linux", "macos"]
+
+# source: https://docs.haskellstack.org/en/stable/topics/stack_root/
+[[base]]
+name = "stack"
+path = "${STACK_ROOT:-~/.stack}"
+systems = ["linux", "macos"]
+
+# source: https://cabal.readthedocs.io/en/stable/config.html
+[[base]]
+name = "cabal"
+path = "${CABAL_DIR:-~/.cabal}"
+systems = ["linux", "macos"]
+
+# source: https://opam.ocaml.org/doc/Manual.html
+[[base]]
+name = "opam"
+path = "${OPAMROOT:-~/.opam}"
+
+# source: https://docs.julialang.org/en/v1/manual/environment-variables/
+[[base]]
+name = "julia-depot"
+path = "${JULIA_DEPOT_PATH:-~/.julia}"
+
+# source: https://docs.julialang.org/en/v1/manual/environment-variables/
+[[base]]
+name = "julia-history"
+path = "${JULIA_HISTORY:-${JULIA_DEPOT_PATH:-~/.julia}/logs/repl_history.jl}"
+
+# source: https://github.com/JuliaLang/juliaup
+[[base]]
+name = "juliaup-depot"
+path = "${JULIAUP_DEPOT_PATH:-~/.julia}"
+
+# source: https://mix.hexdocs.pm/Mix.html
+[[base]]
+name = "mix"
+path = "${MIX_HOME:-~/.mix}"
+
+# source: https://hex.hexdocs.pm/Mix.Tasks.Hex.Config.html
+[[base]]
+name = "hex"
+path = "${HEX_HOME:-~/.hex}"
+
+# source: https://github.com/kerl/kerl
+[[base]]
+name = "kerl"
+path = "${KERL_BASE_DIR:-~/.kerl}"
+
+# source: https://nim-lang.github.io/nimble/folder-structure.html
+[[base]]
+name = "nimble"
+path = "${NIMBLE_DIR:-~/.nimble}"
+
+# source: https://metacpan.org/pod/App::cpanminus
+[[base]]
+name = "cpanm"
+path = "${PERL_CPANM_HOME:-~/.cpanm}"
+
+# source: https://metacpan.org/pod/perlbrew
+[[base]]
+name = "perlbrew"
+path = "${PERLBREW_ROOT:-~/perl5/perlbrew}"
+
+# source: https://docs.racket-lang.org/reference/Filesystem.html ('addon-dir)
+[[base]]
+name = "racket-addon"
+path = "${PLTADDONDIR:-${XDG_DATA_HOME:-~/.local/share}/racket}"
+systems = ["linux"]
+
+# source: https://stat.ethz.ch/R-manual/R-devel/library/base/html/libPaths.html
+[[base]]
+name = "r-libs-user"
+path = "${R_LIBS_USER}"
+
+# source code: Zig 0.17 lib/std/zig.zig resolveGlobalCacheDir; ZIG_GLOBAL_CACHE_DIR tried against `zig env`
+[[base]]
+name = "zig-cache"
+path = "${ZIG_GLOBAL_CACHE_DIR}"
+
+# source: https://lean-lang.org/doc/reference/latest/Build-Tools-and-Distribution/Managing-Toolchains-with-Elan/
+[[base]]
+name = "elan"
+path = "${ELAN_HOME:-~/.elan}"
+
+# source: https://ccache.dev/manual/latest.html
+[[base]]
+name = "ccache"
+path = "${CCACHE_DIR}"
+
+# Embedded, version and package managers
+# source: https://docs.platformio.org/en/latest/projectconf/sections/platformio/options/directory/core_dir.html
+[[base]]
+name = "platformio"
+path = "${PLATFORMIO_CORE_DIR:-~/.platformio}"
+
+# source: https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-guides/tools/idf-tools.html
+[[base]]
+name = "espressif"
+path = "${IDF_TOOLS_PATH:-~/.espressif}"
+
+# source: https://arduino.github.io/arduino-cli/1.5/configuration/
+[[base]]
+name = "arduino-data"
+path = "${ARDUINO_DIRECTORIES_DATA:-~/.arduino15}"
+systems = ["linux"]
+
+# source: https://asdf-vm.com/manage/configuration.html
+[[base]]
+name = "asdf"
+path = "${ASDF_DATA_DIR:-~/.asdf}"
+systems = ["linux", "macos"]
+
+# source: https://mise.jdx.dev/directories.html
+[[base]]
+name = "mise"
+path = "${MISE_DATA_DIR:-${XDG_DATA_HOME:-~/.local/share}/mise}"
+systems = ["linux", "macos"]
+
+# source: https://mise.jdx.dev/directories.html
+[[base]]
+name = "mise-cache"
+path = "${MISE_CACHE_DIR}"
+
+# source: https://aquaproj.github.io/docs/reference/config/
+[[base]]
+name = "aqua"
+path = "${AQUA_ROOT_DIR:-${XDG_DATA_HOME:-~/.local/share}/aquaproj-aqua}"
+systems = ["linux", "macos"]
+
+# source: https://moonrepo.dev/docs/proto/install
+[[base]]
+name = "proto"
+path = "${PROTO_HOME:-~/.proto}"
+
+# source: https://github.com/ScoopInstaller/Install
+# order: source code https://raw.githubusercontent.com/ScoopInstaller/Scoop/master/lib/core.ps1
+[[base]]
+name = "scoop"
+path = "${SCOOP:-~/scoop}"
+systems = ["windows"]
+
+# source code: https://raw.githubusercontent.com/ScoopInstaller/Scoop/master/lib/core.ps1
+[[base]]
+name = "scoop-cache"
+path = "${SCOOP_CACHE:-${SCOOP:-~/scoop}/cache}"
+systems = ["windows"]
+
+# source: https://spack.readthedocs.io/en/latest/configuration.html
+[[base]]
+name = "spack-user-cache"
+path = "${SPACK_USER_CACHE_PATH:-~/.spack}"
+systems = ["linux", "macos"]
+
+# Containers, Android
+# source: https://docs.docker.com/reference/cli/docker/
+[[base]]
+name = "docker"
+path = "${DOCKER_CONFIG:-~/.docker}"
+
+# source: https://docs.flatpak.org/en/latest/flatpak-command-reference.html
+[[base]]
+name = "flatpak-user"
+path = "${FLATPAK_USER_DIR:-${XDG_DATA_HOME:-~/.local/share}/flatpak}"
+systems = ["linux"]
+
+# source: https://developer.hashicorp.com/vagrant/docs/other/environmental-variables
+[[base]]
+name = "vagrant"
+path = "${VAGRANT_HOME:-~/.vagrant.d}"
+
+# source: https://developer.android.com/tools/variables (ANDROID_SDK_ROOT is deprecated)
+[[base]]
+name = "android-sdk"
+path = "${ANDROID_HOME:-${ANDROID_SDK_ROOT:-~/Android/Sdk}}"
+systems = ["linux"]
+
+# source: https://developer.android.com/tools/variables
+[[base]]
+name = "android-avd"
+path = "${ANDROID_AVD_HOME:-${ANDROID_EMULATOR_HOME:-${ANDROID_USER_HOME:-~/.android}}/avd}"
+
+# AI
+# source: https://github.com/ollama/ollama/blob/main/docs/faq.mdx
+[[base]]
+name = "ollama-models"
+path = "${OLLAMA_MODELS:-~/.ollama/models}"
+
+# source: https://keras.io/api/utils/python_utils/ (get_file, cache_dir)
+[[base]]
+name = "keras"
+path = "${KERAS_HOME:-~/.keras}"
+
+# source: https://www.tensorflow.org/datasets/api_docs/python/tfds/load
+[[base]]
+name = "tfds"
+path = "${TFDS_DATA_DIR:-~/tensorflow_datasets}"
+
+# source: https://www.nltk.org/data.html
+[[base]]
+name = "nltk-data"
+path = "${NLTK_DATA}"
+
+# source: https://docs.pytorch.org/docs/2.15/hub.html
+[[base]]
+name = "torch"
+path = "${TORCH_HOME}"
+
+# source: https://huggingface.co/docs/huggingface_hub/package_reference/environment_variables
+[[base]]
+name = "hf"
+path = "${HF_HOME:-${XDG_CACHE_HOME:-~/.cache}/huggingface}"
+
+# source: https://huggingface.co/docs/huggingface_hub/package_reference/environment_variables
+[[base]]
+name = "hf-hub"
+path = "${HF_HUB_CACHE:-${HUGGINGFACE_HUB_CACHE:-${HF_HOME:-${XDG_CACHE_HOME:-~/.cache}/huggingface}/hub}}"
+
+# source: https://huggingface.co/docs/huggingface_hub/package_reference/environment_variables
+[[base]]
+name = "hf-xet"
+path = "${HF_XET_CACHE:-${HF_HOME:-${XDG_CACHE_HOME:-~/.cache}/huggingface}/xet}"
+
+# source: https://huggingface.co/docs/huggingface_hub/package_reference/environment_variables
+[[base]]
+name = "hf-assets"
+path = "${HF_ASSETS_CACHE:-${HUGGINGFACE_ASSETS_CACHE:-${HF_HOME:-${XDG_CACHE_HOME:-~/.cache}/huggingface}/assets}}"
+
+# source: https://huggingface.co/docs/huggingface_hub/package_reference/environment_variables
+[[base]]
+name = "hf-token"
+path = "${HF_TOKEN_PATH:-${HF_HOME:-${XDG_CACHE_HOME:-~/.cache}/huggingface}/token}"
+
+# source: https://code.claude.com/docs/en/env-vars and https://code.claude.com/docs/en/claude-directory
+[[base]]
+name = "claude"
+path = "${CLAUDE_CONFIG_DIR:-~/.claude}"
+
+# source: https://code.claude.com/docs/en/claude-directory (.claude.json moves with CLAUDE_CONFIG_DIR)
+[[base]]
+name = "claude-state"
+path = "${CLAUDE_CONFIG_DIR:-~}"
+
+# source: https://learn.chatgpt.com/docs/config-file/config-advanced
+[[base]]
+name = "codex"
+path = "${CODEX_HOME:-~/.codex}"
+
+# source: https://geminicli.com/docs/reference/configuration/ (the .gemini folder is made inside it)
+[[base]]
+name = "gemini-home"
+path = "${GEMINI_CLI_HOME:-~}"
+
+# source: https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-config-dir-reference
+[[base]]
+name = "copilot"
+path = "${COPILOT_HOME:-~/.copilot}"
+
+# source: https://llm.datasette.io/en/stable/setup.html
+[[base]]
+name = "llm"
+path = "${LLM_USER_PATH:-${XDG_CONFIG_HOME:-~/.config}/io.datasette.llm}"
+systems = ["linux"]
+
+# source: https://llm.datasette.io/en/stable/setup.html
+[[base]]
+name = "llm-macos"
+path = "${LLM_USER_PATH:-~/Library/Application Support/io.datasette.llm}"
+systems = ["macos"]
+
+# source: https://llm.datasette.io/en/stable/setup.html (Windows default as the list has it)
+[[base]]
+name = "llm-windows"
+path = "${LLM_USER_PATH:-${APPDATA:-~/AppData/Roaming}/io.datasette.llm}"
+systems = ["windows"]
+
+# Secrets: folders
+# source: https://www.gnupg.org/documentation/manuals/gnupg/GPG-Configuration.html
+[[base]]
+name = "gnupg"
+path = "${GNUPGHOME:-~/.gnupg}"
+
+# source: https://www.gnupg.org/documentation/manuals/gnupg/Configuration-Options.html (Windows default as the list has it)
+[[base]]
+name = "gnupg-windows"
+path = "${GNUPGHOME:-${APPDATA:-~/AppData/Roaming}/gnupg}"
+systems = ["windows"]
+
+# source: https://git.zx2c4.com/password-store/about/
+[[base]]
+name = "password-store"
+path = "${PASSWORD_STORE_DIR:-~/.password-store}"
+
+# source: https://learn.microsoft.com/en-us/cli/azure/azure-cli-configuration
+[[base]]
+name = "azure"
+path = "${AZURE_CONFIG_DIR:-~/.azure}"
+
+# source: https://docs.cloud.google.com/sdk/docs/configurations
+[[base]]
+name = "gcloud"
+path = "${CLOUDSDK_CONFIG:-~/.config/gcloud}"
+
+# source: https://docs.cloud.google.com/sdk/docs/configurations
+[[base]]
+name = "gcloud-windows"
+path = "${CLOUDSDK_CONFIG:-${APPDATA:-~/AppData/Roaming}/gcloud}"
+systems = ["windows"]
+
+# source: https://cli.github.com/manual/gh_help_environment
+[[base]]
+name = "gh"
+path = "${GH_CONFIG_DIR:-${XDG_CONFIG_HOME:-~/.config}/gh}"
+
+# source: https://cli.github.com/manual/gh_help_environment
+[[base]]
+name = "gh-windows"
+path = "${GH_CONFIG_DIR:-${APPDATA:-~/AppData/Roaming}/GitHub CLI}"
+systems = ["windows"]
+
+# source: https://docs.gitlab.com/cli/configuration/
+[[base]]
+name = "glab"
+path = "${GLAB_CONFIG_DIR:-${XDG_CONFIG_HOME:-~/.config}/glab-cli}"
+
+# source: https://docs.gitlab.com/cli/configuration/
+[[base]]
+name = "glab-macos"
+path = "${GLAB_CONFIG_DIR:-~/Library/Application Support/glab-cli}"
+systems = ["macos"]
+
+# source: https://docs.gitlab.com/cli/configuration/
+[[base]]
+name = "glab-windows"
+path = "${GLAB_CONFIG_DIR:-${LOCALAPPDATA:-~/AppData/Local}/glab-cli}"
+systems = ["windows"]
+
+# source: https://pypi.org/project/kagglehub/
+[[base]]
+name = "kaggle"
+path = "${KAGGLE_CONFIG_DIR:-~/.kaggle}"
+
+# source: https://www.pulumi.com/docs/iac/cli/environment-variables/
+[[base]]
+name = "pulumi"
+path = "${PULUMI_HOME:-~/.pulumi}"
+
+# source: https://helm.sh/docs/helm/helm/
+[[base]]
+name = "helm-config"
+path = "${HELM_CONFIG_HOME:-${XDG_CONFIG_HOME:-~/.config}/helm}"
+systems = ["linux"]
+
+# source: https://helm.sh/docs/helm/helm/
+[[base]]
+name = "helm-config-macos"
+path = "${HELM_CONFIG_HOME:-~/Library/Preferences/helm}"
+systems = ["macos"]
+
+# source: https://helm.sh/docs/helm/helm/
+[[base]]
+name = "helm-config-windows"
+path = "${HELM_CONFIG_HOME:-${APPDATA:-~/AppData/Roaming}/helm}"
+systems = ["windows"]
+
+# source: https://goteleport.com/docs/reference/cli/tsh/
+[[base]]
+name = "teleport"
+path = "${TELEPORT_HOME:-~/.tsh}"
+
+# source: https://docs.jfrog.com/integrations/docs/jfrog-cli-environment-variables
+[[base]]
+name = "jfrog"
+path = "${JFROG_CLI_HOME_DIR:-~/.jfrog}"
+
+# source: https://raw.githubusercontent.com/lastpass/lastpass-cli/master/lpass.1.txt
+[[base]]
+name = "lastpass"
+path = "${LPASS_HOME:-~/.lpass}"
+systems = ["linux", "macos"]
+
+# source: https://bitwarden.com/help/cli/ (defaults as the list has them)
+[[base]]
+name = "bitwarden-cli"
+path = "${BITWARDENCLI_APPDATA_DIR:-${XDG_CONFIG_HOME:-~/.config}/Bitwarden CLI}"
+systems = ["linux"]
+
+# source: https://bitwarden.com/help/cli/
+[[base]]
+name = "bitwarden-cli-macos"
+path = "${BITWARDENCLI_APPDATA_DIR:-~/Library/Application Support/Bitwarden CLI}"
+systems = ["macos"]
+
+# source: https://bitwarden.com/help/cli/
+[[base]]
+name = "bitwarden-cli-windows"
+path = "${BITWARDENCLI_APPDATA_DIR:-${APPDATA:-~/AppData/Roaming}/Bitwarden CLI}"
+systems = ["windows"]
+
+# source: https://docs.min.io/community/minio-object-store/reference/minio-mc.html
+[[base]]
+name = "minio"
+path = "${MC_CONFIG_DIR:-~/.mc}"
+
+# source: https://docs.min.io/community/minio-object-store/reference/minio-mc.html (Windows default as the list has it)
+[[base]]
+name = "minio-windows"
+path = "${MC_CONFIG_DIR:-~/mc}"
+systems = ["windows"]
+
+# source code: https://raw.githubusercontent.com/IBM-Cloud/ibm-cloud-cli-sdk/master/bluemix/env.go and config_helpers/helpers.go
+[[base]]
+name = "ibmcloud-bluemix"
+path = "${IBMCLOUD_CONFIG_HOME:-${IBMCLOUD_HOME:-${BLUEMIX_HOME:-~}}/.bluemix}"
+
+# source code: as above
+[[base]]
+name = "ibmcloud-home"
+path = "${IBMCLOUD_HOME:-${BLUEMIX_HOME:-~}}"
+
+# source code: https://raw.githubusercontent.com/kubernetes/minikube/master/pkg/minikube/localpath/localpath.go
+[[base]]
+name = "minikube-moved"
+path = "${MINIKUBE_HOME}"
+
+# source code: https://raw.githubusercontent.com/kubernetes/cli-runtime/master/pkg/genericclioptions/config_flags.go
+[[base]]
+name = "kube-cache"
+path = "${KUBECACHEDIR:-~/.kube/cache}"
+
+# source: https://www.fetchmail.info/fetchmail-man.html
+[[base]]
+name = "fetchmail"
+path = "${FETCHMAILHOME}"
+
+# source: https://zsh.sourceforge.io/Doc/Release/Files.html
+[[base]]
+name = "zdotdir"
+path = "${ZDOTDIR}"
+
+# source: https://chromium.googlesource.com/chromium/src/+/HEAD/docs/user_data_dir.md
+[[base]]
+name = "chrome-config"
+path = "${CHROME_CONFIG_HOME:-${XDG_CONFIG_HOME:-~/.config}}"
+systems = ["linux"]
+
+# Secrets: the variable names a FILE, not a folder (entries use folder = "")
+# source: https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-envvars.html
+[[base]]
+name = "aws-credentials"
+path = "${AWS_SHARED_CREDENTIALS_FILE}"
+
+# source: https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-envvars.html
+[[base]]
+name = "aws-config"
+path = "${AWS_CONFIG_FILE}"
+
+# source: https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-envvars.html
+[[base]]
+name = "aws-web-identity"
+path = "${AWS_WEB_IDENTITY_TOKEN_FILE}"
+
+# source: https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-envvars.html
+[[base]]
+name = "aws-history"
+path = "${AWS_CLI_HISTORY_FILE}"
+
+# source: https://kubernetes.io/docs/concepts/configuration/organize-cluster-access-kubeconfig/
+[[base]]
+name = "kubeconfig"
+path = "${KUBECONFIG}"
+
+# source: https://docs.cloud.google.com/docs/authentication/application-default-credentials
+[[base]]
+name = "google-adc"
+path = "${GOOGLE_APPLICATION_CREDENTIALS}"
+
+# source: https://developer.hashicorp.com/terraform/cli/config/config-file
+[[base]]
+name = "terraform-cli"
+path = "${TF_CLI_CONFIG_FILE:-~/.terraformrc}"
+systems = ["linux", "macos"]
+
+# source: https://developer.hashicorp.com/terraform/cli/config/config-file
+[[base]]
+name = "terraform-cli-windows"
+path = "${TF_CLI_CONFIG_FILE:-${APPDATA:-~/AppData/Roaming}/terraform.rc}"
+systems = ["windows"]
+
+# source: https://developer.hashicorp.com/terraform/cli/config/config-file
+[[base]]
+name = "terraform-plugin-cache"
+path = "${TF_PLUGIN_CACHE_DIR}"
+
+# source: https://rclone.org/docs/ (RCLONE_ + upper-cased option); tried with `rclone config file`
+[[base]]
+name = "rclone"
+path = "${RCLONE_CONFIG:-${XDG_CONFIG_HOME:-~/.config}/rclone/rclone.conf}"
+
+# source: https://rclone.org/docs/
+[[base]]
+name = "rclone-windows"
+path = "${RCLONE_CONFIG:-${APPDATA:-~/AppData/Roaming}/rclone/rclone.conf}"
+systems = ["windows"]
+
+# source: https://getsops.io/docs/usage/identities/age/
+# additive: source code https://raw.githubusercontent.com/getsops/sops/main/age/keysource.go
+[[base]]
+name = "sops-age"
+path = "${SOPS_AGE_KEY_FILE}"
+
+# source: https://helm.sh/docs/helm/helm/
+[[base]]
+name = "helm-registry"
+path = "${HELM_REGISTRY_CONFIG}"
+
+# source: https://helm.sh/docs/helm/helm/
+[[base]]
+name = "helm-repositories"
+path = "${HELM_REPOSITORY_CONFIG}"
+
+# source: https://docs.podman.io/en/latest/markdown/podman-login.1.html
+[[base]]
+name = "registry-auth"
+path = "${REGISTRY_AUTH_FILE}"
+
+# source: https://www.postgresql.org/docs/current/libpq-pgpass.html
+[[base]]
+name = "pgpass"
+path = "${PGPASSFILE:-~/.pgpass}"
+systems = ["linux", "macos"]
+
+# source: https://www.postgresql.org/docs/current/libpq-pgpass.html
+[[base]]
+name = "pgpass-windows"
+path = "${PGPASSFILE:-${APPDATA:-~/AppData/Roaming}/postgresql/pgpass.conf}"
+systems = ["windows"]
+
+# source: https://www.postgresql.org/docs/current/libpq-envars.html
+[[base]]
+name = "pg-service"
+path = "${PGSERVICEFILE:-~/.pg_service.conf}"
+
+# source: https://www.postgresql.org/docs/current/libpq-envars.html
+[[base]]
+name = "pg-service-windows"
+path = "${PGSERVICEFILE:-${APPDATA:-~/AppData/Roaming}/postgresql/.pg_service.conf}"
+systems = ["windows"]
+
+# source: https://dev.mysql.com/doc/refman/8.4/en/environment-variables.html
+[[base]]
+name = "mysql-login"
+path = "${MYSQL_TEST_LOGIN_FILE}"
+
+# source: https://dev.mysql.com/doc/refman/8.4/en/environment-variables.html (Windows default as the list has it)
+[[base]]
+name = "mysql-login-windows"
+path = "${MYSQL_TEST_LOGIN_FILE:-${APPDATA:-~/AppData/Roaming}/MySQL/.mylogin.cnf}"
+systems = ["windows"]
+
+# source: https://github.com/hetznercloud/cli/blob/main/docs/reference/manual/hcloud.md and https://github.com/hetznercloud/cli/issues/762
+[[base]]
+name = "hcloud"
+path = "${HCLOUD_CONFIG:-~/.config/hcloud/cli.toml}"
+systems = ["linux", "macos"]
+
+# source: as above (Windows default as the list has it)
+[[base]]
+name = "hcloud-windows"
+path = "${HCLOUD_CONFIG:-${APPDATA:-~/AppData/Roaming}/hcloud/cli.toml}"
+systems = ["windows"]
+
+# source: https://github.com/scaleway/scaleway-sdk-go/blob/master/scw/README.md
+[[base]]
+name = "scaleway"
+path = "${SCW_CONFIG_PATH:-${XDG_CONFIG_HOME:-~/.config}/scw/config.yaml}"
+
+# source: https://docs.databricks.com/aws/en/dev-tools/auth/env-vars
+[[base]]
+name = "databricks"
+path = "${DATABRICKS_CONFIG_FILE:-~/.databrickscfg}"
+
+# source: https://docs.cloud.google.com/storage/docs/boto-gsutil
+[[base]]
+name = "boto"
+path = "${BOTO_CONFIG:-~/.boto}"
+
+# source code: https://raw.githubusercontent.com/s3tools/s3cmd/master/s3cmd
+[[base]]
+name = "s3cmd"
+path = "${S3CMD_CONFIG:-~/.s3cfg}"
+
+# source code: as above
+[[base]]
+name = "s3cmd-windows"
+path = "${S3CMD_CONFIG:-${APPDATA:-~/AppData/Roaming}/s3cmd.ini}"
+systems = ["windows"]
+
+# source: https://docs.oracle.com/en-us/iaas/Content/API/SDKDocs/clienvironmentvariables.htm
+[[base]]
+name = "oci-config"
+path = "${OCI_CLI_CONFIG_FILE}"
+
+# source: https://docs.openstack.org/openstacksdk/latest/user/config/configuration.html
+[[base]]
+name = "openstack-clouds"
+path = "${OS_CLIENT_CONFIG_FILE}"
+
+# source: https://docs.openstack.org/openstacksdk/latest/user/config/configuration.html
+[[base]]
+name = "openstack-secure"
+path = "${OS_CLIENT_SECURE_FILE}"
+
+# source: https://everything.curl.dev/usingcurl/netrc.html and https://pkg.go.dev/cmd/go (GOAUTH netrc)
+[[base]]
+name = "netrc"
+path = "${NETRC}"
+
+# source: https://xorg.freedesktop.org/archive/current/doc/man/man1/xauth.1.xhtml
+[[base]]
+name = "xauthority"
+path = "${XAUTHORITY}"
+
+# Secrets: histories (the variable names a file; defaults are matched by ~/.*history or a listed entry)
+# source: https://www.gnu.org/software/bash/manual/html_node/Bash-Variables.html
+[[base]]
+name = "histfile"
+path = "${HISTFILE}"
+
+# source: https://man7.org/linux/man-pages/man1/less.1.html
+[[base]]
+name = "lesshistfile"
+path = "${LESSHISTFILE}"
+
+# source: https://docs.python.org/3/using/cmdline.html
+[[base]]
+name = "python-history"
+path = "${PYTHON_HISTORY}"
+
+# source: https://nodejs.org/api/repl.html
+[[base]]
+name = "node-history"
+path = "${NODE_REPL_HISTORY}"
+
+# source: https://www.postgresql.org/docs/current/app-psql.html
+[[base]]
+name = "psql-history"
+path = "${PSQL_HISTORY}"
+
+# source: https://dev.mysql.com/doc/refman/8.4/en/environment-variables.html
+[[base]]
+name = "mysql-history"
+path = "${MYSQL_HISTFILE}"
+
+# source: https://redis.io/docs/latest/develop/tools/cli/
+[[base]]
+name = "redis-history"
+path = "${REDISCLI_HISTFILE}"
+
+# source: https://stat.ethz.ch/R-manual/R-devel/library/utils/html/savehistory.html
+[[base]]
+name = "r-history"
+path = "${R_HISTFILE}"
+
+# Windows
+# source: https://learn.microsoft.com/en-us/windows-server/storage/folder-redirection/folder-redirection-using-group-policy
+[[base]]
+name = "appdata"
+path = "${APPDATA:-~/AppData/Roaming}"
+systems = ["windows"]
+
+[[category]]
+id = "secrets"
+name = "Secrets"
+searches = false
+agents = true
+index = true
+
+[[entry]]
+id = "keys.ssh"
+category = "secrets"
+what = "SSH: keys and known hosts"
+pattern = "~/.ssh"
+
+[[entry]]
+id = "keys.gnupg"
+category = "secrets"
+what = "GnuPG: keys and the trust database"
+under = "gnupg"
+pattern = ""
+
+[[entry]]
+id = "keys.password-store"
+category = "secrets"
+what = "pass: the password store"
+under = "password-store"
+pattern = ""
+
+[[entry]]
+id = "keys.gnome-keyring"
+category = "secrets"
+what = "GNOME Keyring: the desktop's keyrings"
+under = "data"
+pattern = "keyrings"
+systems = ["linux"]
+
+[[entry]]
+id = "keys.kwallet"
+category = "secrets"
+what = "KWallet: KDE's wallets"
+under = "data"
+pattern = "kwalletd"
+systems = ["linux"]
+
+[[entry]]
+id = "keys.keychains"
+category = "secrets"
+what = "Keychain: the Mac's keychains"
+pattern = "~/Library/Keychains"
+systems = ["macos"]
+
+# The Credential Manager's vaults, and the keys that protect them.
+[[entry]]
+id = "keys.credentials-roaming"
+category = "secrets"
+what = "Credential Manager: credentials that roam"
+under = "appdata"
+pattern = "Microsoft/Credentials"
+systems = ["windows"]
+
+[[entry]]
+id = "keys.credentials-local"
+category = "secrets"
+what = "Credential Manager: this computer's credentials"
+pattern = "~/AppData/Local/Microsoft/Credentials"
+systems = ["windows"]
+
+[[entry]]
+id = "keys.vault"
+category = "secrets"
+what = "Credential Manager: the vaults"
+pattern = "~/AppData/Local/Microsoft/Vault"
+systems = ["windows"]
+
+[[entry]]
+id = "keys.protect"
+category = "secrets"
+what = "DPAPI: the keys that protect credentials"
+under = "appdata"
+pattern = "Microsoft/Protect"
+systems = ["windows"]
+
+[[entry]]
+id = "keys.pki"
+category = "secrets"
+what = "NSS: certificates and their keys"
+pattern = "~/.pki"
+
+[[entry]]
+id = "keys.aws"
+category = "secrets"
+what = "AWS CLI: credentials and settings"
+pattern = "~/.aws"
+
+[[entry]]
+id = "keys.kube"
+category = "secrets"
+what = "kubectl: clusters and their credentials"
+pattern = "~/.kube"
+
+[[entry]]
+id = "keys.docker"
+category = "secrets"
+what = "Docker: logins to image registries"
+under = "docker"
+pattern = ""
+
+# A file, kept from agents as a folder is.
+[[entry]]
+id = "keys.netrc"
+category = "secrets"
+what = "netrc: logins to FTP and HTTP servers"
+pattern = "~/.netrc"
+names = "files"
+
+[[entry]]
+id = "secrets.marked-private"
+category = "secrets"
+what = "A folder you mark private with a .private file"
+holding = ".private"
+
+# Folders a tool's store is told by, wherever it was moved or copied (a
+# GNUPGHOME elsewhere, a backup of ~/.gnupg on a drive): the file each
+# always holds.
+
+[[entry]]
+id = "found.gnupg-trustdb"
+category = "secrets"
+group = "Found by what they hold"
+what = "GnuPG: a keyring, wherever it is (its trustdb.gpg)"
+holding = "trustdb.gpg"
+
+[[entry]]
+id = "found.gnupg-keybox"
+category = "secrets"
+group = "Found by what they hold"
+what = "GnuPG: a keyring, wherever it is (its pubring.kbx)"
+holding = "pubring.kbx"
+
+[[entry]]
+id = "found.pass-store"
+category = "secrets"
+group = "Found by what they hold"
+what = "pass, gopass: a password store, wherever it is (its .gpg-id)"
+holding = ".gpg-id"
+
+[[entry]]
+id = "found.nss-keys"
+category = "secrets"
+group = "Found by what they hold"
+what = "Firefox, Thunderbird and NSS: a profile's saved passwords and keys, wherever it is (its key4.db)"
+holding = "key4.db"
+
+[[entry]]
+id = "found.chromium-profile"
+category = "secrets"
+group = "Found by what they hold"
+what = "Chromium's browsers: a profile's saved passwords, wherever it is (its Login Data)"
+holding = "Login Data"
+
+# Stores of certificates and the keys that go with them, where a tool
+# keeps them: exact paths, so nothing else is caught.
+
+[[entry]]
+id = "keys.dotnet-x509"
+category = "secrets"
+group = "Certificate stores"
+what = ".NET: certificates and their private keys"
+pattern = "~/.dotnet/corefx/cryptography/x509stores"
+systems = ["linux"]
+
+[[entry]]
+id = "keys.java-keystore"
+category = "secrets"
+group = "Certificate stores"
+what = "Java keytool: the default keystore"
+
+# A file, which a private path holds as it holds a folder.
+pattern = "~/.keystore"
+names = "files"
+
+# Tools' sign-ins and tokens, where each keeps them.
+
+[[entry]]
+id = "creds.git"
+category = "secrets"
+group = "Tools' credentials"
+what = "Git: passwords and tokens it stores"
+pattern = "~/.git-credentials"
+names = "files"
+
+[[entry]]
+id = "creds.git-xdg"
+category = "secrets"
+group = "Tools' credentials"
+what = "Git: passwords and tokens it stores"
+under = "config"
+pattern = "git/credentials"
+names = "files"
+
+[[entry]]
+id = "creds.gh"
+category = "secrets"
+group = "Tools' credentials"
+what = "GitHub CLI: its sign-in token"
+under = "gh"
+pattern = "hosts.yml"
+names = "files"
+
+[[entry]]
+id = "creds.cargo"
+category = "secrets"
+group = "Tools' credentials"
+what = "Cargo: registry tokens"
+under = "cargo"
+pattern = "credentials.toml"
+names = "files"
+
+[[entry]]
+id = "creds.cargo-old"
+category = "secrets"
+group = "Tools' credentials"
+what = "Cargo: registry tokens (older name)"
+under = "cargo"
+pattern = "credentials"
+names = "files"
+
+[[entry]]
+id = "creds.npmrc"
+category = "secrets"
+group = "Tools' credentials"
+what = "npm: registry tokens"
+under = "npm-userconfig"
+pattern = ""
+names = "files"
+
+[[entry]]
+id = "creds.pypirc"
+category = "secrets"
+group = "Tools' credentials"
+what = "PyPI uploads: passwords and tokens"
+pattern = "~/.pypirc"
+names = "files"
+
+[[entry]]
+id = "creds.gcloud"
+category = "secrets"
+group = "Tools' credentials"
+what = "Google Cloud CLI: credentials and tokens"
+under = "gcloud"
+pattern = ""
+
+[[entry]]
+id = "creds.azure"
+category = "secrets"
+group = "Tools' credentials"
+what = "Azure CLI: tokens"
+under = "azure"
+pattern = ""
+
+[[entry]]
+id = "creds.vault"
+category = "secrets"
+group = "Tools' credentials"
+what = "HashiCorp Vault: its token"
+pattern = "~/.vault-token"
+names = "files"
+
+[[entry]]
+id = "creds.terraform"
+category = "secrets"
+group = "Tools' credentials"
+what = "Terraform: registry and cloud tokens"
+pattern = "~/.terraform.d/credentials.tfrc.json"
+names = "files"
+
+[[entry]]
+id = "creds.rclone"
+category = "secrets"
+group = "Tools' credentials"
+what = "rclone: remotes and their passwords"
+under = "rclone"
+pattern = ""
+names = "files"
+
+# Where Windows keeps what the three entries above find under ~/.config.
+[[entry]]
+id = "creds.gh-windows"
+category = "secrets"
+group = "Tools' credentials"
+what = "GitHub CLI: its sign-in token"
+under = "gh-windows"
+pattern = "hosts.yml"
+names = "files"
+systems = ["windows"]
+
+[[entry]]
+id = "creds.gcloud-windows"
+category = "secrets"
+group = "Tools' credentials"
+what = "Google Cloud CLI: credentials and tokens"
+under = "gcloud-windows"
+pattern = ""
+systems = ["windows"]
+
+[[entry]]
+id = "creds.rclone-windows"
+category = "secrets"
+group = "Tools' credentials"
+what = "rclone: remotes and their passwords"
+under = "rclone-windows"
+pattern = ""
+names = "files"
+systems = ["windows"]
+
+# Cloud and platform CLIs' sign-ins.
+[[entry]]
+id = "creds.doctl"
+category = "secrets"
+group = "Tools' credentials"
+what = "DigitalOcean CLI: its token"
+under = "config"
+pattern = "doctl/config.yaml"
+names = "files"
+systems = ["linux"]
+
+[[entry]]
+id = "creds.doctl-macos"
+category = "secrets"
+group = "Tools' credentials"
+what = "DigitalOcean CLI: its token"
+pattern = "~/Library/Application Support/doctl/config.yaml"
+names = "files"
+systems = ["macos"]
+
+[[entry]]
+id = "creds.doctl-windows"
+category = "secrets"
+group = "Tools' credentials"
+what = "DigitalOcean CLI: its token"
+under = "appdata"
+pattern = "doctl/config.yaml"
+names = "files"
+systems = ["windows"]
+
+[[entry]]
+id = "creds.fly"
+category = "secrets"
+group = "Tools' credentials"
+what = "Fly.io CLI: its sign-in token"
+pattern = "~/.fly/config.yml"
+names = "files"
+
+[[entry]]
+id = "creds.vercel"
+category = "secrets"
+group = "Tools' credentials"
+what = "Vercel CLI: its sign-in token"
+under = "data"
+pattern = "com.vercel.cli/auth.json"
+names = "files"
+systems = ["linux"]
+
+[[entry]]
+id = "creds.vercel-macos"
+category = "secrets"
+group = "Tools' credentials"
+what = "Vercel CLI: its sign-in token"
+pattern = "~/Library/Application Support/com.vercel.cli/auth.json"
+names = "files"
+systems = ["macos"]
+
+[[entry]]
+id = "creds.vercel-windows"
+category = "secrets"
+group = "Tools' credentials"
+what = "Vercel CLI: its sign-in token"
+under = "appdata"
+pattern = "xdg.data/com.vercel.cli/auth.json"
+names = "files"
+systems = ["windows"]
+
+[[entry]]
+id = "creds.netlify"
+category = "secrets"
+group = "Tools' credentials"
+what = "Netlify CLI: its sign-in token"
+under = "config"
+pattern = "netlify/config.json"
+names = "files"
+systems = ["linux"]
+
+[[entry]]
+id = "creds.netlify-macos"
+category = "secrets"
+group = "Tools' credentials"
+what = "Netlify CLI: its sign-in token"
+pattern = "~/Library/Preferences/netlify/config.json"
+names = "files"
+systems = ["macos"]
+
+[[entry]]
+id = "creds.netlify-windows"
+category = "secrets"
+group = "Tools' credentials"
+what = "Netlify CLI: its sign-in token"
+under = "appdata"
+pattern = "netlify/Config/config.json"
+names = "files"
+systems = ["windows"]
+
+[[entry]]
+id = "creds.railway"
+category = "secrets"
+group = "Tools' credentials"
+what = "Railway CLI: its sign-in tokens"
+pattern = "~/.railway"
+
+[[entry]]
+id = "creds.wrangler"
+category = "secrets"
+group = "Tools' credentials"
+what = "Cloudflare Wrangler: its OAuth tokens"
+under = "config"
+pattern = ".wrangler/config"
+systems = ["linux"]
+
+[[entry]]
+id = "creds.wrangler-legacy"
+category = "secrets"
+group = "Tools' credentials"
+what = "Cloudflare Wrangler: its OAuth tokens (older place)"
+pattern = "~/.wrangler/config"
+
+# unverified: xdg-app-paths' macOS config folder, as Vercel's documented
+# data folder
+[[entry]]
+id = "creds.wrangler-macos"
+category = "secrets"
+group = "Tools' credentials"
+what = "Cloudflare Wrangler: its OAuth tokens"
+pattern = "~/Library/Preferences/.wrangler/config"
+systems = ["macos"]
+
+# unverified: xdg-app-paths' Windows config folder (Vercel's data one is
+# xdg.data)
+[[entry]]
+id = "creds.wrangler-windows"
+category = "secrets"
+group = "Tools' credentials"
+what = "Cloudflare Wrangler: its OAuth tokens"
+under = "appdata"
+pattern = "xdg.config/.wrangler/config"
+systems = ["windows"]
+
+[[entry]]
+id = "creds.cloudflared"
+category = "secrets"
+group = "Tools' credentials"
+what = "cloudflared: account certificate and tunnel keys"
+pattern = "~/.cloudflared"
+
+[[entry]]
+id = "creds.supabase"
+category = "secrets"
+group = "Tools' credentials"
+what = "Supabase CLI: its token, where no keychain holds it"
+pattern = "~/.supabase/access-token"
+names = "files"
+
+# configstore writes ~/.config/configstore on every system; only Node CLIs
+# write there.
+[[entry]]
+id = "creds.configstore"
+category = "secrets"
+group = "Tools' credentials"
+what = "Node CLIs' configstore: Firebase's sign-in and others"
+under = "config"
+pattern = "configstore"
+
+[[entry]]
+id = "creds.oci"
+category = "secrets"
+group = "Tools' credentials"
+what = "Oracle Cloud CLI: its API keys and settings"
+pattern = "~/.oci"
+
+[[entry]]
+id = "creds.ibmcloud"
+category = "secrets"
+group = "Tools' credentials"
+what = "IBM Cloud CLI: its session tokens"
+under = "ibmcloud-bluemix"
+pattern = ""
+
+[[entry]]
+id = "creds.aliyun"
+category = "secrets"
+group = "Tools' credentials"
+what = "Alibaba Cloud CLI: access keys"
+pattern = "~/.aliyun"
+
+[[entry]]
+id = "creds.linode"
+category = "secrets"
+group = "Tools' credentials"
+what = "Linode CLI: its tokens"
+under = "config"
+pattern = "linode-cli"
+
+[[entry]]
+id = "creds.hcloud"
+category = "secrets"
+group = "Tools' credentials"
+what = "Hetzner Cloud CLI: its tokens"
+under = "hcloud"
+pattern = ""
+names = "files"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "creds.hcloud-windows"
+category = "secrets"
+group = "Tools' credentials"
+what = "Hetzner Cloud CLI: its tokens"
+under = "hcloud-windows"
+pattern = ""
+names = "files"
+systems = ["windows"]
+
+[[entry]]
+id = "creds.scaleway"
+category = "secrets"
+group = "Tools' credentials"
+what = "Scaleway CLI: access and secret keys"
+under = "scaleway"
+pattern = ""
+names = "files"
+
+[[entry]]
+id = "creds.openstack"
+category = "secrets"
+group = "Tools' credentials"
+what = "OpenStack: clouds.yaml and secure.yaml passwords"
+under = "config"
+pattern = "openstack"
+systems = ["linux"]
+
+[[entry]]
+id = "creds.openstack-macos"
+category = "secrets"
+group = "Tools' credentials"
+what = "OpenStack: clouds.yaml and secure.yaml passwords"
+pattern = "~/Library/Application Support/openstack"
+systems = ["macos"]
+
+# unverified: appdirs' user_config_dir("openstack", "OpenStack")
+[[entry]]
+id = "creds.openstack-windows"
+category = "secrets"
+group = "Tools' credentials"
+what = "OpenStack: clouds.yaml and secure.yaml passwords"
+pattern = "~/AppData/Local/OpenStack/openstack"
+systems = ["windows"]
+
+[[entry]]
+id = "creds.pulumi"
+category = "secrets"
+group = "Tools' credentials"
+what = "Pulumi: its access tokens"
+under = "pulumi"
+pattern = "credentials.json"
+names = "files"
+
+[[entry]]
+id = "creds.snowflake"
+category = "secrets"
+group = "Tools' credentials"
+what = "Snowflake CLI: connections and their passwords"
+pattern = "~/.snowflake"
+
+[[entry]]
+id = "creds.snowflake-xdg"
+category = "secrets"
+group = "Tools' credentials"
+what = "Snowflake CLI: connections and their passwords"
+under = "config"
+pattern = "snowflake"
+systems = ["linux"]
+
+[[entry]]
+id = "creds.snowflake-macos"
+category = "secrets"
+group = "Tools' credentials"
+what = "Snowflake CLI: connections and their passwords"
+pattern = "~/Library/Application Support/snowflake"
+systems = ["macos"]
+
+# unverified
+[[entry]]
+id = "creds.snowflake-windows"
+category = "secrets"
+group = "Tools' credentials"
+what = "Snowflake CLI: connections and their passwords"
+pattern = "~/AppData/Local/snowflake"
+systems = ["windows"]
+
+[[entry]]
+id = "creds.snowsql"
+category = "secrets"
+group = "Tools' credentials"
+what = "SnowSQL: connections and their passwords"
+pattern = "~/.snowsql/config"
+names = "files"
+
+[[entry]]
+id = "creds.databricks"
+category = "secrets"
+group = "Tools' credentials"
+what = "Databricks: its access tokens"
+under = "databricks"
+pattern = ""
+names = "files"
+
+[[entry]]
+id = "creds.s3cmd"
+category = "secrets"
+group = "Tools' credentials"
+what = "s3cmd: S3 access and secret keys"
+under = "s3cmd"
+pattern = ""
+names = "files"
+
+# unverified location of s3cmd's Windows file
+[[entry]]
+id = "creds.s3cmd-windows"
+category = "secrets"
+group = "Tools' credentials"
+what = "s3cmd: S3 access and secret keys"
+under = "s3cmd-windows"
+pattern = ""
+names = "files"
+systems = ["windows"]
+
+[[entry]]
+id = "creds.boto"
+category = "secrets"
+group = "Tools' credentials"
+what = "gsutil and boto: keys and OAuth tokens"
+under = "boto"
+pattern = ""
+names = "files"
+
+[[entry]]
+id = "creds.minio"
+category = "secrets"
+group = "Tools' credentials"
+what = "MinIO client: S3 access and secret keys"
+under = "minio"
+pattern = "config.json"
+names = "files"
+
+[[entry]]
+id = "creds.minio-windows"
+category = "secrets"
+group = "Tools' credentials"
+what = "MinIO client: S3 access and secret keys"
+under = "minio-windows"
+pattern = "config.json"
+names = "files"
+systems = ["windows"]
+
+[[entry]]
+id = "creds.ngrok"
+category = "secrets"
+group = "Tools' credentials"
+what = "ngrok: its authtoken"
+under = "config"
+pattern = "ngrok/ngrok.yml"
+names = "files"
+systems = ["linux"]
+
+[[entry]]
+id = "creds.ngrok-macos"
+category = "secrets"
+group = "Tools' credentials"
+what = "ngrok: its authtoken"
+pattern = "~/Library/Application Support/ngrok/ngrok.yml"
+names = "files"
+systems = ["macos"]
+
+[[entry]]
+id = "creds.ngrok-windows"
+category = "secrets"
+group = "Tools' credentials"
+what = "ngrok: its authtoken"
+pattern = "~/AppData/Local/ngrok/ngrok.yml"
+names = "files"
+systems = ["windows"]
+
+[[entry]]
+id = "creds.ngrok-legacy"
+category = "secrets"
+group = "Tools' credentials"
+what = "ngrok: its authtoken (older place)"
+pattern = "~/.ngrok2/ngrok.yml"
+names = "files"
+
+[[entry]]
+id = "creds.stripe"
+category = "secrets"
+group = "Tools' credentials"
+what = "Stripe CLI: its API keys"
+under = "config"
+pattern = "stripe/config.toml"
+names = "files"
+
+[[entry]]
+id = "creds.sentry"
+category = "secrets"
+group = "Tools' credentials"
+what = "Sentry CLI: its auth token"
+pattern = "~/.sentryclirc"
+names = "files"
+
+[[entry]]
+id = "creds.terraformrc"
+category = "secrets"
+group = "Tools' credentials"
+what = "Terraform: tokens in its CLI configuration"
+under = "terraform-cli"
+pattern = ""
+names = "files"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "creds.terraformrc-windows"
+category = "secrets"
+group = "Tools' credentials"
+what = "Terraform: tokens in its CLI configuration"
+under = "terraform-cli-windows"
+pattern = ""
+names = "files"
+systems = ["windows"]
+
+# Fills the gap in creds.terraform on Windows.
+[[entry]]
+id = "creds.terraform-windows"
+category = "secrets"
+group = "Tools' credentials"
+what = "Terraform: registry and cloud tokens"
+under = "appdata"
+pattern = "terraform.d/credentials.tfrc.json"
+names = "files"
+systems = ["windows"]
+
+[[entry]]
+id = "creds.kaggle"
+category = "secrets"
+group = "Tools' credentials"
+what = "Kaggle: its API key"
+under = "kaggle"
+pattern = ""
+
+[[entry]]
+id = "creds.kaggle-xdg"
+category = "secrets"
+group = "Tools' credentials"
+what = "Kaggle: its API key"
+under = "config"
+pattern = "kaggle/kaggle.json"
+names = "files"
+
+# Package registries' and developer tools' tokens.
+
+[[entry]]
+id = "creds.containers"
+category = "secrets"
+group = "Tools' credentials"
+what = "Podman, Buildah, Skopeo: registry logins"
+under = "config"
+pattern = "containers/auth.json"
+names = "files"
+
+# Podman's default on Linux, for as long as the session lasts.
+[[entry]]
+id = "creds.containers-runtime"
+category = "secrets"
+group = "Tools' credentials"
+what = "Podman, Buildah, Skopeo: registry logins"
+under = "runtime"
+pattern = "containers/auth.json"
+names = "files"
+systems = ["linux"]
+
+[[entry]]
+id = "creds.helm"
+category = "secrets"
+group = "Tools' credentials"
+what = "Helm: registry logins and repository passwords"
+under = "helm-config"
+pattern = ""
+systems = ["linux"]
+
+[[entry]]
+id = "creds.helm-macos"
+category = "secrets"
+group = "Tools' credentials"
+what = "Helm: registry logins and repository passwords"
+under = "helm-config-macos"
+pattern = ""
+systems = ["macos"]
+
+[[entry]]
+id = "creds.helm-windows"
+category = "secrets"
+group = "Tools' credentials"
+what = "Helm: registry logins and repository passwords"
+under = "helm-config-windows"
+pattern = ""
+systems = ["windows"]
+
+[[entry]]
+id = "creds.minikube"
+category = "secrets"
+group = "Tools' credentials"
+what = "minikube: cluster keys and certificates"
+pattern = "~/.minikube"
+
+[[entry]]
+id = "creds.teleport"
+category = "secrets"
+group = "Tools' credentials"
+what = "Teleport: its keys and certificates"
+under = "teleport"
+pattern = ""
+
+[[entry]]
+id = "creds.vagrant"
+category = "secrets"
+group = "Tools' credentials"
+what = "Vagrant Cloud: its token"
+under = "vagrant"
+pattern = "data/vagrant_login_token"
+names = "files"
+
+[[entry]]
+id = "creds.composer"
+category = "secrets"
+group = "Tools' credentials"
+what = "Composer: tokens for private packages"
+under = "composer-xdg"
+pattern = "auth.json"
+names = "files"
+systems = ["linux"]
+
+[[entry]]
+id = "creds.composer-home"
+category = "secrets"
+group = "Tools' credentials"
+what = "Composer: tokens for private packages"
+under = "composer"
+pattern = "auth.json"
+names = "files"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "creds.composer-windows"
+category = "secrets"
+group = "Tools' credentials"
+what = "Composer: tokens for private packages"
+under = "composer-windows"
+pattern = "auth.json"
+names = "files"
+systems = ["windows"]
+
+# The user's file only: a project's gradle.properties is committed and
+# stays readable.
+[[entry]]
+id = "creds.gradle"
+category = "secrets"
+group = "Tools' credentials"
+what = "Gradle: repository and signing passwords"
+under = "gradle"
+pattern = "gradle.properties"
+names = "files"
+
+[[entry]]
+id = "creds.maven"
+category = "secrets"
+group = "Tools' credentials"
+what = "Maven: server passwords and the master key"
+pattern = "~/.m2/settings*.xml"
+names = "files"
+
+[[entry]]
+id = "creds.nuget"
+category = "secrets"
+group = "Tools' credentials"
+what = "NuGet: feed passwords and API keys"
+under = "dotnet-cli-home"
+pattern = ".nuget/NuGet"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "creds.nuget-xdg"
+category = "secrets"
+group = "Tools' credentials"
+what = "NuGet: feed passwords and API keys"
+under = "config"
+pattern = "NuGet"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "creds.nuget-windows"
+category = "secrets"
+group = "Tools' credentials"
+what = "NuGet: feed passwords and API keys"
+under = "appdata"
+pattern = "NuGet"
+systems = ["windows"]
+
+[[entry]]
+id = "creds.rubygems"
+category = "secrets"
+group = "Tools' credentials"
+what = "RubyGems: API keys for gem push"
+pattern = "~/.gem/credentials"
+names = "files"
+
+[[entry]]
+id = "creds.rubygems-xdg"
+category = "secrets"
+group = "Tools' credentials"
+what = "RubyGems: API keys for gem push"
+under = "data"
+pattern = "gem/credentials"
+names = "files"
+
+# unverified file name (Hex's source)
+[[entry]]
+id = "creds.hex"
+category = "secrets"
+group = "Tools' credentials"
+what = "Hex: its API key"
+under = "hex"
+pattern = "hex.config"
+names = "files"
+
+[[entry]]
+id = "creds.hex-xdg"
+category = "secrets"
+group = "Tools' credentials"
+what = "Hex: its API key"
+under = "config"
+pattern = "hex/hex.config"
+names = "files"
+
+[[entry]]
+id = "creds.dart"
+category = "secrets"
+group = "Tools' credentials"
+what = "Dart pub: publishing and registry tokens"
+under = "config"
+pattern = "dart/pub-{credentials,tokens}.json"
+names = "files"
+
+[[entry]]
+id = "creds.dart-macos"
+category = "secrets"
+group = "Tools' credentials"
+what = "Dart pub: publishing and registry tokens"
+pattern = "~/Library/Application Support/dart/pub-{credentials,tokens}.json"
+names = "files"
+systems = ["macos"]
+
+[[entry]]
+id = "creds.dart-windows"
+category = "secrets"
+group = "Tools' credentials"
+what = "Dart pub: publishing and registry tokens"
+under = "appdata"
+pattern = "dart/pub-{credentials,tokens}.json"
+names = "files"
+systems = ["windows"]
+
+[[entry]]
+id = "creds.dart-legacy"
+category = "secrets"
+group = "Tools' credentials"
+what = "Dart pub: publishing tokens (before Dart 2.15)"
+under = "pub-cache"
+pattern = "credentials.json"
+names = "files"
+
+[[entry]]
+id = "creds.poetry"
+category = "secrets"
+group = "Tools' credentials"
+what = "Poetry: repository passwords, where no keyring is"
+under = "poetry-config"
+pattern = "auth.toml"
+names = "files"
+systems = ["linux"]
+
+# unverified: platformdirs' macOS and Windows folders for Poetry
+[[entry]]
+id = "creds.poetry-macos"
+category = "secrets"
+group = "Tools' credentials"
+what = "Poetry: repository passwords, where no keyring is"
+under = "poetry-config-macos"
+pattern = "auth.toml"
+names = "files"
+systems = ["macos"]
+
+[[entry]]
+id = "creds.poetry-windows"
+category = "secrets"
+group = "Tools' credentials"
+what = "Poetry: repository passwords, where no keyring is"
+under = "poetry-config-windows"
+pattern = "auth.toml"
+names = "files"
+systems = ["windows"]
+
+[[entry]]
+id = "creds.uv"
+category = "secrets"
+group = "Tools' credentials"
+what = "uv: package index passwords"
+under = "uv-credentials"
+pattern = ""
+systems = ["linux", "macos"]
+
+# unverified
+[[entry]]
+id = "creds.uv-windows"
+category = "secrets"
+group = "Tools' credentials"
+what = "uv: package index passwords"
+under = "uv-credentials-windows"
+pattern = ""
+systems = ["windows"]
+
+[[entry]]
+id = "creds.yarn"
+category = "secrets"
+group = "Tools' credentials"
+what = "Yarn: registry tokens"
+pattern = "~/.yarnrc.yml"
+names = "files"
+
+# The legacy path is checked first on every system.
+[[entry]]
+id = "creds.glab"
+category = "secrets"
+group = "Tools' credentials"
+what = "GitLab CLI: its tokens"
+under = "glab"
+pattern = "config.yml"
+names = "files"
+
+[[entry]]
+id = "creds.glab-macos"
+category = "secrets"
+group = "Tools' credentials"
+what = "GitLab CLI: its tokens"
+under = "glab-macos"
+pattern = "config.yml"
+names = "files"
+systems = ["macos"]
+
+[[entry]]
+id = "creds.glab-windows"
+category = "secrets"
+group = "Tools' credentials"
+what = "GitLab CLI: its tokens"
+under = "glab-windows"
+pattern = "config.yml"
+names = "files"
+systems = ["windows"]
+
+# unverified
+[[entry]]
+id = "creds.jfrog"
+category = "secrets"
+group = "Tools' credentials"
+what = "JFrog CLI: server tokens and passwords"
+under = "jfrog"
+pattern = ""
+
+# An app database, no user document: Cursor keeps its tokens there in clear,
+# VS Code its secret:// items where no keyring is.
+[[entry]]
+id = "creds.vscode-state"
+category = "secrets"
+group = "Tools' credentials"
+what = "VS Code, Cursor…: sign-ins in their state database"
+under = "config"
+pattern = "{Code,VSCodium,Cursor,Windsurf}/User/globalStorage/state.vscdb*"
+names = "files"
+systems = ["linux"]
+
+[[entry]]
+id = "creds.vscode-state-macos"
+category = "secrets"
+group = "Tools' credentials"
+what = "VS Code, Cursor…: sign-ins in their state database"
+pattern = "~/Library/Application Support/{Code,VSCodium,Cursor,Windsurf}/User/globalStorage/state.vscdb*"
+names = "files"
+systems = ["macos"]
+
+[[entry]]
+id = "creds.vscode-state-windows"
+category = "secrets"
+group = "Tools' credentials"
+what = "VS Code, Cursor…: sign-ins in their state database"
+under = "appdata"
+pattern = "{Code,VSCodium,Cursor,Windsurf}/User/globalStorage/state.vscdb*"
+names = "files"
+systems = ["windows"]
+
+# AI tools' sign-ins and keys.
+
+# On macOS Claude Code keeps them in the Keychain.
+[[entry]]
+id = "creds.claude-code"
+category = "secrets"
+group = "Tools' credentials"
+what = "Claude Code: its sign-in tokens"
+under = "claude"
+pattern = ".credentials.json"
+names = "files"
+systems = ["linux", "windows"]
+
+# A file people edit by hand, but its MCP servers' env often holds keys.
+[[entry]]
+id = "creds.claude-desktop-macos"
+category = "secrets"
+group = "Tools' credentials"
+what = "Claude Desktop: MCP servers' keys in its settings"
+pattern = "~/Library/Application Support/Claude/claude_desktop_config.json"
+names = "files"
+systems = ["macos"]
+
+[[entry]]
+id = "creds.claude-desktop-windows"
+category = "secrets"
+group = "Tools' credentials"
+what = "Claude Desktop: MCP servers' keys in its settings"
+under = "appdata"
+pattern = "Claude/claude_desktop_config.json"
+names = "files"
+systems = ["windows"]
+
+[[entry]]
+id = "creds.codex"
+category = "secrets"
+group = "Tools' credentials"
+what = "Codex CLI: its tokens or API key"
+under = "codex"
+pattern = "{auth,.credentials}.json"
+names = "files"
+
+[[entry]]
+id = "creds.gemini"
+category = "secrets"
+group = "Tools' credentials"
+what = "Gemini CLI: its OAuth tokens"
+under = "gemini-home"
+pattern = ".gemini/{oauth_creds,mcp-oauth-tokens*}.json"
+names = "files"
+
+[[entry]]
+id = "creds.copilot"
+category = "secrets"
+group = "Tools' credentials"
+what = "GitHub Copilot: its sign-in token"
+under = "config"
+pattern = "github-copilot"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "creds.copilot-windows"
+category = "secrets"
+group = "Tools' credentials"
+what = "GitHub Copilot: its sign-in token"
+pattern = "~/AppData/Local/github-copilot"
+systems = ["windows"]
+
+[[entry]]
+id = "creds.copilot-cli"
+category = "secrets"
+group = "Tools' credentials"
+what = "GitHub Copilot CLI: its token, where no keychain is"
+under = "copilot"
+pattern = "config.json"
+names = "files"
+
+[[entry]]
+id = "creds.huggingface"
+category = "secrets"
+group = "Tools' credentials"
+what = "Hugging Face: access tokens"
+under = "hf"
+pattern = "{token,stored_tokens}"
+names = "files"
+
+[[entry]]
+id = "creds.opencode"
+category = "secrets"
+group = "Tools' credentials"
+what = "opencode: provider API keys and tokens"
+under = "data"
+pattern = "opencode/auth.json"
+names = "files"
+
+[[entry]]
+id = "creds.llm"
+category = "secrets"
+group = "Tools' credentials"
+what = "llm: API keys for its models"
+under = "llm"
+pattern = "keys.json"
+names = "files"
+systems = ["linux"]
+
+[[entry]]
+id = "creds.llm-macos"
+category = "secrets"
+group = "Tools' credentials"
+what = "llm: API keys for its models"
+under = "llm-macos"
+pattern = "keys.json"
+names = "files"
+systems = ["macos"]
+
+# unverified: click.get_app_dir on Windows
+[[entry]]
+id = "creds.llm-windows"
+category = "secrets"
+group = "Tools' credentials"
+what = "llm: API keys for its models"
+under = "llm-windows"
+pattern = "keys.json"
+names = "files"
+systems = ["windows"]
+
+# Password managers' local vaults, and keys tools keep.
+[[entry]]
+id = "creds.sops-age"
+category = "secrets"
+group = "Tools' credentials"
+what = "SOPS: age private keys"
+under = "config"
+pattern = "sops/age/keys.txt"
+names = "files"
+
+[[entry]]
+id = "creds.sops-age-macos"
+category = "secrets"
+group = "Tools' credentials"
+what = "SOPS: age private keys"
+pattern = "~/Library/Application Support/sops/age/keys.txt"
+names = "files"
+systems = ["macos"]
+
+[[entry]]
+id = "creds.sops-age-windows"
+category = "secrets"
+group = "Tools' credentials"
+what = "SOPS: age private keys"
+under = "appdata"
+pattern = "sops/age/keys.txt"
+names = "files"
+systems = ["windows"]
+
+[[entry]]
+id = "creds.gopass"
+category = "secrets"
+group = "Tools' credentials"
+what = "gopass: the password stores"
+under = "data"
+pattern = "gopass/stores"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "creds.bitwarden-cli"
+category = "secrets"
+group = "Tools' credentials"
+what = "Bitwarden CLI: its vault and session keys"
+under = "bitwarden-cli"
+pattern = ""
+systems = ["linux"]
+
+[[entry]]
+id = "creds.bitwarden-cli-macos"
+category = "secrets"
+group = "Tools' credentials"
+what = "Bitwarden CLI: its vault and session keys"
+under = "bitwarden-cli-macos"
+pattern = ""
+systems = ["macos"]
+
+[[entry]]
+id = "creds.bitwarden-cli-windows"
+category = "secrets"
+group = "Tools' credentials"
+what = "Bitwarden CLI: its vault and session keys"
+under = "bitwarden-cli-windows"
+pattern = ""
+systems = ["windows"]
+
+[[entry]]
+id = "creds.bitwarden"
+category = "secrets"
+group = "Tools' credentials"
+what = "Bitwarden: the app's encrypted vault"
+under = "config"
+pattern = "Bitwarden"
+systems = ["linux"]
+
+[[entry]]
+id = "creds.bitwarden-flatpak"
+category = "secrets"
+group = "Tools' credentials"
+what = "Bitwarden (Flatpak): the app's encrypted vault"
+pattern = "~/.var/app/com.bitwarden.desktop"
+systems = ["linux"]
+
+[[entry]]
+id = "creds.bitwarden-snap"
+category = "secrets"
+group = "Tools' credentials"
+what = "Bitwarden (Snap): the app's encrypted vault"
+pattern = "~/snap/bitwarden"
+systems = ["linux"]
+
+[[entry]]
+id = "creds.bitwarden-macos"
+category = "secrets"
+group = "Tools' credentials"
+what = "Bitwarden: the app's encrypted vault"
+pattern = "~/Library/Application Support/Bitwarden"
+systems = ["macos"]
+
+[[entry]]
+id = "creds.bitwarden-macos-store"
+category = "secrets"
+group = "Tools' credentials"
+what = "Bitwarden (App Store): the app's encrypted vault"
+pattern = "~/Library/Containers/com.bitwarden.desktop"
+systems = ["macos"]
+
+[[entry]]
+id = "creds.bitwarden-windows"
+category = "secrets"
+group = "Tools' credentials"
+what = "Bitwarden: the app's encrypted vault"
+under = "appdata"
+pattern = "Bitwarden"
+systems = ["windows"]
+
+[[entry]]
+id = "creds.1password-macos"
+category = "secrets"
+group = "Tools' credentials"
+what = "1Password: its local vault and Secret Key"
+pattern = "~/Library/Group Containers/2BUA8C4S2C.com.1password"
+systems = ["macos"]
+
+[[entry]]
+id = "creds.1password-windows"
+category = "secrets"
+group = "Tools' credentials"
+what = "1Password: its local vault and Secret Key"
+pattern = "~/AppData/Local/1Password"
+systems = ["windows"]
+
+# unverified
+[[entry]]
+id = "creds.1password"
+category = "secrets"
+group = "Tools' credentials"
+what = "1Password: its local vault and Secret Key"
+under = "config"
+pattern = "1Password"
+systems = ["linux"]
+
+[[entry]]
+id = "creds.lastpass"
+category = "secrets"
+group = "Tools' credentials"
+what = "LastPass CLI: its vault and keys"
+under = "config"
+pattern = "lpass"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "creds.lastpass-data"
+category = "secrets"
+group = "Tools' credentials"
+what = "LastPass CLI: its vault and keys"
+under = "data"
+pattern = "lpass"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "creds.lastpass-home"
+category = "secrets"
+group = "Tools' credentials"
+what = "LastPass CLI: its vault and keys"
+under = "lastpass"
+pattern = ""
+systems = ["linux", "macos"]
+
+# Database clients' saved passwords.
+[[entry]]
+id = "creds.pgpass"
+category = "secrets"
+group = "Tools' credentials"
+what = "PostgreSQL: saved passwords"
+under = "pgpass"
+pattern = ""
+names = "files"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "creds.pgpass-windows"
+category = "secrets"
+group = "Tools' credentials"
+what = "PostgreSQL: saved passwords"
+under = "pgpass-windows"
+pattern = ""
+names = "files"
+systems = ["windows"]
+
+[[entry]]
+id = "creds.pg-service"
+category = "secrets"
+group = "Tools' credentials"
+what = "PostgreSQL: connection services, with passwords"
+under = "pg-service"
+pattern = ""
+names = "files"
+
+[[entry]]
+id = "creds.mysql"
+category = "secrets"
+group = "Tools' credentials"
+what = "MySQL: client passwords"
+pattern = "~/.{my,mylogin}.cnf"
+names = "files"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "creds.mysql-windows"
+category = "secrets"
+group = "Tools' credentials"
+what = "MySQL: login paths and their passwords"
+under = "mysql-login-windows"
+pattern = ""
+names = "files"
+systems = ["windows"]
+
+[[entry]]
+id = "creds.pgadmin"
+category = "secrets"
+group = "Tools' credentials"
+what = "pgAdmin: saved server passwords"
+pattern = "~/.pgadmin"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "creds.pgadmin-windows"
+category = "secrets"
+group = "Tools' credentials"
+what = "pgAdmin: saved server passwords"
+under = "appdata"
+pattern = "pgAdmin"
+systems = ["windows"]
+
+# Remote access and VPN clients' saved logins.
+[[entry]]
+id = "creds.remmina"
+category = "secrets"
+group = "Tools' credentials"
+what = "Remmina: saved connections and their passwords"
+under = "data"
+pattern = "remmina"
+systems = ["linux"]
+
+# remmina.pref holds the key that seals the passwords above.
+[[entry]]
+id = "creds.remmina-config"
+category = "secrets"
+group = "Tools' credentials"
+what = "Remmina: the key to its saved passwords"
+under = "config"
+pattern = "remmina"
+systems = ["linux"]
+
+[[entry]]
+id = "creds.filezilla"
+category = "secrets"
+group = "Tools' credentials"
+what = "FileZilla: saved sites and their passwords"
+under = "config"
+pattern = "filezilla"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "creds.filezilla-legacy"
+category = "secrets"
+group = "Tools' credentials"
+what = "FileZilla: saved sites and their passwords"
+pattern = "~/.filezilla"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "creds.filezilla-windows"
+category = "secrets"
+group = "Tools' credentials"
+what = "FileZilla: saved sites and their passwords"
+under = "appdata"
+pattern = "FileZilla"
+systems = ["windows"]
+
+[[entry]]
+id = "creds.winscp"
+category = "secrets"
+group = "Tools' credentials"
+what = "WinSCP: saved sessions and their passwords"
+under = "appdata"
+pattern = "WinSCP.ini"
+names = "files"
+systems = ["windows"]
+
+[[entry]]
+id = "creds.mremoteng"
+category = "secrets"
+group = "Tools' credentials"
+what = "mRemoteNG: connections and their passwords"
+under = "appdata"
+pattern = "mRemoteNG"
+systems = ["windows"]
+
+[[entry]]
+id = "creds.nm-openvpn"
+category = "secrets"
+group = "Tools' credentials"
+what = "NetworkManager: keys of imported OpenVPN profiles"
+pattern = "~/.cert/nm-openvpn"
+systems = ["linux"]
+
+# What the systems keep for their own sign-ins and keys.
+
+# Fills the gap in keys.gnupg on Windows.
+[[entry]]
+id = "creds.gnupg-windows"
+category = "secrets"
+group = "Tools' credentials"
+what = "GnuPG: keys and the trust database"
+under = "gnupg-windows"
+pattern = ""
+systems = ["windows"]
+
+# Fills the gap in keys.netrc on Windows.
+[[entry]]
+id = "creds.netrc-windows"
+category = "secrets"
+group = "Tools' credentials"
+what = "netrc: logins to FTP and HTTP servers"
+pattern = "~/_netrc"
+names = "files"
+systems = ["windows"]
+
+[[entry]]
+id = "creds.authinfo"
+category = "secrets"
+group = "Tools' credentials"
+what = "Emacs auth-source: logins (.authinfo)"
+pattern = "~/.authinfo*"
+names = "files"
+
+[[entry]]
+id = "creds.xauthority"
+category = "secrets"
+group = "Tools' credentials"
+what = "X11: the cookie that opens the display"
+pattern = "~/.Xauthority"
+names = "files"
+systems = ["linux"]
+
+[[entry]]
+id = "keys.windows-crypto"
+category = "secrets"
+group = "Certificate stores"
+what = "Windows: private keys of your certificates"
+under = "appdata"
+pattern = "Microsoft/Crypto"
+systems = ["windows"]
+
+[[entry]]
+id = "creds.windows-token-broker"
+category = "secrets"
+group = "Tools' credentials"
+what = "Windows: Microsoft 365 and Entra sign-in tokens"
+pattern = "~/AppData/Local/Microsoft/TokenBroker"
+systems = ["windows"]
+
+[[entry]]
+id = "creds.msal-windows"
+category = "secrets"
+group = "Tools' credentials"
+what = "Visual Studio, Azure tools: shared sign-in cache"
+pattern = "~/AppData/Local/.IdentityService"
+systems = ["windows"]
+
+[[entry]]
+id = "creds.msal"
+category = "secrets"
+group = "Tools' credentials"
+what = "Visual Studio, Azure tools: shared sign-in cache"
+pattern = "~/.local/.IdentityService"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "creds.dotnet-user-secrets"
+category = "secrets"
+group = "Tools' credentials"
+what = ".NET: user secrets of your projects"
+pattern = "~/.microsoft/usersecrets"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "creds.dotnet-user-secrets-windows"
+category = "secrets"
+group = "Tools' credentials"
+what = ".NET: user secrets of your projects"
+under = "appdata"
+pattern = "Microsoft/UserSecrets"
+systems = ["windows"]
+
+# Browsers' and mail clients' profiles: cookies (live sign-ins), saved
+# passwords, history, messages. Exact folders, per system, with the
+# Flatpak and Snap copies.
+[[entry]]
+id = "browsers.firefox"
+category = "secrets"
+group = "Browsers"
+what = "Firefox: profiles, cookies, saved passwords"
+pattern = "~/.mozilla"
+systems = ["linux"]
+
+[[entry]]
+id = "browsers.firefox-xdg"
+category = "secrets"
+group = "Browsers"
+what = "Firefox (147 on): profiles, cookies, passwords"
+under = "config"
+pattern = "mozilla"
+systems = ["linux"]
+
+[[entry]]
+id = "browsers.firefox-flatpak"
+category = "secrets"
+group = "Browsers"
+what = "Firefox (Flatpak): its profiles"
+pattern = "~/.var/app/org.mozilla.firefox"
+systems = ["linux"]
+
+[[entry]]
+id = "browsers.firefox-snap"
+category = "secrets"
+group = "Browsers"
+what = "Firefox (Snap): its profiles"
+pattern = "~/snap/firefox"
+systems = ["linux"]
+
+[[entry]]
+id = "browsers.librewolf"
+category = "secrets"
+group = "Browsers"
+what = "LibreWolf: profiles, cookies, saved passwords"
+pattern = "~/.librewolf"
+systems = ["linux"]
+
+[[entry]]
+id = "browsers.librewolf-flatpak"
+category = "secrets"
+group = "Browsers"
+what = "LibreWolf (Flatpak): its profiles"
+pattern = "~/.var/app/io.gitlab.librewolf-community"
+systems = ["linux"]
+
+[[entry]]
+id = "browsers.zen"
+category = "secrets"
+group = "Browsers"
+what = "Zen: profiles, cookies, saved passwords"
+pattern = "~/.zen"
+systems = ["linux"]
+
+[[entry]]
+id = "browsers.zen-flatpak"
+category = "secrets"
+group = "Browsers"
+what = "Zen (Flatpak): its profiles"
+pattern = "~/.var/app/app.zen_browser.zen"
+systems = ["linux"]
+
+[[entry]]
+id = "browsers.floorp"
+category = "secrets"
+group = "Browsers"
+what = "Floorp: profiles, cookies, saved passwords"
+pattern = "~/.floorp"
+systems = ["linux"]
+
+[[entry]]
+id = "browsers.waterfox"
+category = "secrets"
+group = "Browsers"
+what = "Waterfox: profiles, cookies, saved passwords"
+pattern = "~/.waterfox"
+systems = ["linux"]
+
+[[entry]]
+id = "browsers.chromium"
+category = "secrets"
+group = "Browsers"
+what = "Chromium: profiles, cookies, saved passwords"
+under = "chrome-config"
+pattern = "chromium"
+systems = ["linux"]
+
+[[entry]]
+id = "browsers.chromium-flatpak"
+category = "secrets"
+group = "Browsers"
+what = "Chromium (Flatpak): its profiles"
+pattern = "~/.var/app/org.chromium.Chromium"
+systems = ["linux"]
+
+[[entry]]
+id = "browsers.chromium-snap"
+category = "secrets"
+group = "Browsers"
+what = "Chromium (Snap): its profiles"
+pattern = "~/snap/chromium"
+systems = ["linux"]
+
+[[entry]]
+id = "browsers.chrome"
+category = "secrets"
+group = "Browsers"
+what = "Chrome: profiles, cookies, saved passwords"
+under = "chrome-config"
+pattern = "google-chrome*"
+systems = ["linux"]
+
+[[entry]]
+id = "browsers.chrome-flatpak"
+category = "secrets"
+group = "Browsers"
+what = "Chrome (Flatpak): its profiles"
+pattern = "~/.var/app/com.google.Chrome"
+systems = ["linux"]
+
+[[entry]]
+id = "browsers.brave"
+category = "secrets"
+group = "Browsers"
+what = "Brave: profiles, cookies, saved passwords"
+under = "config"
+pattern = "BraveSoftware"
+systems = ["linux"]
+
+[[entry]]
+id = "browsers.brave-flatpak"
+category = "secrets"
+group = "Browsers"
+what = "Brave (Flatpak): its profiles"
+pattern = "~/.var/app/com.brave.Browser"
+systems = ["linux"]
+
+[[entry]]
+id = "browsers.edge"
+category = "secrets"
+group = "Browsers"
+what = "Edge: profiles, cookies, saved passwords"
+under = "config"
+pattern = "microsoft-edge*"
+systems = ["linux"]
+
+[[entry]]
+id = "browsers.edge-flatpak"
+category = "secrets"
+group = "Browsers"
+what = "Edge (Flatpak): its profiles"
+pattern = "~/.var/app/com.microsoft.Edge"
+systems = ["linux"]
+
+[[entry]]
+id = "browsers.vivaldi"
+category = "secrets"
+group = "Browsers"
+what = "Vivaldi: profiles, cookies, saved passwords"
+under = "config"
+pattern = "vivaldi*"
+systems = ["linux"]
+
+[[entry]]
+id = "browsers.vivaldi-flatpak"
+category = "secrets"
+group = "Browsers"
+what = "Vivaldi (Flatpak): its profiles"
+pattern = "~/.var/app/com.vivaldi.Vivaldi"
+systems = ["linux"]
+
+[[entry]]
+id = "browsers.opera"
+category = "secrets"
+group = "Browsers"
+what = "Opera: profiles, cookies, saved passwords"
+under = "config"
+pattern = "opera*"
+systems = ["linux"]
+
+[[entry]]
+id = "browsers.epiphany"
+category = "secrets"
+group = "Browsers"
+what = "GNOME Web: cookies, saved passwords, history"
+under = "data"
+pattern = "epiphany"
+systems = ["linux"]
+
+[[entry]]
+id = "browsers.falkon"
+category = "secrets"
+group = "Browsers"
+what = "Falkon: profiles, cookies, saved passwords"
+under = "config"
+pattern = "falkon"
+systems = ["linux"]
+
+[[entry]]
+id = "browsers.qutebrowser"
+category = "secrets"
+group = "Browsers"
+what = "qutebrowser: cookies, history, sessions"
+under = "data"
+pattern = "qutebrowser"
+systems = ["linux"]
+
+[[entry]]
+id = "browsers.firefox-mac"
+category = "secrets"
+group = "Browsers"
+what = "Firefox: profiles, cookies, saved passwords"
+pattern = "~/Library/Application Support/Firefox"
+systems = ["macos"]
+
+[[entry]]
+id = "browsers.chrome-mac"
+category = "secrets"
+group = "Browsers"
+what = "Chrome: profiles, cookies, saved passwords"
+pattern = "~/Library/Application Support/Google/Chrome"
+systems = ["macos"]
+
+[[entry]]
+id = "browsers.chromium-mac"
+category = "secrets"
+group = "Browsers"
+what = "Chromium: profiles, cookies, saved passwords"
+pattern = "~/Library/Application Support/Chromium"
+systems = ["macos"]
+
+[[entry]]
+id = "browsers.brave-mac"
+category = "secrets"
+group = "Browsers"
+what = "Brave: profiles, cookies, saved passwords"
+pattern = "~/Library/Application Support/BraveSoftware"
+systems = ["macos"]
+
+[[entry]]
+id = "browsers.edge-mac"
+category = "secrets"
+group = "Browsers"
+what = "Edge: profiles, cookies, saved passwords"
+pattern = "~/Library/Application Support/Microsoft Edge"
+systems = ["macos"]
+
+[[entry]]
+id = "browsers.vivaldi-mac"
+category = "secrets"
+group = "Browsers"
+what = "Vivaldi: profiles, cookies, saved passwords"
+pattern = "~/Library/Application Support/Vivaldi"
+systems = ["macos"]
+
+[[entry]]
+id = "browsers.zen-mac"
+category = "secrets"
+group = "Browsers"
+what = "Zen: profiles, cookies, saved passwords"
+pattern = "~/Library/Application Support/zen"
+systems = ["macos"]
+
+[[entry]]
+id = "browsers.safari"
+category = "secrets"
+group = "Browsers"
+what = "Safari: history, bookmarks, its data"
+pattern = "~/Library/Safari"
+systems = ["macos"]
+
+[[entry]]
+id = "browsers.safari-container"
+category = "secrets"
+group = "Browsers"
+what = "Safari: its sandboxed data"
+pattern = "~/Library/Containers/com.apple.Safari"
+systems = ["macos"]
+
+[[entry]]
+id = "browsers.cookies-mac"
+category = "secrets"
+group = "Browsers"
+what = "macOS: apps' cookies"
+pattern = "~/Library/Cookies"
+systems = ["macos"]
+
+[[entry]]
+id = "browsers.firefox-win"
+category = "secrets"
+group = "Browsers"
+what = "Firefox: profiles, cookies, saved passwords"
+under = "appdata"
+pattern = "Mozilla/Firefox"
+systems = ["windows"]
+
+[[entry]]
+id = "browsers.chrome-win"
+category = "secrets"
+group = "Browsers"
+what = "Chrome: profiles, cookies, saved passwords"
+pattern = "~/AppData/Local/Google/Chrome/User Data"
+systems = ["windows"]
+
+[[entry]]
+id = "browsers.chromium-win"
+category = "secrets"
+group = "Browsers"
+what = "Chromium: profiles, cookies, saved passwords"
+pattern = "~/AppData/Local/Chromium/User Data"
+systems = ["windows"]
+
+[[entry]]
+id = "browsers.brave-win"
+category = "secrets"
+group = "Browsers"
+what = "Brave: profiles, cookies, saved passwords"
+pattern = "~/AppData/Local/BraveSoftware/Brave-Browser/User Data"
+systems = ["windows"]
+
+[[entry]]
+id = "browsers.edge-win"
+category = "secrets"
+group = "Browsers"
+what = "Edge: profiles, cookies, saved passwords"
+pattern = "~/AppData/Local/Microsoft/Edge/User Data"
+systems = ["windows"]
+
+[[entry]]
+id = "browsers.vivaldi-win"
+category = "secrets"
+group = "Browsers"
+what = "Vivaldi: profiles, cookies, saved passwords"
+pattern = "~/AppData/Local/Vivaldi/User Data"
+systems = ["windows"]
+
+[[entry]]
+id = "browsers.opera-win"
+category = "secrets"
+group = "Browsers"
+what = "Opera: profiles, cookies, saved passwords"
+under = "appdata"
+pattern = "Opera Software"
+systems = ["windows"]
+
+[[entry]]
+id = "mail.thunderbird"
+category = "secrets"
+group = "Mail"
+what = "Thunderbird: mail, accounts, saved passwords"
+pattern = "~/.thunderbird"
+systems = ["linux"]
+
+[[entry]]
+id = "mail.thunderbird-flatpak"
+category = "secrets"
+group = "Mail"
+what = "Thunderbird (Flatpak): its profiles"
+pattern = "~/.var/app/org.mozilla.Thunderbird"
+systems = ["linux"]
+
+[[entry]]
+id = "mail.thunderbird-snap"
+category = "secrets"
+group = "Mail"
+what = "Thunderbird (Snap): its profiles"
+pattern = "~/snap/thunderbird"
+systems = ["linux"]
+
+[[entry]]
+id = "mail.evolution"
+category = "secrets"
+group = "Mail"
+what = "Evolution: mail, contacts, calendars"
+under = "data"
+pattern = "evolution"
+systems = ["linux"]
+
+[[entry]]
+id = "mail.evolution-config"
+category = "secrets"
+group = "Mail"
+what = "Evolution: accounts"
+under = "config"
+pattern = "evolution"
+systems = ["linux"]
+
+[[entry]]
+id = "mail.geary"
+category = "secrets"
+group = "Mail"
+what = "Geary: mail and accounts"
+under = "data"
+pattern = "geary"
+systems = ["linux"]
+
+[[entry]]
+id = "mail.kmail-local"
+category = "secrets"
+group = "Mail"
+what = "KMail: local mail folders"
+under = "data"
+pattern = "local-mail"
+systems = ["linux"]
+
+[[entry]]
+id = "mail.akonadi"
+category = "secrets"
+group = "Mail"
+what = "Akonadi (KMail, KOrganizer): mail and its cache"
+under = "data"
+pattern = "akonadi"
+systems = ["linux"]
+
+[[entry]]
+id = "mail.claws"
+category = "secrets"
+group = "Mail"
+what = "Claws Mail: mail, accounts, passwords"
+pattern = "~/.claws-mail"
+systems = ["linux"]
+
+[[entry]]
+id = "mail.aerc"
+category = "secrets"
+group = "Mail"
+what = "aerc: accounts and their passwords"
+under = "config"
+pattern = "aerc"
+systems = ["linux"]
+
+[[entry]]
+id = "mail.mailspring"
+category = "secrets"
+group = "Mail"
+what = "Mailspring: mail and accounts"
+under = "config"
+pattern = "Mailspring"
+systems = ["linux"]
+
+[[entry]]
+id = "mail.apple-mail"
+category = "secrets"
+group = "Mail"
+what = "Mail: messages and accounts"
+pattern = "~/Library/Mail"
+systems = ["macos"]
+
+[[entry]]
+id = "mail.apple-mail-container"
+category = "secrets"
+group = "Mail"
+what = "Mail: its sandboxed data"
+pattern = "~/Library/Containers/com.apple.mail"
+systems = ["macos"]
+
+[[entry]]
+id = "mail.thunderbird-mac"
+category = "secrets"
+group = "Mail"
+what = "Thunderbird: mail, accounts, saved passwords"
+pattern = "~/Library/Thunderbird"
+systems = ["macos"]
+
+[[entry]]
+id = "mail.thunderbird-win"
+category = "secrets"
+group = "Mail"
+what = "Thunderbird: mail, accounts, saved passwords"
+under = "appdata"
+pattern = "Thunderbird"
+systems = ["windows"]
+
+[[entry]]
+id = "mail.outlook-win"
+category = "secrets"
+group = "Mail"
+what = "Outlook: its mail stores (.ost, .pst)"
+pattern = "~/AppData/Local/Microsoft/Outlook"
+systems = ["windows"]
+
+[[entry]]
+id = "mail.outlook-files-win"
+category = "secrets"
+group = "Mail"
+what = "Outlook: archives kept in Documents"
+pattern = "~/Documents/Outlook Files"
+systems = ["windows"]
+
+# Mail and browsers the profiles above miss.
+
+# unverified: the files' formats hold passwords
+[[entry]]
+id = "mail.fetchmail-msmtp"
+category = "secrets"
+group = "Mail"
+what = "fetchmail, msmtp: mail passwords"
+pattern = "~/.{fetchmailrc,msmtprc}"
+names = "files"
+
+[[entry]]
+id = "mail.msmtp-xdg"
+category = "secrets"
+group = "Mail"
+what = "msmtp: mail passwords"
+under = "config"
+pattern = "msmtp/config"
+names = "files"
+
+# Zen's tarball install on Linux; browsers.zen has only ~/.zen.
+[[entry]]
+id = "browsers.zen-xdg"
+category = "secrets"
+group = "Browsers"
+what = "Zen: its profiles"
+under = "config"
+pattern = "zen"
+systems = ["linux"]
+
+# unverified
+[[entry]]
+id = "browsers.arc-mac"
+category = "secrets"
+group = "Browsers"
+what = "Arc: its profiles"
+pattern = "~/Library/Application Support/Arc"
+systems = ["macos"]
+
+# unverified
+[[entry]]
+id = "browsers.opera-mac"
+category = "secrets"
+group = "Browsers"
+what = "Opera: its profiles"
+pattern = "~/Library/Application Support/com.operasoftware.Opera*"
+systems = ["macos"]
+
+# unverified (portable layout, wherever the user unpacked it)
+[[entry]]
+id = "browsers.tor-anywhere"
+category = "secrets"
+group = "Browsers"
+what = "Tor Browser: its profile"
+pattern = "~/**/TorBrowser/Data"
+
+# Files that are never anything but secret, wherever they are: names
+# matched anywhere. Not *.pem, *.crt nor *.key: a certificate is public,
+# and .key is also Keynote's.
+
+[[entry]]
+id = "keys.ssh-private-anywhere"
+category = "secrets"
+group = "Key files, wherever they are"
+what = "SSH private keys (not their .pub)"
+pattern = "id_{rsa,dsa,ecdsa,ed25519,ecdsa_sk,ed25519_sk}"
+names = "files"
+
+[[entry]]
+id = "keys.pem-private-anywhere"
+category = "secrets"
+group = "Key files, wherever they are"
+what = "Private keys in PEM (privkey.pem, server-key.pem)"
+pattern = "*key*.pem"
+names = "files"
+
+[[entry]]
+id = "keys.pkcs12-anywhere"
+category = "secrets"
+group = "Key files, wherever they are"
+what = "PKCS #12: certificates with their private keys"
+pattern = "*.{p12,pfx}"
+names = "files"
+
+[[entry]]
+id = "keys.java-keystores-anywhere"
+category = "secrets"
+group = "Key files, wherever they are"
+what = "Java keystores"
+pattern = "*.{jks,keystore}"
+names = "files"
+
+[[entry]]
+id = "keys.putty-anywhere"
+category = "secrets"
+group = "Key files, wherever they are"
+what = "PuTTY private keys"
+pattern = "*.ppk"
+names = "files"
+
+[[entry]]
+id = "keys.keepass-anywhere"
+category = "secrets"
+group = "Key files, wherever they are"
+what = "KeePass password databases"
+pattern = "*.kdbx"
+names = "files"
+
+[[entry]]
+id = "keys.dotenv-anywhere"
+category = "secrets"
+group = "Key files, wherever they are"
+what = "A project's .env: its API keys and passwords"
+pattern = ".env"
+names = "files"
+
+[[entry]]
+id = "keys.dotenv-variants-anywhere"
+category = "secrets"
+group = "Key files, wherever they are"
+what = "A project's .env.local, .env.production… (not .env.example)"
+pattern = ".env.{local,dev,development,prod,production,stage,staging,test,testing,preview,*.local}"
+names = "files"
+
+[[entry]]
+id = "keys.credentials-json-anywhere"
+category = "secrets"
+group = "Key files, wherever they are"
+what = "credentials.json: OAuth clients and tools' tokens"
+pattern = "{credentials,.credentials}.json"
+names = "files"
+
+[[entry]]
+id = "keys.google-client-secret-anywhere"
+category = "secrets"
+group = "Key files, wherever they are"
+what = "Google OAuth client secrets (client_secret_….json)"
+pattern = "client_secret*.json"
+names = "files"
+
+[[entry]]
+id = "keys.service-account-anywhere"
+category = "secrets"
+group = "Key files, wherever they are"
+what = "Cloud service account keys (serviceAccountKey.json)"
+pattern = "{service-account,service_account,serviceAccount}*.json"
+names = "files"
+
+[[entry]]
+id = "keys.tfstate-anywhere"
+category = "secrets"
+group = "Key files, wherever they are"
+what = "Terraform state: every resource's secrets in clear"
+pattern = "*.tfstate*"
+names = "files"
+
+[[entry]]
+id = "keys.secrets-files-anywhere"
+category = "secrets"
+group = "Key files, wherever they are"
+what = "secrets.yaml, secrets.toml… (Home Assistant, Streamlit)"
+pattern = "secrets.{json,yaml,yml,toml}"
+names = "files"
+
+[[entry]]
+id = "keys.dot-secrets-anywhere"
+category = "secrets"
+group = "Key files, wherever they are"
+what = "A project's .secrets (act and others)"
+pattern = ".secrets"
+names = "files"
+
+[[entry]]
+id = "keys.htpasswd-anywhere"
+category = "secrets"
+group = "Key files, wherever they are"
+what = "Web server password files (.htpasswd)"
+pattern = ".htpasswd"
+names = "files"
+
+# Not *.p8: PICO-8 cartridges are .p8.
+[[entry]]
+id = "keys.apple-p8-anywhere"
+category = "secrets"
+group = "Key files, wherever they are"
+what = "Apple API private keys (AuthKey_….p8)"
+pattern = "*Key_*.p8"
+names = "files"
+
+[[entry]]
+id = "keys.ovpn-anywhere"
+category = "secrets"
+group = "Key files, wherever they are"
+what = "OpenVPN profiles, with their keys"
+pattern = "*.ovpn"
+names = "files"
+
+[[entry]]
+id = "keys.wireguard-anywhere"
+category = "secrets"
+group = "Key files, wherever they are"
+what = "WireGuard configurations (wg0.conf)"
+pattern = "wg*.conf"
+names = "files"
+
+[[entry]]
+id = "keys.ansible-vault-pass-anywhere"
+category = "secrets"
+group = "Key files, wherever they are"
+what = "Ansible vault password files (.vault_pass…)"
+pattern = ".vault{_,-}pass*"
+names = "files"
+
+[[entry]]
+id = "keys.keepassxc-keyfile-anywhere"
+category = "secrets"
+group = "Key files, wherever they are"
+what = "KeePassXC key files (.keyx)"
+pattern = "*.keyx"
+names = "files"
+
+[[entry]]
+id = "keys.dbeaver-anywhere"
+category = "secrets"
+group = "Key files, wherever they are"
+what = "DBeaver: saved database passwords"
+pattern = "credentials-config.json"
+names = "files"
+
+# The names a private key goes by; .key alone is also Keynote's.
+[[entry]]
+id = "keys.private-key-names-anywhere"
+category = "secrets"
+group = "Key files, wherever they are"
+what = "Private keys by their usual names (server.key, tls.key)"
+pattern = "{client,server,ca,tls,private,privkey}.key"
+names = "files"
+
+# Cryptocurrency wallets: who holds the file holds the coins.
+
+[[entry]]
+id = "wallets.wallet-dat-anywhere"
+category = "secrets"
+group = "Wallets"
+what = "Bitcoin and its forks: wallet.dat files"
+pattern = "wallet.dat"
+names = "files"
+
+[[entry]]
+id = "wallets.ethereum-keystore-anywhere"
+category = "secrets"
+group = "Wallets"
+what = "Ethereum keystore files (UTC--…)"
+pattern = "UTC--*"
+names = "files"
+
+[[entry]]
+id = "wallets.bitcoin"
+category = "secrets"
+group = "Wallets"
+what = "Bitcoin Core: its wallets"
+pattern = "~/.bitcoin/wallets"
+systems = ["linux"]
+
+[[entry]]
+id = "wallets.bitcoin-macos"
+category = "secrets"
+group = "Wallets"
+what = "Bitcoin Core: its wallets"
+pattern = "~/Library/Application Support/Bitcoin/wallets"
+systems = ["macos"]
+
+[[entry]]
+id = "wallets.bitcoin-windows"
+category = "secrets"
+group = "Wallets"
+what = "Bitcoin Core: its wallets"
+pattern = "~/AppData/{Local,Roaming}/Bitcoin/wallets"
+systems = ["windows"]
+
+[[entry]]
+id = "wallets.electrum"
+category = "secrets"
+group = "Wallets"
+what = "Electrum: its wallets"
+pattern = "~/.electrum/wallets"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "wallets.electrum-windows"
+category = "secrets"
+group = "Wallets"
+what = "Electrum: its wallets"
+under = "appdata"
+pattern = "Electrum/wallets"
+systems = ["windows"]
+
+[[entry]]
+id = "wallets.ethereum"
+category = "secrets"
+group = "Wallets"
+what = "Ethereum (geth): its keystore"
+pattern = "~/.ethereum/keystore"
+systems = ["linux"]
+
+[[entry]]
+id = "wallets.ethereum-macos"
+category = "secrets"
+group = "Wallets"
+what = "Ethereum (geth): its keystore"
+pattern = "~/Library/Ethereum/keystore"
+systems = ["macos"]
+
+[[entry]]
+id = "wallets.ethereum-windows"
+category = "secrets"
+group = "Wallets"
+what = "Ethereum (geth): its keystore"
+pattern = "~/AppData/Local/Ethereum/keystore"
+systems = ["windows"]
+
+[[entry]]
+id = "wallets.monero"
+category = "secrets"
+group = "Wallets"
+what = "Monero: its wallets"
+pattern = "~/Monero/wallets"
+systems = ["linux", "macos"]
+
+# unverified
+[[entry]]
+id = "wallets.monero-windows"
+category = "secrets"
+group = "Wallets"
+what = "Monero: its wallets"
+pattern = "~/Documents/Monero/wallets"
+systems = ["windows"]
+
+[[entry]]
+id = "wallets.exodus"
+category = "secrets"
+group = "Wallets"
+what = "Exodus: its wallet and seed"
+under = "config"
+pattern = "Exodus"
+systems = ["linux"]
+
+[[entry]]
+id = "wallets.exodus-macos"
+category = "secrets"
+group = "Wallets"
+what = "Exodus: its wallet and seed"
+pattern = "~/Library/Application Support/Exodus"
+systems = ["macos"]
+
+[[entry]]
+id = "wallets.exodus-windows"
+category = "secrets"
+group = "Wallets"
+what = "Exodus: its wallet and seed"
+under = "appdata"
+pattern = "Exodus"
+systems = ["windows"]
+
+# A literal path on every system, not XDG.
+[[entry]]
+id = "wallets.solana"
+category = "secrets"
+group = "Wallets"
+what = "Solana CLI: its default keypair"
+pattern = "~/.config/solana/id.json"
+names = "files"
+
+# Messaging apps: their sessions are enough to take the account, and
+# their messages are private.
+
+[[entry]]
+id = "chat.signal"
+category = "secrets"
+group = "Messages"
+what = "Signal: messages and the key to them"
+under = "config"
+pattern = "Signal"
+systems = ["linux"]
+
+[[entry]]
+id = "chat.signal-macos"
+category = "secrets"
+group = "Messages"
+what = "Signal: messages and the key to them"
+pattern = "~/Library/Application Support/Signal"
+systems = ["macos"]
+
+[[entry]]
+id = "chat.signal-windows"
+category = "secrets"
+group = "Messages"
+what = "Signal: messages and the key to them"
+under = "appdata"
+pattern = "Signal"
+systems = ["windows"]
+
+[[entry]]
+id = "chat.telegram"
+category = "secrets"
+group = "Messages"
+what = "Telegram: its session, enough to take the account"
+under = "data"
+pattern = "TelegramDesktop/tdata"
+systems = ["linux"]
+
+[[entry]]
+id = "chat.telegram-windows"
+category = "secrets"
+group = "Messages"
+what = "Telegram: its session, enough to take the account"
+under = "appdata"
+pattern = "Telegram Desktop/tdata"
+systems = ["windows"]
+
+# unverified
+[[entry]]
+id = "chat.telegram-macos"
+category = "secrets"
+group = "Messages"
+what = "Telegram: its session, enough to take the account"
+pattern = "~/Library/Application Support/Telegram Desktop/tdata"
+systems = ["macos"]
+
+[[entry]]
+id = "chat.element"
+category = "secrets"
+group = "Messages"
+what = "Element: its session and encryption keys"
+under = "config"
+pattern = "Element*"
+systems = ["linux"]
+
+[[entry]]
+id = "chat.element-macos"
+category = "secrets"
+group = "Messages"
+what = "Element: its session and encryption keys"
+pattern = "~/Library/Application Support/Element*"
+systems = ["macos"]
+
+[[entry]]
+id = "chat.element-windows"
+category = "secrets"
+group = "Messages"
+what = "Element: its session and encryption keys"
+under = "appdata"
+pattern = "Element*"
+systems = ["windows"]
+
+[[entry]]
+id = "chat.discord"
+category = "secrets"
+group = "Messages"
+what = "Discord: its account token"
+under = "config"
+pattern = "{discord,discordcanary,discordptb,vesktop}"
+systems = ["linux"]
+
+[[entry]]
+id = "chat.discord-macos"
+category = "secrets"
+group = "Messages"
+what = "Discord: its account token"
+pattern = "~/Library/Application Support/{discord,discordcanary,discordptb}"
+systems = ["macos"]
+
+[[entry]]
+id = "chat.discord-windows"
+category = "secrets"
+group = "Messages"
+what = "Discord: its account token"
+under = "appdata"
+pattern = "{discord,discordcanary,discordptb}"
+systems = ["windows"]
+
+[[entry]]
+id = "chat.slack"
+category = "secrets"
+group = "Messages"
+what = "Slack: its session cookie"
+under = "config"
+pattern = "Slack"
+systems = ["linux"]
+
+[[entry]]
+id = "chat.slack-macos"
+category = "secrets"
+group = "Messages"
+what = "Slack: its session cookie"
+pattern = "~/Library/Application Support/Slack"
+systems = ["macos"]
+
+[[entry]]
+id = "chat.slack-macos-store"
+category = "secrets"
+group = "Messages"
+what = "Slack (App Store): its session cookie"
+pattern = "~/Library/Containers/com.tinyspeck.slackmacgap"
+systems = ["macos"]
+
+[[entry]]
+id = "chat.slack-windows"
+category = "secrets"
+group = "Messages"
+what = "Slack: its session cookie"
+under = "appdata"
+pattern = "Slack"
+systems = ["windows"]
+
+[[entry]]
+id = "chat.whatsapp-windows"
+category = "secrets"
+group = "Messages"
+what = "WhatsApp: its session and messages"
+pattern = "~/AppData/Local/Packages/5319275A.WhatsAppDesktop_*"
+systems = ["windows"]
+
+# unverified
+[[entry]]
+id = "chat.whatsapp-macos"
+category = "secrets"
+group = "Messages"
+what = "WhatsApp: its session and messages"
+pattern = "~/Library/Group Containers/group.net.whatsapp.WhatsApp.shared"
+systems = ["macos"]
+
+# unverified (IT pages only)
+[[entry]]
+id = "chat.teams-windows"
+category = "secrets"
+group = "Messages"
+what = "Microsoft Teams: its sign-in and cache"
+pattern = "~/AppData/Local/Packages/MSTeams_8wekyb3d8bbwe"
+systems = ["windows"]
+
+[[entry]]
+id = "chat.teams-classic-windows"
+category = "secrets"
+group = "Messages"
+what = "Microsoft Teams (classic): its sign-in and cache"
+under = "appdata"
+pattern = "Microsoft/Teams"
+systems = ["windows"]
+
+# unverified (IT pages only)
+[[entry]]
+id = "chat.teams-macos"
+category = "secrets"
+group = "Messages"
+what = "Microsoft Teams: its sign-in and cache"
+pattern = "~/Library/Containers/com.microsoft.teams2"
+systems = ["macos"]
+
+[[entry]]
+id = "chat.teams-classic-macos"
+category = "secrets"
+group = "Messages"
+what = "Microsoft Teams (classic): its sign-in and cache"
+pattern = "~/Library/Application Support/Microsoft/Teams"
+systems = ["macos"]
+
+[[entry]]
+id = "chat.imessage"
+category = "secrets"
+group = "Messages"
+what = "Messages: iMessage and SMS, codes included"
+pattern = "~/Library/Messages"
+systems = ["macos"]
+
+# unverified: the Flathub ids
+[[entry]]
+id = "chat.signal-flatpak"
+category = "secrets"
+group = "Messages"
+what = "Signal (Flatpak): messages and the key to them"
+pattern = "~/.var/app/org.signal.Signal"
+systems = ["linux"]
+
+[[entry]]
+id = "chat.telegram-flatpak"
+category = "secrets"
+group = "Messages"
+what = "Telegram (Flatpak): its session, enough to take the account"
+pattern = "~/.var/app/org.telegram.desktop"
+systems = ["linux"]
+
+[[entry]]
+id = "chat.element-flatpak"
+category = "secrets"
+group = "Messages"
+what = "Element (Flatpak): its session and encryption keys"
+pattern = "~/.var/app/im.riot.Riot"
+systems = ["linux"]
+
+[[entry]]
+id = "chat.discord-flatpak"
+category = "secrets"
+group = "Messages"
+what = "Discord (Flatpak): its account token"
+pattern = "~/.var/app/com.discordapp.Discord"
+systems = ["linux"]
+
+[[entry]]
+id = "chat.slack-flatpak"
+category = "secrets"
+group = "Messages"
+what = "Slack (Flatpak): its session cookie"
+pattern = "~/.var/app/com.slack.Slack"
+systems = ["linux"]
+
+[[entry]]
+id = "chat.vesktop-flatpak"
+category = "secrets"
+group = "Messages"
+what = "Vesktop (Flatpak): Discord's account token"
+pattern = "~/.var/app/dev.vencord.Vesktop"
+systems = ["linux"]
+
+# Shell and REPL histories: passwords and tokens typed on a command line
+# stay there.
+
+# bash, zsh (.zsh_history, .zhistory), sh, python, node_repl, psql, mysql,
+# sqlite, rediscli, irb, gdb… : every ~/.<x>history and ~/.<x>_history.
+[[entry]]
+id = "history.home-dotfiles"
+category = "secrets"
+group = "Histories"
+what = "Shell and REPL histories (~/.bash_history…)"
+pattern = "~/.*history"
+names = "files"
+
+[[entry]]
+id = "history.histfile"
+category = "secrets"
+group = "Histories"
+what = "zsh: history where its first-run setup puts it"
+pattern = "~/.histfile"
+names = "files"
+
+[[entry]]
+id = "history.zsh-sessions"
+category = "secrets"
+group = "Histories"
+what = "zsh: each Terminal session's history"
+pattern = "~/.zsh_sessions"
+systems = ["macos"]
+
+[[entry]]
+id = "history.fish"
+category = "secrets"
+group = "Histories"
+what = "fish: command history"
+under = "data"
+pattern = "fish/*_history"
+names = "files"
+
+[[entry]]
+id = "history.less"
+category = "secrets"
+group = "Histories"
+what = "less: what was searched for"
+under = "state"
+pattern = "lesshst"
+names = "files"
+
+[[entry]]
+id = "history.less-home"
+category = "secrets"
+group = "Histories"
+what = "less: what was searched for"
+pattern = "~/.lesshst"
+names = "files"
+
+[[entry]]
+id = "history.powershell"
+category = "secrets"
+group = "Histories"
+what = "PowerShell: command history"
+under = "data"
+pattern = "powershell/PSReadLine"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "history.powershell-windows"
+category = "secrets"
+group = "Histories"
+what = "PowerShell: command history"
+under = "appdata"
+pattern = "Microsoft/Windows/PowerShell/PSReadLine"
+systems = ["windows"]
+
+[[entry]]
+id = "history.atuin"
+category = "secrets"
+group = "Histories"
+what = "Atuin: command history and its sync key"
+under = "data"
+pattern = "atuin"
+
+[[entry]]
+id = "history.nushell"
+category = "secrets"
+group = "Histories"
+what = "Nushell: command history"
+under = "config"
+pattern = "nushell/history.{txt,sqlite3}"
+names = "files"
+
+[[entry]]
+id = "history.mongosh"
+category = "secrets"
+group = "Histories"
+what = "mongosh: command history"
+pattern = "~/.mongodb/mongosh"
+
+[[entry]]
+id = "history.ipython"
+category = "secrets"
+group = "Histories"
+what = "IPython: command history"
+under = "ipython"
+pattern = "profile_*/history.sqlite"
+names = "files"
+
+[[entry]]
+id = "history.julia"
+category = "secrets"
+group = "Histories"
+what = "Julia: REPL history"
+under = "julia-history"
+pattern = ""
+names = "files"
+
+[[entry]]
+id = "history.r-anywhere"
+category = "secrets"
+group = "Histories"
+what = "R: session histories (.Rhistory)"
+pattern = ".Rhistory"
+names = "files"
+
+# Optional: registers hold yanked text, command lines hold :! commands.
+[[entry]]
+id = "history.vim"
+category = "secrets"
+group = "Histories"
+what = "Vim: registers and command history"
+pattern = "~/.viminfo"
+names = "files"
+
+[[entry]]
+id = "history.neovim"
+category = "secrets"
+group = "Histories"
+what = "Neovim: registers and command history"
+under = "state"
+pattern = "nvim/shada"
+
+# Files and folders a variable names, where it is set.
+
+[[entry]]
+id = "creds.aws-credentials-file"
+category = "secrets"
+group = "Tools' credentials"
+what = "AWS CLI: access keys in the file AWS_SHARED_CREDENTIALS_FILE names"
+under = "aws-credentials"
+pattern = ""
+names = "files"
+
+[[entry]]
+id = "creds.aws-config-file"
+category = "secrets"
+group = "Tools' credentials"
+what = "AWS CLI: profiles in the file AWS_CONFIG_FILE names"
+under = "aws-config"
+pattern = ""
+names = "files"
+
+[[entry]]
+id = "creds.aws-web-identity"
+category = "secrets"
+group = "Tools' credentials"
+what = "AWS CLI: the web identity token"
+under = "aws-web-identity"
+pattern = ""
+names = "files"
+
+[[entry]]
+id = "creds.kubeconfig"
+category = "secrets"
+group = "Tools' credentials"
+what = "kubectl: clusters and credentials in the file KUBECONFIG names"
+under = "kubeconfig"
+pattern = ""
+names = "files"
+
+[[entry]]
+id = "creds.google-adc"
+category = "secrets"
+group = "Tools' credentials"
+what = "Google Cloud: the credential file GOOGLE_APPLICATION_CREDENTIALS names"
+under = "google-adc"
+pattern = ""
+names = "files"
+
+[[entry]]
+id = "creds.sops-age-file"
+category = "secrets"
+group = "Tools' credentials"
+what = "SOPS: age keys in the file SOPS_AGE_KEY_FILE names"
+under = "sops-age"
+pattern = ""
+names = "files"
+
+[[entry]]
+id = "creds.netrc-file"
+category = "secrets"
+group = "Tools' credentials"
+what = "netrc: logins in the file NETRC names"
+under = "netrc"
+pattern = ""
+names = "files"
+
+[[entry]]
+id = "creds.registry-auth"
+category = "secrets"
+group = "Tools' credentials"
+what = "Podman: registry logins in the file REGISTRY_AUTH_FILE names"
+under = "registry-auth"
+pattern = ""
+names = "files"
+
+[[entry]]
+id = "creds.helm-registry"
+category = "secrets"
+group = "Tools' credentials"
+what = "Helm: registry logins in the file HELM_REGISTRY_CONFIG names"
+under = "helm-registry"
+pattern = ""
+names = "files"
+
+[[entry]]
+id = "creds.helm-repositories"
+category = "secrets"
+group = "Tools' credentials"
+what = "Helm: repositories in the file HELM_REPOSITORY_CONFIG names"
+under = "helm-repositories"
+pattern = ""
+names = "files"
+
+[[entry]]
+id = "creds.mysql-login-file"
+category = "secrets"
+group = "Tools' credentials"
+what = "MySQL: login paths in the file MYSQL_TEST_LOGIN_FILE names"
+under = "mysql-login"
+pattern = ""
+names = "files"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "creds.oci-config-file"
+category = "secrets"
+group = "Tools' credentials"
+what = "Oracle Cloud CLI: the config file OCI_CLI_CONFIG_FILE names"
+under = "oci-config"
+pattern = ""
+names = "files"
+
+[[entry]]
+id = "creds.openstack-clouds-file"
+category = "secrets"
+group = "Tools' credentials"
+what = "OpenStack: clouds in the file OS_CLIENT_CONFIG_FILE names"
+under = "openstack-clouds"
+pattern = ""
+names = "files"
+
+[[entry]]
+id = "creds.openstack-secure-file"
+category = "secrets"
+group = "Tools' credentials"
+what = "OpenStack: secrets in the file OS_CLIENT_SECURE_FILE names"
+under = "openstack-secure"
+pattern = ""
+names = "files"
+
+[[entry]]
+id = "creds.xauthority-file"
+category = "secrets"
+group = "Tools' credentials"
+what = "X11: the authority file XAUTHORITY names"
+under = "xauthority"
+pattern = ""
+names = "files"
+systems = ["linux"]
+
+[[entry]]
+id = "creds.bundler"
+category = "secrets"
+group = "Tools' credentials"
+what = "Bundler: settings, and passwords for gem sources"
+under = "bundle-config"
+pattern = ""
+names = "files"
+
+[[entry]]
+id = "creds.fetchmail"
+category = "secrets"
+group = "Mail"
+what = "fetchmail: its run control file under FETCHMAILHOME"
+under = "fetchmail"
+pattern = "{fetchmailrc,.fetchmailrc}"
+names = "files"
+
+[[entry]]
+id = "creds.ibmcloud-current"
+category = "secrets"
+group = "Tools' credentials"
+what = "IBM Cloud CLI: credentials and settings"
+under = "ibmcloud-home"
+pattern = ".ibmcloud"
+
+[[entry]]
+id = "creds.minikube-moved"
+category = "secrets"
+group = "Tools' credentials"
+what = "minikube: certificates and state under MINIKUBE_HOME"
+under = "minikube-moved"
+pattern = ".minikube"
+
+[[entry]]
+id = "creds.pg-service-windows"
+category = "secrets"
+group = "Tools' credentials"
+what = "PostgreSQL: the connection service file"
+under = "pg-service-windows"
+pattern = ""
+names = "files"
+systems = ["windows"]
+
+[[entry]]
+id = "creds.huggingface-token-file"
+category = "secrets"
+group = "Tools' credentials"
+what = "Hugging Face: the token file HF_TOKEN_PATH names"
+under = "hf-token"
+pattern = ""
+names = "files"
+
+[[entry]]
+id = "creds.claude-state"
+category = "secrets"
+group = "Tools' credentials"
+what = "Claude Code: account details and MCP servers"
+under = "claude-state"
+pattern = ".claude.json"
+names = "files"
+
+# ---- Secrets: histories
+[[entry]]
+id = "history.histfile-var"
+category = "secrets"
+group = "Histories"
+what = "Shell: the history file HISTFILE names"
+under = "histfile"
+pattern = ""
+names = "files"
+
+[[entry]]
+id = "history.zdotdir"
+category = "secrets"
+group = "Histories"
+what = "zsh: histories kept under ZDOTDIR"
+under = "zdotdir"
+pattern = ".*history"
+names = "files"
+
+[[entry]]
+id = "history.aws-cli"
+category = "secrets"
+group = "Histories"
+what = "AWS CLI: the command history AWS_CLI_HISTORY_FILE names"
+under = "aws-history"
+pattern = ""
+names = "files"
+
+[[entry]]
+id = "history.less-file"
+category = "secrets"
+group = "Histories"
+what = "less: the history file LESSHISTFILE names"
+under = "lesshistfile"
+pattern = ""
+names = "files"
+
+[[entry]]
+id = "history.python-file"
+category = "secrets"
+group = "Histories"
+what = "Python: the history file PYTHON_HISTORY names"
+under = "python-history"
+pattern = ""
+names = "files"
+
+[[entry]]
+id = "history.node-file"
+category = "secrets"
+group = "Histories"
+what = "Node.js: the REPL history NODE_REPL_HISTORY names"
+under = "node-history"
+pattern = ""
+names = "files"
+
+[[entry]]
+id = "history.psql-file"
+category = "secrets"
+group = "Histories"
+what = "psql: the history file PSQL_HISTORY names"
+under = "psql-history"
+pattern = ""
+names = "files"
+
+[[entry]]
+id = "history.mysql-file"
+category = "secrets"
+group = "Histories"
+what = "MySQL: the history file MYSQL_HISTFILE names"
+under = "mysql-history"
+pattern = ""
+names = "files"
+
+[[entry]]
+id = "history.redis-file"
+category = "secrets"
+group = "Histories"
+what = "redis-cli: the history file REDISCLI_HISTFILE names"
+under = "redis-history"
+pattern = ""
+names = "files"
+
+[[entry]]
+id = "history.r-file"
+category = "secrets"
+group = "Histories"
+what = "R: the history file R_HISTFILE names"
+under = "r-history"
+pattern = ""
+names = "files"
+
+[[entry]]
+id = "history.claude-code"
+category = "secrets"
+group = "Histories"
+what = "Claude Code: the prompts you typed"
+under = "claude"
+pattern = "history.jsonl"
+names = "files"
+
+[[entry]]
+id = "history.codex"
+category = "secrets"
+group = "Histories"
+what = "Codex: the prompts you typed"
+under = "codex"
+pattern = "history.jsonl"
+names = "files"
+
+[[category]]
+id = "version-control"
+name = "Version control"
+searches = true
+agents = false
+index = true
+
+[[entry]]
+id = "vcs.git"
+category = "version-control"
+what = "Git: a repository's history"
+pattern = ".git"
+
+[[entry]]
+id = "vcs.mercurial"
+category = "version-control"
+what = "Mercurial: a repository's history"
+pattern = ".hg"
+
+[[entry]]
+id = "vcs.subversion"
+category = "version-control"
+what = "Subversion: a working copy's pristine files"
+pattern = ".svn"
+
+[[entry]]
+id = "vcs.jujutsu"
+category = "version-control"
+what = "Jujutsu: a repository's store and operation log"
+pattern = ".jj"
+
+[[entry]]
+id = "vcs.bazaar"
+category = "version-control"
+what = "Bazaar: a branch's history"
+pattern = ".bzr"
+
+[[entry]]
+id = "vcs.darcs"
+category = "version-control"
+what = "Darcs: a repository's patches"
+pattern = "_darcs"
+
+[[entry]]
+id = "vcs.pijul"
+category = "version-control"
+what = "Pijul: a repository's changes"
+pattern = ".pijul"
+
+[[category]]
+id = "environments"
+name = "Project environments"
+searches = true
+agents = false
+index = true
+
+[[entry]]
+id = "js.node-modules"
+category = "environments"
+what = "npm, pnpm, Yarn: a project's installed packages"
+pattern = "node_modules"
+
+[[entry]]
+id = "python.venv"
+category = "environments"
+what = "Python: a project's virtual environment"
+pattern = ".venv"
+
+[[entry]]
+id = "python.venv-plain"
+category = "environments"
+what = "Python: a virtual environment"
+pattern = "venv"
+
+[[entry]]
+id = "python.pycache"
+category = "environments"
+what = "Python: compiled bytecode"
+pattern = "__pycache__"
+
+[[entry]]
+id = "python.pypackages"
+category = "environments"
+what = "PDM: a project's packages (PEP 582)"
+pattern = "__pypackages__"
+
+[[entry]]
+id = "python.eggs"
+category = "environments"
+what = "setuptools: eggs fetched for a build"
+pattern = ".eggs"
+
+# tox, nox, mypy, pytest and Ruff tag theirs now (CACHEDIR.TAG); the
+# names catch the folders older versions made.
+[[entry]]
+id = "python.tox"
+category = "environments"
+what = "tox: test environments"
+pattern = ".tox"
+
+[[entry]]
+id = "python.nox"
+category = "environments"
+what = "nox: test environments"
+pattern = ".nox"
+
+[[entry]]
+id = "python.pytest-cache"
+category = "environments"
+what = "pytest: what the last runs left"
+pattern = ".pytest_cache"
+
+[[entry]]
+id = "python.hypothesis"
+category = "environments"
+what = "Hypothesis: the example database"
+pattern = ".hypothesis"
+
+[[entry]]
+id = "python.mypy-cache"
+category = "environments"
+what = "mypy: the type checker's cache"
+pattern = ".mypy_cache"
+
+[[entry]]
+id = "python.pyre"
+category = "environments"
+what = "Pyre: the type checker's state"
+pattern = ".pyre"
+
+[[entry]]
+id = "python.pytype"
+category = "environments"
+what = "pytype: the type checker's output"
+pattern = ".pytype"
+
+[[entry]]
+id = "python.ruff-cache"
+category = "environments"
+what = "Ruff: the linter's cache"
+pattern = ".ruff_cache"
+
+[[entry]]
+id = "ocaml.opam-switch"
+category = "environments"
+what = "opam: a project's local switch"
+pattern = "_opam"
+
+[[entry]]
+id = "clojure.cpcache"
+category = "environments"
+what = "Clojure CLI: computed classpaths"
+pattern = ".cpcache"
+
+[[entry]]
+id = "purescript.spago"
+category = "environments"
+what = "Spago: a PureScript project's packages"
+pattern = ".spago"
+
+[[entry]]
+id = "terraform.providers"
+category = "environments"
+what = "Terraform: a configuration's providers and modules"
+pattern = ".terraform"
+
+[[entry]]
+id = "terraform.terragrunt-cache"
+category = "environments"
+what = "Terragrunt: configurations it downloaded"
+pattern = ".terragrunt-cache"
+
+[[entry]]
+id = "env.direnv"
+category = "environments"
+what = "direnv: a project's cached environment"
+pattern = ".direnv"
+
+[[entry]]
+id = "env.devenv"
+category = "environments"
+what = "devenv: a project's environment state"
+pattern = ".devenv"
+
+[[category]]
+id = "build-output"
+name = "Build output"
+searches = true
+agents = false
+index = true
+
+# Ordinary words, so only beside the file that says which tool made them.
+[[entry]]
+id = "rust.target"
+category = "build-output"
+what = "Cargo: a Rust project's build output"
+pattern = "target"
+beside = "Cargo.toml"
+
+[[entry]]
+id = "swift.build"
+category = "build-output"
+what = "SwiftPM: a Swift package's build output"
+pattern = ".build"
+beside = "Package.swift"
+
+[[entry]]
+id = "dotnet.obj"
+category = "build-output"
+what = "MSBuild: a C# project's intermediate files"
+pattern = "obj"
+beside = "*.csproj"
+
+[[entry]]
+id = "unity.library"
+category = "build-output"
+what = "Unity: a project's imported assets"
+pattern = "Library"
+beside = "ProjectSettings"
+
+[[entry]]
+id = "unreal.intermediate"
+category = "build-output"
+what = "Unreal Engine: a project's intermediate files"
+pattern = "Intermediate"
+beside = "*.uproject"
+
+[[entry]]
+id = "unreal.derived-data"
+category = "build-output"
+what = "Unreal Engine: the derived data cache"
+pattern = "DerivedDataCache"
+
+[[entry]]
+id = "godot.imported"
+category = "build-output"
+what = "Godot: imported assets and editor state"
+pattern = ".godot"
+
+[[entry]]
+id = "cmake.files"
+category = "build-output"
+what = "CMake: a build's generated files"
+pattern = "CMakeFiles"
+
+[[entry]]
+id = "cmake.clion-builds"
+category = "build-output"
+what = "CLion: CMake build folders"
+pattern = "cmake-build-*"
+
+[[entry]]
+id = "js.next"
+category = "build-output"
+what = "Next.js: build output"
+pattern = ".next"
+
+[[entry]]
+id = "js.nuxt"
+category = "build-output"
+what = "Nuxt: build output"
+pattern = ".nuxt"
+
+[[entry]]
+id = "js.svelte-kit"
+category = "build-output"
+what = "SvelteKit: generated files"
+pattern = ".svelte-kit"
+
+[[entry]]
+id = "js.parcel-cache"
+category = "build-output"
+what = "Parcel: the build cache"
+pattern = ".parcel-cache"
+
+[[entry]]
+id = "js.turbo"
+category = "build-output"
+what = "Turborepo: the task cache"
+pattern = ".turbo"
+
+[[entry]]
+id = "js.angular"
+category = "build-output"
+what = "Angular CLI: the build cache"
+pattern = ".angular"
+
+[[entry]]
+id = "js.docusaurus"
+category = "build-output"
+what = "Docusaurus: generated files"
+pattern = ".docusaurus"
+
+[[entry]]
+id = "serverless.package"
+category = "build-output"
+what = "Serverless Framework: packaged deployments"
+pattern = ".serverless"
+
+[[entry]]
+id = "sass.cache"
+category = "build-output"
+what = "Sass: the compile cache"
+pattern = ".sass-cache"
+
+[[entry]]
+id = "haskell.stack-work"
+category = "build-output"
+what = "Stack: a Haskell project's build"
+pattern = ".stack-work"
+
+[[entry]]
+id = "haskell.dist-newstyle"
+category = "build-output"
+what = "cabal: a Haskell project's build"
+pattern = "dist-newstyle"
+
+[[entry]]
+id = "dart.dart-tool"
+category = "build-output"
+what = "Dart: a package's tool state and build"
+pattern = ".dart_tool"
+
+[[entry]]
+id = "lean.lake"
+category = "build-output"
+what = "Lake: a Lean project's packages and build"
+pattern = ".lake"
+
+[[entry]]
+id = "zig.cache"
+category = "build-output"
+what = "Zig: a project's build cache"
+pattern = ".zig-cache"
+
+[[entry]]
+id = "zig.cache-older"
+category = "build-output"
+what = "Zig: a project's build cache (older name)"
+pattern = "zig-cache"
+
+[[entry]]
+id = "elm.stuff"
+category = "build-output"
+what = "Elm: a project's packages and build"
+pattern = "elm-stuff"
+
+[[entry]]
+id = "clojure.shadow-cljs"
+category = "build-output"
+what = "shadow-cljs: the build cache"
+pattern = ".shadow-cljs"
+
+[[entry]]
+id = "nim.nimcache"
+category = "build-output"
+what = "Nim: the compiler's output"
+pattern = "nimcache"
+
+[[entry]]
+id = "kotlin.project"
+category = "build-output"
+what = "Kotlin: the Gradle plugin's project data"
+pattern = ".kotlin"
+
+[[entry]]
+id = "android.cxx"
+category = "build-output"
+what = "Android Gradle plugin: native builds"
+pattern = ".cxx"
+
+[[entry]]
+id = "android.external-native-build"
+category = "build-output"
+what = "Android Gradle plugin: native builds (older name)"
+pattern = ".externalNativeBuild"
+
+[[entry]]
+id = "bazel.output-root"
+category = "build-output"
+what = "Bazel: its output root"
+pattern = "~/_bazel_*"
+systems = ["windows"]
+
+[[category]]
+id = "toolchains"
+name = "Toolchains and packages"
+searches = true
+agents = false
+index = true
+
+[[entry]]
+id = "rust.rustup"
+category = "toolchains"
+group = "Rust"
+what = "rustup: Rust toolchains"
+under = "rustup"
+pattern = ""
+
+# Cargo's stores, not ~/.cargo: config.toml, credentials.toml and bin sit
+# beside them.
+[[entry]]
+id = "rust.cargo-registry"
+category = "toolchains"
+group = "Rust"
+what = "Cargo: downloaded crates and the index"
+under = "cargo"
+pattern = "registry"
+
+[[entry]]
+id = "rust.cargo-git"
+category = "toolchains"
+group = "Rust"
+what = "Cargo: git dependencies' checkouts"
+under = "cargo"
+pattern = "git"
+
+[[entry]]
+id = "rust.advisory-db"
+category = "toolchains"
+group = "Rust"
+what = "cargo-audit, cargo-deny: advisory databases"
+pattern = "~/.cargo/advisory-db*"
+
+# Not ~/go: go/src holds code written in GOPATH mode.
+[[entry]]
+id = "go.modules"
+category = "toolchains"
+group = "Go"
+what = "Go: the module cache"
+under = "gopath"
+pattern = "pkg"
+
+[[entry]]
+id = "js.npm"
+category = "toolchains"
+group = "JavaScript"
+what = "npm: the package cache and npx's packages"
+under = "npm-cache"
+pattern = ""
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "js.pnpm-store"
+category = "toolchains"
+group = "JavaScript"
+what = "pnpm: the package store"
+pattern = "~/.pnpm-store"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "js.pnpm"
+category = "toolchains"
+group = "JavaScript"
+what = "pnpm: the package store and global packages"
+under = "pnpm"
+pattern = ""
+systems = ["linux"]
+
+[[entry]]
+id = "js.bun-cache"
+category = "toolchains"
+group = "JavaScript"
+what = "Bun: downloaded packages"
+under = "bun-cache"
+pattern = ""
+
+[[entry]]
+id = "js.yarn-berry"
+category = "toolchains"
+group = "JavaScript"
+what = "Yarn: the global package cache"
+under = "yarn-global"
+pattern = ""
+
+[[entry]]
+id = "js.nvm"
+category = "toolchains"
+group = "JavaScript"
+what = "nvm: installed Node versions"
+under = "nvm"
+pattern = "versions"
+systems = ["linux", "macos"]
+
+# nvm puts itself and every Node in $XDG_CONFIG_HOME/nvm when that is set.
+[[entry]]
+id = "js.nvm-xdg"
+category = "toolchains"
+group = "JavaScript"
+what = "nvm: installed Node versions"
+under = "config"
+pattern = "nvm/versions"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "js.fnm"
+category = "toolchains"
+group = "JavaScript"
+what = "fnm: installed Node versions"
+under = "fnm"
+pattern = ""
+systems = ["linux"]
+
+[[entry]]
+id = "js.fnm-older"
+category = "toolchains"
+group = "JavaScript"
+what = "fnm: installed Node versions (older place)"
+pattern = "~/.fnm"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "js.volta"
+category = "toolchains"
+group = "JavaScript"
+what = "Volta: Node toolchains and packages"
+under = "volta"
+pattern = ""
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "js.electron-gyp"
+category = "toolchains"
+group = "JavaScript"
+what = "electron-gyp: Electron's headers"
+pattern = "~/.electron-gyp"
+
+[[entry]]
+id = "js.electron-rebuild-cache"
+category = "toolchains"
+group = "JavaScript"
+what = "electron-rebuild: rebuilt native modules"
+pattern = "~/.electron-rebuild-cache"
+
+[[entry]]
+id = "dart.pub-cache"
+category = "toolchains"
+group = "Dart"
+what = "pub: Dart's package cache"
+pattern = ".pub-cache"
+
+[[entry]]
+id = "python.uv"
+category = "toolchains"
+group = "Python"
+what = "uv: installed Pythons and tools"
+under = "data"
+pattern = "uv"
+systems = ["linux", "macos"]
+
+# The versions alone: the rest of ~/.pyenv is pyenv's own clone.
+[[entry]]
+id = "python.pyenv"
+category = "toolchains"
+group = "Python"
+what = "pyenv: installed Pythons"
+under = "pyenv"
+pattern = "versions"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "python.pyenv-win"
+category = "toolchains"
+group = "Python"
+what = "pyenv-win: installed Pythons"
+pattern = "~/.pyenv/pyenv-win/versions"
+systems = ["windows"]
+
+[[entry]]
+id = "python.pipx"
+category = "toolchains"
+group = "Python"
+what = "pipx: installed apps' environments"
+under = "pipx"
+pattern = ""
+systems = ["linux"]
+
+[[entry]]
+id = "python.pipx-older"
+category = "toolchains"
+group = "Python"
+what = "pipx: installed apps' environments (older place)"
+pattern = "~/.local/pipx"
+
+[[entry]]
+id = "python.poetry"
+category = "toolchains"
+group = "Python"
+what = "Poetry: its own install and environments"
+under = "poetry-data"
+pattern = ""
+systems = ["linux"]
+
+[[entry]]
+id = "python.pdm"
+category = "toolchains"
+group = "Python"
+what = "PDM: its own install and environments"
+under = "data"
+pattern = "pdm"
+systems = ["linux"]
+
+[[entry]]
+id = "python.hatch"
+category = "toolchains"
+group = "Python"
+what = "Hatch: environments and Pythons"
+under = "hatch-data"
+pattern = ""
+systems = ["linux"]
+
+# An installer's root is its base environment, so it is listed whole.
+[[entry]]
+id = "python.miniconda"
+category = "toolchains"
+group = "Python"
+what = "Miniconda: conda's base and environments"
+pattern = "~/miniconda3"
+
+[[entry]]
+id = "python.anaconda"
+category = "toolchains"
+group = "Python"
+what = "Anaconda: conda's base and environments"
+pattern = "~/anaconda3"
+
+[[entry]]
+id = "python.miniforge"
+category = "toolchains"
+group = "Python"
+what = "Miniforge: conda's base and environments"
+pattern = "~/miniforge3"
+
+[[entry]]
+id = "python.mambaforge"
+category = "toolchains"
+group = "Python"
+what = "Mambaforge: conda's base and environments"
+pattern = "~/mambaforge"
+
+[[entry]]
+id = "python.micromamba"
+category = "toolchains"
+group = "Python"
+what = "micromamba: its root prefix"
+under = "micromamba"
+pattern = ""
+
+[[entry]]
+id = "python.mamba"
+category = "toolchains"
+group = "Python"
+what = "micromamba 2: its root prefix"
+under = "data"
+pattern = "mamba"
+systems = ["linux", "macos"]
+
+# Not ~/.conda: a .condarc sits there.
+[[entry]]
+id = "python.conda-pkgs"
+category = "toolchains"
+group = "Python"
+what = "conda: the package cache"
+under = "conda-pkgs"
+pattern = ""
+
+[[entry]]
+id = "python.conda-envs"
+category = "toolchains"
+group = "Python"
+what = "conda: environments"
+under = "conda-envs"
+pattern = ""
+
+# Gradle's stores, not ~/.gradle: gradle.properties and init.d sit beside
+# them.
+[[entry]]
+id = "jvm.gradle-caches"
+category = "toolchains"
+group = "JVM"
+what = "Gradle: dependency and build caches"
+under = "gradle"
+pattern = "caches"
+
+[[entry]]
+id = "jvm.gradle-wrapper"
+category = "toolchains"
+group = "JVM"
+what = "Gradle: the wrapper's distributions"
+under = "gradle"
+pattern = "wrapper"
+
+[[entry]]
+id = "jvm.gradle-daemon"
+category = "toolchains"
+group = "JVM"
+what = "Gradle: the daemon's logs and state"
+under = "gradle"
+pattern = "daemon"
+
+[[entry]]
+id = "jvm.gradle-jdks"
+category = "toolchains"
+group = "JVM"
+what = "Gradle: JDKs it provisioned"
+under = "gradle"
+pattern = "jdks"
+
+[[entry]]
+id = "jvm.gradle-native"
+category = "toolchains"
+group = "JVM"
+what = "Gradle: native libraries it unpacked"
+under = "gradle"
+pattern = "native"
+
+[[entry]]
+id = "jvm.gradle-kotlin-profile"
+category = "toolchains"
+group = "JVM"
+what = "Kotlin: Gradle build reports"
+under = "gradle"
+pattern = "kotlin-profile"
+
+# Not ~/.m2: settings.xml holds servers' passwords.
+[[entry]]
+id = "jvm.maven-repository"
+category = "toolchains"
+group = "JVM"
+what = "Maven: the local repository"
+pattern = "~/.m2/repository"
+
+[[entry]]
+id = "jvm.maven-wrapper"
+category = "toolchains"
+group = "JVM"
+what = "Maven: the wrapper's distributions"
+under = "maven-user"
+pattern = "wrapper"
+
+# Not ~/.sbt nor ~/.ivy2: .sbt/1.0, credentials and .ivy2/local, which
+# publishLocal writes to, stay.
+[[entry]]
+id = "jvm.sbt-boot"
+category = "toolchains"
+group = "JVM"
+what = "sbt: the launcher's Scala and sbt"
+pattern = "~/.sbt/boot"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "jvm.ivy-cache"
+category = "toolchains"
+group = "JVM"
+what = "Ivy: sbt's dependency cache"
+pattern = "~/.ivy2/cache"
+systems = ["linux", "macos"]
+
+# Not ~/.sdkman: etc/config stays.
+[[entry]]
+id = "jvm.sdkman-candidates"
+category = "toolchains"
+group = "JVM"
+what = "SDKMAN!: installed SDKs"
+under = "sdkman"
+pattern = "candidates"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "jvm.sdkman-archives"
+category = "toolchains"
+group = "JVM"
+what = "SDKMAN!: downloaded archives"
+under = "sdkman"
+pattern = "archives"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "jvm.sdkman-tmp"
+category = "toolchains"
+group = "JVM"
+what = "SDKMAN!: downloads in progress"
+under = "sdkman"
+pattern = "tmp"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "jvm.jdks"
+category = "toolchains"
+group = "JVM"
+what = "IntelliJ IDEA: downloaded JDKs"
+pattern = "~/.jdks"
+
+[[entry]]
+id = "jvm.konan"
+category = "toolchains"
+group = "JVM"
+what = "Kotlin/Native: compilers and dependencies"
+under = "konan"
+pattern = ""
+
+[[entry]]
+id = "dotnet.home"
+category = "toolchains"
+group = ".NET"
+what = "dotnet: SDKs and global tools"
+pattern = "~/.dotnet"
+
+[[entry]]
+id = "dotnet.nuget-packages"
+category = "toolchains"
+group = ".NET"
+what = "NuGet: the global packages folder"
+under = "nuget-packages"
+pattern = ""
+
+[[entry]]
+id = "dotnet.nuget-http-cache"
+category = "toolchains"
+group = ".NET"
+what = "NuGet: the HTTP and plugin caches"
+under = "data"
+pattern = "NuGet"
+systems = ["linux", "macos"]
+
+# The ruby subfolders: credentials, gemrc and signing keys sit beside them.
+[[entry]]
+id = "ruby.gems"
+category = "toolchains"
+group = "Ruby"
+what = "RubyGems: installed gems"
+pattern = "~/.gem/ruby"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "ruby.gems-xdg"
+category = "toolchains"
+group = "Ruby"
+what = "RubyGems: installed gems"
+under = "data"
+pattern = "gem/ruby"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "ruby.rbenv"
+category = "toolchains"
+group = "Ruby"
+what = "rbenv: installed Rubies"
+under = "rbenv"
+pattern = "versions"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "ruby.rvm"
+category = "toolchains"
+group = "Ruby"
+what = "RVM: installed Rubies and gems"
+pattern = "~/.rvm"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "ruby.bundler-cache"
+category = "toolchains"
+group = "Ruby"
+what = "Bundler: the gem cache"
+under = "bundle-cache"
+pattern = ""
+systems = ["linux", "macos"]
+
+# Not Composer's home: config.json and auth.json stay.
+[[entry]]
+id = "php.composer-vendor"
+category = "toolchains"
+group = "PHP"
+what = "Composer: global packages"
+under = "composer"
+pattern = "vendor"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "php.composer-cache"
+category = "toolchains"
+group = "PHP"
+what = "Composer: the package cache"
+under = "composer-cache"
+pattern = ""
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "php.composer-vendor-xdg"
+category = "toolchains"
+group = "PHP"
+what = "Composer: global packages"
+under = "composer-xdg"
+pattern = "vendor"
+systems = ["linux"]
+
+# Each tool's stores: its config.yaml or config stays.
+[[entry]]
+id = "haskell.ghcup-ghc"
+category = "toolchains"
+group = "Haskell"
+what = "GHCup: installed GHCs"
+under = "ghcup"
+pattern = ".ghcup/ghc"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "haskell.ghcup-cache"
+category = "toolchains"
+group = "Haskell"
+what = "GHCup: downloads"
+under = "ghcup"
+pattern = ".ghcup/cache"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "haskell.ghcup-tmp"
+category = "toolchains"
+group = "Haskell"
+what = "GHCup: temporary files"
+under = "ghcup"
+pattern = ".ghcup/tmp"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "haskell.ghcup-logs"
+category = "toolchains"
+group = "Haskell"
+what = "GHCup: install logs"
+under = "ghcup"
+pattern = ".ghcup/logs"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "haskell.ghcup-xdg"
+category = "toolchains"
+group = "Haskell"
+what = "GHCup: installed GHCs and tools"
+under = "data"
+pattern = "ghcup"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "haskell.stack-programs"
+category = "toolchains"
+group = "Haskell"
+what = "Stack: installed GHCs"
+under = "stack"
+pattern = "programs"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "haskell.stack-snapshots"
+category = "toolchains"
+group = "Haskell"
+what = "Stack: snapshots' built packages"
+under = "stack"
+pattern = "snapshots"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "haskell.stack-pantry"
+category = "toolchains"
+group = "Haskell"
+what = "Stack: the package store"
+under = "stack"
+pattern = "pantry"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "haskell.stack-indices"
+category = "toolchains"
+group = "Haskell"
+what = "Stack: package indices"
+under = "stack"
+pattern = "indices"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "haskell.cabal-packages"
+category = "toolchains"
+group = "Haskell"
+what = "cabal: downloaded packages"
+under = "cabal"
+pattern = "packages"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "haskell.cabal-store"
+category = "toolchains"
+group = "Haskell"
+what = "cabal: the package store"
+under = "cabal"
+pattern = "store"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "haskell.cabal-store-xdg"
+category = "toolchains"
+group = "Haskell"
+what = "cabal: the package store"
+under = "state"
+pattern = "cabal/store"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "ocaml.opam"
+category = "toolchains"
+group = "OCaml"
+what = "opam: switches and the package repository"
+under = "opam"
+pattern = ""
+
+# Julia's stores, not ~/.julia: config (startup.jl), dev and environments
+# are the user's.
+[[entry]]
+id = "julia.packages"
+category = "toolchains"
+group = "Julia"
+what = "Julia: installed packages"
+under = "julia-depot"
+pattern = "packages"
+
+[[entry]]
+id = "julia.artifacts"
+category = "toolchains"
+group = "Julia"
+what = "Julia: packages' artifacts"
+under = "julia-depot"
+pattern = "artifacts"
+
+[[entry]]
+id = "julia.compiled"
+category = "toolchains"
+group = "Julia"
+what = "Julia: precompiled packages"
+under = "julia-depot"
+pattern = "compiled"
+
+[[entry]]
+id = "julia.registries"
+category = "toolchains"
+group = "Julia"
+what = "Julia: package registries"
+under = "julia-depot"
+pattern = "registries"
+
+[[entry]]
+id = "julia.clones"
+category = "toolchains"
+group = "Julia"
+what = "Julia: packages' git clones"
+under = "julia-depot"
+pattern = "clones"
+
+[[entry]]
+id = "julia.scratchspaces"
+category = "toolchains"
+group = "Julia"
+what = "Julia: packages' scratch spaces"
+under = "julia-depot"
+pattern = "scratchspaces"
+
+[[entry]]
+id = "julia.juliaup"
+category = "toolchains"
+group = "Julia"
+what = "juliaup: installed Julia versions"
+under = "juliaup-depot"
+pattern = "juliaup"
+
+[[entry]]
+id = "julia.logs"
+category = "toolchains"
+group = "Julia"
+what = "Julia: Pkg's usage logs"
+under = "julia-depot"
+pattern = "logs"
+
+# Not ~/.hex: hex.config stays.
+[[entry]]
+id = "elixir.hex-packages"
+category = "toolchains"
+group = "Elixir and Erlang"
+what = "Hex: downloaded packages"
+under = "hex"
+pattern = "packages"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "elixir.mix"
+category = "toolchains"
+group = "Elixir and Erlang"
+what = "Mix: installed archives and escripts"
+under = "mix"
+pattern = ""
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "erlang.kerl"
+category = "toolchains"
+group = "Elixir and Erlang"
+what = "kerl: Erlang builds"
+under = "kerl"
+pattern = ""
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "nim.nimble"
+category = "toolchains"
+group = "Nim"
+what = "Nimble: installed packages"
+under = "nimble"
+pattern = ""
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "nim.choosenim"
+category = "toolchains"
+group = "Nim"
+what = "choosenim: installed Nim toolchains"
+pattern = "~/.choosenim"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "perl.cpanm"
+category = "toolchains"
+group = "Perl"
+what = "cpanm: builds and their logs"
+under = "cpanm"
+pattern = ""
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "perl.cpan-build"
+category = "toolchains"
+group = "Perl"
+what = "CPAN: unpacked builds"
+pattern = "~/.cpan/build"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "perl.cpan-sources"
+category = "toolchains"
+group = "Perl"
+what = "CPAN: downloaded archives"
+pattern = "~/.cpan/sources"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "perl.local-lib"
+category = "toolchains"
+group = "Perl"
+what = "local::lib: installed modules"
+pattern = "~/perl5/lib"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "perl.perlbrew"
+category = "toolchains"
+group = "Perl"
+what = "perlbrew: installed Perls"
+under = "perlbrew"
+pattern = ""
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "lua.luarocks-lib"
+category = "toolchains"
+group = "Lua"
+what = "LuaRocks: installed rocks' libraries"
+pattern = "~/.luarocks/lib"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "lua.luarocks-share"
+category = "toolchains"
+group = "Lua"
+what = "LuaRocks: installed rocks"
+pattern = "~/.luarocks/share"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "racket.packages"
+category = "toolchains"
+group = "Racket"
+what = "Racket: installed packages"
+under = "racket-addon"
+pattern = ""
+systems = ["linux"]
+
+[[entry]]
+id = "chicken.eggs"
+category = "toolchains"
+group = "Scheme"
+what = "CHICKEN: the egg cache"
+pattern = "~/.chicken-install"
+
+[[entry]]
+id = "r.library"
+category = "toolchains"
+group = "R"
+what = "R: installed packages"
+pattern = "~/R/*-library"
+systems = ["linux"]
+
+[[entry]]
+id = "embedded.platformio"
+category = "toolchains"
+group = "Embedded"
+what = "PlatformIO: platforms, toolchains and packages"
+under = "platformio"
+pattern = ""
+
+[[entry]]
+id = "embedded.espressif"
+category = "toolchains"
+group = "Embedded"
+what = "ESP-IDF: toolchains and their Python"
+under = "espressif"
+pattern = ""
+
+# The sketchbook, ~/Arduino, stays.
+[[entry]]
+id = "embedded.arduino15"
+category = "toolchains"
+group = "Embedded"
+what = "Arduino: board packages and tools"
+under = "arduino-data"
+pattern = ""
+systems = ["linux"]
+
+[[entry]]
+id = "vm.asdf"
+category = "toolchains"
+group = "Version managers"
+what = "asdf: installed tools and plugins"
+under = "asdf"
+pattern = ""
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "vm.mise"
+category = "toolchains"
+group = "Version managers"
+what = "mise: installed tools"
+under = "mise"
+pattern = ""
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "vm.aqua"
+category = "toolchains"
+group = "Version managers"
+what = "aqua: installed tools"
+under = "aqua"
+pattern = ""
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "vm.proto-tools"
+category = "toolchains"
+group = "Version managers"
+what = "proto: installed tools"
+under = "proto"
+pattern = "tools"
+
+[[entry]]
+id = "vm.proto-plugins"
+category = "toolchains"
+group = "Version managers"
+what = "proto: downloaded plugins"
+under = "proto"
+pattern = "plugins"
+
+[[entry]]
+id = "vm.proto-temp"
+category = "toolchains"
+group = "Version managers"
+what = "proto: downloads in progress"
+under = "proto"
+pattern = "temp"
+
+[[entry]]
+id = "pkg.linuxbrew"
+category = "toolchains"
+group = "Package managers"
+what = "Homebrew: an install in the home folder"
+pattern = "~/.linuxbrew"
+systems = ["linux"]
+
+# Not ~/scoop: persist holds the apps' data.
+[[entry]]
+id = "pkg.scoop-apps"
+category = "toolchains"
+group = "Package managers"
+what = "Scoop: installed apps"
+under = "scoop"
+pattern = "apps"
+systems = ["windows"]
+
+[[entry]]
+id = "pkg.scoop-cache"
+category = "toolchains"
+group = "Package managers"
+what = "Scoop: downloads"
+under = "scoop-cache"
+pattern = ""
+systems = ["windows"]
+
+[[entry]]
+id = "pkg.scoop-buckets"
+category = "toolchains"
+group = "Package managers"
+what = "Scoop: buckets' manifests"
+under = "scoop"
+pattern = "buckets"
+systems = ["windows"]
+
+[[entry]]
+id = "pkg.scoop-shims"
+category = "toolchains"
+group = "Package managers"
+what = "Scoop: apps' shims"
+under = "scoop"
+pattern = "shims"
+systems = ["windows"]
+
+# Not ~/.spack: its YAML is configuration written by hand.
+[[entry]]
+id = "pkg.spack-cache"
+category = "toolchains"
+group = "Package managers"
+what = "Spack: its cache"
+under = "spack-user-cache"
+pattern = "cache"
+systems = ["linux", "macos"]
+
+# Files and folders a variable names, where it is set.
+
+# ---- Toolchains
+[[entry]]
+id = "go.modcache"
+category = "toolchains"
+group = "Go"
+what = "Go: the module cache GOMODCACHE names"
+under = "gomodcache"
+pattern = ""
+
+[[entry]]
+id = "js.pnpm-moved"
+category = "toolchains"
+group = "JavaScript"
+what = "pnpm: the store and global packages under PNPM_HOME"
+under = "pnpm-moved"
+pattern = ""
+systems = ["macos", "windows"]
+
+[[entry]]
+id = "js.volta-moved"
+category = "toolchains"
+group = "JavaScript"
+what = "Volta: the tools under VOLTA_HOME"
+under = "volta-moved"
+pattern = ""
+systems = ["windows"]
+
+[[entry]]
+id = "js.corepack"
+category = "toolchains"
+group = "JavaScript"
+what = "Corepack: the package managers under COREPACK_HOME"
+under = "corepack"
+pattern = ""
+
+[[entry]]
+id = "dart.pub-cache-moved"
+category = "toolchains"
+group = "Dart"
+what = "pub: the package cache PUB_CACHE names"
+under = "pub-cache-moved"
+pattern = ""
+
+[[entry]]
+id = "python.uv-python"
+category = "toolchains"
+group = "Python"
+what = "uv: the Pythons under UV_PYTHON_INSTALL_DIR"
+under = "uv-python"
+pattern = ""
+
+[[entry]]
+id = "python.uv-tools"
+category = "toolchains"
+group = "Python"
+what = "uv: the tools under UV_TOOL_DIR"
+under = "uv-tools"
+pattern = ""
+
+[[entry]]
+id = "python.virtualenvwrapper"
+category = "toolchains"
+group = "Python"
+what = "virtualenvwrapper: its environments"
+under = "workon-home"
+pattern = ""
+
+[[entry]]
+id = "python.pipenv"
+category = "toolchains"
+group = "Python"
+what = "Pipenv: its environments"
+under = "pipenv-venvs"
+pattern = ""
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "dotnet.cli-home"
+category = "toolchains"
+group = ".NET"
+what = ".NET CLI: tools and workloads under DOTNET_CLI_HOME"
+under = "dotnet-cli-home-moved"
+pattern = ".dotnet"
+
+[[entry]]
+id = "dotnet.root"
+category = "toolchains"
+group = ".NET"
+what = ".NET: the runtimes under DOTNET_ROOT"
+under = "dotnet-root"
+pattern = ""
+
+[[entry]]
+id = "ruby.gem-home"
+category = "toolchains"
+group = "Ruby"
+what = "RubyGems: the gems under GEM_HOME"
+under = "gem-home"
+pattern = "{gems,specifications,extensions,cache,doc}"
+
+[[entry]]
+id = "ruby.gem-specs"
+category = "toolchains"
+group = "Ruby"
+what = "RubyGems: fetched gem specifications"
+under = "gem-specs"
+pattern = ""
+
+[[entry]]
+id = "r.library-moved"
+category = "toolchains"
+group = "R"
+what = "R: the library R_LIBS_USER names"
+under = "r-libs-user"
+pattern = ""
+
+[[entry]]
+id = "lean.elan-toolchains"
+category = "toolchains"
+group = "Lean"
+what = "elan: Lean toolchains"
+under = "elan"
+pattern = "toolchains"
+
+[[entry]]
+id = "terraform.plugin-cache"
+category = "toolchains"
+group = "Terraform"
+what = "Terraform: the provider cache TF_PLUGIN_CACHE_DIR names"
+under = "terraform-plugin-cache"
+pattern = ""
+
+[[entry]]
+id = "pulumi.plugins"
+category = "toolchains"
+group = "Pulumi"
+what = "Pulumi: its resource plugins"
+under = "pulumi"
+pattern = "plugins"
+
+[[category]]
+id = "editors"
+name = "Editors and IDEs"
+searches = true
+agents = false
+index = true
+
+# The extensions alone: argv.json, which people edit, sits beside them.
+[[entry]]
+id = "vscode.extensions"
+category = "editors"
+what = "VS Code and its forks: installed extensions"
+pattern = "~/.vscode*/extensions"
+
+[[entry]]
+id = "vscode.server"
+category = "editors"
+what = "VS Code: the remote server and its extensions"
+pattern = "~/.vscode-server*"
+
+[[entry]]
+id = "cursor.extensions"
+category = "editors"
+what = "Cursor: installed extensions"
+pattern = "~/.cursor/extensions"
+
+# Zed's tools, not its folder: prompts holds the Assistant's prompts the
+# user wrote.
+[[entry]]
+id = "zed.extensions"
+category = "editors"
+what = "Zed: installed extensions"
+under = "data"
+pattern = "zed/extensions"
+systems = ["linux"]
+
+[[entry]]
+id = "zed.languages"
+category = "editors"
+what = "Zed: language servers"
+under = "data"
+pattern = "zed/languages"
+systems = ["linux"]
+
+[[entry]]
+id = "zed.node"
+category = "editors"
+what = "Zed: its Node runtime"
+under = "data"
+pattern = "zed/node"
+systems = ["linux"]
+
+[[entry]]
+id = "zed.prettier"
+category = "editors"
+what = "Zed: its Prettier"
+under = "data"
+pattern = "zed/prettier"
+systems = ["linux"]
+
+[[entry]]
+id = "zed.copilot"
+category = "editors"
+what = "Zed: the Copilot language server"
+under = "data"
+pattern = "zed/copilot"
+systems = ["linux"]
+
+[[entry]]
+id = "zed.external-agents"
+category = "editors"
+what = "Zed: external agents it installed"
+under = "data"
+pattern = "zed/external_agents"
+systems = ["linux"]
+
+[[entry]]
+id = "zed.debug-adapters"
+category = "editors"
+what = "Zed: debug adapters"
+under = "data"
+pattern = "zed/debug_adapters"
+systems = ["linux"]
+
+[[entry]]
+id = "zed.remote-servers"
+category = "editors"
+what = "Zed: remote servers' builds"
+under = "data"
+pattern = "zed/remote_servers"
+systems = ["linux"]
+
+# Scratches live in the config folder, which stays.
+[[entry]]
+id = "jetbrains.data"
+category = "editors"
+what = "JetBrains: plugins and Toolbox's IDEs"
+under = "data"
+pattern = "JetBrains"
+systems = ["linux"]
+
+# The plugin managers' folders: init files and the lockfile stay in the
+# config folder.
+[[entry]]
+id = "neovim.lazy"
+category = "editors"
+what = "lazy.nvim: installed plugins and rocks"
+under = "data"
+pattern = "nvim/lazy*"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "neovim.mason"
+category = "editors"
+what = "mason.nvim: language servers and tools"
+under = "data"
+pattern = "nvim/mason"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "neovim.plugged"
+category = "editors"
+what = "vim-plug: Neovim's plugins"
+under = "data"
+pattern = "nvim/plugged"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "vim.plugged"
+category = "editors"
+what = "vim-plug: Vim's plugins"
+pattern = "~/.vim/plugged"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "vim.vimfiles-plugged"
+category = "editors"
+what = "vim-plug: Vim's plugins"
+pattern = "~/vimfiles/plugged"
+systems = ["windows"]
+
+# The package managers' folders: init.el stays.
+[[entry]]
+id = "emacs.elpa"
+category = "editors"
+what = "package.el: installed packages"
+pattern = "~/.emacs.d/elpa"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "emacs.straight"
+category = "editors"
+what = "straight.el: packages and their builds"
+pattern = "~/.emacs.d/straight"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "emacs.eln-cache"
+category = "editors"
+what = "Emacs: natively compiled Lisp"
+pattern = "~/.emacs.d/eln-cache"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "emacs.elpa-xdg"
+category = "editors"
+what = "package.el: installed packages"
+under = "config"
+pattern = "emacs/elpa"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "emacs.straight-xdg"
+category = "editors"
+what = "straight.el: packages and their builds"
+under = "config"
+pattern = "emacs/straight"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "emacs.eln-cache-xdg"
+category = "editors"
+what = "Emacs: natively compiled Lisp"
+under = "config"
+pattern = "emacs/eln-cache"
+systems = ["linux", "macos"]
+
+[[entry]]
+id = "jupyter.checkpoints"
+category = "editors"
+what = "Jupyter: notebooks' checkpoints"
+pattern = ".ipynb_checkpoints"
+
+[[entry]]
+id = "elixir-ls.build"
+category = "editors"
+what = "ElixirLS: the language server's build"
+pattern = ".elixir_ls"
+
+[[category]]
+id = "containers"
+name = "Containers and sandboxes"
+searches = true
+agents = false
+index = true
+
+[[entry]]
+id = "podman.storage"
+category = "containers"
+what = "Podman: rootless images and containers"
+under = "data"
+pattern = "containers/storage"
+systems = ["linux"]
+
+[[entry]]
+id = "docker.rootless"
+category = "containers"
+what = "Docker: rootless images and containers"
+under = "data"
+pattern = "docker"
+systems = ["linux"]
+
+[[entry]]
+id = "flatpak.user"
+category = "containers"
+what = "Flatpak: your apps and runtimes"
+under = "flatpak-user"
+pattern = ""
+systems = ["linux"]
+
+[[entry]]
+id = "android.sdk"
+category = "containers"
+what = "Android SDK: platforms, tools and images"
+under = "android-sdk"
+pattern = ""
+systems = ["linux"]
+
+# Not ~/.vagrant.d: Vagrant reads a Vagrantfile of the user's there.
+[[entry]]
+id = "vagrant.boxes"
+category = "containers"
+what = "Vagrant: downloaded boxes"
+under = "vagrant"
+pattern = "boxes"
+
+[[entry]]
+id = "vagrant.gems"
+category = "containers"
+what = "Vagrant: plugins' gems"
+under = "vagrant"
+pattern = "gems"
+
+# A prefix's system part, wherever the prefix is (~/.wine, Heroic's,
+# Lutris', Bottles', Steam's compatdata): drive_c/users holds documents
+# and saves, so the prefix is never listed whole.
+[[entry]]
+id = "wine.system"
+category = "containers"
+what = "Wine: a prefix's Windows system files"
+pattern = "/**/drive_c/windows"
+systems = ["linux", "macos"]
+
+# Files and folders a variable names, where it is set.
+
+# ---- Containers
+[[entry]]
+id = "android.avd"
+category = "containers"
+what = "Android emulator: virtual devices and their disk images"
+under = "android-avd"
+pattern = ""
+
+[[category]]
+id = "games"
+name = "Games"
+searches = true
+agents = false
+index = true
+
+# A Steam library's, wherever it is: its steamapps holds an appmanifest per
+# game. userdata (screenshots) and steamapps/compatdata (saves) stay.
+[[entry]]
+id = "steam.common"
+category = "games"
+what = "Steam: installed games"
+pattern = "common"
+beside = "appmanifest_*.acf"
+
+[[entry]]
+id = "steam.shadercache"
+category = "games"
+what = "Steam: games' shader caches"
+pattern = "shadercache"
+beside = "appmanifest_*.acf"
+
+[[entry]]
+id = "steam.workshop"
+category = "games"
+what = "Steam: Workshop downloads"
+pattern = "workshop"
+beside = "appmanifest_*.acf"
+
+[[entry]]
+id = "steam.package"
+category = "games"
+what = "Steam: the client's update packages"
+under = "data"
+pattern = "Steam/package"
+systems = ["linux"]
+
+[[entry]]
+id = "steam.runtime"
+category = "games"
+what = "Steam: the client's runtime"
+under = "data"
+pattern = "Steam/ubuntu12_*"
+systems = ["linux"]
+
+# What the launcher downloads: saves, screenshots, resourcepacks and
+# instances stay.
+[[entry]]
+id = "minecraft.assets"
+category = "games"
+what = "Minecraft: the game's assets"
+pattern = "~/.minecraft/assets"
+systems = ["linux"]
+
+[[entry]]
+id = "minecraft.libraries"
+category = "games"
+what = "Minecraft: the game's libraries"
+pattern = "~/.minecraft/libraries"
+systems = ["linux"]
+
+[[entry]]
+id = "minecraft.versions"
+category = "games"
+what = "Minecraft: the game's versions"
+pattern = "~/.minecraft/versions"
+systems = ["linux"]
+
+[[entry]]
+id = "prism.assets"
+category = "games"
+what = "Prism Launcher: Minecraft's assets"
+under = "data"
+pattern = "PrismLauncher/assets"
+systems = ["linux"]
+
+[[entry]]
+id = "prism.libraries"
+category = "games"
+what = "Prism Launcher: Minecraft's libraries"
+under = "data"
+pattern = "PrismLauncher/libraries"
+systems = ["linux"]
+
+[[entry]]
+id = "prism.flatpak-assets"
+category = "games"
+what = "Prism Launcher: Minecraft's assets"
+pattern = "~/.var/app/org.prismlauncher.PrismLauncher/data/PrismLauncher/assets"
+systems = ["linux"]
+
+[[entry]]
+id = "prism.flatpak-libraries"
+category = "games"
+what = "Prism Launcher: Minecraft's libraries"
+pattern = "~/.var/app/org.prismlauncher.PrismLauncher/data/PrismLauncher/libraries"
+systems = ["linux"]
+
+[[entry]]
+id = "heroic.tools"
+category = "games"
+what = "Heroic: Wine and Proton builds"
+under = "config"
+pattern = "heroic/tools"
+systems = ["linux"]
+
+[[entry]]
+id = "lutris.runners"
+category = "games"
+what = "Lutris: Wine and emulator runners"
+under = "data"
+pattern = "lutris/runners"
+systems = ["linux"]
+
+[[entry]]
+id = "bottles.runners"
+category = "games"
+what = "Bottles: Wine runners"
+under = "data"
+pattern = "bottles/runners"
+systems = ["linux"]
+
+[[entry]]
+id = "bottles.flatpak-runners"
+category = "games"
+what = "Bottles: Wine runners"
+pattern = "~/.var/app/com.usebottles.bottles/data/bottles/runners"
+systems = ["linux"]
+
+[[entry]]
+id = "playonlinux.wine"
+category = "games"
+what = "PlayOnLinux: Wine builds"
+pattern = "~/.PlayOnLinux/wine"
+systems = ["linux"]
+
+[[category]]
+id = "ai"
+name = "AI models and agents"
+searches = true
+agents = false
+index = true
+
+# The models alone: Ollama's key, id_ed25519, sits in ~/.ollama.
+[[entry]]
+id = "ollama.models"
+category = "ai"
+what = "Ollama: downloaded models"
+under = "ollama-models"
+pattern = ""
+
+[[entry]]
+id = "lmstudio.models"
+category = "ai"
+what = "LM Studio: downloaded models"
+pattern = "~/.lmstudio/models"
+
+# Not ~/.keras: keras.json stays.
+[[entry]]
+id = "keras.datasets"
+category = "ai"
+what = "Keras: downloaded datasets"
+under = "keras"
+pattern = "datasets"
+
+[[entry]]
+id = "keras.models"
+category = "ai"
+what = "Keras: downloaded models"
+under = "keras"
+pattern = "models"
+
+[[entry]]
+id = "tensorflow.datasets"
+category = "ai"
+what = "TensorFlow Datasets: downloaded datasets"
+under = "tfds"
+pattern = ""
+
+[[entry]]
+id = "nltk.data"
+category = "ai"
+what = "NLTK: downloaded corpora and models"
+pattern = "~/nltk_data"
+
+# An agent's stores, not its folder, where CLAUDE.md, skills, commands and
+# agents are written. Claude Code's projects stays: its memory files are
+# there, which the user wants found.
+[[entry]]
+id = "claude.file-history"
+category = "ai"
+what = "Claude Code: files as they were before its edits"
+under = "claude"
+pattern = "file-history"
+
+[[entry]]
+id = "claude.plugins"
+category = "ai"
+what = "Claude Code: installed plugins"
+under = "claude"
+pattern = "plugins"
+
+[[entry]]
+id = "claude.shell-snapshots"
+category = "ai"
+what = "Claude Code: snapshots of the shell's state"
+under = "claude"
+pattern = "shell-snapshots"
+
+# Codex's skills and generated_images stay.
+[[entry]]
+id = "codex.sessions"
+category = "ai"
+what = "Codex: session transcripts"
+under = "codex"
+pattern = "sessions"
+
+[[entry]]
+id = "codex.archived-sessions"
+category = "ai"
+what = "Codex: archived session transcripts"
+under = "codex"
+pattern = "archived_sessions"
+
+[[entry]]
+id = "gemini.tmp"
+category = "ai"
+what = "Gemini CLI: sessions and their checkpoints"
+under = "gemini-home"
+pattern = ".gemini/tmp"
+
+[[entry]]
+id = "gemini.history"
+category = "ai"
+what = "Gemini CLI: shadow copies of projects"
+under = "gemini-home"
+pattern = ".gemini/history"
+
+[[entry]]
+id = "opencode.storage"
+category = "ai"
+what = "opencode: sessions, one file per message part"
+under = "data"
+pattern = "opencode/storage"
+
+[[entry]]
+id = "opencode.snapshot"
+category = "ai"
+what = "opencode: projects' snapshots"
+under = "data"
+pattern = "opencode/snapshot"
+
+[[entry]]
+id = "opencode.log"
+category = "ai"
+what = "opencode: logs"
+under = "data"
+pattern = "opencode/log"
+
+[[entry]]
+id = "opencode.tool-output"
+category = "ai"
+what = "opencode: tools' output"
+under = "data"
+pattern = "opencode/tool-output"
+
+# The cache home, where XDG_CACHE_HOME moved it, is added by code.
+
+# Files and folders a variable names, where it is set.
+
+# ---- AI
+[[entry]]
+id = "huggingface.hub"
+category = "ai"
+what = "Hugging Face: downloaded models and datasets"
+under = "hf-hub"
+pattern = ""
+
+[[entry]]
+id = "huggingface.xet"
+category = "ai"
+what = "Hugging Face: the Xet cache"
+under = "hf-xet"
+pattern = ""
+
+[[entry]]
+id = "huggingface.assets"
+category = "ai"
+what = "Hugging Face: assets libraries cached"
+under = "hf-assets"
+pattern = ""
+
+[[entry]]
+id = "torch.hub"
+category = "ai"
+what = "PyTorch: models from the hub under TORCH_HOME"
+under = "torch"
+pattern = "hub"
+
+[[entry]]
+id = "nltk.data-moved"
+category = "ai"
+what = "NLTK: the data NLTK_DATA names"
+under = "nltk-data"
+pattern = ""
+
+[[category]]
+id = "caches"
+name = "Caches"
+searches = true
+agents = false
+index = true
+
+[[entry]]
+id = "caches.dot-cache"
+category = "caches"
+what = "Many tools: a cache folder, wherever it is"
+pattern = ".cache"
+
+[[entry]]
+id = "caches.cachedir-tag"
+category = "caches"
+what = "A folder a tool marks as its cache (CACHEDIR.TAG)"
+holding = "CACHEDIR.TAG"
+
+# Chromium's own names, in every Chromium and Electron profile.
+[[entry]]
+id = "chromium.code-cache"
+category = "caches"
+what = "Chromium and Electron: compiled scripts"
+pattern = "Code Cache"
+
+[[entry]]
+id = "chromium.gpu-cache"
+category = "caches"
+what = "Chromium and Electron: GPU shader caches"
+pattern = "GPU*Cache"
+
+[[entry]]
+id = "chromium.dawn-cache"
+category = "caches"
+what = "Chromium and Electron: WebGPU shader caches"
+pattern = "Dawn*Cache"
+
+[[entry]]
+id = "chromium.graphite-dawn-cache"
+category = "caches"
+what = "Chromium and Electron: Graphite's shader cache"
+pattern = "GraphiteDawnCache"
+
+[[entry]]
+id = "chromium.gr-shader-cache"
+category = "caches"
+what = "Chromium and Electron: Skia's shader cache"
+pattern = "GrShaderCache"
+
+[[entry]]
+id = "chromium.crx-cache"
+category = "caches"
+what = "Chromium: downloaded extensions and components"
+pattern = "*_crx_cache"
+
+# Ordinary names, so only beside a profile's Preferences.
+[[entry]]
+id = "chromium.http-cache"
+category = "caches"
+what = "Chromium and Electron: a profile's HTTP cache"
+pattern = "Cache"
+beside = "Preferences"
+
+[[entry]]
+id = "chromium.service-worker"
+category = "caches"
+what = "Chromium and Electron: sites' service workers"
+pattern = "Service Worker"
+beside = "Preferences"
+
+# An app's cache alone: the rest of ~/.var/app/<id> is its home.
+[[entry]]
+id = "flatpak.app-cache"
+category = "caches"
+what = "Flatpak: an app's cache"
+pattern = "~/.var/app/*/cache"
+systems = ["linux"]
+
+[[entry]]
+id = "nvidia.caches"
+category = "caches"
+what = "NVIDIA: OpenGL and CUDA shader caches"
+pattern = "~/.nv/*Cache"
+systems = ["linux"]
+
+[[entry]]
+id = "kube.cache"
+category = "caches"
+what = "kubectl: the API discovery cache"
+under = "kube-cache"
+pattern = ""
+
+# Files and folders a variable names, where it is set.
+
+# ---- Caches
+[[entry]]
+id = "go.build-cache"
+category = "caches"
+what = "Go: the build cache GOCACHE names"
+under = "gocache"
+pattern = ""
+
+[[entry]]
+id = "js.yarn-cache"
+category = "caches"
+what = "Yarn: the cache YARN_CACHE_FOLDER names"
+under = "yarn-cache"
+pattern = ""
+
+[[entry]]
+id = "js.deno"
+category = "caches"
+what = "Deno: the cache DENO_DIR names"
+under = "deno"
+pattern = ""
+
+[[entry]]
+id = "python.pip-cache"
+category = "caches"
+what = "pip: the cache PIP_CACHE_DIR names"
+under = "pip-cache"
+pattern = ""
+
+[[entry]]
+id = "python.uv-cache"
+category = "caches"
+what = "uv: the cache UV_CACHE_DIR names"
+under = "uv-cache"
+pattern = ""
+
+[[entry]]
+id = "python.poetry-cache"
+category = "caches"
+what = "Poetry: the cache POETRY_CACHE_DIR names"
+under = "poetry-cache"
+pattern = ""
+
+[[entry]]
+id = "python.hatch-cache"
+category = "caches"
+what = "Hatch: the cache HATCH_CACHE_DIR names"
+under = "hatch-cache"
+pattern = ""
+
+[[entry]]
+id = "python.pdm-cache"
+category = "caches"
+what = "PDM: the cache PDM_CACHE_DIR names"
+under = "pdm-cache"
+pattern = ""
+
+[[entry]]
+id = "jvm.coursier-cache"
+category = "caches"
+what = "Coursier: the cache COURSIER_CACHE names"
+under = "coursier"
+pattern = ""
+
+[[entry]]
+id = "dotnet.nuget-http-cache-moved"
+category = "caches"
+what = "NuGet: the HTTP cache NUGET_HTTP_CACHE_PATH names"
+under = "nuget-http-cache"
+pattern = ""
+
+[[entry]]
+id = "dotnet.nuget-plugins-cache"
+category = "caches"
+what = "NuGet: the plugins cache NUGET_PLUGINS_CACHE_PATH names"
+under = "nuget-plugins-cache"
+pattern = ""
+
+[[entry]]
+id = "zig.global-cache"
+category = "caches"
+what = "Zig: the global cache ZIG_GLOBAL_CACHE_DIR names"
+under = "zig-cache"
+pattern = ""
+
+[[entry]]
+id = "vm.mise-cache"
+category = "caches"
+what = "mise: the cache MISE_CACHE_DIR names"
+under = "mise-cache"
+pattern = ""
+
+[[entry]]
+id = "caches.ccache"
+category = "caches"
+what = "ccache: the cache CCACHE_DIR names"
+under = "ccache"
+pattern = ""
+
+[[entry]]
+id = "caches.ccache-legacy"
+category = "caches"
+what = "ccache: the cache in its older place"
+pattern = "~/.ccache"
+
+[[category]]
+id = "system"
+name = "The system's"
+searches = true
+agents = false
+index = true
+
+[[entry]]
+id = "macos.library"
+category = "system"
+what = "macOS: applications' data, settings and caches"
+pattern = "~/Library"
+systems = ["macos"]
+
+[[entry]]
+id = "windows.appdata"
+category = "system"
+what = "Windows: applications' data, settings and caches"
+pattern = "~/AppData"
+systems = ["windows"]
+
+[[category]]
+id = "yours"
+name = "Yours"
+searches = true
+agents = true
+index = true

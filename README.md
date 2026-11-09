@@ -263,10 +263,13 @@ because any program running as you can use it.
   agent wants are proposed in the window for review; a command that acts without
   a plan waits until you allow it.
 
-**Private folders** (Settings › Privacy) never leave the machine: agents never
-see their names or contents, and plugins from outside Skwir are never handed
-them. `~/.ssh`, `~/.gnupg` and similar folders are private from the start, as is
-any folder holding a file named `.private`.
+**Private folders** (Settings › Exclusions, kept from Agents) never leave the
+machine: agents never see their names or contents, and plugins from outside
+Skwir are never handed them. Secrets are private from the start: keys
+(`~/.ssh`, `~/.gnupg`, key files wherever they are), tools' sign-ins, browsers'
+and mail clients' profiles, password managers, wallets, messaging apps and shell
+histories, as is any folder holding a file named `.private`. An agent may never
+make a private folder readable.
 
 ## Plugins from outside Skwir
 

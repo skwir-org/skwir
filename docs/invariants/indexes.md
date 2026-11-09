@@ -42,10 +42,11 @@ what is built.
 ## Scope
 
 - Only roots the user set (`extract.roots`, the XDG user folders by
-  default) and never the home folder itself; folders left out by name
-  and by marker (`CACHEDIR.TAG`, `.noindex`, `.nomedia`,
-  `.trackerignore`); hidden entries off; a mount of another device not
-  entered unless the root is on it.
+  default) and never the home folder itself; the exclusions kept from
+  the index (`exclusions::Role::Index`, ADR-125: what `extract.exclude`
+  was, edited on the Exclusions page), and its own markers (`.noindex`,
+  `.nomedia`, `.trackerignore`) beside `CACHEDIR.TAG`; hidden entries
+  off; a mount of another device not entered unless the root is on it.
 - A private folder is never entered, never read, never indexed, never
   named to a helper: `Scope::enters` asks `Privacy` before a folder, on a
   worker.

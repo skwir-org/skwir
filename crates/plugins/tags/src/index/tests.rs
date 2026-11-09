@@ -14,6 +14,19 @@ pub(crate) fn decoded_piece(bytes: &[u8], parents: &[Option<u32>]) -> Option<usi
     decode_piece(bytes, parents).map(|folders| folders.len())
 }
 
+/// The names searches leave out wherever they are, as the tests take them
+/// (skwir's own list is longer, and may change).
+const NAMES: &[&str] = &[
+    ".git",
+    ".hg",
+    ".svn",
+    "node_modules",
+    "__pycache__",
+    ".venv",
+    "venv",
+    ".cache",
+];
+
 fn home_tempdir() -> tempfile::TempDir {
     let base = dirs::home_dir().unwrap().join(".cache").join("skwir-tests");
     std::fs::create_dir_all(&base).unwrap();
@@ -24,8 +37,14 @@ fn home_tempdir() -> tempfile::TempDir {
 }
 
 /// An index of `megabytes`, stored in `slot`, of no app: nothing written
-/// unless asked.
+/// unless asked; walks leave out the list's names from the start.
 fn index(slot: Option<CacheSlot>, megabytes: u64) -> Arc<TagIndex> {
+    let rule = Arc::new(LeftOut::listed(NAMES.iter().copied()));
+    ruled(slot, megabytes, Arc::new(Mutex::new(rule)))
+}
+
+/// [`index`], walks leaving out what `rule` holds when asked.
+fn ruled(slot: Option<CacheSlot>, megabytes: u64, rule: Arc<Mutex<Arc<LeftOut>>>) -> Arc<TagIndex> {
     Arc::new_cyclic(|me| TagIndex {
         state: Mutex::default(),
         slot,
@@ -37,6 +56,7 @@ fn index(slot: Option<CacheSlot>, megabytes: u64) -> Arc<TagIndex> {
         working: AtomicBool::new(false),
         nudge: crossbeam_channel::bounded(1),
         me: me.clone(),
+        rule: Box::new(move || Arc::clone(&rule.lock())),
     })
 }
 
@@ -168,12 +188,18 @@ fn it_is_kept_in_pieces_read_when_needed_and_moves_carry_tags_along() {
         (PathBuf::from("/r/.hidden/b"), tags(&["x"])),
         (PathBuf::from("/r/d/c"), tags(&["X", "y"])),
         (PathBuf::from("/r/d/.c"), tags(&["z"])),
+        (PathBuf::from("/r/node_modules/n"), tags(&["x"])),
     ]);
-    // Hidden folders and files are not counted, as a search leaves them
-    // out; a tie between spellings goes to the first in order.
+    // Hidden folders and files are counted (the pane shows them or not);
+    // a folder walks leave out is not, below the folder asked, though a
+    // pane taught the index its files.
     assert_eq!(
         first.tally(Path::new("/r")),
-        (vec![("X".into(), 2), ("y".into(), 1)], 2)
+        (vec![("x".into(), 3), ("y".into(), 1), ("z".into(), 1)], 4)
+    );
+    assert_eq!(
+        first.files_under(Path::new("/r/node_modules"), None).len(),
+        1
     );
     let since = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
     first.cover(Path::new("/r"), since, &[7, 9]);
@@ -192,7 +218,7 @@ fn it_is_kept_in_pieces_read_when_needed_and_moves_carry_tags_along() {
     assert!(again.covering(Path::new("/s")).is_none());
     assert_eq!(again.state().total(), room);
     assert!(again.state().pieces.iter().all(|p| !p.loaded));
-    assert_eq!(again.tally(Path::new("/r/d")).1, 1);
+    assert_eq!(again.tally(Path::new("/r/d")).1, 2);
     assert_eq!(
         again.state().pieces.iter().filter(|p| p.loaded).count(),
         1,
@@ -206,7 +232,7 @@ fn it_is_kept_in_pieces_read_when_needed_and_moves_carry_tags_along() {
         }
     }
     assert!(!again.unload_idle());
-    assert_eq!(again.tally(Path::new("/r")).1, 2);
+    assert_eq!(again.tally(Path::new("/r")).1, 4);
 
     // A folder moved carries its files' tags; one gone, its files.
     again.moved(&[
@@ -222,12 +248,13 @@ fn it_is_kept_in_pieces_read_when_needed_and_moves_carry_tags_along() {
     );
     assert_eq!(
         again.tally(Path::new("/r")),
-        (vec![("X".into(), 1), ("y".into(), 1)], 1)
+        (vec![("X".into(), 2), ("y".into(), 1), ("z".into(), 1)], 3),
+        "a tie between spellings goes to the first in order"
     );
     // A covered folder moved away is no longer covered.
     again.moved(&[(PathBuf::from("/r"), Some(PathBuf::from("/q")))]);
     assert!(again.covering(Path::new("/r")).is_none());
-    assert_eq!(again.tally(Path::new("/q")).1, 1);
+    assert_eq!(again.tally(Path::new("/q")).1, 3);
 }
 
 /// What the index takes, against `FILE_BYTES` and `FOLDER_BYTES`:
@@ -341,9 +368,9 @@ fn a_category_counts_each_file_within_it_once() {
 }
 
 /// The sidebar's tags, the home folder's top tags, are those its tag
-/// places list (`tally`): none from files in a hidden folder or hidden
-/// themselves alone, nor from a network mount below it, though a pane
-/// shown there taught the index their tags.
+/// places list (`tally`): hidden files' too, none from a folder walks
+/// leave out (the list's, a cache found), nor from a network mount below
+/// it, though a pane shown there taught the index their tags.
 #[test]
 fn the_home_folders_top_tags_are_those_its_tag_places_list() {
     let index = index(None, 64);
@@ -356,8 +383,12 @@ fn the_home_folders_top_tags_are_those_its_tag_places_list() {
         (home.join("e.txt"), tags(&["work"])),
         (home.join("nas ü/f"), tags(&["far", "work"])),
         (home.join("nas ü/.g/h"), tags(&["far hidden"])),
+        (home.join("app/node_modules/j"), tags(&["listed"])),
+        (home.join(".cache/k"), tags(&["listed"])),
+        (home.join("built/l"), tags(&["cached"])),
         (PathBuf::from("/elsewhere/i"), tags(&["elsewhere"])),
     ]);
+    index.mark_caches(vec![home.join("built")], &[]);
     let by_use = |mut tags: Vec<(String, usize)>| {
         tags.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
         tags
@@ -369,7 +400,15 @@ fn the_home_folders_top_tags_are_those_its_tag_places_list() {
     };
     assert_eq!(
         index.top(9, &home),
-        owned(&[("work", 3), ("Places", 1), ("Places/Paris", 1), ("far", 1)])
+        owned(&[
+            ("work", 4),
+            ("Places", 1),
+            ("Places/Paris", 1),
+            ("dotted", 1),
+            ("far", 1),
+            ("far hidden", 1),
+            ("only hidden", 1),
+        ])
     );
     assert_eq!(by_use(index.tally(&home).0), index.top(9, &home));
     // The share mounted there: what it holds is left out.
@@ -381,22 +420,35 @@ fn the_home_folders_top_tags_are_those_its_tag_places_list() {
     };
     assert_eq!(
         by_use(counts),
-        owned(&[("Work", 2), ("Places", 1), ("Places/Paris", 1)])
+        owned(&[
+            ("work", 3),
+            ("Places", 1),
+            ("Places/Paris", 1),
+            ("dotted", 1),
+            ("only hidden", 1),
+        ])
     );
-    // Forgotten, a file leaves the counts; one hidden leaves nothing.
+    // The cache no longer one: counted again.
+    index.mark_caches(Vec::new(), &[home.join("built")]);
+    assert!(index.top(9, &home).contains(&("cached".to_owned(), 1)));
+    index.learn(vec![(home.join("built/l"), Vec::new())]);
+    // Forgotten, a file leaves the counts; one left out leaves nothing.
     index.learn(vec![
         (home.join("e.txt"), Vec::new()),
         (home.join(".local/share/b"), Vec::new()),
         (home.join("nas ü/.g/h"), Vec::new()),
+        (home.join(".cache/k"), Vec::new()),
     ]);
     assert_eq!(by_use(index.tally(&home).0), index.top(9, &home));
     assert_eq!(index.top(1, &home), owned(&[("Work", 2)]));
 }
 
-/// An index an earlier skwir kept, whose home folder's counts held its
-/// hidden files too, counts them again from its pieces.
+/// An index an earlier skwir kept, whose home folder's counts were of
+/// another rule (once its hidden files too, then none of them), counts
+/// them again from its pieces, and every folder it covered again; so does
+/// one whose list of folders left out changed while it ran.
 #[test]
-fn home_counts_of_hidden_files_kept_before_are_counted_again() {
+fn home_counts_kept_under_another_rule_are_counted_again() {
     let tmp = home_tempdir();
     let slot = || Some(skwir_core::cache::Cache::new(tmp.path()).namespace("tags"));
     let home = std::env::home_dir().unwrap();
@@ -422,13 +474,21 @@ fn home_counts_of_hidden_files_kept_before_are_counted_again() {
         serde_json::json!([[id("work"), 2], [id("only hidden"), 1]]),
     );
     slot.put(META, &serde_json::to_vec(&meta).unwrap()).unwrap();
-    let again = index(Some(slot), 64);
+    let rule = Arc::new(Mutex::new(Arc::new(LeftOut::listed(NAMES.iter().copied()))));
+    let again = ruled(Some(slot), 64, Arc::clone(&rule));
     assert_eq!(
         again.top(9, &home),
-        [("work".to_owned(), 1)],
+        owned(&[("work", 2), ("only hidden", 1)]),
         "{}",
         again.state().home_counts.len()
     );
+
+    // The list changed: counted again, nothing covered any more.
+    again.cover(&home, UNIX_EPOCH + Duration::from_secs(1_700_000_000), &[1]);
+    assert!(again.covering(&home).is_some());
+    *rule.lock() = Arc::new(LeftOut::listed([".skwir-test hidden"]));
+    assert_eq!(again.top(9, &home), owned(&[("work", 1)]));
+    assert!(again.covering(&home).is_none());
 }
 
 fn owned(v: &[(&str, usize)]) -> Vec<(String, usize)> {

@@ -288,6 +288,10 @@ pub struct MenuState {
     /// taller: `PopoverAnchor::popup_at`), and the keyboard's row is
     /// brought into view (`MenuState::reveal`).
     scroll: ScrollHandle,
+    /// Held for what opened it from outside the shell (a row of the
+    /// Settings dialog's Exclusions page, `open_settings_menu`), which learns
+    /// that the menu closed, however it did, when this is let go.
+    pub(crate) held: Option<std::rc::Rc<()>>,
 }
 
 /// Where a menu opened with the Menu key or Shift+F10 is drawn: under the
@@ -307,6 +311,9 @@ pub enum MenuHost {
     Sidebar,
     /// Its row is the cursor's cell, its area the panel.
     Terminal,
+    /// A row of the Settings dialog (the Exclusions page's): its row and area
+    /// are the dialog's own anchors, which it draws (`SettingsMenu`).
+    Settings,
 }
 
 impl MenuHost {
@@ -360,6 +367,7 @@ impl MenuState {
             keyboard: None,
             keys: Vec::new(),
             scroll: ScrollHandle::new(),
+            held: None,
         }
     }
 }
@@ -1271,6 +1279,49 @@ impl Shell {
             menu.keyboard = Some(KeyboardAnchor::new(MenuHost::Terminal));
         }
         cx.notify();
+    }
+
+    /// A menu the Settings dialog asks for (a Exclusions page row's: its ⋯,
+    /// a right click, the Menu key or Shift+F10), drawn above the dialog
+    /// as every menu is (deferred) and walked by the menu's keys, which
+    /// Settings lets through while it is open (`takes_now`). Its items run
+    /// the dialog's own commands (`ui.settings_*`). Opened from the
+    /// keyboard it hangs from the dialog's row, else where the pointer
+    /// pressed; the keyboard goes back to what had it when it closes.
+    pub fn open_settings_menu(
+        &mut self,
+        asked: &crate::settings::SettingsMenu,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if asked.items.is_empty() {
+            return;
+        }
+        self.menu = None;
+        let mut menu = MenuState::open(
+            asked.at.unwrap_or_default(),
+            asked.items.clone(),
+            window,
+            cx,
+        );
+        menu.held = Some(std::rc::Rc::clone(&asked.held));
+        if asked.at.is_none() {
+            menu.highlighted = Some(0);
+            menu.keyboard = Some(KeyboardAnchor {
+                host: MenuHost::Settings,
+                row: asked.row.clone(),
+                area: asked.area.clone(),
+            });
+        }
+        self.menu = Some(menu);
+        cx.notify();
+    }
+
+    /// The Settings dialog closed: a menu it opened goes with it.
+    pub(crate) fn close_settings_menu(&mut self) {
+        if self.menu.as_ref().is_some_and(|menu| menu.held.is_some()) {
+            self.menu = None;
+        }
     }
 
     pub fn close_context_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {

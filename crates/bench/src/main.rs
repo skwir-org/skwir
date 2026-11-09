@@ -117,6 +117,9 @@ fn measure_all(
         if only.wants("tag_search_us") {
             r.tag_search = measure::tag_search(root, *p, runs);
         }
+        if only.wants("name_search_us") {
+            r.name_search = measure::name_search(root, *p, runs);
+        }
         if only.wants("tags_check_us") {
             r.tags_check = measure::tags_check(root, *p, runs);
         }

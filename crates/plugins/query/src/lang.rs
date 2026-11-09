@@ -14,7 +14,7 @@
 //!          | "tag:" word | "tag:*" (any tag) | "comment:" text | "rating" cmp
 //!          | "content:" text | "content:/" regex "/" flags?
 //!          | "near:" lat "," lon ("~" distance)? | "inside:" south "," west "," north "," east
-//! options := "in:" path | "depth:" n | "hidden:" bool | "case:" ("sensitive"|"insensitive")
+//! options := "in:" path | "depth:" n | "hidden:" bool | "excluded:" bool | "case:" ("sensitive"|"insensitive")
 //! ```
 //!
 //! `cmp` is `>`, `<`, `>=`, `<=`, `=`/`:` a value, or `:` `a..b`. Sizes take
@@ -97,12 +97,19 @@ pub use skwir_platform::mime::BySuffix as Types;
 
 /// A parsed query: the boolean expression plus walk options.
 #[derive(Clone, Debug)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent options, each a word of the query: hidden:, excluded:, case:, and whether in: was written"
+)]
 pub struct Query {
     pub expr: Option<Expr>,
     pub root: PathBuf,
     /// `None` = unlimited.
     pub depth: Option<usize>,
     pub hidden: bool,
+    /// The folders searches leave out walked too (`excluded:yes`, ADR-125):
+    /// those of the list and caches, never a trash nor a network mount.
+    pub excluded: bool,
     pub case_sensitive: bool,
     /// Whether `in:` was given explicitly.
     pub root_given: bool,
@@ -305,9 +312,10 @@ impl std::error::Error for ParseError {}
 
 /// The keys a word can start with. Only these open a quote after their
 /// colon; any other word with a colon (`http://x`, `a:'b`) is a name.
-const KEYS: [&str; 20] = [
+const KEYS: [&str; 21] = [
     "name", "ext", "type", "mime", "kind", "tag", "comment", "rating", "content", "size",
-    "modified", "created", "accessed", "taken", "in", "depth", "hidden", "case", "near", "inside",
+    "modified", "created", "accessed", "taken", "in", "depth", "hidden", "excluded", "case",
+    "near", "inside",
 ];
 
 #[derive(Debug, Clone, PartialEq)]
@@ -487,6 +495,7 @@ pub fn parse_in(text: &str, now: SystemTime, cal: &Calendar) -> Result<Query, Pa
     let mut within = None;
     let mut depth = None;
     let mut hidden = false;
+    let mut excluded = false;
     let mut case_sensitive = false;
     let mut rest: Vec<Tok> = Vec::with_capacity(toks.len());
     for t in toks {
@@ -512,6 +521,10 @@ pub fn parse_in(text: &str, now: SystemTime, cal: &Calendar) -> Result<Query, Pa
                 }
                 Some("hidden") => {
                     hidden = parse_bool(w.text()?)?;
+                    continue;
+                }
+                Some("excluded") => {
+                    excluded = parse_bool(w.text()?)?;
                     continue;
                 }
                 Some("case") => {
@@ -554,6 +567,7 @@ pub fn parse_in(text: &str, now: SystemTime, cal: &Calendar) -> Result<Query, Pa
         root,
         depth,
         hidden,
+        excluded,
         case_sensitive,
         root_given,
         within,
@@ -1401,6 +1415,9 @@ impl fmt::Display for Query {
         }
         if self.hidden {
             parts.push("hidden:true".into());
+        }
+        if self.excluded {
+            parts.push("excluded:true".into());
         }
         if self.case_sensitive {
             parts.push("case:sensitive".into());

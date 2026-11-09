@@ -453,6 +453,7 @@ pub fn refine(expr: &str, facet: &str, value: Option<&str>) -> Result<String, St
         ("where", Some("subtree")) => q.depth = None,
         ("where", Some("here")) => q.depth = Some(1),
         ("where", Some("hidden")) => q.hidden = !q.hidden,
+        ("where", Some("excluded")) => q.excluded = !q.excluded,
         ("advanced", Some(index)) => {
             let at: usize = index.parse().map_err(|_| format!("no part `{index}`"))?;
             if at < p.advanced.len() {
@@ -685,7 +686,7 @@ pub fn text_of(expr: &str) -> Option<String> {
 /// the files, look among hidden files, or search a place as it lists).
 pub fn as_filter(expr: &str) -> Option<String> {
     let q = lang::parse(expr).ok()?;
-    if q.within.is_some() || q.hidden || q.reads_files() {
+    if q.within.is_some() || q.hidden || q.excluded || q.reads_files() {
         return None;
     }
     Some(Parts::of(&q).write(&Query {
@@ -899,7 +900,12 @@ pub fn describe_for(
         chips.push(Chip {
             id: "where".into(),
             title,
-            value: q.hidden.then(|| "hidden files".to_owned()),
+            value: match (q.hidden, q.excluded) {
+                (false, false) => None,
+                (true, false) => Some("hidden files".to_owned()),
+                (false, true) => Some("excluded".to_owned()),
+                (true, true) => Some("hidden files, excluded".to_owned()),
+            },
             icon: icon.into(),
             // A place is searched as it lists, never below it.
             choices: if q.within.is_some() {
@@ -922,6 +928,13 @@ pub fn describe_for(
                         label: "Hidden files".into(),
                         command: refine_invocation(r, "where", Some("hidden")),
                         active: q.hidden,
+                    },
+                    // What searches leave out (Settings › Exclusions):
+                    // `excluded:yes`.
+                    Choice {
+                        label: "Excluded files and folders".into(),
+                        command: refine_invocation(r, "where", Some("excluded")),
+                        active: q.excluded,
                     },
                 ]
             },
@@ -1134,6 +1147,10 @@ mod tests {
         assert_eq!(
             r("where", Some("hidden")),
             "invoice size<1M in:/data hidden:true"
+        );
+        assert_eq!(
+            r("where", Some("excluded")),
+            "invoice size<1M in:/data excluded:true"
         );
         // Tags add up, and toggle out.
         let two = refine("tag:a in:/d", "also_tag", Some("to do")).unwrap();

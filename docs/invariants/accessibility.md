@@ -141,6 +141,7 @@ like `AGENTS.md`.
 | context menu, toolbar popups, history menus | menu of menu items | "Context menu"; each item its title |
 | dialogs, confirmations | dialog, alert dialog | its title or question |
 | settings | dialog; its pages a tab list; its controls | "Settings"; each control its setting's title |
+| the Exclusions page (`Page::Exclusions`) | a group: each category's heading a button that expands (expanded or not), its switch a control of its own, each entry a check box, the cursor the active descendant (a heading's button or an entry); a row's menu the window's context menu; what a change did a status, polite; the question before agents may read what an entry names an alert dialog | "Exclusions excluded from ‹role›" ("…from searches and tags"); a heading its name and counts ("Secrets, 63 of 71 excluded from agents, 17 here, folded"), its switch the category and the role ("Secrets excluded from agents", on or off); a row what it names as written, described by what it is and how it stands; the status what the change did |
 | toolbars, tabs | buttons; a tab list of tabs | their titles; each tab its location |
 | toasts | status (alert for a failure), live; its buttons not, an Undo that cannot act disabled, described by why | the message |
 | Activity | its strip a button; a group of progress indicators, a list of what waits, a list of what ended that the History does not hold (Earlier); pinned, Earlier behind a button that says whether it is unfolded | what runs and how far; each card its plan's title; the fold "Earlier" |

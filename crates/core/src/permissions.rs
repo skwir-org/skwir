@@ -7,9 +7,9 @@
 //!   nothing more, from its host.
 //! - **Private folders** ([`Privacy`]): folders whose files never leave
 //!   this machine. Nothing skwir hands an agent or a plugin from outside
-//!   names, lists or reads them: the folders the Privacy page lists
-//!   (`~/.ssh` and the like) and any folder holding a `.private` file,
-//!   with everything under them.
+//!   names, lists or reads them: the exclusions kept from agents
+//!   (`exclusions`, ADR-125: `~/.ssh` and the like, the user's, any
+//!   folder holding a `.private` file), with everything under them.
 //! - **What an agent may run**: a command's [`Effect`](crate::command::Effect),
 //!   read by [`for_agent`].
 
@@ -23,17 +23,20 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::command::{CommandSpec, Effect};
+use crate::exclusions::{Catalog, Role, Rule};
 use crate::fs::volume::Here;
 use crate::scheduler::{Lane, Priority, Scheduler};
-use crate::settings::{RecordField, SettingSpec, Settings};
+use crate::settings::Settings;
 
 /// The settings' namespace: the Privacy page.
 pub const SETTINGS: &str = "privacy";
-/// The private folders, records of one `path` each.
-pub const FOLDERS_KEY: &str = "privacy.folders";
-/// Whether a folder holding a [`MARKER`] file is private.
-pub const MARKER_KEY: &str = "privacy.marker";
-/// The file that makes the folder holding it private.
+/// Before exclusions (0.3.1): the private folders, records of one
+/// `path` each, read as exclusions kept from agents.
+pub const FOLDERS_KEY: &str = crate::exclusions::LEGACY_FOLDERS_KEY;
+/// Before exclusions: whether a folder holding a [`MARKER`] is private.
+pub const MARKER_KEY: &str = crate::exclusions::LEGACY_MARKER_KEY;
+/// The file that makes the folder holding it private (skwir's exclusion
+/// holding it, kept from agents).
 pub const MARKER: &str = ".private";
 /// What a private path is said as, where an answer would name it.
 pub const WITHHELD: &str = "(private)";
@@ -45,35 +48,6 @@ pub const WITHHELD: &str = "(private)";
 const LOCAL_ROOT: &str = "C:\\";
 #[cfg(not(windows))]
 const LOCAL_ROOT: &str = "/";
-
-/// Private from the start: where keys, passwords and credentials live,
-/// the desktop's keyrings among them on each system.
-pub const DEFAULT_FOLDERS: &[&str] = &[
-    "~/.ssh",
-    "~/.gnupg",
-    "~/.password-store",
-    // GNOME's keyrings, KDE's wallets.
-    #[cfg(not(any(target_os = "macos", windows)))]
-    "~/.local/share/keyrings",
-    #[cfg(not(any(target_os = "macos", windows)))]
-    "~/.local/share/kwalletd",
-    #[cfg(target_os = "macos")]
-    "~/Library/Keychains",
-    // The Credential Manager's vaults, and the keys that protect them.
-    #[cfg(windows)]
-    "~/AppData/Roaming/Microsoft/Credentials",
-    #[cfg(windows)]
-    "~/AppData/Local/Microsoft/Credentials",
-    #[cfg(windows)]
-    "~/AppData/Local/Microsoft/Vault",
-    #[cfg(windows)]
-    "~/AppData/Roaming/Microsoft/Protect",
-    "~/.pki",
-    "~/.aws",
-    "~/.kube",
-    "~/.docker",
-    "~/.netrc",
-];
 
 /// Something a plugin may do beyond naming and listing files.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
@@ -173,50 +147,11 @@ impl<'de> Deserialize<'de> for Capabilities {
     }
 }
 
-/// Declare the Privacy page's settings.
-pub fn declare(settings: &Settings) {
-    let mut folders = SettingSpec::records(
-        FOLDERS_KEY,
-        "Private folders",
-        "Files that never leave this machine: an agent and a plugin from outside skwir never see their names nor what they hold, nor anything under them. A path, ~ for your home folder.",
-        "private folder",
-        vec![
-            RecordField::text(
-                "path",
-                "Folder",
-                "A folder or a file, with everything under it",
-                "~/.ssh",
-            )
-            .required(),
-        ],
-    );
-    folders.default = toml::Value::Array(
-        DEFAULT_FOLDERS
-            .iter()
-            .enumerate()
-            .map(|(n, path)| {
-                // Each record has an id, which the dialog edits it by.
-                let mut record = toml::Table::new();
-                record.insert("id".into(), toml::Value::String(format!("default-{n}")));
-                record.insert("path".into(), toml::Value::String((*path).into()));
-                toml::Value::Table(record)
-            })
-            .collect(),
-    );
-    settings.declare(folders.essential());
-    settings.declare(SettingSpec::toggle(
-        MARKER_KEY,
-        "Folders marked private",
-        "A folder holding a file named .private is private too, with everything under it.",
-        true,
-    ));
-}
-
-/// The private folders, as the settings say them when read.
+/// The private folders, as the settings say them when read: the folder
+/// rules kept from agents.
 #[derive(Clone, Default)]
 pub struct Privacy {
-    folders: Vec<PathBuf>,
-    marker: bool,
+    rule: Arc<Rule>,
     /// Where a path on a remote is looked at, in its lane ([`Checker`]):
     /// none, and it is looked at where it is asked.
     workers: Option<Scheduler>,
@@ -225,63 +160,35 @@ pub struct Privacy {
 impl std::fmt::Debug for Privacy {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Privacy")
-            .field("folders", &self.folders)
-            .field("marker", &self.marker)
+            .field("rule", &self.rule)
             .finish_non_exhaustive()
     }
 }
 
 impl Privacy {
-    /// What `settings` say now: each folder with `~` read as the home
-    /// folder; one that is not absolute is left out. A folder may be said
-    /// as its path alone (`privacy.folders = ["~/.ssh"]`, as a hand or Home
-    /// Manager writes it); a value that is no list keeps the folders private
-    /// from the start: what cannot be read never makes a folder public.
+    /// What `settings` say now: the exclusions kept from agents
+    /// (`exclusions::Catalog`), skwir's own and the user's, the 0.3.1
+    /// private folders a file still says read among them. What cannot be
+    /// read never makes a folder public: a rule the check refused is left
+    /// out of the list, and skwir's own stay kept.
     pub fn of(settings: &Settings) -> Privacy {
-        let home = crate::os_path::home();
-        let value = settings.get::<toml::Value>(FOLDERS_KEY);
-        let listed: Vec<String> = match value.as_ref().map(toml::Value::as_array) {
-            Some(Some(records)) => records
-                .iter()
-                .filter_map(|record| {
-                    let path = match record {
-                        toml::Value::String(path) => Some(path.as_str()),
-                        record => record.get("path").and_then(toml::Value::as_str),
-                    };
-                    if path.is_none() {
-                        tracing::warn!("{FOLDERS_KEY}: a folder is a path or a record of one");
-                    }
-                    path.map(str::to_owned)
-                })
-                .collect(),
-            Some(None) => {
-                tracing::warn!("{FOLDERS_KEY} is no list: the folders private from the start are");
-                DEFAULT_FOLDERS
-                    .iter()
-                    .map(|path| (*path).to_owned())
-                    .collect()
-            }
-            None => DEFAULT_FOLDERS
-                .iter()
-                .map(|path| (*path).to_owned())
-                .collect(),
-        };
-        let folders = listed
-            .iter()
-            .filter_map(|text| expand(text, home.as_deref()))
-            .collect();
-        Privacy {
-            folders,
-            marker: settings.get::<bool>(MARKER_KEY).unwrap_or(true),
-            workers: None,
-        }
+        Privacy::ruled(Catalog::of(settings).rule(Role::Agents))
     }
 
     /// Private to these folders, no marker read: for tests.
     pub fn folders(folders: impl IntoIterator<Item = PathBuf>) -> Privacy {
+        Privacy::ruled(Rule::paths(folders))
+    }
+
+    /// Private as `rule` says.
+    pub fn ruled(rule: Rule) -> Privacy {
+        Privacy::shared(Arc::new(rule))
+    }
+
+    /// Private as `rule` says, a rule kept (`App::privacy`).
+    pub fn shared(rule: Arc<Rule>) -> Privacy {
         Privacy {
-            folders: folders.into_iter().collect(),
-            marker: false,
+            rule,
             workers: None,
         }
     }
@@ -295,9 +202,14 @@ impl Privacy {
         self
     }
 
-    /// The folders listed, as absolute paths.
+    /// The folders listed by their path, as absolute paths.
     pub fn listed(&self) -> &[PathBuf] {
-        &self.folders
+        self.rule.listed()
+    }
+
+    /// The exclusions kept from agents.
+    pub fn rule(&self) -> &Rule {
+        &self.rule
     }
 
     /// A checker of many paths, which reads each folder's marker once.
@@ -436,18 +348,16 @@ pub struct Checker<'a> {
 }
 
 impl Checker<'_> {
-    /// Whether `path` is private: under a folder listed, or under one
-    /// holding a `.private` file, by its given name or its resolved target.
+    /// Whether `path` is private: under a folder listed, under one a
+    /// rule names (a name, a glob, a regex, beside its tool's file), or
+    /// under one holding a marker (a `.private` file), by its given name or
+    /// its resolved target.
     pub fn holds(&mut self, path: &Path) -> bool {
-        if self
-            .privacy
-            .folders
-            .iter()
-            .any(|folder| path.starts_with(folder))
-        {
+        let rule = &self.privacy.rule;
+        if rule.listed().iter().any(|folder| path.starts_with(folder)) || named_on(rule, path) {
             return true;
         }
-        if self.privacy.folders.is_empty() && !self.privacy.marker {
+        if rule.is_empty() {
             return false;
         }
         // Looked up, it would reach another machine: it is never read, and
@@ -478,7 +388,7 @@ impl Checker<'_> {
             return Arc::clone(folders);
         }
         let mut folders = Vec::new();
-        for folder in self.privacy.folders.clone() {
+        for folder in self.privacy.rule.listed().to_vec() {
             if self.reaches_elsewhere(&folder) {
                 continue;
             }
@@ -619,7 +529,8 @@ impl Checker<'_> {
         }
         if let Some(folder) = self
             .privacy
-            .folders
+            .rule
+            .listed()
             .iter()
             .find(|folder| holds_folder(text, folder))
         {
@@ -679,9 +590,29 @@ impl Checker<'_> {
     }
 }
 
+/// Whether a rule names `path` or a folder holding it, by name, path or
+/// pattern: nothing is read.
+fn named_on(rule: &Rule, path: &Path) -> bool {
+    path.ancestors().skip(1).any(|folder| rule.names(folder))
+        || (rule.names(path) && rule.names_file(path))
+}
+
+/// Whether a rule names `path` itself as what it is, where it names only
+/// files or only folders of that name (`.env`, a file of keys and a
+/// Python environment): the disk says which it is, and what cannot be
+/// looked at is not public.
+fn named_as_it_is(rule: &Rule, path: &Path) -> bool {
+    let (folder, file) = (rule.names(path), rule.names_file(path));
+    if folder == file {
+        return folder;
+    }
+    std::fs::symlink_metadata(path).map_or(true, |meta| meta.is_dir() == folder)
+}
+
 /// Whether `path` is private, as the disk says: under a folder holding a
-/// [`MARKER`] by its given name, or, resolved, under a private folder
-/// (`folders`, resolved) or a marked one.
+/// marker, or one a beside rule finds beside its tool's file, by its given
+/// name, or, resolved, under a private folder (`folders`, resolved), one
+/// a rule names, or a marked one.
 fn looks_private(
     privacy: &Privacy,
     folders: &[PathBuf],
@@ -689,7 +620,7 @@ fn looks_private(
     here: &Here,
     path: &Path,
 ) -> bool {
-    if marked(privacy, marks, here, path) {
+    if named_as_it_is(&privacy.rule, path) || marked(privacy, marks, here, path) {
         return true;
     }
     // A missing final name is normal for a proposed write. Resolve its
@@ -697,40 +628,50 @@ fn looks_private(
     let Ok(resolved) = resolved_name(path) else {
         return true;
     };
-    if folders.iter().any(|folder| resolved.starts_with(folder)) {
+    if folders.iter().any(|folder| resolved.starts_with(folder))
+        || named_on(&privacy.rule, &resolved)
+        || named_as_it_is(&privacy.rule, &resolved)
+    {
         return true;
     }
     marked(privacy, marks, here, &resolved)
 }
 
-/// Whether a folder holding `path` holds a [`MARKER`], each folder read
+/// Whether a folder holding `path` holds a marker (a [`MARKER`]) or is a
+/// folder a beside rule finds beside its tool's file, each folder read
 /// once (`marks`, never held while reading). An automount point holds
-/// only what it mounts: its marker is never looked up, which would ask
-/// for a machine of that name (`/net/.private`).
+/// only what it mounts: nothing in it is ever looked up, which would ask
+/// for a machine of that name (`/net/.private`). A marker that cannot be
+/// looked up for another reason than its absence is taken as there.
 fn marked(
     privacy: &Privacy,
     marks: &Mutex<HashMap<PathBuf, bool>>,
     here: &Here,
     path: &Path,
 ) -> bool {
-    if !privacy.marker {
+    let rule = &privacy.rule;
+    if rule.markers().is_empty() && !rule.has_beside() {
         return false;
     }
     path.ancestors().any(|folder| {
         if let Some(known) = marks.lock().get(folder).copied() {
             return known;
         }
-        let file = folder.join(MARKER);
-        if !here.holds(&file, Path::new(LOCAL_ROOT)) {
-            return false;
-        }
-        let marked = match std::fs::symlink_metadata(file) {
-            Ok(_) => true,
-            Err(error) => !matches!(
-                error.kind(),
-                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
-            ),
-        };
+        let marked = rule.markers().iter().any(|marker| {
+            let file = folder.join(marker);
+            if !here.holds(&file, Path::new(LOCAL_ROOT)) {
+                return false;
+            }
+            match std::fs::symlink_metadata(file) {
+                Ok(_) => true,
+                Err(error) => !matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                ),
+            }
+        }) || (rule.has_beside()
+            && here.holds(folder, Path::new(LOCAL_ROOT))
+            && rule.beside_found(folder));
         marks.lock().insert(folder.to_owned(), marked);
         marked
     })
@@ -890,6 +831,13 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// Private to these folders, and those holding a `.private` when
+    /// `marker`.
+    fn private_to(folders: Vec<PathBuf>, marker: bool) -> Privacy {
+        let rule = Rule::paths(folders);
+        Privacy::ruled(if marker { rule.holding(MARKER) } else { rule })
+    }
+
     impl Privacy {
         /// A checker that takes the mounts as `here` says them.
         fn checker_in(&self, here: Here) -> Checker<'_> {
@@ -913,11 +861,7 @@ mod tests {
         std::fs::write(&file, "public, were it read").unwrap();
         let local = tmp.path().join("local note");
         std::fs::write(&local, "public").unwrap();
-        let privacy = Privacy {
-            folders: vec![tmp.path().join("keys")],
-            marker: true,
-            workers: None,
-        };
+        let privacy = private_to(vec![tmp.path().join("keys")], true);
         let here = || Here::with_automounts([net.clone()]);
         let mut check = privacy.checker_in(here());
         assert!(check.reaches_elsewhere(&file));
@@ -952,11 +896,7 @@ mod tests {
         let open = tmp.path().join("open notes");
         std::fs::create_dir(&open).unwrap();
         let net = tmp.path().join("net");
-        let privacy = Privacy {
-            folders: vec![],
-            marker: true,
-            workers: None,
-        };
+        let privacy = private_to(vec![], true);
         let here = || Here::with_automounts([net.clone()]);
         let mut check = privacy.checker_in(here());
         let note = diary.join("2026").join("note.txt");
@@ -1031,11 +971,7 @@ mod tests {
         let marked = tmp.path().join("diary");
         std::fs::create_dir_all(marked.join("2026")).unwrap();
         std::fs::write(marked.join(MARKER), "").unwrap();
-        let privacy = Privacy {
-            folders: vec![keys.clone()],
-            marker: true,
-            workers: None,
-        };
+        let privacy = private_to(vec![keys.clone()], true);
         let mut check = privacy.checker();
         assert!(check.holds(&keys));
         assert!(check.holds(&keys.join("id_ed25519")));
@@ -1045,10 +981,7 @@ mod tests {
         );
         assert!(check.holds(&marked.join("2026").join("notes.txt")));
         assert!(!check.holds(&tmp.path().join("open.txt")));
-        let unmarked = Privacy {
-            marker: false,
-            ..privacy.clone()
-        };
+        let unmarked = private_to(vec![keys.clone()], false);
         assert!(!unmarked.holds(&marked.join("2026")));
     }
 
@@ -1111,11 +1044,7 @@ mod tests {
         std::fs::write(diary.join("note"), "synthetic").unwrap();
         let alias = tmp.path().join("note");
         symlink(diary.join("note"), &alias).unwrap();
-        let privacy = Privacy {
-            folders: vec![],
-            marker: true,
-            workers: None,
-        };
+        let privacy = private_to(vec![], true);
         assert!(privacy.holds(&alias));
         let looped = tmp.path().join("loop");
         symlink(&looped, &looped).unwrap();
@@ -1198,12 +1127,7 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         }
 
-        let privacy = Privacy {
-            folders: vec![tmp.path().join("keys")],
-            marker: true,
-            workers: None,
-        }
-        .looked_at_by(workers.clone());
+        let privacy = private_to(vec![tmp.path().join("keys")], true).looked_at_by(workers.clone());
         let mut check = privacy.checker();
         let asked = Instant::now();
         assert!(check.holds(&point.join("note")), "not checked, so private");
@@ -1268,12 +1192,7 @@ mod tests {
                 },
             );
         }
-        let privacy = Privacy {
-            folders: vec![tmp.path().join("keys")],
-            marker: true,
-            workers: None,
-        }
-        .looked_at_by(workers.clone());
+        let privacy = private_to(vec![tmp.path().join("keys")], true).looked_at_by(workers.clone());
         let (tx, rx) = std::sync::mpsc::channel();
         let asked = Instant::now();
         workers.spawn_in(
@@ -1291,14 +1210,14 @@ mod tests {
         assert!(asked.elapsed() < crate::fs::reach::NOT_ANSWERING);
     }
 
-    /// The private folders as the settings say them: records, or paths
-    /// alone as a hand writes them; a value that is no list keeps the
-    /// folders private from the start.
+    /// The private folders as 0.3.1's settings said them, records or paths
+    /// alone as a hand writes them, are read among the exclusions kept
+    /// from agents; a value that is no list keeps skwir's own private.
     #[cfg(unix)]
     #[test]
-    fn private_folders_are_read_however_they_are_written() {
+    fn private_folders_of_old_are_read_however_they_are_written() {
         let settings = Settings::in_memory();
-        declare(&settings);
+        crate::exclusions::declare(&settings);
         let home = crate::os_path::home().unwrap();
         let listed = |value: toml::Value| {
             settings.set(FOLDERS_KEY, value);
@@ -1308,16 +1227,18 @@ mod tests {
             toml::Value::String("~/it's mine".into()),
             toml::Value::String("/srv/l'été".into()),
         ]);
-        assert_eq!(
-            listed(paths),
-            [home.join("it's mine"), PathBuf::from("/srv/l'été")]
+        let read = listed(paths);
+        assert!(
+            read.contains(&home.join("it's mine")) && read.contains(&PathBuf::from("/srv/l'été"))
+        );
+        assert!(
+            !read.contains(&home.join(".gnupg")),
+            "0.3.1's, left out of the list"
         );
         let mut record = toml::Table::new();
         record.insert("path".into(), toml::Value::String("~/.ssh".into()));
-        assert_eq!(
-            listed(toml::Value::Array(vec![toml::Value::Table(record)])),
-            [home.join(".ssh")]
-        );
+        let read = listed(toml::Value::Array(vec![toml::Value::Table(record)]));
+        assert!(read.contains(&home.join(".ssh")) && !read.contains(&home.join(".gnupg")));
         let defaults = listed(toml::Value::String("~/.ssh".into()));
         assert!(defaults.contains(&home.join(".ssh")) && defaults.contains(&home.join(".gnupg")));
     }

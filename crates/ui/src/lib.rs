@@ -88,6 +88,8 @@ pub mod search_bar;
 mod sequence;
 pub mod session;
 pub mod settings;
+mod settings_exclusions;
+mod settings_exclusions_view;
 mod settings_keys;
 mod settings_keys_new;
 mod settings_keys_view;

@@ -273,6 +273,12 @@ pub struct App {
     /// The one waiter reading the panes' filters again when the first of
     /// them reads otherwise (`roll_filters_over`): when, and its token.
     filter_rollover: parking_lot::Mutex<Option<(std::time::SystemTime, CancelToken)>>,
+    /// What walks leave out (`left_out`), as read at a revision of the
+    /// settings.
+    /// The rules as the settings and the environment said them when last
+    /// made (`left_out`, `privacy`): made again once either changed.
+    left_out: parking_lot::Mutex<Option<(Ruled, Arc<crate::walks::LeftOut>)>>,
+    private: parking_lot::Mutex<Option<(Ruled, Arc<crate::exclusions::Rule>)>>,
     providers: RwLock<HashMap<Arc<str>, (Arc<str>, Arc<dyn LocationProvider>)>>,
     /// Shared with every `waker_handle`, so a handle taken before the UI
     /// installs its hook still reaches it.
@@ -283,6 +289,10 @@ pub struct App {
     /// Cancelled on drop: stops every background task started by this app.
     lifetime: CancelToken,
 }
+
+/// What the rules were made from: the settings' revision and what the
+/// login shell said (`environment::generation`).
+type Ruled = (u64, u64);
 
 impl App {
     pub fn new(config: AppConfig) -> anyhow::Result<Arc<Self>> {
@@ -314,6 +324,8 @@ impl App {
         let app = Arc::new_cyclic(|weak| App {
             weak: weak.clone(),
             filter_rollover: parking_lot::Mutex::new(None),
+            left_out: parking_lot::Mutex::new(None),
+            private: parking_lot::Mutex::new(None),
             notifications: parking_lot::Mutex::new(Vec::new()),
             closed_tabs: parking_lot::Mutex::default(),
             executor: Executor::new(scheduler.clone()),
@@ -481,7 +493,7 @@ impl App {
         crate::settings::register(&app);
         crate::tabs::register(&app);
         crate::keymap::declare(&app.settings, app.weak());
-        crate::permissions::declare(&app.settings);
+        crate::exclusions::declare(&app.settings);
         crate::plugin::register(&app);
         crate::playing::register(&app);
         if let Some(problem) = app.settings.take_problem() {
@@ -1739,6 +1751,7 @@ impl App {
             "entries": entries,
         });
         say_as_of(&mut answer, listing.as_of());
+        say_left_out(&mut answer, listing.left_out());
         Ok(Outcome::Value(answer))
     }
 
@@ -2086,7 +2099,52 @@ impl App {
     /// say now (`permissions::Privacy`), a path on a remote looked at in
     /// its lane.
     pub fn privacy(&self) -> crate::permissions::Privacy {
-        crate::permissions::Privacy::of(&self.settings).looked_at_by(self.scheduler.clone())
+        let now = self.ruled();
+        let rule = {
+            let mut kept = self.private.lock();
+            match kept.as_ref() {
+                Some((at, rule)) if *at == now => Arc::clone(rule),
+                _ => {
+                    let rule = Arc::new(self.catalog().rule(crate::exclusions::Role::Agents));
+                    *kept = Some((now, Arc::clone(&rule)));
+                    rule
+                }
+            }
+        };
+        crate::permissions::Privacy::shared(rule).looked_at_by(self.scheduler.clone())
+    }
+
+    /// What the rules are made from now.
+    fn ruled(&self) -> Ruled {
+        (self.settings.revision(), crate::environment::generation())
+    }
+
+    /// The exclusions as the settings say them now, the variables their
+    /// paths start from asked of the login shell where they were not.
+    fn catalog(&self) -> crate::exclusions::Catalog {
+        let catalog = crate::exclusions::Catalog::of(&self.settings);
+        crate::environment::want(&catalog.variables());
+        catalog
+    }
+
+    /// What a walk below a folder leaves out (`walks`, ADR-125), as the
+    /// settings say now: taken when a walk starts, read again only once
+    /// the settings changed. A plugin is not told when a `core` setting
+    /// changes, so what it made of a walk keys on the answer's
+    /// [`fingerprint`](crate::walks::LeftOut::fingerprint).
+    pub fn left_out(&self) -> Arc<crate::walks::LeftOut> {
+        let now = self.ruled();
+        let mut kept = self.left_out.lock();
+        if let Some((at, rule)) = kept.as_ref()
+            && *at == now
+        {
+            return Arc::clone(rule);
+        }
+        let rule = Arc::new(crate::walks::LeftOut::ruled(
+            self.catalog().rule(crate::exclusions::Role::Searches),
+        ));
+        *kept = Some((now, Arc::clone(&rule)));
+        rule
     }
 
     /// The entries of `pane` an agent's call must not count (ADR-044):
@@ -2758,6 +2816,14 @@ struct EntryInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     modified: Option<u64>,
     selected: bool,
+}
+
+/// An `entries` answer of a walk that left folders out says how many
+/// (`Listing::left_out`, ADR-125); one that left none out says nothing.
+fn say_left_out(answer: &mut serde_json::Value, left_out: usize) {
+    if let (true, Some(answer)) = (left_out > 0, answer.as_object_mut()) {
+        answer.insert("excluded".into(), serde_json::json!(left_out));
+    }
 }
 
 /// An `entries` answer that is an index's says so, and as of when
@@ -3566,7 +3632,7 @@ mod builtin {
             "core", Topic::Files,
             "entries",
             "List entries",
-            "What a pane shows, in its order (sorted, filtered, with the folders opened in place), or with `location` what a folder holds, listed without showing it: each entry's id, name, path, kind, size and modification time (seconds since 1970), and whether it is selected; from `offset`, at most `limit`. `complete: false`: the listing was still arriving, ask again. `as_of`, when present: the answer is an index's as of its last update (`by` says which, `updated` when, in seconds since 1970), so a file made, renamed or removed since is not in it",
+            "What a pane shows, in its order (sorted, filtered, with the folders opened in place), or with `location` what a folder holds, listed without showing it: each entry's id, name, path, kind, size and modification time (seconds since 1970), and whether it is selected; from `offset`, at most `limit`. `complete: false`: the listing was still arriving, ask again. `as_of`, when present: the answer is an index's as of its last update (`by` says which, `updated` when, in seconds since 1970), so a file made, renamed or removed since is not in it. `excluded`, when present: how many files and folders below the root the search walked past (the folders left out in Settings › General › Searches, caches, trash, network folders); `excluded:yes` in the search walks the list's",
             |a, app| {
                 use crate::entry::keys;
                 let info = |id: EntryId, e: &crate::entry::Entry, path: Option<PathBuf>, selected: bool| EntryInfo {
@@ -3619,6 +3685,7 @@ mod builtin {
                     "entries": entries,
                 });
                 say_as_of(&mut answer, p.listing.as_of());
+                say_left_out(&mut answer, p.listing.left_out());
                 Ok(Outcome::Value(answer))
             },
         )

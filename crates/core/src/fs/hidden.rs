@@ -24,6 +24,48 @@ pub fn dotted(name: &OsStr) -> bool {
     name.as_encoded_bytes().starts_with(b".")
 }
 
+/// Whether a folder holding `path` below `root` (never `root`, nor `path`
+/// itself) is hidden: [`within`] of its folder. What a walk without hidden
+/// files leaves out, which a place listing files of many folders says of
+/// each (`Entry::in_hidden_folder`). Reads on Windows: call it on a worker.
+pub fn below<S: std::hash::BuildHasher>(
+    path: &Path,
+    root: &Path,
+    marked: &mut std::collections::HashMap<std::path::PathBuf, bool, S>,
+) -> bool {
+    path.parent()
+        .is_some_and(|dir| dir != root && within(dir, root, marked))
+}
+
+/// Whether the folder `dir`, or one holding it, below `root` (never `root`
+/// itself) is hidden: a dot names it, or, on Windows, it wears the mark,
+/// each folder asked once (`marked`). Reads on Windows: call it on a
+/// worker.
+pub fn within<S: std::hash::BuildHasher>(
+    dir: &Path,
+    root: &Path,
+    marked: &mut std::collections::HashMap<std::path::PathBuf, bool, S>,
+) -> bool {
+    let Ok(rest) = dir.strip_prefix(root) else {
+        return false;
+    };
+    let mut at = root.to_path_buf();
+    for component in rest.components() {
+        at.push(component);
+        if dotted(component.as_os_str()) {
+            return true;
+        }
+        if cfg!(windows)
+            && *marked
+                .entry(at.clone())
+                .or_insert_with(|| is_set(&at).unwrap_or(false))
+        {
+            return true;
+        }
+    }
+    false
+}
+
 /// Whether `path` itself (never a link's target) wears the mark.
 ///
 /// # Errors
@@ -213,6 +255,24 @@ mod fat {
 #[cfg(all(test, any(windows, target_os = "linux")))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_dotted_folder_below_the_root_hides_what_it_holds() {
+        let mut marked = std::collections::HashMap::new();
+        let root = Path::new("/h/o me");
+        assert!(below(&root.join(".config/app's/x.conf"), root, &mut marked));
+        assert!(below(&root.join("a/.d/ü"), root, &mut marked));
+        assert!(
+            !below(&root.join(".config"), root, &mut marked),
+            "itself: its own name says"
+        );
+        assert!(!below(&root.join("a/b/x"), root, &mut marked));
+        assert!(
+            !below(Path::new("/h/.x/y"), Path::new("/h/.x"), &mut marked),
+            "the root's own dot"
+        );
+        assert!(!below(Path::new("/elsewhere/.d/x"), root, &mut marked));
+    }
 
     fn home_tempdir() -> tempfile::TempDir {
         let base = dirs::home_dir().unwrap().join(".cache").join("skwir-tests");

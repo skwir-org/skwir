@@ -13503,6 +13503,61 @@ amended).
   board, the shortcut editor, Activity's pin, the omnibox's strip, the
   archive and the chooser's pictures, a tag's chip on a lit menu row.
 
+## 2026-11-08: Exclusions (ADR-125, issue #6)
+
+A tagged `~/.config` never showed in its tag's place: walks took a dot for
+"too costly". Replaced by one list, Settings › Exclusions, of files and
+folders in categories, each excluded from roles.
+
+- **Core** (`skwir_core::exclusions`, `walks`, `environment`): 654 built-in
+  entries in 12 categories (`builtin.toml`, 192 bases; 523 apply on Linux,
+  456 on macOS, 403 on Windows; 164 name files), merged with what the user
+  changed, a rule per role with a side for folders and one for files.
+  Patterns: a name, a path, a glob, `regex:`, a path from a variable
+  (`${CARGO_HOME:-~/.cargo}/registry`, a list's first folder), a name beside
+  its tool's file, a folder holding a marker.
+- **Roles' readers:** `walks::Below` (search, tag count and index, timeline,
+  plocate's and the indexes' answers), `permissions::Privacy` (agents, plugins
+  from outside, models). A file named is not found; a folder named is found
+  itself and not entered. A secret a variable moved stays private where it
+  was (`….before-it-moved`). A catalog costs 5.6 ms to make in a release
+  build, paid per path by `App::privacy` until the rule was kept per settings
+  revision and environment generation.
+- **The login shell** (`skwir_platform::shell_environment`): run on a worker
+  (`-l -i -c`, 10 s, its process group stopped whole), again only once its
+  files' stamps change, kept in the cache, only the names the rules use.
+- **The page** (`settings_exclusions*.rs`): one list, categories folded on
+  open, a heading folding and its switch deciding, the shared context menu
+  over the dialog (Move to a real submenu), a keyboard place of its own, no
+  Undo, the question before agents may read something.
+- **Research** (saved beside the session, not in the tree): the tool stores
+  and their relocation variables from each tool's documentation (192 bases,
+  191 rewrites, 72 new entries; two tried locally, `zig env` and `rclone
+  config file`); the secrets list from theirs. 21 entries marked `#
+  unverified`.
+- **Checked:** fmt; clippy with `-D warnings` on core, platform, ui, the
+  binary, tags, query, timeline, usage, bench; tests: 2047 across those crates,
+  and control and extend (the one failure was the disk filling during its
+  helper's build: passes alone), 28 cross-plugin (`exclusions`, `settings`,
+  `tags_everywhere`, `plugins_toggle`, `keymap_titles`). `just check-cross`
+  (Windows and macOS). Under Wine, `just test-windows -p skwir-core
+  exclusions`, 21 passing. `just bench-check --only …`: `tag_search_us` 3.20 s
+  (budget 7.5), `tags_check_us` 275 ms (budget 4 s), `tags_index_tally_us`
+  934 µs (budget 1.5 ms), `name_search_us` 154 ms (no budget), on
+  `bench-data/deep1m`, the machine otherwise idle.
+- **Seen on Xvfb** (debug build, a test bus, a stand-in login shell exporting
+  `CARGO_HOME` and a decoy token): the page folded, the moved registry listed
+  under Only on this computer, the Add dialog's Files/Folders choice; the
+  cache holding `CARGO_HOME` and not the token. The page's agent tried the
+  menu, its fly-out by rest and by Right, Menu and Shift+F10, Move, folds,
+  the question and its answers (Xvfb :94).
+- **The shell's command tried** against real zsh 5.9, bash 5.3 and fish 4.9
+  with no terminal and startup files that print and export: each gave the
+  variable after the marker.
+- **Not checked:** a screen reader on this page (`just a11y-check`), the file
+  picker (the test bus has no portal), macOS beyond compiling, F1 inside the list
+  (Settings refuses the shortcut overview on every page), `just idle-pss`.
+
 ## 2026-11-08: The Nix package (ADR-124, issue #7)
 
 The closure was 3 GB: built with the dev toolchain, whose paths std's panic

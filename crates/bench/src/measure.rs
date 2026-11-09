@@ -60,6 +60,10 @@ pub struct Report {
     /// A `tag:` search of the whole tree through the query plugin, until
     /// `Complete`.
     pub tag_search: Stat,
+    /// A search of the whole tree by a name (`f007`: a file in each of its
+    /// 10,000 folders) through the query plugin, until `Complete`: its walk,
+    /// the exclusions' look-ups of each folder included (ADR-125).
+    pub name_search: Stat,
     /// The tags of the whole tree checked again (F5 in its tag location),
     /// counted before and unchanged since: the check of what changed,
     /// until it ends.
@@ -117,7 +121,7 @@ pub struct Report {
 
 impl Report {
     /// Each measurement by its key in the budgets file.
-    fn metrics(&self) -> [(&'static str, &Stat); 30] {
+    fn metrics(&self) -> [(&'static str, &Stat); 31] {
         [
             ("first_batch_us", &self.first_batch),
             ("list_getdents_us", &self.list_getdents),
@@ -134,6 +138,7 @@ impl Report {
             ("thumbs_warm_per_drawing_us", &self.thumbs_warm_per_drawing),
             ("tags_fill_us", &self.tags_fill),
             ("tag_search_us", &self.tag_search),
+            ("name_search_us", &self.name_search),
             ("tags_check_us", &self.tags_check),
             ("tags_index_learn_us", &self.tags_index_learn),
             ("tags_index_tally_us", &self.tags_index_tally),
@@ -657,6 +662,26 @@ pub fn tag_search(root: &Path, profile: Profile, runs: usize) -> Stat {
             .map(|_| {
                 let searched = search(&tags, &expr, &root);
                 assert_eq!(searched.found, 1000, "one file in a thousand is tagged");
+                searched.complete
+            })
+            .collect(),
+    )
+}
+
+/// The whole tree searched by a name, through the query plugin: one file
+/// in each of its folders found, the walk timed until it completes.
+pub fn name_search(root: &Path, profile: Profile, runs: usize) -> Stat {
+    let dir = root.join(profile.name());
+    if profile != Profile::Deep1m || !dir.is_dir() {
+        return Stat::NONE;
+    }
+    let app = tags_app();
+    let root = skwir_core::os_path::canonical(&dir).expect("tree");
+    Stat::of(
+        (0..runs)
+            .map(|_| {
+                let searched = search(&app, "f007", &root);
+                assert_eq!(searched.found, 10_000, "f007 in each of the leaf folders");
                 searched.complete
             })
             .collect(),
@@ -1334,6 +1359,7 @@ pub fn run(root: &Path, profile: Profile, runs: usize, only: &Only) -> Report {
         tags_fill,
         // Measured after every profile (`tag_search`, `tags_check`).
         tag_search: Stat::NONE,
+        name_search: Stat::NONE,
         tags_check: Stat::NONE,
         tags_index_learn: Stat::NONE,
         tags_index_tally: Stat::NONE,

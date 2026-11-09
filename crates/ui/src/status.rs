@@ -122,23 +122,27 @@ pub(crate) fn render(
 ) -> AnyElement {
     let theme = cx.global::<Theme>().clone();
     let selection = shell.selection_ctx();
-    let (held, count, complete, error, is_query, sweep, total, as_of, reads) = {
+    let (held, count, complete, error, is_query, sweep, total, as_of, reads, left_out) = {
         let ws = shell.app.workspace.read();
         let pane = ws.pane(shell.pane);
-        pane.map_or((None, 0, true, None, false, None, None, None, false), |p| {
-            (
-                p.listing.filling_count(),
-                shell.ui().list.sorted.len(),
-                p.listing.is_complete(),
-                p.listing.error().map(str::to_owned),
-                shell.ui().place.search,
-                p.selection.sweeping(),
-                // Filtered (its lens, words typed): how many there are in all.
-                p.is_filtered().then(|| p.listing.order_shown(p.sort).len()),
-                p.listing.as_of().cloned(),
-                p.read_filter().is_some_and(|r| r.metadata),
-            )
-        })
+        pane.map_or(
+            (None, 0, true, None, false, None, None, None, false, 0),
+            |p| {
+                (
+                    p.listing.filling_count(),
+                    shell.ui().list.sorted.len(),
+                    p.listing.is_complete(),
+                    p.listing.error().map(str::to_owned),
+                    shell.ui().place.search,
+                    p.selection.sweeping(),
+                    // Filtered (its lens, words typed): how many there are in all.
+                    p.is_filtered().then(|| p.listing.order_shown(p.sort).len()),
+                    p.listing.as_of().cloned(),
+                    p.read_filter().is_some_and(|r| r.metadata),
+                    p.listing.left_out(),
+                )
+            },
+        )
     };
     // "Loading…" follows the same delayed signal as the pane banner.
     let loading = crate::loading::pending(shell, shell.pane);
@@ -189,11 +193,17 @@ pub(crate) fn render(
     // An index's answer says as of when (ADR-050): what was made, renamed
     // or removed since is not in it.
     let as_of = as_of.map(|as_of| as_of_said(&as_of, &jiff::Zoned::now()));
+    // What a search walked past (ADR-125): said, never silently.
+    let left_out = (left_out > 0).then(|| format!("{left_out} excluded"));
     // What it says is the status line a screen reader reads when asked,
     // never announced: it changes with every key.
-    let mut said = shell.a11y.then(|| match &as_of {
-        Some((text, _)) => format!("{items}, {text}"),
-        None => items.clone(),
+    let mut said = shell.a11y.then(|| {
+        let mut said = items.clone();
+        for text in as_of.iter().map(|(text, _)| text).chain(left_out.as_ref()) {
+            said.push_str(", ");
+            said.push_str(text);
+        }
+        said
     });
     let mut bar = div()
         .id(("pane-footer", shell.pane.0 as usize))
@@ -221,6 +231,21 @@ pub(crate) fn render(
                 .id("listing-as-of")
                 .flex_none()
                 .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), cx))
+                .child(text),
+        );
+    }
+    if let Some(text) = left_out {
+        bar = bar.child(
+            div()
+                .id("listing-left-out")
+                .flex_none()
+                .tooltip(|_, cx| {
+                    crate::toolbar::tooltip(
+                        "Files and folders your exclusions leave out (Settings › Exclusions) were walked past: excluded:yes searches them too"
+                            .into(),
+                        cx,
+                    )
+                })
                 .child(text),
         );
     }

@@ -374,6 +374,24 @@ mod args {
         key: String,
     }
 
+    /// What a Exclusions page row's menu does (`ui.settings_exclusion_item`).
+    #[derive(Deserialize, JsonSchema)]
+    pub(super) struct FolderItem {
+        /// `duplicate`, `edit`, `move`, `reset` or `remove` an entry;
+        /// `rename`, `delete` or `add_here` a category.
+        #[serde(rename = "do")]
+        action: String,
+        /// The entry's id.
+        #[serde(default)]
+        entry: Option<String>,
+        /// The category's id.
+        #[serde(default)]
+        category: Option<String>,
+        /// Where `move` takes the entry: a category's id.
+        #[serde(default)]
+        to: Option<String>,
+    }
+
     #[derive(Deserialize, JsonSchema)]
     pub(super) struct ViewButton {
         /// The view's id (`list`, `grid`, `columns`, a plugin's).
@@ -533,10 +551,10 @@ mod args {
 
 use args::{
     Adjust, Amount, Ask, Bucket, Close, Continue, CopyText, Count, Cursor, Delta, Dir, Find, Fold,
-    Folders, History, Key, Layout, ListMoveArgs, Object, On, Pace, Page, PageLink, Pages, Pan,
-    Pick, Player, Pointer, Popup, PreviewScroll, Scrub, Settings, Split, Submit, TagsPrompt,
-    TerminalPaste, Text, TextSize, TimelineCursor, TimelineDate, Toggle, Toward, Url, UsageMode,
-    View, ViewButton,
+    FolderItem, Folders, History, Key, Layout, ListMoveArgs, Object, On, Pace, Page, PageLink,
+    Pages, Pan, Pick, Player, Pointer, Popup, PreviewScroll, Scrub, Settings, Split, Submit,
+    TagsPrompt, TerminalPaste, Text, TextSize, TimelineCursor, TimelineDate, Toggle, Toward, Url,
+    UsageMode, View, ViewButton,
 };
 
 /// The window's commands an agent may run (ADR-044): they change only
@@ -1076,6 +1094,62 @@ const KEY_FORMS: &[(&str, &str, &str)] = &[
         "Change the key, or add one",
     ),
     ("ui.settings_key", r#"{"key":"remove"}"#, "Remove the key"),
+    // The Exclusions page's list.
+    (
+        "ui.settings_exclusion",
+        r#"{"key":"up"}"#,
+        "Go to the folder above",
+    ),
+    (
+        "ui.settings_exclusion",
+        r#"{"key":"down"}"#,
+        "Go to the folder below",
+    ),
+    (
+        "ui.settings_exclusion",
+        r#"{"key":"first"}"#,
+        "Go to the first category",
+    ),
+    (
+        "ui.settings_exclusion",
+        r#"{"key":"last"}"#,
+        "Go to the last folder",
+    ),
+    (
+        "ui.settings_exclusion",
+        r#"{"key":"page_up"}"#,
+        "Go a page up the folders",
+    ),
+    (
+        "ui.settings_exclusion",
+        r#"{"key":"page_down"}"#,
+        "Go a page down the folders",
+    ),
+    (
+        "ui.settings_exclusion",
+        r#"{"key":"left"}"#,
+        "Fold the category, or go to it",
+    ),
+    (
+        "ui.settings_exclusion",
+        r#"{"key":"right"}"#,
+        "Unfold the category",
+    ),
+    (
+        "ui.settings_exclusion",
+        r#"{"key":"open"}"#,
+        "Turn the switch or the tick",
+    ),
+    (
+        "ui.settings_exclusion",
+        r#"{"key":"remove"}"#,
+        "Remove the folder you added",
+    ),
+    (
+        "ui.settings_exclusion",
+        r#"{"key":"menu"}"#,
+        "Open the folder's menu",
+    ),
     ("ui.settings_page", r#"{"delta":-1}"#, "Previous page"),
     ("ui.settings_page", r#"{"delta":1}"#, "Next page"),
     ("ui.settings_move", r#"{"delta":-1}"#, "Move the record up"),
@@ -1186,7 +1260,7 @@ fn repeats_of(name: &str) -> Option<Repeats> {
                 ],
             )
         },
-        "ui.settings_key" => |args| {
+        "ui.settings_key" | "ui.settings_exclusion" => |args| {
             among(
                 args,
                 "key",
@@ -1883,6 +1957,20 @@ pub fn declare_all(app: &App) {
         "ui.settings_key",
         "Keyboard page key",
         "A key in the Keyboard page's list of actions: walk the actions and their keys, change, add or remove one",
+    );
+    declare::<FolderItem>(
+        app,
+        Topic::Window,
+        "ui.settings_exclusion_item",
+        "Exclusions page menu item",
+        "What a Exclusions page row's menu does: duplicate, edit, move, reset or remove a folder; rename or delete one of your categories, or add a folder to one",
+    );
+    declare::<Key>(
+        app,
+        Topic::Window,
+        "ui.settings_exclusion",
+        "Exclusions page key",
+        "A key in the Exclusions page's list: walk the categories and their folders, fold one, turn a switch or a tick, remove a folder you added, open a folder's menu",
     );
     declare::<Object>(
         app,

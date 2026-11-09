@@ -704,6 +704,9 @@ of bars, split or not.
   and as a folder's last pill gone shows it whole: an empty search is
   asked for, never left over. One asked with nothing (`in:/x`) stays a
   search while its depth or hidden files change.
+- The where pill's choices include Hidden files (`hidden:`) and Folders
+  left out (`excluded:`, ADR-125), its value naming those on; neither lets
+  the folder alone filter the words (`facets::as_filter`).
 - The query plugin owns the meaning (`facets.rs`). Pills are read once
   per location, and again when the sidebar's names change; never per
   frame.
@@ -1075,9 +1078,18 @@ of bars, split or not.
   entry; a filter, hidden files shown or a file come adds up again and
   stats only what neither knows; a size learnt adds up again once the
   request running has answered; `PaneView::weighs` for a view that
-  measures folders). The window's state (Undo, pending paste, plugin
-  counts via `tally::Tally`, proposals, the player's strip, what runs)
-  ends the last pane's footer. Side panels have no footer.
+  measures folders). What a listing's answer rests on is its state too:
+  an index's "as of" (ADR-050), a search's "· N excluded"
+  (`Listing::left_out`, ADR-125, its tooltip naming `excluded:yes`),
+  both in what a screen reader is told. The window's state (Undo,
+  pending paste, plugin counts via `tally::Tally`, proposals, the
+  player's strip, what runs) ends the last pane's footer. Side panels
+  have no footer.
+- **A pane with only hidden entries says so** (`placeholder.rs`): its
+  listing complete, nothing filtered out, hidden files off, it says "Only
+  hidden files here" with Show hidden files (`toggle_hidden`) rather than
+  what its place says empty (a tag's place listing a hidden folder alone,
+  a folder of dot files).
 - A key whose command needs a selection has `selection` in its `when`,
   so it does nothing rather than report "nothing selected".
 - **Animation:** only a bounded entrance under 200 ms, plus the player's
@@ -1445,6 +1457,42 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   which also says whether it is inside a dialog or a menu; a command that
   must keep a key says so (`Declared::keeps_a_key`), and no change leaves
   it without one in a place.
+- **The Exclusions page** (ADR-125) is the exclusions' catalog as data
+  (`settings_exclusions.rs`: rows for a role, each edit from one catalog to
+  the next, what it takes from agents) drawn in one list
+  (`settings_exclusions_view.rs`), walked in its own place
+  (`setting_exclusions`, `ui.settings_exclusion`). It reads a folder's syntax,
+  checks an entry and judges what a change takes from agents only
+  through core (`exclusions::Written`, `Matcher::check`,
+  `Matcher::one_path`, `Matcher::looked_up`, `exclusions::here`,
+  `exclusions::exposed`, which
+  `settings.apply` refuses to an agent): never a reading of its own. It
+  saves both tables in one change (`change_drawn`). Whether a folder is
+  on this computer is looked up on a worker (`exclusions::here`: a path
+  once, a glob a level at a time, a remote's taken as there, never
+  read); a name, a `**` or a regex always shows.
+  Anything that lets agents read a folder asks first, Keep private
+  focused and Escape's answer; nothing else asks, a removal included.
+  Every category is folded when the page opens (the folds are the
+  dialog's, never saved), but what a filter typed or Changed shows, the
+  Secrets opened from Privacy (`role: agents`), and the category of what
+  was just shown, added, edited or moved. A change is said at the page's
+  foot, a polite live region, with no Undo: a tick or a switch undoes
+  itself, as on every page. A row's menu is the window's context menu
+  (`Shell::open_settings_menu`, `MenuHost::Settings`), drawn above the
+  dialog, which lets the menu's keys through while it shows
+  (`takes_now`); its items run `ui.settings_exclusion_item`, the user's
+  alone, its Move to a submenu. From the keyboard it hangs from the
+  cursor's row, which the page draws the anchor of; closed, the keyboard
+  is back on the list. The page knows it is open by what the menu holds
+  (`SettingsMenu::held`), never by a flag of its own. The Searches role
+  is said "Searches and tags" wherever the page names it. A press on a
+  category's heading folds or unfolds it, as Left and Right do; only the
+  switch at its end turns the category on or off for the role, as Space
+  and Enter do on the heading. The page is called Exclusions where it is
+  said (its title; the words come from one place each,
+  `settings_exclusions::ENTRY`, `ENTRIES`, `EXCLUDED_FROM`, `excluded_from`),
+  what an entry names "files and folders", never "folders" for both.
 - Type-ahead is on only while no binding takes an unmodified character in
   the file list (`Keymap::typeahead`).
 - **A name typed** (`list.rs`, `Typed`) goes on until a pause of

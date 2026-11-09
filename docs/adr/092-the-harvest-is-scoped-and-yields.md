@@ -79,3 +79,12 @@ are `docs/invariants/indexes.md`.
   Thermal signals are left for later; the load average stands in.
 - A scope that leaves a folder out is said in the footer of a search
   there ("not indexed: left out"), never silently.
+
+## Amendment (2026-11-08)
+
+The folders left out by name (`extract.exclude`) are the exclusions kept
+from the index (`exclusions::Role::Index`, ADR-125), edited on the
+Exclusions page beside those kept from searches and from agents, and
+`CACHEDIR.TAG` is read in core (`exclusions::is_cache`). The harvest,
+when built, reads that role; its own markers (`.noindex`, `.nomedia`,
+`.trackerignore`) stay its own.

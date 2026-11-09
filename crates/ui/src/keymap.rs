@@ -1056,6 +1056,92 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
         r#"{"key":"remove"}"#,
         Some("setting_keys"),
     ),
+    // The Exclusions page's list: its categories and folders walked as the
+    // Keyboard page's actions; Space or Enter turns a switch or a tick.
+    (
+        "up",
+        "ui.settings_exclusion",
+        r#"{"key":"up"}"#,
+        Some("setting_exclusions"),
+    ),
+    (
+        "down",
+        "ui.settings_exclusion",
+        r#"{"key":"down"}"#,
+        Some("setting_exclusions"),
+    ),
+    (
+        "home",
+        "ui.settings_exclusion",
+        r#"{"key":"first"}"#,
+        Some("setting_exclusions"),
+    ),
+    (
+        "end",
+        "ui.settings_exclusion",
+        r#"{"key":"last"}"#,
+        Some("setting_exclusions"),
+    ),
+    (
+        "pageup",
+        "ui.settings_exclusion",
+        r#"{"key":"page_up"}"#,
+        Some("setting_exclusions"),
+    ),
+    (
+        "pagedown",
+        "ui.settings_exclusion",
+        r#"{"key":"page_down"}"#,
+        Some("setting_exclusions"),
+    ),
+    (
+        "left",
+        "ui.settings_exclusion",
+        r#"{"key":"left"}"#,
+        Some("setting_exclusions"),
+    ),
+    (
+        "right",
+        "ui.settings_exclusion",
+        r#"{"key":"right"}"#,
+        Some("setting_exclusions"),
+    ),
+    (
+        "enter",
+        "ui.settings_exclusion",
+        r#"{"key":"open"}"#,
+        Some("setting_exclusions"),
+    ),
+    (
+        "space",
+        "ui.settings_exclusion",
+        r#"{"key":"open"}"#,
+        Some("setting_exclusions"),
+    ),
+    (
+        "delete",
+        "ui.settings_exclusion",
+        r#"{"key":"remove"}"#,
+        Some("setting_exclusions"),
+    ),
+    (
+        "backspace",
+        "ui.settings_exclusion",
+        r#"{"key":"remove"}"#,
+        Some("setting_exclusions"),
+    ),
+    (
+        "menu",
+        "ui.settings_exclusion",
+        r#"{"key":"menu"}"#,
+        Some("setting_exclusions"),
+    ),
+    (
+        "shift-f10",
+        "ui.settings_exclusion",
+        r#"{"key":"menu"}"#,
+        Some("setting_exclusions"),
+    ),
     // A record of a list moves with its buttons' focus, as lines move in
     // an editor.
     (
@@ -1310,6 +1396,7 @@ pub(crate) const PLACES: &[Place] = &[
     inside("setting_slider", "SettingSlider", "Settings"),
     inside("setting_record", "SettingRecord", "Settings"),
     inside("setting_keys", "SettingKeys", "Settings"),
+    inside("setting_exclusions", "SettingExclusions", "Settings"),
 ];
 
 /// Map a registry `when` string to a GPUI context predicate. A token of

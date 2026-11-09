@@ -75,6 +75,7 @@ pub mod process;
 #[cfg(target_os = "linux")]
 mod qt_palette;
 pub mod sandbox;
+pub mod shell_environment;
 pub mod shrink_job;
 pub mod system_icons;
 pub mod system_thumbs;

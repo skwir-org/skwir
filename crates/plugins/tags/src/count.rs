@@ -1,7 +1,9 @@
 //! The count behind tag locations (`location.rs`): every tagged file under a folder,
-//! outside hidden folders and the network mounts below it (ADR-077),
-//! learned by the index (`index::TagIndex`), which then covers the folder
-//! as of the time the count began.
+//! hidden ones included, outside what a walk leaves out below it (the
+//! folders of the list, a cache that says so, a trash, a network mount:
+//! `skwir_core::walks`, ADR-077, ADR-125), learned by the index
+//! (`index::TagIndex`), which then covers the folder as of the time the
+//! count began.
 //!
 //! A first count reads every file's notes. A later one, the folder covered,
 //! checks: it reads again only what changed since. Setting a tag changes
@@ -29,6 +31,7 @@ use skwir_core::app::App;
 use skwir_core::cancel::CancelToken;
 use skwir_core::entry::{EntryId, FileId};
 use skwir_core::fs::reach;
+use skwir_core::walks::Below;
 
 use crate::index::{TagIndex, stable_hash};
 
@@ -46,6 +49,8 @@ pub struct Counted {
     pub folders: usize,
     /// Files whose notes were read.
     pub read: usize,
+    /// Folders below it left out: the list's, caches, mounts.
+    pub left_out: usize,
 }
 
 /// A folder as the next count recognizes it.
@@ -60,10 +65,6 @@ fn folder_key(dev: u64, ino: u64, path: &Path) -> u64 {
 fn changed_since(path: &Path, meta: &std::fs::Metadata, since: Option<SystemTime>) -> bool {
     let Some(since) = since else { return true };
     skwir_core::fs::stat::changed(path, meta).is_none_or(|changed| changed >= since)
-}
-
-fn hidden(name: &OsStr) -> bool {
-    name.as_encoded_bytes().first() == Some(&b'.')
 }
 
 /// Count the tags under `root`. With `covered` (the time the last count
@@ -81,8 +82,8 @@ pub fn run(
     cancel: &CancelToken,
 ) -> anyhow::Result<Option<(SystemTime, Vec<u64>, Counted)>> {
     // The folders the count it relies on saw: a folder above's, when that
-    // one covers it, which never walked a folder hidden below it. What
-    // `root`'s own count saw is not what the index holds since.
+    // one covers it, which never walked a folder it left out below it.
+    // What `root`'s own count saw is not what the index holds since.
     let dirs = covered
         .and_then(|_| index.covering(root))
         .map(|c| index.dirs(&c.root))
@@ -119,18 +120,22 @@ pub fn run_with(
             .and_then(|meta| skwir_core::fs::stat::identity(root, &meta))
             .is_some_and(|id| reach::of_device(id.dev).is_some());
     let walkers = if remote { 1 } else { walkers() };
-    Ok(walk_with(app, index, root, last, cancel, walkers))
+    // A cache's tag is never read on a remote: a lookup per folder there
+    // asks its server (docs/invariants/remote.md).
+    let below = app.left_out().below(root, !remote);
+    Ok(walk_with(app, index, &below, last, cancel, walkers))
 }
 
 /// [`run_with`], read by `walkers` threads, this one among them.
 fn walk_with(
     app: &App,
     index: &Arc<TagIndex>,
-    root: &Path,
+    below: &Below,
     last: Option<(SystemTime, &HashSet<u64>)>,
     cancel: &CancelToken,
     walkers: usize,
 ) -> Option<(SystemTime, Vec<u64>, Counted)> {
+    let root = below.root();
     let began = SystemTime::now().checked_sub(MARGIN).unwrap_or(UNIX_EPOCH);
     let empty = HashSet::new();
     let walk = Walk {
@@ -149,8 +154,11 @@ fn walk_with(
         known: Mutex::new(index.by_folder(root)),
         seen_dirs: Mutex::new(Vec::new()),
         learned: Mutex::new(Vec::new()),
+        caches: Mutex::new((Vec::new(), Vec::new())),
+        below,
         folders: AtomicUsize::new(0),
         read: AtomicUsize::new(0),
+        left_out: AtomicUsize::new(0),
     };
     // Folders are read side by side, as a search walks: a check of a
     // million files took 1.3 s one folder after the other.
@@ -164,21 +172,25 @@ fn walk_with(
         return None;
     }
     let mut learned = walk.learned.into_inner();
-    // What the index knew in folders no longer there (or now hidden: those
-    // are not counted anyway, and forgetting them costs a read later).
+    // What the index knew in folders no longer there (not those left out
+    // below, which the walk did not read: asking costs a read for each).
     for (dir, paths) in walk.known.into_inner() {
-        if !dir
-            .strip_prefix(root)
-            .is_ok_and(|rest| rest.components().any(|c| hidden(c.as_os_str())))
+        if !below.leaves_out(&dir)
+            && below.stops_above(&dir).is_none()
             && std::fs::symlink_metadata(&dir).is_err()
         {
             learned.extend(paths.into_iter().map(|p| (p, Vec::new())));
         }
     }
     index.learn(learned);
+    let (found, cleared) = walk.caches.into_inner();
+    if !found.is_empty() || !cleared.is_empty() {
+        index.mark_caches(found, &cleared);
+    }
     let counted = Counted {
         folders: walk.folders.into_inner(),
         read: walk.read.into_inner(),
+        left_out: walk.left_out.into_inner(),
     };
     Some((began, walk.seen_dirs.into_inner(), counted))
 }
@@ -207,8 +219,14 @@ struct Walk<'a> {
     known: Mutex<HashMap<PathBuf, Vec<PathBuf>>>,
     seen_dirs: Mutex<Vec<u64>>,
     learned: Mutex<Vec<(PathBuf, Vec<String>)>>,
+    /// The caches found, and the folders the index held as caches that no
+    /// longer say so.
+    caches: Mutex<(Vec<PathBuf>, Vec<PathBuf>)>,
+    /// What the walk leaves out below its root.
+    below: &'a Below,
     folders: AtomicUsize,
     read: AtomicUsize,
+    left_out: AtomicUsize,
 }
 
 impl Walk<'_> {
@@ -258,7 +276,28 @@ impl Walk<'_> {
         let Ok(entries) = std::fs::read_dir(dir) else {
             return inside;
         };
+        let entries: Vec<std::fs::DirEntry> = entries.flatten().collect();
+        let held: HashSet<OsString> = entries.iter().map(std::fs::DirEntry::file_name).collect();
         let (app, covered) = (self.app, self.covered);
+        // A folder below the root holding a marker that says so (a signed
+        // `CACHEDIR.TAG`, among its names) is not read, nor seen: once it
+        // no longer says so, the next check reads it whole.
+        let below = self.below;
+        if dir != below.root() && below.probes() {
+            if below.marked_among(dir, |name| held.contains(name)) {
+                self.left_out.fetch_add(1, Ordering::Relaxed);
+                self.caches.lock().0.push(dir.to_owned());
+                return inside;
+            }
+            if self.index.is_cache(dir) {
+                self.caches.lock().1.push(dir.to_owned());
+            }
+        }
+        // Whether this folder holds a sibling a beside rule asks for.
+        let beside = |sibling: &skwir_core::exclusions::NameMatch| match sibling.exact() {
+            Some(name) => held.contains(name),
+            None => held.iter().any(|name| sibling.matches(name)),
+        };
         self.folders.fetch_add(1, Ordering::Relaxed);
         // Off Unix a folder is known by its path alone (ADR-035).
         let id = skwir_core::fs::stat::identity(dir, &meta).unwrap_or(FileId::new(0, 0));
@@ -272,66 +311,64 @@ impl Walk<'_> {
         let mut candidates: Vec<(OsString, std::fs::Metadata)> = Vec::new();
         let mut owners: HashSet<OsString> = HashSet::new();
         let mut learned = Vec::new();
-        for entry in entries.flatten() {
+        for entry in entries {
             let name = entry.file_name();
+            let path = entry.path();
             // A network mount below the folder counted is neither read nor
             // entered (ADR-077): a count of it walks it from its own
             // folder. Told before its stat, which its server answers.
-            if entry.file_type().is_ok_and(|t| t.is_dir()) && reach::is_point(&entry.path()) {
+            if entry.file_type().is_ok_and(|t| t.is_dir()) && reach::is_point(&path) {
                 present.insert(name);
+                self.left_out.fetch_add(1, Ordering::Relaxed);
                 continue;
             }
             let Ok(meta) = entry.metadata() else { continue };
             present.insert(name.clone());
-            // Hidden as a search's walk has it: a dot, or Windows' mark.
-            if skwir_core::fs::is_hidden(&entry) {
-                if meta.is_dir() && app.companions.is_folder(&name) {
-                    // A folder of companions for the whole folder: anything
-                    // in it changed, the folder is read whole.
-                    whole |= changed_since(&entry.path(), &meta, covered)
-                        || std::fs::read_dir(entry.path()).is_ok_and(|inside| {
-                            inside.flatten().any(|e| {
-                                e.metadata()
-                                    .is_ok_and(|m| changed_since(&e.path(), &m, covered))
-                            })
-                        });
-                } else if let Some(owner) = app.companions.owner(&name) {
-                    if changed_since(&entry.path(), &meta, covered) {
-                        owners.insert(owner);
-                    }
-                } else if !hidden(&name) {
-                    // Hidden by Windows' mark alone, which the index does
-                    // not see (it lists all but dot files): what it knows
-                    // of the entry is forgotten, as of one gone, and of a
-                    // folder what it knows inside, which no walk enters.
-                    present.remove(&name);
-                    if meta.is_dir() {
-                        let inside = entry.path();
-                        let gone: Vec<Vec<PathBuf>> = self
-                            .known
-                            .lock()
-                            .extract_if(|folder, _| folder.starts_with(&inside))
-                            .map(|(_, files)| files)
-                            .collect();
-                        learned.extend(gone.into_iter().flatten().map(|p| (p, Vec::new())));
-                    }
+            // A companion, hidden or not (`.ts/`, `._x`, `x.jpg.xmp`), is
+            // its files' or its file's, never counted itself.
+            if meta.is_dir() && app.companions.is_folder(&name) {
+                // A folder of companions for the whole folder: anything in
+                // it changed, the folder is read whole.
+                whole |= changed_since(&path, &meta, covered)
+                    || std::fs::read_dir(&path).is_ok_and(|inside| {
+                        inside.flatten().any(|e| {
+                            e.metadata()
+                                .is_ok_and(|m| changed_since(&e.path(), &m, covered))
+                        })
+                    });
+                continue;
+            }
+            if let Some(owner) = app.companions.owner(&name)
+                && owner != name
+            {
+                if changed_since(&path, &meta, covered) {
+                    owners.insert(owner);
                 }
                 continue;
             }
             if meta.is_dir() {
-                inside.push(entry.path());
+                // A folder left out is not entered, but its own tags are
+                // read: a tagged `node_modules` is counted. One beside the
+                // file of the tool that made it (`target` beside a
+                // `Cargo.toml`) is known to the index as one marked, so
+                // what a pane taught it of what it holds is left out too.
+                if below.named(&path) {
+                    self.left_out.fetch_add(1, Ordering::Relaxed);
+                } else if below.beside_among(&path, beside) {
+                    self.left_out.fetch_add(1, Ordering::Relaxed);
+                    self.caches.lock().0.push(path.clone());
+                } else {
+                    inside.push(path);
+                }
             } else if !meta.is_file() {
                 // Links are counted where their file is; a pipe or a
                 // device is never read.
                 continue;
-            }
-            // A companion that is not hidden (`x.jpg.xmp`) is its file's.
-            if let Some(owner) = app.companions.owner(&name)
-                && owner != name
-            {
-                if changed_since(&entry.path(), &meta, covered) {
-                    owners.insert(owner);
-                }
+            } else if below.leaves_out_file(&path) {
+                // Forgotten, should the index have learned it before the
+                // rule named it.
+                self.left_out.fetch_add(1, Ordering::Relaxed);
+                learned.push((path, Vec::new()));
                 continue;
             }
             candidates.push((name, meta));
@@ -386,16 +423,10 @@ impl Walk<'_> {
 // Helpers of the tests that run on Unix alone (ADR-035).
 #[cfg_attr(not(unix), allow(dead_code, unused_imports))]
 mod tests {
-    use super::{hidden, run};
+    use super::run;
     use skwir_core::app::{App, AppConfig};
     use skwir_core::cancel::CancelToken;
-    use std::ffi::OsStr;
     use std::sync::Arc;
-
-    #[test]
-    fn hidden_names_start_with_a_dot() {
-        assert!(hidden(OsStr::new(".ts")) && !hidden(OsStr::new("a.ts")));
-    }
 
     fn home_tempdir() -> tempfile::TempDir {
         let base = dirs::home_dir().unwrap().join(".cache").join("skwir-tests");
@@ -404,6 +435,91 @@ mod tests {
             .prefix("tags-count-")
             .tempdir_in(base)
             .unwrap()
+    }
+
+    /// Hidden entries are counted like any other (whether a place shows
+    /// them is its pane's); what a walk leaves out below the root is not
+    /// entered, a folder of the list and a cache that says so, nor a trash
+    /// whatever the list says, their own tags read all the same. A cache
+    /// no longer saying so is read whole by the next check.
+    #[cfg(unix)]
+    #[test]
+    fn hidden_entries_are_counted_and_what_a_walk_leaves_out_is_not() {
+        let tmp = home_tempdir();
+        let root = tmp.path().join("it's home ü");
+        let tag = |p: &std::path::Path, v: &str| {
+            skwir_core::fs::xattr::set(p, "user.xdg.tags", v.as_bytes()).unwrap();
+        };
+        for dir in [
+            ".config/app's",
+            "node_modules/pkg",
+            "built",
+            ".Trash-1000/files",
+        ] {
+            std::fs::create_dir_all(root.join(dir)).unwrap();
+        }
+        for file in [
+            ".config/app's/x.conf",
+            ".dot file",
+            "node_modules/pkg/y.js",
+            "built/z.o",
+            ".Trash-1000/files/t",
+        ] {
+            std::fs::write(root.join(file), b"x").unwrap();
+            tag(&root.join(file), "work");
+        }
+        tag(&root.join(".config"), "work");
+        tag(&root.join("node_modules"), "work");
+        std::fs::write(
+            root.join("built/CACHEDIR.TAG"),
+            b"Signature: 8a477f597d28d172789f06886806bc55\n",
+        )
+        .unwrap();
+        let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+        app.plugins
+            .add(Arc::new(crate::TagsPlugin::default()), &app);
+        let index = crate::index::TagIndex::new(None, &app, CancelToken::new());
+        let cancel = CancelToken::new();
+        let (since, dirs, counted) = run(&app, &index, &root, None, &cancel).unwrap().unwrap();
+        let mut found: Vec<String> = index
+            .files_under(&root, None)
+            .into_iter()
+            .map(|(path, _)| path.strip_prefix(&root).unwrap().display().to_string())
+            .collect();
+        found.sort();
+        assert_eq!(
+            found,
+            [
+                ".config",
+                ".config/app's/x.conf",
+                ".dot file",
+                "node_modules"
+            ]
+        );
+        assert_eq!(
+            counted.left_out, 3,
+            "node_modules, the trash, the cache: {counted:?}"
+        );
+        assert!(index.is_cache(&root.join("built")));
+        index.cover(&root, since, &dirs);
+
+        // The cache no longer says so: read whole at the next check.
+        std::fs::remove_file(root.join("built/CACHEDIR.TAG")).unwrap();
+        let known: std::collections::HashSet<u64> = dirs.iter().copied().collect();
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
+        let counted = super::run_with(&app, &index, &root, Some((later, &known)), &cancel)
+            .unwrap()
+            .unwrap()
+            .2;
+        assert_eq!(counted.read, 1, "built/z.o: {counted:?}");
+        assert!(!index.is_cache(&root.join("built")));
+        assert_eq!(index.files_under(&root, None).len(), 5);
+
+        // A count of a folder left out walks it.
+        run(&app, &index, &root.join("node_modules"), None, &cancel)
+            .unwrap()
+            .unwrap();
+        assert_eq!(index.files_under(&root.join("node_modules"), None).len(), 1);
     }
 
     // Extended attributes: Unix's.
@@ -482,15 +598,15 @@ mod tests {
         );
     }
 
-    /// A folder in a hidden one of a folder covered is checked against
-    /// what that folder's count saw, which never walked it: read whole,
-    /// so what was tagged there since its own count is found.
+    /// A folder in one a folder covered leaves out is checked against what
+    /// that folder's count saw, which never walked it: read whole, so what
+    /// was tagged there since its own count is found.
     #[cfg(unix)]
     #[test]
-    fn a_folder_hidden_below_a_covered_one_is_checked_whole() {
+    fn a_folder_left_out_below_a_covered_one_is_checked_whole() {
         let tmp = home_tempdir();
         let above = tmp.path().join("it's above");
-        let root = above.join(".hidden ü/inner");
+        let root = above.join("node_modules/inner ü");
         std::fs::create_dir_all(&root).unwrap();
         let tag = |p: &std::path::Path, v: &str| {
             skwir_core::fs::xattr::set(p, "user.xdg.tags", v.as_bytes()).unwrap();
@@ -524,12 +640,13 @@ mod tests {
         );
     }
 
-    /// What Windows marks hidden is left out as a dot leaves it out: a
-    /// file or a folder so marked that a pane taught the index (one showing
-    /// hidden files) is forgotten by a count, and what is in the folder.
+    /// What Windows marks hidden is counted like any other entry: the
+    /// folder so marked is walked, its files read, and what a pane taught
+    /// the index of them and of the files shown is what their notes say
+    /// (none here: all forgotten).
     #[cfg(windows)]
     #[test]
-    fn what_windows_marks_hidden_is_forgotten_by_a_count() {
+    fn what_windows_marks_hidden_is_counted_like_any_other() {
         use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
         /// `FILE_ATTRIBUTE_HIDDEN`.
         const HIDDEN: u32 = 2;
@@ -575,10 +692,12 @@ mod tests {
                 .collect(),
         );
         assert_eq!(index.files_under(&root, None).len(), 4);
-        run(&app, &index, &root, None, &CancelToken::new())
+        let (_, _, counted) = run(&app, &index, &root, None, &CancelToken::new())
             .unwrap()
             .unwrap();
-        // The file shown is read again: it has no tag on the disk.
+        // Every entry read: the marked folder, the files in it and in the
+        // folder it holds, the marked file and the one shown.
+        assert_eq!((counted.folders, counted.read), (3, 6), "{counted:?}");
         assert!(index.files_under(&root, None).is_empty());
         assert!(index.by_folder(&root).is_empty(), "all forgotten");
     }
@@ -607,10 +726,11 @@ mod tests {
         app.plugins
             .add(Arc::new(crate::TagsPlugin::default()), &app);
         let cancel = CancelToken::new();
+        let below = app.left_out().below(&root, true);
         let counted = |walkers: usize| {
             let index = crate::index::TagIndex::new(None, &app, CancelToken::new());
             let (_, mut dirs, counted) =
-                super::walk_with(&app, &index, &root, None, &cancel, walkers).unwrap();
+                super::walk_with(&app, &index, &below, None, &cancel, walkers).unwrap();
             dirs.sort_unstable();
             (index.tally(&root).0, dirs, counted.folders, counted.read)
         };

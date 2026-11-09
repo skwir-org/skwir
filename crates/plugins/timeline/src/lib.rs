@@ -582,11 +582,13 @@ pub struct SubtreeStatus {
 /// What a count in the background counts.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Counted {
-    /// Every entry below a folder, with or without the hidden ones.
+    /// Every entry below a folder, with or without the hidden ones,
+    /// outside the folders walks leave out (`rule`, their fingerprint).
     Subtree {
         dir: PathBuf,
         hidden: bool,
         date: Date,
+        rule: u64,
     },
     /// The files a pane lists, each read (a picture's clock), told apart
     /// by what they are and which are selected (`Listed::signature`).
@@ -694,11 +696,13 @@ fn nanos(t: SystemTime) -> u64 {
 
 /// Every entry below `root` (not `root` itself), folded by the day of its
 /// `date`, as a search walks: never into a network mount below it
-/// (ADR-077). A picture's clock is read from each file. `None` when
-/// cancelled. Run in `root`'s lane: a remote's folder is walked there one
-/// after the other, never on rayon's threads, which no lane holds.
+/// (ADR-077), nor into a folder walks leave out (`below`, ADR-125: the
+/// folder itself counted). A picture's clock is read from each file.
+/// `None` when cancelled. Run in `root`'s lane: a remote's folder is
+/// walked there one after the other, never on rayon's threads, which no
+/// lane holds.
 fn walk_days(
-    root: &Path,
+    below: &skwir_core::walks::Below,
     hidden: bool,
     date: Date,
     fields: &skwir_core::fields::Fields,
@@ -706,6 +710,7 @@ fn walk_days(
 ) -> Option<(Days, u64)> {
     use rayon::prelude::*;
     type Level = (Days, u64, Vec<PathBuf>);
+    let root = below.root();
     let one = |dir: &Path| -> Level {
         let mut days = Days::default();
         let (mut unknown, mut subdirs) = (0, Vec::new());
@@ -713,12 +718,29 @@ fn walk_days(
             return (days, unknown, subdirs);
         }
         if let Ok(rd) = std::fs::read_dir(dir) {
-            for e in rd.flatten() {
+            let entries: Vec<std::fs::DirEntry> = rd.flatten().collect();
+            let names: std::collections::HashSet<std::ffi::OsString> =
+                entries.iter().map(std::fs::DirEntry::file_name).collect();
+            // A folder holding a marker that says so: nothing in it.
+            if below.marked_among(dir, |name| names.contains(name)) {
+                return (days, unknown, subdirs);
+            }
+            let beside = |sibling: &skwir_core::exclusions::NameMatch| match sibling.exact() {
+                Some(name) => names.contains(name),
+                None => names.iter().any(|name| sibling.matches(name)),
+            };
+            for e in entries {
                 if !hidden && skwir_core::fs::is_hidden(&e) {
                     continue;
                 }
                 // Told before its stat, which its server would answer.
                 if e.file_type().is_ok_and(|t| t.is_dir()) && reach::is_point(&e.path()) {
+                    continue;
+                }
+                if below.names_files()
+                    && !e.file_type().is_ok_and(|t| t.is_dir())
+                    && below.leaves_out_file(&e.path())
+                {
                     continue;
                 }
                 // `DirEntry::metadata` does not follow links: a link is
@@ -744,7 +766,10 @@ fn walk_days(
                     None => unknown += 1,
                 }
                 if m.is_dir() {
-                    subdirs.push(e.path());
+                    let path = e.path();
+                    if !below.named(&path) && !below.beside_among(&path, beside) {
+                        subdirs.push(path);
+                    }
                 }
             }
         }
@@ -990,15 +1015,19 @@ impl TimelinePlugin {
     ) -> anyhow::Result<SubtreeStatus> {
         let (dir, hidden, visit) = pane_view(app, pane)?;
         let date = asked.0;
+        let left_out = app.left_out();
         let what = Counted::Subtree {
             dir: dir.clone(),
             hidden,
             date,
+            rule: left_out.fingerprint(),
         };
         let fields = Arc::clone(&app.fields);
         let lane = reach::lane(&dir);
         self.in_background(app, pane, what, asked, &visit, lane, move |cancel| {
-            walk_days(&dir, hidden, date, &fields, cancel)
+            // A marker or a sibling is never looked up on a remote.
+            let below = left_out.below(&dir, reach::of(&dir).is_none());
+            walk_days(&below, hidden, date, &fields, cancel)
         })
     }
 
@@ -1243,6 +1272,11 @@ impl Plugin for TimelinePlugin {
 mod tests {
     use super::*;
 
+    /// A walk of `root` that leaves out what is always left out alone.
+    fn below_of(root: &Path) -> skwir_core::walks::Below {
+        Arc::new(skwir_core::walks::LeftOut::none()).below(root, true)
+    }
+
     fn at(y: i64, m: u32, d: u32) -> SystemTime {
         Calendar::utc().day_start(days_from_civil(y, m, d)) + Duration::from_secs(100)
     }
@@ -1456,7 +1490,13 @@ mod tests {
         let bytes = |d: &Days| d.days.values().map(|t| t.bytes).sum::<u64>();
         let fields = skwir_core::fields::Fields::default();
         let walk = |hidden, cancel: &CancelToken| {
-            walk_days(tmp.path(), hidden, Date::Modified, &fields, cancel)
+            walk_days(
+                &below_of(tmp.path()),
+                hidden,
+                Date::Modified,
+                &fields,
+                cancel,
+            )
         };
         // a, a/b, a/b/f1, f2: folders count, hidden entries do not.
         let (d, unknown) = walk(false, &CancelToken::new()).unwrap();
@@ -1500,8 +1540,14 @@ mod tests {
         std::fs::write(tmp.path().join("notes.txt"), b"20990101000000").unwrap();
         let fields = skwir_core::fields::Fields::default();
         fields.register("test", Arc::new(Clocks));
-        let (d, unknown) =
-            walk_days(tmp.path(), false, Date::Taken, &fields, &CancelToken::new()).unwrap();
+        let (d, unknown) = walk_days(
+            &below_of(tmp.path()),
+            false,
+            Date::Taken,
+            &fields,
+            &CancelToken::new(),
+        )
+        .unwrap();
         // The day its digits say, in no zone; the folder, the text and the
         // picture without a clock have no such date.
         assert_eq!(

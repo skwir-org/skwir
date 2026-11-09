@@ -7,6 +7,15 @@ the reasoning.
 
 ## Declaring a setting
 
+- A preference too large for rows, which its page draws with an editor of
+  its own (the exclusions' two tables, ADR-125; the keymap is the other
+  such page), is `SettingSpec::drawn_by_page`: kept in the settings file,
+  checked by `validate_with`, never drawn as a row. Its value holds what
+  the user changed of what skwir ships, keyed by id (a table merges key
+  by key in Home Manager and through an agent's change), never a copy of
+  the shipped list. The page writes it with `SettingsView::change_drawn`
+  (its owner's check first, then one save for every key it changes), as
+  JSON that `settings.apply` reads too.
 - Use the `SettingSpec` constructors: `toggle`, `choice`, `integer`
   (`slider` for a short range judged as it changes, an opacity, rather
   than a number known as such, a memory budget), `number`, `text`,
@@ -182,7 +191,11 @@ The key is the owner's; the page is the subject's (ADR-072).
 ## The dialog
 
 - It is a self-contained entity: it holds the `App`, never the shell,
-  and closes through an event, so it can move to a window of its own.
+  and closes through an event, so it can move to a window of its own. A
+  menu it needs (a Exclusions page row's) it asks for through an event too
+  (`SettingsEvent::Menu`): the window's context menu, drawn above it,
+  whose items run the dialog's own `ui.settings_*` commands; it never
+  draws a menu of its own.
 - A row's title and description keep a share of the row whatever the
   control (`TEXTS_SHARE`, a share rather than a width, so a large text
   size in a narrow window still fits: ADR-117), and the control gives way

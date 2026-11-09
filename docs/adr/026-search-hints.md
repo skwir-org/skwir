@@ -121,3 +121,9 @@ A claim still never skips the walk; a proof does. Not built.
   (built 2026-10-20, ADR-050's amendment).
 - `HintProvider` gains coverage; skwird is the first provider; the tags
   count could be a second.
+- 2026-11-08 (ADR-125): what the walk would not reach is no longer every
+  hidden entry but the exclusions kept from searches below the root (and
+  a trash, and the network mounts), unless `excluded:yes`; hidden entries
+  stay out unless `hidden:true`, as before. The hints are filtered alike
+  (`walks::Below::stops_above`), and the tags count counts, and its tag
+  places list, hidden files too.

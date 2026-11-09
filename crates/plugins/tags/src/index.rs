@@ -9,8 +9,9 @@
 //! deletable cache in 256 pieces by folder, each read the first time a
 //! folder of it is needed and written alone when it changed, and let go
 //! of after a few minutes unused; the folders it holds and the tags of the
-//! files under the home folder (outside hidden folders, as its tag places
-//! count them) stay known in between, for the sidebar and for knowing
+//! files under the home folder (outside the folders walks leave out, as its
+//! tag places count them: `skwir_core::walks`, ADR-125) stay known in
+//! between, for the sidebar and for knowing
 //! which pieces a question needs. A category counts the files with any
 //! tag within it once each (`Places` those tagged `Places/France/Paris`),
 //! as a search for it finds them: each tag knows its category, which is a
@@ -30,8 +31,9 @@ use parking_lot::{Mutex, MutexGuard};
 use skwir_core::app::App;
 use skwir_core::cache::CacheSlot;
 use skwir_core::cancel::CancelToken;
-use skwir_core::fs::reach;
 use skwir_core::metadata::{tag_parent, tag_within};
+use skwir_core::walks::LeftOut;
+pub(crate) use skwir_core::walks::mounts_below;
 
 /// The setting: how much room the index may take, in megabytes.
 pub const LIMIT_SETTING: &str = "tags.index_mb";
@@ -57,9 +59,9 @@ const FIRST_WRITE: Duration = Duration::from_secs(1);
 /// in batches, and each written alone would write every piece again.
 const WRITE_EVERY: Duration = Duration::from_secs(2);
 
-/// A folder whose every tagged file, outside hidden folders, the index
-/// holds as of a time: a count of it ended then (`count.rs`), and what was
-/// learned since keeps it so.
+/// A folder whose every tagged file, outside the folders a walk leaves out
+/// below it (`walks::Below`), the index holds as of a time: a count of it
+/// ended then (`count.rs`), and what was learned since keeps it so.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Covered {
     pub root: PathBuf,
@@ -105,25 +107,25 @@ fn piece_of(folder: &Path) -> usize {
     (stable_hash(&[folder.as_os_str().as_encoded_bytes()]) % BUCKETS as u64) as usize
 }
 
-fn hidden(name: &OsStr) -> bool {
-    name.as_encoded_bytes().first() == Some(&b'.')
+/// Whether the list or the rule (`rule`) leaves out `path`, or a folder
+/// holding it, below `root` (never `root` itself): what a walk of `root`
+/// leaves out with nothing read. Each folder on the way is asked once of
+/// a set.
+fn listed_below(rule: &LeftOut, path: &Path, root: &Path) -> bool {
+    left_out_below(path, root, |at| rule.names(at))
 }
 
-/// Whether `path`, under `root`, is inside a hidden folder or hidden
-/// itself: left out of the counts as a search leaves it out.
-fn hidden_under(path: &Path, root: &Path) -> bool {
-    path.strip_prefix(root)
-        .is_ok_and(|rest| rest.components().any(|c| hidden(c.as_os_str())))
-}
-
-/// The network mounts below `root`, as the table in memory has them: what
-/// a walk of it never enters (ADR-077), nor its counts count.
-pub(crate) fn mounts_below(root: &Path) -> Vec<PathBuf> {
-    reach::all()
-        .iter()
-        .filter(|r| r.point != root && r.point.starts_with(root))
-        .map(|r| r.point.clone())
-        .collect()
+/// Whether `left_out` says so of `path` or a folder holding it, below
+/// `root`.
+fn left_out_below(path: &Path, root: &Path, left_out: impl Fn(&Path) -> bool) -> bool {
+    let Ok(rest) = path.strip_prefix(root) else {
+        return false;
+    };
+    let mut at = root.to_path_buf();
+    rest.components().any(|component| {
+        at.push(component);
+        left_out(&at)
+    })
 }
 
 /// A tagged file: its tags, by number, and its name in its folder, in one
@@ -183,15 +185,13 @@ impl File {
     }
 }
 
-/// A folder's tagged files, by name, and how many of those not hidden
-/// carry each tag.
+/// A folder's tagged files, by name, and how many of those carry each
+/// tag.
 #[derive(Default)]
 struct Folder {
     files: Vec<File>,
     /// By tag number: a folder of photos may carry thousands of keywords.
     counts: Vec<(u32, u32)>,
-    /// Its files not hidden.
-    visible: u32,
 }
 
 impl Folder {
@@ -202,16 +202,8 @@ impl Folder {
 
     /// Count `name`'s `tags` in, or out, with the categories they are in
     /// (`parents`, by tag number), each once.
-    fn count(&mut self, name: &OsStr, tags: &[u32], parents: &[Option<u32>], add: bool) {
-        if hidden(name) {
-            return;
-        }
+    fn count(&mut self, tags: &[u32], parents: &[Option<u32>], add: bool) {
         let tags = &with_categories(tags, parents);
-        if add {
-            self.visible += 1;
-        } else {
-            self.visible = self.visible.saturating_sub(1);
-        }
         for tag in tags {
             match self.counts.binary_search_by_key(tag, |(t, _)| *t) {
                 Ok(at) if add => self.counts[at].1 += 1,
@@ -237,15 +229,15 @@ impl Folder {
                 } else {
                     self.files[at] = File::new(name, tags);
                 }
-                self.count(name, &old, parents, false);
+                self.count(&old, parents, false);
                 if !tags.is_empty() {
-                    self.count(name, tags, parents, true);
+                    self.count(tags, parents, true);
                 }
                 Some(old)
             }
             Err(_) if tags.is_empty() => None,
             Err(at) => {
-                self.count(name, tags, parents, true);
+                self.count(tags, parents, true);
                 self.files.insert(at, File::new(name, tags));
                 None
             }
@@ -287,12 +279,22 @@ struct Meta {
     bytes: Vec<u64>,
     /// The home folder `home_visible` is of.
     home: Option<PathBuf>,
-    /// Files under the home folder outside hidden folders, by tag, as its
-    /// tag places count them. `None` from an index that counted the hidden
-    /// ones too (`home_counts`, no longer read): made again from every
-    /// piece.
+    /// Files under the home folder outside the folders the list leaves out
+    /// (`rule`), by tag, as its tag places count them. `None` from an
+    /// index that counted the hidden ones too (`home_counts`, no longer
+    /// read): made again from every piece.
     #[serde(default)]
     home_visible: Option<Vec<(u32, u64)>>,
+    /// What walks left out when these were counted and the folders covered
+    /// (`LeftOut::fingerprint`); none from an index of the dot rule, which
+    /// left out every hidden entry. Another, and the home counts are made
+    /// again and every folder is counted again.
+    #[serde(default)]
+    rule: u64,
+    /// The folders found holding a signed `CACHEDIR.TAG`, which no walk
+    /// below them enters: what they hold is left out when asked.
+    #[serde(default)]
+    caches: Vec<PathBuf>,
     /// A file was not learned for want of room.
     refused: bool,
 }
@@ -316,9 +318,15 @@ struct State {
     folders: BTreeMap<PathBuf, usize>,
     folders_dirty: bool,
     home: Option<PathBuf>,
-    /// Files under `home` outside hidden folders, by tag: what its folders
-    /// there count, kept known between pieces (`Meta::home_visible`).
+    /// Files under `home` outside the folders `rule` lists, by tag: what
+    /// its folders there count, kept known between pieces
+    /// (`Meta::home_visible`).
     home_counts: HashMap<u32, u64>,
+    /// What walks leave out, as the home counts and the folders covered
+    /// were made under it.
+    rule: Arc<LeftOut>,
+    /// The folders found to be caches (`Meta::caches`).
+    caches: std::collections::BTreeSet<PathBuf>,
     refused: bool,
     meta_dirty: bool,
     /// Moves at every change of what it knows (each marked to be written,
@@ -376,11 +384,38 @@ impl State {
     }
 
     /// Whether the files of `dir` are counted under the home folder: in
-    /// it, outside hidden folders.
+    /// it, outside the folders the list leaves out.
     fn at_home(&self, dir: &Path) -> bool {
         self.home
             .as_deref()
-            .is_some_and(|home| dir.starts_with(home) && !hidden_under(dir, home))
+            .is_some_and(|home| dir.starts_with(home) && !listed_below(&self.rule, dir, home))
+    }
+
+    /// The tags of the files under the home folder that its tag places
+    /// count, made from every piece (each read): the folders the list
+    /// leaves out apart.
+    fn count_home(&mut self) {
+        let mut counts: HashMap<u32, u64> = HashMap::new();
+        if let Some(home) = &self.home {
+            for (path, folder) in self.pieces.iter().flat_map(|p| p.folders.iter()) {
+                if path.starts_with(home) && !listed_below(&self.rule, path, home) {
+                    for (tag, n) in &folder.counts {
+                        *counts.entry(*tag).or_default() += u64::from(*n);
+                    }
+                }
+            }
+        }
+        self.home_counts = counts;
+        self.changed();
+    }
+
+    /// Whether a walk of `root` leaves out the folder `path`, or one
+    /// holding it below `root`: the list, a cache found, a network mount
+    /// (`mounts`). Nothing is read.
+    fn left_out(&self, path: &Path, root: &Path, mounts: &HashSet<PathBuf>) -> bool {
+        left_out_below(path, root, |at| {
+            self.rule.names(at) || self.caches.contains(at) || mounts.contains(at)
+        })
     }
 
     /// What a batch changed of the files counted under the home folder, by
@@ -537,11 +572,11 @@ impl Learning<'_> {
             }
         }
         let parents = &state.parents;
-        let counted = self.at_home && !hidden(name);
+        let counted = self.at_home;
         let before = state.bytes[self.at];
         let mut bytes = before;
         if let Some(old) = had {
-            folder.count(name, old, parents, false);
+            folder.count(old, parents, false);
             bytes = bytes.saturating_sub(file_bytes(name, old.len()));
             if counted {
                 for tag in with_categories(old, parents) {
@@ -550,7 +585,7 @@ impl Learning<'_> {
             }
         }
         if !ids.is_empty() {
-            folder.count(name, &ids, parents, true);
+            folder.count(&ids, parents, true);
             bytes += file_bytes(name, ids.len());
             if counted {
                 for tag in with_categories(&ids, parents) {
@@ -702,6 +737,9 @@ pub struct TagIndex {
     ),
     /// Itself, for that thread.
     me: Weak<TagIndex>,
+    /// What walks leave out now (`App::left_out`): asked each time the
+    /// index is, for a plugin is not told when it changes.
+    rule: Box<dyn Fn() -> Arc<LeftOut> + Send + Sync>,
 }
 
 impl TagIndex {
@@ -717,6 +755,13 @@ impl TagIndex {
             working: AtomicBool::new(false),
             nudge: crossbeam_channel::bounded(1),
             me: me.clone(),
+            rule: {
+                let app = app.weak();
+                Box::new(move || {
+                    app.upgrade()
+                        .map_or_else(|| Arc::new(LeftOut::none()), |app| app.left_out())
+                })
+            },
         });
         index.set_limit(
             app.settings
@@ -746,17 +791,34 @@ impl TagIndex {
     }
 
     /// The index, what is known between pieces read from the cache the
-    /// first time a worker needs it, never at startup.
+    /// first time a worker needs it, never at startup; counted again from
+    /// its pieces when what walks leave out changed.
     fn state(&self) -> MutexGuard<'_, State> {
+        // Asked before the lock: it takes the settings'.
+        let rule = (self.rule)();
         let mut state = self.state.lock();
         if !state.read {
-            self.read(&mut state);
+            self.read(&mut state, rule);
+        } else if state.rule.fingerprint() != rule.fingerprint() {
+            state.rule = rule;
+            self.ruled_anew(&mut state);
         }
         state
     }
 
-    fn read(&self, state: &mut State) {
+    /// What walks leave out is not what the counts were made under: the
+    /// home counts made again from every piece, and every folder counted
+    /// again (a check would not read a file it skipped before in a folder
+    /// it walked, a dot file then). What a pane taught the index stays.
+    fn ruled_anew(&self, state: &mut State) {
+        self.load_all(state);
+        state.count_home();
+        state.covered.clear();
+    }
+
+    fn read(&self, state: &mut State, rule: Arc<LeftOut>) {
         state.read = true;
+        state.rule = rule;
         state.pieces = (0..BUCKETS).map(|_| Piece::default()).collect();
         state.bytes = vec![0; BUCKETS];
         let home = std::env::home_dir();
@@ -785,33 +847,30 @@ impl TagIndex {
             state.bytes = meta.bytes;
         }
         state.refused = meta.refused;
+        state.caches = meta.caches.into_iter().collect();
         state.folders = slot
             .and_then(|s| s.get(FOLDERS))
             .map(|b| decode_folders(&b))
             .unwrap_or_default();
+        let ruled = meta.rule == state.rule.fingerprint();
         match meta.home_visible {
-            Some(counts) if meta.home == home => {
+            Some(counts) if meta.home == home && ruled => {
                 state.home_counts = counts.into_iter().collect();
                 state.home = home;
             }
             _ => {
-                // Another home, or counts of hidden files too: made again
-                // from every piece, as its folders count their files.
+                // Another home, counts of hidden files too, or another
+                // list: made again from every piece, as its folders count
+                // their files.
                 state.home = home;
                 self.load_all(state);
-                let mut counts: HashMap<u32, u64> = HashMap::new();
-                if let Some(home) = &state.home {
-                    for (path, folder) in state.pieces.iter().flat_map(|p| p.folders.iter()) {
-                        if path.starts_with(home) && !hidden_under(path, home) {
-                            for (tag, n) in &folder.counts {
-                                *counts.entry(*tag).or_default() += u64::from(*n);
-                            }
-                        }
-                    }
-                }
-                state.home_counts = counts;
-                state.changed();
+                state.count_home();
             }
+        }
+        if !ruled {
+            // Folders covered under another rule are counted again.
+            state.covered.clear();
+            state.changed();
         }
     }
 
@@ -849,14 +908,15 @@ impl TagIndex {
     }
 
     /// [`load_under`](Self::load_under), but the folders a walk of `root`
-    /// reaches: none in a network mount below it (ADR-077), which a count
-    /// never enters and a search never walks, though a pane shown there
-    /// taught the index its files. What the index answers of `root` is
-    /// what a count of it covers, and nothing there is read to tell.
+    /// reaches: none that it leaves out below it (`walks::Below`: the
+    /// list, a cache found, a network mount, ADR-077, ADR-125), which a
+    /// count never enters and a search never walks, though a pane shown
+    /// there taught the index its files. What the index answers of `root`
+    /// is what a count of it covers, and nothing there is read to tell.
     fn load_reached(&self, state: &mut State, root: &Path) -> Vec<(PathBuf, usize)> {
-        let unreached = mounts_below(root);
+        let mounts: HashSet<PathBuf> = mounts_below(root).into_iter().collect();
         let mut under = state.under(root);
-        under.retain(|(path, _)| !unreached.iter().any(|point| path.starts_with(point)));
+        under.retain(|(path, _)| !state.left_out(path, root, &mounts));
         self.load_pieces(state, &under);
         under
     }
@@ -1110,10 +1170,19 @@ impl TagIndex {
 
     /// What the provider read of files: each path with its tags, none for
     /// a file without. Writes the index soon when that changed it.
-    pub fn learn(self: &Arc<Self>, read: Vec<(PathBuf, Vec<String>)>) {
+    pub fn learn(self: &Arc<Self>, mut read: Vec<(PathBuf, Vec<String>)>) {
         let limit = self.limit.load(Ordering::Relaxed);
         let changed = {
             let mut state = self.state();
+            // A file the rules name is not counted, whoever teaches it.
+            let rule = state.rule.rule();
+            if rule.names_files() {
+                for (path, tags) in &mut read {
+                    if !tags.is_empty() && rule.names_file(path) && !rule.names(path) {
+                        tags.clear();
+                    }
+                }
+            }
             let pieces: HashSet<usize> = read
                 .iter()
                 .filter_map(|(p, _)| p.parent())
@@ -1174,6 +1243,34 @@ impl TagIndex {
             state.changed();
         }
         self.write_soon();
+    }
+
+    /// The folders a count found holding a signed `CACHEDIR.TAG`
+    /// (`found`), and those it found no longer holding one (`cleared`):
+    /// what they hold is left out of what the index answers, or no longer.
+    pub fn mark_caches(self: &Arc<Self>, found: Vec<PathBuf>, cleared: &[PathBuf]) {
+        let changed = {
+            let mut state = self.state();
+            let mut changed = false;
+            for dir in found {
+                changed |= state.caches.insert(dir);
+            }
+            for dir in cleared {
+                changed |= state.caches.remove(dir);
+            }
+            if changed {
+                state.changed();
+            }
+            changed
+        };
+        if changed {
+            self.write_soon();
+        }
+    }
+
+    /// Whether a count found `dir` holding a signed `CACHEDIR.TAG`.
+    pub fn is_cache(&self, dir: &Path) -> bool {
+        self.state().caches.contains(dir)
     }
 
     /// The folders the count of `root` saw, as [`cover`](Self::cover) kept
@@ -1304,9 +1401,9 @@ impl TagIndex {
             .collect()
     }
 
-    /// The tags of the files under `root` outside hidden folders and
-    /// network mounts, each with how many files have it (spelled as most
-    /// of them spell it, in the order of their names), and how many files
+    /// The tags of the files under `root` outside the folders a walk of
+    /// it leaves out, each with how many files have it (spelled as most of
+    /// them spell it, in the order of their names), and how many files
     /// have a tag.
     pub fn tally(&self, root: &Path) -> (Vec<(String, usize)>, usize) {
         let mut state = self.state();
@@ -1314,11 +1411,8 @@ impl TagIndex {
         let mut counts: HashMap<u32, u64> = HashMap::new();
         let mut files = 0usize;
         for (path, at) in under {
-            if hidden_under(&path, root) {
-                continue;
-            }
             if let Some(folder) = state.pieces[at].folders.get(&path) {
-                files += folder.visible as usize;
+                files += folder.files.len();
                 for (tag, n) in &folder.counts {
                     *counts.entry(*tag).or_default() += u64::from(*n);
                 }
@@ -1375,10 +1469,10 @@ impl TagIndex {
         here
     }
 
-    /// The tagged files under `root` outside hidden folders and network
-    /// mounts, each with its tags as spelled on it: those with a tag within
-    /// `within` only, when given. What a tag location lists
-    /// (`location.rs`).
+    /// The tagged files under `root` outside the folders a walk of it
+    /// leaves out, hidden ones included (the pane shows them or not), each
+    /// with its tags as spelled on it: those with a tag within `within`
+    /// only, when given. What a tag location lists (`location.rs`).
     pub fn files_under(&self, root: &Path, within: Option<&str>) -> Vec<(PathBuf, Vec<String>)> {
         let mut state = self.state();
         let ids: Option<Vec<u32>> = within.map(|tag| {
@@ -1396,14 +1490,11 @@ impl TagIndex {
         let under = self.load_reached(&mut state, root);
         let mut out = Vec::new();
         for (path, at) in under {
-            if hidden_under(&path, root) {
-                continue;
-            }
             let Some(folder) = state.pieces[at].folders.get(&path) else {
                 continue;
             };
             for file in &folder.files {
-                if hidden(&file.name()) || ids.as_ref().is_some_and(|ids| !file.has(ids)) {
+                if ids.as_ref().is_some_and(|ids| !file.has(ids)) {
                     continue;
                 }
                 let tags = file
@@ -1446,15 +1537,22 @@ impl TagIndex {
         top
     }
 
-    /// The tags of the files under the home folder outside hidden folders,
-    /// by number, less those in `mounts`, the network mounts below it.
+    /// The tags of the files under the home folder outside the folders the
+    /// list leaves out, by number, less those in `mounts` (the network
+    /// mounts below it) and in the caches found: their pieces alone read.
     fn counts_at_home(&self, state: &mut State, mounts: &[PathBuf]) -> HashMap<u32, u64> {
         let mut counts = state.home_counts.clone();
         let Some(home) = state.home.clone() else {
             return counts;
         };
+        let caches: Vec<PathBuf> = state
+            .caches
+            .iter()
+            .filter(|dir| *dir != &home && dir.starts_with(&home))
+            .cloned()
+            .collect();
         let mut away: BTreeMap<PathBuf, usize> = BTreeMap::new();
-        for point in mounts {
+        for point in mounts.iter().chain(&caches) {
             away.extend(state.under(point));
         }
         let away: Vec<(PathBuf, usize)> = away.into_iter().collect();
@@ -1463,7 +1561,8 @@ impl TagIndex {
             let Some(folder) = state.pieces[*at].folders.get(path) else {
                 continue;
             };
-            if hidden_under(path, &home) {
+            // Not counted in the first place.
+            if listed_below(&state.rule, path, &home) {
                 continue;
             }
             for (tag, n) in &folder.counts {
@@ -1512,6 +1611,8 @@ impl TagIndex {
                     bytes: state.bytes.clone(),
                     home: state.home.clone(),
                     home_visible: Some(state.home_counts.iter().map(|(t, n)| (*t, *n)).collect()),
+                    rule: state.rule.fingerprint(),
+                    caches: state.caches.iter().cloned().collect(),
                     refused: state.refused,
                 })
             });

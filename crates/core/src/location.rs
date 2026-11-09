@@ -241,6 +241,11 @@ pub enum ListingEvent {
     /// listing that may rest on either, so a run that walks takes back
     /// what an earlier one said.
     AsOf(Option<AsOf>),
+    /// How many folders below the root a walk left out (ADR-125: the list
+    /// of `walks::LeftOut`, caches, trash, network mounts), said so rather
+    /// than silently. Said by each run of a listing that walks, none
+    /// included, so a run takes back what an earlier one said.
+    LeftOut(usize),
     /// The location is reached at another, which is shown instead, in
     /// its place in the history: an address connected to a mount shows
     /// the mounted folder (ADR-077). Sent once, as the last event.
@@ -953,9 +958,10 @@ impl Delta {
             name,
             // Folders sort first, and a link sorts as what it leads to. A
             // file the system hides now, or no longer (a Mac's UF_HIDDEN
-            // found by its stat, `attrib +h`), is shown or not: the order
-            // is made again, as `shows` says.
-            order: name || old.is_dir() != new.is_dir() || old.hidden != new.hidden,
+            // found by its stat, `attrib +h`, a folder above it a place
+            // found hidden), is shown or not: the order is made again, as
+            // `shows` says.
+            order: name || old.is_dir() != new.is_dir() || old.is_hidden() != new.is_hidden(),
             size,
             modified,
             rewritten,
@@ -1326,6 +1332,8 @@ pub struct Listing {
     /// What the answer rests on, when not the files as they are
     /// (`ListingEvent::AsOf`).
     as_of: Option<AsOf>,
+    /// How many folders the walk left out (`ListingEvent::LeftOut`).
+    left_out: usize,
     /// Incremented on every change, so views know when to recompute. An
     /// event that changes nothing (a stat that found what the listing
     /// already had) leaves it alone, so work keyed on it cannot loop.
@@ -1411,6 +1419,7 @@ impl Default for Listing {
             complete: false,
             error: None,
             as_of: None,
+            left_out: 0,
             version: id,
             names_version: id,
             order_version: id,
@@ -1764,6 +1773,10 @@ impl Listing {
             ListingEvent::AsOf(as_of) => {
                 delta.any = self.as_of != as_of;
                 self.as_of = as_of;
+            }
+            ListingEvent::LeftOut(n) => {
+                delta.any = self.left_out != n;
+                self.left_out = n;
             }
             ListingEvent::Redirect(location) => {
                 self.redirect = Some(location);
@@ -2267,6 +2280,11 @@ impl Listing {
     /// update, not the files as they are now.
     pub fn as_of(&self) -> Option<&AsOf> {
         self.as_of.as_ref()
+    }
+
+    /// How many folders below the root the walk left out.
+    pub fn left_out(&self) -> usize {
+        self.left_out
     }
 
     pub fn get(&self, id: EntryId) -> Option<&Entry> {

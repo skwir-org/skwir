@@ -218,6 +218,9 @@ struct LocationArgs {
     /// Where it searches; the home folder when omitted.
     #[serde(default)]
     root: Option<PathArg>,
+    /// Hidden files too, and what hidden folders hold (`hidden:yes`).
+    #[serde(default)]
+    hidden: bool,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -225,8 +228,8 @@ struct RefineArgs {
     /// A chip's id: `words`, `kind`, `modified`, `created`, `accessed`,
     /// `taken`, `size`, `tag`, `content`, `where` or `advanced`.
     facet: String,
-    /// What to set it to (a kind toggles, `where` takes `subtree`, `here`
-    /// or `hidden`, `advanced` the index of the part to remove); omitted,
+    /// What to set it to (a kind toggles, `where` takes `subtree`, `here`,
+    /// `hidden` or `excluded`, `advanced` the index of the part to remove); omitted,
     /// the facet is cleared.
     #[serde(default)]
     value: Option<String>,
@@ -814,7 +817,7 @@ impl Plugin for QueryPlugin {
             ID, Topic::Find,
             "query.search",
             "Search",
-            "Search, shown in the pane, the pane's lens added unless `as_is` (ADR-107: the terms of a filter or a search the listing can decide, kept as the pane goes elsewhere until taken off; then `entries` lists what it found; a search the pane shows already is left as it is, `refresh` lists it again): words match names; `name:`, `ext:pdf,md`, `kind:image,video` (document, text, audio, archive…), `type:dir`, `tag:x`, `content:words` or `content:/regex/`, `comment:`, `size>10M`, `modified<7d` (also `today`, `this-week`, `2026-05`; `created`, `accessed`, and `taken` for a picture's camera clock), `rating>=4`, `near:lat,lon~5km`; `OR`, `NOT` or `-`, parentheses; `hidden:yes` looks in hidden folders, `depth:2` bounds it. `root` (or `in:`) is where it looks",
+            "Search, shown in the pane, the pane's lens added unless `as_is` (ADR-107: the terms of a filter or a search the listing can decide, kept as the pane goes elsewhere until taken off; then `entries` lists what it found; a search the pane shows already is left as it is, `refresh` lists it again): words match names; `name:`, `ext:pdf,md`, `kind:image,video` (document, text, audio, archive…), `type:dir`, `tag:x`, `content:words` or `content:/regex/`, `comment:`, `size>10M`, `modified<7d` (also `today`, `this-week`, `2026-05`; `created`, `accessed`, and `taken` for a picture's camera clock), `rating>=4`, `near:lat,lon~5km`; `OR`, `NOT` or `-`, parentheses; `hidden:yes` looks in hidden folders, `excluded:yes` in the folders searches leave out (Settings › General › Searches: `node_modules`, caches; never a trash nor a network folder), `depth:2` bounds it. `root` (or `in:`) is where it looks",
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
                 lang::parse(&a.expr).map_err(|e| anyhow::anyhow!("query: {e}"))?;
@@ -1291,6 +1294,12 @@ impl Plugin for QueryPlugin {
                     (facet, Some(value)) => facets::refine("", facet, Some(&value))
                         .map_err(|e| anyhow::anyhow!("query: {e}"))?,
                 };
+                let expr = if a.hidden {
+                    facets::refine(&expr, "where", Some("hidden"))
+                        .map_err(|e| anyhow::anyhow!("query: {e}"))?
+                } else {
+                    expr
+                };
                 let root = match a.root {
                     Some(r) => Some(
                         Location::parse_os(r.as_os_str())
@@ -1445,6 +1454,7 @@ mod tests {
                 | ListingEvent::Renamed(_)
                 | ListingEvent::Changed
                 | ListingEvent::AsOf(_)
+                | ListingEvent::LeftOut(_)
                 | ListingEvent::Redirect(_)
                 | ListingEvent::Moved(_) => {}
             }
@@ -2777,12 +2787,24 @@ mod tests {
                 std::path::PathBuf::from("/nonexistent/report.txt")
             ]
         );
+        let nothing_left_out = std::sync::Arc::new(skwir_core::walks::LeftOut::none())
+            .below(std::path::Path::new("/"), false);
         assert!(
-            plocate::try_locate(&lang::parse("report in:/tmp").unwrap(), &never).is_none(),
+            plocate::try_locate(
+                &lang::parse("report in:/tmp").unwrap(),
+                &nothing_left_out,
+                &never
+            )
+            .is_none(),
             "only over /"
         );
         assert!(
-            plocate::try_locate(&lang::parse("report size>1k in:/").unwrap(), &never).is_none(),
+            plocate::try_locate(
+                &lang::parse("report size>1k in:/").unwrap(),
+                &nothing_left_out,
+                &never
+            )
+            .is_none(),
             "only name-only"
         );
         // A database that cannot answer (it says why) is not "no matches".

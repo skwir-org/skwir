@@ -449,7 +449,7 @@ fn cards_spec() -> SettingSpec {
     SettingSpec::toggle(
         CARDS_KEY,
         "Cards",
-        "Draw the panes, the preview's parts and the terminal as cards on the window's frame, apart by a gutter rather than by lines; the sidebar, the tabs and the window's buttons lie on the frame. While the window is split, the active pane's row is underlined and the other pane a shade darker. The gutter between two cards is the edge to drag. Off, the window's areas are apart by lines, as in earlier versions.",
+        "Draw the panes, the preview's parts and the terminal as cards on the window's frame, apart by a gutter rather than by lines. The sidebar, the tabs and the window's buttons lie on the frame. While the window is split, the active pane's row is underlined and the other pane a shade darker. The gutter between two cards is the edge to drag. Off, the window's areas are apart by lines, as in earlier versions.",
         CARDS_DEFAULT,
     )
     // A detail of the look now that it is the default, under More
@@ -1017,7 +1017,7 @@ pub(crate) fn grammar_folder_records() -> serde_json::Value {
             ),
         };
         records.push(serde_json::json!({
-            "id": format!("folder-{}-{}", looked.source.key(), looked.folder.display()),
+            "id": format!("exclusion-{}-{}", looked.source.key(), looked.folder.display()),
             "name": home_shown(&looked.folder),
             "detail": format!("{}: {held}", looked.source.short()),
             "fixed": true,
@@ -1911,6 +1911,8 @@ pub enum Page {
     Terminal,
     Network,
     Privacy,
+    /// The exclusions (ADR-125): its own editor (`settings_exclusions_view`).
+    Exclusions,
     Plugins,
     Keyboard,
     Changed,
@@ -2016,7 +2018,7 @@ pub(crate) struct Builtin {
 
 /// The dialog's own pages, by subject, in the sidebar's order; plugins'
 /// follow.
-static BUILTIN: [Builtin; 12] = [
+static BUILTIN: [Builtin; 13] = [
     Builtin {
         page: Page::General,
         name: page::GENERAL,
@@ -2129,6 +2131,16 @@ static BUILTIN: [Builtin; 12] = [
         sections: &[],
     },
     Builtin {
+        page: Page::Exclusions,
+        name: page::EXCLUSIONS,
+        owner: Some(skwir_core::exclusions::OWNER),
+        title: "Exclusions",
+        icon: "folder",
+        intro: "The files and folders skwir leaves out: of searches, tag counts and the timeline below the folder they look in, and of what agents, plugins from outside skwir and models see. skwir's own come in categories, each with its switch; tick or untick each, or add yours.",
+        when_used: false,
+        sections: &[],
+    },
+    Builtin {
         page: Page::Plugins,
         name: "plugins",
         owner: None,
@@ -2219,6 +2231,24 @@ pub(crate) fn page_title_of(spec: &SettingSpec, plugins: &[PluginInfo]) -> Strin
 
 pub enum SettingsEvent {
     Close,
+    /// A menu the dialog asks the window to open over it (a Exclusions page
+    /// row's): the shared context menu, which the shell draws
+    /// (`Shell::open_settings_menu`).
+    Menu(SettingsMenu),
+}
+
+/// A menu the dialog asks for: its items (each runs a `ui.settings_*`
+/// command), where the pointer pressed (`None` from the keyboard: it hangs
+/// from `row`, the row it is about, else from `area`, the list, both
+/// drawn by the dialog), and what the dialog keeps a weak hold of to know
+/// it is still open.
+#[derive(Clone)]
+pub struct SettingsMenu {
+    pub items: Vec<skwir_core::registry::MenuItem>,
+    pub at: Option<gpui::Point<gpui::Pixels>>,
+    pub row: PopoverAnchor,
+    pub area: PopoverAnchor,
+    pub held: std::rc::Rc<()>,
 }
 
 pub(crate) struct Row {
@@ -2432,6 +2462,9 @@ pub struct SettingsView {
     pub(crate) app: Arc<App>,
     /// The Keyboard page: the keymap as it lists it, and what it edits.
     pub(crate) keys: crate::settings_keys_view::KeysPage,
+    /// The Exclusions page: the exclusions as it lists them, and what it
+    /// edits (`settings_exclusions_view`).
+    pub(crate) exclusions: crate::settings_exclusions_view::ExclusionsPage,
     pub(crate) page: Page,
     pub(crate) search: Entity<TextInput>,
     pub(crate) rows: Vec<Row>,
@@ -2545,6 +2578,8 @@ impl SettingsView {
         let search = cx.new(|cx| TextInput::new("Search settings", cx));
         let keys = crate::settings_keys_view::KeysPage::new(bound, cx);
         let filter = keys.filter.clone();
+        let exclusions = crate::settings_exclusions_view::ExclusionsPage::new(cx);
+        let exclusions_filter = exclusions.filter.clone();
         let subscriptions = vec![
             cx.subscribe_in(
                 &search,
@@ -2589,6 +2624,31 @@ impl SettingsView {
                     }
                 },
             ),
+            // The Exclusions page's filter, as the Keyboard page's.
+            cx.subscribe_in(
+                &exclusions_filter,
+                window,
+                |this, input, event: &InputEvent, window, cx| match event {
+                    InputEvent::Changed => {
+                        this.exclusions
+                            .list
+                            .scroll_to_item(0, gpui::ScrollStrategy::Top);
+                        cx.notify();
+                    }
+                    InputEvent::Cancel => {
+                        if input.read(cx).text().is_empty() {
+                            cx.emit(SettingsEvent::Close);
+                        } else {
+                            input.update(cx, |input, cx| input.set_text("", cx));
+                            cx.notify();
+                        }
+                    }
+                    InputEvent::Submit => {
+                        window.focus(&this.exclusions.focus, cx);
+                        this.exclusions_key("first", window, cx);
+                    }
+                },
+            ),
         ];
         let app_unfolded = app
             .settings
@@ -2603,6 +2663,7 @@ impl SettingsView {
             sourced: HashMap::new(),
             read_only: app.settings.read_only(),
             keys,
+            exclusions,
             app,
             page: Page::General,
             search,
@@ -2646,6 +2707,7 @@ impl SettingsView {
         view.rebuild(window, cx);
         view.reveal();
         view.read_keys();
+        view.read_exclusions();
         view.probe_requirements();
         list_icon_themes(&view.app);
         list_code_themes(&view.app);
@@ -2759,7 +2821,7 @@ impl SettingsView {
         changed
     }
 
-    fn pending(&self, key: &str) -> bool {
+    pub(crate) fn pending(&self, key: &str) -> bool {
         self.queue.contains_key(key)
             || self
                 .inflight
@@ -2801,8 +2863,12 @@ impl SettingsView {
             };
             self.rows.push(row);
         }
-        self.errors
-            .retain(|key, _| self.rows.iter().any(|row| &row.spec.key == key));
+        // A setting its page draws is no row: its error stays with it.
+        let settings = &self.app.settings;
+        self.errors.retain(|key, _| {
+            self.rows.iter().any(|row| &row.spec.key == key)
+                || settings.spec(key).is_some_and(|spec| spec.page_drawn)
+        });
     }
 
     fn new_row(
@@ -2927,8 +2993,10 @@ impl SettingsView {
             self.settings_revision = settings;
             self.rebuild(window, cx);
             self.relist_choices(cx);
+            self.read_exclusions();
             changed = true;
         }
+        changed |= self.exclusions_sync(cx);
         changed |= self.list_sourced();
         if let Some(found) = self.probe.lock().ok().and_then(|mut slot| slot.take()) {
             self.found = found
@@ -3031,6 +3099,30 @@ impl SettingsView {
         if self.row(key).is_some_and(|row| row.value != text) {
             self.change(key, text, cx);
         }
+    }
+
+    /// Validate and submit settings a page draws with its own editor (the
+    /// exclusions' tables, `SettingSpec::drawn_by_page`), which have no
+    /// row: together, in one save. What their owner's check refuses is
+    /// returned, and nothing is sent.
+    pub(crate) fn change_drawn(
+        &mut self,
+        changes: BTreeMap<String, String>,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        self.highlight = None;
+        self.reset_armed = false;
+        self.app
+            .settings
+            .validate(&changes)
+            .map_err(|error| format!("{error:#}"))?;
+        for key in changes.keys() {
+            self.errors.remove(key);
+        }
+        self.queue.extend(changes);
+        self.flush(cx);
+        cx.notify();
+        Ok(())
     }
 
     /// Submit the queue unless a save is running; `sync` calls again when it
@@ -3374,6 +3466,7 @@ impl SettingsView {
         self.reset_armed = false;
         self.keys.editor = None;
         self.keys.new = None;
+        self.leave_exclusions();
         self.scroll.set_offset(gpui::Point::default());
         self.reveal();
         cx.notify();
@@ -3483,6 +3576,14 @@ impl SettingsView {
                 }
                 page => self.go(page, cx),
             }
+        }
+        // The Exclusions page on a role: `{ "page": "exclusions", "role": "agents" }`.
+        if let Some(role) = text("role").filter(|_| self.page == Page::Exclusions) {
+            let role = match role {
+                "agents" => skwir_core::exclusions::Role::Agents,
+                _ => skwir_core::exclusions::Role::Searches,
+            };
+            self.show_exclusions(role, cx);
         }
         if let Some(filter) = text("filter").filter(|_| self.page == Page::Keyboard) {
             self.keys.find = None;
@@ -3699,7 +3800,8 @@ impl SettingsView {
             .unwrap_or(1);
         match name {
             "settings_close" => {
-                if self.narrowed.is_some() {
+                if self.page == Page::Exclusions && self.close_exclusions_popup(window, cx) {
+                } else if self.narrowed.is_some() {
                     self.close_choices(window, cx);
                 } else if self.dropdown.take().is_some() {
                     cx.notify();
@@ -3729,12 +3831,17 @@ impl SettingsView {
             }
             "settings_adjust" => self.adjust(crate::modal::ListMove::of(args), window, cx),
             "settings_move" => self.move_focused_record(delta, window, cx),
-            "settings_key" => {
+            "settings_exclusion_item" => self.exclusion_item(args, window, cx),
+            "settings_key" | "settings_exclusion" => {
                 let key = args
                     .get("key")
                     .and_then(serde_json::Value::as_str)
                     .unwrap_or_default();
-                self.keys_key(key, window, cx);
+                if name == "settings_exclusion" {
+                    self.exclusions_key(key, window, cx);
+                } else {
+                    self.keys_key(key, window, cx);
+                }
             }
             _ => {}
         }
@@ -3786,7 +3893,9 @@ impl crate::shell::Shell {
             &settings,
             window,
             move |this, _, event: &SettingsEvent, window, cx| match event {
+                SettingsEvent::Menu(asked) => this.open_settings_menu(asked, window, cx),
                 SettingsEvent::Close => {
+                    this.close_settings_menu();
                     this.settings = None;
                     this.settings_subscription = None;
                     let fallback = this.ui().focus.clone();
@@ -4374,6 +4483,7 @@ mod tests {
             page::TERMINAL,
             page::NETWORK,
             page::PRIVACY,
+            page::EXCLUSIONS,
             page::KEYBOARD,
         ] {
             let spec = SettingSpec::toggle("plugin.option", "Option", "Does.", true).page(name);

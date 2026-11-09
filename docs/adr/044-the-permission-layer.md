@@ -107,3 +107,11 @@ Each kind of code can be held to a different degree:
   itself mounted what an agent named, from whichever host it named. The
   same rule the terminal follows for the paths it finds (ADR-029's
   amendment of 2026-10-14, `fs::volume::Here`).
+- 2026-11-08 (ADR-125): the private folders are the exclusions kept
+  from agents, on the Exclusions page: skwir's own (Secrets: `~/.ssh` and
+  its like, the `.private` marker) and the user's, names, globs and
+  regexes on every folder of a path, a name beside its tool's file, as
+  well as paths. `privacy.folders` and `privacy.marker` are read among
+  them while a 0.3.1 file holds them. Only the user lowers privacy: a
+  settings change that would take the agents role from a folder is
+  refused to an agent's call and asked about in the dialog.
