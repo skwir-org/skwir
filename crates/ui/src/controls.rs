@@ -80,7 +80,12 @@ pub fn mark(color: gpui::Hsla) -> gpui::Canvas<()> {
 /// ground, as a box's check is, instead of the accent, which may be the
 /// selection's own color. What is chosen there is known only then.
 pub fn pill(on: bool, theme: &Theme) -> Div {
-    let (accent, off, ground) = (theme.accent, theme.border, theme.selection_bg);
+    let (accent, off, ground, on_accent) = (
+        theme.accent,
+        theme.border,
+        theme.selection_bg,
+        theme.on_accent,
+    );
     let round = |window: &mut gpui::Window, bounds: gpui::Bounds<gpui::Pixels>, color| {
         window.paint_quad(gpui::fill(bounds, color).corner_radii(bounds.size.height / 2.));
     };
@@ -108,11 +113,11 @@ pub fn pill(on: bool, theme: &Theme) -> Div {
             gpui::canvas(
                 |_, _, _| {},
                 move |bounds, (), window, _| {
-                    let knob = match window.element_ink() {
-                        Some(_) if on => ground,
-                        _ => gpui::white(),
-                    };
-                    round(window, bounds, knob);
+                    round(
+                        window,
+                        bounds,
+                        knob(on, window.element_ink(), on_accent, ground),
+                    );
                 },
             )
             .absolute()
@@ -120,6 +125,22 @@ pub fn pill(on: bool, theme: &Theme) -> Div {
             .left(px(if on { 19. } else { 3. }))
             .size(px(14.)),
         )
+}
+
+/// A switch's knob: on the accent, what is drawn on the accent, which may
+/// be dark under a light one; on what is chosen, that ground again, the
+/// track being in its ink; off, white on the gray track, whatever the look.
+fn knob(
+    on: bool,
+    ink: Option<gpui::Hsla>,
+    on_accent: gpui::Hsla,
+    ground: gpui::Hsla,
+) -> gpui::Hsla {
+    match ink {
+        Some(_) if on => ground,
+        _ if on => on_accent,
+        _ => gpui::white(),
+    }
 }
 
 /// A box's check, as it is drawn: filled with its tick when on, an
@@ -648,8 +669,23 @@ pub fn glyph(name: &str, color: gpui::Hsla, size: f32) -> gpui::Svg {
 
 #[cfg(test)]
 mod tests {
-    use super::{KNOB, along};
+    use super::{KNOB, along, knob};
     use gpui::{Bounds, point, px, size};
+
+    /// On a light accent a dark look's knob is what is drawn on the accent,
+    /// not white; chosen it is that ground, off it stays white.
+    #[test]
+    fn a_switch_s_knob_is_what_reads_on_the_track() {
+        let on_accent = gpui::black();
+        let ground = gpui::blue();
+        assert_eq!(knob(true, None, on_accent, ground), on_accent);
+        assert_eq!(knob(true, Some(gpui::white()), on_accent, ground), ground);
+        assert_eq!(knob(false, None, on_accent, ground), gpui::white());
+        assert_eq!(
+            knob(false, Some(gpui::red()), on_accent, ground),
+            gpui::white()
+        );
+    }
 
     #[test]
     fn a_slider_is_read_between_its_knob_s_two_ends() {

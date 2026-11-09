@@ -1334,7 +1334,7 @@ impl Theme {
     /// they do not, as the guard moves a color (`Theme::derive`). Only
     /// then: apart by lines, the window is drawn as before.
     pub fn as_cards(&mut self) {
-        let (text_ratio, _) = self.desktop.contrast.ratios();
+        let (text_ratio, mark_ratio) = self.desktop.contrast.ratios();
         if color::luminance(self.surface) < color::luminance(self.bg) {
             // A set step under the files, the card's edge on the frame what
             // is left: `EDGE` at least, where the frame gave way to text.
@@ -1368,6 +1368,24 @@ impl Theme {
         };
         self.sunken_bg = toward(self.bg, self.frame, SUNKEN, reads);
         self.sunken_bar = toward(self.bar, self.frame, SUNKEN, reads);
+        // The new grounds carry the accent and the outcomes too (the
+        // sidebar's marks, a tab's, a footer's words): each still reads on
+        // what `derive` guarded it on, and there.
+        let new = [self.frame, self.bar, self.sunken_bar, self.sunken_bg];
+        let on_new = [[self.bg, self.surface].as_slice(), new.as_slice()].concat();
+        let accent = guarded("accent", self.accent, &on_new, mark_ratio);
+        (self.on_accent, self.accent) = color::readable_on(self.on_accent, accent, text_ratio);
+        let termed = [
+            grounds.as_slice(),
+            &new.map(|ground| ground.blend(hover)),
+            new.as_slice(),
+            &[self.bg.blend(self.term), self.surface.blend(self.term)],
+        ]
+        .concat();
+        self.accent_text = guarded("accent_text", self.accent_text, &termed, text_ratio);
+        self.error = guarded("error", self.error, &on_new, text_ratio);
+        self.warning = guarded("warning", self.warning, &on_new, text_ratio);
+        self.success = guarded("success", self.success, &on_new, text_ratio);
         self.cards = true;
     }
 
@@ -1626,6 +1644,36 @@ mod tests {
                     assert!(
                         color::reads(text, &grounds, ratio) || !could,
                         "case {case}, cards, {contrast:?}: {base:?}"
+                    );
+                }
+                // And what marks them: the accent, what is written on it,
+                // the words that say how something went.
+                let (_, mark) = contrast.ratios();
+                let new = [
+                    cards.bg,
+                    cards.surface,
+                    cards.frame,
+                    cards.bar,
+                    cards.sunken_bar,
+                    cards.sunken_bg,
+                ];
+                let reachable = |ratio| {
+                    [gpui::black(), gpui::white()]
+                        .iter()
+                        .any(|c| color::reads(*c, &new, ratio))
+                };
+                assert!(
+                    color::reads(cards.accent, &new, mark) || !reachable(mark),
+                    "case {case}, cards accent, {contrast:?}: {base:?}"
+                );
+                assert!(
+                    color::reads(cards.on_accent, &[cards.accent], ratio),
+                    "case {case}, cards on_accent, {contrast:?}: {base:?}"
+                );
+                for said in [cards.accent_text, cards.error, cards.warning, cards.success] {
+                    assert!(
+                        color::reads(said, &new, ratio) || !reachable(ratio),
+                        "case {case}, cards outcome, {contrast:?}: {base:?}"
                     );
                 }
             }

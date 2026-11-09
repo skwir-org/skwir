@@ -60,7 +60,8 @@ ADR-119 (the frame is one of the window's grounds).
    Skwir's own `#f2f2f2`) and `EDGE` (1.025:1) above it at least, the
    card's edge drawn by its outline (point 7); in a dark look they stay
    `surface`. The text and the muted text are guarded on
-   the frame and the bars too, and a split's other pane has grounds of
+   the frame and the bars too, as the accent, what is written on it, the
+   accent's text and the outcomes are (2026-11-09), and a split's other pane has grounds of
    its own, `sunken_bg` and `sunken_bar`: halfway towards the frame, as
    far as its text still reads. Apart by lines, no token changes.
 3. **What is a card**: each pane (its row, its files, its timeline, its
