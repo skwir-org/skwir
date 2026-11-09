@@ -95,15 +95,15 @@ Download the `.deb` files for your system from the release: Debian's end in
 holding them:
 
 ```sh
-sudo apt install ./skwir_0.3.1-1_amd64.deb             # Ubuntu: ./skwir_0.3.1-1ubuntu24.04_amd64.deb
-sudo apt install ./skwir-media_0.3.1-1_amd64.deb       # optional, and so on
+sudo apt install ./skwir_0.4.0-1_amd64.deb             # Ubuntu: ./skwir_0.4.0-1ubuntu24.04_amd64.deb
+sudo apt install ./skwir-media_0.4.0-1_amd64.deb       # optional, and so on
 ```
 
 ### Fedora 44
 
 ```sh
-sudo dnf install ./skwir-0.3.1-1.x86_64.rpm
-sudo dnf install ./skwir-media-0.3.1-1.x86_64.rpm      # optional, and so on
+sudo dnf install ./skwir-0.4.0-1.x86_64.rpm
+sudo dnf install ./skwir-media-0.4.0-1.x86_64.rpm      # optional, and so on
 ```
 
 ### Arch Linux
@@ -131,22 +131,22 @@ need x86-64 Linux with glibc 2.35 or later. They were tried on Ubuntu 22.04 and
 24.04 and on Fedora 44. The AppImage runs as it is:
 
 ```sh
-chmod +x skwir-0.3.1-x86_64.AppImage
-./skwir-0.3.1-x86_64.AppImage
+chmod +x skwir-0.4.0-x86_64.AppImage
+./skwir-0.4.0-x86_64.AppImage
 ```
 
 The tarball needs no FUSE and goes where you like, here `~/.local/opt`:
 
 ```sh
 mkdir -p ~/.local/opt ~/.local/bin
-tar -xzf skwir-0.3.1-linux-x86_64.tar.gz -C ~/.local/opt
-ln -sfn ~/.local/opt/skwir-0.3.1-linux-x86_64/skwir ~/.local/bin/skwir
+tar -xzf skwir-0.4.0-linux-x86_64.tar.gz -C ~/.local/opt
+ln -sfn ~/.local/opt/skwir-0.4.0-linux-x86_64/skwir ~/.local/bin/skwir
 ```
 
 To list it among your applications, add its desktop entry and icon:
 
 ```sh
-cd ~/.local/opt/skwir-0.3.1-linux-x86_64/usr/share
+cd ~/.local/opt/skwir-0.4.0-linux-x86_64/usr/share
 mkdir -p ~/.local/share/applications ~/.local/share/icons/hicolor/scalable/apps
 sed "s|^Exec=skwir|Exec=\"$HOME/.local/bin/skwir\"|" applications/org.skwir.skwir.desktop \
   > ~/.local/share/applications/org.skwir.skwir.desktop

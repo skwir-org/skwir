@@ -1,6 +1,47 @@
 # Changes
 
-## Unreleased
+## 0.4.0 (2026-11-10)
+
+Skwir 0.4.0 opens several windows, draws the window as cards, and keeps what
+tools manage and what holds your secrets out of searches and away from agents.
+A filter now shows only the folders that lead to a match, a search can show as
+a tree, folders appear whole, and Skwir takes less memory at rest.
+
+[Installation instructions](README.md#installing)
+
+- **Several windows** (Ctrl+N): one Skwir, one queue, one History, each window
+  with its own tabs and look; Skwir started again opens a window in the one
+  running.
+- **Cards**, the new look: the panes, the preview and the terminal on the
+  window's frame (Settings › Appearance › More settings › Cards off for lines).
+- **Exclusions** (#6): Settings › Exclusions lists about 280 kinds of folders
+  tools fill and about 245 kinds of secrets, each kept from searches, from
+  agents or both.
+- **Filters look below**: a filter by tag, type, date, size or rating shows only
+  the folders that lead to a match, and in the Tree view a search shows as a
+  tree.
+- **Folders appear whole**, read and sorted away from the window, which never
+  stalls.
+- **See-through backgrounds** for the bars, the files and the preview, from 50
+  to 100 %.
+- **Save as in one line** in Print…, its folders completed as you type, and
+  Print Listing… for a search, a tag or the Trash.
+- **Activity unfolds** above the footer for an action still going after 1.5 s.
+- **The Nix package in variants** (#7), about 1 GB rather than 3.
+- **XML and CSV** (#8, #9): XML under other names colored as XML, CSV separated
+  by semicolons, tabs or pipes shown as columns.
+
+**Changed from 0.3.1**: the window is drawn as cards; Preview (F11) and
+Properties (Alt+Enter, Ctrl+I) are two switches; Skwir started again opens in
+the one running (`skwir --new-instance` starts one of its own); Quick filters
+and the timeline are each pane's, in the View menu; the private folders of
+0.3.1 are read into Exclusions.
+
+**Windows and macOS builds to try** come with this release too. They are made
+on Linux and have never run on either system: please [try them and tell us what
+happens](docs/HELP-WANTED.md). Skwir itself is for Linux, as in 0.3.1.
+
+### All changes
 
 - **A text preview opens with its colors**: it no longer flashes uncolored
   first, as long as its colors take under about a tenth of a second.
@@ -100,7 +141,6 @@
   optional helper, `full` every reader; `.override { withMedia = false; }`
   and the other flags pick what you need; PDFs open through nixpkgs' PDFium;
   the helpers are off your PATH.
-
 - **Cards, the new look** (on by default; Settings › Appearance › More settings › Cards off
   gives the window of earlier versions, apart by lines): the panes,
   the preview's parts and the terminal are drawn as cards on the window's frame, a
@@ -257,6 +297,10 @@
   History's edge; it now wraps and the History is as tall as it. The address
   card's rows of buttons (Add a term, Search in) are no longer cut when they
   wrap either.
+- **A narrow pane's row fits**: in a narrow pane the address field gives up
+  its Search, Bookmark and Tags buttons (Ctrl+F, Ctrl+D and Alt+G remain)
+  rather than drawing the View button over the pane's corner, and the view
+  buttons show wherever they fit, however long the folder's path.
 - **Up beside Back and Forward, and the view buttons put away**: the view
   buttons' menu (their right-click, or View › Buttons…) has a switch in its
   View buttons heading; off, one button stands for them, the view shown, and
