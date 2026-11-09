@@ -328,3 +328,22 @@ preview's bar, inside the cards. Tried by the user the same evening:
   (derived: it names no `borders`) on `#eeeeed` (1.24:1), Skwir's own
   dark `#3a3a3a` on `#161616` (1.59:1), lighter than the frame and the
   cards, as the dark look's lines were. `OUTLINE` is gone.
+
+### 2026-11-09: the outline from quads
+
+- **Found** (a review of the code): the outline was an even-odd path,
+  the only one a window drew by default, so every frame of the default
+  look opened gpui's path pass, a multisampled target the size of the
+  window, for a line a pixel wide.
+- **Decided**: what a window draws every frame by default opens no path
+  pass. The outline (`frame::paint_outline`) is made of quads, worked out
+  in whole device pixels from the corners of the card's shape: a fill for
+  each straight stretch, and a bordered disc kept to its quadrant for each
+  arc, no two on the same pixel. The frame's ground stays a path while
+  the window lets the desktop through, which is not the default.
+- **Checked** on Xvfb (lavapipe), against the build before: a card with a
+  notch at either end, both, split, the preview; at scale 1 the ring's
+  pixels match to within the antialiasing of its arcs (a few levels);
+  at 1.5 and 2, unbroken, at the corners and along each notch. Frame times
+  not measured: the machine was too loaded for a difference to mean
+  anything.

@@ -28,7 +28,8 @@
 //! Each card is outlined (`Theme::card_edge`), as Dolphin draws its views:
 //! a ring a device pixel wide on the frame, just outside the card's shape,
 //! its notches followed (`paint_outline`), drawn within the window, so it
-//! is not where the card meets the window's edge.
+//! is not where the card meets the window's edge. It is made of quads, on
+//! whole device pixels: a window whole opens no path pass for its frame.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -36,7 +37,7 @@ use std::rc::Rc;
 use gpui::{
     AnyElement, App, Bounds, ContentMask, Corners, Element, ElementId, FillOptions, FillRule,
     GlobalElementId, Hsla, InspectorElementId, IntoElement, LayoutId, PathBuilder, PathStyle,
-    Pixels, Window, point, px, size,
+    Pixels, Point, Window, point, px, size,
 };
 
 /// How far a card's corners are rounded where it stands apart:
@@ -418,112 +419,192 @@ fn square_outline(path: &mut PathBuilder, card: &Placed) {
 }
 
 /// A card's outline (`Theme::card_edge`): a ring a device pixel wide on
-/// the frame, between its shape grown by that pixel and its shape, drawn
-/// within the frame's `bounds` (the window's), so it is not where the card
-/// meets the window's edge; what lies on the frame beside it (a notch's
-/// buttons) is drawn over it.
+/// the frame, just outside its shape, drawn within the frame's `bounds`
+/// (the window's), so it is not where the card meets the window's edge;
+/// what lies on the frame beside it (a notch's buttons) is drawn over it.
+///
+/// From quads, as it is drawn every frame of the look a window has by
+/// default: a path would make each of them open gpui's path pass, a
+/// multisampled target the size of the window.
 fn paint_outline(card: &Placed, edge: Hsla, bounds: Bounds<Pixels>, window: &mut Window) {
-    let pixel = px(1. / window.scale_factor());
-    let mut path = PathBuilder::fill().with_style(PathStyle::Fill(
-        FillOptions::default().with_fill_rule(FillRule::EvenOdd),
-    ));
-    shape(&mut path, card, pixel);
-    shape(&mut path, card, px(0.));
-    match path.build() {
-        Ok(path) => window.with_content_mask(Some(ContentMask::new(bounds)), |window| {
-            window.paint_path(path, edge);
-        }),
-        Err(error) => tracing::warn!("cannot shape a card's outline: {error}"),
-    }
+    let scale = window.scale_factor();
+    let pixel = px(1. / scale);
+    window.with_content_mask(Some(ContentMask::new(bounds)), |window| {
+        for stroke in strokes(&turns(card, scale)) {
+            match stroke {
+                Stroke::Run(run) => window.paint_quad(gpui::fill(logical(run, scale), edge)),
+                Stroke::Arc { disc, quadrant } => {
+                    let disc = logical(disc, scale);
+                    let mask = pixels_of(logical(quadrant, scale), scale);
+                    window.with_content_mask(Some(mask), |window| {
+                        window.paint_quad(gpui::quad(
+                            disc,
+                            disc.size.width / 2.,
+                            // The edge's own color, unseen: gpui mixes a
+                            // border with its background unpremultiplied,
+                            // and a black one darkens the arc's inner edge.
+                            edge.opacity(0.),
+                            pixel,
+                            edge,
+                            gpui::BorderStyle::Solid,
+                        ));
+                    });
+                }
+            }
+        }
+    });
 }
 
-/// A card's shape, its corners as it rounds them, grown by `grow` on every
-/// side: its rounded rectangle, or with notches its band (rounded beside
-/// each notch), the band's edge down to the concave fillet into the
-/// files, and what is under the notch, rounded at its corner unless that is
-/// on the window's edge. Clockwise.
-fn shape(path: &mut PathBuilder, card: &Placed, grow: Pixels) {
-    let grown = |radius: Pixels| {
-        if radius > px(0.) {
-            radius + grow
-        } else {
-            px(0.)
-        }
-    };
-    if !card.notched() {
-        rounded_rect(
-            path,
-            card.bounds.dilate(grow),
-            card.corners.map(|c| grown(*c)),
-        );
-        return;
-    }
+/// A corner of a card's shape, in device pixels, and how far it is rounded.
+type Turn = (Point<i32>, i32);
+
+/// What a card's outline is drawn in, in device pixels: no two overlap, as
+/// it may let what is behind the window through.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Stroke {
+    /// A straight stretch of it, a device pixel across.
+    Run(Bounds<i32>),
+    /// A quarter of a ring around a corner's center: the edge of `disc`, a
+    /// device pixel deep, within `quadrant`.
+    Arc {
+        disc: Bounds<i32>,
+        quadrant: Bounds<i32>,
+    },
+}
+
+/// The corners of a card's shape, clockwise: its rectangle, or with notches
+/// its band (rounded beside each notch), the band's edge down to the
+/// concave fillet into the files, and what is under the notch, rounded at
+/// its corner unless that is on the window's edge.
+fn turns(card: &Placed, scale: f32) -> Vec<Turn> {
+    let device = |length: Pixels| device_pixels(length, scale);
     let b = card.bounds;
-    let (r, c) = (card.radius, card.corners);
+    let (left, top) = (device(b.left()), device(b.top()));
+    let (right, bottom) = (device(b.right()), device(b.bottom()));
+    let (r, c) = (device(card.radius), card.corners);
     let [on_left, on_right] = card.on_edge;
-    let (left, top, right, bottom) = (
-        b.left() - grow,
-        b.top() - grow,
-        b.right() + grow,
-        b.bottom() + grow,
-    );
-    // A convex corner of `radius` (its center `radius` in from the
-    // card's), grown; a concave one shrinks by as much.
-    let convex = |path: &mut PathBuilder, radius: Pixels, to| {
-        if radius > px(0.) {
-            let radius = radius + grow;
-            path.arc_to(point(radius, radius), px(0.), false, true, to);
-        }
-    };
-    let concave = |path: &mut PathBuilder, to| {
-        let radius = r - grow;
-        path.arc_to(point(radius, radius), px(0.), false, false, to);
-    };
-    // How far in from the card's edge a corner of `radius` ends: out by
-    // `grow` where it is square, at the grown shape's corner.
-    let at = |radius: Pixels| if radius > px(0.) { radius } else { -grow };
     let [start, end] = card.notches;
-    // The band's top, from beside the notch at its start (or the card's
-    // corner) to beside the one at its end.
+    let under_notch = |on_edge: bool| if on_edge { 0 } else { r };
+    let mut turns = Vec::with_capacity(8);
     match start {
-        Some(notch) => path.move_to(point(notch.bounds.right() + r, top)),
-        None => path.move_to(point(b.left() + at(c.top_left), top)),
+        Some(notch) => turns.push((point(device(notch.bounds.right()), top), r)),
+        None => turns.push((point(left, top), device(c.top_left))),
     }
-    if let Some(notch) = end {
-        let (x, low) = (notch.bounds.left(), notch.bounds.bottom());
-        path.line_to(point(x - r, top));
-        convex(path, r, point(x + grow, b.top() + r));
-        path.line_to(point(x + grow, low - r));
-        concave(path, point(x + r, low - grow));
-        let corner = if on_right { px(0.) } else { r };
-        path.line_to(point(b.right() - at(corner), low - grow));
-        convex(path, corner, point(right, low + corner));
-    } else {
-        path.line_to(point(b.right() - at(c.top_right), top));
-        convex(path, c.top_right, point(right, b.top() + c.top_right));
+    match end {
+        Some(notch) => {
+            let (x, low) = (device(notch.bounds.left()), device(notch.bounds.bottom()));
+            turns.push((point(x, top), r));
+            turns.push((point(x, low), r));
+            turns.push((point(right, low), under_notch(on_right)));
+        }
+        None => turns.push((point(right, top), device(c.top_right))),
     }
-    path.line_to(point(right, b.bottom() - at(c.bottom_right)));
-    convex(
-        path,
-        c.bottom_right,
-        point(b.right() - c.bottom_right, bottom),
-    );
-    path.line_to(point(b.left() + at(c.bottom_left), bottom));
-    convex(path, c.bottom_left, point(left, b.bottom() - c.bottom_left));
+    turns.push((point(right, bottom), device(c.bottom_right)));
+    turns.push((point(left, bottom), device(c.bottom_left)));
     if let Some(notch) = start {
-        let (x, low) = (notch.bounds.right(), notch.bounds.bottom());
-        let corner = if on_left { px(0.) } else { r };
-        path.line_to(point(left, low + at(corner)));
-        convex(path, corner, point(b.left() + corner, low - grow));
-        path.line_to(point(x - r, low - grow));
-        concave(path, point(x - grow, low - r));
-        path.line_to(point(x - grow, b.top() + r));
-        convex(path, r, point(x + r, top));
-    } else {
-        path.line_to(point(left, b.top() + at(c.top_left)));
-        convex(path, c.top_left, point(b.left() + c.top_left, top));
+        let (x, low) = (device(notch.bounds.right()), device(notch.bounds.bottom()));
+        turns.push((point(left, low), under_notch(on_left)));
+        turns.push((point(x, low), r));
     }
-    path.close();
+    turns
+}
+
+/// The outline of the shape whose corners are `turns`, clockwise, axis by
+/// axis: a device pixel outside each of its edges, and around each of its
+/// rounded corners. Where the shape's edges meet square, the row of the
+/// edge across takes the corner's pixel.
+fn strokes(turns: &[Turn]) -> Vec<Stroke> {
+    let count = turns.len();
+    let at = |index: usize| turns[index % count].0;
+    // One step along the edge from turn `index` to the next.
+    let along = |index: usize| {
+        let (from, to) = (at(index), at(index + 1));
+        point((to.x - from.x).signum(), (to.y - from.y).signum())
+    };
+    // Clockwise on the screen, what is outside is to the left of the way.
+    let outside = |way: Point<i32>| point(way.y, -way.x);
+    // 1 where the shape turns right at turn `index` (a corner of it), -1
+    // where it turns left (a corner into it).
+    let bend = |index: usize| {
+        let (coming, going) = (along(index + count - 1), along(index));
+        coming.x * going.y - coming.y * going.x
+    };
+    let mut strokes = Vec::with_capacity(count * 2);
+    for index in 0..count {
+        let way = along(index);
+        let out = outside(way);
+        // How far the run stops short of a turn.
+        let short = |index: usize| match (turns[index % count].1, bend(index % count)) {
+            (0, 1) if way.y == 0 => -1,
+            (0, -1) if way.y == 0 => 1,
+            (radius, _) => radius,
+        };
+        let from = at(index) + point(way.x * short(index), way.y * short(index));
+        let next = index + 1;
+        let to = at(next) - point(way.x * short(next), way.y * short(next));
+        if (to.x - from.x) * way.x + (to.y - from.y) * way.y > 0 {
+            strokes.push(Stroke::Run(between(from, to + out)));
+        }
+        let radius = turns[index].1;
+        if radius == 0 {
+            continue;
+        }
+        let corner = out + outside(along(index + count - 1));
+        let (center, outer, toward) = match bend(index) {
+            1 => (at(index) - scaled(corner, radius), radius + 1, corner),
+            -1 => (
+                at(index) + scaled(corner, radius),
+                radius,
+                point(-corner.x, -corner.y),
+            ),
+            _ => continue,
+        };
+        strokes.push(Stroke::Arc {
+            disc: between(center - point(outer, outer), center + point(outer, outer)),
+            quadrant: between(center, center + scaled(toward, outer)),
+        });
+    }
+    strokes
+}
+
+fn scaled(way: Point<i32>, by: i32) -> Point<i32> {
+    point(way.x * by, way.y * by)
+}
+
+/// The rectangle with `a` and `b` at opposite corners.
+fn between(a: Point<i32>, b: Point<i32>) -> Bounds<i32> {
+    Bounds::from_corners(
+        point(a.x.min(b.x), a.y.min(b.y)),
+        point(a.x.max(b.x), a.y.max(b.y)),
+    )
+}
+
+/// `length`, on whole device pixels, as a number of them.
+#[allow(clippy::cast_possible_truncation)] // a window's length in device pixels
+fn device_pixels(length: Pixels, scale: f32) -> i32 {
+    (f32::from(length) * scale).round() as i32
+}
+
+/// A rectangle of device pixels in the window's own units.
+#[allow(clippy::cast_precision_loss)] // a window's length in device pixels
+fn logical(device: Bounds<i32>, scale: f32) -> Bounds<Pixels> {
+    let at = |value: i32| px(value as f32 / scale);
+    Bounds::from_corners(
+        point(at(device.left()), at(device.top())),
+        point(at(device.right()), at(device.bottom())),
+    )
+}
+
+/// A mask of exactly the device pixels of `bounds`, which lies on whole
+/// ones: gpui covers a mask to device pixels, floor and ceiling, so an edge
+/// a rounding error past a whole pixel would keep one more. A quarter of a
+/// pixel inside is not.
+fn pixels_of(bounds: Bounds<Pixels>, scale: f32) -> ContentMask<Pixels> {
+    let inside = px(0.25 / scale);
+    ContentMask::new(Bounds::from_corners(
+        point(bounds.left() + inside, bounds.top() + inside),
+        point(bounds.right() - inside, bounds.bottom() - inside),
+    ))
 }
 
 /// The frame's curves beside a card's rounded corners: in the square of
@@ -637,7 +718,8 @@ fn paint_fillets(card: &Placed, frame: Hsla, cut: bool, window: &mut Window) {
         let square = Bounds::new(point(square_left, low - r), size(r, r));
         let disc = Bounds::new(point(disc_left, low - 2. * r), size(2. * r, 2. * r));
         if cut {
-            window.with_content_mask(Some(ContentMask::new(square)), |window| {
+            let mask = pixels_of(square, window.scale_factor());
+            window.with_content_mask(Some(mask), |window| {
                 window.paint_quad(gpui::fill(disc, frame).corner_radii(Corners::all(r)));
             });
         }
@@ -755,8 +837,207 @@ fn mask(bounds: Bounds<Pixels>, corners: Corners<Pixels>) -> ContentMask<Pixels>
 
 #[cfg(test)]
 mod tests {
-    use super::corners;
-    use gpui::{Bounds, point, px, size};
+    use super::{Notch, Placed, Stroke, corners, strokes, turns};
+    use gpui::{Bounds, Corners, Hsla, Pixels, Point, point, px, size};
+    use std::collections::{HashMap, HashSet};
+
+    /// A card at (x, y), every length in device pixels at `scale`.
+    fn card(
+        (x, y, width, height): (f32, f32, f32, f32),
+        scale: f32,
+        rounded: bool,
+        notches: [Option<(f32, f32, f32, f32)>; 2],
+    ) -> Placed {
+        let bounds = |(x, y, width, height): (f32, f32, f32, f32)| {
+            Bounds::new(
+                point(px(x / scale), px(y / scale)),
+                size(px(width / scale), px(height / scale)),
+            )
+        };
+        let radius = px(12. / scale);
+        Placed {
+            bounds: bounds((x, y, width, height)),
+            corners: Corners::all(if rounded { radius } else { px(0.) }),
+            radius,
+            on_edge: [!rounded; 2],
+            notches: notches.map(|notch| {
+                notch.map(|notch| Notch {
+                    bounds: bounds(notch),
+                    ground: Hsla::default(),
+                })
+            }),
+            under: Corners::default(),
+        }
+    }
+
+    /// The device pixels a stroke draws in, and how many strokes draw in
+    /// each: an arc's whole quadrant counts, as that is what it is kept to.
+    fn cells(strokes: &[Stroke]) -> HashMap<(i32, i32), u32> {
+        let mut count = HashMap::new();
+        for stroke in strokes {
+            let area = match *stroke {
+                Stroke::Run(run) => run,
+                Stroke::Arc { quadrant, .. } => quadrant,
+            };
+            for y in area.top()..area.bottom() {
+                for x in area.left()..area.right() {
+                    *count.entry((x, y)).or_insert(0) += 1;
+                }
+            }
+        }
+        count
+    }
+
+    /// The pixels a stroke paints: a run's, and those of an arc its ring
+    /// passes through.
+    fn ring(strokes: &[Stroke]) -> HashSet<(i32, i32)> {
+        let mut ring = HashSet::new();
+        for stroke in strokes {
+            match *stroke {
+                Stroke::Run(run) => {
+                    for y in run.top()..run.bottom() {
+                        for x in run.left()..run.right() {
+                            ring.insert((x, y));
+                        }
+                    }
+                }
+                Stroke::Arc { disc, quadrant } => {
+                    #[allow(clippy::cast_precision_loss)] // a few pixels
+                    let (cx, cy, outer) = (
+                        (disc.left() + disc.right()) as f32 / 2.,
+                        (disc.top() + disc.bottom()) as f32 / 2.,
+                        disc.size.width as f32 / 2.,
+                    );
+                    for y in quadrant.top()..quadrant.bottom() {
+                        for x in quadrant.left()..quadrant.right() {
+                            #[allow(clippy::cast_precision_loss)] // a few pixels
+                            let far = (x as f32 + 0.5 - cx).hypot(y as f32 + 0.5 - cy);
+                            if far > outer - 1. && far < outer {
+                                ring.insert((x, y));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        ring
+    }
+
+    /// One closed line: each pixel has at least two neighbours, and from
+    /// any of them all the others are reached.
+    fn is_unbroken(ring: &HashSet<(i32, i32)>) -> bool {
+        let neighbours = |(x, y): (i32, i32)| {
+            (-1..=1)
+                .flat_map(move |dy| (-1..=1).map(move |dx| (x + dx, y + dy)))
+                .filter(move |&near| near != (x, y))
+        };
+        let Some(&first) = ring.iter().next() else {
+            return false;
+        };
+        let mut seen = HashSet::from([first]);
+        let mut waiting = vec![first];
+        while let Some(pixel) = waiting.pop() {
+            for near in neighbours(pixel).filter(|near| ring.contains(near)) {
+                if seen.insert(near) {
+                    waiting.push(near);
+                }
+            }
+        }
+        seen.len() == ring.len()
+            && ring
+                .iter()
+                .all(|&pixel| neighbours(pixel).filter(|near| ring.contains(near)).count() >= 2)
+    }
+
+    const SCALES: [f32; 4] = [1., 1.25, 1.5, 2.];
+    const END: (f32, f32, f32, f32) = (700., 30., 100., 40.);
+    const START: (f32, f32, f32, f32) = (200., 30., 80., 40.);
+
+    /// However a card is cut (square on the window's edges, a notch at
+    /// either end or both), at every scale, its outline is one line, no
+    /// two of its strokes on one pixel.
+    #[test]
+    fn a_card_s_outline_is_unbroken_and_drawn_once() {
+        let shape = (200., 30., 600., 400.);
+        for scale in SCALES {
+            for rounded in [true, false] {
+                for notches in [
+                    [None, None],
+                    [None, Some(END)],
+                    [Some(START), None],
+                    [Some(START), Some(END)],
+                ] {
+                    let card = card(shape, scale, rounded, notches);
+                    let strokes = strokes(&turns(&card, scale));
+                    assert!(
+                        cells(&strokes).values().all(|&count| count == 1),
+                        "strokes overlap at {scale}, rounded {rounded}, {notches:?}"
+                    );
+                    assert!(
+                        is_unbroken(&ring(&strokes)),
+                        "a broken ring at {scale}, rounded {rounded}, {notches:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    fn rect(left: i32, top: i32, right: i32, bottom: i32) -> Bounds<i32> {
+        Bounds::from_corners(Point::new(left, top), Point::new(right, bottom))
+    }
+
+    /// Outside the card by a device pixel, around a rounded corner a disc
+    /// a pixel larger, and into a notch's fillet a disc its size.
+    #[test]
+    fn the_outline_lies_outside_the_shape_and_follows_a_notch() {
+        let card = card((200., 30., 600., 400.), 1., true, [None, Some(END)]);
+        let strokes = strokes(&turns(&card, 1.));
+        // The band's top, then its rounded corner beside the notch.
+        assert!(strokes.contains(&Stroke::Run(rect(212, 29, 688, 30))));
+        assert!(strokes.contains(&Stroke::Arc {
+            disc: rect(675, 29, 701, 55),
+            quadrant: rect(688, 29, 701, 42),
+        }));
+        // Down the band's edge, then the concave fillet into the files,
+        // whose disc is the fillet's own.
+        assert!(strokes.contains(&Stroke::Run(rect(700, 42, 701, 58))));
+        assert!(strokes.contains(&Stroke::Arc {
+            disc: rect(700, 46, 724, 70),
+            quadrant: rect(700, 58, 712, 70),
+        }));
+        // On along the files' top, to the corner under the notch.
+        assert!(strokes.contains(&Stroke::Run(rect(712, 69, 788, 70))));
+        assert!(strokes.contains(&Stroke::Arc {
+            disc: rect(775, 69, 801, 95),
+            quadrant: rect(788, 69, 801, 82),
+        }));
+    }
+
+    /// Square on the window's edges, its top row takes the corner's pixel,
+    /// and no arc is drawn.
+    #[test]
+    fn a_square_corner_is_one_pixel_drawn_once() {
+        let card = card((0., 0., 100., 50.), 1., false, [None, None]);
+        let strokes = strokes(&turns(&card, 1.));
+        assert_eq!(strokes.len(), 4);
+        assert!(strokes.contains(&Stroke::Run(rect(-1, -1, 101, 0))));
+        assert!(strokes.contains(&Stroke::Run(rect(100, 0, 101, 50))));
+        assert!(strokes.contains(&Stroke::Run(rect(-1, 50, 101, 51))));
+        assert!(strokes.contains(&Stroke::Run(rect(-1, 0, 0, 50))));
+    }
+
+    /// A length at a scale that does not divide it comes back a whole
+    /// number of device pixels, the same one.
+    #[test]
+    fn device_pixels_survive_the_round_trip() {
+        for scale in SCALES {
+            for device in 0..2000 {
+                #[allow(clippy::cast_precision_loss)] // a window's length
+                let logical: Pixels = px(device as f32 / scale);
+                assert_eq!(super::device_pixels(logical, scale), device);
+            }
+        }
+    }
 
     /// A card is square where it meets the window's edge and rounded where
     /// it stands apart: the preview at the right, under a gutter at the
