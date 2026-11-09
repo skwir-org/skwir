@@ -285,24 +285,12 @@ impl GridView {
                     return *lines;
                 }
                 wrapped_now += 1;
-                // As the label wraps: a newline ends a line, and no line that
-                // goes on is indented.
-                let lines = entry
-                    .name_str()
-                    .split('\n')
-                    .map(|line| {
-                        wrapper
-                            .wrap_line(
-                                &[gpui::LineFragment::text(line)],
-                                width,
-                                gpui::IndentAdjustment::NoIndent,
-                            )
-                            .take(usize::from(MAX_LINES) - 1)
-                            .count()
-                            + 1
-                    })
-                    .sum::<usize>()
-                    .min(usize::from(MAX_LINES)) as u8;
+                let lines = crate::name_lines::count(
+                    &entry.name_str(),
+                    width,
+                    usize::from(MAX_LINES),
+                    &mut wrapper,
+                ) as u8;
                 counted.insert(*id, (hash, lines));
                 lines
             })

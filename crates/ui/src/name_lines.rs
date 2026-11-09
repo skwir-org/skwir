@@ -18,6 +18,11 @@
 //! break); the balance is ours. The extension is never split. The name is
 //! then drawn with those breaks as newlines, so gpui wraps nothing more.
 //!
+//! A line ends only between two grapheme clusters, and a break is priced by
+//! the clusters on either side, each as its first character says: an accent
+//! typed apart (NFD), a virama, a joiner or a Hangul jamo is part of what
+//! it follows, never a place to break nor a separator.
+//!
 //! Widths are each character's, as gpui's line wrapper measures them
 //! (`TextSystem::layout_width`), kept per font and size, so a line kept
 //! here fits where gpui's wrapper and its middle truncation measure it.
@@ -29,7 +34,8 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use gpui::{App, Font, FontId, Pixels, SharedString};
+use gpui::{App, Font, FontId, LineWrapper, Pixels, SharedString};
+use unicode_segmentation::UnicodeSegmentation;
 
 /// What a break costs, in the units of a line's distance from the mean:
 /// a share of the width, squared.
@@ -120,6 +126,27 @@ pub fn broken(
     text
 }
 
+/// The lines `text` takes where `wrapper` wraps it at `width`, at most
+/// `most`: a newline ends a line, and no line that goes on is indented, as
+/// gpui draws it. What the grid's rows are counted by
+/// (`GridView::measure`), and a drag's name: `broken` keeps to as many.
+pub fn count(text: &str, width: Pixels, most: usize, wrapper: &mut LineWrapper) -> usize {
+    text.split('\n')
+        .map(|line| {
+            wrapper
+                .wrap_line(
+                    &[gpui::LineFragment::text(line)],
+                    width,
+                    gpui::IndentAdjustment::NoIndent,
+                )
+                .take(most - 1)
+                .count()
+                + 1
+        })
+        .sum::<usize>()
+        .min(most)
+}
+
 /// `text`'s width as gpui's line wrapper measures it, in `font` at
 /// `size`: each character's own, summed.
 pub fn width(text: &str, font: &Font, size: Pixels, cx: &App) -> Pixels {
@@ -185,12 +212,26 @@ fn extension(chars: &[char]) -> Option<usize> {
     (dot > 0 && (2..=EXTENSION).contains(&length) && !chars[dot..].contains(&' ')).then_some(dot)
 }
 
-/// What a line ending before `chars[at]` costs.
-fn cost_of_break(chars: &[char], at: usize, extension: Option<usize>) -> f32 {
-    let (before, after) = (chars[at - 1], chars[at]);
+/// Where each grapheme cluster of `chars` starts, as an index in `chars`:
+/// the only places a line may begin.
+fn clusters(chars: &[char]) -> Vec<usize> {
+    let text: String = chars.iter().collect();
+    let mut at = 0;
+    text.graphemes(true)
+        .map(|cluster| {
+            let start = at;
+            at += cluster.chars().count();
+            start
+        })
+        .collect()
+}
+
+/// What a line costs ending between a cluster starting with `before` and
+/// one starting with `after`, the latter being the extension's dot or not.
+fn cost_of_break(before: char, after: char, at_extension: bool) -> f32 {
     if before == ' ' {
         AT_SPACE
-    } else if extension == Some(at) {
+    } else if at_extension {
         BEFORE_EXTENSION
     } else if apostrophe(after) || opening(before) {
         // Never inside `l'été` or `don't`, nor after an opening bracket.
@@ -290,9 +331,10 @@ fn lines_within(
         return None;
     }
     let mean = prefix[length] / lines as f32;
-    // Where a line may end: after the last space of a run, never inside
-    // the extension; each with what the break costs, and where the line
-    // ending there stops being drawn (the spaces it breaks at left out).
+    // Where a line may end: between two clusters, after the last space of
+    // a run, never inside the extension; each with what the break costs,
+    // and where the line ending there stops being drawn (the spaces it
+    // breaks at left out).
     let mut ends: Vec<(usize, f32, usize)> = vec![(0, 0., 0)];
     let shown = |end: usize| {
         let mut shown = end;
@@ -301,11 +343,13 @@ fn lines_within(
         }
         shown
     };
-    for at in 1..length {
+    for pair in clusters(chars).windows(2) {
+        let (before, at) = (pair[0], pair[1]);
         if chars[at] == ' ' || extension.is_some_and(|dot| at > dot) {
             continue;
         }
-        ends.push((at, cost_of_break(chars, at, extension), shown(at)));
+        let cost = cost_of_break(chars[before], chars[at], extension == Some(at));
+        ends.push((at, cost, shown(at)));
     }
     ends.push((length, 0., shown(length)));
     // best[k][j]: the least the first k lines, the last ending at ends[j],
@@ -429,14 +473,14 @@ mod tests {
         // one less; before the extension's dot, nothing.
         let chars: Vec<char> = "ab-cd.txt".chars().collect();
         let dot = super::extension(&chars);
-        let cost = |at| super::cost_of_break(&chars, at, dot);
+        let cost = |at: usize| super::cost_of_break(chars[at - 1], chars[at], dot == Some(at));
         assert!(cost(2) > super::MID_WORD, "before the hyphen");
         assert!(cost(3) < super::MID_WORD, "after it");
         assert!(cost(1) == super::MID_WORD, "inside a word");
         assert!(cost(5) == 0., "before the extension");
         // Any punctuation or symbol, as Dolphin has them.
         let chars: Vec<char> = "a–b~c(d)e".chars().collect();
-        let cost = |at| super::cost_of_break(&chars, at, None);
+        let cost = |at: usize| super::cost_of_break(chars[at - 1], chars[at], false);
         assert!(cost(1) > super::MID_WORD, "before the dash");
         assert!(cost(2) < super::MID_WORD, "after it");
         assert!(cost(4) < super::MID_WORD, "after the tilde");
@@ -448,7 +492,7 @@ mod tests {
     #[test]
     fn an_apostrophe_holds_what_is_on_either_side() {
         let chars: Vec<char> = "l'été".chars().collect();
-        let cost = |at| super::cost_of_break(&chars, at, None);
+        let cost = |at: usize| super::cost_of_break(chars[at - 1], chars[at], false);
         assert!(cost(1) > super::MID_WORD, "not before it");
         assert!(cost(2) >= super::MID_WORD, "nor cheaply after it");
         // Spaces elsewhere: the lines break at one, the apostrophe kept.
@@ -460,6 +504,81 @@ mod tests {
             !lines[0].ends_with("don") && !lines[1].starts_with('\''),
             "{lines:?}"
         );
+    }
+
+    /// `lines`, as `name` drawn on them: they hold it, cluster by cluster.
+    fn starts_on_a_cluster(name: &str, lines: &[String]) {
+        let clusters: Vec<String> =
+            unicode_segmentation::UnicodeSegmentation::graphemes(name, true)
+                .map(str::to_owned)
+                .collect();
+        let mut at = 0;
+        for line in lines {
+            let mut left = line.as_str();
+            while !left.is_empty() {
+                let cluster = &clusters[at];
+                assert!(
+                    left.starts_with(cluster.as_str()),
+                    "{left:?} is not at a cluster of {name:?}: {cluster:?}"
+                );
+                left = &left[cluster.len()..];
+                at += 1;
+            }
+        }
+        assert_eq!(at, clusters.len(), "{lines:?} of {name:?}");
+    }
+
+    #[test]
+    fn a_line_ends_between_clusters_only() {
+        // An accent typed apart (NFD) is its letter's, however cheap a
+        // separator would be: the line does not stop just after it.
+        let name = "re\u{301}sume\u{301}rapport.pdf";
+        let lines = broken(name, 2, 11.).unwrap();
+        starts_on_a_cluster(name, &lines);
+        assert!(!lines[0].ends_with('\u{301}'), "{lines:?}");
+        // Nor just before it, the mark alone at a line's start.
+        let name = "re\u{301}sume\u{301}_final_draft.pdf";
+        for width in [12., 16., 20.] {
+            let lines = broken(name, 2, width).unwrap();
+            starts_on_a_cluster(name, &lines);
+        }
+        // Devanagari: a conjunct stays whole, never cut after the virama
+        // that joins it, nor before a vowel sign.
+        let name = "क्षत्रियक्षत्रियक्षत्रिय.txt";
+        for width in [15., 16., 18., 20.] {
+            let lines = broken(name, 2, width).unwrap();
+            starts_on_a_cluster(name, &lines);
+            assert!(!lines[0].ends_with('\u{94d}'), "{lines:?}");
+        }
+        // Hangul in jamo (NFD): each jamo is a letter to `char`, a syllable
+        // one cluster, and a balanced end may not land inside it.
+        let name = "\u{1112}\u{1161}\u{11ab}\u{1100}\u{1173}\u{11af}\u{1100}\u{1173}\u{11af}\u{110c}\u{1161}.txt";
+        for width in [9., 10., 12.] {
+            let lines = broken(name, 2, width).unwrap();
+            starts_on_a_cluster(name, &lines);
+        }
+        // Emoji joined by a ZWJ, a flag: one cluster each.
+        let name = "\u{1f469}\u{200d}\u{1f4bb}\u{1f1eb}\u{1f1f7}report_final.txt";
+        starts_on_a_cluster(name, &broken(name, 2, 12.).unwrap());
+    }
+
+    /// No two clusters a line could end between leaves it at a width where
+    /// the characters alone would have fitted: left to gpui, which cuts it.
+    #[test]
+    fn a_cluster_wider_than_a_line_is_left_to_gpui() {
+        let name = "\u{1112}\u{1161}\u{11ab}\u{1100}\u{1173}\u{11af}\u{1100}\u{1173}\u{11af}\u{110c}\u{1161}.txt";
+        assert_eq!(broken(name, 2, 8.), None);
+    }
+
+    #[test]
+    fn a_cluster_is_priced_as_what_it_starts_with() {
+        // An accented lowercase letter into a capital is still a change:
+        // the mark does not hide it.
+        let chars: Vec<char> = "e\u{301}M".chars().collect();
+        let clusters = super::clusters(&chars);
+        assert_eq!(clusters, [0, 2]);
+        let cost = super::cost_of_break(chars[clusters[0]], chars[clusters[1]], false);
+        assert!(cost == super::AT_CHANGE, "into a capital, past the accent");
     }
 
     #[test]

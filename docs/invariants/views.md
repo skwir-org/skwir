@@ -288,8 +288,10 @@ around the views is in [shell.md](shell.md).
   separator, any punctuation or symbol as Dolphin has them, or at a
   change from letters to digits or into a capital, more in the middle of
   a word, most before a separator or an apostrophe, which holds `l'été`
-  together), the extension never split; drawn with those breaks as
-  newlines. Widths are the
+  together), the extension never split; a line ends only between two
+  grapheme clusters, each priced by what it starts with, so an accent
+  typed apart, a virama or a Hangul jamo goes with what it follows;
+  drawn with those breaks as newlines. Widths are the
   wrapper's own (`layout_width`, kept per font and size) less a pixel,
   so gpui wraps nothing more; a name broken is kept, and a frame looks
   it up. One its lines cannot hold, or holding a newline of its own, is

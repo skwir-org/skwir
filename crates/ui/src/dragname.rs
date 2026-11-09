@@ -69,18 +69,18 @@ pub struct Name {
 impl Name {
     pub fn of(text: impl Into<SharedString>, theme: &Theme, window: &Window, cx: &App) -> Self {
         let text = text.into();
-        let shaped = |line: &SharedString| {
+        let shaped = |line: &str| {
             window
                 .text_system()
                 .shape_line(
-                    line.clone(),
+                    SharedString::from(line.to_owned()),
                     painted(window, Text::Body),
                     &[run(line, theme)],
                     None,
                 )
                 .width
         };
-        let own = shaped(&text);
+        let own = widest_line(&text, shaped);
         let most = px(f32::from(at(window, WIDTH - 2. * PAD_X)).floor());
         // In whole pixels and one more: laid out, an edge lands on a whole
         // device pixel, and a box a hair short of the text's width wraps
@@ -96,24 +96,23 @@ impl Name {
         // breaks names (`name_lines`): the pill as wide as the widest, as
         // gpui's text element and its middle truncation measure it.
         let font = gpui::font(theme.font.clone());
-        let lines = lines_at(&text, most, &font, window, cx);
+        let mut wrapper = cx
+            .text_system()
+            .line_wrapper(font.clone(), painted(window, Text::Body));
+        let lines = crate::name_lines::count(&text, most, LINES, &mut wrapper);
         let Some(broken) =
             crate::name_lines::broken(&text, lines, most, &font, painted(window, Text::Body), cx)
         else {
             return Name { inner: most, text };
         };
-        let widest = broken
-            .split('\n')
-            .map(|line| {
-                let line = SharedString::from(line.to_owned());
-                shaped(&line).max(crate::name_lines::width(
-                    &line,
-                    &font,
-                    painted(window, Text::Body),
-                    cx,
-                ))
-            })
-            .fold(px(0.), Pixels::max);
+        let widest = widest_line(&broken, |line| {
+            shaped(line).max(crate::name_lines::width(
+                line,
+                &font,
+                painted(window, Text::Body),
+                cx,
+            ))
+        });
         Name {
             inner: fitted(widest),
             text: broken,
@@ -185,26 +184,10 @@ impl Name {
     }
 }
 
-/// The lines gpui's line wrapper wraps `text` to at `width`, at most
-/// `LINES`, as the grid counts a name's (`GridView::measure`).
-fn lines_at(text: &str, width: Pixels, font: &gpui::Font, window: &Window, cx: &App) -> usize {
-    let mut wrapper = cx
-        .text_system()
-        .line_wrapper(font.clone(), painted(window, Text::Body));
-    text.split('\n')
-        .map(|line| {
-            wrapper
-                .wrap_line(
-                    &[gpui::LineFragment::text(line)],
-                    width,
-                    gpui::IndentAdjustment::NoIndent,
-                )
-                .take(LINES - 1)
-                .count()
-                + 1
-        })
-        .sum::<usize>()
-        .min(LINES)
+/// The widest of `text`'s lines: a name may hold a newline, and `shaped`
+/// measures one line alone.
+fn widest_line(text: &str, shaped: impl Fn(&str) -> Pixels) -> Pixels {
+    text.split('\n').map(shaped).fold(px(0.), Pixels::max)
 }
 
 /// A row of a wrapped line: where it starts and ends along the line, and
@@ -355,4 +338,19 @@ pub fn picture(
 fn rgba(color: gpui::Hsla) -> [u8; 4] {
     let color = color.to_rgb();
     [color.r, color.g, color.b, color.a].map(|c| (c.clamp(0., 1.) * 255.).round() as u8)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_name_is_measured_line_by_line() {
+        let wide = |line: &str| {
+            assert!(!line.contains('\n'), "{line:?} measured as one line");
+            px(line.len() as f32)
+        };
+        assert_eq!(widest_line("a\nlonger line\nb", wide), px(11.));
+        assert_eq!(widest_line("no newline", wide), px(10.));
+    }
 }
