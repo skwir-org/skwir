@@ -893,9 +893,15 @@ fn a_variables_value_is_never_read_as_a_glob() {
 /// private, each its own entry; a tool's home stays the list's first.
 #[test]
 fn a_list_of_credentials_is_private_in_every_element() {
-    if std::env::var_os("KUBECONFIG").is_some() {
-        eprintln!("skipped: this environment sets KUBECONFIG itself");
-        return;
+    // Skwir's own environment comes before the shell's
+    // (`environment::var`), and a CI runner sets CARGO_HOME: the values
+    // learned below are the only ones.
+    // SAFETY: nextest runs each test in a process of its own, and nothing
+    // in it has started a thread that reads the environment yet.
+    #[allow(unsafe_code)]
+    unsafe {
+        std::env::remove_var("KUBECONFIG");
+        std::env::remove_var("CARGO_HOME");
     }
     let tmp = tempfile::tempdir().unwrap();
     let (dev, prod, third) = (
