@@ -19,6 +19,8 @@ mod save;
 
 use crate::sizes::TextSizes;
 use crate::theme::Chosen;
+use std::rc::Rc;
+
 use gpui::{
     AnyElement, Context, Entity, FocusHandle, SharedString, Subscription, Window, div, prelude::*,
     relative,
@@ -1226,7 +1228,7 @@ fn field_row(
             let rows = if open {
                 state.save_rows(at, cx)
             } else {
-                Vec::new()
+                Rc::from([])
             };
             // The popover, under the line and over what follows; nothing
             // to offer, none, rather than one saying so.

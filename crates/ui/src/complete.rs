@@ -196,16 +196,19 @@ pub fn rank(
     typed: &str,
     show_hidden: bool,
 ) -> (Vec<Match>, Option<String>) {
-    rank_at_most(folders, typed, show_hidden, ROWS)
+    rank_at_most(folders, typed, show_hidden, ROWS, |_| true)
 }
 
-/// [`rank`], keeping `most` rows: a list that scrolls (a form's Save as)
-/// shows more than the address field's card.
+/// [`rank`] among the names `keep` holds, keeping `most` rows: a list
+/// that scrolls and offers folders alone (a form's Save as) shows more
+/// than the address field's card, and what it fills in is what those
+/// share.
 pub fn rank_at_most(
     folders: &[Arc<Folder>],
     typed: &str,
     show_hidden: bool,
     most: usize,
+    keep: impl Fn(&Name) -> bool,
 ) -> (Vec<Match>, Option<String>) {
     let rows = most.max(1);
     let lower = typed.to_lowercase();
@@ -235,7 +238,7 @@ pub fn rank_at_most(
     };
     for (f, folder) in folders.iter().enumerate() {
         for (index, n) in folder.names.iter().enumerate() {
-            if n.hidden && !hidden_ok {
+            if (n.hidden && !hidden_ok) || !keep(n) {
                 continue;
             }
             let Some(tier) = tier(n, typed, &lower, sensitive) else {
