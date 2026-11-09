@@ -1437,7 +1437,11 @@ pub struct Settings {
     followed: Mutex<Vec<crate::fs::watch::WatchHandle>>,
     status: Mutex<(u64, SaveState)>,
     /// Advances when the schema or a live value changes, so editors compare
-    /// one atomic instead of re-reading the schema on every frame.
+    /// one atomic instead of re-reading the schema on every frame. What
+    /// skwir keeps of the window (the state file, written as it changes,
+    /// ADR-122) is no setting, and nothing is derived from it: its keys do
+    /// not move this, or each folder changed would work out the theme, the
+    /// keymap and the privacy rules again.
     revision: std::sync::atomic::AtomicU64,
     /// Why the file could not be read, until the app says it
     /// (`take_problem`).
@@ -1881,15 +1885,19 @@ impl Settings {
     /// Drop a dotted key, so its default holds again and the file says it
     /// no more once saved.
     pub fn unset(&self, key: &str) {
+        let state = self.is_state(key);
         let mut pending = self.writer.lock();
         Self::remove(&mut self.values.write(), key);
         pending.insert(key.to_owned());
-        self.bump();
+        if !state {
+            self.bump();
+        }
     }
 
     /// Set a dotted key, creating intermediate tables. Writers run off the UI
     /// thread; use `settings.apply` for user preference changes.
     pub fn set(&self, key: &str, value: toml::Value) {
+        let state = self.is_state(key);
         let mut pending = self.writer.lock();
         match Self::insert(&mut self.values.write(), key, value) {
             Ok(()) => {
@@ -1897,7 +1905,15 @@ impl Settings {
             }
             Err(error) => tracing::warn!(%error, "cannot set setting"),
         }
-        self.bump();
+        if !state {
+            self.bump();
+        }
+    }
+
+    /// Whether `key` is what skwir keeps of the window as it was left: the
+    /// state file (`revision` says what that means for it).
+    fn is_state(&self, key: &str) -> bool {
+        self.kept.read().get(key) == Some(&Store::State)
     }
 
     /// What is wrong in `table`, a settings file's or one to be (Home
