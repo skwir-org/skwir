@@ -173,13 +173,7 @@ fn recalled_slot() -> Option<skwir_core::cache::CacheSlot> {
     let names_remotes = std::env::vars_os().any(|(name, _)| {
         name != "RCLONE_CONFIG_PASS" && name.as_encoded_bytes().starts_with(b"RCLONE_CONFIG_")
     });
-    (!names_remotes).then(|| {
-        skwir_core::cache::Cache::new(
-            skwir_core::cache::Cache::default_root().join(skwir_core::cache::LAYOUT.to_string()),
-        )
-        .namespace(crate::ID)
-        .within("rclone-listed")
-    })
+    (!names_remotes).then(|| crate::cache().namespace(crate::ID).within("rclone-listed"))
 }
 
 /// The servers the last start listed of `key`, where nothing has changed

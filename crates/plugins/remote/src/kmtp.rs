@@ -157,11 +157,7 @@ impl Kmtp {
     /// The cache folder the helper keeps what it reads and writes in,
     /// unnamed.
     fn cache() -> PathBuf {
-        skwir_core::cache::Cache::new(
-            skwir_core::cache::Cache::default_root().join(skwir_core::cache::LAYOUT.to_string()),
-        )
-        .namespace(crate::ID)
-        .folder("kmtp")
+        crate::cache().namespace(crate::ID).folder("kmtp")
     }
 
     /// Mount the phone kmtpd holds at `address` through the helper.

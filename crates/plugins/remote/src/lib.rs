@@ -1524,6 +1524,20 @@ struct ThumbnailsArgs {
     rule: String,
 }
 
+/// The cache of the app the plugin was registered in: what its connectors
+/// keep beyond a connection (what rclone listed, a phone's files) stays in
+/// that app's own, and they are built with no `App` at hand. Before any
+/// registration, the system's.
+static CACHE: Mutex<Option<skwir_core::cache::Cache>> = Mutex::new(None);
+
+fn cache() -> skwir_core::cache::Cache {
+    use skwir_core::cache::{Cache, LAYOUT};
+    CACHE
+        .lock()
+        .clone()
+        .unwrap_or_else(|| Cache::new(Cache::default_root().join(LAYOUT.to_string())))
+}
+
 impl Plugin for RemotePlugin {
     fn id(&self) -> &'static str {
         ID
@@ -1568,6 +1582,7 @@ impl Plugin for RemotePlugin {
     }
 
     fn register(&self, app: &App) {
+        *CACHE.lock() = Some(app.cache.clone());
         for transfer in self.remotes.connectors.iter().flat_map(|c| c.transfers()) {
             app.transfers.register(ID, transfer);
         }
@@ -2251,6 +2266,17 @@ impl WindowAsk {
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// What the connectors keep is in the cache of the app they serve,
+    /// and an app with a cache of its own leaves the system's alone.
+    #[test]
+    fn connectors_keep_what_they_keep_in_the_app_s_own_cache() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = super::App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        let plugin = super::RemotePlugin::with(super::Remotes::with(Vec::new()));
+        app.plugins.add(std::sync::Arc::new(plugin), &app);
+        assert_eq!(super::cache().root(), app.cache.root());
+    }
 
     /// Automatic: Always near, Small files near where the program reads a
     /// file whole, and Small files elsewhere once reads proved the server
