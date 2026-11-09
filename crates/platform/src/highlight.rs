@@ -559,10 +559,10 @@ impl Palette {
 /// as [`Highlighter`] takes it: the name's extension, or the name where it
 /// has none. Most languages have no signature, so the name stays the first
 /// word: a grammar that knows it colors the file. A name none knows says
-/// nothing of how the file reads, and what descends from XML in the
-/// database reads as XML, the bytes having said so or the database knowing
-/// the dialect (`.ofx`, `.xliff`, a `.dat` that declares itself). Grammars
-/// are asked only of what is XML. May read what bat's set holds: a worker's
+/// nothing of how the file reads, and its type speaks instead, the bytes
+/// having settled it or the database knowing the name
+/// (`language_of_type`: a `.ofx` that declares itself XML, a script without
+/// an extension, a `.geojson`). May read what bat's set holds: a worker's
 /// work.
 pub fn language_of(path: &Path, mime: Option<&str>) -> Option<String> {
     let token = path
@@ -570,11 +570,33 @@ pub fn language_of(path: &Path, mime: Option<&str>) -> Option<String> {
         .or_else(|| path.file_name())?
         .to_string_lossy()
         .into_owned();
-    let is_xml = mime.is_some_and(|mime| crate::mime::is_xml(&crate::mime::Mime(mime.to_owned())));
-    if is_xml && !grammar_knows(path, &token) {
+    let by_type = mime
+        .filter(|_| !grammar_knows(path, &token))
+        .and_then(|mime| language_of_type(&crate::mime::Mime(mime.to_owned())));
+    Some(by_type.unwrap_or(token))
+}
+
+/// What a file of type `mime` is colored as where its name says nothing.
+/// What descends from XML is XML, before any extension of its own: SMIL's
+/// `.sml` is also Standard ML's. Else the nearest type it descends from
+/// that is text and has an extension a grammar colors and the database
+/// gives to that very type: `.t` is Perl's, for all that troff claims it.
+fn language_of_type(mime: &crate::mime::Mime) -> Option<String> {
+    use crate::mime::{Kind, by_name, extensions, is_kind, is_xml, lineage};
+    if is_xml(mime) {
         return Some("xml".to_owned());
     }
-    Some(token)
+    let table = added::table_now();
+    lineage(mime)
+        .iter()
+        .filter(|kin| is_kind(kin, Kind::Text))
+        .find_map(|kin| {
+            extensions(kin).into_iter().find(|extension| {
+                table.colors(extension).is_some()
+                    && by_name(std::ffi::OsStr::new(&format!("file.{extension}"))).as_ref()
+                        == Some(kin)
+            })
+        })
 }
 
 /// Whether a grammar colors the file at `path` by its name: bat's, for

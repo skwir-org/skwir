@@ -210,6 +210,11 @@ fn a_file_that_is_xml_is_read_as_xml_whatever_its_name() {
     // The bytes say nothing of OFX 1 (SGML, no declaration).
     let older = "OFXHEADER:100\nDATA:OFXSGML\n\n<OFX>\n<CODE>0\n</OFX>\n";
     assert_eq!(language("older.ofx", older).as_deref(), Some("ofx"));
+    // Not only XML: a script's first line says what it is.
+    assert_eq!(
+        language("l'été", "#!/bin/sh\necho hi\n").as_deref(),
+        Some("sh")
+    );
 }
 /// A byte order mark or UTF-16 hides nothing of what a file declares.
 #[test]

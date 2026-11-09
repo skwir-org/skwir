@@ -5,6 +5,9 @@
 - **XML under another name is colored as XML** (#8): a `.ofx` that declares
   itself XML, a dialect such as `.xliff`, `.xsl`, `.atom` or `.rdf`, or a file
   with no extension. A name a grammar knows keeps its colors.
+- **Code colors follow a file's type where its name says nothing**: a script
+  with no extension by its `#!` line, and JSON, Python or Lisp files under names
+  of their own, such as `.geojson`, `.har` or `.wsgi`.
 - **Files in UTF-16 or with a byte order mark** are recognized by what they
   declare: XML, and scripts by their `#!` line.
 - **CSV files separated by semicolons** (#9), tabs or pipes show as their

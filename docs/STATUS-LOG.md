@@ -13686,3 +13686,26 @@ the bytes as before; `identify`, `by_content` and `settle` go through it.
   clippy on the touched crates, Linux and Windows.
 - **Not checked:** under Wine, the disk being nearly full; no line of it differs by
   system.
+
+## 2026-11-09: Code colors follow a file's type where its name says nothing
+
+The XML fallback of #8 made general. `highlight::language_of`: the name's grammar,
+else what descends from XML is `xml`, else the nearest type that is text and has
+an extension bat colors and `mime::by_name` gives to that very type.
+
+- XML stays first: SMIL has its own `.sml`, which bat reads as Standard ML.
+- The guard was measured three ways on the installed database. None: `.roff` and
+  `.tr` got Perl through `.t`, which the database gives to Perl. An extension with
+  one claimant: GeoJSON, HAR and glTF fell to JavaScript, `.json` having two.
+  Resolving to that very type: neither.
+- Bat's table only, so nothing loads the grammars: a language only a tree-sitter
+  grammar knows is not reached through a type.
+- **Measured** (a throwaway test of `language_of` itself, the installed database):
+  of 244 text extensions no grammar knows, 54 read as XML, 35 through their type
+  (JSON dialects, `.mkd`, `.wsgi`, `.har`), 155 stay as they were. Approximate, not
+  wrong: `.csh` gets Bash's colors, `.json5` JavaScript's.
+- **Checked:** `where_no_grammar_knows_a_name_its_type_says_how_it_reads`, a script
+  with no extension through the wired previews; the platform, print and models
+  crates' 514 tests, the 30 of `skwir-ui`'s preview, `extended_previews` and
+  `any_file`; clippy on the touched crates, Linux and Windows.
+- **Not checked:** in a window; under Wine, where `by_name` asks the registry first.

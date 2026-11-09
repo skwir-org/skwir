@@ -1832,6 +1832,41 @@ mod tests {
         );
     }
 
+    /// Where no grammar knows a name, a type's nearest extension that one
+    /// colors and the database gives to that very type.
+    #[test]
+    fn where_no_grammar_knows_a_name_its_type_says_how_it_reads() {
+        let dir = tempfile::tempdir().unwrap();
+        let cancel = CancelToken::new();
+        let language = |name: &str, mime: &str| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, "text\n").unwrap();
+            plain(&held(&path), Some(mime), &cancel)
+                .unwrap()
+                .text
+                .unwrap()
+                .language
+        };
+        let script = "application/x-shellscript";
+        assert_eq!(language("l'été", script).as_deref(), Some("sh"));
+        assert_eq!(
+            language("map.geojson", "application/geo+json").as_deref(),
+            Some("json"),
+            "through what it descends from"
+        );
+        assert_eq!(
+            language("show.smil", "application/smil+xml").as_deref(),
+            Some("xml"),
+            "XML before an extension of its own, `.sml`"
+        );
+        // `.t` is what a grammar knows of troff, and the database's for Perl.
+        assert_eq!(language("a.roff", "text/troff").as_deref(), Some("roff"));
+        // Plain text has nothing to say.
+        assert_eq!(language("a.cfg", "text/plain").as_deref(), Some("cfg"));
+        // A name a grammar knows is never recolored.
+        assert_eq!(language("a.rs", script).as_deref(), Some("rs"));
+    }
+
     #[test]
     fn text_is_decoded_by_its_mark_else_utf8_else_windows_1252() {
         assert_eq!(decode(b"plain"), (Cow::Borrowed("plain"), Encoding::Utf8));
