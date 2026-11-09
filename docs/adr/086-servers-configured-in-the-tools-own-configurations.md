@@ -24,8 +24,9 @@ secret.
 
 1. **The tools' configurations are the store.** A remote added in Skwir
    is rclone's, in rclone's own configuration file, where `rclone` in a
-   terminal finds it too; Skwir keeps no copy, no list, no secret of it.
-   Its name is one its address holds (`rclone://name/`: ASCII letters,
+   terminal finds it too; Skwir keeps no copy, no list, no secret of it
+   (but for the cache of what rclone last printed, Amended 2026-11-09,
+   below). Its name is one its address holds (`rclone://name/`: ASCII letters,
    digits, `_ - . +`).
 2. **Changes go through rclone's remote control on a private socket.**
    A short-lived `rclone rcd` serves it on a socket of the user's
@@ -161,3 +162,23 @@ section, and Bookmarks kept for what they bookmarked, local or remote.
   out and said so.
 - Not migrated: adding by address was a day old and unreleased, so only
   tests had kept a server as a bookmark.
+
+### 2026-11-09: what rclone listed is cached between starts
+
+Every start ran rclone twice, `config file` and `listremotes --long`:
+about half of the user-space CPU a start took where rclone is installed
+(measured with `perf` on one machine, on workers, so no later first
+frame). What a run knows was kept in memory only.
+
+- What `listremotes --long` printed (names and types, no secret) is
+  kept in the deletable cache between starts, with the path rclone gave and the stamps of its configuration file and its
+  program. It is used only while both stamps are those it was read with;
+  what no longer holds is deleted when found. F5 asks rclone.
+- **It is not a store**: rclone's file stays the only place a remote is
+  kept. Nothing goes in the cache but what rclone said, and deleting it
+  costs only those two runs. A new configuration placed where rclone
+  looks first, with the old one unchanged, is seen at F5.
+- **Nothing is kept of an encrypted configuration**, whose names the user
+  chose not to leave in the clear, nor where the environment names
+  remotes of its own (`RCLONE_CONFIG_NAS_TYPE`), which no file's stamp
+  tells of. Those are asked at each start, as before.

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Skwir starts lighter where rclone is installed**: it no longer runs rclone
+  twice at each start to list your remotes, while its configuration is
+  unchanged. An encrypted configuration is still asked each time, its names
+  never written down, and F5 in the Network section asks again.
 - **A search can show as a tree**: in the Tree view, what `Ctrl+F` finds is laid
   out under its folders, which fold; those only on the way are dimmed, and are
   left out of Select All. The List view stays flat.

@@ -611,7 +611,13 @@ pub fn encrypted(
     cancel: &CancelToken,
 ) -> anyhow::Result<bool> {
     let path = config_file(rclone, with, cancel)?;
-    match std::fs::File::open(&path) {
+    Ok(file_encrypted(&path)?)
+}
+
+/// Whether the configuration at `path` is encrypted: its first line says
+/// so. One not made yet is not.
+pub(crate) fn file_encrypted(path: &Path) -> std::io::Result<bool> {
+    match std::fs::File::open(path) {
         Ok(file) => {
             use std::io::BufRead as _;
             let mut first = String::new();
@@ -619,7 +625,7 @@ pub fn encrypted(
             Ok(first.trim_end() == ENCRYPTED)
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(error.into()),
+        Err(error) => Err(error),
     }
 }
 

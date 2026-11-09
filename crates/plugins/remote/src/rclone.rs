@@ -98,6 +98,21 @@ type ListedKey = (PathBuf, Option<PathBuf>);
 /// A configuration file's length and date, `None` where there is none.
 type Stamp = Option<(u64, Option<SystemTime>)>;
 
+/// The stamp of the file at `path`, and whether it was written long enough
+/// ago ([`SETTLED`]) for what names it to be kept.
+fn stamp_of(path: &Path) -> (Stamp, bool) {
+    match std::fs::metadata(path) {
+        Ok(meta) => {
+            let modified = meta.modified().ok();
+            let settled = modified
+                .and_then(|m| m.elapsed().ok())
+                .is_some_and(|age| age >= SETTLED);
+            (Some((meta.len(), modified)), settled)
+        }
+        Err(_) => (None, true),
+    }
+}
+
 /// What `rclone listremotes` last said of a configuration: where its file
 /// is, as rclone said, and the servers it named while the file had a
 /// stamp. Asked again only once the file changed, or when told to forget
@@ -112,6 +127,115 @@ struct Listed {
     /// open) gives meanwhile, the sidebar keeping its servers until the
     /// next refresh asks again.
     last: Option<Vec<Server>>,
+    /// Whether what the last start left ([`Recalled`]) was looked at: once
+    /// a run, so that F5 asks rclone.
+    recalled: bool,
+}
+
+/// What rclone said of its own configuration, kept in the cache for the
+/// next start: without it every start ran rclone twice (where its file is,
+/// what the file names), about half of the CPU a start took. It is what
+/// `listremotes --long` printed, names and types; good only for the very
+/// file it was read from and the very rclone that read it, and never kept
+/// of an encrypted configuration, whose names are not to be written in
+/// the clear (ADR-086).
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Recalled {
+    program: (PathBuf, Stamp),
+    file: PathBuf,
+    stamp: Stamp,
+    said: String,
+}
+
+/// Which rclone a [`Recalled`] was read with: its file, followed to the
+/// end (a package's update moves it), and that file's stamp.
+fn program_of(rclone: &Path) -> (PathBuf, Stamp) {
+    let real = std::fs::canonicalize(rclone).unwrap_or_else(|_| rclone.to_path_buf());
+    let stamp = stamp_of(&real).0;
+    (real, stamp)
+}
+
+/// Where a [`Recalled`] of `key` is kept, by what decides which file
+/// rclone reads besides the key: its variable and the user's folders.
+fn recalled_key(key: &ListedKey) -> Vec<u8> {
+    format!(
+        "{key:?}\0{:?}\0{:?}",
+        std::env::var_os("RCLONE_CONFIG"),
+        skwir_platform::xdg::config_home()
+    )
+    .into_bytes()
+}
+
+/// The cache's corner for [`Recalled`], `None` where the environment
+/// names remotes of its own (`RCLONE_CONFIG_NAS_TYPE`): no file's stamp
+/// tells when those change.
+fn recalled_slot() -> Option<skwir_core::cache::CacheSlot> {
+    let names_remotes = std::env::vars_os().any(|(name, _)| {
+        name != "RCLONE_CONFIG_PASS" && name.as_encoded_bytes().starts_with(b"RCLONE_CONFIG_")
+    });
+    (!names_remotes).then(|| {
+        skwir_core::cache::Cache::new(
+            skwir_core::cache::Cache::default_root().join(skwir_core::cache::LAYOUT.to_string()),
+        )
+        .namespace(crate::ID)
+        .within("rclone-listed")
+    })
+}
+
+/// The servers the last start listed of `key`, where nothing has changed
+/// since. What no longer holds is deleted, so that a configuration
+/// encrypted since leaves no names behind it.
+fn recalled(key: &ListedKey, slot: &skwir_core::cache::CacheSlot) -> Option<Vec<Server>> {
+    let first = with_listed(key, |listed| !std::mem::replace(&mut listed.recalled, true));
+    if !first {
+        return None;
+    }
+    let stored = recalled_key(key);
+    let record = slot.get(&stored)?;
+    let record = serde_json::from_slice::<Recalled>(&record)
+        .ok()
+        .filter(|r| r.program == program_of(&key.0) && r.stamp == stamp_of(&r.file).0);
+    let Some(record) = record else {
+        if let Err(error) = slot.remove(&stored) {
+            tracing::debug!(%error, "forgetting what rclone listed");
+        }
+        return None;
+    };
+    let servers = remotes(&record.said);
+    with_listed(key, |listed| {
+        listed.file = Some(record.file);
+        listed.said = Some((record.stamp, servers.clone()));
+        listed.last = Some(servers.clone());
+    });
+    Some(servers)
+}
+
+/// Keep what rclone `said` of `key`'s `file` for the next start, unless
+/// the file is encrypted (or cannot be told not to be).
+fn remember(
+    key: &ListedKey,
+    slot: &skwir_core::cache::CacheSlot,
+    file: &Path,
+    stamp: Stamp,
+    said: &str,
+) {
+    let stored = recalled_key(key);
+    let done = if matches!(crate::rclone_config::file_encrypted(file), Ok(false)) {
+        let record = Recalled {
+            program: program_of(&key.0),
+            file: file.to_path_buf(),
+            stamp,
+            said: said.to_owned(),
+        };
+        serde_json::to_vec(&record)
+            .map_err(std::io::Error::other)
+            .and_then(|record| slot.put(&stored, &record))
+    } else {
+        slot.remove(&stored)
+    };
+    if let Err(error) = done {
+        tracing::debug!(%error, "keeping what rclone listed");
+    }
 }
 
 /// What `rclone listremotes` said, by rclone and configuration: the last
@@ -139,12 +263,18 @@ pub(crate) fn forget_listed() {
 /// (`file`, which may ask rclone). A listing that failed is not kept, nor
 /// one of a file written just now; one of a file rclone cannot place is
 /// asked every time, as before. A listing that fails gives the servers
-/// last listed (`Listed::last`): asked again at the next refresh.
+/// last listed (`Listed::last`): asked again at the next refresh. With
+/// `across_starts`, what the last start listed is used where it still
+/// holds, and what is listed kept for the next ([`Recalled`]).
 fn servers_listed(
     key: &ListedKey,
     file: impl FnOnce() -> Option<PathBuf>,
-    list: impl FnOnce() -> Option<Vec<Server>>,
+    list: impl FnOnce() -> Option<String>,
+    across_starts: Option<&skwir_core::cache::CacheSlot>,
 ) -> Vec<Server> {
+    if let Some(servers) = across_starts.and_then(|slot| recalled(key, slot)) {
+        return servers;
+    }
     let known = LISTED
         .lock()
         .iter()
@@ -155,18 +285,9 @@ fn servers_listed(
         with_listed(key, |listed| listed.file = Some(found.clone()));
         Some(found)
     }) else {
-        return or_last(key, list());
+        return or_last(key, list().as_deref().map(remotes));
     };
-    let (stamp, settled) = match std::fs::metadata(&path) {
-        Ok(meta) => {
-            let modified = meta.modified().ok();
-            let settled = modified
-                .and_then(|m| m.elapsed().ok())
-                .is_some_and(|age| age >= SETTLED);
-            (Some((meta.len(), modified)), settled)
-        }
-        Err(_) => (None, true),
-    };
+    let (stamp, settled) = stamp_of(&path);
     let kept = LISTED
         .lock()
         .iter()
@@ -177,13 +298,17 @@ fn servers_listed(
     if let Some(servers) = kept {
         return servers;
     }
-    let servers = list();
+    let said = list();
+    let servers = said.as_deref().map(remotes);
     with_listed(key, |listed| {
         listed.said = servers
             .as_ref()
             .filter(|_| settled)
             .map(|servers| (stamp, servers.clone()));
     });
+    if let (Some(slot), Some(said), true) = (across_starts, said.as_deref(), settled) {
+        remember(key, slot, &path, stamp, said);
+    }
     or_last(key, servers)
 }
 
@@ -207,7 +332,7 @@ fn or_last(key: &ListedKey, listed: Option<Vec<Server>>) -> Vec<Server> {
 }
 
 /// Change what is kept of the configuration `key` names, made if none is.
-fn with_listed(key: &ListedKey, change: impl FnOnce(&mut Listed)) {
+fn with_listed<R>(key: &ListedKey, change: impl FnOnce(&mut Listed) -> R) -> R {
     let mut all = LISTED.lock();
     let at = if let Some(at) = all.iter().position(|(k, _)| k == key) {
         at
@@ -218,7 +343,7 @@ fn with_listed(key: &ListedKey, change: impl FnOnce(&mut Listed)) {
         all.push((key.clone(), Listed::default()));
         all.len() - 1
     };
-    change(&mut all[at].1);
+    change(&mut all[at].1)
 }
 
 /// `rclone` run with `config` where one is named.
@@ -424,13 +549,16 @@ impl Connector for Rclone {
             &key,
             || crate::rclone_config::config_file(&rclone, self, cancel).ok(),
             || self.listed(&rclone, cancel),
+            // The user's own: what a start reads. One a test or a form
+            // names is listed when it asks.
+            self.config.is_none().then(recalled_slot).flatten().as_ref(),
         )
     }
 }
 
 impl Rclone {
-    /// The servers `rclone listremotes` names, `None` where it failed.
-    fn listed(&self, rclone: &Path, cancel: &CancelToken) -> Option<Vec<Server>> {
+    /// What `rclone listremotes` prints, `None` where it failed.
+    fn listed(&self, rclone: &Path, cancel: &CancelToken) -> Option<String> {
         // An encrypted configuration is opened with the password the
         // keyring keeps for it, where the user asked (ADR-086); never asked
         // of the window: nobody asked to see it.
@@ -460,7 +588,7 @@ impl Rclone {
         };
         match finished {
             Ok(finished) if finished.status.success() => {
-                Some(remotes(&String::from_utf8_lossy(&finished.stdout)))
+                Some(String::from_utf8_lossy(&finished.stdout).into_owned())
             }
             Ok(finished) => {
                 tracing::debug!("rclone listremotes: {}", finished.stderr.trim());
@@ -1070,8 +1198,9 @@ mod tests {
                 },
                 || {
                     listed.set(listed.get() + 1);
-                    answer.map(remotes)
+                    answer.map(str::to_owned)
                 },
+                None,
             )
             .len()
         };
@@ -1127,8 +1256,9 @@ mod tests {
                     || file.clone(),
                     || {
                         listed.set(listed.get() + 1);
-                        answer.map(remotes)
+                        answer.map(str::to_owned)
                     },
+                    None,
                 )
                 .into_iter()
                 .map(|server| server.address.host)
@@ -1144,6 +1274,141 @@ mod tests {
             assert_eq!(ask(Some("")), Vec::<String>::new(), "none: {key:?}");
             assert!(ask(None).is_empty(), "{key:?}");
         }
+    }
+
+    /// A start runs no rclone for a configuration unchanged since the
+    /// last, and asks again once the file or the program changed, after
+    /// F5, and after a failure. Of an encrypted configuration nothing is
+    /// kept, and what was kept before it was encrypted goes. Counted, with
+    /// rclone stood in for; a new start is what this run knows forgotten.
+    #[test]
+    fn a_start_finds_what_the_last_one_listed_while_it_still_holds() {
+        use std::cell::Cell;
+        let folder = tempfile::tempdir().unwrap();
+        let config = folder.path().join("rclone.conf");
+        let program = folder.path().join("rclone");
+        std::fs::write(&program, "one").unwrap();
+        let write = |path: &Path, text: &str| {
+            std::fs::write(path, text).unwrap();
+            std::fs::File::options()
+                .write(true)
+                .open(path)
+                .unwrap()
+                .set_modified(SystemTime::now() - Duration::from_secs(60))
+                .unwrap();
+        };
+        write(&config, "[nas]\ntype = sftp\n");
+        let cache = skwir_core::cache::Cache::new(folder.path().join("cache"));
+        let slot = cache.namespace("remote").within("rclone-listed");
+        let key = (program.clone(), None);
+        let new_start = || LISTED.lock().retain(|(k, _)| *k != key);
+        let (found, listed) = (Cell::new(0), Cell::new(0));
+        let ask = |answer: Option<&str>| -> Vec<String> {
+            servers_listed(
+                &key,
+                || {
+                    found.set(found.get() + 1);
+                    Some(config.clone())
+                },
+                || {
+                    listed.set(listed.get() + 1);
+                    answer.map(str::to_owned)
+                },
+                Some(&slot),
+            )
+            .into_iter()
+            .map(|server| server.address.host)
+            .collect()
+        };
+        new_start();
+        assert_eq!(ask(Some("nas: sftp")), ["nas"]);
+        assert_eq!((found.get(), listed.get()), (1, 1), "the first start asks");
+
+        new_start();
+        assert_eq!(ask(None), ["nas"], "what the last start said");
+        assert_eq!(ask(None), ["nas"], "and within the run");
+        assert_eq!((found.get(), listed.get()), (1, 1), "no rclone run");
+
+        forget_listed();
+        assert_eq!(ask(Some("nas: sftp\nbox: s3")), ["nas", "box"]);
+        assert_eq!((found.get(), listed.get()), (2, 2), "F5 asks rclone");
+
+        new_start();
+        write(
+            &config,
+            "[nas]\ntype = sftp\n[box]\ntype = s3\n[c]\ntype = s3\n",
+        );
+        assert_eq!(ask(Some("c: s3")), ["c"], "the file changed");
+        assert_eq!(listed.get(), 3);
+
+        new_start();
+        write(&program, "two, an update");
+        assert_eq!(ask(Some("c: s3")), ["c"], "the program changed");
+        assert_eq!(listed.get(), 4);
+
+        new_start();
+        write(&config, "[only]\ntype = s3\n");
+        assert_eq!(ask(None), Vec::<String>::new(), "failed, nothing to give");
+        assert_eq!(listed.get(), 5);
+        assert!(
+            slot.get(&recalled_key(&key)).is_none(),
+            "what no longer holds is deleted"
+        );
+        new_start();
+        assert_eq!(ask(Some("only: s3")), ["only"], "a failure was not kept");
+        assert_eq!(listed.get(), 6);
+        assert!(slot.get(&recalled_key(&key)).is_some());
+
+        // Encrypted since: what names its remotes is gone at the next
+        // start, and nothing is written of it after.
+        new_start();
+        write(
+            &config,
+            "# Encrypted rclone configuration File\n\nRCLONE_ENCRYPT_V0:\nabc\n",
+        );
+        assert_eq!(ask(Some("secret: s3")), ["secret"]);
+        assert!(slot.get(&recalled_key(&key)).is_none(), "not in the clear");
+        new_start();
+        assert_eq!(ask(Some("secret: s3")), ["secret"]);
+        assert_eq!(listed.get(), 8, "asked at each start");
+        assert!(slot.get(&recalled_key(&key)).is_none());
+    }
+
+    /// Where rclone has no configuration yet, that is remembered too: a
+    /// start asks nothing of an rclone installed and never set up, until
+    /// a configuration appears.
+    #[test]
+    fn a_start_asks_nothing_of_an_rclone_with_no_configuration() {
+        use std::cell::Cell;
+        let folder = tempfile::tempdir().unwrap();
+        let config = folder.path().join("rclone.conf");
+        let slot = skwir_core::cache::Cache::new(folder.path().join("cache"))
+            .namespace("remote")
+            .within("rclone-listed");
+        let key = (folder.path().join("no-such-rclone"), None);
+        let new_start = || LISTED.lock().retain(|(k, _)| *k != key);
+        let listed = Cell::new(0);
+        let ask = |answer: &str| {
+            servers_listed(
+                &key,
+                || Some(config.clone()),
+                || {
+                    listed.set(listed.get() + 1);
+                    Some(answer.to_owned())
+                },
+                Some(&slot),
+            )
+            .len()
+        };
+        new_start();
+        assert_eq!(ask(""), 0);
+        new_start();
+        assert_eq!(ask(""), 0);
+        assert_eq!(listed.get(), 1, "no file, as when last asked");
+        std::fs::write(&config, "[nas]\ntype = sftp\n").unwrap();
+        new_start();
+        assert_eq!(ask("nas: sftp"), 1, "a configuration appeared");
+        assert_eq!(listed.get(), 2);
     }
 
     /// A password command whose path holds spaces and a quote is run

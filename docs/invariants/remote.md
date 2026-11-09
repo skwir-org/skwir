@@ -411,6 +411,11 @@ ADR-077 (which revises ADR-021).
   while), never by writing the file. Skwir keeps no list or secret of
   it. A session a Skwir gone left serving is stopped by the next one
   (`config-<pid>-<n>.sock`).
+- A start runs no rclone for a configuration unchanged (`rclone::Recalled`,
+  ADR-086, amended): what `listremotes --long` last printed is in the
+  cache with the stamps of the file and the program, good only while
+  both hold, deleted when they do not, passed over by F5. Never of an
+  encrypted configuration, nor where the environment names remotes.
 - A secret goes to rclone in a request's body, a password command's
   answer or its environment, never a command line. It reaches the plugin
   only from the window's form (`App::fill`): a command's arguments never
