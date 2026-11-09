@@ -111,9 +111,11 @@ pub fn of_parts(inode_type: Option<&str>, type_name: &OsStr) -> Option<Mime> {
 }
 
 /// Whether the name leaves the type to the bytes: several types claim it
-/// equally ([`by_name`]). No I/O.
+/// equally ([`by_name`]), or the system's registry and the database
+/// contradict each other about it ([`identify`]). No I/O.
 pub fn ambiguous(name: &OsStr) -> bool {
-    candidates(name).len() > 1
+    let claims = claims(name);
+    claims.types.len() > 1 || !claims.overruled.is_empty()
 }
 
 /// Selections no larger than this have each name asked as it is.
@@ -174,9 +176,21 @@ fn suffix(name: &str) -> Option<&str> {
 /// type claims is that type. A name several claim is settled by the magic
 /// among them (a Vorbis `.ogg` is Vorbis, a Theora one a film), and stays
 /// the name's answer when the bytes do not choose. A name no type claims is
-/// [`by_content`]'s. Reads the head of the file: call from a worker.
+/// [`by_content`]'s. A name the system's registry and the database
+/// contradict each other about is [`settle`]d by the bytes. Reads the head
+/// of the file: call from a worker.
 pub fn identify<S: FileSource + ?Sized>(name: &OsStr, file: &S) -> Option<Mime> {
-    let candidates = candidates(name);
+    let Claims {
+        types: mut candidates,
+        overruled,
+    } = claims(name);
+    if !overruled.is_empty() {
+        let said = candidates.pop()?;
+        return Some(match head(file) {
+            Some(head) => settle(said, &overruled, &head),
+            None => said,
+        });
+    }
     if candidates.len() < 2 {
         return match candidates.into_iter().next() {
             Some(only) => Some(only),
@@ -1015,10 +1029,26 @@ fn system_type(name: &OsStr) -> Option<Mime> {
     })
 }
 
-/// The types a name makes equally likely: the system's answer, or what
-/// the database's own answers make of it more precisely (`refine`).
-fn candidates(name: &OsStr) -> Vec<Mime> {
+/// What a name says of a file's type.
+#[derive(Debug)]
+struct Claims {
+    /// The types it makes equally likely: the system's answer, or what the
+    /// database's own answers make of it more precisely.
+    types: Vec<Mime>,
+    /// What the database says of the name where the system's answer, then
+    /// alone in `types`, contradicts it: empty where they agree or only
+    /// one of them knows the name.
+    overruled: Vec<Mime>,
+}
+
+/// What the system's registry and the database say of `name`.
+fn claims(name: &OsStr) -> Claims {
     refine(system_type(name), database::candidates(name))
+}
+
+/// The types a name makes equally likely (`Claims::types`).
+fn candidates(name: &OsStr) -> Vec<Mime> {
+    claims(name).types
 }
 
 /// The system's answer `said` and the database's `known` for one name.
@@ -1026,20 +1056,54 @@ fn candidates(name: &OsStr) -> Vec<Mime> {
 /// precisely: its types that descend from the system's (a `.tar.gz` the
 /// system calls gzip is a compressed tar; a `.js` an editor registered as
 /// plain text is JavaScript). Where none does, the system's answer
-/// stands alone; where the system says nothing, the database's.
-fn refine(said: Option<Mime>, known: Vec<Mime>) -> Vec<Mime> {
+/// stands alone, and the database's are kept for the bytes to weigh
+/// against it ([`settle`]); where the system says nothing, the database's.
+fn refine(said: Option<Mime>, known: Vec<Mime>) -> Claims {
     let Some(said) = said else {
-        return known;
+        return Claims {
+            types: known,
+            overruled: Vec::new(),
+        };
     };
-    let refined: Vec<Mime> = known
-        .into_iter()
-        .filter(|m| database::is_a(m, &said))
-        .collect();
-    if refined.is_empty() {
-        vec![said]
+    let (types, overruled): (Vec<Mime>, Vec<Mime>) =
+        known.into_iter().partition(|m| database::is_a(m, &said));
+    if types.is_empty() {
+        Claims {
+            types: vec![said],
+            overruled,
+        }
     } else {
-        refined
+        Claims {
+            types,
+            overruled: Vec::new(),
+        }
     }
+}
+
+/// The type of a file whose name the system's answer `said` and the
+/// database's `known` contradict each other about, by its first bytes.
+/// The registry holds what the application that took an extension wrote
+/// there, which may be its own format and not the file's: Excel names a
+/// `.csv` `application/vnd.ms-excel`, its binary workbooks' type. The bytes
+/// are asked as [`by_content`] asks them, their magic and then whether
+/// they are text, and each answer tried in turn: `said` stands if it agrees
+/// (a workbook renamed `.csv` is an OLE file), else the `known` that does
+/// (text is `text/csv`), else `said`, as it does by name alone.
+fn settle(said: Mime, known: &[Mime], head: &[u8]) -> Mime {
+    for found in [database::magic(head), Some(text_or_binary(head))]
+        .iter()
+        .flatten()
+    {
+        let agrees = |m: &Mime| database::is_a(m, found) || database::is_a(found, m);
+        if agrees(&said) {
+            return said;
+        }
+        let fitting: Vec<Mime> = known.iter().filter(|m| agrees(m)).cloned().collect();
+        if let Some(fits) = database::representative(fitting) {
+            return fits;
+        }
+    }
+    said
 }
 
 /// The first bytes of a regular file, as much as sniffing reads.
@@ -1413,33 +1477,78 @@ mod tests {
         // A compressed tar the system calls gzip; JavaScript an editor
         // registered as plain text.
         assert_eq!(
-            refine(Some(m("application/gzip")), known("a.tar.gz")),
+            refine(Some(m("application/gzip")), known("a.tar.gz")).types,
             [m("application/x-compressed-tar")]
         );
-        assert_eq!(refine(Some(m("text/plain")), known("a.js")), known("a.js"));
-        assert!(!known("a.js").contains(&m("text/plain")));
-        // The database's answer says something else: the system's stands.
         assert_eq!(
-            refine(Some(m("image/png")), known("a.txt")),
-            [m("image/png")]
+            refine(Some(m("text/plain")), known("a.js")).types,
+            known("a.js")
         );
+        assert!(!known("a.js").contains(&m("text/plain")));
+        // The database's answer says something else: the system's stands,
+        // the database's kept for the bytes to weigh.
+        let contradicted = refine(Some(m("image/png")), known("a.txt"));
+        assert_eq!(contradicted.types, [m("image/png")]);
+        assert_eq!(contradicted.overruled, [m("text/plain")]);
         // The database's several answers within the system's stay, for the
         // bytes to choose among; those outside it go.
         let ogg = refine(Some(m("audio/ogg")), known("a.ogg"));
-        assert!(ogg.contains(&m("audio/x-vorbis+ogg")), "{ogg:?}");
-        assert!(!ogg.contains(&m("video/x-theora+ogg")), "{ogg:?}");
-        // One silent: the other's.
-        assert_eq!(refine(None, known("a.png")), [m("image/png")]);
-        assert_eq!(
-            refine(Some(m("application/x-skwir-test")), Vec::new()),
-            [m("application/x-skwir-test")]
-        );
+        assert!(ogg.types.contains(&m("audio/x-vorbis+ogg")), "{ogg:?}");
+        assert!(!ogg.types.contains(&m("video/x-theora+ogg")), "{ogg:?}");
+        assert!(ogg.overruled.is_empty(), "no contradiction: {ogg:?}");
+        // One silent: the other's, and nothing to weigh.
+        let silent = refine(None, known("a.png"));
+        assert_eq!(silent.types, [m("image/png")]);
+        assert!(silent.overruled.is_empty());
+        let unknown = refine(Some(m("application/x-skwir-test")), Vec::new());
+        assert_eq!(unknown.types, [m("application/x-skwir-test")]);
+        assert!(unknown.overruled.is_empty());
         assert!(database::knows(&m("image/png")));
         assert!(
             database::knows(&m("application/x-zip-compressed")),
             "an alias"
         );
         assert!(!database::knows(&m("application/x-skwir-test")));
+    }
+
+    /// What the registry says and what the database says of a name, each
+    /// sure of it, are weighed by the bytes: the type an application wrote
+    /// for a format it only opens gives way to the file's own, and a file
+    /// of that application's stands, under any name.
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn the_bytes_settle_what_the_system_and_the_database_contradict() {
+        const OLE: &[u8] = b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1\0\0\0\0";
+        let m = |name: &str| Mime(name.to_owned());
+        let excel = || m("application/vnd.ms-excel");
+        let csv = [m("text/csv")];
+        // Excel's name for a `.csv`, on what a `.csv` holds, in the
+        // encodings a spreadsheet writes.
+        for text in [
+            &b"name;price\ncafe;3,50\n"[..],
+            &b"name;price\ncaf\xe9;3,50\n"[..],
+            &[0xFF, 0xFE, b'a', 0, b';', 0, b'b', 0, b'\n', 0][..],
+        ] {
+            assert_eq!(settle(excel(), &csv, text), m("text/csv"), "{text:?}");
+        }
+        // Text whose start looks like another format's is still text.
+        assert_eq!(
+            settle(excel(), &csv, b"From date;To date\n1;2\n"),
+            m("text/csv")
+        );
+        // A workbook of the application's, renamed.
+        assert_eq!(settle(excel(), &csv, OLE), excel());
+        // Bytes the database's answer does not fit either: as by name.
+        assert_eq!(settle(excel(), &csv, b"\x7fELF\0\0\0\0"), excel());
+        // Between two binary formats, the magic says which.
+        assert_eq!(
+            settle(
+                m("application/x-skwir-test"),
+                &[m("image/png")],
+                b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR"
+            ),
+            m("image/png")
+        );
     }
 
     /// The database read on Windows, where `just test-windows` puts one
@@ -1513,6 +1622,47 @@ mod tests {
         assert_eq!(by_name(OsStr::new("a.skwir-nothing")), None);
         // What Explorer calls them: the name of the class they open as.
         assert_eq!(qz.description().as_deref(), Some("Skwir test picture"));
+    }
+
+    /// Writes the registry, as Excel does for a format it only opens: in
+    /// Wine's scratch prefix alone (`just test-windows`), and under a
+    /// name no other test types, for they run at once.
+    #[test]
+    #[cfg(windows)]
+    fn on_windows_the_bytes_settle_a_type_the_registry_contradicts() {
+        use crate::windows::classes;
+        struct Classes;
+        impl Drop for Classes {
+            fn drop(&mut self) {
+                classes::remove(".csvs");
+            }
+        }
+        if std::env::var_os("SKWIR_TEST_UNDER_WINE").is_none() {
+            eprintln!("skipped: writes the registry; only in Wine's scratch prefix");
+            return;
+        }
+        assert!(found_database().is_some(), "test-windows.sh puts one there");
+        let _classes = Classes;
+        classes::set(".csvs", "Content Type", "application/vnd.ms-excel");
+        let name = OsStr::new("l'été.csvs");
+        let excel = Some("application/vnd.ms-excel");
+        // By name, as Explorer says; left to the bytes where they are read.
+        assert_eq!(by_name(name).as_ref().map(Mime::as_str), excel);
+        assert!(ambiguous(name));
+        let dir = tempfile::tempdir().unwrap();
+        let typed = |bytes: &[u8]| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, bytes).unwrap();
+            identify(name, path.as_path()).map(|m| m.0)
+        };
+        assert_eq!(
+            typed(b"name;price\ncafe;3,50\n").as_deref(),
+            Some("text/csv-schema")
+        );
+        assert_eq!(
+            typed(b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1\0\0\0\0").as_deref(),
+            excel
+        );
     }
 
     #[test]

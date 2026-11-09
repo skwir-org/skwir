@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **CSV files on Windows with Excel installed** show as tables: the system
+  calls them Excel workbooks, and the preview now goes by what the file holds
+  when the two disagree.
 - **Exclusions, one list of what Skwir treats apart** (#6): Settings ›
   Exclusions lists the folders tools fill with what they manage themselves, by kind
   (version control, project environments, build output, toolchains and

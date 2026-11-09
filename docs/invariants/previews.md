@@ -115,6 +115,11 @@ A name that says nothing is not a binary file.
   never a guess from the name. It is all the hex preview accepts.
 - A declared type counts only as far as the bytes agree
   (`preview::compute`): text is read as text whatever its name.
+- A name the system's registry and the database contradict each other
+  about is ambiguous, and the bytes the panel reads first settle it
+  (ADR-037, amended; `mime::identify`): with Excel installed Windows
+  calls a `.csv` an Excel workbook, which a text file is not. A row and
+  an icon keep what the registry says.
 - Text is what `inspection::decode` reads: UTF-8 without NUL, else UTF-16
   by its byte order mark or Windows-1252, if free of control characters
   (an old zip's `.txt` is Latin-1).

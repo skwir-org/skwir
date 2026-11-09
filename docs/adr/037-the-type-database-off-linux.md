@@ -4,7 +4,8 @@ Status: accepted, 2026-10-06 (Phase 5, step E; ADR-035). Proposed
 2026-10-05 with three options; the user chose the system's registry
 where it can answer, shared-mime-info as the fallback. Built: tested on
 Linux and under Wine; the macOS reader is compiled, never run. ADR-042
-(Skwir under Apache-2.0 alone) changes nothing here.
+(Skwir under Apache-2.0 alone) changes nothing here. Amended 2026-11-09:
+where the bytes are read, they settle a contradiction (below).
 
 ## Context
 
@@ -38,7 +39,7 @@ types onto Skwir's, no GPL data; (3) a small permissive table.
 
 | Question | Answered by |
 |---|---|
-| Type by name | The system's type for the extension (macOS: declared `UTType`, its preferred MIME name; Windows: `HKEY_CLASSES_ROOT\.ext` `Content Type`). The database may only refine it with a descendant (`.tar.gz` gzip → compressed tar; `.js` as plain text → JavaScript; Ogg types chosen by bytes). On contradiction the system wins (`.ts` is what Windows says). Names the system does not know (no extension, `Makefile`) are the database's. |
+| Type by name | The system's type for the extension (macOS: declared `UTType`, its preferred MIME name; Windows: `HKEY_CLASSES_ROOT\.ext` `Content Type`). The database may only refine it with a descendant (`.tar.gz` gzip → compressed tar; `.js` as plain text → JavaScript; Ogg types chosen by bytes). On contradiction the system wins by name (`.ts` is what Windows says), and the bytes settle it where they are read (amended, below). Names the system does not know (no extension, `Makefile`) are the database's. |
 | Type by bytes | The database's magic, then text-or-binary, everywhere. |
 | Display name | The system, in the user's language (`localizedDescription`, `FRIENDLYDOCNAME`); else the database's untranslated comment. |
 | Canonical name | The database's aliases, since providers and queries speak them (`mime::Types`, `kind:`): Windows' `application/x-zip-compressed` is `application/zip`. Unknown to the database: the system's name. |
@@ -68,7 +69,8 @@ types onto Skwir's, no GPL data; (3) a small permissive table.
 
 - A file can have another type or kind on macOS or Windows than on
   Linux: what that system's applications say (ADR-000, principle 4). A
-  wrongly registered extension is wrong in Skwir too, as in Explorer.
+  wrongly registered extension is wrong in Skwir too, as in Explorer,
+  wherever the bytes are not read (a row, an icon, `kind:`).
 - Without the database (a source build with none installed), macOS and
   Windows still type and name files by name, but read no bytes, know no
   hierarchy beyond the system's, and `kind:` is the system's alone.
@@ -80,3 +82,27 @@ types onto Skwir's, no GPL data; (3) a small permissive table.
   under Wine, in its scratch prefix (the test writes the registry, so
   runs nowhere else). macOS's `UTType` reader is compiled, never run
   (5b); its conformance table is unverified.
+
+## Amended 2026-11-09: the bytes settle a contradiction
+
+The registry holds what the application that took an extension wrote
+there, which may be its own format and not the file's. With Excel
+installed a `.csv` is `application/vnd.ms-excel`, the type of its binary
+workbooks: the database's `text/csv` does not descend from it, so the
+system won, the preview's table reader did not take the file, and the
+office documents' preview did and could not show it.
+
+A name the two contradict each other about (the system's type, and
+database types for the name none of which descends from it) now counts
+as ambiguous (`mime::ambiguous`), and what reads the bytes settles it
+(`mime::identify`, `settle`), by the magic and then by whether they are
+text: the system's type if the bytes agree with it (a workbook renamed
+`.csv` is an OLE file), else the database's that does, else the
+system's. What is typed by name alone (a row, an icon, `kind:`) keeps
+the system's answer, in Explorer's words. Linux has no second registry,
+so nothing changes there.
+
+Tested on Linux with the database (`settle`), and under Wine with the
+type written to the scratch prefix's registry under a name no other
+test types. What Excel writes in a real registry is known from outside
+this project; Skwir has not run on Windows with Office.

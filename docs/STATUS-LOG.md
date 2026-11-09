@@ -13594,3 +13594,23 @@ the pane then hid those with a dot name.
   systems (Windows, macOS). Seen on Xvfb: a search's results gaining
   `.dot.txt` and `.dir/inside.txt` at Ctrl+H, losing them at the next.
 
+## 2026-11-09: The bytes settle what the registry and the database contradict
+
+Found while answering issue #9: with Excel installed, Windows' registry calls
+a `.csv` `application/vnd.ms-excel`. `refine` let the system win, so the table
+reader did not take the file and the office preview did, which has no sandbox
+to convert it in on Windows.
+
+- A name the two contradict each other about is `mime::ambiguous`, and
+  `identify` settles it by the head (`settle`): the magic, then text or binary,
+  each tried on the system's type and then the database's. By name alone
+  (rows, icons, `kind:`) the system's answer stands. ADR-037 amended.
+- **Checked:** `settle` with the real database on Linux (text in UTF-8,
+  Windows-1252 and UTF-16, a start like mbox's, an OLE head, an ELF head, a
+  PNG between two binary types); under Wine, `just test-windows -p
+  skwir-platform on_windows`, the type written to the scratch prefix's registry
+  for `.csvs`, a name no other test types (`.csv` is typed by tests running at
+  once); clippy on the platform crate, Linux and Windows; its tests.
+- **Not checked:** what a real registry holds with Office installed (known from
+  outside the project), and a window on Windows. That a `text/csv` goes to the
+  table reader is `format_providers_never_compete_for_the_same_file`'s, on Linux.
