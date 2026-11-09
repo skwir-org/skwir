@@ -1,0 +1,111 @@
+#!/bin/sh
+# The linker a `dist` build of skwir goes through on x86-64 Linux (ADR-128).
+#
+# Linux maps 64 KiB around a fault in a program's code, so code a start
+# runs, scattered over the binary, keeps most of the binary resident for
+# good. Laid out together it takes a quarter of that. The list of what a
+# start runs is tools/build/startup-order.txt (`just startup-order`, before
+# a release); it names functions demangled, because a symbol's hashes
+# depend on how its crate was built. So skwir is linked once, the names
+# are found in its symbol table, and it is linked again in that order, by
+# lld, whose `--symbol-ordering-file` takes exact symbols.
+#
+# Anything else this linker is given is the real linker's, untouched, and
+# whatever stops the second link leaves the first: a binary out of order
+# is a heavier one, never a broken one.
+#
+# The real linker is $SKWIR_REAL_LINKER (order-link-env.sh sets it).
+set -u
+real=${SKWIR_REAL_LINKER:-cc}
+nm=${NM:-nm}
+here=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+list=${SKWIR_STARTUP_ORDER:-$here/startup-order.txt}
+
+# Whether rustc gave `$1`, on the command line or in a response file.
+given() {
+    wanted=$1
+    shift
+    for arg in "$@"; do
+        [ "$arg" = "$wanted" ] && return 0
+        case $arg in
+        @*) grep -qxF -- "$wanted" "${arg#@}" 2>/dev/null && return 0 ;;
+        esac
+    done
+    return 1
+}
+
+# The file being made: what follows `-o`.
+output=
+previous=
+for arg in "$@"; do
+    [ "$previous" = -o ] && output=$arg
+    previous=$arg
+done
+if [ -z "$output" ]; then
+    for arg in "$@"; do
+        case $arg in
+        @*) output=$(sed -n '/^-o$/{n;p;q;}' "${arg#@}") ;;
+        esac
+    done
+fi
+
+# Only skwir itself, `deps/skwir-<hash>`: another crate's name has a dash
+# or a letter past `f` after `skwir-`.
+name=${output##*/}
+case $name in
+skwir- | skwir-*[!0-9a-f]*) exec "$real" "$@" ;;
+skwir-*) ;;
+*) exec "$real" "$@" ;;
+esac
+
+"$real" "$@" || exit
+
+# What is said is shown as a warning of the build: only what went wrong.
+note() { echo "link-ordered: $*" >&2; }
+
+[ -r "$list" ] || {
+    note "no $list: linked as it comes"
+    exit 0
+}
+given -fuse-ld=lld "$@" || {
+    note "rustc did not use lld: linked as it comes"
+    exit 0
+}
+
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/skwir-order.XXXXXX") || exit 0
+trap 'rm -rf "$tmp"' EXIT
+LC_ALL=C "$nm" --defined-only "$output" >"$tmp/mangled" &&
+    LC_ALL=C "$nm" -C --defined-only "$output" >"$tmp/demangled" || {
+    note "cannot read its symbols: linked as it comes"
+    exit 0
+}
+
+# One line of each file, a tab between: "address type mangled" and
+# "address type demangled name, which holds spaces".
+paste "$tmp/mangled" "$tmp/demangled" | LC_ALL=C awk -F '\t' -v list="$list" '
+{
+    split($1, parts, " ")
+    if (parts[2] !~ /^[tTwW]$/) next
+    key = $2
+    sub(/^[^ ]+ [^ ]+ /, "", key)
+    found[key] = (key in found) ? found[key] "\n" parts[3] : parts[3]
+}
+END {
+    while ((getline line < list) > 0)
+        if (line in found) {
+            print found[line]
+            delete found[line]
+        }
+}' >"$tmp/order"
+
+[ -s "$tmp/order" ] || {
+    note "the list names nothing in it: linked as it comes"
+    exit 0
+}
+cp "$output" "$tmp/unordered" || exit 0
+"$real" "$@" -fuse-ld=lld "-Wl,--symbol-ordering-file=$tmp/order" \
+    -Wl,--no-warn-symbol-ordering || {
+    note "the second link failed: linked as it comes"
+    mv "$tmp/unordered" "$output"
+}
+exit 0

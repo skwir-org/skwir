@@ -590,7 +590,8 @@ just macos-sdk             Apple's macOS SDK, by xmac, for building for macOS (y
 just test-windows          the Windows build's tests under Wine (args go to nextest)
 just prune                 what no build uses any more, out of target/debug (--dry-run)
 just bench-check           generate bench-data/ on demand and enforce budgets
-just idle-pss              idle memory and first frame on this display (ADR-033)
+just idle-pss              idle memory and first frame of the `dist` build on this display (ADR-033)
+just startup-order         what a start runs, in order, for `dist` builds to lay out together (ADR-128); before tagging
 just smoke                 the release window on an X display of its own (CI)
 just a11y-check            what a screen reader hears of it, read over AT-SPI
 just remote-check          remote folders against servers on this machine (sshfs, GVfs, KIO, rclone from nixpkgs; NFS and AFP in namespaces; AFC against a stand-in iPhone; servers found nearby on a network of its own)

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Less memory at rest on Linux**, about 30 MiB: the code a start runs is
+  now laid out together in the program, so the rest of it is no longer
+  loaded along with it.
 - **Skwir starts lighter where rclone is installed**: it no longer runs rclone
   twice at each start to list your remotes, while its configuration is
   unchanged. An encrypted configuration is still asked each time, its names

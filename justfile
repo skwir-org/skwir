@@ -50,7 +50,7 @@ build-all:
 # Build what is shipped: skwir and every helper, without debug info, into
 # target/dist (the `dist` profile). Helpers sit beside skwir, where it finds them.
 dist:
-    cargo build --profile dist $(sed 's/^/-p /' tools/package/programs)
+    . tools/build/order-link-env.sh && cargo build --profile dist $(sed 's/^/-p /' tools/package/programs)
 
 # Build the plugins from outside skwir this workspace holds as WebAssembly
 # modules, into target/plugins (ADR-046): SKWIR_PLUGIN_PATH=$PWD/target/plugins.
@@ -348,8 +348,23 @@ bench-check *args:
 
 # Idle memory and first frame (ADR-033) on this display; close other skwir first.
 idle-pss:
-    cargo build --release -p skwir
+    . tools/build/order-link-env.sh && cargo build --profile dist -p skwir
     tools/measure/idle-pss.py
+
+# Make tools/build/startup-order.txt: what a start runs, in order, which
+# `dist` builds lay out together (ADR-128). Before tagging, after the last
+# fix. Traces real starts on displays of its own; needs Intel PT.
+startup-order *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    nixpkgs() { nix build --no-link --print-out-paths --inputs-from 'git+file://{{justfile_directory()}}' "nixpkgs#$1"; }
+    . tools/build/order-link-env.sh
+    cargo build --profile dist -p skwir
+    tools/build/startup_order.py \
+        --sway "$(nixpkgs sway)/bin/sway" \
+        --xvfb "$(nixpkgs xorg.xorgserver)/bin/Xvfb" \
+        --icd "$(nixpkgs mesa)/share/vulkan/icd.d/lvp_icd.x86_64.json" \
+        --perf "$(nixpkgs perf)/bin/perf" {{args}}
 
 # Build both toolkit spikes.
 spike-build:

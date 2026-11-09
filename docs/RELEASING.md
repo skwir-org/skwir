@@ -33,7 +33,12 @@ workers, check performance or build packages.
    below it every change in full. A short section without the heading
    is shown whole. Only stable
    `v<major>.<minor>.<patch>` tags are currently supported.
-3. Run `just release-metadata v0.1.0`, review and commit the release source,
+3. After the last fix, run `just startup-order` and commit
+   `tools/build/startup-order.txt`: what a start of skwir runs, which the
+   packages lay out together (ADR-128). It traces real starts on displays
+   of its own and needs a CPU with Intel PT. A list left stale makes the
+   packages heavier, not wrong.
+4. Run `just release-metadata v0.1.0`, review and commit the release source,
    then create its tag (`git tag -a v0.1.0 -m 'Release 0.1.0'`). Check out
    that commit. Builds and uploads require HEAD to equal the tag and the
    tree to be clean, including untracked files. Ignored build outputs do

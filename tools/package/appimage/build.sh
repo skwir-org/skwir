@@ -7,6 +7,7 @@ source_date="$1"
 export CARGO_TARGET_DIR=/build/target
 export CARGO_INCREMENTAL=0
 python3 tools/package/appimage/gstreamer.py
+. tools/build/order-link-env.sh
 # SQLite built in: Ubuntu 22.04's is older than rusqlite needs, and the
 # systems the AppImage runs on may be as old (ADR-022).
 # shellcheck disable=SC2046 # the shared list is one package per line

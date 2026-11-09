@@ -13802,3 +13802,39 @@ its first hit, as a search would find it; the Name pill holds at this level.
 - **Not checked:** a very large tree's feel, `just bench-check`, `just idle-pss`,
   `just release-check`; a screen reader on the tree; Windows and macOS compiled
   only.
+
+## 2026-11-09: Code laid out in the order a start runs it (ADR-128), rclone asked less
+
+Why idle memory followed code size, from Intel Processor Trace and
+pagemap on the released tarballs, on a headless sway with Intel's driver
+(not the session): see ADR-128. 0.2.0 to 0.3.0 alternated, own share 74.3
+to 85.6 MiB (binary +9.9, anonymous +1.9, threads 47 to 54). The live heap
+at idle (heaptrack, a system-allocator build, the window killed) is 20 MiB:
+the GPU stack 10.7 (Intel's command buffers 6.4), the toolkit 4.2, other
+Skwir code 2.5, the MIME database 1.0, the exclusions' tables 0.8.
+
+- **Built:** `tools/build/link-ordered` and `order-link-env.sh` (`just dist`,
+  `idle-pss`, Debian's, Fedora's, the AppImage's and the AUR's builds),
+  `tools/build/startup_order.py` (`just startup-order`), the list, a build
+  script line that links skwir again when it changes. `rclone::Recalled`:
+  what `listremotes --long` printed is cached between starts.
+- **Measured** (same commit, 3 alternated rounds, first start of each
+  filling the caches): the binary 61.5 and 31.9 MiB, its code 51.9 and 22.4,
+  code windows resident 834 and 360, first frame 58.4 and 55.9 ms. Own share
+  read 94.8 and 62.2 in that run, the first holding 3 MiB more anonymous
+  memory than the build read in the run before (91.5), which is no effect
+  of the layout. A list made 74 commits earlier recovered half. Startup CPU where rclone
+  is installed: rclone was 49 % of user-space cycles (of 0.48 G).
+- **Seen in a window:** two starts on a headless sway under `strace`, a
+  synthetic rclone configuration: the first runs `rclone config file` and
+  `listremotes --long`, the second runs neither; what the cache holds is the
+  names and types, mode 600. `tools/test/smoke.py` passed on the ordered
+  `dist` binary (X11, software Vulkan).
+- **Checked:** rustfmt; clippy `-D warnings` and 135 tests on
+  `skwir-plugin-remote` (two new tests of the cache, the encrypted case
+  included); `tools/build` 20 tests (the wrapper with a linker and `nm`
+  stood in for, the list's order), `tools/release` 38.
+- **Not checked:** `just idle-pss` on the session's display (NVIDIA), the
+  budget's reading; memory after use; `just release-check` and the packages'
+  builds (`just package-*`) through the wrapper; a build outside the dev shell.
+  macOS and Windows are neither built nor measured for this.

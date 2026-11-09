@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Measure skwir's idle memory as ADR-033 budgets it, and its first frame.
 
-Starts the release binary on the display of the current session (the
-reference machine's Wayland session for the gate), on a four-entry folder,
+Starts the binary that ships (the `dist` profile, laid out by ADR-128's
+list) on the display of the current session (the reference machine's
+Wayland session for the gate), on a four-entry folder,
 with XDG directories of its own: once to fill the caches (the GPU driver's
 shader cache, skwir's), then RUNS times. Each start idles IDLE seconds; its
 PSS is read from /proc/<pid>/smaps and split by mapping. The budget is on
@@ -10,7 +11,7 @@ skwir's own share: everything but the GPU driver's code (the user-space
 driver, the Vulkan ICDs and their LLVM), whose share of PSS depends on the
 GPU vendor and on how many other GPU clients map it, not on skwir.
 
-    tools/measure/idle-pss.py [--binary target/release/skwir] [--runs 3]
+    tools/measure/idle-pss.py [--binary target/dist/skwir] [--runs 3]
 
 Exits 1 when the median own share is over the budget. Another process
 running the same binary file shares its pages and lowers the reading, so
@@ -123,7 +124,7 @@ def main():
         return 0
     root = Path(__file__).resolve().parents[2]
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("--binary", default=str(root / "target/release/skwir"))
+    parser.add_argument("--binary", default=str(root / "target/dist/skwir"))
     parser.add_argument("--runs", type=int, default=3)
     parser.add_argument("--idle", type=float, default=15.0)
     args = parser.parse_args()

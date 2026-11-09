@@ -26,6 +26,7 @@ x86_64) platform=linux-x64 ;;
 aarch64) platform=linux-arm64 ;;
 *) echo "no PDFium is pinned for $(uname -m)" >&2; exit 1 ;;
 esac
+. tools/build/order-link-env.sh
 # shellcheck disable=SC2046 # one `-p name` per program
 cargo build --locked --profile dist $(sed 's/^/-p /' tools/package/programs)
 tools/package/pdfium.sh "$platform" target/pdfium

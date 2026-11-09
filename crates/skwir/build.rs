@@ -3,6 +3,8 @@ include!("../../tools/build/identity.rs");
 
 fn main() {
     emit_build();
+    // What the linker lays out first (ADR-128): a new list links skwir again.
+    println!("cargo::rerun-if-changed=../../tools/build/startup-order.txt");
     windows_icon::embed();
 }
 

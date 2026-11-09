@@ -929,14 +929,17 @@ leave (ADR-077).
 **From the releases of 0.3.0 and 0.3.1** (2026-11-03 and 11-05,
 `docs/STATUS-LOG.md`):
 - Idle memory misses ADR-000's budget: 103.7 MiB of own share for 0.3.0
-  against 0.2.0's 91.3, on the session's display, and 103.8 for 0.3.1. Most of it is the binary: its
-  code grew from 54 to 68 MiB and in both releases about 86 % of it is
-  resident at idle, so idle memory follows code size. Find why so much
-  of it is resident (more than an idle program runs), or make it
-  smaller, until `just idle-pss` is green again.
-- `just idle-pss` measures the dev build (`target/release`), whose first
-  frame read 177 to 184 ms while the shipped tarballs read 137 to 170
-  the same evening: why it starts slower is not known.
+  against 0.2.0's 91.3, on the session's display, and 103.8 for 0.3.1.
+  Why was found and a fix built (ADR-128): the kernel keeps resident the
+  64 KiB around each piece of scattered code a start runs. `dist` builds
+  now lay that code out together, the binary reading 31.9 MiB against
+  61.5 on a headless sway. Left: **`just idle-pss` read on the session's
+  display**, the gate, not measured since; what use brings back (the list
+  covers a start, not browsing); the Nix package, macOS and Windows,
+  which are not laid out.
+- Why a build of `target/release` starts slower than the shipped tarballs
+  (first frame 177 to 184 ms against 137 to 170 the same evening) is not
+  known. `just idle-pss` now measures `dist`, what ships.
 
 **From a folder appearing whole** (ADR-120, 2026-11-06):
 - A listing whose order no longer holds (an entry renamed or hidden in
