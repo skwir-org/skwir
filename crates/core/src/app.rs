@@ -3578,13 +3578,7 @@ mod builtin {
                         match (pos(anchor), at_in(&order, target, a.at)) {
                             (Some(a), Some(b)) => {
                                 let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
-                                // A folder drawn only as the way to what
-                                // was found is selected by name alone.
-                                let range: Vec<EntryId> = order[lo..=hi]
-                                    .iter()
-                                    .copied()
-                                    .filter(|id| !p.is_way(*id) || *id == target)
-                                    .collect();
+                                let range = p.covered(order[lo..=hi].iter().copied(), Some(target));
                                 if matches!(mode, SelectMode::AddRange) {
                                     for id in range {
                                         p.selection.add(id);
@@ -3606,9 +3600,10 @@ mod builtin {
                     SelectMode::Follow => {
                         if let Some(&target) = ids.last() {
                             let order = p.order();
+                            let (selection, ways) = p.selecting();
                             match at_in(&order, target, a.at) {
-                                Some(at) => p.selection.follow_at(target, at, &order),
-                                None => p.selection.follow(target, &order),
+                                Some(at) => selection.follow_at(target, at, &order, ways),
+                                None => selection.follow(target, &order, ways),
                             }
                         }
                     }
@@ -3719,9 +3714,7 @@ mod builtin {
                 // not selected, or a Delete would take them unseen.
                 let ids = p.order();
                 let cursor = p.selection.cursor;
-                // A folder drawn only as the way to what was found is not
-                // what was found: a Delete must not take it whole.
-                let ids: Vec<EntryId> = ids.iter().copied().filter(|id| !p.is_way(*id)).collect();
+                let ids = p.covered(ids.iter().copied(), None);
                 p.selection.set(ids);
                 p.selection.cursor = cursor.or(p.selection.cursor);
                 Ok(Outcome::Done)
@@ -3742,11 +3735,13 @@ mod builtin {
                     .pane_mut(pane)
                     .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
                 let order = p.order();
-                let inverted: Vec<EntryId> = order
-                    .iter()
-                    .copied()
-                    .filter(|id| !p.selection.contains(*id))
-                    .collect();
+                let inverted = p.covered(
+                    order
+                        .iter()
+                        .copied()
+                        .filter(|id| !p.selection.contains(*id)),
+                    None,
+                );
                 let cursor = p.selection.cursor;
                 p.selection.set(inverted);
                 p.selection.cursor = cursor.or(p.selection.cursor);
@@ -3783,9 +3778,10 @@ mod builtin {
                     .pane_mut(pane)
                     .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
                 let order = p.order();
-                match p.selection.cursor.and_then(|cursor| at_in(&order, cursor, a.at)) {
-                    Some(at) => p.selection.sweep_start_at(a.unset, at, &order),
-                    None => p.selection.sweep_start(a.unset, &order),
+                let (selection, ways) = p.selecting();
+                match selection.cursor.and_then(|cursor| at_in(&order, cursor, a.at)) {
+                    Some(at) => selection.sweep_start_at(a.unset, at, &order, ways),
+                    None => selection.sweep_start(a.unset, &order, ways),
                 }
                 Ok(Outcome::Done)
             },

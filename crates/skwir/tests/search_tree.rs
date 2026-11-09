@@ -1,6 +1,6 @@
 //! A search laid out as the tree of its folders, the Tree view's way of
 //! showing it: the same hits, each under its folders, the folders on the
-//! way dimmed and never selected by a range or Select All.
+//! way dimmed, and only naming one selects it.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -144,6 +144,66 @@ fn a_search_is_laid_out_under_its_folders() {
         "only the way asked for"
     );
 
+    // Nor does Invert, however it comes: a Delete would take them whole.
+    run(
+        &app,
+        "select",
+        &serde_json::json!({ "ids": [top], "mode": "replace", "pane": pane }),
+    );
+    run(&app, "select_invert", &serde_json::json!({ "pane": pane }));
+    assert_eq!(
+        selected(&app, pane),
+        ["x.txt", "y.txt"].map(str::to_owned).into_iter().collect(),
+        "Invert leaves the ways"
+    );
+
+    // A sweep passes over them, the row it starts on and the one it ends on.
+    let (x, y) = (id_of(&app, pane, "x.txt"), id_of(&app, pane, "y.txt"));
+    run(
+        &app,
+        "select",
+        &serde_json::json!({ "ids": [top], "mode": "replace", "pane": pane }),
+    );
+    run(&app, "select_sweep", &serde_json::json!({ "pane": pane }));
+    for id in [y, x, a] {
+        run(
+            &app,
+            "select",
+            &serde_json::json!({ "ids": [id], "mode": "follow", "pane": pane }),
+        );
+    }
+    assert_eq!(
+        selected(&app, pane),
+        ["top.txt", "x.txt", "y.txt"]
+            .map(str::to_owned)
+            .into_iter()
+            .collect(),
+        "a sweep leaves the ways"
+    );
+    run(
+        &app,
+        "select_sweep_end",
+        &serde_json::json!({ "pane": pane }),
+    );
+
+    // A rubber band covers rows as Select All does; naming one still works.
+    {
+        let ws = app.workspace.read();
+        let p = ws.pane(pane).unwrap();
+        let order = p.order();
+        assert_eq!(p.covered(order.iter().copied(), None).len(), 3, "no way");
+    }
+    run(
+        &app,
+        "select",
+        &serde_json::json!({ "ids": [a], "mode": "replace", "pane": pane }),
+    );
+    assert_eq!(
+        selected(&app, pane),
+        ["a"].map(str::to_owned).into_iter().collect(),
+        "a click names it"
+    );
+
     // Closed, a folder keeps what is under it; the cursor comes back to it.
     run(
         &app,
@@ -160,6 +220,10 @@ fn a_search_is_laid_out_under_its_folders() {
         app.workspace.read().pane(pane).unwrap().selection.cursor,
         Some(a),
         "the cursor inside goes back to the folder closed"
+    );
+    assert!(
+        selected(&app, pane).is_empty(),
+        "the cursor goes back to it, the selection does not"
     );
     run(
         &app,

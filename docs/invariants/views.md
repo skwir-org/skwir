@@ -179,8 +179,11 @@ around the views is in [shell.md](shell.md).
   (`PaneView::lays_found_out_as_tree`): the flat order stays the source
   (`Pane::flat_order`) and `Pane::order` reads the tree a worker made of
   it. Its folders on the way are lent (`Pane::is_way`), so what acts on a
-  selection never takes one unseen: Select All skips them and a range
-  takes one only when it ends on it. Count what was found with
+  selection never takes one unseen: only naming one selects it (a click,
+  an arrow, the end of a range). What passes over rows goes through
+  `Pane::covered` (Select All, Invert, a range, a rubber band) or is
+  given `Pane::ways` (a sweep, the neighbour a cursor goes to): it leaves
+  them. Count what was found with
   `Pane::found_count`, never the order's length. Folding is local to the
   tree (`Pane::fold`): nothing is opened.
 - Only a view that says `opens_in_place` keeps them open; the shell

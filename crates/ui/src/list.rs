@@ -1405,11 +1405,7 @@ impl Shell {
             // key or the other pane's menu may have moved it meanwhile).
             let pane = drag.pane;
             self.with_pane(pane, |shell| {
-                let sorted = std::sync::Arc::clone(&shell.ui().list.sorted);
-                let covered: Vec<EntryId> = covered
-                    .iter()
-                    .filter_map(|index| sorted.get(*index).copied())
-                    .collect();
+                let covered = shell.band_covers(&covered);
                 let Some(drag) = shell.marquee.as_mut() else {
                     return;
                 };
@@ -1452,6 +1448,19 @@ impl Shell {
         cx.notify();
     }
 
+    /// What a band covering the rows at `covered` takes of them, in the
+    /// order shown (`Pane::covered`).
+    fn band_covers(&self, covered: &[usize]) -> Vec<EntryId> {
+        let sorted = &self.ui().list.sorted;
+        let rows = covered
+            .iter()
+            .filter_map(|index| sorted.get(*index).copied());
+        let ws = self.app.workspace.read();
+        ws.pane(self.pane)
+            .map(|p| p.covered(rows, None))
+            .unwrap_or_default()
+    }
+
     /// The band let go: what it selected is settled as one band replacing
     /// the selection would have it, what was kept first, then what it
     /// covers in the order shown (which the changes it sent as it moved
@@ -1464,13 +1473,8 @@ impl Shell {
         if drag.sent.is_some() {
             let pane = drag.pane;
             self.with_pane(pane, |shell| {
-                let sorted = &shell.ui().list.sorted;
                 let mut ids = drag.kept;
-                ids.extend(
-                    drag.covered
-                        .iter()
-                        .filter_map(|index| sorted.get(*index).copied()),
-                );
+                ids.extend(shell.band_covers(&drag.covered));
                 let args = SelectArgs {
                     ids,
                     mode: SelectMode::Replace,

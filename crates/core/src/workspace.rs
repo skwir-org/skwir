@@ -247,12 +247,12 @@ impl Selection {
     }
 
     /// Move the cursor to `id`, `order` being the pane's sorted order: a
-    /// sweep covers up to it, a selection that follows the cursor moves
-    /// with it, a picked one stays.
-    pub fn follow(&mut self, id: EntryId, order: &[EntryId]) {
+    /// sweep covers up to it, what is in `ways` passed over ([`Ways`]), a
+    /// selection that follows the cursor moves with it, a picked one stays.
+    pub fn follow(&mut self, id: EntryId, order: &[EntryId], ways: Ways<'_>) {
         if self.sweep.is_some() {
             self.cursor = Some(id);
-            self.redraw_sweep(order);
+            self.redraw_sweep(order, ways);
         } else if self.picked {
             self.cursor = Some(id);
         } else {
@@ -263,7 +263,7 @@ impl Selection {
     /// Hold a range from the cursor while it moves: selecting, or with
     /// `unset` deselecting, over what was picked. Without a cursor there is
     /// nothing to start from.
-    pub fn sweep_start(&mut self, unset: bool, order: &[EntryId]) {
+    pub fn sweep_start(&mut self, unset: bool, order: &[EntryId], ways: Ways<'_>) {
         let Some(from) = self.cursor else { return };
         let base = if self.picked {
             self.items.clone()
@@ -276,18 +276,24 @@ impl Selection {
             base,
             drawn: None,
         });
-        self.redraw_sweep(order);
+        self.redraw_sweep(order, ways);
     }
 
     /// [`Selection::sweep_start`], the cursor at `at` in `order` (the pane's,
     /// as its view has it): the steps that follow over that order
     /// ([`Selection::follow_at`]) change only what they cross.
-    pub fn sweep_start_at(&mut self, unset: bool, at: usize, order: &Arc<[EntryId]>) {
+    pub fn sweep_start_at(
+        &mut self,
+        unset: bool,
+        at: usize,
+        order: &Arc<[EntryId]>,
+        ways: Ways<'_>,
+    ) {
         let Some(from) = self.cursor else { return };
         if order.get(at) != Some(&from) {
-            return self.sweep_start(unset, order);
+            return self.sweep_start(unset, order, ways);
         }
-        self.sweep_start(unset, &order[at..=at]);
+        self.sweep_start(unset, &order[at..=at], ways);
         if let Some(sweep) = &mut self.sweep {
             sweep.drawn = Some((Arc::clone(order), at, at));
         }
@@ -299,13 +305,13 @@ impl Selection {
     /// a whole folder searched the order for both ends and made the whole
     /// selection again, at each key held down. Another order, or an `at`
     /// that is not `id`'s, draws it whole, as `follow` does.
-    pub fn follow_at(&mut self, id: EntryId, at: usize, order: &Arc<[EntryId]>) {
+    pub fn follow_at(&mut self, id: EntryId, at: usize, order: &Arc<[EntryId]>, ways: Ways<'_>) {
         let drawn = self.sweep.as_ref().and_then(|sweep| {
-            let (drawn, from_at, was) = sweep.drawn.as_ref()?;
-            (Arc::ptr_eq(drawn, order) && order.get(at) == Some(&id)).then_some((*from_at, *was))
+            let (drawn, from_at, last) = sweep.drawn.as_ref()?;
+            (Arc::ptr_eq(drawn, order) && order.get(at) == Some(&id)).then_some((*from_at, *last))
         });
-        let Some((from_at, was)) = drawn else {
-            self.follow(id, order);
+        let Some((from_at, last)) = drawn else {
+            self.follow(id, order, ways);
             // Drawn whole over this order: the next steps need not be.
             let cursor = order.get(at).filter(|here| **here == id).map(|_| at);
             if let (Some(sweep), Some(at)) = (&mut self.sweep, cursor) {
@@ -319,7 +325,7 @@ impl Selection {
         self.cursor = Some(id);
         let Some(sweep) = &mut self.sweep else { return };
         let span = |c: usize| (from_at.min(c), from_at.max(c));
-        let ((lo0, hi0), (lo1, hi1)) = (span(was), span(at));
+        let ((lo0, hi0), (lo1, hi1)) = (span(last), span(at));
         // Both hold `from`: what one holds and not the other lies below
         // both or above both.
         let below = &order[lo0.min(lo1)..lo0.max(lo1)];
@@ -340,6 +346,7 @@ impl Selection {
                 .into_iter()
                 .filter(|id| !sweep.base.contains(id))
                 .collect();
+            entered.retain(|id| ways.is_none_or(|ways| !ways.contains(id)));
             (entered, back)
         };
         if take.len() > 16 {
@@ -364,7 +371,7 @@ impl Selection {
         }
     }
 
-    fn redraw_sweep(&mut self, order: &[EntryId]) {
+    fn redraw_sweep(&mut self, order: &[EntryId], ways: Ways<'_>) {
         #[cfg(test)]
         SWEEPS_DRAWN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let Some(sweep) = &mut self.sweep else { return };
@@ -381,7 +388,12 @@ impl Selection {
             let swept: std::collections::HashSet<&EntryId> = range.iter().collect();
             items.retain(|id| !swept.contains(id));
         } else {
-            items.extend(range.iter().copied());
+            items.extend(
+                range
+                    .iter()
+                    .copied()
+                    .filter(|id| ways.is_none_or(|ways| !ways.contains(id))),
+            );
         }
         self.anchor = Some(sweep.from);
         self.items = items;
@@ -482,31 +494,54 @@ impl Selection {
     /// it (`back`: before it first, as a folder closed in place takes the
     /// cursor that was inside it). A selection the change emptied selects
     /// the neighbour, as an arrow reaching it would: Delete pressed again
-    /// takes the next file, as in Dolphin and Nautilus. A cursor `order`
-    /// does not hold falls back as `retain` has it.
-    pub fn retain_near(&mut self, holds: impl Fn(EntryId) -> bool, order: &[EntryId], back: bool) {
+    /// takes the next file, as in Dolphin and Nautilus. A folder in `ways`
+    /// is no next file ([`Ways`]): it is passed over, and when the cursor
+    /// has nowhere else to go (a folder closed), it is not selected. A
+    /// cursor `order` does not hold falls back as `retain` has it.
+    pub fn retain_near(
+        &mut self,
+        holds: impl Fn(EntryId) -> bool,
+        order: &[EntryId],
+        back: bool,
+        ways: Ways<'_>,
+    ) {
         let lost = self.cursor.filter(|cursor| !holds(*cursor));
         let had = !self.items.is_empty();
         self.retain(&holds);
         let Some(at) = lost.and_then(|lost| order.iter().position(|id| *id == lost)) else {
             return;
         };
-        let after = || order[at + 1..].iter().copied().find(|id| holds(*id));
-        let before = || order[..at].iter().rev().copied().find(|id| holds(*id));
+        let way = |id: EntryId| ways.is_some_and(|ways| ways.contains(&id));
+        let found = |id: EntryId| holds(id) && !way(id);
+        let after =
+            |here: &dyn Fn(EntryId) -> bool| order[at + 1..].iter().copied().find(|id| here(*id));
+        let before =
+            |here: &dyn Fn(EntryId) -> bool| order[..at].iter().rev().copied().find(|id| here(*id));
         let near = if back {
-            before().or_else(after)
+            before(&holds).or_else(|| after(&holds))
         } else {
-            after().or_else(before)
+            after(&found)
+                .or_else(|| before(&found))
+                .or_else(|| after(&holds))
+                .or_else(|| before(&holds))
         };
         let Some(near) = near else { return };
         self.cursor = Some(near);
-        if had && self.items.is_empty() {
+        if had && self.items.is_empty() && !way(near) {
             self.touch();
             self.items.insert(near);
             self.anchor = Some(near);
         }
     }
 }
+
+/// The folders drawn among a pane's rows only as the way to what a search
+/// found (`Pane::ways`, ADR-127): only naming one selects it (a click, an
+/// arrow, the end of a range). What passes over rows (Select All, Invert,
+/// a range, a sweep, a rubber band: `Pane::covered`) and what picks a
+/// neighbour leave them, or a Delete would take a whole folder unseen,
+/// files the search never found included.
+pub type Ways<'a> = Option<&'a crate::hashing::Set<EntryId>>;
 
 /// A location a pane keeps open beside the one it shows, with its listing
 /// kept current: what its view shows next to it (the columns of the folders
@@ -890,6 +925,7 @@ pub(crate) const VIEW_KEPT: std::time::Duration = std::time::Duration::from_mill
 /// search of one ending only at its last file, and those change nothing
 /// on the screen. A folder that cannot be looked into stands from the
 /// start (`Pane::folders_to_ask`).
+#[derive(Default)]
 struct Leading {
     /// The folders asked about, answered or not.
     asked: crate::hashing::Set<EntryId>,
@@ -2180,8 +2216,9 @@ impl Pane {
         let order = self.order();
         let shown: crate::hashing::Set<EntryId> = order.iter().copied().collect();
         let holds = |id: EntryId| shown.contains(&id);
+        let ways = self.found.shown().map(|tree| &tree.way_ids);
         match before {
-            Some(before) => self.selection.retain_near(holds, &before, true),
+            Some(before) => self.selection.retain_near(holds, &before, true, ways),
             None => self.selection.retain(holds),
         }
     }
@@ -2197,11 +2234,37 @@ impl Pane {
     }
 
     /// Whether `id` is a folder shown only as the way to what a search
-    /// found: selected only by name, never by a range or Select All.
+    /// found: only naming it selects it ([`Ways`]).
     pub fn is_way(&self, id: EntryId) -> bool {
         self.found
             .shown()
             .is_some_and(|tree| tree.way_ids.contains(&id))
+    }
+
+    /// The folders shown only as the way to what a search found.
+    pub fn ways(&self) -> Ways<'_> {
+        self.found.shown().map(|tree| &tree.way_ids)
+    }
+
+    /// The selection to change, with what it takes only by name.
+    pub(crate) fn selecting(&mut self) -> (&mut Selection, Ways<'_>) {
+        let ways = self.found.shown().map(|tree| &tree.way_ids);
+        (&mut self.selection, ways)
+    }
+
+    /// What a gesture passing over `rows` takes of them (Select All,
+    /// Invert, a range, a rubber band): the one place that leaves out what
+    /// only naming selects ([`Ways`]). `named`: the one a gesture ends on
+    /// (a range), taken as asked.
+    pub fn covered(
+        &self,
+        rows: impl IntoIterator<Item = EntryId>,
+        named: Option<EntryId>,
+    ) -> Vec<EntryId> {
+        let ways = self.ways();
+        rows.into_iter()
+            .filter(|id| Some(*id) == named || ways.is_none_or(|ways| !ways.contains(id)))
+            .collect()
     }
 
     /// Whether folder `id` can be opened in place. In the tree of what
@@ -2731,7 +2794,10 @@ impl Pane {
             self.sort,
         );
         match shown {
-            Some(shown) => self.selection.retain_near(holds, &shown, back),
+            Some(shown) => {
+                let ways = self.found.shown().map(|tree| &tree.way_ids);
+                self.selection.retain_near(holds, &shown, back, ways);
+            }
             None => self.selection.retain(holds),
         }
         self.retained = Some(Retained {
@@ -4310,6 +4376,51 @@ mod tests {
         assert_eq!((sel.anchor, sel.cursor), (Some(id(3)), Some(id(5))));
     }
 
+    /// A folder drawn only as the way (`Ways`) is no next file, and what
+    /// a sweep passes over is what it finds, however the steps are drawn.
+    #[test]
+    fn a_way_is_neither_the_next_file_nor_swept() {
+        let id = |ino| EntryId {
+            file: crate::FileId::new(1, ino),
+            at: 0,
+        };
+        let order: Arc<[EntryId]> = (1..=6).map(id).collect();
+        let ways: crate::hashing::Set<EntryId> = [id(3), id(4)].into_iter().collect();
+        let ways = Some(&ways);
+        let without = |gone: &'static [u64]| move |e: EntryId| !gone.contains(&e.file.ino);
+
+        // The file after it is past the folders; with none after, the one
+        // before.
+        let mut sel = Selection::default();
+        sel.set([id(2)]);
+        sel.retain_near(without(&[2]), &order, false, ways);
+        assert_eq!((sel.cursor, items(&sel)), (Some(id(5)), vec![5]));
+        // A folder closed takes the cursor, and is not selected.
+        sel.set([id(5)]);
+        sel.retain_near(without(&[5]), &order, true, ways);
+        assert_eq!((sel.cursor, items(&sel)), (Some(id(4)), vec![]));
+        // Nothing but ways left: the cursor is on one, nothing selected.
+        sel.set([id(1)]);
+        sel.retain_near(without(&[1, 2, 5, 6]), &order, false, ways);
+        assert_eq!((sel.cursor, items(&sel)), (Some(id(3)), vec![]));
+
+        // A sweep over them, step by step and drawn whole.
+        for whole in [false, true] {
+            let mut sel = Selection::default();
+            sel.set([id(2)]);
+            sel.sweep_start_at(false, 1, &order, ways);
+            for at in 2..=4 {
+                if whole {
+                    sel.follow(order[at], &order, ways);
+                } else {
+                    sel.follow_at(order[at], at, &order, ways);
+                }
+            }
+            assert_eq!(items(&sel), vec![2, 5], "drawn whole: {whole}");
+            assert_eq!(sel.cursor, Some(id(5)));
+        }
+    }
+
     /// A cursor whose entry leaves the view goes to the entry after it, or
     /// before it at the end (or before it first, `back`, as a folder closed
     /// in place takes it); an emptied selection follows it there, a picked
@@ -4325,32 +4436,32 @@ mod tests {
         let mut sel = Selection::default();
 
         sel.set([id(3)]);
-        sel.retain_near(without(&[3]), &order, false);
+        sel.retain_near(without(&[3]), &order, false, None);
         assert_eq!((sel.cursor, items(&sel)), (Some(id(4)), vec![4]));
         // The last one: the one before it.
         sel.set([id(5)]);
-        sel.retain_near(without(&[5]), &order, false);
+        sel.retain_near(without(&[5]), &order, false, None);
         assert_eq!((sel.cursor, items(&sel)), (Some(id(4)), vec![4]));
         // Several in a row, the cursor on the last: what follows them.
         sel.set([id(2), id(3), id(4)]);
-        sel.retain_near(without(&[2, 3, 4]), &order, false);
+        sel.retain_near(without(&[2, 3, 4]), &order, false, None);
         assert_eq!((sel.cursor, items(&sel)), (Some(id(5)), vec![5]));
         // A pick that keeps some: the cursor moves, the pick stays.
         sel.set([id(2), id(4)]);
-        sel.retain_near(without(&[4]), &order, false);
+        sel.retain_near(without(&[4]), &order, false, None);
         assert_eq!((sel.cursor, items(&sel)), (Some(id(5)), vec![2]));
         // Back: before it first.
         sel.set([id(3)]);
-        sel.retain_near(without(&[3]), &order, true);
+        sel.retain_near(without(&[3]), &order, true, None);
         assert_eq!((sel.cursor, items(&sel)), (Some(id(2)), vec![2]));
         // A cursor with nothing selected moves and selects nothing.
         sel.set([id(3)]);
         sel.clear();
-        sel.retain_near(without(&[3]), &order, false);
+        sel.retain_near(without(&[3]), &order, false, None);
         assert_eq!((sel.cursor, items(&sel)), (Some(id(4)), vec![]));
         // Nothing left: no cursor.
         sel.set([id(3)]);
-        sel.retain_near(|_| false, &order, false);
+        sel.retain_near(|_| false, &order, false, None);
         assert_eq!((sel.cursor, items(&sel)), (None, vec![]));
     }
 
@@ -4625,14 +4736,14 @@ mod tests {
         let mut sel = Selection::default();
         sel.set([id(1)]);
         assert!(!sel.picked());
-        sel.follow(id(2), &order);
+        sel.follow(id(2), &order, None);
         assert_eq!(items(&sel), [2]);
         // The first pick starts from nothing: the item followed is not one.
         sel.pick(id(2));
         assert!(sel.picked());
-        sel.follow(id(3), &order);
+        sel.follow(id(3), &order, None);
         sel.pick(id(3));
-        sel.follow(id(4), &order);
+        sel.follow(id(4), &order, None);
         assert_eq!(items(&sel), [2, 3]);
         assert_eq!(sel.cursor, Some(id(4)));
         // Unpicking the last one gives the selection back to the cursor.
@@ -4640,7 +4751,7 @@ mod tests {
         sel.pick(id(2));
         assert!(!sel.picked());
         assert_eq!(items(&sel), [2]);
-        sel.follow(id(5), &order);
+        sel.follow(id(5), &order, None);
         assert_eq!(items(&sel), [5]);
     }
 
@@ -4673,30 +4784,30 @@ mod tests {
         let mut sel = Selection::default();
         sel.set([id(1)]);
         sel.pick(id(1));
-        sel.follow(id(3), &order);
-        sel.sweep_start(false, &order);
+        sel.follow(id(3), &order, None);
+        sel.sweep_start(false, &order, None);
         assert_eq!(sel.sweeping(), Some(false));
         assert_eq!(items(&sel), [1, 3]);
-        sel.follow(id(5), &order);
+        sel.follow(id(5), &order, None);
         assert_eq!(items(&sel), [1, 3, 4, 5]);
         // Back past its start: the range turns around.
-        sel.follow(id(2), &order);
+        sel.follow(id(2), &order, None);
         assert_eq!(items(&sel), [1, 2, 3]);
         sel.sweep_end();
         assert_eq!(sel.sweeping(), None);
-        sel.follow(id(6), &order);
+        sel.follow(id(6), &order, None);
         assert_eq!(items(&sel), [1, 2, 3], "what it covered stays picked");
 
-        sel.follow(id(3), &order);
-        sel.sweep_start(true, &order);
-        sel.follow(id(1), &order);
+        sel.follow(id(3), &order, None);
+        sel.sweep_start(true, &order, None);
+        sel.follow(id(1), &order, None);
         assert_eq!(items(&sel), Vec::<u64>::new());
         sel.sweep_end();
         assert!(!sel.picked(), "nothing left: the selection follows again");
-        sel.follow(id(4), &order);
+        sel.follow(id(4), &order, None);
         assert_eq!(items(&sel), [4]);
 
-        sel.sweep_start(false, &order);
+        sel.sweep_start(false, &order, None);
         sel.toggle(id(6));
         assert_eq!(sel.sweeping(), None);
     }
@@ -4710,8 +4821,8 @@ mod tests {
         let order: Vec<EntryId> = (1..=3).map(id).collect();
         let mut sel = Selection::default();
         sel.set([id(2)]);
-        sel.sweep_start(false, &order);
-        sel.follow(id(3), &order);
+        sel.sweep_start(false, &order, None);
+        sel.follow(id(3), &order, None);
         sel.retain_in(&Listing::default());
         assert_eq!(sel.sweeping(), None);
         assert!(!sel.picked());
@@ -5027,7 +5138,7 @@ mod tests {
             sel.set(base.iter().copied());
             sel.cursor = Some(order[from]);
             let drawn = SWEEPS_DRAWN.load(Ordering::Relaxed);
-            sel.sweep_start_at(unset, from, &order);
+            sel.sweep_start_at(unset, from, &order, None);
             // Down a row at a time, back up past where it began, down by
             // pages.
             let mut at = from;
@@ -5036,7 +5147,7 @@ mod tests {
                 .chain(std::iter::repeat_n(7, 100));
             for (i, step) in steps.enumerate() {
                 at = at.checked_add_signed(step).unwrap();
-                sel.follow_at(order[at], at, &order);
+                sel.follow_at(order[at], at, &order, None);
                 if i % 97 == 0 || at == from {
                     assert_eq!(
                         sel.iter().collect::<std::collections::HashSet<_>>(),
@@ -5060,15 +5171,15 @@ mod tests {
             );
             // Another order: drawn whole once, then stepped over again.
             let other: Arc<[EntryId]> = order.iter().copied().collect();
-            sel.follow_at(other[at + 1], at + 1, &other);
-            sel.follow_at(other[at + 2], at + 2, &other);
+            sel.follow_at(other[at + 1], at + 1, &other, None);
+            sel.follow_at(other[at + 2], at + 2, &other, None);
             assert_eq!(SWEEPS_DRAWN.load(Ordering::Relaxed), drawn + 2);
             assert_eq!(
                 sel.iter().collect::<std::collections::HashSet<_>>(),
                 swept(at + 2, unset)
             );
             // Told a row that is not the id's: drawn whole, rightly.
-            sel.follow_at(other[at + 3], 0, &other);
+            sel.follow_at(other[at + 3], 0, &other, None);
             assert_eq!(SWEEPS_DRAWN.load(Ordering::Relaxed), drawn + 3);
             assert_eq!(
                 sel.iter().collect::<std::collections::HashSet<_>>(),

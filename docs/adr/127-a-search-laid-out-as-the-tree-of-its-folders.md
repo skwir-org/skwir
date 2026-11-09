@@ -28,9 +28,11 @@ its pruned tree; a search had none.
 5. **Folding is the tree's own** (`Pane::fold`, the `expand` command
    tried first): nothing is listed to open one, and a folder found with
    nothing below it has no triangle (`Pane::opens_here`).
-6. **Ways are not what was found.** Select All skips them, and a range
-   takes one only when it ends on it, so a Delete cannot take a whole
-   folder unseen. The footer and the preview's header count what was found
+6. **Ways are not what was found.** Only naming one selects it (a click,
+   an arrow, the end of a range). What passes over rows leaves them
+   (Select All, Invert, a range, a sweep, a rubber band), and the next
+   file after a Delete is no way, so a Delete cannot take a whole folder
+   unseen. The footer and the preview's header count what was found
    (`Pane::found_count`).
 
 ## Rejected
