@@ -1288,6 +1288,12 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   path (`complete.rs`: the folder typed read once on a worker in its
   lane, each key matched in memory), the asker's folders listed only
   when asked for (its button, Down while folded: `FormState::offered`).
+  What it holds is read one way, by the window and by its asker alike
+  (`form::path`: `~`, `..` as `cd` takes it, a name joined to a folder).
+  A folder is known once it answered (`Reads`): a read let go of for the
+  next one, or one that could not tell (no right to list it, a server
+  that failed: `Resolved::unread`), says nothing against the folder and
+  is asked again.
   Its list is a popover (deferred over the form, scrolling with its
   scroll bar, the row highlighted kept in view), folded once the field
   loses the keyboard but to its own button, which sits inside the field

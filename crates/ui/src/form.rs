@@ -28,6 +28,7 @@ use skwir_core::form::{Answer, Asked, Choice, Field, Form, Kind, Mark, Picture, 
 use crate::controls::{self, ButtonStyle};
 use crate::input::{InputEvent, TextInput};
 use crate::keymap;
+use crate::latest::Latest;
 use crate::modal::{self, FocusReturn, ListMove, Picker};
 use crate::shell::Shell;
 use crate::theme::Theme;
@@ -104,9 +105,10 @@ pub struct FormState {
     typed: bool,
     /// Why the answer was refused (a field needed is empty).
     refusal: Option<String>,
-    /// The folders a Save field read, and the read under way.
-    read: save::Read,
-    reading: Option<skwir_core::CancelToken>,
+    /// What a Save field knows of the folders it read, and the read under
+    /// way, one at a time.
+    read: save::Reads,
+    reading: Latest<save::Known>,
     /// Where a Save field's popover is scrolled (`save::popover`).
     list_scroll: gpui::ScrollHandle,
     /// A Save field's popover lists the asker's folders, asked for (its
@@ -303,6 +305,10 @@ impl Shell {
     /// the keyboard, one at a time, the first first; let go of one whose
     /// asker stopped waiting (a sign-in done, a connection cancelled).
     pub fn ask_forms(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // What a Save field's worker read, its wake brought here.
+        if self.form.as_mut().is_some_and(FormState::save_took) {
+            cx.notify();
+        }
         let app = std::sync::Arc::clone(&self.app);
         self.forms.retain(|asked| app.form_waits(asked.id));
         if let Some(id) = self.form.as_ref().map(|f| f.id)
@@ -424,8 +430,8 @@ impl Shell {
             open: None,
             picker: Picker::default(),
             typed: false,
-            read: save::Read::new(),
-            reading: None,
+            read: save::Reads::default(),
+            reading: Latest::default(),
             list_scroll: gpui::ScrollHandle::new(),
             offered: false,
             back_focus: cx.focus_handle(),
@@ -445,7 +451,7 @@ impl Shell {
             }
         });
         self.form = Some(state);
-        self.save_open(window, cx);
+        self.save_open(cx);
         window.focus(&focus, cx);
         cx.notify();
     }
@@ -477,7 +483,7 @@ impl Shell {
             move |this, _, event: &InputEvent, window, cx| match event {
                 InputEvent::Submit => this.form_enter(Some(at), window, cx),
                 InputEvent::Cancel => this.form_cancel(window, cx),
-                InputEvent::Changed => this.form_typed(at, window, cx),
+                InputEvent::Changed => this.form_typed(at, cx),
             },
         ));
         input
@@ -485,7 +491,7 @@ impl Shell {
 
     /// What was typed in field `at` changed: its list is filtered again
     /// (a file to write's folder read, to complete).
-    fn form_typed(&mut self, at: usize, window: &mut Window, cx: &mut Context<Self>) {
+    fn form_typed(&mut self, at: usize, cx: &mut Context<Self>) {
         let Some(form) = self.form.as_mut() else {
             return;
         };
@@ -508,15 +514,18 @@ impl Shell {
                 form.typed = true;
             }
             // What the window put there itself (a folder chosen, the
-            // folder above) is no typing.
-            Some(Control::Save { input, put, .. }) if input.read(cx).text() == put.as_str() => {}
+            // folder above) is no typing; its folder is read all the same,
+            // where the read before did not answer.
+            Some(Control::Save { input, put, .. }) if input.read(cx).text() == put.as_str() => {
+                self.save_read(at, cx);
+            }
             Some(Control::Save { .. }) => {
                 form.open = Some(at);
                 form.picker = Picker::default();
                 form.typed = true;
                 form.offered = false;
                 form.list_scroll.scroll_to_item(0);
-                self.save_read(at, window, cx);
+                self.save_read(at, cx);
             }
             _ => {}
         }
@@ -568,7 +577,7 @@ impl Shell {
             }
             let rows = form.save_rows(at, cx);
             if let Some(row) = form.highlighted(at).and_then(|row| rows.get(row)) {
-                self.save_choose(at, row, window, cx);
+                self.save_choose(at, row, cx);
             }
             return;
         }
@@ -815,9 +824,6 @@ impl Shell {
     /// if it still waits, hears no answer.
     pub fn close_form(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(form) = self.form.take() {
-            if let Some(reading) = &form.reading {
-                reading.cancel();
-            }
             self.app.answer_form(form.id, None);
             form.give_back.restore(window, &self.ui().focus, cx);
         }

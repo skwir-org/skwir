@@ -31,7 +31,9 @@
 //!   form's answer back (`FormState::blocked`); a name it holds already
 //!   (saving then asks whether to replace it, `op::clash`); where the PDF
 //!   goes when no folder or no name is typed; that a folder alone is
-//!   held; else the field's help.
+//!   held; else the field's help. A read that did not answer (let go of
+//!   for the next, no right to list the folder, a server that failed) says
+//!   nothing against the folder and is asked again (`Reads`).
 use crate::theme::Chosen;
 use std::collections::HashMap;
 use std::ops::Range;
@@ -39,8 +41,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use gpui::{AnyElement, Context, SharedString, Window, div, prelude::*};
+use skwir_core::App;
+use skwir_core::cancel::CancelToken;
 use skwir_core::form::path;
 use skwir_core::form::{Field, Kind};
+use skwir_core::scheduler::Priority;
 
 use super::{Control, FormState};
 use crate::complete;
@@ -62,10 +67,34 @@ pub(super) struct Row {
     pub completed: bool,
 }
 
-/// The folders read for completion, by path: `None` while being read.
-pub(super) type Read = HashMap<PathBuf, Option<Arc<complete::Resolved>>>;
+/// What a read of a folder typed found (or could not tell).
+pub(super) struct Known {
+    folder: PathBuf,
+    resolved: complete::Resolved,
+}
 
-/// The folders kept read for one form, at most.
+impl Known {
+    /// Read `folder` for completion. On a worker, in its lane.
+    fn read(app: &App, folder: PathBuf, stop: &CancelToken) -> Self {
+        let resolved = complete::folders(app, &folder, false, stop);
+        Known { folder, resolved }
+    }
+}
+
+/// What a form's Save fields know of the folders they read, and which is
+/// being read: one at a time, the read before it let go of. A folder is
+/// known once it answered, and only then: nothing else is an answer. A
+/// read let go of, or one that could not tell (`Resolved::unread`), leaves
+/// nothing behind, so that it says nothing against the folder and the next
+/// look reads it again.
+#[derive(Default)]
+pub(super) struct Reads {
+    known: HashMap<PathBuf, Known>,
+    /// The folder a read is under way for.
+    asked: Option<PathBuf>,
+}
+
+/// The folders kept known for one form, at most.
 const KEPT: usize = 16;
 
 /// The folders completing what was typed that the popover lists, at
@@ -206,33 +235,6 @@ impl FormState {
         })
     }
 
-    /// Whether `text`'s name, after its folder, is one of that folder's
-    /// own folders: `None` until the folder is read.
-    fn names_a_folder(&self, text: &str) -> Option<bool> {
-        let (_, name) = split(text);
-        if name.is_empty() {
-            return Some(false);
-        }
-        let folder = folder_of(text)?;
-        let read = self.read.get(&folder)?.as_ref()?;
-        let holder = read.folders.first().filter(|f| f.path == folder)?;
-        Some(holder.names.iter().any(|n| n.dir && n.text == name))
-    }
-
-    /// Whether the folder `text`'s folder part names is one: `None` until
-    /// it is read.
-    fn folder_is(&self, text: &str) -> Option<bool> {
-        let folder = folder_of(text)?;
-        let read = self.read.get(&folder)?.as_ref()?;
-        Some(
-            !read.abbreviated
-                && read
-                    .folders
-                    .first()
-                    .is_some_and(|holder| holder.path == folder),
-        )
-    }
-
     /// The rows of the Save field `at`'s list: the asker's folders when
     /// asked for (`offered`), else what completes the folder typed once
     /// its text was edited, else none.
@@ -253,7 +255,8 @@ impl FormState {
             return if text == put.as_str() {
                 Vec::new()
             } else {
-                self.completions(text, ending)
+                self.read
+                    .completions(text, ending)
                     .map(|(rows, _)| rows)
                     .unwrap_or_default()
             };
@@ -272,38 +275,6 @@ impl FormState {
                 })
             })
             .collect()
-    }
-
-    /// The folders within the folder `text` names that its name typed
-    /// begins (its ending aside), best first, and the start they share
-    /// beyond what was typed; `None` until the folder is read.
-    fn completions(&self, text: &str, ending: &str) -> Option<(Vec<Row>, Option<String>)> {
-        let folder = folder_of(text)?;
-        let resolved = self.read.get(&folder)?.as_ref()?;
-        let typed = stem(split(text).1, ending);
-        let (found, shared) = complete::rank_at_most(&resolved.folders, typed, false, LISTED);
-        // Where each is said only when they come from several folders (a
-        // folder part abbreviated): they are all in the one typed else.
-        let several = resolved.folders.len() > 1;
-        let rows = found
-            .into_iter()
-            .filter_map(|m| {
-                let holder = &resolved.folders[m.folder];
-                let name = &holder.names[m.index];
-                name.dir.then(|| Row {
-                    title: name.text.clone(),
-                    detail: if several {
-                        skwir_core::os_path::from_home(&holder.path)
-                    } else {
-                        String::new()
-                    },
-                    section: String::new(),
-                    folder: holder.path.join(&name.exact),
-                    completed: true,
-                })
-            })
-            .collect();
-        Some((rows, shared))
     }
 
     /// Whether Tab completes in the Save field that has the keyboard: its
@@ -341,11 +312,84 @@ impl FormState {
         let Kind::Save { alone, beside, .. } = &field.kind else {
             return None;
         };
-        let held = self.held(at, cx)?;
+        self.read.note(&self.held(at, cx)?, alone, beside)
+    }
+
+    /// Take what the read under way found, if it answered: whether it did.
+    pub(super) fn save_took(&mut self) -> bool {
+        let Some(known) = self.reading.take() else {
+            return false;
+        };
+        self.read.answered(known);
+        true
+    }
+}
+
+impl Reads {
+    /// Whether `folder` is to be read now, noted as being read if so: it
+    /// is neither known nor being read.
+    fn ask(&mut self, folder: &Path) -> bool {
+        if self.known.contains_key(folder) || self.asked.as_deref() == Some(folder) {
+            return false;
+        }
+        if self.known.len() >= KEPT {
+            self.known.clear();
+        }
+        self.asked = Some(folder.to_owned());
+        true
+    }
+
+    /// The read asked last answered with `known`.
+    fn answered(&mut self, known: Known) {
+        self.asked = None;
+        if !known.resolved.unread {
+            self.known.insert(known.folder.clone(), known);
+        }
+    }
+
+    /// What is known of the folder `text`'s folder part names.
+    fn known_of(&self, text: &str) -> Option<&Known> {
+        self.known.get(&folder_of(text)?)
+    }
+
+    /// Whether `text`'s name, after its folder, is one of that folder's
+    /// own folders: `None` while the folder is not known.
+    fn names_a_folder(&self, text: &str) -> Option<bool> {
+        let (_, name) = split(text);
+        if name.is_empty() {
+            return Some(false);
+        }
+        let known = self.known_of(text)?;
+        let holder = known
+            .resolved
+            .folders
+            .first()
+            .filter(|f| f.path == known.folder)?;
+        Some(holder.names.iter().any(|n| n.dir && n.text == name))
+    }
+
+    /// Whether the folder `text`'s folder part names is one: `None` while
+    /// it is not known.
+    fn folder_is(&self, text: &str) -> Option<bool> {
+        let known = self.known_of(text)?;
+        Some(
+            !known.resolved.abbreviated
+                && known
+                    .resolved
+                    .folders
+                    .first()
+                    .is_some_and(|holder| holder.path == known.folder),
+        )
+    }
+
+    /// What is said under a Save field holding `held` (`Note`), `None` for
+    /// its help; `alone` and `beside` are what its asker says of a folder
+    /// alone and of a name with no folder.
+    fn note(&self, held: &Held, alone: &str, beside: &str) -> Option<Note> {
         let text = held.text.as_str();
         let (dir, name) = split(text);
         if text.is_empty() || (dir.is_empty() && !held.alone) {
-            return (!beside.is_empty()).then(|| Note::says(beside.clone()));
+            return (!beside.is_empty()).then(|| Note::says(beside));
         }
         if folder_of(text).is_none() {
             return Some(Note::blocks(
@@ -366,7 +410,7 @@ impl FormState {
             return match self.names_a_folder(text) {
                 // `.` and `..` are folders no listing names.
                 Some(false) if !name.is_empty() && !matches!(name, "." | "..") => missing(text),
-                _ => (!alone.is_empty()).then(|| Note::says(alone.clone())),
+                _ => (!alone.is_empty()).then(|| Note::says(alone)),
             };
         }
         if name.is_empty() {
@@ -382,9 +426,9 @@ impl FormState {
         if let Err(refused) = skwir_core::op::valid_file_name(std::ffi::OsStr::new(&full)) {
             return Some(Note::blocks(format!("“{full}” cannot be saved: {refused}")));
         }
-        let folder = folder_of(text)?;
-        let read = self.read.get(&folder)?.as_ref()?;
-        let taken = read
+        let taken = self
+            .known_of(text)?
+            .resolved
             .folders
             .first()
             .is_some_and(|holder| holder.names.iter().any(|n| n.text == full));
@@ -395,13 +439,44 @@ impl FormState {
         }
         None
     }
+
+    /// The folders within the folder `text` names that its name typed
+    /// begins (its ending aside), best first, and the start they share
+    /// beyond what was typed; `None` while the folder is not known.
+    fn completions(&self, text: &str, ending: &str) -> Option<(Vec<Row>, Option<String>)> {
+        let resolved = &self.known_of(text)?.resolved;
+        let typed = stem(split(text).1, ending);
+        let (found, shared) = complete::rank_at_most(&resolved.folders, typed, false, LISTED);
+        // Where each is said only when they come from several folders (a
+        // folder part abbreviated): they are all in the one typed else.
+        let several = resolved.folders.len() > 1;
+        let rows = found
+            .into_iter()
+            .filter_map(|m| {
+                let holder = &resolved.folders[m.folder];
+                let name = &holder.names[m.index];
+                name.dir.then(|| Row {
+                    title: name.text.clone(),
+                    detail: if several {
+                        skwir_core::os_path::from_home(&holder.path)
+                    } else {
+                        String::new()
+                    },
+                    section: String::new(),
+                    folder: holder.path.join(&name.exact),
+                    completed: true,
+                })
+            })
+            .collect();
+        Some((rows, shared))
+    }
 }
 
 impl Shell {
     /// The Save fields as a form opens: each holding the name its `names`
     /// give where its value is a folder alone, the name but its ending
     /// selected, its folder read.
-    pub(super) fn save_open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn save_open(&mut self, cx: &mut Context<Self>) {
         let Some(form) = self.form.as_mut() else {
             return;
         };
@@ -431,7 +506,7 @@ impl Shell {
             opened.push(at);
         }
         for at in opened {
-            self.save_read(at, window, cx);
+            self.save_read(at, cx);
         }
     }
 
@@ -482,7 +557,7 @@ impl Shell {
     /// Put `text` in the Save field `at` as the window's (no edit of the
     /// user's: its list offers folders again), the name but its ending
     /// selected, as an edit Ctrl+Z takes back; its folder read.
-    fn save_put(&mut self, at: usize, text: String, window: &mut Window, cx: &mut Context<Self>) {
+    fn save_put(&mut self, at: usize, text: String, cx: &mut Context<Self>) {
         let Some(form) = self.form.as_mut() else {
             return;
         };
@@ -500,18 +575,12 @@ impl Shell {
             input.replace_all(&text, cx);
             input.select_range(range, cx);
         });
-        self.save_read(at, window, cx);
+        self.save_read(at, cx);
     }
 
     /// Put `row`'s folder in place of the one the Save field `at` holds,
     /// keeping its name (see the module's docs); its list folded.
-    pub(super) fn save_choose(
-        &mut self,
-        at: usize,
-        row: &Row,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub(super) fn save_choose(&mut self, at: usize, row: &Row, cx: &mut Context<Self>) {
         let Some(form) = self.form.as_mut() else {
             return;
         };
@@ -540,7 +609,7 @@ impl Shell {
         form.offered = false;
         form.refusal = None;
         let text = path::save_join(&written(&row.folder), &kept);
-        self.save_put(at, text, window, cx);
+        self.save_put(at, text, cx);
         cx.notify();
     }
 
@@ -568,9 +637,11 @@ impl Shell {
             return;
         }
         let (dir, name) = split(&held.text);
-        if (name.is_empty() && !dir.is_empty()) || form.names_a_folder(&held.text) == Some(true) {
+        if (name.is_empty() && !dir.is_empty())
+            || form.read.names_a_folder(&held.text) == Some(true)
+        {
             let text = path::save_join(&held.text, &held.settled);
-            self.save_put(at, text, window, cx);
+            self.save_put(at, text, cx);
         }
         cx.notify();
     }
@@ -605,13 +676,14 @@ impl Shell {
         };
         let rows = form.save_rows(at, cx);
         if let Some(row) = form.highlighted(at).and_then(|row| rows.get(row)) {
-            self.save_choose(at, row, window, cx);
+            self.save_choose(at, row, cx);
             return;
         }
         let Some(held) = form.held(at, cx) else {
             return;
         };
         let shared = form
+            .read
             .completions(&held.text, &held.ending)
             .and_then(|(_, shared)| shared);
         if let Some(shared) = shared {
@@ -634,7 +706,7 @@ impl Shell {
         let completed: Vec<&Row> = rows.iter().filter(|row| row.completed).collect();
         match completed.as_slice() {
             [] => {}
-            [one] => self.save_choose(at, one, window, cx),
+            [one] => self.save_choose(at, one, cx),
             _ => {
                 if let Some(form) = self.form.as_mut() {
                     form.typed = false;
@@ -672,13 +744,14 @@ impl Shell {
         let text = path::save_join(&written(above), kept);
         form.open = None;
         form.typed = false;
-        self.save_put(at, text, window, cx);
+        self.save_put(at, text, cx);
         cx.notify();
     }
 
-    /// Read the folder the Save field `at`'s text names, once, on a
-    /// worker in its lane: what completes it and what it holds already.
-    pub(super) fn save_read(&mut self, at: usize, window: &mut Window, cx: &mut Context<Self>) {
+    /// Read the folder the Save field `at`'s text names, on a worker in
+    /// its lane, once it answered: what completes it and what it holds
+    /// already.
+    pub(super) fn save_read(&mut self, at: usize, cx: &mut Context<Self>) {
         let Some(form) = self.form.as_mut() else {
             return;
         };
@@ -688,40 +761,18 @@ impl Shell {
         let Some(folder) = folder_of(input.read(cx).text()) else {
             return;
         };
-        if form.read.contains_key(&folder) {
+        if !form.read.ask(&folder) {
             return;
         }
-        if form.read.len() >= KEPT {
-            form.read.clear();
-        }
-        form.read.insert(folder.clone(), None);
-        // One folder read at a time: the one typed before is let go of.
-        let cancel = self.app.lifetime().child();
-        if let Some(before) = form.reading.replace(cancel.clone()) {
-            before.cancel();
-        }
-        let (id, app, asked, stop) = (
-            form.id,
-            Arc::clone(&self.app),
-            folder.clone(),
-            cancel.clone(),
-        );
-        self.off_thread_until(
-            skwir_core::fs::reach::lane(&folder),
+        let lane = skwir_core::fs::reach::lane(&folder);
+        let app = Arc::clone(&self.app);
+        form.reading.ask(
+            &self.app,
+            lane,
+            self.app.lifetime(),
+            Priority::Visible,
             "form-complete",
-            cancel,
-            move || complete::folders(&app, &asked, false, &stop),
-            move |shell, resolved, _, cx| {
-                let Some(form) = shell.form.as_mut().filter(|form| form.id == id) else {
-                    return;
-                };
-                if let Some(slot) = form.read.get_mut(&folder) {
-                    *slot = Some(Arc::new(resolved));
-                }
-                cx.notify();
-            },
-            window,
-            cx,
+            move |stop| Known::read(&app, folder, stop),
         );
     }
 }
@@ -872,5 +923,83 @@ mod tests {
             assert_eq!(written(&home.join("l'été")), "~/l'été/");
         }
         assert_eq!(written(Path::new("/")), "/");
+    }
+
+    #[cfg(unix)]
+    fn known(folder: &str, names: &[(&str, bool)]) -> Known {
+        let holder = complete::Folder {
+            path: PathBuf::from(folder),
+            names: names
+                .iter()
+                .map(|(name, dir)| complete::Name::new((*name).into(), *dir, false))
+                .collect(),
+        };
+        Known {
+            folder: PathBuf::from(folder),
+            resolved: complete::Resolved {
+                folders: vec![Arc::new(holder)],
+                ..complete::Resolved::default()
+            },
+        }
+    }
+
+    #[cfg(unix)]
+    fn answer(folder: &str, resolved: complete::Resolved) -> Known {
+        Known {
+            folder: PathBuf::from(folder),
+            resolved,
+        }
+    }
+
+    #[cfg(unix)]
+    fn held(text: &str) -> Held {
+        Held {
+            ending: ".pdf".to_owned(),
+            text: text.to_owned(),
+            settled: "notes.pdf".to_owned(),
+            alone: false,
+        }
+    }
+
+    /// A folder left before it answered was never read: it is asked
+    /// again when it is wanted again, and only then.
+    #[cfg(unix)]
+    #[test]
+    fn a_folder_left_before_it_answered_is_read_again() {
+        let (a, b) = (Path::new("/example/a"), Path::new("/example/a/b"));
+        let mut reads = Reads::default();
+        assert!(reads.ask(a));
+        assert!(!reads.ask(a), "under way");
+        assert!(reads.ask(b), "the one typed next");
+        assert!(reads.ask(a), "back to the first, whose read was let go of");
+        reads.answered(known("/example/a", &[("b", true)]));
+        assert!(!reads.ask(a), "it answered");
+        assert_eq!(reads.folder_is("/example/a/x.pdf"), Some(true));
+    }
+
+    /// A read that could not tell neither holds the form back nor is
+    /// kept; one that says the folder is not there does.
+    #[cfg(unix)]
+    #[test]
+    fn a_read_that_did_not_answer_says_nothing_and_is_asked_again() {
+        let shut = complete::Resolved {
+            unread: true,
+            ..complete::Resolved::default()
+        };
+        let folder = Path::new("/example/shut");
+        let text = "/example/shut/x.pdf";
+        let mut reads = Reads::default();
+        assert!(reads.ask(folder));
+        reads.answered(answer("/example/shut", shut));
+        assert_eq!(reads.folder_is(text), None);
+        assert_eq!(reads.names_a_folder(text), None);
+        assert!(reads.note(&held(text), "", "").is_none());
+        assert!(reads.ask(folder), "not kept");
+
+        reads.answered(answer("/example/shut", complete::Resolved::default()));
+        let note = reads.note(&held(text), "", "").expect("said");
+        assert!(note.blocks);
+        assert_eq!(note.text, "There is no folder “/example/shut”");
+        assert!(!reads.ask(folder), "kept");
     }
 }

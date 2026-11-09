@@ -123,10 +123,23 @@ pub struct Folder {
 #[derive(Debug, Default)]
 pub struct Resolved {
     /// The folders it may be, best first: the one it names when it names
-    /// one; none when it can be none (or could not be read).
+    /// one; none when it can be none.
     pub folders: Vec<Arc<Folder>>,
     /// It names no folder, and these are what its names start.
     pub abbreviated: bool,
+    /// It could not be read (no right to list it, a server that did not
+    /// answer), or its read was given up on: nothing is known of it, which
+    /// is not to say that it is not there.
+    pub unread: bool,
+}
+
+impl Resolved {
+    fn unread() -> Self {
+        Resolved {
+            unread: true,
+            ..Resolved::default()
+        }
+    }
 }
 
 /// Whether `typed` asks for case to count: it holds a capital.
@@ -424,7 +437,7 @@ pub fn folders(app: &App, typed: &Path, show_hidden: bool, cancel: &CancelToken)
         Ok(folder) => {
             return Resolved {
                 folders: vec![Arc::new(folder)],
-                abbreviated: false,
+                ..Resolved::default()
             };
         }
         Err(e)
@@ -433,7 +446,7 @@ pub fn folders(app: &App, typed: &Path, show_hidden: bool, cancel: &CancelToken)
                 std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
             ) =>
         {
-            return Resolved::default();
+            return Resolved::unread();
         }
         Err(_) => {}
     }
@@ -452,7 +465,7 @@ pub fn folders(app: &App, typed: &Path, show_hidden: bool, cancel: &CancelToken)
             return Resolved::default();
         };
         if cancel.is_cancelled() {
-            return Resolved::default();
+            return Resolved::unread();
         }
         let part = part.to_string_lossy();
         // The folders at this level, each read for its names.
@@ -507,6 +520,7 @@ pub fn folders(app: &App, typed: &Path, show_hidden: bool, cancel: &CancelToken)
     Resolved {
         folders,
         abbreviated: true,
+        unread: false,
     }
 }
 
@@ -664,6 +678,32 @@ mod tests {
         assert_eq!(rows.len(), ROWS);
         assert_eq!(rows[0], "n0000");
         assert_eq!(rows[1], "n0002", "folders first");
+    }
+
+    /// A folder no one may list says so: it is not the same as one that
+    /// is not there.
+    #[cfg(unix)]
+    #[test]
+    fn a_folder_that_cannot_be_listed_is_unread_not_absent() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let tmp = tempfile::tempdir().unwrap();
+        let app = App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        let shut = tmp.path().join("can't list");
+        std::fs::create_dir(&shut).unwrap();
+        let mode = |bits| std::fs::Permissions::from_mode(bits);
+        std::fs::set_permissions(&shut, mode(0o300)).unwrap();
+        let cancel = CancelToken::new();
+        // Root lists everything: nothing to tell then.
+        if std::fs::read_dir(&shut).is_err() {
+            let read = folders(&app, &shut, false, &cancel);
+            assert!(read.unread);
+            assert!(read.folders.is_empty());
+        }
+        std::fs::set_permissions(&shut, mode(0o700)).unwrap();
+        assert!(!folders(&app, &shut, false, &cancel).unread);
+        let gone = folders(&app, &tmp.path().join("nothing named so"), false, &cancel);
+        assert!(!gone.unread, "not there is an answer");
+        assert!(gone.folders.is_empty());
     }
 
     #[test]
