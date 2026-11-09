@@ -999,7 +999,8 @@ mod imp {
     }
 
     /// The files followed: those `Own::followed` named at the last
-    /// reading, each by its folder and name, and the folders watched.
+    /// reading, each by its folder and name, and the folders watched for
+    /// them, sorted.
     struct Files {
         settled: skwir_core::fs::Settled,
         /// Read by the watcher's thread for each event, apart from the
@@ -1037,8 +1038,12 @@ mod imp {
         }
 
         /// Follow `files` from now on, in place of those followed before;
-        /// whether any of their folders is watched. A folder not there is
-        /// not, until a reading names it again once it is.
+        /// whether any folder is watched: each file's, or while that is
+        /// not there (not made yet, or gone) the nearest above it that is,
+        /// where it coming is told. Watched anew at each reading, as a
+        /// folder removed and made again (a dotfile tool replacing it) has
+        /// lost its watch, and may have its inode back: a watch still held
+        /// costs nothing to ask for again.
         fn follow(&self, files: &[PathBuf]) -> bool {
             let mut followed = self.files.lock().unwrap_or_else(PoisonError::into_inner);
             let Some(followed) = followed.as_mut() else {
@@ -1050,24 +1055,35 @@ mod imp {
                     Some((file.parent()?.to_path_buf(), file.file_name()?.to_owned()))
                 })
                 .collect();
-            let mut folders: Vec<PathBuf> =
-                wanted.iter().map(|(folder, _)| folder.clone()).collect();
+            let mut folders: Vec<PathBuf> = wanted
+                .iter()
+                .filter_map(|(folder, _)| {
+                    folder
+                        .ancestors()
+                        .find(|at| at.is_dir())
+                        .map(std::path::Path::to_path_buf)
+                })
+                .collect();
             *followed
                 .wanted
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner) = wanted;
             folders.sort();
             folders.dedup();
-            for folder in folders {
-                if followed.watched.contains(&folder) {
-                    continue;
-                }
-                if followed.settled.watch(&folder) {
-                    followed.watched.push(folder);
-                } else {
-                    tracing::debug!("{} is read, not followed", folder.display());
+            for gone in &followed.watched {
+                if folders.binary_search(gone).is_err() {
+                    followed.settled.unwatch(gone);
                 }
             }
+            let settled = &mut followed.settled;
+            folders.retain(|folder| {
+                let watched = settled.watch(folder);
+                if !watched {
+                    tracing::debug!("{} is read, not followed", folder.display());
+                }
+                watched
+            });
+            followed.watched = folders;
             !followed.watched.is_empty()
         }
 
@@ -1168,8 +1184,11 @@ mod imp {
                     .unwrap_or_else(PoisonError::into_inner)
                     .iter()
                     .any(|(folder, name)| {
-                        path.file_name() == Some(name.as_os_str())
-                            && path.parent() == Some(folder.as_path())
+                        (path.file_name() == Some(name.as_os_str())
+                            && path.parent() == Some(folder.as_path()))
+                            // The folder, or one above it: made, removed
+                            // or moved, what is followed moved with it.
+                            || folder.starts_with(path)
                     })
             },
             move || {
@@ -2902,6 +2921,107 @@ general=@Variant(\0\0\0@\0\0\0\x12\0N\0o\0t\0o\0 \0S\0\x61\0n\0s@$\0\0\0\0\0\0\x
             // Written in place, as qt6ct saves it: read again.
             std::fs::write(&conf, fonts(12)).unwrap();
             assert_eq!(next().font_px, Some(16.));
+            stop.cancel();
+            following.join().unwrap();
+        }
+
+        /// Waits for a reading whose font is `px`, past those on the way.
+        fn told(got: &mpsc::Receiver<DesktopStyle>, px: f32) {
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            loop {
+                let left = deadline.saturating_duration_since(std::time::Instant::now());
+                let style = got.recv_timeout(left).unwrap_or_else(|_| {
+                    panic!("no reading of {px} px came");
+                });
+                if style.font_px == Some(px) {
+                    return;
+                }
+            }
+        }
+
+        fn followed_at(
+            conf: &std::path::Path,
+        ) -> (
+            mpsc::Receiver<DesktopStyle>,
+            CancelToken,
+            std::thread::JoinHandle<()>,
+        ) {
+            let (sent, got) = mpsc::channel();
+            let stop = CancelToken::new();
+            let following = {
+                let stop = stop.clone();
+                let desktop = Arc::new(Qt6ct(conf.to_path_buf()));
+                std::thread::spawn(move || {
+                    imp::follow_on(
+                        handed(Vec::new()),
+                        desktop,
+                        move |style| {
+                            let _ = sent.send(style);
+                        },
+                        &stop,
+                    );
+                })
+            };
+            (got, stop, following)
+        }
+
+        fn qt_fonts(size: u32) -> String {
+            format!("[Fonts]\ngeneral=\"Fira Sans,{size},-1,5,400,0,0,0,0,0\"\n")
+        }
+
+        /// A folder a theme makes after Skwir started, however deep, is
+        /// followed from when it comes (a shell making `gtk-3.0`).
+        #[test]
+        fn a_folder_made_later_is_followed() {
+            let config = tempfile::tempdir().unwrap();
+            let folder = config.path().join("later/deeper");
+            let conf = folder.join("qt6ct.conf");
+            let (got, stop, following) = followed_at(&conf);
+            assert_eq!(
+                got.recv_timeout(Duration::from_secs(10)).unwrap().font_px,
+                None
+            );
+            std::fs::create_dir_all(&folder).unwrap();
+            std::fs::write(&conf, qt_fonts(12)).unwrap();
+            told(&got, 16.);
+            std::fs::write(&conf, qt_fonts(15)).unwrap();
+            told(&got, 20.);
+            stop.cancel();
+            following.join().unwrap();
+        }
+
+        /// A folder removed and made again, or moved away and another made
+        /// in its place, is followed still (a dotfile tool replacing it).
+        #[test]
+        fn a_folder_made_again_is_followed() {
+            let config = tempfile::tempdir().unwrap();
+            let folder = config.path().join("qt6ct");
+            let conf = folder.join("qt6ct.conf");
+            std::fs::create_dir(&folder).unwrap();
+            std::fs::write(&conf, qt_fonts(12)).unwrap();
+            let (got, stop, following) = followed_at(&conf);
+            told(&got, 16.);
+            // In one go: the reading finds it there, and its watch gone.
+            std::fs::remove_dir_all(&folder).unwrap();
+            std::fs::create_dir(&folder).unwrap();
+            std::fs::write(&conf, qt_fonts(15)).unwrap();
+            told(&got, 20.);
+            std::fs::write(&conf, qt_fonts(18)).unwrap();
+            told(&got, 24.);
+            // Moved away, then another made in its place, later.
+            std::fs::rename(&folder, config.path().join("kept")).unwrap();
+            let waited = std::time::Instant::now() + Duration::from_secs(10);
+            while std::time::Instant::now() < waited {
+                match got.recv_timeout(Duration::from_millis(100)) {
+                    Ok(style) if style.font_px.is_none() => break,
+                    _ => {}
+                }
+            }
+            std::fs::create_dir(&folder).unwrap();
+            std::fs::write(&conf, qt_fonts(9)).unwrap();
+            told(&got, 12.);
+            std::fs::write(&conf, qt_fonts(21)).unwrap();
+            told(&got, 28.);
             stop.cancel();
             following.join().unwrap();
         }

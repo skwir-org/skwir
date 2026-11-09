@@ -743,6 +743,12 @@ impl Settled {
             .watch(path, notify::RecursiveMode::NonRecursive)
             .is_ok()
     }
+
+    /// Follow `path` no more.
+    pub fn unwatch(&mut self, path: &Path) {
+        use notify::Watcher as _;
+        let _ = self.watcher.unwatch(path);
+    }
 }
 
 #[cfg(all(test, target_os = "linux"))]
