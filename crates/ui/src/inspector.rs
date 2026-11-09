@@ -5074,8 +5074,9 @@ mod tests {
         }
     }
 
-    /// A code view held whole shows plain at once, its links found: its
-    /// colors are found where it is drawn (`coloring`), not before.
+    /// A code view held whole keeps its blocks plain, its links found:
+    /// its colors are found where it is drawn (`coloring`), its first
+    /// lines' beside them (`first_colors`), never written into them.
     #[test]
     fn a_code_view_held_whole_is_colored_where_it_is_drawn() {
         use super::*;

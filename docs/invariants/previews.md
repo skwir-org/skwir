@@ -1585,17 +1585,19 @@ is still to come are in `docs/preview-frame.md`.
     frame; a bounded cache keeps those near the view. A chunk is read
     and colored by one job: from the state the one before it stopped
     in, else fresh, and again once that state is known (`Chunk::exact`).
-  - **Colors hold text back for `coloring::COLORS_WITHIN` at most**
+  - **Colors hold text back for `coloring::COLORS_WITHIN`**
     (100 ms). The first chunk is colored on the worker that makes the
     view (`text_view::start`, `coloring::first_colors`), so the first
     frame has it; never asked for after a frame drew it plain. Rows
     whose time ran out show as far as they got and the view colors them
     as any other. A chunk with a line of half a row or more
     (`waits_for_colors`) is not waited for: it would cost that time on
-    every look. The limit is a ceiling, checked between rows, not a
-    wait: a grammar ready takes milliseconds.
+    every look. The limit is looked at between rows: no wait, as a
+    grammar ready takes milliseconds, and no ceiling, as a grammar being
+    loaded or compiled is waited for whatever it takes.
   - Looking up the paths a chunk writes is a step of its own, after its
-    colors (`TextView::ask_paths`): colors never wait for the disk.
+    colors and apart from the reading (`TextView::ask_paths`, its own
+    `Latest`): neither colors nor the next chunk wait for the disk.
   - The element (`elements/rows.rs`) scrolls by row and lays out only the
     rows on screen, in prepaint; it keeps nothing per row. After
     Ctrl+End it follows the end until moved up, a file written to
@@ -1676,7 +1678,10 @@ is still to come are in `docs/preview-frame.md`.
   what the preview holds whole, in the shared helper, on a worker, never
   reading the file again; the worker making the view tries it for
   `COLORS_WITHIN` when the helper already runs (`coloring::parse_soon`:
-  starting one takes longer), else the view asks once it shows. Until
+  starting one takes longer) and the text is at most
+  `coloring::PARSED_SOON` (a parse is of all of it), else the view asks
+  once it shows. A chunk not read yet when the parse is there is read and
+  colored from it by one job, under the same limit. Until
   the parse comes a chunk stays plain,
   then each chunk is colored from it exactly, with no state carried from
   the chunk before. Whatever it cannot color (a line past

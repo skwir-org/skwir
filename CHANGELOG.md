@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **A text preview opens with its colors**: it no longer flashes uncolored
+  first, as long as its colors take under about a tenth of a second.
 - **Keys act in the window you are typing in**: after a script or an agent
   moved Skwir's idea of the active window, a paste or a Delete could land in
   another window. The same goes for a second launch at the same moment, which

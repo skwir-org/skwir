@@ -887,6 +887,15 @@ band and a sweep took folders shown only as the way to a search's hits.
 77 are fixed; LK-5 is no bug (the corner under a notch is square). Checks
 in `docs/STATUS-LOG.md` (2026-11-09).
 
+## Colors arrive with the text (2026-11-09)
+
+ADR-051 amended (decision 5): a text's first rows are colored before they
+are handed over, 100 ms being what colors may hold them back, so a preview no
+longer flashes uncolored; lines of half a row or more, and a tree-sitter
+parse of a text over 128 KiB, are not waited for. Paths a text writes are
+looked up apart from its reading. Checks in `docs/STATUS-LOG.md`
+(2026-11-09).
+
 ## What is left
 
 Gathered on 2026-10-20 from the notes of this plan and of

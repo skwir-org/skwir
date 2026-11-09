@@ -16,17 +16,19 @@
 //! wanted is colored exactly.
 //!
 //! **The first rows arrive colored** (ADR-051, amended): the worker that
-//! makes a view colors its first chunk before handing it over, for at most
-//! `COLORS_WITHIN`, so its first frame has them. Rows whose colors are late
-//! show as far as they got, and the view colors them as it colors any
-//! other. Lines too long to color in that time are not waited for
-//! (`waits_for_colors`).
+//! makes a view colors its first chunk before handing it over, until
+//! `COLORS_WITHIN` has passed, so its first frame has them. Rows whose
+//! colors are late show as far as they got, and the view colors them as it
+//! colors any other. Lines too long to color in that time are not waited
+//! for (`waits_for_colors`).
 //!
 //! A text a tree-sitter grammar colors (ADR-110, `highlight::engine`) is
-//! parsed whole in the helper once it shows (`parse`), its chunks plain
-//! meanwhile rather than colored twice; then each chunk is colored from
-//! the parse, exactly at once, wherever it is (`tree_rows`): no state
-//! goes from one chunk to the next. A parse that fails leaves the text to
+//! parsed whole in the helper (`parse`): by the worker making the view
+//! when the helper runs and the text is short (`may_parse_soon`), else
+//! once it shows, its chunks plain meanwhile rather than colored twice;
+//! then each chunk is colored from the parse, exactly at once, wherever
+//! it is (`tree_rows`): no state goes from one chunk to the next. A parse
+//! that fails leaves the text to
 //! bat's grammar, and so does a chunk the parse cannot color, colored
 //! fresh (`parsed_rows`), in the code view as in the text view.
 
@@ -52,17 +54,28 @@ use skwir_platform::highlight::tree::Tree;
 pub(crate) const KEPT: usize = 24;
 /// Rows colored at once.
 pub(crate) const STRIDE: u64 = skwir_platform::text_rows::STRIDE;
-/// The longest rows wait for their colors before showing without them. A
-/// grammar ready colors a chunk in milliseconds; one compiled for its first
-/// file in a while takes tens of them (ADR-060). Below what reads as a wait,
-/// and below `Shell::BUSY_AFTER`, so it never shows as one. Tests are built
-/// unoptimized, where a chunk takes longer, on machines under load: what
-/// they say must not depend on the clock.
+/// How long rows wait for their colors before showing without them, looked
+/// at between rows. A grammar ready colors a chunk in milliseconds. Below
+/// what reads as a wait, and below `Shell::BUSY_AFTER`. A grammar being
+/// loaded or compiled for its first file in a while (ADR-060) is not cut
+/// short: tens of milliseconds where it was measured, more on a slower
+/// machine, and its text waits that long. Tests are built unoptimized,
+/// where a chunk takes longer, on machines under load: what they say must
+/// not depend on the clock.
 pub(crate) const COLORS_WITHIN: Duration = if cfg!(test) {
     Duration::from_secs(60)
 } else {
     Duration::from_millis(100)
 };
+
+/// The longest text parsed before it shows (`may_parse_soon`). A parse is
+/// of the whole text, so one too long to make `COLORS_WITHIN` would cost
+/// that time on every look and be thrown away, as a chunk of long lines
+/// would (`waits_for_colors`). Measured with a release helper and the JSON
+/// grammar: 28 ms for 128 KiB, 57 for 256, 120 for 512, 246 for 1 MiB. A
+/// heavier grammar or a slower machine has room here; a wrong guess costs
+/// at most the limit, or a flash.
+const PARSED_SOON: u64 = 128 * 1024;
 
 /// Whether `rows` are worth holding back for their colors: not with a line
 /// long enough to be near a row's limit, where a chunk is a megabyte to
@@ -297,11 +310,15 @@ pub(crate) fn soon(cancel: &CancelToken) -> (CancelToken, flume::Sender<()>) {
     (limit, done)
 }
 
-/// Whether a parse could make it in `COLORS_WITHIN`: starting the helper
-/// takes longer than rows may wait, and one given up on would have started
-/// it for nothing.
-pub(crate) fn may_parse_soon() -> bool {
-    skwir_platform::tree_sitter::shared().is_running()
+/// Whether a parse of `bytes` could make it in `COLORS_WITHIN`: starting
+/// the helper takes longer than rows may wait, and one given up on would
+/// have started it for nothing.
+pub(crate) fn may_parse_soon(bytes: u64) -> bool {
+    short_enough_to_parse_soon(bytes) && skwir_platform::tree_sitter::shared().is_running()
+}
+
+fn short_enough_to_parse_soon(bytes: u64) -> bool {
+    bytes <= PARSED_SOON
 }
 
 /// `parse`, by `limit` (`soon`). `None` when it did not make it, what the
@@ -335,7 +352,8 @@ pub(crate) fn first_colors(data: &Inspection, with: &Colorer) -> Option<FirstCol
     }
     let cancel = skwir_core::scheduler::job_token().unwrap_or_default();
     if let Some(grammar) = &with.grammar {
-        if !may_parse_soon() {
+        let bytes = data.blocks.iter().map(|b| b.text.len() as u64 + 1).sum();
+        if !may_parse_soon(bytes) {
             return None;
         }
         let (limit, _timer) = soon(&cancel);
@@ -1080,6 +1098,14 @@ pub(crate) mod tests {
         let stop = color_rows(&mut quick, |_| true, colors, None, ahead, &cancel).unwrap();
         assert!(stop.is_some());
         assert!(quick[0].runs.iter().any(|run| run.color.is_some()));
+    }
+
+    /// A text is parsed before it shows only where that can make it: the
+    /// parse is of all of it.
+    #[test]
+    fn only_a_short_text_is_parsed_before_it_shows() {
+        assert!(short_enough_to_parse_soon(PARSED_SOON));
+        assert!(!short_enough_to_parse_soon(PARSED_SOON + 1));
     }
 
     /// A chunk with a line near a row's limit is a megabyte to color: its

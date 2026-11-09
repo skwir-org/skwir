@@ -13976,3 +13976,32 @@ frame-by-frame recording of a preview appearing: that the first frame is
 colored follows from what is handed over. The early parse of a code view held
 whole (the text view's was seen). A time limit reached in a real window; a
 test covers it. Windows and macOS not compiled.
+
+**Review of 57028aa6, its six findings fixed the same day.**
+
+- **A chunk scrolled to under a finished parse** was still read plain, then
+  colored by a second job: it is now read and colored from the parse by one
+  (`Reading::Tree`), under `coloring::soon`, plain and read again if the helper
+  is slower than the limit.
+- **The early parse** is tried only for a text of 128 KiB or less
+  (`coloring::PARSED_SOON`). `Tree::open`, release helper, the JSON grammar,
+  median of 7, load 1 to 4: 16 KiB 4.5 ms, 64 KiB 14.6, 128 KiB 28.4, 256 KiB
+  57.2, 512 KiB 120, 1 MiB 247, 2 MiB 485, 4 MiB 985, 8 MiB 1981: linear, about
+  4 MiB/s, so a longer text cannot make 100 ms here. Only this grammar was
+  measured.
+- **Path lookups** have their own `Latest` (`TextView::looked`): the next chunk
+  no longer waits for them. Rows that come back for a chunk colored again
+  meanwhile are dropped and asked anew (`take_paths`).
+- **`COLORS_WITHIN`** is said to be what it is: looked at between rows, a
+  grammar being loaded or compiled not cut short. Behaviour unchanged.
+- **Long lines** are not waited for on a tree-sitter read either.
+- `CHANGELOG.md`, `docs/PLAN.md` and three stale comments.
+
+**Checked:** rustfmt (`--all --check`), clippy `-D warnings` on `skwir-ui` and
+`skwir-platform`, 1098 tests passed (18 skipped) with the helper built beside
+them, `just check-windows` and `just check-macos`. The new test of the one job
+fails with the old behaviour put back (tried, then restored).
+
+**Not checked:** in a real window, none of these (no tree-sitter grammar in a
+test window's folders). Heavier grammars' parse times. `just release-check`, by
+the user's standing preference.

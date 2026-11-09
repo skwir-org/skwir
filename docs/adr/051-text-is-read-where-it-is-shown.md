@@ -96,20 +96,32 @@ allocator): 256 rows in 0.4–8 ms with the grammar compiled, 18–23 ms for
 TypeScript; the first 60 rows after 60 s without code (ADR-060) in
 1–21 ms, 54–65 ms for TypeScript.
 
-- **Colors hold text back for 100 ms at most** (`COLORS_WITHIN`, chosen
+- **Colors hold text back for 100 ms** (`COLORS_WITHIN`, chosen
   with the user over one frame so that a grammar compiling does not
   flash either: below what reads as a wait, and below the preview's
   "Loading…"). A chunk is read and colored by one job, the first on the
   worker that makes the view, its colors checked against the time between
   rows. Rows late show as far as they got; the view colors them as before.
+  The time is looked at only between rows, so a grammar being loaded or
+  compiled is waited for whatever it takes: 54 to 71 ms for TypeScript
+  where it was measured, past the limit on a machine a few times slower,
+  once after a while without code.
 - **Long lines are not waited for:** a chunk with a line of half a row or
   more shows plain first, as decision 5 said, since its colors take
   seconds and would cost the wait on every look.
 - **A tree-sitter parse** is tried by the same worker only when the helper
   already runs, bounded by a cancel at the limit: starting one takes
-  longer than the limit.
+  longer than the limit. Only for a text of 128 KiB or less
+  (`PARSED_SOON`): a parse is of the whole text, and one that cannot make
+  the limit would cost it on every look and be thrown away. With a release
+  helper and the JSON grammar: 28 ms for 128 KiB, 57 for 256, 120 for 512,
+  246 for 1 MiB, the size chosen to leave a heavier grammar or a slower
+  machine room. Once a text is parsed, a chunk not read yet is read and
+  colored from the parse by one job, under the same limit and the same
+  rule for long lines; plain, read again, if the helper is slower.
 - **The paths a text writes** are looked up by a step of their own, after
-  a chunk's colors: up to 256 lookups on the disk no longer hold them.
+  a chunk's colors and apart from the reading: up to 256 lookups on the
+  disk hold neither those colors nor the next chunk.
 - **Rejected:** a second job the worker waits for, which would bound a
   single row's coloring as well: when every worker is busy the job does
   not start, and text would wait the whole limit for nothing. A row is
