@@ -164,6 +164,28 @@ fn markdown_styles_source_and_plugin_fallback() {
         "Markdown"
     );
 }
+/// As the panel asks, every preview wired: a `.csv` split by semicolons, a
+/// comma in its cells, and one saying so on its first line.
+#[test]
+fn a_csv_is_read_by_the_separator_it_uses() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = app(tmp.path());
+    let csv = tmp.path().join("l'été; export.csv");
+    std::fs::write(
+        &csv,
+        "nom;adresse;total\nÉa;1, rue d'ici;12,50\nBé;2 rue là;3\n",
+    )
+    .unwrap();
+    let table = inspect(&app, &csv, &InspectRequest::default());
+    assert_eq!(table.columns, ["nom", "adresse", "total"]);
+    assert_eq!(table.rows[0].cells, ["Éa", "1, rue d'ici", "12,50"]);
+    let named = tmp.path().join("named.csv");
+    std::fs::write(&named, "sep=|\r\na|b\r\n1,5|2\r\n").unwrap();
+    let table = inspect(&app, &named, &InspectRequest::default());
+    assert_eq!(table.columns, ["a", "b"]);
+    assert_eq!(table.rows.len(), 1);
+    assert_eq!(table.rows[0].cells, ["1,5", "2"]);
+}
 #[test]
 fn csv_quoted_newlines_and_structured_code() {
     let tmp = tempfile::tempdir().unwrap();

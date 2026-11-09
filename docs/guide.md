@@ -514,7 +514,8 @@ archives, and the bytes of any file.
 - A table (CSV, a spreadsheet, a database, JSON Lines) sorts by a
   column when you click its header. Drag the edge at a header's right to
   widen or narrow its column, and double-click it to fit the column to
-  its content again; the widths stay while the file is shown.
+  its content again; the widths stay while the file is shown. A CSV is
+  split by the separator the file uses (comma, semicolon, tab or pipe).
 - Text, tables and bytes open at the size Settings › Reading says, one
   for what is read and one for code (Reading text size, Code text size).
   The bar's − and + (or `Ctrl+=` and `Ctrl+-` in the preview) change the

@@ -1,5 +1,6 @@
 //! CSV/TSV, JSON Lines, spreadsheet and SQLite tables streamed from the file
 //! a page at a time, every cell bounded.
+use dialect::Dialect;
 use skwir_core::{
     App, CancelToken,
     inspection::{InspectRequest, Inspection, Row},
@@ -59,6 +60,7 @@ impl Plugin for PreviewPlugin {
         }
     }
 }
+mod dialect;
 mod jsonl;
 mod spreadsheet;
 mod sqlite;
@@ -135,7 +137,7 @@ enum Reader {
     Database,
     /// An Excel workbook, of its type.
     Workbook(skwir_platform::mime::Mime),
-    /// Text: CSV, or TSV split by tabs.
+    /// Text: CSV, split as it reads best, or TSV, by tabs.
     Text { tabs: bool },
     /// JSON Lines.
     Lines,
@@ -201,7 +203,8 @@ impl<R: Read> Read for RecordBound<R> {
 /// what is held of the file (its start, then the file read on through it):
 /// a table is as long as its file, and only the page is kept. Rows before
 /// the page are parsed and dropped, so numbering stays exact. Its columns
-/// are `asked`'s. `tsv`: its cells are split by tabs, else by commas.
+/// are `asked`'s. `tsv`: its cells are split by tabs, else by what its
+/// start shows (`Dialect`).
 fn table(
     held: &Arc<Held>,
     tsv: bool,
@@ -212,13 +215,22 @@ fn table(
     let encoding = sniff(held.head());
     // The CSV reader reads bytes that are ASCII-compatible; UTF-16 is not,
     // so it is decoded whole, within the bound for text read whole.
-    let input: Box<dyn Read> = match encoding {
+    let (mut input, dialect): (Box<dyn Read>, Dialect) = match encoding {
         Encoding::Utf16Le | Encoding::Utf16Be => {
             let (text, _) = inspection::read_text(held, asked, cancel)?;
-            Box::new(std::io::Cursor::new(text.into_bytes()))
+            let dialect = Dialect::of(tsv, text.as_bytes(), false);
+            (Box::new(std::io::Cursor::new(text.into_bytes())), dialect)
         }
-        _ => Box::new(inspection::open(held)?),
+        _ => {
+            let more = (held.head().len() as u64) < held.len();
+            (
+                Box::new(inspection::open(held)?),
+                Dialect::of(tsv, held.head(), more),
+            )
+        }
     };
+    let before = dialect.skip() as u64;
+    std::io::copy(&mut input.by_ref().take(before), &mut std::io::sink())?;
     let cells_in = match encoding {
         Encoding::Windows1252 => Encoding::Windows1252,
         _ => Encoding::Utf8,
@@ -228,14 +240,7 @@ fn table(
         inner: input,
         since: std::rc::Rc::clone(&since),
     };
-    // Tab-separated values have no quoting: a cell that starts with `"`
-    // is that text, not the start of a field running to the file's end.
-    let mut reader = csv::ReaderBuilder::new()
-        .delimiter(if tsv { b'\t' } else { b',' })
-        .quoting(!tsv)
-        .flexible(true)
-        .has_headers(false)
-        .from_reader(input);
+    let mut reader = dialect.reader(input);
     let mut bounds = Bounds::new(asked.table_columns());
     let mut record = csv::ByteRecord::new();
     let columns = if reader.read_byte_record(&mut record)? {
@@ -251,20 +256,15 @@ fn table(
         Encoding::Utf16Le | Encoding::Utf16Be => (0, 0),
         _ => starts::nearest(held, offset),
     };
-    let mut base = 0;
+    let mut base = before;
     if from > 0 {
         use std::io::Seek as _;
         let mut file = inspection::open(held)?;
         file.seek(std::io::SeekFrom::Start(from))?;
-        reader = csv::ReaderBuilder::new()
-            .delimiter(if tsv { b'\t' } else { b',' })
-            .quoting(!tsv)
-            .flexible(true)
-            .has_headers(false)
-            .from_reader(RecordBound {
-                inner: Box::new(file),
-                since: std::rc::Rc::clone(&since),
-            });
+        reader = dialect.reader(RecordBound {
+            inner: Box::new(file),
+            since: std::rc::Rc::clone(&since),
+        });
         base = from;
     }
     let mut rows = Vec::new();
@@ -307,6 +307,10 @@ fn table(
             } else {
                 inspection::count(shown as usize)
             },
+        ),
+        (
+            "Separator",
+            (!columns.is_empty()).then(|| dialect.separator_name()),
         ),
     ]);
     let notice = [encoding.notice(), bounds.notice()]
@@ -588,6 +592,99 @@ mod tests {
         let t = table(&tab, true, 0, limits::Bounds::QUICK, &CancelToken::new()).unwrap();
         assert_eq!(t.columns, ["name", "note"]);
         assert_eq!(t.rows[0].cells, ["a,b", "c"]);
+    }
+
+    fn detail(data: &Inspection, label: &str) -> Option<String> {
+        data.details
+            .iter()
+            .find(|d| d.label == label)
+            .map(|d| d.value.clone())
+    }
+
+    /// Asked about as the panel asks, a CSV split by semicolons, a comma
+    /// in some of its cells, reads as its columns, and says how.
+    #[test]
+    fn a_csv_is_split_by_what_it_is_separated_by() {
+        let dir = tempfile::tempdir().unwrap();
+        let provider = Provider { pages: false };
+        let request = PreviewRequest::holding(
+            dir.path().join("gone").join("l'été; 2026.csv"),
+            "nom;adresse;total\nÉa;1, rue d'ici;12,50\nBé;2 rue là;3\n".as_bytes(),
+            Some("text/csv"),
+        );
+        assert!(provider.accepts(&request));
+        let data = shown(&provider, &request);
+        assert_eq!(data.columns, ["nom", "adresse", "total"]);
+        assert_eq!(data.rows[0].cells, ["Éa", "1, rue d'ici", "12,50"]);
+        assert_eq!(detail(&data, "Separator").as_deref(), Some("Semicolon"));
+        // What the type names stays: a TSV is split by its tabs alone.
+        let tsv = PreviewRequest::holding(
+            dir.path().join("gone").join("it's data.tsv"),
+            &b"a;b\tc\n1;2\t3\n"[..],
+            Some("text/tab-separated-values"),
+        );
+        let data = shown(&provider, &tsv);
+        assert_eq!(data.columns, ["a;b", "c"]);
+        assert_eq!(detail(&data, "Separator").as_deref(), Some("Tab"));
+    }
+
+    #[test]
+    fn a_separator_is_read_in_every_encoding() {
+        let data = read("export.csv", b"nom;prix\ncaf\xe9;3,50\nth\xe9;2,10\n", 0);
+        assert_eq!(data.columns, ["nom", "prix"]);
+        assert_eq!(data.rows[0].cells, ["caf\u{e9}", "3,50"]);
+        assert_eq!(data.notice, "Read as Windows-1252");
+        let utf16: Vec<u8> = [0xFF, 0xFE]
+            .into_iter()
+            .chain(
+                "nom;prix\n\u{e9};3,50\n"
+                    .encode_utf16()
+                    .flat_map(u16::to_le_bytes),
+            )
+            .collect();
+        let data = read("unicode.csv", &utf16, 0);
+        assert_eq!(data.columns, ["nom", "prix"]);
+        assert_eq!(data.rows[0].cells, ["\u{e9}", "3,50"]);
+        assert_eq!(data.notice, "Read as UTF-16LE");
+    }
+
+    /// A `sep=` line is no row, and pages are counted as if it were not
+    /// there, read from where they were seen to begin as from the start.
+    #[test]
+    fn a_line_naming_the_separator_is_not_shown_and_pages_read_past_it() {
+        use std::fmt::Write as _;
+        let mut text = String::from("sep=;\r\nn;name\r\n");
+        for n in 1..=1200 {
+            let _ = write!(text, "{n};\"row; {n}\"\r\n");
+        }
+        let long = held("sep's line.csv", text.as_bytes());
+        let cancel = CancelToken::new();
+        let page = |offset| table(&long, false, offset, limits::Bounds::QUICK, &cancel).unwrap();
+        let first = page(0);
+        assert_eq!(first.columns, ["n", "name"]);
+        assert_eq!(first.rows[0].cells, ["1", "row; 1"]);
+        assert_eq!(detail(&first, "Separator").as_deref(), Some("Semicolon"));
+        let unseen = page(1000);
+        assert_eq!(unseen.rows[0].cells, ["1001", "row; 1001"]);
+        page(500);
+        assert_eq!(starts::nearest(&long, 1000).0, 1000);
+        let seen = page(1000);
+        assert_eq!(seen.columns, ["n", "name"]);
+        assert_eq!(seen.rows[0].cells, unseen.rows[0].cells);
+        assert_eq!(seen.rows.len(), 200);
+        assert_eq!(detail(&seen, "Rows").as_deref(), Some("1200"));
+    }
+
+    /// A file past what a preview holds of its start is read past it by
+    /// the separator that start showed, and its pages agree.
+    #[test]
+    fn a_long_file_keeps_the_separator_of_its_start() {
+        let line = format!("{};{},\n", "x".repeat(40), "y".repeat(40));
+        let rows = 2 * 64 * 1024 / line.len();
+        let text = format!("a;b\n{}", line.repeat(rows));
+        let data = read("long one.csv", text.as_bytes(), 500);
+        assert_eq!(data.columns, ["a", "b"]);
+        assert_eq!(data.rows[0].cells.len(), 2);
     }
 
     #[test]

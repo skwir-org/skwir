@@ -13614,3 +13614,27 @@ to convert it in on Windows.
 - **Not checked:** what a real registry holds with Office installed (known from
   outside the project), and a window on Windows. That a `text/csv` goes to the
   table reader is `format_providers_never_compete_for_the_same_file`'s, on Linux.
+
+## 2026-11-09: A CSV's separator is read from the file (#9)
+
+Reported: `.csv` files separated by `;`, a `,` in some cells, came out as
+broken columns. `text/csv` was always split by commas.
+
+- `tables/src/dialect.rs`: a `sep=` first line, not shown nor counted, else
+  `,` `;` tab `|` each read through the start with the `csv` crate, quotes on.
+  Score: the rows of the commonest length as a share of the rows (under two
+  cells, no table), times the cells that look like cells. A tie goes to the
+  comma, nothing that splits leaves it, as before. A TSV stays split by tabs.
+- The first try counted any comma in a cell against the reading, so
+  `Doe, Ann;30` tied; a comma or semicolon before a space or ending the cell is
+  now a sentence's. Found by the test written for it.
+- No hand-set separator: the user asked whether the cases are common, and the
+  answer was no. Source shows the file and the details name the separator.
+- **Measured** (`cargo run --release` of the module alone, 200 runs, on the
+  loaded machine): 1.6 ms on 64 KiB of 4-byte rows, the worst shape, 0.4 ms on
+  rows of five cells; once per page asked, on a worker, so nothing is kept.
+- **Checked:** clippy on the plugin, Linux and Windows; its 37 tests, among them
+  semicolons through `Provider` as the panel asks, Windows-1252, UTF-16, `sep=`
+  with pages read from learned starts; every wired preview in
+  `extended_previews` and `any_file`.
+- **Not checked:** in a window; the details row is drawn as any other.

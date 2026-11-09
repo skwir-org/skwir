@@ -51,6 +51,13 @@ is binding, like `AGENTS.md`.
   Excel's workbooks by theirs (the binary one's chooses calamine's other
   reader), CSV and TSV by theirs. JSON Lines alone goes by its name: the
   database has no type for it.
+- A TSV's cells are split by tabs, as its type says; a CSV's by what its
+  start shows (`tables/src/dialect.rs`), since spreadsheets write `;`
+  under the same type: a `sep=` first line, which is no row, else the
+  reading of `,` `;` tab `|` whose rows agree most and whose cells look
+  most like cells, a tie going to the comma. Only the start is read (the
+  held head; for UTF-16 the decoded text's): every page of a version of
+  the file is split alike, as the page starts learned there require.
 - A thumbnail provider's `accepts` runs on the UI thread, on names only;
   its `thumbnail` returns `None` for a file not its own.
 - A changed preference re-registers only its provider

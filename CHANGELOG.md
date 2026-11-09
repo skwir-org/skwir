@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **CSV files separated by semicolons** (#9), tabs or pipes show as their
+  columns: the separator is read from the file, a `sep=` first line included,
+  and the preview's details name it.
 - **CSV files on Windows with Excel installed** show as tables: the system
   calls them Excel workbooks, and the preview now goes by what the file holds
   when the two disagree.

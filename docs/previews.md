@@ -216,7 +216,9 @@ The player, in the panel or pinned at its foot:
 ### Tables (`tables`)
 
 - CSV and TSV, quoted multi-line cells included, with horizontal
-  scrolling and section navigation.
+  scrolling and section navigation. A CSV may be separated by commas,
+  semicolons, tabs or pipes, or say so on a `sep=` first line: the file
+  shows which, and the details name it.
 - JSON Lines (`.jsonl`, `.ndjson`): a row per line, the keys as columns.
 - Excel workbooks (`.xlsx`, `.xlsm`, `.xlsb`): each sheet's cells, one
   sheet after another. The **Spreadsheets** setting (Table or Pages)
