@@ -5,6 +5,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use parking_lot::RwLock;
 use schemars::JsonSchema;
@@ -23,6 +24,81 @@ use crate::registry::Registry;
 use crate::scheduler::{Priority, Scheduler};
 use crate::settings::Settings;
 use crate::workspace::{PaneId, StepFilter, WindowId, Workspace};
+
+/// Folders being looked into for a lens (`App::find_where_folders_lead`),
+/// by a few workers taking the next one each.
+struct LookingBelow {
+    asked: crate::workspace::LeadsAsked,
+    leads: crate::registry::LeadsBelow,
+    context: OpenContext,
+    wake: crate::location::Waker,
+    next: AtomicUsize,
+    /// A wake is on its way: what is found meanwhile goes with it.
+    telling: AtomicBool,
+}
+
+impl LookingBelow {
+    /// How long what was found waits to be told: folders arrive together
+    /// rather than each moving the rows.
+    const TOLD_AFTER: std::time::Duration = std::time::Duration::from_millis(150);
+
+    /// Answer the folders no one has taken yet. One that cannot be told
+    /// about shows: nothing proved it leads nowhere.
+    fn run(self: &Arc<Self>) {
+        let cancel = &self.context.cancel;
+        while let Some((id, path)) = self
+            .asked
+            .folders
+            .get(self.next.fetch_add(1, Ordering::Relaxed))
+        {
+            if cancel.is_cancelled() {
+                return;
+            }
+            let found = (self.leads)(&self.asked.words, path, &self.context).unwrap_or(true);
+            if cancel.is_cancelled() {
+                return;
+            }
+            self.asked.answers.lock().push((*id, found));
+            if found {
+                self.tell_soon();
+            }
+        }
+        (self.wake)();
+    }
+
+    /// See that what was found is told, one wake for what comes meanwhile,
+    /// even while every worker looks into a folder that takes long.
+    fn tell_soon(self: &Arc<Self>) {
+        if self.telling.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let this = Arc::clone(self);
+        self.context.scheduler.spawn(
+            Priority::Normal,
+            "filter.leads.told",
+            self.context.cancel.clone(),
+            move || {
+                if this.slept(Self::TOLD_AFTER) {
+                    this.telling.store(false, Ordering::Release);
+                    (this.wake)();
+                }
+            },
+        );
+    }
+
+    /// Wait `time`: false when the work was cancelled meanwhile.
+    fn slept(&self, time: std::time::Duration) -> bool {
+        time.is_zero()
+            || matches!(
+                self.context
+                    .cancel
+                    .subscribe()
+                    .receiver()
+                    .recv_timeout(time),
+                Err(crossbeam_channel::RecvTimeoutError::Timeout)
+            )
+    }
+}
 
 /// What the wakes since the UI last took them are for (`App::take_woken`,
 /// ADR-122): every window, or the windows and panes named. A source that
@@ -406,6 +482,22 @@ impl App {
                         app.refresh_showing(folders);
                     }
                 })));
+            // What a plan changed may be what a lens's folders lead to.
+            let told = Arc::downgrade(&app);
+            app.executor.observe(
+                "core",
+                Arc::new(move |changes: &[crate::op::Change]| {
+                    if changes.is_empty() {
+                        return;
+                    }
+                    if let Some(app) = told.upgrade() {
+                        for pane in app.workspace.write().panes_mut() {
+                            pane.ask_about_folders_again();
+                        }
+                        app.wake();
+                    }
+                }),
+            );
             // A plan short of room asks the user whether to go on anyway;
             // with no window up, no one is asked, and nothing is copied.
             let asking = Arc::downgrade(&app);
@@ -794,7 +886,7 @@ impl App {
                 let read = text
                     .as_deref()
                     .zip(reader.as_ref())
-                    .and_then(|(text, reader)| (reader.0)(text));
+                    .and_then(|(text, reader)| (reader.read)(text));
                 (pane, text, read)
             })
             .collect();
@@ -1421,7 +1513,7 @@ impl App {
         let text = filter.map(str::trim).filter(|t| !t.is_empty())?;
         let reader = self.registry.filter_readers.all().into_iter().next();
         let lens = reader
-            .and_then(|reader| (reader.0)(text))
+            .and_then(|reader| (reader.read)(text))
             .is_some_and(|read| read.lens.is_some());
         Some(StepFilter {
             text: Arc::from(text),
@@ -1438,7 +1530,7 @@ impl App {
         filter: &StepFilter,
     ) -> Option<(Arc<str>, Option<crate::workspace::ReadFilter>)> {
         match self.registry.filter_readers.all().into_iter().next() {
-            Some(reader) => Some((Arc::clone(&filter.text), (reader.0)(&filter.text))),
+            Some(reader) => Some((Arc::clone(&filter.text), (reader.read)(&filter.text))),
             None if filter.lens => None,
             None => Some((Arc::clone(&filter.text), None)),
         }
@@ -1481,7 +1573,7 @@ impl App {
             }
             Lensing::Brought => carried.and_then(|lens| {
                 let reader = self.registry.filter_readers.all().into_iter().next()?;
-                (reader.0)(&lens.words)?.lens
+                (reader.read)(&lens.words)?.lens
             }),
         };
         (location.clone(), Lensed::Filters(lens))
@@ -1593,6 +1685,9 @@ impl App {
                 },
             );
         }
+        for asked in std::mem::take(&mut report.leads) {
+            self.find_where_folders_lead(asked);
+        }
         // A search that follows the pane's switch, which moved.
         for (pane, location) in &report.hidden_moved {
             if let Err(error) = self.search_again(*pane, location) {
@@ -1606,6 +1701,74 @@ impl App {
             }
         }
         report
+    }
+
+    /// Ask of each folder `asked` names whether it leads to what the
+    /// pane's lens keeps, one after the other on a worker that yields to
+    /// what is on screen: the pane takes the answers at its next pump.
+    /// Woken only for those that take a folder away, and at most this
+    /// often while they come.
+    fn find_where_folders_lead(&self, asked: crate::workspace::LeadsAsked) {
+        /// Folders looked into at once: one that takes long holds back
+        /// none of the others' answers.
+        const LOOKS_AT_ONCE: usize = 4;
+        let Some(leads) = self
+            .registry
+            .filter_readers
+            .all()
+            .into_iter()
+            .next()
+            .and_then(|reader| reader.leads)
+        else {
+            return;
+        };
+        let context = OpenContext {
+            scheduler: self.scheduler.clone(),
+            cancel: asked.cancel.clone(),
+            batch_size: 1,
+            waker: None,
+            metadata: Arc::clone(&self.metadata),
+            fields: Arc::clone(&self.fields),
+            hints: Arc::clone(&self.hints),
+            companions: Arc::clone(&self.companions),
+            hidden_shown: asked.show_hidden,
+        };
+        // A worker stays free of it, for what the window asks meanwhile.
+        let looks = self
+            .scheduler
+            .workers()
+            .saturating_sub(1)
+            .clamp(1, LOOKS_AT_ONCE)
+            .min(asked.folders.len());
+        let looking = Arc::new(LookingBelow {
+            telling: AtomicBool::new(asked.keeps_view),
+            next: AtomicUsize::new(0),
+            wake: self.pane_waker(asked.pane),
+            asked,
+            leads,
+            context,
+        });
+        let cancel = looking.context.cancel.clone();
+        self.scheduler
+            .spawn(Priority::Normal, "filter.leads", cancel, move || {
+                let context = &looking.context;
+                if !looking.slept(looking.asked.wait) {
+                    return;
+                }
+                for _ in 0..looks {
+                    let look = Arc::clone(&looking);
+                    context.scheduler.spawn(
+                        Priority::Background,
+                        "filter.leads.look",
+                        context.cancel.clone(),
+                        move || look.run(),
+                    );
+                }
+                if looking.asked.keeps_view && looking.slept(crate::workspace::VIEW_KEPT) {
+                    looking.telling.store(false, Ordering::Release);
+                    (looking.wake)();
+                }
+            });
     }
 
     /// Open `location` again in `pane`, while it still shows it, the step
@@ -2569,8 +2732,6 @@ impl App {
         Ok(())
     }
 
-    /// Close every folder `pane` opened in place: what a view that does not
-    /// draw them asks (only the tree does).
     pub fn collapse_all(&self, pane: PaneId) {
         let changed = self
             .workspace
@@ -3449,13 +3610,13 @@ mod builtin {
             "core", Topic::Find,
             "filter",
             "Filter",
-            "Show only the entries `text` keeps: as the filter's reader reads it (the query plugin: words find names, terms the listing can decide such as kind:image, ext:pdf or size>1M hold for files, every folder staying), else those whose name holds it (case ignored unless it has a capital); without `text`, all of them. Its terms that hold for files are the pane's lens, kept as it shows other locations until taken off; its words go with the location",
+            "Show only the entries `text` keeps: as the filter's reader reads it (the query plugin: words find names, terms the listing can decide such as kind:image, ext:pdf or size>1M hold for files, a folder showing once a search of it finds one), else those whose name holds it (case ignored unless it has a capital); without `text`, all of them. Its terms that hold for files are the pane's lens, kept as it shows other locations until taken off; its words go with the location",
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
                 let text = a.text.as_deref().map(str::trim).filter(|t| !t.is_empty());
                 // Read before the workspace's lock: the reader is a plugin's.
                 let reader = app.registry.filter_readers.all().into_iter().next();
-                let read = text.zip(reader).and_then(|(text, reader)| (reader.0)(text));
+                let read = text.zip(reader).and_then(|(text, reader)| (reader.read)(text));
                 if let Some(p) = app.workspace.write().pane_mut(pane) {
                     p.set_filter(text, read);
                 }
@@ -4361,23 +4522,26 @@ mod tests {
         let counted = std::sync::Arc::clone(&reads);
         let added = app.registry.filter_readers.add(
             "test",
-            crate::registry::FilterReader(std::sync::Arc::new(move |text: &str| {
-                counted.fetch_add(1, Ordering::Relaxed);
-                let lens = Lens {
-                    words: text.into(),
-                    set: Vec::new(),
-                    keeps: std::sync::Arc::new(|_| true),
-                    metadata: false,
-                    next_change: None,
-                };
-                Some(ReadFilter {
-                    keeps: std::sync::Arc::new(|_| true),
-                    waits: Vec::new(),
-                    metadata: false,
-                    lens: Some(lens),
-                    next_change: None,
-                })
-            })),
+            crate::registry::FilterReader {
+                leads: None,
+                read: std::sync::Arc::new(move |text: &str| {
+                    counted.fetch_add(1, Ordering::Relaxed);
+                    let lens = Lens {
+                        words: text.into(),
+                        set: Vec::new(),
+                        keeps: std::sync::Arc::new(|_| true),
+                        metadata: false,
+                        next_change: None,
+                    };
+                    Some(ReadFilter {
+                        keeps: std::sync::Arc::new(|_| true),
+                        waits: Vec::new(),
+                        metadata: false,
+                        lens: Some(lens),
+                        next_change: None,
+                    })
+                }),
+            },
         );
         assert!(added);
         let pane = app.workspace.read().active_id();
@@ -4417,25 +4581,28 @@ mod tests {
         let counted = Arc::clone(&reads);
         let added = app.registry.filter_readers.add(
             "test",
-            crate::registry::FilterReader(Arc::new(move |text: &str| {
-                // The first reading reads otherwise soon; the next never.
-                let first = counted.fetch_add(1, Ordering::Relaxed) == 0;
-                let next_change = first.then(|| SystemTime::now() + Duration::from_millis(200));
-                let lens = Lens {
-                    words: text.into(),
-                    set: Vec::new(),
-                    keeps: Arc::new(|_| true),
-                    metadata: false,
-                    next_change,
-                };
-                Some(ReadFilter {
-                    keeps: Arc::new(|_| true),
-                    waits: Vec::new(),
-                    metadata: false,
-                    lens: Some(lens),
-                    next_change,
-                })
-            })),
+            crate::registry::FilterReader {
+                leads: None,
+                read: Arc::new(move |text: &str| {
+                    // The first reading reads otherwise soon; the next never.
+                    let first = counted.fetch_add(1, Ordering::Relaxed) == 0;
+                    let next_change = first.then(|| SystemTime::now() + Duration::from_millis(200));
+                    let lens = Lens {
+                        words: text.into(),
+                        set: Vec::new(),
+                        keeps: Arc::new(|_| true),
+                        metadata: false,
+                        next_change,
+                    };
+                    Some(ReadFilter {
+                        keeps: Arc::new(|_| true),
+                        waits: Vec::new(),
+                        metadata: false,
+                        lens: Some(lens),
+                        next_change,
+                    })
+                }),
+            },
         );
         assert!(added);
         let pane = app.workspace.read().active_id();

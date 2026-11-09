@@ -289,10 +289,24 @@ and `notes.agree` are core `notes.*` commands.
   (`tar.gz`, `mime::compound_suffixes`); never once per name.
 - What filters a pane is pane state (`Pane::filter`, `read_filter`,
   `lens`, applied by `Pane::order`), tested on what the listing knows,
-  never by reading files. Folders always show; a file the test cannot
-  tell yet (its metadata still to come) stays hidden until it can. The
+  never by reading files. A file the test cannot tell yet (its metadata
+  still to come) stays hidden until it can. The
   core keeps its words, not what they read as: its pills are the query
   plugin's chips (`query.describe_filter`), as a search's are.
+- **A lens's folders are found, never guessed (ADR-126).** A folder the
+  lens does not keep by itself shows once a search of it found something
+  (`Pane::folders_to_ask`, `registry::LeadsBelow`, ended at its first
+  hit), dimmed as only the way (`Pane::only_leads`, read of the lens's
+  test alone, so it does not flicker). What cannot be looked into stands:
+  a link, a remote folder (ADR-077), one that cannot be read, a listing
+  that is no folder's. Words and `name:` never look below: they go with
+  the location, and a way they left would open unfiltered. The answers
+  that take long are the folders that lead nowhere, and those change
+  nothing on the screen: never make a folder leave as it is proved empty.
+  A lens set by hand keeps the view until the folders have answered
+  (`VIEW_KEPT`, 150 ms at most); no answer holds it longer. Read what is
+  shown through `Pane::text_filter` or `Leading::filter`, never `filter`
+  and `read` alone: while the view is kept they say what is coming.
 - A provider names its location (`LocationProvider::title`: `report in
   Papers`) for tabs and menus. A search's trail is the folder it looks in
   (the place it lists, `in:recent:`), then itself: the address draws the
@@ -314,7 +328,9 @@ and `notes.agree` are core `notes.*` commands.
   within a bound), one read shared by the walkers asking at once.
 - **Hints (ADR-026):** a search asks indexes first (`skwir_core::hints`:
   Baloo, the tags index), checks what they name, and still walks: the
-  index hints, the walk answers.
+  index hints, the walk answers. One exception: whether a folder holds
+  anything a lens keeps is answered by an index that covers it
+  (`HintProvider::covers`, ADR-126), as the sidebar's counts are.
 - **An answer that is an index's says so (ADR-050).** A search of `/`
   that plocate answers does not walk; each run says what its answer
   rests on (`ListingEvent::AsOf`: the index and when it was last brought

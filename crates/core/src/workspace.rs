@@ -767,6 +767,132 @@ pub struct Pane {
     /// filter's version and, while it reads metadata, the listings' (a file's
     /// metadata arriving decides whether it is shown), and the order.
     filter_cache: parking_lot::Mutex<Option<FilterCache>>,
+    /// What was found of the folders the lens leaves standing.
+    leading: Leading,
+    /// When the filter was last replaced by hand: one replaced again at
+    /// once is being typed.
+    filter_replaced_at: Option<std::time::Instant>,
+}
+
+/// How long a lens being typed waits before folders are looked into: each
+/// key would read another lens.
+const TYPED_LENS_WAITS: std::time::Duration = std::time::Duration::from_millis(300);
+
+/// How long the view stays as it was when a lens comes, for the first
+/// answers about its folders: most come at once, and the view then changes
+/// once. What takes longer comes after, as a search's results do.
+pub(crate) const VIEW_KEPT: std::time::Duration = std::time::Duration::from_millis(150);
+
+/// What a pane found out of the folders it shows under its lens: a folder
+/// shows once a search of it found something (`LeadsAsked`), as a search's
+/// results come. The slow answers are the folders that lead nowhere, a
+/// search of one ending only at its last file, and those change nothing
+/// on the screen. A folder that cannot be looked into stands from the
+/// start (`Pane::folders_to_ask`).
+struct Leading {
+    /// The folders asked about, answered or not.
+    asked: crate::hashing::Set<EntryId>,
+    /// Those not found to lead anywhere, or not yet: not shown.
+    unproved: crate::hashing::Set<EntryId>,
+    /// Answers waiting for the next pump.
+    answers: Arc<parking_lot::Mutex<Vec<(EntryId, bool)>>>,
+    /// Ends with the lens, the location, or the pane.
+    cancel: CancelToken,
+    /// What the folders were last looked over at.
+    looked: Option<LeadingKey>,
+    /// The lens was typed: what is asked of it waits a moment.
+    typed: bool,
+    /// How many folders asked about are still to be answered.
+    waiting: usize,
+    /// Every folder is to be asked about, not only those new here.
+    again: bool,
+    /// Folders left out since what is shown was last looked over.
+    moved: bool,
+    /// The view as it was, until the first answers come.
+    kept: Option<KeptView>,
+}
+
+/// What a pane went on showing while a new lens's first answers came.
+struct KeptView {
+    filter: Option<Arc<str>>,
+    read: Option<Arc<ReadFilter>>,
+    unproved: crate::hashing::Set<EntryId>,
+    until: std::time::Instant,
+}
+
+impl Default for Leading {
+    fn default() -> Self {
+        Leading {
+            asked: crate::hashing::Set::default(),
+            unproved: crate::hashing::Set::default(),
+            answers: Arc::default(),
+            cancel: CancelToken::new(),
+            looked: None,
+            typed: false,
+            waiting: 0,
+            again: false,
+            moved: false,
+            kept: None,
+        }
+    }
+}
+
+impl Leading {
+    /// Forget the folders' answers: the work under way ends with them.
+    fn reset(&mut self) {
+        self.cancel.cancel();
+        *self = Leading::default();
+    }
+
+    /// Ask about every folder again, answers given standing until new ones
+    /// come; what was still being looked into is looked into anew.
+    fn start_again(&mut self) {
+        self.cancel.cancel();
+        self.cancel = CancelToken::new();
+        self.answers = Arc::default();
+        self.waiting = 0;
+        self.again = true;
+    }
+
+    /// The filter entries are shown by: the one kept while it is, or
+    /// `text` as `read` tests it.
+    fn filter<'a>(
+        &'a self,
+        text: Option<&'a str>,
+        read: Option<&'a ReadFilter>,
+    ) -> Option<TextFilter<'a>> {
+        match &self.kept {
+            Some(kept) => {
+                TextFilter::of(kept.filter.as_deref(), kept.read.as_deref(), &kept.unproved)
+            }
+            None => TextFilter::of(text, read, &self.unproved),
+        }
+    }
+}
+
+/// What decides which folders a pane has to ask about.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct LeadingKey {
+    listing: (u64, u64),
+    tree: u64,
+    show_hidden: bool,
+}
+
+/// Folders to look into for what a pane's lens keeps
+/// (`Pane::folders_to_ask`): whether each leads to something
+/// (`registry::LeadsBelow`), answered by a worker.
+#[derive(Debug)]
+pub struct LeadsAsked {
+    pub pane: PaneId,
+    pub words: Arc<str>,
+    pub folders: Vec<(EntryId, PathBuf)>,
+    pub show_hidden: bool,
+    pub answers: Arc<parking_lot::Mutex<Vec<(EntryId, bool)>>>,
+    pub cancel: CancelToken,
+    /// How long to wait first: a lens being typed changes at each key.
+    pub wait: std::time::Duration,
+    /// The view is kept until the first answers come (`VIEW_KEPT`).
+    pub keeps_view: bool,
 }
 
 /// The filtered order, and what made it: what the filter keeps of every
@@ -858,8 +984,8 @@ struct Retained {
 /// by it (`Pane::carry`); a search holds it in its own terms
 /// (`LocationProvider::lensed`). What it means is its reader's (the query
 /// plugin's): the core keeps its words and asks its test of each file.
-/// Every folder is shown whatever it says, so what is under it can be
-/// reached.
+/// A folder is shown once a search of it found what it keeps, so what is
+/// under it can be reached (`Pane::folders_to_ask`).
 #[derive(Clone)]
 pub struct Lens {
     /// Its words, in its reader's language (`kind:image modified:2024`).
@@ -948,7 +1074,8 @@ impl StepLeft {
 /// What words typed over a folder keep, as the filter's reader read them
 /// (ADR-098, the query plugin's): a test of what the listing knows, never
 /// of the file. A word finds names, of folders too; any other term holds
-/// for files, and every folder stays, as a lens keeps them.
+/// for files, and a folder shows for what a search of it finds, as a lens
+/// keeps them.
 #[derive(Clone)]
 pub struct ReadFilter {
     /// Whether an entry is shown. A file it cannot tell yet (its metadata
@@ -1000,11 +1127,9 @@ fn shows<'a>(
     kept: &'a [Kept],
     expanded: &'a [Opened],
     lent: &'a Lent,
-    filter: Option<&'a str>,
-    read: Option<&'a ReadFilter>,
+    filter: Option<TextFilter<'a>>,
     sort: SortSpec,
 ) -> impl Fn(EntryId) -> bool + 'a {
-    let filter = TextFilter::of(filter, read);
     let top = listing.shows(sort);
     let opened: Vec<_> = opened(kept, expanded)
         .map(|(_, k)| (&k.listing, k.listing.shows(sort)))
@@ -1151,13 +1276,18 @@ fn lent_renamed(gone: impl Iterator<Item = EntryId>, came: &[EntryId]) -> Vec<(E
 /// names that hold the text.
 enum TextFilter<'a> {
     Names(NameFilter<'a>),
-    Read(&'a ReadFilter),
+    /// Its reader's test, and the folders not found to lead anywhere.
+    Read(&'a ReadFilter, &'a crate::hashing::Set<EntryId>),
 }
 
 impl<'a> TextFilter<'a> {
-    fn of(text: Option<&'a str>, read: Option<&'a ReadFilter>) -> Option<Self> {
+    fn of(
+        text: Option<&'a str>,
+        read: Option<&'a ReadFilter>,
+        unproved: &'a crate::hashing::Set<EntryId>,
+    ) -> Option<Self> {
         match (text, read) {
-            (Some(_), Some(read)) => Some(TextFilter::Read(read)),
+            (Some(_), Some(read)) => Some(TextFilter::Read(read, unproved)),
             (Some(text), None) => Some(TextFilter::Names(NameFilter::new(text))),
             (None, _) => None,
         }
@@ -1166,7 +1296,11 @@ impl<'a> TextFilter<'a> {
     fn keeps(&self, entry: &Entry) -> bool {
         match self {
             TextFilter::Names(names) => names.holds(&entry.name),
-            TextFilter::Read(read) => (read.keeps)(entry),
+            TextFilter::Read(read, unproved) => {
+                (read.keeps)(entry)
+                    && (!unproved.contains(&entry.id)
+                        || read.lens.as_ref().is_none_or(|lens| (lens.keeps)(entry)))
+            }
         }
     }
 }
@@ -1254,6 +1388,8 @@ impl Pane {
             lens: None,
             asked_by: None,
             filter_cache: parking_lot::Mutex::new(None),
+            leading: Leading::default(),
+            filter_replaced_at: None,
         }
     }
 
@@ -1446,6 +1582,8 @@ impl Pane {
             self.expanded_changed();
         }
         self.lent.let_go();
+        // Each folder listed is asked about anew, under the lens it takes.
+        self.leading.reset();
         // The words that found names go; the lens stays, as a filter or
         // in the location's own terms.
         self.take_lens(lensed);
@@ -1514,6 +1652,7 @@ impl Pane {
         if !self.expanded.is_empty() {
             self.expanded_changed();
         }
+        self.leading.reset();
         if let Lensed::Holds(_) = lensed {
             self.take_lens(lensed);
         }
@@ -1564,10 +1703,11 @@ impl Pane {
         if self.filter.as_deref() == text {
             return;
         }
+        let before = (self.filter.take(), self.read.take());
         self.filter = text.map(Arc::from);
         self.read = text.and(read).map(Arc::new);
         self.lens = self.read.as_ref().and_then(|r| r.lens.clone());
-        self.filter_changed();
+        self.filter_replaced(before);
     }
 
     /// The filter's text read again by `read`, the reader there is now
@@ -1587,9 +1727,10 @@ impl Pane {
         if self.filter.is_none() {
             return;
         }
+        let before = (self.filter.clone(), self.read.take());
         self.read = read.map(Arc::new);
         self.lens = self.read.as_ref().and_then(|r| r.lens.clone());
-        self.filter_changed();
+        self.filter_replaced(before);
     }
 
     /// The pane's lens (ADR-107), if it has one: its filter's, or the one
@@ -1603,9 +1744,204 @@ impl Pane {
         self.filter.is_some()
     }
 
+    /// The filter as each entry is asked of it.
+    fn text_filter(&self) -> Option<TextFilter<'_>> {
+        self.leading
+            .filter(self.filter.as_deref(), self.read.as_deref())
+    }
+
     fn filter_changed(&mut self) {
+        self.leading.reset();
         self.filter_version += 1;
         self.retain_shown();
+    }
+
+    /// The filter of the location shown replaced `before`: what the pane
+    /// shows stays as it was for a moment when folders are to be looked
+    /// into, so a lens lands whole. A lens changing again at once is
+    /// being typed: it waits for the keys to stop, and the view with it.
+    fn filter_replaced(&mut self, before: (Option<Arc<str>>, Option<Arc<ReadFilter>>)) {
+        let now = std::time::Instant::now();
+        let typed = self
+            .filter_replaced_at
+            .replace(now)
+            .is_some_and(|at| now.duration_since(at) < TYPED_LENS_WAITS);
+        let was_kept = self.leading.kept.take();
+        let unproved = std::mem::take(&mut self.leading.unproved);
+        let kept = self.may_look_below().then(|| {
+            let wait = if typed {
+                TYPED_LENS_WAITS
+            } else {
+                std::time::Duration::ZERO
+            };
+            let until = now + wait + VIEW_KEPT;
+            match was_kept {
+                Some(kept) => KeptView { until, ..kept },
+                None => KeptView {
+                    filter: before.0,
+                    read: before.1,
+                    unproved,
+                    until,
+                },
+            }
+        });
+        self.leading.reset();
+        self.leading.kept = kept;
+        self.leading.typed = typed;
+        self.filter_version += 1;
+        self.retain_shown();
+    }
+
+    /// Whether the lens may have folders here to look into. Quick to ask:
+    /// a pane with none filters at once.
+    fn may_look_below(&self) -> bool {
+        self.read.as_ref().is_some_and(|r| r.lens.is_some())
+            && self.open.is_some()
+            && !self.listing.is_held()
+            && self.location().is_some_and(Location::is_path)
+            && self.listings().any(|listing| {
+                listing
+                    .iter()
+                    .any(|e| e.kind == crate::entry::EntryKind::Directory)
+            })
+    }
+
+    /// The folders of the pane's lens still to be asked about: those it
+    /// lists, listed by a folder, each once, and not shown until a search
+    /// found something in them. A place (a tag's), the trash or a search
+    /// has no folders to look into; a link is never gone through; a remote
+    /// folder is never walked unasked (ADR-077): each of those stands. All
+    /// are asked about again after a change (`ask_about_folders_again`,
+    /// hidden files shown), what is shown staying until the answers come;
+    /// what a name filters out is not asked about at all.
+    fn folders_to_ask(&mut self) -> Option<LeadsAsked> {
+        let read = Arc::clone(self.read.as_ref()?);
+        let lens = read.lens.clone()?;
+        if self.open.is_none() || self.listing.is_held() {
+            return None;
+        }
+        let key = LeadingKey {
+            listing: (self.listing.id(), self.listing.names_version()),
+            tree: self.tree_members_version,
+            show_hidden: self.sort.show_hidden,
+        };
+        let looked = self.leading.looked.replace(key);
+        if looked == Some(key) {
+            return None;
+        }
+        if looked.is_some_and(|before| before.show_hidden != key.show_hidden) {
+            self.leading.start_again();
+        }
+        let again = std::mem::take(&mut self.leading.again);
+        let order = self.unfiltered_order();
+        let mut folders = Vec::new();
+        for &id in order.iter() {
+            let Some(entry) = self.entry(id) else {
+                continue;
+            };
+            let first = !self.leading.asked.contains(&id);
+            if entry.kind != crate::entry::EntryKind::Directory
+                || entry.is_place()
+                || !(first || again)
+                || !(read.keeps)(entry)
+                || !self.listed_by_a_folder(id)
+            {
+                continue;
+            }
+            let Some(path) = self.path_of(id) else {
+                continue;
+            };
+            self.leading.asked.insert(id);
+            if crate::fs::reach::lane(&path).is_shared() {
+                if first {
+                    self.leading.unproved.insert(id);
+                    self.leading.moved = true;
+                }
+                folders.push((id, path));
+            }
+        }
+        if folders.is_empty() {
+            return None;
+        }
+        self.leading.waiting += folders.len();
+        let wait = if std::mem::take(&mut self.leading.typed) {
+            TYPED_LENS_WAITS
+        } else {
+            std::time::Duration::ZERO
+        };
+        Some(LeadsAsked {
+            pane: self.id,
+            words: lens.words,
+            folders,
+            show_hidden: self.sort.show_hidden,
+            answers: Arc::clone(&self.leading.answers),
+            cancel: self.leading.cancel.child(),
+            wait,
+            keeps_view: self.leading.kept.is_some(),
+        })
+    }
+
+    /// Whether the listing holding `id` is a folder's, on disk.
+    fn listed_by_a_folder(&self, id: EntryId) -> bool {
+        self.holder(id).is_some_and(Location::is_path)
+    }
+
+    /// Take the answers that came about the folders: whether what the pane
+    /// shows changed.
+    fn take_leads(&mut self) -> bool {
+        let answers = std::mem::take(&mut *self.leading.answers.lock());
+        self.leading.waiting = self.leading.waiting.saturating_sub(answers.len());
+        let mut moved = std::mem::take(&mut self.leading.moved);
+        for (id, leads) in answers {
+            moved |= if leads {
+                self.leading.unproved.remove(&id)
+            } else {
+                self.leading.unproved.insert(id)
+            };
+        }
+        if let Some(kept) = &self.leading.kept {
+            let answered = self.leading.waiting == 0 && self.leading.looked.is_some();
+            if !answered && std::time::Instant::now() < kept.until {
+                return false;
+            }
+            self.leading.kept = None;
+            moved = true;
+        }
+        if moved {
+            self.filter_version += 1;
+            self.retain_shown();
+        }
+        moved
+    }
+
+    /// Something changed files: every folder is asked about again, what
+    /// is shown staying as it is until the answers come.
+    pub(crate) fn ask_about_folders_again(&mut self) {
+        self.leading.start_again();
+        self.leading.looked = None;
+    }
+
+    /// Whether folders are still being looked into for the pane's lens:
+    /// more may yet show.
+    pub fn looks_below(&self) -> bool {
+        self.leading.waiting > 0 && self.leading.kept.is_none()
+    }
+
+    /// Whether folder `id` is shown only as the way to what the pane's
+    /// filter keeps below it: drawn dimmed. Whether it is, is the lens's
+    /// to say of it, known at once and not moved by what a look below it
+    /// finds.
+    pub fn only_leads(&self, id: EntryId) -> bool {
+        let read = self
+            .leading
+            .kept
+            .as_ref()
+            .map_or(self.read.as_ref(), |kept| kept.read.as_ref());
+        let Some(lens) = read.and_then(|r| r.lens.as_ref()) else {
+            return false;
+        };
+        self.entry(id)
+            .is_some_and(|e| e.is_dir() && !e.is_place() && !(lens.keeps)(e))
     }
 
     /// Show hidden files, or no longer: those selected leave the
@@ -1636,6 +1972,7 @@ impl Pane {
         self.listing = Listing::default();
         self.shown.lock().take();
         self.reveal = None;
+        self.leading.reset();
         // Each closes as it drops.
         self.kept.clear();
         self.opened_moved();
@@ -2060,8 +2397,8 @@ impl Pane {
             &self.kept,
             &self.expanded,
             &self.lent,
-            self.filter.as_deref(),
-            self.read.as_deref(),
+            self.leading
+                .filter(self.filter.as_deref(), self.read.as_deref()),
             self.sort,
         );
         let hidden: crate::hashing::Set<EntryId> =
@@ -2100,8 +2437,8 @@ impl Pane {
             &self.kept,
             &self.expanded,
             &self.lent,
-            self.filter.as_deref(),
-            self.read.as_deref(),
+            self.leading
+                .filter(self.filter.as_deref(), self.read.as_deref()),
             self.sort,
         );
         match shown {
@@ -2194,8 +2531,7 @@ impl Pane {
             &self.kept,
             &self.expanded,
             &self.lent,
-            self.filter.as_deref(),
-            self.read.as_deref(),
+            self.text_filter(),
             self.sort,
         )(id)
     }
@@ -2770,7 +3106,7 @@ impl Pane {
         if !self.is_filtered() {
             return all;
         }
-        let filter = TextFilter::of(self.filter.as_deref(), self.read.as_deref());
+        let filter = self.text_filter();
         let filter = filter.as_ref();
         let keeps = |e: &Entry| shown(filter, e);
         let listings: Vec<&Listing> = self.listings().collect();
@@ -2925,6 +3261,7 @@ impl Pane {
 impl Drop for Pane {
     fn drop(&mut self) {
         self.location_lifetime.cancel();
+        self.leading.cancel.cancel();
         if let Some(open) = &self.open {
             open.close();
         }
@@ -3532,7 +3869,9 @@ impl Workspace {
     pub fn pump_report(&mut self) -> PumpReport {
         let mut r = PumpReport::default();
         for p in &mut self.panes {
-            let n = p.pump(PUMP_BUDGET);
+            let pumped = p.pump(PUMP_BUDGET);
+            r.leads.extend(p.folders_to_ask());
+            let n = pumped + usize::from(p.take_leads());
             if n > 0 {
                 r.applied += n;
                 r.panes_changed.push(p.id);
@@ -3580,6 +3919,9 @@ pub struct PumpReport {
     /// ([`Pane::jobs_wanted`]): `App::pump_report` runs them. A pump that
     /// leaves them shows no folder it opened, nor an order asked anew.
     pub jobs: Vec<crate::location::ListingJob>,
+    /// The folders whose way to what a lens keeps is still to be found
+    /// out: `App::pump_report` hands them to a worker.
+    pub leads: Vec<LeadsAsked>,
 }
 
 /// A pane's location said it is reached at another.

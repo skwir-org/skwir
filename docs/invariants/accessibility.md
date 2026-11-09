@@ -117,7 +117,8 @@ like `AGENTS.md`.
 - **An entry says what `entry::behave` gives it** (`views/entry.rs`): its
   name, its tags and stars as its description (`tags::said`: "Tagged
   Paris, print; 4 stars", the names its chips show, without those its
-  place says), whether it is selected, its `Seat` (index, depth in a
+  place says, then "leads to what the filter keeps" for a folder dimmed
+  as only the way, ADR-126), whether it is selected, its `Seat` (index, depth in a
   tree), and on the cursor the active descendant. A side column's row
   and another place's card say their tags the same way. A view passes the seat; it never
   names or states an entry itself. A view's container takes its role

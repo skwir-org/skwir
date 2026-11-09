@@ -269,6 +269,59 @@ impl LocationProvider for QueryProvider {
 /// What walks leave out now (`App::left_out`), asked when a run starts.
 type Rule = Arc<dyn Fn() -> Arc<LeftOut> + Send + Sync>;
 
+/// Whether a folder leads to what a lens keeps
+/// (`registry::FilterReader::leads`): what a search of the folder for the
+/// lens's words would answer, by that search, ended at its first match. A
+/// folder is left out only on the search's own word for it.
+pub(crate) fn leads_of(app: Weak<App>) -> skwir_core::registry::LeadsBelow {
+    Arc::new(move |words, dir, ctx| {
+        let app = app.clone();
+        let rule: Rule = Arc::new(move || {
+            app.upgrade()
+                .map_or_else(|| Arc::new(LeftOut::none()), |app| app.left_out())
+        });
+        leads(words, dir, ctx, rule)
+    })
+}
+
+fn leads(words: &str, dir: &Path, ctx: &OpenContext, rule: Rule) -> Option<bool> {
+    let mut query = lang::parse(words).ok()?;
+    query.root = dir.to_path_buf();
+    query.hidden = ctx.hidden_shown;
+    let ctx = OpenContext {
+        batch_size: 1,
+        ..ctx.clone()
+    };
+    let (tx, rx) = ctx.channel();
+    let stop = ctx.cancel.child();
+    let shared = Shared {
+        tx,
+        root: dir.to_path_buf(),
+        rule,
+        lane: Mutex::new(reach::lane(dir)),
+        real_root: Mutex::new(None),
+        results: Mutex::default(),
+        walk: Mutex::new(stop.clone()),
+        lifetime: ctx.cancel.clone(),
+        first: Some(stop.clone()),
+        ctx,
+        #[cfg(test)]
+        counted: Counted::default(),
+    };
+    shared.run(&query, &stop);
+    if shared.ctx.cancel.is_cancelled() {
+        return None;
+    }
+    let found = rx
+        .try_iter()
+        .any(|event| matches!(event, ListingEvent::Added(entries) if !entries.is_empty()));
+    // Finding nothing in a folder that cannot be read proves nothing.
+    if !found && std::fs::read_dir(dir).is_err() {
+        return None;
+    }
+    Some(found)
+}
+
 pub struct Shared {
     ctx: OpenContext,
     tx: EventSink,
@@ -287,6 +340,9 @@ pub struct Shared {
     walk: Mutex<CancelToken>,
     /// The pane's and the plugin's lifetimes together.
     lifetime: CancelToken,
+    /// Where it asks whether anything is there at all (`leads_of`): the
+    /// walk ends at the first match, and the root itself may be one.
+    first: Option<CancelToken>,
     /// Rechecks run, results they looked at, and folders whose names were
     /// read for the stores: what the tests count.
     #[cfg(test)]
@@ -766,6 +822,7 @@ impl QueryLocation {
             results: Mutex::default(),
             walk: Mutex::new(lifetime.child()),
             lifetime,
+            first: None,
             #[cfg(test)]
             counted: Counted::default(),
         });
@@ -1118,6 +1175,9 @@ impl Shared {
                 .collect();
             drop(results);
             self.tx.send(ListingEvent::Added(entries));
+            if let Some(first) = &self.first {
+                first.cancel();
+            }
         }
         if complete {
             self.tx.send(ListingEvent::Complete);
@@ -1167,6 +1227,13 @@ impl Shared {
         };
         let deferred = Deferred::new(self, q, &batcher);
         let below = self.below(q);
+        if self.first.is_some()
+            && let Some(name) = q.root.file_name()
+        {
+            let known = Known::Kind(EntryKind::Directory);
+            let mut statter = Statter::default();
+            consider(q, &q.root, (name, known), &batcher, &deferred, &mut statter);
+        }
         // What an index says may match, considered first; the walk skips it.
         let hinted = {
             let hinted = self.hinted(q, &below, cancel, &batcher, &deferred);
@@ -1174,6 +1241,10 @@ impl Shared {
             batcher.flush();
             hinted
         };
+        if self.covered_by_an_index(q) {
+            batcher.finish();
+            return;
+        }
         if let Some(located) = crate::plocate::try_locate(q, &below, cancel) {
             self.left_out(cancel, located.left_out);
             self.rests_on(
@@ -1204,6 +1275,16 @@ impl Shared {
         }
         deferred.finish();
         batcher.finish();
+    }
+
+    /// Whether asking if anything is there at all needs no walk: an index
+    /// looked over all of the root, and what it names was considered. A
+    /// search walks whatever an index says (ADR-026).
+    fn covered_by_an_index(&self, q: &Query) -> bool {
+        self.first.is_some()
+            && q.required_tag().is_some()
+            && skwir_core::os_path::canonical(&q.root)
+                .is_ok_and(|root| self.ctx.hints.covers(skwir_core::entry::keys::TAGS, &root))
     }
 
     /// Stream a subtree by the same rules as the initial walk. Depth is
@@ -1291,7 +1372,7 @@ impl Shared {
         // own threads would ask its server as many at once as this
         // machine has cores, outside the lane, and a server that stops
         // answering would hold threads no one stands in for.
-        if batcher.shared.lane().is_shared() {
+        if batcher.shared.lane().is_shared() && batcher.shared.first.is_none() {
             let visit = &visit;
             builder.build_parallel().run(|| {
                 // The walking thread's stats, through the folder it is in.

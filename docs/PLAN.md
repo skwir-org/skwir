@@ -859,6 +859,16 @@ helpers in `libexec/skwir`; a minimal toolchain and `disallowedReferences`,
 so a binary naming the toolchain fails the build. Checks in
 `docs/STATUS-LOG.md` (2026-11-08, "The Nix package").
 
+## A lens shows the folders that lead to what it keeps (2026-11-09)
+
+ADR-126, from the user's `tag:config` over a folder, which left every
+folder shown. What stays looks below and what goes stays here: a lens's
+terms prune the folders by a real search of each, ended at its first hit;
+the Name pill holds at this level. Folders appear as they are found, dimmed
+when only the way; what cannot be looked into stands; the view is kept
+150 ms at most so a lens lands whole. Checks in `docs/STATUS-LOG.md`
+(2026-11-09).
+
 ## What is left
 
 Gathered on 2026-10-20 from the notes of this plan and of
@@ -1193,6 +1203,13 @@ progress, fixed the same night):
   tags are kept beside them.
 - Not checked: Wayland and the user's session (Xvfb only); a lens over a
   remote folder in a window; Windows and macOS compiled only.
+
+**From the lens's folders (2026-11-09, ADR-126)**:
+- A change made outside Skwir deep in a folder is not seen until the lens
+  or the location changes: only Skwir's own plans and the hidden-files
+  switch ask again.
+- Not checked: the feel over a very large tree, a release build's timing,
+  a screen reader on a dimmed folder; Windows and macOS compiled only.
 
 **From the review fixes (2026-10-30)**:
 - Two odd spellings of a place's two depths are not known as one place

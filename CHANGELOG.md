@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **A filter by tag, type, date, size or rating now shows only the folders that
+  lead to a match**: they appear as they are found, dimmed when they do not
+  match themselves, and the footer says when it is still looking. A folder
+  Skwir cannot look into stays. Names and patterns still look in the folder
+  shown alone.
 - **The address field's text no longer jumps when it is focused**: it stays
   where it first appears as the suggestions arrive. Text fields in dialogs and
   popups now sit centred in their selection and caret, and text set to be

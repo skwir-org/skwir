@@ -56,6 +56,10 @@ const INDENT: f32 = DISCLOSURE + 4.0;
 /// How much of a cut entry remains visible until it is pasted.
 pub const CUT_OPACITY: f32 = 0.45;
 
+/// A folder shown only as the way to what a filter keeps: readable, as it
+/// is still there to be gone into, yet behind what the filter keeps.
+pub const ONLY_LEADS_OPACITY: f32 = 0.6;
+
 /// A detail column of the list: everything about it, once. The header,
 /// the rows, the header's menu, the View menu's sorts and Settings all
 /// read `COLUMNS`.

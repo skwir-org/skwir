@@ -126,8 +126,9 @@ fn keeps(test: &Expr, entry: &Entry, types: &lang::Types) -> bool {
 /// what is wrong), never names that hold the text.
 ///
 /// A word and `name:` hold for folders too; any other term holds for
-/// files, and every folder stays, as a lens keeps them: those of them
-/// alone in their part are its lens (ADR-107). What only a search can tell
+/// files, those of them alone in their part being its lens (ADR-107), and
+/// a folder stays here: the pane shows one once a search of it found
+/// something (`Pane::folders_to_ask`). What only a search can tell
 /// (what files contain, where and when they were taken) is left out, and
 /// said, until Enter.
 pub fn read_filter(text: &str) -> Option<ReadFilter> {

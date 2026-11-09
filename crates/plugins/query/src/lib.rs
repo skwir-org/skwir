@@ -880,7 +880,10 @@ impl Plugin for QueryPlugin {
         );
         app.registry.filter_readers.add(
             ID,
-            skwir_core::registry::FilterReader(Arc::new(lens::read_filter)),
+            skwir_core::registry::FilterReader {
+                read: Arc::new(lens::read_filter),
+                leads: Some(provider::leads_of(app.weak())),
+            },
         );
 
         let editor = Editor {
@@ -2076,13 +2079,20 @@ mod tests {
                 .collect()
         };
 
+        // Once the folders are looked into, as they are after a moment.
+        let comes_to = |want: &[&str]| {
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            while shown() != set(want) {
+                assert!(std::time::Instant::now() < deadline, "{:?}", shown());
+                app.pump();
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        };
+
         go(&root);
         narrow("kind", "image").unwrap();
-        assert_eq!(
-            shown(),
-            set(&["docs", "pics"]),
-            "folders, and no file is a picture"
-        );
+        // The way to a picture alone: no file here is one, nor below docs.
+        comes_to(&["pics"]);
         assert_eq!(pills(), ["Kind: Images"]);
         assert!(chips()[0]["lens"].as_bool().unwrap(), "said to stay");
         go(&pics);
@@ -2096,7 +2106,7 @@ mod tests {
         assert_eq!(shown(), set(&["dog.JPG"]));
         go(&root.join("docs"));
         assert_eq!(filter().as_deref(), Some("kind:image"), "the word went");
-        assert_eq!(shown(), set(&["deep"]));
+        comes_to(&[]);
 
         // A search holds the lens in its terms; a folder opened from its
         // results keeps the lens, not the search's words.

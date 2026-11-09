@@ -150,7 +150,13 @@ work where the keyboard is, by topic.
 - **What a file is stays as you go**: a kind, an extension, a tag, a
   date, a size or a rating you filter by is kept as you open other
   folders, searches, the Trash or a tag, until you take its pill off;
-  the words that find names stay with the folder they were typed in. A
+  the words that find names stay with the folder they were typed in.
+  Under such a filter, a folder shows when something below it matches,
+  dimmed if it does not match itself, and folders arrive as they are
+  found while the footer says "Looking in folders…"; a folder Skwir
+  cannot look into (on a server, a link, one you cannot read) stays. A
+  name you typed, or a pattern such as `*.md`, looks in this folder only:
+  press the funnel pill for its subfolders, or use `ext:md`. A
   pill that stays says so in its tooltip, the footer counts what is
   shown ("12 of 340 items"), and a folder it hides everything in says
   "Hidden by filters", with a button that shows everything. A tab or a

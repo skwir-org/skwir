@@ -128,6 +128,8 @@ fn the_trash_is_seen_through_the_lens() {
     for name in [&picture, &text] {
         std::fs::write(s.root.join(name), b"x").unwrap();
     }
+    // What the folder leads to keeps it through the lens.
+    std::fs::write(s.root.join("inside/kept.jpg"), b"x").unwrap();
     go(&s, &Location::from_path(&s.root));
     s.app
         .dispatch(&Invocation::with_args(

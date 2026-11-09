@@ -29,6 +29,9 @@ impl HintProvider for Learned {
         // Not stat-ed here: the search stats every file it is named.
         (key == keys::TAGS).then(|| self.0.candidates_with(value, root))
     }
+    fn covers(&self, key: &str, root: &Path) -> bool {
+        key == keys::TAGS && self.0.covering(root).is_some()
+    }
 }
 
 /// Baloo, KDE's file index, which indexes the desktop's tags (ours), when

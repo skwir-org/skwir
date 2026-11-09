@@ -790,9 +790,20 @@ pub struct KeyBinding {
 /// (`workspace::ReadFilter`); `None` when it cannot read it, and names
 /// that hold the text are shown.
 #[derive(Clone)]
-pub struct FilterReader(
-    pub Arc<dyn Fn(&str) -> Option<crate::workspace::ReadFilter> + Send + Sync>,
-);
+pub struct FilterReader {
+    pub read: Arc<dyn Fn(&str) -> Option<crate::workspace::ReadFilter> + Send + Sync>,
+    /// What says whether a folder leads to what a lens keeps.
+    pub leads: Option<LeadsBelow>,
+}
+
+/// Whether the folder `dir`, or anything a search of it would find, is
+/// what the lens `words` keep: `None` when it cannot tell (the work was
+/// cancelled, the words no longer read, the folder cannot be read), and
+/// the folder shows. Blocking: asked on a worker, the context's token
+/// cancelling it, its `hidden_shown` the pane's.
+pub type LeadsBelow = Arc<
+    dyn Fn(&str, &std::path::Path, &crate::location::OpenContext) -> Option<bool> + Send + Sync,
+>;
 
 /// All UI registries.
 pub struct Registry {

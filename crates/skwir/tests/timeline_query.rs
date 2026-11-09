@@ -292,11 +292,12 @@ fn a_bar_of_a_folder_is_its_lens() {
     };
     app.navigate(pane, &Location::from_path(&root)).unwrap();
     assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
-    // July: the folder still, its files of July and the folder inside.
+    // July: the folder still, its files of July; the folder inside holds
+    // nothing of it.
     select(day(2026, 7, 1), day(2026, 8, 1));
     assert_eq!(
-        shown(&["first.jpg", "inner", "second.jpg"]),
-        BTreeSet::from(["first.jpg".into(), "inner".into(), "second.jpg".into()])
+        shown(&["first.jpg", "second.jpg"]),
+        BTreeSet::from(["first.jpg".into(), "second.jpg".into()])
     );
     assert_eq!(app.pane_location(pane), Some(Location::from_path(&root)));
     assert!(
@@ -306,10 +307,7 @@ fn a_bar_of_a_folder_is_its_lens() {
     );
     // Its first day, in place of the month.
     select(day(2026, 7, 1), day(2026, 7, 2));
-    assert_eq!(
-        shown(&["first.jpg", "inner"]),
-        BTreeSet::from(["first.jpg".into(), "inner".into()])
-    );
+    assert_eq!(shown(&["first.jpg"]), BTreeSet::from(["first.jpg".into()]));
     let words = lens().unwrap();
     assert!(
         words.contains("modified:2026-07-01") && words.matches("modified").count() == 1,

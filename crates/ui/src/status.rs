@@ -122,11 +122,13 @@ pub(crate) fn render(
 ) -> AnyElement {
     let theme = cx.global::<Theme>().clone();
     let selection = shell.selection_ctx();
-    let (held, count, complete, error, is_query, sweep, total, as_of, reads, left_out) = {
+    let (held, count, complete, error, is_query, sweep, total, as_of, reads, left_out, looking) = {
         let ws = shell.app.workspace.read();
         let pane = ws.pane(shell.pane);
         pane.map_or(
-            (None, 0, true, None, false, None, None, None, false, 0),
+            (
+                None, 0, true, None, false, None, None, None, false, 0, false,
+            ),
             |p| {
                 (
                     p.listing.filling_count(),
@@ -140,6 +142,7 @@ pub(crate) fn render(
                     p.listing.as_of().cloned(),
                     p.read_filter().is_some_and(|r| r.metadata),
                     p.listing.left_out(),
+                    p.looks_below(),
                 )
             },
         )
@@ -188,6 +191,8 @@ pub(crate) fn render(
             format!("{items} · Reading {}…", format::count(n, "file"))
         }
         Some(crate::quick_filters::Reading::Counting) => format!("{items} · Reading…"),
+        // The folders under a lens show as they are found.
+        None if looking => format!("{items} · Looking in folders…"),
         None => items,
     };
     // An index's answer says as of when (ADR-050): what was made, renamed

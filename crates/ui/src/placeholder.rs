@@ -144,6 +144,16 @@ pub fn of(shell: &Shell, pane: PaneId) -> Option<Placeholder> {
                 problem: false,
             });
         }
+        // Nothing yet, not nothing: a folder here may still lead to it.
+        if state.looks_below() {
+            return Some(Placeholder {
+                icon: "search",
+                title: "Looking in the folders here…".to_owned(),
+                detail: format!("The folders that lead to “{filter}” show as they are found."),
+                action: Some(("Show everything", "filter")),
+                problem: false,
+            });
+        }
         let detail = if state.lens().is_some() {
             format!(
                 "Nothing here is “{filter}”. The filters stay as you go to other folders and searches, until you take them off in the address."

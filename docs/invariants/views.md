@@ -20,6 +20,9 @@ around the views is in [shell.md](shell.md).
   `Shell::request_hydrate_kept`) and an option's name and place in its
   column's list box.
 - Every view marks a link, and a tag's place, with `icons::Mark`.
+- A folder shown only as the way to what a filter keeps (`Look::only_leads`,
+  ADR-126) is drawn at `ONLY_LEADS_OPACITY`, by `behave`, unless it is cut
+  or selected: what those say comes first.
 - **An entry's tags are one strip** (`tags::strip`, fitted in prepaint
   by `elements/chips.rs`), wherever it is drawn: each tag a chip (its
   dot, then its own name), and as room shrinks the first ones chips and

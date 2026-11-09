@@ -28,6 +28,16 @@ pub trait HintProvider: Send + Sync {
         root: &Path,
         cancel: &CancelToken,
     ) -> Option<Vec<PathBuf>>;
+
+    /// Whether `candidates` names every file under `root` with a value of
+    /// `key` that this index knew when it last looked over all of `root`:
+    /// its coverage (never overstated, `docs/invariants/indexes.md`), the
+    /// one case where what it does not name was looked at. Only what asks
+    /// whether anything is there at all reads this (a lens's folders); a
+    /// search walks.
+    fn covers(&self, _key: &str, _root: &Path) -> bool {
+        false
+    }
 }
 
 /// The registered hint providers, in registration order.
@@ -53,6 +63,12 @@ impl Hints {
 
     pub fn ids(&self) -> Vec<&'static str> {
         self.list.all().iter().map(|p| p.id()).collect()
+    }
+
+    /// Whether an index looked over all of `root` for `key`
+    /// (`HintProvider::covers`).
+    pub fn covers(&self, key: &str, root: &Path) -> bool {
+        self.list.all().iter().any(|p| p.covers(key, root))
     }
 
     /// Every provider's candidates, once each, only those under `root`;

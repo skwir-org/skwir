@@ -10,6 +10,8 @@ amendment on Back and Forward no longer hold); a saved or recent
 search opens as it was kept (rule 4). Amended 2026-11-07: Quick filters
 and the timeline are each pane's, from the View menu, no longer a
 setting (rule 11); a bar of a folder's timeline is its lens (below).
+Amended by ADR-126 (2026-11-09): a lens shows the folders that lead to
+what it keeps, no longer every folder.
 Amends ADR-098 (words typed over a folder, the pills after the trail)
 and retires the folder narrowing of 2026-10-03 (`workspace::Narrowed`).
 

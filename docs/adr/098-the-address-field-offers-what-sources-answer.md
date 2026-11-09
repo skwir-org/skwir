@@ -5,7 +5,9 @@ Status: accepted, 2026-10-26, the user's choices for each open point
 (a page shared in the session, mock-ups on the README's example folder).
 Built on Linux the night of 2026-10-26 (`docs/STATUS-LOG.md`, "The
 address field as an omnibar"); Windows and macOS compiled. Amends
-ADR-070 (the field's rows) and retires the Jump overlay.
+ADR-070 (the field's rows) and retires the Jump overlay. Amended by
+ADR-126 (2026-11-09): a lens's folders are those that lead to what it
+keeps (5, "every folder staying").
 
 ## Context
 

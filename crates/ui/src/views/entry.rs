@@ -34,6 +34,9 @@ pub struct Look {
     pub cursor: bool,
     /// Cut, waiting for a paste: drawn dimmed, as the file is on its way out.
     pub cut: bool,
+    /// A folder shown only as the way to what a filter keeps below it
+    /// (`Pane::only_leads`): drawn dimmed.
+    pub only_leads: bool,
     /// Its icon, the theme's or the system's, at the size asked.
     pub icon: Option<icons::Pic>,
     pub link: icons::Link,
@@ -90,6 +93,7 @@ impl Shell {
             selected: pane.selection.contains(id),
             cursor: pane.selection.cursor == Some(id),
             cut: self.pending.cut && self.pending.holds(e.file(), &e.name),
+            only_leads: pane.only_leads(id),
             icon: self.icons.for_entry(e, || pane.path_of(id), icon_px),
             link: icons::Link::of(e),
             tags: crate::tags::entry_tags(
@@ -154,6 +158,9 @@ pub fn behave(
     let pane = shell.pane;
     let el = el
         .when(look.cut, |d| d.opacity(crate::views::list::CUT_OPACITY))
+        .when(look.only_leads && !look.cut && !look.selected, |d| {
+            d.opacity(crate::views::list::ONLY_LEADS_OPACITY)
+        })
         .when(shell.a11y, |d| expose(d, look, seat))
         .children(shell.menu_marker(pane, look.cursor));
     let mut el = crate::list::entry_mouse(el, pane, look.id, cx);
@@ -182,9 +189,7 @@ fn expose(el: Stateful<Div>, look: &Look, seat: Seat) -> Stateful<Div> {
         })
         .aria_label(look.name.clone())
         // Its tags and stars, as the views draw them.
-        .when_some(crate::tags::said(&look.tags, look.rating), |d, said| {
-            d.aria_description(said)
-        })
+        .when_some(said(look), StatefulInteractiveElement::aria_description)
         .aria_selected(look.selected)
         .when(
             look.cursor,
@@ -198,6 +203,17 @@ fn expose(el: Stateful<Div>, look: &Look, seat: Seat) -> Stateful<Div> {
             .when_some(open, StatefulInteractiveElement::aria_expanded),
         None => el.aria_position_in_set(seat.index),
     }
+}
+
+/// What is said of an entry beside its name: what dims it, its tags and
+/// stars.
+fn said(look: &Look) -> Option<String> {
+    let tags = crate::tags::said(&look.tags, look.rating);
+    if !look.only_leads {
+        return tags;
+    }
+    let leads = "leads to what the filter keeps";
+    Some(tags.map_or_else(|| leads.to_owned(), |tags| format!("{leads}, {tags}")))
 }
 
 /// Its name, cut in the middle when too long (the extension tells files

@@ -13758,3 +13758,32 @@ took over. Then the card's rows came and the text was deferred above the card:
 - **Not checked:** the session's own Wayland window or a scale other than 1; a
   dialog's centred or right-aligned text on screen; Windows and macOS (gpui's shared
   code, no platform's); `just release-check`.
+
+## 2026-11-09: A lens shows the folders that lead to what it keeps (ADR-126)
+
+Filtering a folder with `tag:config` left every folder inside it shown. A
+lens's terms now look below the folders by a real search of each, ended at
+its first hit, as a search would find it; the Name pill holds at this level.
+
+- **Built:** `registry::LeadsBelow` (the query plugin's, `Shared.first` ending
+  the search at its first hit), `HintProvider::covers` for an index that covers
+  the folder, `Pane::folders_to_ask`, `Leading`, `Pane::only_leads` and
+  `ONLY_LEADS_OPACITY`, `App::find_where_folders_lead` (`LookingBelow`, up to
+  four looks at once), `KeptView` and `VIEW_KEPT`, `Pane::looks_below` for the
+  footer and the empty state.
+- **The form changed once it was tried.** Built first with folders leaving as
+  each was proved empty; the user found it counterintuitive, and the slow
+  answers were the ones that moved the screen. Folders now appear as found.
+- **Checked:** rustfmt; clippy `-D warnings` on `skwir-core`, the query and tags
+  plugins, `skwir-ui` and `skwir`; 1724 tests of those with `skwir-plugin-api`
+  passed, 10 skipped, on the final tree with the search tree of the next entry.
+  This change alone, in a worktree of its own: rustfmt, the same clippy, and the
+  15 tests of `lens_folders`, `lens` and `timeline_query`. `just check-cross`.
+  New tests: a slow folder holding back no other, the view kept then released,
+  answers standing while asked again, a folder that cannot be read staying.
+- **Seen in a window** (Xvfb, the first form): `tag:config` over a tree with a
+  tagged folder, the way to another dimmed, the rest gone.
+- **Not checked:** the kept form in a window by this check, a very large tree, a
+  release build's timing, a screen reader on a dimmed folder, `just bench-check`,
+  `just idle-pss`, `just release-check`. macOS's check leaves the UI out; Windows
+  and macOS are compiled only.
