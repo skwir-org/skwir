@@ -90,6 +90,8 @@ carry: the script takes it from the Inter release Skwir's packages pin
 | `0054-window-tiling` | `Window::tiling`: the edges that meet another window or the screen's, whoever draws the decorations (Wayland's tiled states with server-side ones too) | — |
 | `0056-ground-ink` | `Styled::ground`: a background whose ink everything inside is drawn in while the element is on it (text, icons, underlines), whatever color each names; an opaque background of its own, a hover's in its place, gives each its own color back (`Style::ink`, `Window::with_element_ink`) | — |
 | `0057-deferred-paint-text-style` | A deferred draw paints under the text style of where it stands in the tree, as it prepaints | — |
+| `0058-rounded-mask-on-device-pixels` | A rounded content mask lies on whole device pixels, as what it holds is drawn | — |
+| `0059-unreached-mask-corners` | A primitive that reaches no rounded corner of its mask is kept by its rectangles alone, so its fragments skip the corners' distance | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
 
@@ -1000,6 +1002,38 @@ Checked: `just gpui-check gpui`
 prepainting and 26 px while painting before the change, 19 px in both after).
 Not checked: Windows and macOS (the change is in gpui's shared code, no
 platform's).
+
+### 0058: A rounded mask on device pixels
+
+0053 covered a mask's bounds to device pixels but only scaled its rounded
+rectangle, while the quads and sprites inside are snapped. A rounded element
+that hides its overflow, its top at 16.5 device pixels, had a child snapped to
+16 with its row 16 at half opacity (`saturate(0.5 - 0)`): the straight edge of
+a picture went half see-through at 1.5× or on a tile scrolled to a fractional
+offset. The rounded rectangle is snapped as a quad is
+(`Window::snapped_content_mask`). A card, whose mask is on device pixels
+already, is drawn as it was.
+
+Checked: `just gpui-check gpui`
+(`a_rounded_mask_lies_on_device_pixels`). Not checked: Windows and macOS (the
+change is in gpui's shared code, no platform's).
+
+### 0059: Corners a primitive does not reach
+
+A mask with rounded corners carried its radii into every primitive inside it,
+so a glyph in the middle of a card's list evaluated the corners' signed
+distance per fragment for arcs it cannot reach (0053's early return applies
+only when every radius is zero). `Scene::insert_primitive` zeroes the radii of
+a primitive that has no pixel in the square of a rounded corner, and intersects
+the mask's bounds with its rounded rectangle, which is then all its straight
+edges do. Every renderer gains and no shader changes. Left as they were: a
+shadow, which paints past its bounds; a sprite turned, whose bounds do not say
+where it is drawn; a mesh, which keeps its rectangle (0033).
+
+Checked: `just gpui-check gpui`
+(`a_primitive_away_from_the_corners_is_drawn_without_them`) and `gpui_wgpu`'s
+`headless_renderer_clips_to_a_rounded_content_mask`. The fragment cost saved
+was not measured.
 
 ## Adding or changing a patch
 

@@ -55,6 +55,9 @@ RUNS = [
         "window::tests::a_drop_lands",
         # A deferred draw paints in the text style it stands in (0057).
         "window::tests::a_deferred_draw",
+        # A rounded mask on device pixels (0058), its corners only where a
+        # primitive reaches them (0059).
+        "window::tests::a_rounded_mask", "scene::tests",
     ]),
     # All of them: the atlas (an upload to a removed texture), the context,
     # the renderer and the text system (a variable face's weights, 0045).

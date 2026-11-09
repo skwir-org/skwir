@@ -96,6 +96,7 @@ impl Scene {
         if clipped_bounds.is_empty() {
             return;
         }
+        primitive.forget_corners_out_of_reach(&clipped_bounds);
 
         let order = self
             .layer_stack
@@ -256,6 +257,38 @@ impl Primitive {
             Primitive::Surface(surface) => &surface.bounds,
             Primitive::Mesh(mesh) => &mesh.bounds,
         }
+    }
+
+    /// A primitive none of whose pixels lie in the square of a rounded corner of its mask is kept
+    /// by the mask's rectangles alone: its fragments are spared the corners' distance, for every
+    /// renderer alike. Not a shadow, which paints past its bounds, nor a sprite turned, whose
+    /// bounds do not say where it is drawn.
+    fn forget_corners_out_of_reach(&mut self, drawn: &Bounds<ScaledPixels>) {
+        let mask = match self {
+            Primitive::Shadow(_) | Primitive::Mesh(_) => return,
+            Primitive::Quad(quad) => &mut quad.content_mask,
+            Primitive::Path(path) => &mut path.content_mask,
+            Primitive::Underline(underline) => &mut underline.content_mask,
+            Primitive::MonochromeSprite(sprite) => {
+                if sprite.transformation != TransformationMatrix::unit() {
+                    return;
+                }
+                &mut sprite.content_mask
+            }
+            Primitive::SubpixelSprite(sprite) => {
+                if sprite.transformation != TransformationMatrix::unit() {
+                    return;
+                }
+                &mut sprite.content_mask
+            }
+            Primitive::PolychromeSprite(sprite) => &mut sprite.content_mask,
+            Primitive::Surface(surface) => &mut surface.content_mask,
+        };
+        if mask.corner_radii == Corners::default() || reaches_a_corner(mask, drawn) {
+            return;
+        }
+        mask.bounds = mask.bounds.intersect(&mask.rounded_bounds);
+        mask.corner_radii = Corners::default();
     }
 
     pub fn content_mask(&self) -> &ContentMask<ScaledPixels> {
@@ -1005,5 +1038,94 @@ impl PathVertex<Pixels> {
             st_position: self.st_position,
             content_mask: self.content_mask.scale(factor),
         }
+    }
+}
+
+/// Whether `drawn` has a pixel in the square of a rounded corner of `mask`.
+fn reaches_a_corner(mask: &ContentMask<ScaledPixels>, drawn: &Bounds<ScaledPixels>) -> bool {
+    let (outer, radii) = (mask.rounded_bounds, mask.corner_radii);
+    [
+        (radii.top_left, outer.left(), outer.top()),
+        (
+            radii.top_right,
+            outer.right() - radii.top_right,
+            outer.top(),
+        ),
+        (
+            radii.bottom_right,
+            outer.right() - radii.bottom_right,
+            outer.bottom() - radii.bottom_right,
+        ),
+        (
+            radii.bottom_left,
+            outer.left(),
+            outer.bottom() - radii.bottom_left,
+        ),
+    ]
+    .into_iter()
+    .any(|(radius, x, y)| {
+        radius > ScaledPixels(0.)
+            && drawn.intersects(&Bounds::new(point(x, y), crate::size(radius, radius)))
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{point, size};
+
+    fn scaled(x: f32, y: f32, width: f32, height: f32) -> Bounds<ScaledPixels> {
+        Bounds::new(
+            point(ScaledPixels(x), ScaledPixels(y)),
+            size(ScaledPixels(width), ScaledPixels(height)),
+        )
+    }
+
+    fn quad_at(bounds: Bounds<ScaledPixels>, top_left: f32) -> Quad {
+        let card = scaled(10., 10., 100., 100.);
+        Quad {
+            bounds,
+            content_mask: ContentMask {
+                bounds: card,
+                rounded_bounds: card,
+                corner_radii: Corners {
+                    top_left: ScaledPixels(top_left),
+                    top_right: ScaledPixels(12.),
+                    bottom_right: ScaledPixels(0.),
+                    bottom_left: ScaledPixels(0.),
+                },
+            },
+            ..Default::default()
+        }
+    }
+
+    fn inserted(quad: Quad) -> ContentMask<ScaledPixels> {
+        let mut scene = Scene::default();
+        scene.insert_primitive(quad);
+        scene.quads[0].content_mask
+    }
+
+    /// In the middle of a rounded mask, a primitive is kept by its rectangles
+    /// alone; in the square of a corner, by its rounding.
+    #[test]
+    fn a_primitive_away_from_the_corners_is_drawn_without_them() {
+        let middle = inserted(quad_at(scaled(40., 40., 20., 20.), 12.));
+        assert_eq!(middle.corner_radii, Corners::default());
+        assert_eq!(middle.bounds, scaled(10., 10., 100., 100.));
+        for reaches in [
+            // The top left corner's square, by a pixel.
+            scaled(21., 21., 10., 10.),
+            // The top right's.
+            scaled(90., 15., 10., 10.),
+        ] {
+            let kept = inserted(quad_at(reaches, 12.));
+            assert_ne!(kept.corner_radii, Corners::default(), "{reaches:?}");
+        }
+        // A corner not rounded has no square.
+        let square = inserted(quad_at(scaled(10., 80., 20., 30.), 12.));
+        assert_eq!(square.corner_radii, Corners::default());
+        // Just past the top left's square, and short of the top right's.
+        let between = inserted(quad_at(scaled(22., 10., 76., 10.), 12.));
+        assert_eq!(between.corner_radii, Corners::default());
     }
 }

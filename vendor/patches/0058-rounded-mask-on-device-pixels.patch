@@ -1,0 +1,68 @@
+0058 rounded-mask-on-device-pixels: A rounded content mask lies on whole device pixels, as what it holds is drawn
+
+diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
+index f4c120d..49da084 100644
+--- a/crates/gpui/src/window.rs
++++ b/crates/gpui/src/window.rs
+@@ -3437,7 +3437,8 @@ impl Window {
+         let scale_factor = self.scale_factor();
+         ContentMask {
+             bounds: self.cover_bounds(mask.bounds),
+-            rounded_bounds: mask.rounded_bounds.scale(scale_factor),
++            // As what it holds is drawn: an edge between device pixels would be half see-through.
++            rounded_bounds: self.snap_bounds(mask.rounded_bounds),
+             corner_radii: mask.corner_radii.scale(scale_factor),
+         }
+     }
+@@ -9215,6 +9216,51 @@ mod tests {
+         assert_eq!(seen.get(), Some((px(19.), px(19.))));
+     }
+ 
++    /// SKWIR: a rounded mask's rectangle lies on whole device pixels, as the
++    /// quads and sprites inside it are drawn: an edge between two would be
++    /// half see-through along its straight part (0058).
++    #[gpui::test]
++    fn a_rounded_mask_lies_on_device_pixels(cx: &mut TestAppContext) {
++        struct View(Rc<Cell<Option<(Bounds<ScaledPixels>, Bounds<ScaledPixels>)>>>);
++
++        impl Render for View {
++            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
++                let seen = self.0.clone();
++                canvas(
++                    |_, _, _| {},
++                    move |_, (), window, _| {
++                        let bounds =
++                            Bounds::new(point(px(10.3), px(16.3)), size(px(100.), px(50.)));
++                        let mask = ContentMask {
++                            bounds,
++                            rounded_bounds: bounds,
++                            corner_radii: crate::Corners::all(px(8.)),
++                        };
++                        window.with_content_mask(Some(mask), |window| {
++                            seen.set(Some((
++                                window.snapped_content_mask().rounded_bounds,
++                                window.snap_bounds(bounds),
++                            )));
++                        });
++                    },
++                )
++                .size_full()
++            }
++        }
++
++        let seen = Rc::new(Cell::new(None));
++        let window: AnyWindowHandle = cx
++            .add_window({
++                let seen = seen.clone();
++                move |_, _| View(seen)
++            })
++            .into();
++        cx.update_window(window, |_, window, cx| window.draw(cx).clear(cx))
++            .unwrap();
++        let (rounded, snapped) = seen.get().expect("painted");
++        assert_eq!(rounded, snapped);
++    }
++
+     /// SKWIR: files dropped from another application on a window last used
+     /// by keyboard land where they are dropped: the drag coming in is the
+     /// pointer's, so what is under it counts as hovered.
