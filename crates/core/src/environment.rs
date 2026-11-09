@@ -69,6 +69,15 @@ pub fn learn(
     changed
 }
 
+/// Forget what the shell said: whether it is asked at all changed
+/// (`exclusions.shell_variables`). Off, only skwir's own environment
+/// counts; on again, the next [`want`] asks it.
+pub fn forget() {
+    if LEARNED.write().take().is_some() {
+        GENERATION.fetch_add(1, Ordering::AcqRel);
+    }
+}
+
 /// The names the shell was asked for.
 pub fn asked() -> BTreeSet<String> {
     LEARNED
@@ -131,5 +140,12 @@ mod tests {
         assert_eq!(generation(), at);
         // skwir's own environment wins.
         assert!(var("PATH").is_some());
+
+        // Forgotten, what depends on it is made again, and the names are
+        // asked anew.
+        forget();
+        assert!(generation() > at);
+        assert_eq!(var(name), None);
+        assert!(super::asked().is_empty());
     }
 }

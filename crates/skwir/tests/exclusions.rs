@@ -409,3 +409,33 @@ fn what_cannot_be_read_is_told_and_a_change_of_the_page_keeps_it() {
     assert!(told[0].contains("broken"), "{}", told[0]);
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// Turning off the shell's variables takes effect at once: what the shell
+/// said no longer moves a folder, without a restart.
+#[test]
+fn turning_off_the_shells_variables_forgets_what_it_said() {
+    use skwir_core::environment;
+    let base = fixture("exclusion-shell-off");
+    let app = App::new(AppConfig::ephemeral(base.join("app"))).unwrap();
+    let name = "SKWIR_TEST_ONLY_IN_THE_SHELL";
+    environment::learn(
+        BTreeSet::from([name.to_owned()]),
+        [(name.to_owned(), "/srv/it's a store".into())],
+    );
+    assert!(environment::var(name).is_some());
+    let before = environment::generation();
+    app.dispatch(&Invocation::with_args(
+        "settings.apply",
+        &serde_json::json!({ "changes": { "exclusions.shell_variables": "false" } }),
+    ))
+    .unwrap();
+    until(&app, 10, "saved", || {
+        app.settings.save_status().1 != skwir_core::settings::SaveState::Saving
+    });
+    assert_eq!(environment::var(name), None);
+    assert!(
+        environment::generation() > before,
+        "the rules are made again"
+    );
+    let _ = std::fs::remove_dir_all(&base);
+}

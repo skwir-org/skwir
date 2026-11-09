@@ -650,7 +650,54 @@ pub fn run_capped(
     timeout: Duration,
     output: u64,
 ) -> anyhow::Result<Finished> {
-    run_until_exit(command, input, cancel, timeout, output, false)
+    run_until_exit(command, input, cancel, timeout, output, false, in_group)
+}
+
+/// [`run_capped`] for a program that must not meet the terminal Skwir was
+/// started from, in a session of its own: an interactive shell opens
+/// `/dev/tty`, finds its group is not the terminal's foreground and stops
+/// itself until the time limit. With no terminal it goes on without job
+/// control. Stopped whole as [`run_capped`] stops it: a session leader's
+/// group is its own.
+///
+/// # Errors
+/// As [`run_capped`].
+#[cfg(unix)]
+pub fn run_capped_without_terminal(
+    command: &mut Command,
+    input: Option<&[u8]>,
+    cancel: &CancelToken,
+    timeout: Duration,
+    output: u64,
+) -> anyhow::Result<Finished> {
+    run_until_exit(command, input, cancel, timeout, output, false, in_session)
+}
+
+/// A program in a process group of its own: stopped with what it started.
+#[cfg(unix)]
+fn in_group(command: &mut Command) {
+    use std::os::unix::process::CommandExt;
+    command.process_group(0);
+}
+
+#[cfg(not(unix))]
+fn in_group(_: &mut Command) {}
+
+/// A program in a session of its own, no terminal its own either. Not with
+/// [`in_group`]: `setsid` refuses a process that leads a group already.
+#[cfg(unix)]
+fn in_session(command: &mut Command) {
+    use std::os::unix::process::CommandExt;
+    // SAFETY: what runs between fork and exec is one system call, which
+    // allocates nothing (an `io::Error` of a code is no allocation), as
+    // `pre_exec` asks.
+    #[allow(unsafe_code)]
+    unsafe {
+        command.pre_exec(|| {
+            rustix::process::setsid()?;
+            Ok(())
+        });
+    }
 }
 
 /// [`run_to_exit`] for a program that leaves another running when it
@@ -674,6 +721,7 @@ pub fn run_leaving(
         timeout,
         crate::inspection::limits::HELPER_OUTPUT,
         true,
+        in_group,
     )
 }
 
@@ -684,6 +732,7 @@ fn run_until_exit(
     timeout: Duration,
     output: u64,
     leave: bool,
+    apart: fn(&mut Command),
 ) -> anyhow::Result<Finished> {
     let program = Path::new(command.get_program())
         .file_name()
@@ -707,11 +756,7 @@ fn run_until_exit(
         .stdin(stdin)
         .stdout(stdout.try_clone()?)
         .stderr(stderr.try_clone()?);
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        command.process_group(0);
-    }
+    apart(command);
     let mut child = ChildGuard::new(
         command
             .spawn()

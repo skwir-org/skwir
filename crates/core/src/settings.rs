@@ -1252,6 +1252,17 @@ pub(crate) fn changed(app: &crate::App, keys: &[String]) {
         }
         app.wake();
     }
+    if keys
+        .iter()
+        .any(|key| key == crate::exclusions::SHELL_VARIABLES_KEY)
+    {
+        crate::environment::forget();
+    }
+    if keys.iter().any(|key| {
+        key == crate::exclusions::ENTRIES_KEY || key == crate::exclusions::CATEGORIES_KEY
+    }) {
+        crate::exclusions::tell_problems(app);
+    }
     for key in keys {
         if let Some(id) = key
             .strip_prefix("plugins.")
