@@ -307,6 +307,15 @@ and `notes.agree` are core `notes.*` commands.
   (`VIEW_KEPT`, 150 ms at most); no answer holds it longer. Read what is
   shown through `Pane::text_filter` or `Leading::filter`, never `filter`
   and `read` alone: while the view is kept they say what is coming.
+  Folders are asked about again only where something changed: those
+  above a plan's changes (`Pane::ask_again_above`), every folder on F5
+  and when the hidden-files switch moves; a change or F5 is walked, an
+  index set aside. A rename keeps a folder's answer. An answer is tied to
+  what asked (`Leading::asked`): one superseded is dropped, and a folder
+  asked about again never holds back another's look. Looked over a
+  `PUMP_BUDGET` at a time, on the window's thread; an answer moves only
+  `filter_version`, what was kept of the entries told of the folders
+  alone (`FilterCache`, never a test of every entry).
 - A provider names its location (`LocationProvider::title`: `report in
   Papers`) for tabs and menus. A search's trail is the folder it looks in
   (the place it lists, `in:recent:`), then itself: the address draws the

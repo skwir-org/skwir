@@ -58,7 +58,7 @@ impl LookingBelow {
             if cancel.is_cancelled() {
                 return;
             }
-            self.asked.answers.lock().push((*id, found));
+            self.asked.answers.lock().push((*id, self.asked.ask, found));
             if found {
                 self.tell_soon();
             }
@@ -491,8 +491,16 @@ impl App {
                         return;
                     }
                     if let Some(app) = told.upgrade() {
-                        for pane in app.workspace.write().panes_mut() {
-                            pane.ask_about_folders_again();
+                        let above = crate::workspace::FoldersAbove::of(changes);
+                        let asked: Vec<PaneId> = {
+                            let mut ws = app.workspace.write();
+                            ws.panes_mut()
+                                .iter_mut()
+                                .filter_map(|p| p.ask_again_above(&above).then_some(p.id))
+                                .collect()
+                        };
+                        for pane in asked {
+                            (app.pane_waker(pane))();
                         }
                         app.wake();
                     }
@@ -1714,23 +1722,38 @@ impl App {
     }
 
     /// Ask of each folder `asked` names whether it leads to what the
-    /// pane's lens keeps, one after the other on a worker that yields to
-    /// what is on screen: the pane takes the answers at its next pump.
-    /// Woken only for those that take a folder away, and at most this
-    /// often while they come.
+    /// pane's lens keeps, a few at once at background priority, one that
+    /// takes long holding back none of the others' answers, and the pane
+    /// takes the answers at its next pump. Woken for a folder found, at
+    /// most this often while they come, and once when they are done. A
+    /// reader that cannot tell answers for every folder: nothing proved
+    /// it leads nowhere.
     fn find_where_folders_lead(&self, asked: crate::workspace::LeadsAsked) {
         /// Folders looked into at once: one that takes long holds back
         /// none of the others' answers.
         const LOOKS_AT_ONCE: usize = 4;
-        let Some(leads) = self
+        let leads = self
             .registry
             .filter_readers
             .all()
             .into_iter()
             .next()
-            .and_then(|reader| reader.leads)
-        else {
+            .and_then(|reader| reader.leads);
+        let Some(leads) = leads else {
+            let ask = asked.ask;
+            asked
+                .answers
+                .lock()
+                .extend(asked.folders.iter().map(|(id, _)| (*id, ask, true)));
+            (self.pane_waker(asked.pane))();
             return;
+        };
+        // After a change or F5, what changed is looked at, not an index's
+        // memory of it (`HintProvider::covers`, whose news is on its way).
+        let hints = if asked.fresh {
+            Arc::default()
+        } else {
+            Arc::clone(&self.hints)
         };
         let context = OpenContext {
             scheduler: self.scheduler.clone(),
@@ -1739,7 +1762,7 @@ impl App {
             waker: None,
             metadata: Arc::clone(&self.metadata),
             fields: Arc::clone(&self.fields),
-            hints: Arc::clone(&self.hints),
+            hints,
             companions: Arc::clone(&self.companions),
             hidden_shown: asked.show_hidden,
         };
@@ -1750,6 +1773,7 @@ impl App {
             .saturating_sub(1)
             .clamp(1, LOOKS_AT_ONCE)
             .min(asked.folders.len());
+        let waits = !asked.wait.is_zero() || asked.keeps_view;
         let looking = Arc::new(LookingBelow {
             telling: AtomicBool::new(asked.keeps_view),
             next: AtomicUsize::new(0),
@@ -2742,8 +2766,6 @@ impl App {
         Ok(())
     }
 
-    /// Close every folder `pane` opened in place: what a view that does not
-    /// draw them asks (only the tree does).
     /// Open or close folders of the tree of what a search found, when
     /// the pane shows one: nothing is listed for it.
     fn fold_found_tree(&self, pane: PaneId, a: &ExpandArgs) -> bool {
@@ -2784,6 +2806,8 @@ impl App {
         }
     }
 
+    /// Close every folder `pane` opened in place: what a view that does not
+    /// draw them asks (only the tree does).
     pub fn collapse_all(&self, pane: PaneId) {
         let changed = self
             .workspace
@@ -3407,6 +3431,9 @@ mod builtin {
             "Re-list the pane's location",
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
+                if let Some(p) = app.workspace.write().pane_mut(pane) {
+                    p.ask_about_folders_again();
+                }
                 // The folders opened in place are shown too.
                 if let Some((open, opened)) =
                     app.with_open(pane, crate::workspace::Pane::opened_locations)

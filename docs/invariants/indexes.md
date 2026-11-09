@@ -32,6 +32,11 @@ what is built.
   root a search considers what the index names and nothing else; under
   any other it hints and scans, or, for meaning, lists what it has and
   says what it leaves out.
+  One exception, whether a folder a lens filters leads anywhere (ADR-126,
+  10): the tags index that covers it answers, as the sidebar's counts
+  are, since only whether the folder shows is at stake, never what a
+  search finds; a folder asked about after a change or F5 is walked, as
+  the index learns of a plan's changes after it.
 - A dropped change, a root over its room, a folder denied, a remote or a
   removable volume lowers the proof at once for the subtree concerned.
 - A failed read is unread, counted with its reason, retried at the next

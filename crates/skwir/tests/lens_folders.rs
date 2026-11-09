@@ -188,6 +188,7 @@ fn a_folder_with_the_tag_stays_lit_and_one_leading_to_it_is_dimmed() {
     while only_leads(&s, "tagged") {
         assert!(Instant::now() < deadline, "its own tags are read");
         s.app.pump();
+        shown(&s);
         std::thread::sleep(Duration::from_millis(10));
     }
     assert!(only_leads(&s, "leads"), "only the way there");
@@ -256,9 +257,15 @@ fn another_lens_starts_over() {
 /// A reader whose lens keeps `*.keep` files and whose folders are answered
 /// by `answer`, for what the core does with answers that take long.
 fn reading_with(s: &Setup, answer: impl Fn(&Path) -> Option<bool> + Send + Sync + 'static) {
+    let answer: skwir_core::registry::LeadsBelow = Arc::new(move |_, dir, _| answer(dir));
+    reading_by(s, Some(answer));
+}
+
+/// A reader whose lens keeps `*.keep` files, its folders answered by
+/// `leads`, or left to no one.
+fn reading_by(s: &Setup, leads: Option<skwir_core::registry::LeadsBelow>) {
     let keeps: Arc<dyn Fn(&skwir_core::entry::Entry) -> bool + Send + Sync> =
         Arc::new(|e| e.name_str().ends_with(".keep"));
-    let answer: skwir_core::registry::LeadsBelow = Arc::new(move |_, dir, _| answer(dir));
     let read = move |text: &str| {
         let lens = skwir_core::workspace::Lens {
             words: Arc::from(text),
@@ -273,7 +280,7 @@ fn reading_with(s: &Setup, answer: impl Fn(&Path) -> Option<bool> + Send + Sync 
         "stub",
         skwir_core::registry::FilterReader {
             read: Arc::new(read),
-            leads: Some(answer),
+            leads,
         },
     );
 }
@@ -404,5 +411,265 @@ fn a_folder_that_cannot_be_read_stays_shown() {
     filter(&s, "kind:image");
     shows(&s, &["locked", "pics"], "nothing proved it leads nowhere");
     std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+    drop(s.tmp);
+}
+
+/// Pump until no folder is still being looked into.
+fn looked(s: &Setup) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        s.app.pump();
+        if !looks_below(s) {
+            return;
+        }
+        assert!(Instant::now() < deadline, "the looks end");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+fn select(s: &Setup, name: &str) {
+    let id = {
+        let ws = s.app.workspace.read();
+        let p = ws.pane(s.pane).unwrap();
+        p.listing.find_by_name(name.as_ref()).unwrap().id
+    };
+    s.app
+        .dispatch(&Invocation::with_args(
+            "select",
+            &serde_json::json!({ "ids": [id], "mode": "replace", "pane": s.pane }),
+        ))
+        .unwrap();
+}
+
+fn selected(s: &Setup) -> BTreeSet<String> {
+    let ws = s.app.workspace.read();
+    let p = ws.pane(s.pane).unwrap();
+    p.selection
+        .iter()
+        .filter_map(|id| p.entry(id).map(|e| e.name_str().into_owned()))
+        .collect()
+}
+
+/// Make file `name` in `dir` by a plan, as the user would.
+fn new_file(s: &Setup, name: &str, dir: &Path) {
+    let Outcome::Plan(plan) = s
+        .app
+        .dispatch(&Invocation::with_args(
+            "new_file",
+            &serde_json::json!({ "name": name, "in": dir }),
+        ))
+        .unwrap()
+    else {
+        panic!("a plan that makes the file")
+    };
+    let done = s.app.executor.execute_blocking(&plan, s.app.lifetime());
+    assert!(done.error.is_none(), "{:?}", done.error);
+}
+
+#[test]
+fn f5_looks_again_at_what_changed_outside() {
+    let s = setup();
+    write(&s.root, "pics/a.jpg");
+    write(&s.root, "later/a.txt");
+    go(&s, &s.root);
+    filter(&s, "kind:image");
+    shows(&s, &["pics"], "no picture there yet");
+    looked(&s);
+    // Not through a plan: nothing tells the pane.
+    std::fs::write(s.root.join("later/b.jpg"), b"x").unwrap();
+    stays(&s, &["pics"], "seen only when asked");
+    s.app
+        .dispatch(&Invocation::with_args(
+            "refresh",
+            &serde_json::json!({ "pane": s.pane }),
+        ))
+        .unwrap();
+    shows(&s, &["later", "pics"], "F5 looks again");
+    drop(s.tmp);
+}
+
+#[test]
+fn a_folder_renamed_keeps_its_place_and_its_selection() {
+    let s = setup();
+    write(&s.root, "pics it's/a.jpg");
+    write(&s.root, "plain/a.txt");
+    go(&s, &s.root);
+    filter(&s, "kind:image");
+    shows(&s, &["pics it's"], "found");
+    looked(&s);
+    select(&s, "pics it's");
+    std::fs::rename(s.root.join("pics it's"), s.root.join("shots ü")).unwrap();
+    // It never leaves: a new name is no new folder to prove.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        s.app.pump();
+        let now = shown(&s);
+        if now == set(&["shots ü"]) {
+            break;
+        }
+        assert!(
+            now == set(&["pics it's"]) && Instant::now() < deadline,
+            "stays shown, once renamed: {now:?}"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(selected(&s), set(&["shots ü"]), "and selected");
+    drop(s.tmp);
+}
+
+#[test]
+fn a_plan_asks_again_about_the_folders_above_what_it_changed_alone() {
+    let s = setup_bare();
+    write(&s.root, "a/sub/x");
+    write(&s.root, "b/x");
+    let asked: Arc<std::sync::Mutex<Vec<PathBuf>>> = Arc::default();
+    let log = Arc::clone(&asked);
+    reading_with(&s, move |dir| {
+        log.lock().unwrap().push(dir.to_path_buf());
+        Some(true)
+    });
+    go(&s, &s.root);
+    filter(&s, "lens");
+    shows(&s, &["a", "b"], "both lead somewhere");
+    looked(&s);
+    let times = |dir: &str| {
+        let dir = s.root.join(dir);
+        asked.lock().unwrap().iter().filter(|p| **p == dir).count()
+    };
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while times("a") + times("b") < 2 {
+        assert!(Instant::now() < deadline, "each is asked about");
+        s.app.pump();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    looked(&s);
+    assert_eq!((times("a"), times("b")), (1, 1), "each asked about once");
+    new_file(&s, "c.txt", &s.root.join("a/sub"));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while times("a") < 2 {
+        assert!(Instant::now() < deadline, "the folder above it, again");
+        s.app.pump();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    looked(&s);
+    assert_eq!(times("b"), 1, "nothing below it changed");
+    drop(s.tmp);
+}
+
+#[test]
+fn what_changed_is_looked_at_and_what_stands_is_left_to_the_index() {
+    use skwir_core::cancel::CancelToken;
+    use skwir_core::hints::HintProvider;
+    struct Covers;
+    impl HintProvider for Covers {
+        fn id(&self) -> &'static str {
+            "stub"
+        }
+        fn candidates(&self, _: &str, _: &str, _: &Path, _: &CancelToken) -> Option<Vec<PathBuf>> {
+            None
+        }
+    }
+    let s = setup_bare();
+    write(&s.root, "a/x");
+    s.app.hints.register("stub", Arc::new(Covers));
+    let index_asked: Arc<std::sync::Mutex<Vec<bool>>> = Arc::default();
+    let log = Arc::clone(&index_asked);
+    reading_by(
+        &s,
+        Some(Arc::new(move |_, _, ctx| {
+            log.lock().unwrap().push(ctx.hints.ids().is_empty());
+            Some(true)
+        })),
+    );
+    go(&s, &s.root);
+    filter(&s, "lens");
+    shows(&s, &["a"], "found");
+    looked(&s);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while index_asked.lock().unwrap().is_empty() {
+        assert!(Instant::now() < deadline, "asked about");
+        s.app.pump();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    looked(&s);
+    assert_eq!(
+        *index_asked.lock().unwrap(),
+        [false],
+        "the index may answer"
+    );
+    new_file(&s, "c.txt", &s.root.join("a"));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while index_asked.lock().unwrap().len() < 2 {
+        assert!(Instant::now() < deadline, "asked again");
+        s.app.pump();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(
+        *index_asked.lock().unwrap(),
+        [false, true],
+        "a plan's change is looked at"
+    );
+    drop(s.tmp);
+}
+
+#[test]
+fn a_reader_that_cannot_look_leaves_the_folders_shown() {
+    let s = setup_bare();
+    write(&s.root, "folder/x");
+    write(&s.root, "top.keep");
+    write(&s.root, "top.other");
+    reading_by(&s, None);
+    go(&s, &s.root);
+    filter(&s, "lens");
+    shows(
+        &s,
+        &["folder", "top.keep"],
+        "nothing proved it leads nowhere",
+    );
+    looked(&s);
+    drop(s.tmp);
+}
+
+#[test]
+fn a_folder_opened_in_place_stands_while_it_is_looked_into() {
+    let s = setup_bare();
+    write(&s.root, "open/inner.keep");
+    write(&s.root, "open/inner.other");
+    write(&s.root, "other/x");
+    let (let_go, held) = std::sync::mpsc::channel::<()>();
+    let held = std::sync::Mutex::new(held);
+    reading_with(&s, move |dir| {
+        let _ = held.lock().unwrap().recv();
+        Some(dir.ends_with("open"))
+    });
+    go(&s, &s.root);
+    let id = {
+        let ws = s.app.workspace.read();
+        ws.pane(s.pane)
+            .unwrap()
+            .listing
+            .find_by_name("open".as_ref())
+            .unwrap()
+            .id
+    };
+    s.app
+        .dispatch(&Invocation::with_args(
+            "expand",
+            &serde_json::json!({ "ids": [id], "mode": "expand", "pane": s.pane }),
+        ))
+        .unwrap();
+    shows(
+        &s,
+        &["inner.keep", "inner.other", "open", "other"],
+        "opened in place",
+    );
+    filter(&s, "lens");
+    shows(
+        &s,
+        &["inner.keep", "open"],
+        "what it holds stands under it, the other waits",
+    );
+    drop(let_go);
+    shows(&s, &["inner.keep", "open"], "then as found");
     drop(s.tmp);
 }

@@ -33,8 +33,9 @@ pub trait HintProvider: Send + Sync {
     /// `key` that this index knew when it last looked over all of `root`:
     /// its coverage (never overstated, `docs/invariants/indexes.md`), the
     /// one case where what it does not name was looked at. Only what asks
-    /// whether anything is there at all reads this (a lens's folders); a
-    /// search walks.
+    /// whether anything is there at all reads this (a lens's folders, and
+    /// not when a change or F5 asks again: the index learns of a plan's
+    /// changes after it); a search walks.
     fn covers(&self, _key: &str, _root: &Path) -> bool {
         false
     }

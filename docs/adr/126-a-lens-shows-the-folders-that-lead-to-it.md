@@ -67,12 +67,16 @@ below).
    no longer kept (`Pane::looks_below`): "Looking in folders…" in the
    footer, and "Looking in the folders here…" where it would say "Hidden
    by filters".
-9. **Asked again after a plan** (the executor's observer) **and when the
-   hidden-files switch moves**: what is shown stays until the new answers
-   come, and what was being looked into is looked into anew.
+9. **Asked again** after a plan, about the folders above what it changed
+   (`Pane::ask_again_above`), and about every folder on F5 and when the
+   hidden-files switch moves: what is shown stays until the new answers
+   come, and what was being looked into is looked into anew. A folder
+   renamed keeps its answer: a new name is no new folder to prove.
 10. **An index that covers the folder answers this one question**
     (`HintProvider::covers`, the tags index for a folder it covers): no
-    walk. Searches still walk (ADR-026).
+    walk. Searches still walk (ADR-026). A folder asked about again after
+    a change or F5 walks too: the index is told of a plan's changes after
+    it, and may not have them yet.
 
 ## Rejected
 
@@ -95,8 +99,8 @@ below).
 ## Consequences
 
 - A change made outside Skwir deep in a folder is not seen until the lens
-  or the location changes: only Skwir's own plans and the hidden-files
-  switch ask again.
+  or the location changes or F5: only Skwir's own plans, F5 and the
+  hidden-files switch ask again.
 - What a covering index says is as fresh as the sidebar's counts.
 - With `kind:` every folder shown is dimmed: a folder is never an image.
 - A folder lit by its own tag shows what the lens keeps inside it, as any
