@@ -13852,6 +13852,15 @@ Skwir code 2.5, the MIME database 1.0, the exclusions' tables 0.8.
   traced, likely more of the session's and NVIDIA's code off the list.
   Anonymous memory rose by 2.7 MiB since 0.3.1, which the layout does not
   touch: not attributed.
+- **The flake's Nix package** laid out too, by `--config` in `flake.nix`, so
+  that `package.nix` stands as it would in nixpkgs (ADR-124), whose Rust has no
+  lld. A first build sourced the env script and came out in no order, silently,
+  nixpkgs' build hook setting cargo's linker variable itself. Built `minimal`
+  (the other variants are this binary and more helpers; their flags read by
+  `nix eval`, not built): 97.1 % of its first 12,830 functions are the list's,
+  99.6 % of the list found; on the headless sway, two rounds against a build in
+  no order, the binary 61.4 and 32.6 MiB, own share 93.0 and 64.5, first frame
+  60.9 and 52.5 ms; the window opened and idled in both.
 - **Not checked:** memory after use; `just release-check` and the packages'
   builds (`just package-*`) through the wrapper; a build outside the dev shell.
   macOS and Windows are neither built nor measured for this.

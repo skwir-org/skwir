@@ -175,7 +175,7 @@
       # in its sysroot, so no binary names the toolchain (the package
       # refuses one that does).
       rustMinimal = pkgs.rust-bin.stable.${pinned}.minimal;
-      skwir = pkgs.callPackage ./tools/package/nix/package.nix {
+      skwir = (pkgs.callPackage ./tools/package/nix/package.nix {
         rustPlatform = pkgs.makeRustPlatform {
           cargo = rustMinimal;
           rustc = rustMinimal;
@@ -200,7 +200,18 @@
           # lock file names: no hash to keep beside each.
           allowBuiltinFetchGit = true;
         };
-      };
+      }).overrideAttrs (package: lib.optionalAttrs (stdenv.hostPlatform.isLinux && stdenv.hostPlatform.isx86_64) {
+        # What a start runs, laid out together (ADR-128). Here rather than
+        # in package.nix, written to stand in nixpkgs, whose Rust has no
+        # lld. nixpkgs' build names the linker in the environment, which
+        # only `--config` goes before.
+        cargoBuildFlags = package.cargoBuildFlags ++ [
+          "--config=target.x86_64-unknown-linux-gnu.linker=\"tools/build/link-ordered\""
+        ];
+        postPatch = (package.postPatch or "") + ''
+          patchShebangs tools/build/link-ordered
+        '';
+      });
       # Every flag the package has, on or off.
       skwirWith = on: skwir.override (lib.genAttrs skwir.passthru.features (_: on));
     in {

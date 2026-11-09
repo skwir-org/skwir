@@ -1,8 +1,9 @@
 # ADR-128: Code is laid out in the order a start runs it
 
 Status: accepted 2026-11-09 with the user. Built for Linux on x86-64
-(`dist` builds); not for the Nix package, macOS or Windows. Answers
-PLAN's "find why so much of the code is resident".
+(`dist` builds, the flake's Nix package included); not for macOS or
+Windows.
+Answers PLAN's "find why so much of the code is resident".
 
 ## Context
 
@@ -44,6 +45,10 @@ back with use and the layout stays as it was.
    build (`order-link-env.sh`, sourced by every build that ships), links
    skwir once, finds the list's names in its symbol table, and links it
    again in that order. Anything else it is given is the real linker's.
+   The flake's Nix package names it by `--config`, in `flake.nix`:
+   nixpkgs' build sets cargo's linker variable itself, and an unused
+   wrapper would say nothing. `package.nix` knows nothing of it, written
+   to stand in nixpkgs (ADR-124).
 3. **A binary out of order is heavier, never broken.** No list, no lld
    (the wrapper asks whether rustc chose it), no symbols, a second link
    that fails: the first link stands, and the build says why. Silent
@@ -90,10 +95,19 @@ runs of it.
   cost a window each.
 - The list covers a start. What browsing and previews run stays
   scattered; how much returns with use is not measured.
-- **Not built:** the Nix package (`buildType = "dist"`, no wrapper), macOS
-  (`-order_file`) and Windows (`/ORDER`), whose faults cluster differently
-  and were not measured. `-z pack-relative-relocs` read 3.3 MiB lower but
-  needs glibc 2.36, above the tarball's floor; not taken.
+- **The flake's Nix package** (its pinned Rust brings lld), two builds of
+  `minimal` on the same headless sway: the binary 61.4 and 32.6 MiB. A
+  copy in nixpkgs, whose Rust has no lld, is not laid out.
+- **Not built: macOS and Windows.** Their budgets' figures leave out
+  clean code pages (ADR-038: `phys_footprint` says so; Windows' private
+  working set by Microsoft's definition, not measured), so the idle
+  saving is Linux's alone and what is left there is a cold start. The
+  linkers can (`-order_file`; `/order:`, though the Windows build links
+  through zig and MinGW, which name no such option), but Apple silicon has
+  no Intel PT, Wine does not open the window (ADR-074), and neither can be
+  measured here.
+- `-z pack-relative-relocs` read 3.3 MiB lower but needs glibc 2.36, above
+  the tarball's floor; not taken.
 - `panic=abort` was not an option: `catch_unwind` guards the scheduler's
   jobs, commands and plans. `--icf=all` saved 2 MiB of code and 0.5 of
   PSS; not taken.

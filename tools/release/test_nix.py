@@ -44,6 +44,13 @@ class Package(unittest.TestCase):
         self.assertIn('[ "skwir" ] ++ helpers', self.text, "skwir itself")
         self.assertEqual(self.always | self.flagged | {"skwir"}, listed("programs"))
 
+    def test_the_flake_lays_out_what_a_start_runs_and_the_package_does_not(self):
+        flake = (ROOT / "flake.nix").read_text()
+        self.assertIn('linker=\\"tools/build/link-ordered\\"', flake,
+                      "ADR-128, by --config: nixpkgs' build sets the linker's variable itself")
+        self.assertIn("patchShebangs tools/build/link-ordered", flake, "a build's own shell")
+        self.assertNotIn("link-ordered", self.text, "written to stand in nixpkgs, as ADR-124 says")
+
     def test_a_program_is_either_always_built_or_under_one_flag(self):
         self.assertFalse(self.always & self.flagged)
         found = [quoted(p) for p in re.findall(r"programs = \[([^\]]*)\]", self.features)]

@@ -935,7 +935,8 @@ leave (ADR-077).
   code out together and `just idle-pss` reads 83.2 MiB there, the binary
   35.8 against 0.3.1's 58.6. Left: what use brings back (the list covers
   a start, not browsing); why anonymous memory rose from 31.0 to 33.7 MiB
-  since 0.3.1; the Nix package, macOS and Windows, which are not laid out.
+  since 0.3.1; macOS and Windows, not laid out, whose budgets leave these
+  pages out (ADR-128).
 - Why a build of `target/release` starts slower than the shipped tarballs
   (first frame 177 to 184 ms against 137 to 170 the same evening) is not
   known. `just idle-pss` now measures `dist`, what ships.
