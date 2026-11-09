@@ -28,6 +28,9 @@
   tag's place; Show hidden files decides what shows, a file inside a hidden
   folder too, as a search without `hidden:true` finds it. A place or a folder
   with only hidden files says so, with Show hidden files.
+- **Searches follow Show hidden files**: with hidden files shown, a search
+  finds them too, and runs again as you turn them on or off; `hidden:true`
+  always finds and shows them, `hidden:false` never does.
 - **Searches say what they walked past**: "· 3 excluded" in the
   footer; the where pill's **Excluded files and folders** (`excluded:true`) searches
   them too, as a search of such a folder itself does. A trash is never

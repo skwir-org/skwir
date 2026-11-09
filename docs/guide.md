@@ -445,6 +445,9 @@ it, **+ Filter** adds one, and the text can be typed as is:
   was at its last update: the footer says when (`as of Yesterday 03:00`),
   and a file made or renamed since is not found. Search a folder to walk
   it.
+- A search looks at hidden files when the pane shows them (`Ctrl+H`), and
+  again as you turn them on or off; `hidden:true` always finds and shows
+  them, `hidden:false` never does.
 - A search walks past the folders tools fill with what they manage
   themselves (`node_modules`, `.git`, `~/.cargo/registry`, caches, the
   Trash): Settings › Exclusions lists them, by kind, each with what it

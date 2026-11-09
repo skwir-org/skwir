@@ -163,6 +163,15 @@ and `notes.agree` are core `notes.*` commands.
   are left out alike (`Below::stops_above`, `in_walk`). Each run says how
   many files and folders it walked past (`ListingEvent::LeftOut`, the footer's "·
   N excluded", `entries`' `excluded`), none included.
+- **A search and hidden files.** One that does not say follows its
+  pane's switch: the pane says whether it shows them as it opens
+  (`OpenContext::hidden_shown`), and what follows it says so
+  (`LocationProvider::follows_hidden`), so the pump opens it again however
+  the switch moved (`Pane::take_listed_for_other_hidden`). `hidden:true`
+  finds them and shows them whatever the switch says
+  (`LocationProvider::shows_hidden`, `Listing::showing_hidden`),
+  `hidden:false` never finds them. With no pane (a script, an agent's
+  listing), none are searched.
 - **A hit the walk stat-ed is hydrated, not filled**: its size and dates
   are the walk's, its tags, rating and what is beside it are read as a
   folder's rows are, when a view asks for them (`Metadata::is_filled`,

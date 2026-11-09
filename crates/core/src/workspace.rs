@@ -679,6 +679,9 @@ pub struct Pane {
     pub id: PaneId,
     pub open: Option<Arc<dyn OpenLocation>>,
     location_lifetime: CancelToken,
+    /// What the pane's switch said when a location that follows it was
+    /// opened (`LocationProvider::follows_hidden`); none for any other.
+    listed_hidden: Option<bool>,
     pub listing: Listing,
     /// The locations the pane's view asked to keep (`App::keep_locations`).
     kept: Vec<Kept>,
@@ -1224,6 +1227,7 @@ impl Pane {
             id,
             open: None,
             location_lifetime: CancelToken::new(),
+            listed_hidden: None,
             listing: Listing::default(),
             kept: Vec::new(),
             left: None,
@@ -1513,6 +1517,25 @@ impl Pane {
         if let Lensed::Holds(_) = lensed {
             self.take_lens(lensed);
         }
+    }
+
+    /// What the switch said as a location that follows it was opened.
+    pub(crate) fn set_listed_hidden(&mut self, listed: Option<bool>) {
+        self.listed_hidden = listed;
+    }
+
+    /// The location to open again because the switch moved since it was
+    /// opened: asked once, so one that cannot open is not asked for again.
+    fn take_listed_for_other_hidden(&mut self) -> Option<Location> {
+        let moved = self.open.is_some()
+            && self
+                .listed_hidden
+                .is_some_and(|listed| listed != self.sort.show_hidden);
+        if !moved {
+            return None;
+        }
+        self.listed_hidden = Some(self.sort.show_hidden);
+        self.location().cloned()
     }
 
     /// What the pane's names must hold to be shown, if anything.
@@ -3523,6 +3546,9 @@ impl Workspace {
                     to,
                 });
             }
+            if let Some(location) = p.take_listed_for_other_hidden() {
+                r.hidden_moved.push((p.id, location));
+            }
             r.backlog |= p.backlog();
             r.jobs.extend(p.jobs_wanted());
         }
@@ -3546,6 +3572,10 @@ pub struct PumpReport {
     /// Panes whose location said it is reached at another
     /// (`ListingEvent::Redirect`): `App::pump_report` shows it there.
     pub redirects: Vec<Redirect>,
+    /// Panes showing a location that follows their hidden-files switch,
+    /// which moved since it was opened, however it did: `App::pump_report`
+    /// opens it again.
+    pub hidden_moved: Vec<(PaneId, Location)>,
     /// The jobs for workers that what the panes show wants
     /// ([`Pane::jobs_wanted`]): `App::pump_report` runs them. A pump that
     /// leaves them shows no folder it opened, nor an order asked anew.

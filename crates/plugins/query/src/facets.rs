@@ -452,7 +452,10 @@ pub fn refine(expr: &str, facet: &str, value: Option<&str>) -> Result<String, St
         }
         ("where", Some("subtree")) => q.depth = None,
         ("where", Some("here")) => q.depth = Some(1),
-        ("where", Some("hidden")) => q.hidden = !q.hidden,
+        ("where", Some("hidden")) => {
+            q.hidden = !q.hidden;
+            q.hidden_asked = q.hidden.then_some(true);
+        }
         ("where", Some("excluded")) => q.excluded = !q.excluded,
         ("advanced", Some(index)) => {
             let at: usize = index.parse().map_err(|_| format!("no part `{index}`"))?;

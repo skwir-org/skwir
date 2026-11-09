@@ -107,6 +107,9 @@ pub struct Query {
     /// `None` = unlimited.
     pub depth: Option<usize>,
     pub hidden: bool,
+    /// What the text said of hidden files (`hidden:`): none follows the
+    /// pane's switch, as the search opens (`hidden` then says which).
+    pub hidden_asked: Option<bool>,
     /// The folders searches leave out walked too (`excluded:yes`, ADR-125):
     /// those of the list and caches, never a trash nor a network mount.
     pub excluded: bool,
@@ -494,7 +497,7 @@ pub fn parse_in(text: &str, now: SystemTime, cal: &Calendar) -> Result<Query, Pa
     let mut root = None;
     let mut within = None;
     let mut depth = None;
-    let mut hidden = false;
+    let mut hidden_asked = None;
     let mut excluded = false;
     let mut case_sensitive = false;
     let mut rest: Vec<Tok> = Vec::with_capacity(toks.len());
@@ -520,7 +523,7 @@ pub fn parse_in(text: &str, now: SystemTime, cal: &Calendar) -> Result<Query, Pa
                     continue;
                 }
                 Some("hidden") => {
-                    hidden = parse_bool(w.text()?)?;
+                    hidden_asked = Some(parse_bool(w.text()?)?);
                     continue;
                 }
                 Some("excluded") => {
@@ -566,7 +569,8 @@ pub fn parse_in(text: &str, now: SystemTime, cal: &Calendar) -> Result<Query, Pa
         expr,
         root,
         depth,
-        hidden,
+        hidden: hidden_asked == Some(true),
+        hidden_asked,
         excluded,
         case_sensitive,
         root_given,
@@ -1413,8 +1417,8 @@ impl fmt::Display for Query {
         if let Some(d) = self.depth {
             parts.push(format!("depth:{d}"));
         }
-        if self.hidden {
-            parts.push("hidden:true".into());
+        if let Some(hidden) = self.hidden_asked {
+            parts.push(format!("hidden:{hidden}"));
         }
         if self.excluded {
             parts.push("excluded:true".into());
@@ -2438,6 +2442,14 @@ mod tests {
         assert_eq!(Some(p.root), skwir_core::os_path::home());
         assert_eq!(p.depth, Some(3));
         assert!(p.hidden && p.case_sensitive);
+        assert_eq!(p.hidden_asked, Some(true));
+        // What hidden files are is said only where it is: `hidden:false`
+        // stands apart from nothing said, which follows the pane.
+        assert_eq!(q("foo").hidden_asked, None);
+        let refused = q("foo hidden:false");
+        assert_eq!(refused.hidden_asked, Some(false));
+        assert!(refused.to_string().contains("hidden:false"));
+        assert!(!q("foo").to_string().contains("hidden"));
         let p = q("foo");
         assert!(!p.root_given && p.depth.is_none() && !p.hidden);
         let p = q("in:/tmp");

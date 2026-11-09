@@ -13576,3 +13576,21 @@ locations carried into every binary. Now `tools/package/nix/package.nix`, a
 - **Not checked** on this tree: a window from the Nix package (a PDF through
   nixpkgs' PDFium, a video), which the helpers' probes stand in for.
 
+## 2026-11-09: Searches follow Show hidden files
+
+Asked by the user while answering issue #6: a pane showing hidden files
+searched none of them, and `hidden:true` with the switch off walked them while
+the pane then hid those with a dot name.
+
+- A search that does not say follows its pane's switch, opened again however
+  the switch moved (the pump compares it with what the search was opened
+  under: `toggle_hidden`, a view's argument and a reveal alike). `hidden:true`
+  finds and shows them whatever the switch says, `hidden:false` never finds
+  them. No pane (a script, `open_location`): none, as before.
+- **Checked:** clippy with `-D warnings` on core, query, tags, the binary and
+  ui; tests: 1550 across core, ui, tags, query, timeline, usage, 26
+  cross-plugin, the new `search_hidden` covering every row, the language
+  round-trip of `hidden:false`; `just check-cross` for core and query's
+  systems (Windows, macOS). Seen on Xvfb: a search's results gaining
+  `.dot.txt` and `.dir/inside.txt` at Ctrl+H, losing them at the next.
+

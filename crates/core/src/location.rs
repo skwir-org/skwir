@@ -278,6 +278,10 @@ pub struct OpenContext {
     /// Files beside a file (see [`crate::companions`]): a listing marks
     /// them.
     pub companions: Arc<crate::companions::Companions>,
+    /// Whether the pane it is opened for shows hidden files; no pane, no.
+    /// A search that does not say follows it
+    /// ([`LocationProvider::follows_hidden`]).
+    pub hidden_shown: bool,
 }
 
 impl OpenContext {
@@ -410,6 +414,20 @@ pub trait LocationProvider: Send + Sync {
     /// one slow source not holding back the others. A folder's contents
     /// are shown whole once listed, built and sorted on a worker. By
     /// default, a search's.
+    /// Whether what `location` lists depends on whether the pane shows
+    /// hidden files (a search that does not say): it is opened again when
+    /// the pane's switch moves. Answered from its text alone.
+    fn follows_hidden(&self, _location: &Location) -> bool {
+        false
+    }
+
+    /// Whether `location` shows the hidden entries it lists whatever the
+    /// pane's switch says: a search that asked for them (`hidden:true`).
+    /// Answered from its text alone.
+    fn shows_hidden(&self, _location: &Location) -> bool {
+        false
+    }
+
     fn streams(&self, location: &Location) -> bool {
         self.searches(location)
     }
@@ -1322,6 +1340,8 @@ impl FillJob {
 pub struct Listing {
     /// Which listing this is; see [`stamp`].
     id: u64,
+    /// Its hidden entries are shown whatever the pane's switch says.
+    hidden_asked: bool,
     /// Shared only with a sort running on a worker (`sort_job`), which
     /// lets go before its order is sent: while it runs the listing takes
     /// no events, so `Arc::make_mut` finds them its own and copies
@@ -1414,6 +1434,7 @@ impl Default for Listing {
     fn default() -> Self {
         let id = stamp();
         Listing {
+            hidden_asked: false,
             id,
             entries: Arc::default(),
             complete: false,
@@ -1471,6 +1492,14 @@ impl Listing {
         let mut listing = Listing::default();
         listing.companions = Some(companions);
         listing
+    }
+
+    /// This listing, its hidden entries shown whatever the pane's switch
+    /// says ([`LocationProvider::shows_hidden`]).
+    #[must_use]
+    pub fn showing_hidden(mut self) -> Self {
+        self.hidden_asked = true;
+        self
     }
 
     /// This listing, filled on a worker while it is not shown (ADR-120):
@@ -1582,7 +1611,7 @@ impl Listing {
         });
         Some(SortJob {
             entries: Arc::clone(&self.entries),
-            spec,
+            spec: self.as_asked(spec),
             companions,
             named,
             order,
@@ -2098,7 +2127,16 @@ impl Listing {
     /// hidden files and companions both; one whose file is gone, an
     /// orphan, as any file.
     fn shown(&self, spec: SortSpec, slot: &Slot, companions: bool) -> bool {
-        shown_with(spec, slot, companions, |owner| self.is_named(owner))
+        shown_with(self.as_asked(spec), slot, companions, |owner| {
+            self.is_named(owner)
+        })
+    }
+
+    /// `spec`, hidden files shown where the location asked for them
+    /// ([`LocationProvider::shows_hidden`]).
+    fn as_asked(&self, mut spec: SortSpec) -> SortSpec {
+        spec.show_hidden |= self.hidden_asked;
+        spec
     }
 
     /// Whether an entry is listed and shown under `spec`: not a hidden file

@@ -946,6 +946,16 @@ impl App {
         location: &Location,
         waker: Waker,
     ) -> anyhow::Result<Arc<dyn OpenLocation>> {
+        self.open_waking_with(location, waker, false)
+    }
+
+    /// `location` opened for a pane showing hidden files or not.
+    fn open_waking_with(
+        &self,
+        location: &Location,
+        waker: Waker,
+        hidden_shown: bool,
+    ) -> anyhow::Result<Arc<dyn OpenLocation>> {
         let provider = self
             .provider(&location.scheme)
             .ok_or_else(|| anyhow::anyhow!("no provider for scheme `{}`", location.scheme))?;
@@ -960,6 +970,7 @@ impl App {
                 fields: Arc::clone(&self.fields),
                 hints: Arc::clone(&self.hints),
                 companions: Arc::clone(&self.companions),
+                hidden_shown,
             },
         )
     }
@@ -995,7 +1006,13 @@ impl App {
     /// and sorted on a worker and appears whole; what streams (a search's
     /// results, what is gathered from several sources) shows as it comes.
     fn new_listing(&self, location: &Location) -> crate::Listing {
-        let listing = crate::Listing::with_companions(Arc::clone(&self.companions));
+        let mut listing = crate::Listing::with_companions(Arc::clone(&self.companions));
+        if self
+            .provider(&location.scheme)
+            .is_some_and(|provider| provider.shows_hidden(location))
+        {
+            listing = listing.showing_hidden();
+        }
         if self.streams(location) {
             listing
         } else {
@@ -1482,16 +1499,20 @@ impl App {
         let (location, lensed) = self.lensed_in(pane, location, how.lensing);
         // A location kept open beside the pane is shown without opening it.
         self.agent_may_open(&location)?;
-        let kept = self
-            .workspace
-            .write()
-            .pane_mut(pane)
-            .ok_or_else(|| anyhow::anyhow!("no such pane"))?
-            .take_kept(&location);
+        let follows_hidden = self
+            .provider(&location.scheme)
+            .is_some_and(|provider| provider.follows_hidden(&location));
+        let (kept, hidden_shown) = {
+            let mut ws = self.workspace.write();
+            let p = ws
+                .pane_mut(pane)
+                .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
+            (p.take_kept(&location), p.sort.show_hidden)
+        };
         let (open, listing) = match kept {
             Some(kept) => kept,
             None => (
-                self.open_waking(&location, self.pane_waker(pane))?,
+                self.open_waking_with(&location, self.pane_waker(pane), hidden_shown)?,
                 self.new_listing(&location),
             ),
         };
@@ -1511,6 +1532,7 @@ impl App {
         } else {
             p.replace_open(open, listing, lensed);
         }
+        p.set_listed_hidden(follows_hidden.then_some(hidden_shown));
         then(p, &location);
         drop(ws);
         self.roll_filters_over();
@@ -1571,6 +1593,12 @@ impl App {
                 },
             );
         }
+        // A search that follows the pane's switch, which moved.
+        for (pane, location) in &report.hidden_moved {
+            if let Err(error) = self.search_again(*pane, location) {
+                tracing::warn!("cannot search again: {error:#}");
+            }
+        }
         for redirect in &report.redirects {
             let to = &redirect.to;
             if let Err(error) = self.follow_redirect(redirect.pane, &redirect.from, to) {
@@ -1578,6 +1606,22 @@ impl App {
             }
         }
         report
+    }
+
+    /// Open `location` again in `pane`, while it still shows it, the step
+    /// and its filter as they are: the pane's hidden-files switch moved.
+    fn search_again(&self, pane: PaneId, location: &Location) -> anyhow::Result<()> {
+        let filter = self
+            .workspace
+            .read()
+            .pane(pane)
+            .and_then(|p| p.filter_at(p.history_pos));
+        let again = Opening {
+            from: Some(location),
+            lensing: Lensing::AsLeft(filter.as_ref()),
+            ..Opening::default()
+        };
+        self.open_in(pane, location, again, |_, _| {})
     }
 
     /// Show `to` in `pane` in place of `from`, which said it is reached

@@ -216,8 +216,18 @@ impl LocationProvider for QueryProvider {
         Some(EmptyState::new("Nothing found", detail))
     }
 
+    fn follows_hidden(&self, location: &Location) -> bool {
+        lang::parse(&location.rest).is_ok_and(|q| q.hidden_asked.is_none() && q.within.is_none())
+    }
+
+    fn shows_hidden(&self, location: &Location) -> bool {
+        lang::parse(&location.rest).is_ok_and(|q| q.hidden_asked == Some(true))
+    }
+
     fn open(&self, location: &Location, ctx: OpenContext) -> anyhow::Result<Arc<dyn OpenLocation>> {
-        let query = lang::parse(&location.rest).map_err(|e| anyhow::anyhow!("query: {e}"))?;
+        let mut query = lang::parse(&location.rest).map_err(|e| anyhow::anyhow!("query: {e}"))?;
+        // Hidden files as it says, else as the pane shows them.
+        query.hidden = query.hidden_asked.unwrap_or(ctx.hidden_shown);
         // A search of what a place lists (`in:recent:`), not a walk.
         if let Some(place) = query.within.clone() {
             let app = self
@@ -1699,6 +1709,7 @@ mod tests {
             fields: Arc::default(),
             hints: Arc::default(),
             companions: Arc::default(),
+            hidden_shown: false,
         };
         let query = lang::parse(&location.rest).unwrap();
         let rule: Rule = Arc::new(|| Arc::new(LeftOut::none()));

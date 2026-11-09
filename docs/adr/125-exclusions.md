@@ -89,6 +89,8 @@ search's walk does not reach).
    from anywhere. A search says how many folders it walked past in its
    footer (`ListingEvent::LeftOut`), never silently.
 7. **Hidden entries are walked**; whether they show is the pane's switch.
+   A search that does not say follows that switch, searched again as it
+   moves (`hidden:true` and `hidden:false` say otherwise, and hold).
    A place listing files of many folders marks one inside a hidden folder
    below its root (`Entry::in_hidden_folder`), so a tag's place shows with
    hidden files off what a `tag:` search without `hidden:true` finds; a

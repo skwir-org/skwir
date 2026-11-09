@@ -869,6 +869,7 @@ fn virtual_locations_hydrate_by_path_in_one_batch() {
         fields: std::sync::Arc::clone(&app.fields),
         hints: std::sync::Arc::clone(&app.hints),
         companions: std::sync::Arc::clone(&app.companions),
+        hidden_shown: false,
     };
     let (sink, rx) = ctx.channel();
     let id = |ino| skwir_core::EntryId {
@@ -930,6 +931,7 @@ fn what_cannot_be_read_is_answered_unreadable() {
         fields: std::sync::Arc::clone(&app.fields),
         hints: std::sync::Arc::clone(&app.hints),
         companions: std::sync::Arc::clone(&app.companions),
+        hidden_shown: false,
     };
     let (sink, rx) = ctx.channel();
     let id = skwir_core::EntryId {
