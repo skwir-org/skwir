@@ -1865,11 +1865,6 @@ impl Rule {
         !self.files.is_empty()
     }
 
-    /// Whether a name alone is a folder's of it, wherever the folder is.
-    pub fn names_anywhere(&self, name: &OsStr) -> bool {
-        self.folders.names_anywhere(name)
-    }
-
     /// The beside rules a folder named `name` falls under: those asking for
     /// a sibling, which the caller looks for.
     pub fn beside(&self, name: &OsStr) -> impl Iterator<Item = &NameMatch> {
@@ -2037,6 +2032,10 @@ pub fn variables_in(text: &str) -> Vec<String> {
 /// folder, as a tool that expands it reads it; anything else that is not
 /// a whole path is no value, as the XDG specification says of its own.
 fn variable_path(name: &str, home: Option<&Path>, separator: Option<char>) -> Option<PathBuf> {
+    // The XDG folders are read one way for every caller.
+    if crate::xdg::names_a_folder(name) {
+        return crate::xdg::in_the_shell(name);
+    }
     let elements = variable_elements(name, separator);
     folder_from(elements.first()?, home)
 }

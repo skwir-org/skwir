@@ -19,12 +19,45 @@ fn split(value: Option<OsString>, default: &str) -> Vec<PathBuf> {
         .collect()
 }
 
+/// The folder a variable of the specification holds: an absolute path;
+/// unset, empty or relative, none.
+fn folder_of(value: Option<OsString>) -> Option<PathBuf> {
+    value.map(PathBuf::from).filter(|p| p.is_absolute())
+}
+
 /// An absolute path in a variable, or `~` joined to `fallback`.
 fn home(name: &str, fallback: &str) -> Option<PathBuf> {
-    std::env::var_os(name)
-        .map(PathBuf::from)
-        .filter(|p| p.is_absolute())
-        .or_else(|| crate::os_path::home().map(|h| h.join(fallback)))
+    folder_of(std::env::var_os(name)).or_else(|| crate::os_path::home().map(|h| h.join(fallback)))
+}
+
+/// The variables of the specification that name one folder (no list).
+const FOLDERS: [&str; 5] = [
+    "XDG_DATA_HOME",
+    "XDG_CONFIG_HOME",
+    "XDG_STATE_HOME",
+    "XDG_CACHE_HOME",
+    "XDG_RUNTIME_DIR",
+];
+
+/// The folder `name` says as a program started from the user's terminal
+/// reads it: the session's value, else what the login shell exports
+/// (`environment`), read as every other is. `None` for what the shell does
+/// not set, and for a name that is no folder of the specification.
+///
+/// For what names other programs' files (the exclusions' rules, a trash
+/// they use). Skwir's own folders are this module's other functions, the
+/// session's alone: chosen once as it starts, before the shell has
+/// answered, they never move under it.
+pub fn in_the_shell(name: &str) -> Option<PathBuf> {
+    FOLDERS
+        .contains(&name)
+        .then(|| folder_of(crate::environment::var(name)))?
+}
+
+/// Whether `name` is a variable of the specification that names one folder:
+/// read through [`in_the_shell`], never as a list.
+pub fn names_a_folder(name: &str) -> bool {
+    FOLDERS.contains(&name)
 }
 
 /// `$XDG_STATE_HOME`, what a program keeps between runs that is neither
@@ -86,5 +119,17 @@ mod tests {
         assert_eq!(paths(None), [PathBuf::from("/default")]);
         assert_eq!(paths(Some("")), [PathBuf::from("/default")]);
         assert_eq!(paths(Some("relative:/abs::")), [PathBuf::from("/abs")]);
+    }
+
+    #[test]
+    fn a_folder_is_a_whole_path_and_no_list() {
+        let folder = |value: &str| folder_of(Some(OsString::from(value)));
+        assert_eq!(folder(""), None);
+        assert_eq!(folder("relative/x"), None);
+        assert_eq!(folder("/a:/b"), Some(PathBuf::from("/a:/b")));
+        assert_eq!(folder_of(None), None);
+        assert!(names_a_folder("XDG_DATA_HOME"));
+        assert!(!names_a_folder("XDG_DATA_DIRS"), "a list");
+        assert_eq!(in_the_shell("CARGO_HOME"), None, "no folder of the XDG's");
     }
 }

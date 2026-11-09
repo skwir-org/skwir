@@ -102,7 +102,9 @@ search's walk does not reach).
 8. **Only the user lowers privacy:** a change taking the agents role from
    any folder (an unticked entry, a category switched, a move, a removal,
    a narrower pattern) asks first in the dialog, and is refused outright to
-   an agent (`settings.apply`, `exclusions::refuse_exposure`).
+   an agent (`settings.apply`, `exclusions::refuse_exposure`), as is its
+   change of `exclusions.shell_variables`, which decides what the list
+   follows.
 9. **One page, Exclusions,** with a role picker (Excluded from: Searches
    and tags | Agents): categories folded when it opens, each heading
    counting what it holds and folded by a click, its switch the master

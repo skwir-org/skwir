@@ -20,9 +20,8 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 
-use crate::exclusions::{Catalog, Matcher, NameMatch, Names, Role, Rule};
+use crate::exclusions::{Matcher, NameMatch, Names, Rule};
 use crate::fs::reach;
-use crate::settings::Settings;
 
 pub use crate::exclusions::{CACHEDIR_TAG, is_cache, tags_a_cache};
 
@@ -34,21 +33,13 @@ const ALWAYS: u64 = 1;
 #[derive(Clone, Debug, Default)]
 pub struct LeftOut {
     rule: Rule,
-    trash: Option<PathBuf>,
+    /// Skwir's own trash and, where the login shell moves the data folder,
+    /// the one what starts from a terminal uses.
+    trash: Vec<PathBuf>,
     fingerprint: u64,
 }
 
 impl LeftOut {
-    /// What the settings say now: the exclusions kept from searches.
-    pub fn of(settings: &Settings) -> LeftOut {
-        LeftOut::ruled(Catalog::of(settings).rule(Role::Searches))
-    }
-
-    /// What skwir's own rules leave out, as it ships them.
-    pub fn shipped() -> LeftOut {
-        LeftOut::ruled(Catalog::shipped().rule(Role::Searches))
-    }
-
     /// Only these, names, paths (`~` the home folder) or patterns: for
     /// tests.
     pub fn listed<'a>(folders: impl IntoIterator<Item = &'a str>) -> LeftOut {
@@ -74,7 +65,7 @@ impl LeftOut {
         let fingerprint = rule.fingerprint() ^ ALWAYS.rotate_left(32);
         LeftOut {
             rule,
-            trash: crate::xdg::data_home().map(|data| data.join("Trash")),
+            trash: trash_folders(),
             fingerprint,
         }
     }
@@ -94,7 +85,7 @@ impl LeftOut {
     /// its name or its path: nothing is read.
     pub fn names(&self, dir: &Path) -> bool {
         dir.file_name().is_some_and(is_trash)
-            || self.trash.as_deref() == Some(dir)
+            || self.trash.iter().any(|trash| trash == dir)
             || self.rule.names(dir)
     }
 
@@ -102,11 +93,6 @@ impl LeftOut {
     /// that knows the rules name no file asks nothing (`Rule::names_files`).
     pub fn names_file(&self, path: &Path) -> bool {
         self.rule.names_file(path)
-    }
-
-    /// Whether a name alone is left out, wherever it is.
-    pub fn names_anywhere(&self, name: &OsStr) -> bool {
-        is_trash(name) || self.rule.names_anywhere(name)
     }
 
     /// What a walk of `root` leaves out below it; a marker or a sibling
@@ -121,6 +107,19 @@ impl LeftOut {
             looked: Mutex::default(),
         }
     }
+}
+
+/// The trash folders of the user's data folders, Skwir's own first.
+fn trash_folders() -> Vec<PathBuf> {
+    let own = crate::xdg::data_home();
+    let shell = crate::xdg::in_the_shell("XDG_DATA_HOME");
+    let mut folders: Vec<PathBuf> = own.into_iter().map(|data| data.join("Trash")).collect();
+    if let Some(trash) = shell.map(|data| data.join("Trash"))
+        && !folders.contains(&trash)
+    {
+        folders.push(trash);
+    }
+    folders
 }
 
 /// A trash, by its name: freedesktop's on a volume (`.Trash`,
@@ -154,15 +153,9 @@ impl Below {
         &self.rule
     }
 
-    /// Whether the walk enters `dir`, a folder it found below its root:
-    /// not a network mount, not named by the rules, not holding a marker
-    /// nor beside a sibling that says so. The root itself is always entered.
-    pub fn enters(&self, dir: &Path) -> bool {
-        !self.leaves_out(dir)
-    }
-
-    /// Whether `dir` is left out, the root never: [`enters`](Self::enters)
-    /// turned round.
+    /// Whether `dir`, a folder found below the root, is left out: a network
+    /// mount, named by the rules, holding a marker or beside a sibling
+    /// that says so. The root itself never is.
     pub fn leaves_out(&self, dir: &Path) -> bool {
         if dir == self.root || !dir.starts_with(&self.root) {
             return false;
@@ -308,7 +301,7 @@ mod tests {
         let left = rule(&["node_modules"]);
         let root = Path::new("/r/node_modules");
         let below = left.below(root, false);
-        assert!(below.enters(root), "a root the rules name is walked");
+        assert!(!below.leaves_out(root), "a root the rules name is walked");
         assert!(below.leaves_out(&root.join("a/node_modules")));
         assert!(!below.leaves_out(Path::new("/elsewhere/node_modules")));
         assert_eq!(

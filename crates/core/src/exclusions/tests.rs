@@ -69,8 +69,8 @@ fn skwirs_list_reads_and_each_entry_is_in_a_category() {
         );
     }
     let searches = shipped.rule(Role::Searches);
-    assert!(searches.names_anywhere(OsStr::new("node_modules")));
-    assert!(searches.names_anywhere(OsStr::new(".git")));
+    assert!(searches.names(Path::new("/anywhere/node_modules")));
+    assert!(searches.names(Path::new("/anywhere/.git")));
     assert!(!searches.names(&home.join(".ssh")));
     assert!(searches.markers().contains(&OsString::from(CACHEDIR_TAG)));
 }

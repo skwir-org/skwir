@@ -15,7 +15,9 @@ the reasoning.
   by key in Home Manager and through an agent's change), never a copy of
   the shipped list. The page writes it with `SettingsView::change_drawn`
   (its owner's check first, then one save for every key it changes), as
-  JSON that `settings.apply` reads too.
+  JSON that `settings.apply` reads too; `settings.apply` also takes one
+  key of it (`exclusions.entries.<id>`, the id may hold dots: that key's
+  value as JSON, nothing to take it out), over what the table holds.
 - Use the `SettingSpec` constructors: `toggle`, `choice`, `integer`
   (`slider` for a short range judged as it changes, an opacity, rather
   than a number known as such, a memory budget), `number`, `text`,
