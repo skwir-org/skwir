@@ -22,6 +22,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use skwir_core::App;
 use skwir_core::cancel::CancelToken;
+use skwir_core::form::path::{save_folder, save_split};
 use skwir_core::form::{Answer, Choice, Field, Form, Kind, Mark, Picture, Values};
 use skwir_core::print::booklet::{self, PerSide};
 
@@ -362,7 +363,7 @@ fn into_folder(
     saved: &Saved,
     is_folder: &dyn Fn(&Path) -> Option<bool>,
 ) -> Result<Chosen, String> {
-    let typed = split(text.trim()).1;
+    let typed = save_split(text.trim()).1;
     let folder = chosen.dest.clone().or_else(|| saved.folder.clone());
     if !typed.is_empty()
         && chosen.name.is_some()
@@ -658,22 +659,6 @@ fn own_name(offers: &Offers, layout: Arrange, together: bool) -> &str {
     }
 }
 
-/// `text` split at its last separator: the folder part, with it, and the
-/// name; `~` alone is the home folder.
-fn split(text: &str) -> (&str, &str) {
-    if text == "~" {
-        return (text, "");
-    }
-    match text
-        .char_indices()
-        .rev()
-        .find(|(_, c)| std::path::is_separator(*c) || *c == '/')
-    {
-        Some((at, c)) => text.split_at(at + c.len_utf8()),
-        None => ("", text),
-    }
-}
-
 /// Where Save as's `text` saves, as `chosen` reads it: the folder typed
 /// (`None` for where it goes by itself: none typed, or that one) and the
 /// name (`None` for its own, `own`: none typed, or that one; a name typed
@@ -688,7 +673,7 @@ fn target(
     let (dir, name) = if own.is_empty() {
         (text, "")
     } else {
-        split(text)
+        save_split(text)
     };
     let folder = if dir.is_empty() {
         None
@@ -715,24 +700,16 @@ fn folder_title(folder: &Path) -> String {
     )
 }
 
-/// The folder `typed` names: a whole path, or from `~`.
+/// The folder `typed` names, as the window that completes it reads it
+/// (`form::path`): a whole path, or from `~`.
 fn folder_typed(typed: &str) -> Result<PathBuf, String> {
-    let home = typed
-        .strip_prefix('~')
-        .filter(|rest| rest.is_empty() || rest.starts_with(std::path::is_separator));
-    let path = match home {
-        Some(rest) => skwir_core::os_path::home()
-            .ok_or("Save as: there is no home folder for “~”")?
-            .join(rest.trim_start_matches(std::path::is_separator)),
-        None => PathBuf::from(typed),
-    };
-    if !path.is_absolute() {
-        return Err(format!(
-            "Save as: “{typed}” is no whole path: type it from the top, or from ~"
-        ));
+    let home = skwir_core::os_path::home();
+    if home.is_none() && typed.starts_with('~') {
+        return Err("Save as: there is no home folder for “~”".to_owned());
     }
-    // Its separator after it left out: the folder, as it is kept.
-    Ok(path.components().collect())
+    save_folder(typed, home.as_deref()).ok_or_else(|| {
+        format!("Save as: “{typed}” is no whole path: type it from the top, or from ~")
+    })
 }
 
 /// The paper a PDF is laid out on, offered when it is saved: a printer's
@@ -1360,8 +1337,22 @@ mod tests {
         );
         if let Some(home) = skwir_core::os_path::home() {
             assert_eq!(shown("~/x/notes.pdf"), Ok((Some(home.join("x")), None)));
-            assert_eq!(shown("~"), Ok((Some(home), None)));
+            assert_eq!(shown("~"), Ok((Some(home.clone()), None)));
+            // What the window answers for `~` alone, its name added.
+            assert_eq!(shown("~/notes.pdf"), Ok((Some(home.clone()), None)));
+            assert_eq!(
+                shown("~/link/../b/x"),
+                Ok((Some(home.join("b")), Some(OsString::from("x.pdf"))))
+            );
         }
+        // `..` read as the window reads it, by the names written.
+        assert_eq!(
+            shown("/example/gone/../other/x.pdf"),
+            Ok((
+                Some(PathBuf::from("/example/other")),
+                Some(OsString::from("x.pdf"))
+            ))
+        );
         assert!(shown("letters/x").unwrap_err().starts_with("Save as"));
         assert_eq!(
             read("booklet", "/example/notes/notes (booklet).pdf", &offers),

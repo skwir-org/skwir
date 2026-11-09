@@ -10,6 +10,8 @@
 //! a time, and answers (`App::answer_form`): `None` for Cancel, else what
 //! the fields hold and whether Back or the answer's button was pressed.
 
+pub mod path;
+
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::time::Duration;

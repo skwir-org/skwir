@@ -39,6 +39,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use gpui::{AnyElement, Context, SharedString, Window, div, prelude::*};
+use skwir_core::form::path;
 use skwir_core::form::{Field, Kind};
 
 use super::{Control, FormState};
@@ -108,26 +109,16 @@ impl Note {
     }
 }
 
-/// `text` split where completion splits it (`complete::split`): its
-/// folder part, with its last separator, and its name; `~` alone is the
-/// home folder.
+/// `text` split where completion splits it: its folder part, with its
+/// last separator, and its name; `~` alone is the home folder.
 fn split(text: &str) -> (&str, &str) {
-    if text == "~" {
-        (text, "")
-    } else {
-        complete::split(text)
-    }
+    path::save_split(text)
 }
 
-/// The folder `text`'s folder part names, `~` the home folder: `None`
-/// without one, or for a relative one.
+/// The folder `text`'s folder part names, as the asker reads it
+/// (`form::path`): `None` without one, or for a relative one.
 fn folder_of(text: &str) -> Option<PathBuf> {
-    let (dir, _) = split(text);
-    if dir.is_empty() {
-        return None;
-    }
-    complete::resolve(dir, None, skwir_core::os_path::home().as_deref())
-        .filter(|path| path.is_absolute())
+    path::save_folder(split(text).0, skwir_core::os_path::home().as_deref())
 }
 
 /// `name` without `ending` (case ignored) where it ends so.
@@ -192,7 +183,7 @@ impl FormState {
     pub(super) fn save_value(text: &str, settled: &str) -> String {
         let text = text.trim();
         if folder_alone(text) {
-            format!("{text}{settled}")
+            path::save_join(text, settled)
         } else {
             text.to_owned()
         }
@@ -373,7 +364,8 @@ impl FormState {
         if held.alone {
             // The whole text is the folder.
             return match self.names_a_folder(text) {
-                Some(false) if !name.is_empty() => missing(text),
+                // `.` and `..` are folders no listing names.
+                Some(false) if !name.is_empty() && !matches!(name, "." | "..") => missing(text),
                 _ => (!alone.is_empty()).then(|| Note::says(alone.clone())),
             };
         }
@@ -473,7 +465,7 @@ impl Shell {
             if typed != settled.as_str() {
                 continue;
             }
-            let followed = format!("{dir}{name}");
+            let followed = path::save_join(dir, name);
             let range = stem_range(&followed, ending);
             // Put by the window, as the one it follows was: no edit.
             if text == *put {
@@ -547,7 +539,7 @@ impl Shell {
         form.typed = false;
         form.offered = false;
         form.refusal = None;
-        let text = format!("{}{kept}", written(&row.folder));
+        let text = path::save_join(&written(&row.folder), &kept);
         self.save_put(at, text, window, cx);
         cx.notify();
     }
@@ -576,19 +568,8 @@ impl Shell {
             return;
         }
         let (dir, name) = split(&held.text);
-        let named = if name.is_empty() && !dir.is_empty() {
-            Some(format!("{}{}", held.text, held.settled))
-        } else if form.names_a_folder(&held.text) == Some(true) {
-            Some(format!(
-                "{}{}{}",
-                held.text,
-                std::path::MAIN_SEPARATOR,
-                held.settled
-            ))
-        } else {
-            None
-        };
-        if let Some(text) = named {
+        if (name.is_empty() && !dir.is_empty()) || form.names_a_folder(&held.text) == Some(true) {
+            let text = path::save_join(&held.text, &held.settled);
             self.save_put(at, text, window, cx);
         }
         cx.notify();
@@ -638,8 +619,9 @@ impl Shell {
             // (the ending) kept, the caret after it.
             let (dir, name) = split(&held.text);
             let rest = &name[stem(name, &held.ending).len()..];
-            let text = format!("{dir}{shared}{rest}");
-            let caret = dir.len() + shared.len();
+            let before = path::save_join(dir, &shared);
+            let caret = before.len();
+            let text = format!("{before}{rest}");
             if let Some(Control::Save { input, .. }) = form.controls.get(at) {
                 let input = input.clone();
                 input.update(cx, |input, cx| {
@@ -687,7 +669,7 @@ impl Shell {
             return;
         };
         let kept = if held.alone { "" } else { name };
-        let text = format!("{}{kept}", written(above));
+        let text = path::save_join(&written(above), kept);
         form.open = None;
         form.typed = false;
         self.save_put(at, text, window, cx);
@@ -873,6 +855,12 @@ mod tests {
             "~/a/b.pdf"
         );
         assert_eq!(FormState::save_value("", "notes.pdf"), "notes.pdf");
+        // `~` alone is a folder: the name goes in it, not after a tilde.
+        assert_eq!(
+            FormState::save_value("~", "notes.pdf"),
+            format!("~{}notes.pdf", std::path::MAIN_SEPARATOR)
+        );
+        assert_eq!(FormState::save_value("~", ""), "~", "a folder alone stays");
         assert_eq!(folder_of("letters/x.pdf"), None, "relative");
         assert_eq!(folder_of("x.pdf"), None);
         assert_eq!(

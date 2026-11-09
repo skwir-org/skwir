@@ -24,6 +24,8 @@ use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
+pub use skwir_core::form::path::{is_separator, resolve, separator_of, split};
+
 use skwir_core::App;
 use skwir_core::cancel::CancelToken;
 use skwir_core::command::{Invocation, Outcome};
@@ -59,61 +61,6 @@ pub fn is_path(text: &str) -> bool {
                     && bytes[0].is_ascii_alphabetic()
                     && bytes[1] == b':'
                     && matches!(bytes[2], b'/' | b'\\'))))
-}
-
-/// Whether `c` ends a folder's name in a path typed.
-pub fn is_separator(c: char) -> bool {
-    c == '/' || (cfg!(windows) && c == '\\')
-}
-
-/// The separator a completed folder is followed by: the one the text
-/// already uses, else the system's.
-pub fn separator_of(text: &str) -> char {
-    text.chars()
-        .rev()
-        .find(|c| is_separator(*c))
-        .unwrap_or(std::path::MAIN_SEPARATOR)
-}
-
-/// A path typed, split where it is completed: the folder part, up to and
-/// with its last separator, kept as typed; the name typed after it.
-pub fn split(text: &str) -> (&str, &str) {
-    match text.char_indices().rev().find(|(_, c)| is_separator(*c)) {
-        Some((at, c)) => text.split_at(at + c.len_utf8()),
-        None => ("", text),
-    }
-}
-
-/// The path `text` names: `~` the home folder, a relative path from
-/// `base` (the folder shown), `.` and `..` taken as a shell's `cd` takes
-/// them. `None` for a relative path with no folder shown.
-pub fn resolve(text: &str, base: Option<&Path>, home: Option<&Path>) -> Option<PathBuf> {
-    let tilde = text
-        .strip_prefix('~')
-        .filter(|rest| rest.is_empty() || rest.starts_with(is_separator));
-    let path = if let Some(rest) = tilde {
-        home?.join(rest.trim_start_matches(is_separator))
-    } else {
-        let path = PathBuf::from(text);
-        if path.has_root() {
-            path
-        } else {
-            base?.join(path)
-        }
-    };
-    let mut out = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                if matches!(out.components().next_back(), Some(Component::Normal(_))) {
-                    out.pop();
-                }
-            }
-            other => out.push(other),
-        }
-    }
-    Some(out)
 }
 
 /// `path` written as the text it completes started: under the home
