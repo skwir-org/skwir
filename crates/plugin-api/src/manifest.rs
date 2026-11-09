@@ -279,8 +279,21 @@ impl Manifest {
 /// checks that this list leaves out none of the namespaces of skwir's
 /// commands and settings. `keys` is the keymap's (`keys.like`).
 pub const RESERVED: &[&str] = &[
-    "archive", "core", "keyboard", "keys", "names", "notes", "player", "plugins", "privacy",
-    "reading", "settings", "tab", "ui", "window",
+    "archive",
+    "core",
+    "exclusions",
+    "keyboard",
+    "keys",
+    "names",
+    "notes",
+    "player",
+    "plugins",
+    "privacy",
+    "reading",
+    "settings",
+    "tab",
+    "ui",
+    "window",
 ];
 
 /// Whether `id` can be a plugin's: lowercase letters, digits and dashes,
