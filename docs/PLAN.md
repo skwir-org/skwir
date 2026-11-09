@@ -61,15 +61,15 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
   checks and package builds kept as manual fallbacks. The manual full
   workflow, whose `native` job tests on macOS and Windows runners, has
   never run (no run on 2026-10-20).
-- **Budgets:** idle own share **103.8 MiB of 100, over**: 0.3.1's
-  tarball on the session's display (quiet, 2026-11-05), where 0.3.0's
-  read 103.2 the same evening (103.7 on 11-03) and 0.2.0's 91.3. 0.3.0's
-  code grew by a quarter and most of it is resident at idle; the user
-  released 0.3.0 and 0.3.1 so, and the work is under [What is
-  left](#what-is-left). First frame of 150 ms: the least 147 ms for
-  0.3.1's tarball and 116 for 0.3.0's (nine starts each, alternated),
-  medians 159 and 154. `just bench-check` meets all 51 budgets
-  (2026-11-05, quiet).
+- **Budgets:** idle own share **83.2 MiB of 100, within**: `just
+  idle-pss` on the session's display, the `dist` build with code laid out
+  as a start runs it (ADR-128; 2026-11-09, machine loaded), first frame
+  132 to 143 ms against 150. 0.3.0 and 0.3.1 were released over the
+  budget, the user's choice: 0.3.1's tarball read 103.8 MiB
+  (2026-11-05), 0.3.0's 103.2 the same evening (103.7 on 11-03), 0.2.0's
+  91.3; first frames of the two, the least 147 and 116 ms of nine starts
+  alternated, medians 159 and 154. `just bench-check` meets all 51
+  budgets (2026-11-05, quiet).
 - **Since 0.3.1 (2026-11-06):** About's buttons on one line; a shared
   slider (the seek bar, Settings' sliders); the window's grounds each
   painted once, then see-through at the opacity chosen, the files', a
@@ -928,15 +928,14 @@ leave (ADR-077).
 
 **From the releases of 0.3.0 and 0.3.1** (2026-11-03 and 11-05,
 `docs/STATUS-LOG.md`):
-- Idle memory misses ADR-000's budget: 103.7 MiB of own share for 0.3.0
-  against 0.2.0's 91.3, on the session's display, and 103.8 for 0.3.1.
-  Why was found and a fix built (ADR-128): the kernel keeps resident the
-  64 KiB around each piece of scattered code a start runs. `dist` builds
-  now lay that code out together, the binary reading 31.9 MiB against
-  61.5 on a headless sway. Left: **`just idle-pss` read on the session's
-  display**, the gate, not measured since; what use brings back (the list
-  covers a start, not browsing); the Nix package, macOS and Windows,
-  which are not laid out.
+- Idle memory missed ADR-000's budget in 0.3.0 and 0.3.1 (103.7 and 103.8
+  MiB of own share on the session's display, 0.2.0's 91.3). Why was found
+  and a fix built (ADR-128): the kernel keeps resident the 64 KiB around
+  each piece of scattered code a start runs. `dist` builds now lay that
+  code out together and `just idle-pss` reads 83.2 MiB there, the binary
+  35.8 against 0.3.1's 58.6. Left: what use brings back (the list covers
+  a start, not browsing); why anonymous memory rose from 31.0 to 33.7 MiB
+  since 0.3.1; the Nix package, macOS and Windows, which are not laid out.
 - Why a build of `target/release` starts slower than the shipped tarballs
   (first frame 177 to 184 ms against 137 to 170 the same evening) is not
   known. `just idle-pss` now measures `dist`, what ships.

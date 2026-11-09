@@ -75,6 +75,10 @@ the same commit linked both ways:
 | windows of code resident | 834 | 360 |
 | first frame, ms | 58.4 | 55.9 |
 
+On the session's display (NVIDIA), `just idle-pss` read 83.2 MiB of own
+share, within ADR-000's 100, where 0.3.1's tarball read 103.8: the binary
+35.8 MiB against 58.6.
+
 With the binary evicted from the page cache a first experiment started
 in 82 ms against 94. What idle pays for new code is now what a start
 runs of it.

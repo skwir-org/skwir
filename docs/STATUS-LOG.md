@@ -13834,7 +13834,24 @@ Skwir code 2.5, the MIME database 1.0, the exclusions' tables 0.8.
   `skwir-plugin-remote` (two new tests of the cache, the encrypted case
   included); `tools/build` 20 tests (the wrapper with a linker and `nm`
   stood in for, the list's order), `tools/release` 38.
-- **Not checked:** `just idle-pss` on the session's display (NVIDIA), the
-  budget's reading; memory after use; `just release-check` and the packages'
+- **The budget's reading**, `just idle-pss` on the session's display (NVIDIA,
+  load about 8 from other work), the `dist` build of 055e721f, three starts
+  after a warm-up: own share 83.2 MiB median (82.8 to 83.9), within the 100.
+  0.3.1's tarball read 103.8 on 11-05.
+
+  | Median, MiB | 0.3.1 | now |
+  | --- | --- | --- |
+  | own share | 103.8 | 83.2 |
+  | the binary | 58.6 | 35.8 |
+  | anonymous | 31.0 | 33.7 |
+  | GPU buffers | 11.6 | 11.6 |
+  | GPU driver code | 47.9 | 30.9 |
+
+  First frame 132 to 143 ms, idle CPU 0.4 to 0.8 %. The binary saved 22.8 MiB
+  here against about 30 on the headless sway and reads 3.9 MiB above it: not
+  traced, likely more of the session's and NVIDIA's code off the list.
+  Anonymous memory rose by 2.7 MiB since 0.3.1, which the layout does not
+  touch: not attributed.
+- **Not checked:** memory after use; `just release-check` and the packages'
   builds (`just package-*`) through the wrapper; a build outside the dev shell.
   macOS and Windows are neither built nor measured for this.
