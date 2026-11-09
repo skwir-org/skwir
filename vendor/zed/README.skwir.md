@@ -89,6 +89,7 @@ carry: the script takes it from the Inter release Skwir's packages pin
 | `0055-paint-around` | `Window::paint_around`: a color outside a rounded rectangle, the complement of a quad there told how opaque it is (`Shadow::under`), so two see-through grounds meet without a seam; `Window::snap_to_device_pixels` | — |
 | `0054-window-tiling` | `Window::tiling`: the edges that meet another window or the screen's, whoever draws the decorations (Wayland's tiled states with server-side ones too) | — |
 | `0056-ground-ink` | `Styled::ground`: a background whose ink everything inside is drawn in while the element is on it (text, icons, underlines), whatever color each names; an opaque background of its own, a hover's in its place, gives each its own color back (`Style::ink`, `Window::with_element_ink`) | — |
+| `0057-deferred-paint-text-style` | A deferred draw paints under the text style of where it stands in the tree, as it prepaints | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
 
@@ -978,6 +979,27 @@ menu's row whose submenu is open, the View button with its menu open
 and the rows of that menu, an eject button under the pointer, all white
 on the teal; the gpui crate type-checks. Not checked: Windows and macOS
 (the change is in gpui's shared code, no platform's).
+
+### 0057: A deferred draw paints in its text style
+
+`prepaint_deferred_draws` restored the text style a deferred element stands
+in; `paint_deferred_draws` did not, so what reads the style while painting
+got the window's default instead: `window.line_height()` (1 rem × φ, 26 px
+where the field's is 19 to 23) and a text's alignment (`TextLayout::paint`).
+A field's text is centred in the line height it paints with, so it sat lower
+than laid out inside its own selection and caret; the address field, drawn
+in place until its card's rows arrive and deferred above the card after,
+moved down as they came. Text that says it is centred or right-aligned in a
+popover or a dialog was drawn at the left.
+
+`paint_deferred_draws` restores the stack as prepaint does, and clears it
+after.
+
+Checked: `just gpui-check gpui`
+(`a_deferred_draw_paints_in_the_text_style_it_stands_in`: read 19 px while
+prepainting and 26 px while painting before the change, 19 px in both after).
+Not checked: Windows and macOS (the change is in gpui's shared code, no
+platform's).
 
 ## Adding or changing a patch
 

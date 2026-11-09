@@ -4077,6 +4077,8 @@ impl Window {
             let deferred_draw = &mut deferred_draws[deferred_draw_ix];
             self.element_id_stack
                 .clone_from(&deferred_draw.element_id_stack);
+            self.text_style_stack
+                .clone_from(&deferred_draw.text_style_stack);
             self.next_frame
                 .dispatch_tree
                 .set_active_node(deferred_draw.parent_node);
@@ -4099,6 +4101,7 @@ impl Window {
         }
         self.next_frame.deferred_draws = deferred_draws;
         self.element_id_stack.clear();
+        self.text_style_stack.clear();
     }
 
     fn deferred_draw_traversal_order(&mut self) -> SmallVec<[usize; 8]> {
@@ -9178,6 +9181,40 @@ mod tests {
     /// SKWIR: files dropped from another application on a window last used
     /// by keyboard land where they are dropped: the drag coming in is the
     /// pointer's, so what is under it counts as hovered.
+    /// What a deferred draw reads of the text style while painting (a
+    /// line's height, its alignment) is what it read while prepainting: the
+    /// style of where it stands in the tree (0057).
+    #[gpui::test]
+    fn a_deferred_draw_paints_in_the_text_style_it_stands_in(cx: &mut TestAppContext) {
+        struct View(Rc<Cell<Option<(Pixels, Pixels)>>>);
+
+        impl Render for View {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let seen = self.0.clone();
+                div().size_full().line_height(px(19.)).child(crate::deferred(
+                    canvas(
+                        |_, window, _| window.line_height(),
+                        move |_, prepainted, window, _| {
+                            seen.set(Some((prepainted, window.line_height())));
+                        },
+                    )
+                    .size_full(),
+                ))
+            }
+        }
+
+        let seen = Rc::new(Cell::new(None));
+        let window: AnyWindowHandle = cx
+            .add_window({
+                let seen = seen.clone();
+                move |_, _| View(seen)
+            })
+            .into();
+        cx.update_window(window, |_, window, cx| window.draw(cx).clear(cx))
+            .unwrap();
+        assert_eq!(seen.get(), Some((px(19.), px(19.))));
+    }
+
     #[gpui::test]
     fn a_drop_lands_in_a_window_last_used_by_keyboard(cx: &mut TestAppContext) {
         struct DropView(Rc<Cell<usize>>);

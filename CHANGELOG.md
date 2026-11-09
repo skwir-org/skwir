@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **The address field's text no longer jumps when it is focused**: it stays
+  where it first appears as the suggestions arrive. Text fields in dialogs and
+  popups now sit centred in their selection and caret, and text set to be
+  centred or right-aligned there is drawn so.
 - **XML under another name is colored as XML** (#8): a `.ofx` that declares
   itself XML, a dialect such as `.xliff`, `.xsl`, `.atom` or `.rdf`, or a file
   with no extension. A name a grammar knows keeps its colors.

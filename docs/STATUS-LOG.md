@@ -13729,3 +13729,32 @@ on (a folder, as before).
   Linux and Windows.
 - **Not checked:** a printed page; the test reads the colored runs handed to the
   helper. Under Wine.
+
+## 2026-11-09: The address's words stay at their level on focus (gpui 0057)
+
+Focusing the address moved its words down twice. The field inherits the body's
+line height where the trail has 24 px, which placed them 1 px lower as the field
+took over. Then the card's rows came and the text was deferred above the card:
+`paint_deferred_draws` did not restore the text style, unlike prepaint, so
+`TextElement::paint` centred the line in gpui's default 26 px, 1 px lower again.
+
+- **Built:** gpui patch 0057 restores the text-style stack while deferred draws
+  paint. `address::ADDRESS_LINE` is the one line height of the trail and the field.
+- **Also changes:** every text field in a dialog or popup sits centred in its
+  selection and caret, 1 px higher; `text_center`/`text_right` text in a deferred
+  draw (a dialog's) is drawn as it says, where it was at the left.
+- **Measured** (Xvfb, 60 fps capture, the same `l`, rows it covers):
+
+  | Build | Trail | Field, first frame | Field, with the card |
+  | --- | --- | --- | --- |
+  | Before | 49..59 | 50..60 | 51..61 |
+  | 0057 alone | 49..59 | 50..60 | 50..60 |
+  | 0057 and `ADDRESS_LINE` | 49..59 | 49..59 | 49..59 |
+
+- **Checked:** `a_deferred_draw_paints_in_the_text_style_it_stands_in` failed before
+  the patch (19 px prepainting, 26 px painting) and passes after; `just gpui-check
+  gpui`, 130 tests; rustfmt on `address.rs`, clippy and the 595 tests of `skwir-ui`.
+  In a window: Ctrl+L and a click on the trail, the rename dialog and the palette.
+- **Not checked:** the session's own Wayland window or a scale other than 1; a
+  dialog's centred or right-aligned text on screen; Windows and macOS (gpui's shared
+  code, no platform's); `just release-check`.

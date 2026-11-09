@@ -53,6 +53,8 @@ RUNS = [
         "elements::div::tests::tooltip",
         # A drop from elsewhere on a window last used by keyboard (0050).
         "window::tests::a_drop_lands",
+        # A deferred draw paints in the text style it stands in (0057).
+        "window::tests::a_deferred_draw",
     ]),
     # All of them: the atlas (an upload to a removed texture), the context,
     # the renderer and the text system (a variable face's weights, 0045).

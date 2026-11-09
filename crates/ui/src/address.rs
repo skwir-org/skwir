@@ -19,6 +19,9 @@ use std::path::PathBuf;
 const FIELD_MIN: f32 = 180.;
 /// The address field's height, which the field's card leaves for it.
 pub(crate) const FIELD_HEIGHT: f32 = 30.;
+/// The line the address is written on, as a trail or as text: one height,
+/// so its words stay at their level when the field takes over.
+const ADDRESS_LINE: f32 = 24.;
 /// A pane row's height, and the sidebar header's.
 pub const PANE_ROW_HEIGHT: f32 = 42.;
 
@@ -1329,6 +1332,7 @@ fn pane_row(
                         .flex_1()
                         .min_w_0()
                         .px_2()
+                        .line_height(sized(ADDRESS_LINE))
                         .child(shell.ui().address.clone()),
                 );
             if shell.omnibox_card() {
@@ -1727,7 +1731,7 @@ fn breadcrumbs(
         .id(("trail", pane.0 as usize))
         .role(gpui::Role::Navigation)
         .aria_label("Path")
-        .h(sized(24.))
+        .h(sized(ADDRESS_LINE))
         .flex_1()
         .min_w_0()
         .overflow_hidden()
@@ -1737,7 +1741,7 @@ fn breadcrumbs(
         // `Start` is the left edge whatever the row's direction (taffy's
         // `Start`/`End` follow the writing mode, not the flex direction).
         .justify_start()
-        .line_height(sized(24.));
+        .line_height(sized(ADDRESS_LINE));
     // `index` names it among the row's: the segment it stands before, and
     // one past the last for the chevron after it.
     // `above`, for a segment's own chevron: what it lists instead while
