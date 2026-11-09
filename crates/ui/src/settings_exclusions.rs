@@ -46,7 +46,7 @@ pub(crate) fn excluded_from(role: Role) -> String {
 /// by its file.
 pub(crate) fn pattern_of(matcher: &Matcher) -> String {
     match matcher {
-        Matcher::Pattern { text, .. } => text.trim().to_owned(),
+        Matcher::Pattern { text, .. } => skwir_core::exclusions::shown(text),
         Matcher::Holding(file) => format!("holding {file}"),
     }
 }

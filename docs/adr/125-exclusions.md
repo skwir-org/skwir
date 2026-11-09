@@ -114,7 +114,10 @@ search's walk does not reach).
    page has one. Privacy opens it on Agents.
 10. **A path may start at a variable** (`$CARGO_HOME/registry`,
    `${CARGO_HOME:-~/.cargo}/registry`, the shell's syntax, a default
-   nesting another; a list's first folder), as it may start at `~`. skwir's
+   nesting another; a list's first folder, where tools write; each one of
+   a list a tool reads whole, `KUBECONFIG`), as it may start at `~`. What
+   a variable or the home folder holds is never read as a pattern's
+   syntax. skwir's
    own entries are written under bases (`under`), each such a path: the
    XDG folders and the tools' homes. A variable is skwir's own
    environment's, else the login shell's (`skwir_core::environment`): a

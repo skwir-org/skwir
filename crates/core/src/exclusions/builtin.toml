@@ -26,8 +26,10 @@
 
 # The folders entries are written under (`under`), each a path that
 # starts at the variable that moves it, with what stands for it unset
-# (`${NAME:-default}`, the shell's syntax; a list's first folder). The
-# variables are skwir's own environment's, else the login shell's.
+# (`${NAME:-default}`, the shell's syntax; a list's first folder, where
+# tools write, unless `every = true` says a tool reads all of them, each
+# its own entry). The variables are skwir's own environment's, else the
+# login shell's.
 
 [[base]]
 name = "data"
@@ -870,6 +872,7 @@ path = "${AWS_CLI_HISTORY_FILE}"
 [[base]]
 name = "kubeconfig"
 path = "${KUBECONFIG}"
+every = true
 
 # source: https://docs.cloud.google.com/docs/authentication/application-default-credentials
 [[base]]

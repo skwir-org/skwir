@@ -306,7 +306,7 @@ impl Matcher {
                             ),
                         }
                     }
-                    Written::Path => text.clone(),
+                    Written::Path => unescaped(text),
                 };
                 match beside {
                     Some(sibling) => format!("{what} beside a {sibling}"),
@@ -400,6 +400,11 @@ struct ShippedBase {
     /// What separates the list its variable holds, where it is neither
     /// `:` nor Windows' `;` (conda's `,`).
     separator: Option<char>,
+    /// Every element of its variable's list is read, not only the first:
+    /// a credential a tool reads from each of them (`KUBECONFIG`), where a
+    /// tool's home is the first, where it writes.
+    #[serde(default)]
+    every: bool,
 }
 
 #[derive(serde::Deserialize)]
@@ -489,11 +494,30 @@ fn shipped_catalog(shipped: &Shipped) -> Catalog {
         .iter()
         .filter(|b| for_this_system(b.systems.as_ref()))
         .map(|b| {
-            let now = expand_by(&b.path, home, &|name| {
-                variable_path(name, home, b.separator)
-            });
+            let read = |name: &str| variable_path(name, home, b.separator);
             let unmoved = expand_by(&b.path, home, &|_| None);
-            (b.name.as_str(), Base { now, unmoved })
+            let listed: Vec<PathBuf> = if b.every {
+                let starts = variables_in(&b.path);
+                let variable = starts.first().map(String::as_str).unwrap_or_default();
+                variable_paths(variable, home, b.separator)
+                    .into_iter()
+                    .filter_map(|element| {
+                        expand_by(&b.path, home, &|name| {
+                            if name == variable {
+                                Some(element.clone())
+                            } else {
+                                read(name)
+                            }
+                        })
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let mut listed = listed.into_iter();
+            let now = listed.next().or_else(|| expand_by(&b.path, home, &read));
+            let also = listed.collect();
+            (b.name.as_str(), Base { now, unmoved, also })
         })
         .collect();
     let private: HashSet<&str> = shipped
@@ -510,6 +534,7 @@ fn shipped_catalog(shipped: &Shipped) -> Catalog {
         // Where a variable moved it, what was kept from agents where it
         // was stays so: a credential left behind is one still.
         let mut left_behind = None;
+        let mut also: Vec<String> = Vec::new();
         let names = e
             .names
             .as_deref()
@@ -523,6 +548,7 @@ fn shipped_catalog(shipped: &Shipped) -> Catalog {
                         let Some(Base {
                             now: Some(now),
                             unmoved,
+                            also: others,
                         }) = bases.get(base)
                         else {
                             continue;
@@ -531,9 +557,10 @@ fn shipped_catalog(shipped: &Shipped) -> Catalog {
                             && let Some(unmoved) = unmoved
                             && unmoved != now
                         {
-                            left_behind = Some(tilde(&joined(unmoved, folder)));
+                            left_behind = Some(written_under(unmoved, folder));
                         }
-                        tilde(&joined(now, folder))
+                        also.extend(others.iter().map(|other| written_under(other, folder)));
+                        written_under(now, folder)
                     }
                 };
                 Matcher::Pattern {
@@ -557,6 +584,17 @@ fn shipped_catalog(shipped: &Shipped) -> Catalog {
             ticks: Switches::ALL,
         };
         entries.push(entry(format!("{BUILTIN}{}", e.id), e.what.clone(), matcher));
+        for (n, text) in also.into_iter().enumerate() {
+            entries.push(entry(
+                format!("{BUILTIN}{}.also-{}", e.id, n + 2),
+                format!("{} (another of its list)", e.what),
+                Matcher::Pattern {
+                    text,
+                    beside: None,
+                    names,
+                },
+            ));
+        }
         if let Some(text) = left_behind {
             entries.push(entry(
                 format!("{BUILTIN}{}.before-it-moved", e.id),
@@ -585,7 +623,7 @@ fn shipped_catalog(shipped: &Shipped) -> Catalog {
             what: "Your cache folder (XDG_CACHE_HOME)".into(),
             group: None,
             matcher: Matcher::Pattern {
-                text: tilde(cache),
+                text: literally(&tilde(cache)),
                 beside: None,
                 names: Names::Folders,
             },
@@ -600,19 +638,24 @@ fn shipped_catalog(shipped: &Shipped) -> Catalog {
     }
 }
 
-/// A base as the environment puts it now, and where it is unmoved.
+/// A base as the environment puts it now, where it is unmoved, and the
+/// rest of its variable's list where every element counts.
 struct Base {
     now: Option<PathBuf>,
     unmoved: Option<PathBuf>,
+    also: Vec<PathBuf>,
 }
 
-/// `folder` under `base`; empty, the base itself (a variable that names
-/// a whole folder or a file).
-fn joined(base: &Path, folder: &str) -> PathBuf {
+/// `folder` under `base` as the list writes it; empty, the base itself (a
+/// variable that names a whole folder or a file). What the base's path
+/// holds is no syntax of the list's: `[old]` in a variable is those
+/// characters, never a glob's class.
+fn written_under(base: &Path, folder: &str) -> String {
+    let base = literally(&tilde(base));
     if folder.is_empty() {
-        base.to_path_buf()
+        base
     } else {
-        base.join(folder)
+        format!("{base}/{folder}")
     }
 }
 
@@ -1385,7 +1428,14 @@ impl Written {
         // whose braces are no glob's.
         let (start, rest) = Start::of(text);
         let path = !matches!(start, Start::Nothing) || text.contains(['/', '\\']);
-        match (path, is_glob(rest)) {
+        // A character a path holds is written plain there (`[[]`): only
+        // what was written as a glob's makes it one.
+        let glob = if path {
+            glob_written(rest)
+        } else {
+            is_glob(rest)
+        };
+        match (path, glob) {
             (false, false) => Written::Name,
             (false, true) => Written::NameGlob,
             (true, false) => Written::Path,
@@ -1397,6 +1447,70 @@ impl Written {
 /// Whether a name or a path is written as a glob.
 fn is_glob(text: &str) -> bool {
     text.contains(['*', '?', '[', '{'])
+}
+
+/// A character a glob reads as more than itself: what [`literally`] writes
+/// plain. A `\` is one where a glob escapes with it, not where it
+/// separates names.
+fn is_syntax(c: char) -> bool {
+    matches!(c, '*' | '?' | '[' | ']' | '{' | '}') || (c == '\\' && !cfg!(windows))
+}
+
+/// `text` as a glob reads it plainly: each character of its syntax alone
+/// in a class (`[[]`, which every glob syntax here reads, on Windows too).
+/// How what a variable or the home folder holds goes into the list's text.
+fn literally(text: &str) -> String {
+    let mut plain = String::with_capacity(text.len());
+    for c in text.chars() {
+        if is_syntax(c) {
+            plain.extend(['[', c, ']']);
+        } else {
+            plain.push(c);
+        }
+    }
+    plain
+}
+
+/// Each character of `text`, whether [`literally`] wrote it plain.
+fn each_character(text: &str, mut each: impl FnMut(char, bool)) {
+    let chars: Vec<char> = text.chars().collect();
+    let mut at = 0;
+    while at < chars.len() {
+        if chars[at] == '[' && chars.get(at + 2) == Some(&']') && is_syntax(chars[at + 1]) {
+            each(chars[at + 1], true);
+            at += 3;
+        } else {
+            each(chars[at], false);
+            at += 1;
+        }
+    }
+}
+
+/// Whether `text` holds a glob's syntax, what is written plain aside.
+fn glob_written(text: &str) -> bool {
+    let mut glob = false;
+    each_character(text, |c, plain| {
+        glob |= !plain && matches!(c, '*' | '?' | '[' | '{');
+    });
+    glob
+}
+
+/// `text` with what is written plain read back (`[[]` is `[`).
+fn unescaped(text: &str) -> String {
+    let mut read = String::with_capacity(text.len());
+    each_character(text, |c, _| read.push(c));
+    read
+}
+
+/// What a row of the list writes for `text`: a path as it is, with no
+/// mark of what is written plain in it; anything else as written.
+pub fn shown(text: &str) -> String {
+    let text = text.trim();
+    if Written::of(text) == Written::Path {
+        unescaped(text)
+    } else {
+        text.to_owned()
+    }
 }
 
 impl Pattern {
@@ -1433,7 +1547,8 @@ impl Pattern {
             // Matched as the system writes the path: on Windows, where a
             // glob has no escapes, globset reads `\` as `/` in the glob as
             // in the path.
-            Pattern::PathGlob(glob_of(&full.to_string_lossy())?)
+            let glob = glob_text(text, home.as_deref()).unwrap_or_default();
+            Pattern::PathGlob(glob_of(&glob)?)
         } else {
             Pattern::Path(full)
         })
@@ -1922,25 +2037,46 @@ pub fn variables_in(text: &str) -> Vec<String> {
 /// folder, as a tool that expands it reads it; anything else that is not
 /// a whole path is no value, as the XDG specification says of its own.
 fn variable_path(name: &str, home: Option<&Path>, separator: Option<char>) -> Option<PathBuf> {
-    let value = crate::environment::var(name)?;
-    let first = match separator {
-        Some(separator) => PathBuf::from(
-            value
-                .to_string_lossy()
-                .split(separator)
-                .next()
-                .unwrap_or_default(),
-        ),
-        None => std::env::split_paths(&value).next()?,
+    let elements = variable_elements(name, separator);
+    folder_from(elements.first()?, home)
+}
+
+/// Each element of the list a variable holds that names a folder, in order
+/// (a base read for `every` element).
+fn variable_paths(name: &str, home: Option<&Path>, separator: Option<char>) -> Vec<PathBuf> {
+    variable_elements(name, separator)
+        .iter()
+        .filter_map(|element| folder_from(element, home))
+        .collect()
+}
+
+/// What a variable holds, split as a list (`:`, `;` on Windows, or
+/// `separator`).
+fn variable_elements(name: &str, separator: Option<char>) -> Vec<PathBuf> {
+    let Some(value) = crate::environment::var(name) else {
+        return Vec::new();
     };
-    if first.as_os_str().is_empty() {
+    match separator {
+        Some(separator) => value
+            .to_string_lossy()
+            .split(separator)
+            .map(PathBuf::from)
+            .collect(),
+        None => std::env::split_paths(&value).collect(),
+    }
+}
+
+/// An element as a folder, if it is one: empty is unset, `~` the home
+/// folder, anything else not whole is none.
+fn folder_from(element: &Path, home: Option<&Path>) -> Option<PathBuf> {
+    if element.as_os_str().is_empty() {
         return None;
     }
-    let first = match (first.strip_prefix("~"), home) {
+    let element = match (element.strip_prefix("~"), home) {
         (Ok(rest), Some(home)) => home.join(rest),
-        _ => first,
+        _ => element.to_path_buf(),
     };
-    first.is_absolute().then_some(first)
+    element.is_absolute().then_some(element)
 }
 
 /// `text` as an absolute path, `~` read as `home` and a variable as the
@@ -1953,14 +2089,35 @@ pub fn expand(text: &str, home: Option<&Path>) -> Option<PathBuf> {
     expand_by(text, home, &|name| variable_path(name, home, None))
 }
 
-/// [`expand`], `variable` saying what each variable holds.
+/// [`expand`], `variable` saying what each variable holds. What is
+/// written plain is read back where nothing in the text is a glob's; a
+/// glob keeps it, for [`glob_text`] and its readers.
 fn expand_by(
     text: &str,
     home: Option<&Path>,
     variable: &dyn Fn(&str) -> Option<PathBuf>,
 ) -> Option<PathBuf> {
     let text = text.trim();
-    let (mut path, rest) = match Start::of(text) {
+    let (mut path, rest) = base_and_rest(text, home, variable)?;
+    let glob = glob_written(rest);
+    for part in names_of(rest) {
+        if glob {
+            path.push(part);
+        } else {
+            path.push(unescaped(part));
+        }
+    }
+    path.is_absolute().then_some(path)
+}
+
+/// Where `text` starts, and what is written after: the home folder, a
+/// variable as the environment says, or a whole path's root.
+fn base_and_rest<'a>(
+    text: &'a str,
+    home: Option<&Path>,
+    variable: &dyn Fn(&str) -> Option<PathBuf>,
+) -> Option<(PathBuf, &'a str)> {
+    Some(match Start::of(text) {
         (Start::Home, rest) => (home?.to_path_buf(), rest),
         (Start::Variable { name, unset }, rest) => {
             let base = match variable(name) {
@@ -1980,11 +2137,27 @@ fn expand_by(
             let written: usize = roots.iter().map(|c| c.as_os_str().len()).sum();
             (roots.iter().collect(), text.get(written..)?)
         }
-    };
-    for part in rest.split(['/', '\\']).filter(|part| !part.is_empty()) {
+    })
+}
+
+/// The names a written path goes through: `/` separates them on every
+/// system, `\\` on Windows alone (elsewhere it is a character of a name).
+fn names_of(rest: &str) -> impl Iterator<Item = &str> {
+    rest.split(move |c| c == '/' || (cfg!(windows) && c == '\\'))
+        .filter(|part| !part.is_empty())
+}
+
+/// `text`, a path glob, as a glob compares it: where it starts written
+/// plain, what a home folder or a variable holds being no syntax.
+fn glob_text(text: &str, home: Option<&Path>) -> Option<String> {
+    let text = text.trim();
+    let (base, rest) = base_and_rest(text, home, &|name| variable_path(name, home, None))?;
+    let mut path = PathBuf::from(literally(&base.to_string_lossy()));
+    for part in names_of(rest) {
         path.push(part);
     }
-    path.is_absolute().then_some(path)
+    path.is_absolute()
+        .then(|| path.to_string_lossy().into_owned())
 }
 
 /// The most folders a glob's lookup follows at one level ([`here`]):
@@ -2012,19 +2185,21 @@ pub fn here(text: &str, home: Option<&Path>) -> Option<bool> {
     if written == Written::Path {
         return Some(found(&full));
     }
+    let glob_path = glob_text(text, home)?;
     let mut reached: Vec<PathBuf> = vec![PathBuf::new()];
-    for part in full.components() {
-        let name = part.as_os_str();
+    for part in Path::new(&glob_path).components() {
+        let name = part.as_os_str().to_string_lossy();
         let glob = match part {
-            Component::Normal(name) if is_glob(&name.to_string_lossy()) => {
+            Component::Normal(_) if glob_written(&name) => {
                 if name == "**" {
                     return None;
                 }
-                glob_of(&name.to_string_lossy()).ok()?
+                glob_of(&name).ok()?
             }
             _ => {
+                let plain = unescaped(&name);
                 for path in &mut reached {
-                    path.push(name);
+                    path.push(&plain);
                 }
                 continue;
             }

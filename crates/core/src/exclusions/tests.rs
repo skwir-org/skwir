@@ -828,6 +828,125 @@ fn skwirs_bases_follow_their_variables_and_every_entry_names_one() {
     );
 }
 
+/// What a variable holds is those characters, whatever a glob would make
+/// of them: a secret in `Keys [old]` is private there, one in a path with a
+/// lone brace too. Syntax is what was written.
+#[test]
+fn a_variables_value_is_never_read_as_a_glob() {
+    if std::env::var_os("GNUPGHOME").is_some() {
+        eprintln!("skipped: this environment moves GnuPG's folder itself");
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let home = crate::os_path::home();
+    for name in ["Keys [old]", "a{b", "x*y", "q?r", "br[]ckets"] {
+        let moved = tmp.path().join(name).join("gnupg");
+        crate::environment::learn(
+            BTreeSet::from(["GNUPGHOME".to_owned()]),
+            [("GNUPGHOME".to_owned(), moved.clone().into_os_string())],
+        );
+        let catalog = Catalog::shipped();
+        let rule = catalog.rule(Role::Agents);
+        assert!(rule.names(&moved), "{name}: its folder is named");
+        assert!(
+            rule.lists(&moved.join("private-keys-v1.d")),
+            "{name}: under it"
+        );
+        let entry = catalog
+            .entries
+            .iter()
+            .find(|e| {
+                matches!(&e.matcher, Matcher::Pattern { text, .. }
+                    if expand(text, home.as_deref()).as_deref() == Some(moved.as_path()))
+            })
+            .unwrap_or_else(|| panic!("{name}: an entry names it"));
+        assert_eq!(
+            entry.matcher.one_path().map(shown),
+            Some(tilde(&moved)),
+            "{name}: one path, said as it is"
+        );
+        assert!(
+            !rule.names(&tmp.path().join("Keys o").join("gnupg")),
+            "{name}: `[old]` is no class"
+        );
+    }
+    assert_eq!(Written::of("~/*/cache"), Written::PathGlob);
+    assert_eq!(Written::of("/srv/[[]a[]]/b"), Written::Path);
+    assert_eq!(Written::of("/srv/[ab]/c"), Written::PathGlob);
+    if cfg!(windows) {
+        return; // `/home` and `/srv` are no whole paths there.
+    }
+    // What was written as a glob stays one, under a home that holds a
+    // glob's characters: only what follows it is read as syntax.
+    assert_eq!(
+        glob_text("~/*/cache", Some(Path::new("/home/it's [x]"))).as_deref(),
+        Some("/home/it's [[]x[]]/*/cache")
+    );
+    // Written plain by a hand, too.
+    assert_eq!(
+        expand("/srv/[[]a[]]/b", None),
+        Some(PathBuf::from("/srv/[a]/b"))
+    );
+}
+
+/// A tool that reads every file of a list (kubectl) has each of them
+/// private, each its own entry; a tool's home stays the list's first.
+#[test]
+fn a_list_of_credentials_is_private_in_every_element() {
+    if std::env::var_os("KUBECONFIG").is_some() {
+        eprintln!("skipped: this environment sets KUBECONFIG itself");
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let (dev, prod, third) = (
+        tmp.path().join("dev.yaml"),
+        tmp.path().join("it's [prod].yaml"),
+        tmp.path().join("third ü.yaml"),
+    );
+    let list = std::env::join_paths([&dev, &prod, &third]).unwrap();
+    crate::environment::learn(
+        BTreeSet::from(["KUBECONFIG".to_owned()]),
+        [("KUBECONFIG".to_owned(), list)],
+    );
+    let catalog = Catalog::shipped();
+    let rule = catalog.rule(Role::Agents);
+    for file in [&dev, &prod, &third] {
+        assert!(rule.names_file(file), "{}", file.display());
+    }
+    assert!(!rule.names_file(&tmp.path().join("other.yaml")));
+    let ids: Vec<&str> = catalog
+        .entries
+        .iter()
+        .filter(|e| e.id.starts_with("skwir.creds.kubeconfig"))
+        .map(|e| e.id.as_str())
+        .collect();
+    assert_eq!(
+        ids,
+        [
+            "skwir.creds.kubeconfig",
+            "skwir.creds.kubeconfig.also-2",
+            "skwir.creds.kubeconfig.also-3",
+        ]
+    );
+    // A home is where tools write: the first alone.
+    let cargo = tmp.path().join("cargo a");
+    let other = tmp.path().join("cargo b");
+    crate::environment::learn(
+        BTreeSet::from(["CARGO_HOME".to_owned()]),
+        [(
+            "CARGO_HOME".to_owned(),
+            std::env::join_paths([&cargo, &other]).unwrap(),
+        )],
+    );
+    let names_registry = |at: &Path| {
+        Catalog::shipped()
+            .rule(Role::Searches)
+            .names(&at.join("registry"))
+    };
+    assert!(names_registry(&cargo));
+    assert!(!names_registry(&other));
+}
+
 #[test]
 fn a_keyring_moved_or_copied_is_told_by_what_it_holds() {
     let tmp = tempfile::tempdir().unwrap();
@@ -941,8 +1060,8 @@ fn a_variables_value_is_read_as_a_tool_reads_it() {
         variable_path("SKWIR_TEST_LIST", Some(&home), Some(',')),
         Some(first)
     );
-    assert_eq!(joined(Path::new("/a"), ""), Path::new("/a"));
-    assert_eq!(joined(Path::new("/a"), "b"), Path::new("/a/b"));
+    assert_eq!(written_under(Path::new("/a"), ""), "/a");
+    assert_eq!(written_under(Path::new("/a"), "b"), "/a/b");
 }
 
 #[test]
