@@ -144,10 +144,11 @@ let
     "skwir-djvu-worker"
     "skwir-model-worker"
     "skwir-module-worker"
-    "skwir-kmtp-worker"
     "skwir-tree-sitter-worker"
     "skwir-print-worker"
   ]
+  # KDE's kmtpd is Linux's alone (ADR-097).
+  ++ lib.optional stdenv.hostPlatform.isLinux "skwir-kmtp-worker"
   ++ lib.concatMap (feature: feature.programs) enabled;
 
   plugins = lib.unique ([ gst_all_1.gst-plugins-base ] ++ gstPlugins gst_all_1);
@@ -245,18 +246,19 @@ rustPlatform.buildRustPackage {
   # What the window opens at run time, found through the program's own
   # search path rather than LD_LIBRARY_PATH, which every program skwir
   # starts would inherit; added after fixup has shrunk it to what is
-  # linked. The wrapper only names where PDFium and the player's plugins
-  # are: a setting naming another PDFium still wins.
+  # linked. skwir's wrapper only names where PDFium is: a setting naming
+  # another still wins. The player's plugins are told to its helper alone:
+  # set on skwir, a video player started from it would take them for its
+  # own, built against another GStreamer and glibc.
   postFixup =
     lib.optionalString stdenv.hostPlatform.isLinux ''
       patchelf --add-rpath ${lib.makeLibraryPath drawing} $out/bin/skwir
     ''
-    + lib.optionalString (withPdfium || withMedia) ''
-      wrapProgram $out/bin/skwir ${
-        lib.optionalString withPdfium "--set-default SKWIR_PDFIUM_LIBRARY ${lib.getLib pdfium}/lib/libpdfium${stdenv.hostPlatform.extensions.sharedLibrary}"
-      } ${
-        lib.optionalString withMedia "--set-default GST_PLUGIN_SYSTEM_PATH_1_0 ${lib.makeSearchPath "lib/gstreamer-1.0" plugins}"
-      }
+    + lib.optionalString withPdfium ''
+      wrapProgram $out/bin/skwir --set-default SKWIR_PDFIUM_LIBRARY ${lib.getLib pdfium}/lib/libpdfium${stdenv.hostPlatform.extensions.sharedLibrary}
+    ''
+    + lib.optionalString withMedia ''
+      wrapProgram $out/libexec/skwir/skwir-media-worker --set-default GST_PLUGIN_SYSTEM_PATH_1_0 ${lib.makeSearchPath "lib/gstreamer-1.0" plugins}
     '';
 
   # The toolchain stays out of what is installed: rustc writes the paths

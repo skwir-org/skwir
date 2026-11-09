@@ -72,8 +72,9 @@ the package).
    `libexec/skwir` (`process::helper_folders`); the `dist` profile; the
    window's libraries added to skwir's own search path
    (`patchelf --add-rpath`, after fixup has shrunk it), so nothing skwir
-   starts inherits them; the wrapper sets only where PDFium and the
-   player's plugins are. Fonts, desktop entry, metainfo and icon as
+   starts inherits them; skwir's wrapper says only where PDFium is, and
+   the player's helper's own wrapper where its plugins are, which what
+   skwir starts must not inherit either. Fonts, desktop entry, metainfo and icon as
    before; `LICENSE`, and the notices of skwir and of each helper the
    build carries, one file (ADR-063).
 6. **Checked:** `tools/release/test_nix.py` (release-tools-check) keeps

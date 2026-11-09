@@ -35,7 +35,9 @@ class Package(unittest.TestCase):
         # `features = { withX = { … programs = [ … ]; … }; … };`, then
         # the helpers every build carries.
         self.features = between(self.text, "features = {", "enabled =")
-        self.always = quoted(between(self.text, "helpers = [", "]"))
+        self.always = quoted(between(self.text, "helpers = [", "]")) | set(
+            re.findall(r'lib\.optional stdenv\.hostPlatform\.isLinux "([a-z0-9-]+)"', self.text)
+        )
         self.flagged = set()
         for programs in re.findall(r"programs = \[([^\]]*)\]", self.features):
             self.flagged |= quoted(programs)
@@ -50,6 +52,13 @@ class Package(unittest.TestCase):
                       "ADR-128, by --config: nixpkgs' build sets the linker's variable itself")
         self.assertIn("patchShebangs tools/build/link-ordered", flake, "a build's own shell")
         self.assertNotIn("link-ordered", self.text, "written to stand in nixpkgs, as ADR-124 says")
+
+    def test_the_players_plugins_are_told_to_its_helper_alone(self):
+        fixup = between(self.text, "postFixup =", "disallowedReferences")
+        for wrapped in re.findall(r"wrapProgram (\S+)([^\n]*)", fixup):
+            if "GST_PLUGIN" in wrapped[1]:
+                self.assertEqual(wrapped[0], "$out/libexec/skwir/skwir-media-worker")
+        self.assertIn("skwir-media-worker --set-default GST_PLUGIN_SYSTEM_PATH_1_0", fixup)
 
     def test_a_program_is_either_always_built_or_under_one_flag(self):
         self.assertFalse(self.always & self.flagged)
