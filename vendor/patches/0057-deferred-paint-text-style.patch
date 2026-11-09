@@ -1,7 +1,7 @@
 0057 deferred-paint-text-style: a deferred draw paints under the text style of where it stands in the tree, as it prepaints: what reads the style while painting (a line's height, an alignment) no longer gets the window's default
 
 diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
-index 2d18e02c..bb2768a4 100644
+index 2d18e02c..f4c120da 100644
 --- a/crates/gpui/src/window.rs
 +++ b/crates/gpui/src/window.rs
 @@ -4077,6 +4077,8 @@ impl Window {
@@ -21,10 +21,10 @@ index 2d18e02c..bb2768a4 100644
      }
  
      fn deferred_draw_traversal_order(&mut self) -> SmallVec<[usize; 8]> {
-@@ -9178,6 +9181,40 @@ mod tests {
-     /// SKWIR: files dropped from another application on a window last used
-     /// by keyboard land where they are dropped: the drag coming in is the
-     /// pointer's, so what is under it counts as hovered.
+@@ -9175,6 +9178,43 @@ mod tests {
+         }
+     }
+ 
 +    /// What a deferred draw reads of the text style while painting (a
 +    /// line's height, its alignment) is what it read while prepainting: the
 +    /// style of where it stands in the tree (0057).
@@ -35,15 +35,18 @@ index 2d18e02c..bb2768a4 100644
 +        impl Render for View {
 +            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
 +                let seen = self.0.clone();
-+                div().size_full().line_height(px(19.)).child(crate::deferred(
-+                    canvas(
-+                        |_, window, _| window.line_height(),
-+                        move |_, prepainted, window, _| {
-+                            seen.set(Some((prepainted, window.line_height())));
-+                        },
-+                    )
-+                    .size_full(),
-+                ))
++                div()
++                    .size_full()
++                    .line_height(px(19.))
++                    .child(crate::deferred(
++                        canvas(
++                            |_, window, _| window.line_height(),
++                            move |_, prepainted, window, _| {
++                                seen.set(Some((prepainted, window.line_height())));
++                            },
++                        )
++                        .size_full(),
++                    ))
 +            }
 +        }
 +
@@ -59,6 +62,6 @@ index 2d18e02c..bb2768a4 100644
 +        assert_eq!(seen.get(), Some((px(19.), px(19.))));
 +    }
 +
-     #[gpui::test]
-     fn a_drop_lands_in_a_window_last_used_by_keyboard(cx: &mut TestAppContext) {
-         struct DropView(Rc<Cell<usize>>);
+     /// SKWIR: files dropped from another application on a window last used
+     /// by keyboard land where they are dropped: the drag coming in is the
+     /// pointer's, so what is under it counts as hovered.

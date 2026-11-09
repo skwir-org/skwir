@@ -9178,9 +9178,6 @@ mod tests {
         }
     }
 
-    /// SKWIR: files dropped from another application on a window last used
-    /// by keyboard land where they are dropped: the drag coming in is the
-    /// pointer's, so what is under it counts as hovered.
     /// What a deferred draw reads of the text style while painting (a
     /// line's height, its alignment) is what it read while prepainting: the
     /// style of where it stands in the tree (0057).
@@ -9191,15 +9188,18 @@ mod tests {
         impl Render for View {
             fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
                 let seen = self.0.clone();
-                div().size_full().line_height(px(19.)).child(crate::deferred(
-                    canvas(
-                        |_, window, _| window.line_height(),
-                        move |_, prepainted, window, _| {
-                            seen.set(Some((prepainted, window.line_height())));
-                        },
-                    )
-                    .size_full(),
-                ))
+                div()
+                    .size_full()
+                    .line_height(px(19.))
+                    .child(crate::deferred(
+                        canvas(
+                            |_, window, _| window.line_height(),
+                            move |_, prepainted, window, _| {
+                                seen.set(Some((prepainted, window.line_height())));
+                            },
+                        )
+                        .size_full(),
+                    ))
             }
         }
 
@@ -9215,6 +9215,9 @@ mod tests {
         assert_eq!(seen.get(), Some((px(19.), px(19.))));
     }
 
+    /// SKWIR: files dropped from another application on a window last used
+    /// by keyboard land where they are dropped: the drag coming in is the
+    /// pointer's, so what is under it counts as hovered.
     #[gpui::test]
     fn a_drop_lands_in_a_window_last_used_by_keyboard(cx: &mut TestAppContext) {
         struct DropView(Rc<Cell<usize>>);
