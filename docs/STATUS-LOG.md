@@ -13864,3 +13864,81 @@ Skwir code 2.5, the MIME database 1.0, the exclusions' tables 0.8.
 - **Not checked:** memory after use; `just release-check` and the packages'
   builds (`just package-*`) through the wrapper; a build outside the dev shell.
   macOS and Windows are neither built nor measured for this.
+
+## 2026-11-09: Review fixes since 0.3.1
+
+The user asked for a review of what came after the last one
+(77034be9..468986d0, then ..879e8774), then for every finding fixed, high to
+low. Six reviewers, one area each, left 78 open findings: 2 high, 24 medium,
+52 low. Each area then had a fixer, six at once in one tree, each owning its
+files, builds in capped scopes without incremental builds
+(`target/debug/incremental`, about 67 GB, deleted with the user's leave
+first). The integrator split shared files hunk by hunk, read the two highs
+and the new `unsafe` block, and committed high to low (fc1a102a..bc2ca772, 33
+commits). The combined tree is what was checked: the commits between were
+not built one by one, and some need a later one to compile or lint.
+
+- **Windows** (15 findings: `fc1a102a`, `40095b8c`, `d9db7c42`, `2fc3045c`, `5a986a61`, `3205ec68`): `admit` is the
+  one gate for what the user does in a window and makes it active, only with
+  the keyboard; requests from elsewhere use `admit_here`. What a window holds
+  when it closes goes to the next one, and only the last window declines
+  (`finishing::hand_on`). A refused launch hands over (`NotTaken`). A flight
+  of thumbnails keeps every asker. One pump per wake (`finishing::woken`). A
+  size is fitted to the first display where none is named main. State keys no
+  longer move `settings.revision`.
+- **Folders** (18, FL-7 already fixed): `Pane::covered` and `Pane::ways` are
+  the one place a gesture takes rows. F5, renames and plans share one answer
+  to which folders are asked again (`FoldersAbove`, `Leading::rekey`); rows
+  looked over in `PUMP_BUDGET` slices; an answer moves `filter_version` alone,
+  the folders named applied in `FilterCache`. A re-ask after a plan or F5
+  walks with the tags index set aside: the race with `tags.learn` was real
+  (`docs/invariants/indexes.md` names ADR-126 §10's one exception). A sort let
+  go of is cancelled.
+- **Exclusions** (19): an agent's change of `exclusions.shell_variables` is
+  refused; an agent's dotted key changes one entry, as the docs say;
+  `Catalog::aside` is written back as it stood; what cannot be read is said.
+  `Rule::lists` walks a path's ancestors, resolved folders shared 1 s
+  (`permissions::Seen`). The login shell runs in a session of its own
+  (`setsid` in `pre_exec`, the crate's narrow `allow`). The Nix package tells
+  the player's plugins to its helper alone (`tools/release` tests only: no Nix
+  package built or evaluated).
+- **Look** (7, LK-5 no bug): a card's outline is quads and discs clipped to a
+  quadrant on device pixels, so the default look opens no path pass. gpui 0058
+  (a rounded mask on device pixels) and 0059 (a primitive reaching no corner
+  drops its radii). The accent's tints keep what `derive` gave them. Each
+  reading of a desktop's settings watches again, nearest existing parent for
+  a folder not there yet.
+- **Activity and names** (9): lines end at grapheme clusters (`name_lines`,
+  Unicode segmentation 1.13's conjunct rule). `Typing` says when a file could
+  not be typed. Properties keep what they showed of the same file. A step
+  found done is the run's only where the run acted (`Change::acts_at`,
+  `Operation::file`). A task unfolds Activity (ADR-114 amended). A drag's
+  picture is let go of at its end.
+- **Print, types, remote** (9): `form::path` is the one reading of a typed
+  path and `save_join` the one place a name follows a folder. `Resolved::unread`
+  for a read that could not tell. Remembered folders asked together within one
+  400 ms deadline. A sidecar made as an undo does. rclone's and kmtp's cache is
+  the app's.
+- **Decided before fixing, the integrator's calls:** FL-4 keeps ADR-126 §10's
+  shortcut and amends the invariant; EX-1 refused for agents; WN-7 hands on to
+  the next window; AC-9 a task unfolds Activity; LK-1 a ring from quads.
+
+**Checked** on the combined tree, in capped scopes: rustfmt, `just lint`
+(`-D warnings`), `just test` (3298 passed, 32 skipped),
+`just release-tools-check`, `just check-cross`. Each fixer ran its crates'
+tests and tried its fixes in a real window on an Xvfb of its own, private bus
+and XDG folders: WN-1, WN-5, WN-7, WN-9; PT-1, PT-4 and Tab in Print…; the
+ring at scales 1, 1.5 and 2 against the build before, see-through included;
+AC-1, AC-3, AC-5, AC-6. `tools/gpui/check.py`'s tests of 0058 and 0059 ran
+before those two files were reformatted, which changed whitespace only, and
+the series reverses exactly to the commit before.
+
+**Not checked:** `just release-check`, by the user's standing preference, so
+`bench-check`, `idle-pss`, the native workers and Wine's tests did not run.
+Frame times of the outline and the fragments 0059 saves, under load from these
+builds. FL-5's slicing on a real tree (a test on 100,000 synthetic folders).
+The rubber band, a failed window open, a real Wayland drag, a hung server for
+Save and Print, the login shell under a real terminal, the new line on the
+Exclusions page by eye. No Nix package built. Windows' pipe code is compiled
+by `check-cross`, never run; macOS likewise.
+`just startup-order` is owed after this, before tagging (ADR-128).

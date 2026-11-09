@@ -875,6 +875,18 @@ ADR-127: the Tree view lays a search out under its folders, the List view
 stays flat; the folders on the way are lent to the pane, dimmed, foldable,
 and left out of Select All. Checks in `docs/STATUS-LOG.md` (2026-11-09).
 
+## Review fixes (2026-11-09)
+
+A review of what came after the last one (77034be9..879e8774: several
+windows, folders built whole, Exclusions and the Nix package, cards and
+colors, Activity, the lens and the search tree, printing and types) made
+78 open findings, fixed the same day by six fixers at once (fc1a102a..bc2ca772,
+33 commits, not pushed). Two were high: a window's keys acted on the
+core's active window, which an agent could move, and Invert, the rubber
+band and a sweep took folders shown only as the way to a search's hits.
+77 are fixed; LK-5 is no bug (the corner under a notch is square). Checks
+in `docs/STATUS-LOG.md` (2026-11-09).
+
 ## What is left
 
 Gathered on 2026-10-20 from the notes of this plan and of
@@ -985,6 +997,27 @@ leave (ADR-077).
   helper of one's own is not seen.
 - At 200 % a settings row keeps its texts at the 35 % share, leaving a
   wide blank before its control (70ea5c92's design).
+
+**From the review since 0.3.1** (2026-11-09):
+- A range ending on a folder shown only as the way takes it (ADR-127, a
+  way named on its own); a sweep ending there does not. Folders dimmed
+  under a lens, outside a search's tree, are still taken by Select All
+  (ADR-126).
+- A plan naming a path through a link does not re-ask a pane showing
+  the real path, as a search's own re-check; F5 covers it.
+- Skwir's own folders keep the session's XDG values; only what names
+  other programs' files follows the login shell (EX-15).
+- A login shell that timed out under load is remembered until its files
+  change (ADR-125). A link made in the last second may go unseen by a
+  privacy check (`permissions::Seen`).
+- At 2× in a narrow right pane the row's View button overlaps the
+  notch's Properties button: seen in a capture, not compared with the
+  build before.
+- Not tried in a window: the rubber band's `band_covers`, a failed
+  window open or a close during one, a real Wayland drag leaving the
+  window, a hung server for the Save and Print fields, the login shell
+  under a real terminal with bash or zsh. Frame times of the card's
+  outline are unmeasured (0058, 0059, LK-1).
 
 **From the review of 2026-11-03** (the History and the queue's
 progress, fixed the same night):

@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+- **Keys act in the window you are typing in**: after a script or an agent
+  moved Skwir's idea of the active window, a paste or a Delete could land in
+  another window. The same goes for a second launch at the same moment, which
+  now hands over instead of starting a second program, and for a question held
+  by a window that closes, which moves to the next window.
+- **Delete no longer takes folders shown only as the way to a search's hits**:
+  Invert, the rubber band and a sweep leave them out as Select All did.
+- **Renaming a folder under a filter keeps it shown and selected**, F5 asks
+  again about every folder, and a change now re-checks only the folders above
+  it, so a run of small changes no longer leaves folders hidden.
+- **Exclusions keep what the list cannot show** through a change, say when an
+  entry cannot be read, and ask the login shell apart from the terminal, so a
+  shell's start-up can no longer stop Skwir.
+- **Names break only between whole characters**, Devanagari and combining marks
+  included, in the grid and under a drag.
+- **Print and Save follow one reading of a typed path**: `~` then Enter saves
+  in your home folder as the name shown, a folder that did not answer is asked
+  again, and one you may not list is no longer called missing.
+- **Cards draw with less work**: their outline no longer opens a costly pass in
+  each frame, and it stays sharp at fractional scales.
+- **Properties no longer blanks while a file grows**, and a retry that finds its
+  work already done says so.
 - **Less memory at rest on Linux**, about 30 MiB: the code a start runs is
   now laid out together in the program, so the rest of it is no longer
   loaded along with it.
