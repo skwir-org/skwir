@@ -27,11 +27,13 @@ use skwir_core::exclusions::{
     Role, YOURS,
 };
 use skwir_core::registry::MenuItem;
+use skwir_core::scheduler::{Lane, Priority};
 use skwir_core::settings::SettingSpec;
 
 use crate::controls::{self, ButtonStyle};
 use crate::elements::popover::PopoverAnchor;
 use crate::input::{InputEvent, TextInput};
+use crate::latest::Latest;
 use crate::settings::SettingsView;
 use crate::settings_exclusions::{
     self as model, Ask, Badge, Cursor, Draft, Field, Heading, Kind, Line, ROLES, Row,
@@ -74,25 +76,10 @@ pub(crate) struct ExclusionsPage {
     catalog: Rc<Catalog>,
     generation: u64,
     rows: RefCell<Option<(Asked, Rc<Vec<Row>>)>>,
-    /// What each entry means, for the catalog's generation: worked out
-    /// once it is asked for (`settings_exclusions::meanings`).
-    meanings: RefCell<Option<(u64, Rc<Vec<Option<String>>>)>>,
     /// How many entries the dialog's search finds, for the rules'
     /// generation and the words searched: not counted at each frame.
     found: RefCell<Option<(u64, String, usize)>>,
-    /// Whether each path or path glob written (`Matcher::looked_up`) is
-    /// on this computer, as a worker found.
-    here: HashMap<String, bool>,
-    here_generation: u64,
-    /// The folders asked of a worker, answered or not.
-    looked: HashSet<String>,
-    /// The catalog's generation they were asked for.
-    looked_for: Option<u64>,
-    /// What workers found and the window has not taken in yet.
-    answers: Arc<Mutex<Vec<(String, bool)>>>,
-    /// Whether the first look came back: until then, with Only on this
-    /// computer on, the list waits rather than shows folders it would hide.
-    answered: bool,
+    presence: Presence,
     /// What the last change did, said at the page's foot.
     said: Option<String>,
     /// The row whose menu the window shows, while it does: the menu holds
@@ -104,6 +91,25 @@ pub(crate) struct ExclusionsPage {
     menu_area: PopoverAnchor,
     dialog: Option<Dialog>,
     asking: Option<Asking>,
+}
+
+/// Which folders of the list are on this computer: each path or path
+/// glob written (`Matcher::looked_up`), as a worker found. Looked up once
+/// each, as the list grows: no look stands for another.
+#[derive(Default)]
+struct Presence {
+    known: HashMap<String, bool>,
+    /// Moves when `known` does: the rows are worked out again.
+    generation: u64,
+    /// The folders asked of a worker, answered or not.
+    asked: HashSet<String>,
+    /// The catalog's generation they were last asked for.
+    asked_for: Option<u64>,
+    /// What workers found and the window has not taken in yet.
+    found: Arc<Mutex<Vec<(String, bool)>>>,
+    /// Whether the first look came back: until then, with Only on this
+    /// computer on, the list waits rather than shows folders it would hide.
+    answered: bool,
 }
 
 #[derive(Clone, PartialEq)]
@@ -138,14 +144,8 @@ impl ExclusionsPage {
             catalog: Rc::new(Catalog::default()),
             generation: 0,
             rows: RefCell::default(),
-            meanings: RefCell::default(),
             found: RefCell::default(),
-            here: HashMap::new(),
-            here_generation: 0,
-            looked: HashSet::new(),
-            looked_for: None,
-            answers: Arc::default(),
-            answered: false,
+            presence: Presence::default(),
             said: None,
             menu: None,
             menu_row: PopoverAnchor::default(),
@@ -233,7 +233,8 @@ struct EntryDialog {
     /// The folder typed and whether it is on this computer, once a worker
     /// looked.
     here: Option<(String, bool)>,
-    found: Arc<Mutex<Option<(String, bool)>>>,
+    /// The look for the folder typed last: an older one's answer is dropped.
+    found: Latest<Option<(String, bool)>>,
     kind_focus: FocusHandle,
     /// What a pattern names: files, folders or both.
     names: Names,
@@ -348,28 +349,24 @@ impl SettingsView {
 
     /// Take in what workers found: the folders on this computer, the one
     /// typed in the dialog. Whether anything changed.
-    pub(crate) fn exclusions_sync(&mut self, cx: &App) -> bool {
+    pub(crate) fn exclusions_sync(&mut self) -> bool {
         let mut changed = false;
-        let found: Vec<(String, bool)> = self
-            .exclusions
-            .answers
+        let presence = &mut self.exclusions.presence;
+        let found: Vec<(String, bool)> = presence
+            .found
             .lock()
             .map(|mut found| std::mem::take(&mut *found))
             .unwrap_or_default();
         if !found.is_empty() {
-            self.exclusions.here.extend(found);
-            self.exclusions.here_generation += 1;
-            self.exclusions.answered = true;
+            presence.known.extend(found);
+            presence.generation += 1;
+            presence.answered = true;
             changed = true;
         }
-        // Only for the folder the dialog holds now: an answer for one typed
-        // before it is let go.
         if let Some(Dialog::Entry(dialog)) = &mut self.exclusions.dialog
-            && let Some(here) = dialog.found.lock().ok().and_then(|mut slot| slot.take())
-            && dialog.kind == Kind::Pattern
-            && here.0 == dialog.pattern.read(cx).text().trim()
+            && let Some(answer) = dialog.found.take()
         {
-            dialog.here = Some(here);
+            dialog.here = answer;
             changed = true;
         }
         changed
@@ -378,22 +375,24 @@ impl SettingsView {
     /// Ask a worker which folders of the list are on this computer: those
     /// not asked yet, once the list changed.
     fn look_up_exclusions(&mut self) {
-        if self.exclusions.looked_for == Some(self.exclusions.generation) {
+        let generation = self.exclusions.generation;
+        let presence = &mut self.exclusions.presence;
+        if presence.asked_for == Some(generation) {
             return;
         }
-        self.exclusions.looked_for = Some(self.exclusions.generation);
+        presence.asked_for = Some(generation);
         let texts: Vec<String> = model::asked_presence(&self.exclusions.catalog)
             .into_iter()
-            .filter(|text| !self.exclusions.looked.contains(text))
+            .filter(|text| !presence.asked.contains(text))
             .collect();
         if texts.is_empty() {
-            if self.exclusions.looked.is_empty() {
-                self.exclusions.answered = true;
+            if presence.asked.is_empty() {
+                presence.answered = true;
             }
             return;
         }
-        self.exclusions.looked.extend(texts.iter().cloned());
-        let slot = Arc::clone(&self.exclusions.answers);
+        presence.asked.extend(texts.iter().cloned());
+        let slot = Arc::clone(&presence.found);
         let weak = self.app.weak();
         self.app.scheduler.spawn(
             skwir_core::scheduler::Priority::Normal,
@@ -423,43 +422,27 @@ impl SettingsView {
             only_here: page.only_here,
             changed_only: page.changed_only,
             folds: page.folds,
-            here: page.here_generation,
+            here: page.presence.generation,
         };
         if let Some((kept, rows)) = page.rows.borrow().as_ref()
             && *kept == asked
         {
             return Rc::clone(rows);
         }
-        let meanings = self.exclusion_meanings();
         let rows = Rc::new(model::rows(
             &page.catalog,
             &Ask {
                 role: asked.role,
                 filter: &asked.filter,
                 only_here: asked.only_here,
-                here: &page.here,
+                here: &page.presence.known,
                 changed_only: asked.changed_only,
                 unfolded: &page.unfolded,
                 revealed: &page.revealed,
-                meanings: Some(&meanings),
             },
         ));
         *page.rows.borrow_mut() = Some((asked, Rc::clone(&rows)));
         rows
-    }
-
-    /// What each entry means, worked out once a catalog: each of a glob
-    /// or a regex is compiled to be said.
-    fn exclusion_meanings(&self) -> Rc<Vec<Option<String>>> {
-        let page = &self.exclusions;
-        if let Some((generation, meanings)) = page.meanings.borrow().as_ref()
-            && *generation == page.generation
-        {
-            return Rc::clone(meanings);
-        }
-        let meanings = Rc::new(model::meanings(&page.catalog));
-        *page.meanings.borrow_mut() = Some((page.generation, Rc::clone(&meanings)));
-        meanings
     }
 
     /// Make `after` the rules: asked first where it takes folders from
@@ -782,7 +765,7 @@ impl SettingsView {
         let focus = self.exclusions.focus.clone();
         self.stop(&focus, None, None);
         let foot = self.exclusions_foot(theme);
-        let waiting = self.exclusions.only_here && !self.exclusions.answered;
+        let waiting = self.exclusions.only_here && !self.exclusions.presence.answered;
         if rows.is_empty() || waiting {
             let filter = self.exclusions.filter.read(cx).text().trim().to_owned();
             let said = if waiting {
@@ -1719,7 +1702,7 @@ impl SettingsView {
             means: None,
             already: None,
             here: None,
-            found: Arc::default(),
+            found: Latest::default(),
             kind_focus: cx.focus_handle(),
             choose_focus: cx.focus_handle(),
             category_focus: cx.focus_handle(),
@@ -1753,6 +1736,8 @@ impl SettingsView {
                     || !draft.beside.trim().is_empty()
                     || !draft.holding.trim().is_empty();
                 dialog.problem = typed.then_some(problem);
+                dialog.here = None;
+                dialog.found.forget();
                 return;
             }
         };
@@ -1799,24 +1784,21 @@ impl SettingsView {
         if dialog.here.as_ref().map(|(text, _)| text) != one.as_ref() {
             dialog.here = None;
         }
-        if let Some(text) = one.filter(|_| dialog.here.is_none() && dialog.problem.is_none()) {
-            let slot = Arc::clone(&dialog.found);
-            let weak = self.app.weak();
-            self.app.scheduler.spawn(
-                skwir_core::scheduler::Priority::Normal,
+        match one.filter(|_| dialog.here.is_none() && dialog.problem.is_none()) {
+            Some(text) => dialog.found.ask(
+                &self.app,
+                Lane::SHARED,
+                self.app.lifetime(),
+                Priority::Normal,
                 "settings-exclusions-typed",
-                self.app.lifetime().child(),
-                move || {
+                move |_| {
                     let home = skwir_core::os_path::home();
-                    let found = model::presence(std::slice::from_ref(&text), home.as_deref());
-                    if let (Ok(mut slot), Some(found)) = (slot.lock(), found.into_iter().next()) {
-                        *slot = Some(found);
-                    }
-                    if let Some(app) = weak.upgrade() {
-                        app.wake();
-                    }
+                    model::presence(std::slice::from_ref(&text), home.as_deref())
+                        .into_iter()
+                        .next()
                 },
-            );
+            ),
+            None => dialog.found.forget(),
         }
     }
 
@@ -2659,7 +2641,6 @@ impl SettingsView {
                     changed_only: false,
                     unfolded: &unfolded,
                     revealed: &revealed,
-                    meanings: Some(&self.exclusion_meanings()),
                 },
             );
             let count = rows.iter().filter(|r| matches!(r, Row::Entry(_))).count();

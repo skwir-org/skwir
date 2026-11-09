@@ -2996,7 +2996,7 @@ impl SettingsView {
             self.read_exclusions();
             changed = true;
         }
-        changed |= self.exclusions_sync(cx);
+        changed |= self.exclusions_sync();
         changed |= self.list_sourced();
         if let Some(found) = self.probe.lock().ok().and_then(|mut slot| slot.take()) {
             self.found = found

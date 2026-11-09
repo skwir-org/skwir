@@ -118,19 +118,6 @@ pub(crate) struct Ask<'a> {
     /// hide the moment it is made (a folder added that is not on this
     /// computer). The words typed still narrow them.
     pub revealed: &'a HashSet<String>,
-    /// What each entry means, by its place in the catalog (`meanings`),
-    /// worked out once a catalog: a glob's or a regex's words are read by
-    /// compiling it. Without, worked out here for each entry shown.
-    pub meanings: Option<&'a [Option<String>]>,
-}
-
-/// What each of `catalog`'s entries means (`meaning`), by its place.
-pub(crate) fn meanings(catalog: &Catalog) -> Vec<Option<String>> {
-    catalog
-        .entries
-        .iter()
-        .map(|e| meaning(&e.matcher))
-        .collect()
 }
 
 /// A row of the page's list.
@@ -391,10 +378,7 @@ pub(crate) fn rows(catalog: &Catalog, ask: &Ask<'_>) -> Vec<Row> {
                 continue;
             }
             let shown_as = pattern_of(&entry.matcher);
-            let meaning = match ask.meanings {
-                Some(meanings) => meanings.get(at).cloned().flatten(),
-                None => meaning(&entry.matcher),
-            };
+            let meaning = meaning(&entry.matcher);
             if filtering && !named {
                 let mut texts = vec![shown_as.as_str(), entry.what.as_str()];
                 texts.extend(meaning.as_deref());
@@ -987,7 +971,6 @@ mod tests {
             changed_only: false,
             unfolded,
             revealed: &NONE,
-            meanings: None,
         }
     }
 
@@ -1082,19 +1065,6 @@ mod tests {
         assert_eq!(written.get("broken"), entries.get("broken"));
         assert!(taken(&after).contains("broken"), "its id stays taken");
         assert!(unreadable(&Catalog::shipped()).is_none());
-    }
-
-    #[test]
-    fn meanings_worked_out_once_say_the_same() {
-        let catalog = shipped();
-        let (here, unfolded) = (HashMap::new(), open(&catalog));
-        let once = meanings(&catalog);
-        for filter in ["", "any folder named", "cargo"] {
-            let mut asked = ask(Role::Searches, filter, &here, &unfolded);
-            let each = rows(&catalog, &asked);
-            asked.meanings = Some(&once);
-            assert_eq!(rows(&catalog, &asked), each, "{filter}");
-        }
     }
 
     #[test]
