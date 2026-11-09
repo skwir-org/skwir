@@ -5,13 +5,15 @@
 //! view draws; the rows it lays out (`elements::rows`) are read a chunk of
 //! `STRIDE` at a time around them, nearest first, one chunk on its way at a
 //! time, as a document's pictures are (`inspector_pictures`). A chunk is
-//! read plain first, which takes a few milliseconds whatever its grammar
-//! or its lines, then colored: from where the one before it stopped, or
-//! fresh after a jump, and again once the one before it has been.
-//! Chunks far from the view go past `KEPT`. Find, copy and a line a link
-//! asks for (`file:12`) read the file on a worker too. The paths the text
-//! writes are found as a chunk is colored, never before its text shows
-//! (`links::WrittenPaths`: each a lookup on the disk).
+//! read and colored by one job, from where the one before it stopped, or
+//! fresh after a jump and again once the one before it has been; its
+//! colors hold it back for `coloring::COLORS_WITHIN` at most, the first
+//! chunk's too, on the worker that makes the view, so its first frame has
+//! them. Chunks far from the view go past `KEPT`. Find, copy and a line a
+//! link asks for (`file:12`) read the file on a worker too. The paths the
+//! text writes are found once a chunk is colored, by a job of their own
+//! (`links::WrittenPaths`: each a lookup on the disk): colors never wait
+//! for them.
 //!
 //! A remote's file the preview does not hold whole (ADR-101) is counted as
 //! far as it is shown and a little past (`text_rows::count_until`), its
@@ -19,10 +21,12 @@
 //! is not downloaded whole to size a scrollbar. Scrolling on counts on; a
 //! find, a line asked for and a copy count to the end first.
 //!
-//! A text a tree-sitter grammar colors (ADR-110) is parsed once the view
-//! shows: the copy the preview holds whole (`Held::whole`, up to what it
-//! keeps), UTF-8, never the file read again; a remote's file not held
-//! whole is not fetched for it. Its chunks wait plain for the parse, then
+//! A text a tree-sitter grammar colors (ADR-110) is parsed from the copy
+//! the preview holds whole (`Held::whole`, up to what it keeps), UTF-8,
+//! never the file read again; a remote's file not held whole is not
+//! fetched for it. The worker that makes the view tries, in a helper
+//! already running and for `COLORS_WITHIN`; else it is parsed once the
+//! view shows. Its chunks wait plain for the parse, then
 //! each is colored from it, exactly wherever it is: a row that goes on
 //! with a long line takes the spans of its line from where it starts in
 //! it. A parse that fails, or a text it cannot have, is colored by bat's
@@ -44,7 +48,8 @@ use skwir_platform::text_rows::{self, Form, Index, Point, STRIDE};
 
 use crate::code_preview::{Palette, Resume};
 use crate::coloring::{
-    Parsed, Shade, around, color_rows, let_go, next_to_color, parse, parsed_rows, unread,
+    COLORS_WITHIN, Parsed, Shade, around, color_rows, let_go, may_parse_soon, next_to_color, parse,
+    parse_soon, parsed_rows, soon, unread, waits_for_colors,
 };
 use crate::elements::rows::{Scroll, Seen};
 use crate::latest::Latest;
@@ -66,13 +71,20 @@ pub(crate) struct Chunk {
     /// Colored from where the chunk before stopped (or the file's start),
     /// not from a fresh start after a jump.
     exact: bool,
+    /// The paths its text writes were looked for, in these colors.
+    found: bool,
 }
 
-/// The first rows, read plain with the inspection on its worker
-/// (`inspector::Display::new`), and what colors them.
+/// The first rows, read and colored as far as they could be with the
+/// inspection on its worker (`inspector::Display::new`), and what colors
+/// the rest.
 pub(crate) struct Start {
     pub form: Form,
     pub chunk: Chunk,
+    /// Where the first rows' colors stopped, when they are all colored.
+    stop: Option<Resume>,
+    /// The text's parse, when it came in time.
+    parsed: Option<Arc<Text>>,
     pub palette: Arc<Palette>,
     /// The tree-sitter grammar that colors it, when one does
     /// (`highlight::engine`): the text is parsed once the view shows.
@@ -91,10 +103,11 @@ pub(crate) struct Text {
 }
 
 /// How a chunk is read: plain, colored from where the chunk before
-/// stopped (or fresh) in a palette, or colored from the text's parse.
+/// stopped (or fresh) in a palette, by a time or as long as it takes, or
+/// colored from the text's parse.
 enum Reading<'a> {
     Plain,
-    Colored(Option<Resume>, &'a Palette),
+    Colored(Option<Resume>, &'a Palette, Option<Instant>),
     /// From the parse; by bat's grammar in the palette, fresh, where a
     /// line is too long for it or the helper fails.
     Tree(&'a Text, &'a Palette),
@@ -132,7 +145,6 @@ fn read_chunk(
     form: Form,
     (chunk, point): (u64, Point),
     reading: Reading<'_>,
-    paths: Option<&Mutex<WrittenPaths>>,
     cancel: &CancelToken,
 ) -> anyhow::Result<(Chunk, Option<Resume>)> {
     let at = chunk * STRIDE;
@@ -158,6 +170,11 @@ fn read_chunk(
         });
         lines.push((row.line, row.first));
     }
+    // Lines too long to color quickly are not held back for their colors.
+    let reading = match reading {
+        Reading::Colored(_, _, Some(_)) if !waits_for_colors(&blocks) => Reading::Plain,
+        reading => reading,
+    };
     let (stop, exact) = match reading {
         Reading::Plain => {
             for (n, block) in blocks.iter_mut().enumerate() {
@@ -168,17 +185,12 @@ fn read_chunk(
             }
             (None, false)
         }
-        Reading::Colored(from, palette) => {
+        Reading::Colored(from, palette, until) => {
             let exact = chunk == 0 || from.is_some();
             let language = file.language.as_deref();
-            let stop = color_rows(&mut blocks, |n| ends[n], (language, palette), from, cancel)?;
-            // Colored rows are read after the plain ones showed: the paths
-            // they write are looked up now.
-            if let Some(paths) = paths {
-                paths.lock().link(&mut blocks);
-                skwir_platform::inspection::check(cancel)?;
-            }
-            (Some(stop), exact)
+            let colors = (language, palette);
+            let stop = color_rows(&mut blocks, |n| ends[n], colors, from, until, cancel)?;
+            (stop, exact)
         }
         Reading::Tree(text, palette) => {
             // Where each row starts in its line: a row that begins one at
@@ -220,10 +232,6 @@ fn read_chunk(
             };
             let colors = (file.language.as_deref(), palette);
             parsed_rows(&mut blocks, (|n| at[n], |n| ends[n]), tree, colors, cancel)?;
-            if let Some(paths) = paths {
-                paths.lock().link(&mut blocks);
-                skwir_platform::inspection::check(cancel)?;
-            }
             // Exact wherever it is: no state goes on to the next.
             return Ok((
                 Chunk {
@@ -231,6 +239,7 @@ fn read_chunk(
                     lines,
                     colored: true,
                     exact: true,
+                    found: false,
                 },
                 None,
             ));
@@ -242,49 +251,90 @@ fn read_chunk(
             lines,
             colored: stop.is_some(),
             exact,
+            found: false,
         },
         stop,
     ))
 }
 
-/// The first rows of `file`, plain, for the inspection's worker: shown at
-/// once, colored by the view, in the colors and with the grammars `code`
-/// chooses.
+/// The first rows of `file`, for the inspection's worker, in the colors
+/// and with the grammars `code` chooses: colored here as far as
+/// `COLORS_WITHIN` allows, for the first frame to have them, the view
+/// coloring the rest.
 pub(crate) fn start(
     file: &TextFile,
     code: &crate::code_preview::CodeTheme,
 ) -> anyhow::Result<Start> {
-    let cancel = CancelToken::new();
+    let began = Instant::now();
+    let cancel = skwir_core::scheduler::job_token().unwrap_or_default();
     let form = Form::read(file, &cancel)?;
-    let (chunk, _) = read_chunk(
-        file,
-        form,
-        (0, text_rows::origin(form)),
-        Reading::Plain,
-        None,
-        &cancel,
-    )?;
+    let origin = (0, text_rows::origin(form));
+    let first = text_rows::read(file, form, origin, 0..1, &cancel)?;
     // A grammar parses UTF-8 the preview holds.
     let engine = {
         let name = file.path.file_name().map(|name| name.to_string_lossy());
         let language = file.language.as_deref();
-        let first_line = chunk.rows.first().map(|row| row.text.as_str());
+        let first_line = first.first().map(|row| row.text.as_str());
         let name = name.as_deref().or(language).unwrap_or_default();
         skwir_platform::highlight::engine(name, language, first_line, &code.grammars)
     };
     // A grammar parses UTF-8 the preview holds.
-    let parses = form.encoding == skwir_platform::inspection::Encoding::Utf8 && file.held.is_some();
+    let readable =
+        form.encoding == skwir_platform::inspection::Encoding::Utf8 && file.held.is_some();
     let grammar = match &engine {
-        skwir_platform::highlight::Engine::TreeSitter(grammar) if parses => Some(grammar.clone()),
+        skwir_platform::highlight::Engine::TreeSitter(grammar) if readable => Some(grammar.clone()),
         _ => None,
     };
+    let plain = engine == skwir_platform::highlight::Engine::Plain;
+    let palette = Arc::new(crate::code_preview::Palette::of(code));
+    // Chosen Plain text: bat's plain text, as the view colors it.
+    let unnamed = plain.then(|| TextFile {
+        language: None,
+        ..file.clone()
+    });
+    let read = unnamed.as_ref().unwrap_or(file);
+    let mut parsed = None;
+    let mut chunk = None;
+    if let Some(grammar) = grammar.as_ref().filter(|_| may_parse_soon()) {
+        let (limit, _timer) = soon(&cancel);
+        parsed = held_text(read, form, &limit).and_then(|bytes| {
+            let shared = skwir_platform::tree_sitter::Text::shared(
+                Arc::clone(&bytes),
+                usize::try_from(form.start).ok()?,
+            );
+            let parsed = parse_soon(grammar, shared, &palette, false, &limit)?;
+            Some(Arc::new(Text { parsed, bytes }))
+        });
+        if let Some(text) = &parsed {
+            let colored = Reading::Tree(text.as_ref(), &palette);
+            chunk = read_chunk(read, form, origin, colored, &limit).ok();
+        }
+    }
+    let (chunk, stop) = match chunk {
+        Some(colored) => colored,
+        // Waiting for its parse, plain rather than colored twice.
+        None if grammar.is_some() => read_chunk(read, form, origin, Reading::Plain, &cancel)?,
+        None => {
+            let until = Instant::now() + COLORS_WITHIN;
+            let colored = Reading::Colored(None, &palette, Some(until));
+            read_chunk(read, form, origin, colored, &cancel)?
+        }
+    };
+    tracing::trace!(
+        colored = chunk.colored,
+        rows = chunk.rows.len(),
+        ms = began.elapsed().as_secs_f32() * 1000.,
+        "a text's first rows"
+    );
     Ok(Start {
         form,
         chunk,
-        palette: Arc::new(crate::code_preview::Palette::of(code)),
+        stop,
+        parsed,
         outlined: grammar.as_deref().is_some_and(crate::inspector::outlines),
+        palette,
         grammar,
-        plain: engine == skwir_platform::highlight::Engine::Plain,
+        plain,
     })
 }
 
@@ -420,6 +470,8 @@ impl TextView {
         let Start {
             form,
             chunk,
+            stop,
+            parsed,
             palette,
             grammar,
             outlined: _,
@@ -458,7 +510,7 @@ impl TextView {
             palette,
             paths,
             chunks: HashMap::from([(0, Rc::new(chunk))]),
-            starts: HashMap::new(),
+            starts: stop.into_iter().map(|stop| (1, stop)).collect(),
             wanted: Vec::new(),
             laid: 0..0,
             asked: Latest::default(),
@@ -471,10 +523,10 @@ impl TextView {
             line: None,
             first,
             seen: 0,
-            parse: Parse::None,
+            parse: parsed.map_or(Parse::None, Parse::Done),
         };
         view.count_more(app, view.paced.as_ref().map(|_| PACED_FIRST));
-        if let Some(grammar) = grammar {
+        if let Some(grammar) = grammar.filter(|_| matches!(view.parse, Parse::None)) {
             view.parse_with(app, form, grammar);
         }
         view
@@ -658,9 +710,10 @@ impl TextView {
     }
 
     /// Ask for what the chunks wanted lack, nearest first, one at a time:
-    /// one not read is read plain, then one not colored is colored, or
-    /// colored again when it started fresh and the one before has since
-    /// been colored.
+    /// one not read is read and colored (plain, while a parse is awaited),
+    /// then one not colored is colored, or colored again when it started
+    /// fresh and the one before has since been colored; then the paths
+    /// those colored write are looked for.
     fn request(&mut self, app: &Arc<skwir_core::App>) {
         // A paced view counts on to just past the chunks it wants that the
         // count has not reached.
@@ -738,15 +791,17 @@ impl TextView {
                 .map(|(chunk, point, colored)| (chunk, point, colored, form))
         };
         let Some((chunk, point, colored, form)) = next else {
-            return;
+            return self.ask_paths(app);
         };
+        // A chunk not read yet is read with its colors, unless a parse is
+        // to give them.
+        let at_once = !colored && matches!(self.parse, Parse::None);
         let from = self.starts.get(&chunk).cloned();
         let (file, palette) = (self.file.clone(), Arc::clone(&self.palette));
         let tree = match &self.parse {
             Parse::Done(text) => Some(Arc::clone(text)),
             _ => None,
         };
-        let paths = self.paths.clone();
         self.asking = Some(chunk);
         self.asked.ask(
             app,
@@ -756,20 +811,48 @@ impl TextView {
             "text-rows-read",
             move |cancel| {
                 let reading = match (colored, &tree) {
+                    (false, _) if at_once => {
+                        Reading::Colored(from, &palette, Some(Instant::now() + COLORS_WITHIN))
+                    }
                     (false, _) => Reading::Plain,
                     (true, Some(text)) => Reading::Tree(text.as_ref(), &palette),
-                    (true, None) => Reading::Colored(from, &palette),
+                    (true, None) => Reading::Colored(from, &palette, None),
                 };
                 Reply {
                     chunk,
-                    read: read_chunk(
-                        &file,
-                        form,
-                        (chunk, point),
-                        reading,
-                        paths.as_deref(),
-                        cancel,
-                    ),
+                    read: read_chunk(&file, form, (chunk, point), reading, cancel),
+                }
+            },
+        );
+    }
+
+    /// Look for the paths written in the first chunk wanted that is colored
+    /// and not looked at yet: after its colors, which never wait for the
+    /// disk. What it finds changes no color.
+    fn ask_paths(&mut self, app: &Arc<skwir_core::App>) {
+        let Some(paths) = self.paths.clone() else {
+            return;
+        };
+        let unfound = self.wanted.iter().find_map(|&chunk| {
+            let read = self.chunks.get(&chunk)?;
+            (read.colored && !read.found).then(|| (chunk, (**read).clone()))
+        });
+        let Some((chunk, mut read)) = unfound else {
+            return;
+        };
+        self.asking = Some(chunk);
+        self.asked.ask(
+            app,
+            skwir_core::fs::reach::lane(&self.file.path),
+            &self.counting,
+            Priority::Visible,
+            "text-rows-paths",
+            move |_| {
+                paths.lock().link(&mut read.rows);
+                read.found = true;
+                Reply {
+                    chunk,
+                    read: Ok((read, None)),
                 }
             },
         );
@@ -1011,6 +1094,12 @@ impl Shell {
         let Some(crate::preview::PreviewContent::Inspection(display)) = content else {
             return;
         };
+        if let Some(first) = display.first_colors.take()
+            && self.preview.inspection.colors.begin_with(*first)
+        {
+            // Its folds came, or none will (`sync_colors`).
+            self.preview.inspection.folds_arrived(&display.data);
+        }
         let (Some(file), Some(start)) = (display.data.text.clone(), display.text.take()) else {
             return;
         };
@@ -1207,6 +1296,87 @@ pub(crate) fn scroll(scroll: &Scroll, args: &serde_json::Value) {
 mod tests {
     use super::*;
 
+    fn held_file(path: &std::path::Path, language: &str, text: &str) -> TextFile {
+        let bytes: Arc<[u8]> = text.as_bytes().into();
+        TextFile {
+            path: path.to_owned(),
+            language: Some(language.into()),
+            whole: false,
+            held: Some(Arc::new(skwir_core::preview::Held::of_bytes(
+                path.to_owned(),
+                bytes,
+            ))),
+        }
+    }
+
+    /// The first frame has its colors: the view starts from rows colored
+    /// on the worker, and goes on from where they stopped.
+    #[test]
+    fn a_text_starts_colored() {
+        let code = crate::code_preview::CodeTheme::own(false);
+        let text = "fn main() {\n    let answer = 42; // a note\n}\n".repeat(120);
+        let file = held_file(std::path::Path::new("/nowhere/a.rs"), "rs", &text);
+        let start = start(&file, &code).unwrap();
+        assert!(start.chunk.colored && start.chunk.exact);
+        assert!(start.stop.is_some(), "the next chunk goes on from here");
+        let colors: HashSet<[u8; 3]> = start.chunk.rows[..3]
+            .iter()
+            .flat_map(|row| row.runs.iter().filter_map(|run| run.color))
+            .collect();
+        assert!(colors.len() > 2, "{colors:?}");
+    }
+
+    /// A chunk of lines too long to color quickly shows at once, plain:
+    /// the time would be spent for nothing, on every look.
+    #[test]
+    fn a_text_of_long_lines_starts_plain() {
+        let code = crate::code_preview::CodeTheme::own(false);
+        let text = format!("{}\n", "let a = 1; ".repeat(1000));
+        let file = held_file(std::path::Path::new("/nowhere/a.min.js"), "js", &text);
+        let start = start(&file, &code).unwrap();
+        assert!(!start.chunk.colored);
+        assert!(start.stop.is_none());
+        assert!(start.chunk.rows[0].runs.iter().all(|r| r.color.is_none()));
+    }
+
+    /// The paths a text writes are looked for once it is colored, by a
+    /// step of their own that keeps its colors and asks for nothing more.
+    #[test]
+    fn paths_are_found_after_the_colors_and_keep_them() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("notes.txt"), "here").unwrap();
+        let app = skwir_core::App::new(skwir_core::app::AppConfig::ephemeral(
+            dir.path().join("app"),
+        ))
+        .unwrap();
+        let code = crate::code_preview::CodeTheme::own(false);
+        let path = dir.path().join("a.rs");
+        let file = held_file(&path, "rs", "// see ./notes.txt for more\nfn main() {}\n");
+        let begun = start(&file, &code).unwrap();
+        assert!(begun.chunk.colored && !begun.chunk.found);
+        let mut view = TextView::new(&app, file, begun, None, true);
+        view.laid(0..2);
+        view.request(&app);
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while !view.chunks[&0].found {
+            assert!(Instant::now() < deadline, "the paths never came");
+            assert!(app.scheduler.wait_idle(Duration::from_secs(30)));
+            view.take();
+            view.request(&app);
+        }
+        let chunk = &view.chunks[&0];
+        assert!(chunk.colored && chunk.exact, "still colored");
+        assert!(
+            chunk.rows[0].runs.iter().any(|run| run.link.is_some()),
+            "{:?}",
+            chunk.rows[0].runs
+        );
+        assert!(chunk.rows[0].runs.iter().any(|run| run.color.is_some()));
+        view.take();
+        view.request(&app);
+        assert!(!view.asked.is_pending(), "nothing more to ask");
+    }
+
     #[test]
     fn a_row_starts_in_its_line_after_the_line_s_newline() {
         assert_eq!(in_line(b"ab\ncdef", 0, 5), 2);
@@ -1292,7 +1462,6 @@ mod tests {
                 form,
                 (chunk, point),
                 Reading::Tree(&parsed, &palette),
-                None,
                 &cancel,
             )
             .unwrap();

@@ -387,8 +387,8 @@ A text document is read as its structure, or laid out as pages.
 - A path a text read where it is shown writes (a string, a Markdown or
   HTML link's target, `url(…)`, a word with a slash after a name: never a
   bare word) is a link under Ctrl too, to the file it names from the
-  file's folder (`links::WrittenPaths`). It is looked up only as a chunk
-  is colored, after its text showed; each word once for the file, a
+  file's folder (`links::WrittenPaths`). It is looked up only once a
+  chunk is colored, by a step of its own; each word once for the file, a
   bounded number of new ones per chunk, and only on this machine
   (`Here`). A member written out of its container finds none.
 - A document's link is followed only where that stays on this machine
@@ -1583,9 +1583,19 @@ is still to come are in `docs/preview-frame.md`.
   - The view (`text_view.rs`) asks for the chunks around the rows laid
     out, nearest first, one at a time (`Latest`), never per row or per
     frame; a bounded cache keeps those near the view. A chunk is read
-    plain first, then colored: from the state the one before it stopped
+    and colored by one job: from the state the one before it stopped
     in, else fresh, and again once that state is known (`Chunk::exact`).
-    Nothing waits on colors to show text.
+  - **Colors hold text back for `coloring::COLORS_WITHIN` at most**
+    (100 ms). The first chunk is colored on the worker that makes the
+    view (`text_view::start`, `coloring::first_colors`), so the first
+    frame has it; never asked for after a frame drew it plain. Rows
+    whose time ran out show as far as they got and the view colors them
+    as any other. A chunk with a line of half a row or more
+    (`waits_for_colors`) is not waited for: it would cost that time on
+    every look. The limit is a ceiling, checked between rows, not a
+    wait: a grammar ready takes milliseconds.
+  - Looking up the paths a chunk writes is a step of its own, after its
+    colors (`TextView::ask_paths`): colors never wait for the disk.
   - The element (`elements/rows.rs`) scrolls by row and lays out only the
     rows on screen, in prepaint; it keeps nothing per row. After
     Ctrl+End it follows the end until moved up, a file written to
@@ -1664,7 +1674,10 @@ is still to come are in `docs/preview-frame.md`.
   bat's grammars do: capture names are mapped to bat's scopes
   (`highlight::tree::scope_of`), never colored apart. It parses only
   what the preview holds whole, in the shared helper, on a worker, never
-  reading the file again; until the parse comes a chunk stays plain,
+  reading the file again; the worker making the view tries it for
+  `COLORS_WITHIN` when the helper already runs (`coloring::parse_soon`:
+  starting one takes longer), else the view asks once it shows. Until
+  the parse comes a chunk stays plain,
   then each chunk is colored from it exactly, with no state carried from
   the chunk before. Whatever it cannot color (a line past
   `tree::LONGEST_LINE`, a helper's failure) bat colors, fresh, in every

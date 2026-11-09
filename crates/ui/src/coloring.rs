@@ -13,8 +13,14 @@
 //! between them asks for nothing inside it. Once those are colored, a pass
 //! goes on in the background from the last chunk colored exactly to the
 //! farthest wanted, keeping only where each chunk stops; then every chunk
-//! wanted is colored exactly. Its first paint waits for none of it: the
-//! lines show plain, their links found, and their colors follow.
+//! wanted is colored exactly.
+//!
+//! **The first rows arrive colored** (ADR-051, amended): the worker that
+//! makes a view colors its first chunk before handing it over, for at most
+//! `COLORS_WITHIN`, so its first frame has them. Rows whose colors are late
+//! show as far as they got, and the view colors them as it colors any
+//! other. Lines too long to color in that time are not waited for
+//! (`waits_for_colors`).
 //!
 //! A text a tree-sitter grammar colors (ADR-110, `highlight::engine`) is
 //! parsed whole in the helper once it shows (`parse`), its chunks plain
@@ -28,6 +34,7 @@ use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use gpui::Context;
 use parking_lot::Mutex;
@@ -45,6 +52,25 @@ use skwir_platform::highlight::tree::Tree;
 pub(crate) const KEPT: usize = 24;
 /// Rows colored at once.
 pub(crate) const STRIDE: u64 = skwir_platform::text_rows::STRIDE;
+/// The longest rows wait for their colors before showing without them. A
+/// grammar ready colors a chunk in milliseconds; one compiled for its first
+/// file in a while takes tens of them (ADR-060). Below what reads as a wait,
+/// and below `Shell::BUSY_AFTER`, so it never shows as one. Tests are built
+/// unoptimized, where a chunk takes longer, on machines under load: what
+/// they say must not depend on the clock.
+pub(crate) const COLORS_WITHIN: Duration = if cfg!(test) {
+    Duration::from_secs(60)
+} else {
+    Duration::from_millis(100)
+};
+
+/// Whether `rows` are worth holding back for their colors: not with a line
+/// long enough to be near a row's limit, where a chunk is a megabyte to
+/// color (ADR-051) and the time would be spent for nothing, on every look.
+pub(crate) fn waits_for_colors(rows: &[Block]) -> bool {
+    rows.iter()
+        .all(|row| row.text.len() * 2 < skwir_platform::text_rows::ROW_BYTES)
+}
 
 /// The chunks of `per` rows to have for rows `laid` of `rows`: those laid
 /// out, nearest their middle first, then the one after and the one before.
@@ -114,23 +140,32 @@ pub(crate) fn let_go<T>(chunks: &mut HashMap<u64, T>, wanted: &[u64], middle: u6
 /// Rows `rows`, their runs replaced: colored in `language` from `from`
 /// (fresh from the language's start without), `ends` saying whether row
 /// `n` ends its line, then given the links their text writes
-/// (`link_block`). Where the colors stopped, to go on from.
+/// (`link_block`). Where the colors stopped, to go on from; `None` when
+/// `until` came first: the rows reached keep their colors, the others are
+/// plain, their links found all the same.
 pub(crate) fn color_rows(
     rows: &mut [Block],
     ends: impl Fn(usize) -> bool,
     (language, palette): (Option<&str>, &Palette),
     from: Option<Resume>,
+    until: Option<Instant>,
     cancel: &CancelToken,
-) -> anyhow::Result<Resume> {
+) -> anyhow::Result<Option<Resume>> {
     let mut colors = Highlighter::resume(language, palette, from);
-    for (n, row) in rows.iter_mut().enumerate() {
+    for n in 0..rows.len() {
         if n % 64 == 0 {
             skwir_platform::inspection::check(cancel)?;
         }
-        row.runs = colors.row(&row.text, ends(n));
-        skwir_platform::links::link_block(row, true);
+        if until.is_some_and(|until| Instant::now() >= until) {
+            for row in &mut rows[n..] {
+                skwir_platform::links::link_block(row, true);
+            }
+            return Ok(None);
+        }
+        rows[n].runs = colors.row(&rows[n].text, ends(n));
+        skwir_platform::links::link_block(&mut rows[n], true);
     }
-    Ok(colors.stop())
+    Ok(Some(colors.stop()))
 }
 
 /// Rows `rows`, their runs replaced: colored by `tree`, row `n` being the
@@ -183,7 +218,7 @@ pub(crate) fn parsed_rows(
     if let Err(error) = colored {
         skwir_platform::inspection::check(cancel)?;
         tracing::debug!(%error, "rows colored by bat's grammar, not their parse");
-        color_rows(rows, ends, colors, None, cancel)?;
+        color_rows(rows, ends, colors, None, None, cancel)?;
     }
     Ok(())
 }
@@ -236,6 +271,91 @@ pub(crate) fn parse(
         tree,
         folds: folds.into(),
         outline,
+    })
+}
+
+/// A token of `cancel`'s that is cancelled `COLORS_WITHIN` from now, and
+/// what keeps that from happening once dropped: the bound on a wait for
+/// the helper, which unlike coloring cannot look at a clock between rows.
+pub(crate) fn soon(cancel: &CancelToken) -> (CancelToken, flume::Sender<()>) {
+    let limit = cancel.child();
+    let (done, wait) = flume::bounded::<()>(1);
+    let ending = limit.clone();
+    let started = std::thread::Builder::new()
+        .name("skwir-colors-limit".into())
+        .spawn(move || {
+            if matches!(
+                wait.recv_timeout(COLORS_WITHIN),
+                Err(flume::RecvTimeoutError::Timeout)
+            ) {
+                ending.cancel();
+            }
+        });
+    if started.is_err() {
+        limit.cancel();
+    }
+    (limit, done)
+}
+
+/// Whether a parse could make it in `COLORS_WITHIN`: starting the helper
+/// takes longer than rows may wait, and one given up on would have started
+/// it for nothing.
+pub(crate) fn may_parse_soon() -> bool {
+    skwir_platform::tree_sitter::shared().is_running()
+}
+
+/// `parse`, by `limit` (`soon`). `None` when it did not make it, what the
+/// grammar says beside its colors included.
+pub(crate) fn parse_soon(
+    grammar: &str,
+    text: skwir_platform::tree_sitter::Text,
+    palette: &Palette,
+    folds: bool,
+    limit: &CancelToken,
+) -> Option<Parsed> {
+    parse(grammar, text, palette, folds, limit).filter(|_| !limit.is_cancelled())
+}
+
+/// The first chunk of a code view, colored on the worker making it, if
+/// that took no longer than `COLORS_WITHIN`.
+pub(crate) struct FirstColors {
+    rows: Vec<Block>,
+    /// Where bat's colors stopped; none where a tree-sitter grammar's.
+    stop: Option<Resume>,
+    parsed: Option<Arc<Parsed>>,
+}
+
+/// The first chunk of `data` colored as `with` says, for its first frame:
+/// on the worker making the view. `None` when the view is to color it, as
+/// when its colors are late.
+pub(crate) fn first_colors(data: &Inspection, with: &Colorer) -> Option<FirstColors> {
+    let mut rows = rows_of(data, 0);
+    if !waits_for_colors(&rows) {
+        return None;
+    }
+    let cancel = skwir_core::scheduler::job_token().unwrap_or_default();
+    if let Some(grammar) = &with.grammar {
+        if !may_parse_soon() {
+            return None;
+        }
+        let (limit, _timer) = soon(&cancel);
+        let text = joined(data);
+        let parsed = parse_soon(grammar, text, &with.palette, data.folds.is_empty(), &limit)?;
+        let at = |n: usize| (u32::try_from(n).unwrap_or(u32::MAX), 0);
+        tree_rows(&mut rows, at, &parsed.tree, &limit).ok()?;
+        return Some(FirstColors {
+            rows,
+            stop: None,
+            parsed: Some(Arc::new(parsed)),
+        });
+    }
+    let until = Instant::now() + COLORS_WITHIN;
+    let colors = (with.language.as_deref(), &*with.palette);
+    let stop = color_rows(&mut rows, |_| true, colors, None, Some(until), &cancel).ok()??;
+    Some(FirstColors {
+        rows,
+        stop: Some(stop),
+        parsed: None,
     })
 }
 
@@ -393,6 +513,21 @@ impl CodeColors {
         }
     }
 
+    /// The first chunk, colored on the worker that made the view. Whether
+    /// its parse came with it, for what waits for one.
+    pub(crate) fn begin_with(&mut self, first: FirstColors) -> bool {
+        let FirstColors { rows, stop, parsed } = first;
+        Rc::make_mut(&mut self.chunks).insert(0, Rc::new(Colored { rows, exact: true }));
+        if let Some(stop) = stop {
+            self.started(1, stop);
+        }
+        let came = parsed.is_some();
+        if let Some(parsed) = parsed {
+            self.parse = Parse::Done(parsed);
+        }
+        came
+    }
+
     /// Its parse failed, as when the helper cannot have it.
     #[cfg(test)]
     pub(crate) fn parse_failed(&mut self) {
@@ -527,7 +662,8 @@ impl CodeColors {
                         let mut rows = rows_of(&data, chunk);
                         let palette = (with.language.as_deref(), &*with.palette);
                         // It fails only when let go of: never taken.
-                        let Ok(stop) = color_rows(&mut rows, |_| true, palette, from, cancel)
+                        let Ok(Some(stop)) =
+                            color_rows(&mut rows, |_| true, palette, from, None, cancel)
                         else {
                             return Reply::Forward { kept: Vec::new() };
                         };
@@ -557,7 +693,8 @@ impl CodeColors {
                         let mut kept = Vec::new();
                         for chunk in first..=last {
                             let mut rows = rows_of(&data, chunk);
-                            let Ok(stop) = color_rows(&mut rows, |_| true, palette, from, cancel)
+                            let Ok(Some(stop)) =
+                                color_rows(&mut rows, |_| true, palette, from, None, cancel)
                             else {
                                 break;
                             };
@@ -631,18 +768,9 @@ impl CodeColors {
             Priority::Visible,
             "code-colors-parse",
             move |cancel| {
-                let mut text = String::new();
-                for (n, block) in data.blocks.iter().enumerate() {
-                    if n > 0 {
-                        text.push('\n');
-                    }
-                    text.push_str(&block.text);
-                }
                 let folds = data.folds.is_empty();
-                // Joined once, then kept by the tree alone (to parse again
-                // in a helper started later), never copied.
-                let text = Arc::<[u8]>::from(text.into_bytes());
-                Reply::Parsed(parse(&grammar, text.into(), &palette, folds, cancel).map(Arc::new))
+                let text = joined(&data);
+                Reply::Parsed(parse(&grammar, text, &palette, folds, cancel).map(Arc::new))
             },
         );
     }
@@ -690,6 +818,20 @@ impl CodeColors {
         }
         changed
     }
+}
+
+/// The text of `data`'s code view, its lines joined, as it holds them (a
+/// block a line): joined once, then kept by the tree alone (to parse again
+/// in a helper started later), never copied.
+fn joined(data: &Inspection) -> skwir_platform::tree_sitter::Text {
+    let mut text = String::new();
+    for (n, block) in data.blocks.iter().enumerate() {
+        if n > 0 {
+            text.push('\n');
+        }
+        text.push_str(&block.text);
+    }
+    Arc::<[u8]>::from(text.into_bytes()).into()
 }
 
 /// The lines of chunk `chunk` of `data`'s code view, their runs to be
@@ -899,10 +1041,87 @@ pub(crate) mod tests {
             |_| true,
             (Some("json"), &palette),
             None,
+            None,
             &cancel,
         )
         .unwrap();
         assert_ne!(color(&fresh[0]), Some(comment));
+    }
+
+    fn code_blocks(lines: usize, text: impl Fn(usize) -> String) -> Vec<Block> {
+        (0..lines)
+            .map(|n| Block {
+                text: text(n),
+                code: true,
+                language: Some("toml".into()),
+                ..Block::default()
+            })
+            .collect()
+    }
+
+    /// Rows whose time has passed show without colors, their links found
+    /// all the same; with time left they are colored, and say where.
+    #[test]
+    fn rows_past_their_time_stay_plain_with_their_links() {
+        let palette = Palette::of(&crate::code_preview::CodeTheme::own(false));
+        let line = |_| "# see https://example.invalid/page".to_owned();
+        let colors = (Some("toml"), &palette);
+        let cancel = CancelToken::new();
+        let mut late = code_blocks(3, line);
+        let past = Some(Instant::now());
+        let stop = color_rows(&mut late, |_| true, colors, None, past, &cancel).unwrap();
+        assert!(stop.is_none());
+        for row in &late {
+            assert!(row.runs.iter().all(|run| run.color.is_none()), "{row:?}");
+            assert!(row.runs.iter().any(|run| run.link.is_some()), "{row:?}");
+        }
+        let mut quick = code_blocks(3, line);
+        let ahead = Some(Instant::now() + Duration::from_secs(60));
+        let stop = color_rows(&mut quick, |_| true, colors, None, ahead, &cancel).unwrap();
+        assert!(stop.is_some());
+        assert!(quick[0].runs.iter().any(|run| run.color.is_some()));
+    }
+
+    /// A chunk with a line near a row's limit is a megabyte to color: its
+    /// rows are not held back for it.
+    #[test]
+    fn long_lines_are_not_waited_for() {
+        let row = |len: usize| {
+            vec![Block {
+                text: "x".repeat(len),
+                ..Block::default()
+            }]
+        };
+        let half = skwir_platform::text_rows::ROW_BYTES / 2;
+        assert!(waits_for_colors(&row(half - 1)));
+        assert!(!waits_for_colors(&row(half)));
+    }
+
+    /// A code view's first chunk comes colored from the worker making it,
+    /// where the view goes on from: it is not colored again.
+    #[test]
+    fn a_code_view_begins_with_its_first_chunk_colored() {
+        use skwir_core::inspection::InspectionKind;
+        let data = Inspection {
+            kind: InspectionKind::Code,
+            blocks: code_blocks(2 * STRIDE as usize, |n| format!("key{n} = {n}")),
+            ..Inspection::default()
+        };
+        let with = Colorer {
+            language: Some("toml".into()),
+            palette: Arc::new(Palette::of(&crate::code_preview::CodeTheme::own(false))),
+            grammar: None,
+            outlined: false,
+        };
+        let first = first_colors(&data, &with).expect("colored well within its time");
+        let mut colors = CodeColors::default();
+        assert!(!colors.begin_with(first), "no parse came with it");
+        assert_eq!(colors.shade(0), Shade::Exact);
+        assert!(colors.known(1), "the next chunk starts where it stopped");
+        assert!(colors.laid(vec![0, 1], data.blocks.len()));
+        assert_eq!(colors.next(), Some(Next::Chunk(1)), "the next, not it");
+        let row = CodeColors::row(&colors.chunks, 3).unwrap();
+        assert!(row.runs.iter().any(|run| run.color.is_some()));
     }
 
     #[test]
@@ -1043,8 +1262,9 @@ pub(crate) mod tests {
         let mut from = None;
         for chunk in 0..4 {
             let mut rows = rows_of(&data, chunk);
-            let stop = color_rows(&mut rows, |_| true, (Some("toml"), &palette), from, &cancel);
-            from = Some(stop.unwrap());
+            let colors = (Some("toml"), &palette);
+            from = color_rows(&mut rows, |_| true, colors, from, None, &cancel).unwrap();
+            assert!(from.is_some());
             for (n, row) in rows.iter().enumerate() {
                 let line = chunk as usize * STRIDE as usize + n;
                 assert_eq!(runs(row), runs(&whole.blocks[line]), "line {line}");
@@ -1058,6 +1278,7 @@ pub(crate) mod tests {
             &mut fresh,
             |_| true,
             (Some("toml"), &palette),
+            None,
             None,
             &cancel,
         )

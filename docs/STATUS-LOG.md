@@ -13942,3 +13942,37 @@ Save and Print, the login shell under a real terminal, the new line on the
 Exclusions page by eye. No Nix package built. Windows' pipe code is compiled
 by `check-cross`, never run; macOS likewise.
 `just startup-order` is owed after this, before tagging (ADR-128).
+
+## 2026-11-09: Colors arrive with the text (ADR-051 amended)
+
+A text always flashed uncolored: its first rows were handed over plain, and
+their colors asked for after a frame had drawn them. The user asked for that
+to go without text waiting, then for a limit high enough that TypeScript's
+first file does not flash either: 100 ms, not one frame.
+
+- **`coloring::COLORS_WITHIN`, 100 ms at most, checked between rows.** The
+  worker that makes the view colors the first chunk (`text_view::start`,
+  `coloring::first_colors`); a chunk scrolled to is read and colored by one
+  job. Rows late show as far as they got, and the view colors them.
+- **Lines of half a row or more are not waited for** (`waits_for_colors`).
+- **Tree-sitter:** the same worker parses when the helper already runs, a
+  cancel bounding it (`coloring::soon`, `parse_soon`).
+- **Paths written in a text** are looked up after its colors, by a step of
+  their own (`TextView::ask_paths`).
+
+**Measured** (bat's grammars, build without LTO, glibc's allocator, the
+machine under load): 256 rows in 0.4–8 ms with the grammar compiled,
+18–23 ms for TypeScript; the first 60 rows cold in 1–21 ms, 54–65 ms for
+TypeScript. In a release window on Xvfb (lavapipe), all of `start`: cold
+TypeScript 71 ms and TSX 67 ms, others 19–30 ms, every one colored when
+handed over; tree-sitter 1.3 ms colored with the helper running, 0.13 ms
+plain with it cold.
+
+**Checked:** rustfmt, clippy `-D warnings` on `skwir-ui` and `skwir-platform`,
+their tests (1079 passed, 18 skipped), in capped scopes; the window above.
+
+**Not checked:** `just release-check`, by the user's standing preference. A
+frame-by-frame recording of a preview appearing: that the first frame is
+colored follows from what is handed over. The early parse of a code view held
+whole (the text view's was seen). A time limit reached in a real window; a
+test covers it. Windows and macOS not compiled.

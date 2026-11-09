@@ -503,6 +503,12 @@ impl Helper {
         Ok((process, id))
     }
 
+    /// Whether a helper is running that calls would go to: one need not be
+    /// started for them.
+    pub fn is_running(&self) -> bool {
+        self.current().is_some()
+    }
+
     /// The helper calls go to: the one running, else one started now (a
     /// helper that ended, once per call).
     fn process(&self, cancel: &CancelToken) -> anyhow::Result<Arc<Process>> {

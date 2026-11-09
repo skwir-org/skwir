@@ -71,8 +71,11 @@ pub struct Display {
     /// The pictures its blocks name for later (`inspector_pictures`).
     pub(crate) later: Arc<crate::inspector_pictures::Later>,
     /// What colors its code view where it is shown (`coloring`): a code
-    /// view held whole is shown plain at once, colored as it is drawn.
+    /// view held whole is colored as it is drawn.
     pub(crate) colors: Option<Arc<crate::coloring::Colorer>>,
+    /// Its first chunk colored here, for its first frame, if that was
+    /// quick (`coloring::first_colors`): taken when it arrives.
+    pub(crate) first_colors: Option<Box<crate::coloring::FirstColors>>,
 }
 impl Display {
     pub fn new(mut data: Inspection, code: &crate::code_preview::CodeTheme) -> Self {
@@ -120,7 +123,7 @@ impl Display {
             && let Some(palette) = palette.take()
         {
             // Colored where it is drawn (`coloring::CodeColors`), not whole
-            // before it shows: its lines plain until then, their links
+            // before it shows, but for its first lines (below); their links
             // found here.
             for block in &mut data.blocks {
                 skwir_platform::links::link_block(block, true);
@@ -155,6 +158,10 @@ impl Display {
             }
             data.blocks = skwir_core::inspection::split_blocks(data.blocks);
         }
+        let first_colors = colorer
+            .as_deref()
+            .and_then(|with| crate::coloring::first_colors(&data, with))
+            .map(Box::new);
         for block in &mut data.blocks {
             let Some(palette) = palette.as_ref() else {
                 break;
@@ -256,6 +263,7 @@ impl Display {
             page_starts,
             later,
             colors: colorer,
+            first_colors,
         }
     }
     /// Whether the tree-sitter grammar that colors its code says where

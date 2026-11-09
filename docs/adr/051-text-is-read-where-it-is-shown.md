@@ -86,3 +86,32 @@ ADR-009's bounds (`TEXT_PAGE`, `SOURCE_PAGE`).
   minified file is 4 KiB of one line, with several matches. It goes from
   match to match, marks them in the rows drawn, and brings the one it is
   on into view along its row.
+
+## Amendment (2026-11-09): colors arrive with the text
+
+Decision 5 had every chunk read plain first and its colors asked for
+after a frame drew it, so a text always flashed uncolored, however quick
+its colors. Measured on bat's grammars (a build without LTO, on glibc's
+allocator): 256 rows in 0.4–8 ms with the grammar compiled, 18–23 ms for
+TypeScript; the first 60 rows after 60 s without code (ADR-060) in
+1–21 ms, 54–65 ms for TypeScript.
+
+- **Colors hold text back for 100 ms at most** (`COLORS_WITHIN`, chosen
+  with the user over one frame so that a grammar compiling does not
+  flash either: below what reads as a wait, and below the preview's
+  "Loading…"). A chunk is read and colored by one job, the first on the
+  worker that makes the view, its colors checked against the time between
+  rows. Rows late show as far as they got; the view colors them as before.
+- **Long lines are not waited for:** a chunk with a line of half a row or
+  more shows plain first, as decision 5 said, since its colors take
+  seconds and would cost the wait on every look.
+- **A tree-sitter parse** is tried by the same worker only when the helper
+  already runs, bounded by a cancel at the limit: starting one takes
+  longer than the limit.
+- **The paths a text writes** are looked up by a step of their own, after
+  a chunk's colors: up to 256 lookups on the disk no longer hold them.
+- **Rejected:** a second job the worker waits for, which would bound a
+  single row's coloring as well: when every worker is busy the job does
+  not start, and text would wait the whole limit for nothing. A row is
+  at most 4 KiB, and rows of half that are not waited for, so a row's own
+  time is small beside the limit.
