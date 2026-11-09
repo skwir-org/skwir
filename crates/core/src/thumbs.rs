@@ -240,20 +240,48 @@ struct Queued {
 /// A request asked for and not answered yet, queued, set aside or
 /// running.
 struct Flight {
-    /// The frame it was last asked for, of the asker that asked it last:
-    /// older than a few of that asker's frames, its viewport has moved on
-    /// and it is dropped before it runs, or stopped while it runs.
-    asked: u64,
-    /// Who asked it last: a window (`Asker`), its frames its own.
-    asker: Asker,
-    /// Everyone who asked it, woken when it lands (`Thumbnails::wake_for`).
-    askers: Vec<Asker>,
+    /// Everyone who asked it (a window, `Asker`), each with the frame of
+    /// its own it last asked it in, woken when it lands
+    /// (`Thumbnails::wake_for`). Older than a few of an asker's frames, that
+    /// asker's viewport has moved on; once every asker's has, it is dropped
+    /// before it runs, or stopped while it runs (`Flight::stale`).
+    askers: Vec<(Asker, u64)>,
     /// The best priority it was asked with.
     priority: Priority,
     cancel: CancelToken,
     /// A provider that makes thumbnails takes it: else only a cache is
     /// looked in (`Thumbnails::only_in_cache`).
     made: bool,
+}
+
+impl Flight {
+    /// `asker` asks it, in its frame `frame`.
+    fn asked_by(&mut self, asker: Asker, frame: u64) {
+        match self.askers.iter_mut().find(|(who, _)| *who == asker) {
+            Some((_, at)) => *at = frame,
+            None => self.askers.push((asker, frame)),
+        }
+    }
+
+    /// Whether `asker` is among those who asked it.
+    fn asked_of(&self, asker: Asker) -> bool {
+        self.askers.iter().any(|(who, _)| *who == asker)
+    }
+
+    /// Whether no one asking it wants it any more: every asker's frames
+    /// went on past it, or none is left. An asker that drew nothing since
+    /// still waits for it, and no other window's frames decide for it
+    /// (ADR-122): so one dropped has no one waiting to be woken.
+    fn stale(&self, frames: &HashMap<Asker, u64>) -> bool {
+        self.askers.iter().all(|(who, at)| {
+            frames.get(who).copied().unwrap_or(0).saturating_sub(*at) > STALE_FRAMES
+        })
+    }
+
+    /// Who to wake once it lands.
+    fn askers(&self) -> Vec<Asker> {
+        self.askers.iter().map(|(asker, _)| *asker).collect()
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -468,29 +496,36 @@ impl Thumbnails {
         self.tick_for(Asker::ANY);
     }
 
-    /// Call once per frame `asker` draws: its requests not asked for in its
-    /// last few frames are dropped before they run, and running ones are
-    /// cancelled, since its viewport moved on. Another asker's are not.
+    /// Call once per frame `asker` draws: what it asked for and did not
+    /// ask for again in its last few frames, and no one else still wants,
+    /// is dropped before it runs, or cancelled while it runs, since the
+    /// viewport moved on (`Flight::stale`). What another asker still wants
+    /// is not.
     pub fn tick_for(&self, asker: Asker) {
         let mut s = self.state.lock();
-        let frame = s.frames.entry(asker).or_insert(0);
-        *frame += 1;
-        let frame = *frame;
-        for flight in s.in_flight.values().filter(|f| f.asker == asker) {
-            if frame.saturating_sub(flight.asked) > STALE_FRAMES {
+        *s.frames.entry(asker).or_insert(0) += 1;
+        let State {
+            in_flight, frames, ..
+        } = &*s;
+        for flight in in_flight.values().filter(|f| f.asked_of(asker)) {
+            if flight.stale(frames) {
                 flight.cancel.cancel();
             }
         }
     }
 
-    /// `asker` draws no more (a window closed): what it asked for and no
-    /// one else did since is cancelled, and its frames forgotten.
+    /// `asker` draws no more (a window closed): it asks for nothing any
+    /// more, what no one else asked for is cancelled, and its frames
+    /// forgotten.
     pub fn forget_asker(&self, asker: Asker) {
         self.asker_wakers.lock().remove(&asker);
         let mut s = self.state.lock();
         s.frames.remove(&asker);
-        for flight in s.in_flight.values().filter(|f| f.asker == asker) {
-            flight.cancel.cancel();
+        for flight in s.in_flight.values_mut() {
+            flight.askers.retain(|(who, _)| *who != asker);
+            if flight.askers.is_empty() {
+                flight.cancel.cancel();
+            }
         }
     }
 
@@ -550,11 +585,7 @@ impl Thumbnails {
             }
             let frame = s.frame_of(asker);
             if let Some(flight) = s.in_flight.get_mut(&key) {
-                flight.asked = frame;
-                flight.asker = asker;
-                if !flight.askers.contains(&asker) {
-                    flight.askers.push(asker);
-                }
+                flight.asked_by(asker, frame);
                 flight.priority = flight.priority.min(priority);
                 return ThumbState::Pending;
             }
@@ -584,9 +615,7 @@ impl Thumbnails {
         s.in_flight.insert(
             key,
             Flight {
-                asked: frame,
-                asker,
-                askers: vec![asker],
+                askers: vec![(asker, frame)],
                 priority,
                 cancel: self.lifetime.child(),
                 made,
@@ -730,10 +759,9 @@ impl Thumbnails {
                 ..
             } = &mut *s;
             queue.retain(|q| {
-                let live = in_flight.get(&q.key).is_some_and(|f| {
-                    let frame = frames.get(&f.asker).copied().unwrap_or(0);
-                    frame.saturating_sub(f.asked) <= STALE_FRAMES && !f.cancel.is_cancelled()
-                });
+                let live = in_flight
+                    .get(&q.key)
+                    .is_some_and(|f| !f.stale(frames) && !f.cancel.is_cancelled());
                 if !live {
                     in_flight.remove(&q.key);
                     *skipped += 1;
@@ -856,7 +884,7 @@ impl Thumbnails {
         let evicted = {
             let mut s = self.state.lock();
             if let Some(flight) = s.in_flight.remove(&key) {
-                askers = flight.askers;
+                askers = flight.askers();
             }
             match produced {
                 Some((_, img)) => {
@@ -1060,6 +1088,89 @@ mod tests {
         ));
         t.forget_asker(b);
         assert_eq!(cancelled(&t, 1), Some(true), "its window closed");
+        release.send(()).ok();
+    }
+
+    /// A picture two windows asked for stays asked while either wants it:
+    /// the one that asked last moving on does not take it from the other
+    /// (ADR-122), whose frames alone say when it has moved on too.
+    #[test]
+    fn a_picture_two_windows_asked_for_stays_until_both_moved_on() {
+        let t = Thumbnails::new(Scheduler::new(2));
+        let slow = Fake::new("slow", Stage::Generate, true);
+        let (release, wait) = std::sync::mpsc::channel::<()>();
+        *slow.during.lock() = Some(Box::new(move || {
+            let _ = wait.recv_timeout(Duration::from_secs(10));
+        }));
+        t.register("core", slow);
+        let (a, b) = (Asker(1), Asker(2));
+        // The worker takes the first and holds it; the second stays queued,
+        // asked by both, the first asker last.
+        let pending = |state: ThumbState| assert!(matches!(state, ThumbState::Pending));
+        pending(t.get_for(a, req(1), Priority::Visible));
+        pending(t.get_for(b, req(2), Priority::Visible));
+        pending(t.get_for(a, req(2), Priority::Visible));
+        let cancelled = |ino: u64| {
+            t.state
+                .lock()
+                .in_flight
+                .get(&req(ino).key())
+                .map(|f| f.cancel.is_cancelled())
+        };
+        // Its last asker scrolls on, asking for something else meanwhile:
+        // the other, which drew nothing since, still waits for it.
+        for frame in 0..=STALE_FRAMES {
+            pending(t.get_for(a, req(100 + frame), Priority::Visible));
+            t.tick_for(a);
+        }
+        assert_eq!(cancelled(2), Some(false), "the other window still wants it");
+        release.send(()).ok();
+        let landed = (0..1000).any(|_| {
+            if matches!(
+                t.get_for(b, req(2), Priority::Visible),
+                ThumbState::Ready(_)
+            ) {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+            false
+        });
+        assert!(landed, "made for the window that still waited");
+    }
+
+    /// A window that closes takes back only what it alone asked for.
+    #[test]
+    fn a_window_closing_leaves_what_another_asked_for_too() {
+        let t = Thumbnails::new(Scheduler::new(2));
+        let slow = Fake::new("slow", Stage::Generate, true);
+        let (release, wait) = std::sync::mpsc::channel::<()>();
+        *slow.during.lock() = Some(Box::new(move || {
+            let _ = wait.recv_timeout(Duration::from_secs(10));
+        }));
+        t.register("core", slow);
+        let (a, b) = (Asker(1), Asker(2));
+        assert!(matches!(
+            t.get_for(b, req(1), Priority::Visible),
+            ThumbState::Pending
+        ));
+        assert!(matches!(
+            t.get_for(a, req(1), Priority::Visible),
+            ThumbState::Pending
+        ));
+        let cancelled = || {
+            t.state
+                .lock()
+                .in_flight
+                .get(&req(1).key())
+                .map(|f| f.cancel.is_cancelled())
+        };
+        t.forget_asker(a);
+        assert_eq!(cancelled(), Some(false), "the other window asked for it");
+        t.forget_asker(b);
+        assert!(
+            matches!(cancelled(), Some(true) | None),
+            "no one asks for it any more: cancelled, or gone already"
+        );
         release.send(()).ok();
     }
 
