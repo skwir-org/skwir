@@ -324,10 +324,13 @@ of bars, split or not.
     from it (a split, a tab) takes. More holds the window's panel without
     a button (Terminal) and the layout's settings, one row each
     (`address::layout_values`).
-  - Two `AdaptiveRow` variants: all buttons while the address keeps
+  - `AdaptiveRow` variants: all buttons while the address keeps
     `FIELD_MIN`, else one button opening the View menu (only that one
-    with the view buttons off). The address has no width of its own when
-    variants are measured.
+    with the view buttons off), and narrower still the field without its
+    own buttons (Search, keep, an aspect's: Ctrl+F, Ctrl+D, Alt+G) and
+    without `FIELD_MIN`, so a narrow pane's row fits. The address has no
+    width of its own when variants are measured. As a card, the band is
+    cut at its end: nothing it holds is drawn over a notch.
 
 ### The trail
 

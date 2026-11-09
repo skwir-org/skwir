@@ -1006,8 +1006,11 @@ struct Ends {
 /// the address keeps `FIELD_MIN`, else the one button that opens the View
 /// menu, which is all there is with the buttons off
 /// (`ui.view_buttons_shown`); a row holding Split first tries it with its
-/// label. The address counts as `FIELD_MIN` when a variant is measured
-/// (its content has no width of its own) and takes the rest when drawn.
+/// label. Narrower still, the field gives up its own buttons (Search, the
+/// keep button, an aspect's; Ctrl+F, Ctrl+D and Alt+G remain) and keeps
+/// only the room left. The address counts as `FIELD_MIN` when a variant
+/// is measured (its content has no width of its own) and takes the rest
+/// when drawn.
 pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> AnyElement {
     let theme = cx.global::<Theme>().clone();
     let roots = &shell.roots.roots;
@@ -1125,9 +1128,9 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
         .child(AdaptiveRow {
             variants: row_variants(shell.prefs.view_buttons_shown, row.ends.toggles)
                 .into_iter()
-                .map(|(wide, labeled)| {
+                .map(|variant| {
                     let anchors = [&anchor, &nav_anchor, &chip_anchor, &omni_anchor];
-                    pane_row(shell, &row, wide, labeled, anchors, cx)
+                    pane_row(shell, &row, variant, anchors, cx)
                 })
                 .collect(),
             height: PANE_ROW_HEIGHT - theme.line_width(),
@@ -1187,21 +1190,48 @@ fn goes_up(shown: Option<&Location>, trail: Option<&skwir_core::location::Trail>
     }
 }
 
-/// A pane row's variants, richest first, each whether it has the view
-/// buttons (`wide`) and whether Split and the panel's switches say their
-/// names (`labeled`, only where the row holds them, `toggles`): the
-/// labels go first, the view buttons next. With the buttons off
+/// One way of laying out a pane's row (`row_variants`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Variant {
+    /// The view buttons beside the View menu, else its one button.
+    wide: bool,
+    /// Split and the panel's switches say their names.
+    labeled: bool,
+    /// The field holds its own buttons and keeps `FIELD_MIN`; else it has
+    /// only the room the rest leaves.
+    field_buttons: bool,
+}
+
+/// A pane row's variants, richest first: whether it has the view buttons
+/// (`wide`), whether Split and the panel's switches say their names
+/// (`labeled`, only where the row holds them, `toggles`), and whether the
+/// field has its buttons. The labels go first, the view buttons next, the
+/// field's buttons last, so a narrow pane's row fits rather than drawing
+/// past its end (over a notch, as a card). With the view buttons off
 /// (`buttons`), no variant has them: the one button is all there is.
-fn row_variants(buttons: bool, toggles: bool) -> Vec<(bool, bool)> {
-    let variants: &[(bool, bool)] = if buttons {
-        &[(true, true), (true, false), (false, false)]
+fn row_variants(buttons: bool, toggles: bool) -> Vec<Variant> {
+    let variant = |wide, labeled, field_buttons| Variant {
+        wide,
+        labeled,
+        field_buttons,
+    };
+    let variants = if buttons {
+        vec![
+            variant(true, true, true),
+            variant(true, false, true),
+            variant(false, false, true),
+            variant(false, false, false),
+        ]
     } else {
-        &[(false, true), (false, false)]
+        vec![
+            variant(false, true, true),
+            variant(false, false, true),
+            variant(false, false, false),
+        ]
     };
     variants
-        .iter()
-        .copied()
-        .filter(|&(_, labeled)| !labeled || toggles)
+        .into_iter()
+        .filter(|v| !v.labeled || toggles)
         .collect()
 }
 
@@ -1262,17 +1292,24 @@ fn history_button(
 fn pane_row(
     shell: &Shell,
     row: &PaneRow,
-    wide: bool,
-    labeled: bool,
+    variant: Variant,
     [anchor, nav_anchor, chip_anchor, omni_anchor]: [&PopoverAnchor; 4],
     cx: &mut Context<Shell>,
 ) -> AnyElement {
+    let Variant {
+        wide,
+        labeled,
+        field_buttons,
+    } = variant;
     let theme = cx.global::<Theme>().clone();
     let pane = shell.pane;
     // A location reads as a trail of places, a search's or what narrows a
     // folder as pills after it; the text field takes over while it is
     // being edited. No width of its own: the field's minimum is what a
-    // variant is measured with.
+    // variant is measured with. Its basis is nothing in pixels: one in
+    // percent (`flex_1`) comes to its content where a variant is measured
+    // at its natural width, with no width to take a share of, and the
+    // whole trail would count.
     let address = match &row.address {
         // The pills follow the trail; the room after them edits the
         // address.
@@ -1281,7 +1318,9 @@ fn pane_row(
             glyph,
             holds_places,
         } => div()
-            .flex_1()
+            .flex_grow_1()
+            .flex_shrink(1.)
+            .flex_basis(px(0.))
             .w(px(0.))
             .min_w_0()
             .h_full()
@@ -1320,7 +1359,9 @@ fn pane_row(
         // the card, where it is typed.
         Address::Text => {
             let typed = div()
-                .flex_1()
+                .flex_grow_1()
+                .flex_shrink(1.)
+                .flex_basis(px(0.))
                 .w(px(0.))
                 .min_w_0()
                 .h_full()
@@ -1353,7 +1394,8 @@ fn pane_row(
     let mut field = div()
         .id(("address-field", pane.0 as usize))
         .flex_1()
-        .min_w(sized(FIELD_MIN))
+        .when(field_buttons, |d| d.min_w(sized(FIELD_MIN)))
+        .when(!field_buttons, gpui::Styled::min_w_0)
         .h(sized(FIELD_HEIGHT))
         .flex()
         .items_center()
@@ -1371,7 +1413,7 @@ fn pane_row(
     // nothing else in sight says so. Offered where Ctrl+F has a place to
     // look in or a search to edit, while a source searches; gone while
     // the field is typed in, its token wearing the same magnifier.
-    let title = matches!(row.address, Address::Trail { .. })
+    let title = (field_buttons && matches!(row.address, Address::Trail { .. }))
         .then(|| {
             search_title(
                 &shell.app,
@@ -1395,7 +1437,7 @@ fn pane_row(
     // with its filter, while a plugin keeps such locations: filled when it
     // is kept, and pressing it then takes it back with the place's own
     // command. It is at the field's end: it is about what the field shows.
-    if let Some(location) = &row.location {
+    if let Some(location) = row.location.as_ref().filter(|_| field_buttons) {
         let filter = row.filter.as_deref();
         // Offered only where its keeper keeps what is shown (`keep`).
         let keeper = shell.app.keeper_of(location, filter);
@@ -1436,7 +1478,7 @@ fn pane_row(
     // the folder and lit on its own locations, from which its command goes
     // back to the folder. Last, at the field's edge, so that it stays where
     // it was pressed whether or not the keep button is offered.
-    if let Some(location) = &row.location {
+    if let Some(location) = row.location.as_ref().filter(|_| field_buttons) {
         for (i, aspect) in shell.app.registry.aspects.all().into_iter().enumerate() {
             let lit = *aspect.scheme == *location.scheme;
             if !lit && !location.is_path() {
@@ -1534,11 +1576,13 @@ fn pane_row(
         return line.into_any_element();
     }
     // The band between the notches: the card's ground, rounded where a
-    // notch ends it.
+    // notch ends it. What it cannot hold is cut at its end, never drawn
+    // over a notch.
     let band = line
         .relative()
         .flex_1()
         .min_w_0()
+        .overflow_hidden()
         .px(sized(6.))
         .when(shell.drawn_raised == Some(true), |d| {
             d.child(underline(&theme))
@@ -2122,17 +2166,46 @@ mod tests {
         assert!(ViewButtons::default().with(&usage, false).is_default());
     }
 
-    /// With the view buttons off, no variant of the row has them, and the
-    /// toggles' labels are tried first only where the row holds them.
+    /// With the view buttons off, no variant of the row has them, the
+    /// toggles' labels are tried first only where the row holds them, and
+    /// the field gives up its buttons last.
     #[test]
     fn the_row_without_view_buttons_has_the_one_button_only() {
+        let variants = |buttons, toggles| -> Vec<(bool, bool, bool)> {
+            row_variants(buttons, toggles)
+                .into_iter()
+                .map(|v| (v.wide, v.labeled, v.field_buttons))
+                .collect()
+        };
         assert_eq!(
-            row_variants(true, true),
-            [(true, true), (true, false), (false, false)]
+            variants(true, true),
+            [
+                (true, true, true),
+                (true, false, true),
+                (false, false, true),
+                (false, false, false)
+            ]
         );
-        assert_eq!(row_variants(true, false), [(true, false), (false, false)]);
-        assert_eq!(row_variants(false, true), [(false, true), (false, false)]);
-        assert_eq!(row_variants(false, false), [(false, false)]);
+        assert_eq!(
+            variants(true, false),
+            [
+                (true, false, true),
+                (false, false, true),
+                (false, false, false)
+            ]
+        );
+        assert_eq!(
+            variants(false, true),
+            [
+                (false, true, true),
+                (false, false, true),
+                (false, false, false)
+            ]
+        );
+        assert_eq!(
+            variants(false, false),
+            [(false, false, true), (false, false, false)]
+        );
     }
 
     /// Up goes where the `up` command would: a folder's to the one holding
