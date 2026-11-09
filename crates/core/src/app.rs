@@ -600,6 +600,19 @@ impl App {
         crate::tabs::register(&app);
         crate::keymap::declare(&app.settings, app.weak());
         crate::exclusions::declare(&app.settings);
+        if crate::exclusions::holds_changes(&app.settings) {
+            let told = Arc::downgrade(&app);
+            app.scheduler.spawn(
+                Priority::Background,
+                "exclusions-problems",
+                app.lifetime.child(),
+                move || {
+                    if let Some(app) = told.upgrade() {
+                        crate::exclusions::tell_problems(&app);
+                    }
+                },
+            );
+        }
         crate::plugin::register(&app);
         crate::playing::register(&app);
         if let Some(problem) = app.settings.take_problem() {

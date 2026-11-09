@@ -34,7 +34,7 @@ use std::sync::{Arc, LazyLock};
 use globset::{GlobBuilder, GlobMatcher, GlobSet, GlobSetBuilder};
 use regex::bytes::{RegexSet, RegexSetBuilder};
 
-use crate::settings::{SettingSpec, Settings};
+use crate::settings::{Beside, SettingSpec, Settings};
 
 #[cfg(test)]
 mod tests;
@@ -357,13 +357,29 @@ impl Entry {
 
 /// The list as the settings say it now: skwir's, with what the user
 /// changed of it and added.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Catalog {
     pub categories: Vec<Category>,
     pub entries: Vec<Entry>,
     /// What the settings said that could not be taken, said as the
     /// settings' check says a problem.
     pub problems: Vec<String>,
+    /// What they hold that this list has no place for.
+    aside: Aside,
+}
+
+/// What the settings hold that a list read here could not take in, written
+/// back as it stood ([`Catalog::values`]), so a tick on the page never
+/// erases it: an override of one of skwir's for another system, for a base
+/// unset on this launch or dropped by a release, a category or an entry
+/// that cannot be read (said in [`Catalog::problems`]).
+#[derive(Clone, Debug, Default, PartialEq)]
+struct Aside {
+    categories: toml::Table,
+    entries: toml::Table,
+    /// The categories asked for, by entry, that are not here: the entry
+    /// stands in another meanwhile, which is not its choice.
+    wanted: HashMap<String, String>,
 }
 
 // What `builtin.toml` holds.
@@ -580,6 +596,7 @@ fn shipped_catalog(shipped: &Shipped) -> Catalog {
         categories,
         entries,
         problems: Vec::new(),
+        aside: Aside::default(),
     }
 }
 
@@ -666,36 +683,45 @@ impl Catalog {
         let categories = categories.and_then(toml::Value::as_table).unwrap_or(&empty);
         let entries = entries.and_then(toml::Value::as_table).unwrap_or(&empty);
         legacy.apply(&mut catalog, entries);
+        let category_at: HashMap<String, usize> = catalog
+            .categories
+            .iter()
+            .enumerate()
+            .map(|(at, c)| (c.id.clone(), at))
+            .collect();
         for (id, value) in categories {
-            let Some(table) = value.as_table() else {
+            let aside = |problem: Option<String>, catalog: &mut Catalog| {
+                catalog.aside.categories.insert(id.clone(), value.clone());
                 catalog
                     .problems
-                    .push(format!("{CATEGORIES_KEY}.{id}: a category is a table"));
+                    .extend(problem.map(|p| format!("{CATEGORIES_KEY}.{id}: {p}")));
+            };
+            let Some(table) = value.as_table() else {
+                aside(Some("a category is a table".into()), &mut catalog);
                 continue;
             };
-            if let Some(category) = catalog.categories.iter_mut().find(|c| c.id == *id) {
+            if let Err(problem) = category_problem(id, table) {
+                aside(Some(problem), &mut catalog);
+                continue;
+            }
+            if let Some(&at) = category_at.get(id) {
+                let category = &mut catalog.categories[at];
                 category.switches = category.switches.over(table);
                 continue;
             }
             if id.starts_with(BUILTIN) {
-                // A category a later release dropped, or a typo: nothing to change.
+                // A category a later release dropped, or another system's:
+                // nothing to change here.
+                aside(None, &mut catalog);
                 continue;
             }
-            if let Err(problem) = user_id(id) {
-                catalog
-                    .problems
-                    .push(format!("{CATEGORIES_KEY}.{id}: {problem}"));
-                continue;
-            }
-            let Some(name) = table.get("name").and_then(toml::Value::as_str) else {
-                catalog.problems.push(format!(
-                    "{CATEGORIES_KEY}.{id}: a category of yours needs a name"
-                ));
-                continue;
-            };
             catalog.categories.push(Category {
                 id: id.clone(),
-                name: name.to_owned(),
+                name: table
+                    .get("name")
+                    .and_then(toml::Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
                 builtin: false,
                 switches: Switches::ALL.over(table),
                 shipped: None,
@@ -712,26 +738,40 @@ impl Catalog {
                     catalog
                         .problems
                         .push(format!("{ENTRIES_KEY}.{id}: no category {category}"));
+                    catalog
+                        .aside
+                        .wanted
+                        .insert(id.to_owned(), category.to_owned());
                     fallback.to_owned()
                 }
                 None => fallback.to_owned(),
             };
+        let entry_at: HashMap<String, usize> = catalog
+            .entries
+            .iter()
+            .enumerate()
+            .map(|(at, e)| (e.id.clone(), at))
+            .collect();
         for (id, value) in entries {
-            let Some(table) = value.as_table() else {
+            let aside = |problem: Option<String>, catalog: &mut Catalog| {
+                catalog.aside.entries.insert(id.clone(), value.clone());
                 catalog
                     .problems
-                    .push(format!("{ENTRIES_KEY}.{id}: an entry is a table"));
+                    .extend(problem.map(|p| format!("{ENTRIES_KEY}.{id}: {p}")));
+            };
+            let Some(table) = value.as_table() else {
+                aside(Some("an entry is a table".into()), &mut catalog);
                 continue;
             };
             if id.starts_with(BUILTIN) {
-                if table.contains_key("folder") || table.contains_key("holding") {
-                    catalog.problems.push(format!(
-                        "{ENTRIES_KEY}.{id}: skwir. names skwir's own folders; give yours a name without a dot"
-                    ));
+                if let Err(problem) = override_problem(table) {
+                    aside(Some(problem), &mut catalog);
                     continue;
                 }
-                let Some(at) = catalog.entries.iter().position(|e| e.id == *id) else {
-                    // A built-in a later release dropped: its override does nothing.
+                let Some(&at) = entry_at.get(id) else {
+                    // Another system's, a base unset here, a built-in a
+                    // later release dropped: it does nothing here.
+                    aside(None, &mut catalog);
                     continue;
                 };
                 let fallback = catalog.entries[at].category.clone();
@@ -746,12 +786,23 @@ impl Catalog {
                     entry.category = category_of(table, YOURS, &mut catalog, id);
                     catalog.entries.push(entry);
                 }
-                Err(problem) => catalog
-                    .problems
-                    .push(format!("{ENTRIES_KEY}.{id}: {problem}")),
+                Err(problem) => aside(Some(problem), &mut catalog),
             }
         }
         catalog
+    }
+
+    /// The ids of entries taken, what is set aside included: a new entry
+    /// gets none of them.
+    pub fn entry_ids(&self) -> HashSet<String> {
+        let held = self.entries.iter().map(|e| e.id.clone());
+        held.chain(self.aside.entries.keys().cloned()).collect()
+    }
+
+    /// The ids of categories taken, what is set aside included.
+    pub fn category_ids(&self) -> HashSet<String> {
+        let held = self.categories.iter().map(|c| c.id.clone());
+        held.chain(self.aside.categories.keys().cloned()).collect()
     }
 
     pub fn category(&self, id: &str) -> Option<&Category> {
@@ -784,7 +835,7 @@ impl Catalog {
         let builtin = builtin();
         let shipped: std::collections::HashMap<&str, &Entry> =
             builtin.entries.iter().map(|e| (e.id.as_str(), e)).collect();
-        let mut categories = toml::Table::new();
+        let mut categories = self.aside.categories.clone();
         for category in &self.categories {
             let mut table = toml::Table::new();
             let base = category.shipped.unwrap_or(Switches::ALL);
@@ -803,9 +854,10 @@ impl Catalog {
                 categories.insert(category.id.clone(), toml::Value::Table(table));
             }
         }
-        let mut entries = toml::Table::new();
+        let mut entries = self.aside.entries.clone();
         for entry in &self.entries {
             let mut table = toml::Table::new();
+            let wanted = self.aside.wanted.get(&entry.id);
             if entry.builtin {
                 let Some(was) = shipped.get(entry.id.as_str()) else {
                     continue;
@@ -823,6 +875,8 @@ impl Catalog {
                         "category".into(),
                         toml::Value::String(entry.category.clone()),
                     );
+                } else if let Some(wanted) = wanted {
+                    table.insert("category".into(), toml::Value::String(wanted.clone()));
                 }
             } else {
                 match &entry.matcher {
@@ -849,6 +903,8 @@ impl Catalog {
                         "category".into(),
                         toml::Value::String(entry.category.clone()),
                     );
+                } else if let Some(wanted) = wanted {
+                    table.insert("category".into(), toml::Value::String(wanted.clone()));
                 }
                 for role in Role::ALL {
                     table.insert(
@@ -899,20 +955,14 @@ fn user_entry(id: &str, table: &toml::Table) -> Result<Entry, String> {
         (None, None) => return Err("pattern or holding says what it names".into()),
     };
     matcher.check()?;
-    for key in table.keys() {
-        if !matches!(
-            key.as_str(),
-            "pattern"
-                | "names"
-                | "holding"
-                | "beside"
-                | "what"
-                | "category"
-                | "searches"
-                | "agents"
-                | "index"
-        ) {
-            return Err(format!("no field {key}"));
+    for (key, field) in table {
+        match key.as_str() {
+            "searches" | "agents" | "index" if !field.is_bool() => {
+                return Err(format!("{key}: true or false"));
+            }
+            "pattern" | "names" | "holding" | "beside" | "what" | "category" | "searches"
+            | "agents" | "index" => {}
+            _ => return Err(format!("no field {key}")),
         }
     }
     Ok(Entry {
@@ -932,73 +982,134 @@ fn user_entry(id: &str, table: &toml::Table) -> Result<Entry, String> {
 /// The fields a built-in's override may hold.
 const OVERRIDES: &[&str] = &["searches", "agents", "index", "category"];
 
-/// The settings' own check of the categories: each a table, a built-in's
-/// switches, the user's named, with an id of no dot.
-fn check_categories(value: &toml::Value) -> anyhow::Result<()> {
-    let Some(table) = value.as_table() else {
-        anyhow::bail!("folder categories are a table, by id");
-    };
-    for (id, category) in table {
-        let Some(category) = category.as_table() else {
-            anyhow::bail!("{id}: a category is a table");
-        };
-        let builtin = id.starts_with(BUILTIN);
-        if !builtin {
-            user_id(id).map_err(|e| anyhow::anyhow!("{id}: {e}"))?;
-            anyhow::ensure!(
-                category
-                    .get("name")
-                    .and_then(toml::Value::as_str)
-                    .is_some_and(|n| !n.trim().is_empty()),
-                "{id}: a category of yours needs a name"
-            );
+/// What stops a category's table being read: a built-in's holds switches,
+/// the user's a name, under an id of no dot.
+fn category_problem(id: &str, category: &toml::Table) -> Result<(), String> {
+    let builtin = id.starts_with(BUILTIN);
+    if !builtin {
+        user_id(id)?;
+        if category
+            .get("name")
+            .and_then(toml::Value::as_str)
+            .is_none_or(|n| n.trim().is_empty())
+        {
+            return Err("a category of yours needs a name".into());
         }
-        for (key, field) in category {
-            match key.as_str() {
-                "name" if !builtin => {}
-                "searches" | "agents" | "index" => {
-                    anyhow::ensure!(field.is_bool(), "{id}.{key}: true or false");
-                }
-                _ => anyhow::bail!("{id}: no field {key}"),
-            }
+    }
+    for (key, field) in category {
+        match key.as_str() {
+            "name" if !builtin => {}
+            "searches" | "agents" | "index" if field.is_bool() => {}
+            "searches" | "agents" | "index" => return Err(format!("{key}: true or false")),
+            _ => return Err(format!("no field {key}")),
         }
     }
     Ok(())
 }
 
-/// The settings' own check of the entries: a built-in's override holds
-/// switches and a category, the user's a folder that can be read.
-fn check_entries(value: &toml::Value) -> anyhow::Result<()> {
+/// What stops an override of one of skwir's being read: it holds switches
+/// and a category, never a folder.
+fn override_problem(entry: &toml::Table) -> Result<(), String> {
+    for (key, field) in entry {
+        if key == "folder" || key == "holding" {
+            return Err("skwir. names skwir's own folders; give yours a name without a dot".into());
+        }
+        if !OVERRIDES.contains(&key.as_str()) {
+            return Err(format!("no field {key}"));
+        }
+        if key != "category" && !field.is_bool() {
+            return Err(format!("{key}: true or false"));
+        }
+    }
+    Ok(())
+}
+
+/// The table stored beside `beside`, where a value replaces one: a key it
+/// holds as it stands is spared, as a shortcut waiting for its plugin is.
+/// A file's value is judged whole (`settings.check`).
+fn stored_table(beside: Beside<'_>) -> Option<&toml::Table> {
+    match beside {
+        Beside::Stored(stored) => stored?.as_table(),
+        Beside::File => None,
+    }
+}
+
+/// The settings' own check of the categories. What was stored as it is
+/// passes, so one a hand wrote wrong stops no other change: it is said on
+/// the page, and kept.
+fn check_categories(value: &toml::Value, beside: Beside<'_>) -> anyhow::Result<()> {
+    let Some(table) = value.as_table() else {
+        anyhow::bail!("folder categories are a table, by id");
+    };
+    let stored = stored_table(beside);
+    for (id, category) in table {
+        if stored.is_some_and(|stored| stored.get(id) == Some(category)) {
+            continue;
+        }
+        let Some(category) = category.as_table() else {
+            anyhow::bail!("{id}: a category is a table");
+        };
+        category_problem(id, category).map_err(|e| anyhow::anyhow!("{id}: {e}"))?;
+    }
+    Ok(())
+}
+
+/// The settings' own check of the entries, what was stored as it is
+/// spared as [`check_categories`] spares it.
+fn check_entries(value: &toml::Value, beside: Beside<'_>) -> anyhow::Result<()> {
     let Some(table) = value.as_table() else {
         anyhow::bail!("exclusions are a table, by id");
     };
+    let stored = stored_table(beside);
     for (id, entry) in table {
+        if stored.is_some_and(|stored| stored.get(id) == Some(entry)) {
+            continue;
+        }
         let Some(entry) = entry.as_table() else {
             anyhow::bail!("{id}: an entry is a table");
         };
         if id.starts_with(BUILTIN) {
-            for (key, field) in entry {
-                if key == "folder" || key == "holding" {
-                    anyhow::bail!(
-                        "{id}: skwir. names skwir's own folders; give yours a name without a dot"
-                    );
-                }
-                anyhow::ensure!(OVERRIDES.contains(&key.as_str()), "{id}: no field {key}");
-                anyhow::ensure!(
-                    key == "category" || field.is_bool(),
-                    "{id}.{key}: true or false"
-                );
-            }
-            continue;
-        }
-        user_entry(id, entry).map_err(|e| anyhow::anyhow!("{id}: {e}"))?;
-        for role in Role::ALL {
-            if let Some(field) = entry.get(role.key()) {
-                anyhow::ensure!(field.is_bool(), "{id}.{}: true or false", role.key());
-            }
+            override_problem(entry).map_err(|e| anyhow::anyhow!("{id}: {e}"))?;
+        } else {
+            user_entry(id, entry).map_err(|e| anyhow::anyhow!("{id}: {e}"))?;
         }
     }
     Ok(())
+}
+
+/// What the settings hold of the exclusions that cannot be read, told
+/// once, as a notice leading to the page: what a hand or a file wrote
+/// wrong keeps nothing private, and says so at the start and when the file
+/// changes. On a worker: it reads the catalog.
+pub(crate) fn tell_problems(app: &crate::App) {
+    static TOLD: parking_lot::Mutex<BTreeSet<String>> = parking_lot::Mutex::new(BTreeSet::new());
+    let problems: BTreeSet<String> = Catalog::of(&app.settings).problems.into_iter().collect();
+    let mut told = TOLD.lock();
+    let new = problems.difference(&told).count();
+    if let Some(first) = problems.difference(&told).next() {
+        let more = if new > 1 {
+            format!(" (and {} more)", new - 1)
+        } else {
+            String::new()
+        };
+        app.notify_about_setting(
+            crate::app::NotifyLevel::Warning,
+            format!("An exclusion cannot be read, so it does not apply{more}: {first}"),
+            ENTRIES_KEY,
+        );
+    }
+    *told = problems;
+}
+
+/// Whether the settings hold any exclusions of the user's: what there is to
+/// read wrong. Asked at start, where reading the list would cost for none.
+pub(crate) fn holds_changes(settings: &Settings) -> bool {
+    [ENTRIES_KEY, CATEGORIES_KEY].into_iter().any(|key| {
+        settings
+            .get::<toml::Value>(key)
+            .and_then(|value| value.as_table().map(|table| !table.is_empty()))
+            .unwrap_or(false)
+    })
 }
 
 /// Declare the two settings (the Exclusions page draws them), and the 0.3.1
@@ -1013,7 +1124,7 @@ pub fn declare(settings: &Settings) {
             table(),
         )
         .page(crate::settings::page::EXCLUSIONS)
-        .validate_with(|value, _| check_categories(value)),
+        .validate_with(check_categories),
     );
     settings.declare(
         SettingSpec::drawn_by_page(
@@ -1023,7 +1134,7 @@ pub fn declare(settings: &Settings) {
             table(),
         )
         .page(crate::settings::page::EXCLUSIONS)
-        .validate_with(|value, _| check_entries(value)),
+        .validate_with(check_entries),
     );
     settings.declare(
         SettingSpec::toggle(
@@ -1143,7 +1254,20 @@ impl Legacy {
             }
         }
         let Some(listed) = &self.folders else { return };
-        let normal = |text: &str| expand(text, crate::os_path::home().as_deref());
+        let home = crate::os_path::home();
+        let normal = |text: &str| expand(text, home.as_deref());
+        // Each of skwir's that is one path, by that path: asked once per
+        // folder either list holds, never per pair.
+        let mut at_path: HashMap<PathBuf, Vec<usize>> = HashMap::new();
+        for (at, entry) in catalog.entries.iter().enumerate() {
+            if let Matcher::Pattern {
+                text, beside: None, ..
+            } = &entry.matcher
+                && let Some(path) = normal(text)
+            {
+                at_path.entry(path).or_default().push(at);
+            }
+        }
         let listed_paths: HashSet<PathBuf> = listed.iter().filter_map(|t| normal(t)).collect();
         // 0.3.1's own, absent from the list: unticked for agents.
         for was in PRIVATE_0_3_1 {
@@ -1151,30 +1275,18 @@ impl Legacy {
             if listed_paths.contains(&path) {
                 continue;
             }
-            for entry in &mut catalog.entries {
-                if entry.builtin
-                    && !entries.contains_key(&entry.id)
-                    && matches!(&entry.matcher, Matcher::Pattern { text, beside: None, .. } if normal(text).as_ref() == Some(&path))
-                {
+            for &at in at_path.get(&path).map_or(&[][..], Vec::as_slice) {
+                let entry = &mut catalog.entries[at];
+                if entry.builtin && !entries.contains_key(&entry.id) {
                     entry.ticks = entry.ticks.with(Role::Agents, false);
                 }
             }
         }
         // The list's own that no built-in is: the user's, in Secrets.
-        let shipped: HashSet<PathBuf> = catalog
-            .entries
-            .iter()
-            .filter_map(|e| match &e.matcher {
-                Matcher::Pattern {
-                    text, beside: None, ..
-                } => normal(text),
-                _ => None,
-            })
-            .collect();
         let mut taken: HashSet<String> = catalog.entries.iter().map(|e| e.id.clone()).collect();
         for text in listed {
             let Some(path) = normal(text) else { continue };
-            if shipped.contains(&path) {
+            if at_path.contains_key(&path) {
                 continue;
             }
             let id = unique_id(&format!("private {text}"), &taken);

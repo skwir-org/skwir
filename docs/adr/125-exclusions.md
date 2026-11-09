@@ -67,6 +67,10 @@ search's walk does not reach).
    the user's holds their entry. Contributions are `owner.name`; the user's
    ids hold no dot (made from "What it is"); a `skwir.` id naming a folder
    is refused; an override of a built-in a release drops does nothing.
+   What a launch cannot take in (another system's, a base unset here, what
+   cannot be read) is written back as it stood by any change of the page;
+   what cannot be read applies nothing, and is said on the page and in a
+   notice leading to it.
 4. **An entry is** a pattern: a name (anything so named), a path (`~` for home), a
    glob (`cmake-build-*`, `~/Projects/*/out`; `*` within a name, `**`
    across), `regex:` over the folder's path written from `~`, a name

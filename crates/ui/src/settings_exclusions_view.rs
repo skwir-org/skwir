@@ -313,10 +313,7 @@ impl SettingsView {
             return;
         }
         let catalog = Catalog::of(&self.app.settings);
-        if self.exclusions.generation > 0
-            && catalog.categories == self.exclusions.catalog.categories
-            && catalog.entries == self.exclusions.catalog.entries
-        {
+        if self.exclusions.generation > 0 && catalog == *self.exclusions.catalog {
             return;
         }
         self.exclusions.set_catalog(catalog);
@@ -753,6 +750,20 @@ impl SettingsView {
                     .text_color(theme.error)
                     .child(controls::glyph("warning", theme.error, 13.))
                     .child(div().flex_1().min_w_0().child(error.clone())),
+            );
+        }
+        // What the settings hold that cannot be read: it keeps nothing out
+        // until it is fixed, and is never erased by a change here.
+        if let Some(problems) = model::unreadable(&self.exclusions.catalog) {
+            bar = bar.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(sized(6.))
+                    .text_body()
+                    .text_color(theme.warning)
+                    .child(controls::glyph("warning", theme.warning, 13.))
+                    .child(div().flex_1().min_w_0().child(problems)),
             );
         }
         bar.into_any_element()

@@ -358,3 +358,54 @@ fn an_agents_dotted_key_changes_one_entry_and_lowers_nothing() {
     );
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// A hand-written entry that cannot be read is told once, as a notice, and
+/// a change made on the Exclusions page (both tables, whole) keeps it.
+#[test]
+fn what_cannot_be_read_is_told_and_a_change_of_the_page_keeps_it() {
+    use skwir_core::exclusions::{Catalog, ENTRIES_KEY, Role};
+    use skwir_core::settings::SettingSpec;
+    let base = fixture("exclusion-unread");
+    let app = App::new(AppConfig::ephemeral(base.join("app"))).unwrap();
+    let hand: toml::Table =
+        toml::from_str(r#"broken = { pattern = "~/it's x", colour = "red" }"#).unwrap();
+    app.settings
+        .set(ENTRIES_KEY, toml::Value::Table(hand.clone()));
+    let catalog = Catalog::of(&app.settings);
+    assert_eq!(catalog.problems.len(), 1, "{:?}", catalog.problems);
+
+    // What the page saves: every table whole, with one tick more.
+    let mut after = catalog.clone();
+    let tick = after
+        .entries
+        .iter_mut()
+        .find(|e| e.builtin && e.ticks.get(Role::Searches))
+        .unwrap();
+    tick.ticks = tick.ticks.with(Role::Searches, false);
+    let tick_id = tick.id.clone();
+    let (categories, entries) = after.values();
+    app.dispatch(&Invocation::with_args(
+        "settings.apply",
+        &serde_json::json!({ "changes": {
+            ENTRIES_KEY: SettingSpec::format_value(&entries),
+            skwir_core::exclusions::CATEGORIES_KEY: SettingSpec::format_value(&categories),
+        } }),
+    ))
+    .expect("what was stored as it is stops no other change");
+    until(&app, 10, "saved", || {
+        app.settings.save_status().1 != skwir_core::settings::SaveState::Saving
+    });
+    let saved = app.settings.get::<toml::Table>(ENTRIES_KEY).unwrap();
+    assert_eq!(saved.get("broken"), hand.get("broken"), "kept as it stood");
+    assert!(saved.contains_key(&tick_id));
+
+    let told: Vec<String> = app
+        .take_notifications()
+        .into_iter()
+        .map(|n| n.text)
+        .filter(|text| text.contains("cannot be read"))
+        .collect();
+    assert_eq!(told.len(), 1, "{told:?}");
+    assert!(told[0].contains("broken"), "{}", told[0]);
+    let _ = std::fs::remove_dir_all(&base);
+}

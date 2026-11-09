@@ -70,6 +70,23 @@ pub(crate) fn presence(texts: &[String], home: Option<&Path>) -> Vec<(String, bo
         .collect()
 }
 
+/// What the settings hold that cannot be read, in a line above the list:
+/// the first few, and how many more. `None` where all can be.
+pub(crate) fn unreadable(catalog: &Catalog) -> Option<String> {
+    const SHOWN: usize = 3;
+    if catalog.problems.is_empty() {
+        return None;
+    }
+    let shown = catalog.problems[..catalog.problems.len().min(SHOWN)].join("; ");
+    let more = catalog.problems.len().saturating_sub(SHOWN);
+    let tail = if more > 0 {
+        format!(" (and {more} more)")
+    } else {
+        String::new()
+    };
+    Some(format!("Not applied, as it cannot be read: {shown}{tail}"))
+}
+
 /// The folders whose presence the page needs: every path's and path
 /// glob's.
 pub(crate) fn asked_presence(catalog: &Catalog) -> HashSet<String> {
@@ -680,7 +697,7 @@ pub(crate) fn problem(catalog: &Catalog, id: &str) -> Option<String> {
 }
 
 fn taken(catalog: &Catalog) -> HashSet<String> {
-    catalog.entries.iter().map(|e| e.id.clone()).collect()
+    catalog.entry_ids()
 }
 
 fn entry_mut<'a>(catalog: &'a mut Catalog, id: &str) -> Option<&'a mut Entry> {
@@ -844,8 +861,7 @@ pub(crate) fn removed(catalog: &Catalog, id: &str) -> Catalog {
 /// for. Its id.
 pub(crate) fn new_category(catalog: &Catalog, name: &str) -> (Catalog, String) {
     let mut next = catalog.clone();
-    let taken: HashSet<String> = catalog.categories.iter().map(|c| c.id.clone()).collect();
-    let id = unique_id(name, &taken);
+    let id = unique_id(name, &catalog.category_ids());
     next.categories.push(skwir_core::exclusions::Category {
         id: id.clone(),
         name: name.trim().to_owned(),
@@ -1048,6 +1064,26 @@ mod tests {
 
     /// What each entry means, worked out once for the catalog, lists the
     /// same rows as worked out for each.
+    #[test]
+    fn what_cannot_be_read_is_said_and_stays_through_a_tick() {
+        let entries = toml::Value::Table(
+            toml::from_str(r#"broken = { pattern = "~/x", colour = "red" }"#).unwrap(),
+        );
+        let catalog = Catalog::from_values(None, Some(&entries), &Legacy::default());
+        let said = unreadable(&catalog).expect("said");
+        assert!(said.contains("broken"), "{said}");
+        let ssh = catalog
+            .entries
+            .iter()
+            .find(|e| matches!(&e.matcher, Matcher::Pattern { text, .. } if text == "~/.ssh"))
+            .unwrap();
+        let after = ticked(&catalog, &ssh.id, Role::Searches, false);
+        let written = after.values().1;
+        assert_eq!(written.get("broken"), entries.get("broken"));
+        assert!(taken(&after).contains("broken"), "its id stays taken");
+        assert!(unreadable(&Catalog::shipped()).is_none());
+    }
+
     #[test]
     fn meanings_worked_out_once_say_the_same() {
         let catalog = shipped();

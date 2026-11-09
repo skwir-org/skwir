@@ -108,6 +108,84 @@ fn what_you_change_is_stored_and_nothing_more() {
     assert_eq!(none.1, toml::Value::Table(toml::Table::new()));
 }
 
+/// What the list could not take in is written back as it stood, however
+/// the rest changes: a tick on the page never erases another system's
+/// override or what a hand wrote wrong.
+#[test]
+fn what_the_list_cannot_hold_is_written_back_as_it_stood() {
+    let (categories, entries) = (
+        table(
+            r#"
+            "skwir.another-system" = { searches = true }
+            "a.b" = { name = "x" }
+            mine = { name = "Mine" }
+            "#,
+        ),
+        table(
+            r#"
+            "skwir.another-system.thing" = { agents = false }
+            broken = { pattern = "~/x", colour = "red" }
+            waiting = { pattern = "~/y", category = "not-here" }
+            "#,
+        ),
+    );
+    let mut list = Catalog::from_values(Some(&categories), Some(&entries), &Legacy::default());
+    // A tick and a new entry elsewhere.
+    let ssh_id = shipped(&Catalog::shipped(), "~/.ssh").id.clone();
+    let ssh = list.entries.iter_mut().find(|e| e.id == ssh_id).unwrap();
+    ssh.ticks = ssh.ticks.with(Role::Searches, false);
+    let (written_categories, written) = list.values();
+    let written = written.as_table().unwrap();
+    assert_eq!(
+        written.get("skwir.another-system.thing"),
+        entries.get("skwir.another-system.thing"),
+    );
+    assert_eq!(written.get("broken"), entries.get("broken"));
+    assert_eq!(
+        written["waiting"]["category"].as_str(),
+        Some("not-here"),
+        "the category asked for, not the one it stands in meanwhile"
+    );
+    assert!(written.contains_key(&ssh_id));
+    let written_categories = written_categories.as_table().unwrap();
+    assert!(written_categories.contains_key("skwir.another-system"));
+    assert!(written_categories.contains_key("a.b"));
+    assert!(written_categories.contains_key("mine"));
+
+    // Only what the list could not hold: what was removed from it stays
+    // removed.
+    list.entries.retain(|e| e.id != "waiting");
+    assert!(!list.values().1.as_table().unwrap().contains_key("waiting"));
+
+    // Said; ids set aside are not given to a new one.
+    assert!(
+        list.problems.iter().any(|p| p.contains("broken")),
+        "{:?}",
+        list.problems
+    );
+    assert!(list.problems.iter().any(|p| p.contains("a.b")));
+    assert!(
+        list.problems
+            .iter()
+            .any(|p| p.contains("no category not-here"))
+    );
+    assert!(list.entry_ids().contains("broken"));
+    assert!(list.category_ids().contains("a.b"));
+
+    // The check spares what was stored as it is, as a tick on the page
+    // sends it back; a file's value it judges whole.
+    let stored = Some(&entries);
+    let as_stored = toml::Value::Table(written.clone());
+    assert!(check_entries(&as_stored, Beside::File).is_err());
+    assert!(check_entries(&as_stored, Beside::Stored(stored)).is_ok());
+    let mut changed = written.clone();
+    changed.insert(
+        "broken".to_owned(),
+        table("pattern = \"~/x\"\ncolour = \"blue\"\n"),
+    );
+    assert!(check_entries(&toml::Value::Table(changed), Beside::Stored(stored)).is_err());
+}
+
 #[test]
 fn a_built_in_switches_and_moves_but_never_changes_its_folder() {
     let ssh_id = shipped(&Catalog::shipped(), "~/.ssh").id.clone();
@@ -124,7 +202,10 @@ fn a_built_in_switches_and_moves_but_never_changes_its_folder() {
         format!(r#""{ssh_id}" = {{ on = false }}"#),
         r#""skwir.made-up" = { pattern = "~/x" }"#.to_owned(),
     ] {
-        assert!(check_entries(&table(&refused)).is_err(), "{refused}");
+        assert!(
+            check_entries(&table(&refused), Beside::File).is_err(),
+            "{refused}"
+        );
     }
     // An override of a built-in a later release dropped does nothing.
     let dropped = catalog("", r#""skwir.gone-since" = { searches = false }"#);
@@ -144,12 +225,24 @@ fn your_ids_hold_no_dot_and_your_entries_say_which_folders() {
         r#"thing = { pattern = "x", colour = "red" }"#,
         r#"thing = { pattern = "x", searches = "yes" }"#,
     ] {
-        assert!(check_entries(&table(refused)).is_err(), "{refused}");
+        assert!(
+            check_entries(&table(refused), Beside::File).is_err(),
+            "{refused}"
+        );
     }
-    assert!(check_categories(&table("work = { }")).is_err(), "a name");
-    assert!(check_categories(&table(r#""a.b" = { name = "x" }"#)).is_err());
-    assert!(check_categories(&table(r#""skwir.games" = { name = "x" }"#)).is_err());
-    assert!(check_categories(&table(r#""skwir.games" = { searches = false }"#)).is_ok());
+    assert!(
+        check_categories(&table("work = { }"), Beside::File).is_err(),
+        "a name"
+    );
+    assert!(check_categories(&table(r#""a.b" = { name = "x" }"#), Beside::File).is_err());
+    assert!(check_categories(&table(r#""skwir.games" = { name = "x" }"#), Beside::File).is_err());
+    assert!(
+        check_categories(
+            &table(r#""skwir.games" = { searches = false }"#),
+            Beside::File
+        )
+        .is_ok()
+    );
     let fine = r#"
         a = { pattern = "node_modules" }
         b = { pattern = "~/Projects/*/out" }
@@ -160,9 +253,15 @@ fn your_ids_hold_no_dot_and_your_entries_say_which_folders() {
         g = { pattern = "C:/srv/cache" }
     "#;
     if cfg!(windows) {
-        assert!(check_entries(&table(fine)).is_ok());
+        assert!(check_entries(&table(fine), Beside::File).is_ok());
     } else {
-        assert!(check_entries(&table(&fine.replace("C:/srv/cache", "/srv/cache"))).is_ok());
+        assert!(
+            check_entries(
+                &table(&fine.replace("C:/srv/cache", "/srv/cache")),
+                Beside::File
+            )
+            .is_ok()
+        );
     }
 }
 
@@ -377,7 +476,7 @@ fn a_folders_text_is_read_one_way_and_checked_by_the_rules() {
     assert_eq!(folder("regex:^~/x", None).looked_up(), None);
     // The settings' own check says the same.
     let beside_a_path = table(r#"mine = { pattern = "~/x/target", beside = "Cargo.toml" }"#);
-    assert!(check_entries(&beside_a_path).is_err());
+    assert!(check_entries(&beside_a_path, Beside::File).is_err());
 }
 
 #[test]
@@ -893,7 +992,7 @@ any = { pattern = "scratch" }"#,
     assert!(rule.names_file(Path::new("/a/b.log")) && !rule.names(Path::new("/a/b.log")));
     assert!(rule.names_file(Path::new("/a/scratch")) && rule.names(Path::new("/a/scratch")));
     let wrong = table(r#"logs = { pattern = "*.log", names = "lines" }"#);
-    assert!(check_entries(&wrong).is_err());
+    assert!(check_entries(&wrong, Beside::File).is_err());
     let beside_files = table(r#"x = { pattern = "out", names = "files", beside = "a.toml" }"#);
-    assert!(check_entries(&beside_files).is_err());
+    assert!(check_entries(&beside_files, Beside::File).is_err());
 }
