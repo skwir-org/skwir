@@ -44,7 +44,7 @@ use skwir_core::Location;
 use skwir_core::op::PlanId;
 use skwir_core::workspace::{PaneId, WindowId};
 use skwir_platform::desktop::{Asked, Presence, Standing};
-use skwir_platform::handover::{Opening, TakingOver};
+use skwir_platform::handover::{NotTaken, Opening, TakingOver};
 
 use crate::activity::{Under, summary, words};
 use crate::format;
@@ -93,8 +93,14 @@ pub(crate) struct Finishing {
     taking: Arc<Mutex<Option<TakingOver>>>,
     /// Counts the times taking over started or stopped.
     round: Arc<AtomicU64>,
+    /// This launch lost the race to take launches over, and was handed
+    /// over to the one that won (`take_over`): set by its worker.
+    handed_away: Arc<AtomicBool>,
     /// The launches handed over, for the next wake.
     openings: Openings,
+    /// What a window that closed held and no other has taken yet: the next
+    /// `deliver` hands it on (`hand_on`).
+    handed: Inbox,
     /// A signal asked the program to end.
     ending: Arc<AtomicBool>,
     /// The presence shown, while no window is up.
@@ -105,6 +111,14 @@ pub(crate) struct Finishing {
 }
 
 impl Global for Finishing {}
+
+/// What this launch opens (`start`): `initial`, in the active pane, and
+/// `asked`, what it was asked to open, should another Skwir of this
+/// instance prove to hold later launches (`take_over`).
+pub(crate) struct Launch {
+    pub(crate) initial: Option<Location>,
+    pub(crate) asked: Option<Opening>,
+}
 
 /// Start the program's life: what it reads once for every window, its
 /// state, the loop taking the core's wakes, what ends it, then a window
@@ -117,8 +131,9 @@ pub(crate) fn start(
     started: Instant,
     wakes: flume::Receiver<()>,
     openings: Openings,
-    initial: Option<Location>,
+    launch: Launch,
 ) {
+    let Launch { initial, asked } = launch;
     // The program ends when nothing keeps it (`closed`), not with its last
     // window.
     cx.set_quit_mode(gpui::QuitMode::Explicit);
@@ -126,7 +141,7 @@ pub(crate) fn start(
     #[cfg(unix)]
     end_on_signals(&app, &ending);
     let work = Rc::new(RefCell::new(Work::new(&app)));
-    prepare(&app, cx);
+    let prepared = Arc::clone(&app);
     cx.set_global(Finishing {
         app,
         keymap,
@@ -142,11 +157,19 @@ pub(crate) fn start(
         quitting: false,
         taking: Arc::default(),
         round: Arc::default(),
+        handed_away: Arc::default(),
         openings,
+        handed: Inbox::default(),
         ending,
         shown: None,
         opened: false,
     });
+    // Later launches of this Skwir (ADR-122) come here, for its life. Asked
+    // first: a launch that started with this one finds this one's marker
+    // sooner, and one that lost to it finds out before it shows anything
+    // (`handed_away`).
+    take_over(cx.global::<Finishing>(), asked);
+    prepare(&prepared, cx);
     cx.on_window_closed(|cx, _| {
         if cx.windows().is_empty() {
             closed(cx);
@@ -154,12 +177,27 @@ pub(crate) fn start(
     })
     .detach();
     listen(cx, wakes);
+    if !handed_away(cx) {
+        show(cx, initial, None, false);
+    }
+}
+
+/// This launch was handed over to another Skwir of this instance
+/// (`take_over`), which opens what it was asked: it ends, as a launch that
+/// found that Skwir at once would have, rather than stay a second program
+/// (ADR-122). Whether it does.
+fn handed_away(cx: &mut App) -> bool {
     let state = cx.global::<Finishing>();
-    // The tab left stays drawn until the tab shown is ready (`tabs.rs`).
-    state.app.hold_tabs(true);
-    show(cx, initial, None, false);
-    // Later launches of this Skwir (ADR-122) come here, for its life.
-    take_over(cx.global::<Finishing>());
+    if !state.handed_away.swap(false, Ordering::AcqRel) {
+        return false;
+    }
+    if under_way(&state.app) {
+        tracing::info!("another Skwir took this launch over, and this one is at work: it stays");
+        return false;
+    }
+    tracing::info!("another Skwir took this launch over");
+    quit(cx);
+    true
 }
 
 /// What the program reads once, whatever windows it opens: the settings the
@@ -233,6 +271,10 @@ fn show(cx: &mut App, initial: Option<Location>, token: Option<String>, activity
         }
         return;
     }
+    // The tab left stays drawn until the tab shown is ready (`tabs.rs`),
+    // each time windows come back: none being up, the panes slept
+    // (`App::suspend_panes`, which lets go of it).
+    app.hold_tabs(true);
     if let Some(location) = initial {
         let pane = app.workspace.read().active_id();
         if let Err(error) = app.navigate(pane, &location) {
@@ -257,16 +299,21 @@ fn say_in_active(cx: &mut App, text: String) {
     }
 }
 
-/// The window the core says is active, else the one opened last.
+/// What takes what names no window: the core's active window while it is
+/// up, else the one opened last. The core's may not be up: it was just made
+/// and has yet to open, or could not (`open_window`).
+fn front_of<H>(windows: &[(WindowId, H)], active: WindowId) -> Option<&(WindowId, H)> {
+    windows
+        .iter()
+        .find(|(id, _)| *id == active)
+        .or(windows.last())
+}
+
+/// The window that takes what names no window (`front_of`).
 pub(crate) fn active_handle(cx: &App) -> Option<WindowHandle<Shell>> {
     let state = cx.global::<Finishing>();
     let active = state.app.workspace.read().active_window_id();
-    state
-        .windows
-        .iter()
-        .find(|(id, _)| *id == active)
-        .or(state.windows.last())
-        .map(|(_, handle)| *handle)
+    front_of(&state.windows, active).map(|(_, handle)| *handle)
 }
 
 /// How many windows are up.
@@ -328,6 +375,10 @@ fn woken(cx: &mut App) -> bool {
         end(cx);
         return false;
     }
+    if handed_away(cx) {
+        return false;
+    }
+    let state = cx.global::<Finishing>();
     // What woke it, taken before anything is applied: a wake that comes
     // while the windows sync is for the next pass.
     let app = Arc::clone(&state.app);
@@ -344,27 +395,33 @@ fn woken(cx: &mut App) -> bool {
         }
         return false;
     }
-    follow_windows(cx);
-    deliver(cx);
-    let windows: Vec<(WindowId, WindowHandle<Shell>)> = cx.global::<Finishing>().windows.clone();
     // What a pane moved to another window carries there, given before any
-    // window follows the tabs, taken by the one that shows it.
+    // window follows the tabs, one opened for it included (`Shell::new`).
+    let windows: Vec<(WindowId, WindowHandle<Shell>)> = cx.global::<Finishing>().windows.clone();
     for (_, window) in &windows {
         let _ = window.update(cx, |shell, _, cx| shell.give_away_moved(cx));
     }
-    // Every window takes in what the core sent; the windows it concerns
-    // draw (ADR-122): all of them for a wake that says nothing, the window
-    // a wake names, and the windows of the panes that woke or whose
-    // listings moved, wherever their tabs are now. A film playing in one
-    // draws that one alone.
-    let mut backlog = false;
+    follow_windows(cx);
+    if cx.global::<Finishing>().windows.is_empty() {
+        // None left and none could open: the program takes it in.
+        sync(cx);
+        return false;
+    }
+    deliver(cx);
+    let windows: Vec<(WindowId, WindowHandle<Shell>)> = cx.global::<Finishing>().windows.clone();
+    // The listings are pumped once, for every window (a slice a wake:
+    // `PUMP_BUDGET`, whatever the number of windows). Then the windows the
+    // wake concerns take in what the core sent and draw (ADR-122): all of
+    // them for a wake that says nothing, the window a wake names, the
+    // windows of the panes that woke or whose listings moved, wherever
+    // their tabs are now, and any that has something waiting or whose tabs
+    // moved. A film playing in one syncs and draws that one alone; another
+    // window's own draw syncs it (`render`).
+    let report = app.pump_report();
     let mut panes = woken.panes;
+    panes.extend(report.panes_changed.iter().copied());
     for (_, window) in &windows {
-        let _ = window.update(cx, |shell, window, cx| {
-            shell.sync(window, cx);
-            backlog |= shell.backlog();
-            panes.extend(shell.take_pumped());
-        });
+        let _ = window.update(cx, |shell, _, _| panes.extend(shell.take_pumped()));
     }
     let concerned: std::collections::HashSet<WindowId> = {
         let ws = app.workspace.read();
@@ -375,10 +432,17 @@ fn woken(cx: &mut App) -> bool {
             .collect()
     };
     for (id, window) in windows {
-        if woken.all || concerned.contains(&id) {
-            let _ = window.update(cx, |_, _, cx| cx.notify());
-        }
+        let is_concerned = woken.all || concerned.contains(&id);
+        let _ = window.update(cx, |shell, window, cx| {
+            if is_concerned || shell.has_to_sync() {
+                shell.sync_pumped(report.applied, window, cx);
+            }
+            if is_concerned {
+                cx.notify();
+            }
+        });
     }
+    let backlog = report.backlog;
     cx.global_mut::<Finishing>().carried.clear();
     record_windows(cx);
     backlog
@@ -436,12 +500,21 @@ fn follow_windows(cx: &mut App) {
     for id in new {
         open_window(cx, id, false, None, false);
     }
-    let state = cx.global::<Finishing>();
-    if state.raised != Some(active)
-        && let Some((_, window)) = state.windows.iter().find(|(id, _)| *id == active)
-    {
+    let state = cx.global_mut::<Finishing>();
+    if state.raised == Some(active) {
+        return;
+    }
+    // What the window brought forward last closed: the core's next active
+    // window was chosen by that alone, and the compositor gives the focus
+    // where it goes (`observe_window_activation` tells which): a command
+    // made none active, and none is pulled forward.
+    if state.raised.is_some_and(|raised| !core.contains(&raised)) {
+        state.raised = Some(active);
+        return;
+    }
+    if let Some((_, window)) = state.windows.iter().find(|(id, _)| *id == active) {
         let window = *window;
-        cx.global_mut::<Finishing>().raised = Some(active);
+        state.raised = Some(active);
         let _ = window.update(cx, |_, window, _| window.activate_window());
     }
 }
@@ -470,12 +543,17 @@ pub(crate) struct Inbox {
 /// Take in what the core sent and asked, once for the program, and hand
 /// each window its part: what a plan did to the window that ran it (else
 /// the active one), a window's command to the window of the pane it names,
-/// the rest to the active window. Then tell the desktop, and do what it
+/// the rest to the active window. "The active window" is one that is up
+/// (`front_of`): what is taken from the core's queues is never left in the
+/// inbox of a window that is not. Then tell the desktop, and do what it
 /// asked.
 fn deliver(cx: &mut App) {
     let state = cx.global_mut::<Finishing>();
     let app = Arc::clone(&state.app);
     let active = app.workspace.read().active_window_id();
+    let Some(front) = front_of(&state.windows, active).map(|(id, _)| *id) else {
+        return;
+    };
     let mut inboxes: HashMap<WindowId, Inbox> = HashMap::new();
     let watched = watched(cx);
     let state = cx.global_mut::<Finishing>();
@@ -498,7 +576,7 @@ fn deliver(cx: &mut App) {
             };
             let window = window
                 .filter(|w| state.windows.iter().any(|(up, _)| up == w))
-                .unwrap_or(active);
+                .unwrap_or(front);
             inboxes.entry(window).or_default().taken.push(taken);
         }
         work.sync_stopped(&app);
@@ -508,7 +586,7 @@ fn deliver(cx: &mut App) {
         // woken then (ADR-114, amended 2026-11-03 and 2026-11-07).
         let askers = crate::work::Askers {
             ran: &state.plans,
-            front: active,
+            front,
             unfold_after: unfold_after(&app),
         };
         let wake = work.watch(&app, Instant::now(), Some(askers));
@@ -519,13 +597,15 @@ fn deliver(cx: &mut App) {
     if let Some(at) = wake {
         crate::work::wake_after(&shared, &app, at, cx);
     }
-    let inbox = inboxes.entry(active).or_default();
+    let inbox = inboxes.entry(front).or_default();
     inbox.notifications = app.take_notifications();
     inbox.proposals = app.take_proposals();
     inbox.questions = app.take_questions();
     inbox.clashes = app.take_clash_questions();
     inbox.secrets = app.take_secret_questions();
     inbox.forms = app.take_forms();
+    let handed = std::mem::take(&mut cx.global_mut::<Finishing>().handed);
+    inbox.take_in(handed);
     for request in app.take_front_requests() {
         // Asked for a pane: the window that shows it.
         let window = request
@@ -533,7 +613,13 @@ fn deliver(cx: &mut App) {
             .get("pane")
             .and_then(|pane| serde_json::from_value::<PaneId>(pane.clone()).ok())
             .and_then(|pane| app.workspace.read().window_of(pane))
-            .unwrap_or(active);
+            .filter(|w| {
+                cx.global::<Finishing>()
+                    .windows
+                    .iter()
+                    .any(|(up, _)| up == w)
+            })
+            .unwrap_or(front);
         inboxes.entry(window).or_default().front.push(request);
     }
     let windows = cx.global::<Finishing>().windows.clone();
@@ -546,6 +632,37 @@ fn deliver(cx: &mut App) {
 }
 
 impl Inbox {
+    /// Whether it holds nothing.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.taken.is_empty()
+            && self.notifications.is_empty()
+            && self.front.is_empty()
+            && self.proposals.is_empty()
+            && self.questions.is_empty()
+            && self.clashes.is_empty()
+            && self.secrets.is_empty()
+            && self.forms.is_empty()
+    }
+
+    /// Answer Cancel to all it asks: no window is left to ask it.
+    fn decline(self, app: &skwir_core::App) {
+        for plan in self.proposals {
+            app.dismissed(plan.id);
+        }
+        for question in self.questions {
+            app.answer(question.id, false);
+        }
+        for clashes in self.clashes {
+            app.answer_clashes(clashes.id, None);
+        }
+        for secret in self.secrets {
+            app.answer_secret(secret.id, None);
+        }
+        for form in self.forms {
+            app.answer_form(form.id, None);
+        }
+    }
+
     /// Add what `more` holds after what this holds.
     pub(crate) fn take_in(&mut self, more: Inbox) {
         self.taken.extend(more.taken);
@@ -775,6 +892,21 @@ pub(crate) fn left(cx: &mut App, id: WindowId) {
     }
 }
 
+/// What a window that left held (`Shell::take_held`) goes to the next
+/// window up, at the next wake (ADR-122): a copy's question is not answered
+/// Cancel because the window it was shown in closed. With none left, it is
+/// declined.
+pub(crate) fn hand_on(cx: &mut App, held: Inbox) {
+    let state = cx.global_mut::<Finishing>();
+    state.handed.take_in(held);
+    if state.windows.is_empty() {
+        let held = std::mem::take(&mut state.handed);
+        held.decline(&state.app);
+    } else {
+        state.app.wake();
+    }
+}
+
 /// Stop and quit was asked: the window closing ends the program, the
 /// plans stopping as it does (`lib.rs`, `wind_down`).
 pub(crate) fn stopping(cx: &mut App) {
@@ -805,13 +937,19 @@ fn closed(cx: &mut App) {
         state.windows.clear();
         state.work.borrow_mut().stopped = None;
     }
+    let held = std::mem::take(&mut state.handed);
+    held.decline(&state.app);
     if state.quitting {
         return;
     }
     let app = Arc::clone(&state.app);
     crate::remember_location(&app);
-    if state.stopping || !keeps(&app, &state.work.borrow()) {
+    if state.stopping {
         quit(cx);
+        return;
+    }
+    if !keeps(&app, &state.work.borrow()) {
+        end_unless_handed(cx);
         return;
     }
     tracing::info!("the window closed: finishing what runs without it");
@@ -821,10 +959,15 @@ fn closed(cx: &mut App) {
 
 /// Take later launches over, on a worker: on Linux it waits for the bus.
 /// What it gets is kept only if taking over was not stopped meanwhile.
-fn take_over(state: &Finishing) {
+/// `launch` is what this program was started to open, at start: if another
+/// Skwir of this instance holds later launches (two launches at once, both
+/// finding no one there), it is handed over there, and this one ends
+/// (`handed_away`).
+fn take_over(state: &Finishing, launch: Option<Opening>) {
     let round = state.round.fetch_add(1, Ordering::AcqRel) + 1;
     let (openings, wake) = (Arc::clone(&state.openings), state.app.waker_handle());
     let (taking, rounds) = (Arc::clone(&state.taking), Arc::clone(&state.round));
+    let (handed_away, wake_handed) = (Arc::clone(&state.handed_away), wake.clone());
     let started = std::thread::Builder::new()
         .name("skwir-take-over".into())
         .spawn(move || {
@@ -832,13 +975,50 @@ fn take_over(state: &Finishing) {
                 openings.lock().push(opening);
                 wake();
             });
+            if matches!(taken, Err(NotTaken::Elsewhere))
+                && let Some(launch) = launch
+                && skwir_platform::handover::hand_over_to_holder(&launch)
+            {
+                handed_away.store(true, Ordering::Release);
+                wake_handed();
+            }
             let mut taking = taking.lock();
             if rounds.load(Ordering::Acquire) == round {
-                *taking = taken;
+                *taking = taken.ok();
             }
         });
     if let Err(error) = started {
         tracing::debug!("later launches start a Skwir of their own: {error}");
+    }
+}
+
+/// Nothing keeps the program, which ends, unless a launch was handed over
+/// just before. Asked with no launch being taken meanwhile
+/// (`TakingOver::close_unless`): a launch answered "taken" is never lost
+/// with the program. One waits: the window opens for it, and the program
+/// goes on, taking later launches over as it did (ADR-122, 5).
+fn end_unless_handed(cx: &mut App) {
+    let state = cx.global::<Finishing>();
+    let openings = Arc::clone(&state.openings);
+    let goes_on = state
+        .taking
+        .lock()
+        .as_ref()
+        .is_some_and(|taking| !taking.close_unless(|| !openings.lock().is_empty()));
+    if !goes_on {
+        stop_taking_over(state);
+    }
+    let handed = openings.lock().pop();
+    match handed {
+        Some(opening) => {
+            reopen(cx, Some(opening), false);
+            if !goes_on {
+                // Stopped before this one was seen (no gate to ask yet, or
+                // a launch the last moment before): taken over anew.
+                take_over(cx.global::<Finishing>(), None);
+            }
+        }
+        None => quit(cx),
     }
 }
 
@@ -912,15 +1092,7 @@ fn sync(cx: &mut App) {
         };
         reopen(cx, Some(opening), true);
     } else if !keeps {
-        // A launch handed over just before taking over stopped opens the
-        // window rather than end with the program.
-        let state = cx.global::<Finishing>();
-        stop_taking_over(state);
-        let handed = state.openings.lock().pop();
-        match handed {
-            Some(opening) => reopen(cx, Some(opening), false),
-            None => quit(cx),
-        }
+        end_unless_handed(cx);
     }
 }
 
@@ -1164,6 +1336,12 @@ fn open_window(
         Err(error) if !cx.global::<Finishing>().opened => panic!("open window: {error:#}"),
         Err(error) => {
             tracing::error!("a window could not open: {error:#}");
+            // Out of the core: it would stay the active window, and be
+            // asked to open again at every wake (the last one stays).
+            let app = Arc::clone(&cx.global::<Finishing>().app);
+            if let Err(error) = app.close_window(id) {
+                tracing::warn!("a window that did not open closes: {error:#}");
+            }
             return false;
         }
     };
@@ -1282,9 +1460,10 @@ mod tests {
     use std::time::Duration;
 
     use skwir_core::op::{PlanId, RunKind, Transfer};
+    use skwir_core::workspace::WindowId;
     use skwir_platform::desktop::Standing;
 
-    use super::presence;
+    use super::{front_of, presence};
     use crate::activity::{Stopped, Under};
     use crate::toast::Running;
     use crate::work::Work;
@@ -1299,6 +1478,21 @@ mod tests {
             ..Transfer::default()
         };
         (running, transfer)
+    }
+
+    /// What names no window goes to the active window while it is up, else
+    /// to the one opened last: never to one that did not open.
+    #[test]
+    fn what_names_no_window_goes_to_one_that_is_up() {
+        let up = [(WindowId(1), "first"), (WindowId(2), "second")];
+        let front = |active| front_of(&up, active).map(|(_, name)| *name);
+        assert_eq!(front(WindowId(1)), Some("first"));
+        assert_eq!(
+            front(WindowId(9)),
+            Some("second"),
+            "the active one is not up"
+        );
+        assert_eq!(front_of::<&str>(&[], WindowId(1)), None);
     }
 
     /// Without a window, the presence says what runs as the strip does,

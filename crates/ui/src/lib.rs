@@ -175,11 +175,19 @@ mod dev_thumbs {
 
 /// Run the UI until the window closes. `initial` is opened in the active pane.
 pub fn run(app: Arc<App>, initial: Option<Location>) -> anyhow::Result<()> {
-    run_from(app, initial, Instant::now())
+    run_from(app, initial, Instant::now(), None)
 }
 
-/// Like [`run`], with the instant the process started, for first-frame timing.
-pub fn run_from(app: Arc<App>, initial: Option<Location>, started: Instant) -> anyhow::Result<()> {
+/// Like [`run`], with the instant the process started, for first-frame
+/// timing, and what this launch asked (`launch`), handed to another Skwir
+/// of this instance if it proves to hold later launches
+/// (`finishing::take_over`).
+pub fn run_from(
+    app: Arc<App>,
+    initial: Option<Location>,
+    started: Instant,
+    launch: Option<skwir_platform::handover::Opening>,
+) -> anyhow::Result<()> {
     // Commands that may wait move their waiting off this thread.
     skwir_core::scheduler::mark_window_thread(&app.scheduler);
     let (wake_tx, wake_rx) = flume::bounded::<()>(1);
@@ -267,7 +275,11 @@ pub fn run_from(app: Arc<App>, initial: Option<Location>, started: Instant) -> a
         })
         .detach();
         // The window, and what outlives it (ADR-115).
-        finishing::start(cx, app, keymap, started, wake_rx, openings, initial);
+        let launch = finishing::Launch {
+            initial,
+            asked: launch,
+        };
+        finishing::start(cx, app, keymap, started, wake_rx, openings, launch);
     });
     Ok(())
 }

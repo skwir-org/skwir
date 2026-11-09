@@ -103,6 +103,24 @@ pub struct PaneUi {
 }
 
 impl PaneUi {
+    /// What it carries to the window its tab moves to.
+    pub(crate) fn carried(&self) -> Carried {
+        Carried {
+            view_id: self.view_id,
+            quick_filters_on: self.quick_filters_on,
+            timeline: self.timeline.like(),
+        }
+    }
+
+    /// Show its files as `carried` from the window its tab came from.
+    pub(crate) fn shows_as(&mut self, carried: Carried) {
+        if self.views.contains_key(carried.view_id) {
+            self.view_id = carried.view_id;
+        }
+        self.quick_filters_on = carried.quick_filters_on;
+        self.timeline = carried.timeline;
+    }
+
     /// Its pane went dormant with its tab (ADR-018): nothing it drew from is
     /// kept. The views start over when the listing comes back, as after a
     /// navigation.
@@ -352,8 +370,6 @@ pub struct Shell {
     pub type_names: crate::typenames::TypeNames,
     /// Switches of the settings, resolved when their revision changes.
     pub prefs: Preferences,
-    /// Listing events were left for the next sync (`PumpReport::backlog`).
-    backlog: bool,
     /// The panes, any window's, whose listings the last sync's pump moved:
     /// their windows draw (`finishing::woken`).
     pumped: Vec<skwir_core::workspace::PaneId>,
@@ -504,6 +520,9 @@ pub struct Shell {
     /// What plans' steps ask that only the user knows (an archive's
     /// password), waiting for the prompt to be free (`ask_secrets`).
     pub secrets: std::collections::VecDeque<skwir_core::app::SecretQuestion>,
+    /// The question the secret prompt shows, handed on with it if its
+    /// window closes (`take_held`).
+    pub(crate) secret_shown: Option<skwir_core::app::SecretQuestion>,
     pub nudges: crate::shortcuts::Nudges,
     /// What `/` looked for last, and whether backward: `n` and `N` look
     /// for it again.
@@ -743,7 +762,6 @@ impl Shell {
             type_names: crate::typenames::TypeNames::default(),
             prefs: Preferences::default(),
             unsaved: std::collections::BTreeMap::new(),
-            backlog: false,
             pumped: Vec::new(),
             sidebar_sections: crate::sidebar::Sections::default(),
             arranged_places: std::cell::RefCell::default(),
@@ -811,6 +829,7 @@ impl Shell {
             about: None,
             marquee: None,
             secrets: std::collections::VecDeque::new(),
+            secret_shown: None,
             form: None,
             forms: std::collections::VecDeque::new(),
             nudges: crate::shortcuts::Nudges::default(),
@@ -838,7 +857,26 @@ impl Shell {
             _subscriptions: subs,
         };
         shell.sync_tabs(window, cx);
+        // Its window closed while it opened (a script's `window.close` just
+        // after its `window.new`): a shell always has a pane to draw
+        // (`ui`), no pane of the core's, and the next `follow_windows`
+        // takes it down.
+        if shell.panes.is_empty() {
+            let none = PaneId(u32::MAX);
+            shell.pane = none;
+            let ui = shell.make_pane_ui(none, window, cx);
+            shell.panes.push(ui);
+        }
         shell.restore_session(shape, split, window, cx);
+        // The tab it opened for shows its files as it did where it was: what
+        // a pane carries stands over the shape this window took from there.
+        let panes: Vec<PaneId> = shell.panes.iter().map(|ui| ui.id).collect();
+        let mut carried = crate::finishing::take_carried(cx, &panes);
+        for ui in &mut shell.panes {
+            if let Some(carried) = carried.remove(&ui.id) {
+                ui.shows_as(carried);
+            }
+        }
         // The taskbar's button shows the progress of the window used.
         shell.work.borrow().shown_in(Some(window));
         // A thumbnail this window asked for wakes it alone (`leave` forgets).
@@ -981,7 +1019,11 @@ impl Shell {
         }
         // Restored tabs bring their own splits. One made here starts even:
         // the remembered share is put back after it.
-        if split && session.split && !self.is_split() {
+        if split
+            && session.split
+            && !self.is_split()
+            && self.app.workspace.read().window(self.window_id).is_some()
+        {
             let (split, share) = (self.layout.split, self.split_share);
             self.toggle_split(window, cx);
             self.layout.split = split;
@@ -2175,15 +2217,19 @@ impl Shell {
     /// does in a window: it acts in this window. A command that names no
     /// pane acts in the core's active window (ADR-122), which an agent's
     /// or a script's `window.select`, `tab.move` or `window.new` may have
-    /// made another without the focus moving; so this window is made
-    /// active first. What is asked from elsewhere (`sync`) is not, and
-    /// leaves the active window as it is.
+    /// made another without the focus moving; so this window, the one with
+    /// the keyboard, is made active first. What is asked from elsewhere
+    /// (`sync`) is not, nor what runs here with no one at this window (a
+    /// track that ended in one behind another): they leave the active
+    /// window as it is.
     fn admit(&mut self, name: &str, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if !self.admit_here(name, window, cx) {
             return false;
         }
-        self.app.workspace.write().set_active_window(self.window_id);
-        crate::finishing::raised(cx, self.window_id);
+        if window.is_window_active() {
+            self.app.workspace.write().set_active_window(self.window_id);
+            crate::finishing::raised(cx, self.window_id);
+        }
         true
     }
 
@@ -2372,12 +2418,6 @@ impl Shell {
         cx.notify();
     }
 
-    /// Whether a listing is still being applied, a slice per sync
-    /// (`PUMP_BUDGET`): the wake loop syncs again after a turn.
-    pub(crate) fn backlog(&self) -> bool {
-        self.backlog
-    }
-
     /// The panes whose listings the last sync's pump moved, taken.
     pub(crate) fn take_pumped(&mut self) -> Vec<skwir_core::workspace::PaneId> {
         std::mem::take(&mut self.pumped)
@@ -2447,18 +2487,19 @@ impl Shell {
     }
 
     /// The window is about to close (its close button, Quit): what it asks
-    /// and was not answered is answered Cancel, as its own Close would;
-    /// from now on the shell takes nothing (`sync`), the program taking in
-    /// what the core sends and asks, which finishes without the window
-    /// (`finishing.rs`) or ends. The window goes later (gpui removes it in
-    /// a task of its own), and what is asked meanwhile waits for the next
-    /// window rather than going with this one.
+    /// and was not answered goes to the next window up, or, none being up,
+    /// is answered Cancel, as its own Close would (`take_held`,
+    /// `finishing::hand_on`); from now on the shell takes nothing (`sync`),
+    /// the program taking in what the core sends and asks, which finishes
+    /// without the window (`finishing.rs`) or ends. The window goes later
+    /// (gpui removes it in a task of its own), and what is asked meanwhile
+    /// waits for the next window rather than going with this one.
     pub(crate) fn leave(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let _ = window;
         if self.left {
             return;
         }
-        self.decline_held();
+        let held = self.take_held();
         self.left = true;
         // A window closed with the keyboard may not be told it lost it.
         self.app.set_window_focused(self.window_id, false);
@@ -2467,6 +2508,7 @@ impl Shell {
         self.let_go_of_player();
         self.app.thumbnails.forget_asker(self.thumb_asker());
         crate::finishing::left(cx, self.window_id);
+        crate::finishing::hand_on(cx, held);
         if crate::finishing::window_count(cx) == 0 {
             self.work.borrow().shown_in(None);
         }
@@ -2517,33 +2559,40 @@ impl Shell {
         }
     }
 
-    /// What the window took to ask and was not answered: Cancel each.
-    fn decline_held(&mut self) {
+    /// All the window took to ask and was not answered, shown or waiting
+    /// its turn, and all that waits to be taken in (`Inbox`): what the next
+    /// window up takes over, or what is answered Cancel with no window left
+    /// (`finishing::hand_on`). Asked again from the start.
+    fn take_held(&mut self) -> crate::finishing::Inbox {
+        let mut held = crate::finishing::Inbox::default();
         for review in self.reviews.drain(..) {
             match review {
-                crate::review::Review::Plan { plan, .. } => {
-                    self.app.dismissed(plan.id);
-                }
-                crate::review::Review::Question(question) => {
-                    self.app.answer(question.id, false);
-                }
-                crate::review::Review::Clashes(clashes) => {
-                    self.app.answer_clashes(clashes.question.id, None);
+                crate::review::Review::Plan { plan, .. } => held.proposals.push(plan),
+                crate::review::Review::Question(question) => held.questions.push(question),
+                crate::review::Review::Clashes(clashes) => held.clashes.push(clashes.question),
+            }
+        }
+        let prompted = self.prompt.take().map(|prompt| prompt.kind);
+        if let Some(crate::prompts::PromptKind::Secret { id }) = prompted {
+            let shown = self
+                .secret_shown
+                .take()
+                .filter(|question| question.id == id);
+            match shown {
+                Some(question) => held.secrets.push(question),
+                None => {
+                    self.app.answer_secret(id, None);
                 }
             }
         }
-        if let Some(prompt) = self.prompt.take() {
-            self.give_up_secret(prompt.kind);
-        }
-        for secret in self.secrets.drain(..) {
-            self.app.answer_secret(secret.id, None);
-        }
+        held.secrets.extend(self.secrets.drain(..));
         if let Some(form) = self.form.take() {
-            self.app.answer_form(form.id, None);
+            held.forms.push(form.into_asked());
         }
-        for form in self.forms.drain(..) {
-            self.app.answer_form(form.id, None);
-        }
+        held.forms.extend(self.forms.drain(..));
+        held.front.extend(self.front_waiting.drain(..));
+        held.take_in(std::mem::take(&mut self.inbox));
+        held
     }
 
     /// Dispatch and hand back a `Value` (for plugin queries the UI renders).
@@ -3315,10 +3364,29 @@ impl Shell {
         if self.left {
             return;
         }
-        let t0 = Instant::now();
         let report = self.app.pump_report();
-        self.backlog = report.backlog;
         self.pumped.extend_from_slice(&report.panes_changed);
+        self.sync_pumped(report.applied, window, cx);
+    }
+
+    /// Whether the program took something for this window, or its tabs
+    /// moved: a sync to do though no wake named it (`finishing::woken`).
+    pub(crate) fn has_to_sync(&self) -> bool {
+        !self.inbox.is_empty() || self.app.workspace.read().revision() != self.tabs_revision
+    }
+
+    /// `sync`, the listings pumped already (`finishing::woken`, once for
+    /// every window: never one window's turn each per wake).
+    pub(crate) fn sync_pumped(
+        &mut self,
+        applied: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.left {
+            return;
+        }
+        let t0 = Instant::now();
         self.sync_views();
         self.sync_keymap(cx);
         // What the program took from the core for this window
@@ -3587,9 +3655,9 @@ impl Shell {
         }
         self.take_reveal(cx);
         self.sync_loading(cx);
-        if report.applied > 0 || resorted_any {
+        if applied > 0 || resorted_any {
             tracing::debug!(
-                applied = report.applied,
+                applied,
                 resorted = resorted_any,
                 rows = self.ui().list.sorted.len(),
                 took_us = t0.elapsed().as_micros() as u64,

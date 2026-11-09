@@ -130,5 +130,5 @@ fn main() -> anyhow::Result<()> {
     // The folder is not logged: it can come from a preference, and paths
     // are private.
     tracing::info!("starting");
-    skwir_ui::run_from(app, initial, started)
+    skwir_ui::run_from(app, initial, started, Some(opening))
 }

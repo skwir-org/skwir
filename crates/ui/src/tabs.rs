@@ -176,21 +176,25 @@ impl Shell {
             .map(|ui| (ui.id, ui))
             .collect();
         // A pane come from another window with its tab shows its files
-        // as it did there (`give_away_moved`).
-        let mut carried = crate::finishing::take_carried(cx, &wanted);
+        // as it did there (`give_away_moved`). Not taken in a shell being
+        // built: its shape is laid down after this (`Shell::new`).
+        let mut carried = if self.shown_tab.is_none() {
+            std::collections::HashMap::new()
+        } else {
+            crate::finishing::take_carried(cx, &wanted)
+        };
         let mut panes = Vec::with_capacity(wanted.len());
         for id in &wanted {
             let ui = pool.remove(id).unwrap_or_else(|| {
                 let mut ui = self.make_pane_ui(*id, window, cx);
-                let (view, quick_filters, timeline) = match carried.remove(id) {
-                    Some(carried) => (carried.view_id, carried.quick_filters_on, carried.timeline),
-                    None => (view, quick_filters, timeline.like()),
-                };
-                if ui.views.contains_key(view) {
-                    ui.view_id = view;
-                }
-                ui.quick_filters_on = quick_filters;
-                ui.timeline = timeline;
+                ui.shows_as(match carried.remove(id) {
+                    Some(carried) => carried,
+                    None => crate::shell::Carried {
+                        view_id: view,
+                        quick_filters_on: quick_filters,
+                        timeline: timeline.like(),
+                    },
+                });
                 ui
             });
             panes.push(ui);
@@ -225,6 +229,12 @@ impl Shell {
                 }
                 self.hidden.insert(id, ui);
             } else {
+                // Gone to another window with its tab, in a sync before the
+                // program's (a click's own, `render`): what it shows its
+                // files as goes with it all the same (`give_away_moved`).
+                if self.app.workspace.read().window_of(id).is_some() {
+                    crate::finishing::carry(cx, vec![(id, ui.carried())]);
+                }
                 // Closed: with the split, with its tab, or by a script.
                 self.release_usage(id);
             }
@@ -264,16 +274,7 @@ impl Shell {
                     ws.window_of(ui.id)
                         .is_some_and(|window| window != self.window_id)
                 })
-                .map(|ui| {
-                    (
-                        ui.id,
-                        crate::shell::Carried {
-                            view_id: ui.view_id,
-                            quick_filters_on: ui.quick_filters_on,
-                            timeline: ui.timeline.like(),
-                        },
-                    )
-                })
+                .map(|ui| (ui.id, ui.carried()))
                 .collect()
         };
         crate::finishing::carry(cx, moved);

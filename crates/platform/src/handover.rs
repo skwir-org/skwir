@@ -182,40 +182,82 @@ pub fn hand_over(opening: &Opening) -> bool {
     }
 }
 
+/// [`hand_over`] for a launch that was refused taking later launches over
+/// ([`NotTaken::Elsewhere`]): the Skwir that holds them answers it. Two
+/// launches at once both find no one there and go on, the one that loses
+/// finding out here; it is handed over rather than stay a second program
+/// (ADR-122). A marker the other has yet to write is no reason not to ask.
+/// Waits up to two seconds for the other's answer: call it on a worker.
+#[must_use]
+pub fn hand_over_to_holder(opening: &Opening) -> bool {
+    if apart() {
+        return false;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        linux::ask_holder(
+            &linux::name(&Instance::here()),
+            linux::patient_session,
+            opening,
+        )
+    }
+    #[cfg(windows)]
+    {
+        pipe::name(&Instance::here()).is_some_and(|name| pipe::hand_over_to(&name, opening))
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
+    {
+        let _ = opening;
+        false
+    }
+}
+
+/// Why later launches are not taken over here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NotTaken {
+    /// Another Skwir of this instance takes them: this one, if it is a
+    /// launch, is theirs ([`hand_over_to_holder`]).
+    Elsewhere,
+    /// It cannot be: no session bus or runtime folder (Linux), this
+    /// Skwir does already, on macOS and other systems, once [`keep_apart`]
+    /// was asked.
+    Cannot,
+}
+
 /// While the returned value is held, later launches are handed here:
 /// `taken` is called with each, on a thread of the module's (the session
 /// bus's on Linux, the pipe's on Windows), before the launch is answered;
 /// it must return at once, make no call on the session bus, and never
-/// drop the [`TakingOver`] (which waits for it). `None` where this cannot
-/// be: another Skwir of this instance takes them already, no session bus
-/// or runtime folder (Linux), on macOS and other systems, once
-/// [`keep_apart`] was asked.
+/// drop the [`TakingOver`] (which waits for it). [`NotTaken`] says why
+/// not.
 ///
 /// Waits for the bus's answer to the name asked (Linux): call it on a
 /// worker.
-#[must_use]
-pub fn take_over(taken: impl Fn(Opening) + Send + Sync + 'static) -> Option<TakingOver> {
+pub fn take_over(taken: impl Fn(Opening) + Send + Sync + 'static) -> Result<TakingOver, NotTaken> {
     if apart() {
-        return None;
+        return Err(NotTaken::Cannot);
     }
     #[cfg(target_os = "linux")]
     {
         let instance = Instance::here();
         linux::take_over_with(
             crate::bus::session,
-            linux::marker(&instance)?,
+            linux::marker(&instance).ok_or(NotTaken::Cannot)?,
             linux::name(&instance),
             taken,
         )
     }
     #[cfg(windows)]
     {
-        pipe::take_over_at(pipe::name(&Instance::here())?, taken)
+        pipe::take_over_at(
+            pipe::name(&Instance::here()).ok_or(NotTaken::Cannot)?,
+            taken,
+        )
     }
     #[cfg(not(any(target_os = "linux", windows)))]
     {
         let _ = taken;
-        None
+        Err(NotTaken::Cannot)
     }
 }
 
@@ -233,6 +275,16 @@ pub struct TakingOver {
 }
 
 impl TakingOver {
+    /// Stop taking launches over, unless `waiting` says one already was
+    /// (asked with no launch being taken meanwhile): whether it stopped.
+    /// Stopped, launches are refused as after [`TakingOver::stop_aside`],
+    /// which still takes down what serves them. Not stopped, nothing
+    /// changed and taking over goes on: a program about to end looks here
+    /// so that no launch handed over at the last moment is lost.
+    pub fn close_unless(&self, waiting: impl FnOnce() -> bool) -> bool {
+        self.gate.close_unless(waiting)
+    }
+
     /// Stop as a drop does, what serves launches taken down on a thread of
     /// its own (the name, the object and our marker on Linux, a call on
     /// the bus; the pipe on Windows, up to [`PATIENCE`]): the window's
@@ -292,6 +344,17 @@ impl Gate {
     fn close(&self) {
         self.0.lock().take();
     }
+
+    /// Close, unless `waiting` holds, asked with no launch being passed:
+    /// whether it closed.
+    fn close_unless(&self, waiting: impl FnOnce() -> bool) -> bool {
+        let mut held = self.0.lock();
+        if waiting() {
+            return false;
+        }
+        held.take();
+        true
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -304,7 +367,7 @@ mod linux {
     use zbus::blocking::Connection;
     use zbus::fdo::{RequestNameFlags, RequestNameReply};
 
-    use super::{Gate, Instance, Opening, PATIENCE, TakingOver};
+    use super::{Gate, Instance, NotTaken, Opening, PATIENCE, TakingOver};
 
     /// What the bus name of an instance begins with.
     pub(super) const NAME: &str = "org.skwir.skwir";
@@ -351,6 +414,16 @@ mod linux {
         if std::fs::symlink_metadata(marker).is_err() {
             return false;
         }
+        ask_holder(name, connect, opening)
+    }
+
+    /// Hand `opening` to the Skwir holding `name`, on the bus `connect`
+    /// connects to: whether it took it.
+    pub(super) fn ask_holder(
+        name: &str,
+        connect: impl FnOnce() -> zbus::Result<Connection>,
+        opening: &Opening,
+    ) -> bool {
         let ask = || -> zbus::Result<bool> {
             let bus = connect()?;
             // Asked first, so a name no one holds is not started by the
@@ -432,7 +505,7 @@ mod linux {
         marker: PathBuf,
         name: String,
         taken: impl Fn(Opening) + Send + Sync + 'static,
-    ) -> Option<TakingOver> {
+    ) -> Result<TakingOver, NotTaken> {
         let gate = Gate::new(taken);
         let stop = CancelToken::new();
         let (first, answered) = std::sync::mpsc::sync_channel(1);
@@ -447,17 +520,18 @@ mod linux {
                         // What the bus that ended had is let go of first
                         // (its marker, ours, written again once served).
                         drop(served.take());
-                        served = Served::on(bus, &gate, &marker, &name);
+                        let on = Served::on(bus, &gate, &marker, &name);
                         if let Some(first) = first.take() {
-                            let _ = first.send(served.is_some());
+                            let _ = first.send(on.as_ref().map(|_| ()).map_err(|not| *not));
                         }
+                        served = on.ok();
                     });
                     drop(served);
                 })
         };
         let thread = thread
             .inspect_err(|error| tracing::debug!("not taking launches over: {error}"))
-            .ok()?;
+            .map_err(|_| NotTaken::Cannot)?;
         let taking = TakingOver {
             gate,
             held: Some(Held {
@@ -467,7 +541,10 @@ mod linux {
         };
         // Not served (dropped: stopped and waited for), or no bus (the
         // thread ended without a word).
-        answered.recv().unwrap_or(false).then_some(taking)
+        answered
+            .recv()
+            .unwrap_or(Err(NotTaken::Cannot))
+            .map(|()| taking)
     }
 
     /// The object and the name served on one connection, which the
@@ -480,27 +557,43 @@ mod linux {
     }
 
     impl Served {
-        /// Served on `bus`, or `None` where it cannot be: another Skwir
-        /// holds the name, this connection serves it already (a second
-        /// [`super::take_over`] of this Skwir), no marker can be written.
-        fn on(bus: &Connection, gate: &Arc<Gate>, marker: &Path, name: &str) -> Option<Served> {
+        /// Served on `bus`, or why not: another Skwir holds the name
+        /// ([`NotTaken::Elsewhere`]); this connection serves it already (a
+        /// second [`super::take_over`] of this Skwir), no marker can be
+        /// written ([`NotTaken::Cannot`]).
+        fn on(
+            bus: &Connection,
+            gate: &Arc<Gate>,
+            marker: &Path,
+            name: &str,
+        ) -> Result<Served, NotTaken> {
             let objects = bus.object_server();
             match objects.at(PATH, Finishing(Arc::clone(gate))) {
                 Ok(true) => {}
                 Ok(false) => {
                     tracing::debug!("this Skwir takes later launches over already");
-                    return None;
+                    return Err(NotTaken::Cannot);
                 }
                 Err(error) => {
                     tracing::debug!("not taking launches over: {error}");
-                    return None;
+                    return Err(NotTaken::Cannot);
                 }
             }
             let named = bus.request_name_with_flags(name, RequestNameFlags::DoNotQueue.into());
             if !matches!(named, Ok(RequestNameReply::PrimaryOwner)) {
                 tracing::debug!(?named, "another Skwir takes later launches over");
                 let _ = objects.remove::<Finishing, _>(PATH);
-                return None;
+                // Refused: this library says so as an error, the bus as a
+                // reply.
+                let taken = matches!(
+                    named,
+                    Err(zbus::Error::NameTaken) | Ok(RequestNameReply::Exists)
+                );
+                return Err(if taken {
+                    NotTaken::Elsewhere
+                } else {
+                    NotTaken::Cannot
+                });
             }
             let served = Served {
                 bus: bus.clone(),
@@ -510,9 +603,9 @@ mod linux {
             if let Err(error) = write_marker(marker) {
                 // Dropped: neither the name nor the object kept.
                 tracing::debug!("not taking launches over: {}: {error}", marker.display());
-                return None;
+                return Err(NotTaken::Cannot);
             }
-            Some(served)
+            Ok(served)
         }
     }
 
@@ -576,7 +669,7 @@ mod pipe {
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow;
 
-    use super::{Gate, Opening, PATIENCE, TakingOver, frame};
+    use super::{Gate, NotTaken, Opening, PATIENCE, TakingOver, frame};
 
     /// How often a wait on the pipe looks again: a wait lasts at most
     /// [`PATIENCE`], and only while a launch is handed over.
@@ -763,12 +856,19 @@ mod pipe {
     pub(super) fn take_over_at(
         pipe: OsString,
         taken: impl Fn(Opening) + Send + Sync + 'static,
-    ) -> Option<TakingOver> {
+    ) -> Result<TakingOver, NotTaken> {
         // Its first instance: refused where any is there, made by
-        // another Skwir (or anyone).
+        // another Skwir (or anyone): ERROR_ACCESS_DENIED.
+        const ACCESS_DENIED: i32 = 5;
         let first = crate::windows::pipe::instance(&pipe, true)
             .inspect_err(|error| tracing::debug!("not taking launches over: {error}"))
-            .ok()?;
+            .map_err(|error| {
+                if error.raw_os_error() == Some(ACCESS_DENIED) {
+                    NotTaken::Elsewhere
+                } else {
+                    NotTaken::Cannot
+                }
+            })?;
         let gate = Gate::new(taken);
         let stop = Arc::new(AtomicBool::new(false));
         let thread = {
@@ -777,9 +877,9 @@ mod pipe {
                 .name("skwir-finishing".into())
                 .spawn(move || serve(&pipe, first, &gate, &stop))
                 .inspect_err(|error| tracing::debug!("not taking launches over: {error}"))
-                .ok()?
+                .map_err(|_| NotTaken::Cannot)?
         };
-        Some(TakingOver {
+        Ok(TakingOver {
             gate,
             held: Some(Held {
                 pipe,
@@ -1100,7 +1200,7 @@ mod frame_tests {
 
 #[cfg(all(test, target_os = "linux"))]
 mod linux_tests {
-    use super::linux::{hand_over_at, take_over_with};
+    use super::linux::{ask_holder, hand_over_at, take_over_with};
     use super::*;
     use std::io::BufRead;
     use std::os::unix::ffi::OsStringExt;
@@ -1396,6 +1496,67 @@ mod linux_tests {
         until("the marker removed", &|| !marker.exists());
     }
 
+    /// A launch that lost the race to take launches over hands itself to
+    /// the one that won, even before that one's marker is written.
+    #[test]
+    fn a_launch_that_lost_the_name_is_taken_by_the_one_that_holds_it() {
+        let folder = folder();
+        let listen = format!("unix:dir={}", folder.path().display());
+        let bus = bus_or_skip!(folder.path(), &listen);
+        let marker = folder.path().join("skwir").join("finishing");
+        let (told, taken) = taker();
+        let first =
+            take_over_with(connector(&bus.address), marker.clone(), HELD.into(), taken).unwrap();
+        std::fs::remove_file(&marker).unwrap();
+        assert!(
+            !hand_over_at(&marker, HELD, patient(&bus.address), &opening()),
+            "a launch finding no marker goes on"
+        );
+        assert!(ask_holder(HELD, patient(&bus.address), &opening()));
+        assert_eq!(*told.lock(), vec![opening()]);
+        drop(first);
+    }
+
+    /// A launch handed over just before the program ends keeps it: the
+    /// program looks, and goes on taking launches over. With none waiting,
+    /// it stops: the next launch is refused.
+    #[test]
+    fn a_launch_waiting_keeps_the_program_taking_launches_over() {
+        let folder = folder();
+        let listen = format!("unix:dir={}", folder.path().display());
+        let bus = bus_or_skip!(folder.path(), &listen);
+        let marker = folder.path().join("skwir").join("finishing");
+        let (told, taken) = taker();
+        let taking =
+            take_over_with(connector(&bus.address), marker.clone(), HELD.into(), taken).unwrap();
+        assert!(hand_over_at(
+            &marker,
+            HELD,
+            patient(&bus.address),
+            &opening()
+        ));
+        let waiting = || !told.lock().is_empty();
+        assert!(!taking.close_unless(waiting), "a launch waits");
+        told.lock().clear();
+        assert!(hand_over_at(
+            &marker,
+            HELD,
+            patient(&bus.address),
+            &opening()
+        ));
+        assert_eq!(told.lock().len(), 1, "taking launches over goes on");
+        told.lock().clear();
+        assert!(taking.close_unless(waiting), "none waits");
+        assert!(!hand_over_at(
+            &marker,
+            HELD,
+            patient(&bus.address),
+            &opening()
+        ));
+        assert!(told.lock().is_empty(), "refused once closed");
+        drop(taking);
+    }
+
     /// While one Skwir takes launches over, another cannot, on a
     /// connection of its own (another process) or on the same (this one
     /// asking twice), and the first goes on taking them; once it lets go,
@@ -1419,15 +1580,21 @@ mod linux_tests {
             .unwrap()
         };
         let (_, other) = taker();
-        assert!(
-            take_over_with(connector(&bus.address), marker.clone(), HELD.into(), other).is_none()
+        assert_eq!(
+            take_over_with(connector(&bus.address), marker.clone(), HELD.into(), other).err(),
+            Some(NotTaken::Elsewhere),
+            "another Skwir holds the name"
         );
         let (_, again) = taker();
         let same = {
             let shared = shared.clone();
             move || Ok::<_, zbus::Error>(shared.clone())
         };
-        assert!(take_over_with(same, marker.clone(), HELD.into(), again).is_none());
+        assert_eq!(
+            take_over_with(same, marker.clone(), HELD.into(), again).err(),
+            Some(NotTaken::Cannot),
+            "this Skwir does already"
+        );
         assert!(hand_over_at(
             &marker,
             HELD,
@@ -1635,7 +1802,10 @@ mod windows_tests {
         let (told, taken) = taker();
         let first = pipe::take_over_at(pipe.clone(), taken).unwrap();
         let (_, other) = taker();
-        assert!(pipe::take_over_at(pipe.clone(), other).is_none());
+        assert_eq!(
+            pipe::take_over_at(pipe.clone(), other).err(),
+            Some(super::NotTaken::Elsewhere)
+        );
         assert!(pipe::hand_over_to(&pipe, &opening()));
         assert_eq!(told.lock().len(), 1);
         drop(first);

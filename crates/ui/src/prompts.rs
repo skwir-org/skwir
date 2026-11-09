@@ -244,6 +244,7 @@ impl Shell {
         let Some(question) = self.secrets.pop_front() else {
             return;
         };
+        self.secret_shown = Some(question.clone());
         self.open_prompt_with(
             PromptKind::Secret { id: question.id },
             &question.title,

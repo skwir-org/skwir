@@ -1618,8 +1618,29 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   `Workspace::active_id` (the active window's). A tab moved to another
   window is drawn there anew, carrying what its panes show their files
   as (`Carried`: the view, Quick filters, the timeline), given before any
-  window follows (`give_away_moved`): a `PaneUi` is made in its window
-  and never moves.
+  window follows (`give_away_moved`) or as its own sync lets it go
+  (`sync_tabs`): a `PaneUi` is made in its window and never moves.
+- **What the user does in a window acts in it.** `Shell::run` and
+  `run_args` pass one gate, `admit`, which makes this window the core's
+  active one before the command runs: an agent's or a script's
+  `window.select`, `tab.move` or `window.new` moves the active window
+  without moving the focus, and a key pressed here is not theirs to
+  redirect. What is asked from elsewhere (`Inbox::front`) goes through
+  `admit_here`, and leaves the active window as it is.
+- **The active window is the one used last** (ADR-122): the core keeps
+  the windows in the order they were used (`Workspace::used`), so closing
+  the active one goes to the one used before it. That change is the
+  close's, not a command's: `finishing::follow_windows` does not bring it
+  forward (the compositor gives the focus where it goes).
+- **What a window closing holds is handed on.** Reviews, questions,
+  clashes, secrets and forms, shown or waiting their turn, and commands
+  waiting for a dialog go to the next window up (`Shell::take_held`,
+  `finishing::hand_on`, taken at the next `deliver`) and are asked again
+  there. Answered Cancel only when the last window leaves.
+- **What names no window goes to one that is up** (`finishing::front_of`:
+  the core's active window while it is up, else the one opened last). A
+  window that cannot open (`open_window`) is taken out of the core, so no
+  ghost stays active.
 - **Opening and closing.** Ctrl+N (`window.new`) opens a window on the
   folder shown, shaped as its window (unsplit); Open in New Window on a
   folder (`window.open`) or a sidebar place (`sidebar::open_in_window`),
@@ -1662,10 +1683,16 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   window used last), else, with `ui.launch_opens` = `tab`, a tab of the
   window in use, a bare launch then bringing that window forward
   (`finishing::reopen`). With none up, the windows come back (ADR-115).
+  Two launches at once both find no one there: the one refused the name
+  (`NotTaken::Elsewhere`) hands itself to the one that holds it and ends
+  (`handed_away`), never a second program. Taking over is asked for before
+  anything is shown, and stops only once no launch waits
+  (`TakingOver::close_unless`, `finishing::end_unless_handed`).
   macOS: `on_open_urls` hands the Finder's and the Dock's openings in;
   a launch from a terminal is a program of its own there.
-- **A wake draws the windows it concerns** (`finishing::woken`): every
-  window syncs, then draws if the wake was for all (`App::wake`, an
+- **A wake draws the windows it concerns** (`finishing::woken`): the
+  listings are pumped once for all the windows, then a window syncs and
+  draws if the wake was for all (`App::wake`, an
   unnamed `waker_handle`: the queue, the tasks, settings, plugins), named
   it (`App::window_waker`, `Shell::waker`: its media sessions, previews,
   readers, terminal, map tiles; `Thumbnails::wake_asker_with`: a picture
@@ -1673,8 +1700,12 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   listings, kept and opened in place included), or if the pump moved a
   pane in it (`PumpReport::panes_changed`, `Shell::take_pumped`), its
   tab wherever it is now. A thumbnail asked by two windows wakes both
-  (`Flight::askers`). What answers one question (`latest::Latest`)
-  wakes every window, once.
+  (`Flight::askers`), and stays asked until both have moved on. What
+  answers one question (`latest::Latest`) wakes every window, once. A
+  window with something taken for it (`Shell::has_to_sync`) syncs too; a
+  window a wake does not concern otherwise takes it in at its own next
+  draw (`render` syncs): so a wake that must act in a window not on
+  screen (a media key) names that window or names none.
 
 ## What the window remembers
 

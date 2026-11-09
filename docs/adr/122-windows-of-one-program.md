@@ -115,6 +115,14 @@ ADR-115 (one process for every window; launches always handed over).
    its place; Finder, Explorer and the browsers each window's size and
    place.
 
+Amended 2026-11-09, from a review: a key pressed in a window acts in it,
+whatever an agent made active (`Shell::admit`); the active window goes,
+when one closes, to the one used before it (`Workspace::used`), not
+whichever took its place, and is not raised for that; what a window
+holds closing goes to the next one up, declined only with the last; two
+launches at once are one program, the one refused the name handing
+itself to the one that holds it.
+
 ## Rejected
 
 - **A process per window with a New Window that starts one** (Dolphin):

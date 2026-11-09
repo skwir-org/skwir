@@ -3644,6 +3644,9 @@ pub struct Workspace {
     /// The window commands act in when they name no pane: the one the user
     /// last used.
     active_window: usize,
+    /// The windows, the one used last at the end: who comes next when the
+    /// active window closes (`remove_window_at`).
+    used: Vec<WindowId>,
     next_id: u32,
     next_tab: u32,
     next_window: u32,
@@ -3747,6 +3750,7 @@ impl Default for Workspace {
             panes: Vec::new(),
             windows: Vec::new(),
             active_window: 0,
+            used: Vec::new(),
             next_id: 0,
             next_tab: 0,
             next_window: 0,
@@ -3858,6 +3862,8 @@ impl Workspace {
         let id = WindowId(self.next_window);
         self.next_window += 1;
         self.windows.push(WindowTabs::new(id, tab, from));
+        // Not used yet: the first to wait, whoever is active stays.
+        self.used.insert(0, id);
         self.revision += 1;
         (id, tab_id, ids)
     }
@@ -4017,7 +4023,8 @@ impl Workspace {
         {
             self.remove_window_at(i);
         }
-        self.active_window = self.window_index(window).expect("still there");
+        let dest = self.window_index(window).expect("still there");
+        self.make_active(dest);
         self.revision += 1;
         Ok(emptied)
     }
@@ -4036,17 +4043,33 @@ impl Workspace {
         let window = WindowId(self.next_window);
         self.next_window += 1;
         self.windows.push(WindowTabs::new(window, tab, Some(from)));
-        self.active_window = self.windows.len() - 1;
+        self.make_active(self.windows.len() - 1);
         self.revision += 1;
         Ok(window)
     }
 
+    /// Window `i` is the one in use now.
+    fn make_active(&mut self, i: usize) {
+        self.active_window = i;
+        let id = self.windows[i].id;
+        self.used.retain(|used| *used != id);
+        self.used.push(id);
+    }
+
+    /// Take window `i` out. The active window gone, the one used last before
+    /// it is active (ADR-122: "the one the user last used"), not whichever
+    /// took its place.
     fn remove_window_at(&mut self, i: usize) -> WindowTabs {
+        let was_active = i == self.active_window;
         let window = self.windows.remove(i);
+        self.used.retain(|used| *used != window.id);
         if i < self.active_window {
             self.active_window -= 1;
         }
-        self.active_window = self.active_window.min(self.windows.len().saturating_sub(1));
+        if was_active {
+            let next = self.used.last().and_then(|id| self.window_index(*id));
+            self.active_window = next.unwrap_or(0);
+        }
         self.revision += 1;
         window
     }
@@ -4163,7 +4186,7 @@ impl Workspace {
         match self.window_index(id) {
             Some(i) => {
                 if i != self.active_window {
-                    self.active_window = i;
+                    self.make_active(i);
                     self.revision += 1;
                 }
                 true
@@ -4216,7 +4239,7 @@ impl Workspace {
         let tab = &mut self.windows[w].tabs[t];
         if tab.active != id || self.active_window != w {
             tab.active = id;
-            self.active_window = w;
+            self.make_active(w);
             self.revision += 1;
         }
         true

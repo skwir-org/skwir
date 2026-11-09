@@ -128,6 +128,15 @@ const CHOICE_ROWS: usize = 8;
 const PICK_ROWS: usize = 8;
 
 impl FormState {
+    /// The form as it was asked, to be asked again in another window: what
+    /// was typed in this one goes with it.
+    pub(crate) fn into_asked(self) -> Asked {
+        Asked {
+            id: self.id,
+            form: self.form,
+        }
+    }
+
     /// What Tab walks: the fields shown, More Options, Back, Cancel, the
     /// answer (`Shell::walk_dialog`).
     pub(crate) fn walk(&self, cx: &gpui::App) -> Vec<FocusHandle> {
