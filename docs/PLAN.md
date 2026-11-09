@@ -869,6 +869,12 @@ when only the way; what cannot be looked into stands; the view is kept
 150 ms at most so a lens lands whole. Checks in `docs/STATUS-LOG.md`
 (2026-11-09).
 
+## A search laid out as a tree (2026-11-09)
+
+ADR-127: the Tree view lays a search out under its folders, the List view
+stays flat; the folders on the way are lent to the pane, dimmed, foldable,
+and left out of Select All. Checks in `docs/STATUS-LOG.md` (2026-11-09).
+
 ## What is left
 
 Gathered on 2026-10-20 from the notes of this plan and of

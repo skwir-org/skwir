@@ -1688,6 +1688,16 @@ impl App {
         for asked in std::mem::take(&mut report.leads) {
             self.find_where_folders_lead(asked);
         }
+        for asked in std::mem::take(&mut report.found) {
+            let wake = self.pane_waker(asked.pane);
+            let (lane, cancel) = (crate::fs::reach::lane(&asked.root), asked.cancel.clone());
+            self.scheduler
+                .spawn_in(lane, Priority::Normal, "search.tree", cancel, move || {
+                    if asked.run() {
+                        wake();
+                    }
+                });
+        }
         // A search that follows the pane's switch, which moved.
         for (pane, location) in &report.hidden_moved {
             if let Err(error) = self.search_again(*pane, location) {
@@ -2732,6 +2742,48 @@ impl App {
         Ok(())
     }
 
+    /// Close every folder `pane` opened in place: what a view that does not
+    /// draw them asks (only the tree does).
+    /// Open or close folders of the tree of what a search found, when
+    /// the pane shows one: nothing is listed for it.
+    fn fold_found_tree(&self, pane: PaneId, a: &ExpandArgs) -> bool {
+        let mut ws = self.workspace.write();
+        let Some(p) = ws.pane_mut(pane).filter(|p| p.is_found_tree()) else {
+            return false;
+        };
+        let ids: Vec<EntryId> = if a.ids.is_empty() {
+            p.selection.iter().collect()
+        } else {
+            a.ids.clone()
+        };
+        let mut moved = false;
+        for id in ids {
+            let open = p.is_open_at(id);
+            moved |= match a.mode {
+                ExpandMode::Expand => p.fold(id, false),
+                ExpandMode::Toggle => p.fold(id, open),
+                ExpandMode::Collapse => p.fold(id, true),
+                ExpandMode::CollapseAll => false,
+            };
+        }
+        if moved {
+            p.end_folding();
+        }
+        true
+    }
+
+    /// Show a search in `pane` as the tree of its folders, or as it comes.
+    pub fn set_found_as_tree(&self, pane: PaneId, wanted: bool) {
+        let moved = self
+            .workspace
+            .write()
+            .pane_mut(pane)
+            .is_some_and(|p| p.set_found_as_tree(wanted));
+        if moved {
+            self.wake();
+        }
+    }
+
     pub fn collapse_all(&self, pane: PaneId) {
         let changed = self
             .workspace
@@ -3526,9 +3578,17 @@ mod builtin {
                         match (pos(anchor), at_in(&order, target, a.at)) {
                             (Some(a), Some(b)) => {
                                 let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
-                                let range = order[lo..=hi].iter().copied();
+                                // A folder drawn only as the way to what
+                                // was found is selected by name alone.
+                                let range: Vec<EntryId> = order[lo..=hi]
+                                    .iter()
+                                    .copied()
+                                    .filter(|id| !p.is_way(*id) || *id == target)
+                                    .collect();
                                 if matches!(mode, SelectMode::AddRange) {
-                                    range.for_each(|id| p.selection.add(id));
+                                    for id in range {
+                                        p.selection.add(id);
+                                    }
                                 } else {
                                     p.selection.set(range);
                                 }
@@ -3659,7 +3719,10 @@ mod builtin {
                 // not selected, or a Delete would take them unseen.
                 let ids = p.order();
                 let cursor = p.selection.cursor;
-                p.selection.set(ids.iter().copied());
+                // A folder drawn only as the way to what was found is not
+                // what was found: a Delete must not take it whole.
+                let ids: Vec<EntryId> = ids.iter().copied().filter(|id| !p.is_way(*id)).collect();
+                p.selection.set(ids);
                 p.selection.cursor = cursor.or(p.selection.cursor);
                 Ok(Outcome::Done)
             },
@@ -3759,6 +3822,10 @@ mod builtin {
                 let pane = app.pane_or_active(a.pane);
                 if a.mode == ExpandMode::CollapseAll {
                     app.collapse_all(pane);
+                    return Ok(Outcome::Done);
+                }
+                if app.fold_found_tree(pane, &a) {
+                    app.wake();
                     return Ok(Outcome::Done);
                 }
                 // Which of them are folders or places, and where they lead.

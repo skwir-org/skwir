@@ -38,6 +38,7 @@ pub mod exclusions;
 pub mod fields;
 pub mod folders;
 pub mod form;
+mod found_tree;
 pub mod fs;
 pub mod geo;
 pub mod hashing;

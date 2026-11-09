@@ -166,6 +166,11 @@ pub trait PaneView {
     fn opens_in_place(&self) -> bool {
         false
     }
+    /// Whether the view lays what a search found out as the tree of its
+    /// folders: the tree does, the rest shows it as it comes.
+    fn lays_found_out_as_tree(&self) -> bool {
+        false
+    }
 }
 
 /// What a view's `ViewSpec::factory` holds: a constructor.

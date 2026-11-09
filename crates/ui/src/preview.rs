@@ -2221,7 +2221,12 @@ impl Shell {
             return;
         };
         self.preview.info.name = self.app.location_title(&location);
-        let count = self.ui().list.sorted.len();
+        let found = {
+            let ws = self.app.workspace.read();
+            ws.pane(self.pane)
+                .and_then(skwir_core::workspace::Pane::found_count)
+        };
+        let count = found.unwrap_or(self.ui().list.sorted.len());
         self.preview.info.size = Some(if self.app.is_search(&location) {
             format::count(count, "result")
         } else {

@@ -3485,10 +3485,12 @@ impl Shell {
             // What the location says of itself (its trail, its verbs),
             // read when it changed, outside the lock.
             crate::trail::sync(self);
-            let (wanted, close) = {
+            let (wanted, close, found_as_tree) = {
                 let ws = app.workspace.read();
                 let Some(pane) = ws.pane(id) else { continue };
                 let view = self.ui().views.get(self.ui().view_id);
+                let lays_out = view.is_some_and(|view| view.lays_found_out_as_tree());
+                let found_as_tree = (pane.wants_found_tree() != lays_out).then_some(lays_out);
                 let trail = self.ui().place.trail.as_ref();
                 let wanted = view
                     .map(|view| view.kept_locations(pane.location(), trail))
@@ -3498,8 +3500,12 @@ impl Shell {
                 (
                     (!wanted.is_empty() || pane.keeps_any()).then_some(wanted),
                     close,
+                    found_as_tree,
                 )
             };
+            if let Some(found_as_tree) = found_as_tree {
+                app.set_found_as_tree(id, found_as_tree);
+            }
             if close {
                 app.collapse_all(id);
             }

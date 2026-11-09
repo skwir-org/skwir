@@ -132,7 +132,7 @@ pub(crate) fn render(
             |p| {
                 (
                     p.listing.filling_count(),
-                    shell.ui().list.sorted.len(),
+                    p.found_count().unwrap_or(shell.ui().list.sorted.len()),
                     p.listing.is_complete(),
                     p.listing.error().map(str::to_owned),
                     shell.ui().place.search,

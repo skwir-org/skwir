@@ -196,7 +196,8 @@ names and details have a text size of their own, from 80 to 200 %
   the cursor holds after them. `→` goes into it, `←` back up; a click on a
   folder shows what it holds. `Shift` and the wheel scroll to the columns
   that do not fit.
-- **Tree** opens folders in place. **Board** shows the folders of the one
+- **Tree** opens folders in place, and lays a search out under its
+  folders, those only on the way dimmed. **Board** shows the folders of the one
   shown as columns of cards you can drag between.
 - **Usage** (`Ctrl+4`) draws what takes the room in a folder, counted as
   you look; its − and + (or the zoom: `Ctrl` and the wheel, `Ctrl+=`,

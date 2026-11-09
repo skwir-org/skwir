@@ -772,7 +772,108 @@ pub struct Pane {
     /// When the filter was last replaced by hand: one replaced again at
     /// once is being typed.
     filter_replaced_at: Option<std::time::Instant>,
+    /// A search laid out as a tree.
+    found: FoundTree,
 }
+
+/// A search laid out as the tree of its folders (`found_tree`), while a
+/// view shows it so.
+#[derive(Default)]
+struct FoundTree {
+    wanted: bool,
+    made: Option<crate::found_tree::Made>,
+    made_times: u64,
+    /// The flat order the tree shown was made of, and one being made of.
+    from: Option<Arc<[EntryId]>>,
+    working: bool,
+    answer: Arc<parking_lot::Mutex<Option<FoundAnswer>>>,
+    /// The folders on the way read so far.
+    known: Arc<parking_lot::Mutex<HashMap<PathBuf, Entry>>>,
+    /// The folders closed in it, and how many times that changed.
+    folded: crate::hashing::Set<EntryId>,
+    folds: u64,
+    cancel: CancelToken,
+    /// The rows shown, what they were made of: the flat order (by
+    /// identity), `folds` and `made_times`.
+    shown: parking_lot::Mutex<Option<FoundShown>>,
+}
+
+/// The flat order a tree was made of, and the tree.
+pub type FoundAnswer = (Arc<[EntryId]>, FoundMade);
+
+/// A tree made, on its way to the pane.
+#[derive(Debug)]
+pub struct FoundMade(pub(crate) crate::found_tree::Made);
+
+struct FoundShown {
+    flat: Arc<[EntryId]>,
+    folds: u64,
+    made: u64,
+    order: Arc<[EntryId]>,
+}
+
+/// A pane's search to lay out as a tree, on a worker.
+pub struct FoundAsked {
+    pub pane: PaneId,
+    pub open: Arc<dyn OpenLocation>,
+    pub root: PathBuf,
+    pub flat: Arc<[EntryId]>,
+    pub ascending: bool,
+    pub answer: Arc<parking_lot::Mutex<Option<FoundAnswer>>>,
+    pub known: Arc<parking_lot::Mutex<HashMap<PathBuf, Entry>>>,
+    pub cancel: CancelToken,
+}
+
+impl std::fmt::Debug for FoundAsked {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FoundAsked")
+            .field("pane", &self.pane)
+            .field("root", &self.root)
+            .finish_non_exhaustive()
+    }
+}
+
+impl FoundAsked {
+    /// Make the tree and leave it for the pane's next pump: whether there
+    /// is one to take.
+    pub fn run(&self) -> bool {
+        let hits: Vec<(EntryId, PathBuf)> = self
+            .flat
+            .iter()
+            .filter_map(|id| Some((*id, self.open.path_of(*id)?)))
+            .collect();
+        let mut statter = crate::fs::Statter::default();
+        let made = crate::found_tree::make(
+            &self.root,
+            &hits,
+            self.ascending,
+            &mut |path| statter.stat(path),
+            &mut self.known.lock(),
+            &|| self.cancel.is_cancelled(),
+        );
+        let Some(made) = made else { return false };
+        *self.answer.lock() = Some((Arc::clone(&self.flat), FoundMade(made)));
+        true
+    }
+}
+
+impl FoundTree {
+    fn reset(&mut self) {
+        self.cancel.cancel();
+        *self = FoundTree {
+            wanted: self.wanted,
+            ..FoundTree::default()
+        };
+    }
+
+    /// The tree when it is the one shown.
+    fn shown(&self) -> Option<&crate::found_tree::Made> {
+        self.made.as_ref().filter(|_| self.wanted)
+    }
+}
+
+/// The id a tree lends its folders on the way under.
+const FOUND_TREE: &str = "found-tree";
 
 /// How long a lens being typed waits before folders are looked into: each
 /// key would read another lens.
@@ -1390,6 +1491,7 @@ impl Pane {
             filter_cache: parking_lot::Mutex::new(None),
             leading: Leading::default(),
             filter_replaced_at: None,
+            found: FoundTree::default(),
         }
     }
 
@@ -1584,6 +1686,7 @@ impl Pane {
         self.lent.let_go();
         // Each folder listed is asked about anew, under the lens it takes.
         self.leading.reset();
+        self.found.reset();
         // The words that found names go; the lens stays, as a filter or
         // in the location's own terms.
         self.take_lens(lensed);
@@ -1653,6 +1756,7 @@ impl Pane {
             self.expanded_changed();
         }
         self.leading.reset();
+        self.found.reset();
         if let Lensed::Holds(_) = lensed {
             self.take_lens(lensed);
         }
@@ -1927,11 +2031,195 @@ impl Pane {
         self.leading.waiting > 0 && self.leading.kept.is_none()
     }
 
+    /// Show a search as the tree of its folders, or as it comes: what the
+    /// view shown does (`PaneView::lays_found_out_as_tree`).
+    pub(crate) fn set_found_as_tree(&mut self, wanted: bool) -> bool {
+        if self.found.wanted == wanted {
+            return false;
+        }
+        self.found.reset();
+        self.found.wanted = wanted;
+        if !wanted {
+            self.lent.let_go();
+        }
+        self.tree_version += 1;
+        self.tree_members_version += 1;
+        true
+    }
+
+    /// Whether the view shown lays a search out as a tree.
+    pub fn wants_found_tree(&self) -> bool {
+        self.found.wanted
+    }
+
+    /// How many it found, when a tree shows them among the folders on the
+    /// way: what says how many counts those alone.
+    pub fn found_count(&self) -> Option<usize> {
+        self.found.shown().map(|_| self.flat_order().len())
+    }
+
+    /// Whether the pane shows a tree of what it found.
+    pub fn is_found_tree(&self) -> bool {
+        self.found.shown().is_some()
+    }
+
+    /// The tree to make of the order now, one at a time: each one made
+    /// says when it is done, so a search streaming is laid out as fast as
+    /// the worker goes, and never behind by more than one.
+    fn found_tree_asked(&mut self) -> Option<FoundAsked> {
+        if !self.found.wanted || self.found.working || self.open.is_none() {
+            return None;
+        }
+        let open = Arc::clone(self.open.as_ref()?);
+        let root = open.found_under()?.to_path_buf();
+        let flat = self.flat_order();
+        if self
+            .found
+            .from
+            .as_ref()
+            .is_some_and(|f| Arc::ptr_eq(f, &flat))
+            || (flat.is_empty() && self.found.made.is_none())
+        {
+            return None;
+        }
+        self.found.working = true;
+        Some(FoundAsked {
+            pane: self.id,
+            open,
+            root,
+            flat,
+            ascending: self.sort.ascending,
+            answer: Arc::clone(&self.found.answer),
+            known: Arc::clone(&self.found.known),
+            cancel: self.found.cancel.child(),
+        })
+    }
+
+    /// Take the tree made: whether what the pane shows changed.
+    fn take_found_tree(&mut self) -> bool {
+        let Some((flat, FoundMade(mut made))) = self.found.answer.lock().take() else {
+            return false;
+        };
+        self.found.working = false;
+        self.found.from = Some(flat);
+        if !self.found.wanted {
+            return false;
+        }
+        let ways = std::mem::take(&mut made.ways);
+        self.lend(FOUND_TREE, ways);
+        self.found.made = Some(made);
+        self.found.made_times += 1;
+        self.tree_version += 1;
+        self.tree_members_version += 1;
+        true
+    }
+
+    /// `flat` as the tree shows it: what went since it was made left out,
+    /// what is under a closed folder too. New hits wait for the next tree.
+    fn found_order(&self, flat: Arc<[EntryId]>) -> Arc<[EntryId]> {
+        let Some(tree) = self.found.shown() else {
+            return flat;
+        };
+        let mut shown = self.found.shown.lock();
+        if let Some(s) = shown.as_ref()
+            && Arc::ptr_eq(&s.flat, &flat)
+            && s.folds == self.found.folds
+            && s.made == self.found.made_times
+        {
+            return Arc::clone(&s.order);
+        }
+        let hit: crate::hashing::Set<EntryId> = flat.iter().copied().collect();
+        let mut order = Vec::with_capacity(tree.order.len());
+        let mut folded: Option<u32> = None;
+        for &id in tree.order.iter() {
+            let depth = tree.depth.get(&id).copied().unwrap_or(0);
+            if folded.is_some_and(|at| depth > at) {
+                continue;
+            }
+            folded = None;
+            if hit.contains(&id) || tree.way_ids.contains(&id) {
+                order.push(id);
+                if self.found.folded.contains(&id) {
+                    folded = Some(depth);
+                }
+            }
+        }
+        let order: Arc<[EntryId]> = order.into();
+        *shown = Some(FoundShown {
+            flat,
+            folds: self.found.folds,
+            made: self.found.made_times,
+            order: Arc::clone(&order),
+        });
+        order
+    }
+
+    /// Open or close folder `at` of the tree of what was found; whether
+    /// it moved. `end_folding` once all were.
+    pub(crate) fn fold(&mut self, at: EntryId, folded: bool) -> bool {
+        let Some(tree) = self.found.shown() else {
+            return false;
+        };
+        if !tree.parents.contains(&at) {
+            return false;
+        }
+        if folded {
+            self.found.folded.insert(at)
+        } else {
+            self.found.folded.remove(&at)
+        }
+    }
+
+    /// Folders of the tree opened or closed: the cursor inside a folder
+    /// closed goes back to it.
+    pub(crate) fn end_folding(&mut self) {
+        let before = self.shown.lock().clone();
+        self.found.folds += 1;
+        self.tree_version += 1;
+        self.tree_members_version += 1;
+        let order = self.order();
+        let shown: crate::hashing::Set<EntryId> = order.iter().copied().collect();
+        let holds = |id: EntryId| shown.contains(&id);
+        match before {
+            Some(before) => self.selection.retain_near(holds, &before, true),
+            None => self.selection.retain(holds),
+        }
+    }
+
+    /// Close every folder of the tree of what was found.
+    fn fold_all(&mut self) -> bool {
+        let Some(parents) = self.found.shown().map(|tree| tree.parents.clone()) else {
+            return false;
+        };
+        self.found.folded = parents;
+        self.end_folding();
+        true
+    }
+
+    /// Whether `id` is a folder shown only as the way to what a search
+    /// found: selected only by name, never by a range or Select All.
+    pub fn is_way(&self, id: EntryId) -> bool {
+        self.found
+            .shown()
+            .is_some_and(|tree| tree.way_ids.contains(&id))
+    }
+
+    /// Whether folder `id` can be opened in place. In the tree of what
+    /// was found, only one with something found under it.
+    pub fn opens_here(&self, id: EntryId) -> bool {
+        self.found
+            .shown()
+            .is_none_or(|tree| tree.parents.contains(&id))
+    }
+
     /// Whether folder `id` is shown only as the way to what the pane's
     /// filter keeps below it: drawn dimmed. Whether it is, is the lens's
     /// to say of it, known at once and not moved by what a look below it
     /// finds.
     pub fn only_leads(&self, id: EntryId) -> bool {
+        if self.is_way(id) {
+            return true;
+        }
         let read = self
             .leading
             .kept
@@ -1973,6 +2261,7 @@ impl Pane {
         self.shown.lock().take();
         self.reveal = None;
         self.leading.reset();
+        self.found.reset();
         // Each closes as it drops.
         self.kept.clear();
         self.opened_moved();
@@ -2768,6 +3057,9 @@ impl Pane {
 
     /// Whether the folder (or place) that is entry `at` is open in place.
     pub fn is_open_at(&self, at: EntryId) -> bool {
+        if let Some(tree) = self.found.shown() {
+            return tree.parents.contains(&at) && !self.found.folded.contains(&at);
+        }
         self.expanded.iter().any(|o| o.at == at)
     }
 
@@ -2915,6 +3207,9 @@ impl Pane {
 
     /// Close every folder opened in place.
     pub fn collapse_all(&mut self) -> bool {
+        if self.fold_all() {
+            return true;
+        }
         if self.expanded.is_empty() {
             return false;
         }
@@ -3025,6 +3320,9 @@ impl Pane {
     /// How many opened folders deep entry `id` is: 0 for the shown
     /// listing's own entries.
     pub fn depth(&self, id: EntryId) -> usize {
+        if let Some(tree) = self.found.shown() {
+            return tree.depth.get(&id).map_or(0, |depth| *depth as usize);
+        }
         if self.expanded.is_empty() || self.listing.get(id).is_some() {
             return 0;
         }
@@ -3096,12 +3394,13 @@ impl Pane {
     /// the filter and the narrowing keep. What range selection, select
     /// all and the views follow.
     pub fn order(&self) -> Arc<[EntryId]> {
-        let order = self.filtered_order();
+        let order = self.found_order(self.flat_order());
         *self.shown.lock() = Some(Arc::clone(&order));
         order
     }
 
-    fn filtered_order(&self) -> Arc<[EntryId]> {
+    /// The entries the filter keeps, in the order sorted.
+    fn flat_order(&self) -> Arc<[EntryId]> {
         let all = self.unfiltered_order();
         if !self.is_filtered() {
             return all;
@@ -3262,6 +3561,7 @@ impl Drop for Pane {
     fn drop(&mut self) {
         self.location_lifetime.cancel();
         self.leading.cancel.cancel();
+        self.found.cancel.cancel();
         if let Some(open) = &self.open {
             open.close();
         }
@@ -3871,7 +4171,7 @@ impl Workspace {
         for p in &mut self.panes {
             let pumped = p.pump(PUMP_BUDGET);
             r.leads.extend(p.folders_to_ask());
-            let n = pumped + usize::from(p.take_leads());
+            let n = pumped + usize::from(p.take_leads()) + usize::from(p.take_found_tree());
             if n > 0 {
                 r.applied += n;
                 r.panes_changed.push(p.id);
@@ -3890,6 +4190,7 @@ impl Workspace {
             }
             r.backlog |= p.backlog();
             r.jobs.extend(p.jobs_wanted());
+            r.found.extend(p.found_tree_asked());
         }
         r
     }
@@ -3922,6 +4223,9 @@ pub struct PumpReport {
     /// The folders whose way to what a lens keeps is still to be found
     /// out: `App::pump_report` hands them to a worker.
     pub leads: Vec<LeadsAsked>,
+    /// The searches to lay out as trees: `App::pump_report` hands them to
+    /// a worker.
+    pub found: Vec<FoundAsked>,
 }
 
 /// A pane's location said it is reached at another.

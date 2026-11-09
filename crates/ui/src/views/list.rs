@@ -55,7 +55,6 @@ const DISCLOSURE: f32 = 12.0;
 const INDENT: f32 = DISCLOSURE + 4.0;
 /// How much of a cut entry remains visible until it is pasted.
 pub const CUT_OPACITY: f32 = 0.45;
-
 /// A folder shown only as the way to what a filter keeps: readable, as it
 /// is still there to be gone into, yet behind what the filter keeps.
 pub const ONLY_LEADS_OPACITY: f32 = 0.6;
@@ -385,6 +384,9 @@ pub struct RowData {
     /// folder whether it is open in place.
     pub depth: usize,
     pub expanded: bool,
+    /// Whether it can be opened in place: under the tree of what a search
+    /// found, a folder with something found in it.
+    pub opens: bool,
     /// The folder it is in, and its whole path, where files from many
     /// folders are listed.
     pub folder: Option<(String, String)>,
@@ -440,6 +442,7 @@ impl Shell {
                 ix,
                 look,
                 expanded: e.is_dir() && pane.is_open_at(id),
+                opens: e.is_dir() && pane.opens_here(id),
                 depth: pane.depth(id),
                 size: String::new(),
                 modified: String::new(),
@@ -543,7 +546,7 @@ fn disclosure(r: &RowData, color: gpui::Hsla, scale: Scale, cx: &mut Context<She
         .flex_none()
         .flex()
         .items_center();
-    if !r.look.is_dir {
+    if !r.opens {
         return slot;
     }
     let id = r.look.id;
@@ -882,6 +885,10 @@ impl PaneView for ListView {
     }
 
     fn opens_in_place(&self) -> bool {
+        self.tree
+    }
+
+    fn lays_found_out_as_tree(&self) -> bool {
         self.tree
     }
 

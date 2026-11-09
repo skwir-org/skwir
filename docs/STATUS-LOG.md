@@ -13787,3 +13787,18 @@ its first hit, as a search would find it; the Name pill holds at this level.
   release build's timing, a screen reader on a dimmed folder, `just bench-check`,
   `just idle-pss`, `just release-check`. macOS's check leaves the UI out; Windows
   and macOS are compiled only.
+
+## 2026-11-09: A search laid out as a tree (ADR-127)
+
+- **Built:** `found_tree.rs` (`make`, three unit tests), `FoundTree`,
+  `FoundAsked` on a worker (`search.tree`), `OpenLocation::found_under`,
+  `PaneView::lays_found_out_as_tree`, `Pane::fold`, `is_way`, `opens_here` and
+  `found_count`; Select All and ranges skip the folders on the way.
+- **Checked:** rustfmt; clippy `-D warnings` on the touched crates; 1724 tests
+  passed, 10 skipped; `just check-cross`. `crates/skwir/tests/search_tree.rs`
+  drives the view's layout through the commands.
+- **Seen in a window** (Xvfb): `Ctrl+F` with `ext:txt` in the Tree view, its
+  folders dimmed, one folded; the footer's count is asserted by test, not seen.
+- **Not checked:** a very large tree's feel, `just bench-check`, `just idle-pss`,
+  `just release-check`; a screen reader on the tree; Windows and macOS compiled
+  only.

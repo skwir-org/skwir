@@ -175,6 +175,14 @@ around the views is in [shell.md](shell.md).
   new name, with what is open inside it (`Pane::follow_moves`: a watch
   sees only its own folder move). The folder shown is not followed when a
   folder above it moves: nothing watches its parents.
+- **A search laid out as a tree (ADR-127)** is the tree view's own
+  (`PaneView::lays_found_out_as_tree`): the flat order stays the source
+  (`Pane::flat_order`) and `Pane::order` reads the tree a worker made of
+  it. Its folders on the way are lent (`Pane::is_way`), so what acts on a
+  selection never takes one unseen: Select All skips them and a range
+  takes one only when it ends on it. Count what was found with
+  `Pane::found_count`, never the order's length. Folding is local to the
+  tree (`Pane::fold`): nothing is opened.
 - Only a view that says `opens_in_place` keeps them open; the shell
   closes them under any other.
 - The columns view's columns are a folder's parents or the places of a

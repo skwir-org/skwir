@@ -363,6 +363,13 @@ pub trait OpenLocation: Send + Sync {
         None
     }
 
+    /// The folder its entries are found below when they are found across
+    /// the folders under one (a search of a folder): what the Tree view
+    /// lays them out under. `None`: its entries stand as they come.
+    fn found_under(&self) -> Option<&Path> {
+        None
+    }
+
     /// Re-list from scratch (emits `Removed` for gone entries, `Added` for new).
     fn refresh(&self);
 

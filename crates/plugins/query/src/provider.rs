@@ -1725,6 +1725,10 @@ impl OpenLocation for QueryLocation {
         &self.location
     }
 
+    fn found_under(&self) -> Option<&Path> {
+        Some(&self.shared.root)
+    }
+
     fn events(&self) -> &Receiver<ListingEvent> {
         &self.rx
     }

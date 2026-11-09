@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **A search can show as a tree**: in the Tree view, what `Ctrl+F` finds is laid
+  out under its folders, which fold; those only on the way are dimmed, and are
+  left out of Select All. The List view stays flat.
 - **A filter by tag, type, date, size or rating now shows only the folders that
   lead to a match**: they appear as they are found, dimmed when they do not
   match themselves, and the footer says when it is still looking. A folder
