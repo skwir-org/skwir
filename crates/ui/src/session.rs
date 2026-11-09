@@ -196,7 +196,9 @@ impl Placement {
             Some((display, point(px(at.x), px(at.y))))
         });
         let display = kept.as_ref().map(|(display, _)| *display).or(primary);
-        let room = display.map(|display| display.visible);
+        // Where the system names no main display (Wayland), the size still
+        // fits one: the first it says it has.
+        let room = display.or(displays.first()).map(|display| display.visible);
         let fits = |wanted: f32, smallest: f32, room: Option<f32>| {
             let wanted = if wanted.is_finite() { wanted } else { 0. };
             let at_most = room.unwrap_or(f32::MAX).max(smallest);
@@ -620,6 +622,14 @@ mod tests {
             panic!("not maximized: {:?}", opened.bounds);
         };
         assert_eq!(bounds.size, rect(0., 0., 1920., 240.).size);
+
+        // No main display named (Wayland): the size fits one all the same.
+        let opened = huge.opening(0., &displays, None);
+        let gpui::WindowBounds::Maximized(bounds) = opened.bounds else {
+            panic!("not maximized: {:?}", opened.bounds);
+        };
+        assert_eq!(bounds.size, rect(0., 0., 1920., 240.).size);
+        assert_eq!(opened.display, None, "no display asked for");
     }
 
     #[test]
