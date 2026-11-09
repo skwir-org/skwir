@@ -274,3 +274,87 @@ fn a_folder_you_keep_from_agents_is_private_and_stays_so_against_an_agent() {
     assert!(app.privacy().holds(&secret.join("2025.pdf")));
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// An agent's dotted key changes one entry of the table, whatever the
+/// others say and however many dots its id holds; it never lowers privacy
+/// that way, nor by turning off the shell's variables.
+#[test]
+fn an_agents_dotted_key_changes_one_entry_and_lowers_nothing() {
+    let base = fixture("exclusion-dotted");
+    let app = App::new(AppConfig::ephemeral(base.join("app"))).unwrap();
+    let apply = |changes: serde_json::Value| {
+        let result = app.dispatch(&Invocation::with_args(
+            "settings.apply",
+            &serde_json::json!({ "changes": changes }),
+        ));
+        until(&app, 10, "saved", || {
+            app.settings.save_status().1 != skwir_core::settings::SaveState::Saving
+        });
+        result
+    };
+    let as_agent = |changes: serde_json::Value| {
+        skwir_core::permissions::as_agent(app.privacy(), || apply(changes))
+    };
+    let entries = || {
+        app.settings
+            .get::<toml::Table>(skwir_core::exclusions::ENTRIES_KEY)
+            .unwrap()
+    };
+    let ours = base.join("taxes ü");
+    let entry = |path: &Path| {
+        serde_json::json!({ "pattern": path, "what": "Taxes", "agents": true }).to_string()
+    };
+    apply(serde_json::json!({ "exclusions.entries.taxes": entry(&ours) })).unwrap();
+    as_agent(serde_json::json!({
+        "exclusions.entries.letters": entry(&base.join("it's letters")),
+    }))
+    .expect("an agent may add one");
+    assert_eq!(
+        entries().keys().collect::<Vec<_>>(),
+        ["letters", "taxes"],
+        "added beside what was there"
+    );
+    assert!(app.privacy().holds(&ours.join("2025.pdf")));
+
+    let catalog = skwir_core::exclusions::Catalog::of(&app.settings);
+    let builtin = catalog
+        .kept_from(skwir_core::exclusions::Role::Agents)
+        .find(|e| e.builtin && e.id.matches('.').count() > 1)
+        .expect("one of skwir's kept from agents, its id with dots");
+    for (lowering, value) in [
+        (
+            format!("exclusions.entries.{}", builtin.id),
+            r#"{"agents": false}"#,
+        ),
+        ("exclusions.entries.taxes".to_owned(), ""),
+        ("exclusions.shell_variables".to_owned(), "false"),
+    ] {
+        let said = format!(
+            "{:#}",
+            as_agent(serde_json::json!({ (lowering.as_str()): value }))
+                .expect_err("an agent may not lower privacy")
+        );
+        assert!(said.contains("an agent may not"), "{lowering}: {said}");
+    }
+    assert_eq!(entries().len(), 2, "nothing of it was saved");
+    assert!(
+        app.settings
+            .get::<bool>("exclusions.shell_variables")
+            .unwrap()
+    );
+
+    // The user may, and a built-in's id is one key however it is written.
+    apply(serde_json::json!({
+        format!("exclusions.entries.{}", builtin.id): r#"{"agents": false}"#,
+    }))
+    .unwrap();
+    let saved = entries();
+    assert_eq!(saved[&builtin.id]["agents"].as_bool(), Some(false));
+    apply(serde_json::json!({ "exclusions.entries.taxes": "" })).unwrap();
+    assert!(!entries().contains_key("taxes"), "taken out");
+    assert!(
+        apply(serde_json::json!({ "exclusions.nothing.x": "{}" })).is_err(),
+        "only what a page draws takes one key"
+    );
+    let _ = std::fs::remove_dir_all(&base);
+}

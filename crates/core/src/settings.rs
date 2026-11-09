@@ -2045,11 +2045,72 @@ impl Settings {
         self.status.lock().clone()
     }
 
+    /// `changes` with each change of one key of a table a page draws
+    /// (`exclusions.entries.<id>`, whose id may hold dots: that key's value
+    /// as JSON, nothing to take it out) made a change of the whole table,
+    /// that key over what the table holds now: what Home Manager's merge
+    /// does, for a caller of `settings.apply`.
+    ///
+    /// # Errors
+    /// When the value of one is no JSON.
+    fn tables_whole(
+        &self,
+        changes: &BTreeMap<String, String>,
+    ) -> anyhow::Result<BTreeMap<String, String>> {
+        let table_of = |key: &str, schema: &BTreeMap<String, SettingSpec>| {
+            key.match_indices('.')
+                .map(|(at, _)| at)
+                .find(|at| {
+                    schema
+                        .get(&key[..*at])
+                        .is_some_and(|spec| spec.page_drawn && spec.default.is_table())
+                })
+                .map(|at| key[..at].to_owned())
+        };
+        let ones: Vec<(String, String)> = {
+            let schema = self.schema.read();
+            changes
+                .keys()
+                .filter(|key| !schema.contains_key(*key))
+                .filter_map(|key| Some((key.clone(), table_of(key, &schema)?)))
+                .collect()
+        };
+        if ones.is_empty() {
+            return Ok(changes.clone());
+        }
+        let mut whole = changes.clone();
+        for (key, table) in ones {
+            let text = whole.remove(&key).unwrap_or_default();
+            let id = &key[table.len() + 1..];
+            let mut held: serde_json::Map<String, serde_json::Value> = match whole.get(&table) {
+                Some(given) => serde_json::from_str(given)
+                    .map_err(|error| anyhow::anyhow!("{table}: expected JSON: {error}"))?,
+                None => match Self::lookup(&self.values.read(), &table) {
+                    Some(value) => serde_json::to_value(value)?
+                        .as_object()
+                        .cloned()
+                        .unwrap_or_default(),
+                    None => serde_json::Map::new(),
+                },
+            };
+            if text.trim().is_empty() {
+                held.remove(id);
+            } else {
+                let value = serde_json::from_str(&text)
+                    .map_err(|error| anyhow::anyhow!("{key}: expected JSON: {error}"))?;
+                held.insert(id.to_owned(), value);
+            }
+            whole.insert(table, serde_json::Value::Object(held).to_string());
+        }
+        Ok(whole)
+    }
+
     pub fn validate(
         &self,
         changes: &BTreeMap<String, String>,
     ) -> anyhow::Result<BTreeMap<String, toml::Value>> {
         use anyhow::Context as _;
+        let changes = self.tables_whole(changes)?;
         // What each holds now, read before the schema's lock is taken.
         let stored: BTreeMap<&String, Option<toml::Value>> = {
             let values = self.values.read();

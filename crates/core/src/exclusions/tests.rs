@@ -404,6 +404,19 @@ fn an_agent_may_not_lower_privacy_but_may_raise_it() {
         refuse_exposure(&settings, &lowering).is_ok(),
         "the user may"
     );
+    // The shell's variables name folders the list follows: turning them
+    // off is lowering privacy, and only a change of it is.
+    let shell = |on: bool| {
+        std::collections::BTreeMap::from([(
+            SHELL_VARIABLES_KEY.to_owned(),
+            toml::Value::Boolean(on),
+        )])
+    };
+    let (off, on) = (shell(false), shell(true));
+    let refused = as_agent(&off).expect_err("an agent may not turn them off");
+    assert!(refused.to_string().contains("login shell"), "{refused}");
+    assert!(as_agent(&on).is_ok(), "as it stands: no change");
+    assert!(refuse_exposure(&settings, &off).is_ok(), "the user may");
 }
 
 #[test]

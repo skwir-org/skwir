@@ -1988,6 +1988,16 @@ pub fn refuse_exposure(
     {
         return Ok(());
     }
+    // Off, a path only the shell's files move goes back to its default: the
+    // folder it names now is named no more. Whether it lowers privacy
+    // depends on what those files say, so it is the user's alone either way.
+    if let Some(value) = changes.get(SHELL_VARIABLES_KEY)
+        && settings.get::<toml::Value>(SHELL_VARIABLES_KEY).as_ref() != Some(value)
+    {
+        anyhow::bail!(
+            "an agent may not change whether the login shell's variables are read: a private folder only they name would stop being private. Only you can, in Settings, Privacy"
+        );
+    }
     let before = Catalog::of(settings);
     let now = |key: &str| {
         changes
@@ -2007,7 +2017,7 @@ pub fn refuse_exposure(
     let exposed = exposed(&before, &after);
     anyhow::ensure!(
         exposed.is_empty(),
-        "an agent may not make private folders readable ({}): only you can, in Settings, Folders",
+        "an agent may not make private folders readable ({}): only you can, in Settings, Exclusions",
         exposed.join(", ")
     );
     Ok(())
