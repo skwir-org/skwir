@@ -882,7 +882,7 @@ impl Plugin for QueryPlugin {
             ID,
             skwir_core::registry::FilterReader {
                 read: Arc::new(lens::read_filter),
-                leads: Some(provider::leads_of(app.weak())),
+                leads: Some(provider::leads_of(app.weak(), lifetime.clone())),
             },
         );
 

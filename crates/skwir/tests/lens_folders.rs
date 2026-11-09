@@ -466,6 +466,28 @@ fn new_file(s: &Setup, name: &str, dir: &Path) {
     assert!(done.error.is_none(), "{:?}", done.error);
 }
 
+#[cfg(unix)]
+#[test]
+fn a_folder_with_something_unread_below_it_stays_shown() {
+    use std::os::unix::fs::PermissionsExt;
+    let s = setup();
+    write(&s.root, "pics/a.jpg");
+    write(&s.root, "plain/a.txt");
+    write(&s.root, "parent/locked/a.txt");
+    let locked = s.root.join("parent/locked");
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    if std::fs::read_dir(&locked).is_ok() {
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+        eprintln!("skipped: this user reads any folder");
+        return;
+    }
+    go(&s, &s.root);
+    filter(&s, "kind:image");
+    shows(&s, &["parent", "pics"], "nothing proved it leads nowhere");
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+    drop(s.tmp);
+}
+
 #[test]
 fn f5_looks_again_at_what_changed_outside() {
     let s = setup();

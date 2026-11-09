@@ -581,14 +581,16 @@ impl Kept {
 
     /// Events wait to be applied: not those of a listing filled elsewhere,
     /// whose jobs take them, nor of one sorted elsewhere, whose order
-    /// comes first; each wakes the window (ADR-120, ADR-121).
+    /// comes first; each wakes the window (ADR-120, ADR-121). What such a
+    /// job left to be taken counts: its one wake may have been spent.
     fn backlog(&self) -> bool {
-        !self.listing.is_held()
-            && !self.listing.is_sorting()
-            && self
-                .open
-                .as_ref()
-                .is_some_and(|open| !open.events().is_empty())
+        self.listing.has_result()
+            || (!self.listing.is_held()
+                && !self.listing.is_sorting()
+                && self
+                    .open
+                    .as_ref()
+                    .is_some_and(|open| !open.events().is_empty()))
     }
 
     /// Follow the folder it lists where it moved (`Listing::take_moved`):
@@ -974,6 +976,47 @@ struct Leading {
     kept: Option<KeptView>,
 }
 
+/// An ask under way: ended when every folder it was asked about was asked
+/// about again.
+struct LeadsJob {
+    cancel: CancelToken,
+    /// How many of its folders are still its to answer.
+    left: usize,
+}
+
+/// A look over the rows for the folders to ask about (`Pane::folders_to_ask`),
+/// at most `PUMP_BUDGET` at a time: a folder of folders (`/nix/store`) has
+/// hundreds of thousands.
+struct LeadsPass {
+    rows: Arc<[EntryId]>,
+    /// The next row to look at.
+    next: usize,
+    ask: u64,
+    /// Every row asked about, not only those new here.
+    again: bool,
+    /// The rows to ask about again by name.
+    named: crate::hashing::Set<EntryId>,
+    /// The folders opened in place: what is opened stands until nothing is
+    /// found in it (`Pane::folders_to_ask`).
+    opened: crate::hashing::Set<EntryId>,
+    /// What it found to ask about.
+    folders: Vec<(EntryId, PathBuf)>,
+    /// Whether the folders it has not reached yet are kept from showing.
+    hiding: Hiding,
+    fresh: bool,
+}
+
+/// Whether folders not reached yet by a look over the rows are shown.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Hiding {
+    /// Not a first look (`Leading::again`, what arrived): nothing moves.
+    Never,
+    /// A first look of a location or a lens: should it take more than one
+    /// pump, the folders it has not reached yet do not show meanwhile.
+    Soon,
+    Now,
+}
+
 /// What a pane went on showing while a new lens's first answers came.
 struct KeptView {
     filter: Option<Arc<str>>,
@@ -1010,8 +1053,35 @@ impl Leading {
         read: Option<&'a ReadFilter>,
     ) -> Option<TextFilter<'a>> {
         match &self.kept {
-            Some(kept) => {
-                TextFilter::of(kept.filter.as_deref(), kept.read.as_deref(), &kept.unproved)
+            Some(kept) => TextFilter::of(
+                kept.filter.as_deref(),
+                kept.read.as_deref(),
+                &kept.unproved,
+                None,
+            ),
+            None => TextFilter::of(
+                text,
+                read,
+                &self.unproved,
+                self.pass
+                    .as_ref()
+                    .is_some_and(|p| p.hiding == Hiding::Now)
+                    .then_some(&self.asked),
+            ),
+        }
+    }
+
+    /// `id` is asked about by `ask`: what asked before it no longer has
+    /// to answer it, and goes once it has nothing left to answer.
+    fn asked_by(&mut self, id: EntryId, ask: u64) {
+        let before = self.asked.insert(id, ask);
+        if let Some(before) = before.filter(|before| *before != ask)
+            && let Some(job) = self.jobs.get_mut(&before)
+        {
+            job.left = job.left.saturating_sub(1);
+            if job.left == 0 {
+                job.cancel.cancel();
+                self.jobs.remove(&before);
             }
         }
     }
@@ -2093,37 +2163,42 @@ impl Pane {
         if self.leading.pass.is_none() {
             self.leading.pass = self.look_over_rows();
         }
-        let again = std::mem::take(&mut self.leading.again);
-        let order = self.unfiltered_order();
-        let mut folders = Vec::new();
-        for &id in order.iter() {
-            let Some(entry) = self.entry(id) else {
-                continue;
-            };
-            let first = !self.leading.asked.contains(&id);
-            if entry.kind != crate::entry::EntryKind::Directory
-                || entry.is_place()
-                || !(first || again)
-                || !(read.keeps)(entry)
-                || !self.listed_by_a_folder(id)
-            {
-                continue;
+        let mut pass = self.leading.pass.take()?;
+        let deadline = std::time::Instant::now() + PUMP_BUDGET;
+        let mut looked = 0_usize;
+        while let Some(&id) = pass.rows.get(pass.next) {
+            // Asking the clock costs as much as a row.
+            looked += 1;
+            if looked.is_multiple_of(64) && std::time::Instant::now() >= deadline {
+                break;
             }
-            let Some(path) = self.path_of(id) else {
-                continue;
-            };
-            self.leading.asked.insert(id);
-            if crate::fs::reach::lane(&path).is_shared() {
-                if first {
-                    self.leading.unproved.insert(id);
-                    self.leading.moved = true;
-                }
-                folders.push((id, path));
+            pass.next += 1;
+            self.ask_of_row(id, &read, &mut pass);
+        }
+        if pass.next < pass.rows.len() {
+            if pass.hiding == Hiding::Soon {
+                pass.hiding = Hiding::Now;
+                self.filter_test_moved();
             }
             self.leading.pass = Some(pass);
             return None;
         }
-        self.leading.waiting += folders.len();
+        // What it kept from showing shows: a row it passed over without a
+        // question (a folder no folder lists) included.
+        if pass.hiding == Hiding::Now {
+            self.filter_test_moved();
+        }
+        if pass.folders.is_empty() {
+            return None;
+        }
+        let cancel = self.leading.cancel.child();
+        self.leading.jobs.insert(
+            pass.ask,
+            LeadsJob {
+                cancel: cancel.clone(),
+                left: pass.folders.len(),
+            },
+        );
         let wait = if std::mem::take(&mut self.leading.typed) {
             TYPED_LENS_WAITS
         } else {
@@ -2141,6 +2216,95 @@ impl Pane {
             keeps_view: self.leading.kept.is_some(),
             fresh: pass.fresh,
         })
+    }
+
+    /// What of the rows is to be looked over, if anything moved since they
+    /// last were: what came since, unless every folder is asked again or
+    /// the listings are others than those looked at.
+    fn look_over_rows(&mut self) -> Option<LeadsPass> {
+        let key = LeadingKey {
+            listing: (self.listing.id(), self.listing.names_version()),
+            tree: self.tree_members_version,
+            show_hidden: self.sort.show_hidden,
+        };
+        let looked = self.leading.looked.replace(key);
+        if looked.is_some_and(|before| before.show_hidden != key.show_hidden) {
+            self.leading.start_again();
+        }
+        let again = std::mem::take(&mut self.leading.again);
+        let named = std::mem::take(&mut self.leading.again_of);
+        if looked == Some(key) && !again && named.is_empty() {
+            return None;
+        }
+        let fresh = std::mem::take(&mut self.leading.fresh);
+        let at = self.listings_at();
+        let before = std::mem::replace(&mut self.leading.at, at.clone());
+        let same_listings = !again
+            && looked.is_some()
+            && before.len() == at.len()
+            && before.iter().zip(&at).all(|(a, b)| a.0 == b.0);
+        let arrived = || -> Option<Vec<EntryId>> {
+            let mut rows = Vec::new();
+            for (listing, (_, then)) in self.listings().zip(&before) {
+                rows.extend(listing.updated_since(*then)?);
+            }
+            Some(rows)
+        };
+        let rows: Arc<[EntryId]> = match same_listings.then(arrived).flatten() {
+            Some(mut rows) => {
+                rows.extend(named.iter().copied());
+                rows.into()
+            }
+            None => self.unfiltered_order(),
+        };
+        self.leading.asks += 1;
+        let opened = self.expanded.iter().map(|o| o.at).collect();
+        Some(LeadsPass {
+            rows,
+            next: 0,
+            ask: self.leading.asks,
+            again,
+            named,
+            opened,
+            folders: Vec::new(),
+            hiding: if looked.is_none() {
+                Hiding::Soon
+            } else {
+                Hiding::Never
+            },
+            fresh,
+        })
+    }
+
+    /// Whether row `id` is a folder to ask about, in `pass`.
+    fn ask_of_row(&mut self, id: EntryId, read: &ReadFilter, pass: &mut LeadsPass) {
+        let Some(entry) = self.entry(id) else {
+            return;
+        };
+        let first = !self.leading.asked.contains_key(&id);
+        if entry.kind != crate::entry::EntryKind::Directory
+            || entry.is_place()
+            || !(first || pass.again || pass.named.contains(&id))
+            || !(read.keeps)(entry)
+            || !self.listed_by_a_folder(id)
+        {
+            return;
+        }
+        let Some(path) = self.path_of(id) else {
+            return;
+        };
+        self.leading.asked_by(id, pass.ask);
+        let stands = !crate::fs::reach::lane(&path).is_shared();
+        if !stands {
+            if first && !pass.opened.contains(&id) {
+                self.leading.unproved.insert(id);
+            }
+            self.leading.waiting.insert(id);
+            pass.folders.push((id, path));
+        }
+        if first {
+            self.leading.moved.push(id);
+        }
     }
 
     /// Whether the listing holding `id` is a folder's, on disk.
@@ -2218,7 +2382,6 @@ impl Pane {
         {
             self.retain_shown();
         }
-        moved
     }
 
     /// Something changed files, or the pane was asked to look again (F5):
@@ -2226,7 +2389,41 @@ impl Pane {
     /// is shown staying as it is until the answers come.
     pub(crate) fn ask_about_folders_again(&mut self) {
         self.leading.start_again();
-        self.leading.looked = None;
+        self.leading.fresh = true;
+    }
+
+    /// A plan changed what is below `above`: the folders this pane lists on
+    /// the way there are asked about again, from the files themselves,
+    /// the others' looks going on. Whether any is.
+    pub(crate) fn ask_again_above(&mut self, above: &FoldersAbove<'_>) -> bool {
+        if self.read.as_ref().is_none_or(|r| r.lens.is_none()) || self.open.is_none() {
+            return false;
+        }
+        let mut named = Vec::new();
+        let top = self
+            .location()
+            .and_then(Location::path)
+            .map(|at| (at, &self.listing));
+        let kept = opened(&self.kept, &self.expanded)
+            .filter_map(|(_, k)| Some((k.path.clone()?, &k.listing)));
+        for (folder, listing) in top.into_iter().chain(kept) {
+            let Some(below) = above.by_folder.get(folder.as_path()) else {
+                continue;
+            };
+            named.extend(
+                below
+                    .iter()
+                    .filter_map(|name| listing.find_by_name(name))
+                    .filter(|e| e.kind == crate::entry::EntryKind::Directory)
+                    .map(|e| e.id),
+            );
+        }
+        if named.is_empty() {
+            return false;
+        }
+        self.leading.again_of.extend(named);
+        self.leading.fresh = true;
+        true
     }
 
     /// Whether folders are still being looked into for the pane's lens:
@@ -2327,6 +2524,15 @@ impl Pane {
         let Some(tree) = self.found.shown() else {
             return flat;
         };
+        let gone = (
+            self.listing.shown_version(),
+            self.filter_version,
+            if self.read.as_ref().is_some_and(|read| read.metadata) {
+                self.listing.version()
+            } else {
+                0
+            },
+        );
         let mut shown = self.found.shown.lock();
         if let Some(s) = shown.as_ref()
             && s.gone == gone
@@ -4467,7 +4673,8 @@ impl Workspace {
                 r.hidden_moved.push((p.id, location));
             }
             r.backlog |= p.backlog();
-            r.jobs.extend(p.jobs_wanted());
+            r.jobs
+                .extend(p.jobs_wanted().into_iter().map(|job| (p.id, job)));
             r.found.extend(p.found_tree_asked());
         }
         r
@@ -4497,7 +4704,8 @@ pub struct PumpReport {
     /// The jobs for workers that what the panes show wants
     /// ([`Pane::jobs_wanted`]): `App::pump_report` runs them. A pump that
     /// leaves them shows no folder it opened, nor an order asked anew.
-    pub jobs: Vec<crate::location::ListingJob>,
+    /// Each with the pane it is for: its wake is that pane's.
+    pub jobs: Vec<(PaneId, crate::location::ListingJob)>,
     /// The folders whose way to what a lens keeps is still to be found
     /// out: `App::pump_report` hands them to a worker.
     pub leads: Vec<LeadsAsked>,

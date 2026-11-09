@@ -1155,6 +1155,8 @@ struct Sorting {
     /// change made to it directly, as its events wait) is sorted again.
     version: u64,
     order: Receiver<Sorted>,
+    /// Ends the sort once nothing waits for it.
+    cancel: CancelToken,
 }
 
 /// An order made on a worker, and its ranks for placing what arrives
@@ -1174,6 +1176,8 @@ pub struct SortJob {
     /// The names companions belong to that are listed.
     named: crate::hashing::Set<OsString>,
     order: Sender<Sorted>,
+    /// Asked for another order since, or none at all: not worth finishing.
+    cancel: CancelToken,
 }
 
 impl fmt::Debug for SortJob {
@@ -1196,14 +1200,24 @@ impl SortJob {
             companions,
             named,
             order,
+            cancel,
         } = self;
+        if cancel.is_cancelled() {
+            return;
+        }
         let sorted = {
-            let keyed = keyed_of(
+            let mut keyed = keys_of(
                 spec,
                 entries.values().filter(|slot| {
                     shown_with(spec, slot, companions, |owner| named.contains(owner))
                 }),
             );
+            // The sort is the long part: a sort let go of ends here, so
+            // the entries are the listing's again at once.
+            if cancel.is_cancelled() {
+                return;
+            }
+            keyed.sort_unstable_by(|a, b| Listing::compare(spec, *a, *b));
             Sorted {
                 ids: keyed.iter().map(|key| key.4).collect(),
                 ranks: keyed.into_iter().map(Rank::of).collect(),
@@ -1259,9 +1273,14 @@ fn shown_with(
     spec.show_hidden || !slot.entry.is_hidden()
 }
 
+/// `slots`' sort keys under `spec`, not sorted yet.
+fn keys_of<'a>(spec: SortSpec, slots: impl Iterator<Item = &'a Slot>) -> Vec<SortKeyOf<'a>> {
+    slots.map(|slot| Listing::sort_key(spec, slot)).collect()
+}
+
 /// `slots`' sort keys under `spec`, in order.
 fn keyed_of<'a>(spec: SortSpec, slots: impl Iterator<Item = &'a Slot>) -> Vec<SortKeyOf<'a>> {
-    let mut keyed: Vec<SortKeyOf<'a>> = slots.map(|slot| Listing::sort_key(spec, slot)).collect();
+    let mut keyed = keys_of(spec, slots);
     keyed.sort_unstable_by(|a, b| Listing::compare(spec, *a, *b));
     keyed
 }
@@ -1595,13 +1614,16 @@ impl Listing {
 
     /// The sort that makes `spec`'s order on a worker (ADR-121), when the
     /// order shown is another's (`order_shown`) and none runs for it. A
-    /// sort asked for another spec before is let go. Until its order is
-    /// back the listing takes no events.
+    /// sort asked for another spec is let go, whether `spec` needs one or
+    /// has its order already: the last asked wins. Until its order is back
+    /// the listing takes no events.
     pub fn sort_job(&mut self, spec: SortSpec) -> Option<SortJob> {
         if self.fill.is_some() || self.sorting.as_ref().is_some_and(|s| s.spec == spec) {
             return None;
         }
+        self.let_go_of_sort();
         self.order_before(spec)?;
+        let cancel = CancelToken::new();
         let companions = self.companions_shown();
         let named = self
             .owners
@@ -1615,6 +1637,7 @@ impl Listing {
             companions_shown: companions,
             version: self.version,
             order: sorted,
+            cancel: cancel.clone(),
         });
         Some(SortJob {
             entries: Arc::clone(&self.entries),
@@ -1622,13 +1645,36 @@ impl Listing {
             companions,
             named,
             order,
+            cancel,
         })
     }
 
+    /// Let go of the sort under way, its order no one's any more.
+    fn let_go_of_sort(&mut self) {
+        if let Some(sorting) = self.sorting.take() {
+            sorting.cancel.cancel();
+        }
+    }
+
     /// Whether an order asked anew is made on a worker: its events wait
-    /// until it is back, which wakes the window.
+    /// until it is back, which wakes the window. Also while a sort let go
+    /// of still holds the entries, which applying them would copy whole on
+    /// the window's thread (ADR-121): its end wakes it too.
     pub fn is_sorting(&self) -> bool {
-        self.sorting.is_some()
+        self.sorting.is_some() || Arc::strong_count(&self.entries) > 1
+    }
+
+    /// Whether what a worker made waits to be taken (a folder filled, an
+    /// order made): the next pump takes it, and the job's one wake may
+    /// have been spent on a pump that had no budget left for this listing.
+    pub fn has_result(&self) -> bool {
+        self.fill
+            .as_ref()
+            .is_some_and(|fill| fill.done.load(std::sync::atomic::Ordering::Acquire))
+            || self
+                .sorting
+                .as_ref()
+                .is_some_and(|sorting| !sorting.order.is_empty())
     }
 
     /// Take the order a worker made, if it came: shown from now on.
@@ -2290,8 +2336,8 @@ impl Listing {
         // An order asked anew, made on a worker: taken, it is shown; until
         // it is back, the listing's events wait (ADR-121).
         let sorted = self.take_sorted();
-        if self.sorting.is_some() {
-            return 0;
+        if self.is_sorting() {
+            return usize::from(sorted);
         }
         let started = std::time::Instant::now();
         let mut n = usize::from(sorted);
@@ -2617,7 +2663,9 @@ mod tests {
         assert!(listing.is_sorting());
         let version = listing.version();
         job.run();
+        assert!(listing.has_result(), "its order waits to be taken");
         assert_eq!(listing.drain(&rx, long), 2, "the order, then what waited");
+        assert!(!listing.has_result());
         assert!(!listing.is_sorting());
         assert_ne!(listing.version(), version);
         assert_eq!(names(&listing, backwards), ["d", "c", "b"]);
@@ -2652,6 +2700,55 @@ mod tests {
         assert_eq!(listing.drain(&rx, long), 0);
         assert!(!listing.is_sorting());
         assert!(listing.sort_job(by_name).is_some());
+    }
+
+    #[test]
+    fn a_sort_asked_back_to_the_order_held_lets_the_other_go() {
+        let file = |ino, name: &str| {
+            Entry::new(
+                EntryId {
+                    file: crate::FileId::new(1, ino),
+                    at: 0,
+                },
+                name,
+                EntryKind::File,
+            )
+        };
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let long = std::time::Duration::from_secs(60);
+        let by_name = SortSpec::default();
+        let backwards = SortSpec {
+            ascending: false,
+            ..by_name
+        };
+        let names = |listing: &Listing, spec| -> Vec<String> {
+            listing
+                .order_shown(spec)
+                .iter()
+                .map(|id| listing.get(*id).unwrap().name_str().into_owned())
+                .collect()
+        };
+        let mut listing = Listing::default();
+        listing.apply(ListingEvent::Added(vec![file(1, "b"), file(2, "c")]));
+        assert_eq!(names(&listing, by_name), ["b", "c"]);
+
+        let job = listing.sort_job(backwards).expect("for a worker");
+        // Asked back to the order it holds, while the sort runs.
+        assert!(listing.sort_job(by_name).is_none(), "its own order");
+        tx.send(ListingEvent::Added(vec![file(3, "d")])).unwrap();
+        assert_eq!(names(&listing, by_name), ["b", "c"]);
+        assert_eq!(
+            listing.drain(&rx, long),
+            0,
+            "its events wait for the sort to let go of the entries"
+        );
+        job.run();
+        assert_eq!(listing.drain(&rx, long), 1, "what waited");
+        assert_eq!(
+            names(&listing, by_name),
+            ["b", "c", "d"],
+            "A's rows, A's header"
+        );
     }
 
     #[test]

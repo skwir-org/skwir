@@ -73,17 +73,24 @@ impl LookingBelow {
             return;
         }
         let this = Arc::clone(self);
-        self.context.scheduler.spawn(
-            Priority::Normal,
-            "filter.leads.told",
-            self.context.cancel.clone(),
-            move || {
-                if this.slept(Self::TOLD_AFTER) {
-                    this.telling.store(false, Ordering::Release);
-                    (this.wake)();
-                }
-            },
-        );
+        Self::after_waiting(move || {
+            if this.slept(Self::TOLD_AFTER) {
+                this.telling.store(false, Ordering::Release);
+                (this.wake)();
+            }
+        });
+    }
+
+    /// Run `then` on a thread of its own: what it waits for holds none of
+    /// the workers looking (ADR-126, "one worker left free"). The last
+    /// answer's wake still tells what it found, if no thread can be had.
+    fn after_waiting(then: impl FnOnce() + Send + 'static) {
+        if let Err(error) = std::thread::Builder::new()
+            .name("skwir-looks-waits".into())
+            .spawn(then)
+        {
+            tracing::warn!("a look at folders waits on no thread: {error}");
+        }
     }
 
     /// Wait `time`: false when the work was cancelled meanwhile.
@@ -502,7 +509,6 @@ impl App {
                         for pane in asked {
                             (app.pane_waker(pane))();
                         }
-                        app.wake();
                     }
                 }),
             );
@@ -1681,8 +1687,8 @@ impl App {
         // and each taken by the pump its wake brings (ADR-120, ADR-121).
         // Never cancelled: a job for a folder left stops or is dropped, and
         // one kept (a column gone to) still waits for it.
-        for job in std::mem::take(&mut report.jobs) {
-            let wake = self.waker_handle();
+        for (pane, job) in std::mem::take(&mut report.jobs) {
+            let wake = self.pane_waker(pane);
             self.scheduler.spawn(
                 Priority::Visible,
                 job.label(),
@@ -1782,27 +1788,30 @@ impl App {
             leads,
             context,
         });
-        let cancel = looking.context.cancel.clone();
-        self.scheduler
-            .spawn(Priority::Normal, "filter.leads", cancel, move || {
-                let context = &looking.context;
-                if !looking.slept(looking.asked.wait) {
-                    return;
-                }
-                for _ in 0..looks {
-                    let look = Arc::clone(&looking);
-                    context.scheduler.spawn(
-                        Priority::Background,
-                        "filter.leads.look",
-                        context.cancel.clone(),
-                        move || look.run(),
-                    );
-                }
-                if looking.asked.keeps_view && looking.slept(crate::workspace::VIEW_KEPT) {
-                    looking.telling.store(false, Ordering::Release);
-                    (looking.wake)();
-                }
-            });
+        let begin = move || {
+            let context = &looking.context;
+            if !looking.slept(looking.asked.wait) {
+                return;
+            }
+            for _ in 0..looks {
+                let look = Arc::clone(&looking);
+                context.scheduler.spawn(
+                    Priority::Background,
+                    "filter.leads.look",
+                    context.cancel.clone(),
+                    move || look.run(),
+                );
+            }
+            if looking.asked.keeps_view && looking.slept(crate::workspace::VIEW_KEPT) {
+                looking.telling.store(false, Ordering::Release);
+                (looking.wake)();
+            }
+        };
+        if waits {
+            LookingBelow::after_waiting(begin);
+        } else {
+            begin();
+        }
     }
 
     /// Open `location` again in `pane`, while it still shows it, the step

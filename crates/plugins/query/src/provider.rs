@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::ffi::{OsStr, OsString};
 use std::ops::Bound;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -272,9 +273,15 @@ type Rule = Arc<dyn Fn() -> Arc<LeftOut> + Send + Sync>;
 /// Whether a folder leads to what a lens keeps
 /// (`registry::FilterReader::leads`): what a search of the folder for the
 /// lens's words would answer, by that search, ended at its first match. A
-/// folder is left out only on the search's own word for it.
-pub(crate) fn leads_of(app: Weak<App>) -> skwir_core::registry::LeadsBelow {
+/// folder is left out only on the search's own word for it. Ends with the
+/// plugin, as a search does.
+pub(crate) fn leads_of(app: Weak<App>, lifetime: CancelToken) -> skwir_core::registry::LeadsBelow {
     Arc::new(move |words, dir, ctx| {
+        let ctx = OpenContext {
+            cancel: ctx.cancel.linked(&lifetime),
+            ..ctx.clone()
+        };
+        let ctx = &ctx;
         let app = app.clone();
         let rule: Rule = Arc::new(move || {
             app.upgrade()
@@ -304,6 +311,7 @@ fn leads(words: &str, dir: &Path, ctx: &OpenContext, rule: Rule) -> Option<bool>
         walk: Mutex::new(stop.clone()),
         lifetime: ctx.cancel.clone(),
         first: Some(stop.clone()),
+        unlooked: AtomicBool::new(false),
         ctx,
         #[cfg(test)]
         counted: Counted::default(),
@@ -315,8 +323,11 @@ fn leads(words: &str, dir: &Path, ctx: &OpenContext, rule: Rule) -> Option<bool>
     let found = rx
         .try_iter()
         .any(|event| matches!(event, ListingEvent::Added(entries) if !entries.is_empty()));
-    // Finding nothing in a folder that cannot be read proves nothing.
-    if !found && std::fs::read_dir(dir).is_err() {
+    // Finding nothing where the walk could not look proves nothing: a
+    // folder below that could not be read or a mount the walk does not
+    // enter, as the folder itself that cannot be read. Exclusions are the
+    // search's own word, and stay.
+    if !found && (shared.unlooked.load(Ordering::Relaxed) || std::fs::read_dir(dir).is_err()) {
         return None;
     }
     Some(found)
@@ -343,6 +354,9 @@ pub struct Shared {
     /// Where it asks whether anything is there at all (`leads_of`): the
     /// walk ends at the first match, and the root itself may be one.
     first: Option<CancelToken>,
+    /// Something below the root was not looked at: a folder that could
+    /// not be read, a network mount never entered.
+    unlooked: AtomicBool,
     /// Rechecks run, results they looked at, and folders whose names were
     /// read for the stores: what the tests count.
     #[cfg(test)]
@@ -823,6 +837,7 @@ impl QueryLocation {
             walk: Mutex::new(lifetime.child()),
             lifetime,
             first: None,
+            unlooked: AtomicBool::new(false),
             #[cfg(test)]
             counted: Counted::default(),
         });
@@ -1346,6 +1361,7 @@ impl Shared {
                 return ignore::WalkState::Quit;
             }
             let Ok(dent) = result else {
+                batcher.shared.unlooked.store(true, Ordering::Relaxed);
                 return ignore::WalkState::Continue;
             };
             if dent.depth() == 0 {
@@ -1386,6 +1402,9 @@ impl Shared {
                     return 0;
                 }
             }
+        }
+        if mounts.load(Ordering::Relaxed) > 0 {
+            batcher.shared.unlooked.store(true, Ordering::Relaxed);
         }
         // The folders left out, found themselves (`name:node_modules`).
         let skipped = std::mem::take(&mut *skipped.lock());
