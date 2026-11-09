@@ -552,6 +552,7 @@ pub(crate) fn ended(running: Running, end: End<'_>) -> (String, Tone) {
         moved,
         ran,
         tally,
+        skipped,
     } = end;
     let said = said.join(". ");
     let already = tally.filter(|t| t.already.count > 0 && error.is_none() && !cancelled);
@@ -572,7 +573,7 @@ pub(crate) fn ended(running: Running, end: End<'_>) -> (String, Tone) {
             ),
             Tone::Success,
         ),
-        None => ended_as(running, applied, error, cancelled, items, kept_in),
+        None => ended_as(running, applied, skipped, error, cancelled, items, kept_in),
     };
     // A long one says how much it moved, in how long (ADR-113).
     if tone == Tone::Success && moved > 0 && ran >= AVERAGED_FROM {
@@ -721,12 +722,16 @@ pub(crate) struct End<'a> {
     pub ran: Duration,
     /// Its items done and found done already (`ExecEvent::Finished`).
     pub tally: Option<&'a Tally>,
+    /// Its steps found done already: what a run has to go by with no
+    /// `tally`, that of a retry or of what went on by itself.
+    pub skipped: usize,
 }
 
 /// What the toast of `running`, ended, says of what was done (`ended`).
 fn ended_as(
     running: Running,
     applied: usize,
+    skipped: usize,
     error: Option<String>,
     cancelled: bool,
     items: Option<skwir_core::op::Items>,
@@ -739,6 +744,16 @@ fn ended_as(
         }
         _ => (running.first, running.first_named, applied),
     };
+    // All it had left it found done (a retry's, what went on by itself):
+    // said so, never "Moved 0 items".
+    if count == 0 && skipped > 0 && error.is_none() && !cancelled {
+        let found = Counted {
+            count: skipped,
+            first,
+            named,
+        };
+        return (found_done(&title, run, &found), Tone::Info);
+    }
     let done = describe(
         &title,
         run,
@@ -1103,6 +1118,59 @@ mod tests {
                 Tone::Info
             )
         );
+    }
+
+    /// A retry, or what went on by itself, with all it had left found done
+    /// (and so no `Tally`, counted for a whole run only) says it found it
+    /// so, from what it was told of its steps, never "Moved 0 items".
+    #[test]
+    fn a_run_with_nothing_left_to_do_says_it_found_it_done() {
+        let trashing = || Running {
+            first: Some(Change::Trash {
+                path: PathBuf::from("/example/it's here/c.txt"),
+            }),
+            ..Running::for_test(
+                skwir_core::op::Plan::new("trash").id,
+                "move to trash",
+                RunKind::Apply,
+                1,
+            )
+        };
+        let found = ended(
+            trashing(),
+            End {
+                skipped: 1,
+                ..End::default()
+            },
+        );
+        assert_eq!(found, ("“c.txt” was already gone".to_owned(), Tone::Info));
+        let found = ended(
+            trashing(),
+            End {
+                skipped: 3,
+                ..End::default()
+            },
+        );
+        assert_eq!(found, ("3 items were already gone".to_owned(), Tone::Info));
+        // What it did, it says it did; found done with an error is not.
+        let did = ended(
+            trashing(),
+            End {
+                applied: 2,
+                skipped: 1,
+                ..End::default()
+            },
+        );
+        assert_eq!(did, ("Moved 2 items to Trash".to_owned(), Tone::Success));
+        let failed = ended(
+            trashing(),
+            End {
+                skipped: 1,
+                error: Some("no room".into()),
+                ..End::default()
+            },
+        );
+        assert_eq!(failed.1, Tone::Error);
     }
 
     /// What a plan found done already it says it found, never that it did

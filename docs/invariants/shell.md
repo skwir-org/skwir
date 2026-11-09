@@ -959,7 +959,8 @@ of bars, split or not.
   (`Shell::sync_unfolded`, `Work::unfolds_in`; the program woken then,
   by the strip's one timer). An action is asked in the window that ran
   its command (`finishing::ran`, a reviewed proposal's too), else in the
-  window in front as it joined (an undo, a retry, a script's). Quicker
+  window in front as it joined (an undo, a retry, a script's; a task, a
+  print). Quicker
   ones, and those of other windows, the strip says alone. Its chevron
   folds it into the strip (`ui.activity_pin`, remembered with the
   window's shape: `activity_folded`); the popup's pin, pressed while it

@@ -195,7 +195,8 @@ and macOS otherwise compiled only.
      copy.
    - Only where it was asked: in the window that ran its command (a
      reviewed proposal's too), else the window in front as it joined (an
-     undo, a retry, a script's, whose window the core does not say).
+     undo, a retry, a script's, whose window the core does not say; a
+     task, a print, unfolds it as a plan does, amended 2026-11-09).
      Other windows keep the strip.
    - **Its chevron folds it into the strip**, remembered with the
      window's shape (`activity_folded`); the popup's pin unfolds it

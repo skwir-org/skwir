@@ -80,6 +80,10 @@ pub(crate) struct Work {
     /// windows are up (`Askers`): Activity unfolds there once it lasted
     /// (ADR-114, amended 2026-11-07).
     asked_in: HashMap<PlanId, WindowId>,
+    /// What runs that is no plan (a task: a print), by id, when it was
+    /// first seen and in the window in front then, as nothing says who
+    /// asked for one: it unfolds Activity there as a plan does.
+    tasks_asked_in: HashMap<u64, (Instant, WindowId)>,
     /// After how long they unfold it (`ui.activity_unfold_ms`), as the
     /// last `watch` was told; `None` without a window.
     unfold_after: Option<Duration>,
@@ -382,9 +386,25 @@ impl Work {
         self.joined.retain(|plan, _| under(plan));
         self.announced.retain(|plan| under(plan));
         self.asked_in.retain(|plan, _| under(plan));
+        let tasks: HashSet<u64> = app.tasks.running().iter().map(|task| task.id).collect();
+        self.tasks_asked_in.retain(|task, _| tasks.contains(task));
+        if let Some(askers) = askers {
+            for task in tasks {
+                self.tasks_asked_in
+                    .entry(task)
+                    .or_insert((now, askers.front));
+            }
+        }
         self.unfold_after = askers.map(|askers| askers.unfold_after);
         let mut next: Option<Instant> = None;
         let mut sooner = |at: Instant| next = Some(next.map_or(at, |next| next.min(at)));
+        if let Some(after) = self.unfold_after {
+            for &(at, _) in self.tasks_asked_in.values() {
+                if now < at + after {
+                    sooner(at + after);
+                }
+            }
+        }
         let mut newest: Option<(Instant, PlanId)> = None;
         self.late_waiting = 0;
         for (&plan, &at) in &self.joined {
@@ -435,6 +455,10 @@ impl Work {
             .iter()
             .filter(|&(_, asker)| *asker == window)
             .any(|(plan, _)| self.joined.get(plan).is_some_and(|&at| now >= at + after))
+            || self
+                .tasks_asked_in
+                .values()
+                .any(|&(at, asker)| asker == window && now >= at + after)
     }
 
     /// The actions of this spell of work that ended (`Spell`).
@@ -579,6 +603,7 @@ impl Work {
                         moved,
                         ran,
                         tally: tally.as_deref(),
+                        skipped,
                     },
                 );
                 let mut actions = toast::finished_actions(
@@ -1078,6 +1103,53 @@ mod tests {
         work.take(&app, counted(late, "copy “b”", 1, true), LOOKED_AT);
         work.watch(&app, t1, None);
         assert!(!work.unfolds_in(here, t1 + ms(5000)));
+    }
+
+    /// A task (a print) unfolds Activity as a plan does: in the window in
+    /// front as it was first seen, once it lasted, the program woken then;
+    /// ended, it unfolds nothing more, and without a window it unfolds
+    /// nothing.
+    #[test]
+    fn a_task_unfolds_activity_as_a_plan_does() {
+        use std::collections::HashMap;
+        use std::time::Instant;
+
+        use skwir_core::CancelToken;
+        use skwir_core::workspace::WindowId;
+
+        use super::Askers;
+        let (_tmp, app) = app();
+        let mut work = Work::default();
+        let t0 = Instant::now();
+        let ms = |n: u64| Duration::from_millis(n);
+        let (here, there) = (WindowId(1), WindowId(2));
+        let ran = HashMap::new();
+        let askers = Askers {
+            ran: &ran,
+            front: here,
+            unfold_after: ms(1500),
+        };
+        let task = app.tasks.start("Print “it's a.pdf”", CancelToken::new());
+        assert_eq!(work.watch(&app, t0, Some(askers)), Some(t0 + ms(1500)));
+        assert!(!work.unfolds_in(here, t0 + ms(1499)));
+        assert!(work.unfolds_in(here, t0 + ms(1500)));
+        assert!(!work.unfolds_in(there, t0 + ms(1500)));
+        // Seen first as it joined, whichever comes to the front later.
+        let front_now = Askers {
+            front: there,
+            ..askers
+        };
+        work.watch(&app, t0 + ms(500), Some(front_now));
+        assert!(work.unfolds_in(here, t0 + ms(1500)));
+        assert!(!work.unfolds_in(there, t0 + ms(1500)));
+        drop(task);
+        assert_eq!(work.watch(&app, t0 + ms(1600), Some(askers)), None);
+        assert!(!work.unfolds_in(here, t0 + ms(1600)));
+        // Without a window, nothing unfolds.
+        let late = app.tasks.start("Print “b.pdf”", CancelToken::new());
+        work.watch(&app, t0, None);
+        assert!(!work.unfolds_in(here, t0 + ms(5000)));
+        drop(late);
     }
 
     /// One timer at a time wakes the program for the strip (ADR-114): a
