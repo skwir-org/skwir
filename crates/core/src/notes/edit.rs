@@ -454,6 +454,9 @@ impl Operation for SetNotes {
     fn args(&self) -> serde_json::Value {
         serde_json::to_value(self).expect("serializable")
     }
+    fn file(&self) -> Option<crate::entry::FileId> {
+        Some(self.entry.id)
+    }
     fn describe(&self) -> Change {
         let (words, field) = self.words();
         Change::Metadata {
@@ -770,6 +773,9 @@ impl Operation for RestoreNotes {
     }
     fn args(&self) -> serde_json::Value {
         serde_json::to_value(self).expect("serializable")
+    }
+    fn file(&self) -> Option<crate::entry::FileId> {
+        Some(self.entry.id)
     }
     fn describe(&self) -> Change {
         let name = name_of(&self.entry.path);

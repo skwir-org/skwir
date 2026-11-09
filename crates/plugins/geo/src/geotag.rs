@@ -940,6 +940,9 @@ impl skwir_core::op::Kind for SetPosition {
 }
 
 impl skwir_core::op::Effect for SetPosition {
+    fn file(&self) -> Option<skwir_core::entry::FileId> {
+        Some(self.entry.id)
+    }
     fn describe(&self) -> Change {
         let name = display_name(&self.entry.path);
         let (will, did, already) = match &self.to {

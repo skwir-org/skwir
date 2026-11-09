@@ -448,6 +448,23 @@ impl Change {
         }
     }
 
+    /// Where it acts: what it places, renames, takes away, makes or
+    /// writes. A copy's or a link's source is only read, and not said here.
+    pub fn acts_at(&self) -> impl Iterator<Item = &Path> {
+        let (first, second) = match self {
+            Change::Rename { from, to } | Change::Move { from, to } => (from, Some(to)),
+            Change::Copy { to, .. } | Change::Link { to, .. } => (to, None),
+            Change::Swap { a, b } => (a, Some(b)),
+            Change::Trash { path }
+            | Change::Restore { path }
+            | Change::Delete { path }
+            | Change::Create { path, .. }
+            | Change::Remove { path }
+            | Change::Metadata { path, .. } => (path, None),
+        };
+        std::iter::once(first.as_path()).chain(second.map(PathBuf::as_path))
+    }
+
     /// Where it puts something that was not there: what a copy, a move or
     /// a link places, what is made, where a restore puts a file back. What
     /// the window selects once listed (ADR-054's names settled first). A
@@ -616,6 +633,13 @@ pub trait Operation: Send + Sync + fmt::Debug {
     fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>>;
     /// Clone into a box (plans are cloned into the journal).
     fn clone_box(&self) -> Box<dyn Operation>;
+    /// The file it writes, as a metadata change says it
+    /// (`Change::Metadata`), where it knows it: what the run counts apart
+    /// from what it found done already, under whichever name a file of
+    /// several names was asked. None for what is known by its path alone.
+    fn file(&self) -> Option<crate::entry::FileId> {
+        None
+    }
     /// Whether its inverse can undo it: false for what `apply` never
     /// returns an inverse for (deleting permanently). A plan with such a
     /// step is asked about before the user's gesture applies it
@@ -782,6 +806,10 @@ pub trait Effect: Send + Sync + fmt::Debug {
     fn held(&self) -> usize {
         0
     }
+    /// `Operation::file`.
+    fn file(&self) -> Option<crate::entry::FileId> {
+        None
+    }
     /// `Operation::makes`.
     fn makes(&self, ctx: &StepContext) -> Option<Made> {
         let _ = ctx;
@@ -836,6 +864,9 @@ impl<T: Kind> Operation for T {
     }
     fn held(&self) -> usize {
         Effect::held(self)
+    }
+    fn file(&self) -> Option<crate::entry::FileId> {
+        Effect::file(self)
     }
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         Some(self)

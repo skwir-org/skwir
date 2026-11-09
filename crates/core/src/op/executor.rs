@@ -79,6 +79,59 @@ enum Came {
     Other,
 }
 
+/// What a run's applied steps acted on: a step then found done at one of
+/// them, or under one (a file in a folder it trashed, a file asked twice),
+/// was done by the run, not before it (`Came::Ours`).
+#[derive(Default)]
+struct ActedOn {
+    /// Where they placed, renamed, took away or made something: at one of
+    /// these, or under one. What a copy or a link read is none of it.
+    paths: HashSet<PathBuf>,
+    /// What they wrote of a file, by field: that file alone (a folder's
+    /// tag says nothing of what is in it), under whichever of its names.
+    written: HashSet<(Written, String)>,
+}
+
+/// A file written to: as it is known by its step (`Operation::file`), or
+/// else by its path.
+#[derive(PartialEq, Eq, Hash)]
+enum Written {
+    File(crate::entry::FileId),
+    Path(PathBuf),
+}
+
+impl Written {
+    fn of(step: &dyn Operation, path: &Path) -> Written {
+        step.file()
+            .map_or_else(|| Written::Path(path.to_path_buf()), Written::File)
+    }
+}
+
+impl ActedOn {
+    /// `step`, applied, acted on what it says.
+    fn note(&mut self, step: &dyn Operation, change: &Change) {
+        match change {
+            Change::Metadata { path, field, .. } => {
+                self.written
+                    .insert((Written::of(step, path), field.clone()));
+            }
+            _ => self.paths.extend(change.acts_at().map(Path::to_path_buf)),
+        }
+    }
+
+    /// Whether what `step` found done is what the run's steps did.
+    fn holds(&self, step: &dyn Operation, change: &Change) -> bool {
+        match change {
+            Change::Metadata { path, field, .. } => self
+                .written
+                .contains(&(Written::of(step, path), field.clone())),
+            _ => change
+                .acts_at()
+                .any(|at| at.ancestors().any(|above| self.paths.contains(above))),
+        }
+    }
+}
+
 /// What a run came to by its plan's items (`Plan::items`, else each step
 /// an item), from what each step `came` to: an item done where one of its
 /// steps applied or was done by the run, found done where each of them
@@ -4181,11 +4234,7 @@ impl Executor {
         // before it takes the record.
         let mut came = Vec::with_capacity(plan.steps.len());
         let mut first_applied = None;
-        // What its applied steps acted on: a step found done at one of
-        // them, or under one (a file in a folder it trashed, a file asked
-        // twice), was done by this run, not before it.
-        let mut acted_on: std::collections::HashSet<std::path::PathBuf> =
-            std::collections::HashSet::new();
+        let mut acted_on = ActedOn::default();
         // Its speed is measured from here, its sizing and checks done.
         meter.begin(total);
         for (i, step) in plan.steps.iter().enumerate() {
@@ -4231,10 +4280,11 @@ impl Executor {
                 StepStatus::AlreadyDone => {
                     skipped += 1;
                     holds = true;
-                    let ours = change
-                        .subject()
-                        .is_some_and(|on| on.ancestors().any(|at| acted_on.contains(at)));
-                    step_came = if ours { Came::Ours } else { Came::Already };
+                    step_came = if acted_on.holds(step.as_ref(), &change) {
+                        Came::Ours
+                    } else {
+                        Came::Already
+                    };
                 }
                 StepStatus::Conflict { reason } => err = Some(reason.clone()),
                 StepStatus::Pending { .. } => match super::guarded(|| step.apply(&ctx)) {
@@ -4268,10 +4318,8 @@ impl Executor {
                     }
                 },
             }
-            if step_came == Came::Applied
-                && let Some(on) = change.subject()
-            {
-                acted_on.insert(on.to_path_buf());
+            if step_came == Came::Applied {
+                acted_on.note(step.as_ref(), &change);
             }
             came.push(step_came);
             if holds {
@@ -6707,5 +6755,133 @@ mod tests {
             items.steps.clear();
         }
         assert_eq!(tally_of(&plan), None);
+    }
+
+    /// A step found done is the run's only where the run acted: at what it
+    /// places, not at what it read. A folder and a file in it both pasted,
+    /// the file already there: the copy of the folder did not place it, so
+    /// it is found done. Written through two names, one file: the second
+    /// is done by the run, not found done.
+    #[test]
+    fn a_step_found_done_is_the_runs_only_where_it_acted() {
+        use super::super::{Copy, EntryRef, Tally};
+        let base = dirs::home_dir().unwrap().join(".cache/skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let tmp = tempfile::tempdir_in(base).unwrap();
+        let name = |n: &str| tmp.path().join(n);
+        let executor = Executor::new(Scheduler::new(2));
+        let tally_of = |plan: &Plan| -> Tally {
+            executor.execute_blocking(plan, &CancelToken::new());
+            let seen = events_until(
+                &executor,
+                |e| matches!(e, ExecEvent::Finished { plan: p, .. } if *p == plan.id),
+            );
+            match seen.last() {
+                Some(ExecEvent::Finished { tally, .. }) => {
+                    tally.as_deref().cloned().expect("counted")
+                }
+                _ => unreachable!(),
+            }
+        };
+        std::fs::create_dir_all(name("it's d")).unwrap();
+        std::fs::create_dir_all(name("Docs")).unwrap();
+        std::fs::write(name("it's d/x.txt"), b"same").unwrap();
+        std::fs::write(name("Docs/x.txt"), b"same").unwrap();
+        // Whole: a copy already there has its source's time.
+        let when = std::fs::metadata(name("it's d/x.txt"))
+            .unwrap()
+            .modified()
+            .unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(name("Docs/x.txt"))
+            .unwrap()
+            .set_modified(when)
+            .unwrap();
+        let copy = |from: &str| -> Box<dyn Operation> {
+            Box::new(Copy {
+                entry: EntryRef::from_path(name(from)).unwrap(),
+                dest_dir: name("Docs"),
+                new_name: None,
+                preserve_attributes: true,
+            })
+        };
+        let plan = Plan::with_steps("copy", vec![copy("it's d"), copy("it's d/x.txt")]);
+        let tally = tally_of(&plan);
+        assert_eq!((tally.done.count, tally.already.count), (1, 1));
+        // Two links to one file: the second's already there before the run.
+        std::fs::create_dir_all(name("A")).unwrap();
+        std::fs::create_dir_all(name("B")).unwrap();
+        std::fs::write(name("target.txt"), b"t").unwrap();
+        #[cfg(unix)]
+        {
+            use super::super::Link;
+            std::os::unix::fs::symlink(name("target.txt"), name("B/target.txt")).unwrap();
+            let link = |to: &str| -> Box<dyn Operation> {
+                Box::new(Link {
+                    entry: EntryRef::from_path(name("target.txt")).unwrap(),
+                    dest_dir: name(to),
+                    new_name: None,
+                })
+            };
+            let tally = tally_of(&Plan::with_steps("link", vec![link("A"), link("B")]));
+            assert_eq!((tally.done.count, tally.already.count), (1, 1));
+        }
+        // One file written through two of its names.
+        std::fs::write(name("one"), b"").unwrap();
+        std::fs::hard_link(name("one"), name("two")).unwrap();
+        let wrote = std::sync::Arc::new(parking_lot::Mutex::new(false));
+        let mark = |n: &str| -> Box<dyn Operation> {
+            Box::new(Mark {
+                entry: EntryRef::from_path(name(n)).unwrap(),
+                wrote: std::sync::Arc::clone(&wrote),
+            })
+        };
+        let tally = tally_of(&Plan::with_steps("tag", vec![mark("one"), mark("two")]));
+        assert_eq!((tally.done.count, tally.already.count), (2, 0));
+        // Already written before this run: found done.
+        let tally = tally_of(&Plan::with_steps("tag", vec![mark("one")]));
+        assert_eq!((tally.done.count, tally.already.count), (0, 1));
+    }
+
+    /// A step that writes a field of its file, as a note's does: done once
+    /// `wrote` says so, wherever it is asked from.
+    #[derive(Clone, Debug)]
+    struct Mark {
+        entry: super::super::EntryRef,
+        wrote: std::sync::Arc<parking_lot::Mutex<bool>>,
+    }
+
+    impl Operation for Mark {
+        fn kind(&self) -> &'static str {
+            "test-mark"
+        }
+        fn args(&self) -> serde_json::Value {
+            serde_json::Value::Null
+        }
+        fn describe(&self) -> Change {
+            Change::Metadata {
+                path: self.entry.path.clone(),
+                field: "tags".into(),
+                words: None,
+            }
+        }
+        fn check(&self, _ctx: &StepContext) -> StepStatus {
+            if *self.wrote.lock() {
+                StepStatus::AlreadyDone
+            } else {
+                StepStatus::Pending { reversible: true }
+            }
+        }
+        fn apply(&self, _ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
+            *self.wrote.lock() = true;
+            Ok(None)
+        }
+        fn clone_box(&self) -> Box<dyn Operation> {
+            Box::new(self.clone())
+        }
+        fn file(&self) -> Option<crate::entry::FileId> {
+            Some(self.entry.id)
+        }
     }
 }

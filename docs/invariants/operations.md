@@ -45,11 +45,16 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   its item's change. A plan's items are its steps, else `Plan::items`,
   whose `steps` say which steps are each item's (`Items::steps`, from
   `clash::settle` and `Plan::unfold`: the trash and the copy of a
-  replace are one item, said by the copy). A step found done at what an
-  applied step of the same run acted on, or under it (a file in a folder
-  it trashed, a file asked twice), was done by the run: counted done. A
-  run of what a retry had left is not counted: what it finds done may be
-  its first run's.
+  replace are one item, said by the copy). A step found done where an
+  applied step of the same run acted (`Change::acts_at`: what it placed,
+  renamed, took away or made, never what a copy or a link only read), or
+  under it (a file in a folder it trashed, a file asked twice), was done
+  by the run: counted done. A field written is that file's alone, under
+  whichever of its names it was asked (`Operation::file`). A run of what
+  a retry had left, or of what went on by itself, is not counted: what
+  it finds done may be its first run's. With nothing left to do it says
+  it found it done all the same, from its steps (`Finished`'s `skipped`,
+  `toast::ended_as`), never that it did none.
 - **A long step shows how far it went.** A plan's card shows a single
   step only when it announces its work: a step whose work runs elsewhere
   (a helper, on a worker) announces its bytes once it knows them, in its

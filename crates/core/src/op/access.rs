@@ -412,6 +412,9 @@ impl super::Kind for SetAccess {
 }
 
 impl super::Effect for SetAccess {
+    fn file(&self) -> Option<crate::entry::FileId> {
+        Some(self.entry.id)
+    }
     fn describe(&self) -> Change {
         let name = name(&self.entry.path);
         let (inside, of_inside) = if self.inside {
