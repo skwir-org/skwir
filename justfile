@@ -255,9 +255,15 @@ check-macos:
 test-windows *args:
     tools/cross/test-windows.sh {{args}}
 
-# Linux's package (Phase 5, step K): skwir and its helpers, by Nix, from the git tree.
-package-nix:
-    nix build "git+file://{{justfile_directory()}}#default"
+# The Nix package (ADR-124): skwir and the helpers its flags keep, from the
+# git tree; `variant` is default, minimal or full.
+package-nix variant="default":
+    nix build "git+file://{{justfile_directory()}}#{{variant}}"
+
+# What the Nix package's variants hold (tools/package/nix/check.sh): built
+# from scratch, so a release step rather than a routine check.
+package-nix-check *variants:
+    tools/package/nix/check.sh {{variants}}
 
 # The notices of the crates each package's programs link, into
 # tools/package/notices, kept with the source for the packages to copy

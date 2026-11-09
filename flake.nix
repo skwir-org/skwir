@@ -167,6 +167,42 @@
           heaptrack
           wayland-utils
         ];
+
+      # The package (`packages.default`): built from what the build reads of
+      # the git tree (the workspace, its vendored crates, the build and
+      # package tools, the licence), so a change to the docs or the other
+      # tools builds nothing again; with the pinned Rust alone, no rust-src
+      # in its sysroot, so no binary names the toolchain (the package
+      # refuses one that does).
+      rustMinimal = pkgs.rust-bin.stable.${pinned}.minimal;
+      skwir = pkgs.callPackage ./tools/package/nix/package.nix {
+        rustPlatform = pkgs.makeRustPlatform {
+          cargo = rustMinimal;
+          rustc = rustMinimal;
+        };
+        src = lib.fileset.toSource {
+          root = ./.;
+          fileset = lib.fileset.unions [
+            ./Cargo.toml
+            ./Cargo.lock
+            ./crates
+            ./vendor
+            ./tools/build
+            ./tools/package
+            ./LICENSE
+          ];
+        };
+        # The workspace's, as every package says it.
+        inherit ((builtins.fromTOML (builtins.readFile ./Cargo.toml)).workspace.package) version;
+        cargoLock = {
+          lockFile = ./Cargo.lock;
+          # The git sources Zed pins (ADR-064), fetched at the commit the
+          # lock file names: no hash to keep beside each.
+          allowBuiltinFetchGit = true;
+        };
+      };
+      # Every flag the package has, on or off.
+      skwirWith = on: skwir.override (lib.genAttrs skwir.passthru.features (_: on));
     in {
       devShells.default = pkgs.mkShell {
         inherit buildInputs;
@@ -201,77 +237,13 @@
       devShells.pdf = self.devShells.${system}.default.overrideAttrs (_: {
         SKWIR_PDFIUM_LIBRARY = "${pkgs.pdfium}/lib/libpdfium${stdenv.hostPlatform.extensions.sharedLibrary}";
       });
-      # skwir and its helpers as `just dist` builds them, for Linux
-      # (Phase 5, step K): the helpers beside skwir, where it finds them,
-      # what wgpu and GStreamer load at run time on its path, and its
-      # desktop entry, metainfo and icon, as the other packages install
-      # them. Built from the git tree: only tracked files are its source.
-      # The tests need a session and fixtures of their own (`just
-      # test-all`), not run here.
-      packages.default = let
-        rustPlatform = pkgs.makeRustPlatform {
-          cargo = rustToolchain;
-          rustc = rustToolchain;
-        };
-        # Skwir's own fonts (ADR-118): the archives tools/package/fonts.lock
-        # pins, which fonts.py takes the static files from.
-        fontArchives = {
-          "Inter-4.1.zip" = pkgs.fetchurl {
-            url = "https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip";
-            sha256 = "9883fdd4a49d4fb66bd8177ba6625ef9a64aa45899767dde3d36aa425756b11e";
-          };
-          "JetBrainsMono-2.304.zip" = pkgs.fetchurl {
-            url = "https://github.com/JetBrains/JetBrainsMono/releases/download/v2.304/JetBrainsMono-2.304.zip";
-            sha256 = "6f6376c6ed2960ea8a963cd7387ec9d76e3f629125bc33d1fdcd7eb7012f7bbf";
-          };
-        };
-      in
-        rustPlatform.buildRustPackage {
-          pname = "skwir";
-          # The workspace's, as every package says it.
-          inherit ((builtins.fromTOML (builtins.readFile ./Cargo.toml)).workspace.package) version;
-          src = self;
-          cargoLock = {
-            lockFile = ./Cargo.lock;
-            # The git sources Zed pins (ADR-064), fetched at the commit the
-            # lock file names: no hash to keep beside each.
-            allowBuiltinFetchGit = true;
-          };
-          # The programs shipped, as every package lists them.
-          cargoBuildFlags =
-            map (p: "--package=${p}")
-            (lib.filter (p: p != "") (lib.splitString "\n" (builtins.readFile ./tools/package/programs)));
-          doCheck = false;
-          inherit buildInputs;
-          nativeBuildInputs = [pkgs.pkg-config pkgs.cmake pkgs.clang pkgs.makeWrapper];
-          LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
-          postInstall = ''
-            mkdir -p fonts/.downloads
-            ${lib.concatStrings (lib.mapAttrsToList (name: archive: "cp ${archive} fonts/.downloads/${name}\n") fontArchives)}
-            ${pkgs.python3}/bin/python3 tools/package/fonts.py fonts
-            install -Dm644 fonts/fonts/* -t $out/share/skwir/fonts
-            mkdir -p $out/share/licenses/skwir
-            cp -R fonts/licenses/fonts $out/share/licenses/skwir/
-          '' + lib.optionalString stdenv.hostPlatform.isLinux ''
-            install -Dm644 tools/package/linux/org.skwir.skwir.desktop -t $out/share/applications
-            install -Dm644 tools/package/linux/org.skwir.skwir.metainfo.xml -t $out/share/metainfo
-            install -Dm644 crates/ui/assets/org.skwir.skwir.svg -t $out/share/icons/hicolor/scalable/apps
-          '';
-          postFixup = lib.optionalString stdenv.hostPlatform.isLinux ''
-            wrapProgram $out/bin/skwir \
-              --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath linuxRuntimeLibs} \
-              --set-default GST_PLUGIN_SYSTEM_PATH_1_0 ${lib.makeSearchPath "lib/gstreamer-1.0" mediaPlugins}
-          '';
-          meta = {
-            # The words every package says skwir in.
-            inherit ((builtins.fromTOML (builtins.readFile ./crates/skwir/Cargo.toml)).package) description;
-            # skwir's own; the Poppler, DjVuLibre and MuPDF readers, which
-            # link libraries under the GPL and the AGPL (ADR-042, ADR-061);
-            # the model helper's STEP reader (ogeom), under the LGPL.
-            license = with lib.licenses; [asl20 gpl3Only agpl3Plus lgpl21Only];
-            mainProgram = "skwir";
-          };
-        };
+      # skwir and its helpers as nixpkgs would build them (ADR-124,
+      # tools/package/nix/package.nix): the default, with the reader `auto`
+      # uses for each kind of file and the player; `minimal`, every flag
+      # off; `full`, every flag on.
+      packages.default = skwir;
+      packages.minimal = skwirWith false;
+      packages.full = skwirWith true;
 
       # For running the Windows build's tests under Wine (Phase 5), and
       # making its package on Linux (ADR-074): llvm-rc embeds skwir.exe's

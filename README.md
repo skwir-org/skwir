@@ -161,7 +161,38 @@ A later version goes beside it; run the `ln` line again with its name.
 nix run github:skwir-org/skwir
 ```
 
-The flake has a package, an overlay and a Home Manager module. The module
+The flake's package comes in three variants
+([ADR-124](docs/adr/124-the-nix-package-in-nixpkgs-manner.md)): `default`, with
+the helper skwir prefers for each kind of file and the player; `minimal`,
+without any optional dependency; and `full`, every alternative reader
+included. Any other mix is an `override`. Following your nixpkgs shares the
+libraries your system already has:
+
+```nix
+inputs.skwir = {
+  url = "github:skwir-org/skwir";
+  inputs.nixpkgs.follows = "nixpkgs";
+};
+
+# One of these:
+environment.systemPackages = [ inputs.skwir.packages.${pkgs.stdenv.hostPlatform.system}.default ];
+environment.systemPackages = [ inputs.skwir.packages.${pkgs.stdenv.hostPlatform.system}.minimal ];
+environment.systemPackages = [
+  (inputs.skwir.packages.${pkgs.stdenv.hostPlatform.system}.default.override {
+    withPdfium = true;     # PDF reader (PDFium)
+    withPoppler = false;   # Poppler's PDF reader, to choose in the settings
+    withMupdf = false;     # MuPDF's reader, to choose in the settings (AGPL)
+    withDjvulibre = true;  # DjVuLibre's DjVu reader (the built-in one stays)
+    withArchive = true;    # open and extract archives (libarchive)
+    withMermaid = true;    # Mermaid diagrams
+    withMedia = true;      # audio and video player (GStreamer)
+    gstPlugins = ps: [ ps.gst-plugins-base ps.gst-plugins-good ];  # its formats
+  })
+];
+```
+
+The flake also has an overlay and a Home Manager module, whose `package` takes
+any variant. The module
 installs skwir and writes the settings you declare, checked by skwir while the
 configuration builds; they are linked read-only, or with `mutableSettings`
 merged into a writable file at each activation. Skwir keeps the window's state
@@ -174,6 +205,7 @@ both work
 imports = [ inputs.skwir.homeManagerModules.default ];
 programs.skwir = {
   enable = true;
+  # package = inputs.skwir.packages.${pkgs.stdenv.hostPlatform.system}.minimal;
   settings = {
     core.startup = "last";
     plugins.control.enabled = true;

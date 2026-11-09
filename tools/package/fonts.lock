@@ -3,8 +3,8 @@
 # releases, drawn alike by every text system (gpui drew a variable font's
 # bold as its regular before its patch 0045, ADR-073).
 # Each line: an archive, where it is published, its SHA-256.
-# tools/package/fonts.py fetches and checks them; flake.nix names the same
-# archives and sums. To update: a newer release here and in flake.nix,
-# with a skwir release.
+# tools/package/fonts.py fetches and checks them; the Nix package
+# (tools/package/nix/package.nix) names the same archives and sums. To
+# update: a newer release here and there, with a skwir release.
 Inter-4.1.zip https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip 9883fdd4a49d4fb66bd8177ba6625ef9a64aa45899767dde3d36aa425756b11e
 JetBrainsMono-2.304.zip https://github.com/JetBrains/JetBrainsMono/releases/download/v2.304/JetBrainsMono-2.304.zip 6f6376c6ed2960ea8a963cd7387ec9d76e3f629125bc33d1fdcd7eb7012f7bbf

@@ -151,3 +151,10 @@ the nine.
   memory there, and wgpu keeps three. The first frame went 8 ms later.
   0013 halved the pipeline phase (66 to 35 ms).
 - **The stripped binary** went from 67.7 to 75.8 MB.
+
+## Amendment (2026-11-08)
+
+The Nix package (ADR-124) still fetches the git sources at the lock
+file's commits (`allowBuiltinFetchGit`), which the flake gives it; a
+copy of the package in nixpkgs, where that is not allowed, vendors them
+with the rest (`cargoHash`).

@@ -93,3 +93,12 @@ and the folders it manages unless all are granted, and bubblewrap
   (`crates/ui/assets/org.skwir.skwir.svg`), installed as
   `/usr/share/icons/hicolor/scalable/apps/org.skwir.skwir.svg`, which
   the desktop entry names and `linux/check.sh` checks.
+
+## Amendments
+
+- 2026-11-08 (ADR-124): the Nix package, the fourth Linux format, built
+  by Nix from the git tree (`tools/package/nix/package.nix`): `skwir` in
+  `bin`, its helpers in `libexec/skwir` as Fedora's are, one wrapper
+  naming where PDFium and the player's plugins are; its helpers chosen
+  by flags, in three variants (`default`, `minimal`, `full`), checked by
+  `just package-nix-check`.

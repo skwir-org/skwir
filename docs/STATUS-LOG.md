@@ -13502,3 +13502,22 @@ amended).
   `crates/core` adds, not this change. Not seen in a window: the
   board, the shortcut editor, Activity's pin, the omnibox's strip, the
   archive and the chooser's pictures, a tag's chip on a lit menu row.
+
+## 2026-11-08: The Nix package (ADR-124, issue #7)
+
+The closure was 3 GB: built with the dev toolchain, whose paths std's panic
+locations carried into every binary. Now `tools/package/nix/package.nix`, a
+`callPackage` with `withX` flags, built with a minimal toolchain and
+`disallowedReferences`.
+
+- **Measured** (`nix path-info -rSh`, built from scratch on the finished
+  tree): `minimal` 271.4 MiB, `default` 1.0 GiB; `full` evaluated.
+- **Checked** by `just package-nix-check`, from a worktree holding the tree
+  as staged: no toolchain path and no library of a disabled helper in a
+  closure; the rpath, and no `LD_LIBRARY_PATH` in the wrapper; every helper
+  in `libexec/skwir` answers `--probe` and `--build`; fonts, licences,
+  notices, desktop entry and icon there; `skwir cmd settings.check` without
+  a window. `just release-tools-check` (`test_nix.py`).
+- **Not checked** on this tree: a window from the Nix package (a PDF through
+  nixpkgs' PDFium, a video), which the helpers' probes stand in for.
+

@@ -81,3 +81,12 @@ ADR-037 and ADR-040 where they name it.
   copy of one program alone) must point to that source. A crate under
   the GPL is still not built into an Apache-2.0 program: only a helper
   under the GPL takes it, as decision 3 says.
+
+## Amendment (2026-11-08): the Nix package's licences follow its flags
+
+The Nix package (ADR-124) builds only the readers its flags keep, so its
+`meta.license` says what each build holds: Apache-2.0 and the LGPL (the
+model helper's STEP reader) always, the GPL with Poppler's or
+DjVuLibre's reader, the AGPL with MuPDF's. `default` holds DjVuLibre's,
+not Poppler's or MuPDF's. It installs `LICENSE` and the notices of what
+its programs link, as decision 4 asks.

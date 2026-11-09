@@ -1,6 +1,7 @@
 """Skwir's own fonts are the same in every package (ADR-118): the archives
-tools/package/fonts.lock pins are those the Nix package fetches, and
-fonts.py takes files from each of them and from nothing else."""
+tools/package/fonts.lock pins are those the Nix package fetches
+(tools/package/nix/package.nix), and fonts.py takes files from each of
+them and from nothing else."""
 
 from pathlib import Path
 from unittest import mock
@@ -31,12 +32,12 @@ def fonts_py():
 
 class Fonts(unittest.TestCase):
     def test_the_nix_package_fetches_the_archives_pinned(self):
-        flake = (ROOT / "flake.nix").read_text()
+        package = (ROOT / "tools/package/nix/package.nix").read_text()
         for name, url, sum_ in pinned():
             with self.subTest(name):
-                self.assertIn(f'"{name}"', flake)
-                self.assertIn(f'url = "{url}"', flake)
-                self.assertIn(f'sha256 = "{sum_}"', flake)
+                self.assertIn(f'"{name}"', package)
+                self.assertIn(f'url = "{url}"', package)
+                self.assertIn(f'sha256 = "{sum_}"', package)
 
     def test_fonts_py_takes_from_each_archive_pinned(self):
         taken = fonts_py().TAKEN

@@ -91,3 +91,10 @@ features.
   GStreamer helper Linux has plays on Windows and macOS too, GStreamer's
   own build carried, FFmpeg's decoders with it, which reverses point 4's
   "codec licensing".
+- 2026-11-08 (ADR-124): "No distribution packages PDFium" was wrong for
+  nixpkgs, which builds it from source (`pdfium`). The Nix package
+  carries none: its wrapper names nixpkgs' (`SKWIR_PDFIUM_LIBRARY`,
+  `--set-default`, so a setting naming another still wins), behind
+  `withPdfium` (on). Nix's split is by flags, not packages: Poppler and
+  MuPDF off by default, as suggested elsewhere; the player, DjVuLibre,
+  archives and Mermaid on (`tools/package/nix/package.nix`).

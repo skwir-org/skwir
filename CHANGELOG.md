@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **The Nix package in variants** (#7): the closure is about 1 GB, not 3 GB
+  (the Rust toolchain no longer rides along); `minimal` (270 MiB) carries no
+  optional helper, `full` every reader; `.override { withMedia = false; }`
+  and the other flags pick what you need; PDFs open through nixpkgs' PDFium;
+  the helpers are off your PATH.
+
 - **Cards, the new look** (on by default; Settings › Appearance › More settings › Cards off
   gives the window of earlier versions, apart by lines): the panes,
   the preview's parts and the terminal are drawn as cards on the window's frame, a

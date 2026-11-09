@@ -99,3 +99,11 @@ and Windows' message font (Segoe UI); code stays JetBrains Mono there.
   where a package puts them (Linux, Windows, a Mac's bundle, none for a
   build not packaged); `test_fonts.py`; the PKGBUILD tests. Not run: the
   packages' builds and checks, which a release runs.
+
+## Amendment (2026-11-08)
+
+The Nix package's archives and sums are named in
+`tools/package/nix/package.nix` (ADR-124), which `test_fonts.py` reads,
+no longer in the flake. nixpkgs' `inter` cannot stand in for them: it
+deletes the static files Skwir takes (it installs `Inter.ttc` and the
+variable fonts).

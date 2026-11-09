@@ -225,10 +225,11 @@ fn ask_build(path: &Path) -> Said {
 }
 
 /// Where skwir's helpers are, from the folder its program is in: beside
-/// it (a build, `just dist`, a Mac's bundle, Windows' installer, the Nix
-/// package), else where a Linux package keeps a program's private
-/// helpers, `/usr/bin/skwir` beside `/usr/lib/skwir/` (Debian, Arch) or
-/// `/usr/libexec/skwir/` (Fedora) (ADR-040). On Windows, a helper that
+/// it (a build, `just dist`, a Mac's bundle, Windows' installer), else
+/// where a Linux package keeps a program's private helpers,
+/// `/usr/bin/skwir` beside `/usr/lib/skwir/` (Debian, Arch) or
+/// `/usr/libexec/skwir/` (Fedora, and the Nix package's `libexec/skwir`
+/// beside its `bin`) (ADR-040, ADR-124). On Windows, a helper that
 /// loads the libraries the package carries for it sits among them, in
 /// their folder (the media helper in `gstreamer\bin`, ADR-076): Windows
 /// finds a program's libraries beside it.

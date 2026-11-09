@@ -830,6 +830,15 @@ ADR-028 amended), a file replaced whole keeping its mark
 (`file::take_place`). Checks in `docs/STATUS-LOG.md` (2026-11-08,
 "Notes beside files on every volume").
 
+## The Nix package in variants (2026-11-08)
+
+Issue #7 (a 3 GB closure), ADR-124: nixpkgs' manner, `callPackage` and
+`withX` flags in `tools/package/nix/package.nix`; `default` (about 1.0 GiB),
+`minimal` (about 270 MiB) and `full`; nixpkgs' PDFium through the wrapper;
+helpers in `libexec/skwir`; a minimal toolchain and `disallowedReferences`,
+so a binary naming the toolchain fails the build. Checks in
+`docs/STATUS-LOG.md` (2026-11-08, "The Nix package").
+
 ## What is left
 
 Gathered on 2026-10-20 from the notes of this plan and of
