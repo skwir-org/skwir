@@ -2170,12 +2170,29 @@ impl Shell {
         }
     }
 
-    /// Whether `name` runs now. When the dialog open takes it instead,
-    /// Settings keeps what it is not asked, and the overview and About
-    /// close. What the user does acts on the tab shown: it is drawn first.
-    /// Moving between tabs keeps holding, so cycling through them draws only
-    /// the one it stops on.
+    /// Whether `name`, which the user asked in this window (a key, a click,
+    /// a menu), runs now (`admit_here`). The one gate for what the user
+    /// does in a window: it acts in this window. A command that names no
+    /// pane acts in the core's active window (ADR-122), which an agent's
+    /// or a script's `window.select`, `tab.move` or `window.new` may have
+    /// made another without the focus moving; so this window is made
+    /// active first. What is asked from elsewhere (`sync`) is not, and
+    /// leaves the active window as it is.
     fn admit(&mut self, name: &str, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if !self.admit_here(name, window, cx) {
+            return false;
+        }
+        self.app.workspace.write().set_active_window(self.window_id);
+        crate::finishing::raised(cx, self.window_id);
+        true
+    }
+
+    /// Whether `name` runs now in this window. When the dialog open takes
+    /// it instead, Settings keeps what it is not asked, and the overview
+    /// and About close. What the user does acts on the tab shown: it is
+    /// drawn first. Moving between tabs keeps holding, so cycling through
+    /// them draws only the one it stops on.
+    fn admit_here(&mut self, name: &str, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if !self.takes_now(name) {
             if self.settings.is_none() && self.shortcuts.is_some() {
                 self.toggle_shortcuts(window, cx);
@@ -2224,6 +2241,18 @@ impl Shell {
         if !self.admit(name, window, cx) {
             return;
         }
+        self.carry_out(name, args, window, cx);
+    }
+
+    /// Carry out a command `admit` or `admit_here` let through: `ui.*` the
+    /// shell's, everything else the core's.
+    fn carry_out(
+        &mut self,
+        name: &str,
+        args: serde_json::Value,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         // Settings may contain private paths; never trace their values.
         if !name.starts_with("ui.settings") && !name.starts_with("settings.") {
             tracing::debug!(name, %args, "run");
@@ -3433,7 +3462,9 @@ impl Shell {
             && self.takes_now(&request.name)
         {
             let request = self.front_waiting.pop_front().expect("one waits");
-            self.run(&request.name, request.args, window, cx);
+            if self.admit_here(&request.name, window, cx) {
+                self.carry_out(&request.name, request.args, window, cx);
+            }
         }
         if let Some(settings) = self.settings.clone() {
             settings.update(cx, |settings, cx| settings.sync(window, cx));
