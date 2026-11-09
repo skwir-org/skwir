@@ -13709,3 +13709,23 @@ an extension bat colors and `mime::by_name` gives to that very type.
   crates' 514 tests, the 30 of `skwir-ui`'s preview, `extended_previews` and
   `any_file`; clippy on the touched crates, Linux and Windows.
 - **Not checked:** in a window; under Wine, where `by_name` asks the registry first.
+
+## 2026-11-09: Printing types a file as its preview does
+
+`print/src/make.rs` typed by the name alone, so what the name did not say never
+reached it. `source` now asks the bytes where the name says nothing or several
+types claim it, as the preview worker does, through the file the request holds. A
+selection's language comes from `highlight::language_of` too; it was a copy of the
+old rule. A file that cannot be held keeps its name's type, and is told so further
+on (a folder, as before).
+
+- Disabling the step for one run made a PDF with no extension fail with "shows
+  nothing that can be printed": the reported fault, as the code read.
+- Still by the name: the dialog's page count for a PDF, and which files a contact
+  sheet takes as pictures. A PDF with no extension prints; the dialog just does not
+  count it first.
+- **Checked:** `a_name_that_says_nothing_prints_as_the_bytes_say` (a PDF, a script, a
+  selection, a text that says nothing) and the crate's other 16 tests; clippy,
+  Linux and Windows.
+- **Not checked:** a printed page; the test reads the colored runs handed to the
+  helper. Under Wine.

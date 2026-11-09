@@ -8,6 +8,9 @@
 - **Code colors follow a file's type where its name says nothing**: a script
   with no extension by its `#!` line, and JSON, Python or Lisp files under names
   of their own, such as `.geojson`, `.har` or `.wsgi`.
+- **Printing goes by what a file holds where its name says nothing**, as its
+  preview does: a PDF with no extension prints as a PDF, and code prints in
+  its colors, a selection included.
 - **Files in UTF-16 or with a byte order mark** are recognized by what they
   declare: XML, and scripts by their `#!` line.
 - **CSV files separated by semicolons** (#9), tabs or pipes show as their

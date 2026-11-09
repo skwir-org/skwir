@@ -606,10 +606,27 @@ fn source(
     // own name: the link's names where it goes and what it is called.
     let path: &Path = &skwir_core::fs::content_path(path)
         .with_context(|| format!("“{}” shows nothing that can be printed", display_name(path)))?;
-    let mime = skwir_platform::mime::of_request(path, None).map(|mime| mime.as_str().to_owned());
-    let request = request(path, mime.clone())?;
+    let mut request = request(
+        path,
+        skwir_platform::mime::of_request(path, None).map(|mime| mime.as_str().to_owned()),
+    )?;
+    // Typed as the preview worker types it, so it prints as it shows: the
+    // bytes are asked only where the name says nothing or several types
+    // claim it. One that cannot be held is told so further on.
+    let undecided = path
+        .file_name()
+        .filter(|name| request.mime.is_none() || skwir_platform::mime::ambiguous(name));
+    if let Some(name) = undecided
+        && let Ok(held) = request.held()
+    {
+        request.mime = skwir_platform::mime::identify(name, &held).map(|mime| mime.0);
+    }
+    let mime = request.mime.clone();
     if let Some(selection) = &shown.selection {
-        return Ok(Source::parts(vec![selected(path, selection)], None));
+        return Ok(Source::parts(
+            vec![selected(path, mime.as_deref(), selection)],
+            None,
+        ));
     }
     // A PDF is counted only when its pages are picked (`picked`).
     if mime.as_deref() == Some("application/pdf") {
@@ -746,11 +763,8 @@ pub(crate) fn page_count(app: &App, path: &Path, cancel: &CancelToken) -> anyhow
 
 /// What is selected, as its own document: lines in the code font, colored
 /// as the file's language.
-fn selected(path: &Path, selection: &str) -> Part {
-    let language = path
-        .extension()
-        .or_else(|| path.file_name())
-        .map(|name| name.to_string_lossy().into_owned());
+fn selected(path: &Path, mime: Option<&str>, selection: &str) -> Part {
+    let language = skwir_platform::highlight::language_of(path, mime);
     let palette =
         skwir_platform::highlight::Palette::of(&skwir_platform::highlight::CodeTheme::own(false));
     let mut colors = skwir_platform::highlight::Highlighter::new(language.as_deref(), &palette);
@@ -1094,6 +1108,57 @@ mod tests {
 
     /// A contact sheet takes the pictures among the files, shrunk and
     /// named, a see-through one kept see-through, and says what it left.
+    /// A file whose name says nothing prints as its bytes say, as its
+    /// preview shows it: a PDF as one, a script and a selection of it in
+    /// their colors, and a text that says nothing as the text it is.
+    #[test]
+    fn a_name_that_says_nothing_prints_as_the_bytes_say() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        let printed = |name: &str, bytes: &[u8], selection: Option<&str>| {
+            let path = tmp.path().join(name);
+            std::fs::write(&path, bytes).unwrap();
+            let shown = Shown {
+                page: None,
+                selection: selection.map(str::to_owned),
+            };
+            source(
+                &app,
+                &path,
+                &shown,
+                None,
+                tmp.path(),
+                &CancelToken::new(),
+                &Follow::none(),
+            )
+            .unwrap()
+        };
+        let colors = |printed: Source| {
+            let Source::Parts { parts, .. } = printed else {
+                panic!("a text is laid out");
+            };
+            let [Part::Code { lines, .. }] = parts.as_slice() else {
+                panic!("a text is code");
+            };
+            lines
+                .iter()
+                .flat_map(|line| &line.runs)
+                .map(|run| run.color)
+                .collect::<std::collections::HashSet<_>>()
+                .len()
+        };
+        let pdf = b"%PDF-1.7\n%\xE2\xE3\xCF\xD3\n\x00\x01\x02";
+        assert!(matches!(
+            printed("rapport", pdf, None),
+            Source::Pdf(_, None)
+        ));
+        let script = b"#!/bin/sh\nif true; then echo \"hi\"; fi\n";
+        assert!(colors(printed("l'été", script, None)) > 1);
+        let line = Some("if true; then echo \"hi\"; fi");
+        assert!(colors(printed("l'été", script, line)) > 1, "a selection");
+        assert!(colors(printed("notes", b"just some words\n", None)) <= 1);
+    }
+
     /// Pages named before a document is counted: the page shown, closed
     /// ranges in order, each once; every page, a range to the end and a
     /// pick too long are picked once it is counted.
