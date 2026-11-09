@@ -349,7 +349,9 @@ working in an area, also read that area's rules (see
     thumbnails and stored pictures alike.
   - Two providers that hand a file to each other ask one question
     (`preview::shown_as_pages`, `preview::playlist`).
-  - A code view's language stays the name's.
+  - A code view's language is the name's, as most languages have no
+    signature to read; where no grammar knows the name, what the database
+    has as XML is colored as XML (`highlight::language_of`).
 
 ## Background work and streamed state
 

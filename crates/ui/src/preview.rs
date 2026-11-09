@@ -1438,7 +1438,7 @@ pub fn inspect_shown(
         view.source = false;
         return Ok(None);
     }
-    skwir_platform::inspection::source(&own.held()?, cancel).map(Some)
+    skwir_platform::inspection::source(&own.held()?, own.mime.as_deref(), cancel).map(Some)
 }
 
 /// Whether the file `request` asks about is text, by its first bytes,
@@ -1491,7 +1491,7 @@ pub fn source_instead(
     let Ok(mut data) = own
         .held()
         .map_err(anyhow::Error::from)
-        .and_then(|held| skwir_platform::inspection::source(&held, cancel))
+        .and_then(|held| skwir_platform::inspection::source(&held, own.mime.as_deref(), cancel))
     else {
         return Err(error);
     };
@@ -1644,7 +1644,7 @@ fn compute(
     if skwir_platform::inspection::is_text(held.head()) {
         // Every text file is read the way structured code is: a gutter,
         // selection, find and copy. There is no second, poorer text view.
-        return match skwir_platform::inspection::plain(&held, cancel) {
+        return match skwir_platform::inspection::plain(&held, mime, cancel) {
             Ok(data) => PreviewContent::Inspection(crate::inspector::Display::new(data, code)),
             Err(error) => failure_content(&error),
         };
@@ -7150,6 +7150,33 @@ mod tests {
         assert_eq!(sharper(20_000., 1600, 0, u32::MAX), Some(PICTURE_SIDE));
         assert_eq!(sharper(20_000., PICTURE_SIDE, 0, u32::MAX), None);
         assert_eq!(sharper(f32::NAN, 1600, 0, u32::MAX), None);
+    }
+
+    /// The worker's own step for text no provider presents: the type it
+    /// settled says what the text is colored as.
+    #[test]
+    fn text_no_provider_presents_is_colored_by_its_settled_type() {
+        use super::{PreviewContent, compute};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("l'été.ofx");
+        std::fs::write(&path, "<?xml version=\"1.0\"?>\n<OFX/>\n").unwrap();
+        let language = |mime: Option<&str>| match compute(
+            &asked(&path),
+            &path,
+            false,
+            mime,
+            &crate::code_preview::CodeTheme::own(false),
+            1024,
+            skwir_platform::inspection::limits::Bounds::QUICK,
+            &skwir_core::CancelToken::new(),
+        ) {
+            PreviewContent::Inspection(display) => {
+                display.data.text.as_ref().unwrap().language.clone()
+            }
+            _ => panic!("a text file is the code view"),
+        };
+        assert_eq!(language(Some("application/xml")).as_deref(), Some("xml"));
+        assert_eq!(language(Some("text/plain")).as_deref(), Some("ofx"));
     }
 
     #[test]

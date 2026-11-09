@@ -415,6 +415,12 @@ pub fn is_directory(mime: &Mime) -> bool {
     mime.0 == "inode/directory"
 }
 
+/// Whether the database has `mime` read as XML: `application/xml`, a name
+/// of it, or a dialect descending from it. No I/O once it is loaded.
+pub fn is_xml(mime: &Mime) -> bool {
+    database::is_a(&unalias(mime), &Mime("application/xml".to_owned()))
+}
+
 /// The type `mime` is another name for (`model/x.stl-binary` is
 /// `model/stl`), or `mime` itself. No I/O once the database is loaded.
 ///

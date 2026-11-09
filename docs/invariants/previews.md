@@ -1552,7 +1552,9 @@ is still to come are in `docs/preview-frame.md`.
 ## Text and code
 
 - **One text path.** Any text file without a presentation of its own is
-  the code view (`inspection::plain`): the language from the name, a
+  the code view (`inspection::plain`): the language from the name (where
+  no grammar knows the name, what descends from `application/xml` is
+  colored as XML, `highlight::language_of`), a
   gutter, selection, find and copy. A rendered format's source is the
   same view (`inspection::source`). There is no second, poorer text
   renderer in the UI: the code view's rows (`code_preview::CodeRow`)

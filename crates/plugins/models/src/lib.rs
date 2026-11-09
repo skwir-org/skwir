@@ -318,7 +318,7 @@ impl PreviewProvider for Provider {
             // Text without a picture is read as the text it is, saying what
             // was left out.
             None if format.is_text() => {
-                let mut data = inspection::plain(&held, cancel)?;
+                let mut data = inspection::plain(&held, req.mime.as_deref(), cancel)?;
                 data.details = details;
                 data.notice = [notice, std::mem::take(&mut data.notice)]
                     .into_iter()

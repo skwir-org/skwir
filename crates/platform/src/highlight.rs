@@ -555,6 +555,38 @@ impl Palette {
     }
 }
 
+/// What the code view colors the file at `path` of type `mime` as, a token
+/// as [`Highlighter`] takes it: the name's extension, or the name where it
+/// has none. Most languages have no signature, so the name stays the first
+/// word: a grammar that knows it colors the file. A name none knows says
+/// nothing of how the file reads, and what descends from XML in the
+/// database reads as XML, the bytes having said so or the database knowing
+/// the dialect (`.ofx`, `.xliff`, a `.dat` that declares itself). Grammars
+/// are asked only of what is XML. May read what bat's set holds: a worker's
+/// work.
+pub fn language_of(path: &Path, mime: Option<&str>) -> Option<String> {
+    let token = path
+        .extension()
+        .or_else(|| path.file_name())?
+        .to_string_lossy()
+        .into_owned();
+    let is_xml = mime.is_some_and(|mime| crate::mime::is_xml(&crate::mime::Mime(mime.to_owned())));
+    if is_xml && !grammar_knows(path, &token) {
+        return Some("xml".to_owned());
+    }
+    Some(token)
+}
+
+/// Whether a grammar colors the file at `path` by its name: bat's, for
+/// `token`, or a tree-sitter grammar found for it, as `engine` asks them.
+fn grammar_knows(path: &Path, token: &str) -> bool {
+    added::table_now().colors(token).is_some()
+        || path.file_name().is_some_and(|name| {
+            let found = crate::grammars::all().unwrap_or_default();
+            crate::grammars::for_file(&found, &name.to_string_lossy(), None).is_some()
+        })
+}
+
 /// The one syntax highlighter, for the code view and for a document's code
 /// blocks alike. It runs on the worker that builds the `Display` and keeps
 /// the grammar's state from line to line (a multiline string, a comment).

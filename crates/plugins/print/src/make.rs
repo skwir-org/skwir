@@ -685,7 +685,7 @@ fn builtin(
     }
     let held = request.held()?;
     if skwir_platform::inspection::is_text(held.head()) {
-        let inspection = skwir_platform::inspection::plain(&held, cancel)?;
+        let inspection = skwir_platform::inspection::plain(&held, mime, cancel)?;
         let palette = skwir_platform::highlight::Palette::of(
             &skwir_platform::highlight::CodeTheme::own(false),
         );

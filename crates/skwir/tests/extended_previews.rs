@@ -186,6 +186,31 @@ fn a_csv_is_read_by_the_separator_it_uses() {
     assert_eq!(table.rows.len(), 1);
     assert_eq!(table.rows[0].cells, ["1,5", "2"]);
 }
+/// A file the bytes or the database say is XML is colored as one, whatever
+/// it is called, and a name that says what it is keeps its colors.
+#[test]
+fn a_file_that_is_xml_is_read_as_xml_whatever_its_name() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = app(tmp.path());
+    let declared = "<?xml version=\"1.0\"?>\n<OFX><A>l'été</A></OFX>\n";
+    let source = InspectRequest {
+        source: true,
+        ..InspectRequest::default()
+    };
+    let language = |name: &str, bytes: &str| {
+        let path = tmp.path().join(name);
+        std::fs::write(&path, bytes).unwrap();
+        inspect(&app, &path, &source).text.unwrap().language
+    };
+    let xml = Some("xml".to_owned());
+    assert_eq!(language("l'été statement.ofx", declared), xml);
+    assert_eq!(language("export", declared), xml);
+    assert_eq!(language("strings.xliff", declared), xml);
+    assert_eq!(language("real.xml", declared), xml);
+    // The bytes say nothing of OFX 1 (SGML, no declaration).
+    let older = "OFXHEADER:100\nDATA:OFXSGML\n\n<OFX>\n<CODE>0\n</OFX>\n";
+    assert_eq!(language("older.ofx", older).as_deref(), Some("ofx"));
+}
 #[test]
 fn csv_quoted_newlines_and_structured_code() {
     let tmp = tempfile::tempdir().unwrap();

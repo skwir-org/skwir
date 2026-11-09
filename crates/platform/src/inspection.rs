@@ -810,9 +810,10 @@ pub fn read_text<S: FileSource + ?Sized>(
 /// is (`plain`), with the switch back to the presentation.
 pub fn source(
     held: &std::sync::Arc<skwir_core::preview::Held>,
+    mime: Option<&str>,
     cancel: &CancelToken,
 ) -> anyhow::Result<Inspection> {
-    let mut data = plain(held, cancel)?;
+    let mut data = plain(held, mime, cancel)?;
     data.source_available = true;
     Ok(data)
 }
@@ -820,9 +821,11 @@ pub fn source(
 /// Any text file that has no presentation of its own, read where it is
 /// shown (ADR-051): its first rows, and the file (`Inspection::text`) for
 /// the view to read on from. It is the same view as `source`, so every
-/// text file is read, searched and copied the same way.
+/// text file is read, searched and copied the same way. `mime` is its type
+/// as settled, for what it is colored as (`highlight::language_of`).
 pub fn plain(
     held: &std::sync::Arc<skwir_core::preview::Held>,
+    mime: Option<&str>,
     cancel: &CancelToken,
 ) -> anyhow::Result<Inspection> {
     use crate::text_rows::{Form, STRIDE, origin, read};
@@ -832,10 +835,7 @@ pub fn plain(
     let path = held.path();
     let whole = rows.len() as u64 <= STRIDE;
     rows.truncate(STRIDE as usize);
-    let language = path
-        .extension()
-        .or_else(|| path.file_name())
-        .map(|name| name.to_string_lossy().into_owned());
+    let language = crate::highlight::language_of(path, mime);
     let lines = rows.iter().filter(|row| row.first).count();
     Ok(Inspection {
         kind: InspectionKind::Code,
@@ -1752,7 +1752,7 @@ mod tests {
         let cancel = CancelToken::new();
         let path = dir.path().join("it's a café.rs");
         std::fs::write(&path, "fn main() {\r\n    let x = 1;\n}\n").unwrap();
-        let data = plain(&held(&path), &cancel).unwrap();
+        let data = plain(&held(&path), None, &cancel).unwrap();
         assert_eq!(data.kind, InspectionKind::Code);
         assert_eq!(data.title, "3 lines");
         assert_eq!(data.blocks[0].text, "fn main() {");
@@ -1760,7 +1760,7 @@ mod tests {
         assert!(data.notice.is_empty() && !data.source_available);
         let file = data.text.unwrap();
         assert!(file.whole && file.path == path);
-        let shown = source(&held(&path), &cancel).unwrap();
+        let shown = source(&held(&path), None, &cancel).unwrap();
         assert!(shown.source_available);
         assert_eq!(
             shown.title, "3 lines",
@@ -1771,7 +1771,7 @@ mod tests {
         let long = dir.path().join("Makefile");
         let line = "target: dependency # comment\n";
         std::fs::write(&long, line.repeat(1000)).unwrap();
-        let first = plain(&held(&long), &cancel).unwrap();
+        let first = plain(&held(&long), None, &cancel).unwrap();
         assert_eq!(first.blocks[0].language.as_deref(), Some("Makefile"));
         assert_eq!(first.blocks.len() as u64, crate::text_rows::STRIDE);
         assert!(first.title.is_empty() && !first.text.unwrap().whole);
@@ -1780,9 +1780,56 @@ mod tests {
         // One endless line is rows of the code view, a line's number once.
         let minified = dir.path().join("app.min.js");
         std::fs::write(&minified, "x".repeat(limits::LINE_BYTES + 1)).unwrap();
-        let data = plain(&held(&minified), &cancel).unwrap();
+        let data = plain(&held(&minified), None, &cancel).unwrap();
         assert_eq!((data.kind, data.blocks.len()), (InspectionKind::Code, 2));
         assert_eq!(data.title, "1 line");
+    }
+
+    /// The name's grammar first; where none knows the name, what the
+    /// database has as XML is colored as XML.
+    #[test]
+    fn what_is_xml_reads_as_xml_where_no_grammar_knows_its_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let cancel = CancelToken::new();
+        let language = |name: &str, mime: Option<&str>| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, "<a><b>1</b></a>\n").unwrap();
+            let data = plain(&held(&path), mime, &cancel).unwrap();
+            assert_eq!(
+                data.blocks[0].language,
+                data.text.as_ref().unwrap().language
+            );
+            data.text.unwrap().language
+        };
+        let xml = Some("xml".to_owned());
+        assert_eq!(language("l'été.ofx", Some("application/xml")), xml);
+        assert_eq!(
+            language("export", Some("application/xml")),
+            xml,
+            "no extension"
+        );
+        assert_eq!(
+            language("a.ofx", Some("text/xml")),
+            xml,
+            "by another of its names"
+        );
+        assert_eq!(
+            language("a.xliff", Some("application/xliff+xml")),
+            xml,
+            "a dialect"
+        );
+        // What is not XML, or not known to be, is as it was.
+        assert_eq!(
+            language("a.ofx", Some("text/plain")).as_deref(),
+            Some("ofx")
+        );
+        assert_eq!(language("a.ofx", None).as_deref(), Some("ofx"));
+        // A name a grammar knows keeps it: bytes that declare XML in a file
+        // named as code do not recolor it.
+        assert_eq!(
+            language("a.rs", Some("application/xml")).as_deref(),
+            Some("rs")
+        );
     }
 
     #[test]
@@ -1821,7 +1868,7 @@ mod tests {
             read_text(&path, limits::Bounds::QUICK, &cancel).unwrap(),
             ("name;price\ncaf\u{e9};3\n".into(), Encoding::Windows1252)
         );
-        let data = plain(&held(&path), &cancel).unwrap();
+        let data = plain(&held(&path), None, &cancel).unwrap();
         assert_eq!(data.blocks[1].text, "caf\u{e9};3");
         assert_eq!(data.notice, "Read as Windows-1252");
     }

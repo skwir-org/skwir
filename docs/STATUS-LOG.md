@@ -13638,3 +13638,30 @@ broken columns. `text/csv` was always split by commas.
   with pages read from learned starts; every wired preview in
   `extended_previews` and `any_file`.
 - **Not checked:** in a window; the details row is drawn as any other.
+
+## 2026-11-09: XML under another name is colored as XML (#8)
+
+Reported: "OFX files are XML", shown without colors. Detection was not at fault:
+`.ofx` is unknown to the database, the bytes were read, and `<?xml` gave
+`application/xml`. `inspection::plain` took the language from the extension
+alone, so the type never reached the colorer.
+
+- `highlight::language_of(path, mime)`: the name's grammar first (bat's table,
+  else a tree-sitter grammar found for the name, as `engine` asks them); where
+  none knows it, what the database has as XML (`mime::is_xml`, by its hierarchy)
+  is `xml`. `plain` and `source` take the settled type; printing gives its own,
+  by name alone, so a `.ofx` prints plain.
+- Content cannot replace the name: `file` 5.48 on 14 source files with their names
+  removed got 4 right (JSON, Python, C, C++), 8 plain text, and called Rust and
+  Go C source.
+- **Measured** (a throwaway test, the installed database): 55 extensions descend
+  from XML with no grammar by name, `.xsl`, `.xliff`, `.atom`, `.rdf`, `.xul`
+  among them; each now colors as XML.
+- OFX 1.x is SGML, not XML, and stays plain text.
+- **Checked:** `what_is_xml_reads_as_xml_where_no_grammar_knows_its_name`
+  (platform), `text_no_provider_presents_is_colored_by_its_settled_type` (the
+  worker's own step), `a_file_that_is_xml_is_read_as_xml_whatever_its_name` (real
+  bytes through the wired previews); the platform, print and models crates' 512
+  tests, the 30 of `skwir-ui`'s preview, `extended_previews` and `any_file`;
+  clippy on the touched crates, Linux and Windows.
+- **Not checked:** in a window: the token is the one a `.xml` file has.

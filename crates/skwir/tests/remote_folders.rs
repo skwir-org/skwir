@@ -1930,7 +1930,7 @@ fn a_preview_of_a_file_on_a_mount_fetches_it_once() {
     assert!(previews.render(&request, &cancel).unwrap().is_none());
     let held = request.held().unwrap();
     assert!(skwir_platform::inspection::is_text(held.head()));
-    let plain = skwir_platform::inspection::plain(&held, &cancel).unwrap();
+    let plain = skwir_platform::inspection::plain(&held, None, &cancel).unwrap();
     // The view: its rows counted, a chunk read.
     let file = plain.text.unwrap();
     let form = text_rows::Form::read(&file, &cancel).unwrap();
