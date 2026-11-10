@@ -14129,3 +14129,48 @@ playing.
 **Not checked:** 3D in a window (lavapipe draws no meshes); a film back
 from its bytes; `just release-check`, by the user's standing preference.
 Windows and macOS not compiled.
+
+## 2026-11-10: A bar changes once, with what it shows
+
+Coming out of View as hex, the bar changed twice; going in, on some files
+(JSON). Recorded at 60 fps on Xvfb (ffmpeg's x11grab, distinct frames by
+`mpdecimate`), 67 ms each in the debug build: going out, the bytes' bar
+without its button, all its tools a button to the left (the pointer then
+on Smaller text), then the file's bar; going in from formatted JSON, its
+bar with Source and View as hex lit side by side, then the bytes'. Leaving
+Full preview on a picture too large had one bar with the picture and no
+Full preview at all.
+
+The cause: a bar's tools came from the content shown, their lights from
+the request on its way (`InspectRequest::provider`, `source`, `whole`),
+which a click changes before its answer comes. For a moment the bar was
+of neither: the bytes with no provider asked are bytes shown unasked,
+which have no button.
+
+- An inspection's bar lights by the request it answered
+  (`Display::origin`), the picture's by `PreviewState::shown`: what the
+  request on its way asked (`asked`, set in `preview_request` and where a
+  picture read ahead is taken) becomes `shown` where the content is
+  replaced (`replace_preview_content`), so the two change together.
+- Source's button says what it asks (`on`), as Full preview's does, so a
+  second click before the first is answered asks the same.
+- More: View as hex is last, a group of its own after what is about the
+  entry (`Bar::otherwise`). The groups are now laid out in one loop, each
+  there when it holds a row.
+- `docs/invariants/previews.md`: "A bar is of what is shown", and the menu
+  rule's order.
+
+**Measured** after, the same way: going into the bytes from formatted
+JSON, out of them, Markdown's Source both ways, a picture too large's Full
+preview both ways (its whole decode about 10 s in the debug build): one
+change each, the frames before it the press and the focus ring on the same
+bar. While the whole picture decodes, Full preview stays unlit and the busy
+strip says it is on its way, where it was lit at once before.
+
+**Checked:** rustfmt, clippy `-D warnings` on `skwir-ui` and its tests that
+match `preview|inspect|hex|bar|reader|media|model` (126 passed), in capped
+scopes; the window above; More's order in a JSON file's.
+
+**Not checked:** the player's and the reader's More after the move (the
+same `look_tools` call); `just release-check`, by the user's standing
+preference. Windows and macOS not compiled.

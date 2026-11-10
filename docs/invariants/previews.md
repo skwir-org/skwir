@@ -1114,6 +1114,17 @@ is still to come are in `docs/preview-frame.md`.
 - An item states the narrowest of the three variants that still shows
   it (`keep`). Text and a page give way alike: a tool in the same place
   has the same `keep`.
+- **A bar is of what is shown.** Its tools and what is lit among them
+  come from what the panel shows and the request that content answered
+  (`inspector::Display::origin`; `PreviewState::shown` for the others,
+  `asked` as it was when the content came, set in
+  `replace_preview_content`), never from a request still on its way. A
+  click then changes the bar once, as its answer comes: the content's
+  tools with a light of what is coming were a bar of neither (the bytes'
+  without their button, as if shown unasked). Until the answer comes,
+  the busy strip under the bar says it is on its way. A toggle says what
+  it asks (`on`, from what is shown), so a second click before the first
+  is answered asks the same.
 - **A tool stays while its file is shown.** Turning a page, a sheet or a
   chapter never adds a button or takes one away: one that cannot act
   where the user is, is disabled, as the reader's are. A file of more
@@ -1194,12 +1205,16 @@ is still to come are in `docs/preview-frame.md`.
   tests call too: a provider that leaves the source to the shared code
   view gets it only for a file that is text, so a file of the type that
   is not is asked again as it shows.
-- **The menu rule** is every responsive toolbar's. More holds the
-  buttons the chosen variant dropped (`PopoverAnchor::popup_for`), a
-  kind's settings that never have a button (volume, speed, tracks), and
-  what no kind has a button for (open externally, copy the path).
-  Nothing is both a button and a menu row. More is there whenever it
-  holds something, last but for the ×.
+- **The menu rule** is every responsive toolbar's. More holds, in groups
+  in this order: the buttons the chosen variant dropped and what this
+  kind never has a button for (`PopoverAnchor::popup_for`, Wrap lines,
+  Slideshow); a kind's settings that never have a button (volume,
+  speed, tracks); what no kind has a button for (open externally, copy
+  the path, what plugins add); last, another way of looking at the file,
+  which leaves this one (View as hex, `Bar::otherwise`), as a view a
+  menu opens comes after copying and making (ADR-099). Nothing is both a
+  button and a menu row. More is there whenever it holds something,
+  last but for the ×.
 - Open externally and copy the path belong to the entry: under a
   container's view they are in its More, and a member's More holds only
   the member's own (`Bar::always`).

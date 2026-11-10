@@ -17,7 +17,8 @@
 //! Nothing is both a button and a menu row. More is there whenever it holds
 //! something, last but for the ×, which stays at the end. Open externally and
 //! copy the path are the entry's: under a container's view they are in its
-//! More, not the member's (`Bar::always`).
+//! More, not the member's (`Bar::always`). Another way of looking at the
+//! file (View as hex) is last, after them (`Bar::otherwise`).
 use crate::sizes::TextSizes;
 use crate::sizes::sized;
 use std::rc::Rc;
@@ -172,6 +173,10 @@ pub struct Bar {
     pub always: bool,
     /// The × at the end that leaves a member (`close_tool`).
     pub close: Option<Button>,
+    /// Another way of looking at the file, which leaves this one (View as
+    /// hex): the end of More, after what is about the entry, as a view a
+    /// menu opens comes after copying and making (ADR-099).
+    otherwise: Vec<Button>,
 }
 
 impl Bar {
@@ -183,6 +188,7 @@ impl Bar {
             popups: Vec::new(),
             always: true,
             close: None,
+            otherwise: Vec::new(),
         }
     }
 
@@ -354,7 +360,8 @@ pub enum Hex {
     Shown,
     /// A button: nothing else of the file is shown, nor can be.
     Button,
-    /// A row of More, as an action too rare for a button.
+    /// A row of More, as an action too rare for a button: the last
+    /// (`Bar::otherwise`).
     Row,
 }
 
@@ -381,7 +388,7 @@ pub fn look_tools(bar: &mut Bar, looks: Looks) {
                 "preview-source",
                 "code",
                 "The file's own text, as written",
-                serde_json::json!({"action":"source"}),
+                serde_json::json!({"action":"source","on":!on}),
                 label::SOURCE,
                 on,
             ),
@@ -426,10 +433,10 @@ pub fn look_tools(bar: &mut Bar, looks: Looks) {
             label::HEX,
             on,
         );
-        bar.push(match hex {
-            Hex::Row => Item::menu_only(button),
-            Hex::Shown | Hex::Button => Item::button(Slot::Look, 2, button),
-        });
+        match hex {
+            Hex::Row => bar.otherwise.push(button),
+            Hex::Shown | Hex::Button => bar.push(Item::button(Slot::Look, 2, button)),
+        }
     }
 }
 
@@ -488,6 +495,7 @@ pub fn fullscreen_tool(bar: &mut Bar, shell: &Shell, theme: &Theme) {
 fn has_more(bar: &Bar, mode: usize) -> bool {
     bar.always
         || bar.settings.is_some()
+        || !bar.otherwise.is_empty()
         || bar
             .items
             .iter()
@@ -630,26 +638,45 @@ pub fn render(
                 let mut panel = toolbar::menu_panel(popup, "ui.preview_menu", theme, cx)
                     .max_h(sized(480.))
                     .overflow_y_scroll();
-                let mut dropped = false;
-                for item in bar.items.iter().filter(|item| !item.shown(mode)) {
-                    if let Tool::Button(button) = &item.tool {
-                        panel = panel.child(menu_row(button.clone(), shell, cx));
-                        dropped = true;
-                    }
-                }
-                if let Some(settings) = &bar.settings {
-                    if dropped {
+                // What this variant has no button for, the kind's
+                // settings, what is about the entry, then another way of
+                // looking: groups apart, each there when it holds a row.
+                let dropped = bar
+                    .items
+                    .iter()
+                    .filter(|item| !item.shown(mode))
+                    .filter_map(|item| match &item.tool {
+                        Tool::Button(button) => Some(menu_row(button.clone(), shell, cx)),
+                        Tool::Widget(_) => None,
+                    })
+                    .collect();
+                let groups: [Vec<AnyElement>; 4] = [
+                    dropped,
+                    bar.settings
+                        .as_ref()
+                        .map(|settings| settings(shell, theme, cx))
+                        .unwrap_or_default(),
+                    if bar.always {
+                        always(shell, cx)
+                    } else {
+                        Vec::new()
+                    },
+                    bar.otherwise
+                        .iter()
+                        .map(|button| menu_row(button.clone(), shell, cx))
+                        .collect(),
+                ];
+                for (at, group) in groups
+                    .into_iter()
+                    .filter(|group| !group.is_empty())
+                    .enumerate()
+                {
+                    if at > 0 {
                         panel = panel.child(separator(theme));
                     }
-                    panel = panel.children(settings(shell, theme, cx));
-                    dropped = true;
+                    panel = panel.children(group);
                 }
-                if dropped && bar.always {
-                    panel = panel.child(separator(theme));
-                }
-                panel
-                    .when(bar.always, |panel| panel.children(always(shell, cx)))
-                    .into_any_element()
+                panel.into_any_element()
             })
             .collect();
         root = root.child(anchor.popup_for(&chosen, panels));

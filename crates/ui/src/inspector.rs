@@ -2301,7 +2301,10 @@ impl Shell {
             }
             "auto" => state.request = InspectRequest::default(),
             "source" => {
-                state.request.source = !state.request.source;
+                // What its button says it does (`on`, from what is shown),
+                // so a second click before the first is answered asks the
+                // same; without it (a key, the palette), the other way.
+                state.request.source = args["on"].as_bool().unwrap_or(!state.request.source);
                 state.request.offset = 0;
                 // And so for every file of its type from now on: an
                 // inspection's, or a picture's written as text.
@@ -3006,19 +3009,23 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
     // 3D reads the whole model as it turns, which is no Full preview. The
     // bytes chosen (the one way of looking asked by provider): View as hex
     // lit, the way back; unchosen, rare enough to live in More, in every
-    // preview that has it.
-    let whole = request.whole && data.kind != InspectionKind::Model;
+    // preview that has it. Each is lit by what is shown, the request this
+    // inspection answered (`Display::origin`), never by one on its way: a
+    // bar of what is shown with a light of what is coming would change
+    // twice (the bytes' bar without its button, as if shown unasked).
+    let shown = display.origin.as_deref().map_or(request, |(_, view)| view);
+    let whole = shown.whole && data.kind != InspectionKind::Model;
     crate::preview_bar::look_tools(
         &mut bar,
         Looks {
-            source: data.source_available.then_some(request.source),
+            source: data.source_available.then_some(shown.source),
             turn: (data.mesh_available && shell.draws_meshes)
                 .then_some(data.kind == InspectionKind::Model),
             whole: (offered.whole || whole).then_some(Whole {
                 on: whole,
                 enabled: whole || data.whole_available,
             }),
-            hex: if request.provider.is_some() {
+            hex: if shown.provider.is_some() {
                 Some(Hex::Shown)
             } else {
                 (data.kind != InspectionKind::Hex && crate::preview_toolbar::hex_available(shell))

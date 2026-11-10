@@ -597,6 +597,15 @@ pub struct PreviewState {
     /// The type a picture written as text offers its Source by
     /// (`PreviewResult::picture_source`).
     pub picture_source: Option<String>,
+    /// How the request on its way asked to look at the file
+    /// (`preview_request`): what the content it brings answers.
+    asked: skwir_core::inspection::InspectRequest,
+    /// How the panel's content was asked to be looked at: `asked` as it
+    /// was when the content came (`replace_preview_content`). The bars
+    /// light by it (Full preview), never by a request still on its way,
+    /// so a bar changes once, with what it shows (an inspection's own is
+    /// `inspector::Display::origin`).
+    pub(crate) shown: skwir_core::inspection::InspectRequest,
     /// The members the panel went down into, outermost first.
     pub nested: Vec<Arc<Nested>>,
     /// A member asked for and not extracted yet: the worker's next job.
@@ -889,6 +898,8 @@ impl Default for PreviewState {
             queue: None,
             closed_links: None,
             picture_source: None,
+            asked: skwir_core::inspection::InspectRequest::default(),
+            shown: skwir_core::inspection::InspectRequest::default(),
             autoplay: None,
             nested: Vec::new(),
             containers: Vec::new(),
@@ -2695,6 +2706,7 @@ impl Shell {
         let mut inspection = self.preview.inspection.request.clone();
         // A window that draws meshes turns a model (ADR-067).
         inspection.meshes = self.draws_meshes;
+        self.preview.asked.clone_from(&inspection);
         let source_types = self.preview.source_types.clone();
         let turned_types = self.preview.turned_types.clone();
         let tx = self.preview.tx.clone();
@@ -3451,6 +3463,8 @@ impl Shell {
             return false;
         }
         let generation = self.preview.generation;
+        // Read ahead as a file is first looked at: quick, as it would show.
+        self.preview.asked = skwir_core::inspection::InspectRequest::default();
         let mut slot = ahead.slot.lock();
         match std::mem::replace(&mut *slot, AheadSlot::Done) {
             AheadSlot::Read(content) => {
@@ -3621,6 +3635,11 @@ impl Shell {
         // bytes, as many rows as the file holds.
         self.start_text(&mut content, refresh);
         self.start_bytes(content.as_ref(), refresh);
+        self.preview.shown = if content.is_some() {
+            self.preview.asked.clone()
+        } else {
+            skwir_core::inspection::InspectRequest::default()
+        };
         self.preview.content = content;
         // A link to a place in this file shows it now it is here.
         self.show_waiting_mark(cx);

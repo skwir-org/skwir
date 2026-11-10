@@ -242,7 +242,9 @@ pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyEleme
     // even Full preview's bounds). With nothing else shown nor to be shown
     // (a failure, a file without a preview), the bytes are the one way left
     // to look: a button of its own.
-    let whole = shell.preview.inspection.request.whole;
+    // Lit by what is shown (`PreviewState::shown`), never by a request on
+    // its way: the bar changes once, with the picture.
+    let whole = shell.preview.shown.whole;
     crate::preview_bar::look_tools(
         &mut bar,
         Looks {
