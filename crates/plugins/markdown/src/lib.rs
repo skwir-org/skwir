@@ -115,7 +115,7 @@ impl PreviewProvider for Provider {
         cancel: &CancelToken,
     ) -> anyhow::Result<Option<skwir_core::thumbs::Image>> {
         let held = req.held()?;
-        if key.starts_with(notebook::OUTPUT) && format_of(req) == Some(Format::Notebook) {
+        if notebook::holds(key) && format_of(req) == Some(Format::Notebook) {
             let notebook = notebook::read(&held, Bounds::of(view), cancel)?;
             return Ok(notebook::decoded(&notebook, key));
         }
@@ -182,21 +182,13 @@ impl PreviewProvider for Provider {
 }
 
 /// A notebook read as a document: its Markdown, its code and outputs, and
-/// its pictures beside it or drawn by its outputs.
+/// its pictures beside it, pasted into its cells or drawn by its outputs.
 fn notebook(held: &Arc<Held>, bounds: Bounds, cancel: &CancelToken) -> anyhow::Result<Inspection> {
     let value = notebook::read(held, bounds, cancel)?;
-    let read = notebook::markdown(&value, bounds, cancel)?;
     let base = held.path().parent().unwrap_or(std::path::Path::new("."));
-    let page = markdown::parse(
-        &read.markdown,
-        bounds,
-        cancel,
-        |href| {
-            notebook::named(&value, href)
-                .or_else(|| rich_preview::local_picture(base, href, cancel))
-        },
-        None,
-    )?;
+    let read = notebook::page(&value, bounds, cancel, |href| {
+        rich_preview::local_picture(base, href, cancel)
+    })?;
     let mut data = measured(
         Inspection {
             kind: InspectionKind::Markdown,
@@ -215,7 +207,7 @@ fn notebook(held: &Arc<Held>, bounds: Bounds, cancel: &CancelToken) -> anyhow::R
             ..Inspection::default()
         },
         inspection::Encoding::Utf8,
-        page,
+        read.page,
         bounds,
     );
     data.details.extend(inspection::details([
@@ -393,5 +385,110 @@ mod tests {
         assert_eq!(fact("Cells").as_deref(), Some("3"));
         assert_eq!(fact("Language").as_deref(), Some("python"));
         assert_eq!(fact("Kernel").as_deref(), Some("Python 3"));
+    }
+
+    #[test]
+    fn a_notebook_shows_html_results_and_pictures_pasted_into_cells() {
+        let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+        // A table as pandas writes one: a stylesheet with a blank line in
+        // it, which would end an HTML block written into Markdown.
+        let frame = "<div>\n<style scoped>\n    .dataframe tbody tr th {\n        vertical-align: top;\n    }\n\n    .dataframe thead th {\n        text-align: right;\n    }\n</style>\n<table border=\"1\" class=\"dataframe\">\n  <thead>\n    <tr style=\"text-align: right;\">\n      <th></th>\n      <th>café</th>\n    </tr>\n  </thead>\n  <tbody>\n    <tr>\n      <th>0</th>\n      <td>42</td>\n    </tr>\n  </tbody>\n</table>\n</div>";
+        let document = serde_json::json!({
+            "nbformat": 4,
+            "nbformat_minor": 5,
+            "metadata": {"language_info": {"name": "python"}},
+            "cells": [
+                {"cell_type": "markdown", "source": "# Results\n\n![a shot](attachment:shot%20one.png)\n\n![](attachment:gone.png)",
+                 "attachments": {"shot one.png": {"image/png": png}}},
+                // A fence this cell leaves open never takes the next.
+                {"cell_type": "markdown", "source": "```\nleft open"},
+                {"cell_type": "markdown", "source": "# Results"},
+                {"cell_type": "code", "source": "frame",
+                 "outputs": [
+                    {"output_type": "execute_result",
+                     "data": {"text/html": frame, "text/plain": "   café\n0    42"}},
+                    // Drawn by a script: nothing inert, its text stands for it.
+                    {"output_type": "display_data",
+                     "data": {"text/html": "<div id=\"chart\"></div><script>draw()</script>",
+                              "text/plain": "<Chart>"}}
+                 ]}
+            ]
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let request = PreviewRequest::holding(
+            dir.path().join("results.ipynb"),
+            document.to_string().into_bytes(),
+            Some("application/x-ipynb+json"),
+        );
+        let data = notebook(&request.held().unwrap(), Bounds::QUICK, &CancelToken::new()).unwrap();
+        let headings: Vec<_> = data
+            .blocks
+            .iter()
+            .filter(|block| block.heading > 0)
+            .map(|block| (block.text.as_str(), block.anchors.clone()))
+            .collect();
+        assert_eq!(
+            headings,
+            [
+                ("Results", vec!["results".to_owned()]),
+                ("Results", vec!["results-1".to_owned()]),
+            ],
+            "each cell is read apart, its targets unique in the page"
+        );
+        let rows: Vec<_> = data
+            .blocks
+            .iter()
+            .filter_map(|block| match &block.kind {
+                skwir_core::inspection::BlockKind::TableRow { header, .. } => {
+                    Some((*header, block.text.as_str()))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(rows.len(), 2, "{rows:?}");
+        assert!(rows[0].0 && rows[0].1.contains("café"), "{rows:?}");
+        assert!(rows[1].1.contains("42"), "{rows:?}");
+        let code: Vec<_> = data
+            .blocks
+            .iter()
+            .filter(|block| block.code)
+            .map(|block| (block.language.as_deref(), block.text.as_str()))
+            .collect();
+        assert_eq!(
+            code,
+            [
+                (None, "left open"),
+                (Some("python"), "frame"),
+                (Some("output"), "<Chart>"),
+            ],
+            "a table shown is not printed again; the stylesheet is not text"
+        );
+        let pictures: Vec<_> = data
+            .blocks
+            .iter()
+            .filter_map(|block| match &block.picture {
+                Some(skwir_core::inspection::Picture::Later { key, .. }) => Some(key.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            pictures.len(),
+            1,
+            "an attachment the cell lacks shows nothing"
+        );
+        let image = Provider
+            .picture(
+                &request,
+                &InspectRequest::default(),
+                &pictures[0],
+                &CancelToken::new(),
+            )
+            .unwrap()
+            .expect("decoded from the notebook when seen");
+        assert_eq!((image.width, image.height), (1, 1));
+        assert!(
+            data.blocks.iter().any(|block| block.alt == "a shot"),
+            "the picture keeps its description"
+        );
     }
 }

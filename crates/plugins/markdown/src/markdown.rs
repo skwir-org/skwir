@@ -313,9 +313,112 @@ pub fn parse(
     source: &str,
     bounds: Bounds,
     cancel: &CancelToken,
+    load: impl FnMut(&str) -> Option<Picture>,
+    wiki: Option<&mut Wiki>,
+) -> anyhow::Result<rich_preview::Page> {
+    let mut document = Document::new(bounds);
+    document.markdown(source, cancel, load, wiki)?;
+    Ok(document.finish())
+}
+
+/// A page read in parts, each a document of its own: a notebook's cells,
+/// which Jupyter draws apart, so a list or a fence one leaves open never
+/// takes the next, and what a cell printed is never read as Markdown. The
+/// parts share the page's heading targets, its diagrams and its bound on
+/// the blocks.
+pub struct Document {
+    blocks: Vec<Block>,
+    anchors: Anchors,
+    diagrams: usize,
+    bounds: Bounds,
+    truncated: bool,
+}
+
+impl Document {
+    pub fn new(bounds: Bounds) -> Self {
+        Self {
+            blocks: Vec::new(),
+            anchors: Anchors::default(),
+            diagrams: 0,
+            bounds,
+            truncated: false,
+        }
+    }
+
+    pub fn bounds(&self) -> Bounds {
+        self.bounds
+    }
+
+    /// Whether the page holds all it may: what comes after is left out.
+    pub fn full(&self) -> bool {
+        self.truncated || self.blocks.len() >= self.bounds.blocks()
+    }
+
+    /// A part written in Markdown, its pictures named by `load`.
+    pub fn markdown(
+        &mut self,
+        source: &str,
+        cancel: &CancelToken,
+        load: impl FnMut(&str) -> Option<Picture>,
+        wiki: Option<&mut Wiki>,
+    ) -> anyhow::Result<()> {
+        read(self, source, cancel, load, wiki)
+    }
+
+    /// HTML, read by the shared reading-mode reader, its pictures named by
+    /// `load`; whether it showed anything (a chart a script draws shows
+    /// nothing inert).
+    pub fn html(
+        &mut self,
+        source: &str,
+        cancel: &CancelToken,
+        mut load: impl FnMut(&str) -> Option<Picture>,
+    ) -> anyhow::Result<bool> {
+        let before = self.blocks.len();
+        emit_html(
+            &mut self.blocks,
+            &mut source.to_owned(),
+            self.bounds,
+            cancel,
+            &mut load,
+            0,
+        )?;
+        Ok(self.blocks.len() > before)
+    }
+
+    /// A block made elsewhere: a notebook's code, what a cell printed.
+    pub fn push(&mut self, block: Block) {
+        if self.full() {
+            self.truncated = true;
+        } else {
+            self.blocks.push(block);
+        }
+    }
+
+    pub fn finish(self) -> rich_preview::Page {
+        rich_preview::Page {
+            truncated: self.truncated || self.blocks.len() > self.bounds.blocks(),
+            blocks: cut(self.blocks, self.bounds),
+        }
+    }
+}
+
+/// Read `source` into `document`, up to its bound.
+fn read(
+    document: &mut Document,
+    source: &str,
+    cancel: &CancelToken,
     mut load: impl FnMut(&str) -> Option<Picture>,
     mut wiki: Option<&mut Wiki>,
-) -> anyhow::Result<rich_preview::Page> {
+) -> anyhow::Result<()> {
+    let Document {
+        blocks,
+        anchors,
+        diagrams,
+        bounds,
+        truncated,
+    } = document;
+    let bounds = *bounds;
     // Metadata blocks are enabled so that a note's front matter is recognized
     // and skipped, rather than read as a rule and a large heading.
     let options = Options::ENABLE_TABLES
@@ -325,7 +428,6 @@ pub fn parse(
         | Options::ENABLE_YAML_STYLE_METADATA_BLOCKS
         | Options::ENABLE_PLUSES_DELIMITED_METADATA_BLOCKS
         | Options::ENABLE_WIKILINKS;
-    let mut blocks = Vec::new();
     let mut current = Block::default();
     let mut inline = Inline::default();
     let mut quote_depth = 0u32;
@@ -341,16 +443,12 @@ pub fn parse(
     let mut cells: Vec<std::ops::Range<usize>> = Vec::new();
     let mut cell_start = 0usize;
     let mut html = String::new();
-    let mut anchors = Anchors::default();
-    let mut diagrams = 0;
 
     for event in Parser::new_ext(source, options) {
         check(cancel)?;
         if blocks.len() >= bounds.blocks() {
-            return Ok(rich_preview::Page {
-                blocks: cut(blocks, bounds),
-                truncated: true,
-            });
+            *truncated = true;
+            return Ok(());
         }
         if in_metadata {
             if matches!(event, Event::End(TagEnd::MetadataBlock(_))) {
@@ -434,33 +532,26 @@ pub fn parse(
         }
         // A run of raw HTML ends here: read it where it stood.
         if !html.is_empty() && !matches!(event, Event::Html(_)) {
-            flush(&mut blocks, &mut current, &mut marker);
-            emit_html(
-                &mut blocks,
-                &mut html,
-                bounds,
-                cancel,
-                &mut load,
-                quote_depth,
-            )?;
+            flush(blocks, &mut current, &mut marker);
+            emit_html(blocks, &mut html, bounds, cancel, &mut load, quote_depth)?;
             begin(&mut current, quote_depth, &lists, marker.as_deref());
         }
         match event {
             Event::Start(Tag::Paragraph) => {
-                flush(&mut blocks, &mut current, &mut marker);
+                flush(blocks, &mut current, &mut marker);
                 begin(&mut current, quote_depth, &lists, marker.as_deref());
             }
             Event::End(TagEnd::Paragraph) => {
-                flush(&mut blocks, &mut current, &mut marker);
+                flush(blocks, &mut current, &mut marker);
             }
             Event::End(TagEnd::Heading(_)) => {
                 if current.anchors.is_empty() {
                     current.anchors.push(anchors.slug(&current.text));
                 }
-                flush(&mut blocks, &mut current, &mut marker);
+                flush(blocks, &mut current, &mut marker);
             }
             Event::Start(Tag::Heading { level: tag, id, .. }) => {
-                flush(&mut blocks, &mut current, &mut marker);
+                flush(blocks, &mut current, &mut marker);
                 begin(&mut current, quote_depth, &lists, marker.as_deref());
                 current.heading = level(tag);
                 current.anchors = id
@@ -469,23 +560,23 @@ pub fn parse(
                     .collect();
             }
             Event::Start(Tag::BlockQuote(_)) => {
-                flush(&mut blocks, &mut current, &mut marker);
+                flush(blocks, &mut current, &mut marker);
                 quote_depth += 1;
             }
             Event::End(TagEnd::BlockQuote(_)) => {
-                flush(&mut blocks, &mut current, &mut marker);
+                flush(blocks, &mut current, &mut marker);
                 quote_depth = quote_depth.saturating_sub(1);
             }
             Event::Start(Tag::List(start)) => {
-                flush(&mut blocks, &mut current, &mut marker);
+                flush(blocks, &mut current, &mut marker);
                 lists.push(start);
             }
             Event::End(TagEnd::List(_)) => {
-                flush(&mut blocks, &mut current, &mut marker);
+                flush(blocks, &mut current, &mut marker);
                 lists.pop();
             }
             Event::Start(Tag::Item) => {
-                flush(&mut blocks, &mut current, &mut marker);
+                flush(blocks, &mut current, &mut marker);
                 marker = Some(if let Some(Some(next)) = lists.last_mut() {
                     let number = *next;
                     *next += 1;
@@ -497,11 +588,11 @@ pub fn parse(
                 begin(&mut current, quote_depth, &lists, marker.as_deref());
             }
             Event::End(TagEnd::Item) => {
-                flush(&mut blocks, &mut current, &mut marker);
+                flush(blocks, &mut current, &mut marker);
                 marker = None;
             }
             Event::Start(Tag::CodeBlock(kind)) => {
-                flush(&mut blocks, &mut current, &mut marker);
+                flush(blocks, &mut current, &mut marker);
                 begin(&mut current, quote_depth, &lists, marker.as_deref());
                 current.code = true;
                 current.language = match kind {
@@ -523,9 +614,9 @@ pub fn parse(
                 // Every one tried counts, drawn or not: a page of diagrams
                 // that fail ran the helper for each, its deadline each time.
                 if current.language.as_deref() == Some("mermaid")
-                    && diagrams < limits::EMBEDDED_IMAGES
+                    && *diagrams < limits::EMBEDDED_IMAGES
                     && let Some(image) = {
-                        diagrams += 1;
+                        *diagrams += 1;
                         crate::diagram::mermaid(&current.text, cancel)
                     }
                 {
@@ -534,18 +625,18 @@ pub fn parse(
                     current.language = None;
                     current.picture = Some(Picture::Ready(image));
                 }
-                flush(&mut blocks, &mut current, &mut marker);
+                flush(blocks, &mut current, &mut marker);
             }
             Event::Start(Tag::Table(_)) => {
-                flush(&mut blocks, &mut current, &mut marker);
+                flush(blocks, &mut current, &mut marker);
                 in_table = true;
             }
             Event::Start(Tag::MetadataBlock(_)) => {
-                flush(&mut blocks, &mut current, &mut marker);
+                flush(blocks, &mut current, &mut marker);
                 in_metadata = true;
             }
             Event::Start(Tag::Image { dest_url, .. }) => {
-                flush(&mut blocks, &mut current, &mut marker);
+                flush(blocks, &mut current, &mut marker);
                 images = 1;
                 alt.clear();
                 pending = load(dest_url.as_ref());
@@ -559,7 +650,7 @@ pub fn parse(
                 begin(&mut current, quote_depth, &lists, marker.as_deref());
                 if picture.is_some() || !text.trim().is_empty() {
                     current.set_picture(picture, &text);
-                    flush(&mut blocks, &mut current, &mut marker);
+                    flush(blocks, &mut current, &mut marker);
                     begin(&mut current, quote_depth, &lists, marker.as_deref());
                 }
             }
@@ -572,7 +663,7 @@ pub fn parse(
             Event::SoftBreak => push(&mut current, " ", &inline),
             Event::HardBreak => push(&mut current, "\n", &inline),
             Event::Rule => {
-                flush(&mut blocks, &mut current, &mut marker);
+                flush(blocks, &mut current, &mut marker);
                 blocks.push(Block {
                     kind: BlockKind::Rule,
                     quote: quote_depth > 0,
@@ -592,19 +683,9 @@ pub fn parse(
             _ => {}
         }
     }
-    flush(&mut blocks, &mut current, &mut marker);
-    emit_html(
-        &mut blocks,
-        &mut html,
-        bounds,
-        cancel,
-        &mut load,
-        quote_depth,
-    )?;
-    Ok(rich_preview::Page {
-        truncated: blocks.len() > bounds.blocks(),
-        blocks: cut(blocks, bounds),
-    })
+    flush(blocks, &mut current, &mut marker);
+    emit_html(blocks, &mut html, bounds, cancel, &mut load, quote_depth)?;
+    Ok(())
 }
 
 /// A run of raw HTML may add several blocks at once: keep to the bound.

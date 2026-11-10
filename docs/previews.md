@@ -211,7 +211,10 @@ The player, in the panel or pinned at its foot:
   `skwir-mermaid-worker` is installed, and stay code without it.
 - Jupyter notebooks (`.ipynb`, format 4): Markdown cells, code in the
   kernel's language, and what each cell printed, returned, raised or
-  plotted.
+  plotted. A result Jupyter shows as HTML is read like an HTML file, so a
+  table of data (pandas') is a table; one a script draws (a chart) shows
+  its plain text instead. Pictures pasted into a cell are shown. Each
+  cell is read on its own, as Jupyter reads it.
 
 ### Tables (`tables`)
 

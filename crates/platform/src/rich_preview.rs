@@ -454,7 +454,10 @@ struct Walk {
     current_pre: bool,
     /// The element whose content `current` holds.
     group: Option<NodeId>,
-    /// Whether `current` is a table row, and a header row.
+    /// Whether `current` is a table row, and whether its cells so far are
+    /// all headers: a row is a header row when every cell is a `th`, so a
+    /// body row led by its own header (pandas' row numbers) stays a body
+    /// row.
     row: Option<bool>,
     /// Cells opened in the current row.
     cells: usize,
@@ -486,7 +489,7 @@ impl Walk {
                 self.finish();
             }
             self.group = context.block;
-            self.row = (context.row.is_some() && context.row == context.block).then_some(false);
+            self.row = (context.row.is_some() && context.row == context.block).then_some(true);
             self.cells = 0;
         }
         if !self.filled() {
@@ -533,7 +536,8 @@ impl Walk {
                 run.range.start < run.range.end
             });
         }
-        if let Some(header) = self.row.take() {
+        if let Some(headers) = self.row.take() {
+            let header = headers && self.cells > 0;
             let mut cells = Vec::new();
             let mut start = 0;
             for (index, _) in block.text.match_indices('\t') {
@@ -669,7 +673,7 @@ impl Walk {
                 if context.row.is_some() && context.row == context.block {
                     self.begin(context);
                     if let Some(header) = self.row.as_mut() {
-                        *header |= e.name() == "th";
+                        *header &= e.name() == "th";
                     }
                     if self.cells > 0 {
                         self.current.text.push('\t');
@@ -1368,6 +1372,38 @@ mod tests {
             (decoded.width, decoded.height),
             (1600, 400),
             "shown as named"
+        );
+    }
+
+    /// A table as pandas writes one: a head row of headers, body rows led
+    /// by their own header (the row's number), `vertical-align` on every
+    /// cell.
+    #[test]
+    fn a_row_led_by_its_header_is_a_body_row_and_cells_are_not_raised() {
+        use skwir_core::inspection::{BlockKind, Script};
+        let source = r#"<style scoped>
+                .dataframe tbody tr th { vertical-align: top; }
+                .dataframe thead th { text-align: right; }
+            </style>
+            <table class="dataframe">
+              <thead><tr><th></th><th>city</th></tr></thead>
+              <tbody><tr><th>0</th><td>Lyon</td></tr></tbody>
+            </table>"#;
+        let blocks = read(source, Markup::Html);
+        let rows: Vec<_> = blocks
+            .iter()
+            .filter_map(|block| match &block.kind {
+                BlockKind::TableRow { header, .. } => Some((block.text.as_str(), *header)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(rows, [("\tcity", true), ("0\tLyon", false)]);
+        assert!(
+            blocks
+                .iter()
+                .flat_map(|block| &block.runs)
+                .all(|run| run.script == Script::Baseline),
+            "a cell's vertical-align places it in the cell"
         );
     }
 

@@ -407,6 +407,12 @@ impl Sheets {
                 Property::Page(_) | Property::Margin(..) | Property::Padding(..) => {}
             }
         }
+        // A cell's `vertical-align` places its content in the cell, never
+        // raises it (CSS 2.1, 17.5.4: `super`, `sub` and `text-top` act as
+        // `baseline` there): pandas sets `top` on every cell it writes.
+        if matches!(element.value().name(), "td" | "th") {
+            script = None;
+        }
         // A raised element raises its content; its own `baseline` only
         // undoes what a sheet said about it, not its parent's position.
         if let Some(script) = script.filter(|script| *script != Script::Baseline) {

@@ -1,27 +1,42 @@
 //! Jupyter notebooks (`.ipynb`) read as the document they are: Markdown
 //! cells as Markdown, code cells as code in the kernel's language, and what
-//! each printed or drew after it. The notebook is written out as one
-//! Markdown document and read by the same parser as a README, so it reads
-//! alike and needs no layout of its own. A picture an output drew is named
-//! for later (`OUTPUT`) and decoded again from the notebook when it is seen.
+//! each printed, returned or drew after it. Each cell is read apart, as
+//! Jupyter draws it, into one page (`markdown::Document`): a Markdown cell
+//! by the same parser as a README, a result Jupyter shows as HTML by the
+//! same reader as an HTML file, so it reads alike and needs no layout of
+//! its own, and a list, a fence or an HTML block one cell leaves open never
+//! takes the next. A picture an output drew, or one pasted into a cell
+//! (`attachment:`), is named for later (`OUTPUT`, `ATTACHMENT`) and decoded
+//! again from the notebook when it is seen.
+use crate::markdown::Document;
 use base64::Engine as _;
 use serde_json::Value;
-use skwir_core::{CancelToken, inspection::Picture, preview::Held, thumbs::Image};
+use skwir_core::{
+    CancelToken,
+    inspection::{Block, Picture},
+    preview::Held,
+    thumbs::Image,
+};
 use skwir_platform::inspection::{self, limits, limits::Bounds};
-use std::fmt::Write as _;
+use skwir_platform::rich_preview;
 use std::sync::Arc;
 
 /// The key prefix of a picture an output drew; the rest is its number in
 /// the notebook, counted in reading order.
-pub const OUTPUT: &str = "notebook-output:";
+const OUTPUT: &str = "notebook-output:";
+
+/// The key prefix of a picture pasted into a cell; the rest is the cell's
+/// number, a `/` and the name the cell gives it.
+const ATTACHMENT: &str = "notebook-attachment:";
 
 /// Lines of one output kept: a training loop can print thousands. Full
 /// preview keeps them all.
 const OUTPUT_LINES: usize = 200;
 
-/// What the notebook says of itself, for Properties.
+/// What the notebook says of itself, for Properties, and the page it reads
+/// as.
 pub struct Notebook {
-    pub markdown: String,
+    pub page: rich_preview::Page,
     pub cells: usize,
     pub language: Option<String>,
     pub kernel: Option<String>,
@@ -50,17 +65,6 @@ fn text(value: Option<&Value>) -> String {
     }
 }
 
-/// A fence longer than any run of backticks in `code`.
-fn fence(code: &str) -> String {
-    let mut longest = 0;
-    let mut run = 0;
-    for ch in code.chars() {
-        run = if ch == '`' { run + 1 } else { 0 };
-        longest = longest.max(run);
-    }
-    "`".repeat((longest + 1).max(3))
-}
-
 /// A terminal's colours taken out of a traceback: `ESC [ … letter`.
 fn plain(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
@@ -80,10 +84,15 @@ fn plain(text: &str) -> String {
     out
 }
 
-/// The pictures an output bundle can hold, in the order they are preferred.
+/// The pictures a bundle (an output's data, a cell's attachment) can hold,
+/// in the order they are preferred.
 const PICTURES: [&str; 3] = ["image/png", "image/jpeg", "image/svg+xml"];
 
-/// The picture of an output bundle, as bytes.
+fn has_picture(data: &Value) -> bool {
+    PICTURES.iter().any(|mime| data.get(*mime).is_some())
+}
+
+/// The picture of a bundle, as bytes.
 fn picture_bytes(data: &Value) -> Option<Vec<u8>> {
     let (mime, value) = PICTURES
         .iter()
@@ -96,9 +105,17 @@ fn picture_bytes(data: &Value) -> Option<Vec<u8>> {
         .chars()
         .filter(|ch| !ch.is_ascii_whitespace())
         .collect();
-    base64::engine::general_purpose::STANDARD
+    let bytes = base64::engine::general_purpose::STANDARD
         .decode(encoded)
-        .ok()
+        .ok()?;
+    (bytes.len() <= limits::BINARY_INPUT).then_some(bytes)
+}
+
+/// The picture `bytes` hold, named `key` for later, at the size read from
+/// its header.
+fn later(key: String, bytes: &[u8]) -> Option<Picture> {
+    let (width, height) = inspection::picture_size(bytes)?;
+    Some(Picture::Later { key, width, height })
 }
 
 /// The notebook's output bundles that hold a picture, in reading order:
@@ -107,7 +124,7 @@ fn pictures(notebook: &Value) -> impl Iterator<Item = &Value> {
     cells(notebook)
         .flat_map(outputs)
         .filter_map(|output| output.get("data"))
-        .filter(|data| PICTURES.iter().any(|mime| data.get(*mime).is_some()))
+        .filter(|data| has_picture(data))
 }
 
 fn cells(notebook: &Value) -> impl Iterator<Item = &Value> {
@@ -125,13 +142,37 @@ fn outputs(cell: &Value) -> impl Iterator<Item = &Value> {
         .flatten()
 }
 
-/// The notebook as one Markdown document, within `bounds`. Pictures are
-/// named `OUTPUT` and a number; `load` is asked for each as the parser
-/// meets it.
-pub fn markdown(
+/// The attachment a cell names `name`, with the name it is kept under: as
+/// written, else as its link encodes it (`shot%20one.png`: a Markdown link
+/// holds no space), as a picture beside a document is found.
+fn attachment<'a>(attachments: &'a Value, name: &str) -> Option<(String, &'a Value)> {
+    if let Some(bundle) = attachments.get(name) {
+        return Some((name.to_owned(), bundle));
+    }
+    let name = String::from_utf8(skwir_platform::uri::percent_decode(name)).ok()?;
+    let bundle = attachments.get(&name)?;
+    Some((name, bundle))
+}
+
+/// Count `text` against `bounds`' text input before it is read.
+fn spend(read: &mut usize, text: &str, bounds: Bounds) -> anyhow::Result<()> {
+    *read += text.len();
+    if *read > bounds.text_input() {
+        return Err(bounds.refuse(format!(
+            "Notebook text exceeds {} preview limit",
+            limits::describe(bounds.text_input())
+        )));
+    }
+    Ok(())
+}
+
+/// The notebook as one page, within `bounds`. `beside` names a picture a
+/// cell finds beside the notebook.
+pub fn page(
     notebook: &Value,
     bounds: Bounds,
     cancel: &CancelToken,
+    mut beside: impl FnMut(&str) -> Option<Picture>,
 ) -> anyhow::Result<Notebook> {
     let output_lines = bounds.choose(OUTPUT_LINES, usize::MAX);
     let metadata = notebook.get("metadata");
@@ -146,23 +187,45 @@ pub fn markdown(
         .and_then(|m| m.pointer("/kernelspec/display_name"))
         .and_then(Value::as_str)
         .map(str::to_owned);
-    let code_language = language.clone().unwrap_or_default();
-    let mut out = String::new();
+    let code_language = language.clone().filter(|name| !name.trim().is_empty());
+    let mut document = Document::new(bounds);
+    let mut read = 0;
     let mut shortened = 0;
     let mut picture = 0;
-    let mut count = 0;
-    for cell in cells(notebook) {
+    for (number, cell) in cells(notebook).enumerate() {
         inspection::check(cancel)?;
-        count += 1;
+        if document.full() {
+            break;
+        }
         let source = text(cell.get("source"));
         match cell.get("cell_type").and_then(Value::as_str) {
             Some("markdown") => {
-                out.push_str(&source);
-                out.push_str("\n\n");
+                spend(&mut read, &source, bounds)?;
+                let attachments = cell.get("attachments");
+                // What a cell names as an attachment is in the notebook,
+                // never a file beside it.
+                let load = |href: &str| match href.strip_prefix("attachment:") {
+                    Some(name) => {
+                        let (name, bundle) = attachment(attachments?, name)?;
+                        later(
+                            format!("{ATTACHMENT}{number}/{name}"),
+                            &picture_bytes(bundle)?,
+                        )
+                    }
+                    None => beside(href),
+                };
+                document.markdown(&source, cancel, load, None)?;
             }
             Some("code") => {
-                let code = fence(&source);
-                let _ = write!(out, "{code}{code_language}\n{source}\n{code}\n\n");
+                if !source.trim().is_empty() {
+                    spend(&mut read, &source, bounds)?;
+                    document.push(Block {
+                        code: true,
+                        language: code_language.clone(),
+                        text: source,
+                        ..Block::default()
+                    });
+                }
                 for output in outputs(cell) {
                     let shown = match output.get("output_type").and_then(Value::as_str) {
                         Some("stream") => Some(text(output.get("text"))),
@@ -180,16 +243,19 @@ pub fn markdown(
                         )),
                         Some("execute_result" | "display_data") => {
                             let data = output.get("data");
-                            if data.is_some_and(|data| {
-                                PICTURES.iter().any(|mime| data.get(*mime).is_some())
-                            }) {
-                                let _ = write!(out, "![]({OUTPUT}{picture})\n\n");
+                            if data.is_some_and(has_picture) {
+                                let key = format!("{OUTPUT}{picture}");
                                 picture += 1;
+                                if let Some(picture) = data
+                                    .and_then(picture_bytes)
+                                    .and_then(|bytes| later(key, &bytes))
+                                {
+                                    let mut block = Block::default();
+                                    block.set_picture(Some(picture), "");
+                                    document.push(block);
+                                }
                                 None
-                            } else if let Some(markdown) = data.and_then(|d| d.get("text/markdown"))
-                            {
-                                out.push_str(&text(Some(markdown)));
-                                out.push_str("\n\n");
+                            } else if rich(&mut document, data, &mut read, cancel, &mut beside)? {
                                 None
                             } else {
                                 data.map(|d| text(d.get("text/plain")))
@@ -206,49 +272,74 @@ pub fn markdown(
                         shortened += 1;
                     }
                     let shown = lines.join("\n");
-                    let printed = fence(&shown);
+                    spend(&mut read, &shown, bounds)?;
                     // Labelled as what it is; no grammar claims the word.
-                    let _ = write!(out, "{printed}output\n{shown}\n{printed}\n\n");
+                    document.push(Block {
+                        code: true,
+                        language: Some("output".into()),
+                        text: shown,
+                        ..Block::default()
+                    });
                 }
             }
             // A raw cell is for a converter, not for reading.
             _ => {}
         }
-        if out.len() > bounds.text_input() {
-            return Err(bounds.refuse(format!(
-                "Notebook text exceeds {} preview limit",
-                limits::describe(bounds.text_input())
-            )));
-        }
     }
     Ok(Notebook {
-        markdown: out,
-        cells: count,
+        page: document.finish(),
+        cells: cells(notebook).count(),
         language,
         kernel,
         shortened,
     })
 }
 
-/// The picture `href` names, if it is an output's: named for later, at
-/// the size read from its header.
-pub fn named(notebook: &Value, href: &str) -> Option<Picture> {
-    let bytes = numbered(notebook, href)?;
-    let (width, height) = inspection::picture_size(&bytes)?;
-    Some(Picture::Later {
-        key: href.to_owned(),
-        width,
-        height,
-    })
+/// A result shown as Jupyter shows it, read into `document`: its HTML (a
+/// table of data), else its Markdown; whether it showed anything. HTML a
+/// script would draw shows nothing inert, and its plain text stands for it.
+fn rich(
+    document: &mut Document,
+    data: Option<&Value>,
+    read: &mut usize,
+    cancel: &CancelToken,
+    beside: &mut impl FnMut(&str) -> Option<Picture>,
+) -> anyhow::Result<bool> {
+    let Some(data) = data else {
+        return Ok(false);
+    };
+    let bounds = document.bounds();
+    if let Some(html) = data.get("text/html") {
+        let html = text(Some(html));
+        spend(read, &html, bounds)?;
+        if document.html(&html, cancel, &mut *beside)? {
+            return Ok(true);
+        }
+    }
+    let Some(markdown) = data.get("text/markdown") else {
+        return Ok(false);
+    };
+    let markdown = text(Some(markdown));
+    spend(read, &markdown, bounds)?;
+    document.markdown(&markdown, cancel, &mut *beside, None)?;
+    Ok(true)
+}
+
+/// Whether `key` names a picture the notebook holds.
+pub fn holds(key: &str) -> bool {
+    key.starts_with(OUTPUT) || key.starts_with(ATTACHMENT)
 }
 
 /// The picture `key` names, decoded.
 pub fn decoded(notebook: &Value, key: &str) -> Option<Image> {
-    inspection::image(&numbered(notebook, key)?).ok()
-}
-
-fn numbered(notebook: &Value, key: &str) -> Option<Vec<u8>> {
-    let number: usize = key.strip_prefix(OUTPUT)?.parse().ok()?;
-    let bytes = picture_bytes(pictures(notebook).nth(number)?)?;
-    (bytes.len() <= limits::BINARY_INPUT).then_some(bytes)
+    let bundle = if let Some(number) = key.strip_prefix(OUTPUT) {
+        pictures(notebook).nth(number.parse().ok()?)?
+    } else {
+        let (cell, name) = key.strip_prefix(ATTACHMENT)?.split_once('/')?;
+        cells(notebook)
+            .nth(cell.parse().ok()?)?
+            .get("attachments")?
+            .get(name)?
+    };
+    inspection::image(&picture_bytes(bundle)?).ok()
 }

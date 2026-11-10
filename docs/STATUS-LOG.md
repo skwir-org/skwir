@@ -14333,3 +14333,53 @@ one size, and as folders by size did before, all 4 KiB on ext4).
 **Not checked:** `just release-check`, by the user's standing preference;
 `skwir-ui`'s whole suite; Windows and macOS not compiled (nothing here is
 one system's).
+
+## 2026-11-10: A notebook's tables and pasted pictures
+
+A notebook was written out as one Markdown text and read as a README, so
+a result shown as HTML (a pandas table) could not go in it: an HTML block
+in Markdown ends at the first blank line, and pandas' stylesheet holds
+one, so the rest of the table would have been read as Markdown (indented,
+as code). Its plain text stood for it. A picture pasted into a cell
+(`attachment:`) was looked for as a file beside the notebook, and found
+nowhere.
+
+- Each cell is read on its own into one page (`markdown::Document`: the
+  parts share the heading targets, the diagrams and the bound on blocks),
+  as Jupyter reads them: a list, a fence or an HTML block a cell leaves
+  open no longer takes the next, and what a cell printed is a code block
+  made as such, never Markdown read again (the fence longer than any run
+  of backticks in it is gone).
+- A result's HTML goes to the shared HTML reader; one that shows nothing
+  inert (a chart a script draws) gives way to its Markdown, else its
+  plain text.
+- A cell's attachment is named for later (`notebook-attachment:` + the
+  cell's number and the name) and decoded from the notebook when seen,
+  found by its name as written, else decoded as a link encodes it
+  (`%20`), as a picture beside a document is. An output's picture is
+  sized from the bundle in hand, no longer looked up by its number from
+  the notebook's start for each one.
+- Two flaws of the HTML reader, seen on pandas' table, for every HTML
+  page (files, books, e-mail): a row was a header row as soon as one cell
+  was a `th`, so every body row led by its number was drawn as a header;
+  now when every cell is. And `vertical-align: top` raised a cell's text
+  as a superscript; a cell's `vertical-align` places it in the cell (CSS
+  2.1, 17.5.4) and never raises it.
+
+**Checked:** rustfmt on the files touched; clippy `-D warnings` on
+`skwir-plugin-markdown` with its tests; the tests of `skwir-platform`,
+`skwir-plugin-books`, `-documents`, `-email` and `-markdown` (568 passed)
+and `skwir`'s `any_file` (2 passed). New tests: a notebook with an encoded
+attachment's name, an attachment it lacks, a fence a cell leaves open, two
+cells' headings of one name, a pandas table with a blank line in its
+stylesheet and a script's chart; pandas' table in the HTML reader. A debug
+window on Xvfb, a fixture notebook: the pasted picture, the table (head
+row grey, body rows plain with their bold numbers, its "3 rows × 3
+columns"), a plot, the chart's `alt.Chart(...)` as output, the last cell's
+heading.
+
+**Seen, left as it was:** in a narrow panel a table's columns are equal
+and words break inside (`Nîme s`), as a Markdown table's do.
+
+**Not checked:** `just release-check`, by the user's standing preference;
+Windows and macOS not compiled (nothing here is one system's).
