@@ -54,7 +54,9 @@ pub struct CodeRow<'a> {
     pub index: usize,
     /// The line number in the gutter (from 1), on a line's first row.
     pub number: Option<u64>,
-    /// How many digits the gutter holds: the most any row of it needs.
+    /// How many digits the gutter holds: the most any row of it needs, or
+    /// may once counted (`TextView::gutter`), so it never widens while it
+    /// is looked at.
     pub digits: usize,
     /// The fold it opens, and whether it is closed.
     pub fold: Option<(&'a std::ops::Range<usize>, bool)>,

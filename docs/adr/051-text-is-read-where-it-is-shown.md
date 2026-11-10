@@ -127,3 +127,42 @@ TypeScript; the first 60 rows after 60 s without code (ADR-060) in
   not start, and text would wait the whole limit for nothing. A row is
   at most 4 KiB, and rows of half that are not waited for, so a row's own
   time is small beside the limit.
+
+## Amendment (2026-11-10): the gutter and the scrollbar know the count
+
+The gutter held as many digits as the lines counted so far, at least five,
+and the first frame knows only the first chunk's: a file of 100 000 lines
+or more showed, then its text moved a digit or two to the right once the
+count reported, 15 to 100 ms later. The scrollbar thumb, sized from the
+rows counted so far, shrank in the same way. Measured in a release window:
+a 194 MB log in the page cache is counted in 75 ms (2.6 GB/s).
+
+- **The worker that makes the view counts the rows too**, after the first
+  chunk's colors and within the same `COLORS_WITHIN`, and hands the index
+  over; the view counts on from where it stopped (`Index::paused`). It
+  counts only while its own pace says it will be done in time, judged
+  after each 1 MiB block past the first from the bytes counted since and
+  the bytes left (`text_rows::count_by`): a file that cannot be counted in
+  time costs two blocks, not the whole limit, on any machine. The first
+  block is not judged: it pays for opening the file and its first reads,
+  and judged from it alone a 40 MB log, counted in about 15 ms, was
+  stopped as late in a real window. A remote's file not held
+  whole is not counted before it shows: it is counted as far as it is
+  shown (ADR-101).
+- **Until all are counted, rows and lines are estimated** from those
+  counted, as dense in the rest of the file's length, or from the first
+  chunk's before the count goes further (`TextView::estimated`): local and
+  remote alike, where only a remote's rows were before.
+- **The gutter makes room for the lines estimated when the view is made**,
+  or counted since, and never narrows (`TextView::gutter`). A count that
+  ends short of the estimate leaves its room: moving the text back would
+  be the same jolt the other way, and a digit to spare is not seen. A
+  count that passes it widens the gutter, once: a line number is never
+  cut. For a remote's file that happens while scrolling, as its count
+  follows the view.
+- **Rejected:** room for the most lines the file's length allows (its
+  bytes, half of them in UTF-16), which never needs to widen: every text
+  file is this view, and every one over 100 KB would have had a digit or
+  two more than it needs, a remote's 2 MB file seven where five do. And
+  holding the text until the count ends: a log of a gigabyte would wait
+  seconds.

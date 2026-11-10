@@ -379,7 +379,66 @@ pub fn count_until<S: FileSource + ?Sized>(
     index: &RwLock<Index>,
     until: Option<u64>,
     cancel: &CancelToken,
+    progress: impl FnMut(),
+) -> anyhow::Result<()> {
+    count_while(path, index, until, cancel, progress, |_| true)
+}
+
+/// Count the rows of `path` into `index` from where it stopped, as
+/// `count_until` does, while the count will be done by `by` at the pace it
+/// goes: judged after each block past the first, from how long the blocks
+/// since the first took and how many bytes are left. The first pays for
+/// the start (the file opened, its first reads) and says little of the
+/// pace: judged from it alone, a file counted in 15 ms was stopped as
+/// late. Stopped short, the index says where (`Index::paused`), for
+/// `count_until` to go on from. Whether it is done. What a view counts
+/// before its first frame: on any machine, a count that cannot be done in
+/// time stops after its second block, not at `by`.
+pub fn count_by<S: FileSource + ?Sized>(
+    path: &S,
+    index: &RwLock<Index>,
+    by: std::time::Instant,
+    cancel: &CancelToken,
+) -> anyhow::Result<bool> {
+    if std::time::Instant::now() >= by {
+        return Ok(index.read().done());
+    }
+    let len = path.length()?;
+    // Where and when the first block ended.
+    let mut first: Option<(std::time::Instant, u64)> = None;
+    count_while(
+        path,
+        index,
+        None,
+        cancel,
+        || {},
+        |reached| {
+            let now = std::time::Instant::now();
+            if now >= by {
+                return false;
+            }
+            let Some((then, from)) = first else {
+                first = Some((now, reached));
+                return true;
+            };
+            let counted = reached.saturating_sub(from).max(1) as f64;
+            let left = len.saturating_sub(reached) as f64;
+            let rest = now.duration_since(then).as_secs_f64() * left / counted;
+            rest <= by.saturating_duration_since(now).as_secs_f64()
+        },
+    )?;
+    Ok(index.read().done())
+}
+
+/// `count_until`, stopped short too once `go_on`, told how far into the
+/// file the count reached, says not to: asked after each block.
+fn count_while<S: FileSource + ?Sized>(
+    path: &S,
+    index: &RwLock<Index>,
+    until: Option<u64>,
+    cancel: &CancelToken,
     mut progress: impl FnMut(),
+    mut go_on: impl FnMut(u64) -> bool,
 ) -> anyhow::Result<()> {
     let (form, done, paused) = {
         let index = index.read();
@@ -420,7 +479,7 @@ pub fn count_until<S: FileSource + ?Sized>(
             check(cancel)?;
             reported = cutter.offset;
             let done = found.is_none();
-            let stop = !done && until.is_some_and(|until| rows >= until);
+            let stop = !done && (until.is_some_and(|until| rows >= until) || !go_on(cutter.offset));
             let mut shared = index.write();
             shared.points.append(&mut points);
             shared.rows = rows;
@@ -445,13 +504,14 @@ pub fn count_until<S: FileSource + ?Sized>(
     }
 }
 
-/// A row as read: its text, the line it is part of (from 0), and whether
-/// it begins that line.
+/// A row as read: its text, the line it is part of (from 0), whether it
+/// begins that line, and where it starts in the file.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Row {
     pub text: String,
     pub line: u64,
     pub first: bool,
+    pub at: u64,
 }
 
 /// Rows `rows` of the file at `path`, read from `point`, the place of row
@@ -480,6 +540,7 @@ pub fn read<S: FileSource + ?Sized>(
                 text: form.decode(&cutter.buf[found.bytes]),
                 line,
                 first,
+                at: found.start,
             });
         }
         if found.ends_line {
@@ -853,6 +914,57 @@ mod tests {
         assert_eq!(index.reached(), text.len() as u64);
         assert_eq!((index.rows(), index.lines()), (whole.rows(), whole.lines()));
         assert_eq!(index.points, whole.points);
+    }
+
+    /// A count asked to be done by a time counts nothing once it has
+    /// passed, stops after a block where its pace says it would be late,
+    /// and goes on from there to what one count finds.
+    #[test]
+    fn a_count_by_a_time_stops_where_it_would_be_late_and_goes_on() {
+        use std::time::{Duration, Instant};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("l'été, a log.log");
+        let line = "y".repeat(200);
+        let text: String = (0..12_000).fold(String::new(), |mut text, n| {
+            use std::fmt::Write as _;
+            let _ = writeln!(text, "{n} {line}");
+            text
+        });
+        assert!(text.len() > 2 * BLOCK);
+        std::fs::write(&path, &text).unwrap();
+        let cancel = CancelToken::new();
+        let whole = counted(&path);
+        let form = Form::read(&path, &cancel).unwrap();
+        let index = RwLock::new(Index::new(form));
+        assert!(!count_by(&path, &index, Instant::now(), &cancel).unwrap());
+        assert_eq!(index.read().reached(), 0, "nothing counted after its time");
+        count_while(&path, &index, None, &cancel, || {}, |_| false).unwrap();
+        {
+            let late = index.read();
+            assert!(late.paused() && !late.done(), "stopped short of the end");
+            assert!(late.reached() >= BLOCK as u64 && late.reached() < text.len() as u64);
+        }
+        let by = Instant::now() + Duration::from_secs(60);
+        assert!(
+            count_by(&path, &index, by, &cancel).unwrap(),
+            "done in time"
+        );
+        let (index, whole) = (index.read(), whole.read());
+        assert_eq!((index.rows(), index.lines()), (whole.rows(), whole.lines()));
+        assert_eq!(index.points, whole.points);
+    }
+
+    /// A row read says where it starts in the file.
+    #[test]
+    fn a_row_read_says_where_it_starts() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rows.txt");
+        std::fs::write(&path, "\u{feff}ab\r\ncd\n\nlast").unwrap();
+        let cancel = CancelToken::new();
+        let form = Form::read(&path, &cancel).unwrap();
+        let rows = read(&path, form, (0, origin(form)), 0..10, &cancel).unwrap();
+        let at: Vec<u64> = rows.iter().map(|row| row.at).collect();
+        assert_eq!(at, [3, 7, 10, 11]);
     }
 
     #[test]

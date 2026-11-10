@@ -14005,3 +14005,52 @@ fails with the old behaviour put back (tried, then restored).
 **Not checked:** in a real window, none of these (no tree-sitter grammar in a
 test window's folders). Heavier grammars' parse times. `just release-check`, by
 the user's standing preference.
+
+## 2026-11-10: The gutter knows the count (ADR-051 amended)
+
+A text of a million lines showed, then moved about 17 px to the right a moment
+later: the gutter held the digits of the lines counted so far (five at least),
+and the first frame knows only its first chunk's, so it widened to six at
+100 000 lines and seven at 1 000 000 when the count reported, 15 to 100 ms
+after. The scrollbar thumb, sized from the rows counted so far, shrank the
+same way.
+
+- `text_rows::count_by`: a count that goes on while its pace says it will be
+  done by a time, judged after each block past the first from the blocks since,
+  and pauses where it would not (`count_until` goes on from there). The first
+  block is not judged: judged from it alone, a 40 MB log counted in 15 ms was
+  stopped as late in the window below. `Row::at` says where a row starts.
+- `text_view::start` counts the rows after the first chunk's colors, within the
+  same `COLORS_WITHIN` from its start, and hands the index over; a remote's file
+  not held whole is not counted before it shows.
+- Until all are counted, `TextView::estimated` scales what is counted (or the
+  first chunk, before the count goes further) to the file's length, for the
+  rows (the scrollbar) and the lines, local and remote alike.
+- `TextView::gutter`: room for the lines estimated when the view is made, or
+  counted since, never fewer. A count that ends short of the estimate leaves
+  the room; one that passes it widens the gutter once.
+
+**Measured** in a release window on Xvfb (lavapipe), the trace
+`a text's first rows`: a 40 MB log of 1.2 million lines counted before it
+shows, the first rows handed over in 31–37 ms (13 ms before this change, the
+count then after the first frame). A 194 MB log of 6 million lines in the page
+cache: stopped after 4 and 7 MiB, handed over in 8 ms; uncached, after 2 MiB in
+4 ms. The six-million-line view, made from the estimate, and the
+1.2-million-line one, counted, drew their first lines pixel for pixel alike
+(seven digits); a short file kept five. Before the change, the view counted a
+194 MB cached log in 75 ms (2.6 GB/s, from the bytes it read).
+
+**Checked:** rustfmt, clippy `-D warnings` on `skwir-ui` and `skwir-platform`,
+their tests (1088 passed, 18 skipped), `skwir`'s tests compiled, in capped
+scopes; the window above. New tests: a count by a time stops where it would
+be late and goes on to what one count finds; a row says where it starts; a
+text counted in time shows with all its lines; an estimate too high leaves
+the gutter's room, one too low widens it once; the rows estimated from the
+first chunk, then from what is counted.
+
+**Not checked:** a frame-by-frame recording: the window's screen grabs take
+about 40 ms, and the old count always finished before the first one, so the
+narrow first frame was never caught; that the first frame now has the room
+follows from what is handed over. A remote's file in a window (the shared
+estimate is tested on local files only). `just release-check`, by the user's
+standing preference. Windows and macOS not compiled.

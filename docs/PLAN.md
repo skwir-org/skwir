@@ -897,6 +897,15 @@ parse of a text over 128 KiB, are not waited for. Paths a text writes are
 looked up apart from its reading. Checks in `docs/STATUS-LOG.md`
 (2026-11-09).
 
+## The gutter knows the count (2026-11-10)
+
+ADR-051 amended again: the worker that makes a text's view counts its rows
+too, within the same 100 ms and only while its pace says it will be done in
+time; until all are counted, rows and lines are estimated from what is, local
+and remote alike. The gutter makes room for the lines estimated when the view
+is made and never narrows, so a long text no longer moves sideways a moment
+after it shows. Checks in `docs/STATUS-LOG.md` (2026-11-10).
+
 ## What is left
 
 Gathered on 2026-10-20 from the notes of this plan and of

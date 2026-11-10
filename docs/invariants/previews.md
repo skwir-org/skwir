@@ -1570,13 +1570,28 @@ is still to come are in `docs/preview-frame.md`.
     `LINE_BYTES` at a character boundary. Counting and reading cut rows
     with one cutter, so they agree. The encoding is decided once, from
     the file's first bytes; UTF-16 is cut in its own units.
-  - A worker counts the rows into an index of every `STRIDE`th
-    (`text_rows::count`), published a block at a time; the view shows
-    what is counted, and the bar the lines so far ("…" until done). What
+  - The rows are counted into an index of every `STRIDE`th, published a
+    block at a time: first by the worker that makes the view, within
+    `COLORS_WITHIN` and only while its own pace says it will be done in
+    time (`text_rows::count_by`, judged after each block past the first,
+    which pays for the start, so a file that cannot be is not waited
+    for), then by a worker while the view draws,
+    from where that stopped (`count_until`). Until all are counted, the
+    rows and lines are estimated from those counted, as dense in the rest
+    of the file's length, or from the first chunk before the count has
+    gone further (`TextView::estimated`): the scrollbar is about right
+    from the first frame. The gutter makes room for the lines estimated
+    when the view is made, or counted since, never fewer
+    (`TextView::gutter`): a count that ends short of the estimate leaves
+    its room, one that passes it widens it, once. Never a gutter sized
+    from the lines counted so far: it widened a frame after the text
+    showed, for every file of 100 000 lines or more. The bar says the
+    lines so far ("…" until done). What
     the preview holds is read, never the file again (`TextFile::held`,
     ADR-101). A remote's file not held whole is counted as far as it is
     shown and a little past (`text_rows::count_until`, `Index::paused`),
-    its rows beyond estimated from its length: scrolling counts on, and
+    never before it shows, its rows and lines beyond estimated as any
+    other's: scrolling counts on, and
     a find, a copy or a line asked for counts to the end first, one
     count at a time on the index (`TextView::gate`). A count that failed
     is not asked again while the view lasts.

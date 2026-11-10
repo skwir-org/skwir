@@ -1,5 +1,12 @@
 # Changes
 
+## Unreleased
+
+- **A long text no longer moves sideways after it shows**: its line numbers
+  have room for every line from the first frame, where 0.4.0 widened them a
+  moment later for a file of 100,000 lines or more. Its scrollbar is about
+  the right size from the first frame too.
+
 ## 0.4.0 (2026-11-10)
 
 Skwir 0.4.0 opens several windows, draws the window as cards, and keeps what

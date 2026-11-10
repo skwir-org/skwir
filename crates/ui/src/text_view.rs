@@ -1,8 +1,16 @@
 //! A text file shown whole, read where it is shown (ADR-051).
 //!
-//! The provider names the file (`Inspection::text`) and its first rows. A
-//! worker counts its rows into an index (`text_rows::count`) while the
-//! view draws; the rows it lays out (`elements::rows`) are read a chunk of
+//! The provider names the file (`Inspection::text`) and its first rows.
+//! Its rows are counted into an index (`text_rows::count_until`): by the
+//! worker that makes the view, within `coloring::COLORS_WITHIN` and only
+//! while its pace says it will be done in time (`text_rows::count_by`),
+//! then on a worker while the view draws, from where that stopped. Until
+//! all are counted, its rows and lines are estimated from those counted
+//! and its length (its first rows', before any are): the scrollbar is
+//! about right from the first frame. The gutter makes room for the lines
+//! estimated when the view is made, or counted since, and never narrows
+//! (`TextView::gutter`): the text moves sideways only when the count
+//! passes the estimate. The rows it lays out (`elements::rows`) are read a chunk of
 //! `STRIDE` at a time around them, nearest first, one chunk on its way at a
 //! time, as a document's pictures are (`inspector_pictures`). A chunk is
 //! read and colored by one job, from where the one before it stopped, or
@@ -33,6 +41,7 @@
 //! it. A parse that fails, or a text it cannot have, is colored by bat's
 //! grammar. The view does not fold.
 
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::rc::Rc;
@@ -43,6 +52,7 @@ use gpui::Context;
 use parking_lot::{Mutex, RwLock};
 use skwir_core::cancel::CancelToken;
 use skwir_core::inspection::{Block, TextFile};
+use skwir_core::preview::FileSource as _;
 use skwir_core::scheduler::Priority;
 use skwir_platform::links::WrittenPaths;
 use skwir_platform::text_rows::{self, Form, Index, Point, STRIDE};
@@ -74,14 +84,22 @@ pub(crate) struct Chunk {
     exact: bool,
     /// The paths its text writes were looked for, in these colors.
     found: bool,
+    /// Where the row after its last starts: `None` when its last is the
+    /// file's.
+    reach: Option<u64>,
 }
 
 /// The first rows, read and colored as far as they could be with the
-/// inspection on its worker (`inspector::Display::new`), and what colors
-/// the rest.
+/// inspection on its worker (`inspector::Display::new`), what colors the
+/// rest, and its rows as far as they were counted in time.
 pub(crate) struct Start {
     pub form: Form,
     pub chunk: Chunk,
+    /// Its rows counted (`text_rows::count_by`): all of them, or as far as
+    /// the view's count goes on from.
+    index: Index,
+    /// Its length, which what is not counted yet is estimated by.
+    len: u64,
     /// Where the first rows' colors stopped, when they are all colored.
     stop: Option<Resume>,
     /// The text's parse, when it came in time.
@@ -152,10 +170,9 @@ fn read_chunk(
 ) -> anyhow::Result<(Chunk, Option<Resume>)> {
     let at = chunk * STRIDE;
     let mut rows = text_rows::read(file, form, (at, point), at..at + STRIDE + 1, cancel)?;
-    let after = (rows.len() as u64 > STRIDE)
-        .then(|| rows.pop())
-        .flatten()
-        .map(|row| row.first);
+    let after = (rows.len() as u64 > STRIDE).then(|| rows.pop()).flatten();
+    let reach = after.as_ref().map(|row| row.at);
+    let after = after.map(|row| row.first);
     let ends: Vec<bool> = (0..rows.len())
         .map(|n| {
             rows.get(n + 1)
@@ -247,6 +264,7 @@ fn read_chunk(
                     colored: true,
                     exact: true,
                     found: false,
+                    reach,
                 },
                 None,
             ));
@@ -259,9 +277,41 @@ fn read_chunk(
             colored: stop.is_some(),
             exact,
             found: false,
+            reach,
         },
         stop,
     ))
+}
+
+/// Whether `file` is counted only as far as it is shown: a remote's file
+/// the preview does not hold whole, never downloaded whole to size a
+/// scrollbar (ADR-101).
+fn counted_as_shown(file: &TextFile) -> bool {
+    file.held
+        .as_ref()
+        .is_some_and(|held| held.is_remote() && held.held_whole().is_none())
+}
+
+/// A stretch of a text from its start: its rows and lines, and the bytes
+/// it spans. What is not counted yet is estimated from the one that
+/// reaches furthest (`TextView::estimated`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Sample {
+    rows: u64,
+    lines: u64,
+    bytes: u64,
+}
+
+impl Sample {
+    /// Its rows and lines in a text of `bytes`, as dense as it is: never
+    /// fewer than it holds.
+    fn scaled(self, bytes: u64) -> (u64, u64) {
+        if self.bytes == 0 {
+            return (self.rows, self.lines);
+        }
+        let scale = |n: u64| ((n as f64 * bytes as f64 / self.bytes as f64).ceil() as u64).max(n);
+        (scale(self.rows), scale(self.lines))
+    }
 }
 
 /// The first rows of `file`, for the inspection's worker, in the colors
@@ -331,14 +381,33 @@ pub(crate) fn start(
             read_chunk(read, form, origin, colored, &cancel)?
         }
     };
+    // Its rows counted here too, after its colors and within the same
+    // time, while the count will be done in it: its gutter and scrollbar
+    // are made for all of them from the first frame. A remote's file not
+    // held whole is counted by the view, as far as it is shown.
+    let index = RwLock::new(Index::new(form));
+    if !counted_as_shown(file)
+        && let Err(error) = text_rows::count_by(read, &index, began + COLORS_WITHIN, &cancel)
+    {
+        // Counted again by the view, which says why it could not be.
+        if !cancel.is_cancelled() {
+            tracing::debug!(%error, "counting a text's rows before it shows");
+        }
+        *index.write() = Index::new(form);
+    }
+    let index = index.into_inner();
     tracing::trace!(
         colored = chunk.colored,
         rows = chunk.rows.len(),
+        counted = index.done(),
+        reached = index.reached(),
         ms = began.elapsed().as_secs_f32() * 1000.,
         "a text's first rows"
     );
     Ok(Start {
         form,
+        len: read.length().unwrap_or(0),
+        index,
         chunk,
         stop,
         parsed,
@@ -435,6 +504,13 @@ pub struct TextView {
     line: Option<u64>,
     /// The rows and lines of the first chunk, before any is counted.
     first: (u64, u64),
+    /// The first chunk's rows and lines in the bytes they span: what the
+    /// rest is estimated from before anything is counted.
+    sample: Sample,
+    /// The file's length, which what is not counted yet is estimated by.
+    len: u64,
+    /// The lines the gutter makes room for (`gutter`): never fewer.
+    room: Cell<u64>,
     /// The rows known at the last wake.
     seen: u64,
     /// Its parse, when a tree-sitter grammar colors it.
@@ -454,8 +530,6 @@ enum Parse {
 
 /// A count that goes as far as the view needs (`TextView::count_more`).
 struct Paced {
-    /// The file's length, which the rows not yet counted are estimated by.
-    len: u64,
     /// Whether a count is on its way.
     going: Arc<std::sync::atomic::AtomicBool>,
     /// Whether a count failed: none is asked again while the view lasts,
@@ -487,6 +561,8 @@ impl TextView {
         let Start {
             form,
             chunk,
+            index,
+            len,
             stop,
             parsed,
             palette,
@@ -502,18 +578,18 @@ impl TextView {
             chunk.rows.len() as u64,
             chunk.lines.iter().filter(|(_, first)| *first).count() as u64,
         );
-        let index = Arc::new(RwLock::new(Index::new(form)));
+        let sample = Sample {
+            rows: first.0,
+            lines: first.1,
+            // No row after its last: it reaches the file's end.
+            bytes: chunk.reach.unwrap_or(len).saturating_sub(form.start),
+        };
+        let index = Arc::new(RwLock::new(index));
         let counting = app.lifetime().child();
-        // A remote's file not held whole is counted as far as it is shown.
-        let paced = file
-            .held
-            .as_ref()
-            .filter(|held| held.is_remote() && held.held_whole().is_none())
-            .map(|held| Paced {
-                len: held.len(),
-                going: Arc::default(),
-                failed: Arc::default(),
-            });
+        let paced = counted_as_shown(&file).then(|| Paced {
+            going: Arc::default(),
+            failed: Arc::default(),
+        });
         let paths = paths
             .then(|| WrittenPaths::new(&file.path))
             .flatten()
@@ -541,10 +617,19 @@ impl TextView {
             copied: Latest::default(),
             line: None,
             first,
+            sample,
+            len,
+            room: Cell::new(0),
             seen: 0,
             parse: parsed.map_or(Parse::None, Parse::Done),
         };
-        view.count_more(app, view.paced.as_ref().map(|_| PACED_FIRST));
+        // Room for the lines it has, counted or estimated, from its first
+        // frame on.
+        let room = view.estimated().map_or(view.lines().0, |(_, lines)| lines);
+        view.room.set(room);
+        if !view.index.read().done() {
+            view.count_more(app, view.paced.as_ref().map(|_| PACED_FIRST));
+        }
         if let Some(grammar) = grammar.filter(|_| matches!(view.parse, Parse::None)) {
             view.parse_with(app, form, grammar);
         }
@@ -644,19 +729,12 @@ impl TextView {
         );
     }
 
-    /// The rows known: counted, or the first chunk's before any is; for a
-    /// paced view, those not counted yet estimated from how far the count
-    /// reached into the file.
+    /// The rows known: counted, or the first chunk's before any is, and
+    /// while some are not counted yet, as many as estimated (`estimated`).
     pub(crate) fn rows(&self) -> u64 {
-        let index = self.index.read();
-        let counted = index.rows().max(self.first.0);
-        match &self.paced {
-            Some(paced) if !index.done() && index.reached() > 0 => {
-                let per_byte = counted as f64 / index.reached() as f64;
-                ((per_byte * paced.len as f64).ceil() as u64).max(counted)
-            }
-            _ => counted,
-        }
+        let counted = self.index.read().rows().max(self.first.0);
+        self.estimated()
+            .map_or(counted, |(rows, _)| rows.max(counted))
     }
 
     /// The lines known, and whether all are counted.
@@ -664,6 +742,39 @@ impl TextView {
         let index = self.index.read();
         let done = index.done() || self.file.whole;
         (index.lines().max(self.first.1), done)
+    }
+
+    /// The rows and lines of the whole text, while some are not counted
+    /// yet: those counted, as dense in the rest of its length as in what
+    /// they span, or the first chunk's before the count has gone further.
+    /// `None` once all are counted.
+    fn estimated(&self) -> Option<(u64, u64)> {
+        let index = self.index.read();
+        if index.done() || self.file.whole {
+            return None;
+        }
+        let counted = Sample {
+            rows: index.rows(),
+            lines: index.lines(),
+            bytes: index.reached().saturating_sub(index.form.start),
+        };
+        let sample = if counted.bytes >= self.sample.bytes {
+            counted
+        } else {
+            self.sample
+        };
+        Some(sample.scaled(self.len.saturating_sub(index.form.start)))
+    }
+
+    /// The lines the gutter makes room for: as many as estimated when the
+    /// view was made, or counted since, and never fewer than before. A
+    /// count that ends short of the estimate leaves its room, rather than
+    /// move the text back: the text moves sideways only when the count
+    /// passes the estimate.
+    pub(crate) fn gutter(&self) -> u64 {
+        let room = self.room.get().max(self.lines().0);
+        self.room.set(room);
+        room
     }
 
     /// The chunks read, for a frame's rows.
@@ -1077,7 +1188,7 @@ pub(crate) struct Look {
 pub(crate) fn element(view: &TextView, look: Look) -> gpui::AnyElement {
     use gpui::IntoElement;
     let chunks = view.chunks();
-    let digits = crate::code_preview::digits(view.lines().0);
+    let digits = crate::code_preview::digits(view.gutter());
     let empty = Block {
         code: true,
         ..Block::default()
@@ -1387,6 +1498,112 @@ mod tests {
             .flat_map(|row| row.runs.iter().filter_map(|run| run.color))
             .collect();
         assert!(colors.len() > 2, "{colors:?}");
+    }
+
+    fn test_app(dir: &std::path::Path) -> Arc<skwir_core::App> {
+        skwir_core::App::new(skwir_core::app::AppConfig::ephemeral(dir.join("app"))).unwrap()
+    }
+
+    /// A text counted in time is counted before it shows: its gutter has
+    /// room for all its lines, and its scrollbar all its rows, from the
+    /// first frame, and nothing is left to count.
+    #[test]
+    fn a_text_counted_in_time_shows_with_all_its_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = test_app(dir.path());
+        let code = crate::code_preview::CodeTheme::own(false);
+        let text = "x\n".repeat(120_000);
+        let file = held_file(&dir.path().join("l'été.log"), "txt", &text);
+        let begun = start(&file, &code).unwrap();
+        assert!(begun.index.done(), "counted before it shows");
+        let view = TextView::new(&app, file, begun, None, false);
+        assert_eq!((view.rows(), view.lines()), (120_000, (120_000, true)));
+        assert_eq!(crate::code_preview::digits(view.gutter()), 6);
+    }
+
+    /// A text not counted in time is estimated from its first rows, then
+    /// from what is counted: its gutter keeps the room it was made with
+    /// when the count ends short of it, never moving the text back.
+    #[test]
+    fn a_gutter_made_from_an_estimate_never_narrows() {
+        use std::fmt::Write as _;
+        let dir = tempfile::tempdir().unwrap();
+        let app = test_app(dir.path());
+        let code = crate::code_preview::CodeTheme::own(false);
+        // Short lines first: an estimate from them is too high.
+        let mut text = "a\n".repeat(300);
+        for n in 0..50_000 {
+            writeln!(text, "{n:029}").unwrap();
+        }
+        let len = text.len() as u64;
+        let file = held_file(&dir.path().join("dense first.log"), "txt", &text);
+        let mut begun = start(&file, &code).unwrap();
+        // As if it could not be counted in time.
+        begun.index = Index::new(begun.form);
+        let form = begun.form;
+        let view = TextView::new(&app, file.clone(), begun, None, false);
+        let estimate = (256 * len).div_ceil(512);
+        assert_eq!(view.room.get(), estimate, "from its first rows");
+        assert!(app.scheduler.wait_idle(Duration::from_secs(60)));
+        assert_eq!(view.lines(), (50_300, true));
+        assert_eq!(view.rows(), 50_300);
+        assert_eq!(view.gutter(), estimate, "never narrower");
+        assert_eq!(crate::code_preview::digits(view.gutter()), 6);
+        // Not counted yet, its rows are as many as estimated: from its
+        // first rows, then from what is counted.
+        *view.index.write() = Index::new(form);
+        assert_eq!(view.rows(), estimate);
+        let cancel = CancelToken::new();
+        text_rows::count_until(&file, &view.index, Some(STRIDE), &cancel, || {}).unwrap();
+        assert!(view.index.read().paused());
+        let rows = view.rows();
+        assert!(rows.abs_diff(50_300) < 503, "{rows} rows estimated");
+    }
+
+    /// An estimate the count passes widens the gutter: no line number is
+    /// cut.
+    #[test]
+    fn a_gutter_widens_when_the_count_passes_its_estimate() {
+        use std::fmt::Write as _;
+        let dir = tempfile::tempdir().unwrap();
+        let app = test_app(dir.path());
+        let code = crate::code_preview::CodeTheme::own(false);
+        // Long lines first: an estimate from them is too low.
+        let mut text = String::new();
+        for n in 0..300 {
+            writeln!(text, "{n:059}").unwrap();
+        }
+        text.push_str(&"a\n".repeat(150_000));
+        let file = held_file(&dir.path().join("sparse first.log"), "txt", &text);
+        let mut begun = start(&file, &code).unwrap();
+        begun.index = Index::new(begun.form);
+        let view = TextView::new(&app, file, begun, None, false);
+        assert_eq!(
+            view.room.get(),
+            (256 * text.len() as u64).div_ceil(256 * 60)
+        );
+        assert!(view.room.get() < 100_000, "room for five digits");
+        assert!(app.scheduler.wait_idle(Duration::from_secs(60)));
+        assert_eq!(view.lines(), (150_300, true));
+        assert_eq!(view.gutter(), 150_300);
+        assert_eq!(crate::code_preview::digits(view.gutter()), 6);
+    }
+
+    #[test]
+    fn a_sample_scales_to_the_whole_and_never_below_what_it_holds() {
+        let sample = Sample {
+            rows: 300,
+            lines: 256,
+            bytes: 1000,
+        };
+        assert_eq!(sample.scaled(10_000), (3000, 2560));
+        assert_eq!(sample.scaled(10), (300, 256), "never fewer");
+        let empty = Sample {
+            rows: 4,
+            lines: 4,
+            bytes: 0,
+        };
+        assert_eq!(empty.scaled(1 << 20), (4, 4));
     }
 
     /// A chunk of lines too long to color quickly shows at once, plain:
