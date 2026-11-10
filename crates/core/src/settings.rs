@@ -1106,6 +1106,18 @@ pub(crate) fn register(app: &crate::App) {
     app.companions
         .set_shown(app.settings.get(crate::companions::SHOW).unwrap_or(false));
     app.settings.declare(
+        SettingSpec::toggle(
+            crate::location::FOLDERS_FIRST,
+            "Folders first",
+            "List folders before files, each sorted among themselves. Off sorts them together: by date modified, the newest comes first, folder or file. By size, folders, which are not weighed, sort as having none.",
+            true,
+        )
+        .page(page::VIEWS)
+        .section("Sorting")
+        .essential(),
+    );
+    apply_folders_first(app);
+    app.settings.declare(
         SettingSpec::choice(
             CLOSE_SPLIT,
             "Pane that closes",
@@ -1230,6 +1242,16 @@ pub(crate) fn register(app: &crate::App) {
     );
 }
 
+/// Give every pane, and every pane made from now, the user's choice of
+/// folders before files (`location::FOLDERS_FIRST`).
+fn apply_folders_first(app: &crate::App) {
+    let first = app
+        .settings
+        .get(crate::location::FOLDERS_FIRST)
+        .unwrap_or(true);
+    app.workspace.write().set_folders_first(first);
+}
+
 /// What follows a change of `keys`, made in the dialog or found in the
 /// file (`Settings::reload`): what the core keeps of them is set again, a
 /// plugin turned on or off in the file is, and the plugins hear of theirs.
@@ -1250,6 +1272,10 @@ pub(crate) fn changed(app: &crate::App, keys: &[String]) {
         for pane in app.workspace.write().panes_mut() {
             pane.companions_changed();
         }
+        app.wake();
+    }
+    if keys.iter().any(|key| key == crate::location::FOLDERS_FIRST) {
+        apply_folders_first(app);
         app.wake();
     }
     if keys

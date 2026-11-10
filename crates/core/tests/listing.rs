@@ -1438,6 +1438,50 @@ fn companions_hide_beside_their_file_and_orphans_do_not() {
     assert_eq!(shown(true), ["._gone.txt", "._it's a.txt", ".hidden"]);
 }
 
+/// Folders first is the user's setting, in every pane: turned off from
+/// the settings' command, the pane shown sorts its folders with its files
+/// (on a worker, the order before shown until then), and a pane made
+/// afterwards, a split's or a new tab's, sorts so too.
+#[test]
+fn folders_first_turned_off_sorts_every_pane_with_the_files() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("mixed");
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::write(dir.join("a file's.txt"), b"x").unwrap();
+    std::fs::create_dir(dir.join("b folder")).unwrap();
+    std::fs::write(dir.join("c ünï.txt"), b"x").unwrap();
+    let app = app(tmp.path());
+    let pane = active(&app);
+    navigate(&app, &dir);
+    let names = |p: &skwir_core::workspace::Pane| -> Vec<String> {
+        p.order()
+            .iter()
+            .map(|id| p.entry(*id).unwrap().name_str().into_owned())
+            .collect()
+    };
+    wait_pane(&app, pane, |p| {
+        names(p) == ["b folder", "a file's.txt", "c ünï.txt"]
+    });
+    app.dispatch(&skwir_core::command::Invocation::with_args(
+        "settings.apply",
+        &serde_json::json!({
+            "changes": { skwir_core::location::FOLDERS_FIRST: "false" }
+        }),
+    ))
+    .expect("settings.apply");
+    // The setting is saved and applied on a worker.
+    wait_pane(&app, pane, |p| {
+        !p.sort.folders_first && names(p) == ["a file's.txt", "b folder", "c ünï.txt"]
+    });
+    let split = app.workspace.write().add_pane();
+    let (_, tab) = app.workspace.write().add_tab(0);
+    let ws = app.workspace.read();
+    assert!(!ws.folders_first());
+    for made in [split, tab] {
+        assert!(!ws.pane(made).unwrap().sort.folders_first, "{made:?}");
+    }
+}
+
 /// What Windows marks hidden is left out with the dot-files, from the
 /// listing on, and shown with them.
 #[cfg(windows)]

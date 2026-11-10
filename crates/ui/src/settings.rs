@@ -2052,9 +2052,9 @@ static BUILTIN: [Builtin; 13] = [
         owner: None,
         title: "Folders and views",
         icon: "grid",
-        intro: "How a folder shows its files: the grid, the list's columns, and the thumbnails drawn for them.",
+        intro: "How a folder shows its files: their order, the grid, the list's columns, and the thumbnails drawn for them.",
         when_used: true,
-        sections: &["Grid", "List columns", "Thumbnails"],
+        sections: &["Sorting", "Grid", "List columns", "Thumbnails"],
     },
     Builtin {
         page: Page::Notes,
@@ -4248,7 +4248,18 @@ mod tests {
                 .iter()
                 .any(|(section, key)| section == "Tabs" && key == TABS_AT_KEY)
         );
-        assert_eq!(sections(&specs, &Page::Views), ["Grid", "List columns"]);
+        assert_eq!(
+            sections(&specs, &Page::Views),
+            ["Sorting", "Grid", "List columns"]
+        );
+        // The core's order of folders heads the page of how folders show.
+        assert_eq!(
+            page(&specs, &Page::Views)[0],
+            (
+                "Sorting".to_owned(),
+                skwir_core::location::FOLDERS_FIRST.to_owned()
+            )
+        );
         let columns: Vec<String> = page(&specs, &Page::Views)
             .into_iter()
             .filter(|(section, _)| section == "List columns")

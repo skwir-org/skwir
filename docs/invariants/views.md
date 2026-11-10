@@ -347,8 +347,18 @@ around the views is in [shell.md](shell.md).
   goes there with the file selected.
 - Columns are chosen in the header's menu (`Shell::open_column_menu`),
   through `settings.apply`, so it never disagrees with Settings.
-- **A sort asked anew** (a header clicked, the direction, hidden files) is
-  made on a worker (ADR-121): the header says it at once, the rows keep
+- **Folders first** is the user's setting (`location::FOLDERS_FIRST`),
+  never a pane's: it is a field of `SortSpec`, so every order, cache and
+  sort job keys on it, and the workspace gives it to each pane as the
+  pane is made (`Workspace::push_pane`) and to all when it changes; the
+  View menu's row is the setting (`settings.apply`). Off, folders and
+  files are sorted together. A key a folder has none of
+  (`SortKey::applies_to`: its size, which is not its files') sorts it as
+  none, below every value, and nothing waits for it to be read. Orders
+  that are no pane's sort (the address's completions, an archive's tree,
+  Usage) keep folders first.
+- **A sort asked anew** (a header clicked, the direction, hidden files,
+  Folders first) is made on a worker (ADR-121): the header says it at once, the rows keep
   the order before (`Listing::order_shown`, kept current) until the new
   one is back, and what acts on the order (the arrows, ranges, Select
   all) acts on the one drawn. A view reads a listing's order through

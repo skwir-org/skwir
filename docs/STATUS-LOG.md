@@ -14274,3 +14274,62 @@ view and not in the picture.
 run with the other session's core changes in the tree); `just
 release-check`, by the user's standing preference. Windows and macOS not
 compiled.
+
+## 2026-11-10: Folders first, or sorted with the files (issue #10)
+
+GitHub issue #10: sorted by date modified, folders stayed above the files,
+each sorted apart, so the newest item was not always first. Folders before
+files was hard-wired in the listing's sort key (`!e.is_dir()` first).
+
+- `SortSpec::folders_first` (serde default `true`): the sort key puts files
+  after folders only while it holds; the rank placed arrivals keep follows
+  it. Being a field of the spec, every order, sort cache and sort job keys
+  on it, as on the sort's key and direction, with nothing kept beside them.
+- The user's setting, never a pane's: `location::FOLDERS_FIRST`
+  (`core.folders_first`, on by default, essential), Settings › Folders and
+  views › Sorting, a section new at the head of that page. The workspace
+  holds it and gives it to every pane it makes (`Workspace::push_pane`, the
+  one way a pane is taken in, so a closed tab reopened sorts as the user
+  does now) and to all of them when it changes (`settings::changed`), which
+  asks each order anew on a worker (ADR-121). The `sort` command does not
+  take it. The `entries` command's listing of a folder not shown follows it.
+- View › Folders first, below the sort keys (a check among the keys' would
+  read as another key) and above Hidden files: `settings.apply` of the
+  setting, as the Companion files row is.
+- `SortKey::applies_to`: a folder has no size of its own (not walked; what
+  its stat calls its size is the directory's, 4 KiB on ext4), so by size it
+  sorts as having none, below every file, an empty one included (a size
+  counts from 1), and is not waited for (`Pane::unknown`). A place still
+  counts its files. Folders first, folders by size now fall back to their
+  names among themselves.
+- The address's completions, an archive's tree and Usage order their own
+  rows and keep folders first.
+
+**Checked:** rustfmt on the files touched; clippy `-D warnings` on
+`skwir-core` and `skwir-ui` with their tests; `skwir-core`'s tests (733
+passed before the last two were added, then the sort ones again, 9
+passed); `skwir-ui`'s matching `settings|menu|view|sort|address`; `skwir`'s
+`settings` tests (6 passed: the essential budget, every setting on its
+subject's page). New tests: by name, date and size, folders first or with
+the files, both directions, an empty file and a folder not stat-ed; the two
+tests that place arrivals and hydrated batches against a whole sort now run
+with folders sorted with the files too; turned off by `settings.apply`, the
+pane shown sorts its folders with its files, and a split's pane and a new
+tab's are made so. `bench-check --only listing_sort_hydrate_us,
+listing_sort_update_us`: 428 ms (budget 1.5 s) and 1.1 ms (budget 4 ms). A
+debug window on Xvfb, a fixture of two folders and four files of distinct
+dates: newest first with folders first, then View › Folders first off gave
+new notes, empty, middle folder, draft's copy, big log, old folder, and
+`folders_first = false` in the settings file; by size smallest first the
+folders by name, then the files from the empty one; largest first the
+files from the largest, then the folders; the row unchecked while off, and
+on again folders came first; the Folders and views page opens with
+Sorting › Folders first.
+
+**Seen, left as it was:** a descending sort breaks ties by name in its own
+direction, so largest first lists the folders Z to A (as it lists files of
+one size, and as folders by size did before, all 4 KiB on ext4).
+
+**Not checked:** `just release-check`, by the user's standing preference;
+`skwir-ui`'s whole suite; Windows and macOS not compiled (nothing here is
+one system's).

@@ -3950,17 +3950,20 @@ impl Pane {
 
     /// The entries the pane shows whose fact its sort is by has not been
     /// read yet (`SortKey::has_read`: a size or a date from a stat, a
-    /// rating from the providers), folders too (places count their files
-    /// from the start): what a sort by size, date or rating places after
-    /// the rest until it comes (`SortKey::needs_metadata`), so whoever
-    /// sorts so asks for them.
+    /// rating from the providers), folders too but by size, which they
+    /// have none of (`SortKey::applies_to`; places count their files from
+    /// the start): what a sort by size, date or rating places after the
+    /// rest until it comes (`SortKey::needs_metadata`), so whoever sorts
+    /// so asks for them.
     pub fn unknown(&self) -> Vec<EntryId> {
+        let key = self.sort.key;
         self.order()
             .iter()
             .copied()
             .filter(|id| {
-                self.entry(*id)
-                    .is_some_and(|e| !e.is_place() && !self.sort.key.has_read(&e.metadata))
+                self.entry(*id).is_some_and(|e| {
+                    !e.is_place() && key.applies_to(e) && !key.has_read(&e.metadata)
+                })
             })
             .collect()
     }
@@ -4052,6 +4055,10 @@ pub struct Workspace {
     /// Bumped whenever panes, tabs or windows come, go, move or change
     /// which is active, so the UI compares one number to follow them.
     revision: u64,
+    /// Whether folders come before files (`location::FOLDERS_FIRST`),
+    /// in every pane's sort: given each pane as it is made (`push_pane`)
+    /// and to all of them when it changes (`set_folders_first`).
+    folders_first: bool,
 }
 
 /// A window's tabs, one shown at a time (ADR-122).
@@ -4151,6 +4158,7 @@ impl Default for Workspace {
             next_window: 0,
             holding: false,
             revision: 0,
+            folders_first: SortSpec::default().folders_first,
         };
         w.add_window(None, Vec::new());
         w
@@ -4176,17 +4184,40 @@ impl Workspace {
     fn new_panes(&mut self, panes: Vec<(Location, SortSpec)>) -> Vec<PaneId> {
         if panes.is_empty() {
             let id = self.new_pane_id();
-            self.panes.push(Pane::new(id));
+            self.push_pane(Pane::new(id));
             return vec![id];
         }
         panes
             .into_iter()
             .map(|(location, sort)| {
                 let id = self.new_pane_id();
-                self.panes.push(Pane::dormant(id, location, sort));
+                self.push_pane(Pane::dormant(id, location, sort));
                 id
             })
             .collect()
+    }
+
+    /// Take `pane` among the workspace's, sorting as every pane does: the
+    /// way in of every pane made, so none keeps a sort of folders that
+    /// is no longer the user's (a closed tab's, reopened).
+    fn push_pane(&mut self, mut pane: Pane) {
+        pane.sort.folders_first = self.folders_first;
+        self.panes.push(pane);
+    }
+
+    /// Whether folders come before files in every pane's sort.
+    pub fn folders_first(&self) -> bool {
+        self.folders_first
+    }
+
+    /// Put folders before files, or sort them together, in every pane
+    /// (`location::FOLDERS_FIRST` changed): each one's order is made again
+    /// on a worker (ADR-121), the one before shown until it is back.
+    pub(crate) fn set_folders_first(&mut self, first: bool) {
+        self.folders_first = first;
+        for pane in &mut self.panes {
+            pane.sort.folders_first = first;
+        }
     }
 
     /// A new pane in the tab shown: the other side of a split.
@@ -4198,7 +4229,7 @@ impl Workspace {
     /// A new pane in tab `tab` (the tab shown when there is no such tab).
     fn add_pane_to(&mut self, tab: TabId) -> PaneId {
         let id = self.new_pane_id();
-        self.panes.push(Pane::new(id));
+        self.push_pane(Pane::new(id));
         let (w, t) = self
             .tab_place(tab)
             .unwrap_or((self.active_window, self.windows[self.active_window].shown));

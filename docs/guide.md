@@ -180,8 +180,14 @@ work where the keyboard is, by topic.
 
 `Ctrl+1`, `Ctrl+2` and `Ctrl+3` show the folder as a list, a grid or
 columns. The View menu, at the end of the pane's row, has every view, the
-sort, hidden files (`Ctrl+H` or `Alt+.`) and the zoom (`Ctrl++`,
-`Ctrl+-`, `Ctrl+0`, or `Ctrl+wheel`). The zoom sizes pictures and icons;
+sort, Folders first, hidden files (`Ctrl+H` or `Alt+.`) and the zoom
+(`Ctrl++`, `Ctrl+-`, `Ctrl+0`, or `Ctrl+wheel`). Folders first, on
+unless you turn it off (there or in Settings › Folders and views), lists
+folders before files; off, they are sorted together, so by date the
+newest comes first whatever it is. A folder's own date changes when
+something directly in it is added, removed or renamed, not when a file
+in it is edited in place. By size a folder, which is not weighed (the
+Usage view weighs it), sorts as having none. The zoom sizes pictures and icons;
 names and details have a text size of their own, from 80 to 200 %
 (Settings › Appearance › Files text size, or "Files text: larger" and
 "smaller" in the palette), and rows and labels grow with it.

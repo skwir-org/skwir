@@ -792,7 +792,13 @@ pub struct QuickFilters {
     pub tags: Vec<String>,
 }
 
-/// What to sort a listing by. Directories always come first.
+/// The setting that puts folders before files, whatever the sort
+/// (`SortSpec::folders_first`): on by default; off, they are sorted
+/// together.
+pub const FOLDERS_FIRST: &str = "core.folders_first";
+
+/// What to sort a listing by: within folders and files apart while
+/// folders come first (`SortSpec::folders_first`), else all together.
 #[derive(
     Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema,
 )]
@@ -802,7 +808,9 @@ pub enum SortKey {
     Name,
     /// An entry not stat-ed yet sorts after those that are, in either
     /// direction, as for every key below: a pane sorted by one asks for
-    /// every entry's metadata (`Pane::unknown`).
+    /// every entry's metadata (`Pane::unknown`). A folder has no size
+    /// (`applies_to`): it sorts as none, below every file, an empty one
+    /// included. A place by how many files it holds.
     Size,
     Modified,
     /// The user's rating (`keys::RATING`); unrated sorts as none.
@@ -822,14 +830,24 @@ impl SortKey {
     /// Whether what it sorts by has been read of an entry whose metadata
     /// is `metadata`: a size or a date once stat-ed (`Metadata::is_hydrated`),
     /// a rating once the providers read it (`Metadata::is_filled`), a name
-    /// always. What a sort waits for, and asks to be read, is this alone:
-    /// a search's hits, stat-ed by its walk, sort by size at once.
+    /// always. What a sort waits for, and asks to be read, is this alone,
+    /// of an entry it applies to (`applies_to`): a search's hits, stat-ed
+    /// by its walk, sort by size at once.
     pub fn has_read(self, metadata: &crate::entry::Metadata) -> bool {
         match self {
             SortKey::Rating => metadata.is_filled(),
             SortKey::Size | SortKey::Modified => metadata.is_hydrated(),
             _ => true,
         }
+    }
+
+    /// Whether `entry` has what it sorts by. Every entry does, but a
+    /// folder sorted by size: a folder is not walked (the Usage view
+    /// weighs it), and what its stat calls its size (4 KiB, its names'
+    /// length) is none of its files', so it sorts as having none and is
+    /// never waited for. A place counts its files.
+    pub fn applies_to(self, entry: &crate::entry::Entry) -> bool {
+        self != SortKey::Size || !entry.is_dir() || entry.is_place()
     }
 }
 
@@ -840,6 +858,17 @@ pub struct SortSpec {
     pub ascending: bool,
     /// Include dot-prefixed entries.
     pub show_hidden: bool,
+    /// Folders before files, each sorted by `key` among themselves; else
+    /// sorted together. The user's setting ([`FOLDERS_FIRST`]), which the
+    /// workspace gives every pane: no pane chooses its own.
+    #[serde(default = "folders_first")]
+    pub folders_first: bool,
+}
+
+/// Folders first, as Skwir always sorted them: what a spec that does not
+/// say means.
+fn folders_first() -> bool {
+    true
 }
 
 impl Default for SortSpec {
@@ -848,6 +877,7 @@ impl Default for SortSpec {
             key: SortKey::Name,
             ascending: true,
             show_hidden: false,
+            folders_first: folders_first(),
         }
     }
 }
@@ -893,6 +923,7 @@ impl SortCache {
 /// in full.
 #[derive(Clone, Copy, Debug)]
 struct Rank {
+    /// A file while folders come first: after every folder.
     file: bool,
     unknown: bool,
     num: u64,
@@ -2122,20 +2153,26 @@ impl Listing {
         ids
     }
 
-    /// What an entry is sorted by under `spec`: files after directories,
-    /// then whether its key is still unknown (not stat-ed yet, or not to be
-    /// read: after the rest, whichever the direction), then the size or
-    /// date (0 for a name sort, or when the entry has none), then the
-    /// name's collation key, then the id, so that no two entries tie: the
-    /// order is one order, whether made whole or by placing arrivals, and
-    /// equal names do not trade places from one sort to the next.
+    /// What an entry is sorted by under `spec`: files after folders while
+    /// folders come first, then whether its key is still unknown (not
+    /// stat-ed yet, or not to be read: after the rest, whichever the
+    /// direction), then the size or date (0 for a name sort, or when the
+    /// entry has none), then the name's collation key, then the id, so
+    /// that no two entries tie: the order is one order, whether made whole
+    /// or by placing arrivals, and equal names do not trade places from
+    /// one sort to the next.
     fn sort_key(spec: SortSpec, slot: &Slot) -> SortKeyOf<'_> {
         use crate::entry::{Value, keys};
         let e = &slot.entry;
+        let applies = spec.key.applies_to(e);
         let unknown = spec.key.needs_metadata()
+            && applies
             && (!spec.key.has_read(&e.metadata) || e.metadata.is_unread());
         let num = match spec.key {
             SortKey::Name => 0,
+            // A folder has none, below every size, 0 bytes included: a
+            // size counts from 1.
+            SortKey::Size if !applies => 0,
             // A place by how many files it holds.
             SortKey::Size => e
                 .metadata
@@ -2145,7 +2182,7 @@ impl Listing {
                     keys::SIZE
                 })
                 .and_then(Value::as_u64)
-                .unwrap_or(0),
+                .map_or(0, |size| size.saturating_add(1)),
             SortKey::Modified | SortKey::Deleted => e
                 .metadata
                 .value(if spec.key == SortKey::Modified {
@@ -2162,7 +2199,13 @@ impl Listing {
                 .and_then(Value::as_u64)
                 .unwrap_or(0),
         };
-        (!e.is_dir(), unknown, num, &*slot.key, e.id)
+        (
+            spec.folders_first && !e.is_dir(),
+            unknown,
+            num,
+            &*slot.key,
+            e.id,
+        )
     }
 
     fn compare(spec: SortSpec, a: SortKeyOf<'_>, b: SortKeyOf<'_>) -> std::cmp::Ordering {
@@ -3290,6 +3333,71 @@ mod tests {
         assert_eq!(sizes, [2, 4, 1, 3], "and still after it the other way");
     }
 
+    /// Folders come before files, or are sorted with them: by date the
+    /// newest first whatever it is; by size a folder has none, so it sorts
+    /// below every file, an empty one included, and never waits for its
+    /// stat; by name they mix as their names do.
+    #[test]
+    fn folders_first_or_sorted_with_the_files() {
+        use crate::entry::{Provenance, Value, keys};
+        let entry = |ino, name: &str, kind, size: Option<u64>, secs: u64| {
+            let mut e = Entry::new(
+                EntryId {
+                    file: crate::FileId::new(1, ino),
+                    at: 0,
+                },
+                name,
+                kind,
+            );
+            if let Some(size) = size {
+                e = stat(e, size);
+                e.metadata.set(
+                    keys::MODIFIED,
+                    Value::Time(std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs)),
+                    Provenance::Filesystem,
+                );
+            }
+            e
+        };
+        let mut listing = Listing::default();
+        listing.apply(ListingEvent::Added(vec![
+            entry(1, "b folder", EntryKind::Directory, Some(4096), 30),
+            entry(2, "a file", EntryKind::File, Some(10), 40),
+            entry(3, "c folder", EntryKind::Directory, Some(4096), 10),
+            entry(4, "d empty", EntryKind::File, Some(0), 20),
+            // Not stat-ed yet: by size, a folder still has none.
+            entry(5, "e folder", EntryKind::Directory, None, 0),
+        ]));
+        listing.apply(ListingEvent::Complete);
+        let order = |key, ascending, folders_first| -> Vec<u64> {
+            let spec = SortSpec {
+                key,
+                ascending,
+                folders_first,
+                ..SortSpec::default()
+            };
+            listing.sorted(spec).iter().map(|id| id.file.ino).collect()
+        };
+        assert_eq!(order(SortKey::Name, true, true), [1, 3, 5, 2, 4]);
+        assert_eq!(order(SortKey::Name, true, false), [2, 1, 3, 4, 5]);
+        // The newest first, whatever it is; the one not stat-ed last.
+        assert_eq!(order(SortKey::Modified, false, true), [1, 3, 5, 2, 4]);
+        assert_eq!(order(SortKey::Modified, false, false), [2, 1, 4, 3, 5]);
+        // By size, folders by name among themselves, before the files
+        // smallest first, after them largest first.
+        assert_eq!(order(SortKey::Size, true, true), [1, 3, 5, 4, 2]);
+        assert_eq!(order(SortKey::Size, true, false), [1, 3, 5, 4, 2]);
+        assert_eq!(order(SortKey::Size, false, false), [2, 4, 5, 3, 1]);
+        let folder = listing
+            .get(EntryId {
+                file: crate::FileId::new(1, 5),
+                at: 0,
+            })
+            .unwrap();
+        assert!(!SortKey::Size.applies_to(folder), "nothing to wait for");
+        assert!(SortKey::Modified.applies_to(folder));
+    }
+
     #[test]
     fn a_rating_changed_on_disk_sorts_the_listing_again() {
         use crate::entry::{Provenance, Value, keys};
@@ -3378,7 +3486,8 @@ mod tests {
     }
 
     /// Arrivals placed in the cached order give the order a full sort
-    /// gives, under every sort, hidden or not, however the batches fall;
+    /// gives, under every sort, hidden or not, folders first or not,
+    /// however the batches fall;
     /// a removal or a rename in between is sorted again, and the complete
     /// listing's order holds everything.
     #[test]
@@ -3410,12 +3519,22 @@ mod tests {
                 .set(keys::SIZE, Value::UInt(ino % 4), Provenance::Filesystem);
             e
         };
+        // Folders first and sorted with the files.
+        let ways = [
+            (true, false, true),
+            (false, true, true),
+            (true, true, true),
+            (true, false, false),
+            (false, true, false),
+            (true, true, false),
+        ];
         for key in [SortKey::Name, SortKey::Size, SortKey::Modified] {
-            for (ascending, show_hidden) in [(true, false), (false, true), (true, true)] {
+            for (ascending, show_hidden, folders_first) in ways {
                 let spec = SortSpec {
                     key,
                     ascending,
                     show_hidden,
+                    folders_first,
                 };
                 let mut listing = Listing::default();
                 let mut next = 0;
@@ -3463,7 +3582,7 @@ mod tests {
     /// A listing hydrated in batches once complete, as a sort by size asks
     /// for every entry's metadata, keeps the order a full sort gives: what
     /// a batch stat-ed moves from among the unknown to its place, what
-    /// went leaves, whichever the direction.
+    /// went leaves, whichever the direction, folders first or not.
     #[test]
     fn hydration_and_removals_are_placed_where_a_full_sort_puts_them() {
         use crate::entry::{Provenance, Value, keys};
@@ -3497,11 +3616,14 @@ mod tests {
             e
         };
         for key in [SortKey::Size, SortKey::Modified, SortKey::Name] {
-            for ascending in [true, false] {
+            for (ascending, folders_first) in
+                [(true, true), (false, true), (true, false), (false, false)]
+            {
                 let spec = SortSpec {
                     key,
                     ascending,
                     show_hidden: false,
+                    folders_first,
                 };
                 let mut listing = Listing::default();
                 listing.apply(ListingEvent::Added((0..200).map(bare).collect()));

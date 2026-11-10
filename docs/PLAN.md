@@ -906,12 +906,31 @@ and remote alike. The gutter makes room for the lines estimated when the view
 is made and never narrows, so a long text no longer moves sideways a moment
 after it shows. Checks in `docs/STATUS-LOG.md` (2026-11-10).
 
+## Folders first, or with the files (2026-11-10)
+
+GitHub issue #10: sorted by date, folders stayed above the files, so the
+newest item was not always first. Folders first is now the user's setting
+(`core.folders_first`, on by default: Settings › Folders and views ›
+Sorting, and View › Folders first, the same setting), a field of every
+pane's sort; off, folders and files are sorted together. A folder has no
+size of its own, so by size it sorts as having none, before every file
+smallest first and after them largest first. The completions, an archive's
+tree and Usage keep folders first. Checks in `docs/STATUS-LOG.md`
+(2026-11-10).
+
 ## What is left
 
 Gathered on 2026-10-20 from the notes of this plan and of
 `docs/STATUS-LOG.md`, each as recorded on the date it gives. Later work
 may have covered one: check the source before starting it. Work that
 closes an item removes its line; work that leaves one adds it here.
+
+**Grouping** (issue #10, 2026-11-10): the reply promised a look at
+grouping by other criteria (kind, date…); nothing is designed yet. Folders
+first stays a field of the sort, which a group would come before
+(`docs/invariants/views.md`). A descending sort breaks ties by name in its
+own direction, so largest first lists folders Z to A, as it lists files of
+one size.
 
 **Exclusions** (ADR-125, 2026-11-08): the Index role has no reader until
 the index is built. Changed by you does not list what changed of the

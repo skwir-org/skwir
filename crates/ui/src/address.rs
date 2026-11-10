@@ -335,11 +335,31 @@ fn view_options(shell: &Shell) -> Vec<MenuPart> {
             .segment()
         })
         .collect();
-    let mut show = vec![menu_item(
-        Button::new("menu-hidden", "", "Show hidden files", "toggle_hidden")
-            .active(spec.show_hidden),
-        "Hidden files",
-    )];
+    // Folders before files, or sorted with them: the setting itself, in
+    // every pane, so the row never disagrees with Settings. Below the keys,
+    // as a check among their checks would read as another key.
+    let mut show = vec![
+        menu_item(
+            Button::new(
+                "menu-folders-first",
+                "",
+                "List folders before files; off, sort them together",
+                "settings.apply",
+            )
+            .args(serde_json::json!({
+                "changes": {
+                    skwir_core::location::FOLDERS_FIRST: (!spec.folders_first).to_string()
+                }
+            }))
+            .active(spec.folders_first),
+            "Folders first",
+        ),
+        menu_item(
+            Button::new("menu-hidden", "", "Show hidden files", "toggle_hidden")
+                .active(spec.show_hidden),
+            "Hidden files",
+        ),
+    ];
     // With hidden files, the files that keep another's notes beside it
     // (ADR-028): the same setting as General's, where one looks for a file
     // that seems missing.

@@ -1975,11 +1975,14 @@ impl App {
         }
         let privacy = crate::permissions::agent_call();
         let mut check = privacy.as_ref().map(crate::permissions::Privacy::checker);
+        // Folders where the user's panes put them.
+        let folders_first = self.workspace.read().folders_first();
         let order: Vec<EntryId> = listing
             .sorted(SortSpec {
                 key: SortKey::Name,
                 ascending: true,
                 show_hidden: hidden,
+                folders_first,
             })
             .iter()
             .copied()
