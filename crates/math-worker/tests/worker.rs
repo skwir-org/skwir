@@ -47,6 +47,47 @@ fn each_formula_is_drawn_or_refused_alone_in_order() {
     assert!(formulas[3]["svg"].as_str().is_some(), "the next is drawn");
 }
 
+/// No equation numbers itself (MathJax's default, Jupyter's): a number is
+/// a `\tag`'s, and comes apart for the caller to set at the line's end.
+#[test]
+fn an_equation_is_numbered_by_its_tag_alone_and_its_number_comes_apart() {
+    let batch = serde_json::json!({"formulas": [
+        {"tex": r"\begin{equation}x = 1\end{equation}", "display": true},
+        {"tex": r"\begin{align}a &= b \tag{3}\\ c &= d\end{align}", "display": true},
+        {"tex": r"E = mc^2 \tag{A}", "display": true},
+        {"tex": r"x \tag{B}", "display": false},
+    ]});
+    let output = typeset(&batch.to_string());
+    assert!(output.status.success());
+    let answer: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let formulas = answer["formulas"].as_array().unwrap();
+    assert!(formulas[0].get("tag").is_none(), "{}", formulas[0]);
+    for tagged in &formulas[1..3] {
+        let tag = &tagged["tag"];
+        assert!(
+            tag["svg"]
+                .as_str()
+                .is_some_and(|svg| svg.starts_with("<svg"))
+        );
+        assert!(
+            tag["width"].as_f64().unwrap() > 1.,
+            "the parentheses and the number"
+        );
+        assert!(
+            tag["gap"].as_f64().unwrap() >= 1.,
+            "an em clear of the formula"
+        );
+    }
+    assert!(
+        formulas[2]["width"].as_f64().unwrap() < 4.,
+        "the formula's width is its own, not its number's"
+    );
+    assert!(
+        formulas[3].get("tag").is_none(),
+        "a formula in a sentence keeps it"
+    );
+}
+
 #[test]
 fn what_is_not_a_batch_is_refused_with_a_reason() {
     let output = typeset("x^2");

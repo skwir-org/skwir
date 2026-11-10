@@ -69,10 +69,40 @@ code costs about 0.73 MiB idle, used or not.
 - Without the helper every formula is its TeX, as before, set as code.
 - A formula is drawn in one ink: `\color` is not kept.
 - A formula is not searched by its TeX: Find reads the text drawn.
-- An equation's number stands after it, not at the line's end.
 - KaTeX's HTML shows its MathML typeset beside the spans its own
   stylesheet would have drawn, which the reader cannot.
 - In a debug build, rust-embed reads the fonts from the crate's folder,
   which the helper, isolated, cannot see: it embeds them there too
   (`debug-embed`); without them RaTeX had fallen back to the system's
   faces, at their sizes.
+
+## Amendments
+
+### 2026-11-11: numbers by `\tag` alone, at the line's end; MathJax's pages
+
+Typeset one at a time, every numbered equation of a page read "(1)":
+RaTeX numbers `equation`, `align`, `gather` and `alignat` itself, from 1
+each formula. JupyterLab sets no `tags`, so MathJax's default (`'none'`)
+holds there: such an environment is not numbered, and a number is the
+one a `\tag` writes; GitHub cannot be configured otherwise.
+
+- The helper typesets those environments as their starred forms: no
+  equation is numbered by itself, in Markdown, a notebook or HTML.
+- A number comes apart from its formula: the helper lays the formula out
+  again without its numbers (a `\tag`, an environment's), splits its
+  drawing where that ends, and answers the number as a `tag` of its own
+  (`inspection::Tag`) on the formula's baseline. The view sets it at the
+  end of the line the formula is set apart on, or an em past the
+  formula where that line has no room, as KaTeX's stylesheet sets one.
+
+An HTML page that loads MathJax, or KaTeX's auto-render, writes its TeX
+in its text for them to typeset in the browser (an exported notebook,
+Sphinx's and MkDocs' pages). Its text is read by MathJax's rules
+(`math::delimited::mathjax`): `\(…\)`, `\[…\]`, `$$…$$` and environments,
+`$…$` only where the page's configuration lists it (nbconvert's does),
+never in `pre` or `code`. The finder is the one a notebook's cells use
+(`math::delimited`, `JUPYTER`), moved into the platform for both.
+
+The tag of a hand-written `\tag{A}` is set in math italic by RaTeX where
+KaTeX sets it upright; numbers read the same either way.
+

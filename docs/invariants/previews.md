@@ -356,10 +356,17 @@ A name that says nothing is not a binary file.
   letters would have (the text's, a link's, the selection's, a ground's),
   at the text's size: never a picture of fixed pixels or colors.
 - A notebook's math is Jupyter's, taken out of each cell before its
-  Markdown is read (`jupyter::take_math`, by JupyterLab's `removeMath`):
-  Markdown's own `$` rules are not a notebook's. Elsewhere, Markdown's are
-  pulldown-cmark's. HTML's is MathML's TeX annotation, else its
-  `alttext`.
+  Markdown is read (`math::delimited::take` with `JUPYTER`, by JupyterLab's
+  `removeMath`): Markdown's own `$` rules are not a notebook's. Elsewhere,
+  Markdown's are pulldown-cmark's. HTML's is MathML's TeX annotation, else
+  its `alttext`; and a page that loads MathJax or KaTeX's auto-render has
+  its text read by their rules (`delimited::mathjax`, `$` only where its
+  configuration lists it), never its `pre` or `code`. Delimited TeX is
+  found by `math::delimited` alone.
+- **No equation numbers itself** (MathJax's default, Jupyter's): a number
+  is a `\tag`'s. It is drawn apart from its formula (`Drawing::tag`) and
+  set at the end of the formula's line, or an em past it where the line
+  has no room.
 
 ## Text documents (ADR-030)
 

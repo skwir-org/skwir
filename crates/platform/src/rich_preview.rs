@@ -137,7 +137,10 @@ pub fn html(
     let doc = document(source, markup);
     let mut sheets = stylesheets(&doc, &mut resources);
     check(cancel)?;
-    let mut walk = Walk::default();
+    let mut walk = Walk {
+        tex: typesetter(&doc),
+        ..Walk::default()
+    };
     let mut stack: Vec<Context> = vec![Context::default()];
     // A subtree that is not read: hidden, too deep, or a picture. Hidden,
     // the places it names stay where it stood (a printed page's mark a
@@ -174,7 +177,7 @@ pub fn html(
                                         "table" | "thead" | "tbody" | "tfoot" | "tr" | "colgroup"
                                     )
                                 }) => {}
-                    Node::Text(text) => walk.text(&parent, text),
+                    Node::Text(text) => walk.read(&parent, text),
                     Node::Element(e) => {
                         let element = ElementRef::wrap(node).expect("an element");
                         let style = sheets.compute(element, &parent.style);
@@ -445,6 +448,9 @@ const INDENT: f32 = 8.;
 struct Walk {
     /// The page's formulas, typeset once it is read (`page`).
     formulas: crate::math::Pending,
+    /// How the page's own typesetter finds formulas in its text, if it
+    /// loads one (`typesetter`).
+    tex: Option<crate::math::delimited::Rules>,
     blocks: Vec<Block>,
     /// Footnotes, moved to the end of the page.
     notes: Vec<Block>,
@@ -629,6 +635,38 @@ impl Walk {
             found: false,
             drawing: None,
         });
+    }
+
+    /// A text of the page, its formulas typeset where the page's own
+    /// typesetter would have found them (`tex`): never in code, which
+    /// MathJax and KaTeX leave alone.
+    fn read(&mut self, context: &Context, text: &str) {
+        use crate::math::delimited::{self, Taken};
+        let Some(rules) = self
+            .tex
+            .filter(|_| !context.silent && !context.pre && !context.code)
+            .filter(|_| text.contains(['$', '\\']))
+        else {
+            return self.text(context, text);
+        };
+        let (marked, taken) = delimited::take(text, rules);
+        if taken.is_empty() {
+            return self.text(context, text);
+        }
+        for part in delimited::split(&marked) {
+            match part.map_err(|number| &taken[number]) {
+                Ok(text) => self.text(context, text),
+                Err(Taken::Formula {
+                    tex,
+                    display,
+                    written,
+                }) => match self.formulas.ask(tex, *display, written.clone()) {
+                    Some(drawing) => self.formula(context, drawing, *display),
+                    None => self.text(context, written),
+                },
+                Err(Taken::Written(written)) => self.text(context, written),
+            }
+        }
     }
 
     /// A formula drawn in its line, in the run's styles there (a link, its
@@ -827,6 +865,44 @@ impl Walk {
             truncated,
         }
     }
+}
+
+/// The rules a page's own typesetter finds formulas in its text by, if it
+/// loads one: MathJax (`MathJax`'s script, or its configuration), or KaTeX's
+/// auto-render, which typeset the page's TeX in the browser. `$…$` is one
+/// only where their configuration says so, as nbconvert's does: neither
+/// takes it by default, where prices are written.
+fn typesetter(doc: &Html) -> Option<crate::math::delimited::Rules> {
+    let mut loads = false;
+    let mut dollars = false;
+    for node in doc.tree.nodes() {
+        let Some(e) = node.value().as_element().filter(|e| e.name() == "script") else {
+            continue;
+        };
+        let src = e.attr("src").unwrap_or_default().to_ascii_lowercase();
+        let own: String = node
+            .children()
+            .filter_map(|child| child.value().as_text().map(|text| &**text))
+            .collect();
+        loads |= src.contains("mathjax")
+            || (src.contains("katex") && src.contains("auto-render"))
+            || e.attr("type")
+                .is_some_and(|kind| kind.eq_ignore_ascii_case("text/x-mathjax-config"))
+            || own.contains("MathJax")
+            || own.contains("renderMathInElement");
+        // Its configuration, spaces aside: `['$','$']` among MathJax's
+        // inline delimiters, `left: "$", right: "$"` among KaTeX's.
+        let bare: String = own.chars().filter(|c| !c.is_whitespace()).collect();
+        dollars |= [
+            "['$','$']",
+            "[\"$\",\"$\"]",
+            "left:\"$\",right:\"$\"",
+            "left:'$',right:'$'",
+        ]
+        .iter()
+        .any(|written| bare.contains(written));
+    }
+    loads.then(|| crate::math::delimited::mathjax(dollars))
 }
 
 /// The TeX a MathML element carries beside its markup
@@ -1500,6 +1576,63 @@ mod tests {
                 .iter()
                 .any(|run| run.drawing.as_ref().is_some_and(|d| !d.svg.is_empty()))
         }));
+    }
+
+    /// A page that loads MathJax, as nbconvert writes one: its TeX in its
+    /// text, `$` among its delimiters by its configuration.
+    const MATHJAX: &str = r#"<html><head>
+        <script>MathJax = {tex: {inlineMath: [ ['$','$'], ["\\(","\\)"] ]}};</script>
+        <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js"></script>
+        </head><body><p>Let $x$ and \(y\) be, and</p><p>$$z = 1$$</p>
+        <p>but <code>$c$</code> is code.</p></body></html>"#;
+
+    #[test]
+    fn a_page_loading_mathjax_has_its_tex_typeset_where_mathjax_finds_it() {
+        let Some(worker) = std::env::current_exe()
+            .ok()
+            .and_then(|exe| Some(exe.parent()?.parent()?.join("skwir-math-worker")))
+            .filter(|path| path.is_file())
+        else {
+            eprintln!("skipped: skwir-math-worker is not built");
+            return;
+        };
+        use_math_worker(&worker);
+        let blocks = read(MATHJAX, Markup::Html);
+        let said: Vec<_> = blocks
+            .iter()
+            .map(|block| block.said(0..block.text.len()).into_owned())
+            .collect();
+        assert_eq!(
+            said,
+            [
+                "Let $x$ and \\(y\\) be, and",
+                "$$z = 1$$",
+                "but $c$ is code."
+            ]
+        );
+        let drawn = |block: &Block| {
+            block
+                .runs
+                .iter()
+                .filter(|run| run.drawing.is_some())
+                .count()
+        };
+        assert_eq!(drawn(&blocks[0]), 2);
+        assert_eq!(blocks[1].align, Align::Center);
+        assert_eq!(drawn(&blocks[2]), 0, "code is not typeset");
+        // A page that loads nothing has its TeX as text.
+        let plain = read("<p>Let $x$ and \\(y\\) be.</p>", Markup::Html);
+        assert_eq!(plain[0].text, "Let $x$ and \\(y\\) be.");
+        // MathJax without `$` among its delimiters: a price is a price.
+        let prices = read(
+            r#"<script src="mathjax/tex-mml-chtml.js"></script><p>$5 and \(z\) and $10</p>"#,
+            Markup::Html,
+        );
+        assert_eq!(
+            prices[0].said(0..prices[0].text.len()),
+            "$5 and \\(z\\) and $10"
+        );
+        assert_eq!(drawn(&prices[0]), 1);
     }
 
     #[test]

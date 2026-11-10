@@ -10,10 +10,12 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use skwir_core::{
     CancelToken,
-    inspection::{Block, Drawing},
+    inspection::{Block, Drawing, Tag},
 };
 
 use crate::inspection::limits;
+
+pub mod delimited;
 
 /// Formulas a page typesets at most; past them each stays its TeX.
 pub const FORMULAS: usize = 2048;
@@ -55,6 +57,23 @@ struct Typeset {
     height: Option<f32>,
     depth: Option<f32>,
     svg: Option<String>,
+    /// Its number, drawn apart (`\tag`).
+    tag: Option<Number>,
+}
+
+#[derive(Deserialize)]
+struct Number {
+    gap: f32,
+    width: f32,
+    svg: String,
+}
+
+/// What tells one SVG from another, for a view to keep its raster by.
+fn id_of(svg: &[u8]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    svg.hash(&mut hasher);
+    hasher.finish()
 }
 
 /// Each formula's drawing, in order: `None` for one that cannot be typeset
@@ -89,19 +108,33 @@ pub fn typeset(formulas: &[Formula], cancel: &CancelToken) -> anyhow::Result<Vec
                 .zip(&asked)
                 .map(|(typeset, formula)| {
                     let svg = typeset.svg?.into_bytes();
+                    let (ascent, descent) = (typeset.height? * SCALE, typeset.depth? * SCALE);
+                    let margin = answer.padding * SCALE;
+                    let tag = typeset.tag.map(|number| {
+                        let svg = number.svg.into_bytes();
+                        Arc::new(Tag {
+                            gap: number.gap * SCALE,
+                            drawing: Drawing {
+                                width: number.width * SCALE,
+                                ascent,
+                                descent,
+                                margin,
+                                id: id_of(&svg),
+                                svg: Arc::from(svg),
+                                text: String::new(),
+                                tag: None,
+                            },
+                        })
+                    });
                     Some(Drawing {
                         width: typeset.width? * SCALE,
-                        ascent: typeset.height? * SCALE,
-                        descent: typeset.depth? * SCALE,
-                        margin: answer.padding * SCALE,
-                        id: {
-                            use std::hash::{Hash, Hasher};
-                            let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                            svg.hash(&mut hasher);
-                            hasher.finish()
-                        },
+                        ascent,
+                        descent,
+                        margin,
+                        id: id_of(&svg),
                         svg: Arc::from(svg),
                         text: formula.tex.clone(),
+                        tag,
                     })
                 }),
         );
@@ -175,6 +208,7 @@ impl Pending {
             descent: 0.,
             margin: 0.,
             text: written,
+            tag: None,
         });
         self.asked.push((
             drawing.clone(),

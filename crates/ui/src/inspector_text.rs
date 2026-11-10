@@ -442,21 +442,47 @@ fn paint_drawings(
 ) {
     let text_style = window.text_style();
     let font_size = text_style.font_size.to_pixels(window.rem_size());
-    for ((_, bounds), (drawing, ink)) in layout.inline_boxes().into_iter().zip(drawings) {
-        let margin = font_size * drawing.margin;
-        let bounds = gpui::Bounds {
-            origin: bounds.origin - gpui::point(margin, margin),
-            size: bounds.size + gpui::size(margin * 2., margin * 2.),
-        };
-        let _ = window.paint_svg(
-            bounds,
-            SharedString::from(format!("skwir-drawing-{:x}", drawing.id)),
-            Some(&drawing.svg),
-            gpui::TransformationMatrix::unit(),
-            ink.unwrap_or(text_style.color),
-            cx,
-        );
+    let ink = |ink: &Option<gpui::Hsla>| ink.unwrap_or(text_style.color);
+    let line_end = layout.bounds().right();
+    for ((_, bounds), (drawing, ink_of)) in layout.inline_boxes().into_iter().zip(drawings) {
+        paint_drawing(drawing, bounds, font_size, ink(ink_of), window, cx);
+        // Its number at the end of the line, or past it where the line
+        // has no room.
+        if let Some(tag) = &drawing.tag {
+            let width = font_size * tag.drawing.width;
+            let x = (line_end - width).max(bounds.right() + font_size * tag.gap);
+            let bounds = gpui::Bounds {
+                origin: gpui::point(x, bounds.top()),
+                size: gpui::size(width, bounds.size.height),
+            };
+            paint_drawing(&tag.drawing, bounds, font_size, ink(ink_of), window, cx);
+        }
     }
+}
+
+/// Paint `drawing`'s SVG over the box `bounds`, reaching past it by its
+/// margin, in `ink`.
+fn paint_drawing(
+    drawing: &Drawing,
+    bounds: gpui::Bounds<gpui::Pixels>,
+    font_size: gpui::Pixels,
+    ink: gpui::Hsla,
+    window: &mut gpui::Window,
+    cx: &mut gpui::App,
+) {
+    let margin = font_size * drawing.margin;
+    let bounds = gpui::Bounds {
+        origin: bounds.origin - gpui::point(margin, margin),
+        size: bounds.size + gpui::size(margin * 2., margin * 2.),
+    };
+    let _ = window.paint_svg(
+        bounds,
+        SharedString::from(format!("skwir-drawing-{:x}", drawing.id)),
+        Some(&drawing.svg),
+        gpui::TransformationMatrix::unit(),
+        ink,
+        cx,
+    );
 }
 
 /// One stretch of a block's text as its own element: the whole block, or a

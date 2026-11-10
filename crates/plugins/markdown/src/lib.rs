@@ -3,7 +3,6 @@
 //! semantic blocks, so they read alike, and all keep their source one
 //! toggle away.
 mod diagram;
-mod jupyter;
 mod markdown;
 mod notebook;
 use skwir_core::{

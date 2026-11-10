@@ -15,7 +15,11 @@
 //!
 //! Sizes are in ems of the text the formula sits in: `height` above the
 //! baseline, `depth` below it. The SVG reaches `padding` past each side of
-//! that box, for what overhangs it (an italic letter, a radical's hook);
+//! that box, for what overhangs it (an italic letter, a radical's hook).
+//! A formula's number (`\tag`) comes apart, as `tag`: its SVG on the same
+//! baseline, `gap` past the formula, for the caller to set at the end of
+//! the line. Equations are not numbered by themselves (MathJax's default,
+//! which Jupyter keeps): a number is the one a `\tag` writes;
 //! its glyphs are outlines, nothing that could read a file or a URL. A
 //! batch it cannot read is an exit status of 1 and a reason on standard
 //! error. Pure Rust (RaTeX: KaTeX's TeX, its layout and its fonts), nothing
@@ -65,10 +69,103 @@ enum Typeset {
         height: f64,
         depth: f64,
         svg: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        tag: Option<Tag>,
     },
     Refused {
         error: String,
     },
+}
+
+/// A formula's number, drawn apart: `gap` past the formula, `width` wide,
+/// on its baseline.
+#[derive(Serialize)]
+struct Tag {
+    gap: f64,
+    width: f64,
+    svg: String,
+}
+
+/// The environments that number their lines, which are typeset as their
+/// starred forms: an equation is numbered by its `\tag` alone, as MathJax
+/// numbers them unless a page asks otherwise (`tags: 'none'`), and as
+/// formulas typeset one at a time could not count them.
+const NUMBERED: [&str; 4] = ["equation", "align", "gather", "alignat"];
+
+fn unnumbered(tex: &str) -> String {
+    let mut tex = tex.to_owned();
+    for name in NUMBERED {
+        for (from, to) in [("begin", "begin"), ("end", "end")] {
+            tex = tex.replace(
+                &format!("\\{from}{{{name}}}"),
+                &format!("\\{to}{{{name}*}}"),
+            );
+        }
+    }
+    tex
+}
+
+/// `nodes` without their numbers (a `\tag`, an environment's), if they have
+/// any: what lays the formula out without its number, so the number can be
+/// set apart from it.
+fn untagged(nodes: &[ratex_parser::ParseNode]) -> Option<Vec<ratex_parser::ParseNode>> {
+    use ratex_parser::ParseNode;
+    let mut found = false;
+    let mut out = Vec::with_capacity(nodes.len());
+    for node in nodes {
+        match node {
+            ParseNode::Tag { body, .. } => {
+                found = true;
+                out.extend(body.iter().cloned());
+            }
+            ParseNode::Array { tags: Some(_), .. } => {
+                found = true;
+                let mut node = node.clone();
+                if let ParseNode::Array { tags, .. } = &mut node {
+                    *tags = None;
+                }
+                out.push(node);
+            }
+            other => out.push(other.clone()),
+        }
+    }
+    found.then_some(out)
+}
+
+/// The x where an item of a display list is drawn from.
+fn item_x(item: &ratex_types::DisplayItem) -> f64 {
+    use ratex_types::DisplayItem;
+    match item {
+        DisplayItem::GlyphPath { x, .. }
+        | DisplayItem::Line { x, .. }
+        | DisplayItem::Rect { x, .. }
+        | DisplayItem::Path { x, .. } => *x,
+    }
+}
+
+/// The same item drawn `dx` further along.
+fn moved(item: &ratex_types::DisplayItem, dx: f64) -> ratex_types::DisplayItem {
+    use ratex_types::DisplayItem;
+    let mut item = item.clone();
+    match &mut item {
+        DisplayItem::GlyphPath { x, .. }
+        | DisplayItem::Line { x, .. }
+        | DisplayItem::Rect { x, .. }
+        | DisplayItem::Path { x, .. } => *x += dx,
+    }
+    item
+}
+
+fn svg(list: &ratex_types::DisplayList) -> String {
+    ratex_svg::render_to_svg(
+        list,
+        &ratex_svg::SvgOptions {
+            font_size: UNITS,
+            padding: PADDING * UNITS,
+            embed_glyphs: true,
+            ..Default::default()
+        },
+    )
 }
 
 fn main() {
@@ -140,7 +237,7 @@ fn typeset(formula: &Formula) -> Result<Typeset, String> {
     if formula.tex.len() > FORMULA {
         return Err(format!("the formula is longer than {FORMULA} bytes"));
     }
-    let nodes = ratex_parser::parse(&formula.tex).map_err(|error| error.message)?;
+    let nodes = ratex_parser::parse(&unnumbered(&formula.tex)).map_err(|error| error.message)?;
     let options = ratex_layout::LayoutOptions {
         style: if formula.display {
             ratex_types::MathStyle::Display
@@ -151,20 +248,44 @@ fn typeset(formula: &Formula) -> Result<Typeset, String> {
     };
     let root = ratex_layout::layout(&nodes, &options);
     ratex_layout::validate_layout(&root)?;
-    let list = ratex_layout::to_display_list(&root);
-    let svg = ratex_svg::render_to_svg(
-        &list,
-        &ratex_svg::SvgOptions {
-            font_size: UNITS,
-            padding: PADDING * UNITS,
-            embed_glyphs: true,
-            ..Default::default()
-        },
-    );
+    let mut list = ratex_layout::to_display_list(&root);
+    // Its number apart: what is drawn from where the formula laid out
+    // without it ends (a `\tag` follows it at once, an environment's
+    // stands a gap past it); nothing of the formula is drawn from there.
+    let tag = untagged(&nodes)
+        .filter(|_| formula.display)
+        .map(|nodes| ratex_layout::layout(&nodes, &options).width)
+        .and_then(|width| {
+            let (number, own): (Vec<_>, Vec<_>) = list
+                .items
+                .drain(..)
+                .partition(|item| item_x(item) >= width - 1e-9);
+            list.items = own;
+            let from = number.iter().map(item_x).fold(f64::INFINITY, f64::min);
+            if number.is_empty() {
+                return None;
+            }
+            let tag = ratex_types::DisplayList {
+                items: number.iter().map(|item| moved(item, -from)).collect(),
+                width: list.width - from,
+                height: list.height,
+                depth: list.depth,
+            };
+            // At least an em clear of the formula, where the line has no
+            // room to set it at its end.
+            let gap = (from - width).max(1.);
+            list.width = width;
+            Some(Tag {
+                gap,
+                width: tag.width,
+                svg: svg(&tag),
+            })
+        });
     Ok(Typeset::Drawn {
         width: list.width,
         height: list.height,
         depth: list.depth,
-        svg,
+        svg: svg(&list),
+        tag,
     })
 }

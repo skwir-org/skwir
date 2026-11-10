@@ -14462,3 +14462,46 @@ and 175 %; a selection across two formulas drawn in its ink, copied as
 change is in its shared layout, compiled here for Linux only); `just
 release-check`, by the user's standing preference.
 
+## 2026-11-11: Equations numbered by their tags, and MathJax's pages
+
+Typeset one at a time, every numbered equation read "(1)": RaTeX numbers
+`equation`, `align`, `gather` and `alignat` itself, from 1 each formula.
+JupyterLab sets no `tags` in its MathJax configuration, so its default
+(`'none'`) holds: such an environment is not numbered there, and a
+number is the one a `\tag` writes (ADR-129, amended).
+
+- The helper typesets those environments as their starred forms, and a
+  number comes apart: the formula is laid out again without its numbers
+  (a `\tag` node, an environment's tags), its drawing split where that
+  ends, the number answered as `tag` (`gap`, `width`, its SVG) on the
+  same baseline. `inspection::Tag` carries it; the view sets it at the
+  end of the formula's line, or an em past the formula where the line
+  has no room.
+- A page that loads MathJax (its script, `MathJax.Hub.Config`, a
+  `text/x-mathjax-config`) or KaTeX's auto-render has its text read by
+  their rules (`math::delimited::mathjax`): `\(…\)`, `\[…\]`, `$$…$$`,
+  environments, `$…$` where its configuration lists `['$','$']` (or
+  KaTeX's `left: "$"`), never in `pre` or `code`. What the helper cannot
+  typeset is the TeX as the page writes it.
+- The finder of delimited TeX moved from the markdown plugin into the
+  platform (`math::delimited`, `Rules::Jupyter` and `Rules::Page`), for
+  notebooks and pages alike; its code ranges are walked with the text
+  rather than searched for each `$` (the Scale rule).
+
+**Checked:** rustfmt; clippy `-D warnings` on `skwir-core`, `-platform`,
+`-ui`, `-plugin-markdown`, `-math-worker`; their tests with the helper
+built (1238 passed, then 504 after the last change). New tests: an
+`equation` unnumbered, the numbers of an `align` and of a `\tag` apart and
+an em clear, none for a formula in a sentence; MathJax's rules (one
+backslash, a TeX line break, `$` only when asked, no Markdown code); a
+page loading MathJax as nbconvert configures it (inline, set apart, code
+left alone), one loading nothing, and MathJax without `$`. A debug window
+on Xvfb: a notebook's `equation` unnumbered, `$$E = mc^2 \tag{1.2}$$` and
+an `align`'s `\tag{3}` at the line's end on their rows' baselines, an em
+past their formulas in a narrow panel; an exported notebook's page
+(MathJax 2's configuration) with `$σ^2 = …$`, `\(σ\)` and `$$∫…$$` typeset
+and a `$` in code left alone.
+
+**Not checked:** a screen reader; Windows and macOS; `just
+release-check`, by the user's standing preference.
+

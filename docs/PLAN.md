@@ -927,10 +927,10 @@ closes an item removes its line; work that leaves one adds it here.
 
 **Formulas** (ADR-129, 2026-11-10): the helper is in Linux's and Nix's
 packages only; Windows' and macOS's leave it out, as Mermaid's. A formula
-is drawn in one ink (`\color` is not kept), is not found by its TeX, and
-an equation's number stands after it rather than at the line's end.
+is drawn in one ink (`\color` is not kept) and is not found by its TeX.
 KaTeX's HTML shows its MathML typeset beside the spans its stylesheet
-draws. Not checked with a screen reader listening.
+draws. RaTeX sets a hand-written `\tag{A}` in italic. Not checked with a
+screen reader listening.
 
 **Grouping** (issue #10, 2026-11-10): the reply promised a look at
 grouping by other criteria (kind, date…); nothing is designed yet. Folders

@@ -533,6 +533,16 @@ pub struct Drawing {
     /// What the drawing says, in its place where the text is copied, read
     /// aloud or searched: a formula's TeX, as written.
     pub text: String,
+    /// A formula's number (`\tag`), set at the end of the line the formula
+    /// stands on, or `Tag::gap` past it where that line has no room.
+    pub tag: Option<std::sync::Arc<Tag>>,
+}
+/// A formula's number, drawn apart from it (`Drawing::tag`): on its
+/// baseline, its own box and SVG; `gap` ems clear of the formula at least.
+#[derive(Clone, Debug)]
+pub struct Tag {
+    pub drawing: Drawing,
+    pub gap: f32,
 }
 /// Where a run sits in its line.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

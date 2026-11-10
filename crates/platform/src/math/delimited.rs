@@ -1,20 +1,62 @@
-//! The math Jupyter takes out of a Markdown cell before reading its
-//! Markdown, by the rules of JupyterLab's `removeMath`
-//! (`packages/rendermime/src/latex.ts`), so a cell's formulas are the ones
-//! Jupyter shows: `$…$`, `$$…$$`, `\\(…\\)` and `\\[…\\]` (the backslash
-//! doubled, as Markdown keeps one), and `\begin{…}…\end{…}`. A formula's
-//! delimiters match and its braces balance; none runs across a blank line;
-//! a `$` in a code span or a fenced block is not one. Each piece taken is
-//! replaced by a placeholder Markdown leaves alone (`MARK`, its number,
-//! `END`), found again in the text the parser reads (`Taken`).
+//! Formulas a text writes between delimiters, found as the program that
+//! typesets them on its page finds them, and taken out of it, each replaced
+//! by a placeholder (`MARK`, its number, `END`) found again where the text
+//! is read (`Taken`, `split`). A formula's delimiters match and its braces
+//! balance. Its rules (`Rules`) are Jupyter's for a notebook's Markdown
+//! (`JUPYTER`, JupyterLab's `removeMath` in
+//! `packages/rendermime/src/latex.ts`: the backslash of `\\(` doubled, as
+//! Markdown keeps one; no formula across a blank line; no `$` of code), or
+//! MathJax's and KaTeX's for an HTML page that loads them (`mathjax`): its
+//! text's own `\(…\)` and `\[…\]`, `$…$` where the page asks for it.
+//! `$$…$$` and `\begin{…}…\end{…}` are formulas under both.
 
-/// What opens a placeholder: a private character, which no cell writes
+/// Which delimiters a text writes its formulas between, and what ends one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Rules {
+    /// A notebook's Markdown cell, as Jupyter reads it.
+    Jupyter,
+    /// An HTML page's text, as MathJax and KaTeX's auto-render read it:
+    /// `$…$` only where the page asks for it (`dollars`).
+    Page { dollars: bool },
+}
+
+/// A notebook's Markdown cell, as Jupyter reads it.
+pub const JUPYTER: Rules = Rules::Jupyter;
+
+/// An HTML page's text, as MathJax and KaTeX's auto-render read it.
+pub fn mathjax(dollars: bool) -> Rules {
+    Rules::Page { dollars }
+}
+
+impl Rules {
+    /// `$…$` is a formula (`$$…$$` always is).
+    fn dollars(self) -> bool {
+        match self {
+            Self::Jupyter => true,
+            Self::Page { dollars } => dollars,
+        }
+    }
+
+    /// `\(` and `\[` are written with their backslash doubled, as Markdown
+    /// keeps one; otherwise with one, as HTML's text has it.
+    fn doubled(self) -> bool {
+        self == Self::Jupyter
+    }
+
+    /// A blank line ends a formula open (a paragraph), and a `$` in a code
+    /// span or a fenced block is not one: Markdown.
+    fn markdown(self) -> bool {
+        self == Self::Jupyter
+    }
+}
+
+/// What opens a placeholder: a private character, which no text writes
 /// as one (one it holds is taken as written, `Taken::Written`).
 pub const MARK: char = '\u{e000}';
 /// What closes a placeholder.
 pub const END: char = '\u{e001}';
 
-/// A piece of a cell taken out before its Markdown is read.
+/// A piece of a text taken out before it is read.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Taken {
     /// A formula, and how it was written (what it reads as, and is shown
@@ -24,12 +66,12 @@ pub enum Taken {
         display: bool,
         written: String,
     },
-    /// Text that is the cell's own: a private character it wrote.
+    /// Text that is the text's own: a private character it wrote.
     Written(String),
 }
 
 impl Taken {
-    /// What it reads as in the cell's text.
+    /// What it reads as in the text.
     pub fn written(&self) -> &str {
         match self {
             Self::Formula { written, .. } | Self::Written(written) => written,
@@ -37,30 +79,44 @@ impl Taken {
     }
 }
 
-/// A delimiter or a sign Jupyter looks for, and where it is in the cell.
+/// A delimiter or a sign the rules look for, and where it is in the text.
 #[derive(Clone, Debug, PartialEq)]
 enum Sign {
     Dollar,
     Dollars,
     /// `\begin{name}` or `\end{name}`, as written.
     Environment(String),
-    /// `\\(`, `\\)`, `\\[` or `\\]`.
-    Doubled(char),
+    /// `\(`, `\)`, `\[` or `\]` (`\\(`… where `Rules::doubled`).
+    Bracket(char),
     Open,
     Close,
     /// Line breaks and the spaces between them: two or more end a
     /// paragraph, and any formula open.
     Breaks(usize),
-    /// What stands for itself: an escaped `{`, `}` or `$`.
+    /// What stands for itself: an escaped `{`, `}` or `$`, a backslash
+    /// escaped (a TeX line break) where a bracket has one.
     Escaped,
     Private,
 }
 
-/// The signs of `text`, with their byte ranges. A `$` within `code`
-/// (spans and fenced blocks) is none.
-fn signs(text: &str, code: &[std::ops::Range<usize>]) -> Vec<(Sign, std::ops::Range<usize>)> {
+/// The signs of `text` under `rules`, with their byte ranges. A `$` within
+/// `code` (spans and fenced blocks, in order) is none.
+fn signs(
+    text: &str,
+    rules: Rules,
+    code: &[std::ops::Range<usize>],
+) -> Vec<(Sign, std::ops::Range<usize>)> {
     let bytes = text.as_bytes();
-    let in_code = |at: usize| code.iter().any(|range| range.contains(&at));
+    // The code ranges come in order, as the signs do: one walks with them.
+    let mut code = code.iter().peekable();
+    let mut in_code = |at: usize| {
+        while code.next_if(|range| range.end <= at).is_some() {}
+        code.peek().is_some_and(|range| range.contains(&at))
+    };
+    let bracket = |at: usize| match bytes.get(at).copied() {
+        Some(bracket @ (b'(' | b')' | b'[' | b']')) => Some(char::from(bracket)),
+        _ => None,
+    };
     let mut signs = Vec::new();
     let mut at = 0;
     while at < bytes.len() {
@@ -73,17 +129,21 @@ fn signs(text: &str, code: &[std::ops::Range<usize>]) -> Vec<(Sign, std::ops::Ra
                 let next = bytes.get(at + 1).copied();
                 if matches!(next, Some(b'{' | b'}' | b'$')) {
                     Some((Sign::Escaped, 2))
-                } else if next == Some(b'\\')
-                    && let Some(bracket @ (b'(' | b')' | b'[' | b']')) = bytes.get(at + 2).copied()
+                } else if rules.doubled() && next == Some(b'\\') {
+                    bracket(at + 2).map(|bracket| (Sign::Bracket(bracket), 3))
+                } else if !rules.doubled() && next == Some(b'\\') {
+                    Some((Sign::Escaped, 2))
+                } else if !rules.doubled()
+                    && let Some(bracket) = bracket(at + 1)
                 {
-                    Some((Sign::Doubled(char::from(bracket)), 3))
+                    Some((Sign::Bracket(bracket), 2))
                 } else {
                     environment(rest).map(|len| (Sign::Environment(rest[..len].to_owned()), len))
                 }
             }
             b'{' => Some((Sign::Open, 1)),
             b'}' => Some((Sign::Close, 1)),
-            b'\n' => {
+            b'\n' if rules.markdown() => {
                 let len = rest.len() - rest.trim_start().len();
                 Some((Sign::Breaks(rest[..len].matches('\n').count()), len))
             }
@@ -184,11 +244,16 @@ fn spans(line: &str, offset: usize, ranges: &mut Vec<std::ops::Range<usize>>) {
     }
 }
 
-/// `text` with its math taken out, each piece a placeholder, and the pieces
-/// in order.
-pub fn take_math(text: &str) -> (String, Vec<Taken>) {
+/// `text` with its formulas under `rules` taken out, each piece a
+/// placeholder, and the pieces in order.
+pub fn take(text: &str, rules: Rules) -> (String, Vec<Taken>) {
     let text = text.replace("\r\n", "\n").replace('\r', "\n");
-    let signs = signs(&text, &code(&text));
+    let code = if rules.markdown() {
+        code(&text)
+    } else {
+        Vec::new()
+    };
+    let signs = signs(&text, rules, &code);
     // Each piece taken: the signs it spans, first and last.
     let mut pieces: Vec<(usize, usize)> = Vec::new();
     let mut start: Option<usize> = None;
@@ -224,10 +289,10 @@ pub fn take_math(text: &str) -> (String, Vec<Taken>) {
             }
         } else {
             let closing = match sign {
-                Sign::Dollar => Some(Sign::Dollar),
+                Sign::Dollar if rules.dollars() => Some(Sign::Dollar),
                 Sign::Dollars => Some(Sign::Dollars),
-                Sign::Doubled('(') => Some(Sign::Doubled(')')),
-                Sign::Doubled('[') => Some(Sign::Doubled(']')),
+                Sign::Bracket('(') => Some(Sign::Bracket(')')),
+                Sign::Bracket('[') => Some(Sign::Bracket(']')),
                 Sign::Environment(begin) => begin
                     .strip_prefix("\\begin")
                     .map(|name| Sign::Environment(format!("\\end{name}"))),
@@ -268,7 +333,8 @@ pub fn take_math(text: &str) -> (String, Vec<Taken>) {
     (out, taken)
 }
 
-/// A piece of math as Jupyter hands it on: what its delimiters say.
+/// A piece of math as the page's typesetter is handed it: what its
+/// delimiters say.
 fn formula(written: &str) -> Taken {
     let between = |open: &str, close: &str| {
         written
@@ -278,9 +344,9 @@ fn formula(written: &str) -> Taken {
     };
     let (tex, display) = if let Some(tex) = between("$$", "$$").filter(|_| written.len() >= 4) {
         (tex, true)
-    } else if let Some(tex) = between("\\\\[", "\\\\]") {
+    } else if let Some(tex) = between("\\\\[", "\\\\]").or_else(|| between("\\[", "\\]")) {
         (tex, true)
-    } else if let Some(tex) = between("\\\\(", "\\\\)") {
+    } else if let Some(tex) = between("\\\\(", "\\\\)").or_else(|| between("\\(", "\\)")) {
         (tex, false)
     } else if let Some(tex) = between("$", "$") {
         (tex, false)
@@ -336,7 +402,7 @@ mod tests {
     use super::*;
 
     fn formulas(text: &str) -> Vec<(String, bool)> {
-        take_math(text)
+        take(text, JUPYTER)
             .1
             .into_iter()
             .filter_map(|taken| match taken {
@@ -384,9 +450,46 @@ mod tests {
     }
 
     #[test]
+    fn a_page_s_math_is_what_mathjax_finds() {
+        let found = |text: &str, dollars| -> Vec<(String, bool)> {
+            take(text, mathjax(dollars))
+                .1
+                .into_iter()
+                .filter_map(|taken| match taken {
+                    Taken::Formula { tex, display, .. } => Some((tex, display)),
+                    Taken::Written(_) => None,
+                })
+                .collect()
+        };
+        let formula = |tex: &str, display| (tex.to_owned(), display);
+        assert_eq!(
+            found("Let \\(x_1\\) and \\[\\sum x\\] and $$y$$.", false),
+            [
+                formula("x_1", false),
+                formula("\\sum x", true),
+                formula("y", true)
+            ]
+        );
+        // A price is one only where the page asks for `$`.
+        assert!(found("costs $5 and $10", false).is_empty());
+        assert_eq!(found("costs $5 and $10", true).len(), 1);
+        // A line break of TeX is no delimiter, nor is a paragraph an end.
+        assert_eq!(
+            found("\\[a \\\\ (b)\\]", false),
+            [formula("a \\\\ (b)", true)]
+        );
+        assert_eq!(found("\\(a\n\nb\\)", false).len(), 1);
+        assert_eq!(
+            found("`$x$` $y$", true).len(),
+            2,
+            "HTML's text has no Markdown code"
+        );
+    }
+
+    #[test]
     fn placeholders_split_and_restore_as_written() {
         let cell = "A \u{e000} and $x$, $$y$$.";
-        let (text, taken) = take_math(cell);
+        let (text, taken) = take(cell, JUPYTER);
         assert_eq!(taken.len(), 3, "{taken:?}");
         assert_eq!(taken[0], Taken::Written("\u{e000}".into()));
         assert_eq!(restore(&text, &taken), cell);

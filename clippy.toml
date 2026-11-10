@@ -2,6 +2,6 @@
 # GVfs, the desktop's remote file systems, and WebDAV (ADR-077);
 # BitLocker, Windows' drive encryption (ADR-088); LXQt, a desktop whose
 # fonts are read (ADR-117); JetBrains, whose Mono skwir carries (ADR-118);
-# RaTeX and KaTeX, formulas' typesetters, MathML and LaTeXML, its writer,
+# RaTeX, KaTeX and MathJax, formulas' typesetters, MathML and LaTeXML, its writer,
 # and JupyterLab, whose rules for math in a cell skwir follows (ADR-129).
-doc-valid-idents = ["GVfs", "WebDAV", "BitLocker", "LXQt", "JetBrains", "RaTeX", "KaTeX", "LaTeXML", "MathML", "JupyterLab", ".."]
+doc-valid-idents = ["GVfs", "WebDAV", "BitLocker", "LXQt", "JetBrains", "RaTeX", "KaTeX", "LaTeXML", "MathML", "MathJax", "JupyterLab", ".."]

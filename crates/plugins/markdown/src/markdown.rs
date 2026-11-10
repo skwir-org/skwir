@@ -219,14 +219,14 @@ fn inline_event(inline: &mut Inline, event: &Event, wiki: Option<&mut Wiki>) -> 
     true
 }
 
-/// `event` with the math Jupyter took out put back (`jupyter::take_math`):
+/// `event` with the math Jupyter took out put back (`delimited::take`):
 /// a placeholder in text is the formula Markdown's math would have given,
 /// one in code or HTML is what was written there.
-fn placed<'a>(event: Event<'a>, taken: &[crate::jupyter::Taken]) -> Vec<Event<'a>> {
-    use crate::jupyter::{self, Taken};
-    let restored = |text: &str| CowStr::from(jupyter::restore(text, taken));
+fn placed<'a>(event: Event<'a>, taken: &[math::delimited::Taken]) -> Vec<Event<'a>> {
+    use math::delimited::{self, Taken};
+    let restored = |text: &str| CowStr::from(delimited::restore(text, taken));
     match event {
-        Event::Text(text) if text.contains(jupyter::MARK) => jupyter::split(&text)
+        Event::Text(text) if text.contains(delimited::MARK) => delimited::split(&text)
             .into_iter()
             .map(|part| match part.map_err(|number| taken.get(number)) {
                 Ok(text) => Event::Text(CowStr::from(text.to_owned())),
@@ -240,9 +240,9 @@ fn placed<'a>(event: Event<'a>, taken: &[crate::jupyter::Taken]) -> Vec<Event<'a
                 Err(None) => Event::Text(CowStr::from("")),
             })
             .collect(),
-        Event::Code(text) if text.contains(jupyter::MARK) => vec![Event::Code(restored(&text))],
-        Event::Html(text) if text.contains(jupyter::MARK) => vec![Event::Html(restored(&text))],
-        Event::InlineHtml(text) if text.contains(jupyter::MARK) => {
+        Event::Code(text) if text.contains(delimited::MARK) => vec![Event::Code(restored(&text))],
+        Event::Html(text) if text.contains(delimited::MARK) => vec![Event::Html(restored(&text))],
+        Event::InlineHtml(text) if text.contains(delimited::MARK) => {
             vec![Event::InlineHtml(restored(&text))]
         }
         other => vec![other],
@@ -433,14 +433,14 @@ impl Document {
 
     /// A notebook's Markdown cell, its pictures named by `load`: its math
     /// is what Jupyter takes out of it before reading its Markdown
-    /// (`jupyter::take_math`), not Markdown's `$…$`.
+    /// (`delimited::JUPYTER`), not Markdown's `$…$`.
     pub fn cell(
         &mut self,
         source: &str,
         cancel: &CancelToken,
         load: impl FnMut(&str) -> Option<Picture>,
     ) -> anyhow::Result<()> {
-        let (text, taken) = crate::jupyter::take_math(source);
+        let (text, taken) = math::delimited::take(source, math::delimited::JUPYTER);
         read(self, &text, cancel, load, None, Some(&taken))
     }
 
@@ -490,7 +490,7 @@ fn read(
     cancel: &CancelToken,
     mut load: impl FnMut(&str) -> Option<Picture>,
     mut wiki: Option<&mut Wiki>,
-    taken: Option<&[crate::jupyter::Taken]>,
+    taken: Option<&[math::delimited::Taken]>,
 ) -> anyhow::Result<()> {
     let Document {
         blocks,
