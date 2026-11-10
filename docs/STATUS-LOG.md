@@ -14054,3 +14054,32 @@ narrow first frame was never caught; that the first frame now has the room
 follows from what is handed over. A remote's file in a window (the shared
 estimate is tested on local files only). `just release-check`, by the user's
 standing preference. Windows and macOS not compiled.
+
+## 2026-11-10: The way back from the bytes is where the way in was
+
+View as hex, offered as a button where nothing else of a file is shown (a
+failure, a file without a preview), stood at the left of the bar; the way
+back from the bytes was an unlabelled arrow ("Default presentation") after
+the text size, beside the caption "Hex · size", and in More in a narrow
+panel. The two were one way of looking with its way in and its way out in
+two places, where Source and 3D are each one tool, lit while on.
+
+- `preview_bar::hex_tool`: View as hex is one tool for both ways, lit while
+  the bytes are shown by choice, where a click shows the file as it would
+  be shown again (`ui.inspect`'s `auto`). As a button it is first of the bar
+  (`Slot::Look`, before contents), in the bar that offers it and in the
+  bytes' own, kept in every variant; elsewhere the way in is a row of More,
+  as before. The arrow is gone. The bytes shown unasked (a file only they
+  show) have no such tool: there is nothing to go back to.
+- `docs/invariants/previews.md` ("The toolbar") lists the slot and says so.
+
+**Checked:** rustfmt, clippy `-D warnings` on `skwir-ui` and its tests that
+match `preview|inspect|hex|bar` (98 passed), in capped scopes. A debug window
+on Xvfb (lavapipe): a broken PNG's bar starts with View as hex; clicked, the
+bytes' bar starts with it, lit, then jump to offset, the text size and
+"Hex · size"; clicked again, the failure shows again, the button unlit. A
+text file's More holds View as hex; chosen, the button is lit at the left
+and takes the text back. A binary file shown as hex unasked has none.
+
+**Not checked:** `just release-check`, by the user's standing preference.
+Windows and macOS not compiled.

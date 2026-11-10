@@ -240,15 +240,9 @@ pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyEleme
         picture_tools(&mut bar, shell);
     }
     if hex_available(shell) {
-        let hex = Button::new("preview-hex", "grid", label::HEX, "ui.inspect")
-            .args(serde_json::json!({"action":"hex"}));
         // With nothing else shown (a failure, a file without a preview),
         // the bytes are the one way left to look: a button of its own.
-        bar.push(if shows_nothing(shell) {
-            Item::button(Slot::View, 2, hex.label(label::HEX))
-        } else {
-            Item::menu_only(hex)
-        });
+        crate::preview_bar::hex_tool(&mut bar, false, shows_nothing(shell));
     }
     // A picture written as text (an SVG) has a source, as any rendered text
     // does: the same button, off while the picture is shown.

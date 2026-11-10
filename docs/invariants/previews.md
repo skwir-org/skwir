@@ -1086,17 +1086,22 @@ is still to come are in `docs/preview-frame.md`.
 - **One toolbar.** A preview never builds a row: it lists its tools in
   slots of `preview_bar::Bar`, which lays them out. Left to right:
   1. a member's name under its container's view (`Slot::Title`);
-  2. contents, first because its drawer opens on that side;
-  3. navigate: previous, the page or chapter as a field with the count,
+  2. View as hex where it is a button (`preview_bar::hex_tool`,
+     `Slot::Look`): in a file's bar with nothing else to show, and lit in
+     the bytes' own bar while they are shown by choice, where a click
+     shows the file as it would be shown again. The way back is where
+     the way in was, one tool for both, as Source is;
+  3. contents, first of the rest because its drawer opens on that side;
+  4. navigate: previous, the page or chapter as a field with the count,
      next (`preview_bar::number_tool`, for the reader's pages and a
      book's numbered sections alike, `Inspection::sections`);
-  4. view: zoom or text size (smaller, the value as a picker, larger);
+  5. view: zoom or text size (smaller, the value as a picker, larger);
      Fit width for a page or Full width for text; the presentation (the
      reader's Continuous, or Source, lit while the file's own text is
      shown), then what is shown says itself (`Inspection::title`: the
      format's name, a page's lines);
-  5. spacer, find, More;
-  6. the × that leaves a member (`preview_bar::close_tool`), the same for
+  6. spacer, find, More;
+  7. the × that leaves a member (`preview_bar::close_tool`), the same for
      every kind, also for a member that could not be written out, whose
      failure stands in its place (`PreviewState::inside`).
 - **A folder has no bar** (`preview::controls`): Properties counts what
@@ -1124,7 +1129,8 @@ is still to come are in `docs/preview-frame.md`.
   rare for a button in any variant (View as hex) is `Item::menu_only`,
   but where nothing else is shown of a file that can be read (a failure,
   a file without a preview: `preview_toolbar::shows_nothing`), View as
-  hex is a button: the one way left to look. It is offered only for a
+  hex is a button: the one way left to look. Shown, the bytes keep it,
+  lit, first of their bar: the way back. It is offered only for a
   file whose bytes are read (`PreviewState::shows_bytes`, asked by the
   bar and by `ui.inspect`'s `hex`, which the palette offers whatever is
   shown): a folder, a link that leads nowhere and a special file have

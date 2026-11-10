@@ -2,8 +2,9 @@
 //!
 //! A preview never builds a row: it lists its tools, each in a slot, and this
 //! module lays them out, so the same action is in the same place whatever is
-//! shown. Slots, left to right: contents (its drawer opens on that side),
-//! navigate (previous and next, page), view (how the content is shown:
+//! shown. Slots, left to right: View as hex (`hex_tool`: the way back from
+//! the bytes where the way in was), contents (its drawer opens on that
+//! side), navigate (previous and next, page), view (how the content is shown:
 //! rendered or source, zoom or text size, fit), a spacer, find, More, then
 //! the × that closes a member of a container (`close_tool`). A member shown
 //! under its container's view starts with its name (`Slot::Title`). Copy has
@@ -62,7 +63,11 @@ pub enum Slot {
     /// The name of a member shown under its container's view, before
     /// everything: the card names the container.
     Title,
-    /// Contents, first of the tools: the drawer it opens is on the left too.
+    /// The bytes as a button (`hex_tool`), first of the tools: the way
+    /// back from them is found where the way in was.
+    Look,
+    /// Contents, first after the way of looking: the drawer it opens is on
+    /// the left too.
     Lead,
     Navigate,
     View,
@@ -338,6 +343,24 @@ pub fn whole_tool(bar: &mut Bar, on: bool, enabled: bool) {
         .active(on)
         .enabled(enabled),
     ));
+}
+
+/// View as hex, one tool for both ways, as Source is: lit while the bytes
+/// are shown by choice (`on`), where a click shows the file as it would be
+/// shown again. As a button it is first of the bar (`Slot::Look`), in the
+/// bar that offers it (a file with nothing else to show) and in the bytes'
+/// own, so the way back is where the way in was; elsewhere the way in is a
+/// row of More (`button`: false).
+pub fn hex_tool(bar: &mut Bar, on: bool, button: bool) {
+    let hex = Button::new("preview-hex", "grid", label::HEX, "ui.inspect")
+        .args(serde_json::json!({"action": if on { "auto" } else { "hex" }}))
+        .label(label::HEX)
+        .active(on);
+    bar.push(if button {
+        Item::button(Slot::Look, 2, hex)
+    } else {
+        Item::menu_only(hex)
+    });
 }
 
 /// The whole screen, the same tool at the end of every kind's bar, lit

@@ -2908,14 +2908,14 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
             1,
             button("inspect-offset", "move", "Jump to byte offset", "offset"),
         ));
-    } else if crate::preview_toolbar::hex_available(shell) {
-        // Rare enough to live in More, in every preview that has it.
-        bar.push(Item::menu_only(button(
-            "inspect-hex",
-            "grid",
-            label::HEX,
-            "hex",
-        )));
+    }
+    // The bytes chosen (the one way of looking asked by provider): View as
+    // hex lit, first of the bar, the way back. Unchosen, rare enough to
+    // live in More, in every preview that has it.
+    if request.provider.is_some() {
+        crate::preview_bar::hex_tool(&mut bar, true, true);
+    } else if data.kind != InspectionKind::Hex && crate::preview_toolbar::hex_available(shell) {
+        crate::preview_bar::hex_tool(&mut bar, false, false);
     }
     // Folding is offered where there is something to fold: a code view's
     // grammar may find folds once it is parsed.
@@ -3009,13 +3009,7 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
     // Source, lit while the file's own text is shown, never named after
     // the state it is in. What is shown says itself beside it, rendered or
     // not (a format's name, a page's lines).
-    if request.provider.is_some() {
-        bar.push(Item::button(
-            Slot::View,
-            1,
-            button("inspect-auto", "back", "Default presentation", "auto"),
-        ));
-    }
+
     // A model turned in 3D, or shown by its picture: one button, lit while
     // it turns.
     if data.mesh_available && shell.draws_meshes {
