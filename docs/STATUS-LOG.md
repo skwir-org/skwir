@@ -14237,3 +14237,40 @@ narrow panel's More: Fit width, then Slideshow.
 submenu's name are set as the context menu's are); a container's More
 under a member; `just release-check`, by the user's standing preference.
 Windows and macOS not compiled.
+
+## 2026-11-10: How a file is shown at the bar's end, beside More
+
+First of the bar, Source, 3D, Full preview and View as hex read as the
+preview's main tools, which they are not: contents, pages and the size are
+read with most. By the user's choice they now stand at the bar's end, just
+before More (`Slot::Look` after `Slot::Tools`), not just before Find: Find
+is not in every way of looking (a picture, the "Large file" and failure
+bars, a turned model have none), and a group before it would move as it
+came or went, as Source did before (2026-11-10, above). What stands after
+the group, More and a member's ×, is there in every way of looking, so a
+click still never moves it; the bytes' lit button stands beside the More
+they were asked from.
+
+- `preview_bar::row`: the spacer before the bar's end (find, the whole
+  screen, then how the file is shown, a separator between), the slots
+  before it apart as they were.
+- More is in every bar, disabled where it holds nothing: an entry's always
+  holds its rows; a member's bytes in a wide panel had nothing, and its
+  More went, moving the lit View as hex by its width.
+- `docs/invariants/previews.md` ("The toolbar") lists the slots so.
+
+**Checked:** rustfmt on the three files, clippy `-D warnings` on
+`skwir-ui`, in a capped scope (built with another session's work in
+progress in `crates/core`, which compiled). A debug window on Xvfb, each
+both ways, the button's place compared: an SVG's Source (Find comes with
+its text); Markdown's Source; a broken PNG's View as hex (Find and the
+whole screen come with the bytes); a picture too large's Full preview; a
+JSON file's View as hex from More, lit where its Source stood; a zip's
+member's View as hex in a wide panel, its More disabled while the bytes
+are shown. With the keyboard off the button, Source is lit in the source
+view and not in the picture.
+
+**Not checked:** unit tests (no layout test covers the bar; they were not
+run with the other session's core changes in the tree); `just
+release-check`, by the user's standing preference. Windows and macOS not
+compiled.

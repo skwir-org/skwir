@@ -235,7 +235,7 @@ pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyEleme
     if shell.walks_pictures() {
         picture_tools(&mut bar, shell);
     }
-    // How the file is shown, first of the bar (`look_tools`). A picture
+    // How the file is shown, at the bar's end (`look_tools`). A picture
     // written as text (an SVG) has a source, as any rendered text does: the
     // same button, off while the picture is shown. Refused to stay quick:
     // all of it, asked, and lit while so (a picture decoded whole, or past

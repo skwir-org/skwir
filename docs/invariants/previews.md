@@ -1086,24 +1086,30 @@ is still to come are in `docs/preview-frame.md`.
 - **One toolbar.** A preview never builds a row: it lists its tools in
   slots of `preview_bar::Bar`, which lays them out. Left to right:
   1. a member's name under its container's view (`Slot::Title`);
-  2. how the file is shown (`preview_bar::look_tools`, `Slot::Look`), in
-     this order: Source, 3D, Full preview, View as hex. Each is one tool
-     for both ways, lit while on, where a click shows the file as it was
-     shown before. What follows belongs to how the file is shown (a
-     picture's zoom, a text's size, a model's look) and changes with it;
-     nothing before these tools does, so a tool clicked is where it was
-     once lit, the way back where the way in was. One function pushes
-     them, so the order is every kind's;
-  3. contents, first of the rest because its drawer opens on that side;
-  4. navigate: previous, the page or chapter as a field with the count,
+  2. contents, first of the tools because its drawer opens on that side;
+  3. navigate: previous, the page or chapter as a field with the count,
      next (`preview_bar::number_tool`, for the reader's pages and a
      book's numbered sections alike, `Inspection::sections`);
-  5. view: zoom or text size (smaller, the value as a picker, larger);
+  4. view: zoom or text size (smaller, the value as a picker, larger);
      Fit width for a page or Full width for text; Continuous scrolling
      (a document's, a text's), then what is shown says itself
      (`Inspection::title`: the format's name, a page's lines);
-  6. spacer, find, More;
-  7. the × that leaves a member (`preview_bar::close_tool`), the same for
+  5. spacer, find, the whole screen;
+  6. how the file is shown (`preview_bar::look_tools`, `Slot::Look`), in
+     this order: Source, 3D, Full preview, View as hex. Each is one tool
+     for both ways, lit while on, where a click shows the file as it was
+     shown before. Not first: the tools read with most (contents, pages,
+     size) are, and these are less used. Held to the bar's end, beside
+     More: what stands before them belongs to how the file is shown (a
+     picture's zoom, a text's size, a model's look, find, which a picture
+     has not) and changes with it, what stands after them (More, the ×)
+     does not, so a tool clicked is where it was once lit, the way back
+     where the way in was, and the bytes' lit button beside the More they
+     were asked from. One function pushes them, so the order is every
+     kind's;
+  7. More, in every bar, disabled where it holds nothing (a member's
+     bytes in a wide panel): its place, and what stands before it, stay;
+  8. the × that leaves a member (`preview_bar::close_tool`), the same for
      every kind, also for a member that could not be written out, whose
      failure stands in its place (`PreviewState::inside`).
 - **A folder has no bar** (`preview::controls`): Properties counts what
@@ -1145,7 +1151,7 @@ is still to come are in `docs/preview-frame.md`.
   hex is a button: the one way left to look. Not for a file too large
   for a quick preview, which Full preview shows: there the bytes are in
   More, so neither tool moves once lit. Shown, the bytes keep it, lit,
-  first of their bar: the way back. Every kind's More has it, the
+  beside More: the way back. Every kind's More has it, the
   reader's and the player's too, and the way back from the bytes brings
   back the reader or the player (a track kept playing included: what the
   bytes showed is never the player's picture). It is offered only for a
@@ -1214,8 +1220,8 @@ is still to come are in `docs/preview-frame.md`.
   about the entry (below); last, another way of looking at the file,
   which leaves this one (View as hex, `Bar::otherwise`), as a view a
   menu opens comes after copying and making (ADR-099). Nothing is both a
-  button and a menu row. More is there whenever it holds something,
-  last but for the ×.
+  button and a menu row. More is in every bar, last but for the ×,
+  disabled where it holds nothing.
 - **What is about the entry** (`Shell::preview_entry_items`) is menu
   items, as a context menu's: the window's Open externally and Copy
   path, what plugins add to the preview's menu, and what its sources

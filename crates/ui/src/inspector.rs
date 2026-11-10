@@ -3000,7 +3000,7 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
             .enabled(sized),
         ));
     }
-    // How the file is shown, first of the bar (`look_tools`). Source, lit
+    // How the file is shown, at the bar's end (`look_tools`). Source, lit
     // while the file's own text is shown, never named after the state it
     // is in; what is shown says itself after the tools, rendered or not (a
     // format's name, a page's lines). A model turned in 3D, or shown by its

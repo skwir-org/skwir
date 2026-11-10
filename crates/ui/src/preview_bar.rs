@@ -2,11 +2,13 @@
 //!
 //! A preview never builds a row: it lists its tools, each in a slot, and this
 //! module lays them out, so the same action is in the same place whatever is
-//! shown. Slots, left to right: how the file is shown (`look_tools`: Source,
-//! 3D, Full preview, View as hex, so a click never moves them), contents
-//! (its drawer opens on that side), navigate (previous and next, page), view
-//! (zoom or text size, fit), a spacer, find, More, then
-//! the × that closes a member of a container (`close_tool`). A member shown
+//! shown. Slots, left to right: contents (its drawer opens on that side),
+//! navigate (previous and next, page), view (zoom or text size, fit), a
+//! spacer, find and the whole screen, how the file is shown (`look_tools`:
+//! Source, 3D, Full preview, View as hex), More, then the × that closes a
+//! member of a container (`close_tool`). How the file is shown is held to
+//! the bar's end, beside More, which every bar has: what stands after it
+//! is the same in every way of looking, so a click never moves it. A member shown
 //! under its container's view starts with its name (`Slot::Title`). Copy has
 //! no button: it is Ctrl+C and the content's own right-click menu, where
 //! people look for it.
@@ -14,8 +16,9 @@
 //! The menu rule is every responsive toolbar's: More holds what has no button
 //! in the variant the row chose this frame (`PopoverAnchor::popup_for`), plus
 //! what never has one (open externally, copy the path, a kind's own settings).
-//! Nothing is both a button and a menu row. More is there whenever it holds
-//! something, last but for the ×, which stays at the end. Open externally and
+//! Nothing is both a button and a menu row. More is in every bar, last but
+//! for the ×, which stays at the end, and disabled where it holds nothing
+//! (a member's, whose entry's rows are its container's). Open externally and
 //! copy the path are the entry's: under a container's view they are in its
 //! More, not the member's (`Bar::always`). Another way of looking at the
 //! file (View as hex) is last, after them (`Bar::otherwise`).
@@ -65,16 +68,19 @@ pub enum Slot {
     /// The name of a member shown under its container's view, before
     /// everything: the card names the container.
     Title,
-    /// How the file is shown (`look_tools`: Source, 3D, Full preview, View
-    /// as hex), first of the tools: nothing before them changes with it.
-    Look,
-    /// Contents, first after the way of looking: the drawer it opens is on
-    /// the left too.
+    /// Contents, first of the tools: the drawer it opens is on the left
+    /// too.
     Lead,
     Navigate,
     View,
-    /// After the spacer, in the order given.
+    /// After the spacer, in the order given: find, the whole screen.
     Tools,
+    /// How the file is shown (`look_tools`: Source, 3D, Full preview, View
+    /// as hex), last before More: what stands after it (More, the ×) is
+    /// there in every way of looking, so nothing moves it when it is
+    /// clicked, while the tools before it change with how the file is
+    /// shown.
+    Look,
 }
 
 /// A piece of a row that is not a command button: a page field, a time, a
@@ -366,13 +372,15 @@ pub enum Hex {
     Row,
 }
 
-/// How the file is shown, first of every bar that has any of it
-/// (`Slot::Look`), in this order: Source, 3D, Full preview, View as hex.
-/// What comes after belongs to how the file is shown (a picture's zoom, a
-/// text's size, a model's look) and changes with it, so nothing before
-/// these tools does: a tool clicked is where it was once it is lit, the
-/// way back where the way in was. One function pushes them all, so the
-/// order is the same in every kind's bar.
+/// How the file is shown, at the end of every bar that has any of it, just
+/// before More (`Slot::Look`), in this order: Source, 3D, Full preview,
+/// View as hex. The tools before it belong to how the file is shown (a
+/// picture's zoom, a text's size, a model's look, find) and change with
+/// it; what stands after it (More, the ×) does not, so a tool clicked is
+/// where it was once it is lit, the way back where the way in was, and
+/// the bytes' lit button beside the More they were asked from. One
+/// function pushes them all, so the order is the same in every kind's
+/// bar.
 pub fn look_tools(bar: &mut Bar, looks: Looks) {
     let tool = |id, icon, title, args: serde_json::Value, label: &'static str, on: bool| {
         Button::new(id, icon, title, "ui.inspect")
@@ -688,17 +696,16 @@ fn row(
     let filled = bar.items.iter().any(|item| item.fills && item.shown(mode));
     let mut items: Vec<&Item> = bar.items.iter().filter(|item| item.shown(mode)).collect();
     items.sort_by_key(|item| item.slot);
+    // What stands at the bar's end, after the spacer: find and the whole
+    // screen, then how the file is shown.
+    let right = |slot: Slot| slot >= Slot::Tools;
     for item in items {
-        if last.is_some_and(|slot| slot != item.slot) {
-            row = if item.slot == Slot::Tools && !filled {
-                row.child(div().flex_1().min_w_0())
-            } else if item.slot != Slot::Tools {
-                row.child(toolbar::separator(theme))
-            } else {
-                row
-            };
-        } else if last.is_none() && item.slot == Slot::Tools && !filled {
-            row = row.child(div().flex_1().min_w_0());
+        if right(item.slot) && !last.is_some_and(right) {
+            if !filled {
+                row = row.child(div().flex_1().min_w_0());
+            }
+        } else if last.is_some_and(|slot| slot != item.slot) {
+            row = row.child(toolbar::separator(theme));
         }
         last = Some(item.slot);
         row = row.child(match &item.tool {
@@ -714,18 +721,19 @@ fn row(
             Tool::Widget(widget) => widget(shell, cx),
         });
     }
-    if last != Some(Slot::Tools) && !filled {
+    if !last.is_some_and(right) && !filled {
         row = row.child(div().flex_1().min_w_0());
     }
-    row.when(has_more(bar, mode), |row| {
-        row.child(
-            Button::new("preview-more", "more", label::MORE, "ui.preview_menu")
-                .active(active == Some(MORE))
-                // A popup whose own button this variant dropped opens here.
-                .anchor_if(anchor, active.is_some() && !anchored)
-                .render(shell, cx),
-        )
-    })
+    // More in every bar, so what stands before it keeps its place:
+    // disabled where it holds nothing.
+    row.child(
+        Button::new("preview-more", "more", label::MORE, "ui.preview_menu")
+            .active(active == Some(MORE))
+            .enabled(has_more(bar, mode))
+            // A popup whose own button this variant dropped opens here.
+            .anchor_if(anchor, active.is_some() && !anchored)
+            .render(shell, cx),
+    )
     .children(bar.close.clone().map(|close| close.render(shell, cx)))
     .into_any_element()
 }
