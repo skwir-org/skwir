@@ -184,6 +184,9 @@ pub struct Button {
     /// What an automatic value does now, while it is the one chosen: a
     /// dashed outline (`now`).
     now: bool,
+    /// A popup's row that opens a submenu beside it (`opens_beside`):
+    /// whether that submenu is open.
+    beside: Option<bool>,
 }
 
 /// A tag's colors on a button (a narrowing by that tag), in place of
@@ -249,6 +252,7 @@ impl Button {
             hold: None,
             keeps_open: false,
             now: false,
+            beside: None,
         }
     }
     pub fn title(&self) -> SharedString {
@@ -291,6 +295,16 @@ impl Button {
     /// What the automatic value, chosen, does now: this value, outlined.
     pub fn now(mut self, now: bool) -> Self {
         self.now = now;
+        self
+    }
+    /// A popup's row that opens a submenu beside it, as a context menu's
+    /// does (`Popup::sub`): a chevron at its end, expanded while `open`,
+    /// the popup kept open when it is pressed, and Right opens it as Enter
+    /// does (`SUBMENU`, `ui.preview_submenu`'s `here`).
+    pub fn opens_beside(mut self, open: bool) -> Self {
+        self.shape = Shape::MenuRow;
+        self.keeps_open = true;
+        self.beside = Some(open);
         self
     }
     /// Draw the chevron of a button that opens a menu.
@@ -375,6 +389,7 @@ impl Button {
             self.shape == Shape::Dropdown,
             self.anchor.is_some(),
         );
+        let beside = self.beside;
         // A label cut short says itself in the tooltip, before the title.
         let (label, clip) = self
             .label
@@ -436,6 +451,7 @@ impl Button {
                     // A switch says it is off too.
                     .when(switch && !active, |d| d.aria_toggled(false.into()))
                     .when(dropdown, |d| d.aria_expanded(open))
+                    .when_some(beside, StatefulInteractiveElement::aria_expanded)
             })
             .relative()
             .h(sized(if menu || switch { MENU_ROW } else { 30. }))
@@ -573,6 +589,16 @@ impl Button {
                         .flex_none(),
                 )
             })
+            // A submenu's row, as a context menu's (`menu::row_element`).
+            .when(beside.is_some(), |d| {
+                d.child(div().flex_1()).child(
+                    svg()
+                        .path("toolbar/chevron-right.svg")
+                        .size(px(13.))
+                        .flex_none()
+                        .text_color(theme.text_muted),
+                )
+            })
             .children(self.anchor.map(|anchor| anchor.marker()))
             .when(revealed, |d| d.child(reveal_marker()))
             // A long press: `HOLD` after the press, what it holds runs, and
@@ -617,6 +643,10 @@ impl Button {
                 // Left and Right walk a setting's values (`keymap`).
                 if value {
                     keys.add(CHOICE);
+                }
+                // Right opens a submenu beside its row.
+                if beside.is_some() {
+                    keys.add(SUBMENU);
                 }
             },
             move |this, window, cx| {
@@ -879,6 +909,62 @@ pub struct Popup {
     /// How far its rows are scrolled, for the keyboard to bring the row
     /// it reaches into view (`RevealRow`).
     scroll: ScrollHandle,
+    /// The submenu open beside one of its rows, if any.
+    pub sub: Submenu,
+}
+
+/// A popup's submenu, open beside its row (`Button::opens_beside`) as a
+/// context menu's is (docs/invariants/shell.md, "Context menu"): one at a
+/// time, holding no submenu; the pointer opens it after resting
+/// `menu::REST` on its row, or at once with a press, and resting on
+/// another row closes it. Its rows have the keyboard's focus as the
+/// popup's do, walked by `ui.preview_submenu`: drawn beside the popup,
+/// they are not where gpui's tab order would reach them.
+#[derive(Default)]
+pub struct Submenu {
+    /// The submenu shown, by its name.
+    pub open: Option<SharedString>,
+    /// Where its row stands, and where it is drawn, both measured in
+    /// prepaint: a press there is no press outside the popup.
+    pub row: crate::elements::popover::PopoverAnchor,
+    pub area: crate::elements::popover::PopoverAnchor,
+    /// Its rows' focus, in their order.
+    pub rows: Vec<FocusHandle>,
+    /// The focus of each submenu's row, which Left and Escape go back to.
+    pub parents: Vec<(SharedString, FocusHandle)>,
+    /// The pointer resting on a row: the submenu it opens, or the one open
+    /// it closes, once it has rested.
+    pub rest: Option<gpui::Task<()>>,
+}
+
+impl Submenu {
+    /// The focus of the row that opens `name`.
+    pub fn parent(&self, name: &str) -> Option<&FocusHandle> {
+        self.parents
+            .iter()
+            .find(|(parent, _)| parent.as_ref() == name)
+            .map(|(_, focus)| focus)
+    }
+
+    /// Show `name` beside its row, with `rows` rows: the keyboard stays
+    /// where it is.
+    pub fn show(&mut self, name: SharedString, rows: usize, cx: &mut gpui::App) {
+        self.rest = None;
+        if self.open.as_ref() == Some(&name) {
+            return;
+        }
+        self.open = Some(name);
+        self.rows = (0..rows).map(|_| cx.focus_handle()).collect();
+        self.area = crate::elements::popover::PopoverAnchor::default();
+    }
+
+    /// Close the one open, if any.
+    pub fn hide(&mut self) {
+        self.rest = None;
+        self.open = None;
+        self.rows.clear();
+        self.area = crate::elements::popover::PopoverAnchor::default();
+    }
 }
 impl Popup {
     pub fn new(kind: &'static str, window: &mut Window, cx: &mut Context<Shell>) -> Self {
@@ -893,6 +979,7 @@ impl Popup {
             focus,
             previous,
             scroll: ScrollHandle::new(),
+            sub: Submenu::default(),
         }
     }
     pub fn restore(self, window: &mut Window, cx: &mut gpui::App) {
@@ -906,6 +993,8 @@ pub fn popup_panel(
     theme: &Theme,
     cx: &mut Context<Shell>,
 ) -> Stateful<Div> {
+    // What its submenu covers is part of it (`Submenu::area`).
+    let beside = popup.sub.area.clone();
     // A row the keyboard reached is brought into view in this popup.
     if let Some(reveal) = cx.try_global::<RevealRow>()
         && reveal.row.is_some()
@@ -945,14 +1034,22 @@ pub fn popup_panel(
         // A press outside closes it, and says so: the click that press
         // begins, on the button that opened it, must not open it again
         // (`Shell::note_dismissed`).
-        .on_mouse_down_out(cx.listener(move |this, _, window, cx| {
-            this.run(
-                close,
-                serde_json::json!({"close": true, "pointer": true}),
-                window,
-                cx,
-            );
-        }))
+        .on_mouse_down_out(
+            cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
+                if beside
+                    .bounds()
+                    .is_some_and(|area| area.contains(&event.position))
+                {
+                    return;
+                }
+                this.run(
+                    close,
+                    serde_json::json!({"close": true, "pointer": true}),
+                    window,
+                    cx,
+                );
+            }),
+        )
 }
 
 /// A popup that is a menu, drawn as a context menu is (`menu::render`):
@@ -1076,6 +1173,9 @@ pub fn menu_parts(
 /// The flag a value's key context carries (`Button::segment`,
 /// `Button::tile`): Left and Right walk to the values beside it.
 pub(crate) const CHOICE: &str = "choice";
+/// The key context's flag on a popup's row that opens a submenu
+/// (`Button::opens_beside`).
+pub(crate) const SUBMENU: &str = "submenu";
 
 /// The key a button's id goes under in its key context.
 const ROW: &str = "row";

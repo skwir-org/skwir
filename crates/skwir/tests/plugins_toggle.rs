@@ -287,8 +287,8 @@ fn all_plugins_coexist_and_every_command_has_a_schema() {
 }
 
 /// Every menu source takes what its menu asks it with (`MenuSource`): the
-/// pane, which every menu gives, and a place's `location` or a tag's
-/// `tags`. One refusing them leaves its items out, saying nothing: the
+/// pane, which every menu gives, and a place's `location`, a tag's `tags`
+/// or the preview's file (`entries`). One refusing them leaves its items out, saying nothing: the
 /// tag pill in the sidebar lost its tag's menu so.
 #[test]
 fn every_menu_source_takes_what_its_menu_gives() {
@@ -300,6 +300,7 @@ fn every_menu_source_takes_what_its_menu_gives() {
     let pane = app.workspace.read().active_id();
     let sources = app.registry.menu_sources.all();
     assert!(sources.iter().any(|s| s.menu == "place"));
+    assert!(sources.iter().any(|s| s.menu == "preview"));
     for source in sources {
         let command = match source.menu.as_str() {
             "place" => source
@@ -310,6 +311,11 @@ fn every_menu_source_takes_what_its_menu_gives() {
                 .command
                 .clone()
                 .with("tags", serde_json::json!(["work"])),
+            // The file the preview shows (`Shell::preview_entry_items`).
+            "preview" => source.command.clone().with(
+                "entries",
+                serde_json::json!([{ "id": { "dev": 1, "ino": 2 }, "path": "/srv/a.png" }]),
+            ),
             _ => source.command.clone(),
         }
         .with("pane", pane);

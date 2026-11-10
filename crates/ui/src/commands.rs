@@ -202,6 +202,24 @@ mod args {
         pointer: bool,
     }
 
+    /// The preview's More's submenu beside its row: `open` one by its
+    /// name, the keyboard on its first row; `back` to its row; `step` the
+    /// keyboard along its rows, or to the last (`end`: true) or first.
+    #[derive(Deserialize, JsonSchema)]
+    pub(super) struct Submenu {
+        #[serde(default)]
+        open: Option<String>,
+        /// The one whose row has the keyboard.
+        #[serde(default)]
+        here: bool,
+        #[serde(default)]
+        back: bool,
+        #[serde(default)]
+        step: Option<i64>,
+        #[serde(default)]
+        end: Option<bool>,
+    }
+
     /// Activity's toggle: `close` closes it (`pointer`: by a press outside
     /// it), and never opens it.
     #[derive(Deserialize, JsonSchema)]
@@ -552,9 +570,9 @@ mod args {
 use args::{
     Adjust, Amount, Ask, Bucket, Close, Continue, CopyText, Count, Cursor, Delta, Dir, Find, Fold,
     FolderItem, Folders, History, Key, Layout, ListMoveArgs, Object, On, Pace, Page, PageLink,
-    Pages, Pan, Pick, Player, Pointer, Popup, PreviewScroll, Scrub, Settings, Split, Submit,
-    TagsPrompt, TerminalPaste, Text, TextSize, TimelineCursor, TimelineDate, Toggle, Toward, Url,
-    UsageMode, View, ViewButton,
+    Pages, Pan, Pick, Player, Pointer, Popup, PreviewScroll, Scrub, Settings, Split, Submenu,
+    Submit, TagsPrompt, TerminalPaste, Text, TextSize, TimelineCursor, TimelineDate, Toggle,
+    Toward, Url, UsageMode, View, ViewButton,
 };
 
 /// The window's commands an agent may run (ADR-044): they change only
@@ -652,6 +670,7 @@ const SHOWS: &[&str] = &[
     "ui.properties_count",
     "ui.properties_fold",
     "ui.preview_menu",
+    "ui.preview_submenu",
     "ui.preview_page",
     "ui.preview_scroll",
     "ui.preview_seek",
@@ -1218,6 +1237,7 @@ fn repeats_of(name: &str) -> Option<Repeats> {
         // choice's ring moved along its values.
         | "ui.menu_expand"
         | "ui.menu_collapse"
+        | "ui.preview_submenu"
         | "ui.settings_next"
         | "ui.settings_prev"
         | "ui.settings_page"
@@ -2293,6 +2313,13 @@ pub fn declare_all(app: &App) {
         "ui.preview_menu",
         "Preview menu",
         "Open or close one of the preview's menus",
+    );
+    declare::<Submenu>(
+        app,
+        Topic::Preview,
+        "ui.preview_submenu",
+        "Preview menu: submenu",
+        "Open a submenu of the preview's More beside its row (`open`, or `here`: the one whose row has the keyboard), go back to its row (`back`), or move the keyboard along its rows (`step`, `end`)",
     );
     none(
         Topic::Preview,

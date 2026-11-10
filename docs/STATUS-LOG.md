@@ -14174,3 +14174,66 @@ scopes; the window above; More's order in a JSON file's.
 **Not checked:** the player's and the reader's More after the move (the
 same `look_tools` call); `just release-check`, by the user's standing
 preference. Windows and macOS not compiled.
+
+## 2026-11-10: Open With in the preview's More, and its first group in the bar's order
+
+The two ideas after View as hex went last in More.
+
+**Open With.** More's "Open externally" opened with the type's default
+application alone, where the file menu has Open With its default and an
+Open With › submenu (ADR-099). More now has the same, by the user's choice
+with a submenu that opens beside its row, as a context menu's does.
+
+- What is about the entry is menu items (`Shell::preview_entry_items`):
+  the window's Open externally and Copy path, the plugins' preview items
+  (run through `ui.preview_invoke`, as before), and what the preview
+  menu's sources answer in place of what they replace (`menu::merge`, as
+  the file menu's). A source is asked once, as More opens, with the file
+  shown as its pane lists it (`entries`) and its pane; the plugins
+  toggle test gives preview sources that.
+- `open_with.menu` takes `entries` (`MenuArgs`): typed from the pane's
+  listing in memory (`Pane::entry_at`), never read; a file named by its
+  path alone, or not listed, answers nothing. The preview's items name
+  their files: Open With the default (in place of
+  `ui.preview_open_external`), the others and Other Application… in Open
+  With. Without a default the answer is empty and Open externally stays,
+  as it does with the plugin off.
+- A toolbar popup's submenu (`toolbar::Submenu` on `Popup`,
+  `Button::opens_beside`): drawn beside its row with
+  `PopoverAnchor::popup_beside`, above More, resting `menu::REST` or a
+  press opening it, resting on another row closing it, lit while open,
+  expanded to assistive technology. Its rows are drawn outside the popup,
+  where gpui's tab order does not reach: they take handles of their own,
+  walked by `ui.preview_submenu` (Up, Down, Home, End in
+  `toolbar_submenu`; Left and Escape back to the row; Right on the row,
+  which has the `submenu` flag). On More's own rows the arrows and Tab
+  close it first, Escape closes it before More. A press on it is no press
+  outside (`Submenu::area`, read by `popup_panel`). A tracked handle keeps
+  its own tab stop in gpui, not the element's: the submenu's row's is made
+  one.
+
+**The first group.** More's rows for what has no button were in the order
+pushed, dropped buttons and rows never a button mixed. Now the buttons the
+variant dropped come first in the bar's order (by slot, then as given),
+then what never has a button, each a group.
+
+**Checked:** rustfmt; clippy `-D warnings` on `skwir-ui` and
+`skwir-plugin-open-with`; the open-with plugin's tests and `skwir-ui`'s
+that match `keymap|menu|command|preview|inspect|toolbar|shortcut|bar` (157
+passed, one new: the preview's answer for the file shown, whatever is
+selected; a folder and a file named by path alone answer nothing);
+`plugins_toggle` (6 passed). A debug window on Xvfb with fake applications
+of its own and a default for PNG: More holds Open With Fake Viewer, Open
+With ›, Copy path, Print…, Reduce Size…, View as hex; the submenu opens on
+the pointer's rest, on More's left where the window has no room on its
+right, its first row level with its row; Down reaches its row, Right opens
+it with the keyboard on its first row, Down, End and Home walk it, Left and
+Escape go back to the row, Escape there closes More; a press on Other
+Application… opens the chooser for the file shown; Open With Fake Viewer
+ran its program with the file's path; the plugin off, Open externally. A
+narrow panel's More: Fit width, then Slideshow.
+
+**Not checked:** `just a11y-check` (the row's expanded state and the
+submenu's name are set as the context menu's are); a container's More
+under a member; `just release-check`, by the user's standing preference.
+Windows and macOS not compiled.

@@ -387,7 +387,7 @@ pub enum Row {
 /// How long the pointer rests on a row before the submenu it opens opens,
 /// or the one it leaves closes: long enough to cross another row on the
 /// way to a submenu, short enough not to wait for it.
-const REST: std::time::Duration = std::time::Duration::from_millis(250);
+pub(crate) const REST: std::time::Duration = std::time::Duration::from_millis(250);
 
 impl MenuState {
     pub fn rows(&self) -> Vec<Row> {
@@ -691,7 +691,10 @@ fn properties_title(shell: &Shell) -> &'static str {
 
 /// The items, with each source's answer in place of what it replaces
 /// (an empty answer replaces nothing), in order.
-fn merge(mut items: Vec<MenuItem>, answers: Vec<(MenuSource, Vec<MenuItem>)>) -> Vec<MenuItem> {
+pub(crate) fn merge(
+    mut items: Vec<MenuItem>,
+    answers: Vec<(MenuSource, Vec<MenuItem>)>,
+) -> Vec<MenuItem> {
     for (source, answer) in answers {
         if answer.is_empty() {
             continue;
@@ -771,12 +774,17 @@ impl Shell {
 
     /// What `source` answers for the active pane; nothing when it fails.
     fn source_items(&self, source: &MenuSource) -> Vec<MenuItem> {
+        self.source_answer(&source.command.clone().with("pane", self.pane))
+    }
+
+    /// What a menu's source answers, asked with what its menu gives
+    /// (`command`); nothing when it fails.
+    pub(crate) fn source_answer(&self, command: &skwir_core::command::Invocation) -> Vec<MenuItem> {
         #[derive(serde::Deserialize)]
         struct Answer {
             items: Vec<MenuItem>,
         }
-        let command = source.command.clone().with("pane", self.pane);
-        match self.app.dispatch(&command) {
+        match self.app.dispatch(command) {
             Ok(skwir_core::command::Outcome::Value(value)) => {
                 match serde_json::from_value::<Answer>(value) {
                     Ok(answer) => answer.items,
@@ -1169,9 +1177,11 @@ impl Shell {
         };
         // What plugins add, run with what the preview shows: after the
         // shell's own, by its order group (Print in 3xx, made from it).
-        for (title, icon, command) in self.preview_items() {
+        for plugin in self.preview_items() {
+            let command = &plugin.command;
             let args = serde_json::json!({ "command": command.name, "args": command.args });
-            items.push(item(300, &title, &icon, "ui.preview_invoke", args));
+            let icon = plugin.icon.as_deref().unwrap_or_default();
+            items.push(item(300, &plugin.title, icon, "ui.preview_invoke", args));
         }
         self.menu = Some(MenuState::open(position, items, window, cx));
         cx.notify();
@@ -1638,7 +1648,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
 /// How far a submenu's first row stands from its panel's edge: the
 /// panel's padding and border. Its row stands level with the row that
 /// opened it, and its panel meets the menu's.
-const SUB_INSET: Pixels = px(5.);
+pub(crate) const SUB_INSET: Pixels = px(5.);
 
 /// The open submenu `name`'s panel: a menu of its own to assistive
 /// technology, named by its row; the keyboard stays with the menu

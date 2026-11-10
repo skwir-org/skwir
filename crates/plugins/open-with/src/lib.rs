@@ -393,42 +393,83 @@ fn refresh(cache: &Cached, app: &App) {
 /// under the workspace's lock: a menu is no walk of a huge selection.
 const MENU_TYPES: usize = 1000;
 
-/// `open_with.menu`: the context menu's Open for the selection, from the
+/// `open_with.menu`'s arguments: the context menu's (its pane), or the
+/// preview's (the file it shows, `entries`, as `ui.preview_invoke` gives
+/// it).
+#[derive(Debug, Default, serde::Deserialize, schemars::JsonSchema)]
+struct MenuArgs {
+    /// The pane to act on; the active pane when omitted.
+    #[serde(default)]
+    pane: Option<PaneId>,
+    /// The files the menu is about, by identity and path, as the pane
+    /// lists them; the pane's selection when omitted.
+    #[serde(default)]
+    entries: Vec<skwir_core::op::EntryArg>,
+}
+
+/// `open_with.menu`: the Open of a menu, for the pane's selection (the
+/// context menu) or the file the preview shows (its More), from the
 /// catalog in memory. Files whose names say their types, sharing one
 /// default application: "Open With" it, the application `open` starts
 /// (which types a file by its bytes where the name is ambiguous, `.ogg`);
 /// the picker stays Open With….
 /// Anything else (a folder, a type the name does not say, types with no
 /// common default, the catalog not read yet, more than `MENU_TYPES`
-/// selected) answers no items, and the menu keeps its plain Open.
-fn menu(pane: Option<PaneId>, cache: &Cached, app: &App) -> anyhow::Result<Outcome> {
+/// selected, a file the pane does not list) answers no items, and the
+/// menu keeps its plain Open (the preview's Open externally).
+fn menu(args: &MenuArgs, cache: &Cached, app: &App) -> anyhow::Result<Outcome> {
     let nothing = || Ok(Outcome::Value(serde_json::json!({ "items": [] })));
-    let pane = app.pane_or_active(pane);
+    let pane = app.pane_or_active(args.pane);
     let catalog = cache.remembered();
     refresh(cache, app);
     let Some(catalog) = catalog else {
         return nothing();
     };
-    let names: Vec<std::ffi::OsString> = {
+    // A link opens what it leads to, typed by its name; a pipe or a device
+    // is no file an application opens.
+    let opened =
+        |e: &skwir_core::Entry| (e.opens() == EntryKind::File).then(|| e.type_name().to_owned());
+    let names: Option<Vec<std::ffi::OsString>> = {
         let ws = app.workspace.read();
         let Some(p) = ws.pane(pane) else {
             return nothing();
         };
-        if p.selection.len() > MENU_TYPES {
-            return nothing();
-        }
-        let mut names = Vec::with_capacity(p.selection.len());
-        for id in p.selection.iter() {
-            match p.entry(id) {
-                // A link opens what it leads to, typed by its name; a
-                // pipe or a device is no file an application opens.
-                Some(e) if e.opens() == EntryKind::File => {
-                    names.push(e.type_name().to_owned());
-                }
-                _ => return nothing(),
+        if args.entries.is_empty() {
+            if p.selection.len() > MENU_TYPES {
+                return nothing();
             }
+            p.selection
+                .iter()
+                .map(|id| p.entry(id).and_then(opened))
+                .collect()
+        } else {
+            if args.entries.len() > MENU_TYPES {
+                return nothing();
+            }
+            // As the pane lists it, from memory: a menu reads no file.
+            args.entries
+                .iter()
+                .map(|entry| match entry {
+                    skwir_core::op::EntryArg::Named { id: Some(id), path } => {
+                        p.entry_at(*id, path.as_ref()).and_then(opened)
+                    }
+                    _ => None,
+                })
+                .collect()
         }
-        names
+    };
+    let Some(names) = names else {
+        return nothing();
+    };
+    // The context menu's items act on the pane's selection, the
+    // preview's on the files it named, each run as answered.
+    let (owner, target) = if args.entries.is_empty() {
+        ("context", serde_json::json!({ "pane": pane }))
+    } else {
+        (
+            "preview",
+            serde_json::json!({ "pane": pane, "entries": args.entries }),
+        )
     };
     let mut types: Vec<Mime> = Vec::new();
     for m in mime::by_names(names.iter().map(std::ffi::OsString::as_os_str)) {
@@ -438,10 +479,9 @@ fn menu(pane: Option<PaneId>, cache: &Cached, app: &App) -> anyhow::Result<Outco
         }
     }
     let open_with = |application: &Application| {
-        Invocation::with_args(
-            "open_with",
-            &serde_json::json!({ "app": application.id, "pane": pane }),
-        )
+        let mut args = target.clone();
+        args["app"] = serde_json::json!(application.id);
+        Invocation::with_args("open_with", &args)
     };
     // The default the files share opens them first; without one, Open
     // stays, said again since this answer takes its place.
@@ -450,16 +490,25 @@ fn menu(pane: Option<PaneId>, cache: &Cached, app: &App) -> anyhow::Result<Outco
         .iter()
         .find(|(_, _, is_default)| *is_default)
         .map(|(application, _, _)| *application);
-    let mut items = vec![match default {
-        Some(default) => MenuItem::new(
-            "context",
+    let mut items = match default {
+        Some(default) => vec![MenuItem::new(
+            owner,
             format!("Open With {}", default.name),
             "open",
             0,
             open_with(default),
-        ),
-        None => MenuItem::new("context", "Open", "open", 0, Invocation::new("open")),
-    }];
+        )],
+        None if owner == "context" => vec![MenuItem::new(
+            owner,
+            "Open",
+            "open",
+            0,
+            Invocation::new("open"),
+        )],
+        // The preview's Open externally is the window's own: it stays
+        // when no item answers in its place.
+        None => return nothing(),
+    };
     // The other applications for their types, best fit first, in the
     // Open With submenu before the chooser.
     items.extend(
@@ -469,7 +518,7 @@ fn menu(pane: Option<PaneId>, cache: &Cached, app: &App) -> anyhow::Result<Outco
             .take(OPEN_WITH_APPS)
             .map(|(application, _, _)| {
                 MenuItem::new(
-                    "context",
+                    owner,
                     application.name.clone(),
                     "",
                     5,
@@ -478,6 +527,14 @@ fn menu(pane: Option<PaneId>, cache: &Cached, app: &App) -> anyhow::Result<Outco
                 .submenu(OPEN_WITH)
             }),
     );
+    // The context menu's chooser is its own (`register`), for the
+    // selection; the preview's names its files.
+    if owner == "preview" {
+        items.push(
+            MenuItem::new(owner, "Other Application…", "open", 8, choose(&target))
+                .submenu(OPEN_WITH),
+        );
+    }
     Ok(Outcome::Value(serde_json::json!({ "items": items })))
 }
 
@@ -1369,13 +1426,14 @@ impl Plugin for OpenWithPlugin {
             .when("empty folder")
             .submenu(OPEN_FOLDER_WITH),
         );
+
         let cache = Arc::clone(&self.catalog);
-        app.commands.register::<PaneArg, _>(
+        app.commands.register::<MenuArgs, _>(
             ID, Topic::Files,
             "open_with.menu",
-            "Name the default application in the context menu",
-            "The context menu's Open for the selection, naming the default application its files share, and the other applications for their types in its Open With submenu; no items when the selection's types or the applications are not known yet. Answers from memory",
-            move |a, app| menu(a.pane, &cache, app),
+            "Name the default application in a menu",
+            "A menu's Open for the selection, or for the files named (the preview's: `entries`, as the pane lists them), naming the default application they share, and the other applications for their types in its Open With submenu; no items when their types or the applications are not known yet. Answers from memory",
+            move |a, app| menu(&a, &cache, app),
         )
         .data();
         app.registry.menu_sources.add(
@@ -1385,6 +1443,16 @@ impl Plugin for OpenWithPlugin {
                 when: Some("selection !place".into()),
                 command: Invocation::new("open_with.menu"),
                 replaces: vec![Invocation::new("open")],
+            },
+        );
+        // The preview's More: Open externally, for the file it shows.
+        app.registry.menu_sources.add(
+            ID,
+            MenuSource {
+                menu: "preview".into(),
+                when: None,
+                command: Invocation::new("open_with.menu"),
+                replaces: vec![Invocation::new("ui.preview_open_external")],
             },
         );
         // Read before the first menu asks.
@@ -1688,7 +1756,7 @@ mod tests {
         app.plugins.add(Arc::new(OpenWithPlugin::default()), &app);
         assert!(app.commands.get("open").is_some());
         assert_eq!(app.registry.menus.all().len(), 4);
-        assert_eq!(app.registry.menu_sources.all().len(), 1);
+        assert_eq!(app.registry.menu_sources.all().len(), 2);
         app.plugins.set_enabled(ID, false, &app);
         assert!(app.commands.get("open").is_none());
         assert!(app.registry.menus.all().is_empty());
@@ -1963,6 +2031,59 @@ mod tests {
         );
         assert!(items(&[photo, "no-type-9q"]).is_empty(), "a type not known");
         assert!(items(&["sub"]).is_empty(), "a folder opens here");
+        // The preview's: the file it shows, as the pane lists it, whatever
+        // is selected; each item names it, its chooser last of Open With.
+        let shown = |name: &str| {
+            select(&app, pane, &[name]);
+            let ws = app.workspace.read();
+            let p = ws.pane(pane).unwrap();
+            let id = p.selection.iter().next().unwrap();
+            let file = p.entry(id).unwrap().file();
+            let path = p.path_of(id).unwrap();
+            serde_json::json!([{ "id": file, "path": path }])
+        };
+        let photo_shown = shown(photo);
+        select(&app, pane, &["notes.txt"]);
+        let preview = |entries: &serde_json::Value| {
+            let Outcome::Value(answer) = app
+                .dispatch(&Invocation::with_args(
+                    "open_with.menu",
+                    &serde_json::json!({ "pane": pane, "entries": entries }),
+                ))
+                .unwrap()
+            else {
+                panic!("the items are a value")
+            };
+            answer["items"].as_array().unwrap().clone()
+        };
+        let answer = preview(&photo_shown);
+        let titles: Vec<&str> = answer
+            .iter()
+            .map(|item| item["title"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            titles,
+            ["Open With Viewer", "Editor", "Hex", "Other Application…"],
+            "the photo's, not the text selected"
+        );
+        assert!(answer.iter().all(|item| item["menu"] == "preview"));
+        assert_eq!(answer[0]["command"]["args"]["entries"], photo_shown);
+        assert_eq!(answer[1]["command"]["args"]["entries"], photo_shown);
+        let chooser = &answer[3];
+        assert_eq!(chooser["submenu"], OPEN_WITH);
+        assert_eq!(
+            chooser["command"]["args"]["source"]["args"]["entries"],
+            photo_shown
+        );
+        assert!(
+            preview(&shown("sub")).is_empty(),
+            "a folder: the window's Open externally stays"
+        );
+        let unlisted = serde_json::json!([{ "path": root.join("b.png") }]);
+        assert!(
+            preview(&unlisted).is_empty(),
+            "named by its path alone: nothing read to type it"
+        );
     }
 
     /// A program that writes its arguments, one a line, to `out`.

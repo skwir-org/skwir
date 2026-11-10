@@ -30,8 +30,9 @@ use crate::elements::{
     popover::PopoverAnchor,
 };
 use crate::shell::Shell;
-use crate::theme::Theme;
+use crate::theme::{Chosen as _, Theme};
 use crate::toolbar::{self, Button};
+use skwir_core::registry::MenuItem;
 
 /// The labels every preview uses for the actions they share.
 pub mod label {
@@ -502,41 +503,134 @@ fn has_more(bar: &Bar, mode: usize) -> bool {
             .any(|item| !item.shown(mode) && matches!(item.tool, Tool::Button(_)))
 }
 
-/// What never has a button, for every kind, then what plugins add to the
-/// preview's menu (`Shell::preview_items`), run with what it shows.
-fn always(shell: &Shell, cx: &mut Context<Shell>) -> Vec<AnyElement> {
-    let plugins: Vec<Button> = shell
-        .preview_items()
+/// What is about the entry (`Shell::preview_entry_items`, asked as More
+/// opened), in its order: a row each, and a row for each submenu where its
+/// first item stands, which opens the submenu beside it (`fly_out`), with
+/// the first icon among its items, as a context menu's does.
+fn entry_rows(popup: &toolbar::Popup, shell: &Shell, cx: &mut Context<Shell>) -> Vec<AnyElement> {
+    let mut items: Vec<&MenuItem> = shell.preview.menu_entry.iter().collect();
+    items.sort_by_key(|item| item.order);
+    let mut parents: Vec<&str> = Vec::new();
+    let mut rows = Vec::new();
+    for item in items {
+        match item.submenu.as_deref() {
+            None => rows.push(menu_row(item_button(item), shell, cx)),
+            Some(name) if !parents.contains(&name) => {
+                parents.push(name);
+                rows.push(submenu_row(popup, name, shell, cx));
+            }
+            Some(_) => {}
+        }
+    }
+    rows
+}
+
+/// A menu's item as a popup's button: what it runs, checked while on.
+fn item_button(item: &MenuItem) -> Button {
+    Button::new(
+        format!("preview-entry-{}", item.title),
+        item.icon.clone().unwrap_or_default(),
+        item.title.clone(),
+        item.command.name.to_string(),
+    )
+    .args(item.command.args.clone())
+    .active(item.is_on())
+}
+
+/// The row of More's submenu `name`: pressed (Enter, Space, Right), it
+/// opens the submenu with the keyboard on its first row; the pointer
+/// resting on it opens it too, and resting on another row of More closes
+/// it (`Shell::preview_sub_rest`). Lit while open, as the context menu's.
+fn submenu_row(
+    popup: &toolbar::Popup,
+    name: &str,
+    shell: &Shell,
+    cx: &mut Context<Shell>,
+) -> AnyElement {
+    let theme = cx.global::<Theme>().clone();
+    let icon = shell
+        .preview_sub_items(name)
         .into_iter()
-        .enumerate()
-        .map(|(at, (title, icon, command))| {
-            Button::new(
-                format!("preview-plugin-{at}"),
-                icon,
-                title,
-                "ui.preview_invoke",
-            )
-            .args(serde_json::json!({ "command": command.name, "args": command.args }))
-        })
-        .collect();
-    [
-        Button::new(
-            "preview-external",
-            "open",
-            "Open externally",
-            "ui.preview_open_external",
-        ),
-        Button::new(
-            "preview-copy-path",
-            "copy",
-            "Copy path",
-            "ui.preview_copy_path",
-        ),
-    ]
-    .into_iter()
-    .chain(plugins)
-    .map(|button| menu_row(button, shell, cx))
-    .collect()
+        .find_map(|item| item.icon.clone().filter(|icon| !icon.is_empty()))
+        .unwrap_or_default();
+    let open = popup.sub.open.as_deref() == Some(name);
+    let mut row = Button::new(
+        format!("preview-submenu-{name}"),
+        icon,
+        name.to_owned(),
+        "ui.preview_submenu",
+    )
+    .args(serde_json::json!({ "open": name }))
+    .label(name.to_owned())
+    .opens_beside(open)
+    .anchor_if(&popup.sub.row, true)
+    .render(shell, cx);
+    if let Some(focus) = popup.sub.parent(name) {
+        row = row.track_focus(focus);
+    }
+    let rests: gpui::SharedString = name.to_owned().into();
+    row.when(open, |row| row.chosen(&theme))
+        .on_mouse_move(cx.listener(move |this, _, window, cx| {
+            this.preview_sub_rest(Some(rests.clone()), window, cx);
+            cx.stop_propagation();
+        }))
+        .into_any_element()
+}
+
+/// More's submenu `name`, beside its row: its items, each a row the
+/// keyboard reaches (`Submenu::rows`, walked by `ui.preview_submenu`), a
+/// menu of its own to assistive technology, named by its row.
+fn fly_out(
+    popup: &toolbar::Popup,
+    name: &str,
+    shell: &Shell,
+    theme: &Theme,
+    cx: &mut Context<Shell>,
+) -> AnyElement {
+    let mut rows = div()
+        .id("preview-submenu-rows")
+        .flex()
+        .flex_col()
+        .min_h_0()
+        .overflow_y_scroll();
+    for (at, item) in shell.preview_sub_items(name).into_iter().enumerate() {
+        let button = item_button(item);
+        let title = button.title();
+        let label = title.split(" · ").next().unwrap_or(&title).to_owned();
+        let mut row = button.label(label).menu().render(shell, cx);
+        if let Some(focus) = popup.sub.rows.get(at) {
+            row = row.track_focus(focus);
+        }
+        rows = rows.child(row);
+    }
+    div()
+        .id("preview-submenu")
+        .role(gpui::Role::Menu)
+        .aria_label(name.to_owned())
+        .key_context("ToolbarSubmenu")
+        .relative()
+        .min_w(sized(180.))
+        .max_w(sized(460.))
+        .p_1()
+        .flex()
+        .flex_col()
+        .min_h_0()
+        .rounded_lg()
+        .border_1()
+        .border_color(theme.border)
+        .bg(theme.surface)
+        .text_color(theme.text)
+        .shadow_md()
+        .occlude()
+        // The pointer reaching it keeps it open.
+        .on_mouse_move(cx.listener(|this, _, _, _| {
+            if let Some(popup) = this.preview.menu.as_mut() {
+                popup.sub.rest = None;
+            }
+        }))
+        .child(rows)
+        .child(popup.sub.area.marker())
+        .into_any_element()
 }
 
 /// A button as a row of the menu: its title without the shortcut hint.
@@ -548,6 +642,31 @@ fn menu_row(button: Button, shell: &Shell, cx: &mut Context<Shell>) -> AnyElemen
         .menu()
         .render(shell, cx)
         .into_any_element()
+}
+
+/// The rows of More for what variant `mode` shows no button for: those
+/// it dropped, in the bar's order (by slot, then as given, as the row
+/// lays them out), or those no variant has a button for (`never`).
+fn without_buttons(
+    bar: &Bar,
+    mode: usize,
+    never: bool,
+    shell: &Shell,
+    cx: &mut Context<Shell>,
+) -> Vec<AnyElement> {
+    let mut items: Vec<&Item> = bar
+        .items
+        .iter()
+        .filter(|item| !item.shown(mode) && (item.keep == NEVER) == never)
+        .collect();
+    items.sort_by_key(|item| item.slot);
+    items
+        .into_iter()
+        .filter_map(|item| match &item.tool {
+            Tool::Button(button) => Some(menu_row(button.clone(), shell, cx)),
+            Tool::Widget(_) => None,
+        })
+        .collect()
 }
 
 pub(crate) fn separator(theme: &Theme) -> Div {
@@ -638,26 +757,22 @@ pub fn render(
                 let mut panel = toolbar::menu_panel(popup, "ui.preview_menu", theme, cx)
                     .max_h(sized(480.))
                     .overflow_y_scroll();
-                // What this variant has no button for, the kind's
-                // settings, what is about the entry, then another way of
-                // looking: groups apart, each there when it holds a row.
-                let dropped = bar
-                    .items
-                    .iter()
-                    .filter(|item| !item.shown(mode))
-                    .filter_map(|item| match &item.tool {
-                        Tool::Button(button) => Some(menu_row(button.clone(), shell, cx)),
-                        Tool::Widget(_) => None,
-                    })
-                    .collect();
-                let groups: [Vec<AnyElement>; 4] = [
-                    dropped,
+                // What this variant has no button for, in the bar's order
+                // (as the row lays them out: by slot, then as given), so
+                // a narrower panel adds rows where its buttons stood; what
+                // this kind never has a button for (`Item::menu_only`);
+                // the kind's settings; what is about the entry; another
+                // way of looking. Groups apart, each there when it holds
+                // a row.
+                let groups: [Vec<AnyElement>; 5] = [
+                    without_buttons(bar, mode, false, shell, cx),
+                    without_buttons(bar, mode, true, shell, cx),
                     bar.settings
                         .as_ref()
                         .map(|settings| settings(shell, theme, cx))
                         .unwrap_or_default(),
                     if bar.always {
-                        always(shell, cx)
+                        entry_rows(popup, shell, cx)
                     } else {
                         Vec::new()
                     },
@@ -676,10 +791,20 @@ pub fn render(
                     }
                     panel = panel.children(group);
                 }
-                panel.into_any_element()
+                // Resting on a row closes the submenu open, but on its own.
+                panel
+                    .on_mouse_move(cx.listener(|this, _, window, cx| {
+                        this.preview_sub_rest(None, window, cx);
+                    }))
+                    .into_any_element()
             })
             .collect();
         root = root.child(anchor.popup_for(&chosen, panels));
+        // Above More, beside the row that opens it.
+        if let Some(name) = popup.sub.open.clone() {
+            let panel = fly_out(popup, &name, shell, theme, cx);
+            root = root.child(popup.sub.row.popup_beside(4, crate::menu::SUB_INSET, panel));
+        }
     } else if let Some(panel) = bar
         .popups
         .iter()

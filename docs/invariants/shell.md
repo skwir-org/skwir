@@ -42,6 +42,17 @@ Views are in [views.md](views.md); what locations decide, in
   press reached the control, which a binding stops, and only if focus has
   not moved since (its focus generation): a control whose keys are bound
   is never left to it, and nothing presses twice.
+- **A popup's submenu opens beside its row**, as a context menu's
+  (`toolbar::Submenu`, `Button::opens_beside`, the preview's More's Open
+  With): the same rules (below, "Context menu"), the same look and
+  `menu::REST`. Its rows have the keyboard's focus as the popup's do, but
+  stand outside gpui's tab order, drawn beside the popup: the keys walk
+  them by `ui.preview_submenu` (`toolbar_submenu`), Right on its row
+  opens it (the row's `submenu` flag), and the arrows or Escape on the
+  popup's own rows close it first. A press on it is no press outside the
+  popup (`Submenu::area`). A row with a handle of its own
+  (`track_focus`) takes gpui's tab stop from the handle, not the element:
+  make it `tab_stop(true)` where the arrows walk it.
 - Previews share one frame (`preview.rs`) and one toolbar
   (`preview_bar.rs`): a kind lists tools in slots, never builds a row
   ([previews.md](previews.md), "The preview frame"). Preview menus close
@@ -737,7 +748,8 @@ of bars, split or not.
 - Words that depend on the environment ("Open With Image Viewer") come
   from a `MenuSource`, answered from memory as the menu opens; the plain
   items stay registered for the palette. Its command takes what its menu
-  gives (`pane`, always; a place's `location`, a tag's `tags`): one that
+  gives (`pane`, always; a place's `location`, a tag's `tags`, the
+  preview's file shown, `entries`): one that
   refuses an argument answers nothing, unsaid
   (`crates/skwir/tests/plugins_toggle.rs` gives every source its menu's).
 - Rare items set `submenu`. Give items an `icon`.

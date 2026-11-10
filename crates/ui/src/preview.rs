@@ -492,6 +492,9 @@ pub struct PreviewState {
     pub inspection: crate::inspector::State,
     pub media: crate::media::MediaState,
     pub menu: Option<crate::toolbar::Popup>,
+    /// What More holds about the entry shown, asked as it opened
+    /// (`Shell::preview_entry_items`).
+    pub(crate) menu_entry: Vec<skwir_core::registry::MenuItem>,
     /// The Preview switch (F11, the Preview button): the panel shows the
     /// preview of what is selected. With `properties_on`, one of the two
     /// switches the panel is made of (`panel_open`); part of the window's
@@ -858,6 +861,7 @@ impl Default for PreviewState {
             inspection: crate::inspector::State::default(),
             media: crate::media::MediaState::default(),
             menu: None,
+            menu_entry: Vec::new(),
             preview_on: false,
             peek: false,
             width: DEFAULT_WIDTH,
@@ -1762,6 +1766,22 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Escape on More's rows closes its submenu first, as a context
+        // menu's; a press outside closes both.
+        let closing = args.get("close").and_then(serde_json::Value::as_bool) == Some(true);
+        let pointer = args.get("pointer").and_then(serde_json::Value::as_bool) == Some(true);
+        if closing
+            && !pointer
+            && let Some(popup) = self
+                .preview
+                .menu
+                .as_mut()
+                .filter(|popup| popup.sub.open.is_some())
+        {
+            popup.sub.hide();
+            cx.notify();
+            return;
+        }
         let kind = match args.get("kind").and_then(serde_json::Value::as_str) {
             Some("zoom") => "zoom",
             Some("text") => "text",
@@ -1775,9 +1795,188 @@ impl Shell {
             // Whose bar it is: the side that has the keyboard, which the
             // press on its button gave it.
             self.preview.menu_parked = self.container_has_keyboard(window, cx);
-            self.preview.menu = Some(crate::toolbar::Popup::new(kind, window, cx));
+            let mut popup = crate::toolbar::Popup::new(kind, window, cx);
+            if kind == "preview" {
+                // Its rows about the entry, asked once, and the focus of
+                // each of their submenus' rows.
+                self.preview.menu_entry = self.preview_entry_items();
+                popup.sub.parents = crate::menu::rows_of(&self.preview.menu_entry)
+                    .into_iter()
+                    .filter_map(|row| match row {
+                        // A row of More's, in its tab order as the others are:
+                        // gpui keeps a tracked handle's own.
+                        crate::menu::Row::Parent(name) => {
+                            Some((name.into(), cx.focus_handle().tab_stop(true).tab_index(0)))
+                        }
+                        crate::menu::Row::Item(_) | crate::menu::Row::Choice(_) => None,
+                    })
+                    .collect();
+            }
+            self.preview.menu = Some(popup);
         }
         cx.notify();
+    }
+
+    /// The keys walking More while its submenu is open: in the submenu,
+    /// along its rows (Tab as the arrows); on More's own rows, the submenu
+    /// closes and the keys go on (false), as a context menu's do.
+    pub(crate) fn preview_sub_walk(
+        &mut self,
+        name: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(popup) = self
+            .preview
+            .menu
+            .as_mut()
+            .filter(|popup| popup.sub.open.is_some())
+        else {
+            return false;
+        };
+        if popup.sub.rows.iter().any(|row| row.is_focused(window)) {
+            let args = match name {
+                "toolbar_next" => serde_json::json!({ "step": 1 }),
+                "toolbar_prev" => serde_json::json!({ "step": -1 }),
+                "toolbar_first" => serde_json::json!({ "end": false }),
+                _ => serde_json::json!({ "end": true }),
+            };
+            self.preview_submenu(&args, window, cx);
+            return true;
+        }
+        popup.sub.hide();
+        cx.notify();
+        false
+    }
+
+    /// The items of More's submenu `name`, in their order.
+    pub(crate) fn preview_sub_items(&self, name: &str) -> Vec<&skwir_core::registry::MenuItem> {
+        let mut items: Vec<_> = self
+            .preview
+            .menu_entry
+            .iter()
+            .filter(|item| item.submenu.as_deref() == Some(name))
+            .collect();
+        items.sort_by_key(|item| item.order);
+        items
+    }
+
+    /// `ui.preview_submenu`: More's submenu beside its row. `open` shows
+    /// one, the keyboard on its first row (Right, Enter or Space on its
+    /// row, or a press); `back` closes it, the keyboard back on its row
+    /// (Left, Escape); `step` walks its rows, `end` reaches its last
+    /// (`true`) or first. A submenu's rows are walked here, not by gpui's
+    /// tab order, which does not reach a panel drawn beside the popup.
+    pub fn preview_submenu(
+        &mut self,
+        args: &serde_json::Value,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let here = args.get("here").and_then(serde_json::Value::as_bool) == Some(true);
+        let open = match args.get("open").and_then(serde_json::Value::as_str) {
+            Some(name) => Some(name.to_owned()),
+            // The submenu whose row has the keyboard (Right on it).
+            None if here => self.preview.menu.as_ref().and_then(|popup| {
+                popup
+                    .sub
+                    .parents
+                    .iter()
+                    .find(|(_, focus)| focus.is_focused(window))
+                    .map(|(name, _)| name.to_string())
+            }),
+            None => None,
+        };
+        let rows = open
+            .as_deref()
+            .map_or(0, |name| self.preview_sub_items(name).len());
+        let Some(popup) = self
+            .preview
+            .menu
+            .as_mut()
+            .filter(|popup| popup.kind == "preview")
+        else {
+            return;
+        };
+        let sub = &mut popup.sub;
+        if let Some(name) = open {
+            sub.show(name.into(), rows, cx);
+            if let Some(first) = sub.rows.first() {
+                window.focus(first, cx);
+            }
+        } else if here {
+            // Right on a row that opens nothing: nothing.
+        } else if args.get("back").and_then(serde_json::Value::as_bool) == Some(true) {
+            let parent = sub
+                .open
+                .as_deref()
+                .and_then(|name| sub.parent(name))
+                .cloned();
+            sub.hide();
+            if let Some(parent) = parent {
+                window.focus(&parent, cx);
+            }
+        } else {
+            let at = sub.rows.iter().position(|row| row.is_focused(window));
+            let last = sub.rows.len().saturating_sub(1);
+            let to = match (
+                args.get("end").and_then(serde_json::Value::as_bool),
+                args.get("step").and_then(serde_json::Value::as_i64),
+            ) {
+                (Some(true), _) => Some(last),
+                (Some(false), _) => Some(0),
+                // At its ends the keyboard stays, as a context menu's.
+                (None, Some(step)) => Some(at.map_or(0, |at| {
+                    at.saturating_add_signed(isize::try_from(step).unwrap_or(0))
+                        .min(last)
+                })),
+                (None, None) => None,
+            };
+            if let Some(row) = to.and_then(|to| sub.rows.get(to)) {
+                window.focus(row, cx);
+            }
+        }
+        cx.notify();
+    }
+
+    /// The pointer rests on a row of More: once it has rested
+    /// `menu::REST`, the submenu that row opens (`opens`) opens, or, on
+    /// another row, the one open closes; the keyboard stays where it is.
+    pub(crate) fn preview_sub_rest(
+        &mut self,
+        opens: Option<gpui::SharedString>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let rows = opens
+            .as_deref()
+            .map_or(0, |name| self.preview_sub_items(name).len());
+        let Some(popup) = self
+            .preview
+            .menu
+            .as_mut()
+            .filter(|popup| popup.kind == "preview")
+        else {
+            return;
+        };
+        if popup.sub.open == opens {
+            popup.sub.rest = None;
+            return;
+        }
+        // Each move starts the rest again, as a context menu's does.
+        popup.sub.rest = Some(cx.spawn_in(window, async move |this, cx| {
+            cx.background_executor().timer(crate::menu::REST).await;
+            let _ = this.update(cx, |this, cx| {
+                let Some(popup) = this.preview.menu.as_mut() else {
+                    return;
+                };
+                match opens {
+                    Some(name) => popup.sub.show(name, rows, cx),
+                    None => popup.sub.hide(),
+                }
+                cx.notify();
+            });
+        }));
     }
 
     /// Called on UI wake. Only a changed request schedules worker work.
@@ -4664,19 +4863,43 @@ impl Shell {
     }
 
     /// The plugins' items of the preview's menu (`MenuItem::menu`
-    /// `preview`) that hold for what it shows, in their order: title, icon
-    /// and what they run.
-    pub(crate) fn preview_items(&self) -> Vec<(String, String, skwir_core::command::Invocation)> {
+    /// `preview`) that hold for what it shows, in their order, each as it
+    /// was registered: the window runs it with what it shows
+    /// (`ui.preview_invoke`).
+    pub(crate) fn preview_items(&self) -> Vec<skwir_core::registry::MenuItem> {
+        self.preview_menu_parts().0
+    }
+
+    /// The plugins' items of the preview's menu and its sources
+    /// (`MenuSource::menu` `preview`) whose `when` holds for what it shows,
+    /// the items in their order.
+    fn preview_menu_parts(
+        &self,
+    ) -> (
+        Vec<skwir_core::registry::MenuItem>,
+        Vec<skwir_core::registry::MenuSource>,
+    ) {
         if self.preview.key.is_none() {
-            return Vec::new();
+            return (Vec::new(), Vec::new());
         }
         let tokens = self.preview_tokens();
         let all = self.app.registry.menus.all();
+        let sources: Vec<_> = self
+            .app
+            .registry
+            .menu_sources
+            .all()
+            .into_iter()
+            .filter(|source| source.menu == "preview")
+            .collect();
         // `kind:` and `has:` read the type of the entry shown, worked out
         // only when an item asks.
         let asks = all
             .iter()
-            .any(|item| item.menu == "preview" && crate::menu::asks_types(item.when.as_deref()));
+            .filter(|item| item.menu == "preview")
+            .map(|item| item.when.as_deref())
+            .chain(sources.iter().map(|source| source.when.as_deref()))
+            .any(crate::menu::asks_types);
         let types = if asks {
             self.preview_types()
         } else {
@@ -4702,16 +4925,60 @@ impl Shell {
             .filter(|item| item.menu == "preview" && holds(item.when.as_deref()))
             .collect();
         items.sort_by_key(|item| item.order);
-        items
+        let sources = sources
             .into_iter()
-            .map(|item| {
-                (
-                    item.title.clone(),
-                    item.icon.clone().unwrap_or_default(),
-                    item.command.clone(),
-                )
+            .filter(|source| holds(source.when.as_deref()))
+            .collect();
+        (items, sources)
+    }
+
+    /// What More holds about the entry shown (`preview_bar::Bar::always`):
+    /// opening it, copying its path, what plugins add to the preview's
+    /// menu, run with what it shows (`ui.preview_invoke`), and what the
+    /// menu's sources answer in place of what they replace (the default
+    /// application in place of Open externally, the others in an Open With
+    /// submenu), in their order. Asked as More opens, never while drawing,
+    /// a source asked with what the menu gives: the file shown, as its
+    /// pane lists it (`entries`), and its pane (`menu::context_items`).
+    pub(crate) fn preview_entry_items(&self) -> Vec<skwir_core::registry::MenuItem> {
+        use skwir_core::command::Invocation;
+        use skwir_core::registry::MenuItem;
+        let Some(key) = &self.preview.key else {
+            return Vec::new();
+        };
+        let own = |order, title: &str, icon: &str, name: &str| {
+            MenuItem::new("preview", title, icon, order, Invocation::new(name))
+        };
+        let mut items = vec![
+            own(0, "Open externally", "open", "ui.preview_open_external"),
+            own(100, "Copy path", "copy", "ui.preview_copy_path"),
+        ];
+        let (plugins, sources) = self.preview_menu_parts();
+        items.extend(plugins.into_iter().map(|item| MenuItem {
+            command: Invocation::with_args(
+                "ui.preview_invoke",
+                &serde_json::json!({ "command": item.command.name, "args": item.command.args }),
+            ),
+            ..item
+        }));
+        let shown = skwir_core::op::EntryArg::from(EntryRef {
+            id: key.id.file,
+            path: key.path.clone(),
+            only_name: false,
+        });
+        let answers = sources
+            .into_iter()
+            .map(|source| {
+                let command = source
+                    .command
+                    .clone()
+                    .with("entries", serde_json::json!([shown]))
+                    .with("pane", key.pane);
+                let answer = self.source_answer(&command);
+                (source, answer)
             })
-            .collect()
+            .collect();
+        crate::menu::merge(items, answers)
     }
 
     pub fn preview_copy_path(&mut self, cx: &mut Context<Self>) {

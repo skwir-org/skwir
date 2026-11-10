@@ -324,6 +324,53 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
 
 /// Builtin bindings that carry arguments (`keys, command, args json, when`).
 const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
+    // A popup's submenu, open beside its row: the arrows walk its rows,
+    // Home and End reach its ends, Left and Escape go back to its row
+    // (`ui.preview_submenu`), as a context menu's do.
+    (
+        "down",
+        "ui.preview_submenu",
+        r#"{"step":1}"#,
+        Some("toolbar_submenu"),
+    ),
+    (
+        "up",
+        "ui.preview_submenu",
+        r#"{"step":-1}"#,
+        Some("toolbar_submenu"),
+    ),
+    (
+        "home",
+        "ui.preview_submenu",
+        r#"{"end":false}"#,
+        Some("toolbar_submenu"),
+    ),
+    (
+        "end",
+        "ui.preview_submenu",
+        r#"{"end":true}"#,
+        Some("toolbar_submenu"),
+    ),
+    (
+        "left",
+        "ui.preview_submenu",
+        r#"{"back":true}"#,
+        Some("toolbar_submenu"),
+    ),
+    // On the row that opens it, Right opens it, as Enter and Space do
+    // (`toolbar::SUBMENU`).
+    (
+        "right",
+        "ui.preview_submenu",
+        r#"{"here":true}"#,
+        Some("toolbar_button submenu"),
+    ),
+    (
+        "escape",
+        "ui.preview_submenu",
+        r#"{"back":true}"#,
+        Some("toolbar_submenu"),
+    ),
     // The timeline's bars: one at a time, Shift extending what is chosen,
     // the page keys a window of them.
     (
@@ -1386,6 +1433,7 @@ pub(crate) const PLACES: &[Place] = &[
     inside("menu", MENU, "Context menu"),
     inside("toolbar_button", "ToolbarButton", "Toolbars"),
     inside("toolbar_popup", "ToolbarPopup", "Toolbars"),
+    inside("toolbar_submenu", "ToolbarSubmenu", "Toolbars"),
     inside("shortcuts", "Shortcuts", "Shortcut overview"),
     inside("about", "About", "About skwir"),
     inside("settings", "Settings", "Settings"),

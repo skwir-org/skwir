@@ -1206,18 +1206,32 @@ is still to come are in `docs/preview-frame.md`.
   view gets it only for a file that is text, so a file of the type that
   is not is asked again as it shows.
 - **The menu rule** is every responsive toolbar's. More holds, in groups
-  in this order: the buttons the chosen variant dropped and what this
-  kind never has a button for (`PopoverAnchor::popup_for`, Wrap lines,
-  Slideshow); a kind's settings that never have a button (volume,
-  speed, tracks); what no kind has a button for (open externally, copy
-  the path, what plugins add); last, another way of looking at the file,
+  in this order: the buttons the chosen variant dropped, in the bar's
+  order (by slot, then as given: a narrower panel adds rows where its
+  buttons stood, `PopoverAnchor::popup_for`); what this kind never has a
+  button for (`Item::menu_only`: Wrap lines, Slideshow); a kind's
+  settings that never have a button (volume, speed, tracks); what is
+  about the entry (below); last, another way of looking at the file,
   which leaves this one (View as hex, `Bar::otherwise`), as a view a
   menu opens comes after copying and making (ADR-099). Nothing is both a
   button and a menu row. More is there whenever it holds something,
   last but for the ×.
-- Open externally and copy the path belong to the entry: under a
-  container's view they are in its More, and a member's More holds only
-  the member's own (`Bar::always`).
+- **What is about the entry** (`Shell::preview_entry_items`) is menu
+  items, as a context menu's: the window's Open externally and Copy
+  path, what plugins add to the preview's menu, and what its sources
+  (`MenuSource::menu` `preview`) answer in place of what they replace,
+  in their order. A source is asked as More opens, never while drawing,
+  with what the menu gives: the file shown, as its pane lists it
+  (`entries`), and its pane; its items name their files and run as
+  answered. The open-with plugin's answers Open With its default
+  application in place of Open externally, and an Open With submenu of
+  the type's other applications and Other Application…, as the file
+  menu's; without the plugin, or without a default, Open externally
+  stays. A submenu opens beside its row (docs/invariants/shell.md,
+  "Toolbars and buttons").
+- What is about the entry belongs to the entry: under a container's
+  view it is in its More, and a member's More holds only the member's
+  own (`Bar::always`).
 - Another tool's popup (the zoom picker, the find field) anchors to that
   tool, or to More when the variant dropped it (`Item::opens`,
   `preview::active_popup`), in the bar it was opened from
