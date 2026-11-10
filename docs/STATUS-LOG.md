@@ -14083,3 +14083,49 @@ and takes the text back. A binary file shown as hex unasked has none.
 
 **Not checked:** `just release-check`, by the user's standing preference.
 Windows and macOS not compiled.
+
+## 2026-11-10: How a file is shown is first of its bar
+
+After View as hex (above), the previews were looked over for the same
+pattern, a tool that moves once clicked because the tools before it change
+with how the file is shown. On Xvfb, before this change: an SVG's Source
+moved two buttons left once lit (the picture's zoom gave way to a text's
+size), a Markdown file's three (Contents, Full width and Continuous went);
+a picture too large's Full preview moved five buttons right (the zoom tools
+came before it). 3D, from the code, which lavapipe cannot draw: a turned
+model's five tools came before it. The document reader and the player
+offered no View as hex, every other preview did, in More. A member's ×
+stays at the end, by the user's choice: it closes what a row opened, and
+its name is at the left.
+
+- `preview_bar::look_tools` pushes Source, 3D, Full preview and View as hex
+  in that order, first of every bar (`Slot::Look`), each lit while on; the
+  inspection's, the picture's and the failure's bars call it, so the order
+  is one. `whole_tool` and `hex_tool` are gone into it. Source and 3D never
+  meet (the text model formats, G-code and DXF, are never turned).
+- The bar of a file too large for a quick preview has Full preview, and the
+  bytes in More (`preview_toolbar::shows_nothing` is a failure or no
+  preview only), so neither moves once lit.
+- The reader's and the player's More hold View as hex.
+- Back from the bytes to a track, the bytes stayed on screen with the
+  player's bar gone: a result that opens a player never replaced what the
+  panel showed, so a poster or a cover is not covered by a blank card while
+  the pipeline warms up. What another way of looking showed (an inspection)
+  is never the player's picture, so it is replaced (`Shell::preview_arrived`,
+  `looked_otherwise`). Reachable before through the palette's "Preview:
+  hexadecimal" and "default presentation".
+- `docs/invariants/previews.md` ("The toolbar") says the rule.
+
+**Checked:** rustfmt, clippy `-D warnings` on `skwir-ui` and its tests that
+match `preview|inspect|hex|bar|reader|media|model` (126 passed), in capped
+scopes. A debug window on Xvfb (lavapipe), each before and after a click:
+the SVG's Source, the Markdown file's both ways, first of the bar; the
+picture too large's Full preview first, View as hex in More, both ways; a
+PDF's More holds View as hex, lit first of the bytes' bar, and its click
+brings the reader back; a WAV the same, the player back; a WAV playing
+(volume 0 %, kept playing while browsing) back to its player still
+playing.
+
+**Not checked:** 3D in a window (lavapipe draws no meshes); a film back
+from its bytes; `just release-check`, by the user's standing preference.
+Windows and macOS not compiled.

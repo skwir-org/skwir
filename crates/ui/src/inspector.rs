@@ -2767,7 +2767,7 @@ pub fn parked(
 /// the keyboard, which a press on a button gives it). The container's has
 /// no ×, which is the member's, and its More holds what is about the entry.
 fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
-    use crate::preview_bar::{Bar, Item, Slot, label};
+    use crate::preview_bar::{Bar, Hex, Item, Looks, Slot, Whole, label};
     let (display, state, parked) = (view.display, view.state, view.parked);
     let data = &display.data;
     let request = &state.request;
@@ -2909,14 +2909,6 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
             button("inspect-offset", "move", "Jump to byte offset", "offset"),
         ));
     }
-    // The bytes chosen (the one way of looking asked by provider): View as
-    // hex lit, first of the bar, the way back. Unchosen, rare enough to
-    // live in More, in every preview that has it.
-    if request.provider.is_some() {
-        crate::preview_bar::hex_tool(&mut bar, true, true);
-    } else if data.kind != InspectionKind::Hex && crate::preview_toolbar::hex_available(shell) {
-        crate::preview_bar::hex_tool(&mut bar, false, false);
-    }
     // Folding is offered where there is something to fold: a code view's
     // grammar may find folds once it is parsed.
     let grammar_folds = data.kind == InspectionKind::Code && state.colors.folds().is_some();
@@ -3005,49 +2997,35 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
             .enabled(sized),
         ));
     }
-    // How the file is shown, after its size, as a document's Continuous is:
-    // Source, lit while the file's own text is shown, never named after
-    // the state it is in. What is shown says itself beside it, rendered or
-    // not (a format's name, a page's lines).
-
-    // A model turned in 3D, or shown by its picture: one button, lit while
-    // it turns.
-    if data.mesh_available && shell.draws_meshes {
-        bar.push(Item::button(
-            Slot::View,
-            2,
-            button(
-                "inspect-turn",
-                "cube",
-                "The model turned in 3D, or its picture",
-                "turn",
-            )
-            .label(label::TURN)
-            .active(data.kind == InspectionKind::Model),
-        ));
-    }
-    // What was cut short to stay quick: all of it, asked, and lit while
-    // so, also where the way of looking changed since (the source). 3D
-    // reads the whole model as it turns, which is no Full preview.
+    // How the file is shown, first of the bar (`look_tools`). Source, lit
+    // while the file's own text is shown, never named after the state it
+    // is in; what is shown says itself after the tools, rendered or not (a
+    // format's name, a page's lines). A model turned in 3D, or shown by its
+    // picture. What was cut short to stay quick: all of it, asked, and lit
+    // while so, also where the way of looking changed since (the source);
+    // 3D reads the whole model as it turns, which is no Full preview. The
+    // bytes chosen (the one way of looking asked by provider): View as hex
+    // lit, the way back; unchosen, rare enough to live in More, in every
+    // preview that has it.
     let whole = request.whole && data.kind != InspectionKind::Model;
-    if offered.whole || whole {
-        crate::preview_bar::whole_tool(&mut bar, whole, whole || data.whole_available);
-    }
-    if data.source_available {
-        bar.push(Item::button(
-            Slot::View,
-            2,
-            button(
-                "inspect-source",
-                "code",
-                // One wording for both states: a tooltip outlives the click.
-                "The file's own text, as written",
-                "source",
-            )
-            .label(label::SOURCE)
-            .active(request.source),
-        ));
-    }
+    crate::preview_bar::look_tools(
+        &mut bar,
+        Looks {
+            source: data.source_available.then_some(request.source),
+            turn: (data.mesh_available && shell.draws_meshes)
+                .then_some(data.kind == InspectionKind::Model),
+            whole: (offered.whole || whole).then_some(Whole {
+                on: whole,
+                enabled: whole || data.whole_available,
+            }),
+            hex: if request.provider.is_some() {
+                Some(Hex::Shown)
+            } else {
+                (data.kind != InspectionKind::Hex && crate::preview_toolbar::hex_available(shell))
+                    .then_some(Hex::Row)
+            },
+        },
+    );
     // A text read where it is shown says its lines as they are counted.
     let counted = state.text.as_ref().map(|text| {
         let (lines, done) = text.lines();

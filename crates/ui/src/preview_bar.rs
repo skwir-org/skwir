@@ -2,10 +2,10 @@
 //!
 //! A preview never builds a row: it lists its tools, each in a slot, and this
 //! module lays them out, so the same action is in the same place whatever is
-//! shown. Slots, left to right: View as hex (`hex_tool`: the way back from
-//! the bytes where the way in was), contents (its drawer opens on that
-//! side), navigate (previous and next, page), view (how the content is shown:
-//! rendered or source, zoom or text size, fit), a spacer, find, More, then
+//! shown. Slots, left to right: how the file is shown (`look_tools`: Source,
+//! 3D, Full preview, View as hex, so a click never moves them), contents
+//! (its drawer opens on that side), navigate (previous and next, page), view
+//! (zoom or text size, fit), a spacer, find, More, then
 //! the × that closes a member of a container (`close_tool`). A member shown
 //! under its container's view starts with its name (`Slot::Title`). Copy has
 //! no button: it is Ctrl+C and the content's own right-click menu, where
@@ -63,8 +63,8 @@ pub enum Slot {
     /// The name of a member shown under its container's view, before
     /// everything: the card names the container.
     Title,
-    /// The bytes as a button (`hex_tool`), first of the tools: the way
-    /// back from them is found where the way in was.
+    /// How the file is shown (`look_tools`: Source, 3D, Full preview, View
+    /// as hex), first of the tools: nothing before them changes with it.
     Look,
     /// Contents, first after the way of looking: the drawer it opens is on
     /// the left too.
@@ -323,44 +323,114 @@ pub fn close_tool(bar: &mut Bar, shell: &Shell, theme: &Theme) {
     );
 }
 
-/// Full preview: all of a file a preview cut short or refused to stay
-/// quick, read again past those bounds (`InspectRequest::whole`), for this
-/// file only. The same tool in every kind's bar that has it: lit while `on`,
-/// where a click asks for the quick preview again, and disabled where it
-/// would show no more (`enabled`) rather than gone.
-pub fn whole_tool(bar: &mut Bar, on: bool, enabled: bool) {
-    bar.push(Item::button(
-        Slot::View,
-        2,
-        Button::new(
-            "preview-whole",
-            "down",
-            "All of this file, past the size a preview keeps to",
-            "ui.inspect",
-        )
-        .args(serde_json::json!({"action":"whole","on":!on}))
-        .label(label::WHOLE)
-        .active(on)
-        .enabled(enabled),
-    ));
+/// How a file is shown, which the tools after it belong to: each a tool
+/// lit while it is on, where a click shows the file as it was shown before.
+/// Each is `None` where the bar has no such tool.
+#[derive(Default)]
+pub struct Looks {
+    /// Source: the file's own text, lit while shown (`InspectRequest::source`).
+    pub source: Option<bool>,
+    /// 3D: the model turned, lit while it turns.
+    pub turn: Option<bool>,
+    /// Full preview: all of a file a preview cut short or refused to stay
+    /// quick, read again past those bounds (`InspectRequest::whole`), for
+    /// this file only: lit while on, and disabled where it would show no
+    /// more rather than gone (`Whole::enabled`).
+    pub whole: Option<Whole>,
+    /// View as hex: lit while the bytes are shown by choice, where a click
+    /// shows the file as it would be shown again (`ui.inspect`'s `auto`).
+    pub hex: Option<Hex>,
 }
 
-/// View as hex, one tool for both ways, as Source is: lit while the bytes
-/// are shown by choice (`on`), where a click shows the file as it would be
-/// shown again. As a button it is first of the bar (`Slot::Look`), in the
-/// bar that offers it (a file with nothing else to show) and in the bytes'
-/// own, so the way back is where the way in was; elsewhere the way in is a
-/// row of More (`button`: false).
-pub fn hex_tool(bar: &mut Bar, on: bool, button: bool) {
-    let hex = Button::new("preview-hex", "grid", label::HEX, "ui.inspect")
-        .args(serde_json::json!({"action": if on { "auto" } else { "hex" }}))
-        .label(label::HEX)
-        .active(on);
-    bar.push(if button {
-        Item::button(Slot::Look, 2, hex)
-    } else {
-        Item::menu_only(hex)
-    });
+#[derive(Clone, Copy)]
+pub struct Whole {
+    pub on: bool,
+    pub enabled: bool,
+}
+
+#[derive(Clone, Copy)]
+pub enum Hex {
+    /// Lit, the way back from the bytes.
+    Shown,
+    /// A button: nothing else of the file is shown, nor can be.
+    Button,
+    /// A row of More, as an action too rare for a button.
+    Row,
+}
+
+/// How the file is shown, first of every bar that has any of it
+/// (`Slot::Look`), in this order: Source, 3D, Full preview, View as hex.
+/// What comes after belongs to how the file is shown (a picture's zoom, a
+/// text's size, a model's look) and changes with it, so nothing before
+/// these tools does: a tool clicked is where it was once it is lit, the
+/// way back where the way in was. One function pushes them all, so the
+/// order is the same in every kind's bar.
+pub fn look_tools(bar: &mut Bar, looks: Looks) {
+    let tool = |id, icon, title, args: serde_json::Value, label: &'static str, on: bool| {
+        Button::new(id, icon, title, "ui.inspect")
+            .args(args)
+            .label(label)
+            .active(on)
+    };
+    if let Some(on) = looks.source {
+        bar.push(Item::button(
+            Slot::Look,
+            2,
+            // One wording for both states: a tooltip outlives the click.
+            tool(
+                "preview-source",
+                "code",
+                "The file's own text, as written",
+                serde_json::json!({"action":"source"}),
+                label::SOURCE,
+                on,
+            ),
+        ));
+    }
+    if let Some(on) = looks.turn {
+        bar.push(Item::button(
+            Slot::Look,
+            2,
+            tool(
+                "preview-turn",
+                "cube",
+                "The model turned in 3D, or its picture",
+                serde_json::json!({"action":"turn"}),
+                label::TURN,
+                on,
+            ),
+        ));
+    }
+    if let Some(Whole { on, enabled }) = looks.whole {
+        bar.push(Item::button(
+            Slot::Look,
+            2,
+            tool(
+                "preview-whole",
+                "down",
+                "All of this file, past the size a preview keeps to",
+                serde_json::json!({"action":"whole","on":!on}),
+                label::WHOLE,
+                on,
+            )
+            .enabled(enabled),
+        ));
+    }
+    if let Some(hex) = looks.hex {
+        let on = matches!(hex, Hex::Shown);
+        let button = tool(
+            "preview-hex",
+            "grid",
+            label::HEX,
+            serde_json::json!({"action": if on { "auto" } else { "hex" }}),
+            label::HEX,
+            on,
+        );
+        bar.push(match hex {
+            Hex::Row => Item::menu_only(button),
+            Hex::Shown | Hex::Button => Item::button(Slot::Look, 2, button),
+        });
+    }
 }
 
 /// The whole screen, the same tool at the end of every kind's bar, lit

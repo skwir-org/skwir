@@ -2,7 +2,7 @@
 use crate::sizes::TextSizes;
 use crate::{
     preview::PreviewContent,
-    preview_bar::{Bar, Item, Slot, label},
+    preview_bar::{Bar, Hex, Item, Looks, Slot, Whole, label},
     shell::Shell,
     theme::Theme,
     toolbar::{self, Button},
@@ -147,13 +147,15 @@ pub(crate) fn hex_available(shell: &Shell) -> bool {
     hex
 }
 
-/// Whether the panel shows nothing of a file it could read: its preview
-/// failed, or it has none. Not a link that leads nowhere nor a special
-/// file, which are never read (`PreviewKey::content`).
+/// Whether the panel shows nothing of a file it could read, and nothing
+/// but its bytes can: its preview failed, or it has none. Not a file too
+/// large for a quick preview, which Full preview shows, nor a link that
+/// leads nowhere nor a special file, which are never read
+/// (`PreviewKey::content`).
 fn shows_nothing(shell: &Shell) -> bool {
     matches!(
         shell.preview.content,
-        Some(PreviewContent::Error(_) | PreviewContent::TooLarge(_) | PreviewContent::Generic)
+        Some(PreviewContent::Error(_) | PreviewContent::Generic)
     ) && shell.preview.shown_content().is_some()
 }
 
@@ -230,36 +232,36 @@ pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyEleme
     if image {
         zoom_tools(&mut bar, shell);
     }
-    // Refused to stay quick: all of it, asked, and lit while so (a picture
-    // decoded whole, or past even Full preview's bounds).
-    let whole = shell.preview.inspection.request.whole;
-    if whole || matches!(shell.preview.content, Some(PreviewContent::TooLarge(_))) {
-        crate::preview_bar::whole_tool(&mut bar, whole, true);
-    }
     if shell.walks_pictures() {
         picture_tools(&mut bar, shell);
     }
-    if hex_available(shell) {
-        // With nothing else shown (a failure, a file without a preview),
-        // the bytes are the one way left to look: a button of its own.
-        crate::preview_bar::hex_tool(&mut bar, false, shows_nothing(shell));
-    }
-    // A picture written as text (an SVG) has a source, as any rendered text
-    // does: the same button, off while the picture is shown.
-    if image && shell.preview.picture_source.is_some() {
-        bar.push(Item::button(
-            Slot::View,
-            2,
-            Button::new(
-                "preview-source",
-                "code",
-                "The file's own text, as written",
-                "ui.inspect",
-            )
-            .args(serde_json::json!({"action":"source"}))
-            .label(label::SOURCE),
-        ));
-    }
+    // How the file is shown, first of the bar (`look_tools`). A picture
+    // written as text (an SVG) has a source, as any rendered text does: the
+    // same button, off while the picture is shown. Refused to stay quick:
+    // all of it, asked, and lit while so (a picture decoded whole, or past
+    // even Full preview's bounds). With nothing else shown nor to be shown
+    // (a failure, a file without a preview), the bytes are the one way left
+    // to look: a button of its own.
+    let whole = shell.preview.inspection.request.whole;
+    crate::preview_bar::look_tools(
+        &mut bar,
+        Looks {
+            source: (image && shell.preview.picture_source.is_some()).then_some(false),
+            turn: None,
+            whole: (whole || matches!(shell.preview.content, Some(PreviewContent::TooLarge(_))))
+                .then_some(Whole {
+                    on: whole,
+                    enabled: true,
+                }),
+            hex: hex_available(shell).then(|| {
+                if shows_nothing(shell) {
+                    Hex::Button
+                } else {
+                    Hex::Row
+                }
+            }),
+        },
+    );
     let (text, muted) = (caption(shell), theme.text_muted);
     bar.push(Item::widget(
         Slot::View,

@@ -96,7 +96,7 @@ is binding, like `AGENTS.md`.
   Full preview would not lift never offers it. The panel shows a refused
   text file as written with Full preview offered (`source_instead`), any
   other as `PreviewContent::TooLarge`, and puts **Full preview** in the
-  bar for both (`preview_bar::whole_tool`). Asked, it stays, lit, where a
+  bar for both (`preview_bar::look_tools`). Asked, it stays, lit, where a
   click asks for the quick preview again; a section of the file it would
   show no more of has it disabled (`inspector::Offered`, "The toolbar").
 - **For the file shown only.** `whole` lives in the panel's request,
@@ -1086,20 +1086,22 @@ is still to come are in `docs/preview-frame.md`.
 - **One toolbar.** A preview never builds a row: it lists its tools in
   slots of `preview_bar::Bar`, which lays them out. Left to right:
   1. a member's name under its container's view (`Slot::Title`);
-  2. View as hex where it is a button (`preview_bar::hex_tool`,
-     `Slot::Look`): in a file's bar with nothing else to show, and lit in
-     the bytes' own bar while they are shown by choice, where a click
-     shows the file as it would be shown again. The way back is where
-     the way in was, one tool for both, as Source is;
+  2. how the file is shown (`preview_bar::look_tools`, `Slot::Look`), in
+     this order: Source, 3D, Full preview, View as hex. Each is one tool
+     for both ways, lit while on, where a click shows the file as it was
+     shown before. What follows belongs to how the file is shown (a
+     picture's zoom, a text's size, a model's look) and changes with it;
+     nothing before these tools does, so a tool clicked is where it was
+     once lit, the way back where the way in was. One function pushes
+     them, so the order is every kind's;
   3. contents, first of the rest because its drawer opens on that side;
   4. navigate: previous, the page or chapter as a field with the count,
      next (`preview_bar::number_tool`, for the reader's pages and a
      book's numbered sections alike, `Inspection::sections`);
   5. view: zoom or text size (smaller, the value as a picker, larger);
-     Fit width for a page or Full width for text; the presentation (the
-     reader's Continuous, or Source, lit while the file's own text is
-     shown), then what is shown says itself (`Inspection::title`: the
-     format's name, a page's lines);
+     Fit width for a page or Full width for text; Continuous scrolling
+     (a document's, a text's), then what is shown says itself
+     (`Inspection::title`: the format's name, a page's lines);
   6. spacer, find, More;
   7. the × that leaves a member (`preview_bar::close_tool`), the same for
      every kind, also for a member that could not be written out, whose
@@ -1129,8 +1131,13 @@ is still to come are in `docs/preview-frame.md`.
   rare for a button in any variant (View as hex) is `Item::menu_only`,
   but where nothing else is shown of a file that can be read (a failure,
   a file without a preview: `preview_toolbar::shows_nothing`), View as
-  hex is a button: the one way left to look. Shown, the bytes keep it,
-  lit, first of their bar: the way back. It is offered only for a
+  hex is a button: the one way left to look. Not for a file too large
+  for a quick preview, which Full preview shows: there the bytes are in
+  More, so neither tool moves once lit. Shown, the bytes keep it, lit,
+  first of their bar: the way back. Every kind's More has it, the
+  reader's and the player's too, and the way back from the bytes brings
+  back the reader or the player (a track kept playing included: what the
+  bytes showed is never the player's picture). It is offered only for a
   file whose bytes are read (`PreviewState::shows_bytes`, asked by the
   bar and by `ui.inspect`'s `hex`, which the palette offers whatever is
   shown): a folder, a link that leads nowhere and a special file have

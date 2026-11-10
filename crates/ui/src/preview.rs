@@ -2494,7 +2494,10 @@ impl Shell {
         // A track's thumbnail stands for its cover until the poster's.
         let thumbnail = self.preview.content.is_none()
             && matches!(result.content, PreviewContent::Image { detail: None, .. });
-        if self.preview.media.session.is_none() || poster || thumbnail {
+        // What another way of looking showed (the bytes, until the track
+        // they were of comes back) is never the player's picture.
+        let looked_otherwise = matches!(self.preview.content, Some(PreviewContent::Inspection(_)));
+        if self.preview.media.session.is_none() || poster || thumbnail || looked_otherwise {
             self.replace_preview_content(Some(result.content), window, cx);
             // Read a page at a time, the page is kept and the next read
             // ahead (`keep_shown_page`).

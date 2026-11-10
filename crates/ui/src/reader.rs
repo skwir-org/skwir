@@ -977,6 +977,16 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
         .opens("find"),
     );
     bar.popups.push(("find", std::rc::Rc::new(find_panel)));
+    // The bytes, a row of More as in every preview that has them; shown,
+    // the bytes' own bar has the way back, lit at its left (`look_tools`).
+    crate::preview_bar::look_tools(
+        &mut bar,
+        crate::preview_bar::Looks {
+            hex: crate::preview_toolbar::hex_available(shell)
+                .then_some(crate::preview_bar::Hex::Row),
+            ..crate::preview_bar::Looks::default()
+        },
+    );
     crate::preview_bar::fullscreen_tool(&mut bar, shell, theme);
     crate::preview_bar::render(
         &bar,
