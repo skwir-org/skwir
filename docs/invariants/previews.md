@@ -338,6 +338,28 @@ A name that says nothing is not a binary file.
   Skwir. Its SVG is decoded with the page like an HTML drawing, within
   `EMBEDDED_IMAGES`. What cannot be drawn, the helper missing included,
   stays code.
+- **A formula is typeset by `skwir-math-worker`** (`skwir_platform::math`,
+  ADR-129), never by a typesetter linked into Skwir, and a page's
+  formulas go to it in one batch: each waits in the page as a drawing to
+  come (`math::Pending::ask`) and is typeset once the page is read and
+  cut to its bound (`Pending::typeset`), a notebook's cells and all. A
+  reader never calls the helper per formula or per part.
+- **A formula is one character of its line** (`Block::DRAWN`), its run
+  holding the drawing (`inspection::Drawing`): the text's ranges stay
+  the text's, and whatever reads a block's words for someone (a copy, a
+  screen reader) reads `Block::said`, where it is its TeX. One that is
+  not drawn (the helper missing, past `math::FORMULAS`, TeX the helper
+  refuses) is what it was written as, as code (`Block::undraw`); one on a
+  line of its own, the code block of its TeX.
+- The view draws a drawing where the text's layout put its box
+  (`TextLayout::inline_boxes`, gpui patch 0060), as a mask in the ink its
+  letters would have (the text's, a link's, the selection's, a ground's),
+  at the text's size: never a picture of fixed pixels or colors.
+- A notebook's math is Jupyter's, taken out of each cell before its
+  Markdown is read (`jupyter::take_math`, by JupyterLab's `removeMath`):
+  Markdown's own `$` rules are not a notebook's. Elsewhere, Markdown's are
+  pulldown-cmark's. HTML's is MathML's TeX annotation, else its
+  `alttext`.
 
 ## Text documents (ADR-030)
 

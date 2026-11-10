@@ -5,8 +5,8 @@
 # own fonts fetched (tools/package/pdfium.sh, fonts.py), then
 # cargo-generate-rpm, from
 # crates/skwir/Cargo.toml's [package.metadata.generate-rpm]: skwir, and
-# skwir-media, skwir-poppler, skwir-djvulibre, skwir-mermaid and
-# skwir-mupdf (its variants).
+# skwir-media, skwir-poppler, skwir-djvulibre, skwir-mermaid, skwir-math
+# and skwir-mupdf (its variants).
 #
 #     tools/package/rpm.sh        # into target/generate-rpm/
 #
@@ -32,6 +32,6 @@ cargo build --locked --profile dist $(sed 's/^/-p /' tools/package/programs)
 tools/package/pdfium.sh "$platform" target/pdfium
 python3 tools/package/fonts.py target/fonts
 cargo generate-rpm -p crates/skwir --profile dist
-for variant in media poppler djvulibre mermaid mupdf; do
+for variant in media poppler djvulibre mermaid math mupdf; do
     cargo generate-rpm -p crates/skwir --profile dist --variant "$variant"
 done

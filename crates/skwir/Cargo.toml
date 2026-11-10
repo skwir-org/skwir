@@ -148,7 +148,7 @@ recommends = "skwir-media, mesa-vulkan-drivers, bubblewrap, udisks2"
 # folders mount through (ADR-077), the FUSE rclone and the phone helper
 # need, rsync for copies over sftp, and what finds servers nearby
 # (ADR-084).
-suggests = "skwir-poppler, skwir-djvulibre, skwir-mermaid, skwir-mupdf, poppler-utils, libreoffice-writer, libreoffice-calc, libreoffice-impress, pandoc, imagemagick, ffmpeg, libimage-exiftool-perl, plocate, sshfs, rclone, gvfs-fuse, gvfs-backends, kio-fuse, rsync, fuse3, avahi-daemon, wsdd"
+suggests = "skwir-poppler, skwir-djvulibre, skwir-mermaid, skwir-math, skwir-mupdf, poppler-utils, libreoffice-writer, libreoffice-calc, libreoffice-impress, pandoc, imagemagick, ffmpeg, libimage-exiftool-perl, plocate, sshfs, rclone, gvfs-fuse, gvfs-backends, kio-fuse, rsync, fuse3, avahi-daemon, wsdd"
 assets = [
     ["target/release/skwir", "usr/bin/", "755"],
     ["target/release/skwir-pdf-worker", "usr/lib/skwir/", "755"],
@@ -218,6 +218,17 @@ assets = [
     ["../../tools/package/notices/skwir-mermaid/THIRD-PARTY-NOTICES", "usr/share/doc/skwir-mermaid/", "644"],
 ]
 
+[package.metadata.deb.variants.math]
+name = "skwir-math"
+extended-description = "Formulas typeset in skwir's Markdown, notebook and HTML previews."
+depends = "$auto, skwir"
+recommends = ""
+suggests = ""
+assets = [
+    ["target/release/skwir-math-worker", "usr/lib/skwir/", "755"],
+    ["../../tools/package/notices/skwir-math/THIRD-PARTY-NOTICES", "usr/share/doc/skwir-math/", "644"],
+]
+
 [package.metadata.deb.variants.mupdf]
 name = "skwir-mupdf"
 extended-description = "skwir's MuPDF engine: PDFs, and books laid out into pages."
@@ -283,6 +294,7 @@ udisks2 = "*"
 skwir-poppler = "*"
 skwir-djvulibre = "*"
 skwir-mermaid = "*"
+skwir-math = "*"
 skwir-mupdf = "*"
 poppler-utils = "*"
 libreoffice-writer = "*"
@@ -358,6 +370,19 @@ assets = [
     { source = "target/release/skwir-mermaid-worker", dest = "/usr/libexec/skwir/skwir-mermaid-worker", mode = "755" },
     { source = "../../LICENSE", dest = "/usr/share/licenses/skwir-mermaid/LICENSE", mode = "644" },
     { source = "../../tools/package/notices/skwir-mermaid/THIRD-PARTY-NOTICES", dest = "/usr/share/licenses/skwir-mermaid/THIRD-PARTY-NOTICES", mode = "644" },
+]
+requires = { skwir = "*" }
+recommends = {}
+suggests = {}
+
+[package.metadata.generate-rpm.variants.math]
+name = "skwir-math"
+license = "Apache-2.0"
+summary = "Formulas typeset in skwir's Markdown, notebook and HTML previews"
+assets = [
+    { source = "target/release/skwir-math-worker", dest = "/usr/libexec/skwir/skwir-math-worker", mode = "755" },
+    { source = "../../LICENSE", dest = "/usr/share/licenses/skwir-math/LICENSE", mode = "644" },
+    { source = "../../tools/package/notices/skwir-math/THIRD-PARTY-NOTICES", dest = "/usr/share/licenses/skwir-math/THIRD-PARTY-NOTICES", mode = "644" },
 ]
 requires = { skwir = "*" }
 recommends = {}

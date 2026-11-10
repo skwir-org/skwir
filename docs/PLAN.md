@@ -925,6 +925,13 @@ Gathered on 2026-10-20 from the notes of this plan and of
 may have covered one: check the source before starting it. Work that
 closes an item removes its line; work that leaves one adds it here.
 
+**Formulas** (ADR-129, 2026-11-10): the helper is in Linux's and Nix's
+packages only; Windows' and macOS's leave it out, as Mermaid's. A formula
+is drawn in one ink (`\color` is not kept), is not found by its TeX, and
+an equation's number stands after it rather than at the line's end.
+KaTeX's HTML shows its MathML typeset beside the spans its stylesheet
+draws. Not checked with a screen reader listening.
+
 **Grouping** (issue #10, 2026-11-10): the reply promised a look at
 grouping by other criteria (kind, date…); nothing is designed yet. Folders
 first stays a field of the sort, which a group would come before
@@ -1836,7 +1843,7 @@ it left is in [What is left](#what-is-left).
   (2026-10-16 and 17); 3D models turned on the GPU, STEP, IGES and Rhino
   (ADR-067, 069); Full preview (ADR-068); pictures read ahead
   (2026-10-19); contents that highlight the part shown and pin beside it
-  (2026-10-20).
+  (2026-10-20); formulas typeset in their lines (ADR-129).
 - **The window:** settings (ADR-010), by subject (ADR-072); Usage
   (ADR-007); huge folders drawn as they stream (2026-09-25); tabs
   (ADR-018); the terminal (ADR-019); keys and key schemes (ADR-024), a

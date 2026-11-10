@@ -214,7 +214,7 @@ pub fn page(
                     }
                     None => beside(href),
                 };
-                document.markdown(&source, cancel, load, None)?;
+                document.cell(&source, cancel, load)?;
             }
             Some("code") => {
                 if !source.trim().is_empty() {
@@ -241,11 +241,27 @@ pub fn page(
                                 .collect::<Vec<_>>()
                                 .join("\n"),
                         )),
+                        // Shown as Jupyter shows it: its HTML, Markdown or
+                        // LaTeX, else its picture, else its text.
                         Some("execute_result" | "display_data") => {
                             let data = output.get("data");
-                            if data.is_some_and(has_picture) {
-                                let key = format!("{OUTPUT}{picture}");
+                            // Every bundle holding a picture is numbered,
+                            // shown or not, as `pictures` numbers them.
+                            let key = data.is_some_and(has_picture).then(|| {
                                 picture += 1;
+                                format!("{OUTPUT}{}", picture - 1)
+                            });
+                            let pictured = key.is_some();
+                            if rich(
+                                &mut document,
+                                data,
+                                &mut read,
+                                cancel,
+                                pictured,
+                                &mut beside,
+                            )? {
+                                None
+                            } else if let Some(key) = key {
                                 if let Some(picture) = data
                                     .and_then(picture_bytes)
                                     .and_then(|bytes| later(key, &bytes))
@@ -254,8 +270,6 @@ pub fn page(
                                     block.set_picture(Some(picture), "");
                                     document.push(block);
                                 }
-                                None
-                            } else if rich(&mut document, data, &mut read, cancel, &mut beside)? {
                                 None
                             } else {
                                 data.map(|d| text(d.get("text/plain")))
@@ -287,7 +301,7 @@ pub fn page(
         }
     }
     Ok(Notebook {
-        page: document.finish(),
+        page: document.finish(cancel),
         cells: cells(notebook).count(),
         language,
         kernel,
@@ -296,13 +310,16 @@ pub fn page(
 }
 
 /// A result shown as Jupyter shows it, read into `document`: its HTML (a
-/// table of data), else its Markdown; whether it showed anything. HTML a
-/// script would draw shows nothing inert, and its plain text stands for it.
+/// table of data), else its Markdown, else its LaTeX (what sympy prints);
+/// whether it showed anything. HTML a script would draw shows nothing
+/// inert, and what is next stands for it. LaTeX is read where its formulas
+/// can be typeset, or where no picture of it (`pictured`) stands beside it.
 fn rich(
     document: &mut Document,
     data: Option<&Value>,
     read: &mut usize,
     cancel: &CancelToken,
+    pictured: bool,
     beside: &mut impl FnMut(&str) -> Option<Picture>,
 ) -> anyhow::Result<bool> {
     let Some(data) = data else {
@@ -316,13 +333,21 @@ fn rich(
             return Ok(true);
         }
     }
-    let Some(markdown) = data.get("text/markdown") else {
-        return Ok(false);
-    };
-    let markdown = text(Some(markdown));
-    spend(read, &markdown, bounds)?;
-    document.markdown(&markdown, cancel, &mut *beside, None)?;
-    Ok(true)
+    if let Some(markdown) = data.get("text/markdown") {
+        let markdown = text(Some(markdown));
+        spend(read, &markdown, bounds)?;
+        document.markdown(&markdown, cancel, &mut *beside, None)?;
+        return Ok(true);
+    }
+    match data.get("text/latex") {
+        Some(latex) if !pictured || document.typesets() => {
+            let latex = text(Some(latex));
+            spend(read, &latex, bounds)?;
+            document.cell(&latex, cancel, &mut *beside)?;
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
 }
 
 /// Whether `key` names a picture the notebook holds.

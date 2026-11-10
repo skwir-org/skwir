@@ -603,13 +603,17 @@ pub enum RunPosition {
     Subscript,
     /// Smaller, on the baseline: capitals set as synthesized small capitals.
     Reduced,
+    /// Each character of the run is a box the line holds, which the caller
+    /// draws where the layout places it (`TextLayout::inline_boxes`): a
+    /// formula, a picture in a sentence. No glyph is drawn for it.
+    Inline(InlineBox),
 }
 
 impl RunPosition {
     /// The run's size relative to the text's.
     pub fn scale(self) -> f32 {
         match self {
-            Self::Baseline => 1.,
+            Self::Baseline | Self::Inline(_) => 1.,
             Self::Superscript | Self::Subscript => 0.7,
             Self::Reduced => 0.8,
         }
@@ -621,8 +625,56 @@ impl RunPosition {
         match self {
             Self::Superscript => 0.35,
             Self::Subscript => -0.15,
-            Self::Baseline | Self::Reduced => 0.,
+            Self::Baseline | Self::Reduced | Self::Inline(_) => 0.,
         }
+    }
+
+    /// The box each character of the run is, if it is one.
+    pub fn inline_box(self) -> Option<InlineBox> {
+        match self {
+            Self::Inline(inline) => Some(inline),
+            _ => None,
+        }
+    }
+}
+
+/// The size of a box a line holds (`RunPosition::Inline`), in ems of the
+/// text's size, so it grows with the text: as wide as `width`, standing
+/// `ascent` above the baseline and reaching `descent` below it. A line keeps
+/// its baseline and grows to hold a box taller than its text. Kept in
+/// thousandths of an em, so that a run holding one compares and hashes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+pub struct InlineBox {
+    width: u32,
+    ascent: i32,
+    descent: i32,
+}
+
+impl InlineBox {
+    /// A box `width` wide, `ascent` above the baseline and `descent` below
+    /// it, in ems; a negative width is none.
+    pub fn new(width: f32, ascent: f32, descent: f32) -> Self {
+        let milli = |ems: f32| (ems * 1000.).round();
+        Self {
+            width: milli(width.max(0.)) as u32,
+            ascent: milli(ascent) as i32,
+            descent: milli(descent) as i32,
+        }
+    }
+
+    /// Its width, in ems.
+    pub fn width(self) -> f32 {
+        self.width as f32 / 1000.
+    }
+
+    /// How far it stands above the baseline, in ems.
+    pub fn ascent(self) -> f32 {
+        self.ascent as f32 / 1000.
+    }
+
+    /// How far it reaches below the baseline, in ems.
+    pub fn descent(self) -> f32 {
+        self.descent as f32 / 1000.
     }
 }
 

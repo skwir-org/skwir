@@ -1,0 +1,78 @@
+# ADR-129: Formulas are typeset by a helper and drawn in their lines
+
+Status: accepted 2026-11-10 with the user. Built on Linux; the helper is
+in Linux's and Nix's packages, not yet in Windows' or macOS's (as
+Mermaid's, ADR-074, ADR-075).
+Amends ADR-041 (a package of its own, `skwir-math`), ADR-064 (gpui patch
+0060) and ADR-124 (`withMath`).
+
+## Context
+
+Notebooks, READMEs and books write formulas in TeX (`$…$`, `$$…$$`, a
+MathML element's TeX annotation); previews showed the TeX, or MathML's
+markup as loose letters. Drawing them takes a typesetter with math fonts,
+and a line of text that can hold a drawing: the reading view's text is
+gpui's, whose lines hold only glyphs.
+
+Measured in a scratch program on this machine, 2026-11-10:
+
+| Typesetter | What | Size added (stripped) | Per formula |
+| --- | --- | --- | --- |
+| RaTeX 0.1.15 (MIT, Rust) | KaTeX's TeX and layout, mhchem, KaTeX's fonts (OFL, 0.5 MB) | 3.9 MB parser and layout, 4.9 MB with SVG out | about 1 ms, 6 ms with `\ce` |
+| latex-rust 3.0 | STIX Two Math, math mode only | not measured | 4 stars, Rust 1.99 |
+| Typst through MiTeX | a whole typesetter | far larger | not measured |
+| LaTeX to MathML (pulldown-latex, math-core) | MathML, which still needs drawing | | |
+
+RaTeX refuses broken TeX and a macro that expands for ever with a reason,
+and bounds its depth and its output. ADR-128 measured that each MiB of
+code costs about 0.73 MiB idle, used or not.
+
+## Decision
+
+1. **A helper of its own typesets** (`skwir-math-worker`, pure Rust:
+   RaTeX, its fonts embedded), optional as Mermaid's is: Linux's packages
+   ship it in `skwir-math`, Nix's under `withMath` (on). It reads a page's
+   formulas as JSON on its standard input and answers each with an SVG of
+   outlines and its box in ems (width, height above the baseline, depth
+   below, and the padding the SVG reaches past it), or why it cannot;
+   run isolated as every helper reading a file's content is.
+2. **One batch a page.** A page's formulas wait in it as drawings to come
+   (`math::Pending`) and are typeset together once it is read, after the
+   blocks past its bound are cut: one call for a notebook, its cells and
+   all. At most `math::FORMULAS` a page; each refused, past the bound, or
+   without the helper, stays as it is written, as code (a formula on a
+   line of its own, the code block of its TeX).
+3. **A formula is a character of its line.** It stands in its block's
+   text as the object replacement character, its run holding the drawing
+   (`inspection::Drawing`); it reads as its TeX where the text is copied
+   or read aloud (`Block::said`), and moves with the text it sits in. A
+   formula set apart is a centered block of its own.
+4. **Lines hold boxes** (gpui patch 0060): a run in `RunPosition::Inline`
+   is boxes the layout places, wraps and selects as characters, paints no
+   glyph for, and reports (`TextLayout::inline_boxes`); a text holding one
+   taller than its line grows its lines. The view paints each drawing
+   there as a mask in the text's ink: the text's color, a link's, the
+   selection's, a ground's, at the text's size, at any scale. Formulas
+   are set at 1.21 em of their text, as KaTeX sets them.
+5. **Where formulas are:** Markdown's `$…$` and `$$…$$` (pulldown-cmark's
+   rules: a price is not one); a notebook's cells by Jupyter's rules
+   (JupyterLab's `removeMath`: `$`, `$$`, `\\(`, `\\[`, environments, a
+   `$` in code no delimiter), taken out before its Markdown is read, and
+   its results' LaTeX; HTML's MathML that carries its TeX (pandoc's,
+   LaTeXML's, KaTeX's), else its `alttext`.
+
+## Consequences
+
+- Formulas read as Jupyter, GitHub and KaTeX show them, with no browser,
+  no network and no font installed; the main program carries no
+  typesetter.
+- Without the helper every formula is its TeX, as before, set as code.
+- A formula is drawn in one ink: `\color` is not kept.
+- A formula is not searched by its TeX: Find reads the text drawn.
+- An equation's number stands after it, not at the line's end.
+- KaTeX's HTML shows its MathML typeset beside the spans its own
+  stylesheet would have drawn, which the reader cannot.
+- In a debug build, rust-embed reads the fonts from the crate's folder,
+  which the helper, isolated, cannot see: it embeds them there too
+  (`debug-embed`); without them RaTeX had fallen back to the system's
+  faces, at their sizes.

@@ -1,5 +1,6 @@
 skwir-poppler-worker
 skwir-media-worker
 skwir-mermaid-worker
+skwir-math-worker
 skwir-mupdf-worker
 skwir-djvulibre-worker

@@ -1,8 +1,8 @@
 use crate::{
     ActiveTooltip, AnyView, App, Bounds, DispatchPhase, Element, ElementId, GlobalElementId,
     HighlightStyle, Hitbox, HitboxBehavior, InspectorElementId, IntoElement, LayoutId,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Size, TextOverflow,
-    TextRun, TextStyle, TooltipId, TruncateFrom, WhiteSpace, Window, WrappedLine,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Size, TextAlign,
+    TextOverflow, TextRun, TextStyle, TooltipId, TruncateFrom, WhiteSpace, Window, WrappedLine,
     WrappedLineLayout, register_tooltip_mouse_handlers, set_tooltip_on_window,
 };
 use anyhow::Context as _;
@@ -390,6 +390,7 @@ impl IntoElement for SharedString {
 /// and just pass text directly.
 pub struct StyledText {
     text: SharedString,
+    said: Option<SharedString>,
     runs: Option<Vec<TextRun>>,
     delayed_highlights: Option<Vec<(Range<usize>, HighlightStyle)>>,
     delayed_font_family_overrides: Option<Vec<(Range<usize>, SharedString)>>,
@@ -401,11 +402,26 @@ impl StyledText {
     pub fn new(text: impl Into<SharedString>) -> Self {
         StyledText {
             text: text.into(),
+            said: None,
             runs: None,
             delayed_highlights: None,
             delayed_font_family_overrides: None,
             layout: TextLayout::default(),
         }
+    }
+
+    /// What the text says to assistive technology, where it differs from
+    /// the characters drawn: an inline box (`RunPosition::Inline`) stands
+    /// for words its character does not say.
+    pub fn with_said(mut self, said: impl Into<SharedString>) -> Self {
+        self.said = Some(said.into());
+        self
+    }
+
+    /// What the text says to assistive technology: its own words, or those
+    /// it was given (`with_said`).
+    fn said(&self) -> SharedString {
+        self.said.clone().unwrap_or_else(|| self.text.clone())
     }
 
     /// Get the layout for this element. This can be used to map indices to pixels and vice versa.
@@ -624,6 +640,8 @@ struct TextLayoutInner {
     len: usize,
     lines: SmallVec<[WrappedLine; 1]>,
     line_height: Pixels,
+    /// How the lines are aligned as they are painted, for their boxes.
+    text_align: TextAlign,
     wrap_width: Option<Pixels>,
     truncate_width: Option<Pixels>,
     size: Option<Size<Pixels>>,
@@ -757,6 +775,7 @@ impl TextLayout {
                         lines: Default::default(),
                         len: 0,
                         line_height,
+                        text_align: text_style.text_align,
                         wrap_width,
                         truncate_width,
                         size: Some(Size::default()),
@@ -764,6 +783,14 @@ impl TextLayout {
                     });
                     return Size::default();
                 };
+
+                // Boxes taller than the line (a formula in a sentence) make
+                // every line of the text as tall as they need, so that no
+                // line runs into the next.
+                let line_height = lines
+                    .iter()
+                    .filter_map(|line| line.unwrapped_layout.inline_height())
+                    .fold(line_height, |height, needed| height.max(needed.ceil()));
 
                 let mut size: Size<Pixels> = Size::default();
                 for line in &lines {
@@ -776,6 +803,7 @@ impl TextLayout {
                     lines,
                     len,
                     line_height,
+                    text_align: text_style.text_align,
                     wrap_width,
                     truncate_width,
                     size: Some(size),
@@ -922,6 +950,38 @@ impl TextLayout {
         }
 
         None
+    }
+
+    /// Where each box the text holds (`RunPosition::Inline`) was painted:
+    /// the byte index of its character, and its bounds. The caller draws
+    /// what each holds there.
+    pub fn inline_boxes(&self) -> Vec<(usize, Bounds<Pixels>)> {
+        let element_state = self.0.borrow();
+        let Some(element_state) = element_state.as_ref() else {
+            return Vec::new();
+        };
+        let Some(bounds) = element_state.bounds else {
+            return Vec::new();
+        };
+        let line_height = element_state.line_height;
+        let mut line_origin = bounds.origin;
+        let mut line_start_ix = 0;
+        let mut boxes = Vec::new();
+        for line in &element_state.lines {
+            boxes.extend(
+                line.inline_boxes(
+                    line_origin,
+                    line_height,
+                    element_state.text_align,
+                    Some(bounds),
+                )
+                .into_iter()
+                .map(|(index, bounds)| (line_start_ix + index, bounds)),
+            );
+            line_origin.y += line.size(line_height).height;
+            line_start_ix += line.len() + 1;
+        }
+        boxes
     }
 
     /// Retrieve the layout for the line containing the given byte index.
@@ -1107,7 +1167,7 @@ impl Element for InteractiveText {
     }
 
     fn write_a11y_info(&self, node: &mut accesskit::Node) {
-        node.set_value(self.text.text.to_string());
+        node.set_value(self.text.said().to_string());
     }
 
     fn request_layout(

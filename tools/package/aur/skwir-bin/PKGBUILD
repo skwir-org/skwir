@@ -48,8 +48,8 @@ optdepends=(
   'avahi: servers nearby, a NAS or a Mac'
   'wsdd: Windows PCs nearby'
 )
-provides=("skwir=$pkgver" "skwir-mermaid=$pkgver" "skwir-mupdf=$pkgver")
-conflicts=('skwir' 'skwir-mermaid' 'skwir-mupdf')
+provides=("skwir=$pkgver" "skwir-mermaid=$pkgver" "skwir-math=$pkgver" "skwir-mupdf=$pkgver")
+conflicts=('skwir' 'skwir-mermaid' 'skwir-math' 'skwir-mupdf')
 # Its programs and libraries as the release built and checked them.
 options=('!strip' '!debug')
 source=("skwir-$pkgver-linux-x86_64.tar.gz::$_repo/releases/download/v$pkgver/skwir-$pkgver-linux-x86_64.tar.gz")

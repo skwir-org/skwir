@@ -166,6 +166,24 @@ def carried():
     return out
 
 
+def katex_fonts():
+    """KaTeX's fonts, which ratex-katex-fonts carries into the math helper
+    (ADR-129): under the SIL Open Font License, not the crate's own MIT, as
+    the notice beside them says; both are the crate's version's."""
+    run = subprocess.run(
+        ["cargo", "metadata", "--format-version", "1", "--locked", "--offline"],
+        cwd=ROOT, capture_output=True, text=True, check=True,
+    )
+    crate = next(p for p in json.loads(run.stdout)["packages"] if p["name"] == "ratex-katex-fonts")
+    fonts = pathlib.Path(crate["manifest_path"]).parent / "fonts"
+    rule = "-" * 72
+    return [rule, "SIL Open Font License 1.1 (OFL-1.1)", "",
+            *textwrap.wrap(f"Used by: KaTeX's fonts (KaTeX_*.ttf), carried by "
+                           f"ratex-katex-fonts {crate['version']}", 72, break_on_hyphens=False), "",
+            (fonts / "FONT_NOTICE.txt").read_text().rstrip("\n"), "",
+            (fonts / "OFL.txt").read_text().rstrip("\n"), ""]
+
+
 def notices(package, programs, target):
     merged = {}
     for program in programs:
@@ -192,6 +210,8 @@ def notices(package, programs, target):
         out += [rule, f"{name} ({ident})", "", "Used by: " + ", ".join(used), "", text, ""]
     if "skwir" in programs:
         out += carried()
+    if "skwir-math-worker" in programs:
+        out += katex_fonts()
     return "\n".join(out) + "\n"
 
 

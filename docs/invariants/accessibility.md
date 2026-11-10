@@ -98,6 +98,9 @@ like `AGENTS.md`.
   place around it says nothing more.
 - A label's words are its value (`aria_value`), as gpui's text gives
   them; a name set on a label is not said.
+- A text holding drawings (a formula, `inspection::Drawing`) says their
+  words in their place (`StyledText::with_said`, from `Block::said`): a
+  formula is its TeX, never the character it is drawn over.
 - **A terminal is read as text**: each row of the screen a text run, the
   blank cells between its runs as spaces, the cursor as the caret, built
   in the panel's `a11y_synthetic_children` from the screen it draws

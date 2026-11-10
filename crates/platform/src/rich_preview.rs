@@ -25,7 +25,7 @@ use ego_tree::{NodeId, NodeRef, iter::Edge};
 use scraper::{ElementRef, Html, Node, node::Element};
 use skwir_core::{
     CancelToken,
-    inspection::{Block, BlockKind, Picture, Run, Script},
+    inspection::{Align, Block, BlockKind, Picture, Run, Script},
     thumbs::Image,
 };
 use std::{
@@ -148,7 +148,7 @@ pub fn html(
             check(cancel)?;
         }
         if walk.blocks.len() + walk.notes.len() > most {
-            return Ok(walk.page(most));
+            return Ok(walk.page(most, cancel));
         }
         match edge {
             Edge::Open(node) => {
@@ -228,7 +228,7 @@ pub fn html(
             }
         }
     }
-    Ok(walk.page(most))
+    Ok(walk.page(most, cancel))
 }
 
 /// The page's tree: XHTML read as XML when it is well-formed.
@@ -443,6 +443,8 @@ const INDENT: f32 = 8.;
 
 #[derive(Default)]
 struct Walk {
+    /// The page's formulas, typeset once it is read (`page`).
+    formulas: crate::math::Pending,
     blocks: Vec<Block>,
     /// Footnotes, moved to the end of the page.
     notes: Vec<Block>,
@@ -625,7 +627,37 @@ impl Walk {
             code: context.code,
             link: context.link.clone(),
             found: false,
+            drawing: None,
         });
+    }
+
+    /// A formula drawn in its line, in the run's styles there (a link, its
+    /// emphasis); `display`, on a line of its own, centered, unless it is
+    /// in a table's row, which is one line.
+    fn formula(
+        &mut self,
+        context: &Context,
+        drawing: Arc<skwir_core::inspection::Drawing>,
+        display: bool,
+    ) {
+        let run = Run {
+            bold: context.style.bold,
+            italic: context.style.italic,
+            link: context.link.clone(),
+            ..Run::default()
+        };
+        self.begin(context);
+        if !display || self.row.is_some() {
+            self.current.push_drawing(drawing, &run);
+            return;
+        }
+        if self.filled() {
+            self.finish();
+            self.begin(context);
+        }
+        self.current.align = Align::Center;
+        self.current.push_drawing(drawing, &run);
+        self.finish();
     }
 
     /// Text the reader adds around the page's own (a ruby reading's
@@ -653,11 +685,23 @@ impl Walk {
             }
             return true;
         }
-        if e.name() == "math"
-            && let Some(alt) = e.attr("alttext")
-        {
-            self.text(context, alt);
-            return true;
+        if e.name() == "math" {
+            // MathML that carries its TeX (pandoc's, LaTeXML's, KaTeX's)
+            // is typeset from it, in its line or on one of its own;
+            // otherwise it reads as what the page says it reads as.
+            let display = e.attr("display") == Some("block");
+            let tex = tex_of(node);
+            if !context.silent
+                && let Some(tex) = &tex
+                && let Some(drawing) = self.formulas.ask(tex, display, written(tex, display))
+            {
+                self.formula(context, drawing, display);
+                return true;
+            }
+            if let Some(alt) = e.attr("alttext").map(str::to_owned).or(tex) {
+                self.text(context, &alt);
+                return true;
+            }
         }
         match e.name() {
             "br" => {
@@ -756,7 +800,7 @@ impl Walk {
     }
 
     /// The page read, its first `most` blocks.
-    fn page(mut self, most: usize) -> Page {
+    fn page(mut self, most: usize, cancel: &CancelToken) -> Page {
         if self.filled() {
             self.finish();
         }
@@ -777,10 +821,43 @@ impl Walk {
         sizes(&mut self.blocks, &self.sizes);
         let truncated = self.blocks.len() > most;
         self.blocks.truncate(most);
+        std::mem::take(&mut self.formulas).typeset(&mut self.blocks, cancel);
         Page {
             blocks: self.blocks,
             truncated,
         }
+    }
+}
+
+/// The TeX a MathML element carries beside its markup
+/// (`<annotation encoding="application/x-tex">`), if it does.
+fn tex_of(math: NodeRef<'_, Node>) -> Option<String> {
+    let annotation = math.descendants().find(|node| {
+        node.value().as_element().is_some_and(|e| {
+            e.name() == "annotation"
+                && e.attr("encoding").is_some_and(|encoding| {
+                    matches!(
+                        encoding.to_ascii_lowercase().as_str(),
+                        "application/x-tex" | "tex" | "latex"
+                    )
+                })
+        })
+    })?;
+    let tex: String = annotation
+        .descendants()
+        .filter_map(|node| node.value().as_text().map(|text| &**text))
+        .collect();
+    let tex = tex.trim();
+    (!tex.is_empty()).then(|| tex.to_owned())
+}
+
+/// A formula as its TeX is written in Markdown: what a formula drawn is
+/// copied as, and shown as where it cannot be.
+fn written(tex: &str, display: bool) -> String {
+    if display {
+        format!("$${tex}$$")
+    } else {
+        format!("${tex}$")
     }
 }
 
@@ -1372,6 +1449,73 @@ mod tests {
             (decoded.width, decoded.height),
             (1600, 400),
             "shown as named"
+        );
+    }
+
+    /// MathML as pandoc writes it: its markup, and its TeX beside it.
+    const MATHML: &str = r#"<p>Mass is <math alttext="m"><semantics><mi>m</mi>
+        <annotation encoding="application/x-tex">m</annotation></semantics></math>, and
+        <math display="block"><semantics><mrow><mi>E</mi><mo>=</mo><mi>m</mi><msup><mi>c</mi><mn>2</mn></msup></mrow>
+        <annotation encoding="application/x-tex">E = mc^2</annotation></semantics></math>
+        follows.</p><p>Plain <math><mi>x</mi></math> MathML.</p>"#;
+
+    fn use_math_worker(worker: &std::path::Path) {
+        // SAFETY: no other thread of this test process reads the environment;
+        // nextest runs each test in a process of its own.
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::set_var(crate::math::WORKER.variable, worker);
+        }
+    }
+
+    #[test]
+    fn mathml_with_its_tex_is_typeset_in_its_line_or_apart() {
+        let Some(worker) = std::env::current_exe()
+            .ok()
+            .and_then(|exe| Some(exe.parent()?.parent()?.join("skwir-math-worker")))
+            .filter(|path| path.is_file())
+        else {
+            eprintln!("skipped: skwir-math-worker is not built");
+            return;
+        };
+        use_math_worker(&worker);
+        let blocks = read(MATHML, Markup::Html);
+        let said: Vec<_> = blocks
+            .iter()
+            .map(|block| block.said(0..block.text.len()).into_owned())
+            .collect();
+        assert_eq!(
+            said,
+            [
+                "Mass is $m$, and",
+                "$$E = mc^2$$",
+                "follows.",
+                "Plain x MathML."
+            ]
+        );
+        assert_eq!(blocks[1].align, Align::Center);
+        assert!(blocks[..2].iter().all(|block| {
+            block
+                .runs
+                .iter()
+                .any(|run| run.drawing.as_ref().is_some_and(|d| !d.svg.is_empty()))
+        }));
+    }
+
+    #[test]
+    fn without_its_helper_mathml_reads_as_it_says() {
+        use_math_worker(std::path::Path::new("/nonexistent/skwir-math-worker"));
+        let blocks = read(MATHML, Markup::Html);
+        assert!(
+            blocks
+                .iter()
+                .all(|block| block.runs.iter().all(|run| run.drawing.is_none()))
+        );
+        let text = texts(&blocks).join(" ");
+        assert!(text.contains("Mass is m, and"), "{text}");
+        assert!(
+            text.contains("E = mc^2"),
+            "its TeX where it has no alttext: {text}"
         );
     }
 

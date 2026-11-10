@@ -1,0 +1,29 @@
+[package]
+name = "skwir-math-worker"
+description = "skwir helper: formulas written in TeX typeset as SVG, in a process of its own"
+version.workspace = true
+publish.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+# RaTeX: KaTeX's TeX and its layout in Rust, with KaTeX's fonts carried
+# inside (`embed-fonts`) and each glyph drawn as its outline
+# (`standalone`), so the SVG needs no font where it is drawn.
+ratex-parser = "0.1.15"
+ratex-layout = "0.1.15"
+ratex-types = "0.1.15"
+ratex-svg = { version = "0.1.15", features = ["standalone", "embed-fonts"] }
+serde.workspace = true
+serde_json.workspace = true
+# RaTeX's fonts embedded in a debug build too: rust-embed's own reads them
+# from the source folder there, which the helper, isolated, cannot read
+# (it fell back to the system's faces, at their sizes).
+rust-embed = { version = "8.13", features = ["debug-embed"] }
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

@@ -14383,3 +14383,82 @@ and words break inside (`Nîme s`), as a Markdown table's do.
 
 **Not checked:** `just release-check`, by the user's standing preference;
 Windows and macOS not compiled (nothing here is one system's).
+
+## 2026-11-10: Formulas typeset in their lines (ADR-129)
+
+Notebooks, READMEs and books showed their formulas as TeX, or MathML as
+loose letters. By the user's choices: a helper of its own, optional as
+Mermaid's (it adds weight), and a gpui patch so a formula sits in its
+sentence rather than as a picture between paragraphs.
+
+- **The helper**, `skwir-math-worker`: RaTeX 0.1.15 (KaTeX's TeX, its
+  layout, mhchem, KaTeX's fonts embedded, glyphs as outlines), a page's
+  formulas as JSON on its standard input, each answered with an SVG and
+  its box in ems, or why not; each refused alone, one that panics too;
+  five seconds a batch. Linux's packages ship it in `skwir-math` (deb,
+  rpm, AUR, its notices with KaTeX's fonts' OFL), Nix's under
+  `withMath`; Windows' and macOS's leave it out, as Mermaid's.
+- **One batch a page** (`math::Pending`, shared by the Markdown and HTML
+  readers): formulas wait as drawings to come and are typeset once the
+  page is read and cut to its bound, a notebook in one call. What is not
+  drawn is what it was written as, as code (`Block::undraw`, which moves
+  the runs and a row's cells after it); on a line of its own, a `latex`
+  code block.
+- **A formula is a character of its line** (`Block::DRAWN`, its run's
+  `inspection::Drawing`), read as its TeX where the text is copied or
+  read aloud (`Block::said`, `StyledText::with_said`). Set at 1.21 em of
+  its text, as KaTeX sets them.
+- **gpui 0060, inline boxes**: `RunPosition::Inline(InlineBox)`, each
+  character of the run a box shaped and painted by nobody, wrapped,
+  selected and hit as one character; `TextLayout::inline_boxes` gives
+  where each was painted (alignment kept); a text holding taller boxes
+  grows its lines. The view paints each SVG there as a mask
+  (`Window::paint_svg`), in the text's, a link's or the selection's ink,
+  sharp at any zoom.
+- **Where**: Markdown's `$…$` and `$$…$$` (pulldown-cmark's math; a
+  price stays a price); a notebook's cells by Jupyter's rules
+  (`jupyter::take_math`, after JupyterLab's `removeMath`: `\\(…\\)`,
+  `\\[…\\]`, environments, no `$` of code), taken out before the
+  Markdown is read and put back as its events, and the LaTeX a cell
+  returns (sympy's), read where it can be typeset or no picture stands
+  for it; MathML carrying its TeX annotation in HTML, books and e-mail,
+  else its `alttext`.
+- **Along the way**: a notebook's results are shown in Jupyter's order
+  (HTML, Markdown, LaTeX, then a picture), and every bundle holding a
+  picture is numbered, shown or not, so the plot after an HTML result is
+  the one decoded. A paragraph's half after what cut it (an image, a
+  formula set apart) starts at its words, not at a space.
+- **Found on the way**: in a debug build rust-embed reads the fonts from
+  the crate's folder, which the isolated helper cannot see; RaTeX then
+  fell back to the system's faces, at their sizes (a small integral, a
+  radical apart from its bar): the helper embeds them there too
+  (`debug-embed`). And `ui.preview_submenu`'s keys (bf961246) had no
+  titles: `keymap_titles` failed; they have them.
+
+**Measured** in a scratch program, release, this machine: RaTeX about
+1 ms a formula (parse, layout, SVG, raster), 6 ms with `\ce`; 3.9 MB
+stripped for the parser and layout, 4.9 MB with the SVG writer, beside
+0.5 MB of fonts.
+
+**Checked:** rustfmt (`cargo fmt --all --check`); clippy `-D warnings` on
+`skwir-core`, `-platform`, `-ui`, `-plugin-markdown`, `-math-worker`; the
+tests of those, `skwir`, `-plugin-books`, `-email`, `-documents` and the
+Mermaid helper (2170 passed), gpui's patched modules (`just gpui-check
+gpui`, 134 passed, the two new); `just deny`; `just notices`;
+`just release-tools-check`. New tests: the helper's batch (a refusal and
+an endless macro alone) and its probe; Markdown's formulas with and
+without the helper, a row's cells after a formula written out; Jupyter's
+rules (prices as Jupyter reads them, braces, paragraphs, code spans and
+fences, private characters); a notebook's math and sympy's result, both
+ways; the plot after an HTML result; MathML with and without the helper;
+gpui's box shaping and placing. A debug window on Xvfb: a Markdown file
+(inline, set apart, in a table, in a quote in its color, a broken one as
+its TeX, prices), a notebook (`\\(…\\)`, an equation numbered, sympy's
+x³/3, a `$` in code, a sum set apart and the words after it), at 100 %
+and 175 %; a selection across two formulas drawn in its ink, copied as
+`We minimise $\lVert Ax - b \rVert^2$, whose gradient is $2A^T(Ax-b)$:`.
+
+**Not checked:** a screen reader listening; Windows and macOS (gpui's
+change is in its shared layout, compiled here for Linux only); `just
+release-check`, by the user's standing preference.
+

@@ -1936,7 +1936,7 @@ impl Shell {
                                 .data
                                 .blocks
                                 .get(i)
-                                .map(|b| b.text.clone())
+                                .map(|b| b.said(0..b.text.len()).into_owned())
                                 .or_else(|| {
                                     listed(&display.data)
                                         .get(i.saturating_sub(display.data.blocks.len()))
@@ -1944,13 +1944,14 @@ impl Shell {
                                 })
                         })
                         .unwrap_or_else(|| {
-                            let blocks = display.data.blocks.iter().map(|b| b.text.as_str());
+                            // A drawing is copied as what it says.
+                            let blocks = display
+                                .data
+                                .blocks
+                                .iter()
+                                .map(|b| b.said(0..b.text.len()).into_owned());
                             let rows = listed(&display.data).iter().map(|r| r.cells.join("\t"));
-                            blocks
-                                .map(str::to_owned)
-                                .chain(rows)
-                                .collect::<Vec<_>>()
-                                .join("\n")
+                            blocks.chain(rows).collect::<Vec<_>>().join("\n")
                         });
                     cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
                     return;

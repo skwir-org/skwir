@@ -58,6 +58,7 @@ pub mod keyfile;
 mod line_channel;
 pub mod links;
 pub mod magick;
+pub mod math;
 pub mod media;
 pub mod mime;
 pub mod model;

@@ -384,6 +384,94 @@ pub struct Block {
     pub note: Option<u32>,
 }
 impl Block {
+    /// The character a drawing stands in for in a block's text (`Drawing`):
+    /// the object replacement character, which nothing else writes.
+    pub const DRAWN: char = '\u{fffc}';
+
+    /// Append `drawing` to the text, in a run of its own carrying `run`'s
+    /// styles (its link, its emphasis).
+    pub fn push_drawing(&mut self, drawing: std::sync::Arc<Drawing>, run: &Run) {
+        let start = self.text.len();
+        self.text.push(Self::DRAWN);
+        self.runs.push(Run {
+            range: start..self.text.len(),
+            drawing: Some(drawing),
+            ..run.clone()
+        });
+    }
+
+    /// Write `text` in place of the drawing run `run` holds, as code: a
+    /// formula that cannot be drawn shows the TeX it is written in. What
+    /// follows it in the text (runs, a row's cells) moves along.
+    pub fn undraw(&mut self, run: usize, text: &str) {
+        let Some(at) = self.runs.get(run).map(|run| run.range.clone()) else {
+            return;
+        };
+        if self.text.get(at.clone()).is_none() {
+            return;
+        }
+        self.text.replace_range(at.clone(), text);
+        let moved = |offset: usize| {
+            if offset >= at.end {
+                offset - at.len() + text.len()
+            } else {
+                offset
+            }
+        };
+        for (index, each) in self.runs.iter_mut().enumerate() {
+            if index == run {
+                each.range = at.start..at.start + text.len();
+                each.drawing = None;
+                each.code = true;
+            } else {
+                each.range = moved(each.range.start)..moved(each.range.end);
+            }
+        }
+        if let BlockKind::TableRow { cells, .. } = &mut self.kind {
+            for cell in cells {
+                *cell = moved(cell.start)..moved(cell.end);
+            }
+        }
+    }
+
+    /// The text of `range` as it reads: each drawing as what it says
+    /// (`Drawing::text`), the rest as it is.
+    pub fn said(&self, range: std::ops::Range<usize>) -> std::borrow::Cow<'_, str> {
+        let Some(text) = self.text.get(range.clone()) else {
+            return std::borrow::Cow::Borrowed("");
+        };
+        let mut drawn: Vec<(std::ops::Range<usize>, &Drawing)> = self
+            .runs
+            .iter()
+            .filter_map(|run| {
+                let at = run.range.start.max(range.start)..run.range.end.min(range.end);
+                Some((at, run.drawing.as_deref()?)).filter(|(at, _)| !at.is_empty())
+            })
+            .collect();
+        if drawn.is_empty() {
+            return std::borrow::Cow::Borrowed(text);
+        }
+        drawn.sort_by_key(|(at, _)| at.start);
+        let mut said = String::with_capacity(text.len());
+        let mut from = range.start;
+        for (at, drawing) in drawn {
+            let Some(drawn) = self.text.get(at.clone()).filter(|_| at.start >= from) else {
+                continue;
+            };
+            said.push_str(&self.text[from..at.start]);
+            for letter in drawn.chars() {
+                if letter == Self::DRAWN {
+                    said.push_str(&drawing.text);
+                } else {
+                    said.push(letter);
+                }
+            }
+            from = at.end;
+        }
+        said.push_str(&self.text[from..range.end]);
+        std::borrow::Cow::Owned(said)
+    }
+
     /// Show `picture`, described by `alt` (an image's `alt`, a drawing's
     /// title). A description stands in for its picture, as a browser draws
     /// it: never beside a picture shown, in the picture's box if it cannot be
@@ -423,6 +511,29 @@ impl Picture {
         }
     }
 }
+/// A drawing set in a line of text, in place of one character of it
+/// (`Block::DRAWN`), whose run holds it: a formula. It is drawn in the
+/// text's ink (its shapes are a mask, whatever colors they name), at the
+/// text's size: every length is in ems of the text around it.
+#[derive(Clone, Debug)]
+pub struct Drawing {
+    /// An SVG of outlines, nothing it could fetch.
+    pub svg: std::sync::Arc<[u8]>,
+    /// What tells this SVG from another (a hash of it): what a view keeps
+    /// its raster by.
+    pub id: u64,
+    /// The box the line holds for it: as wide as `width`, standing `ascent`
+    /// above the baseline and reaching `descent` below it.
+    pub width: f32,
+    pub ascent: f32,
+    pub descent: f32,
+    /// How far the SVG reaches past each side of the box: what overhangs it
+    /// (an italic letter, a radical's hook) is drawn, not laid out.
+    pub margin: f32,
+    /// What the drawing says, in its place where the text is copied, read
+    /// aloud or searched: a formula's TeX, as written.
+    pub text: String,
+}
 /// Where a run sits in its line.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Script {
@@ -457,6 +568,9 @@ pub struct Run {
     /// a log), where a click selects: it is drawn and followed only while
     /// Ctrl (Cmd) is held over it (`skwir_platform::links::link_block`).
     pub found: bool,
+    /// Each character of the run is this drawing (`Block::DRAWN`), drawn
+    /// where the line holds it.
+    pub drawing: Option<std::sync::Arc<Drawing>>,
 }
 #[derive(Clone, Debug, Default)]
 pub struct Row {

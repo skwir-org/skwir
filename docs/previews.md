@@ -209,6 +209,14 @@ The player, in the panel or pinned at its foot:
   and hidden text. It is inert: no scripts, fonts or remote content.
 - Fenced `mermaid` blocks are drawn as diagrams when
   `skwir-mermaid-worker` is installed, and stay code without it.
+- Formulas are typeset when `skwir-math-worker` is installed (the
+  `skwir-math` package), in the line they are written in or centered on
+  one of their own: Markdown's `$…$` and `$$…$$`, a notebook's math as
+  Jupyter finds it (`\\(…\\)`, `\\[…\\]` and `\begin{…}` environments
+  too) and the LaTeX its cells return, and MathML that carries its TeX in
+  HTML files, books and e-mail. They are drawn in the text's color and
+  size, and copy as their TeX. Without the helper, or where the TeX
+  cannot be typeset, the formula is its TeX, as code.
 - Jupyter notebooks (`.ipynb`, format 4): Markdown cells, code in the
   kernel's language, and what each cell printed, returned, raised or
   plotted. A result Jupyter shows as HTML is read like an HTML file, so a
@@ -560,6 +568,7 @@ external program or network service.
 | RTF (or every text document with Pandoc chosen) | | Pandoc, bubblewrap; Word and OpenDocument read as text need nothing |
 | SQLite databases | | `libsqlite3`, which Skwir links |
 | Mermaid diagrams | `skwir-mermaid-worker` | Nothing (Rust, built by default; separate because its layout engine is about 16 MB) |
+| Formulas (TeX, MathML's TeX) | `skwir-math-worker` | Nothing (RaTeX and KaTeX's fonts, Rust, built by default; separate because the typesetter and its fonts are about 5 MB) |
 | 3D meshes without a stored picture | `skwir-model-worker` | Nothing (Rust, built by default); without it, an installed thumbnailer (f3d) draws them, if any |
 | HEIC, AVIF, JPEG XL, raw photos | | A thumbnailer for them (libheif's `heif-thumbnailer`, for example), else ImageMagick (`magick`, or ImageMagick 6's `convert`) and bubblewrap; with neither they show no picture |
 

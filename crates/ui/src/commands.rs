@@ -801,6 +801,29 @@ const KEY_FORMS: &[(&str, &str, &str)] = &[
         "A page down the list",
     ),
     ("ui.review_choose", r#"{"delta":-1}"#, "Previous choice"),
+    // A preview's More, its submenu beside a row (Open With).
+    ("ui.preview_submenu", r#"{"here":true}"#, "Open the submenu"),
+    ("ui.preview_submenu", r#"{"step":1}"#, "Next in the submenu"),
+    (
+        "ui.preview_submenu",
+        r#"{"step":-1}"#,
+        "Previous in the submenu",
+    ),
+    (
+        "ui.preview_submenu",
+        r#"{"end":false}"#,
+        "First in the submenu",
+    ),
+    (
+        "ui.preview_submenu",
+        r#"{"end":true}"#,
+        "Last in the submenu",
+    ),
+    (
+        "ui.preview_submenu",
+        r#"{"back":true}"#,
+        "Back from the submenu",
+    ),
     // The timeline's bars.
     ("ui.timeline_cursor", r#"{"by":-1}"#, "Previous bar"),
     ("ui.timeline_cursor", r#"{"by":1}"#, "Next bar"),

@@ -1,0 +1,584 @@
+0060 inline-boxes: A line holds boxes its caller draws where the layout says (RunPosition::Inline, TextLayout::inline_boxes)
+
+diff --git a/crates/gpui/src/elements/text.rs b/crates/gpui/src/elements/text.rs
+index ed64384..6304b5d 100644
+--- a/crates/gpui/src/elements/text.rs
++++ b/crates/gpui/src/elements/text.rs
+@@ -1,8 +1,8 @@
+ use crate::{
+     ActiveTooltip, AnyView, App, Bounds, DispatchPhase, Element, ElementId, GlobalElementId,
+     HighlightStyle, Hitbox, HitboxBehavior, InspectorElementId, IntoElement, LayoutId,
+-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Size, TextOverflow,
+-    TextRun, TextStyle, TooltipId, TruncateFrom, WhiteSpace, Window, WrappedLine,
++    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Size, TextAlign,
++    TextOverflow, TextRun, TextStyle, TooltipId, TruncateFrom, WhiteSpace, Window, WrappedLine,
+     WrappedLineLayout, register_tooltip_mouse_handlers, set_tooltip_on_window,
+ };
+ use anyhow::Context as _;
+@@ -390,6 +390,7 @@ impl IntoElement for SharedString {
+ /// and just pass text directly.
+ pub struct StyledText {
+     text: SharedString,
++    said: Option<SharedString>,
+     runs: Option<Vec<TextRun>>,
+     delayed_highlights: Option<Vec<(Range<usize>, HighlightStyle)>>,
+     delayed_font_family_overrides: Option<Vec<(Range<usize>, SharedString)>>,
+@@ -401,6 +402,7 @@ impl StyledText {
+     pub fn new(text: impl Into<SharedString>) -> Self {
+         StyledText {
+             text: text.into(),
++            said: None,
+             runs: None,
+             delayed_highlights: None,
+             delayed_font_family_overrides: None,
+@@ -408,6 +410,20 @@ impl StyledText {
+         }
+     }
+ 
++    /// What the text says to assistive technology, where it differs from
++    /// the characters drawn: an inline box (`RunPosition::Inline`) stands
++    /// for words its character does not say.
++    pub fn with_said(mut self, said: impl Into<SharedString>) -> Self {
++        self.said = Some(said.into());
++        self
++    }
++
++    /// What the text says to assistive technology: its own words, or those
++    /// it was given (`with_said`).
++    fn said(&self) -> SharedString {
++        self.said.clone().unwrap_or_else(|| self.text.clone())
++    }
++
+     /// Get the layout for this element. This can be used to map indices to pixels and vice versa.
+     pub fn layout(&self) -> &TextLayout {
+         &self.layout
+@@ -624,6 +640,8 @@ struct TextLayoutInner {
+     len: usize,
+     lines: SmallVec<[WrappedLine; 1]>,
+     line_height: Pixels,
++    /// How the lines are aligned as they are painted, for their boxes.
++    text_align: TextAlign,
+     wrap_width: Option<Pixels>,
+     truncate_width: Option<Pixels>,
+     size: Option<Size<Pixels>>,
+@@ -757,6 +775,7 @@ impl TextLayout {
+                         lines: Default::default(),
+                         len: 0,
+                         line_height,
++                        text_align: text_style.text_align,
+                         wrap_width,
+                         truncate_width,
+                         size: Some(Size::default()),
+@@ -765,6 +784,14 @@ impl TextLayout {
+                     return Size::default();
+                 };
+ 
++                // Boxes taller than the line (a formula in a sentence) make
++                // every line of the text as tall as they need, so that no
++                // line runs into the next.
++                let line_height = lines
++                    .iter()
++                    .filter_map(|line| line.unwrapped_layout.inline_height())
++                    .fold(line_height, |height, needed| height.max(needed.ceil()));
++
+                 let mut size: Size<Pixels> = Size::default();
+                 for line in &lines {
+                     let line_size = line.size(line_height);
+@@ -776,6 +803,7 @@ impl TextLayout {
+                     lines,
+                     len,
+                     line_height,
++                    text_align: text_style.text_align,
+                     wrap_width,
+                     truncate_width,
+                     size: Some(size),
+@@ -924,6 +952,38 @@ impl TextLayout {
+         None
+     }
+ 
++    /// Where each box the text holds (`RunPosition::Inline`) was painted:
++    /// the byte index of its character, and its bounds. The caller draws
++    /// what each holds there.
++    pub fn inline_boxes(&self) -> Vec<(usize, Bounds<Pixels>)> {
++        let element_state = self.0.borrow();
++        let Some(element_state) = element_state.as_ref() else {
++            return Vec::new();
++        };
++        let Some(bounds) = element_state.bounds else {
++            return Vec::new();
++        };
++        let line_height = element_state.line_height;
++        let mut line_origin = bounds.origin;
++        let mut line_start_ix = 0;
++        let mut boxes = Vec::new();
++        for line in &element_state.lines {
++            boxes.extend(
++                line.inline_boxes(
++                    line_origin,
++                    line_height,
++                    element_state.text_align,
++                    Some(bounds),
++                )
++                .into_iter()
++                .map(|(index, bounds)| (line_start_ix + index, bounds)),
++            );
++            line_origin.y += line.size(line_height).height;
++            line_start_ix += line.len() + 1;
++        }
++        boxes
++    }
++
+     /// Retrieve the layout for the line containing the given byte index.
+     pub fn line_layout_for_index(&self, index: usize) -> Option<Arc<WrappedLineLayout>> {
+         let element_state = self.0.borrow();
+@@ -1107,7 +1167,7 @@ impl Element for InteractiveText {
+     }
+ 
+     fn write_a11y_info(&self, node: &mut accesskit::Node) {
+-        node.set_value(self.text.text.to_string());
++        node.set_value(self.text.said().to_string());
+     }
+ 
+     fn request_layout(
+diff --git a/crates/gpui/src/style.rs b/crates/gpui/src/style.rs
+index 56f4c78..930b4d7 100644
+--- a/crates/gpui/src/style.rs
++++ b/crates/gpui/src/style.rs
+@@ -603,13 +603,17 @@ pub enum RunPosition {
+     Subscript,
+     /// Smaller, on the baseline: capitals set as synthesized small capitals.
+     Reduced,
++    /// Each character of the run is a box the line holds, which the caller
++    /// draws where the layout places it (`TextLayout::inline_boxes`): a
++    /// formula, a picture in a sentence. No glyph is drawn for it.
++    Inline(InlineBox),
+ }
+ 
+ impl RunPosition {
+     /// The run's size relative to the text's.
+     pub fn scale(self) -> f32 {
+         match self {
+-            Self::Baseline => 1.,
++            Self::Baseline | Self::Inline(_) => 1.,
+             Self::Superscript | Self::Subscript => 0.7,
+             Self::Reduced => 0.8,
+         }
+@@ -621,9 +625,57 @@ impl RunPosition {
+         match self {
+             Self::Superscript => 0.35,
+             Self::Subscript => -0.15,
+-            Self::Baseline | Self::Reduced => 0.,
++            Self::Baseline | Self::Reduced | Self::Inline(_) => 0.,
+         }
+     }
++
++    /// The box each character of the run is, if it is one.
++    pub fn inline_box(self) -> Option<InlineBox> {
++        match self {
++            Self::Inline(inline) => Some(inline),
++            _ => None,
++        }
++    }
++}
++
++/// The size of a box a line holds (`RunPosition::Inline`), in ems of the
++/// text's size, so it grows with the text: as wide as `width`, standing
++/// `ascent` above the baseline and reaching `descent` below it. A line keeps
++/// its baseline and grows to hold a box taller than its text. Kept in
++/// thousandths of an em, so that a run holding one compares and hashes.
++#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
++pub struct InlineBox {
++    width: u32,
++    ascent: i32,
++    descent: i32,
++}
++
++impl InlineBox {
++    /// A box `width` wide, `ascent` above the baseline and `descent` below
++    /// it, in ems; a negative width is none.
++    pub fn new(width: f32, ascent: f32, descent: f32) -> Self {
++        let milli = |ems: f32| (ems * 1000.).round();
++        Self {
++            width: milli(width.max(0.)) as u32,
++            ascent: milli(ascent) as i32,
++            descent: milli(descent) as i32,
++        }
++    }
++
++    /// Its width, in ems.
++    pub fn width(self) -> f32 {
++        self.width as f32 / 1000.
++    }
++
++    /// How far it stands above the baseline, in ems.
++    pub fn ascent(self) -> f32 {
++        self.ascent as f32 / 1000.
++    }
++
++    /// How far it reaches below the baseline, in ems.
++    pub fn descent(self) -> f32 {
++        self.descent as f32 / 1000.
++    }
+ }
+ 
+ /// A highlight style to apply, similar to a `TextStyle` except
+diff --git a/crates/gpui/src/text_system/line.rs b/crates/gpui/src/text_system/line.rs
+index 23fc17e..d486897 100644
+--- a/crates/gpui/src/text_system/line.rs
++++ b/crates/gpui/src/text_system/line.rs
+@@ -488,6 +488,30 @@ impl WrappedLine {
+         Ok(())
+     }
+ 
++    /// Where each box the line holds (`RunPosition::Inline`) is drawn when
++    /// the line is painted at `origin` as `paint` paints it: the index of
++    /// its character in the line, and its bounds.
++    pub fn inline_boxes(
++        &self,
++        origin: Point<Pixels>,
++        line_height: Pixels,
++        align: TextAlign,
++        bounds: Option<Bounds<Pixels>>,
++    ) -> Vec<(usize, Bounds<Pixels>)> {
++        let align_width = match bounds {
++            Some(bounds) => Some(bounds.size.width),
++            None => self.layout.wrap_width,
++        };
++        inline_boxes(
++            origin,
++            &self.layout.unwrapped_layout,
++            line_height,
++            align,
++            align_width,
++            &self.wrap_boundaries,
++        )
++    }
++
+     /// Paint the background of line of text to the window.
+     pub fn paint_background(
+         &self,
+@@ -519,6 +543,77 @@ impl WrappedLine {
+     }
+ }
+ 
++/// Where `paint_line` puts each box of `layout`: its glyph's origin, found
++/// as `paint_line` finds it (each wrap starts a line, aligned), then the box
++/// standing on the line's baseline.
++fn inline_boxes(
++    origin: Point<Pixels>,
++    layout: &LineLayout,
++    line_height: Pixels,
++    align: TextAlign,
++    align_width: Option<Pixels>,
++    wrap_boundaries: &[WrapBoundary],
++) -> Vec<(usize, Bounds<Pixels>)> {
++    let mut boxes = Vec::new();
++    if layout
++        .runs
++        .iter()
++        .all(|run| run.position.inline_box().is_none())
++    {
++        return boxes;
++    }
++    let padding_top = (line_height - layout.ascent - layout.descent) / 2.;
++    let baseline = padding_top + layout.ascent;
++    let mut wraps = wrap_boundaries.iter().peekable();
++    let mut glyph_origin = point(
++        aligned_origin_x(
++            origin,
++            align_width.unwrap_or(layout.width),
++            px(0.0),
++            &align,
++            layout,
++            wraps.peek(),
++        ),
++        origin.y,
++    );
++    let mut prev_glyph_position = Point::default();
++    for (run_ix, run) in layout.runs.iter().enumerate() {
++        for (glyph_ix, glyph) in run.glyphs.iter().enumerate() {
++            glyph_origin.x += glyph.position.x - prev_glyph_position.x;
++            if wraps.peek() == Some(&&WrapBoundary { run_ix, glyph_ix }) {
++                wraps.next();
++                glyph_origin.x = aligned_origin_x(
++                    origin,
++                    align_width.unwrap_or(layout.width),
++                    glyph.position.x,
++                    &align,
++                    layout,
++                    wraps.peek(),
++                );
++                glyph_origin.y += line_height;
++            }
++            prev_glyph_position = glyph.position;
++            if let Some(inline) = run.position.inline_box() {
++                let font_size = layout.font_size;
++                boxes.push((
++                    glyph.index,
++                    Bounds {
++                        origin: point(
++                            glyph_origin.x,
++                            glyph_origin.y + baseline - font_size * inline.ascent(),
++                        ),
++                        size: size(
++                            font_size * inline.width(),
++                            font_size * (inline.ascent() + inline.descent()),
++                        ),
++                    },
++                ));
++            }
++        }
++    }
++    boxes
++}
++
+ fn paint_line(
+     origin: Point<Pixels>,
+     layout: &LineLayout,
+@@ -733,8 +828,12 @@ fn paint_line(
+                     size: max_glyph_size,
+                 };
+ 
++                // A box's character draws nothing: the caller draws what
++                // the box holds (`WrappedLine::inline_boxes`).
+                 let content_mask = window.content_mask();
+-                if max_glyph_bounds.intersects(&content_mask.bounds) {
++                if run.position.inline_box().is_none()
++                    && max_glyph_bounds.intersects(&content_mask.bounds)
++                {
+                     let vertical_offset = point(px(0.0), glyph.position.y);
+                     if glyph.is_emoji {
+                         window.paint_emoji(
+@@ -1058,6 +1157,79 @@ mod tests {
+         }
+     }
+ 
++    #[test]
++    fn inline_boxes_are_where_their_glyphs_are_painted() {
++        // "ab", a box 2 em wide standing 1 em up and 0.25 down, then "c",
++        // at 10 px; wrapped before the box.
++        let inline = crate::InlineBox::new(2., 1., 0.25);
++        let glyph = |x: f32, index| ShapedGlyph {
++            id: GlyphId(1),
++            position: point(px(x), px(0.)),
++            index,
++            is_emoji: false,
++        };
++        let run = |position, glyphs| ShapedRun {
++            font_id: FontId(0),
++            position,
++            glyphs,
++        };
++        let layout = LineLayout {
++            font_size: px(10.),
++            width: px(50.),
++            ascent: px(8.),
++            descent: px(2.),
++            runs: vec![
++                run(
++                    crate::RunPosition::Baseline,
++                    vec![glyph(0., 0), glyph(10., 1)],
++                ),
++                run(crate::RunPosition::Inline(inline), vec![glyph(20., 2)]),
++                run(crate::RunPosition::Baseline, vec![glyph(40., 5)]),
++            ],
++            len: 6,
++        };
++        let wraps = [WrapBoundary {
++            run_ix: 1,
++            glyph_ix: 0,
++        }];
++        let origin = point(px(100.), px(50.));
++        let left = inline_boxes(
++            origin,
++            &layout,
++            px(20.),
++            TextAlign::Left,
++            Some(px(60.)),
++            &wraps,
++        );
++        // The second line: its baseline 5 px of padding and the 8 px ascent
++        // down, the box 10 px above it.
++        assert_eq!(
++            left,
++            vec![(
++                2,
++                Bounds {
++                    origin: point(px(100.), px(50. + 20. + 3.)),
++                    size: size(px(20.), px(12.5)),
++                }
++            )]
++        );
++        // Centered, the second line (the box and "c", 30 px) starts 15 px in.
++        let centered = inline_boxes(
++            origin,
++            &layout,
++            px(20.),
++            TextAlign::Center,
++            Some(px(60.)),
++            &wraps,
++        );
++        assert_eq!(centered[0].1.origin.x, px(115.));
++        let plain = LineLayout {
++            runs: vec![run(crate::RunPosition::Baseline, vec![glyph(0., 0)])],
++            ..LineLayout::default()
++        };
++        assert!(inline_boxes(origin, &plain, px(20.), TextAlign::Left, None, &[]).is_empty());
++    }
++
+     #[test]
+     fn test_aligned_line_paint_bounds() {
+         let line = make_shaped_line("abcd", &[(0, 0.), (1, 10.), (2, 20.), (3, 30.)], 40., &[]);
+diff --git a/crates/gpui/src/text_system/line_layout.rs b/crates/gpui/src/text_system/line_layout.rs
+index 1a5fa5d..1687a7d 100644
+--- a/crates/gpui/src/text_system/line_layout.rs
++++ b/crates/gpui/src/text_system/line_layout.rs
+@@ -74,6 +74,15 @@ pub struct ShapedGlyph {
+ }
+ 
+ impl LineLayout {
++    /// How tall a line must be to hold the boxes this one holds
++    /// (`RunPosition::Inline`) with its text, if it holds any.
++    pub fn inline_height(&self) -> Option<Pixels> {
++        self.runs
++            .iter()
++            .any(|run| run.position.inline_box().is_some())
++            .then(|| self.ascent + self.descent.abs())
++    }
++
+     /// The index for the character at the given x coordinate
+     pub fn index_for_x(&self, x: Pixels) -> Option<usize> {
+         if x >= self.width {
+@@ -781,10 +790,35 @@ fn shape(
+         ..LineLayout::default()
+     };
+     let mut start = 0;
++    let mut measured = false;
+     for stretch in runs.chunk_by(|a, b| a.position == b.position) {
+         let position = stretch[0].position;
+         let len: usize = stretch.iter().map(|run| run.len).sum();
+         let end = (start + len).min(text.len());
++        // Each character of an inline run is a box: one glyph the platform
++        // never sees, which a word may break before, as wide as the box.
++        if let Some(inline) = position.inline_box() {
++            let glyphs = text[start..end]
++                .char_indices()
++                .map(|(offset, _)| {
++                    let glyph = ShapedGlyph {
++                        id: GlyphId(0),
++                        position: point(layout.width, px(0.)),
++                        index: start + offset,
++                        is_emoji: false,
++                    };
++                    layout.width += font_size * inline.width();
++                    glyph
++                })
++                .collect();
++            layout.runs.push(ShapedRun {
++                font_id: stretch[0].font_id,
++                glyphs,
++                position,
++            });
++            start = end;
++            continue;
++        }
+         let scale = position.scale();
+         let part = platform.layout_line(&text[start..end], font_size * scale, stretch);
+         let x = layout.width;
+@@ -800,14 +834,40 @@ fn shape(
+         // The text's metrics at full size, whichever stretch is largest; a
+         // platform may give the descent as a negative distance.
+         let (ascent, descent) = (part.ascent / scale, part.descent / scale);
+-        if start == 0 || ascent > layout.ascent {
++        if !measured || ascent > layout.ascent {
+             layout.ascent = ascent;
+         }
+-        if start == 0 || descent.abs() > layout.descent.abs() {
++        if !measured || descent.abs() > layout.descent.abs() {
+             layout.descent = descent;
+         }
++        measured = true;
+         start = end;
+     }
++    // A line of boxes alone stands on the baseline its font gives it.
++    if !measured && let Some(run) = runs.first() {
++        let space = FontRun {
++            len: 1,
++            font_id: run.font_id,
++            position: RunPosition::Baseline,
++        };
++        let part = platform.layout_line(" ", font_size, &[space]);
++        (layout.ascent, layout.descent) = (part.ascent, part.descent);
++    }
++    // The boxes reach as high and as low as they stand: the text holding
++    // them makes its lines that tall (`LineLayout::height`).
++    for inline in layout
++        .runs
++        .iter()
++        .filter_map(|run| run.position.inline_box())
++    {
++        layout.ascent = layout.ascent.max(font_size * inline.ascent());
++        let descent = font_size * inline.descent();
++        if layout.descent < px(0.) {
++            layout.descent = layout.descent.min(-descent);
++        } else {
++            layout.descent = layout.descent.max(descent);
++        }
++    }
+     layout
+ }
+ 
+@@ -1071,4 +1131,53 @@ mod run_position_tests {
+         assert_eq!(run.font_size(px(20.)), px(14.));
+         assert_eq!(run.rise(px(20.)), px(7.));
+     }
++
++    #[test]
++    fn each_character_of_an_inline_run_is_a_box_of_its_width() {
++        let platform = NoopTextSystem::new();
++        let plain = shape(&platform, "ab", px(20.), &[run(2, RunPosition::Baseline)]);
++        let em = plain.width / 2.;
++        assert_eq!(plain.inline_height(), None);
++        // Two boxes 2 em wide, 1.5 em up and 0.5 em down, between "a" and
++        // "b": one glyph each, which the platform never shapes.
++        let tall = RunPosition::Inline(crate::InlineBox::new(2., 1.5, 0.5));
++        let text = "a\u{fffc}\u{fffc}b";
++        let line = shape(
++            &platform,
++            text,
++            px(20.),
++            &[
++                run(1, RunPosition::Baseline),
++                run(6, tall),
++                run(1, RunPosition::Baseline),
++            ],
++        );
++        let glyphs: Vec<_> = line
++            .runs
++            .iter()
++            .flat_map(|run| run.glyphs.iter().map(move |g| (g.index, run.position)))
++            .collect();
++        assert_eq!(
++            glyphs,
++            [
++                (0, RunPosition::Baseline),
++                (1, tall),
++                (4, tall),
++                (7, RunPosition::Baseline)
++            ]
++        );
++        assert!((line.x_for_index(4) - (em + px(40.))).abs() < px(0.01));
++        assert!((line.x_for_index(7) - (em + px(80.))).abs() < px(0.01));
++        assert!((line.width - (em * 2. + px(80.))).abs() < px(0.01));
++        // The line reaches as high and as low as its boxes (this platform
++        // gives its descent as a negative distance).
++        assert_eq!(line.ascent, plain.ascent.max(px(30.)));
++        assert_eq!(line.descent, -(plain.descent.abs().max(px(10.))));
++        assert_eq!(line.inline_height(), Some(line.ascent + line.descent.abs()));
++        // A box alone stands on its font's baseline.
++        let small = RunPosition::Inline(crate::InlineBox::new(1., 0.2, 0.1));
++        let alone = shape(&platform, "\u{fffc}", px(20.), &[run(3, small)]);
++        assert_eq!((alone.ascent, alone.descent), (plain.ascent, plain.descent));
++        assert_eq!(alone.width, px(20.));
++    }
+ }

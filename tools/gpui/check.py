@@ -58,6 +58,9 @@ RUNS = [
         # A rounded mask on device pixels (0058), its corners only where a
         # primitive reaches them (0059).
         "window::tests::a_rounded_mask", "scene::tests",
+        # Where a line's boxes are drawn (0060; their shaping is
+        # text_system::line_layout's).
+        "text_system::line::tests::inline_boxes",
     ]),
     # All of them: the atlas (an upload to a removed texture), the context,
     # the renderer and the text system (a variable face's weights, 0045).

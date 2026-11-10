@@ -185,6 +185,7 @@ environment.systemPackages = [
     withDjvulibre = true;  # DjVuLibre's DjVu reader (the built-in one stays)
     withArchive = true;    # open and extract archives (libarchive)
     withMermaid = true;    # Mermaid diagrams
+    withMath = true;       # formulas typeset (RaTeX)
     withMedia = true;      # audio and video player (GStreamer)
     gstPlugins = ps: [ ps.gst-plugins-base ps.gst-plugins-good ];  # its formats
   })

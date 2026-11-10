@@ -8,14 +8,16 @@
 //! handed to the shared reading-mode HTML reader rather than dropped. Its
 //! images go through the same document-local loader, which names each
 //! picture for the view to decode when it shows it.
-use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, LinkType, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{
+    CodeBlockKind, CowStr, Event, HeadingLevel, LinkType, Options, Parser, Tag, TagEnd,
+};
 use skwir_core::{
     CancelToken,
-    inspection::{Block, BlockKind, Picture, Run},
+    inspection::{Align, Block, BlockKind, Picture, Run},
 };
 use skwir_platform::{
     inspection::{check, limits, limits::Bounds},
-    rich_preview,
+    math, rich_preview,
 };
 
 /// Where a note's Obsidian links (`[[Note]]`, `[[Note#Heading|label]]`)
@@ -217,6 +219,53 @@ fn inline_event(inline: &mut Inline, event: &Event, wiki: Option<&mut Wiki>) -> 
     true
 }
 
+/// `event` with the math Jupyter took out put back (`jupyter::take_math`):
+/// a placeholder in text is the formula Markdown's math would have given,
+/// one in code or HTML is what was written there.
+fn placed<'a>(event: Event<'a>, taken: &[crate::jupyter::Taken]) -> Vec<Event<'a>> {
+    use crate::jupyter::{self, Taken};
+    let restored = |text: &str| CowStr::from(jupyter::restore(text, taken));
+    match event {
+        Event::Text(text) if text.contains(jupyter::MARK) => jupyter::split(&text)
+            .into_iter()
+            .map(|part| match part.map_err(|number| taken.get(number)) {
+                Ok(text) => Event::Text(CowStr::from(text.to_owned())),
+                Err(Some(Taken::Formula { tex, display, .. })) if *display => {
+                    Event::DisplayMath(CowStr::from(tex.clone()))
+                }
+                Err(Some(Taken::Formula { tex, .. })) => {
+                    Event::InlineMath(CowStr::from(tex.clone()))
+                }
+                Err(Some(Taken::Written(written))) => Event::Text(CowStr::from(written.clone())),
+                Err(None) => Event::Text(CowStr::from("")),
+            })
+            .collect(),
+        Event::Code(text) if text.contains(jupyter::MARK) => vec![Event::Code(restored(&text))],
+        Event::Html(text) if text.contains(jupyter::MARK) => vec![Event::Html(restored(&text))],
+        Event::InlineHtml(text) if text.contains(jupyter::MARK) => {
+            vec![Event::InlineHtml(restored(&text))]
+        }
+        other => vec![other],
+    }
+}
+
+/// A formula in a sentence: a drawing to come in its run's styles, or its
+/// TeX as code.
+fn inline_formula(
+    current: &mut Block,
+    tex: &str,
+    inline: &mut Inline,
+    formulas: &mut math::Pending,
+) {
+    if let Some(drawing) = formulas.ask(tex, false, written(tex.trim(), false)) {
+        current.push_drawing(drawing, &inline.run(0..0));
+    } else {
+        inline.code += 1;
+        push(current, &written(tex.trim(), false), inline);
+        inline.code -= 1;
+    }
+}
+
 /// Heading link targets, named the way GitHub names them, since that is
 /// where READMEs' `[see](#the-plan)` links were written against: lowercase,
 /// a space becomes a hyphen, and everything but letters, digits, `-` and
@@ -318,7 +367,7 @@ pub fn parse(
 ) -> anyhow::Result<rich_preview::Page> {
     let mut document = Document::new(bounds);
     document.markdown(source, cancel, load, wiki)?;
-    Ok(document.finish())
+    Ok(document.finish(cancel))
 }
 
 /// A page read in parts, each a document of its own: a notebook's cells,
@@ -330,8 +379,19 @@ pub struct Document {
     blocks: Vec<Block>,
     anchors: Anchors,
     diagrams: usize,
+    formulas: math::Pending,
     bounds: Bounds,
     truncated: bool,
+}
+
+/// A formula as it is written in Markdown: what it is copied as, and shown
+/// as where it is not drawn.
+fn written(tex: &str, display: bool) -> String {
+    if display {
+        format!("$${tex}$$")
+    } else {
+        format!("${tex}$")
+    }
 }
 
 impl Document {
@@ -340,6 +400,7 @@ impl Document {
             blocks: Vec::new(),
             anchors: Anchors::default(),
             diagrams: 0,
+            formulas: math::Pending::default(),
             bounds,
             truncated: false,
         }
@@ -347,6 +408,11 @@ impl Document {
 
     pub fn bounds(&self) -> Bounds {
         self.bounds
+    }
+
+    /// Whether its formulas can be typeset: the helper is installed.
+    pub fn typesets(&mut self) -> bool {
+        self.formulas.typesets()
     }
 
     /// Whether the page holds all it may: what comes after is left out.
@@ -362,7 +428,20 @@ impl Document {
         load: impl FnMut(&str) -> Option<Picture>,
         wiki: Option<&mut Wiki>,
     ) -> anyhow::Result<()> {
-        read(self, source, cancel, load, wiki)
+        read(self, source, cancel, load, wiki, None)
+    }
+
+    /// A notebook's Markdown cell, its pictures named by `load`: its math
+    /// is what Jupyter takes out of it before reading its Markdown
+    /// (`jupyter::take_math`), not Markdown's `$…$`.
+    pub fn cell(
+        &mut self,
+        source: &str,
+        cancel: &CancelToken,
+        load: impl FnMut(&str) -> Option<Picture>,
+    ) -> anyhow::Result<()> {
+        let (text, taken) = crate::jupyter::take_math(source);
+        read(self, &text, cancel, load, None, Some(&taken))
     }
 
     /// HTML, read by the shared reading-mode reader, its pictures named by
@@ -395,11 +474,12 @@ impl Document {
         }
     }
 
-    pub fn finish(self) -> rich_preview::Page {
-        rich_preview::Page {
-            truncated: self.truncated || self.blocks.len() > self.bounds.blocks(),
-            blocks: cut(self.blocks, self.bounds),
-        }
+    /// The page read, its formulas typeset.
+    pub fn finish(self, cancel: &CancelToken) -> rich_preview::Page {
+        let truncated = self.truncated || self.blocks.len() > self.bounds.blocks();
+        let mut blocks = cut(self.blocks, self.bounds);
+        self.formulas.typeset(&mut blocks, cancel);
+        rich_preview::Page { blocks, truncated }
     }
 }
 
@@ -410,11 +490,13 @@ fn read(
     cancel: &CancelToken,
     mut load: impl FnMut(&str) -> Option<Picture>,
     mut wiki: Option<&mut Wiki>,
+    taken: Option<&[crate::jupyter::Taken]>,
 ) -> anyhow::Result<()> {
     let Document {
         blocks,
         anchors,
         diagrams,
+        formulas,
         bounds,
         truncated,
     } = document;
@@ -428,6 +510,14 @@ fn read(
         | Options::ENABLE_YAML_STYLE_METADATA_BLOCKS
         | Options::ENABLE_PLUSES_DELIMITED_METADATA_BLOCKS
         | Options::ENABLE_WIKILINKS;
+    // Markdown's math, unless Jupyter's was taken out before: its
+    // placeholders are formulas again here (`placed`).
+    let events: Box<dyn Iterator<Item = Event<'_>>> = match taken {
+        None => Box::new(Parser::new_ext(source, options | Options::ENABLE_MATH)),
+        Some(taken) => {
+            Box::new(Parser::new_ext(source, options).flat_map(move |event| placed(event, taken)))
+        }
+    };
     let mut current = Block::default();
     let mut inline = Inline::default();
     let mut quote_depth = 0u32;
@@ -444,7 +534,7 @@ fn read(
     let mut cell_start = 0usize;
     let mut html = String::new();
 
-    for event in Parser::new_ext(source, options) {
+    for event in events {
         check(cancel)?;
         if blocks.len() >= bounds.blocks() {
             *truncated = true;
@@ -504,6 +594,11 @@ fn read(
                 }
                 Event::SoftBreak => push(&mut current, " ", &inline),
                 Event::HardBreak => push(&mut current, "\n", &inline),
+                // A formula in a cell stands in its line, whichever way it
+                // was written.
+                Event::InlineMath(tex) | Event::DisplayMath(tex) => {
+                    inline_formula(&mut current, &tex, &mut inline, formulas);
+                }
                 _ => {}
             }
             continue;
@@ -517,7 +612,11 @@ fn read(
             match &event {
                 Event::Start(Tag::Image { .. }) => images += 1,
                 Event::End(TagEnd::Image) => images -= 1,
-                Event::Text(text) | Event::Code(text) | Event::InlineHtml(text) => {
+                Event::Text(text)
+                | Event::Code(text)
+                | Event::InlineHtml(text)
+                | Event::InlineMath(text)
+                | Event::DisplayMath(text) => {
                     alt.push_str(text);
                 }
                 Event::SoftBreak | Event::HardBreak => alt.push(' '),
@@ -654,12 +753,19 @@ fn read(
                     begin(&mut current, quote_depth, &lists, marker.as_deref());
                 }
             }
+            // The half of a paragraph after what cut it (an image, a
+            // formula set apart) starts at its words, not at the space
+            // before them; code keeps its indent.
+            Event::Text(text) if current.text.is_empty() && !current.code => {
+                push(&mut current, text.trim_start(), &inline);
+            }
             Event::Text(text) => push(&mut current, text.as_ref(), &inline),
             Event::Code(text) => {
                 inline.code += 1;
                 push(&mut current, text.as_ref(), &inline);
                 inline.code -= 1;
             }
+            Event::SoftBreak if current.text.is_empty() => {}
             Event::SoftBreak => push(&mut current, " ", &inline),
             Event::HardBreak => push(&mut current, "\n", &inline),
             Event::Rule => {
@@ -670,6 +776,24 @@ fn read(
                     list_depth: lists.len() as u32,
                     ..Block::default()
                 });
+            }
+            Event::InlineMath(tex) => inline_formula(&mut current, &tex, &mut inline, formulas),
+            // A formula set apart is a block of its own, centered, so the
+            // paragraph around it is cut in two, as an image cuts it; both
+            // halves stay in the quote or list item they were written in.
+            Event::DisplayMath(tex) => {
+                flush(blocks, &mut current, &mut marker);
+                begin(&mut current, quote_depth, &lists, marker.as_deref());
+                if let Some(drawing) = formulas.ask(&tex, true, written(tex.trim(), true)) {
+                    current.align = Align::Center;
+                    current.push_drawing(drawing, &Run::default());
+                } else {
+                    current.code = true;
+                    current.language = Some("latex".into());
+                    tex.trim().clone_into(&mut current.text);
+                }
+                flush(blocks, &mut current, &mut marker);
+                begin(&mut current, quote_depth, &lists, marker.as_deref());
             }
             Event::TaskListMarker(checked) => {
                 push(&mut current, if checked { "☑ " } else { "☐ " }, &inline);
@@ -729,34 +853,118 @@ mod tests {
         );
     }
 
-    /// Point `SKWIR_MERMAID_WORKER` at `worker`. Tests run in processes of
-    /// their own under nextest, so the variable reaches no other test.
+    /// Point `SKWIR_MERMAID_WORKER` at `worker`.
     fn use_worker(worker: &std::path::Path) {
+        use_helper(&skwir_platform::diagram::WORKER, worker);
+    }
+
+    /// Point `helper`'s variable at `worker`. Tests run in processes of
+    /// their own under nextest, so the variable reaches no other test.
+    fn use_helper(helper: &skwir_platform::process::Worker, worker: &std::path::Path) {
         // SAFETY: no other thread of this test process reads the environment.
         #[allow(unsafe_code)]
         unsafe {
-            std::env::set_var("SKWIR_MERMAID_WORKER", worker);
+            std::env::set_var(helper.variable, worker);
         }
     }
 
-    /// The helper built into the target directory this test runs from
-    /// (the test binary sits in its `deps`). Without it the test says so
-    /// and passes, unless `SKWIR_REQUIRE_WORKERS` is set.
-    fn with_mermaid_worker() -> bool {
+    /// `helper` built into the target directory this test runs from (the
+    /// test binary sits in its `deps`), its variable pointed at it. Without
+    /// it the test says so and passes, unless `SKWIR_REQUIRE_WORKERS` is
+    /// set.
+    fn with_built(helper: &skwir_platform::process::Worker) -> bool {
         let built = std::env::current_exe()
             .ok()
-            .and_then(|exe| Some(exe.parent()?.parent()?.join("skwir-mermaid-worker")))
+            .and_then(|exe| Some(exe.parent()?.parent()?.join(helper.executable)))
             .filter(|path| path.is_file());
         let Some(worker) = built else {
             assert!(
                 std::env::var_os("SKWIR_REQUIRE_WORKERS").is_none(),
-                "skwir-mermaid-worker is not built"
+                "{} is not built",
+                helper.executable
             );
-            eprintln!("skipped: skwir-mermaid-worker is not built");
+            eprintln!("skipped: {} is not built", helper.executable);
             return false;
         };
-        use_worker(&worker);
+        use_helper(helper, &worker);
         true
+    }
+
+    fn with_mermaid_worker() -> bool {
+        with_built(&skwir_platform::diagram::WORKER)
+    }
+
+    /// A paragraph with a formula drawn and one that cannot be, one set
+    /// apart, and a row of a table holding both kinds.
+    const FORMULAS: &str = "Einstein: $E = mc^2$, and *so* $\\foo{x}$.\n\n$$\n\\sum_{i=1}^n x_i\n$$\n\n| a | b |\n|---|---|\n| $\\foo{x}$ | $x^2$ |\n";
+
+    fn drawings(block: &Block) -> Vec<&skwir_core::inspection::Drawing> {
+        block
+            .runs
+            .iter()
+            .filter_map(|run| run.drawing.as_deref())
+            .collect()
+    }
+
+    #[test]
+    fn formulas_stand_in_their_lines_and_a_broken_one_is_its_tex() {
+        if !with_built(&skwir_platform::math::WORKER) {
+            return;
+        }
+        let blocks = parse(FORMULAS);
+        let sentence = &blocks[0];
+        assert_eq!(
+            sentence.text,
+            format!("Einstein: {}, and so $\\foo{{x}}$.", Block::DRAWN)
+        );
+        assert_eq!(
+            sentence.said(0..sentence.text.len()),
+            "Einstein: $E = mc^2$, and so $\\foo{x}$.",
+            "a drawing reads as its TeX"
+        );
+        let drawn = drawings(sentence);
+        assert_eq!(drawn.len(), 1);
+        assert!(drawn[0].svg.starts_with(b"<svg"));
+        assert!(drawn[0].width > 2. && drawn[0].ascent > 0.5 && drawn[0].margin > 0.);
+        assert!(
+            sentence
+                .runs
+                .iter()
+                .any(|run| run.code && &sentence.text[run.range.clone()] == "$\\foo{x}$"),
+            "what cannot be typeset is its TeX, as code"
+        );
+        let apart = &blocks[1];
+        assert_eq!(apart.align, Align::Center);
+        assert_eq!(apart.text, Block::DRAWN.to_string());
+        assert!(drawings(apart)[0].descent > 0.5, "the sum's limit below");
+        let row = blocks
+            .iter()
+            .find(|block| matches!(block.kind, BlockKind::TableRow { header: false, .. }))
+            .unwrap();
+        let BlockKind::TableRow { cells, .. } = &row.kind else {
+            unreachable!()
+        };
+        let cells: Vec<_> = cells.iter().map(|cell| &row.text[cell.clone()]).collect();
+        assert_eq!(
+            cells,
+            ["$\\foo{x}$".to_owned(), Block::DRAWN.to_string()],
+            "the cells after a formula written out move along"
+        );
+    }
+
+    #[test]
+    fn without_its_helper_a_formula_is_its_tex() {
+        use_helper(
+            &skwir_platform::math::WORKER,
+            std::path::Path::new("/nonexistent/skwir-math-worker"),
+        );
+        let blocks = parse(FORMULAS);
+        assert!(blocks.iter().all(|block| drawings(block).is_empty()));
+        assert_eq!(blocks[0].text, "Einstein: $E = mc^2$, and so $\\foo{x}$.");
+        assert!(blocks[0].runs.iter().any(|run| run.code));
+        assert!(blocks[1].code);
+        assert_eq!(blocks[1].language.as_deref(), Some("latex"));
+        assert_eq!(blocks[1].text, "\\sum_{i=1}^n x_i");
     }
 
     const DIAGRAMS: &str = "```mermaid\nflowchart LR\n  A[Read] --> B[Show]\n```\n\n```mermaid\nnot a diagram at all\n```\n";
@@ -821,7 +1029,8 @@ mod tests {
         let blocks = parse("> Before ![alt](x.png) after.\n");
         assert_eq!(
             blocks.iter().map(|b| b.text.as_str()).collect::<Vec<_>>(),
-            ["Before ", "alt", " after."]
+            ["Before ", "alt", "after."],
+            "the half after it starts at its words"
         );
         assert!(
             blocks.iter().all(|b| b.quote),

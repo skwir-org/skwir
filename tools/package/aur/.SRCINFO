@@ -57,6 +57,7 @@ pkgname = skwir
 	optdepends = poppler-glib: PDFs through Poppler, beside the PDFium skwir carries
 	optdepends = djvulibre: DjVu through DjVuLibre, beside the djvu-rs reader skwir carries
 	optdepends = skwir-mermaid: Mermaid diagrams drawn in Markdown previews
+	optdepends = skwir-math: formulas typeset in Markdown, notebooks and HTML
 	optdepends = skwir-mupdf: the MuPDF engine, PDFs and books laid out into pages
 	optdepends = bubblewrap: LibreOffice, ImageMagick and thumbnailers run isolated
 	optdepends = libreoffice-fresh: office documents shown as pages
@@ -84,6 +85,12 @@ pkgname = skwir
 
 pkgname = skwir-mermaid
 	pkgdesc = Mermaid diagrams drawn in skwir's Markdown previews
+	depends = skwir
+	depends = libgcc
+	depends = glibc
+
+pkgname = skwir-math
+	pkgdesc = Formulas typeset in skwir's Markdown, notebook and HTML previews
 	depends = skwir
 	depends = libgcc
 	depends = glibc

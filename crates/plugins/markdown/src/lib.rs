@@ -3,6 +3,7 @@
 //! semantic blocks, so they read alike, and all keep their source one
 //! toggle away.
 mod diagram;
+mod jupyter;
 mod markdown;
 mod notebook;
 use skwir_core::{
@@ -23,13 +24,17 @@ impl Plugin for PreviewPlugin {
         "Markdown, HTML and notebooks"
     }
     fn description(&self) -> &'static str {
-        "Read Markdown and HTML files and Jupyter notebooks as documents, with headings, tables, code, Mermaid diagrams and local images; switch to the source at any time. HTML is inert: no scripts, fonts or remote content"
+        "Read Markdown and HTML files and Jupyter notebooks as documents, with headings, tables, code, formulas, Mermaid diagrams and local images; switch to the source at any time. HTML is inert: no scripts, fonts or remote content"
     }
     fn category(&self) -> skwir_core::plugin::Category {
         skwir_core::plugin::Category::Previews
     }
     fn requirements(&self) -> Vec<skwir_core::plugin::Requirement> {
-        vec![skwir_platform::diagram::WORKER.requirement("Mermaid diagrams drawn in Markdown")]
+        vec![
+            skwir_platform::diagram::WORKER.requirement("Mermaid diagrams drawn in Markdown"),
+            skwir_platform::math::WORKER
+                .requirement("Formulas typeset in Markdown, notebooks and HTML"),
+        ]
     }
     fn capabilities(&self) -> skwir_core::permissions::Capabilities {
         use skwir_core::permissions::Capability;
@@ -385,6 +390,133 @@ mod tests {
         assert_eq!(fact("Cells").as_deref(), Some("3"));
         assert_eq!(fact("Language").as_deref(), Some("python"));
         assert_eq!(fact("Kernel").as_deref(), Some("Python 3"));
+    }
+
+    /// A result shown as its HTML still counts among the bundles holding a
+    /// picture, so the plot after it is the one named.
+    #[test]
+    fn a_plot_after_a_result_shown_otherwise_is_named_by_its_place() {
+        let one = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+        let two = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAIAAAB7QOjdAAAAIGNIUk0AAHomAACAhAAA+gAAAIDoAAB1MAAA6mAAADqYAAAXcJy6UTwAAAAGYktHRAD/AP8A/6C9p5MAAAAPSURBVAjXY/zPwMDAwAAABggBAcOaYMUAAAAASUVORK5CYII=";
+        let document = serde_json::json!({
+            "nbformat": 4,
+            "nbformat_minor": 5,
+            "metadata": {},
+            "cells": [{"cell_type": "code", "source": "show()", "outputs": [
+                {"output_type": "display_data",
+                 "data": {"text/html": "<p>Shown as HTML</p>", "image/png": one}},
+                {"output_type": "display_data", "data": {"image/png": two}}
+            ]}]
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let request = PreviewRequest::holding(
+            dir.path().join("plots.ipynb"),
+            document.to_string().into_bytes(),
+            Some("application/x-ipynb+json"),
+        );
+        let data = notebook(&request.held().unwrap(), Bounds::QUICK, &CancelToken::new()).unwrap();
+        assert!(
+            data.blocks
+                .iter()
+                .any(|block| block.text == "Shown as HTML")
+        );
+        let keys: Vec<_> = data
+            .blocks
+            .iter()
+            .filter_map(|block| match &block.picture {
+                Some(skwir_core::inspection::Picture::Later { key, .. }) => Some(key.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(keys.len(), 1);
+        let image = Provider
+            .picture(
+                &request,
+                &InspectRequest::default(),
+                &keys[0],
+                &CancelToken::new(),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!((image.width, image.height), (2, 1), "the second plot");
+    }
+
+    /// The math Jupyter shows, in cells and in what sympy prints, drawn where
+    /// the helper is built; its TeX, as code, where it is not.
+    #[test]
+    fn a_notebook_s_formulas_are_jupyter_s() {
+        let document = serde_json::json!({
+            "nbformat": 4,
+            "nbformat_minor": 5,
+            "metadata": {},
+            "cells": [
+                {"cell_type": "markdown",
+                 "source": "Let \\\\(a\\\\) and $b$; `$c$` stays.\n\n\\begin{equation}x = 1\\end{equation}"},
+                {"cell_type": "code", "source": "integrate(x**2)", "outputs": [
+                    {"output_type": "execute_result",
+                     "data": {"text/latex": "$\\displaystyle \\frac{x^{3}}{3}$", "text/plain": "x**3/3"}}
+                ]}
+            ]
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let request = PreviewRequest::holding(
+            dir.path().join("maths.ipynb"),
+            document.to_string().into_bytes(),
+            Some("application/x-ipynb+json"),
+        );
+        let read =
+            || notebook(&request.held().unwrap(), Bounds::QUICK, &CancelToken::new()).unwrap();
+        let said = |data: &Inspection| -> Vec<String> {
+            data.blocks
+                .iter()
+                .filter(|block| !block.code || block.language.as_deref() == Some("latex"))
+                .map(|block| block.said(0..block.text.len()).into_owned())
+                .collect()
+        };
+        let worker = std::env::current_exe()
+            .ok()
+            .and_then(|exe| Some(exe.parent()?.parent()?.join("skwir-math-worker")))
+            .filter(|path| path.is_file());
+        if let Some(worker) = &worker {
+            // SAFETY: no other thread of this test process reads the
+            // environment; nextest runs each test in a process of its own.
+            #[allow(unsafe_code)]
+            unsafe {
+                std::env::set_var("SKWIR_MATH_WORKER", worker);
+            }
+            let data = read();
+            let drawn = data
+                .blocks
+                .iter()
+                .flat_map(|block| &block.runs)
+                .filter(|run| run.drawing.is_some())
+                .count();
+            assert_eq!(drawn, 4, "a, b, the equation and the result");
+            assert_eq!(
+                said(&data),
+                [
+                    "Let $a$ and $b$; $c$ stays.",
+                    "$$\\begin{equation}x = 1\\end{equation}$$",
+                    "$\\displaystyle \\frac{x^{3}}{3}$",
+                ]
+            );
+        } else {
+            eprintln!("drawn: skipped, skwir-math-worker is not built");
+        }
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::set_var("SKWIR_MATH_WORKER", "/nonexistent/skwir-math-worker");
+        }
+        let data = read();
+        assert_eq!(
+            said(&data),
+            [
+                "Let $a$ and $b$; $c$ stays.",
+                "\\begin{equation}x = 1\\end{equation}",
+                "$\\displaystyle \\frac{x^{3}}{3}$",
+            ],
+            "the TeX, as code, where nothing draws it"
+        );
     }
 
     #[test]

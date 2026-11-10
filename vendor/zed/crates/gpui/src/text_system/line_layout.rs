@@ -74,6 +74,15 @@ pub struct ShapedGlyph {
 }
 
 impl LineLayout {
+    /// How tall a line must be to hold the boxes this one holds
+    /// (`RunPosition::Inline`) with its text, if it holds any.
+    pub fn inline_height(&self) -> Option<Pixels> {
+        self.runs
+            .iter()
+            .any(|run| run.position.inline_box().is_some())
+            .then(|| self.ascent + self.descent.abs())
+    }
+
     /// The index for the character at the given x coordinate
     pub fn index_for_x(&self, x: Pixels) -> Option<usize> {
         if x >= self.width {
@@ -781,10 +790,35 @@ fn shape(
         ..LineLayout::default()
     };
     let mut start = 0;
+    let mut measured = false;
     for stretch in runs.chunk_by(|a, b| a.position == b.position) {
         let position = stretch[0].position;
         let len: usize = stretch.iter().map(|run| run.len).sum();
         let end = (start + len).min(text.len());
+        // Each character of an inline run is a box: one glyph the platform
+        // never sees, which a word may break before, as wide as the box.
+        if let Some(inline) = position.inline_box() {
+            let glyphs = text[start..end]
+                .char_indices()
+                .map(|(offset, _)| {
+                    let glyph = ShapedGlyph {
+                        id: GlyphId(0),
+                        position: point(layout.width, px(0.)),
+                        index: start + offset,
+                        is_emoji: false,
+                    };
+                    layout.width += font_size * inline.width();
+                    glyph
+                })
+                .collect();
+            layout.runs.push(ShapedRun {
+                font_id: stretch[0].font_id,
+                glyphs,
+                position,
+            });
+            start = end;
+            continue;
+        }
         let scale = position.scale();
         let part = platform.layout_line(&text[start..end], font_size * scale, stretch);
         let x = layout.width;
@@ -800,13 +834,39 @@ fn shape(
         // The text's metrics at full size, whichever stretch is largest; a
         // platform may give the descent as a negative distance.
         let (ascent, descent) = (part.ascent / scale, part.descent / scale);
-        if start == 0 || ascent > layout.ascent {
+        if !measured || ascent > layout.ascent {
             layout.ascent = ascent;
         }
-        if start == 0 || descent.abs() > layout.descent.abs() {
+        if !measured || descent.abs() > layout.descent.abs() {
             layout.descent = descent;
         }
+        measured = true;
         start = end;
+    }
+    // A line of boxes alone stands on the baseline its font gives it.
+    if !measured && let Some(run) = runs.first() {
+        let space = FontRun {
+            len: 1,
+            font_id: run.font_id,
+            position: RunPosition::Baseline,
+        };
+        let part = platform.layout_line(" ", font_size, &[space]);
+        (layout.ascent, layout.descent) = (part.ascent, part.descent);
+    }
+    // The boxes reach as high and as low as they stand: the text holding
+    // them makes its lines that tall (`LineLayout::height`).
+    for inline in layout
+        .runs
+        .iter()
+        .filter_map(|run| run.position.inline_box())
+    {
+        layout.ascent = layout.ascent.max(font_size * inline.ascent());
+        let descent = font_size * inline.descent();
+        if layout.descent < px(0.) {
+            layout.descent = layout.descent.min(-descent);
+        } else {
+            layout.descent = layout.descent.max(descent);
+        }
     }
     layout
 }
@@ -1070,5 +1130,54 @@ mod run_position_tests {
         let run = &raised.runs[1];
         assert_eq!(run.font_size(px(20.)), px(14.));
         assert_eq!(run.rise(px(20.)), px(7.));
+    }
+
+    #[test]
+    fn each_character_of_an_inline_run_is_a_box_of_its_width() {
+        let platform = NoopTextSystem::new();
+        let plain = shape(&platform, "ab", px(20.), &[run(2, RunPosition::Baseline)]);
+        let em = plain.width / 2.;
+        assert_eq!(plain.inline_height(), None);
+        // Two boxes 2 em wide, 1.5 em up and 0.5 em down, between "a" and
+        // "b": one glyph each, which the platform never shapes.
+        let tall = RunPosition::Inline(crate::InlineBox::new(2., 1.5, 0.5));
+        let text = "a\u{fffc}\u{fffc}b";
+        let line = shape(
+            &platform,
+            text,
+            px(20.),
+            &[
+                run(1, RunPosition::Baseline),
+                run(6, tall),
+                run(1, RunPosition::Baseline),
+            ],
+        );
+        let glyphs: Vec<_> = line
+            .runs
+            .iter()
+            .flat_map(|run| run.glyphs.iter().map(move |g| (g.index, run.position)))
+            .collect();
+        assert_eq!(
+            glyphs,
+            [
+                (0, RunPosition::Baseline),
+                (1, tall),
+                (4, tall),
+                (7, RunPosition::Baseline)
+            ]
+        );
+        assert!((line.x_for_index(4) - (em + px(40.))).abs() < px(0.01));
+        assert!((line.x_for_index(7) - (em + px(80.))).abs() < px(0.01));
+        assert!((line.width - (em * 2. + px(80.))).abs() < px(0.01));
+        // The line reaches as high and as low as its boxes (this platform
+        // gives its descent as a negative distance).
+        assert_eq!(line.ascent, plain.ascent.max(px(30.)));
+        assert_eq!(line.descent, -(plain.descent.abs().max(px(10.))));
+        assert_eq!(line.inline_height(), Some(line.ascent + line.descent.abs()));
+        // A box alone stands on its font's baseline.
+        let small = RunPosition::Inline(crate::InlineBox::new(1., 0.2, 0.1));
+        let alone = shape(&platform, "\u{fffc}", px(20.), &[run(3, small)]);
+        assert_eq!((alone.ascent, alone.descent), (plain.ascent, plain.descent));
+        assert_eq!(alone.width, px(20.));
     }
 }

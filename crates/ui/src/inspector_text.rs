@@ -2,13 +2,14 @@
 use crate::elements::rows::{Seen, Spot};
 use crate::{markdown::MarkdownStyle, shell::Shell};
 use gpui::{
-    AnyElement, HighlightStyle, MouseButton, RunPosition, SharedString, StrikethroughStyle,
-    StyledText, UnderlineStyle, WeakEntity, div, prelude::*, px,
+    AnyElement, HighlightStyle, InlineBox, MouseButton, RunPosition, SharedString,
+    StrikethroughStyle, StyledText, UnderlineStyle, WeakEntity, div, prelude::*, px,
 };
 use skwir_core::{
-    inspection::{Block, Script},
+    inspection::{Block, Drawing, Script},
     workspace::PaneId,
 };
+use std::sync::Arc;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Selection {
     pub start: (usize, usize),
@@ -41,7 +42,8 @@ impl Selection {
                 if r.is_empty() && (i < first || i > last || self.start == self.end) {
                     None
                 } else {
-                    b.text.get(r)
+                    // A drawing is copied as what it says (a formula's TeX).
+                    b.text.get(r.clone()).map(|_| b.said(r))
                 }
             })
             .collect();
@@ -247,6 +249,19 @@ pub fn styled(
                 if highlight.position.is_none() && reduced.iter().any(|r| r.contains(&start)) {
                     highlight.position = Some(RunPosition::Reduced);
                 }
+                // A drawing is a box the line holds, drawn where the layout
+                // puts it (`drawn`).
+                if let Some(drawing) = &r.drawing {
+                    highlight.position = Some(RunPosition::Inline(InlineBox::new(
+                        drawing.width,
+                        drawing.ascent,
+                        drawing.descent,
+                    )));
+                    // Nothing is behind a formula but what is behind text.
+                    if !selection.contains(&start) {
+                        highlight.background_color = None;
+                    }
+                }
                 if link && (style.link_underline || r.found) {
                     highlight.underline = Some(UnderlineStyle {
                         thickness: px(1.),
@@ -380,6 +395,70 @@ pub(crate) fn links_in(block: &Block, range: std::ops::Range<usize>) -> Vec<Link
     links
 }
 
+/// The drawings `range` of `block` holds, in the order their boxes are
+/// laid out, each with the ink it is drawn in where its run names one: the
+/// selection's, a link's; the text's otherwise.
+fn drawings_in(
+    block: &Block,
+    range: std::ops::Range<usize>,
+    selection: std::ops::Range<usize>,
+    style: &MarkdownStyle,
+) -> Vec<(Arc<Drawing>, Option<gpui::Hsla>)> {
+    block
+        .runs
+        .iter()
+        .filter_map(|run| Some((run, run.drawing.as_ref()?)))
+        .flat_map(|(run, drawing)| {
+            block
+                .text
+                .get(run.range.clone())
+                .into_iter()
+                .flat_map(|drawn| drawn.char_indices())
+                .filter(|(_, letter)| *letter == Block::DRAWN)
+                .map(move |(offset, _)| (run, drawing, run.range.start + offset))
+        })
+        .filter(|(_, _, at)| range.contains(at))
+        .map(|(run, drawing, at)| {
+            let ink = if selection.contains(&at) {
+                Some(style.selection_text)
+            } else if run.link.is_some() && !run.found {
+                Some(style.link)
+            } else {
+                None
+            };
+            (drawing.clone(), ink)
+        })
+        .collect()
+}
+
+/// Paint each drawing in the box `layout` placed for it, in its ink or the
+/// text's: an SVG drawn as a mask, so it is the text's color whatever its
+/// own say, and reaching past the box by its margin.
+fn paint_drawings(
+    layout: &gpui::TextLayout,
+    drawings: &[(Arc<Drawing>, Option<gpui::Hsla>)],
+    window: &mut gpui::Window,
+    cx: &mut gpui::App,
+) {
+    let text_style = window.text_style();
+    let font_size = text_style.font_size.to_pixels(window.rem_size());
+    for ((_, bounds), (drawing, ink)) in layout.inline_boxes().into_iter().zip(drawings) {
+        let margin = font_size * drawing.margin;
+        let bounds = gpui::Bounds {
+            origin: bounds.origin - gpui::point(margin, margin),
+            size: bounds.size + gpui::size(margin * 2., margin * 2.),
+        };
+        let _ = window.paint_svg(
+            bounds,
+            SharedString::from(format!("skwir-drawing-{:x}", drawing.id)),
+            Some(&drawing.svg),
+            gpui::TransformationMatrix::unit(),
+            ink.unwrap_or(text_style.color),
+            cx,
+        );
+    }
+}
+
 /// One stretch of a block's text as its own element: the whole block, or a
 /// single table cell. Runs, links and the selection are clipped to `range`,
 /// and pointer offsets are reported back in the block's own coordinates, so
@@ -431,8 +510,13 @@ pub fn part(
         labels,
         found: &found,
     };
-    let (shown, highlights) = styled(block, range.clone(), selection, style, marks);
-    let text = StyledText::new(shown).with_highlights(highlights);
+    let (shown, highlights) = styled(block, range.clone(), selection.clone(), style, marks);
+    let drawings = drawings_in(block, range.clone(), selection.clone(), style);
+    let mut text = StyledText::new(shown).with_highlights(highlights);
+    if !drawings.is_empty() {
+        text = text.with_said(block.said(range.clone()).into_owned());
+    }
+    let drawn = text.layout().clone();
     let down = text.layout().clone();
     let placed = text.layout().clone();
     let told = text.layout().clone();
@@ -519,6 +603,17 @@ pub fn part(
         .id(gpui::ElementId::from((id, "select")))
         .cursor_text()
         .child(text)
+        // Painted after the text: each drawing in the box its line holds.
+        .when(!drawings.is_empty(), |d| {
+            d.child(
+                gpui::canvas(
+                    |_, _, _| {},
+                    move |_, (), window, cx| paint_drawings(&drawn, &drawings, window, cx),
+                )
+                .absolute()
+                .size_full(),
+            )
+        })
         // Prepainted after the text: where its lines are is known, for a
         // page read a screen at a time to end between two.
         .when_some(style.lines.clone(), |d, lines| {

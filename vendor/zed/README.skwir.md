@@ -92,6 +92,7 @@ carry: the script takes it from the Inter release Skwir's packages pin
 | `0057-deferred-paint-text-style` | A deferred draw paints under the text style of where it stands in the tree, as it prepaints | — |
 | `0058-rounded-mask-on-device-pixels` | A rounded content mask lies on whole device pixels, as what it holds is drawn | — |
 | `0059-unreached-mask-corners` | A primitive that reaches no rounded corner of its mask is kept by its rectangles alone, so its fragments skip the corners' distance | — |
+| `0060-inline-boxes` | A line holds boxes its caller draws (`RunPosition::Inline`): each character of an inline run is one, as wide as it says, never shaped or painted; `TextLayout::inline_boxes` says where each was drawn; a text holding one taller than its line grows its lines; `StyledText::with_said` gives what such a text says to assistive technology | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
 
@@ -1034,6 +1035,38 @@ Checked: `just gpui-check gpui`
 (`a_primitive_away_from_the_corners_is_drawn_without_them`) and `gpui_wgpu`'s
 `headless_renderer_clips_to_a_rounded_content_mask`. The fragment cost saved
 was not measured.
+
+### 0060: Inline boxes
+
+A run can be boxes a line holds for its caller to draw: a formula in a
+sentence (ADR-129). `RunPosition::Inline(InlineBox)` gives the box's width,
+the height it stands above the baseline and the depth it reaches below it,
+in ems of the text's size, kept in thousandths so a run still compares and
+hashes.
+
+- **Shaping.** `shape`, 0006's, takes an inline stretch itself: each
+  character of it is one glyph the platform never sees, as wide as the box.
+  Two boxes side by side are two characters, so runs merged or split around
+  them change nothing. The line's ascent and descent grow to its boxes';
+  a line of boxes alone stands on its font's baseline (a space shaped for
+  its metrics).
+- **Wrapping and hit tests** read glyph positions, so a box is a character
+  a word may break before, selected and pointed at as one.
+- **Painting.** `paint_line` draws no glyph for a box; backgrounds and
+  decorations go under it as under any glyph.
+- **Where.** `WrappedLine::inline_boxes` walks the glyphs as `paint_line`
+  does (each wrap aligned) and gives each box's bounds on its line's
+  baseline; `TextLayout::inline_boxes` gives them for the whole text, its
+  alignment kept from its layout.
+- **Height.** A text holding boxes makes every line as tall as its tallest
+  needs (`LineLayout::inline_height`), so no line runs into the next; a
+  text without boxes keeps its line height.
+- **What it says.** `StyledText::with_said` gives `InteractiveText` its
+  words for assistive technology where the characters drawn do not say
+  them.
+
+The tests are `text_system::line_layout::run_position_tests::each_character_of_an_inline_run_is_a_box_of_its_width`
+and `text_system::line::tests::inline_boxes_are_where_their_glyphs_are_painted`.
 
 ## Adding or changing a patch
 

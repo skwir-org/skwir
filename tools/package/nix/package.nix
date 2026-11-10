@@ -67,6 +67,8 @@
   withArchive ? true,
   # Mermaid diagrams drawn (pure Rust, but large).
   withMermaid ? true,
+  # Formulas typeset (pure Rust, RaTeX and KaTeX's fonts, but large).
+  withMath ? true,
   # The audio and video player (GStreamer).
   withMedia ? true,
   # The player's formats, from this package's own GStreamer; its base
@@ -126,6 +128,12 @@ let
       programs = [ "skwir-mermaid-worker" ];
       libraries = [ ];
       notices = [ "skwir-mermaid" ];
+    };
+    withMath = {
+      on = withMath;
+      programs = [ "skwir-math-worker" ];
+      libraries = [ ];
+      notices = [ "skwir-math" ];
     };
     withMedia = {
       on = withMedia;

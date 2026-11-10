@@ -51,7 +51,10 @@ impl Plugin for PreviewPlugin {
     }
     fn requirements(&self) -> Vec<skwir_core::plugin::Requirement> {
         use skwir_platform::document::{Engine, worker};
-        vec![worker(Engine::Mupdf).requirement("Books laid out into pages by MuPDF")]
+        vec![
+            worker(Engine::Mupdf).requirement("Books laid out into pages by MuPDF"),
+            skwir_platform::math::WORKER.requirement("Formulas a book writes in MathML typeset"),
+        ]
     }
     fn capabilities(&self) -> skwir_core::permissions::Capabilities {
         use skwir_core::permissions::Capability;

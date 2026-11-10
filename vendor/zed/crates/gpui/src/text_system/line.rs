@@ -488,6 +488,30 @@ impl WrappedLine {
         Ok(())
     }
 
+    /// Where each box the line holds (`RunPosition::Inline`) is drawn when
+    /// the line is painted at `origin` as `paint` paints it: the index of
+    /// its character in the line, and its bounds.
+    pub fn inline_boxes(
+        &self,
+        origin: Point<Pixels>,
+        line_height: Pixels,
+        align: TextAlign,
+        bounds: Option<Bounds<Pixels>>,
+    ) -> Vec<(usize, Bounds<Pixels>)> {
+        let align_width = match bounds {
+            Some(bounds) => Some(bounds.size.width),
+            None => self.layout.wrap_width,
+        };
+        inline_boxes(
+            origin,
+            &self.layout.unwrapped_layout,
+            line_height,
+            align,
+            align_width,
+            &self.wrap_boundaries,
+        )
+    }
+
     /// Paint the background of line of text to the window.
     pub fn paint_background(
         &self,
@@ -517,6 +541,77 @@ impl WrappedLine {
 
         Ok(())
     }
+}
+
+/// Where `paint_line` puts each box of `layout`: its glyph's origin, found
+/// as `paint_line` finds it (each wrap starts a line, aligned), then the box
+/// standing on the line's baseline.
+fn inline_boxes(
+    origin: Point<Pixels>,
+    layout: &LineLayout,
+    line_height: Pixels,
+    align: TextAlign,
+    align_width: Option<Pixels>,
+    wrap_boundaries: &[WrapBoundary],
+) -> Vec<(usize, Bounds<Pixels>)> {
+    let mut boxes = Vec::new();
+    if layout
+        .runs
+        .iter()
+        .all(|run| run.position.inline_box().is_none())
+    {
+        return boxes;
+    }
+    let padding_top = (line_height - layout.ascent - layout.descent) / 2.;
+    let baseline = padding_top + layout.ascent;
+    let mut wraps = wrap_boundaries.iter().peekable();
+    let mut glyph_origin = point(
+        aligned_origin_x(
+            origin,
+            align_width.unwrap_or(layout.width),
+            px(0.0),
+            &align,
+            layout,
+            wraps.peek(),
+        ),
+        origin.y,
+    );
+    let mut prev_glyph_position = Point::default();
+    for (run_ix, run) in layout.runs.iter().enumerate() {
+        for (glyph_ix, glyph) in run.glyphs.iter().enumerate() {
+            glyph_origin.x += glyph.position.x - prev_glyph_position.x;
+            if wraps.peek() == Some(&&WrapBoundary { run_ix, glyph_ix }) {
+                wraps.next();
+                glyph_origin.x = aligned_origin_x(
+                    origin,
+                    align_width.unwrap_or(layout.width),
+                    glyph.position.x,
+                    &align,
+                    layout,
+                    wraps.peek(),
+                );
+                glyph_origin.y += line_height;
+            }
+            prev_glyph_position = glyph.position;
+            if let Some(inline) = run.position.inline_box() {
+                let font_size = layout.font_size;
+                boxes.push((
+                    glyph.index,
+                    Bounds {
+                        origin: point(
+                            glyph_origin.x,
+                            glyph_origin.y + baseline - font_size * inline.ascent(),
+                        ),
+                        size: size(
+                            font_size * inline.width(),
+                            font_size * (inline.ascent() + inline.descent()),
+                        ),
+                    },
+                ));
+            }
+        }
+    }
+    boxes
 }
 
 fn paint_line(
@@ -733,8 +828,12 @@ fn paint_line(
                     size: max_glyph_size,
                 };
 
+                // A box's character draws nothing: the caller draws what
+                // the box holds (`WrappedLine::inline_boxes`).
                 let content_mask = window.content_mask();
-                if max_glyph_bounds.intersects(&content_mask.bounds) {
+                if run.position.inline_box().is_none()
+                    && max_glyph_bounds.intersects(&content_mask.bounds)
+                {
                     let vertical_offset = point(px(0.0), glyph.position.y);
                     if glyph.is_emoji {
                         window.paint_emoji(
@@ -1056,6 +1155,79 @@ mod tests {
             text: SharedString::new(text),
             decoration_runs: SmallVec::from(decorations.to_vec()),
         }
+    }
+
+    #[test]
+    fn inline_boxes_are_where_their_glyphs_are_painted() {
+        // "ab", a box 2 em wide standing 1 em up and 0.25 down, then "c",
+        // at 10 px; wrapped before the box.
+        let inline = crate::InlineBox::new(2., 1., 0.25);
+        let glyph = |x: f32, index| ShapedGlyph {
+            id: GlyphId(1),
+            position: point(px(x), px(0.)),
+            index,
+            is_emoji: false,
+        };
+        let run = |position, glyphs| ShapedRun {
+            font_id: FontId(0),
+            position,
+            glyphs,
+        };
+        let layout = LineLayout {
+            font_size: px(10.),
+            width: px(50.),
+            ascent: px(8.),
+            descent: px(2.),
+            runs: vec![
+                run(
+                    crate::RunPosition::Baseline,
+                    vec![glyph(0., 0), glyph(10., 1)],
+                ),
+                run(crate::RunPosition::Inline(inline), vec![glyph(20., 2)]),
+                run(crate::RunPosition::Baseline, vec![glyph(40., 5)]),
+            ],
+            len: 6,
+        };
+        let wraps = [WrapBoundary {
+            run_ix: 1,
+            glyph_ix: 0,
+        }];
+        let origin = point(px(100.), px(50.));
+        let left = inline_boxes(
+            origin,
+            &layout,
+            px(20.),
+            TextAlign::Left,
+            Some(px(60.)),
+            &wraps,
+        );
+        // The second line: its baseline 5 px of padding and the 8 px ascent
+        // down, the box 10 px above it.
+        assert_eq!(
+            left,
+            vec![(
+                2,
+                Bounds {
+                    origin: point(px(100.), px(50. + 20. + 3.)),
+                    size: size(px(20.), px(12.5)),
+                }
+            )]
+        );
+        // Centered, the second line (the box and "c", 30 px) starts 15 px in.
+        let centered = inline_boxes(
+            origin,
+            &layout,
+            px(20.),
+            TextAlign::Center,
+            Some(px(60.)),
+            &wraps,
+        );
+        assert_eq!(centered[0].1.origin.x, px(115.));
+        let plain = LineLayout {
+            runs: vec![run(crate::RunPosition::Baseline, vec![glyph(0., 0)])],
+            ..LineLayout::default()
+        };
+        assert!(inline_boxes(origin, &plain, px(20.), TextAlign::Left, None, &[]).is_empty());
     }
 
     #[test]

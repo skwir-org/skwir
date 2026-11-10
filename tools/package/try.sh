@@ -151,8 +151,8 @@ fi
 mkdir -p "$builder/src"
 (cd "$tree" && git ls-files -co --exclude-standard -z | tar --null -T - -cf -) | tar -xf - -C "$builder/src"
 # The packages made: skwir, and those of its own a package of its own
-# holds (skwir-media, skwir-poppler… on Debian and Fedora; skwir-mermaid
-# and skwir-mupdf on Arch), by names of the tools' own making.
+# holds (skwir-media, skwir-poppler… on Debian and Fedora; skwir-mermaid,
+# skwir-math and skwir-mupdf on Arch), by names of the tools' own making.
 case "$distribution" in
 debian | ubuntu)
     # Keep Cargo's compiled dependencies, but never reuse old packages.
