@@ -434,7 +434,7 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
         .child(
             div()
                 .text_title()
-                .child(format!("Rename {} items", b.count)),
+                .child(format!("Rename {}", crate::format::count(b.count, "item"))),
         )
         .child(form)
         .children(

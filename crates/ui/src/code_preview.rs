@@ -184,7 +184,10 @@ impl CodeRow<'_> {
                         .rounded_sm()
                         .bg(theme.code_bg)
                         .text_color(theme.text_muted)
-                        .child(format!("… {} lines", range.end - range.start - 1)),
+                        .child(format!(
+                            "… {}",
+                            crate::format::count(range.end - range.start - 1, "line")
+                        )),
                 )
             })
             .into_any_element()

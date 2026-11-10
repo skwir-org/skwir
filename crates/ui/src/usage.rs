@@ -1388,7 +1388,9 @@ fn render(view: &mut UsageView, shell: &mut Shell, cx: &mut Context<Shell>) -> A
                 if status.is_some_and(|s| s.scanning && s.tree.as_ref().is_some_and(|n| n.incomplete)) {
                     "Striped blocks are still being counted · proportions will change as sizes arrive".into()
                 } else if status.is_some_and(|s| s.updating) {
-                    format!("Scanning… {} folders read", status.map_or(0, |s| s.scanned_dirs))
+                    let read = status.map_or(0, |s| s.scanned_dirs);
+                    let read = usize::try_from(read).unwrap_or(usize::MAX);
+                    format!("Scanning… {} read", crate::format::count(read, "folder"))
                 } else if let Some(note) = deleting {
                     note
                 } else {
