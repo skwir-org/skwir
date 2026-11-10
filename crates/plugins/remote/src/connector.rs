@@ -269,7 +269,7 @@ pub fn mounts_folder() -> Option<PathBuf> {
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        skwir_core::xdg::runtime_dir().map(|dir| dir.join("skwir").join("remote"))
+        skwir_core::folders::runtime().map(|folder| folder.join("remote"))
     }
 }
 

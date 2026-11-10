@@ -377,14 +377,11 @@ mod linux {
     /// The most a marker holds: a pid and a line's end.
     const MARKER_BOUND: u64 = 32;
 
-    /// Where the running Skwir of `instance` says so: in the session's
-    /// runtime folder.
+    /// Where the running Skwir of `instance` says so: in skwir's runtime
+    /// folder.
     pub(super) fn marker(instance: &Instance) -> Option<PathBuf> {
-        skwir_core::xdg::runtime_dir().map(|runtime| {
-            runtime
-                .join("skwir")
-                .join(format!("running-{}", instance.key()))
-        })
+        skwir_core::folders::runtime()
+            .map(|folder| folder.join(format!("running-{}", instance.key())))
     }
 
     /// The bus name the running Skwir of `instance` holds: an element of
@@ -624,7 +621,9 @@ mod linux {
         let folder = marker
             .parent()
             .ok_or_else(|| std::io::Error::other("a marker in no folder"))?;
-        std::fs::create_dir_all(folder)?;
+        // The folder agents and scripts listen in too: made the user's
+        // alone, as everything there is (`folders::private`).
+        skwir_core::folders::private(folder)?;
         let mut staged = tempfile::NamedTempFile::new_in(folder)?;
         std::io::Write::write_all(&mut staged, format!("{}\n", std::process::id()).as_bytes())?;
         skwir_core::fs::file::take_place(staged, marker)
@@ -1350,6 +1349,13 @@ mod linux_tests {
         let (told, taken) = taker();
         let taking =
             take_over_with(connector(&bus.address), marker.clone(), HELD.into(), taken).unwrap();
+        // The marker's folder, where agents and scripts listen too, made
+        // the user's alone by the marker that came first.
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let made = std::fs::metadata(marker.parent().unwrap()).unwrap();
+            assert_eq!(made.permissions().mode() & 0o777, 0o700);
+        }
         let other = "org.skwir.skwir.Iother";
         assert!(!hand_over_at(
             &marker,

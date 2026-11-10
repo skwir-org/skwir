@@ -46,7 +46,7 @@ pub fn socket_for(point: &Path) -> Option<PathBuf> {
 /// When it cannot be made.
 pub fn socket_folder() -> anyhow::Result<PathBuf> {
     let folder = sockets().ok_or_else(|| anyhow::anyhow!("no runtime folder"))?;
-    std::fs::create_dir_all(&folder)?;
+    skwir_core::folders::private(&folder)?;
     Ok(folder)
 }
 

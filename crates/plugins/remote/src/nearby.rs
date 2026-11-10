@@ -599,10 +599,9 @@ impl OwnWsdd {
     fn start(cancel: &CancelToken) -> anyhow::Result<Self> {
         let program = skwir_core::os_path::find_program("wsdd")
             .ok_or_else(|| anyhow::anyhow!("wsdd is not installed"))?;
-        let folder = skwir_core::xdg::runtime_dir()
-            .ok_or_else(|| anyhow::anyhow!("no runtime folder"))?
-            .join("skwir");
-        std::fs::create_dir_all(&folder)?;
+        let folder =
+            skwir_core::folders::runtime().ok_or_else(|| anyhow::anyhow!("no runtime folder"))?;
+        skwir_core::folders::private(&folder)?;
         sweep_left(&folder);
         let socket = folder.join(format!(
             "wsdd-{}-{}.sock",

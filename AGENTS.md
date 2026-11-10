@@ -310,6 +310,11 @@ working in an area, also read that area's rules (see
   paths are ignored). Never read the variables elsewhere, nor add a
   distribution's folders beside them (NixOS names its own in
   `XDG_DATA_DIRS`).
+- What a running skwir keeps for the session (sockets, markers, mount
+  points) is in `skwir_core::folders::runtime`, and every folder made
+  there is made with `folders::private`, the user's alone: a plain
+  `create_dir_all` makes it open to all, and what listens there (the
+  channel of agents and scripts) would be reachable by others.
 - A plugin that needs a search dispatches `query.search` with separate
   `expr`, `root` and `pane` arguments (see `timeline.select`). The query
   plugin owns literal escaping (`lang::quote`): never interpolate raw

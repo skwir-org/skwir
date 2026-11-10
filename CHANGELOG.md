@@ -45,6 +45,11 @@ happens](docs/HELP-WANTED.md). Skwir itself is for Linux, as in 0.3.1.
 
 - **A text preview opens with its colors**: it no longer flashes uncolored
   first, as long as its colors take under about a tenth of a second.
+- **Agents and scripts listen whatever ran first**: once Nearby, an rsync copy
+  or a Skwir finishing without its window had made Skwir's runtime folder,
+  Agents and scripts refused to listen there ("the channel's folder is not the
+  user's alone") until the session ended. Each now makes it the user's alone,
+  and one made before is closed again.
 - **Keys act in the window you are typing in**: after a script or an agent
   moved Skwir's idea of the active window, a paste or a Delete could land in
   another window. The same goes for a second launch at the same moment, which

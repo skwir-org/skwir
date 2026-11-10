@@ -133,10 +133,9 @@ struct Empty(PathBuf);
 
 impl Empty {
     fn new() -> std::io::Result<Empty> {
-        let parent = skwir_core::xdg::runtime_dir()
-            .unwrap_or_else(std::env::temp_dir)
-            .join("skwir");
-        std::fs::create_dir_all(&parent)?;
+        let parent =
+            skwir_core::folders::runtime().unwrap_or_else(|| std::env::temp_dir().join("skwir"));
+        skwir_core::folders::private(&parent)?;
         let path = parent.join(crate::ssh_mount::unique("empty-"));
         std::fs::create_dir(&path)?;
         Ok(Empty(path))

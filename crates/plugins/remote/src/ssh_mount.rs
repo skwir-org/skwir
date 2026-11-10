@@ -38,8 +38,7 @@ pub fn control_path(point: &Path) -> Option<PathBuf> {
         h = (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
     }
     Some(
-        skwir_core::xdg::runtime_dir()?
-            .join("skwir")
+        skwir_core::folders::runtime()?
             .join("ssh")
             .join(format!("{h:016x}")),
     )

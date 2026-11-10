@@ -476,22 +476,47 @@ fn a_command_refused_says_why_and_no_window_says_so() {
     assert!(client::not_listening(&error), "{error:#}");
 }
 
+/// The folder made open to others before the window listens (as the
+/// marker of the Skwir taking launches made it, written first at a
+/// start): closed to them, and only then the socket made there.
 #[test]
-fn a_folder_open_to_others_is_refused() {
+fn a_folder_of_the_users_open_to_others_is_closed_before_it_listens() {
+    use std::os::unix::fs::PermissionsExt as _;
     let tmp = tempfile::tempdir().unwrap();
     let app = app(tmp.path());
     let folder = tmp.path().join("open");
-    {
-        use std::os::unix::fs::DirBuilderExt as _;
-        std::fs::DirBuilder::new()
-            .mode(0o755)
-            .create(&folder)
-            .unwrap();
-    }
+    std::fs::create_dir(&folder).unwrap();
+    std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let address = Address(folder.join("control.sock"));
+    let server = serve(&app, address.clone());
+    wait_until("listening", || address.0.exists());
+    let mode = std::fs::metadata(&folder).unwrap().permissions().mode();
+    assert_eq!(mode & 0o777, 0o700, "no socket where others could reach it");
+    let answer = client::call(
+        &address,
+        "test.answer",
+        arguments(json!({})),
+        PlanMode::Propose,
+    )
+    .unwrap();
+    assert_eq!(answer.value, json!(42));
+    drop(server);
+}
+
+/// What is not a folder of the user's (here a link to one) is never
+/// listened in.
+#[test]
+fn a_link_in_place_of_the_folder_is_refused() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = app(tmp.path());
+    let elsewhere = tmp.path().join("elsewhere");
+    std::fs::create_dir(&elsewhere).unwrap();
+    let folder = tmp.path().join("linked");
+    std::os::unix::fs::symlink(&elsewhere, &folder).unwrap();
     let address = Address(folder.join("control.sock"));
     let server = serve(&app, address.clone());
     std::thread::sleep(Duration::from_millis(300));
-    assert!(!address.0.exists(), "no socket where others could reach it");
+    assert!(!address.0.exists(), "no socket through the link");
     drop(server);
 }
 
@@ -502,7 +527,7 @@ fn a_socket_left_by_a_crash_is_replaced_and_one_in_use_is_not_taken() {
     let folder = tmp.path().join("channel");
     {
         use std::os::unix::fs::DirBuilderExt as _;
-        // As the plugin makes it: the user's alone, or it refuses to listen.
+        // As the plugin makes it: the user's alone.
         std::fs::DirBuilder::new()
             .mode(0o700)
             .create(&folder)

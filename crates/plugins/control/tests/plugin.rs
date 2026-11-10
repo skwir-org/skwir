@@ -90,14 +90,11 @@ fn turned_on_where_it_cannot_listen_it_says_why() {
     unsafe {
         std::env::set_var("XDG_RUNTIME_DIR", runtime.path());
     }
-    // Its folder open to others: the plugin refuses to listen there.
-    {
-        use std::os::unix::fs::DirBuilderExt as _;
-        std::fs::DirBuilder::new()
-            .mode(0o755)
-            .create(runtime.path().join("skwir"))
-            .unwrap();
-    }
+    // A link in place of its folder, not a folder of the user's: the
+    // plugin refuses to listen there.
+    let elsewhere = runtime.path().join("elsewhere");
+    std::fs::create_dir(&elsewhere).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, runtime.path().join("skwir")).unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
     app.set_window_shown();

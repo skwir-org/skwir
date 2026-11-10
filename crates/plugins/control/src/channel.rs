@@ -24,8 +24,8 @@ impl Address {
 pub fn address() -> Option<Address> {
     #[cfg(unix)]
     {
-        let folder = match skwir_core::xdg::runtime_dir() {
-            Some(runtime) => runtime.join("skwir"),
+        let folder = match skwir_core::folders::runtime() {
+            Some(folder) => folder,
             None if cfg!(target_os = "macos") => std::env::temp_dir().join("skwir"),
             None => {
                 std::env::temp_dir().join(format!("skwir-{}", rustix::process::getuid().as_raw()))
@@ -62,8 +62,7 @@ impl std::error::Error for NotListening {}
 
 #[cfg(unix)]
 mod imp {
-    use std::os::unix::fs::{DirBuilderExt as _, MetadataExt as _, PermissionsExt as _};
-    use std::path::Path;
+    use std::os::unix::fs::PermissionsExt as _;
 
     use tokio::net::{UnixListener, UnixStream};
 
@@ -97,7 +96,11 @@ mod imp {
         let folder = path
             .parent()
             .ok_or_else(|| anyhow::anyhow!("the channel's folder"))?;
-        own_folder(folder)?;
+        // Another part of skwir may have made it first (the marker of the
+        // one taking launches, a socket of the remote plugin's): made the
+        // user's alone, whoever did.
+        skwir_core::folders::private(folder)
+            .map_err(|error| anyhow::anyhow!("the channel's folder: {error}"))?;
         if path.exists() {
             match std::os::unix::net::UnixStream::connect(path) {
                 Ok(_) => return Ok(None),
@@ -110,26 +113,6 @@ mod imp {
             listener,
             path: path.clone(),
         }))
-    }
-
-    /// `folder`, made if missing, and refused unless it is the user's alone
-    /// (owned by the user, open to nobody else).
-    // A permission mask reads as one: no group or other bits.
-    #[allow(clippy::verbose_bit_mask)]
-    fn own_folder(folder: &Path) -> anyhow::Result<()> {
-        if !folder.exists() {
-            std::fs::DirBuilder::new()
-                .recursive(true)
-                .mode(0o700)
-                .create(folder)?;
-        }
-        let metadata = std::fs::symlink_metadata(folder)?;
-        let uid = rustix::process::getuid().as_raw();
-        anyhow::ensure!(
-            metadata.is_dir() && metadata.uid() == uid && metadata.mode() & 0o077 == 0,
-            "the channel's folder is not the user's alone"
-        );
-        Ok(())
     }
 
     pub async fn connect(address: &Address) -> Result<Stream, NotListening> {
