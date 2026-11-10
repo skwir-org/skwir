@@ -97,6 +97,33 @@ if [ -n "{fail_on}" ] && grep -q "{fail_on}" {self.calls}; then exit 1; fi
         self.assertEqual(done.stderr, "", "rustc shows what a linker says as a warning")
         self.assertEqual([p.name for p in self.root.glob("skwir-order.*")], [])
 
+    def test_a_name_an_older_nm_leaves_mangled_is_read_without_its_suffix(self):
+        """Ubuntu 22.04's nm, where the AppImage is made, leaves a Rust name
+        mangled when LLVM gave it a suffix; c++filt reads it without."""
+        line = "0000000000006000 t _RNvCsAAA_3app5third.llvm.7\n"
+        (self.root / "mangled").write_text(MANGLED + line)
+        (self.root / "demangled").write_text(DEMANGLED + line)
+        script(self.root / "c++filt", """
+[ "$1" = -i ] || exit 2
+sed 's/^_RNvCsAAA_3app5third$/app::third/'
+""")
+        self.list.write_text("app::third\napp::second\n")
+        done, _ = self.link(env={"CXXFILT": str(self.root / "c++filt")})
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual((self.root / "order-given").read_text().splitlines(), [
+            "_RNvCsAAA_3app5third.llvm.7",
+            "_RNvCsAAA_3app6second",
+            "_RNvCsAAA_3app6second.llvm.1",
+        ])
+        # Without c++filt, the rest is in order still, and nothing is said.
+        done, _ = self.link(env={"CXXFILT": str(self.root / "no-c++filt")})
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(done.stderr, "")
+        self.assertEqual((self.root / "order-given").read_text().splitlines(), [
+            "_RNvCsAAA_3app6second",
+            "_RNvCsAAA_3app6second.llvm.1",
+        ])
+
     def test_anything_else_is_the_real_linkers_alone(self):
         for name in ("skwir-bench-0123456789abcdef", "skwir-plugin-remote-0123", "libfoo.so",
                      "build_script_build-0123456789abcdef", "skwir-"):

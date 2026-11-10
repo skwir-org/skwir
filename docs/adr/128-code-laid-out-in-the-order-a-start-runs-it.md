@@ -45,7 +45,10 @@ back with use and the layout stays as it was.
    build (`order-link-env.sh`, sourced by every build that ships), links
    skwir once, finds the list's names in its symbol table, and links it
    again in that order. Anything else it is given is the real linker's.
-   The flake's Nix package names it by `--config`, in `flake.nix`:
+   Names are read by the system's nm; one an older nm leaves mangled for a
+   suffix LLVM gave it (Ubuntu 22.04's, where the AppImage and the tarball
+   are made, for one in twelve of the list) is read again by c++filt
+   without it, so every root lays a binary out alike. The flake's Nix package names it by `--config`, in `flake.nix`:
    nixpkgs' build sets cargo's linker variable itself, and an unused
    wrapper would say nothing. `package.nix` knows nothing of it, written
    to stand in nixpkgs (ADR-124).

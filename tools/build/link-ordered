@@ -18,6 +18,7 @@
 set -u
 real=${SKWIR_REAL_LINKER:-cc}
 nm=${NM:-nm}
+cxxfilt=${CXXFILT:-c++filt}
 here=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 list=${SKWIR_STARTUP_ORDER:-$here/startup-order.txt}
 
@@ -79,16 +80,30 @@ LC_ALL=C "$nm" --defined-only "$output" >"$tmp/mangled" &&
     note "cannot read its symbols: linked as it comes"
     exit 0
 }
+# Ubuntu 22.04's nm (binutils 2.38, where the AppImage is made) leaves a
+# Rust name mangled when LLVM gave it a suffix (`.llvm.<hash>`, as ThinLTO
+# names a function it shares between its modules; `.specialized.1`; `.0`):
+# one in twelve of what a start runs. Later ones read the name without it.
+# So each name is read again without its suffix (a Rust name holds no dot),
+# by c++filt, for where nm left one as it was. Without c++filt, those are
+# not found, as before.
+sed -E 's/^[^ ]+ [^ ]+ //; s/^(_R[^.]*)\..*$/\1/' "$tmp/mangled" |
+    LC_ALL=C "$cxxfilt" -i >"$tmp/plain" 2>/dev/null || : >"$tmp/plain"
+[ "$(wc -l <"$tmp/plain")" -eq "$(wc -l <"$tmp/mangled")" ] || : >"$tmp/plain"
 
-# One line of each file, a tab between: "address type mangled" and
-# "address type demangled name, which holds spaces".
-paste "$tmp/mangled" "$tmp/demangled" | LC_ALL=C awk -F '\t' -v list="$list" '
+# One line of each file, a tab between: "address type mangled", "address
+# type demangled name, which holds spaces" and that name read again.
+paste "$tmp/mangled" "$tmp/demangled" "$tmp/plain" | LC_ALL=C awk -F '\t' -v list="$list" '
 {
     split($1, parts, " ")
     if (parts[2] !~ /^[tTwW]$/) next
     key = $2
     sub(/^[^ ]+ [^ ]+ /, "", key)
-    found[key] = (key in found) ? found[key] "\n" parts[3] : parts[3]
+    if (key == parts[3] && key ~ /^_R/ && $3 != "") key = $3
+    # Not one assignment testing `key in found`: mawk makes the element
+    # before it asks.
+    if (key in found) found[key] = found[key] "\n" parts[3]
+    else found[key] = parts[3]
 }
 END {
     while ((getline line < list) > 0)
