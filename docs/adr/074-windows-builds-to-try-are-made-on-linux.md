@@ -140,3 +140,9 @@ written on Linux and never run.
   `gstreamer\bin` among the libraries of the GStreamer it carries
   (`tools/package/gstreamer.py`); the check plays an H.264 and AAC clip
   and a VP9 and Opus one through it under Wine.
+- 2026-11-11 (ADR-129): the formulas' helper is in the package, beside
+  skwir. Linux's packages keep it apart so that its weight (about 5 MB)
+  is the user's choice; this one has no way to add it apart, and without
+  it formulas would never be drawn. Under Wine it typesets a batch (a
+  fraction, a number set apart by its `\tag`, chemistry; broken TeX
+  refused with its reason). Mermaid's stays out.

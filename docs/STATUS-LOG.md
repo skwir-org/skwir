@@ -14750,3 +14750,51 @@ tests 20 times alone; core's, the UI's and extend's tests side by side
 three times (1380 passed each); the thumbnail tests 30 times with every
 core kept busy (17 passed each).
 
+## 2026-11-11: A notebook's outputs typeset as JupyterLab does; GitHub's inline form; formulas on Windows and macOS
+
+The gap and the small items left after the math work (ADR-129 amended).
+
+- **What a cell returns.** An HTML result's `$x$` stayed text: the HTML
+  reader looked for TeX only where the page loads MathJax, which an
+  output never does (JupyterLab's own typesets it). Its caller now says
+  how (`rich_preview::html_with`, `Math`): a notebook's HTML result is read
+  by MathJax's rules as JupyterLab sets them, `$` included; `\$` is a
+  dollar there (MathJax's `processEscapes`), and what a page marks
+  `mathjax_ignore` or `tex2jax_ignore` is left alone, as MathJax leaves
+  it (pandas marks a frame so with `display.html.use_mathjax` off). Its
+  formulas join the caller's batch (`Math::batch`): a notebook is still
+  one call of the helper, its outputs and a Markdown file's HTML included.
+  A Markdown result is read as a cell is, by Jupyter's rules.
+- **GitHub's `` $`…`$ ``.** pulldown-cmark reads it as a formula whose TeX
+  is in backticks, which went to the typesetter as they were (PLAN had it
+  as a dollar, code and a dollar, wrongly): in Markdown it is the formula
+  between them, copied as written. A notebook's cells have no such form.
+- **Windows and macOS.** The helper is in both packages
+  (`tools/package/{windows,macos}/programs`, ADR-074 and ADR-075
+  amended), their notices made again (KaTeX's fonts' OFL in them).
+  Mermaid's stays out.
+- **A match found in a grown row**, unchecked before: Find brings it into
+  view whole, its highlight filling the row, as a match in a row one line
+  high is.
+
+**Checked:** rustfmt; clippy `-D warnings` on `skwir-platform` and
+`-plugin-markdown`; their tests and the books', email's, documents' and
+the helper's (597 passed; new: a page read by its caller's rules into its
+caller's batch, `\$` a dollar, a `tex2jax_ignore` table left alone, the
+formula left for the batch; a notebook's HTML and Markdown results drawn
+as JupyterLab draws them; GitHub's inline form). `just notices` (the
+Windows and macOS notices), `notices-check`, `release-tools-check`.
+`just package-windows`: the helper in the zip, `--probe` under Wine, and
+a batch typeset by the Windows build under Wine (a fraction, a number
+set apart by its `\tag`, chemistry drawn; broken TeX refused with its
+reason). `just package-macos`: the helper arm64, macOS 12 or later,
+signed with the bundle; never run. A debug window on Xvfb: "zebra" beside
+an integral found from the top of a long page, and an ordinary match,
+each brought into view the same way.
+
+**Seen, left as it was:** the Windows check failed twice at the media
+helper's VP9 and Opus clip, waiting for its subtitles to turn off, after
+the H.264 clip passed; run alone, the same check passed twice. The machine
+was loaded then (a load average of 14), and nothing of the media helper
+or its check changed since 0.4.0: timing under load, not this work.
+

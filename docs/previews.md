@@ -212,11 +212,14 @@ The player, in the panel or pinned at its foot:
 - Fenced `mermaid` blocks are drawn as diagrams when
   `skwir-mermaid-worker` is installed, and stay code without it.
 - Formulas are typeset when `skwir-math-worker` is installed (the
-  `skwir-math` package), in the line they are written in or centered on
-  one of their own: Markdown's `$…$`, `$$…$$` and fenced `math` blocks
+  `skwir-math` package on Linux; Windows' and macOS's packages carry it),
+  in the line they are written in or centered on one of their own:
+  Markdown's `$…$`, `$$…$$`, `` $`…`$ `` and fenced `math` blocks
   (GitHub's; a notebook's stays code, as in JupyterLab), a notebook's
   math as Jupyter finds it (`\\(…\\)`, `\\[…\\]` and `\begin{…}`
-  environments too) and the LaTeX its cells return, MathML in HTML files,
+  environments too) and in what its cells return (LaTeX, Markdown, and
+  HTML as JupyterLab's MathJax reads it: a frame pandas marks
+  `tex2jax_ignore` is left alone), MathML in HTML files,
   books and e-mail (its TeX where it carries it, else its markup), and
   the TeX of a page written for MathJax or KaTeX (an exported notebook).
   A page that already drew its formulas (KaTeX's, Wikipedia's) shows each
@@ -576,7 +579,7 @@ external program or network service.
 | RTF (or every text document with Pandoc chosen) | | Pandoc, bubblewrap; Word and OpenDocument read as text need nothing |
 | SQLite databases | | `libsqlite3`, which Skwir links |
 | Mermaid diagrams | `skwir-mermaid-worker` | Nothing (Rust, built by default; separate because its layout engine is about 16 MB) |
-| Formulas (TeX, MathML's TeX) | `skwir-math-worker` | Nothing (RaTeX and KaTeX's fonts, Rust, built by default; separate because the typesetter and its fonts are about 5 MB) |
+| Formulas (TeX, MathML's TeX) | `skwir-math-worker` | Nothing (RaTeX and KaTeX's fonts, Rust, built by default; a package of its own on Linux because the typesetter and its fonts are about 5 MB; in Windows' and macOS's packages) |
 | 3D meshes without a stored picture | `skwir-model-worker` | Nothing (Rust, built by default); without it, an installed thumbnailer (f3d) draws them, if any |
 | HEIC, AVIF, JPEG XL, raw photos | | A thumbnailer for them (libheif's `heif-thumbnailer`, for example), else ImageMagick (`magick`, or ImageMagick 6's `convert`) and bubblewrap; with neither they show no picture |
 

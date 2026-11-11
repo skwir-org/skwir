@@ -263,14 +263,31 @@ fn inline_formula(
     tex: &str,
     inline: &mut Inline,
     formulas: &mut math::Pending,
+    github: bool,
 ) {
-    if let Some(drawing) = formulas.ask(tex, false, written(tex.trim(), false)) {
+    // GitHub's own form, `` $`…`$ ``, where Markdown's math is GitHub's:
+    // pulldown-cmark reads it as a formula whose TeX is in backticks.
+    let (tex, written) = match github.then(|| backticked(tex)).flatten() {
+        Some(inner) => (inner, format!("$`{inner}`$")),
+        None => (tex, written(tex.trim(), false)),
+    };
+    if let Some(drawing) = formulas.ask(tex, false, written.clone()) {
         current.push_drawing(drawing, &inline.run(0..0));
     } else {
         inline.code += 1;
-        push(current, &written(tex.trim(), false), inline);
+        push(current, &written, inline);
         inline.code -= 1;
     }
+}
+
+/// What `tex` holds between the backticks around it, if it is in them as a
+/// code span is (one or more on each side, as many).
+fn backticked(tex: &str) -> Option<&str> {
+    let ticks = tex.len() - tex.trim_start_matches('`').len();
+    let inner = tex
+        .get(ticks..tex.len().checked_sub(ticks)?)
+        .filter(|_| ticks > 0 && tex.ends_with(&tex[..ticks]))?;
+    (!inner.is_empty() && !inner.starts_with('`') && !inner.ends_with('`')).then_some(inner)
 }
 
 /// Heading link targets, named the way GitHub names them, since that is
@@ -336,6 +353,12 @@ fn level(level: HeadingLevel) -> u8 {
 /// Read a run of raw HTML with the shared reading-mode parser and append what
 /// it found. Markdown allows arbitrary HTML blocks, so dropping them loses a
 /// README's logo, badges and centered headers.
+/// HTML in the document, read by the shared reading-mode reader, its
+/// formulas joining the document's batch (`formulas`), its text's TeX found
+/// by `tex` (a notebook's output, by JupyterLab's MathJax), else by the
+/// page's own scripts alone: Markdown's HTML is no Markdown, whose `$`
+/// GitHub leaves there.
+#[allow(clippy::too_many_arguments)] // The reader's state, borrowed apart.
 fn emit_html(
     blocks: &mut Vec<Block>,
     html: &mut String,
@@ -343,17 +366,23 @@ fn emit_html(
     cancel: &CancelToken,
     image: &mut impl FnMut(&str) -> Option<Picture>,
     quote_depth: u32,
+    formulas: &mut math::Pending,
+    tex: Option<math::delimited::Rules>,
 ) -> anyhow::Result<()> {
     let source = std::mem::take(html);
     if source.trim().is_empty() {
         return Ok(());
     }
-    let page = rich_preview::html(
+    let page = rich_preview::html_with(
         &source,
         rich_preview::Markup::Html,
         bounds,
         cancel,
         rich_preview::named(image),
+        rich_preview::Math {
+            batch: Some(formulas),
+            tex,
+        },
     )?;
     for mut block in page.blocks {
         block.quote |= quote_depth > 0;
@@ -451,9 +480,11 @@ impl Document {
         read(self, &text, cancel, load, None, Some(&taken))
     }
 
-    /// HTML, read by the shared reading-mode reader, its pictures named by
-    /// `load`; whether it showed anything (a chart a script draws shows
-    /// nothing inert).
+    /// A notebook's HTML result, read by the shared reading-mode reader, its
+    /// pictures named by `load`, its TeX found as JupyterLab's MathJax finds
+    /// it (`$` included, `\$` a dollar, nothing marked `mathjax_ignore`),
+    /// its formulas typeset with the notebook's; whether it showed anything
+    /// (a chart a script draws shows nothing inert).
     pub fn html(
         &mut self,
         source: &str,
@@ -468,6 +499,8 @@ impl Document {
             cancel,
             &mut load,
             0,
+            &mut self.formulas,
+            Some(math::delimited::mathjax(true)),
         )?;
         Ok(self.blocks.len() > before)
     }
@@ -518,9 +551,10 @@ fn read(
         | Options::ENABLE_PLUSES_DELIMITED_METADATA_BLOCKS
         | Options::ENABLE_WIKILINKS;
     // Markdown's math, unless Jupyter's was taken out before: its
-    // placeholders are formulas again here (`placed`). A fenced `math` block
-    // is GitHub's formula set apart, which JupyterLab shows as code.
-    let fenced_math = taken.is_none();
+    // placeholders are formulas again here (`placed`). Markdown's math is
+    // GitHub's: a fenced `math` block is a formula set apart, and
+    // `` $`…`$ `` one in a sentence, which JupyterLab has neither of.
+    let github = taken.is_none();
     let events: Box<dyn Iterator<Item = Event<'_>>> = match taken {
         None => Box::new(Parser::new_ext(source, options | Options::ENABLE_MATH)),
         Some(taken) => {
@@ -606,7 +640,7 @@ fn read(
                 // A formula in a cell stands in its line, whichever way it
                 // was written.
                 Event::InlineMath(tex) | Event::DisplayMath(tex) => {
-                    inline_formula(&mut current, &tex, &mut inline, formulas);
+                    inline_formula(&mut current, &tex, &mut inline, formulas, github);
                 }
                 _ => {}
             }
@@ -641,7 +675,16 @@ fn read(
         // A run of raw HTML ends here: read it where it stood.
         if !html.is_empty() && !matches!(event, Event::Html(_)) {
             flush(blocks, &mut current, &mut marker);
-            emit_html(blocks, &mut html, bounds, cancel, &mut load, quote_depth)?;
+            emit_html(
+                blocks,
+                &mut html,
+                bounds,
+                cancel,
+                &mut load,
+                quote_depth,
+                formulas,
+                None,
+            )?;
             begin(&mut current, quote_depth, &lists, marker.as_deref());
         }
         match event {
@@ -736,7 +779,7 @@ fn read(
                     current.language = None;
                     current.picture = Some(Picture::Ready(image));
                 }
-                if fenced_math
+                if github
                     && current.language.as_deref() == Some("math")
                     && let Some(drawing) = {
                         let tex = current.text.trim();
@@ -805,7 +848,9 @@ fn read(
                     ..Block::default()
                 });
             }
-            Event::InlineMath(tex) => inline_formula(&mut current, &tex, &mut inline, formulas),
+            Event::InlineMath(tex) => {
+                inline_formula(&mut current, &tex, &mut inline, formulas, github);
+            }
             // A formula set apart is a block of its own, centered, so the
             // paragraph around it is cut in two, as an image cuts it; both
             // halves stay in the quote or list item they were written in.
@@ -836,7 +881,16 @@ fn read(
         }
     }
     flush(blocks, &mut current, &mut marker);
-    emit_html(blocks, &mut html, bounds, cancel, &mut load, quote_depth)?;
+    emit_html(
+        blocks,
+        &mut html,
+        bounds,
+        cancel,
+        &mut load,
+        quote_depth,
+        formulas,
+        None,
+    )?;
     Ok(())
 }
 
@@ -924,6 +978,33 @@ mod tests {
 
     /// A paragraph with a formula drawn and one that cannot be, one set
     /// apart, and a row of a table holding both kinds.
+    /// GitHub's `` $`…`$ `` is the formula between its backticks, copied as
+    /// it is written.
+    #[test]
+    fn github_s_inline_form_is_the_formula_between_its_backticks() {
+        assert_eq!(backticked("`\\sqrt{3}`"), Some("\\sqrt{3}"));
+        assert_eq!(backticked("``a`b``"), Some("a`b"));
+        assert_eq!(backticked("x^2"), None);
+        assert_eq!(backticked("`x"), None);
+        assert_eq!(backticked("``"), None);
+        if !with_built(&skwir_platform::math::WORKER) {
+            return;
+        }
+        let blocks = parse("A $`\\sqrt{3}`$ and $x$.\n");
+        let sentence = &blocks[0];
+        assert_eq!(
+            sentence.said(0..sentence.text.len()),
+            "A $`\\sqrt{3}`$ and $x$."
+        );
+        let drawn = drawings(sentence);
+        assert_eq!(drawn.len(), 2);
+        assert!(
+            drawn[0].width > 1.,
+            "a root, not quotes: {}",
+            drawn[0].width
+        );
+    }
+
     /// A paragraph's first block begins it, a picture first included; a
     /// tight list's items and the half after a picture do not.
     #[test]

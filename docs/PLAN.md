@@ -925,16 +925,15 @@ Gathered on 2026-10-20 from the notes of this plan and of
 may have covered one: check the source before starting it. Work that
 closes an item removes its line; work that leaves one adds it here.
 
-**Formulas** (ADR-129, 2026-11-10): the helper is in Linux's and Nix's
-packages only; Windows' and macOS's leave it out, as Mermaid's. A formula
+**Formulas** (ADR-129, 2026-11-10): the helper is in every package, apart
+on Linux; Windows' was tried under Wine, macOS's built and looked over,
+never run. A formula
 is drawn in one ink (`\color` is not kept) and is not found by its TeX.
 RaTeX sets a hand-written `\tag{A}` in italic. What a screen reader hears
 of a formula was read over AT-SPI (a probe on the a11y check's harness),
 not with Orca. MathML that uses an element `math::mathml` does not know
 (`mglyph`, `mmultiscripts`, `mlongdiv`) reads as loose letters. A visually
 hidden label alone in its block is lost (an empty block is not kept).
-GitHub's inline form, `` $`…`$ ``, is not read: it shows as a dollar, code
-and a dollar (its fenced `math` block is).
 
 **Grouping** (issue #10, 2026-11-10): the reply promised a look at
 grouping by other criteria (kind, date…); nothing is designed yet. Folders

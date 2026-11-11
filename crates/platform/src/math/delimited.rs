@@ -164,6 +164,17 @@ fn signs(
     signs
 }
 
+/// What `text`, outside its formulas, shows of what it escaped under
+/// `rules`: a page MathJax reads with `$` (its `processEscapes`) shows
+/// `\$` as a dollar. A notebook's Markdown is Markdown's to unescape.
+pub fn unescaped(text: &str, rules: Rules) -> std::borrow::Cow<'_, str> {
+    if rules == (Rules::Page { dollars: true }) && text.contains("\\$") {
+        std::borrow::Cow::Owned(text.replace("\\$", "$"))
+    } else {
+        std::borrow::Cow::Borrowed(text)
+    }
+}
+
 /// The length of the `\begin{name}` or `\end{name}` `text` starts with: a
 /// name of letters, which a `*` may end.
 fn environment(text: &str) -> Option<usize> {

@@ -106,3 +106,6 @@ macOS, `tools/package/macos.sh` for a Mac, written on Linux and never run.
   since its commit f14592c4 ("Require macOS 12 and SDK 26"), which drops
   the APIs macOS 12 deprecated. The deployment target, Info.plist's
   `LSMinimumSystemVersion` and the package's check say 12.0.
+- 2026-11-11 (ADR-129): the formulas' helper is in the bundle, beside
+  skwir, as in Windows' package: one bundle, no way to add it apart.
+  Built and looked over (arm64, signed); never run. Mermaid's stays out.

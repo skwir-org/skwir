@@ -333,10 +333,12 @@ fn rich(
             return Ok(true);
         }
     }
+    // Markdown a cell returns is read as its cells are, by Jupyter's math
+    // rules: JupyterLab renders both alike.
     if let Some(markdown) = data.get("text/markdown") {
         let markdown = text(Some(markdown));
         spend(read, &markdown, bounds)?;
-        document.markdown(&markdown, cancel, &mut *beside, None)?;
+        document.cell(&markdown, cancel, &mut *beside)?;
         return Ok(true);
     }
     match data.get("text/latex") {

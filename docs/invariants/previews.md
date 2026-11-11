@@ -364,13 +364,20 @@ A name that says nothing is not a binary file.
 - A notebook's math is Jupyter's, taken out of each cell before its
   Markdown is read (`math::delimited::take` with `JUPYTER`, by JupyterLab's
   `removeMath`): Markdown's own `$` rules are not a notebook's. Elsewhere,
-  Markdown's are pulldown-cmark's, and a fenced `math` block is GitHub's
-  formula set apart (a notebook's is code, as JupyterLab shows it). HTML's is MathML's TeX annotation, else
+  Markdown's are pulldown-cmark's, a fenced `math` block is GitHub's
+  formula set apart and `` $`…`$ `` its formula in a sentence (a
+  notebook's cells have neither, as JupyterLab has not). What a notebook's
+  cell returns is typeset as JupyterLab typesets it: its Markdown as a
+  cell, its HTML by MathJax's rules as JupyterLab sets them (`$`
+  included), which its caller gives the HTML reader (`rich_preview::Math`),
+  whose formulas then join the caller's batch. HTML's is MathML's TeX annotation, else
   its markup written as TeX (`math::mathml`, a formula of an element it
   does not know left as it reads), else its `alttext`; and a page that
   loads MathJax or KaTeX's auto-render has its text read by their rules
-  (`delimited::mathjax`, `$` only where its configuration lists it), never
-  its `pre` or `code`. Delimited TeX is found by `math::delimited` alone.
+  (`delimited::mathjax`, `$` only where its configuration lists it, `\$`
+  a dollar there), never its `pre` or `code`, nor what it marks
+  `mathjax_ignore` or `tex2jax_ignore`. Delimited TeX is found by
+  `math::delimited` alone.
 - **A formula beside a drawing of itself is typeset once**: MathML
   carrying its TeX next to an `aria-hidden` drawing (KaTeX's spans,
   MathJax 3's glyphs, Wikipedia's picture) is typeset in the drawing's

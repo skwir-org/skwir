@@ -1,8 +1,8 @@
 # ADR-129: Formulas are typeset by a helper and drawn in their lines
 
 Status: accepted 2026-11-10 with the user. Built on Linux; the helper is
-in Linux's and Nix's packages, not yet in Windows' or macOS's (as
-Mermaid's, ADR-074, ADR-075).
+in Linux's and Nix's packages, apart, and in Windows' and macOS's since
+2026-11-11 (amendments).
 Amends ADR-041 (a package of its own, `skwir-math`), ADR-064 (gpui patch
 0060) and ADR-124 (`withMath`).
 
@@ -143,3 +143,28 @@ cut between two rows), it asks the text's rows
 
 Markdown's fenced `math` block (GitHub's) is a formula set apart, as
 `$$…$$` is; in a notebook's cell it stays code, as JupyterLab shows it.
+
+### 2026-11-11: what a notebook's cells return; GitHub's inline form; Windows and macOS
+
+A notebook's outputs were read by the rules of what they are, not of
+JupyterLab, which renders them: an HTML result's `$x$` stayed text (the
+result loads no MathJax, JupyterLab's own typesets it), a Markdown
+result's math was Markdown's. Now an HTML result is read by MathJax's
+rules as JupyterLab sets them (`$` included; `\$` a dollar, its
+`processEscapes`; nothing marked `mathjax_ignore` or `tex2jax_ignore`,
+as pandas marks a frame with `display.html.use_mathjax` off), and a
+Markdown result as a cell is. The HTML reader is told so by its caller
+(`rich_preview::html_with`, `Math`), and its formulas join the caller's
+batch: a notebook is still typeset in one call, its outputs and the HTML
+in a Markdown file included.
+
+Markdown's `` $`…`$ ``, GitHub's other inline form, was typeset with its
+backticks as TeX; it is the formula between them, copied as written. A
+notebook's cells have no such form, as JupyterLab has not.
+
+Windows' and macOS's packages carry the helper: Linux's keep it apart
+so that its weight is the user's choice, and these have one package
+each, with no way to add it apart, so formulas there would never be
+drawn. It links nothing and runs only for a page that holds formulas:
+it weighs about 5 MB and costs nothing idle. Mermaid's stays out.
+

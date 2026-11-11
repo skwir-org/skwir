@@ -440,6 +440,71 @@ mod tests {
         assert_eq!((image.width, image.height), (2, 1), "the second plot");
     }
 
+    /// What a cell returns is typeset as JupyterLab typesets it: HTML by its
+    /// MathJax (`$` included, `\$` a dollar, what pandas marks
+    /// `tex2jax_ignore` left alone), Markdown as cells are read.
+    #[test]
+    fn a_notebook_s_outputs_have_their_math_typeset_as_jupyterlab_does() {
+        let Some(worker) = std::env::current_exe()
+            .ok()
+            .and_then(|exe| Some(exe.parent()?.parent()?.join("skwir-math-worker")))
+            .filter(|path| path.is_file())
+        else {
+            eprintln!("skipped: skwir-math-worker is not built");
+            return;
+        };
+        // SAFETY: no other thread of this test process reads the
+        // environment; nextest runs each test in a process of its own.
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::set_var("SKWIR_MATH_WORKER", worker);
+        }
+        let document = serde_json::json!({
+            "nbformat": 4,
+            "nbformat_minor": 5,
+            "metadata": {},
+            "cells": [
+                {"cell_type": "code", "source": "show()", "outputs": [
+                    {"output_type": "display_data",
+                     "data": {"text/html": "<p>A rate $r$ for \\$5.</p>", "text/plain": "rate"}},
+                    {"output_type": "execute_result",
+                     "data": {"text/html": "<table class=\"dataframe tex2jax_ignore\"><tr><td>$5</td><td>$10</td></tr></table>",
+                              "text/plain": "prices"}},
+                    {"output_type": "display_data",
+                     "data": {"text/markdown": "Let \\\\(m\\\\) be.", "text/plain": "m"}}
+                ]}
+            ]
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let request = PreviewRequest::holding(
+            dir.path().join("outputs.ipynb"),
+            document.to_string().into_bytes(),
+            Some("application/x-ipynb+json"),
+        );
+        let data = notebook(&request.held().unwrap(), Bounds::QUICK, &CancelToken::new()).unwrap();
+        let shown: Vec<(String, usize)> = data
+            .blocks
+            .iter()
+            .filter(|block| !block.code)
+            .map(|block| {
+                let drawn = block.runs.iter().filter(|run| {
+                    run.drawing
+                        .as_ref()
+                        .is_some_and(|drawing| !drawing.svg.is_empty())
+                });
+                (block.said(0..block.text.len()).into_owned(), drawn.count())
+            })
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                ("A rate $r$ for $5.".to_owned(), 1),
+                ("$5\t$10".to_owned(), 0),
+                ("Let $m$ be.".to_owned(), 1),
+            ]
+        );
+    }
+
     /// The math Jupyter shows, in cells and in what sympy prints, drawn where
     /// the helper is built; its TeX, as code, where it is not.
     #[test]

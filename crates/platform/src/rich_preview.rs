@@ -131,14 +131,44 @@ pub fn html(
     markup: Markup,
     bounds: limits::Bounds,
     cancel: &CancelToken,
+    resources: impl Resources,
+) -> anyhow::Result<Page> {
+    html_with(source, markup, bounds, cancel, resources, Math::default())
+}
+
+/// Where a page's formulas go and how its text's TeX is found, as its
+/// caller says (`html_with`): a notebook's output is part of the
+/// notebook, whose formulas are typeset in one batch, and JupyterLab's
+/// MathJax typesets it, which the output itself does not load.
+#[derive(Default)]
+pub struct Math<'a> {
+    /// The batch the page's formulas join, typeset by its owner with the
+    /// rest of its page; none, the page's own, typeset once it is read.
+    pub batch: Option<&'a mut crate::math::Pending>,
+    /// How its text's TeX is found where its own scripts say nothing.
+    pub tex: Option<crate::math::delimited::Rules>,
+}
+
+/// [`html`], its formulas where `math` says.
+pub fn html_with(
+    source: &str,
+    markup: Markup,
+    bounds: limits::Bounds,
+    cancel: &CancelToken,
     mut resources: impl Resources,
+    mut math: Math<'_>,
 ) -> anyhow::Result<Page> {
     let most = bounds.blocks();
     let doc = document(source, markup);
     let mut sheets = stylesheets(&doc, &mut resources);
     check(cancel)?;
     let mut walk = Walk {
-        tex: typesetter(&doc),
+        tex: typesetter(&doc).or(math.tex),
+        formulas: math
+            .batch
+            .as_deref_mut()
+            .map(std::mem::take)
+            .unwrap_or_default(),
         ..Walk::default()
     };
     let pairs = pairs(&doc);
@@ -152,7 +182,7 @@ pub fn html(
             check(cancel)?;
         }
         if walk.blocks.len() + walk.notes.len() > most {
-            return Ok(walk.page(most, cancel));
+            return Ok(walk.page(most, cancel, math.batch));
         }
         match edge {
             Edge::Open(node) => {
@@ -250,7 +280,7 @@ pub fn html(
             }
         }
     }
-    Ok(walk.page(most, cancel))
+    Ok(walk.page(most, cancel, math.batch))
 }
 
 /// The page's tree: XHTML read as XML when it is well-formed.
@@ -323,6 +353,10 @@ struct Context {
     quote: bool,
     /// The nearest block is a `p`: its first block begins a paragraph.
     paragraph: bool,
+    /// Inside what the page tells MathJax to leave alone
+    /// (`mathjax_ignore`, `tex2jax_ignore`): pandas' tables, where it sets
+    /// `display.html.use_mathjax` off.
+    untypeset: bool,
     lists: u32,
     /// How the nearest list numbers its items (`None`: bullets), and
     /// where it starts.
@@ -360,6 +394,7 @@ impl Default for Context {
             code: false,
             quote: false,
             paragraph: false,
+            untypeset: false,
             lists: 0,
             list: None,
             item: None,
@@ -432,6 +467,14 @@ impl Context {
             }
             "tr" => context.row = Some(node.id()),
             _ => {}
+        }
+        // MathJax's classes, as JupyterLab's and MathJax 2's name them.
+        for class in e.attr("class").unwrap_or_default().split_ascii_whitespace() {
+            match class {
+                "mathjax_ignore" | "tex2jax_ignore" => context.untypeset = true,
+                "mathjax_process" | "tex2jax_process" => context.untypeset = false,
+                _ => {}
+            }
         }
         if let Some(language) = e.attr("class").and_then(|c| {
             c.split_whitespace()
@@ -693,18 +736,18 @@ impl Walk {
         use crate::math::delimited::{self, Taken};
         let Some(rules) = self
             .tex
-            .filter(|_| !context.silent && !context.pre && !context.code)
+            .filter(|_| !context.silent && !context.pre && !context.code && !context.untypeset)
             .filter(|_| text.contains(['$', '\\']))
         else {
             return self.text(context, text);
         };
         let (marked, taken) = delimited::take(text, rules);
         if taken.is_empty() {
-            return self.text(context, text);
+            return self.text(context, &delimited::unescaped(text, rules));
         }
         for part in delimited::split(&marked) {
             match part.map_err(|number| &taken[number]) {
-                Ok(text) => self.text(context, text),
+                Ok(text) => self.text(context, &delimited::unescaped(text, rules)),
                 Err(Taken::Formula {
                     tex,
                     display,
@@ -887,8 +930,14 @@ impl Walk {
         self.row = row;
     }
 
-    /// The page read, its first `most` blocks.
-    fn page(mut self, most: usize, cancel: &CancelToken) -> Page {
+    /// The page read, its first `most` blocks, its formulas typeset or
+    /// handed back to the `batch` they joined.
+    fn page(
+        mut self,
+        most: usize,
+        cancel: &CancelToken,
+        batch: Option<&mut crate::math::Pending>,
+    ) -> Page {
         if self.filled() {
             self.finish();
         }
@@ -909,7 +958,11 @@ impl Walk {
         sizes(&mut self.blocks, &self.sizes);
         let truncated = self.blocks.len() > most;
         self.blocks.truncate(most);
-        std::mem::take(&mut self.formulas).typeset(&mut self.blocks, cancel);
+        let formulas = std::mem::take(&mut self.formulas);
+        match batch {
+            Some(batch) => *batch = formulas,
+            None => formulas.typeset(&mut self.blocks, cancel),
+        }
         Page {
             blocks: self.blocks,
             truncated,
@@ -1821,6 +1874,48 @@ mod tests {
             "$5 and \\(z\\) and $10"
         );
         assert_eq!(drawn(&prices[0]), 1);
+    }
+
+    /// A page read by its caller's rules into its caller's batch, as a
+    /// notebook's output is: its `$` formulas found, `\$` a dollar, what
+    /// pandas marks `tex2jax_ignore` left alone, and its formulas waiting
+    /// for the batch's owner to typeset them.
+    #[test]
+    fn a_page_read_by_its_caller_s_rules_joins_its_batch() {
+        let Some(worker) = std::env::current_exe()
+            .ok()
+            .and_then(|exe| Some(exe.parent()?.parent()?.join("skwir-math-worker")))
+            .filter(|path| path.is_file())
+        else {
+            eprintln!("skipped: skwir-math-worker is not built");
+            return;
+        };
+        use_math_worker(&worker);
+        let mut batch = crate::math::Pending::default();
+        let mut page = html_with(
+            r#"<p>Let $x$ cost \$5.</p><table class="dataframe tex2jax_ignore"><tr><td>$5 and $10</td></tr></table>"#,
+            Markup::Html,
+            limits::Bounds::QUICK,
+            &CancelToken::new(),
+            pictures(|_| None),
+            Math {
+                batch: Some(&mut batch),
+                tex: Some(crate::math::delimited::mathjax(true)),
+            },
+        )
+        .unwrap();
+        assert_eq!(said(&page.blocks), ["Let $x$ cost $5.", "$5 and $10"]);
+        let drawing = |blocks: &[Block]| {
+            blocks[0]
+                .runs
+                .iter()
+                .find_map(|run| run.drawing.clone())
+                .expect("a formula")
+        };
+        assert!(drawing(&page.blocks).svg.is_empty(), "left for the batch");
+        assert!(page.blocks[1].runs.iter().all(|run| run.drawing.is_none()));
+        batch.typeset(&mut page.blocks, &CancelToken::new());
+        assert!(drawing(&page.blocks).svg.starts_with(b"<svg"));
     }
 
     /// Formulas set beside a drawing of themselves, as KaTeX (its MathML,
