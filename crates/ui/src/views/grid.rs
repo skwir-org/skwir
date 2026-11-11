@@ -36,7 +36,9 @@ use gpui::{AnyElement, Context, Window, div, prelude::*, px, size};
 use skwir_core::EntryId;
 use skwir_core::thumbs::ThumbSize;
 
-use crate::elements::uniform_grid::{TileHeights, UniformGridScrollHandle, uniform_grid};
+use crate::elements::uniform_grid::{
+    GridGroups, TileHeights, UniformGridScrollHandle, uniform_grid,
+};
 use crate::elements::zoom_wheel::{self, Zoomed};
 use crate::icons;
 use crate::shell::Shell;
@@ -44,6 +46,7 @@ use crate::sizes::{Part, Scale};
 use crate::theme::Theme;
 use crate::thumbs::ThumbView;
 use crate::view::{Nav, PaneView};
+use crate::views::groups;
 use crate::views::list::{COLUMNS, Detail, PerColumn, RowData, files_scale};
 
 /// Zoom steps for `ui.zoom`: the side of a tile's box.
@@ -352,12 +355,15 @@ fn shown_name(
     .unwrap_or(name)
 }
 
+/// A tile: `group` says what a screen reader hears of its group where it
+/// is the group's first (`groups::said`).
 fn cell(
     shell: &mut Shell,
     theme: &Theme,
     row: &RowData,
     lines: u8,
     captions: &[Caption],
+    group: Option<String>,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
     let zoom = shell.zoom;
@@ -503,7 +509,7 @@ fn cell(
     let seat = crate::views::entry::Seat {
         index: ix,
         tree: None,
-        group: None,
+        group,
     };
     crate::views::entry::behave(el, look, seat, shell, cx).into_any_element()
 }
@@ -693,6 +699,46 @@ fn mosaic(
         .into_any_element()
 }
 
+/// A heading's height in the grid, at 100 %: a list row's, with room
+/// above it to set the groups apart.
+const HEADING: f32 = 32.;
+
+/// The grid's groups as the grid element draws them: each heading made as
+/// the list makes its rows' (`groups::heading`), its words where the
+/// tiles' pictures begin; the one pinned on the files' ground.
+fn grid_groups(
+    rows: crate::views::groups::RowMap,
+    scale: Scale,
+    shell: &Shell,
+    cx: &Context<Shell>,
+) -> GridGroups {
+    let theme = cx.global::<Theme>().clone();
+    let ground = theme.files_ground(shell.lowered());
+    let a11y = shell.a11y;
+    let height = scale.f(HEADING);
+    let spans = rows.clone();
+    GridGroups {
+        rows,
+        height,
+        heading: Rc::new(move |n, pinned, left, _, _| {
+            let span = &spans.spans()[n];
+            let left = Some(left + FRAME);
+            if pinned {
+                groups::pinned(span, height, left, scale, &theme, ground)
+                    .id(("pinned-heading", n))
+                    .into_any_element()
+            } else {
+                groups::expose(
+                    groups::heading(span, n == 0, height, left, scale, &theme).id(("heading", n)),
+                    span,
+                    a11y,
+                )
+                .into_any_element()
+            }
+        }),
+    }
+}
+
 impl PaneView for GridView {
     fn zooms(&self) -> crate::view::Zooms {
         crate::view::Zooms::Tiles
@@ -719,6 +765,16 @@ impl PaneView for GridView {
         let scale = files_scale(cx.global::<Theme>());
         let pane = shell.pane;
         let said = Rc::clone(&captions);
+        // The groups, each starting a row of its own under its heading.
+        let rows = shell.ui().list.rows.clone();
+        let first_of = {
+            let rows = rows.clone();
+            move |ix: usize| {
+                rows.group_of(ix)
+                    .filter(|n| rows.spans()[*n].start == ix)
+                    .map(|n| groups::said(&rows.spans()[n]))
+            }
+        };
         let render = cx.processor(
             move |this: &mut Shell, (range, cols): (Range<usize>, usize), _, cx| {
                 this.with_pane(pane, |this| {
@@ -746,7 +802,7 @@ impl PaneView for GridView {
                         .map(|ix| match rows.next_if(|row| row.ix == ix) {
                             Some(row) => {
                                 let lines = lines.get(ix).copied().unwrap_or(1);
-                                cell(this, &theme, row, lines, &said, cx)
+                                cell(this, &theme, row, lines, &said, first_of(ix), cx)
                             }
                             None => div().into_any_element(),
                         })
@@ -780,6 +836,7 @@ impl PaneView for GridView {
         )
         .gap(size(px(GUTTER.0), px(GUTTER.1)))
         .max_gap(px(MAX_GUTTER))
+        .groups(rows.grouped().then(|| grid_groups(rows, scale, shell, cx)))
         .track_scroll(self.scroll.clone())
         .size_full()
         .px_1();
@@ -824,24 +881,45 @@ impl PaneView for GridView {
         self.scroll.scroll_to_anchor(anchor);
     }
 
-    fn nav_delta(&self, nav: Nav, _: &Shell) -> Option<isize> {
+    /// Up and Down go to the tile drawn over or under the cursor, in its
+    /// column, past a heading, or to the last of a shorter row; from the
+    /// first row or the last, to the order's end. A page goes as many rows.
+    fn nav_delta(&self, nav: Nav, shell: &Shell) -> Option<isize> {
         // Geometry from the last prepaint, never from a measured width.
         let cols = self.scroll.cols() as isize;
         let rows = self.scroll.rows_visible();
-        let page = (rows.saturating_sub(1).max(1) as isize) * cols;
-        // Whole rows, so the cursor stays in its column.
-        let half = ((rows / 2).max(1) as isize) * cols;
-        match nav {
-            Nav::Up => Some(-cols),
-            Nav::Down => Some(cols),
-            Nav::Left => Some(-1),
-            Nav::Right => Some(1),
-            Nav::PageUp => Some(-page),
-            Nav::PageDown => Some(page),
-            Nav::HalfPageUp => Some(-half),
-            Nav::HalfPageDown => Some(half),
-            Nav::Home | Nav::End => None,
+        let (page, half) = (rows.saturating_sub(1).max(1), (rows / 2).max(1));
+        let steps = match nav {
+            Nav::Left => return Some(-1),
+            Nav::Right => return Some(1),
+            Nav::Home | Nav::End => return None,
+            Nav::Up => -1,
+            Nav::Down => 1,
+            Nav::PageUp => -(page as isize),
+            Nav::PageDown => page as isize,
+            Nav::HalfPageUp => -(half as isize),
+            Nav::HalfPageDown => half as isize,
+        };
+        let count = shell.ui().list.sorted.len();
+        let Some(cursor) = shell.cursor_index().filter(|ix| *ix < count) else {
+            return Some(steps * cols);
+        };
+        let slots = self.scroll.slots();
+        let mut at = cursor;
+        for _ in 0..steps.unsigned_abs() {
+            let next = if steps < 0 {
+                slots.above(at)
+            } else {
+                slots.below(at)
+            };
+            match next {
+                Some(next) => at = next,
+                // Past the first row or the last: to the order's end.
+                None if at == cursor => at = if steps < 0 { 0 } else { count - 1 },
+                None => break,
+            }
         }
+        Some(at as isize - cursor as isize)
     }
 
     fn reset(&mut self) {

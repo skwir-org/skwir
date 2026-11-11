@@ -62,6 +62,7 @@ impl Geometry {
             Geometry::Rows { height, rows } if x >= 0. && y >= 0. => {
                 rows.at((y / *height) as usize).is_some()
             }
+            Geometry::Cells { slots, origin } if slots.heading_at(y - origin.1).is_some() => true,
             _ => self.item_at(x, y, count).is_some(),
         }
     }

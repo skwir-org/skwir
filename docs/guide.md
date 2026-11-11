@@ -193,7 +193,8 @@ Last week, Earlier this month, Last month, Earlier this year, then each
 year). The heading of the group at the top stays there as you scroll;
 the arrows, Shift and Select All pass over headings, which are never
 selected. In the tree, a folder opened keeps its files under it, in its
-own group. Folders first, on
+own group; in the grid, each group starts a row of its own, and Up and
+Down go to the picture drawn above or below. Folders first, on
 unless you turn it off (there or in Settings › Folders and views), lists
 folders before files; off, they are sorted together, so by date the
 newest comes first whatever it is. A folder's own date changes when

@@ -650,6 +650,14 @@ def run(w):
     check("Down again: 4 of 4, the last group's first",
           hears(w, f"list item {fourth!r} 4 of 4 selected focused")
           and (w.focused().get_description() or "").startswith(groups[2]))
+    w.keys("ctrl+2")
+    check("the grid, grouped: the same headings among its tiles",
+          until(lambda: headings() == groups) or print("  headings:", headings()))
+    w.keys("Home")
+    check("and Home its first tile, 1 of 4, described by its group",
+          hears(w, f"list item {first!r} 1 of 4 selected focused")
+          and (w.focused().get_description() or "").startswith(groups[0]))
+    w.keys("ctrl+1")
     w.cmd("group", {"by": "none"})
     check("not grouped again: no heading", until(lambda: not headings()))
     w.keys("Home")

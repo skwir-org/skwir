@@ -685,16 +685,12 @@ fn grouped_row_elements(
         .map(|at| match rows.at(at) {
             Some(Row::Heading(n)) => {
                 let span = &rows.spans()[n];
-                let el = groups::heading(span, n == 0, height, scale, theme).id(("heading", n));
-                if shell.a11y {
-                    // A heading among the options: what flat review reads.
-                    // Each group's first entry says its group as well.
-                    el.role(gpui::Role::Heading)
-                        .aria_level(2)
-                        .aria_label(groups::said(span))
-                } else {
-                    el
-                }
+                // Each group's first entry says its group as well.
+                groups::expose(
+                    groups::heading(span, n == 0, height, None, scale, theme).id(("heading", n)),
+                    span,
+                    shell.a11y,
+                )
             }
             Some(Row::Entry(ix)) => match data.next_if(|r| r.ix == ix) {
                 Some(r) => {

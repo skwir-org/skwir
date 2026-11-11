@@ -15003,3 +15003,50 @@ grouped order without headings (phase 3).
 
 **Not done here:** the grid's headings (phase 3); a heading's click and
 menu (phase 4). Not compiled for Windows or macOS.
+
+## 2026-11-11: Group headings in the grid (ADR-130, phase 3)
+
+- **Lines** (`uniform_grid::math::Slots`): the grid was rows of
+  `columns` tiles, tile `ix` in row `ix / cols`, and everything leaned on
+  it (origins, hits, the band, anchors, keys). It is now lines: rows of
+  tiles, and where groups are drawn each group's heading before its rows
+  (`Slots::grouped`), a group starting a row of its own. A tile's line is
+  a search among the lines; not grouped, the lines are the rows as before
+  and every earlier test holds.
+- **Drawn in the element's prepaint** (`GridGroups`): the headings in view
+  as wide as the grid, then the one at the top pinned over what scrolls
+  under it (`Slots::pinned_at`, pushed up by the next), so neither lags a
+  scroll. A heading is the list's (`groups::heading`), its words where the
+  first column's pictures begin, a little taller (32 at 100 %); the
+  pinned one and what a screen reader hears are the list's too.
+- **Keys**: Up and Down go to the tile drawn over or under the cursor
+  (`Slots::above`, `below`): its column in the next row, past a heading,
+  or the last of a shorter row; from the first row or the last, to the
+  order's end, as before. Pages step as many rows.
+- **Scrolling**: a row brought into view from above stops under the
+  pinned heading; what a reflow keeps (`Slots::anchor`) is the tile under
+  it. Found in the window: grouped at the top, the grid kept its first
+  tile at the very top, under the pinned heading, cutting the first row;
+  measured under the heading, a grid at the top stays there.
+- **The band** hit-tests the lines: a heading is no tile, and a press on
+  one begins no band.
+
+**Checked:** rustfmt per file; clippy `-D warnings` on `skwir-ui`, all
+targets; `skwir-core`, `skwir-plugin-query` and `skwir-ui` 1 508 passed
+(new: each group a row of its own under its heading, hits past a short
+row and on a heading, the band, the lines in view; the tile drawn over
+and under, grouped and not; the pinned heading and its push, anchors told
+under it, rows brought into view stopping under it). `just a11y-check`
+(release build): 72 passed, new: the grid grouped by kind says the same
+headings and its first tile 1 of 4 described by Folders. In a window on
+Xvfb (the 73 files of phase 2, Modified, Newest): headings Today 11,
+Yesterday 11, Earlier this week 10, each group on rows of its own; Down
+from permit.pdf (column 5 of Today's short row) to obs-21.txt under it,
+Up back; Up from obs-28.txt (column 6) to permit.pdf, the last of the
+shorter row; the top heading pinned while scrolling; a band from the
+empty slot after permit.pdf over the heading selecting permit.pdf,
+obs-21.txt and obs-28.txt; zoomed out while scrolled, the anchored row
+at the top under the pinned heading.
+
+**Not done here:** a heading's click and menu, Folder (phase 4). Not
+compiled for Windows or macOS.

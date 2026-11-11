@@ -111,53 +111,141 @@ pub mod math {
         }
     }
 
+    /// What a line of the grid holds: a row of tiles, `first..end` of the
+    /// order, or the heading of group `group`, whose first tile is `first`.
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    enum Line {
+        Tiles {
+            group: usize,
+            first: usize,
+            end: usize,
+        },
+        Heading {
+            group: usize,
+            first: usize,
+        },
+    }
+
+    impl Line {
+        fn first(&self) -> usize {
+            match self {
+                Line::Tiles { first, .. } | Line::Heading { first, .. } => *first,
+            }
+        }
+
+        fn group(&self) -> usize {
+            match self {
+                Line::Tiles { group, .. } | Line::Heading { group, .. } => *group,
+            }
+        }
+    }
+
     /// Where the tiles are, in content coordinates (origin at the top left
     /// of the scrolled content, inside the padding). The grid places tiles
     /// with it and the rubber band hit-tests with it, so they cannot disagree.
     ///
-    /// A row is as tall as its tallest tile, so rows differ: `tops` holds
-    /// where each slot row begins, and one more entry for the end. A tile
-    /// keeps its own height inside the row, hanging from the row's top: the
-    /// pictures of a row line up, and a tile beside a long name is not
-    /// stretched to it, so its highlight hugs its own picture and name.
+    /// The grid is lines: rows of tiles and, where groups are drawn
+    /// (ADR-130), each group's heading before its rows, a group starting a
+    /// row of its own. A row is as tall as its tallest tile, so rows
+    /// differ: `tops` holds where each line begins, and one more entry for
+    /// the end. A tile keeps its own height inside the row, hanging from
+    /// the row's top: the pictures of a row line up, and a tile beside a
+    /// long name is not stretched to it, so its highlight hugs its own
+    /// picture and name. A tile's line is found by a search, never a walk.
     #[derive(Clone, Debug, Default, PartialEq)]
     pub struct Slots {
         pub columns: Columns,
         /// Between the tiles of two rows.
         pub gap: f32,
         tops: Rc<[f32]>,
+        lines: Rc<[Line]>,
+        /// The line of each group's heading.
+        headings: Rc<[usize]>,
         heights: Rc<[f32]>,
+        /// A heading's height, where groups are drawn: the one at the top
+        /// is pinned there (`pinned_at`), and a row brought into view from
+        /// above stops under it.
+        heading: f32,
     }
 
     impl Slots {
-        /// `height_of` is the height tile `ix` needs; its row takes the most
-        /// any of its tiles needs.
+        /// `count` tiles in rows of `columns`. `height_of` is the height
+        /// tile `ix` needs; its row takes the most any of its tiles needs.
         pub fn new(
             columns: Columns,
             gap: f32,
             count: usize,
             height_of: impl Fn(usize) -> f32,
         ) -> Self {
+            Self::build(columns, gap, &[count], None, height_of)
+        }
+
+        /// Tiles in groups of `groups` tiles each, one after the other in
+        /// the order, each group's rows under a heading `heading` tall.
+        pub fn grouped(
+            columns: Columns,
+            gap: f32,
+            groups: &[usize],
+            heading: f32,
+            height_of: impl Fn(usize) -> f32,
+        ) -> Self {
+            Self::build(columns, gap, groups, Some(heading), height_of)
+        }
+
+        fn build(
+            columns: Columns,
+            gap: f32,
+            groups: &[usize],
+            heading: Option<f32>,
+            height_of: impl Fn(usize) -> f32,
+        ) -> Self {
             let cols = columns.cols.max(1);
+            let count: usize = groups.iter().sum();
             let heights: Rc<[f32]> = (0..count).map(height_of).collect();
-            let mut tops = Vec::with_capacity(count.div_ceil(cols) + 1);
+            let rows = count.div_ceil(cols) + groups.len();
+            let mut tops = Vec::with_capacity(rows + 1);
+            let mut lines = Vec::with_capacity(rows);
+            let mut headings = Vec::with_capacity(groups.len());
             let mut top = 0.;
-            tops.push(top);
-            for row in heights.chunks(cols) {
-                let tallest = row.iter().copied().fold(0., f32::max);
-                top += tallest + gap;
-                tops.push(top);
+            let mut first = 0;
+            for (group, len) in groups.iter().enumerate() {
+                if let Some(height) = heading {
+                    headings.push(lines.len());
+                    lines.push(Line::Heading { group, first });
+                    tops.push(top);
+                    top += height;
+                }
+                let end = first + len;
+                let mut at = first;
+                while at < end {
+                    let row_end = (at + cols).min(end);
+                    let tallest = heights[at..row_end].iter().copied().fold(0., f32::max);
+                    lines.push(Line::Tiles {
+                        group,
+                        first: at,
+                        end: row_end,
+                    });
+                    tops.push(top);
+                    top += tallest + gap;
+                    at = row_end;
+                }
+                first = end;
             }
+            tops.push(top);
             Slots {
                 columns,
                 gap,
                 tops: tops.into(),
+                lines: lines.into(),
+                headings: headings.into(),
                 heights,
+                heading: heading.unwrap_or(0.),
             }
         }
 
+        /// How many lines: rows of tiles, and headings.
         pub fn rows(&self) -> usize {
-            self.tops.len().saturating_sub(1)
+            self.lines.len()
         }
 
         pub fn height(&self) -> f32 {
@@ -168,7 +256,7 @@ pub mod math {
             (self.gap / 2.).floor()
         }
 
-        /// The slot row holding `y`; the last one for anything below.
+        /// The line holding `y`; the last one for anything below.
         fn row_at(&self, y: f32) -> usize {
             self.tops
                 .partition_point(|top| *top <= y)
@@ -176,10 +264,23 @@ pub mod math {
                 .min(self.rows().saturating_sub(1))
         }
 
-        /// Height of `row`: what its tallest tile needs.
+        /// The line of tile `ix` (the last's for any past it).
+        fn line_of(&self, ix: usize) -> usize {
+            // A heading and its group's first row start at the same tile:
+            // the last line starting at or before `ix` is the row.
+            self.lines
+                .partition_point(|line| line.first() <= ix)
+                .saturating_sub(1)
+        }
+
+        /// Height of line `row`: what its tallest tile needs, or a heading's.
         pub fn row_height(&self, row: usize) -> f32 {
+            let gap = match self.lines.get(row) {
+                Some(Line::Tiles { .. }) => self.gap,
+                _ => 0.,
+            };
             match (self.tops.get(row), self.tops.get(row + 1)) {
-                (Some(top), Some(next)) => next - top - self.gap,
+                (Some(top), Some(next)) => next - top - gap,
                 _ => 0.,
             }
         }
@@ -191,23 +292,46 @@ pub mod math {
 
         /// Top left corner of tile `ix`.
         pub fn origin(&self, ix: usize) -> (f32, f32) {
-            let cols = self.columns.cols.max(1);
+            let row = self.line_of(ix);
+            let first = self.lines.get(row).map_or(0, Line::first);
             (
-                self.columns.left + (ix % cols) as f32 * self.columns.pitch + self.columns.inset(),
-                self.tops.get(ix / cols).copied().unwrap_or(0.) + self.inset(),
+                self.columns.left
+                    + ix.saturating_sub(first) as f32 * self.columns.pitch
+                    + self.columns.inset(),
+                self.tops.get(row).copied().unwrap_or(0.) + self.inset(),
             )
         }
 
-        /// The tile under a point. The gutters belong to no tile.
+        /// Where a tile's picture begins, from the content's left: where a
+        /// heading's words begin, in line with the first column.
+        pub fn left(&self) -> f32 {
+            self.columns.left + self.columns.inset()
+        }
+
+        /// The tile under a point. The gutters belong to no tile, nor does a
+        /// heading.
         pub fn tile_at(&self, x: f32, y: f32) -> Option<usize> {
             if y < 0. || y >= self.height() {
                 return None;
             }
             let row = self.row_at(y);
+            let Line::Tiles { first, end, .. } = self.lines[row] else {
+                return None;
+            };
             let dy = y - self.tops[row] - self.inset();
-            let col = self.columns.at(x)?;
-            let ix = row * self.columns.cols + col;
-            (0. ..self.tile_height(ix)).contains(&dy).then_some(ix)
+            let ix = first + self.columns.at(x)?;
+            (ix < end && (0. ..self.tile_height(ix)).contains(&dy)).then_some(ix)
+        }
+
+        /// The group whose heading is under a point.
+        pub fn heading_at(&self, y: f32) -> Option<usize> {
+            if y < 0. || y >= self.height() || self.rows() == 0 {
+                return None;
+            }
+            match self.lines[self.row_at(y)] {
+                Line::Heading { group, .. } => Some(group),
+                Line::Tiles { .. } => None,
+            }
         }
 
         /// Tiles a rectangle touches, given by its two extremes on each axis.
@@ -218,18 +342,23 @@ pub mod math {
             if self.rows() == 0 || y.1 < 0. || y.0 >= self.height() {
                 return Vec::new();
             }
-            let cols = self.columns.cols;
-            let touches = |ix: usize| {
-                let top = self.tops[ix / cols] + self.inset();
-                top <= y.1 && top + self.tile_height(ix) > y.0
-            };
-            (self.row_at(y.0.max(0.))..=self.row_at(y.1))
-                .flat_map(|row| (c0..=c1).map(move |col| row * cols + col))
-                .filter(|ix| touches(*ix))
-                .collect()
+            let mut covered = Vec::new();
+            for row in self.row_at(y.0.max(0.))..=self.row_at(y.1) {
+                let Line::Tiles { first, end, .. } = self.lines[row] else {
+                    continue;
+                };
+                let top = self.tops[row] + self.inset();
+                covered.extend(
+                    (c0..=c1)
+                        .map(|col| first + col)
+                        .filter(|ix| *ix < end)
+                        .filter(|ix| top <= y.1 && top + self.tile_height(*ix) > y.0),
+                );
+            }
+            covered
         }
 
-        /// Rows intersecting the viewport. `offset_y` is the (negative)
+        /// Lines intersecting the viewport. `offset_y` is the (negative)
         /// scroll offset.
         pub fn visible_rows(&self, offset_y: f32, viewport_h: f32) -> Range<usize> {
             if self.rows() == 0 {
@@ -240,31 +369,110 @@ pub mod math {
             self.row_at(top)..last.min(self.rows())
         }
 
-        /// The first item of the row at the top of the viewport, and how far
-        /// into that row the viewport begins: what a reflow must keep.
+        /// The tiles in lines `rows`: from the first row's first to the
+        /// last row's end.
+        pub fn items_in(&self, rows: Range<usize>) -> Range<usize> {
+            let lines = &self.lines[rows.start.min(self.rows())..rows.end.min(self.rows())];
+            let tiles = |line: &Line| match line {
+                Line::Tiles { first, end, .. } => Some((*first, *end)),
+                Line::Heading { .. } => None,
+            };
+            match (
+                lines.iter().find_map(tiles),
+                lines.iter().rev().find_map(tiles),
+            ) {
+                (Some((first, _)), Some((_, end))) => first..end,
+                _ => 0..0,
+            }
+        }
+
+        /// The headings among lines `rows`: each one's line, top and group.
+        pub fn headings_in(&self, rows: Range<usize>) -> Vec<(usize, f32, usize)> {
+            (rows.start.min(self.rows())..rows.end.min(self.rows()))
+                .filter_map(|row| match self.lines[row] {
+                    Line::Heading { group, .. } => Some((row, self.tops[row], group)),
+                    Line::Tiles { .. } => None,
+                })
+                .collect()
+        }
+
+        /// The heading pinned at the top of a view scrolled to `offset_y`:
+        /// its group and how far down from the content's top it is drawn,
+        /// the next heading, arriving, pushing it up. None where nothing is
+        /// grouped, or where the heading is wholly in its place already.
+        pub fn pinned_at(&self, offset_y: f32) -> Option<(usize, f32)> {
+            if self.headings.is_empty() || self.rows() == 0 {
+                return None;
+            }
+            let top = (-offset_y).max(0.);
+            let row = self.row_at(top);
+            let group = self.lines[row].group();
+            if row == self.headings[group] && top - self.tops[row] < 0.5 {
+                return None;
+            }
+            let next = self
+                .headings
+                .get(group + 1)
+                .map_or(f32::INFINITY, |line| self.tops[*line]);
+            Some((group, top.min(next - self.heading)))
+        }
+
+        /// The tile drawn under `ix`, in its column or the last of a shorter
+        /// row, past a heading; none from the last row.
+        pub fn below(&self, ix: usize) -> Option<usize> {
+            let row = self.line_of(ix);
+            let col = ix.checked_sub(self.lines.get(row)?.first())?;
+            self.lines[row + 1..].iter().find_map(|line| match line {
+                Line::Tiles { first, end, .. } => Some((first + col).min(end - 1)),
+                Line::Heading { .. } => None,
+            })
+        }
+
+        /// The tile drawn over `ix`, in its column or the last of a shorter
+        /// row, past a heading; none from the first row.
+        pub fn above(&self, ix: usize) -> Option<usize> {
+            let row = self.line_of(ix);
+            let col = ix.checked_sub(self.lines.get(row)?.first())?;
+            self.lines[..row].iter().rev().find_map(|line| match line {
+                Line::Tiles { first, end, .. } => Some((first + col).min(end - 1)),
+                Line::Heading { .. } => None,
+            })
+        }
+
+        /// The first item of the line at the top of the viewport, and how far
+        /// into that line the viewport begins: what a reflow must keep. The
+        /// top is under the pinned heading, where groups are drawn: a view at
+        /// the very top stays there when its tiles are grouped. A heading
+        /// there is told from its group's first row, below it.
         pub fn anchor(&self, offset_y: f32) -> (usize, f32) {
             if self.rows() == 0 {
                 return (0, 0.);
             }
-            let top = (-offset_y).max(0.);
+            let top = (-offset_y).max(0.) + self.heading;
             let row = self.row_at(top);
-            (row * self.columns.cols.max(1), top - self.tops[row])
+            match self.lines[row] {
+                Line::Tiles { first, .. } => (first, top - self.tops[row]),
+                Line::Heading { first, .. } => (first, top - self.tops[(row + 1).min(self.rows())]),
+            }
         }
 
-        /// Scroll offset that shows `anchor` again after the rows changed: a
+        /// Scroll offset that shows `anchor` again after the lines changed: a
         /// resize regroups them, a zoom or a rename changes their heights.
         pub fn offset_for_anchor(&self, (item, within): (usize, f32)) -> f32 {
             if self.rows() == 0 {
                 return 0.;
             }
-            let row = (item / self.columns.cols.max(1)).min(self.rows() - 1);
+            let row = self.line_of(item).min(self.rows() - 1);
             let room = (self.tops[row + 1] - self.tops[row] - 1.).max(0.);
-            -(self.tops[row] + within.clamp(0., room))
+            // Above, as far as the line before it reaches.
+            let above = self.tops[row] - self.tops[row.saturating_sub(1)];
+            -(self.tops[row] + within.clamp(-above, room) - self.heading).max(0.)
         }
 
         /// Offset that shows item `ix`'s row where `place` says, or the
         /// current offset when the row is already fully visible and
-        /// `place` is not `Top`. Clamped to the content.
+        /// `place` is not `Top`. Clamped to the content. Under a pinned
+        /// heading a row is hidden: the view's top is below it.
         pub fn offset_for_item(
             &self,
             ix: usize,
@@ -276,20 +484,23 @@ pub mod math {
             if self.rows() == 0 {
                 return current;
             }
-            let row = (ix / self.columns.cols.max(1)).min(self.rows() - 1);
+            let row = self.line_of(ix).min(self.rows() - 1);
             let (top, bottom) = (self.tops[row], self.tops[row + 1]);
             let scroll_top = -current;
-            let visible = top >= scroll_top && bottom <= scroll_top + viewport_h;
+            let pinned = self.heading;
+            let visible = top >= scroll_top + pinned && bottom <= scroll_top + viewport_h;
             let max_scroll = (content_h - viewport_h).max(0.0);
             if place != Place::Top && visible {
                 return current;
             }
             let target = match place {
                 // Scroll the minimum: put the row at the bottom.
-                Place::Nearest if bottom > scroll_top + viewport_h && top >= scroll_top => {
+                Place::Nearest
+                    if bottom > scroll_top + viewport_h && top >= scroll_top + pinned =>
+                {
                     bottom - viewport_h
                 }
-                Place::Nearest | Place::Top => top,
+                Place::Nearest | Place::Top => top - pinned,
                 Place::Middle => top + self.row_height(row) / 2. - viewport_h / 2.,
             };
             -target.clamp(0.0, max_scroll)
@@ -303,6 +514,17 @@ pub mod math {
 pub struct TileHeights {
     pub revision: u64,
     pub of: Rc<dyn Fn(usize) -> f32>,
+}
+
+/// What the grid draws of its order's groups (ADR-130): each group starts
+/// a row of its own, under a heading `height` tall as wide as the grid.
+/// `heading` makes one: given its group, whether it is the one pinned at
+/// the top, and where the tiles' pictures begin from the left.
+#[derive(Clone)]
+pub struct GridGroups {
+    pub rows: crate::views::groups::RowMap,
+    pub height: f32,
+    pub heading: Rc<dyn Fn(usize, bool, f32, &mut Window, &mut App) -> AnyElement>,
 }
 
 /// Create a grid of `item_count` tiles `tile_width` wide. `f` renders the
@@ -337,6 +559,7 @@ where
         item_count,
         tile_width,
         heights,
+        groups: None,
         gap: Size::default(),
         max_gap: None,
         render_items: Box::new(render_items),
@@ -353,6 +576,7 @@ pub struct UniformGrid {
     item_count: usize,
     tile_width: Pixels,
     heights: TileHeights,
+    groups: Option<GridGroups>,
     gap: Size<Pixels>,
     max_gap: Option<Pixels>,
     render_items: RenderItems,
@@ -389,8 +613,18 @@ pub struct GridScrollState {
     deferred: Option<Deferred>,
     layout: GridLayout,
     /// What `layout.slots` was built from: rebuilt only when this changes.
-    built_from: Option<(usize, math::Columns, f32, u64)>,
+    built_from: Option<Built>,
 }
+
+/// What a grid's lines were laid out from: the tiles, the columns, the gap
+/// between rows, the tiles' heights and the groups with their headings'.
+type Built = (
+    usize,
+    math::Columns,
+    f32,
+    u64,
+    Option<((usize, usize), u32)>,
+);
 
 /// Scroll handle for a [`UniformGrid`]; keep it in the view and pass it each frame.
 #[derive(Clone, Debug, Default)]
@@ -492,6 +726,12 @@ impl UniformGrid {
         self
     }
 
+    /// Draw the order's groups, each under its heading (none: not grouped).
+    pub fn groups(mut self, groups: Option<GridGroups>) -> Self {
+        self.groups = groups.filter(|g| g.rows.grouped());
+        self
+    }
+
     /// Track scroll state with `handle` (also enables wheel scrolling on it).
     pub fn track_scroll(mut self, handle: UniformGridScrollHandle) -> Self {
         let base = handle.0.borrow().base_handle.clone();
@@ -574,7 +814,18 @@ impl Element for UniformGrid {
             gap.0,
             self.max_gap.map_or(f32::INFINITY, f32::from),
         );
-        let built_from = (self.item_count, columns, gap.1, self.heights.revision);
+        // Groups that do not hold the tiles, one after the other, group
+        // nothing.
+        let groups = self.groups.clone().filter(|g| {
+            g.rows.spans().iter().map(|span| span.len).sum::<usize>() == self.item_count
+        });
+        let built_from = (
+            self.item_count,
+            columns,
+            gap.1,
+            self.heights.revision,
+            groups.as_ref().map(|g| (g.rows.key(), g.height.to_bits())),
+        );
         // The rows before this frame, to find again what was at the top.
         let (deferred, before) = match &self.scroll_handle {
             Some(h) => {
@@ -589,8 +840,12 @@ impl Element for UniformGrid {
             .as_ref()
             .filter(|h| h.0.borrow().built_from == Some(built_from))
             .map(|h| h.0.borrow().layout.slots.clone());
-        let slots = reuse.unwrap_or_else(|| {
-            math::Slots::new(columns, gap.1, self.item_count, &*self.heights.of)
+        let slots = reuse.unwrap_or_else(|| match &groups {
+            Some(g) => {
+                let lens: Vec<usize> = g.rows.spans().iter().map(|span| span.len).collect();
+                math::Slots::grouped(columns, gap.1, &lens, g.height, &*self.heights.of)
+            }
+            None => math::Slots::new(columns, gap.1, self.item_count, &*self.heights.of),
         });
         let cols = columns.cols;
         let content_h = slots.height() + f32::from(padding.top + padding.bottom);
@@ -651,7 +906,7 @@ impl Element for UniformGrid {
                 if item_count == 0 || visible.is_empty() {
                     return hitbox;
                 }
-                let items_range = (visible.start * cols)..((visible.end * cols).min(item_count));
+                let items_range = slots.items_in(visible.clone());
                 let items = render_items(items_range.clone(), cols, window, cx);
                 let content_mask = ContentMask::new(bounds);
                 window.with_content_mask(Some(content_mask), |window| {
@@ -668,6 +923,32 @@ impl Element for UniformGrid {
                         );
                         item.layout_as_root(available, window, cx);
                         item.prepaint_at(origin, window, cx);
+                        frame_state.items.push(item);
+                    }
+                    let Some(groups) = &groups else {
+                        return;
+                    };
+                    // The headings as wide as the grid, then the one pinned
+                    // at the top, drawn last, over what scrolls under it.
+                    let heading = size(
+                        AvailableSpace::Definite(px(viewport_w)),
+                        AvailableSpace::Definite(px(groups.height)),
+                    );
+                    let at = |top: f32| {
+                        padded_bounds.origin
+                            + point(scroll_offset.x, px(top) + scroll_offset.y + padding.top)
+                    };
+                    let left = slots.left();
+                    let pinned = slots.pinned_at(y).map(|(group, top)| (group, true, top));
+                    for (group, pin, top) in slots
+                        .headings_in(visible)
+                        .into_iter()
+                        .map(|(_, top, group)| (group, false, top))
+                        .chain(pinned)
+                    {
+                        let mut item = (groups.heading)(group, pin, left, window, cx);
+                        item.layout_as_root(heading, window, cx);
+                        item.prepaint_at(at(top), window, cx);
                         frame_state.items.push(item);
                     }
                 });
@@ -845,6 +1126,103 @@ mod tests {
         assert!((at(20, 0., Place::Top) - -500.).abs() < 1e-6);
         // Clamped to the content.
         assert!((at(99, 0., Place::Top) - -2100.).abs() < 1e-6);
+    }
+
+    /// Groups of 3 and 7 tiles, five a row, headings 30 tall: H0 0..30,
+    /// tiles 0..3 30..178, H1 178..208, tiles 3..8 208..356, 8..10
+    /// 356..504.
+    fn grouped() -> Slots {
+        Slots::grouped(Columns::fit(600., 100., 12., 40.), 8., &[3, 7], 30., |_| {
+            140.
+        })
+    }
+
+    #[test]
+    fn each_group_starts_a_row_under_its_heading() {
+        let slots = grouped();
+        assert_eq!((slots.rows(), slots.height()), (5, 504.));
+        assert_eq!(slots.origin(0), (10., 34.));
+        assert_eq!(slots.origin(3), (10., 212.), "a row of its own");
+        assert_eq!(slots.origin(4), (130., 212.));
+        assert_eq!(slots.origin(8), (10., 360.));
+        assert_eq!((slots.row_height(0), slots.row_height(1)), (30., 140.));
+        assert_eq!(slots.tile_at(250., 40.), Some(2));
+        assert_eq!(slots.tile_at(370., 40.), None, "past a group's short row");
+        assert_eq!(slots.tile_at(50., 20.), None, "a heading is no tile");
+        assert_eq!(slots.heading_at(10.), Some(0));
+        assert_eq!(slots.heading_at(190.), Some(1));
+        assert_eq!(slots.heading_at(100.), None);
+        assert_eq!(
+            slots.covered((0., 600.), (0., 600.)),
+            (0..10).collect::<Vec<_>>()
+        );
+        assert!(
+            slots.covered((0., 600.), (179., 207.)).is_empty(),
+            "a heading"
+        );
+        assert_eq!(slots.items_in(0..2), 0..3);
+        assert_eq!(slots.items_in(2..4), 3..8);
+        assert_eq!(slots.items_in(0..1), 0..0, "a heading alone");
+        assert_eq!(slots.headings_in(0..5), vec![(0, 0., 0), (2, 178., 1)]);
+        assert_eq!(slots.left(), 10.);
+        // Not grouped: no heading anywhere.
+        let flat = Slots::new(Columns::fit(600., 100., 12., 40.), 8., 10, |_| 140.);
+        assert!(flat.headings_in(0..2).is_empty());
+        assert_eq!(flat.pinned_at(-50.), None);
+    }
+
+    /// Up and Down go to the tile drawn over or under, past a heading, or
+    /// to the last of a shorter row.
+    #[test]
+    fn the_tile_above_or_below_is_the_one_drawn_there() {
+        let slots = grouped();
+        assert_eq!(slots.below(1), Some(4), "past the heading, in its column");
+        assert_eq!(slots.below(2), Some(5));
+        assert_eq!(slots.below(5), Some(9), "the last of a shorter row");
+        assert_eq!(slots.below(9), None);
+        assert_eq!(slots.above(4), Some(1));
+        assert_eq!(slots.above(3), Some(0));
+        assert_eq!(slots.above(0), None);
+        assert_eq!(slots.above(9), Some(4));
+        // Not grouped, as the columns go.
+        let flat = Slots::new(Columns::fit(600., 100., 12., 40.), 8., 12, |_| 140.);
+        assert_eq!(
+            (flat.below(1), flat.below(7), flat.below(11)),
+            (Some(6), Some(11), None)
+        );
+        assert_eq!((flat.above(6), flat.above(4)), (Some(1), None));
+    }
+
+    #[test]
+    fn a_heading_at_the_top_is_pinned_and_comes_back() {
+        let slots = grouped();
+        // Wholly in its place: drawn there, nothing pinned.
+        assert_eq!(slots.pinned_at(0.), None);
+        assert_eq!(slots.pinned_at(-50.), Some((0, 50.)));
+        // The next heading, arriving, pushes it up.
+        assert_eq!(slots.pinned_at(-160.), Some((0, 148.)));
+        assert_eq!(slots.pinned_at(-200.), Some((1, 200.)));
+        // What a reflow keeps is under the pinned heading: at the very top,
+        // the first row; a heading there told from its group's first row.
+        assert_eq!(slots.anchor(0.), (0, 0.));
+        assert!(slots.offset_for_anchor((0, 0.)).abs() < 1e-3);
+        assert_eq!(slots.anchor(-188.), (3, 10.));
+        assert!((slots.offset_for_anchor((3, 10.)) - -188.).abs() < 1e-3);
+        assert_eq!(slots.anchor(-160.), (3, -18.));
+        assert!((slots.offset_for_anchor((3, -18.)) - -160.).abs() < 1e-3);
+        // Grouped from a view at the top of the tiles not grouped: the top.
+        let flat = Slots::new(Columns::fit(600., 100., 12., 40.), 8., 10, |_| 140.);
+        assert!(slots.offset_for_anchor(flat.anchor(0.)).abs() < 1e-3);
+        // A row brought into view from above stops under the pinned
+        // heading; from below, at the bottom.
+        let at = |ix, current, place| slots.offset_for_item(ix, 200., 504., current, place);
+        assert!((at(4, -300., Place::Nearest) - -178.).abs() < 1e-3);
+        assert!((at(0, -300., Place::Top) - 0.).abs() < 1e-3);
+        assert!((at(8, 0., Place::Nearest) - -304.).abs() < 1e-3);
+        assert!(
+            (at(4, -178., Place::Nearest) - -178.).abs() < 1e-3,
+            "in view"
+        );
     }
 
     /// A row brought to the middle has as much above it as below, unless

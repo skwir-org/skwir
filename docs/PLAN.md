@@ -937,7 +937,10 @@ submenu beside its row (the preview's More's submenu made any popup's,
 `ui.toolbar_submenu`); the Type column sorts. **Phase 2, built
 2026-11-11:** List and Tree draw each group's heading as a row
 (`views::groups::RowMap`), the one at the top pinned; a screen reader
-hears headings and counts entries alone. What changed in an order
+hears headings and counts entries alone. **Phase 3, built 2026-11-11:**
+the grid starts each group on a row of its own under a heading as wide
+as the pane, its Up and Down going to the tile drawn over or under. What
+changed in an order
 is found by searches and moved once in blocks, no longer merged rank by
 rank, and the order before last is written over: a folder of 100 000
 entries hydrated by size takes about 110 ms, against about 400 ms before
@@ -962,11 +965,10 @@ not with Orca. MathML that uses an element `math::mathml` does not know
 (`mglyph`, `mmultiscripts`, `mlongdiv`) reads as loose letters. A visually
 hidden label alone in its block is lost (an empty block is not kept).
 
-**Grouping** (ADR-130, 2026-11-11): phases 1 and 2 are built: List and
-Tree draw headings; the grid, Columns, the board, Usage and the map show
-a grouped pane's order without them. Left, in order: the grid's breaks
-and its Up and Down by what is drawn, Group by and sort by Folder where
-files come from many folders
+**Grouping** (ADR-130, 2026-11-11): phases 1 to 3 are built: List, Tree
+and the grid draw headings; Columns, the board, Usage and the map show a
+grouped pane's order without them. Left, in order: Group by and sort by
+Folder where files come from many folders
 (the sort learns each entry's folder), a heading's click and menu (Select
 these, Show only these by its term), then collapsing and a Board by
 group. Not compiled for Windows or macOS yet (`just check-cross`). A

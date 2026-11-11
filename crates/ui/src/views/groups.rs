@@ -65,6 +65,16 @@ impl RowMap {
         !self.spans.is_empty()
     }
 
+    /// Which groups these are, for what is laid out from them to be kept
+    /// while they are the same: the groups of another order are another
+    /// list of them.
+    pub fn key(&self) -> (usize, usize) {
+        (
+            Arc::as_ptr(&self.spans).cast::<()>().addr(),
+            self.spans.len(),
+        )
+    }
+
     /// How many rows there are: the entries and the headings.
     pub fn len(&self) -> usize {
         self.entries + self.spans.len()
@@ -201,40 +211,90 @@ pub fn said(span: &Span) -> String {
 
 /// The heading of a group as a row `height` tall: its label in Small text,
 /// the count beside it in the muted ink (ADR-117), a line above it unless
-/// it is the first, set on the files' ground as rows are.
-pub fn heading(span: &Span, first: bool, height: f32, scale: Scale, theme: &Theme) -> Div {
+/// it is the first, set on the files' ground as rows are. Its words begin
+/// `left` from its left edge, where a grid's tiles do; none, where a list's
+/// rows begin theirs.
+pub fn heading(
+    span: &Span,
+    first: bool,
+    height: f32,
+    left: Option<f32>,
+    scale: Scale,
+    theme: &Theme,
+) -> Div {
+    let words = div()
+        .min_w_0()
+        .flex()
+        .items_baseline()
+        .gap(scale.px(8.))
+        .child(
+            div()
+                .min_w_0()
+                .truncate()
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .text_color(theme.text)
+                .child(label(span).to_string()),
+        )
+        .child(
+            div()
+                .flex_none()
+                .text_color(theme.text_muted)
+                .child(span.count.to_string()),
+        );
     div()
         .h(px(height))
         .w_full()
         .flex_none()
-        .px_2()
         .flex()
         .items_end()
         .pb(scale.px(5.))
         .when(!first, |d| d.border_t_1().border_color(theme.border))
         .text_small()
-        .child(
+        .map(|d| match left {
+            Some(left) => d.pl(px(left)).pr_2().child(words),
             // In line with the rows' content, inside their 1 px ring.
+            None => d.px_2().child(words.mx(px(1.))),
+        })
+}
+
+/// A heading as a screen reader hears it, where one listens: a heading
+/// among the options, named by its group and count. It is never an
+/// option: the entries' positions and count are their own.
+pub fn expose(el: gpui::Stateful<Div>, span: &Span, a11y: bool) -> gpui::Stateful<Div> {
+    if !a11y {
+        return el;
+    }
+    el.role(gpui::Role::Heading)
+        .aria_level(2)
+        .aria_label(said(span))
+}
+
+/// The heading pinned at the top of a view, `height` tall: on the files'
+/// `ground`, a line under it, over what scrolls beneath, which it hides
+/// from the pointer.
+pub fn pinned(
+    span: &Span,
+    height: f32,
+    left: Option<f32>,
+    scale: Scale,
+    theme: &Theme,
+    ground: gpui::Hsla,
+) -> Div {
+    div()
+        .relative()
+        .w_full()
+        .h(px(height))
+        .bg(ground)
+        .occlude()
+        .child(heading(span, true, height, left, scale, theme))
+        .child(
             div()
-                .mx(px(1.))
-                .min_w_0()
-                .flex()
-                .items_baseline()
-                .gap(scale.px(8.))
-                .child(
-                    div()
-                        .min_w_0()
-                        .truncate()
-                        .font_weight(gpui::FontWeight::SEMIBOLD)
-                        .text_color(theme.text)
-                        .child(label(span).to_string()),
-                )
-                .child(
-                    div()
-                        .flex_none()
-                        .text_color(theme.text_muted)
-                        .child(span.count.to_string()),
-                ),
+                .absolute()
+                .bottom_0()
+                .left_0()
+                .w_full()
+                .h(px(1.))
+                .bg(theme.border),
         )
 }
 
@@ -282,30 +342,17 @@ impl UniformListDecoration for Pinned {
         div()
             .size_full()
             .child(
-                div()
-                    .absolute()
-                    .top(-scroll_offset.y - push)
-                    .left_0()
-                    .w_full()
-                    .h(item_height)
-                    .bg(self.ground)
-                    .occlude()
-                    .child(heading(
-                        &self.rows.spans()[n],
-                        true,
-                        height,
-                        self.scale,
-                        &self.theme,
-                    ))
-                    .child(
-                        div()
-                            .absolute()
-                            .bottom_0()
-                            .left_0()
-                            .w_full()
-                            .h(px(1.))
-                            .bg(self.theme.border),
-                    ),
+                pinned(
+                    &self.rows.spans()[n],
+                    height,
+                    None,
+                    self.scale,
+                    &self.theme,
+                    self.ground,
+                )
+                .absolute()
+                .top(-scroll_offset.y - push)
+                .left_0(),
             )
             .into_any_element()
     }

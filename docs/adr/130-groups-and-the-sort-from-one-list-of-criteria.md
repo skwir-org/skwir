@@ -3,7 +3,7 @@
 Status: accepted, 2026-11-11, on the user's answers to the proposal
 "Grouping" (a page shared in the session, with mock-ups of the View
 menu, a list grouped by date and a grid grouped by kind). Built in
-phases (below): phases 1 and 2 on 2026-11-11, on Linux; macOS and
+phases (below): phases 1 to 3 on 2026-11-11, on Linux; macOS and
 Windows not compiled for them yet. Amends ADR-099 (the View menu's sort) and follows
 ADR-121 (an order asked anew is made on a worker).
 

@@ -389,7 +389,18 @@ around the views is in [shell.md](shell.md).
   above stops below it. The tree groups its top level: a folder opened
   in place keeps its entries under it, in its group, whose heading
   counts its own (`Span::count`). Columns, the board, Usage and the map
-  draw no headings; the grid's are phase 3.
+  draw no headings.
+- **The grid is lines** (`uniform_grid::math::Slots`): rows of tiles and,
+  where groups are drawn, each group's heading before its rows, a group
+  starting a row of its own; a tile's line is found by a search. The
+  element draws the headings as wide as the grid and the one at the top
+  pinned, in its prepaint (`GridGroups`, `Slots::pinned_at`); a heading's
+  words begin where the first column's pictures do. Up and Down go to
+  the tile drawn over or under (`Slots::above`, `below`): its column in
+  the next row, past a heading, or the last of a shorter row. What a
+  reflow keeps (`Slots::anchor`) is the tile under the pinned heading,
+  so a grid at its top stays there when it is grouped. The rubber band
+  hit-tests the same lines, and begins on no heading.
 - **What changed is placed, never merged rank by rank**
   (`Listing::place`): a hydrated batch in a big folder is a thousand
   entries among a hundred thousand, a hundred times while it is read.
