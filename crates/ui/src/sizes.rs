@@ -22,7 +22,9 @@
 //!   Small, nine tenths of the body, is only a note read after the Body
 //!   text it stands beside: a shortcut or a key cap, a count or a unit,
 //!   what is said under a name (a size, a date, a speed), a column's
-//!   header, a group's heading, a short hint beside a control, a badge
+//!   header, a menu's or the sidebar's group heading (a view's groups are
+//!   headed in Body, as the names under them), a short hint beside a
+//!   control, a badge
 //!   (a state, a tag over a picture). Nothing is written smaller. Title is
 //!   the title of a dialog or a panel. Text an
 //!   element paints itself takes the same sizes from the rem in force
@@ -89,8 +91,9 @@ pub trait TextSizes: Styled + Sized {
     }
 
     /// A note beside Body text: a shortcut or a key cap, a count or a
-    /// unit, what is said under a name, a column's header, a group's
-    /// heading; a badge. Never a sentence, nor a control.
+    /// unit, what is said under a name, a column's header, a menu's or
+    /// the sidebar's group heading; a badge. Never a sentence, nor a
+    /// control.
     fn text_small(self) -> Self {
         self.text_size(rems(Text::Small.rems()))
     }

@@ -15220,3 +15220,20 @@ not hear a heading's expanded state (AccessKit's AT-SPI adapter 0.19
 passes it for no element). Folds are not kept across a restart (by
 decision). Not measured: reading a large folder's fields (one job per 64
 files, at Normal priority, after what is drawn).
+
+## 2026-11-12: Group headings in Body text
+
+The user asked for a view's group headings at the default size: a
+heading's label is Body and semibold, as the names it heads, its lines
+theirs (1.2 times the text, so it fits the list's smallest row), its
+count beside it still Small, a note (`views::groups::heading`, which
+the list, the tree, the grid and the pinned heading share). ADR-130,
+decision 9, is amended; the text-size rule (AGENTS.md, `sizes.rs`) now
+names the Small group headings as a menu's or the sidebar's.
+
+**Checked:** rustfmt; clippy `-D warnings` on `skwir-ui`, all targets;
+`skwir-ui` 640 passed (among them the sizes rule, which refuses a bare
+number in `.line_height(`). In a window on Xvfb, a synthetic folder grouped by
+Kind: the headings the names' size, semibold, the counts Small and
+muted, in the list at the default and the smallest row zoom (16 px
+icons: the heading inside its row) and in the grid.

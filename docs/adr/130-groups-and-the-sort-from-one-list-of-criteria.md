@@ -108,7 +108,9 @@ built.
    The cursor, ranges, Select All and the rubber band act on entries
    alone, and a screen reader's position and count are entries'. A
    heading is a row as tall as an entry, its label in Small text with
-   the count beside it (ADR-117), the one at the top pinned. The tree
+   the count beside it (ADR-117), the one at the top pinned. (Amended
+   2026-11-12, the user: its label is Body, as the names it heads, its
+   count Small.) The tree
    groups its top level only; a folder opened in place keeps its entries
    under it. The grid starts each group on a new row under a heading as
    wide as the pane, and Up and Down go to the tile drawn above or

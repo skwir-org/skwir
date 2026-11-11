@@ -218,9 +218,10 @@ pub fn said(span: &Span) -> String {
     )
 }
 
-/// The heading of a group as a row `height` tall: its label in Small text,
-/// the count beside it in the muted ink (ADR-117), a line above it unless
-/// it is the first, set on the files' ground as rows are, after its
+/// The heading of a group as a row `height` tall: its label in Body text,
+/// as the names it heads, its lines theirs, 1.2 times the text; the count
+/// beside it a note, Small in the muted ink (ADR-117); a line above it
+/// unless it is the first, set on the files' ground as rows are, after its
 /// `chevron` (`groups::chevron`). Its words begin `left` from its left
 /// edge, where a grid's tiles do; none, where a list's rows begin theirs.
 pub fn heading(
@@ -237,6 +238,8 @@ pub fn heading(
         .flex()
         .items_baseline()
         .gap(scale.px(8.))
+        .text_body()
+        .line_height(gpui::relative(1.2))
         .children(chevron)
         .child(
             div()
@@ -249,6 +252,7 @@ pub fn heading(
         .child(
             div()
                 .flex_none()
+                .text_small()
                 .text_color(theme.text_muted)
                 .child(span.count.to_string()),
         );
@@ -260,7 +264,6 @@ pub fn heading(
         .items_end()
         .pb(scale.px(5.))
         .when(!first, |d| d.border_t_1().border_color(theme.border))
-        .text_small()
         .map(|d| match left {
             Some(left) => d.pl(px(left)).pr_2().child(words),
             // In line with the rows' content, inside their 1 px ring.

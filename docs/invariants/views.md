@@ -408,9 +408,10 @@ around the views is in [shell.md](shell.md).
   reader's position and count in positions, as when nothing is grouped.
   A view asked to scroll to a position turns it into a row where it
   draws (`ListView::asked`), with the rows as they are then. A heading
-  is a row as tall as an entry, a chevron at its start, its label Small
-  and semibold, its count
-  beside it muted, a line above it but the first; the one at the top is
+  is a row as tall as an entry, a chevron at its start, its label Body
+  and semibold as the names it heads (their lines, 1.2 times the text),
+  its count beside it Small and muted, a line above it but the first;
+  the one at the top is
   pinned (`groups::Pinned`, a decoration of the list, computed after it
   scrolled), pushed up by the next, and a row brought into view from
   above stops below it. The tree groups its top level: a folder opened
