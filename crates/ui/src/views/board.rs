@@ -187,8 +187,8 @@ impl BoardView {
         let Some(pane) = ws.pane(shell.pane) else {
             return (Vec::new(), Vec::new(), (0, 0));
         };
-        let spec = pane.sort;
-        let top = pane.listing.order_shown(spec);
+        let spec = pane.sorting();
+        let top = pane.listing.order_shown(&spec);
         let shown = pane.location().cloned();
         let mut columns = Vec::new();
         let mut missing = Vec::new();
@@ -218,7 +218,7 @@ impl BoardView {
             }
             let ids = opened
                 .and_then(|o| pane.kept(&o.location))
-                .map_or_else(|| Arc::from([]), |listing| listing.order_shown(spec));
+                .map_or_else(|| Arc::from([]), |listing| listing.order_shown(&spec));
             let shown = if path.is_none() {
                 shell.app.tags_shown(&location).into()
             } else {

@@ -670,7 +670,7 @@ const SHOWS: &[&str] = &[
     "ui.properties_count",
     "ui.properties_fold",
     "ui.preview_menu",
-    "ui.preview_submenu",
+    "ui.toolbar_submenu",
     "ui.preview_page",
     "ui.preview_scroll",
     "ui.preview_seek",
@@ -802,25 +802,25 @@ const KEY_FORMS: &[(&str, &str, &str)] = &[
     ),
     ("ui.review_choose", r#"{"delta":-1}"#, "Previous choice"),
     // A preview's More, its submenu beside a row (Open With).
-    ("ui.preview_submenu", r#"{"here":true}"#, "Open the submenu"),
-    ("ui.preview_submenu", r#"{"step":1}"#, "Next in the submenu"),
+    ("ui.toolbar_submenu", r#"{"here":true}"#, "Open the submenu"),
+    ("ui.toolbar_submenu", r#"{"step":1}"#, "Next in the submenu"),
     (
-        "ui.preview_submenu",
+        "ui.toolbar_submenu",
         r#"{"step":-1}"#,
         "Previous in the submenu",
     ),
     (
-        "ui.preview_submenu",
+        "ui.toolbar_submenu",
         r#"{"end":false}"#,
         "First in the submenu",
     ),
     (
-        "ui.preview_submenu",
+        "ui.toolbar_submenu",
         r#"{"end":true}"#,
         "Last in the submenu",
     ),
     (
-        "ui.preview_submenu",
+        "ui.toolbar_submenu",
         r#"{"back":true}"#,
         "Back from the submenu",
     ),
@@ -1260,7 +1260,7 @@ fn repeats_of(name: &str) -> Option<Repeats> {
         // choice's ring moved along its values.
         | "ui.menu_expand"
         | "ui.menu_collapse"
-        | "ui.preview_submenu"
+        | "ui.toolbar_submenu"
         | "ui.settings_next"
         | "ui.settings_prev"
         | "ui.settings_page"
@@ -2340,7 +2340,7 @@ pub fn declare_all(app: &App) {
     declare::<Submenu>(
         app,
         Topic::Preview,
-        "ui.preview_submenu",
+        "ui.toolbar_submenu",
         "Preview menu: submenu",
         "Open a submenu of the preview's More beside its row (`open`, or `here`: the one whose row has the keyboard), go back to its row (`back`), or move the keyboard along its rows (`step`, `end`)",
     );

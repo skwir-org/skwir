@@ -181,7 +181,12 @@ work where the keyboard is, by topic.
 `Ctrl+1`, `Ctrl+2` and `Ctrl+3` show the folder as a list, a grid or
 columns. The View menu, at the end of the pane's row, has every view, the
 sort, Folders first, hidden files (`Ctrl+H` or `Alt+.`) and the zoom
-(`Ctrl++`, `Ctrl+-`, `Ctrl+0`, or `Ctrl+wheel`). Folders first, on
+(`Ctrl++`, `Ctrl+-`, `Ctrl+0`, or `Ctrl+wheel`). Sort by turns the order
+round in one click, and the row under it lists what to sort by: name,
+kind, type, extension, size, the dates, rating, tags or owner. Each starts
+where you look first (names A to Z, the largest, the newest, the best
+rated), and choosing it again turns it round; files that tie are listed A
+to Z either way. Folders first, on
 unless you turn it off (there or in Settings › Folders and views), lists
 folders before files; off, they are sorted together, so by date the
 newest comes first whatever it is. A folder's own date changes when

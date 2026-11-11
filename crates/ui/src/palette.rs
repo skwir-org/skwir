@@ -371,6 +371,7 @@ pub fn offered(
     app: &skwir_core::App,
     views: &[skwir_core::registry::ViewSpec],
     sorts: &[SortKey],
+    groups: &[SortKey],
 ) -> Vec<Offer> {
     let mut offers: Vec<Offer> = Vec::new();
     for spec in app.commands.list() {
@@ -399,6 +400,20 @@ pub fn offered(
                 .and_then(|key| serde_json::from_value::<SortKey>(key.clone()).ok());
             if &*spec.name == "sort" && key.is_some_and(|key| !sorts.contains(&key)) {
                 continue;
+            }
+            // Grouped likewise, and not at all without the sorter, which
+            // makes every group (ADR-130).
+            if &*spec.name == "group" {
+                let by = form.args.get("by").cloned().and_then(|by| {
+                    serde_json::from_value::<skwir_core::grouping::GroupBy>(by).ok()
+                });
+                let offered = match by {
+                    Some(skwir_core::grouping::GroupBy::Key(key)) => groups.contains(&key),
+                    _ => !groups.is_empty(),
+                };
+                if !offered {
+                    continue;
+                }
             }
             offers.push(Offer::of(&spec.name, form.args.clone(), form.title.clone()));
         }
@@ -464,16 +479,21 @@ pub fn offered(
 impl Shell {
     fn palette_items(&self) -> Vec<PaletteItem> {
         let sorts: Vec<SortKey> = self.sort_keys().into_iter().map(|(_, key)| key).collect();
-        offered(&self.app, &self.available_views(), &sorts)
-            .into_iter()
-            .map(|offer| PaletteItem {
-                keys: self.keys_for(&offer.name, &offer.args),
-                name: offer.name,
-                args: offer.args,
-                title: offer.title,
-                required: offer.required,
-            })
-            .collect()
+        offered(
+            &self.app,
+            &self.available_views(),
+            &sorts,
+            &self.group_keys(),
+        )
+        .into_iter()
+        .map(|offer| PaletteItem {
+            keys: self.keys_for(&offer.name, &offer.args),
+            name: offer.name,
+            args: offer.args,
+            title: offer.title,
+            required: offer.required,
+        })
+        .collect()
     }
 
     pub fn open_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -695,7 +715,7 @@ mod tests {
     use skwir_core::command::{NoArgs, Outcome};
 
     fn titles(app: &App, sorts: &[SortKey]) -> Vec<String> {
-        super::offered(app, &[], sorts)
+        super::offered(app, &[], sorts, &[])
             .into_iter()
             .map(|offer| offer.title)
             .collect()

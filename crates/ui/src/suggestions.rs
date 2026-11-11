@@ -248,7 +248,7 @@ impl SuggestSource for Commands {
 
     fn suggest(&self, app: &App, ask: &Ask, _: &CancelToken) -> Answer {
         let words = ask.words();
-        let mut found: Vec<(i32, Suggestion)> = crate::palette::offered(app, &[], &[])
+        let mut found: Vec<(i32, Suggestion)> = crate::palette::offered(app, &[], &[], &[])
             .into_iter()
             .filter(|offer| offer.required.is_empty())
             .filter_map(|offer| {

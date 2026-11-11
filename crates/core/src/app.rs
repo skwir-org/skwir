@@ -356,6 +356,10 @@ pub struct App {
     /// The one waiter reading the panes' filters again when the first of
     /// them reads otherwise (`roll_filters_over`): when, and its token.
     filter_rollover: parking_lot::Mutex<Option<(std::time::SystemTime, CancelToken)>>,
+    /// The one waiter making the panes' sort keys again when the first of
+    /// them answers otherwise (`roll_keys_over`: the date groups at
+    /// midnight): when, and its token.
+    keys_rollover: parking_lot::Mutex<Option<(std::time::SystemTime, CancelToken)>>,
     /// What walks leave out (`left_out`), as read at a revision of the
     /// settings.
     /// The rules as the settings and the environment said them when last
@@ -407,6 +411,7 @@ impl App {
         let app = Arc::new_cyclic(|weak| App {
             weak: weak.clone(),
             filter_rollover: parking_lot::Mutex::new(None),
+            keys_rollover: parking_lot::Mutex::new(None),
             left_out: parking_lot::Mutex::new(None),
             private: parking_lot::Mutex::new(None),
             notifications: parking_lot::Mutex::new(Vec::new()),
@@ -938,9 +943,6 @@ impl App {
     /// filter is set and after each reading, and gone with the app. A
     /// search holds its own (the query plugin lists it again).
     fn roll_filters_over(&self) {
-        /// How often the waiter looks at the clock: one set forward or back
-        /// meanwhile moves the change.
-        const CHECK: std::time::Duration = std::time::Duration::from_secs(600);
         let when = self
             .workspace
             .read()
@@ -948,7 +950,110 @@ impl App {
             .iter()
             .filter_map(|p| p.read_filter().and_then(|r| r.next_change))
             .min();
-        let mut waiting = self.filter_rollover.lock();
+        self.wait_until(
+            |app| &app.filter_rollover,
+            when,
+            "skwir-filter-rollover",
+            App::read_filters_again,
+        );
+    }
+
+    /// Make the panes' sort keys again with the sorter there is now
+    /// (`Registry::sorters`, ADR-130), `pane`'s alone when given: for a pane
+    /// whose sort needs keys (`SortSpec::needs_keys`), what the sorter makes
+    /// for its criteria; for one that needs none, none. A sorter turned off
+    /// leaves nothing of its keys in a pane, whose groups go and whose sort
+    /// by a criterion only it read is by name; turned on, it makes them
+    /// (`PluginHost`). Every listing the pane shows is sorted anew with
+    /// them, on a worker (ADR-121).
+    pub(crate) fn make_keys_again(&self, pane: Option<PaneId>) {
+        if self.make_keys(|p, _| pane.is_none_or(|id| p.id == id)) {
+            self.wake();
+        }
+    }
+
+    /// Make the keys of the panes whose keys are not those their sort wants
+    /// (`Pane::keys_wanted`): a sort or a group changed by any path, a tab
+    /// opened with another's sort, a sorter turned on or off. Asked by
+    /// every pump, before the listings' jobs, so an order asked anew is
+    /// made with them.
+    fn make_wanted_keys(&self) {
+        self.make_keys(crate::workspace::Pane::keys_wanted);
+    }
+
+    /// Make the keys of the panes `which` picks: whether it picked any.
+    fn make_keys(&self, which: impl Fn(&crate::workspace::Pane, u64) -> bool) -> bool {
+        let revision = self.registry.sorters.revision();
+        let asked: Vec<(PaneId, Option<crate::workspace::KeysFor>)> = self
+            .workspace
+            .read()
+            .panes()
+            .iter()
+            .filter(|p| which(p, revision))
+            .map(|p| (p.id, p.keys_wanted_for(revision)))
+            .collect();
+        // Nothing made, nothing to wait for anew: the pump asks this of
+        // every pane each time, and leaves the waiter alone.
+        if asked.is_empty() {
+            return false;
+        }
+        // Made before the workspace's lock: the sorter is a plugin's.
+        let sorter = self.registry.sorters.all().into_iter().next();
+        let made: Vec<_> = asked
+            .into_iter()
+            .map(|(id, made_for)| {
+                let keys = made_for
+                    .zip(sorter.as_ref())
+                    .and_then(|((sort, group, _), sorter)| (sorter.keys)(sort, group));
+                (id, made_for, keys)
+            })
+            .collect();
+        let mut ws = self.workspace.write();
+        for (id, made_for, keys) in made {
+            if let Some(p) = ws.pane_mut(id)
+                && p.keys_wanted_for(revision) == made_for
+            {
+                p.set_keys(keys, made_for);
+            }
+        }
+        drop(ws);
+        self.roll_keys_over();
+        true
+    }
+
+    /// Make the panes' keys again when the first of them answers otherwise
+    /// (`Keys::next_change`: the date groups at midnight): one waiter, as
+    /// for the filters.
+    fn roll_keys_over(&self) {
+        let when = self
+            .workspace
+            .read()
+            .panes()
+            .iter()
+            .filter_map(|p| p.keys().and_then(|k| k.next_change))
+            .min();
+        self.wait_until(
+            |app| &app.keys_rollover,
+            when,
+            "skwir-keys-rollover",
+            |app| app.make_keys_again(None),
+        );
+    }
+
+    /// Call `then` once `when` has come: one waiter per `slot`, for the
+    /// earliest time asked, set again whenever it is asked and gone with
+    /// the app; none when `when` is.
+    fn wait_until(
+        &self,
+        slot: fn(&App) -> &parking_lot::Mutex<Option<(std::time::SystemTime, CancelToken)>>,
+        when: Option<std::time::SystemTime>,
+        name: &str,
+        then: fn(&App),
+    ) {
+        /// How often the waiter looks at the clock: one set forward or back
+        /// meanwhile moves the change.
+        const CHECK: std::time::Duration = std::time::Duration::from_secs(600);
+        let mut waiting = slot(self).lock();
         if waiting.as_ref().map(|(at, _)| *at) == when {
             return;
         }
@@ -963,7 +1068,7 @@ impl App {
         drop(waiting);
         let app = self.weak.clone();
         let spawned = std::thread::Builder::new()
-            .name("skwir-filter-rollover".into())
+            .name(name.into())
             .spawn(move || {
                 let signal = cancel.subscribe();
                 while let Ok(left) = when.duration_since(std::time::SystemTime::now()) {
@@ -975,12 +1080,12 @@ impl App {
                 if let Some(app) = app.upgrade()
                     && !cancel.is_cancelled()
                 {
-                    app.filter_rollover.lock().take();
-                    app.read_filters_again();
+                    slot(&app).lock().take();
+                    then(&app);
                 }
             });
         if let Err(error) = spawned {
-            tracing::warn!("filter rollover: {error}");
+            tracing::warn!("{name}: {error}");
         }
     }
 
@@ -1695,6 +1800,9 @@ impl App {
     /// said it is reached at another (an address connected, ADR-077)
     /// shows that one in its place.
     pub fn pump_report(&self) -> crate::workspace::PumpReport {
+        // What the panes are sorted and grouped by, made before their
+        // listings ask for an order (ADR-130).
+        self.make_wanted_keys();
         let mut report = self.workspace.write().pump_report();
         // A folder is filled on a worker, an order asked anew made there,
         // and each taken by the pump its wake brings (ADR-120, ADR-121).
@@ -1983,6 +2091,7 @@ impl App {
                 ascending: true,
                 show_hidden: hidden,
                 folders_first,
+                ..SortSpec::default()
             })
             .iter()
             .copied()
@@ -3020,6 +3129,17 @@ pub struct SortArgs {
     pub pane: Option<PaneId>,
 }
 
+/// `group`: what a pane's entries are grouped by, and which way.
+#[derive(Debug, Default, Deserialize, Serialize, JsonSchema)]
+pub struct GroupArgs {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by: Option<crate::grouping::GroupBy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ascending: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pane: Option<PaneId>,
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct EntriesArgs {
     /// The first entry to answer, counted in the pane's order.
@@ -3690,17 +3810,16 @@ mod builtin {
                 let p = ws
                     .pane_mut(pane)
                     .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
+                let before = p.sort;
                 if let Some(k) = a.key {
-                    // The same key again flips the direction unless one was given.
-                    // A rating is sought from the best down, the trash from
-                    // what was put there last.
+                    // The same key again flips the direction unless one was
+                    // given; another starts where people look first
+                    // (ADR-130, 3): words A to Z, the largest, the newest,
+                    // the best rated first.
                     p.sort.ascending = a.ascending.unwrap_or(if p.sort.key == k {
                         !p.sort.ascending
                     } else {
-                        !matches!(
-                            k,
-                            crate::location::SortKey::Rating | crate::location::SortKey::Deleted
-                        )
+                        k.starts_ascending()
                     });
                     p.sort.key = k;
                 } else if let Some(asc) = a.ascending {
@@ -3709,11 +3828,54 @@ mod builtin {
                 if let Some(h) = a.show_hidden {
                     p.set_show_hidden(h);
                 }
+                let keyed = p.sort.key != before.key;
+                drop(ws);
+                if keyed {
+                    app.make_keys_again(Some(pane));
+                }
                 Ok(Outcome::Done)
             },
         );
         sort.forms(sort_forms());
         sort.shows();
+
+        let group = c.register::<GroupArgs, _>(
+            "core",
+            Topic::View,
+            "group",
+            "Group",
+            "Group a pane's entries under headings (ADR-130): by `by` (none, same_as_sort: by the sort's key in its direction, or a key as `sort` takes: name, kind, type, extension, size, modified, created, accessed, deleted, rating, tags, owner), in direction `ascending` (a key starts in its own: words A to Z, the largest, the newest, the best rated first; the same key again flips it). Within each group, folders come first while they do everywhere, then the sort decides",
+            |a, app| {
+                let pane = app.pane_or_active(a.pane);
+                let mut ws = app.workspace.write();
+                let p = ws
+                    .pane_mut(pane)
+                    .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
+                let before = p.sort;
+                if let Some(by) = a.by {
+                    p.sort.group_ascending = match (a.ascending, by) {
+                        (Some(ascending), _) => ascending,
+                        (None, crate::grouping::GroupBy::Key(_)) if by == p.sort.group => {
+                            !p.sort.group_ascending
+                        }
+                        (None, crate::grouping::GroupBy::Key(k)) => k.starts_ascending(),
+                        (None, _) => true,
+                    };
+                    p.sort.group = by;
+                } else if let Some(ascending) = a.ascending {
+                    p.sort.group_ascending = ascending;
+                }
+                let regrouped = p.sort.group_key() != before.group_key();
+                drop(ws);
+                if regrouped {
+                    app.make_keys_again(Some(pane));
+                }
+                app.wake();
+                Ok(Outcome::Done)
+            },
+        );
+        group.forms(group_forms());
+        group.shows();
 
         c.register::<FilterArgs, _>(
             "core", Topic::Find,
@@ -4454,18 +4616,13 @@ mod builtin {
 
 /// `sort`'s forms: each key, each way, in words (ADR-024).
 fn sort_forms() -> Vec<Form> {
-    const KEYS: [(&str, &str, &str, &str); 5] = [
-        ("name", "name", "A to Z", "Z to A"),
-        ("size", "size", "smallest first", "largest first"),
-        ("modified", "date modified", "oldest first", "newest first"),
-        ("rating", "rating", "lowest first", "highest first"),
-        ("deleted", "date deleted", "oldest first", "newest first"),
-    ];
     let mut forms = vec![
         Form::new(serde_json::json!({ "ascending": true }), "Sort ascending"),
         Form::new(serde_json::json!({ "ascending": false }), "Sort descending"),
     ];
-    for (key, words, up, down) in KEYS {
+    for key in crate::location::SortKey::ALL {
+        let words = key.words();
+        let [(_, up), (_, down)] = key.directions();
         forms.push(Form::new(
             serde_json::json!({ "key": key }),
             format!("Sort by {words}"),
@@ -4477,6 +4634,34 @@ fn sort_forms() -> Vec<Form> {
         forms.push(Form::new(
             serde_json::json!({ "key": key, "ascending": false }),
             format!("Sort by {words}, {down}"),
+        ));
+    }
+    forms
+}
+
+/// The palette's forms of `group`: by each key, and its directions.
+fn group_forms() -> Vec<Form> {
+    let mut forms = vec![
+        Form::new(serde_json::json!({ "by": "none" }), "Do not group"),
+        Form::new(
+            serde_json::json!({ "by": "same_as_sort" }),
+            "Group the same as the sort",
+        ),
+    ];
+    for key in crate::location::SortKey::ALL {
+        let words = key.words();
+        let [(_, up), (_, down)] = key.directions();
+        forms.push(Form::new(
+            serde_json::json!({ "by": key }),
+            format!("Group by {words}"),
+        ));
+        forms.push(Form::new(
+            serde_json::json!({ "by": key, "ascending": true }),
+            format!("Group by {words}, {up}"),
+        ));
+        forms.push(Form::new(
+            serde_json::json!({ "by": key, "ascending": false }),
+            format!("Group by {words}, {down}"),
         ));
     }
     forms

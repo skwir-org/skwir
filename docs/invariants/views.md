@@ -357,12 +357,56 @@ around the views is in [shell.md](shell.md).
   none, below every value, and nothing waits for it to be read. Orders
   that are no pane's sort (the address's completions, an archive's tree,
   Usage) keep folders first.
+- **The sort and the groups take one list of criteria** (ADR-130,
+  `SortKey::ALL`), offered where they apply (`Shell::sort_keys`,
+  `group_keys`: Rating while ratings are kept, Deleted in the trash, what
+  only the sorter reads while there is one, Group by only then). A
+  criterion chosen starts in its natural direction
+  (`SortKey::starts_ascending`), the header's click included; chosen again,
+  it turns. A direction reverses its criterion, never the names: ties
+  are A to Z either way. What has none (a date, a rating, tags, an
+  extension, a folder's size) is the lowest.
+- **The group comes first in the order** (`SortSpec::group`), so each is
+  one run of it; folders first acts within each group, and a group of
+  only folders comes first while it is on, whatever the groups' direction.
+  Same as sort is the sort criterion's groups in its direction. Where
+  each group starts is the listing's (`Listing::spans_shown`, from the
+  order's ranks) mapped onto what the pane shows (`Pane::groups`): never
+  asked of the keys again per row.
+- **What changed is placed, never merged rank by rank**
+  (`Listing::place`): a hydrated batch in a big folder is a thousand
+  entries among a hundred thousand, a hundred times while it is read.
+  What moved keeps what it was placed by (`Moved`) and is found by a
+  search; what is placed gallops back from the end (`gallop_back`); then
+  every rank moves once, with those beside it in a block (`shift`). What
+  went is told by its id in one pass, most ranks by a bit (`Taken`), as
+  going costs the listing a pass anyway. Comparisons grow with the batch
+  and the log of the gaps; what grows with the order is bulk copying. A
+  rank stays a plain value (`Copy`): what an entry is grouped or sorted
+  by in words lives beside the ranks (`Extras`), each rank's freed as it
+  is taken out, so no rank is counted, cloned or dropped one by one. The
+  ids are written over the order before last once no one holds it
+  (`ids_of`): a list made anew per batch cost a third of hydrating in
+  pages faulted in again. Code that tells two orders apart by their
+  pointer holds the one it compares with (`Arc::ptr_eq`), never an
+  address alone: a list no one holds is written over.
+- **What core cannot read, the sorter's keys answer** (`grouping::Keys`,
+  `registry::Sorter`, the query plugin's): a kind, a type's name, an
+  owner's name, each entry's group. Keys answer from memory, never
+  blocking; what they must read they read on a worker and say so
+  (`Keys::changed`), and the order is made again. A pane's keys are made
+  at each pump where its sort wants others (`Pane::keys_wanted`, whatever
+  path changed the sort, a sorter turned on or off) and again when they
+  say they change (midnight). Every listing a pane shows is sorted with
+  `Pane::sorting` (its spec and keys), never its spec alone, which would
+  lose the groups and every criterion only the sorter reads.
 - **A sort asked anew** (a header clicked, the direction, hidden files,
-  Folders first) is made on a worker (ADR-121): the header says it at once, the rows keep
-  the order before (`Listing::order_shown`, kept current) until the new
-  one is back, and what acts on the order (the arrows, ranges, Select
-  all) acts on the one drawn. A view reads a listing's order through
-  `order_shown` with the pane's sort, never `sorted`.
+  Folders first, a group, keys made again) is made on a worker (ADR-121):
+  the header says it at once, the rows keep the order before
+  (`Listing::order_shown`, kept current) until the new one is back, and
+  what acts on the order (the arrows, ranges, Select all) acts on the one
+  drawn. A view reads a listing's order through `order_shown` with the
+  pane's sorting, never `sorted`.
 
 ## Scrolling
 

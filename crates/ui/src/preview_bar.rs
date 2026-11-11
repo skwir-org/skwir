@@ -33,7 +33,7 @@ use crate::elements::{
     popover::PopoverAnchor,
 };
 use crate::shell::Shell;
-use crate::theme::{Chosen as _, Theme};
+use crate::theme::Theme;
 use crate::toolbar::{self, Button};
 use skwir_core::registry::MenuItem;
 
@@ -545,100 +545,43 @@ fn item_button(item: &MenuItem) -> Button {
     .active(item.is_on())
 }
 
-/// The row of More's submenu `name`: pressed (Enter, Space, Right), it
-/// opens the submenu with the keyboard on its first row; the pointer
-/// resting on it opens it too, and resting on another row of More closes
-/// it (`Shell::preview_sub_rest`). Lit while open, as the context menu's.
+/// The row of More's submenu `name`, its first item's icon before it
+/// (`toolbar::submenu_row`).
 fn submenu_row(
     popup: &toolbar::Popup,
     name: &str,
     shell: &Shell,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
-    let theme = cx.global::<Theme>().clone();
     let icon = shell
         .preview_sub_items(name)
         .into_iter()
         .find_map(|item| item.icon.clone().filter(|icon| !icon.is_empty()))
         .unwrap_or_default();
-    let open = popup.sub.open.as_deref() == Some(name);
-    let mut row = Button::new(
+    toolbar::submenu_row(
+        popup,
         format!("preview-submenu-{name}"),
+        name,
         icon,
-        name.to_owned(),
-        "ui.preview_submenu",
+        name.to_owned().into(),
+        shell,
+        cx,
     )
-    .args(serde_json::json!({ "open": name }))
-    .label(name.to_owned())
-    .opens_beside(open)
-    .anchor_if(&popup.sub.row, true)
-    .render(shell, cx);
-    if let Some(focus) = popup.sub.parent(name) {
-        row = row.track_focus(focus);
-    }
-    let rests: gpui::SharedString = name.to_owned().into();
-    row.when(open, |row| row.chosen(&theme))
-        .on_mouse_move(cx.listener(move |this, _, window, cx| {
-            this.preview_sub_rest(Some(rests.clone()), window, cx);
-            cx.stop_propagation();
-        }))
-        .into_any_element()
 }
 
-/// More's submenu `name`, beside its row: its items, each a row the
-/// keyboard reaches (`Submenu::rows`, walked by `ui.preview_submenu`), a
-/// menu of its own to assistive technology, named by its row.
-fn fly_out(
-    popup: &toolbar::Popup,
-    name: &str,
-    shell: &Shell,
-    theme: &Theme,
-    cx: &mut Context<Shell>,
-) -> AnyElement {
-    let mut rows = div()
-        .id("preview-submenu-rows")
-        .flex()
-        .flex_col()
-        .min_h_0()
-        .overflow_y_scroll();
-    for (at, item) in shell.preview_sub_items(name).into_iter().enumerate() {
-        let button = item_button(item);
-        let title = button.title();
-        let label = title.split(" · ").next().unwrap_or(&title).to_owned();
-        let mut row = button.label(label).menu().render(shell, cx);
-        if let Some(focus) = popup.sub.rows.get(at) {
-            row = row.track_focus(focus);
-        }
-        rows = rows.child(row);
-    }
-    div()
-        .id("preview-submenu")
-        .role(gpui::Role::Menu)
-        .aria_label(name.to_owned())
-        .key_context("ToolbarSubmenu")
-        .relative()
-        .min_w(sized(180.))
-        .max_w(sized(460.))
-        .p_1()
-        .flex()
-        .flex_col()
-        .min_h_0()
-        .rounded_lg()
-        .border_1()
-        .border_color(theme.border)
-        .bg(theme.surface)
-        .text_color(theme.text)
-        .shadow_md()
-        .occlude()
-        // The pointer reaching it keeps it open.
-        .on_mouse_move(cx.listener(|this, _, _, _| {
-            if let Some(popup) = this.preview.menu.as_mut() {
-                popup.sub.rest = None;
-            }
-        }))
-        .child(rows)
-        .child(popup.sub.area.marker())
-        .into_any_element()
+/// More's submenu `name`'s rows: its items, called by their title's first
+/// part.
+pub(crate) fn sub_rows(shell: &Shell, name: &str) -> Vec<toolbar::FlyRow> {
+    shell
+        .preview_sub_items(name)
+        .into_iter()
+        .map(|item| {
+            let button = item_button(item);
+            let title = button.title();
+            let label = title.split(" · ").next().unwrap_or(&title).to_owned();
+            toolbar::FlyRow::Row(button.label(label))
+        })
+        .collect()
 }
 
 /// A button as a row of the menu: its title without the shortcut hint.
@@ -802,7 +745,7 @@ pub fn render(
                 // Resting on a row closes the submenu open, but on its own.
                 panel
                     .on_mouse_move(cx.listener(|this, _, window, cx| {
-                        this.preview_sub_rest(None, window, cx);
+                        this.popup_sub_rest(None, window, cx);
                     }))
                     .into_any_element()
             })
@@ -810,7 +753,7 @@ pub fn render(
         root = root.child(anchor.popup_for(&chosen, panels));
         // Above More, beside the row that opens it.
         if let Some(name) = popup.sub.open.clone() {
-            let panel = fly_out(popup, &name, shell, theme, cx);
+            let panel = toolbar::fly_out(popup, &name, shell.submenu_rows(&name), shell, theme, cx);
             root = root.child(popup.sub.row.popup_beside(4, crate::menu::SUB_INSET, panel));
         }
     } else if let Some(panel) = bar

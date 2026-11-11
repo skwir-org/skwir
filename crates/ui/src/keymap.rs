@@ -326,34 +326,34 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
 const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
     // A popup's submenu, open beside its row: the arrows walk its rows,
     // Home and End reach its ends, Left and Escape go back to its row
-    // (`ui.preview_submenu`), as a context menu's do.
+    // (`ui.toolbar_submenu`), as a context menu's do.
     (
         "down",
-        "ui.preview_submenu",
+        "ui.toolbar_submenu",
         r#"{"step":1}"#,
         Some("toolbar_submenu"),
     ),
     (
         "up",
-        "ui.preview_submenu",
+        "ui.toolbar_submenu",
         r#"{"step":-1}"#,
         Some("toolbar_submenu"),
     ),
     (
         "home",
-        "ui.preview_submenu",
+        "ui.toolbar_submenu",
         r#"{"end":false}"#,
         Some("toolbar_submenu"),
     ),
     (
         "end",
-        "ui.preview_submenu",
+        "ui.toolbar_submenu",
         r#"{"end":true}"#,
         Some("toolbar_submenu"),
     ),
     (
         "left",
-        "ui.preview_submenu",
+        "ui.toolbar_submenu",
         r#"{"back":true}"#,
         Some("toolbar_submenu"),
     ),
@@ -361,13 +361,13 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
     // (`toolbar::SUBMENU`).
     (
         "right",
-        "ui.preview_submenu",
+        "ui.toolbar_submenu",
         r#"{"here":true}"#,
         Some("toolbar_button submenu"),
     ),
     (
         "escape",
-        "ui.preview_submenu",
+        "ui.toolbar_submenu",
         r#"{"back":true}"#,
         Some("toolbar_submenu"),
     ),

@@ -6,3 +6,4 @@
 # everyone who runs the test benefits from these saved cases.
 cc 2a12439ae13f43c6c8f2fed8933928435c5a46757f5ad575795d7f98229d4b42 # shrinks to events = [Add([15, 19]), Sort(false), Remove([15, 19]), Sort(false)]
 cc 3b0acaa05f48477f0adebcdf6de668dac3b7b0913e4cf30b835a293002e47927 # shrinks to events = [Add([22]), Add([0, 1, 2, 3]), Sort(true), Grow(22, 0), Sort(true)]
+cc d112a7b1d979cd96e772376e35639c3883891f0bb91951e3eae15aafc34dd787 # shrinks to events = [Add([2]), Rename(3, 23), Sort(true), Grow(2, 2), Grow(23, 0), Sort(true)]

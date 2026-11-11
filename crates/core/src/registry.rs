@@ -796,6 +796,22 @@ pub struct FilterReader {
     pub leads: Option<LeadsBelow>,
 }
 
+/// What makes the keys a sort needs that core cannot read (ADR-130): for
+/// a sort by a criterion and a group by another (or none), what a plugin
+/// knows of the entries (a kind, a type's name, an owner's name, each
+/// entry's group); `None` when it answers nothing of them.
+#[derive(Clone)]
+pub struct Sorter {
+    pub keys: Arc<
+        dyn Fn(
+                crate::location::SortKey,
+                Option<crate::location::SortKey>,
+            ) -> Option<crate::grouping::Keys>
+            + Send
+            + Sync,
+    >,
+}
+
 /// Whether the folder `dir`, or anything a search of it would find, is
 /// what the lens `words` keep: `None` when it cannot tell (the work was
 /// cancelled, the words no longer read, the folder cannot be read), and
@@ -828,6 +844,10 @@ pub struct Registry {
     /// What reads the words typed over a folder into a test (ADR-098, the
     /// query plugin's); the first registered is asked.
     pub filter_readers: Contributions<FilterReader>,
+    /// What makes the keys a pane's sort and groups need (ADR-130, the
+    /// query plugin's); the first registered is asked. None, and nothing
+    /// is grouped.
+    pub sorters: Contributions<Sorter>,
     /// The names the user gave sidebar places (ADR-034), by group and
     /// `Place::key`: the sidebar publishes its arrangement's, so a tab, a
     /// toast and `tab.list` name a place as the sidebar does.
@@ -852,6 +872,7 @@ impl Default for Registry {
             remotes: Contributions::gated(Arc::clone(&gate)),
             suggesters: Contributions::gated(Arc::clone(&gate)),
             filter_readers: Contributions::gated(Arc::clone(&gate)),
+            sorters: Contributions::gated(Arc::clone(&gate)),
             titles: RwLock::default(),
             gate,
         }
@@ -909,6 +930,7 @@ impl Registry {
         self.remotes.remove_owner(owner);
         self.suggesters.remove_owner(owner);
         self.filter_readers.remove_owner(owner);
+        self.sorters.remove_owner(owner);
     }
 }
 

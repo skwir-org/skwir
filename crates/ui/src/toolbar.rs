@@ -300,7 +300,7 @@ impl Button {
     /// A popup's row that opens a submenu beside it, as a context menu's
     /// does (`Popup::sub`): a chevron at its end, expanded while `open`,
     /// the popup kept open when it is pressed, and Right opens it as Enter
-    /// does (`SUBMENU`, `ui.preview_submenu`'s `here`).
+    /// does (`SUBMENU`, `ui.toolbar_submenu`'s `here`).
     pub fn opens_beside(mut self, open: bool) -> Self {
         self.shape = Shape::MenuRow;
         self.keeps_open = true;
@@ -918,7 +918,7 @@ pub struct Popup {
 /// time, holding no submenu; the pointer opens it after resting
 /// `menu::REST` on its row, or at once with a press, and resting on
 /// another row closes it. Its rows have the keyboard's focus as the
-/// popup's do, walked by `ui.preview_submenu`: drawn beside the popup,
+/// popup's do, walked by `ui.toolbar_submenu`: drawn beside the popup,
 /// they are not where gpui's tab order would reach them.
 #[derive(Default)]
 pub struct Submenu {
@@ -966,6 +966,157 @@ impl Submenu {
         self.area = crate::elements::popover::PopoverAnchor::default();
     }
 }
+/// A row of a popup's submenu (`fly_out`): a button, or a line between
+/// its groups.
+// A submenu's dozen rows, made for one frame and drawn at once: boxing
+// each button would allocate more than the lines' room costs.
+#[allow(clippy::large_enum_variant)]
+pub enum FlyRow {
+    Row(Button),
+    Line,
+}
+
+/// How many of `rows` the keyboard reaches.
+pub fn row_count(rows: &[FlyRow]) -> usize {
+    rows.iter()
+        .filter(|row| matches!(row, FlyRow::Row(_)))
+        .count()
+}
+
+impl Shell {
+    /// The open popup that may hold a submenu beside a row: the preview's
+    /// More, else a toolbar menu (the View menu's Sort by and Group by).
+    pub(crate) fn submenu_popup(&mut self) -> Option<&mut Popup> {
+        if self
+            .preview
+            .menu
+            .as_ref()
+            .is_some_and(|popup| popup.kind == "preview")
+        {
+            return self.preview.menu.as_mut();
+        }
+        self.toolbar_menu.as_mut()
+    }
+
+    /// The rows of the open popup's submenu `name`.
+    pub(crate) fn submenu_rows(&self, name: &str) -> Vec<FlyRow> {
+        if self
+            .preview
+            .menu
+            .as_ref()
+            .is_some_and(|popup| popup.kind == "preview")
+        {
+            return crate::preview_bar::sub_rows(self, name);
+        }
+        match &self.toolbar_menu {
+            Some(popup) if popup.kind == crate::address::VIEW_OPTIONS => {
+                crate::address::view_submenu(self, name)
+            }
+            _ => Vec::new(),
+        }
+    }
+}
+
+/// The row of `popup`'s submenu `name`, called `label`, `icon` before it:
+/// pressed (Enter, Space, Right), it opens the submenu with the keyboard
+/// on its first row; the pointer resting on it opens it too, and resting
+/// on another row of the popup closes it (`Shell::popup_sub_rest`). Lit
+/// while open, as the context menu's.
+pub fn submenu_row(
+    popup: &Popup,
+    id: String,
+    name: &str,
+    icon: impl Into<SharedString>,
+    label: SharedString,
+    shell: &Shell,
+    cx: &mut Context<Shell>,
+) -> gpui::AnyElement {
+    let theme = cx.global::<Theme>().clone();
+    let open = popup.sub.open.as_deref() == Some(name);
+    let mut row = Button::new(id, icon, label.to_string(), "ui.toolbar_submenu")
+        .args(serde_json::json!({ "open": name }))
+        .label(label)
+        .opens_beside(open)
+        .anchor_if(&popup.sub.row, true)
+        .render(shell, cx);
+    if let Some(focus) = popup.sub.parent(name) {
+        row = row.track_focus(focus);
+    }
+    let rests: SharedString = name.to_owned().into();
+    row.when(open, |row| row.chosen(&theme))
+        .on_mouse_move(cx.listener(move |this, _, window, cx| {
+            this.popup_sub_rest(Some(rests.clone()), window, cx);
+            cx.stop_propagation();
+        }))
+        .into_any_element()
+}
+
+/// `popup`'s submenu `name`, beside its row: `rows`, each button one the
+/// keyboard reaches (`Submenu::rows`, walked by `ui.toolbar_submenu`), a
+/// menu of its own to assistive technology, named by its row.
+pub fn fly_out(
+    popup: &Popup,
+    name: &str,
+    rows: Vec<FlyRow>,
+    shell: &Shell,
+    theme: &Theme,
+    cx: &mut Context<Shell>,
+) -> gpui::AnyElement {
+    let mut panel = div()
+        .id("popup-submenu-rows")
+        .flex()
+        .flex_col()
+        .min_h_0()
+        .overflow_y_scroll();
+    let mut at = 0;
+    for row in rows {
+        panel = panel.child(match row {
+            FlyRow::Row(button) => {
+                let mut row = button.menu().render(shell, cx);
+                if let Some(focus) = popup.sub.rows.get(at) {
+                    row = row.track_focus(focus);
+                }
+                at += 1;
+                row.into_any_element()
+            }
+            FlyRow::Line => div()
+                .flex_none()
+                .my_1()
+                .h(px(1.))
+                .bg(theme.border)
+                .into_any_element(),
+        });
+    }
+    div()
+        .id("popup-submenu")
+        .role(gpui::Role::Menu)
+        .aria_label(name.to_owned())
+        .key_context("ToolbarSubmenu")
+        .relative()
+        .min_w(sized(180.))
+        .max_w(sized(460.))
+        .p_1()
+        .flex()
+        .flex_col()
+        .min_h_0()
+        .rounded_lg()
+        .border_1()
+        .border_color(theme.border)
+        .bg(theme.surface)
+        .text_color(theme.text)
+        .shadow_md()
+        .occlude()
+        // The pointer reaching it keeps it open.
+        .on_mouse_move(cx.listener(|this, _, _, _| {
+            if let Some(popup) = this.submenu_popup() {
+                popup.sub.rest = None;
+            }
+        }))
+        .child(panel)
+        .child(popup.sub.area.marker())
+        .into_any_element()
+}
+
 impl Popup {
     pub fn new(kind: &'static str, window: &mut Window, cx: &mut Context<Shell>) -> Self {
         let previous = crate::modal::FocusReturn::capture(window, cx);
@@ -1088,6 +1239,9 @@ pub enum MenuPart {
     Choice(SharedString, Vec<Button>),
     /// Values as tiles, four to a row (`Button::tile`).
     Tiles(Vec<Button>),
+    /// The row of a submenu of the popup open, by its name, called by its
+    /// label (`submenu_row`): its rows beside it (`Shell::submenu_rows`).
+    Sub(SharedString, SharedString),
 }
 
 /// `panel` holding `parts`, as a context menu holds its rows.
@@ -1121,6 +1275,18 @@ pub fn menu_parts(
                 .bg(theme.border)
                 .into_any_element(),
             MenuPart::Row(button) => button.render(shell, cx).into_any_element(),
+            MenuPart::Sub(name, label) => match shell.toolbar_menu.as_ref() {
+                Some(popup) => submenu_row(
+                    popup,
+                    format!("popup-submenu-{name}"),
+                    &name,
+                    "",
+                    label,
+                    shell,
+                    cx,
+                ),
+                None => div().into_any_element(),
+            },
             MenuPart::Choice(name, values) => div()
                 .flex()
                 .flex_none()
@@ -1137,24 +1303,28 @@ pub fn menu_parts(
                         .text_color(theme.text)
                         .child(name.clone()),
                 )
-                .child(
-                    // To a screen reader, the setting is a radio group named
-                    // by its row, its values radio buttons (ADR-099), as a
-                    // context menu's setting (`menu::choice_element`).
-                    div()
-                        .id(crate::elements::known_by("popup-choice", &name))
-                        .role(gpui::Role::RadioGroup)
-                        .when(shell.a11y, |d| d.aria_label(name))
-                        .flex()
-                        .flex_none()
-                        .gap(sized(2.))
-                        .p(sized(2.))
-                        .rounded_md()
-                        .border_1()
-                        .border_color(theme.border)
-                        .bg(theme.bg)
-                        .children(values.into_iter().map(|value| value.render(shell, cx))),
-                )
+                // A setting with no values here says only its name (Group by
+                // while not grouped by a criterion of its own).
+                .when(!values.is_empty(), |row| {
+                    row.child(
+                        // To a screen reader, the setting is a radio group named
+                        // by its row, its values radio buttons (ADR-099), as a
+                        // context menu's setting (`menu::choice_element`).
+                        div()
+                            .id(crate::elements::known_by("popup-choice", &name))
+                            .role(gpui::Role::RadioGroup)
+                            .when(shell.a11y, |d| d.aria_label(name))
+                            .flex()
+                            .flex_none()
+                            .gap(sized(2.))
+                            .p(sized(2.))
+                            .rounded_md()
+                            .border_1()
+                            .border_color(theme.border)
+                            .bg(theme.bg)
+                            .children(values.into_iter().map(|value| value.render(shell, cx))),
+                    )
+                })
                 .into_any_element(),
             MenuPart::Tiles(values) => div()
                 .id("popup-tiles")

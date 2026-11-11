@@ -918,6 +918,30 @@ smallest first and after them largest first. The completions, an archive's
 tree and Usage keep folders first. Checks in `docs/STATUS-LOG.md`
 (2026-11-10).
 
+## Groups and the sort from one list (ADR-130, 2026-11-11)
+
+The reply on issue #10 promised grouping. ADR-130 settles it, on the
+user's answers to a proposal with mock-ups: one list of criteria for the
+sort and the groups (name, kind, type, extension, size, the dates,
+rating, tags, owner), Group by None, Same as sort or a criterion with a
+direction of its own, folders first within each group, each criterion
+starting in its natural direction, ties A to Z, the date groups the
+calendar's then one per year. Built in phases. **Phase 1, built
+2026-11-11:** core's criteria, `GroupBy`, the group first in every order
+and the spans (`Listing::spans_shown`, `Pane::groups`); the query
+plugin's keys (`groups.rs`: kinds, a type's name read on a worker, owners,
+every criterion's groups with the query term that keeps each); the
+`group` command and its palette forms, the sort's new criteria and
+starts; the View menu's Sort by and Group by, each a direction over a
+submenu beside its row (the preview's More's submenu made any popup's,
+`ui.toolbar_submenu`); the Type column sorts. What changed in an order
+is found by searches and moved once in blocks, no longer merged rank by
+rank, and the order before last is written over: a folder of 100 000
+entries hydrated by size takes about 110 ms, against about 400 ms before
+groups (24 bytes an entry more for the order kept, by the user's
+choice). Checks in `docs/STATUS-LOG.md`
+(2026-11-11).
+
 ## What is left
 
 Gathered on 2026-10-20 from the notes of this plan and of
@@ -935,12 +959,18 @@ not with Orca. MathML that uses an element `math::mathml` does not know
 (`mglyph`, `mmultiscripts`, `mlongdiv`) reads as loose letters. A visually
 hidden label alone in its block is lost (an empty block is not kept).
 
-**Grouping** (issue #10, 2026-11-10): the reply promised a look at
-grouping by other criteria (kind, date…); nothing is designed yet. Folders
-first stays a field of the sort, which a group would come before
-(`docs/invariants/views.md`). A descending sort breaks ties by name in its
-own direction, so largest first lists folders Z to A, as it lists files of
-one size.
+**Grouping** (ADR-130, 2026-11-11): phase 1 is built; no view draws a
+heading yet, so a grouped pane shows its groups' order alone. Left, in
+order: List and Tree headings (a row map, the heading pinned, what a
+screen reader hears), the grid's breaks and its Up and Down by what is
+drawn, Group by and sort by Folder where files come from many folders
+(the sort learns each entry's folder), a heading's click and menu (Select
+these, Show only these by its term), then collapsing and a Board by
+group. Not compiled for Windows or macOS yet (`just check-cross`). A
+type's name the keys had not read, met on the window's thread (what
+arrives, placed), sorts by its MIME type until a worker reads it and the
+order is made again. Same as sort moves a name that begins with neither
+a letter nor a digit into Other, first.
 
 **Exclusions** (ADR-125, 2026-11-08): the Index role has no reader until
 the index is built. Changed by you does not list what changed of the

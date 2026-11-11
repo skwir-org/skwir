@@ -41,6 +41,7 @@ pub mod form;
 mod found_tree;
 pub mod fs;
 pub mod geo;
+pub mod grouping;
 pub mod hashing;
 pub mod hints;
 pub mod jsonl;

@@ -7,6 +7,9 @@ user's go on its version 2 (the file menu's order, decisions 6 to 9).
 Built and checked on Linux the same day (`docs/STATUS-LOG.md`, "Menus:
 submenus beside, choices in a row" and "The file menu, regrouped"); not
 compiled for Windows or macOS yet (`just check-cross` not run).
+Decision 5 amended by ADR-130 (2026-11-11): the sort's criteria in a
+submenu beside the row naming the one chosen, under its direction's row,
+and Group by the same.
 
 ## Context
 

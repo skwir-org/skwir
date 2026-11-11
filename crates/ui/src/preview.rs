@@ -1817,19 +1817,18 @@ impl Shell {
         cx.notify();
     }
 
-    /// The keys walking More while its submenu is open: in the submenu,
-    /// along its rows (Tab as the arrows); on More's own rows, the submenu
-    /// closes and the keys go on (false), as a context menu's do.
-    pub(crate) fn preview_sub_walk(
+    /// The keys walking a popup while its submenu is open (More's, the
+    /// View menu's): in the submenu, along its rows (Tab as the arrows); on
+    /// the popup's own rows, the submenu closes and the keys go on
+    /// (false), as a context menu's do.
+    pub(crate) fn popup_sub_walk(
         &mut self,
         name: &str,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
         let Some(popup) = self
-            .preview
-            .menu
-            .as_mut()
+            .submenu_popup()
             .filter(|popup| popup.sub.open.is_some())
         else {
             return false;
@@ -1841,7 +1840,7 @@ impl Shell {
                 "toolbar_first" => serde_json::json!({ "end": false }),
                 _ => serde_json::json!({ "end": true }),
             };
-            self.preview_submenu(&args, window, cx);
+            self.toolbar_submenu(&args, window, cx);
             return true;
         }
         popup.sub.hide();
@@ -1861,13 +1860,14 @@ impl Shell {
         items
     }
 
-    /// `ui.preview_submenu`: More's submenu beside its row. `open` shows
-    /// one, the keyboard on its first row (Right, Enter or Space on its
-    /// row, or a press); `back` closes it, the keyboard back on its row
-    /// (Left, Escape); `step` walks its rows, `end` reaches its last
-    /// (`true`) or first. A submenu's rows are walked here, not by gpui's
-    /// tab order, which does not reach a panel drawn beside the popup.
-    pub fn preview_submenu(
+    /// `ui.toolbar_submenu`: the open popup's submenu beside its row
+    /// (More's, the View menu's). `open` shows one, the keyboard on its
+    /// first row (Right, Enter or Space on its row, or a press); `back`
+    /// closes it, the keyboard back on its row (Left, Escape); `step` walks
+    /// its rows, `end` reaches its last (`true`) or first. A submenu's rows
+    /// are walked here, not by gpui's tab order, which does not reach a
+    /// panel drawn beside the popup.
+    pub fn toolbar_submenu(
         &mut self,
         args: &serde_json::Value,
         window: &mut Window,
@@ -1877,7 +1877,7 @@ impl Shell {
         let open = match args.get("open").and_then(serde_json::Value::as_str) {
             Some(name) => Some(name.to_owned()),
             // The submenu whose row has the keyboard (Right on it).
-            None if here => self.preview.menu.as_ref().and_then(|popup| {
+            None if here => self.submenu_popup().and_then(|popup| {
                 popup
                     .sub
                     .parents
@@ -1887,15 +1887,10 @@ impl Shell {
             }),
             None => None,
         };
-        let rows = open
-            .as_deref()
-            .map_or(0, |name| self.preview_sub_items(name).len());
-        let Some(popup) = self
-            .preview
-            .menu
-            .as_mut()
-            .filter(|popup| popup.kind == "preview")
-        else {
+        let rows = open.as_deref().map_or(0, |name| {
+            crate::toolbar::row_count(&self.submenu_rows(name))
+        });
+        let Some(popup) = self.submenu_popup() else {
             return;
         };
         let sub = &mut popup.sub;
@@ -1939,24 +1934,20 @@ impl Shell {
         cx.notify();
     }
 
-    /// The pointer rests on a row of More: once it has rested
-    /// `menu::REST`, the submenu that row opens (`opens`) opens, or, on
-    /// another row, the one open closes; the keyboard stays where it is.
-    pub(crate) fn preview_sub_rest(
+    /// The pointer rests on a row of the open popup (More, the View
+    /// menu): once it has rested `menu::REST`, the submenu that row opens
+    /// (`opens`) opens, or, on another row, the one open closes; the
+    /// keyboard stays where it is.
+    pub(crate) fn popup_sub_rest(
         &mut self,
         opens: Option<gpui::SharedString>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let rows = opens
-            .as_deref()
-            .map_or(0, |name| self.preview_sub_items(name).len());
-        let Some(popup) = self
-            .preview
-            .menu
-            .as_mut()
-            .filter(|popup| popup.kind == "preview")
-        else {
+        let rows = opens.as_deref().map_or(0, |name| {
+            crate::toolbar::row_count(&self.submenu_rows(name))
+        });
+        let Some(popup) = self.submenu_popup() else {
             return;
         };
         if popup.sub.open == opens {
@@ -1967,7 +1958,7 @@ impl Shell {
         popup.sub.rest = Some(cx.spawn_in(window, async move |this, cx| {
             cx.background_executor().timer(crate::menu::REST).await;
             let _ = this.update(cx, |this, cx| {
-                let Some(popup) = this.preview.menu.as_mut() else {
+                let Some(popup) = this.submenu_popup() else {
                     return;
                 };
                 match opens {

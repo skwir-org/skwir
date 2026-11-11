@@ -1,0 +1,153 @@
+//! A pane grouped and sorted by what the query plugin knows of its files
+//! (ADR-130), through the commands a menu, the palette or an agent runs.
+
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use skwir_core::app::{App, AppConfig};
+use skwir_core::command::Invocation;
+use skwir_core::location::{Location, SortKey};
+use skwir_core::workspace::{Pane, PaneId};
+
+/// Pump until `what` holds of the pane, for a few seconds at most.
+fn pump_until(app: &App, pane: PaneId, what: impl Fn(&Pane) -> bool) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        app.pump();
+        if app.workspace.read().pane(pane).is_some_and(&what) {
+            return true;
+        }
+        if Instant::now() > deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
+fn run(app: &App, command: &str, args: &serde_json::Value) {
+    app.dispatch(&Invocation::with_args(command, args))
+        .unwrap_or_else(|e| panic!("{command} {args}: {e:#}"));
+}
+
+/// What the pane shows under each heading: the label and the names.
+fn shown(app: &App, pane: PaneId) -> Vec<(String, Vec<String>)> {
+    let ws = app.workspace.read();
+    let p = ws.pane(pane).unwrap();
+    let order = p.order();
+    p.groups()
+        .iter()
+        .map(|span| {
+            let label = span
+                .group
+                .as_ref()
+                .map_or_else(String::new, |g| g.label.to_string());
+            let names = order[span.start..span.start + span.len]
+                .iter()
+                .map(|id| p.entry(*id).unwrap().name_str().into_owned())
+                .collect();
+            (label, names)
+        })
+        .collect()
+}
+
+fn settled(p: &Pane) -> bool {
+    !p.groups().is_empty() && !p.listing.is_sorting()
+}
+
+/// Grouped by kind, each kind's files under its heading, A to Z by what
+/// the type database calls it, the folders' first whichever way, and the
+/// same key again turning the groups round; a criterion starting where
+/// people look first; the groups gone with the query plugin, and back
+/// with it.
+#[test]
+fn a_pane_groups_by_kind_through_the_query_plugin() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+    app.plugins
+        .add(Arc::new(skwir_plugin_query::QueryPlugin::default()), &app);
+    let root = tmp.path().join("field guide");
+    std::fs::create_dir(&root).unwrap();
+    std::fs::create_dir(root.join("sketches")).unwrap();
+    for name in ["dunes.jpg", "aurora.png", "packing list.txt"] {
+        std::fs::write(root.join(name), name).unwrap();
+    }
+    let pane = app.workspace.read().active_id();
+    app.navigate(pane, &Location::from_path(&root)).unwrap();
+    assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+
+    run(&app, "group", &serde_json::json!({ "by": "kind" }));
+    assert!(pump_until(&app, pane, settled), "grouped");
+    let images = || {
+        (
+            "Images".to_owned(),
+            vec!["aurora.png".into(), "dunes.jpg".into()],
+        )
+    };
+    let folders = || ("Folders".to_owned(), vec!["sketches".to_owned()]);
+    let text = || {
+        (
+            "Text and code".to_owned(),
+            vec!["packing list.txt".to_owned()],
+        )
+    };
+    assert_eq!(shown(&app, pane), [folders(), images(), text()]);
+
+    // The same key again turns the groups round, the folders still first.
+    run(&app, "group", &serde_json::json!({ "by": "kind" }));
+    assert!(pump_until(&app, pane, |p| settled(p) && !p.sort.group_ascending));
+    assert_eq!(shown(&app, pane), [folders(), text(), images()]);
+
+    // A criterion starts in its natural direction (ADR-130, 3).
+    for (key, ascending) in [
+        (SortKey::Modified, false),
+        (SortKey::Size, false),
+        (SortKey::Type, true),
+        (SortKey::Name, true),
+    ] {
+        run(&app, "sort", &serde_json::json!({ "key": key }));
+        let ws = app.workspace.read();
+        assert_eq!(ws.pane(pane).unwrap().sort.ascending, ascending, "{key:?}");
+    }
+
+    // Without the query plugin, nothing is grouped; with it, again.
+    assert!(app.plugins.set_enabled("query", false, &app));
+    assert!(pump_until(&app, pane, |p| p.groups().is_empty() && p.keys().is_none()));
+    assert!(app.plugins.set_enabled("query", true, &app));
+    assert!(pump_until(&app, pane, settled), "grouped again");
+    assert_eq!(shown(&app, pane), [folders(), text(), images()]);
+}
+
+/// Sorted by type, the files are in the order of what their types are
+/// called, a type's name read on a worker.
+#[test]
+fn a_pane_sorts_by_what_types_are_called() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+    app.plugins
+        .add(Arc::new(skwir_plugin_query::QueryPlugin::default()), &app);
+    let root = tmp.path().join("types");
+    std::fs::create_dir(&root).unwrap();
+    for name in ["a.txt", "b.png", "c.txt", "d.png"] {
+        std::fs::write(root.join(name), name).unwrap();
+    }
+    let pane = app.workspace.read().active_id();
+    app.navigate(pane, &Location::from_path(&root)).unwrap();
+    assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+    run(&app, "sort", &serde_json::json!({ "key": "type" }));
+    let together = |p: &Pane| {
+        let names: Vec<String> = p
+            .order()
+            .iter()
+            .map(|id| p.entry(*id).unwrap().name_str().into_owned())
+            .collect();
+        let at = |n: &str| names.iter().position(|m| m == n).unwrap();
+        p.keys().is_some()
+            && !p.listing.is_sorting()
+            && at("a.txt").abs_diff(at("c.txt")) == 1
+            && at("b.png").abs_diff(at("d.png")) == 1
+    };
+    assert!(
+        pump_until(&app, pane, together),
+        "each type's files together"
+    );
+}

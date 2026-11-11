@@ -14798,3 +14798,152 @@ the H.264 clip passed; run alone, the same check passed twice. The machine
 was loaded then (a load average of 14), and nothing of the media helper
 or its check changed since 0.4.0: timing under load, not this work.
 
+## 2026-11-11: Groups and the sort from one list of criteria, phase 1 (ADR-130)
+
+Issue #10's reply promised grouping; the user chose its shape on a
+proposal page with mock-ups (Dolphin's Group By as the model): folders
+first within each group, the groups a direction of their own as in
+Windows, calendar date groups then years, per pane, a heading's click
+selecting its group later; then one list of criteria for the sort and the
+groups, both menus as submenus, each criterion starting in its natural
+direction, ties A to Z. ADR-130 records it and its phases; this is the
+first.
+
+- **Core** (`location.rs`, `grouping.rs`): `SortKey` gains Kind, Type,
+  Extension, Created, Accessed, Tags and Owner (`SortKey::ALL`, their
+  words, titles and directions); `SortSpec::group` (`GroupBy`: none, same
+  as sort, a key) and `group_ascending`. An order's key is the group
+  (after every group while not read), folders first within it, the value
+  (a number, then words as a shared collation key), then the name A to Z
+  whichever the direction, then the identity; a group of only folders
+  first while folders come first. `Listing` sorts with a `Sort` (the spec
+  and the keys made for it), keyed on both (`SortStamp`, the keys'
+  `changed` included); its ranks hold the group and the words, so what
+  arrives, moves or goes is placed as before; `spans_shown` makes the
+  groups' spans from the ranks once per order, `Pane::groups` maps them
+  onto what the pane shows (folders opened in place in their folder's
+  group).
+- **Keys** (`registry::Sorter`): made by `App::make_keys` for every pane
+  whose sort wants others, at each pump before the listings' jobs
+  (`Pane::keys_wanted`: a sort or group changed by any path, a tab
+  opened with another's sort, a sorter turned on or off), and again at
+  their `next_change` (one waiter, shared with the filters' rollover,
+  `App::wait_until`).
+- **The query plugin's sorter** (`groups.rs`): a kind (its first, by
+  title), a type's name (read on a worker; on the window's thread the
+  MIME type stands for it, a worker reads it and the keys say they
+  changed), an owner's name; groups for every criterion, each made once
+  per keys, with the query term that keeps its files: the dates from the
+  user's calendar (Today … Earlier this year, then a group per year, In
+  the future, No date; each term from its group's start to where the next
+  newer begins, last year's exact in January), sizes to Over 1 GB, first
+  letters as the name sort folds them, extensions, ratings in stars, tag
+  sets, owners.
+- **Commands**: `sort` starts a key where people look first
+  (`SortKey::starts_ascending`; before, only Rating and Deleted did);
+  `group` (`by`, `ascending`, `pane`), the same key again turning it; the
+  palette's forms for every key, offered where the key applies, Group by
+  only with the sorter.
+- **The View menu**: Sort by's direction over a row naming the criterion,
+  its submenu beside it (words, dates, notes, lines between); Group by
+  the same, after None and Same as sort, its direction only for a key of
+  its own. The preview's More's submenu is now any popup's
+  (`toolbar::submenu_row`, `fly_out`, `FlyRow`, `Shell::submenu_popup`,
+  `submenu_rows`; `ui.preview_submenu` is `ui.toolbar_submenu`). The Type
+  column's header sorts.
+- **Placing what changed** (`Listing::place`), asked by the user ("Have
+  you researched the most efficient algorithms for this case?"). The
+  placement kept from ADR-121 merged each batch with the whole order:
+  every rank filtered by a set, compared and cloned, so a hydrated batch
+  of 1 024 sizes in 100 000 entries cost as much as the whole order, and
+  groups, whose ranks compare and clone more, made it a third dearer.
+  Built in three steps, each measured against the one before:
+  1. Galloping: what is taken out goes in one pass, most ranks told
+     apart by a bit (`Taken`, sixteen bits an entry, a set behind it);
+     what is placed is placed from the end, each galloping back from
+     where the one after it went (`gallop_back`), the ranks after it
+     moved up in one block, in place. A rank is `Copy`, its group and
+     words a number into `Extras` beside the order, each freed as its
+     rank is taken out and reused by the next (no table larger than the
+     most pointed at once, nothing to compact: a first table compacted
+     at twice what was pointed at, a trade of memory for speed the user
+     had asked to be asked about, was replaced by it). The few-at-a-time
+     path is gone. Tried and dropped: finding what goes by scanning the
+     ids and moving blocks between, level with `retain` or slower (153
+     against 160 ms, run in turn).
+  2. One pass, by the user's choice of its memory: what moved keeps what
+     it was placed by (`Moved`, 24 bytes more than its id while it
+     waits) and is found by a search (`placed_at`); every rank then
+     moves once, the runs that go down from the start, those that go up
+     from the end (`shift`). What went still takes the two passes (going
+     costs the listing a pass anyway). Less than estimated: `place`'s
+     instructions 0.88 to 0.71 billion, hydrating some 5 % faster, one
+     entry grown 1.2 to 1.0 ms. What the estimate missed: page faults.
+  3. The spare, by the user's choice of its memory: a list of 100 000
+     ids made anew per batch was faulted in again each time, about a
+     third of hydrating (336 000 minor faults in three runs and the
+     setup, sys 0.32 s of 0.8 s). Each sorted listing keeps the order
+     before last and writes the next over it once no one holds it
+     (`ids_of`, `Arc::get_mut`; the pane holds the last drawn): 24 bytes
+     an entry shown. Every comparison of orders by pointer in the shell
+     (the grid's count, the folders' weights, the map) holds the order
+     it compares with, so a list written over is never taken for one
+     unchanged.
+**Checked:** rustfmt per file; clippy `-D warnings` on `skwir-core`,
+`skwir-ui`, `skwir-plugin-query` and `skwir`, all targets. Tests of
+`skwir-core`, `skwir-plugin-query` and `skwir-ui`: 1496 passed. New:
+ties A to Z either way; groups first in their own direction, folders
+first within, a group of folders first; Same as sort moving nothing
+where groups follow the values; grouped arrivals, moves and many at once
+placed where a full sort puts them; keys that changed making the order
+again; extensions and tags as words. The query plugin's: the date groups
+on a Wednesday at each boundary instant, on a Monday (yesterday last
+week), in January (last month last year), in Paris past midnight (and its
+next change at Paris's midnight); sizes at their bounds; names folded;
+ratings' stars; extensions; keys only where needed. Two existing tests
+changed with ADR-130, 4: largest first now lists folders A to Z, and
+entries not stat-ed yet A to Z after the rest. After the placement:
+`skwir-core`, `skwir-plugin-query` and `skwir-ui` 1 500 passed; the
+binary's `grouping`, `plugins_toggle` and `keymap_titles` 11 passed (two
+through the real query plugin: grouped by kind, turned round, gone with
+the plugin and back; sorted by type's name); clippy `-D warnings` on
+`skwir-core` and `skwir-plugin-query`, all targets. New: galloping back
+at every start in slices of 0 to 69; shifting against taking out and
+putting in one by one, 3 000 cases (at the ends, at one place, at a
+place taken out, more out than in and the reverse); an order of 3 000
+entries (names alike past the sixteen bytes a rank holds, folders among
+them), by size either way, by name, grouped by size, by kind grouped by
+size, through 24 rounds of 250 moved and 15 arrived (one pass) then 20
+gone and 40 moved (two), equal to a full sort each time, its spans
+those of the same entries sorted whole, its table holding what its
+ranks point at and no more; the order before last written over once no
+one holds it, and one held left as it was. With the one-pass path broken
+on purpose (its positions left unsorted), four tests fail.
+
+**Measured** (`skwir-bench list --runs 3 --only
+listing_sort_hydrate_us,listing_sort_update_us`, builds run in turn, the
+build before this work from a reflinked copy, the machine under other
+builds): hydrating 100 000 entries sorted by size in 98 batches and one
+entry grown after,
+
+| build | hydrate | one grown | minor faults (3 runs and setup) |
+| --- | --- | --- | --- |
+| before groups | 402–429 ms | 1.1 ms | 942 000 |
+| groups, merged as before | 620–677 ms | 1.0 ms | |
+| galloping, two passes | 153–156 ms | 1.0 ms | 334 000 |
+| one pass | 152–162 ms | 0.9 ms | 336 000 |
+| one pass and the spare | 108–112 ms | 0.4 ms | 164 000 |
+
+(medians at the lightest load each was run at, 4 to 8; under load 11 to
+15 every build took 20 to 60 % longer, in the same order: two passes
+184–210 ms against one pass 176–190 ms, run in turn.)
+
+Instructions (callgrind, one run): 1.82 billion before groups, 2.41
+merged with groups, 1.67 galloping, 1.53 in one pass; `place` 1.09,
+1.62, 0.88 and 0.71 billion. What is left grows with the order: moving
+its ranks once (6.4 MB at 100 000) and writing its ids (2.4 MB), as the
+order shared as one list costs.
+
+**Not done here:** no view draws a heading yet (phase 2); the grid's
+breaks, Folder, a heading's click and menu are later phases. Not compiled
+for Windows or macOS (`just check-cross`).

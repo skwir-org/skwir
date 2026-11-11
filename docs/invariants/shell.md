@@ -47,7 +47,7 @@ Views are in [views.md](views.md); what locations decide, in
   With): the same rules (below, "Context menu"), the same look and
   `menu::REST`. Its rows have the keyboard's focus as the popup's do, but
   stand outside gpui's tab order, drawn beside the popup: the keys walk
-  them by `ui.preview_submenu` (`toolbar_submenu`), Right on its row
+  them by `ui.toolbar_submenu` (`toolbar_submenu`), Right on its row
   opens it (the row's `submenu` flag), and the arrows or Escape on the
   popup's own rows close it first. A press on it is no press outside the
   popup (`Submenu::area`). A row with a handle of its own

@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::cancel::CancelToken;
 use crate::entry::{Entry, EntryId, FileId};
+use crate::grouping::{Group, Sort, SortStamp, Span};
 use crate::os_path::PathArg;
 use crate::scheduler::{Priority, Scheduler};
 
@@ -797,8 +798,11 @@ pub struct QuickFilters {
 /// together.
 pub const FOLDERS_FIRST: &str = "core.folders_first";
 
-/// What to sort a listing by: within folders and files apart while
-/// folders come first (`SortSpec::folders_first`), else all together.
+/// What to sort a listing by, and to group it by (ADR-130: one list of
+/// criteria for both): within folders and files apart while folders come
+/// first (`SortSpec::folders_first`), else all together. What has none
+/// (no date, no rating, no tags, no extension, a folder's size) is the
+/// lowest: first going up, last going down.
 #[derive(
     Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema,
 )]
@@ -807,10 +811,11 @@ pub enum SortKey {
     #[default]
     Name,
     /// An entry not stat-ed yet sorts after those that are, in either
-    /// direction, as for every key below: a pane sorted by one asks for
-    /// every entry's metadata (`Pane::unknown`). A folder has no size
-    /// (`applies_to`): it sorts as none, below every file, an empty one
-    /// included. A place by how many files it holds.
+    /// direction, as for every key below that reads metadata
+    /// (`needs_metadata`): a pane sorted by one asks for every entry's
+    /// metadata (`Pane::unknown`). A folder has no size (`applies_to`):
+    /// it sorts as none, below every file, an empty one included. A place
+    /// by how many files it holds.
     Size,
     Modified,
     /// The user's rating (`keys::RATING`); unrated sorts as none.
@@ -818,40 +823,192 @@ pub enum SortKey {
     /// When a file of the trash was put there (`keys::TRASHED`); a file
     /// that does not say sorts as the oldest.
     Deleted,
+    /// What the type database calls its kind (`mime::Kind`'s title, a file
+    /// of several kinds by its first): the sorter's keys say it
+    /// (`keyed`).
+    Kind,
+    /// What its type is called (`JPEG image`): the sorter's keys say it.
+    Type,
+    /// Its name's extension, case folded; a folder has none.
+    Extension,
+    Created,
+    Accessed,
+    /// The whole set of its tags (`keys::TAGS`), A to Z within.
+    Tags,
+    /// Its owner's name: the sorter's keys say it.
+    Owner,
 }
 
 impl SortKey {
-    /// Whether the order depends on what a stat finds, which a listing
-    /// learns only when its entries are hydrated.
+    /// Every criterion, in the order menus offer them.
+    pub const ALL: [SortKey; 12] = [
+        SortKey::Name,
+        SortKey::Kind,
+        SortKey::Type,
+        SortKey::Extension,
+        SortKey::Size,
+        SortKey::Modified,
+        SortKey::Created,
+        SortKey::Accessed,
+        SortKey::Deleted,
+        SortKey::Rating,
+        SortKey::Tags,
+        SortKey::Owner,
+    ];
+
+    /// Whether the order depends on what a stat finds, or the providers,
+    /// which a listing learns only when its entries are hydrated or
+    /// filled.
     pub fn needs_metadata(self) -> bool {
-        matches!(self, SortKey::Size | SortKey::Modified | SortKey::Rating)
+        matches!(
+            self,
+            SortKey::Size
+                | SortKey::Modified
+                | SortKey::Rating
+                | SortKey::Created
+                | SortKey::Accessed
+                | SortKey::Tags
+                | SortKey::Owner
+        )
     }
 
     /// Whether what it sorts by has been read of an entry whose metadata
-    /// is `metadata`: a size or a date once stat-ed (`Metadata::is_hydrated`),
-    /// a rating once the providers read it (`Metadata::is_filled`), a name
-    /// always. What a sort waits for, and asks to be read, is this alone,
-    /// of an entry it applies to (`applies_to`): a search's hits, stat-ed
-    /// by its walk, sort by size at once.
+    /// is `metadata`: a size, a date or an owner once stat-ed
+    /// (`Metadata::is_hydrated`), a rating or tags once the providers read
+    /// them (`Metadata::is_filled`), a name always. What a sort waits for,
+    /// and asks to be read, is this alone, of an entry it applies to
+    /// (`applies_to`): a search's hits, stat-ed by its walk, sort by size
+    /// at once.
     pub fn has_read(self, metadata: &crate::entry::Metadata) -> bool {
         match self {
-            SortKey::Rating => metadata.is_filled(),
-            SortKey::Size | SortKey::Modified => metadata.is_hydrated(),
+            SortKey::Rating | SortKey::Tags => metadata.is_filled(),
+            SortKey::Size
+            | SortKey::Modified
+            | SortKey::Created
+            | SortKey::Accessed
+            | SortKey::Owner => metadata.is_hydrated(),
             _ => true,
         }
     }
 
     /// Whether `entry` has what it sorts by. Every entry does, but a
-    /// folder sorted by size: a folder is not walked (the Usage view
-    /// weighs it), and what its stat calls its size (4 KiB, its names'
-    /// length) is none of its files', so it sorts as having none and is
-    /// never waited for. A place counts its files.
+    /// folder sorted by size or extension: a folder is not walked (the
+    /// Usage view weighs it), and what its stat calls its size (4 KiB, its
+    /// names' length) is none of its files', so it sorts as having none
+    /// and is never waited for; a dot in a folder's name is no type. A
+    /// place counts its files.
     pub fn applies_to(self, entry: &crate::entry::Entry) -> bool {
-        self != SortKey::Size || !entry.is_dir() || entry.is_place()
+        match self {
+            SortKey::Size => !entry.is_dir() || entry.is_place(),
+            SortKey::Extension => !entry.is_dir(),
+            _ => true,
+        }
+    }
+
+    /// Whether only a plugin reads it (a kind, a type's name, an owner's
+    /// name): sorted by the sorter's keys (`grouping::Keys::value`), by
+    /// name without them.
+    pub fn keyed(self) -> bool {
+        matches!(self, SortKey::Kind | SortKey::Type | SortKey::Owner)
+    }
+
+    /// The direction it starts in when chosen (ADR-130, 3): words A to Z,
+    /// sizes largest first, dates newest first, ratings highest first.
+    pub fn starts_ascending(self) -> bool {
+        matches!(
+            self,
+            SortKey::Name
+                | SortKey::Kind
+                | SortKey::Type
+                | SortKey::Extension
+                | SortKey::Tags
+                | SortKey::Owner
+        )
+    }
+
+    /// What a menu or a column calls it: `Modified`.
+    pub fn title(self) -> &'static str {
+        match self {
+            SortKey::Name => "Name",
+            SortKey::Kind => "Kind",
+            SortKey::Type => "Type",
+            SortKey::Extension => "Extension",
+            SortKey::Size => "Size",
+            SortKey::Modified => "Modified",
+            SortKey::Created => "Created",
+            SortKey::Accessed => "Accessed",
+            SortKey::Deleted => "Deleted",
+            SortKey::Rating => "Rating",
+            SortKey::Tags => "Tags",
+            SortKey::Owner => "Owner",
+        }
+    }
+
+    /// What a sentence calls it ("Sort by date modified"): `date
+    /// modified`.
+    pub fn words(self) -> &'static str {
+        match self {
+            SortKey::Name => "name",
+            SortKey::Kind => "kind",
+            SortKey::Type => "type",
+            SortKey::Extension => "extension",
+            SortKey::Size => "size",
+            SortKey::Modified => "date modified",
+            SortKey::Created => "date created",
+            SortKey::Accessed => "date accessed",
+            SortKey::Deleted => "date deleted",
+            SortKey::Rating => "rating",
+            SortKey::Tags => "tags",
+            SortKey::Owner => "owner",
+        }
+    }
+
+    /// Its directions in its own words, going up then going down, short
+    /// (a menu's buttons: `Oldest`, `Newest`) and whole (`oldest
+    /// first`).
+    pub fn directions(self) -> [(&'static str, &'static str); 2] {
+        match self {
+            SortKey::Size => [("Smallest", "smallest first"), ("Largest", "largest first")],
+            SortKey::Modified | SortKey::Created | SortKey::Accessed | SortKey::Deleted => {
+                [("Oldest", "oldest first"), ("Newest", "newest first")]
+            }
+            SortKey::Rating => [("Lowest", "lowest first"), ("Highest", "highest first")],
+            SortKey::Name
+            | SortKey::Kind
+            | SortKey::Type
+            | SortKey::Extension
+            | SortKey::Tags
+            | SortKey::Owner => [("A to Z", "A to Z"), ("Z to A", "Z to A")],
+        }
+    }
+
+    /// Whether `old` becoming `new` moves an entry ordered by it: what
+    /// `delta` says for the facts every listing's versions follow, the
+    /// others compared here, only for an order by them.
+    fn moved_by(self, delta: &Delta, old: &crate::entry::Entry, new: &crate::entry::Entry) -> bool {
+        use crate::entry::keys;
+        let differs = |key: &str| old.metadata.value(key) != new.metadata.value(key);
+        match self {
+            SortKey::Name | SortKey::Extension => false,
+            SortKey::Size => delta.size,
+            SortKey::Modified | SortKey::Deleted => delta.modified,
+            SortKey::Rating => delta.rating,
+            SortKey::Created => differs(keys::CREATED),
+            SortKey::Accessed => differs(keys::ACCESSED),
+            SortKey::Tags => differs(keys::TAGS),
+            SortKey::Owner => differs(keys::UID),
+            // What it is or leads to changed, so its type may have.
+            SortKey::Kind | SortKey::Type => {
+                old.inode_type() != new.inode_type() || old.type_name() != new.type_name()
+            }
+        }
     }
 }
 
 /// A pane's sort and filter settings; the sorted order is cached in the listing.
+// Each flag is a setting of its own (a direction, hidden files, folders
+// first, the groups' direction): a state machine would say less.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SortSpec {
     pub key: SortKey,
@@ -860,14 +1017,28 @@ pub struct SortSpec {
     pub show_hidden: bool,
     /// Folders before files, each sorted by `key` among themselves; else
     /// sorted together. The user's setting ([`FOLDERS_FIRST`]), which the
-    /// workspace gives every pane: no pane chooses its own.
+    /// workspace gives every pane: no pane chooses its own. While grouped,
+    /// within each group (ADR-130, 5).
     #[serde(default = "folders_first")]
     pub folders_first: bool,
+    /// What the entries are grouped by: the group comes first in the
+    /// order, so each is one run of it (ADR-130).
+    #[serde(default)]
+    pub group: crate::grouping::GroupBy,
+    /// The groups' direction, for a criterion of their own; Same as sort
+    /// goes the sort's.
+    #[serde(default = "going_up")]
+    pub group_ascending: bool,
 }
 
 /// Folders first, as Skwir always sorted them: what a spec that does not
 /// say means.
 fn folders_first() -> bool {
+    true
+}
+
+/// Groups going up: what a spec that does not say means.
+fn going_up() -> bool {
     true
 }
 
@@ -878,7 +1049,30 @@ impl Default for SortSpec {
             ascending: true,
             show_hidden: false,
             folders_first: folders_first(),
+            group: crate::grouping::GroupBy::None,
+            group_ascending: true,
         }
+    }
+}
+
+impl SortSpec {
+    /// The criterion the entries are grouped by, if any.
+    pub fn group_key(&self) -> Option<SortKey> {
+        self.group.key(self.key)
+    }
+
+    /// The groups' direction: the sort's for Same as sort.
+    pub fn groups_ascending(&self) -> bool {
+        match self.group {
+            crate::grouping::GroupBy::SameAsSort => self.ascending,
+            _ => self.group_ascending,
+        }
+    }
+
+    /// Whether a sorter's keys answer something of it: a criterion only a
+    /// plugin reads, or a group.
+    pub fn needs_keys(&self) -> bool {
+        self.key.keyed() || self.group_key().is_some()
     }
 }
 
@@ -886,8 +1080,18 @@ impl Default for SortSpec {
 struct SortCache {
     /// The version the order depends on whole: see [`Listing::sorted`].
     stamp: u64,
-    spec: SortSpec,
+    /// The sort it was made for, its keys with it: what is placed in it
+    /// later is keyed alike.
+    sort: Sort,
+    /// `sort`'s stamp when the order was made: keys whose answers changed
+    /// since make it again.
+    made: SortStamp,
     ids: Arc<[EntryId]>,
+    /// The order before `ids`, kept to be written over by the next once
+    /// no one holds it (`ids_of`).
+    spare: Option<Arc<[EntryId]>>,
+    /// Where each group starts in `ids`, once asked (`Listing::spans`).
+    spans: Option<Arc<[Span]>>,
     /// Whether companions were shown when `ids` was made.
     companions_shown: bool,
     /// How many entries the listing held when `ids` was made: the ones
@@ -897,22 +1101,56 @@ struct SortCache {
     /// entries that moved find their place without looking every entry
     /// up (`Listing::place`).
     ranks: Vec<Rank>,
+    /// What `ranks` point at.
+    extras: Extras,
     /// Entries placed whose key under `spec` changed since (a size, a
-    /// date, a rating): taken out and placed again.
-    moved: Vec<EntryId>,
+    /// date, a rating), each with what it was placed by: found by it,
+    /// taken out and placed again.
+    moved: Vec<Moved>,
     /// Entries placed that the listing let go of since.
     gone: IdSet,
 }
 
 impl SortCache {
-    /// Whether a change of `delta` moves an entry in this order.
-    fn moves(&self, delta: &Delta) -> bool {
-        match self.spec.key {
-            SortKey::Name => false,
-            SortKey::Size => delta.size,
-            SortKey::Modified | SortKey::Deleted => delta.modified,
-            SortKey::Rating => delta.rating,
+    /// A cache of `ids`, ranked `ranks`, made with `sort` over a listing
+    /// whose order stood at `stamp` and which held `seen` entries.
+    fn new(
+        stamp: u64,
+        sort: Sort,
+        companions_shown: bool,
+        ids: Arc<[EntryId]>,
+        (ranks, extras): (Vec<Rank>, Extras),
+        seen: usize,
+    ) -> Self {
+        SortCache {
+            stamp,
+            made: sort.stamp(),
+            sort,
+            spans: None,
+            ids,
+            spare: None,
+            companions_shown,
+            seen,
+            ranks,
+            extras,
+            moved: Vec::new(),
+            gone: IdSet::default(),
         }
+    }
+
+    /// Whether `old` becoming `new`, as `delta` says, moves an entry in
+    /// this order: what it is sorted by changed, or what it is grouped by.
+    fn moves(&self, delta: &Delta, old: &Entry, new: &Entry) -> bool {
+        let spec = &self.sort.spec;
+        spec.key.moved_by(delta, old, new)
+            || spec
+                .group_key()
+                .is_some_and(|key| key.moved_by(delta, old, new))
+    }
+
+    /// Whether it holds `sort`'s order, made with the keys as they answer.
+    fn holds(&self, sort: &SortStamp) -> bool {
+        self.made == *sort
     }
 }
 
@@ -920,9 +1158,16 @@ impl SortCache {
 /// the name's collation key cut to its first sixteen bytes (eight tied a
 /// quarter of the time: a run of digits takes two bytes of marker). Two ranks that
 /// differ order their entries as the full keys do; equal ones are compared
-/// in full.
+/// in full. Its group and words are its key's (`Extra`), kept beside the
+/// order and named by a number (`Extras`), none while the order is
+/// neither grouped nor by words: a rank is a plain value, as big as
+/// before groups were, which the placing of what changed moves in blocks
+/// (`Listing::place`).
 #[derive(Clone, Copy, Debug)]
 struct Rank {
+    later: bool,
+    /// Its group and words, in its order's `Extras`.
+    extra: u32,
     /// A file while folders come first: after every folder.
     file: bool,
     unknown: bool,
@@ -932,18 +1177,264 @@ struct Rank {
 }
 
 impl Rank {
-    fn of(key: SortKeyOf<'_>) -> Self {
+    /// `key`'s rank, its extra kept in `extras`.
+    fn of(key: &SortKeyOf<'_>, extras: &mut Extras) -> Self {
+        Rank::with(key, extras.add(key.extra.as_ref()))
+    }
+
+    /// `key`'s rank pointing at `extra`: 0, for a rank only compared with
+    /// (`Listing::compare_rank` reads the key's extra, not its rank's).
+    fn with(key: &SortKeyOf<'_>, extra: u32) -> Self {
         let mut prefix = [0u8; 16];
-        let n = key.3.len().min(16);
-        prefix[..n].copy_from_slice(&key.3[..n]);
+        let n = key.name.len().min(16);
+        prefix[..n].copy_from_slice(&key.name[..n]);
         Rank {
-            file: key.0,
-            unknown: key.1,
-            num: key.2,
+            later: key.later,
+            extra,
+            file: key.file,
+            unknown: key.unknown,
+            num: key.num,
             prefix: u128::from_be_bytes(prefix),
-            id: key.4,
+            id: key.id,
         }
     }
+}
+
+/// An entry placed whose key changed, with what of it was placed: what a
+/// change can move (a name, a kind or whether it is hidden changes the
+/// order whole). Found by it among the ranks in a search, rather than in
+/// a pass over them all (`Listing::place`): 24 bytes more than its id
+/// while it waits to be placed.
+#[derive(Debug)]
+struct Moved {
+    id: EntryId,
+    later: bool,
+    unknown: bool,
+    num: u64,
+    extra: Option<Arc<Extra>>,
+}
+
+impl Moved {
+    fn of(key: SortKeyOf<'_>) -> Self {
+        let SortKeyOf {
+            later,
+            extra,
+            unknown,
+            num,
+            id,
+            ..
+        } = key;
+        Moved {
+            id,
+            later,
+            unknown,
+            num,
+            extra,
+        }
+    }
+
+    /// Its key as it was placed, its name and whether it is a file
+    /// `now`'s, which no move changes.
+    fn placed<'a>(self, now: &SortKeyOf<'a>) -> SortKeyOf<'a> {
+        SortKeyOf {
+            later: self.later,
+            extra: self.extra,
+            file: now.file,
+            unknown: self.unknown,
+            num: self.num,
+            name: now.name,
+            id: self.id,
+        }
+    }
+}
+
+/// The ranks of `keyed`, in its order, and what they point at.
+fn ranks_of(keyed: &[SortKeyOf<'_>]) -> (Vec<Rank>, Extras) {
+    let mut extras = Extras::default();
+    let ranks = keyed.iter().map(|key| Rank::of(key, &mut extras)).collect();
+    (ranks, extras)
+}
+
+/// What an order's ranks point at (`Rank::extra`): 0 is none, `n` the
+/// `n`th kept. Each rank points at one of its own; a rank taken out lets
+/// go of its at once (`free`), and a rank placed takes the first let go
+/// of, so the table never holds more than the most ranks pointed at once.
+#[derive(Debug, Default)]
+struct Extras {
+    kept: Vec<Option<Arc<Extra>>>,
+    /// Numbers let go of, for the next kept.
+    free: Vec<u32>,
+}
+
+impl Extras {
+    /// Keep `extra`: its number, 0 for none.
+    fn add(&mut self, extra: Option<&Arc<Extra>>) -> u32 {
+        let Some(extra) = extra else {
+            return 0;
+        };
+        if let Some(at) = self.free.pop() {
+            self.kept[at as usize - 1] = Some(Arc::clone(extra));
+            return at;
+        }
+        self.kept.push(Some(Arc::clone(extra)));
+        u32::try_from(self.kept.len()).expect("an order of fewer than four billion entries")
+    }
+
+    /// Let go of what `at` names, its rank taken out.
+    fn free(&mut self, at: u32) {
+        if at != 0 {
+            self.kept[at as usize - 1] = None;
+            self.free.push(at);
+        }
+    }
+
+    #[inline]
+    fn get(&self, at: u32) -> Option<&Extra> {
+        let at = usize::try_from(at).ok()?.checked_sub(1)?;
+        self.kept[at].as_deref()
+    }
+
+    fn group(&self, at: u32) -> Option<&Group> {
+        self.get(at)?.group.as_deref()
+    }
+
+    fn words(&self, at: u32) -> Option<&[u8]> {
+        self.get(at)?.words.as_deref()
+    }
+}
+
+/// Entries asked about for every rank of an order (`Listing::place`): a
+/// bit per hash, sixteen for each entry, tells most ranks apart without
+/// asking the set.
+struct Taken<'a> {
+    bits: Vec<u64>,
+    /// What brings a hash down to a bit's index.
+    shift: u32,
+    set: &'a IdSet,
+}
+
+impl<'a> Taken<'a> {
+    fn new(set: &'a IdSet) -> Self {
+        let len = (set.len() * 16).next_power_of_two().max(64);
+        let shift = 64 - len.trailing_zeros();
+        let mut bits = vec![0u64; len / 64];
+        for id in set {
+            let at = Self::bit(*id, shift);
+            bits[at / 64] |= 1 << (at % 64);
+        }
+        Taken { bits, shift, set }
+    }
+
+    // The hash's top bits, fewer than `shift` leaves: a usize holds them.
+    #[allow(clippy::cast_possible_truncation)]
+    #[inline]
+    fn bit(id: EntryId, shift: u32) -> usize {
+        ((id.at ^ id.file.ino.rotate_left(32)).wrapping_mul(0x9e37_79b9_7f4a_7c15) >> shift)
+            as usize
+    }
+
+    #[inline]
+    fn holds(&self, id: EntryId) -> bool {
+        let at = Self::bit(id, self.shift);
+        self.bits[at / 64] & (1 << (at % 64)) != 0 && self.set.contains(&id)
+    }
+}
+
+/// `ranks` with those at `drops` (in order) taken out and each of `new`
+/// put before the rank that stood at its `ins` (in order), in one pass:
+/// what stays between two of these is a run, moved as one block, each
+/// rank once. The runs that go down are moved first, from the start, then
+/// those that go up, from the end: as the order keeps its order, a run
+/// never lands where one still to move stands. What is placed is put in
+/// the places left.
+fn shift(ranks: &mut Vec<Rank>, drops: &[usize], ins: &[usize], new: &[Rank]) {
+    let n = ranks.len();
+    // (from, to, length) for each run; where each of `new` lands.
+    let mut runs: Vec<(usize, usize, usize)> = Vec::with_capacity(drops.len() + ins.len() + 1);
+    let mut lands = Vec::with_capacity(ins.len());
+    let (mut at, mut to, mut d, mut j) = (0, 0, 0, 0);
+    loop {
+        let stop = drops
+            .get(d)
+            .copied()
+            .unwrap_or(n)
+            .min(ins.get(j).copied().unwrap_or(n));
+        if stop > at {
+            runs.push((at, to, stop - at));
+            to += stop - at;
+            at = stop;
+        }
+        if ins.get(j) == Some(&at) {
+            lands.push(to);
+            to += 1;
+            j += 1;
+        } else if drops.get(d) == Some(&at) {
+            d += 1;
+            at += 1;
+        } else {
+            break;
+        }
+    }
+    debug_assert!(at == n && j == ins.len() && d == drops.len());
+    if let Some(&first) = new.first()
+        && to > n
+    {
+        ranks.resize(to, first);
+    }
+    for &(from, to, len) in runs.iter().filter(|(from, to, _)| to < from) {
+        ranks.copy_within(from..from + len, to);
+    }
+    for &(from, to, len) in runs.iter().rev().filter(|(from, to, _)| to > from) {
+        ranks.copy_within(from..from + len, to);
+    }
+    for (&at, rank) in lands.iter().zip(new) {
+        ranks[at] = *rank;
+    }
+    ranks.truncate(to);
+}
+
+/// The ids of `ranks`, in order: written over `spare` (an order before)
+/// where no one holds it any more and it is as long, made anew where
+/// not. A list of 100 000 ids made anew at each hydrated batch was a third
+/// of the time a folder took to hydrate, the system giving its pages
+/// again each time; what the pane drew holds the order before, so the
+/// one before it is the one written over: 24 bytes an entry more while
+/// the order is kept, as the user chose (2026-11-11).
+fn ids_of(ranks: &[Rank], spare: Option<Arc<[EntryId]>>) -> Arc<[EntryId]> {
+    if let Some(mut spare) = spare
+        && let Some(ids) = Arc::get_mut(&mut spare)
+        && ids.len() == ranks.len()
+    {
+        for (id, rank) in ids.iter_mut().zip(ranks) {
+            *id = rank.id;
+        }
+        return spare;
+    }
+    ranks.iter().map(|r| r.id).collect()
+}
+
+/// Where `above` starts to hold in `s`, along which it holds from some
+/// point to the end: found from the end, by steps that double, then
+/// halving the last; cheap where that point is near the end.
+fn gallop_back<T>(s: &[T], above: impl Fn(&T) -> bool) -> usize {
+    let mut hi = s.len();
+    let mut step = 1;
+    while step <= hi && above(&s[hi - step]) {
+        hi -= step;
+        step *= 2;
+    }
+    let lo = if step > hi { 0 } else { hi - step + 1 };
+    lo + s[lo..hi].partition_point(|x| !above(x))
+}
+
+/// What an entry is sorted by beyond numbers and its name: its group
+/// while grouped, its value in words (a kind, a type's name, an
+/// extension, tags) while sorted by them. Made once per entry for an
+/// order, shared by its key and its rank.
+#[derive(Debug)]
+struct Extra {
+    group: Option<Arc<Group>>,
+    words: Option<Arc<[u8]>>,
 }
 
 #[derive(Clone, Debug)]
@@ -1038,10 +1529,6 @@ impl Delta {
         }
     }
 }
-
-/// How many entries `Listing::place` puts in their places one by one;
-/// more are merged with the order in one pass.
-const FEW_PLACED: usize = 8;
 
 /// The renames a listing keeps for its holders until one asks
 /// (`Listing::take_renamed`).
@@ -1164,7 +1651,32 @@ fn unname(by_name: &mut crate::hashing::Map<u64, Named>, hash: u64, id: EntryId)
 }
 
 /// What an entry sorts by: see `Listing::sort_key`.
-type SortKeyOf<'a> = (bool, bool, u64, &'a [u8], EntryId);
+#[derive(Clone, Debug)]
+struct SortKeyOf<'a> {
+    /// Its group is not read yet: after every group, either direction.
+    later: bool,
+    /// Its group, and its value in words after `num` (none the lowest).
+    extra: Option<Arc<Extra>>,
+    /// A file while folders come first.
+    file: bool,
+    /// What it is sorted by is not read yet: after the rest, either
+    /// direction.
+    unknown: bool,
+    num: u64,
+    /// The name's collation key.
+    name: &'a [u8],
+    id: EntryId,
+}
+
+impl SortKeyOf<'_> {
+    fn group(&self) -> Option<&Group> {
+        self.extra.as_ref()?.group.as_deref()
+    }
+
+    fn words(&self) -> Option<&[u8]> {
+        self.extra.as_ref()?.words.as_deref()
+    }
+}
 
 /// Every version of every listing is read from this one clock, so a value
 /// names one state of one listing. A pane that reopens its folder gets a
@@ -1180,7 +1692,9 @@ fn stamp() -> u64 {
 /// asked for, and where its order comes back.
 #[derive(Debug)]
 struct Sorting {
-    spec: SortSpec,
+    sort: Sort,
+    /// `sort`'s stamp when it was asked.
+    made: SortStamp,
     companions_shown: bool,
     /// The listing's version when it was asked: one changed since (by a
     /// change made to it directly, as its events wait) is sorted again.
@@ -1195,14 +1709,14 @@ struct Sorting {
 #[derive(Debug)]
 struct Sorted {
     ids: Arc<[EntryId]>,
-    ranks: Vec<Rank>,
+    ranks: (Vec<Rank>, Extras),
 }
 
 /// A sort of a listing shown, for a worker (`Listing::sort_job`): the
 /// window's thread sorts no folder anew.
 pub struct SortJob {
     entries: Arc<crate::hashing::IndexMap<EntryId, Slot>>,
-    spec: SortSpec,
+    sort: Sort,
     companions: bool,
     /// The names companions belong to that are listed.
     named: crate::hashing::Set<OsString>,
@@ -1215,7 +1729,7 @@ impl fmt::Debug for SortJob {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SortJob")
             .field("entries", &self.entries.len())
-            .field("spec", &self.spec)
+            .field("sort", &self.sort)
             .finish_non_exhaustive()
     }
 }
@@ -1227,7 +1741,7 @@ impl SortJob {
     pub fn run(self) {
         let SortJob {
             entries,
-            spec,
+            sort,
             companions,
             named,
             order,
@@ -1238,9 +1752,9 @@ impl SortJob {
         }
         let sorted = {
             let mut keyed = keys_of(
-                spec,
+                &sort,
                 entries.values().filter(|slot| {
-                    shown_with(spec, slot, companions, |owner| named.contains(owner))
+                    shown_with(sort.spec, slot, companions, |owner| named.contains(owner))
                 }),
             );
             // The sort is the long part: a sort let go of ends here, so
@@ -1248,10 +1762,10 @@ impl SortJob {
             if cancel.is_cancelled() {
                 return;
             }
-            keyed.sort_unstable_by(|a, b| Listing::compare(spec, *a, *b));
+            keyed.sort_unstable_by(|a, b| Listing::compare(sort.spec, a, b));
             Sorted {
-                ids: keyed.iter().map(|key| key.4).collect(),
-                ranks: keyed.into_iter().map(Rank::of).collect(),
+                ids: keyed.iter().map(|key| key.id).collect(),
+                ranks: ranks_of(&keyed),
             }
         };
         drop(entries);
@@ -1304,16 +1818,134 @@ fn shown_with(
     spec.show_hidden || !slot.entry.is_hidden()
 }
 
-/// `slots`' sort keys under `spec`, not sorted yet.
-fn keys_of<'a>(spec: SortSpec, slots: impl Iterator<Item = &'a Slot>) -> Vec<SortKeyOf<'a>> {
-    slots.map(|slot| Listing::sort_key(spec, slot)).collect()
+/// `slots`' sort keys under `sort`, not sorted yet.
+fn keys_of<'a>(sort: &Sort, slots: impl Iterator<Item = &'a Slot>) -> Vec<SortKeyOf<'a>> {
+    slots.map(|slot| Listing::sort_key(sort, slot)).collect()
 }
 
-/// `slots`' sort keys under `spec`, in order.
-fn keyed_of<'a>(spec: SortSpec, slots: impl Iterator<Item = &'a Slot>) -> Vec<SortKeyOf<'a>> {
-    let mut keyed = keys_of(spec, slots);
-    keyed.sort_unstable_by(|a, b| Listing::compare(spec, *a, *b));
+/// `slots`' sort keys under `sort`, in order.
+fn keyed_of<'a>(sort: &Sort, slots: impl Iterator<Item = &'a Slot>) -> Vec<SortKeyOf<'a>> {
+    let mut keyed = keys_of(sort, slots);
+    keyed.sort_unstable_by(|a, b| Listing::compare(sort.spec, a, b));
     keyed
+}
+
+/// The value of `key` for `e`, as sorted: a number, then words (its
+/// collation key), each none where it has none, the lowest. `keyer` gives
+/// what only a plugin reads (`SortKey::keyed`); without it, nothing.
+fn value_of(
+    key: SortKey,
+    keyer: Option<&crate::grouping::Keyer>,
+    e: &Entry,
+) -> (u64, Option<Arc<[u8]>>) {
+    use crate::entry::{Value, keys};
+    let time = |k: &str| {
+        e.metadata
+            .value(k)
+            .and_then(Value::as_time)
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |d| d.as_secs())
+    };
+    match key {
+        SortKey::Name => (0, None),
+        // A folder has none, below every size, 0 bytes included: a size
+        // counts from 1.
+        SortKey::Size if !key.applies_to(e) => (0, None),
+        // A place by how many files it holds.
+        SortKey::Size => (
+            e.metadata
+                .value(if e.is_place() {
+                    keys::FILES
+                } else {
+                    keys::SIZE
+                })
+                .and_then(Value::as_u64)
+                .map_or(0, |size| size.saturating_add(1)),
+            None,
+        ),
+        SortKey::Modified => (time(keys::MODIFIED), None),
+        SortKey::Deleted => (time(keys::TRASHED), None),
+        SortKey::Created => (time(keys::CREATED), None),
+        SortKey::Accessed => (time(keys::ACCESSED), None),
+        SortKey::Rating => (
+            e.metadata
+                .value(keys::RATING)
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+            None,
+        ),
+        // Case folded whole: a collation key tells `PNG` from `png` last.
+        SortKey::Extension => (
+            0,
+            extension_of(e).map(|ext| Arc::from(collated(&ext.to_lowercase()))),
+        ),
+        SortKey::Tags => (0, tags_of(e).map(|tags| Arc::from(collated(&tags)))),
+        SortKey::Kind | SortKey::Type | SortKey::Owner => keyer.map_or((0, None), |keyer| {
+            let group = keyer(e);
+            (group.rank, Some(Arc::clone(&group.key)))
+        }),
+    }
+}
+
+/// `text`'s collation key.
+fn collated(text: &str) -> Box<[u8]> {
+    crate::collate::sort_key(OsStr::new(text))
+}
+
+/// The extension of `e`'s name, as a sort and a group by extension read
+/// it: none for a folder, nor for a name that only starts with a dot.
+pub fn extension_of(e: &Entry) -> Option<&str> {
+    if e.is_dir() {
+        return None;
+    }
+    Path::new(&e.name)
+        .extension()
+        .and_then(OsStr::to_str)
+        .filter(|ext| !ext.is_empty())
+}
+
+/// `e`'s tags as one set, A to Z, as a sort and a group by tags read
+/// them: none without any.
+pub fn tags_of(e: &Entry) -> Option<String> {
+    use crate::entry::{Value, keys};
+    let Some(Value::List(tags)) = e.metadata.value(keys::TAGS) else {
+        return None;
+    };
+    let mut tags: Vec<&str> = tags.iter().filter_map(Value::as_str).collect();
+    if tags.is_empty() {
+        return None;
+    }
+    tags.sort_by_cached_key(|tag| collated(tag));
+    tags.dedup();
+    Some(tags.join(", "))
+}
+
+/// Where the groups `a` and `b` stand under `spec`: a group that holds
+/// only folders first while folders come first, then in the groups'
+/// direction; alike when either is none (the order is not grouped).
+// Out of line: only grouped orders come here, and the comparisons that do
+// stay small enough to be inlined into every sort and merge.
+#[inline(never)]
+fn group_order(spec: SortSpec, a: Option<&Group>, b: Option<&Group>) -> std::cmp::Ordering {
+    let (Some(a), Some(b)) = (a, b) else {
+        return std::cmp::Ordering::Equal;
+    };
+    if std::ptr::eq(a, b) {
+        return std::cmp::Ordering::Equal;
+    }
+    let folders = if spec.folders_first {
+        b.folders.cmp(&a.folders)
+    } else {
+        std::cmp::Ordering::Equal
+    };
+    folders.then_with(|| {
+        let o = a.standing(b);
+        if spec.groups_ascending() {
+            o
+        } else {
+            o.reverse()
+        }
+    })
 }
 
 /// A listing filled on a worker while it is not shown (ADR-120): shared by
@@ -1335,13 +1967,13 @@ struct Fill {
 pub struct FillJob {
     fill: Arc<Fill>,
     events: Receiver<ListingEvent>,
-    spec: SortSpec,
+    sort: Sort,
 }
 
 impl fmt::Debug for FillJob {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("FillJob")
-            .field("spec", &self.spec)
+            .field("sort", &self.sort)
             .finish_non_exhaustive()
     }
 }
@@ -1355,7 +1987,7 @@ impl FillJob {
     /// (its folder left) is not filled further.
     pub fn run(self) {
         use std::sync::atomic::Ordering;
-        let FillJob { fill, events, spec } = self;
+        let FillJob { fill, events, sort } = self;
         loop {
             if Arc::strong_count(&fill) == 1 {
                 return;
@@ -1373,7 +2005,7 @@ impl FillJob {
                     listing.apply(event);
                     fill.count.store(listing.len(), Ordering::Relaxed);
                     if ends {
-                        listing.sorted(spec);
+                        listing.sorted(&sort);
                         fill.done.store(true, Ordering::Release);
                         return;
                     }
@@ -1593,8 +2225,12 @@ impl Listing {
 
     /// The job that applies what `events` hold to the listing filled
     /// elsewhere, for a worker: when some wait, none runs, and it is not
-    /// done. `spec` is the order it is shown in.
-    pub fn fill_job(&self, events: &Receiver<ListingEvent>, spec: SortSpec) -> Option<FillJob> {
+    /// done. `sort` is the order it is shown in.
+    pub fn fill_job(
+        &self,
+        events: &Receiver<ListingEvent>,
+        sort: impl Into<Sort>,
+    ) -> Option<FillJob> {
         use std::sync::atomic::Ordering;
         let fill = self.fill.as_ref()?;
         if fill.done.load(Ordering::Acquire)
@@ -1606,7 +2242,7 @@ impl Listing {
         Some(FillJob {
             fill: Arc::clone(fill),
             events: events.clone(),
-            spec,
+            sort: sort.into(),
         })
     }
 
@@ -1626,21 +2262,48 @@ impl Listing {
     /// kept current as entries come and go. Sorted here only when it has
     /// no order to show. What reads a pane's order reads this one: it
     /// acts on the order drawn.
-    pub fn order_shown(&self, spec: SortSpec) -> Arc<[EntryId]> {
-        match self.order_before(spec) {
+    pub fn order_shown(&self, sort: impl Into<Sort>) -> Arc<[EntryId]> {
+        let sort = sort.into();
+        match self.order_before(&sort) {
             Some(before) => self.sorted(before),
-            None => self.sorted(spec),
+            None => self.sorted(sort),
         }
     }
 
-    /// The spec of the order it holds, when that order is current but for
-    /// another spec than `spec`: the one to show while `spec`'s is made.
-    fn order_before(&self, spec: SortSpec) -> Option<SortSpec> {
+    /// Where each group starts in the order shown for `sort`
+    /// (`order_shown`), its label and its count (ADR-130); empty when it is
+    /// not grouped. Made from the order's ranks, which hold each entry's
+    /// group, once per order.
+    pub fn spans_shown(&self, sort: impl Into<Sort>) -> Arc<[Span]> {
+        let sort = sort.into();
+        self.order_shown(&sort);
+        let mut cache = self.sort_cache.lock();
+        let Some(c) = cache.as_mut() else {
+            return Arc::from([]);
+        };
+        if c.sort.grouping().is_none() {
+            return Arc::from([]);
+        }
+        if let Some(spans) = &c.spans {
+            return Arc::clone(spans);
+        }
+        let (ranks, extras) = (&c.ranks, &c.extras);
+        let spans: Arc<[Span]> = crate::grouping::spans_of(&c.ids, |at, _| {
+            Some(extras.get(ranks[at].extra).and_then(|e| e.group.clone()))
+        })
+        .into();
+        c.spans = Some(Arc::clone(&spans));
+        spans
+    }
+
+    /// The sort of the order it holds, when that order is current but for
+    /// another sort than `sort`: the one to show while `sort`'s is made.
+    fn order_before(&self, sort: &Sort) -> Option<Sort> {
         let cache = self.sort_cache.lock();
         let c = cache.as_ref()?;
         let current =
             c.stamp == self.order_version && c.companions_shown == self.companions_shown();
-        (current && c.spec != spec).then_some(c.spec)
+        (current && !c.holds(&sort.stamp())).then(|| c.sort.clone())
     }
 
     /// The sort that makes `spec`'s order on a worker (ADR-121), when the
@@ -1648,12 +2311,14 @@ impl Listing {
     /// sort asked for another spec is let go, whether `spec` needs one or
     /// has its order already: the last asked wins. Until its order is back
     /// the listing takes no events.
-    pub fn sort_job(&mut self, spec: SortSpec) -> Option<SortJob> {
-        if self.fill.is_some() || self.sorting.as_ref().is_some_and(|s| s.spec == spec) {
+    pub fn sort_job(&mut self, sort: impl Into<Sort>) -> Option<SortJob> {
+        let sort = sort.into();
+        let made = sort.stamp();
+        if self.fill.is_some() || self.sorting.as_ref().is_some_and(|s| s.made == made) {
             return None;
         }
         self.let_go_of_sort();
-        self.order_before(spec)?;
+        self.order_before(&sort)?;
         let cancel = CancelToken::new();
         let companions = self.companions_shown();
         let named = self
@@ -1663,8 +2328,10 @@ impl Listing {
             .cloned()
             .collect();
         let (order, sorted) = crossbeam_channel::bounded(1);
+        let asked = self.as_asked(&sort);
         self.sorting = Some(Sorting {
-            spec,
+            sort,
+            made,
             companions_shown: companions,
             version: self.version,
             order: sorted,
@@ -1672,7 +2339,7 @@ impl Listing {
         });
         Some(SortJob {
             entries: Arc::clone(&self.entries),
-            spec: self.as_asked(spec),
+            sort: asked,
             companions,
             named,
             order,
@@ -1730,16 +2397,18 @@ impl Listing {
             // Changed under it: sorted again.
             return false;
         }
-        *self.sort_cache.get_mut() = Some(SortCache {
-            stamp: self.order_version,
-            spec: sorting.spec,
-            companions_shown: sorting.companions_shown,
-            ids: sorted.ids,
-            seen: self.entries.len(),
-            ranks: sorted.ranks,
-            moved: Vec::new(),
-            gone: IdSet::default(),
-        });
+        let mut cache = SortCache::new(
+            self.order_version,
+            sorting.sort,
+            sorting.companions_shown,
+            sorted.ids,
+            sorted.ranks,
+            self.entries.len(),
+        );
+        // Made with the keys as they answered when asked: answers changed
+        // since make it again.
+        cache.made = sorting.made;
+        *self.sort_cache.get_mut() = Some(cache);
         // Another order, and other entries shown where hidden files are.
         let now = stamp();
         self.shown_version = now;
@@ -1977,10 +2646,13 @@ impl Listing {
                 if !d.any {
                     return;
                 }
+                // One placed: what it was placed by, to find it again. One
+                // not placed yet is an arrival, placed as one.
                 if let Some(c) = self.sort_cache.get_mut().as_mut()
-                    && c.moves(&d)
+                    && slot.index() < c.seen
+                    && c.moves(&d, old, &e)
                 {
-                    c.moved.push(e.id);
+                    c.moved.push(Moved::of(Self::sort_key(&c.sort, slot.get())));
                 }
                 if d.name {
                     let before = self.name_hasher.hash_one(old.name.as_os_str());
@@ -2116,12 +2788,14 @@ impl Listing {
     /// Until the listing is complete, the order may leave out the latest
     /// arrivals (see the placement rule below); once it is, it holds every
     /// shown entry.
-    pub fn sorted(&self, spec: SortSpec) -> Arc<[EntryId]> {
+    pub fn sorted(&self, sort: impl Into<Sort>) -> Arc<[EntryId]> {
+        let sort = sort.into();
+        let made = sort.stamp();
         let companions_shown = self.companions_shown();
         let mut cache = self.sort_cache.lock();
         if let Some(c) = cache.as_mut()
             && c.stamp == self.order_version
-            && c.spec == spec
+            && c.holds(&made)
             && c.companions_shown == companions_shown
         {
             // While the listing streams in, arrivals are placed once they
@@ -2134,88 +2808,95 @@ impl Listing {
             let waiting = self.entries.len() - c.seen + c.moved.len();
             if !c.gone.is_empty() || waiting > 0 && (self.complete || waiting * 4 >= c.ranks.len())
             {
-                self.place(c, spec);
+                self.place(c);
             }
             return Arc::clone(&c.ids);
         }
-        let keyed = self.keyed(spec);
-        let ids: Arc<[EntryId]> = keyed.iter().map(|key| key.4).collect();
-        *cache = Some(SortCache {
-            stamp: self.order_version,
-            spec,
+        let keyed = self.keyed(&sort);
+        let ids: Arc<[EntryId]> = keyed.iter().map(|key| key.id).collect();
+        *cache = Some(SortCache::new(
+            self.order_version,
+            sort,
             companions_shown,
-            ids: Arc::clone(&ids),
-            seen: self.entries.len(),
-            ranks: keyed.into_iter().map(Rank::of).collect(),
-            moved: Vec::new(),
-            gone: IdSet::default(),
-        });
+            Arc::clone(&ids),
+            ranks_of(&keyed),
+            self.entries.len(),
+        ));
         ids
     }
 
-    /// What an entry is sorted by under `spec`: files after folders while
-    /// folders come first, then whether its key is still unknown (not
-    /// stat-ed yet, or not to be read: after the rest, whichever the
-    /// direction), then the size or date (0 for a name sort, or when the
-    /// entry has none), then the name's collation key, then the id, so
-    /// that no two entries tie: the order is one order, whether made whole
-    /// or by placing arrivals, and equal names do not trade places from
-    /// one sort to the next.
-    fn sort_key(spec: SortSpec, slot: &Slot) -> SortKeyOf<'_> {
-        use crate::entry::{Value, keys};
+    /// What an entry is sorted by under `sort` (ADR-130): its group first
+    /// (after every group while it is not read yet), then files after
+    /// folders while folders come first, then whether its value is still
+    /// unknown (not stat-ed yet, or not to be read: after the rest,
+    /// whichever the direction), then the value (a size, a date, a rating,
+    /// or words: 0 and none for a name sort, or when the entry has none),
+    /// then the name's collation key, then the id, so that no two entries
+    /// tie: the order is one order, whether made whole or by placing
+    /// arrivals, and equal names do not trade places from one sort to the
+    /// next.
+    fn sort_key<'a>(sort: &Sort, slot: &'a Slot) -> SortKeyOf<'a> {
+        let spec = &sort.spec;
         let e = &slot.entry;
-        let applies = spec.key.applies_to(e);
-        let unknown = spec.key.needs_metadata()
-            && applies
-            && (!spec.key.has_read(&e.metadata) || e.metadata.is_unread());
-        let num = match spec.key {
-            SortKey::Name => 0,
-            // A folder has none, below every size, 0 bytes included: a
-            // size counts from 1.
-            SortKey::Size if !applies => 0,
-            // A place by how many files it holds.
-            SortKey::Size => e
-                .metadata
-                .value(if e.is_place() {
-                    keys::FILES
-                } else {
-                    keys::SIZE
-                })
-                .and_then(Value::as_u64)
-                .map_or(0, |size| size.saturating_add(1)),
-            SortKey::Modified | SortKey::Deleted => e
-                .metadata
-                .value(if spec.key == SortKey::Modified {
-                    keys::MODIFIED
-                } else {
-                    keys::TRASHED
-                })
-                .and_then(Value::as_time)
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map_or(0, |d| d.as_secs()),
-            SortKey::Rating => e
-                .metadata
-                .value(keys::RATING)
-                .and_then(Value::as_u64)
-                .unwrap_or(0),
+        let unread = |key: SortKey| {
+            key.needs_metadata()
+                && key.applies_to(e)
+                && (!key.has_read(&e.metadata) || e.metadata.is_unread())
         };
-        (
-            spec.folders_first && !e.is_dir(),
-            unknown,
+        let (later, group) = match sort.grouping() {
+            Some((key, _)) if unread(key) => (true, None),
+            Some((_, keyer)) => (false, Some(keyer(e))),
+            None => (false, None),
+        };
+        let (num, words) = value_of(spec.key, sort.value(), e);
+        SortKeyOf {
+            later,
+            extra: (group.is_some() || words.is_some()).then(|| Arc::new(Extra { group, words })),
+            file: spec.folders_first && !e.is_dir(),
+            unknown: unread(spec.key),
             num,
-            &*slot.key,
-            e.id,
-        )
+            name: &slot.key,
+            id: e.id,
+        }
     }
 
-    fn compare(spec: SortSpec, a: SortKeyOf<'_>, b: SortKeyOf<'_>) -> std::cmp::Ordering {
-        a.0.cmp(&b.0)
-            .then_with(|| a.1.cmp(&b.1))
-            .then_with(|| {
-                let o = a.2.cmp(&b.2).then_with(|| a.3.cmp(b.3));
-                if spec.ascending { o } else { o.reverse() }
-            })
-            .then_with(|| a.4.cmp(&b.4))
+    /// Where `a` stands against `b` under `spec`: by group in the groups'
+    /// direction (a group of folders first while folders come first),
+    /// then folders before files, then by value in the sort's direction,
+    /// then by name A to Z whichever the direction (ADR-130, 4), but for a
+    /// sort by name, whose value it is.
+    ///
+    /// The group and the words are looked at only where either key has
+    /// some (`Extra`): an order neither grouped nor by words compares as
+    /// few fields as before groups were, and small enough to be inlined
+    /// where every sort and merge calls it.
+    #[inline]
+    fn compare(spec: SortSpec, a: &SortKeyOf<'_>, b: &SortKeyOf<'_>) -> std::cmp::Ordering {
+        let extra = a.extra.is_some() || b.extra.is_some();
+        let o = a.later.cmp(&b.later);
+        if o.is_ne() {
+            return o;
+        }
+        if extra {
+            let o = group_order(spec, a.group(), b.group());
+            if o.is_ne() {
+                return o;
+            }
+        }
+        let o = a.file.cmp(&b.file).then(a.unknown.cmp(&b.unknown));
+        if o.is_ne() {
+            return o;
+        }
+        let mut o = a.num.cmp(&b.num);
+        if o.is_eq() && extra {
+            o = a.words().cmp(&b.words());
+        }
+        if o.is_eq() && spec.key == SortKey::Name {
+            o = a.name.cmp(b.name);
+        }
+        let o = if spec.ascending { o } else { o.reverse() };
+        o.then_with(|| a.name.cmp(b.name))
+            .then_with(|| a.id.cmp(&b.id))
     }
 
     /// Whether `slot` is shown under `spec`: a hidden file only with hidden
@@ -2223,16 +2904,17 @@ impl Listing {
     /// hidden files and companions both; one whose file is gone, an
     /// orphan, as any file.
     fn shown(&self, spec: SortSpec, slot: &Slot, companions: bool) -> bool {
-        shown_with(self.as_asked(spec), slot, companions, |owner| {
-            self.is_named(owner)
-        })
+        let mut spec = spec;
+        spec.show_hidden |= self.hidden_asked;
+        shown_with(spec, slot, companions, |owner| self.is_named(owner))
     }
 
-    /// `spec`, hidden files shown where the location asked for them
+    /// `sort`, hidden files shown where the location asked for them
     /// ([`LocationProvider::shows_hidden`]).
-    fn as_asked(&self, mut spec: SortSpec) -> SortSpec {
-        spec.show_hidden |= self.hidden_asked;
-        spec
+    fn as_asked(&self, sort: &Sort) -> Sort {
+        let mut sort = sort.clone();
+        sort.spec.show_hidden |= self.hidden_asked;
+        sort
     }
 
     /// Whether an entry is listed and shown under `spec`: not a hidden file
@@ -2248,111 +2930,206 @@ impl Listing {
     }
 
     /// The shown entries' sort keys, in order.
-    fn keyed(&self, spec: SortSpec) -> Vec<SortKeyOf<'_>> {
+    fn keyed(&self, sort: &Sort) -> Vec<SortKeyOf<'_>> {
         let companions = self.companions_shown();
         keyed_of(
-            spec,
+            sort,
             self.entries
                 .values()
-                .filter(|slot| self.shown(spec, slot, companions)),
+                .filter(|slot| self.shown(sort.spec, slot, companions)),
         )
     }
 
     #[cfg(test)]
-    fn compute_sorted(&self, spec: SortSpec) -> Arc<[EntryId]> {
-        self.keyed(spec).iter().map(|key| key.4).collect()
+    fn compute_sorted(&self, sort: impl Into<Sort>) -> Arc<[EntryId]> {
+        self.keyed(&sort.into()).iter().map(|key| key.id).collect()
     }
 
-    /// Where `placed` (a rank of the cached order) stands against `key`,
-    /// as `compare` says: by the ranks, and by the full keys when they tie.
+    /// Where `placed` (a rank of the cached order, pointing into `extras`)
+    /// stands against `key` (`rank`), as `compare` says: by the ranks, and
+    /// by the full names when they tie.
+    #[inline]
     fn compare_rank(
         &self,
         spec: SortSpec,
+        extras: &Extras,
         placed: &Rank,
-        key: SortKeyOf<'_>,
+        key: &SortKeyOf<'_>,
         rank: &Rank,
     ) -> std::cmp::Ordering {
-        placed
+        // As `compare`, the group and the words only where either has some.
+        let extra = placed.extra != 0 || key.extra.is_some();
+        let o = placed.later.cmp(&rank.later);
+        if o.is_ne() {
+            return o;
+        }
+        if extra {
+            let o = group_order(spec, extras.group(placed.extra), key.group());
+            if o.is_ne() {
+                return o;
+            }
+        }
+        let o = placed
             .file
             .cmp(&rank.file)
-            .then_with(|| placed.unknown.cmp(&rank.unknown))
-            .then_with(|| {
-                let o = (placed.num, placed.prefix)
-                    .cmp(&(rank.num, rank.prefix))
-                    .then_with(|| {
-                        let slot = self.entries.get(&placed.id).expect("a ranked id is listed");
-                        (*slot.key).cmp(key.3)
-                    });
-                if spec.ascending { o } else { o.reverse() }
-            })
+            .then(placed.unknown.cmp(&rank.unknown));
+        if o.is_ne() {
+            return o;
+        }
+        let mut o = placed.num.cmp(&rank.num);
+        if o.is_eq() && extra {
+            o = extras.words(placed.extra).cmp(&key.words());
+        }
+        if o.is_eq() && spec.key == SortKey::Name {
+            o = self.names_against(placed, key, rank);
+        }
+        let o = if spec.ascending { o } else { o.reverse() };
+        o.then_with(|| self.names_against(placed, key, rank))
             .then_with(|| placed.id.cmp(&rank.id))
+    }
+
+    /// Where `placed`'s name stands against `key`'s (`rank`'s): by their
+    /// first sixteen bytes, and in full when those tie.
+    #[inline]
+    fn names_against(&self, placed: &Rank, key: &SortKeyOf<'_>, rank: &Rank) -> std::cmp::Ordering {
+        placed.prefix.cmp(&rank.prefix).then_with(|| {
+            let slot = self.entries.get(&placed.id).expect("a ranked id is listed");
+            (*slot.key).cmp(key.name)
+        })
     }
 
     /// The cached order with what changed put in its place: the entries
     /// that went taken out, those that moved taken out and placed again
     /// with the arrivals (the entries after its first `seen`), which are
-    /// sorted among themselves and merged with the ranks in one pass, which
-    /// the copy of the order costs anyway. A new name or kind never comes
-    /// here; it changes `order_version`, and the order is made again.
-    fn place(&self, cache: &mut SortCache, spec: SortSpec) {
+    /// sorted among themselves. A new name or kind never comes here; it
+    /// changes `order_version`, and the order is made again.
+    ///
+    /// The order is never walked rank by rank against what is placed: a
+    /// hydrated batch of a thousand sizes in a folder of 100 000 entries
+    /// would compare and look up every rank, a thousand times over while
+    /// the folder is read. What moved is found by what it was placed by
+    /// (`Moved`), in a search each; what is placed by galloping back from
+    /// where the one after it goes: about two comparisons for each
+    /// doubling of the gap between two. Then the ranks are moved once,
+    /// each with those beside it in a block (`shift`), which, with the ids
+    /// made from them, costs what reading and writing the order once costs,
+    /// as the order shared as one list (`ids`) does anyway. What went is
+    /// found by its id, in one pass over the ranks told apart by a bit
+    /// (`Taken`), taking out what moved with it, and what is placed then
+    /// placed in a second, from the end: going costs the listing a pass
+    /// already.
+    fn place(&self, cache: &mut SortCache) {
+        let sort = cache.sort.clone();
+        let spec = sort.spec;
+        cache.spans = None;
         let companions = self.companions_shown();
         let shown = |slot: &&Slot| self.shown(spec, slot, companions);
         let mut out = std::mem::take(&mut cache.gone);
+        // Where what moved is, found by what it was placed by; while
+        // nothing went, whose ranks only a pass finds (going costs the
+        // listing a pass anyway).
+        let mut drops = out.is_empty().then(Vec::new);
         let mut again: Vec<SortKeyOf<'_>> = Vec::new();
-        for id in std::mem::take(&mut cache.moved) {
-            // One not placed yet is an arrival, placed below.
-            if let Some((at, _, slot)) = self.entries.get_full(&id)
+        for moved in std::mem::take(&mut cache.moved) {
+            // One moved twice is found by what it was first.
+            if let Some((at, _, slot)) = self.entries.get_full(&moved.id)
                 && at < cache.seen
-                && out.insert(id)
+                && out.insert(moved.id)
                 && shown(&slot)
             {
-                again.push(Self::sort_key(spec, slot));
+                let now = Self::sort_key(&sort, slot);
+                if let Some(found) = drops.as_mut() {
+                    let was = moved.placed(&now);
+                    match self.placed_at(spec, &cache.ranks, &cache.extras, &was) {
+                        Some(at) => found.push(at),
+                        None => drops = None,
+                    }
+                }
+                again.push(now);
             }
         }
         again.extend(
             self.entries.as_slice()[cache.seen..]
                 .values()
                 .filter(shown)
-                .map(|slot| Self::sort_key(spec, slot)),
+                .map(|slot| Self::sort_key(&sort, slot)),
         );
-        again.sort_unstable_by(|a, b| Self::compare(spec, *a, *b));
-        // A few (a file growing, one arriving): each found and put in its
-        // place where the order is, a search apiece instead of a merge
-        // that compares every rank.
-        if out.len() + again.len() <= FEW_PLACED {
-            let ranks = &mut cache.ranks;
-            ranks.retain(|r| !out.contains(&r.id));
-            for key in again {
-                let rank = Rank::of(key);
-                let at = ranks.partition_point(|p| {
-                    self.compare_rank(spec, p, key, &rank) != std::cmp::Ordering::Greater
+        again.sort_unstable_by(|a, b| Self::compare(spec, a, b));
+        // Compared with, what they point at kept once what is taken out
+        // let go of its own.
+        let mut new: Vec<Rank> = again.iter().map(|key| Rank::with(key, 0)).collect();
+        let ranks = &mut cache.ranks;
+        let extras = &mut cache.extras;
+        let keep = |new: &mut [Rank], extras: &mut Extras| {
+            for (rank, key) in new.iter_mut().zip(&again) {
+                rank.extra = extras.add(key.extra.as_ref());
+            }
+        };
+        if let Some(mut drops) = drops {
+            // Where each goes among the ranks as they stand, what moved
+            // still there: then everything moved in one pass.
+            drops.sort_unstable();
+            let mut ins = vec![0; new.len()];
+            let mut end = ranks.len();
+            for (j, (key, rank)) in again.iter().zip(&new).enumerate().rev() {
+                end = gallop_back(&ranks[..end], |p| {
+                    self.compare_rank(spec, extras, p, key, rank).is_gt()
                 });
-                ranks.insert(at, rank);
+                ins[j] = end;
             }
-            cache.ids = ranks.iter().map(|r| r.id).collect();
-            cache.seen = self.entries.len();
-            return;
-        }
-        let placed = &cache.ranks;
-        let mut ranks = Vec::with_capacity(placed.len() + again.len());
-        let mut old = placed
-            .iter()
-            .filter(|r| out.is_empty() || !out.contains(&r.id))
-            .peekable();
-        for key in again {
-            let rank = Rank::of(key);
-            while let Some(p) = old
-                .next_if(|p| self.compare_rank(spec, p, key, &rank) != std::cmp::Ordering::Greater)
-            {
-                ranks.push(*p);
+            for &at in &drops {
+                extras.free(ranks[at].extra);
             }
-            ranks.push(rank);
+            keep(&mut new, extras);
+            shift(ranks, &drops, &ins, &new);
+        } else {
+            // What went is told by its id in one pass, most ranks by a
+            // bit, what moved with it; then what is placed is placed from
+            // the end, the ranks after each moved up in one block.
+            let taken = Taken::new(&out);
+            ranks.retain(|r| {
+                let kept = !taken.holds(r.id);
+                if !kept {
+                    extras.free(r.extra);
+                }
+                kept
+            });
+            keep(&mut new, extras);
+            let mut end = ranks.len();
+            if let Some(&first) = new.first() {
+                ranks.resize(end + new.len(), first);
+            }
+            for (j, (key, rank)) in again.iter().zip(&new).enumerate().rev() {
+                let at = gallop_back(&ranks[..end], |p| {
+                    self.compare_rank(spec, extras, p, key, rank).is_gt()
+                });
+                // Those before it in `new` go before them too.
+                ranks.copy_within(at..end, at + j + 1);
+                ranks[at + j] = *rank;
+                end = at;
+            }
         }
-        ranks.extend(old.copied());
-        let ids: Vec<EntryId> = ranks.iter().map(|r| r.id).collect();
-        cache.ids = ids.into();
-        cache.ranks = ranks;
+        let ids = ids_of(ranks, cache.spare.take());
+        cache.spare = Some(std::mem::replace(&mut cache.ids, ids));
         cache.seen = self.entries.len();
+    }
+
+    /// Where `was` (an entry that moved, as it was placed) stands among
+    /// `ranks`, found by a search. None when it is not there, which only a
+    /// change `SortCache::moves` missed leaves (a bug the tests catch):
+    /// then it is taken out by its id.
+    fn placed_at(
+        &self,
+        spec: SortSpec,
+        ranks: &[Rank],
+        extras: &Extras,
+        was: &SortKeyOf<'_>,
+    ) -> Option<usize> {
+        let rank = Rank::with(was, 0);
+        let at = ranks.partition_point(|p| self.compare_rank(spec, extras, p, was, &rank).is_lt());
+        let here = ranks.get(at).is_some_and(|p| p.id == was.id);
+        debug_assert!(here, "{:?} where it was placed", was.id);
+        here.then_some(at)
     }
 
     /// Apply what was queued when called, until `budget` has passed, without
@@ -2609,7 +3386,7 @@ mod tests {
                 .sort_cache
                 .lock()
                 .as_ref()
-                .is_some_and(|c| c.spec == spec && c.ids.len() == 2)
+                .is_some_and(|c| c.sort.spec == spec && c.ids.len() == 2)
         );
 
         let mut failed = Listing::default().filled_elsewhere();
@@ -3330,7 +4107,9 @@ mod tests {
             .iter()
             .map(|id| id.file.ino)
             .collect();
-        assert_eq!(sizes, [2, 4, 1, 3], "and still after it the other way");
+        // Still after it the other way, A to Z among themselves: a direction
+        // reverses the size, never the names (ADR-130, 4).
+        assert_eq!(sizes, [2, 4, 3, 1], "and still after it the other way");
     }
 
     /// Folders come before files, or are sorted with them: by date the
@@ -3384,10 +4163,11 @@ mod tests {
         assert_eq!(order(SortKey::Modified, false, true), [1, 3, 5, 2, 4]);
         assert_eq!(order(SortKey::Modified, false, false), [2, 1, 4, 3, 5]);
         // By size, folders by name among themselves, before the files
-        // smallest first, after them largest first.
+        // smallest first, after them largest first, A to Z still: a
+        // direction reverses the size, never the names (ADR-130, 4).
         assert_eq!(order(SortKey::Size, true, true), [1, 3, 5, 4, 2]);
         assert_eq!(order(SortKey::Size, true, false), [1, 3, 5, 4, 2]);
-        assert_eq!(order(SortKey::Size, false, false), [2, 4, 5, 3, 1]);
+        assert_eq!(order(SortKey::Size, false, false), [2, 4, 1, 3, 5]);
         let folder = listing
             .get(EntryId {
                 file: crate::FileId::new(1, 5),
@@ -3535,6 +4315,7 @@ mod tests {
                     ascending,
                     show_hidden,
                     folders_first,
+                    ..SortSpec::default()
                 };
                 let mut listing = Listing::default();
                 let mut next = 0;
@@ -3577,6 +4358,587 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Keys for the tests: a sort by size grouped by `grouped`, each entry
+    /// in group `size % 3` (`Low`, `Mid`, `High`), a folder in Folders, as
+    /// by size; a sort by kind valued by the name's last letter.
+    fn test_keys(sort: SortKey, grouped: Option<SortKey>) -> crate::grouping::Keys {
+        use crate::entry::{Value, keys};
+        use crate::grouping::Group;
+        let groups: Vec<Arc<Group>> = ["Low", "Mid", "High"]
+            .iter()
+            .zip(1..)
+            .map(|(label, rank)| Arc::new(Group::ranked(rank, label)))
+            .collect();
+        let folders = Arc::new(Group::ranked(0, "Folders").of_folders());
+        let mut k = crate::grouping::Keys::new(sort, grouped);
+        k.group = Some(Arc::new(move |e: &Entry| {
+            if e.is_dir() {
+                return Arc::clone(&folders);
+            }
+            let size = e
+                .metadata
+                .value(keys::SIZE)
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            Arc::clone(&groups[usize::try_from(size % 3).unwrap()])
+        }));
+        k.value = Some(Arc::new(|e: &Entry| {
+            let last = e.name.to_string_lossy().chars().last().unwrap_or(' ');
+            Arc::new(Group::new(1, &last.to_string()))
+        }));
+        k
+    }
+
+    fn sized_entry(ino: u64, name: &str, kind: EntryKind, size: u64) -> Entry {
+        stat(
+            Entry::new(
+                EntryId {
+                    file: crate::FileId::new(1, ino),
+                    at: 0,
+                },
+                name,
+                kind,
+            ),
+            size,
+        )
+    }
+
+    /// A direction reverses what is sorted by, never the names: entries of
+    /// one size are listed A to Z whichever the direction; sorted by name,
+    /// the name is what is reversed (ADR-130, 4).
+    #[test]
+    fn ties_are_listed_a_to_z_whichever_the_direction() {
+        let mut listing = Listing::default();
+        listing.apply(ListingEvent::Added(vec![
+            sized_entry(1, "b", EntryKind::File, 5),
+            sized_entry(2, "c", EntryKind::File, 7),
+            sized_entry(3, "a", EntryKind::File, 5),
+            sized_entry(4, "d", EntryKind::File, 5),
+        ]));
+        listing.apply(ListingEvent::Complete);
+        let order = |key, ascending| -> Vec<u64> {
+            let spec = SortSpec {
+                key,
+                ascending,
+                ..SortSpec::default()
+            };
+            listing.sorted(spec).iter().map(|id| id.file.ino).collect()
+        };
+        assert_eq!(order(SortKey::Size, true), [3, 1, 4, 2]);
+        assert_eq!(order(SortKey::Size, false), [2, 3, 1, 4]);
+        assert_eq!(order(SortKey::Name, false), [4, 2, 1, 3]);
+    }
+
+    /// Grouped, an order lists each group whole, the groups in their own
+    /// direction and the entries within in the sort's, folders first within
+    /// each, a group of folders first whatever the groups' direction while
+    /// folders come first; the spans say where each starts.
+    #[test]
+    fn groups_come_first_in_their_own_direction() {
+        let mut listing = Listing::default();
+        listing.apply(ListingEvent::Added(vec![
+            sized_entry(1, "a", EntryKind::File, 3), // Low
+            sized_entry(2, "b", EntryKind::File, 4), // Mid
+            sized_entry(3, "c", EntryKind::File, 5), // High
+            sized_entry(4, "d", EntryKind::File, 6), // Low
+            sized_entry(5, "e", EntryKind::Directory, 0),
+            sized_entry(6, "f", EntryKind::File, 7), // Mid
+        ]));
+        listing.apply(ListingEvent::Complete);
+        let keys = test_keys(SortKey::Size, Some(SortKey::Size));
+        let order =
+            |ascending, group_ascending, folders_first| -> (Vec<u64>, Vec<(String, usize)>) {
+                let sort = Sort {
+                    spec: SortSpec {
+                        key: SortKey::Size,
+                        ascending,
+                        folders_first,
+                        group: crate::grouping::GroupBy::Key(SortKey::Size),
+                        group_ascending,
+                        ..SortSpec::default()
+                    },
+                    keys: Some(keys.clone()),
+                };
+                let ids = listing.sorted(&sort).iter().map(|id| id.file.ino).collect();
+                let spans = listing
+                    .spans_shown(&sort)
+                    .iter()
+                    .map(|s| (s.group.as_ref().unwrap().label.to_string(), s.len))
+                    .collect();
+                (ids, spans)
+            };
+        let (ids, spans) = order(true, true, true);
+        assert_eq!(ids, [5, 1, 4, 2, 6, 3]);
+        assert_eq!(
+            spans,
+            [
+                ("Folders".into(), 1),
+                ("Low".into(), 2),
+                ("Mid".into(), 2),
+                ("High".into(), 1)
+            ]
+        );
+        // The groups reversed, the entries within as the sort says, the
+        // folders still first.
+        assert_eq!(order(false, false, true).0, [5, 3, 6, 2, 4, 1]);
+        assert_eq!(order(true, false, true).0, [5, 3, 2, 6, 1, 4]);
+        // Folders sorted with the files: their group where its rank puts it.
+        assert_eq!(order(true, false, false).0, [3, 2, 6, 1, 4, 5]);
+    }
+
+    /// Same as sort draws groups over the order as it stands: where the
+    /// groups follow the sort's values, nothing moves, whichever the
+    /// direction, folders first or not.
+    #[test]
+    fn same_as_sort_moves_nothing() {
+        use crate::grouping::{Group, GroupBy};
+        let mut listing = Listing::default();
+        listing.apply(ListingEvent::Added(
+            (1..40)
+                .map(|ino: u64| {
+                    let kind = if ino.is_multiple_of(7) {
+                        EntryKind::Directory
+                    } else {
+                        EntryKind::File
+                    };
+                    sized_entry(ino, &format!("n{}", ino % 9), kind, ino * 37 % 23)
+                })
+                .collect(),
+        ));
+        listing.apply(ListingEvent::Complete);
+        let tens: Vec<Arc<Group>> = (0..4)
+            .map(|r| Arc::new(Group::ranked(r + 1, "tens")))
+            .collect();
+        let folders = Arc::new(Group::ranked(0, "Folders").of_folders());
+        let mut keys = crate::grouping::Keys::new(SortKey::Size, Some(SortKey::Size));
+        keys.group = Some(Arc::new(move |e: &Entry| {
+            use crate::entry::{Value, keys};
+            if e.is_dir() {
+                return Arc::clone(&folders);
+            }
+            let size = e
+                .metadata
+                .value(keys::SIZE)
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            Arc::clone(&tens[usize::try_from(size / 10).unwrap()])
+        }));
+        for ascending in [true, false] {
+            for folders_first in [true, false] {
+                let spec = SortSpec {
+                    key: SortKey::Size,
+                    ascending,
+                    folders_first,
+                    ..SortSpec::default()
+                };
+                let grouped = Sort {
+                    spec: SortSpec {
+                        group: GroupBy::SameAsSort,
+                        ..spec
+                    },
+                    keys: Some(keys.clone()),
+                };
+                assert_eq!(*listing.sorted(spec), *listing.sorted(&grouped), "{spec:?}");
+                assert!(!listing.spans_shown(&grouped).is_empty());
+            }
+        }
+    }
+
+    /// Galloping back finds where a run that holds to the end starts,
+    /// wherever it starts, in a slice of any length.
+    #[test]
+    fn galloping_back_finds_where_a_run_starts() {
+        for len in 0..70 {
+            let s: Vec<usize> = (0..len).collect();
+            for start in 0..=len {
+                assert_eq!(gallop_back(&s, |x| *x >= start), start, "{start} of {len}");
+            }
+        }
+    }
+
+    /// An order made again around what moved is written over the order
+    /// before last once no one holds it, never over one someone holds,
+    /// which stays as it was.
+    #[test]
+    fn an_order_no_one_holds_is_written_over() {
+        let spec = SortSpec {
+            key: SortKey::Size,
+            ..SortSpec::default()
+        };
+        let mut listing = Listing::default();
+        listing.apply(ListingEvent::Added(
+            (0..50)
+                .map(|ino| sized_entry(ino, &format!("f{ino}"), EntryKind::File, ino))
+                .collect(),
+        ));
+        listing.apply(ListingEvent::Complete);
+        let grow = |listing: &mut Listing, ino: u64, size: u64| {
+            listing.apply(ListingEvent::Updated(vec![sized_entry(
+                ino,
+                &format!("f{ino}"),
+                EntryKind::File,
+                size,
+            )]));
+            let order = listing.sorted(spec);
+            assert_eq!(*order, *listing.compute_sorted(spec));
+            order
+        };
+        let first = Arc::as_ptr(&listing.sorted(spec));
+        grow(&mut listing, 3, 90);
+        // The first, held by no one: written over.
+        let third = grow(&mut listing, 7, 95);
+        assert_eq!(Arc::as_ptr(&third), first);
+        // Held (the first by `third`, the second here), an order is not
+        // written over: those after are lists of their own, and what is
+        // held stays as it was.
+        let held = grow(&mut listing, 9, 99);
+        let before = held.to_vec();
+        let fifth = grow(&mut listing, 11, 120);
+        let sixth = grow(&mut listing, 12, 130);
+        assert_ne!(Arc::as_ptr(&sixth), Arc::as_ptr(&held));
+        assert_eq!(*held, *before);
+        drop(fifth);
+    }
+
+    /// Taking out and putting in in one pass gives what doing each in turn
+    /// gives: at the ends, at one place, at a place taken out, more taken
+    /// out than put in and the reverse.
+    #[test]
+    fn shifting_takes_out_and_puts_in_as_one_by_one() {
+        let rank = |n: u64| Rank {
+            later: false,
+            extra: 0,
+            file: false,
+            unknown: false,
+            num: n,
+            prefix: 0,
+            id: EntryId {
+                file: crate::FileId::new(1, n),
+                at: 0,
+            },
+        };
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        let mut next = |bound: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % bound
+        };
+        for case in 0..3_000 {
+            let n = usize::try_from(next(40)).unwrap();
+            let old: Vec<Rank> = (0..n as u64).map(rank).collect();
+            let drops: Vec<usize> = (0..n).filter(|_| next(4) == 0).collect();
+            let mut ins: Vec<usize> = (0..next(12))
+                .map(|_| usize::try_from(next(n as u64 + 1)).unwrap())
+                .collect();
+            ins.sort_unstable();
+            let new: Vec<Rank> = (0..ins.len() as u64).map(|j| rank(1_000 + j)).collect();
+            // One by one: each old rank, after the new ones put before it.
+            let mut want = Vec::new();
+            let mut j = 0;
+            for (at, r) in old.iter().enumerate() {
+                while j < ins.len() && ins[j] == at {
+                    want.push(new[j].num);
+                    j += 1;
+                }
+                if !drops.contains(&at) {
+                    want.push(r.num);
+                }
+            }
+            want.extend(new[j..].iter().map(|r| r.num));
+            let mut ranks = old.clone();
+            shift(&mut ranks, &drops, &ins, &new);
+            let got: Vec<u64> = ranks.iter().map(|r| r.num).collect();
+            assert_eq!(
+                got, want,
+                "case {case}: {n} ranks, out {drops:?}, in at {ins:?}"
+            );
+        }
+    }
+
+    /// An order big enough for placing to gallop far, of names alike in
+    /// far more than the sixteen bytes a rank holds, grouped or not, by
+    /// words or numbers: what moves, goes and arrives, round after round,
+    /// is placed where a full sort puts it, and the groups' spans with it;
+    /// what the ranks taken out pointed at is let go of.
+    #[test]
+    fn a_big_order_placed_in_blocks_is_a_full_sorts() {
+        use crate::grouping::GroupBy;
+        let name = |ino: u64| {
+            if ino.is_multiple_of(4) {
+                format!("short {}", ino % 97)
+            } else {
+                format!(
+                    "a name much longer than sixteen bytes, number {:05}",
+                    ino * 7 % 5003
+                )
+            }
+        };
+        let entry = |ino: u64, size: u64| {
+            let kind = if ino.is_multiple_of(9) {
+                EntryKind::Directory
+            } else {
+                EntryKind::File
+            };
+            sized_entry(ino, &name(ino), kind, size)
+        };
+        let id = |ino| EntryId {
+            file: crate::FileId::new(1, ino),
+            at: 0,
+        };
+        for (key, group, ascending, folders_first) in [
+            (SortKey::Size, GroupBy::None, true, true),
+            (SortKey::Size, GroupBy::None, false, false),
+            (SortKey::Name, GroupBy::None, false, true),
+            (SortKey::Size, GroupBy::SameAsSort, false, true),
+            (SortKey::Kind, GroupBy::Key(SortKey::Size), true, false),
+        ] {
+            let keys =
+                (group != GroupBy::None || key.keyed()).then(|| test_keys(key, group.key(key)));
+            let sort = Sort {
+                spec: SortSpec {
+                    key,
+                    ascending,
+                    folders_first,
+                    group,
+                    group_ascending: !ascending,
+                    ..SortSpec::default()
+                },
+                keys,
+            };
+            let mut listing = Listing::default();
+            let mut next = 3_000;
+            listing.apply(ListingEvent::Added(
+                (0..next).map(|ino| entry(ino, ino % 13)).collect(),
+            ));
+            listing.apply(ListingEvent::Complete);
+            assert_eq!(*listing.sorted(&sort), *listing.compute_sorted(&sort));
+            let moved = |listing: &mut Listing, count: u64, round: u64, next: u64| {
+                let moved = (0..count).map(|i| (i * 11 + round * 131) % next);
+                let batch = moved
+                    .filter(|ino| listing.entries.contains_key(&id(*ino)))
+                    .map(|ino| entry(ino, (ino * 31 + round) % 17))
+                    .collect();
+                listing.apply(ListingEvent::Updated(batch));
+            };
+            for round in 0..24u64 {
+                // Moved and arrived, nothing gone: found by what they were
+                // placed by, all moved in one pass.
+                moved(&mut listing, 250, round, next);
+                listing.apply(ListingEvent::Added(
+                    (next..next + 15).map(|ino| entry(ino, ino % 5)).collect(),
+                ));
+                next += 15;
+                assert_eq!(
+                    *listing.sorted(&sort),
+                    *listing.compute_sorted(&sort),
+                    "{:?}, round {round}",
+                    sort.spec
+                );
+                // Gone with what moved: told by their ids.
+                listing.apply(ListingEvent::Removed(
+                    (0..20).map(|i| id((i * 149 + round * 7) % next)).collect(),
+                ));
+                moved(&mut listing, 40, round + 7, next);
+                assert_eq!(
+                    *listing.sorted(&sort),
+                    *listing.compute_sorted(&sort),
+                    "{:?}, round {round}, gone",
+                    sort.spec
+                );
+            }
+            // Its spans are those of the same entries sorted whole, and it
+            // keeps what its ranks point at, no more.
+            let mut whole = Listing::default();
+            whole.apply(ListingEvent::Added(
+                listing
+                    .entries
+                    .values()
+                    .map(|slot| slot.entry.clone())
+                    .collect(),
+            ));
+            whole.apply(ListingEvent::Complete);
+            let spans = |l: &Listing| -> Vec<(Option<Arc<str>>, usize, usize)> {
+                l.spans_shown(&sort)
+                    .iter()
+                    .map(|s| (s.group.as_ref().map(|g| g.label.clone()), s.start, s.len))
+                    .collect()
+            };
+            assert_eq!(spans(&listing), spans(&whole), "{:?}", sort.spec);
+            let c = listing.sort_cache.lock();
+            let c = c.as_ref().unwrap();
+            let pointed = c.ranks.iter().filter(|r| r.extra != 0).count();
+            let kept = c.extras.kept.iter().filter(|e| e.is_some()).count();
+            assert_eq!(kept, pointed, "{:?}", sort.spec);
+            assert_eq!(pointed > 0, group != GroupBy::None || key.keyed());
+        }
+    }
+
+    /// Grouped and sorted by a value only keys say, what arrives, moves or
+    /// goes is placed where a full sort puts it.
+    #[test]
+    fn grouped_arrivals_are_placed_where_a_full_sort_puts_them() {
+        use crate::grouping::GroupBy;
+        let entry = |ino: u64| {
+            let kind = if ino.is_multiple_of(5) {
+                EntryKind::Directory
+            } else {
+                EntryKind::File
+            };
+            sized_entry(ino, &format!("x{}", ino * 13 % 17), kind, ino % 11)
+        };
+        for (key, group) in [
+            (SortKey::Name, GroupBy::Key(SortKey::Size)),
+            (SortKey::Kind, GroupBy::Key(SortKey::Size)),
+            (SortKey::Kind, GroupBy::SameAsSort),
+            (SortKey::Size, GroupBy::SameAsSort),
+        ] {
+            for (ascending, group_ascending, folders_first) in [
+                (true, true, true),
+                (false, true, false),
+                (true, false, true),
+                (false, false, false),
+            ] {
+                let mut keys = test_keys(key, group.key(key));
+                if group == GroupBy::SameAsSort && key == SortKey::Kind {
+                    keys.group.clone_from(&keys.value);
+                }
+                let sort = Sort {
+                    spec: SortSpec {
+                        key,
+                        ascending,
+                        folders_first,
+                        group,
+                        group_ascending,
+                        ..SortSpec::default()
+                    },
+                    keys: Some(keys),
+                };
+                let mut listing = Listing::default();
+                let mut next = 0;
+                for batch in [1, 9, 0, 3, 40, 2] {
+                    listing.apply(ListingEvent::Added(
+                        (next..next + batch).map(entry).collect(),
+                    ));
+                    next += batch;
+                    let shown = listing.sorted(&sort);
+                    let held: std::collections::HashSet<_> = shown.iter().collect();
+                    let whole: Vec<_> = listing
+                        .compute_sorted(&sort)
+                        .iter()
+                        .filter(|id| held.contains(id))
+                        .copied()
+                        .collect();
+                    assert_eq!(*shown, *whole, "{:?}", sort.spec);
+                }
+                listing.apply(ListingEvent::Complete);
+                let whole = |listing: &Listing| {
+                    assert_eq!(
+                        *listing.sorted(&sort),
+                        *listing.compute_sorted(&sort),
+                        "{:?}",
+                        sort.spec
+                    );
+                };
+                whole(&listing);
+                // Once whole, what grows into another group is placed there
+                // at once: one at a time, and many.
+                let grown = |ino: u64, size| {
+                    sized_entry(ino, &format!("x{}", ino * 13 % 17), EntryKind::File, size)
+                };
+                for (ino, size) in [(1, 6), (2, 7), (12, 0), (13, 4)] {
+                    listing.apply(ListingEvent::Updated(vec![grown(ino, size)]));
+                    whole(&listing);
+                }
+                listing.apply(ListingEvent::Updated(
+                    (21..40)
+                        .filter(|ino| ino % 5 != 0)
+                        .map(|ino| grown(ino, ino % 4))
+                        .collect(),
+                ));
+                whole(&listing);
+            }
+        }
+    }
+
+    /// Keys whose answers changed (a type's name read on a worker) leave
+    /// the order made with them behind: shown until a worker makes the new
+    /// one, as any order asked anew.
+    #[test]
+    fn keys_that_changed_make_the_order_again() {
+        let mut listing = Listing::default();
+        listing.apply(ListingEvent::Added(vec![
+            sized_entry(1, "a", EntryKind::File, 1),
+            sized_entry(2, "b", EntryKind::File, 2),
+        ]));
+        listing.apply(ListingEvent::Complete);
+        let keys = test_keys(SortKey::Kind, None);
+        let sort = Sort {
+            spec: SortSpec {
+                key: SortKey::Kind,
+                ..SortSpec::default()
+            },
+            keys: Some(keys.clone()),
+        };
+        listing.sorted(&sort);
+        assert!(listing.sort_job(&sort).is_none(), "its order is made");
+        keys.changed
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        let job = listing.sort_job(&sort).expect("made again");
+        job.run();
+        listing.take_sorted();
+        assert!(listing.order_before(&sort).is_none());
+    }
+
+    /// An extension and a set of tags sort as words, case folded, none the
+    /// lowest; a folder has no extension.
+    #[test]
+    fn extensions_and_tags_sort_as_words() {
+        use crate::entry::{Provenance, Value, keys};
+        let tagged = |ino, name: &str, tags: &[&str]| {
+            let mut e = sized_entry(ino, name, EntryKind::File, 1);
+            e.metadata.set(
+                keys::TAGS,
+                Value::List(tags.iter().map(|t| Value::Text(Arc::from(*t))).collect()),
+                Provenance::User,
+            );
+            e.metadata.mark_filled();
+            e
+        };
+        let mut listing = Listing::default();
+        listing.apply(ListingEvent::Added(vec![
+            tagged(1, "z.PNG", &["print"]),
+            tagged(2, "y.doc", &["draft", "print"]),
+            tagged(3, "x", &[]),
+            tagged(4, "w.png", &["print", "draft"]),
+            sized_entry(5, "v.d", EntryKind::Directory, 0),
+        ]));
+        listing.apply(ListingEvent::Complete);
+        let order = |key| -> Vec<u64> {
+            let spec = SortSpec {
+                key,
+                folders_first: false,
+                ..SortSpec::default()
+            };
+            listing.sorted(spec).iter().map(|id| id.file.ino).collect()
+        };
+        assert_eq!(order(SortKey::Extension), [5, 3, 2, 4, 1]);
+        // The folder's tags are not read: after the rest.
+        assert_eq!(order(SortKey::Tags), [3, 4, 2, 1, 5]);
+        assert_eq!(
+            tags_of(
+                listing
+                    .get(EntryId {
+                        file: crate::FileId::new(1, 4),
+                        at: 0
+                    })
+                    .unwrap()
+            )
+            .as_deref(),
+            Some("draft, print")
+        );
     }
 
     /// A listing hydrated in batches once complete, as a sort by size asks
@@ -3624,6 +4986,7 @@ mod tests {
                     ascending,
                     show_hidden: false,
                     folders_first,
+                    ..SortSpec::default()
                 };
                 let mut listing = Listing::default();
                 listing.apply(ListingEvent::Added((0..200).map(bare).collect()));

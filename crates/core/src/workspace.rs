@@ -698,6 +698,55 @@ struct OrderCache {
     order: Arc<[EntryId]>,
 }
 
+/// What a pane's keys were made for: the sort's criterion, the group's,
+/// and the sorters' revision.
+pub(crate) type KeysFor = (
+    crate::location::SortKey,
+    Option<crate::location::SortKey>,
+    u64,
+);
+
+/// The groups of a pane's order (`Pane::groups`), and what they were made
+/// from, compared by identity.
+struct GroupsCache {
+    order: Arc<[EntryId]>,
+    spans: Arc<[crate::grouping::Span]>,
+    groups: Arc<[crate::grouping::Span]>,
+}
+
+/// The groups of `order`, which holds entries of `top` (`is_top`) in
+/// `top`'s order, some left out, and entries of folders opened in place
+/// after the folder: each of `top`'s by its span of `top` (`spans`), each
+/// other in the group of the entry before it. `None` when `order` is not
+/// in `top`'s order. Linear in both.
+fn groups_within(
+    order: &[EntryId],
+    top: &[EntryId],
+    spans: &[crate::grouping::Span],
+    is_top: impl Fn(EntryId) -> bool,
+) -> Option<Vec<crate::grouping::Span>> {
+    let mut at = 0;
+    let mut span = 0;
+    let mut lost = false;
+    let groups = crate::grouping::spans_of(order, |_, id| {
+        if lost || !is_top(id) {
+            return None;
+        }
+        while top.get(at).is_some_and(|&t| t != id) {
+            at += 1;
+        }
+        if at == top.len() {
+            lost = true;
+            return None;
+        }
+        while spans.get(span).is_some_and(|s| s.start + s.len <= at) {
+            span += 1;
+        }
+        Some(spans.get(span).and_then(|s| s.group.clone()))
+    });
+    (!lost).then_some(groups)
+}
+
 /// How a name waiting to be selected is selected once listed
 /// (`Pane::reveal`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -730,6 +779,13 @@ pub struct Pane {
     /// `listing.order_shown(sort)`, the order before while a worker makes
     /// this one (ADR-121).
     pub sort: SortSpec,
+    /// What the sorter knows of the entries for `sort` (ADR-130): made by
+    /// `App::make_keys_again` whenever `sort` needs them; every listing the
+    /// pane shows is sorted with them (`sorting`).
+    keys: Option<crate::grouping::Keys>,
+    /// What `keys` were made for: the criteria, and the sorters' revision
+    /// then; none while the sort needs none.
+    keys_for: Option<KeysFor>,
     pub history: Vec<Location>,
     /// Index into `history` of the current location.
     pub history_pos: usize,
@@ -779,6 +835,9 @@ pub struct Pane {
     /// The selection as last looked over: see `retain_changed`.
     retained: Option<Retained>,
     order_cache: parking_lot::Mutex<Option<OrderCache>>,
+    /// The groups of the order last shown (`groups`): the order and the
+    /// listing's spans they were made from, and the groups.
+    groups_cache: parking_lot::Mutex<Option<GroupsCache>>,
     /// The order `order` last gave, what is shown: where a cursor whose
     /// entry leaves the view goes from (`Selection::retain_near`).
     shown: parking_lot::Mutex<Option<Arc<[EntryId]>>>,
@@ -1688,6 +1747,8 @@ impl Pane {
             left: None,
             selection: Selection::default(),
             sort: SortSpec::default(),
+            keys: None,
+            keys_for: None,
             history: Vec::new(),
             history_pos: 0,
             left_at: Vec::new(),
@@ -1702,6 +1763,7 @@ impl Pane {
             tree_members_version: 0,
             retained: None,
             order_cache: parking_lot::Mutex::new(None),
+            groups_cache: parking_lot::Mutex::new(None),
             shown: parking_lot::Mutex::new(None),
             filter: None,
             read: None,
@@ -2955,7 +3017,7 @@ impl Pane {
     /// The window's thread builds no folder it opens, nor sorts one anew.
     pub fn jobs_wanted(&mut self) -> Vec<crate::location::ListingJob> {
         use crate::location::ListingJob;
-        let sort = self.sort;
+        let sort = self.sorting();
         let mut jobs = Vec::new();
         let listings = std::iter::once((self.open.as_ref(), &mut self.listing)).chain(
             self.kept
@@ -2964,8 +3026,8 @@ impl Pane {
         );
         for (open, listing) in listings {
             let Some(open) = open else { continue };
-            jobs.extend(listing.fill_job(open.events(), sort).map(ListingJob::Fill));
-            jobs.extend(listing.sort_job(sort).map(ListingJob::Sort));
+            jobs.extend(listing.fill_job(open.events(), &sort).map(ListingJob::Fill));
+            jobs.extend(listing.sort_job(&sort).map(ListingJob::Sort));
         }
         jobs
     }
@@ -3956,16 +4018,99 @@ impl Pane {
     /// rest until it comes (`SortKey::needs_metadata`), so whoever sorts
     /// so asks for them.
     pub fn unknown(&self) -> Vec<EntryId> {
-        let key = self.sort.key;
+        let keys: Vec<crate::location::SortKey> = std::iter::once(self.sort.key)
+            .chain(self.sort.group_key())
+            .filter(|key| key.needs_metadata())
+            .collect();
+        if keys.is_empty() {
+            return Vec::new();
+        }
         self.order()
             .iter()
             .copied()
             .filter(|id| {
                 self.entry(*id).is_some_and(|e| {
-                    !e.is_place() && key.applies_to(e) && !key.has_read(&e.metadata)
+                    !e.is_place()
+                        && keys
+                            .iter()
+                            .any(|key| key.applies_to(e) && !key.has_read(&e.metadata))
                 })
             })
             .collect()
+    }
+
+    /// The sort every listing the pane shows is sorted with: its spec, and
+    /// the keys made for it where it needs them (`SortSpec::needs_keys`).
+    pub fn sorting(&self) -> crate::grouping::Sort {
+        crate::grouping::Sort {
+            spec: self.sort,
+            keys: self.keys.clone().filter(|_| self.sort.needs_keys()),
+        }
+    }
+
+    /// The keys made for the pane's sort, if any.
+    pub fn keys(&self) -> Option<&crate::grouping::Keys> {
+        self.keys.as_ref()
+    }
+
+    /// Sort with `keys`, made for `made_for`, from now on
+    /// (`App::make_keys_again`).
+    pub(crate) fn set_keys(
+        &mut self,
+        keys: Option<crate::grouping::Keys>,
+        made_for: Option<KeysFor>,
+    ) {
+        self.keys = keys;
+        self.keys_for = made_for;
+    }
+
+    /// What the pane's keys are to be made for with the sorters at
+    /// `revision`: the criteria, while its sort needs keys.
+    pub(crate) fn keys_wanted_for(&self, revision: u64) -> Option<KeysFor> {
+        self.sort
+            .needs_keys()
+            .then(|| (self.sort.key, self.sort.group_key(), revision))
+    }
+
+    /// Whether its keys are not those its sort wants (a tab opened with
+    /// another's sort, a sorter turned on or off): made again at the next
+    /// pump, whatever path changed the sort.
+    pub(crate) fn keys_wanted(&self, revision: u64) -> bool {
+        self.keys_wanted_for(revision) != self.keys_for
+    }
+
+    /// Where each group starts in what the pane shows (`order`), its label
+    /// and its count (ADR-130); empty while it is not grouped. An entry of
+    /// a folder opened in place is in the group of the folder; a pane
+    /// laid out otherwise than its listing's order (a search as a tree)
+    /// is not grouped.
+    pub fn groups(&self) -> Arc<[crate::grouping::Span]> {
+        let sort = self.sorting();
+        if sort.grouping().is_none() {
+            return Arc::from([]);
+        }
+        let spans = self.listing.spans_shown(&sort);
+        let order = self.order();
+        let top = self.listing.order_shown(&sort);
+        let mut cache = self.groups_cache.lock();
+        if let Some(c) = cache.as_ref()
+            && Arc::ptr_eq(&c.order, &order)
+            && Arc::ptr_eq(&c.spans, &spans)
+        {
+            return Arc::clone(&c.groups);
+        }
+        let groups: Arc<[crate::grouping::Span]> = if Arc::ptr_eq(&order, &top) {
+            Arc::clone(&spans)
+        } else {
+            groups_within(&order, &top, &spans, |id| self.listing.get(id).is_some())
+                .map_or_else(|| Arc::from([]), Arc::from)
+        };
+        *cache = Some(GroupsCache {
+            order,
+            spans,
+            groups: Arc::clone(&groups),
+        });
+        groups
     }
 
     /// `order` before the name filter and the narrowing: what the pane
@@ -3973,12 +4118,13 @@ impl Pane {
     /// yet, and does not show it until it can; no view draws it, so
     /// whoever narrows asks for it (`hydrate`) from here.
     pub fn unfiltered_order(&self) -> Arc<[EntryId]> {
-        let top = self.listing.order_shown(self.sort);
+        let sort = self.sorting();
+        let top = self.listing.order_shown(&sort);
         if self.expanded.is_empty() {
             return top;
         }
         let opened: Vec<(&Opened, Arc<[EntryId]>)> = opened(&self.kept, &self.expanded)
-            .map(|(o, k)| (o, k.listing.order_shown(self.sort)))
+            .map(|(o, k)| (o, k.listing.order_shown(&sort)))
             .collect();
         let from: Vec<Arc<[EntryId]>> = std::iter::once(Arc::clone(&top))
             .chain(opened.iter().map(|(_, ids)| Arc::clone(ids)))

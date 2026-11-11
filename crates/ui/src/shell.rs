@@ -2636,7 +2636,7 @@ impl Shell {
             "toolbar_next" | "toolbar_prev"
                 if self.walk_dialog(name == "toolbar_next", window, cx) => {}
             "toolbar_next" | "toolbar_prev" | "toolbar_first" | "toolbar_last"
-                if self.preview_sub_walk(name, window, cx) => {}
+                if self.popup_sub_walk(name, window, cx) => {}
             "toolbar_next" => {
                 window.focus_next(cx);
                 self.reveal_focused_row(window, cx);
@@ -3224,7 +3224,7 @@ impl Shell {
                 cx,
             ),
             "preview_menu" => self.preview_menu(args, window, cx),
-            "preview_submenu" => self.preview_submenu(args, window, cx),
+            "toolbar_submenu" => self.toolbar_submenu(args, window, cx),
             "note" => self.note_command(args, window, cx),
             "preview_goto" => self.preview_goto(window, cx),
             "reader_page_submit" => self.reader_page_submit(window, cx),

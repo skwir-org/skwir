@@ -155,7 +155,7 @@ pub const COLUMNS: [Column; 6] = [
         label: "Type",
         description: "Show the kind of file, such as PDF document.",
         shown: true,
-        sort: None,
+        sort: Some(SortKey::Type),
         width: 150.,
         right: false,
     },
@@ -238,18 +238,31 @@ impl Shell {
         crate::settings::remember(self, column.setting, shown.to_string(), cx);
     }
 
-    /// What the pane sorts by here, each with its column's label: Name,
-    /// then each column that sorts and applies here (`column_applies`). The
-    /// View menu offers these, and the palette only their sorts.
+    /// What the pane sorts by here, each with what menus call it: every
+    /// criterion (ADR-130) that applies here, as its column would (Rating
+    /// while ratings are kept, Deleted in the trash), those only the
+    /// sorter reads (a kind, a type's name, an owner) while there is one.
+    /// The View menu offers these, and the palette only their sorts.
     pub fn sort_keys(&self) -> Vec<(&'static str, SortKey)> {
-        std::iter::once(("Name", SortKey::Name))
-            .chain(
-                COLUMNS
-                    .iter()
-                    .filter(|column| self.column_applies(column.detail))
-                    .filter_map(|column| Some((column.label, column.sort?))),
-            )
+        let sorter = !self.app.registry.sorters.all().is_empty();
+        SortKey::ALL
+            .into_iter()
+            .filter(|key| match key {
+                SortKey::Rating => self.column_applies(Detail::Rating),
+                SortKey::Deleted => self.column_applies(Detail::Deleted),
+                key => sorter || !key.keyed(),
+            })
+            .map(|key| (key.title(), key))
             .collect()
+    }
+
+    /// What the pane can be grouped by here: what it sorts by, while the
+    /// sorter, which makes every group, is there; nothing else.
+    pub fn group_keys(&self) -> Vec<SortKey> {
+        if self.app.registry.sorters.all().is_empty() {
+            return Vec::new();
+        }
+        self.sort_keys().into_iter().map(|(_, key)| key).collect()
     }
 
     /// Whether `detail` can be shown here: Rating only while ratings are

@@ -522,7 +522,10 @@ impl PaneView for ColumnsView {
             let p = ws.pane(pane);
             (
                 p.and_then(|p| p.location().cloned()),
-                p.map_or_else(SortSpec::default, |p| p.sort),
+                p.map_or_else(
+                    || skwir_core::grouping::Sort::from(SortSpec::default()),
+                    skwir_core::workspace::Pane::sorting,
+                ),
                 p.and_then(|p| p.selection.cursor),
                 p.is_some_and(|p| p.listing.is_complete()),
             )
@@ -566,7 +569,7 @@ impl PaneView for ColumnsView {
                     let Some(listing) = pane.and_then(|p| p.kept(&a.location)) else {
                         return Arc::from([]);
                     };
-                    let ids = listing.order_shown(spec);
+                    let ids = listing.order_shown(&spec);
                     // Looked for again only when its names change: every
                     // batch of metadata moved the listing's version. Not
                     // while it is held back, which shows nothing yet.
@@ -594,7 +597,7 @@ impl PaneView for ColumnsView {
                 let ws = shell.app.workspace.read();
                 ws.pane(pane)
                     .and_then(|p| p.kept(&next))
-                    .map_or_else(|| Arc::from([]), |listing| listing.order_shown(spec))
+                    .map_or_else(|| Arc::from([]), |listing| listing.order_shown(&spec))
             };
             (next, ids)
         });

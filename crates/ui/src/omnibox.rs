@@ -3136,7 +3136,7 @@ fn depth_line(shell: &Shell, typed: Typed, cx: &mut Context<Shell>) -> Option<An
             format!(
                 "As you type: {} of {}",
                 crate::format::thousands(shell.ui().list.sorted.len()),
-                crate::format::count(p.listing.order_shown(p.sort).len(), "item")
+                crate::format::count(p.listing.order_shown(p.sorting()).len(), "item")
             )
         })
     } else if words.is_empty() {

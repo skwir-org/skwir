@@ -13,6 +13,7 @@ mod any_input;
 pub mod assist;
 pub mod facets;
 pub mod field;
+pub mod groups;
 pub mod lang;
 pub mod lens;
 pub mod plocate;
@@ -883,6 +884,14 @@ impl Plugin for QueryPlugin {
             skwir_core::registry::FilterReader {
                 read: Arc::new(lens::read_filter),
                 leads: Some(provider::leads_of(app.weak(), lifetime.clone())),
+            },
+        );
+        // What a sort or a grouping needs that core cannot read (ADR-130).
+        let weak = app.weak();
+        app.registry.sorters.add(
+            ID,
+            skwir_core::registry::Sorter {
+                keys: Arc::new(move |sort, group| groups::keys(&weak, sort, group)),
             },
         );
 

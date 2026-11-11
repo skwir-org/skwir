@@ -1,0 +1,166 @@
+# ADR-130: Groups and the sort from one list of criteria
+
+Status: accepted, 2026-11-11, on the user's answers to the proposal
+"Grouping" (a page shared in the session, with mock-ups of the View
+menu, a list grouped by date and a grid grouped by kind). Built in
+phases (below): phase 1 on 2026-11-11, on Linux; macOS and Windows not
+compiled for it yet. Amends ADR-099 (the View menu's sort) and follows
+ADR-121 (an order asked anew is made on a worker).
+
+## Context
+
+- **Asked for** (issue #10, 2026-11-10): folders and files sorted
+  together by date. Folders first became a setting (f34cab8e); the reply
+  on the issue promised grouping by other criteria too. The user named
+  Dolphin's Group By (26.08: None, Same as Sort, then criteria, in a
+  submenu) as the model.
+- **What others do**, read for the proposal: Dolphin's groups of an
+  explicit criterion always run ascending (dates oldest first), sets
+  folders apart before grouping (a heading can appear twice, once among
+  the folders, once among the files: its own defaults turn Folders First
+  off in Downloads), and steps dates by weeks, then one group per month
+  for good. Finder keeps a fixed order per criterion; Windows Explorer
+  gives the groups a direction of their own, apart from the sort's.
+  Nautilus, Nemo and Thunar do not group.
+- **Skwir's order is one flat list** of entries (`Listing::order_shown`),
+  sorted on a worker when asked anew (ADR-121), which every view draws
+  and everything acts on (the arrows, ranges, Select All, an agent's
+  index). The sort had five keys (name, size, modified, rating, deleted),
+  each from what core reads itself.
+- **Core knows neither types nor the calendar** (ADR-037, ADR-017): a
+  kind, a type's name, an owner's name and a day's bounds are the
+  platform's, which plugins reach. The query plugin already owns kinds,
+  date periods, sizes and tags, with their query terms (ADR-107).
+
+## Decision
+
+1. **One list of criteria** (`SortKey`) for the sort and the group:
+   Name, Kind, Type, Extension, Size, Modified, Created, Accessed,
+   Deleted (in the Trash), Rating (while ratings are kept), Tags, Owner,
+   and Folder (where files come from many folders; phase 4). The sort
+   gains every one it lacked; every list column sorts, Type and Folder
+   included. A criterion is offered where its column would apply.
+2. **Group by** (`SortSpec::group`): None, Same as sort, or a criterion
+   with a direction of its own (`SortSpec::group_ascending`). Same as
+   sort groups by the sort's criterion in the sort's direction. The group
+   comes first in what an order is sorted by, so each group is one run
+   of the one order; the order is made as any order asked anew is, on a
+   worker (ADR-121). What a pane shows says where each group starts, its
+   label and its count (`Pane::groups`).
+3. **A criterion starts in its natural direction**, for the sort and the
+   group alike: words A to Z (Name, Kind, Type, Extension, Tags, Owner,
+   Folder), sizes largest first, dates newest first, ratings highest
+   first. Choosing the criterion shown again flips it, as before; a
+   column's header does the same. (Before, only Rating and Deleted
+   started from the top.)
+4. **A direction reverses its criterion, never the names**: entries that
+   tie on it are listed A to Z, then by identity, whichever the
+   direction. Sorted by name, the name is the criterion.
+5. **Folders first acts within each group**: a group lists its folders,
+   then its files, and each heading appears once. A group that holds only
+   folders (Folders, by size or extension, where folders have none; the
+   kind Folders) comes first while Folders first is on, whatever the
+   group's direction; while it is off, it goes where the criterion puts
+   it (by size, as having none).
+6. **What has none is the lowest**: no date, no rating, no tags, no
+   extension, a folder's size: first going up, last going down, as
+   folders sorted by size already were. What is not read yet (a size
+   before the stat) sorts after the rest in either direction, as before.
+7. **Groups don't overlap**: each entry is in one, the first that holds
+   it.
+   - **Dates** (Modified, Created, Accessed, Deleted): Today, Yesterday,
+     Earlier this week, Last week, Earlier this month, Last month,
+     Earlier this year, then one group per year; In the future; No date.
+     Days of the user's calendar (ADR-017), weeks from the locale's first
+     weekday; a group left empty is not shown; the groups are made again
+     at midnight.
+   - **Size**: Empty, Under 100 KB, 100 KB to 1 MB, 1 to 100 MB, 100 MB
+     to 1 GB, Over 1 GB; Folders.
+   - **Name**: the first letter as the name sort folds it (É with E),
+     0–9, and Other for a name that begins with neither; letters of
+     other scripts each a group of their own.
+   - **Kind**: the type database's kinds (`mime::Kind`), a file of
+     several in its first; **Type**: the type's name; **Extension**: the
+     extension, No extension, Folders; **Rating**: one group per rating,
+     Unrated; **Tags**: the whole set a file has ("draft, print"), No
+     tags, so no file is shown twice; **Owner**: the owner's name.
+   - **Same as sort** is the sort criterion's groups: it moves no entry
+     but a name that begins with neither a letter nor a digit, which
+     gathers in Other.
+8. **What a plugin knows, a plugin answers** (`registry::Sorter`, the
+   query plugin's): for a sort, `Keys` that give an entry's value for a
+   criterion core cannot read (Kind, Type, Owner) and an entry's group
+   with its label, and when they next change. Keys answer from memory,
+   never blocking: a type's name not read yet is read on a worker, the
+   type itself standing for it meanwhile, and the order is made again
+   once it is (`Keys::changed`). Core reads Name, Size, the dates,
+   Rating, Extension and Tags itself. Keys are made again when the sort
+   or the group changes, when the plugin is turned on or off, and when
+   they say they change (midnight). With no sorter (the plugin off),
+   Group by and the criteria it answers are not offered, and a pane
+   sorted by one is in name order.
+9. **Headings are rows, never entries** (phases 2 and 3). A view that
+   groups keeps one map from its rows to positions in the order; drawing,
+   scrolling and the pointer work in rows, everything else in positions.
+   The cursor, ranges, Select All and the rubber band act on entries
+   alone, and a screen reader's position and count are entries'. A
+   heading is a row as tall as an entry, its label in Small text with
+   the count beside it (ADR-117), the one at the top pinned. The tree
+   groups its top level only; a folder opened in place keeps its entries
+   under it. The grid starts each group on a new row under a heading as
+   wide as the pane, and Up and Down go to the tile drawn above or
+   below. Columns, Board, Usage and Map do not group at first.
+10. **The View menu** (amends ADR-099, decision 5): Sort by, its
+    direction in the criterion's words, over a row that names the
+    criterion and opens a fly-out of them all; Group by the same, its
+    fly-out adding None and Same as sort, its direction shown only for a
+    criterion of its own. Each is a command: `sort` as before, `group`
+    (`by`, `ascending`, `pane`), with palette forms ("Group by kind");
+    Group by has no default key.
+11. **Per pane, as the sort**: not saved across restarts. A place that
+    remembers its own (Downloads by date) is for an ADR of its own.
+12. **A heading acts** (phase 4): a click selects its group; its menu
+    offers Select these and Show only these, which sets the group's
+    query term as the lens (ADR-107). Collapsing comes later.
+13. **Not done**: a second sort key (grouping is the second key: grouped
+    by type, sorted newest first, each type's files are listed newest
+    first under headings); folders sized by how many items they hold, as
+    Dolphin does, which reads every folder shown (a request per folder
+    on a remote mount) before the order can settle.
+
+## Phases
+
+1. Core and the query plugin: the criteria, `GroupBy`, the keys and
+   their sorter, the order with groups first, the spans, the `group`
+   command, the sort's new criteria and directions, the menu. Every date
+   boundary tested against an explicit calendar.
+2. List and Tree: the headings, the row map, the pinned heading, what a
+   screen reader hears.
+3. The grid: its breaks, Up and Down by what is drawn.
+4. Group by Folder (the sort learns each entry's folder), Show only
+   these, a heading's click and menu.
+5. Later: collapsing; a Board with a column per group; criteria read on
+   demand (the day a picture was taken).
+
+## Consequences
+
+- A pane sorted by date starts newest first, and one sorted by size
+  largest first: a change for anyone used to the old starts.
+- Every order carries the group, the file flag, the unknown flag, the
+  value, the name and the identity; an order's ranks name the group and
+  a criterion's words by a number into a table beside them, which points
+  at what every entry with them shares: some 25 bytes an entry more
+  while a listing is shown, and nothing while it is neither grouped nor
+  sorted by words. A rank stays as big as before (64 bytes).
+- Placing what changed no longer merges every rank (`Listing::place`):
+  the comparisons grow with what changed, and the order is moved once,
+  in blocks. Two costs in memory, chosen by the user (2026-11-11): what
+  moved keeps what it was placed by until it is placed again (24 bytes
+  an entry waiting: some 24 KB a batch once a folder is read, up to
+  600 KB while 100 000 entries stream in), and each sorted listing keeps
+  the order before last to write the next over (24 bytes an entry shown:
+  2.4 MB at 100 000). A folder of 100 000 entries hydrated by size in 98
+  batches takes about 110 ms and one entry grown 0.4 ms, against about
+  400 ms and 1.1 ms before groups (620 ms with groups, merged as before).
+- Keys are a plugin's closures run per entry on a worker (and for what
+  arrives, on the window's thread): cheap by contract, as a lens is.

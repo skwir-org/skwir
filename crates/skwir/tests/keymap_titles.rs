@@ -91,16 +91,10 @@ fn the_palette_names_each_thing_to_do_once() {
         }
     }
     let views = app.registry.views.all();
-    // Every sort, as where every column applies.
-    let sorts = [
-        SortKey::Name,
-        SortKey::Size,
-        SortKey::Modified,
-        SortKey::Rating,
-        SortKey::Deleted,
-    ];
+    // Every sort and every group (ADR-130), as where every column applies.
+    let sorts = SortKey::ALL;
     let mut offered: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for offer in skwir_ui::palette::offered(&app, &views, &sorts) {
+    for offer in skwir_ui::palette::offered(&app, &views, &sorts, &sorts) {
         offered
             .entry(offer.title)
             .or_default()
@@ -147,7 +141,7 @@ fn what_only_reads_is_data_unless_the_window_shows_its_answer() {
         "reads, neither data nor shown from the window: {undecided:?}"
     );
     let views = app.registry.views.all();
-    let offered = skwir_ui::palette::offered(&app, &views, &[SortKey::Name]);
+    let offered = skwir_ui::palette::offered(&app, &views, &[SortKey::Name], &[SortKey::Name]);
     for name in SHOWN {
         assert!(offered.iter().any(|o| o.name == name), "{name} offered");
     }

@@ -29,6 +29,8 @@ struct Snapshot {
     suggesters: Vec<std::sync::Arc<str>>,
     /// What reads the words typed over a folder (the query plugin).
     filter_readers: Vec<std::sync::Arc<str>>,
+    /// What makes the keys sorts and groups need (the query plugin, ADR-130).
+    sorters: Vec<std::sync::Arc<str>>,
     /// What keeps a kind of location in the sidebar (bookmarks, searches).
     keepers: Vec<String>,
     /// Other ways to see a folder, each a button of its address (its tags).
@@ -89,6 +91,7 @@ fn snapshot(app: &App) -> Snapshot {
         remotes: app.registry.remotes.owners(),
         suggesters: app.registry.suggesters.owners(),
         filter_readers: app.registry.filter_readers.owners(),
+        sorters: app.registry.sorters.owners(),
         keepers: app
             .registry
             .keepers
