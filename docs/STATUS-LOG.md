@@ -14727,3 +14727,26 @@ quotation and table.
 **Seen, left as it was:** the line before a long paragraph's cut ends
 short: the rest is a block of its own, set from a new line.
 
+## 2026-11-11: The thumbnail tests of windows wait for their request to run
+
+`thumbs::tests::a_window_drawing_never_makes_another_window_s_request_stale`
+failed in two runs of three of core's, the UI's and extend's tests side by
+side, and passed alone: "its own window moved on", the request no longer
+in flight. It took for granted that the slow provider was running when the
+window's frames went on; under load the worker started after them, found
+the request stale and dropped it before it ran, as it should
+(`work_one`), so nothing was in flight to be cancelled. The code was
+right, the test raced it. `a_window_closing_leaves_what_another_asked_for_too`
+had met the same race and been loosened to "cancelled, or gone already".
+
+- `holding()`, a provider that says when a worker runs it (`Held::taken`)
+  and holds the request until let go: the tests of a window's frames and of
+  a window closing wait for it before they tick or close, and check a
+  running request cancelled (the closing test strictly again); the test of
+  two windows waits for the first request held, as its comment says.
+
+**Checked:** rustfmt; clippy `-D warnings` on `skwir-core`; its window
+tests 20 times alone; core's, the UI's and extend's tests side by side
+three times (1380 passed each); the thumbnail tests 30 times with every
+core kept busy (17 passed each).
+

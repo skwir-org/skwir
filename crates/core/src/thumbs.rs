@@ -985,6 +985,39 @@ mod tests {
         }
     }
 
+    /// A provider that tells when a worker runs it (`Held::taken`) and then
+    /// holds the request until let go (`Held::release`), ten seconds at
+    /// most: a request running, which a stale frame cancels, where one still
+    /// queued is dropped before it runs.
+    fn holding() -> (Arc<Fake>, Held) {
+        let slow = Fake::new("slow", Stage::Generate, true);
+        let (release, wait) = std::sync::mpsc::channel::<()>();
+        let (taken, started) = std::sync::mpsc::channel::<()>();
+        *slow.during.lock() = Some(Box::new(move || {
+            let _ = taken.send(());
+            let _ = wait.recv_timeout(Duration::from_secs(10));
+        }));
+        (slow, Held { release, started })
+    }
+
+    struct Held {
+        release: std::sync::mpsc::Sender<()>,
+        started: std::sync::mpsc::Receiver<()>,
+    }
+
+    impl Held {
+        /// Wait until a worker runs the request: in flight until let go.
+        fn taken(&self) {
+            self.started
+                .recv_timeout(Duration::from_secs(10))
+                .expect("a worker takes the request");
+        }
+
+        fn release(&self) {
+            self.release.send(()).ok();
+        }
+    }
+
     impl ThumbnailProvider for Fake {
         fn id(&self) -> &'static str {
             self.id
@@ -1046,17 +1079,16 @@ mod tests {
     #[test]
     fn a_window_drawing_never_makes_another_window_s_request_stale() {
         let t = Thumbnails::new(Scheduler::new(2));
-        let slow = Fake::new("slow", Stage::Generate, true);
-        let (release, wait) = std::sync::mpsc::channel::<()>();
-        *slow.during.lock() = Some(Box::new(move || {
-            let _ = wait.recv_timeout(Duration::from_secs(10));
-        }));
-        t.register("core", slow.clone());
+        let (slow, held) = holding();
+        t.register("core", slow);
         let (a, b) = (Asker(1), Asker(2));
         assert!(matches!(
             t.get_for(a, req(1), Priority::Visible),
             ThumbState::Pending
         ));
+        // Running, so its own window's frames cancel it: still queued, they
+        // would have dropped it before it ran.
+        held.taken();
         let cancelled = |t: &Thumbnails, ino: u64| {
             t.state
                 .lock()
@@ -1072,23 +1104,20 @@ mod tests {
             t.tick_for(a);
         }
         assert_eq!(cancelled(&t, 1), Some(true), "its own window moved on");
-        release.send(()).ok();
+        held.release();
 
         // Asked again by the other window, which then closes.
-        let slow = Fake::new("slow", Stage::Generate, true);
-        let (release, wait) = std::sync::mpsc::channel::<()>();
-        *slow.during.lock() = Some(Box::new(move || {
-            let _ = wait.recv_timeout(Duration::from_secs(10));
-        }));
+        let (slow, held) = holding();
         let t = Thumbnails::new(Scheduler::new(2));
         t.register("core", slow);
         assert!(matches!(
             t.get_for(b, req(1), Priority::Visible),
             ThumbState::Pending
         ));
+        held.taken();
         t.forget_asker(b);
         assert_eq!(cancelled(&t, 1), Some(true), "its window closed");
-        release.send(()).ok();
+        held.release();
     }
 
     /// A picture two windows asked for stays asked while either wants it:
@@ -1097,17 +1126,14 @@ mod tests {
     #[test]
     fn a_picture_two_windows_asked_for_stays_until_both_moved_on() {
         let t = Thumbnails::new(Scheduler::new(2));
-        let slow = Fake::new("slow", Stage::Generate, true);
-        let (release, wait) = std::sync::mpsc::channel::<()>();
-        *slow.during.lock() = Some(Box::new(move || {
-            let _ = wait.recv_timeout(Duration::from_secs(10));
-        }));
+        let (slow, held) = holding();
         t.register("core", slow);
         let (a, b) = (Asker(1), Asker(2));
         // The worker takes the first and holds it; the second stays queued,
         // asked by both, the first asker last.
         let pending = |state: ThumbState| assert!(matches!(state, ThumbState::Pending));
         pending(t.get_for(a, req(1), Priority::Visible));
+        held.taken();
         pending(t.get_for(b, req(2), Priority::Visible));
         pending(t.get_for(a, req(2), Priority::Visible));
         let cancelled = |ino: u64| {
@@ -1124,7 +1150,7 @@ mod tests {
             t.tick_for(a);
         }
         assert_eq!(cancelled(2), Some(false), "the other window still wants it");
-        release.send(()).ok();
+        held.release();
         let landed = (0..1000).any(|_| {
             if matches!(
                 t.get_for(b, req(2), Priority::Visible),
@@ -1142,17 +1168,14 @@ mod tests {
     #[test]
     fn a_window_closing_leaves_what_another_asked_for_too() {
         let t = Thumbnails::new(Scheduler::new(2));
-        let slow = Fake::new("slow", Stage::Generate, true);
-        let (release, wait) = std::sync::mpsc::channel::<()>();
-        *slow.during.lock() = Some(Box::new(move || {
-            let _ = wait.recv_timeout(Duration::from_secs(10));
-        }));
+        let (slow, held) = holding();
         t.register("core", slow);
         let (a, b) = (Asker(1), Asker(2));
         assert!(matches!(
             t.get_for(b, req(1), Priority::Visible),
             ThumbState::Pending
         ));
+        held.taken();
         assert!(matches!(
             t.get_for(a, req(1), Priority::Visible),
             ThumbState::Pending
@@ -1167,11 +1190,8 @@ mod tests {
         t.forget_asker(a);
         assert_eq!(cancelled(), Some(false), "the other window asked for it");
         t.forget_asker(b);
-        assert!(
-            matches!(cancelled(), Some(true) | None),
-            "no one asks for it any more: cancelled, or gone already"
-        );
-        release.send(()).ok();
+        assert_eq!(cancelled(), Some(true), "no one asks for it any more");
+        held.release();
     }
 
     /// A picture two windows asked for wakes both, each by its own waker
