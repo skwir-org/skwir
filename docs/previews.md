@@ -215,11 +215,12 @@ The player, in the panel or pinned at its foot:
   `skwir-math` package), in the line they are written in or centered on
   one of their own: Markdown's `$…$` and `$$…$$`, a notebook's math as
   Jupyter finds it (`\\(…\\)`, `\\[…\\]` and `\begin{…}` environments
-  too) and the LaTeX its cells return, MathML that carries its TeX in
-  HTML files, books and e-mail, and the TeX of a page written for MathJax
-  or KaTeX (an exported notebook). A page that already drew its formulas
-  (KaTeX's, Wikipedia's) shows each once, typeset from its TeX. They are drawn in the text's color and
-  size, and copy as their TeX. As in Jupyter, an equation is numbered only
+  too) and the LaTeX its cells return, MathML in HTML files, books and
+  e-mail (its TeX where it carries it, else its markup), and the TeX of a
+  page written for MathJax or KaTeX (an exported notebook). A page that
+  already drew its formulas (KaTeX's, Wikipedia's) shows each once,
+  typeset from its TeX. They are drawn in the text's color and size, and
+  copy as their TeX. As in Jupyter, an equation is numbered only
   by its `\tag`, set at the end of its line. Without the helper, or where
   the TeX cannot be typeset, the formula is its TeX, as code.
 - Jupyter notebooks (`.ipynb`, format 4): Markdown cells, code in the

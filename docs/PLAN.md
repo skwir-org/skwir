@@ -930,9 +930,9 @@ packages only; Windows' and macOS's leave it out, as Mermaid's. A formula
 is drawn in one ink (`\color` is not kept) and is not found by its TeX.
 RaTeX sets a hand-written `\tag{A}` in italic. What a screen reader hears
 of a formula was read over AT-SPI (a probe on the a11y check's harness),
-not with Orca. MathJax 3's saved pages carry MathML without its TeX:
-their formulas read as loose letters. A visually hidden label alone in its
-block is lost (an empty block is not kept).
+not with Orca. MathML that uses an element `math::mathml` does not know
+(`mglyph`, `mmultiscripts`, `mlongdiv`) reads as loose letters. A visually
+hidden label alone in its block is lost (an empty block is not kept).
 
 **Grouping** (issue #10, 2026-11-10): the reply promised a look at
 grouping by other criteria (kind, date…); nothing is designed yet. Folders

@@ -116,3 +116,15 @@ as the reader draws neither the spans nor a picture it does not fetch
 (`rich_preview::pairs`). A drawing with no formula beside it (KaTeX's
 `html` output) stays, shown and not said, as KaTeX marks it.
 
+### 2026-11-11: MathML without its TeX
+
+An EPUB, or a page MathJax drew and saved, often carries MathML alone,
+which read as loose letters ("x2+y2"). Its presentation markup is now
+written as TeX (`math::mathml`) and typeset like any formula: identifiers
+in their letters' style (a function TeX names as its command), numbers
+and operators as their Unicode, which RaTeX reads, TeX's own characters
+escaped; groups, fences (`\left`, `\right`), scripts, fractions, roots,
+accents, limits (a large operator unbraced, so TeX places them), tables,
+enclosures. An element it does not know leaves the formula as it read:
+never half a formula. A TeX annotation, where there is one, comes first.
+

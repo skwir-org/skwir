@@ -14590,3 +14590,36 @@ content.
 **Seen, left as it was:** a cell of long text squeezed to its column's
 least width makes its row tall, as a browser's table does.
 
+## 2026-11-11: MathML without its TeX, typeset from its markup
+
+EPUBs, and pages MathJax drew and saved, often carry MathML with no TeX
+annotation: their formulas read as loose letters ("x2+y2"). The fourth
+step of the list (ADR-129, amended): `math::mathml` writes presentation
+MathML as TeX, and the formula is typeset as any other; a TeX annotation
+still comes first, `alttext` after.
+
+- Identifiers in their letters' style (one letter italic, a word upright,
+  `mathvariant` as `\mathbb`, `\mathbf`…), a function TeX names as its
+  command (`\sin`, `\lim`), numbers and operators as their Unicode (RaTeX
+  reads `×`, `≤`, `α`), TeX's own characters escaped, the invisible
+  operators dropped; rows, fences as `\left`/`\right`, scripts,
+  fractions (`linethickness="0"` as `\genfrac`), roots, accents
+  (`\hat`, `\vec`, `\overline`…), limits (a large operator unbraced, so TeX
+  places them under and over as it does for `\sum`), `\overset` and
+  `\underset` otherwise, tables as `matrix`, `mfenced`, `menclose` (box,
+  strike), `mphantom`. An element it does not know leaves the formula as
+  it read.
+
+**Checked:** rustfmt; clippy `-D warnings` on `skwir-platform` and
+`skwir-ui`; `skwir-platform`'s, `-books`', `-email`'s, `-documents`' and
+`-markdown`'s tests (585 passed, then the MathML ones again). New tests:
+nine MathML forms and the TeX they become; an unknown element, an empty
+formula, an annotation not TeX; a quadratic formula and a matrix with no
+TeX, typeset by the helper. A debug window on Xvfb, an XHTML chapter of
+plain MathML: an inline polynomial, the quadratic formula set apart, a
+rotation matrix with upright functions, a sum with its limits under and
+over, a vector in ℝ³.
+
+**Seen, left as it was:** a minus before a function in a matrix's cell is
+set as a binary sign, a little wide (RaTeX's spacing).
+

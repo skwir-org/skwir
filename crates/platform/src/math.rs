@@ -16,6 +16,7 @@ use skwir_core::{
 use crate::inspection::limits;
 
 pub mod delimited;
+pub mod mathml;
 
 /// Formulas a page typesets at most; past them each stays its TeX.
 pub const FORMULAS: usize = 2048;

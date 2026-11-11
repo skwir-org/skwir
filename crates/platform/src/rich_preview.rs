@@ -1051,9 +1051,15 @@ fn beside(node: NodeRef<'_, Node>, next: bool) -> Option<(NodeRef<'_, Node>, Vec
     }
 }
 
-/// The TeX a MathML element carries beside its markup
-/// (`<annotation encoding="application/x-tex">`), if it does.
+/// The TeX of a MathML element: the one it carries beside its markup
+/// (`<annotation encoding="application/x-tex">`), else its markup written
+/// as TeX (`math::mathml`), if every element of it is known.
 fn tex_of(math: NodeRef<'_, Node>) -> Option<String> {
+    annotated(math).or_else(|| crate::math::mathml::tex(math))
+}
+
+/// The TeX a MathML element carries beside its markup, if it does.
+fn annotated(math: NodeRef<'_, Node>) -> Option<String> {
     let annotation = math.descendants().find(|node| {
         node.value().as_element().is_some_and(|e| {
             e.name() == "annotation"
@@ -1712,8 +1718,9 @@ mod tests {
                 "Mass is $m$, and",
                 "$$E = mc^2$$",
                 "follows.",
-                "Plain x MathML."
-            ]
+                "Plain $x$ MathML."
+            ],
+            "MathML without its TeX is typeset from its markup"
         );
         assert_eq!(blocks[1].align, Align::Center);
         assert!(blocks[..2].iter().all(|block| {
@@ -1864,6 +1871,32 @@ mod tests {
         let block = &blocks[0];
         assert_eq!(block.said(0..block.text.len()), " Edit, rated 4 out of 5.");
         assert_eq!(block.copied(0..block.text.len()), "✎ Edit, rated ★★★★☆.");
+    }
+
+    /// MathML as an EPUB writes it, with no TeX beside it: its markup
+    /// written as TeX is what the helper typesets.
+    #[test]
+    fn mathml_without_its_tex_is_typeset_from_its_markup() {
+        let Some(worker) = std::env::current_exe()
+            .ok()
+            .and_then(|exe| Some(exe.parent()?.parent()?.join("skwir-math-worker")))
+            .filter(|path| path.is_file())
+        else {
+            eprintln!("skipped: skwir-math-worker is not built");
+            return;
+        };
+        use_math_worker(&worker);
+        let source = r#"<p>Roots: <math display="block"><mi>x</mi><mo>=</mo><mfrac><mrow><mo>−</mo><mi>b</mi><mo>±</mo><msqrt><msup><mi>b</mi><mn>2</mn></msup><mo>−</mo><mn>4</mn><mi>a</mi><mi>c</mi></msqrt></mrow><mrow><mn>2</mn><mi>a</mi></mrow></mfrac></math></p>
+            <p>and <math><mrow><mo>(</mo><mtable><mtr><mtd><mn>1</mn></mtd><mtd><mn>2</mn></mtd></mtr><mtr><mtd><mn>3</mn></mtd><mtd><mn>4</mn></mtd></mtr></mtable><mo>)</mo></mrow></math>.</p>"#;
+        let blocks = read(source, Markup::Html);
+        let drawn: Vec<_> = blocks
+            .iter()
+            .flat_map(|block| &block.runs)
+            .filter_map(|run| run.drawing.as_ref())
+            .collect();
+        assert_eq!(drawn.len(), 2, "{:?}", texts(&blocks));
+        assert!(drawn.iter().all(|drawing| !drawing.svg.is_empty()));
+        assert!(drawn[0].descent > 0.5, "the fraction's denominator below");
     }
 
     #[test]

@@ -359,10 +359,11 @@ A name that says nothing is not a binary file.
   Markdown is read (`math::delimited::take` with `JUPYTER`, by JupyterLab's
   `removeMath`): Markdown's own `$` rules are not a notebook's. Elsewhere,
   Markdown's are pulldown-cmark's. HTML's is MathML's TeX annotation, else
-  its `alttext`; and a page that loads MathJax or KaTeX's auto-render has
-  its text read by their rules (`delimited::mathjax`, `$` only where its
-  configuration lists it), never its `pre` or `code`. Delimited TeX is
-  found by `math::delimited` alone.
+  its markup written as TeX (`math::mathml`, a formula of an element it
+  does not know left as it reads), else its `alttext`; and a page that
+  loads MathJax or KaTeX's auto-render has its text read by their rules
+  (`delimited::mathjax`, `$` only where its configuration lists it), never
+  its `pre` or `code`. Delimited TeX is found by `math::delimited` alone.
 - **A formula beside a drawing of itself is typeset once**: MathML
   carrying its TeX next to an `aria-hidden` drawing (KaTeX's spans,
   MathJax 3's glyphs, Wikipedia's picture) is typeset in the drawing's
