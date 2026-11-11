@@ -65,7 +65,8 @@ background work, for folders nobody looks at.
   one; successive ones line up after it.
 - **The window remembers its tabs** with `core.startup = last`: at close,
   each pane's location (not its history), the tab shown and the active pane
-  go to `core.last_tabs`. At startup without a folder argument the shown
+  go to `core.last_tabs` (each pane's filter too since ADR-109, and its
+  sort and groups since 2026-11-12, ADR-130's amendment). At startup without a folder argument the shown
   tab opens and the rest stay dormant, so startup opens one location
   however many tabs there are; a folder argument opens alone. The window's
   shape (`ui.session`) follows the tab shown; restored tabs bring their own

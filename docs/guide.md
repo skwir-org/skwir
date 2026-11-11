@@ -46,7 +46,8 @@ work where the keyboard is, by topic.
   back as big as they were, and where they were except on Wayland, where
   the desktop places them. Quit closes them all, and
   with General › At startup set to come back, every window comes back as
-  it was; a window you closed yourself does not. Skwir started again (a
+  it was, each pane sorted and grouped as you left it, hidden files shown
+  or not; a window you closed yourself does not. Skwir started again (a
   launcher, `skwir ~/Documents`, a browser's Show in Folder) opens a
   window in the Skwir already running, or a tab with General › Open
   folders from other programs in; `skwir --new-instance` starts one of its

@@ -15237,3 +15237,29 @@ number in `.line_height(`). In a window on Xvfb, a synthetic folder grouped by
 Kind: the headings the names' size, semibold, the counts Small and
 muted, in the list at the default and the smallest row zoom (16 px
 icons: the heading inside its row) and in the grid.
+
+## 2026-11-12: Each pane comes back sorted and grouped
+
+The user asked for the sort and the groups to come back with the
+windows. ADR-130 had kept them per pane and not across restarts (11);
+amended. A remembered tab (`SavedTab`) keeps each pane's sort beside its
+location and filter (`sorts`): the criterion and its direction, the
+groups and theirs, hidden files. Folders first is the user's setting,
+which every pane takes as it is made (`Workspace::push_pane`), so a kept
+one is never what comes back. A tab whose panes sort as new ones do
+writes none, so a session file nobody sorted is as before; a sort that
+cannot be read (a later Skwir's criterion, `sorts_as_read`) is a new
+pane's, and the windows still come back. Folds are still not kept
+(ADR-131). A sort changed is recorded as every change of the windows
+is, at most every 2 s, and at Quit.
+
+**Checked:** rustfmt; clippy `-D warnings` on `skwir-core`, all
+targets; `skwir-core` 749 passed (new: a pane sorted by size, largest
+first, grouped by kind the other way, hidden files shown, and another
+tab as new, saved, read back through TOML and restored in a new app as
+they were, folders first the user's; a criterion unknown to this Skwir
+read as a new pane's sort, the windows restored). In a window on Xvfb
+with `core.startup = last`, a synthetic folder sorted by Size and
+grouped by Kind from the View menu, Quit (`state.toml` kept the tab's
+sort), started again without a folder: the pane back sorted by Size,
+largest first, under the same Kind headings.

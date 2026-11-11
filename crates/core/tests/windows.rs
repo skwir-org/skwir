@@ -508,6 +508,87 @@ fn every_window_comes_back_with_its_tabs_and_its_shape() {
     assert_eq!(dormant, 2, "each window opens the one location it shows");
 }
 
+/// Each pane comes back sorted and grouped as it was left, hidden files
+/// with it, while folders first stays the user's; a tab sorted as a new
+/// one keeps no sort, and a sort this Skwir cannot read (a later one's
+/// criterion) is a new pane's, the windows still restored.
+#[test]
+fn each_pane_comes_back_sorted_and_grouped_as_it_was() {
+    use skwir_core::grouping::GroupBy;
+    use skwir_core::location::{SortKey, SortSpec};
+    let dir = home_tempdir();
+    tree(dir.path());
+    let app = app(dir.path());
+    navigate(&app, dir.path());
+    run(
+        &app,
+        "tab.new",
+        serde_json::json!({ "location": dir.path().join("it's a folder"), "show": false }),
+    );
+    run(
+        &app,
+        "sort",
+        serde_json::json!({ "key": "size", "ascending": false }),
+    );
+    run(
+        &app,
+        "group",
+        serde_json::json!({ "by": "kind", "ascending": false }),
+    );
+    run(&app, "toggle_hidden", serde_json::json!({}));
+    let left = SortSpec {
+        key: SortKey::Size,
+        ascending: false,
+        show_hidden: true,
+        group: GroupBy::Key(SortKey::Kind),
+        group_ascending: false,
+        ..SortSpec::default()
+    };
+    let pane = active(&app);
+    assert_eq!(app.workspace.read().pane(pane).unwrap().sort, left);
+    // Folders first is the user's: a pane's own is never what comes back.
+    app.workspace
+        .write()
+        .pane_mut(pane)
+        .unwrap()
+        .sort
+        .folders_first = false;
+    let saved = app.saved_windows();
+    let tabs = &saved.windows[0].tabs;
+    assert_eq!(
+        tabs[0].sorts,
+        vec![SortSpec {
+            folders_first: false,
+            ..left
+        }]
+    );
+    assert!(tabs[1].sorts.is_empty(), "sorted as a new pane: none kept");
+    let kept = toml::Value::try_from(&saved).unwrap();
+    assert_eq!(kept.clone().try_into::<SavedWindows>().unwrap(), saved);
+
+    let next = common::app(dir.path());
+    assert!(next.restore_windows(&saved));
+    let window = active_window(&next);
+    let sorts: Vec<SortSpec> = tabs_of(&next, window)
+        .into_iter()
+        .map(|tab| {
+            next.workspace
+                .read()
+                .pane(pane_of(&next, tab))
+                .unwrap()
+                .sort
+        })
+        .collect();
+    assert_eq!(sorts, vec![left, SortSpec::default()]);
+
+    // A criterion this Skwir does not know: that pane sorts as a new one.
+    let mut later = kept;
+    later["windows"][0]["tabs"][0]["sorts"][0]["key"] = toml::Value::String("brightness".into());
+    let read: SavedWindows = later.try_into().expect("the windows read");
+    assert_eq!(read.windows[0].tabs[0].sorts, vec![SortSpec::default()]);
+    assert!(common::app(dir.path()).restore_windows(&read));
+}
+
 #[test]
 fn tabs_kept_before_there_were_windows_come_back_as_one() {
     let dir = home_tempdir();

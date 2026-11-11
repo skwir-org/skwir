@@ -129,10 +129,42 @@ pub struct SavedTab {
     /// Left out when nothing was filtered, as the file was before.
     #[serde(skip_serializing_if = "filters_none")]
     pub filters: Vec<String>,
+    /// By pane, how it was sorted and grouped (ADR-130, 11, amended): its
+    /// criterion and direction, its groups and theirs, and hidden files;
+    /// folders first is the user's setting, which every pane takes. Left
+    /// out when each pane sorts as a new one does. A sort this Skwir
+    /// cannot read (a later one's criterion) is a new pane's: the windows
+    /// still come back.
+    #[serde(skip_serializing_if = "sorts_none", deserialize_with = "sorts_as_read")]
+    pub sorts: Vec<SortSpec>,
 }
 
 fn filters_none(filters: &[String]) -> bool {
     filters.iter().all(String::is_empty)
+}
+
+/// Whether every pane sorts as a new one does, folders first aside: the
+/// user's, never a pane's.
+fn sorts_none(sorts: &[SortSpec]) -> bool {
+    sorts.iter().all(|sort| {
+        *sort
+            == SortSpec {
+                folders_first: sort.folders_first,
+                ..SortSpec::default()
+            }
+    })
+}
+
+/// The panes' sorts as kept, each one that cannot be read a new pane's,
+/// and none where what is kept is no list.
+fn sorts_as_read<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<SortSpec>, D::Error> {
+    Ok(match toml::Value::deserialize(d)? {
+        toml::Value::Array(sorts) => sorts
+            .into_iter()
+            .map(|sort| sort.try_into().unwrap_or_default())
+            .collect(),
+        _ => Vec::new(),
+    })
 }
 
 /// The windows as the state keeps them (ADR-122): each one's tabs and
@@ -966,6 +998,7 @@ impl App {
         for tab in window.tabs() {
             let mut panes = Vec::new();
             let mut filters = Vec::new();
+            let mut sorts = Vec::new();
             let mut active = 0;
             for id in &tab.panes {
                 let pane = ws.pane(*id);
@@ -973,6 +1006,7 @@ impl App {
                     continue;
                 };
                 filters.push(pane.and_then(|p| p.filter()).unwrap_or_default().to_owned());
+                sorts.push(pane.map(|p| p.sort).unwrap_or_default());
                 if *id == tab.active {
                     active = panes.len();
                 }
@@ -989,14 +1023,19 @@ impl App {
             if tab.id == shown {
                 saved.shown = saved.tabs.len();
             }
-            // Nothing filtered: written, and read back, as before.
+            // Nothing filtered, nothing sorted otherwise: written, and read
+            // back, as before.
             if filters_none(&filters) {
                 filters.clear();
+            }
+            if sorts_none(&sorts) {
+                sorts.clear();
             }
             saved.tabs.push(SavedTab {
                 panes,
                 active,
                 filters,
+                sorts,
             });
         }
         saved
@@ -1004,7 +1043,8 @@ impl App {
 }
 
 /// Put the tabs of `saved` into `into`, or a new window when `None`,
-/// dormant, with what filtered each pane, its shown tab and its shape: the
+/// dormant, with what filtered each pane and how it was sorted, its shown
+/// tab and its shape: the
 /// window they went to, `None` when it had no tab to restore.
 fn restore_window(
     ws: &mut crate::workspace::Workspace,
@@ -1017,11 +1057,17 @@ fn restore_window(
         if saved_tab.panes.is_empty() {
             continue;
         }
+        // Each pane sorted as it was; folders first the user's
+        // (`Workspace::push_pane`).
         let panes: Vec<(Location, SortSpec)> = saved_tab
             .panes
             .iter()
             .take(2)
-            .map(|l| (l.clone(), SortSpec::default()))
+            .enumerate()
+            .map(|(at, l)| {
+                let sort = saved_tab.sorts.get(at).copied().unwrap_or_default();
+                (l.clone(), sort)
+            })
             .collect();
         let (tab, ids) = if let Some(window) = into {
             ws.add_dormant_tab_in(window, usize::MAX, panes)
