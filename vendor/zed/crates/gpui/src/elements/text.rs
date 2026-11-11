@@ -784,14 +784,6 @@ impl TextLayout {
                     return Size::default();
                 };
 
-                // Boxes taller than the line (a formula in a sentence) make
-                // every line of the text as tall as they need, so that no
-                // line runs into the next.
-                let line_height = lines
-                    .iter()
-                    .filter_map(|line| line.unwrapped_layout.inline_height())
-                    .fold(line_height, |height, needed| height.max(needed.ceil()));
-
                 let mut size: Size<Pixels> = Size::default();
                 for line in &lines {
                     let line_size = line.size(line_height);
@@ -982,6 +974,71 @@ impl TextLayout {
             line_start_ix += line.len() + 1;
         }
         boxes
+    }
+
+    /// The row the character at `index` is set in, across the text: one
+    /// line high, or taller where it holds a box taller than its text
+    /// (`LineRows`).
+    pub fn row_bounds_for_index(&self, index: usize) -> Option<Bounds<Pixels>> {
+        let element_state = self.0.borrow();
+        let element_state = element_state.as_ref()?;
+        let bounds = element_state.bounds?;
+        let line_height = element_state.line_height;
+        let mut line_top = bounds.top();
+        let mut line_start_ix = 0;
+        for line in &element_state.lines {
+            let line_end_ix = line_start_ix + line.len();
+            let rows = line.rows(line_height);
+            if index > line_end_ix {
+                line_top += rows.height_of_all();
+                line_start_ix = line_end_ix + 1;
+                continue;
+            }
+            // The row `position_for_index` places it in: an index where a
+            // row wraps ends the row before.
+            let row = line
+                .wrap_boundaries
+                .iter()
+                .take_while(|boundary| {
+                    line.unwrapped_layout.runs[boundary.run_ix].glyphs[boundary.glyph_ix].index
+                        < index - line_start_ix
+                })
+                .count();
+            return Some(Bounds::new(
+                Point {
+                    x: bounds.left(),
+                    y: line_top + rows.top(row),
+                },
+                Size {
+                    width: bounds.size.width,
+                    height: rows.height(row),
+                },
+            ));
+        }
+        None
+    }
+
+    /// Where each row of the text starts, top to bottom, and where the last
+    /// ends: every row one line below the last, but one holding a box
+    /// taller than its text (`LineRows`).
+    pub fn row_edges(&self) -> Vec<Pixels> {
+        let element_state = self.0.borrow();
+        let Some(element_state) = element_state.as_ref() else {
+            return Vec::new();
+        };
+        let Some(bounds) = element_state.bounds else {
+            return Vec::new();
+        };
+        let line_height = element_state.line_height;
+        let mut line_top = bounds.top();
+        let mut edges = Vec::new();
+        for line in &element_state.lines {
+            let rows = line.rows(line_height);
+            edges.extend((0..rows.len()).map(|row| line_top + rows.top(row)));
+            line_top += rows.height_of_all();
+        }
+        edges.push(line_top);
+        edges
     }
 
     /// Retrieve the layout for the line containing the given byte index.

@@ -128,3 +128,18 @@ accents, limits (a large operator unbraced, so TeX places them), tables,
 enclosures. An element it does not know leaves the formula as it read:
 never half a formula. A TeX annotation, where there is one, comes first.
 
+### 2026-11-11: a formula grows its own row; GitHub's `math` blocks
+
+A formula taller than its text made every line of its paragraph as tall
+as it (decision 4): a paragraph holding one integral read double-spaced.
+A row is now one line high, and a row holding a box taller than its text
+grows by what the box needs above the text and below it, in whole pixels,
+its text keeping its place one line high in it, as a browser grows a line
+box (gpui 0060 amended: `LineLayout::rows`, `LineRows`). A background,
+the selection's included, fills its row. Where something is set by a row
+(a found match's spot, a note opened under its reference, page mode's
+cut between two rows), it asks the text's rows
+(`TextLayout::row_bounds_for_index`, `row_edges`), not its line height.
+
+Markdown's fenced `math` block (GitHub's) is a formula set apart, as
+`$$…$$` is; in a notebook's cell it stays code, as JupyterLab shows it.

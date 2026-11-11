@@ -14623,3 +14623,56 @@ over, a vector in ℝ³.
 **Seen, left as it was:** a minus before a function in a matrix's cell is
 set as a binary sign, a little wide (RaTeX's spacing).
 
+## 2026-11-11: A formula grows its own row; quotes inside the margin; GitHub's math blocks
+
+Three things the sample files (`skwir-samples/math-examples`, made for the
+user) showed in a window.
+
+**Rows.** A formula taller than its text made every line of its paragraph
+that tall: the text took its tallest line's height for all
+(`LineLayout::inline_height`), so a paragraph holding one integral read
+double-spaced. gpui 0060 amended (ADR-129 amended): a line's ascent and
+descent stay its text's, and its rows are worked out from its boxes
+(`LineLayout::rows`, a `LineRows`): one line high, but a row holding a box
+that stands higher or reaches lower than its text, which grows by what the
+box needs, above and below, in whole pixels, the text one line high in it.
+Its size, paint bounds, glyphs, decorations, boxes and backgrounds (which
+fill the row, the selection's included), and its hit tests and positions
+read them. `TextLayout::row_bounds_for_index` and `row_edges` give a row to
+whatever is set by one: the found match's spot and a note opened under its
+reference (`inspector_text`), and page mode, whose texts now tell each
+row's edge (`inspector_pages::Drawn::edges`) rather than one line height.
+The patch was amended in a series made again from Zed's 37faef81 and
+exported; the other patches changed only in their `index` lines, put back.
+
+**Quotes.** A quotation's text started 10 px left of the paragraphs, its
+bar in the margin: its `pl_4` replaced the row's page padding (8 px when it
+was written, 28 px in reading mode since da865f6f). A block's spacing and
+a quotation's bar are now on a frame inside the page padding: the bar at
+the text's left edge, the words 18 px past it, the bar still running
+through the spacing between a quotation's blocks.
+
+**GitHub's `math` blocks.** A fenced `math` block in Markdown is a formula
+set apart, as `$$…$$`; a notebook's stays code, as JupyterLab shows it.
+The code's run went with its text (it had covered the drawing's
+character, which then drew nothing), and a Mermaid block's too.
+
+**Checked:** rustfmt; clippy `-D warnings` on `skwir-ui` and
+`-plugin-markdown`; `just gpui-check` (136 passed; new: a row grows by
+what its box needs and the others keep their height, positions and hit
+tests through a grown row, a box at the top of its grown row and the paint
+bounds); `skwir`'s, `-ui`'s and `-plugin-markdown`'s tests (883 passed;
+new: a page cut above or below a grown row, never in it; a fenced `math`
+block drawn in Markdown, code in a notebook, one run); `just check-cross`
+clean (it stopped at `crates/core/tests/listing.rs` before: `wait_pane`,
+which needs nothing of Linux, was Linux's alone; the folders-first test
+passes under Wine). A debug window on Xvfb, the samples: only the
+integral's line taller, wide and narrowed (its row moving with it); a
+selection across it filling the row and following the pointer below it;
+the quote's bar at the text's edge; the `math` block drawn, and code in
+the notebook.
+
+**Seen, left as it was:** a list and a quotation are set with no space
+above or below them as a whole in reading mode (each keeps its lines
+together), so a quotation after a list sits right under it.
+

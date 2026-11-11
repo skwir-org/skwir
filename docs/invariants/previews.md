@@ -355,10 +355,17 @@ A name that says nothing is not a binary file.
   (`TextLayout::inline_boxes`, gpui patch 0060), as a mask in the ink its
   letters would have (the text's, a link's, the selection's, a ground's),
   at the text's size: never a picture of fixed pixels or colors.
+- **A formula taller than its text grows its own row**, not every line
+  of its text (gpui's `LineRows`): a text's rows are not one line height
+  apart. What is set under a row or between two (a found match's spot, a
+  note under its reference, a page's end) asks the text's rows
+  (`TextLayout::row_bounds_for_index`, `row_edges`), never its
+  `line_height`.
 - A notebook's math is Jupyter's, taken out of each cell before its
   Markdown is read (`math::delimited::take` with `JUPYTER`, by JupyterLab's
   `removeMath`): Markdown's own `$` rules are not a notebook's. Elsewhere,
-  Markdown's are pulldown-cmark's. HTML's is MathML's TeX annotation, else
+  Markdown's are pulldown-cmark's, and a fenced `math` block is GitHub's
+  formula set apart (a notebook's is code, as JupyterLab shows it). HTML's is MathML's TeX annotation, else
   its markup written as TeX (`math::mathml`, a formula of an element it
   does not know left as it reads), else its `alttext`; and a page that
   loads MathJax or KaTeX's auto-render has its text read by their rules
@@ -719,7 +726,9 @@ A text document is read as its structure, or laid out as pages.
   and HTML read in it.
 - A block's frame (spacing, quote border, list indent) is drawn once for
   every kind; only the middle differs, so nothing can return early and
-  lose the border.
+  lose the border. It lies inside the page's padding: a quotation's bar
+  stands at the text's left edge, its words indented past it, never in
+  the margin.
 - Reading mode caps the column at `MarkdownStyle::measure`, centres it
   and keeps `page_padding` to the pane's edge, all in layout, never from
   a measured width. The column is for text only.

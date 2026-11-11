@@ -241,25 +241,29 @@ pub fn block(
     entity: WeakEntity<crate::shell::Shell>,
 ) -> AnyElement {
     let id = ("inspect-block", index);
-    let mut row = div()
+    let row = div()
         .id(id)
         .w_full()
         .px(px(style.page_padding))
         .when_some(style.font.clone(), gpui::Styled::font_family);
-    row = if block.kind == BlockKind::Rule {
-        row.py(px(style.section_spacing))
+    // Inside the page's margins: the block's spacing, and a quotation's bar
+    // at the text's left edge, running through that spacing to the next
+    // block of the quotation.
+    let mut frame = div().w_full().min_w_0();
+    frame = if block.kind == BlockKind::Rule {
+        frame.py(px(style.section_spacing))
     } else if block.heading > 0 {
-        row.pt(px(style.heading_top)).pb(px(style.heading_bottom))
+        frame.pt(px(style.heading_top)).pb(px(style.heading_bottom))
     } else if block.code {
-        row.py(px(style.section_spacing))
+        frame.py(px(style.section_spacing))
     } else if style.reading && (block.list_depth > 0 || block.quote) {
         // Reading mode keeps the lines of a list or a quotation together.
-        row
+        frame
     } else {
-        row.py(px(style.block_spacing))
+        frame.py(px(style.block_spacing))
     };
     if block.quote {
-        row = row.border_l_2().border_color(style.quote_border).pl_4();
+        frame = frame.border_l_2().border_color(style.quote_border).pl_4();
     }
     // A picture alone on its line sits on the line's baseline, as a browser
     // sets it: an item's marker beside it lines up with its foot.
@@ -321,7 +325,8 @@ pub fn block(
                     .child(block.marker.clone().unwrap_or_default()),
             );
     }
-    row.child(line.child(content)).into_any_element()
+    row.child(frame.child(line.child(content)))
+        .into_any_element()
 }
 
 /// A block's picture, where its text would be. One the page centred (a

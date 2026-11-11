@@ -29,20 +29,44 @@ use crate::reader_scroll::WheelTurn;
 use crate::shell::Shell;
 
 /// A text drawn this frame, in the window's coordinates: where it starts
-/// and ends, and how tall its lines are. gpui sets every line of a text one
-/// line height below the last.
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// and ends, and the edges of its rows (`gpui::TextLayout::row_edges`):
+/// each row's top, then the text's bottom. A row is one line below the
+/// last, or more where a formula in it is taller than its text.
+#[derive(Clone, Debug, PartialEq)]
 pub struct Drawn {
     pub top: f32,
     pub bottom: f32,
-    pub line: f32,
+    pub edges: Vec<f32>,
+}
+
+impl Drawn {
+    /// Its row edges from `from` to `to`.
+    fn edges_within(&self, from: f32, to: f32) -> &[f32] {
+        let first = self.edges.partition_point(|&edge| edge < from);
+        let last = self.edges.partition_point(|&edge| edge <= to);
+        &self.edges[first..last.max(first)]
+    }
+
+    /// Whether `y` is between two of its rows, or outside it.
+    fn between_rows(&self, y: f32) -> bool {
+        if y <= self.top + NEAR || y >= self.bottom - NEAR || self.edges.len() < 2 {
+            return true;
+        }
+        !self.edges_within(y - NEAR, y + NEAR).is_empty()
+    }
+
+    /// The top of the row `y` falls in, within `NEAR` of the next.
+    fn row_top(&self, y: f32) -> Option<f32> {
+        let after = self.edges.partition_point(|&edge| edge <= y + NEAR);
+        self.edges.get(after.checked_sub(1)?).copied()
+    }
 }
 
 /// What the texts drawn this frame told: filled while the list is
 /// prepainted, read by the pager after it.
 pub type Texts = Rc<RefCell<Vec<Drawn>>>;
 
-/// Where gpui sets a line is a sum of line heights: within half a pixel.
+/// Where gpui sets a row is a sum of row heights: within half a pixel.
 const NEAR: f32 = 0.5;
 
 /// Frames a page found back from where it ends may take: a few, as the list
@@ -62,13 +86,7 @@ const SWIPE_PAUSE: Duration = Duration::from_millis(200);
 /// Whether a page may end, or start, at `y`: no text drawn across it, but
 /// between two of its lines.
 fn between_lines(y: f32, texts: &[Drawn]) -> bool {
-    texts.iter().all(|text| {
-        if y <= text.top + NEAR || y >= text.bottom - NEAR || text.line < 1. {
-            return true;
-        }
-        let lines = (y - text.top) / text.line;
-        (lines - lines.round()).abs() * text.line <= NEAR
-    })
+    texts.iter().all(|text| text.between_rows(y))
 }
 
 /// Where a page may end or start from `from` to `to`: the edges of the
@@ -78,14 +96,8 @@ fn edges(from: f32, to: f32, items: &[(f32, f32)], texts: &[Drawn]) -> Vec<f32> 
         .iter()
         .flat_map(|&(top, bottom)| [top, bottom])
         .collect();
-    for text in texts.iter().filter(|text| text.line >= 1.) {
-        let first = ((from - text.top) / text.line).ceil().max(0.);
-        let last = ((to.min(text.bottom) - text.top) / text.line).floor();
-        let mut line = first;
-        while line <= last {
-            edges.push(text.top + line * text.line);
-            line += 1.;
-        }
+    for text in texts {
+        edges.extend_from_slice(text.edges_within(from, to.min(text.bottom)));
     }
     edges.retain(|&y| y >= from - NEAR && y <= to + NEAR);
     edges
@@ -119,8 +131,8 @@ pub fn page_start(end: f32, height: f32, items: &[(f32, f32)], texts: &[Drawn]) 
 pub fn line_start(top: f32, texts: &[Drawn]) -> f32 {
     texts
         .iter()
-        .filter(|text| text.line >= 1. && top > text.top + NEAR && top < text.bottom - NEAR)
-        .map(|text| text.top + ((top - text.top + NEAR) / text.line).floor() * text.line)
+        .filter(|text| top > text.top + NEAR && top < text.bottom - NEAR)
+        .filter_map(|text| text.row_top(top))
         .fold(top, f32::min)
 }
 
@@ -664,10 +676,19 @@ mod tests {
 
     /// A paragraph's text, `lines` lines of `line` from `top`.
     fn text(top: f32, lines: u8, line: f32) -> Drawn {
+        rows(top, &vec![line; usize::from(lines)])
+    }
+
+    /// A text of rows `heights` tall from `top`.
+    fn rows(top: f32, heights: &[f32]) -> Drawn {
+        let mut edges = vec![top];
+        for height in heights {
+            edges.push(edges.last().unwrap() + height);
+        }
         Drawn {
             top,
-            bottom: top + f32::from(lines) * line,
-            line,
+            bottom: *edges.last().unwrap(),
+            edges,
         }
     }
 
@@ -718,6 +739,18 @@ mod tests {
         assert!(start >= 100.);
         // Forward from there, the page ends where it was asked to.
         assert_eq!(page_end(start, 400., &items, &texts), 400.);
+    }
+
+    #[test]
+    fn a_row_a_formula_grew_is_kept_whole() {
+        // 20 px lines from 8, the third row 46 px for a formula.
+        let items = [(0., 200.)];
+        let texts = [rows(8., &[20., 20., 46., 20., 20.])];
+        assert_eq!(page_end(0., 90., &items, &texts), 48., "above the tall row");
+        assert_eq!(page_end(0., 95., &items, &texts), 94., "below it");
+        assert!(!between_lines(68., &texts), "20 px into the tall row");
+        assert_eq!(line_start(70., &texts), 48.);
+        assert_eq!(page_start(134., 60., &items, &texts), 94.);
     }
 
     #[test]

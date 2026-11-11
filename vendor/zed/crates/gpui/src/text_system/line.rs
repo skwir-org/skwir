@@ -564,6 +564,8 @@ fn inline_boxes(
     }
     let padding_top = (line_height - layout.ascent - layout.descent) / 2.;
     let baseline = padding_top + layout.ascent;
+    let rows = layout.rows(line_height, wrap_boundaries);
+    let mut row = 0;
     let mut wraps = wrap_boundaries.iter().peekable();
     let mut glyph_origin = point(
         aligned_origin_x(
@@ -574,7 +576,7 @@ fn inline_boxes(
             layout,
             wraps.peek(),
         ),
-        origin.y,
+        origin.y + rows.band(row),
     );
     let mut prev_glyph_position = Point::default();
     for (run_ix, run) in layout.runs.iter().enumerate() {
@@ -590,7 +592,8 @@ fn inline_boxes(
                     layout,
                     wraps.peek(),
                 );
-                glyph_origin.y += line_height;
+                row += 1;
+                glyph_origin.y = origin.y + rows.band(row);
             }
             prev_glyph_position = glyph.position;
             if let Some(inline) = run.position.inline_box() {
@@ -644,6 +647,10 @@ fn paint_line(
         let padding_top = (line_height - layout.ascent - layout.descent) / 2.;
         let baseline_offset = point(px(0.), padding_top + layout.ascent);
         let underline_y_offset = underline_y_offset(line_height, layout.ascent, layout.descent);
+        // Each row's text is set one line high in its band, under what a
+        // box taller than the text grew the row by (`LineLayout::rows`).
+        let rows = layout.rows(line_height, wrap_boundaries);
+        let mut row = 0;
         let mut decoration_runs = decoration_runs.iter();
         let mut wraps = wrap_boundaries.iter().peekable();
         let mut run_end = 0;
@@ -660,7 +667,7 @@ fn paint_line(
                 layout,
                 wraps.peek(),
             ),
-            origin.y,
+            origin.y + rows.band(row),
         );
         let mut prev_glyph_position = Point::default();
         let mut max_glyph_size = size(px(0.), px(0.));
@@ -680,6 +687,7 @@ fn paint_line(
 
                 if wraps.peek() == Some(&&WrapBoundary { run_ix, glyph_ix }) {
                     wraps.next();
+                    let next_band = origin.y + rows.band(row + 1);
                     if let Some((underline_origin, underline_style, underline_range)) =
                         current_underline.as_mut()
                     {
@@ -695,7 +703,7 @@ fn paint_line(
                         );
                         if glyph.index < run_end {
                             underline_origin.x = origin.x;
-                            underline_origin.y += line_height;
+                            underline_origin.y = next_band + underline_y_offset;
                         } else {
                             current_underline = None;
                         }
@@ -713,7 +721,7 @@ fn paint_line(
                         );
                         if glyph.index < run_end {
                             strikethrough_origin.x = origin.x;
-                            strikethrough_origin.y += line_height;
+                            strikethrough_origin.y += next_band - (origin.y + rows.band(row));
                         } else {
                             current_strikethrough = None;
                         }
@@ -727,7 +735,8 @@ fn paint_line(
                         layout,
                         wraps.peek(),
                     );
-                    glyph_origin.y += line_height;
+                    row += 1;
+                    glyph_origin.y = next_band;
                 }
                 prev_glyph_position = glyph.position;
 
@@ -912,6 +921,9 @@ fn paint_line_background(
         wrap_boundaries,
     );
     window.paint_layer(line_bounds, |window| {
+        // A background fills its row, as tall as a box in it grew it.
+        let rows = layout.rows(line_height, wrap_boundaries);
+        let mut row = 0;
         let mut decoration_runs = decoration_runs.iter();
         let mut wraps = wrap_boundaries.iter().peekable();
         let mut run_end = 0;
@@ -926,7 +938,7 @@ fn paint_line_background(
                 layout,
                 wraps.peek(),
             ),
-            origin.y,
+            origin.y + rows.top(row),
         );
         let mut prev_glyph_position = Point::default();
         let mut max_glyph_size = size(px(0.), px(0.));
@@ -948,13 +960,13 @@ fn paint_line_background(
                         window.paint_quad(fill(
                             Bounds {
                                 origin: *background_origin,
-                                size: size(glyph_origin.x - background_origin.x, line_height),
+                                size: size(glyph_origin.x - background_origin.x, rows.height(row)),
                             },
                             *background_color,
                         ));
                         if glyph.index < run_end {
                             background_origin.x = origin.x;
-                            background_origin.y += line_height;
+                            background_origin.y = origin.y + rows.top(row + 1);
                         } else {
                             current_background = None;
                         }
@@ -968,7 +980,8 @@ fn paint_line_background(
                         layout,
                         wraps.peek(),
                     );
-                    glyph_origin.y += line_height;
+                    row += 1;
+                    glyph_origin.y = origin.y + rows.top(row);
                 }
                 prev_glyph_position = glyph.position;
 
@@ -1012,7 +1025,7 @@ fn paint_line_background(
                     window.paint_quad(fill(
                         Bounds {
                             origin: background_origin,
-                            size: size(width, line_height),
+                            size: size(width, rows.height(row)),
                         },
                         background_color,
                     ));
@@ -1034,7 +1047,7 @@ fn paint_line_background(
             window.paint_quad(fill(
                 Bounds {
                     origin: background_origin,
-                    size: size(last_line_end_x - background_origin.x, line_height),
+                    size: size(last_line_end_x - background_origin.x, rows.height(row)),
                 },
                 background_color,
             ));
@@ -1052,13 +1065,8 @@ fn line_paint_bounds(
     align_width: Option<Pixels>,
     wrap_boundaries: &[WrapBoundary],
 ) -> Bounds<Pixels> {
-    let mut bounds = Bounds::new(
-        origin,
-        size(
-            layout.width,
-            line_height * (wrap_boundaries.len() as f32 + 1.),
-        ),
-    );
+    let rows = layout.rows(line_height, wrap_boundaries);
+    let mut bounds = Bounds::new(origin, size(layout.width, rows.height_of_all()));
     if align == TextAlign::Left || layout.len == 0 {
         return bounds;
     }
@@ -1081,8 +1089,8 @@ fn line_paint_bounds(
             TextAlign::Right => align_width - width,
         };
         bounds = bounds.union(&Bounds::new(
-            point(origin.x + offset, origin.y + line_height * row as f32),
-            size(width, line_height),
+            point(origin.x + offset, origin.y + rows.top(row)),
+            size(width, rows.height(row)),
         ));
         row_start = row_end;
     }
@@ -1228,6 +1236,87 @@ mod tests {
             ..LineLayout::default()
         };
         assert!(inline_boxes(origin, &plain, px(20.), TextAlign::Left, None, &[]).is_empty());
+    }
+
+    #[test]
+    fn inline_boxes_taller_than_their_text_grow_their_row_alone() {
+        // "ab", a box 2 em wide, 2 em up and 1 em down at 10 px, then "cd";
+        // wrapped before the box and before "d", in 20 px lines.
+        let tall = crate::InlineBox::new(2., 2., 1.);
+        let glyph = |x: f32, index| ShapedGlyph {
+            id: GlyphId(1),
+            position: point(px(x), px(0.)),
+            index,
+            is_emoji: false,
+        };
+        let run = |position, glyphs| ShapedRun {
+            font_id: FontId(0),
+            position,
+            glyphs,
+        };
+        let layout = LineLayout {
+            font_size: px(10.),
+            width: px(60.),
+            ascent: px(8.),
+            descent: px(2.),
+            runs: vec![
+                run(
+                    crate::RunPosition::Baseline,
+                    vec![glyph(0., 0), glyph(10., 1)],
+                ),
+                run(crate::RunPosition::Inline(tall), vec![glyph(20., 2)]),
+                run(
+                    crate::RunPosition::Baseline,
+                    vec![glyph(40., 5), glyph(50., 6)],
+                ),
+            ],
+            len: 7,
+        };
+        let wraps = [
+            WrapBoundary {
+                run_ix: 1,
+                glyph_ix: 0,
+            },
+            WrapBoundary {
+                run_ix: 2,
+                glyph_ix: 1,
+            },
+        ];
+        let origin = point(px(100.), px(50.));
+        // The second row grew 7 px above its text and 3 below: the box
+        // stands at its top, 20 px up from the text's baseline.
+        let boxes = inline_boxes(
+            origin,
+            &layout,
+            px(20.),
+            TextAlign::Left,
+            Some(px(60.)),
+            &wraps,
+        );
+        assert_eq!(
+            boxes,
+            vec![(
+                2,
+                Bounds {
+                    origin: point(px(100.), px(50. + 20.)),
+                    size: size(px(20.), px(30.)),
+                }
+            )]
+        );
+        let bounds = line_paint_bounds(
+            origin,
+            &layout,
+            px(20.),
+            TextAlign::Center,
+            Some(px(60.)),
+            &wraps,
+        );
+        assert_eq!(bounds.top(), px(50.));
+        assert_eq!(
+            bounds.size.height,
+            px(70.),
+            "the first and last rows one line high"
+        );
     }
 
     #[test]

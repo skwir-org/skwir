@@ -1,7 +1,7 @@
-0060 inline-boxes: A line holds boxes its caller draws where the layout says (RunPosition::Inline, TextLayout::inline_boxes)
+0060 inline-boxes: A line holds boxes its caller draws where the layout says, a row taller only where one needs it (RunPosition::Inline, TextLayout::inline_boxes, LineRows)
 
 diff --git a/crates/gpui/src/elements/text.rs b/crates/gpui/src/elements/text.rs
-index ed64384..6304b5d 100644
+index ed64384..377dc62 100644
 --- a/crates/gpui/src/elements/text.rs
 +++ b/crates/gpui/src/elements/text.rs
 @@ -1,8 +1,8 @@
@@ -69,22 +69,7 @@ index ed64384..6304b5d 100644
                          wrap_width,
                          truncate_width,
                          size: Some(Size::default()),
-@@ -765,6 +784,14 @@ impl TextLayout {
-                     return Size::default();
-                 };
- 
-+                // Boxes taller than the line (a formula in a sentence) make
-+                // every line of the text as tall as they need, so that no
-+                // line runs into the next.
-+                let line_height = lines
-+                    .iter()
-+                    .filter_map(|line| line.unwrapped_layout.inline_height())
-+                    .fold(line_height, |height, needed| height.max(needed.ceil()));
-+
-                 let mut size: Size<Pixels> = Size::default();
-                 for line in &lines {
-                     let line_size = line.size(line_height);
-@@ -776,6 +803,7 @@ impl TextLayout {
+@@ -776,6 +795,7 @@ impl TextLayout {
                      lines,
                      len,
                      line_height,
@@ -92,7 +77,7 @@ index ed64384..6304b5d 100644
                      wrap_width,
                      truncate_width,
                      size: Some(size),
-@@ -924,6 +952,38 @@ impl TextLayout {
+@@ -924,6 +944,103 @@ impl TextLayout {
          None
      }
  
@@ -128,10 +113,75 @@ index ed64384..6304b5d 100644
 +        boxes
 +    }
 +
++    /// The row the character at `index` is set in, across the text: one
++    /// line high, or taller where it holds a box taller than its text
++    /// (`LineRows`).
++    pub fn row_bounds_for_index(&self, index: usize) -> Option<Bounds<Pixels>> {
++        let element_state = self.0.borrow();
++        let element_state = element_state.as_ref()?;
++        let bounds = element_state.bounds?;
++        let line_height = element_state.line_height;
++        let mut line_top = bounds.top();
++        let mut line_start_ix = 0;
++        for line in &element_state.lines {
++            let line_end_ix = line_start_ix + line.len();
++            let rows = line.rows(line_height);
++            if index > line_end_ix {
++                line_top += rows.height_of_all();
++                line_start_ix = line_end_ix + 1;
++                continue;
++            }
++            // The row `position_for_index` places it in: an index where a
++            // row wraps ends the row before.
++            let row = line
++                .wrap_boundaries
++                .iter()
++                .take_while(|boundary| {
++                    line.unwrapped_layout.runs[boundary.run_ix].glyphs[boundary.glyph_ix].index
++                        < index - line_start_ix
++                })
++                .count();
++            return Some(Bounds::new(
++                Point {
++                    x: bounds.left(),
++                    y: line_top + rows.top(row),
++                },
++                Size {
++                    width: bounds.size.width,
++                    height: rows.height(row),
++                },
++            ));
++        }
++        None
++    }
++
++    /// Where each row of the text starts, top to bottom, and where the last
++    /// ends: every row one line below the last, but one holding a box
++    /// taller than its text (`LineRows`).
++    pub fn row_edges(&self) -> Vec<Pixels> {
++        let element_state = self.0.borrow();
++        let Some(element_state) = element_state.as_ref() else {
++            return Vec::new();
++        };
++        let Some(bounds) = element_state.bounds else {
++            return Vec::new();
++        };
++        let line_height = element_state.line_height;
++        let mut line_top = bounds.top();
++        let mut edges = Vec::new();
++        for line in &element_state.lines {
++            let rows = line.rows(line_height);
++            edges.extend((0..rows.len()).map(|row| line_top + rows.top(row)));
++            line_top += rows.height_of_all();
++        }
++        edges.push(line_top);
++        edges
++    }
++
      /// Retrieve the layout for the line containing the given byte index.
      pub fn line_layout_for_index(&self, index: usize) -> Option<Arc<WrappedLineLayout>> {
          let element_state = self.0.borrow();
-@@ -1107,7 +1167,7 @@ impl Element for InteractiveText {
+@@ -1107,7 +1224,7 @@ impl Element for InteractiveText {
      }
  
      fn write_a11y_info(&self, node: &mut accesskit::Node) {
@@ -223,7 +273,7 @@ index 56f4c78..930b4d7 100644
  
  /// A highlight style to apply, similar to a `TextStyle` except
 diff --git a/crates/gpui/src/text_system/line.rs b/crates/gpui/src/text_system/line.rs
-index 23fc17e..d486897 100644
+index 23fc17e..fcbd493 100644
 --- a/crates/gpui/src/text_system/line.rs
 +++ b/crates/gpui/src/text_system/line.rs
 @@ -488,6 +488,30 @@ impl WrappedLine {
@@ -257,7 +307,7 @@ index 23fc17e..d486897 100644
      /// Paint the background of line of text to the window.
      pub fn paint_background(
          &self,
-@@ -519,6 +543,77 @@ impl WrappedLine {
+@@ -519,6 +543,80 @@ impl WrappedLine {
      }
  }
  
@@ -282,6 +332,8 @@ index 23fc17e..d486897 100644
 +    }
 +    let padding_top = (line_height - layout.ascent - layout.descent) / 2.;
 +    let baseline = padding_top + layout.ascent;
++    let rows = layout.rows(line_height, wrap_boundaries);
++    let mut row = 0;
 +    let mut wraps = wrap_boundaries.iter().peekable();
 +    let mut glyph_origin = point(
 +        aligned_origin_x(
@@ -292,7 +344,7 @@ index 23fc17e..d486897 100644
 +            layout,
 +            wraps.peek(),
 +        ),
-+        origin.y,
++        origin.y + rows.band(row),
 +    );
 +    let mut prev_glyph_position = Point::default();
 +    for (run_ix, run) in layout.runs.iter().enumerate() {
@@ -308,7 +360,8 @@ index 23fc17e..d486897 100644
 +                    layout,
 +                    wraps.peek(),
 +                );
-+                glyph_origin.y += line_height;
++                row += 1;
++                glyph_origin.y = origin.y + rows.band(row);
 +            }
 +            prev_glyph_position = glyph.position;
 +            if let Some(inline) = run.position.inline_box() {
@@ -335,7 +388,63 @@ index 23fc17e..d486897 100644
  fn paint_line(
      origin: Point<Pixels>,
      layout: &LineLayout,
-@@ -733,8 +828,12 @@ fn paint_line(
+@@ -549,6 +647,10 @@ fn paint_line(
+         let padding_top = (line_height - layout.ascent - layout.descent) / 2.;
+         let baseline_offset = point(px(0.), padding_top + layout.ascent);
+         let underline_y_offset = underline_y_offset(line_height, layout.ascent, layout.descent);
++        // Each row's text is set one line high in its band, under what a
++        // box taller than the text grew the row by (`LineLayout::rows`).
++        let rows = layout.rows(line_height, wrap_boundaries);
++        let mut row = 0;
+         let mut decoration_runs = decoration_runs.iter();
+         let mut wraps = wrap_boundaries.iter().peekable();
+         let mut run_end = 0;
+@@ -565,7 +667,7 @@ fn paint_line(
+                 layout,
+                 wraps.peek(),
+             ),
+-            origin.y,
++            origin.y + rows.band(row),
+         );
+         let mut prev_glyph_position = Point::default();
+         let mut max_glyph_size = size(px(0.), px(0.));
+@@ -585,6 +687,7 @@ fn paint_line(
+ 
+                 if wraps.peek() == Some(&&WrapBoundary { run_ix, glyph_ix }) {
+                     wraps.next();
++                    let next_band = origin.y + rows.band(row + 1);
+                     if let Some((underline_origin, underline_style, underline_range)) =
+                         current_underline.as_mut()
+                     {
+@@ -600,7 +703,7 @@ fn paint_line(
+                         );
+                         if glyph.index < run_end {
+                             underline_origin.x = origin.x;
+-                            underline_origin.y += line_height;
++                            underline_origin.y = next_band + underline_y_offset;
+                         } else {
+                             current_underline = None;
+                         }
+@@ -618,7 +721,7 @@ fn paint_line(
+                         );
+                         if glyph.index < run_end {
+                             strikethrough_origin.x = origin.x;
+-                            strikethrough_origin.y += line_height;
++                            strikethrough_origin.y += next_band - (origin.y + rows.band(row));
+                         } else {
+                             current_strikethrough = None;
+                         }
+@@ -632,7 +735,8 @@ fn paint_line(
+                         layout,
+                         wraps.peek(),
+                     );
+-                    glyph_origin.y += line_height;
++                    row += 1;
++                    glyph_origin.y = next_band;
+                 }
+                 prev_glyph_position = glyph.position;
+ 
+@@ -733,8 +837,12 @@ fn paint_line(
                      size: max_glyph_size,
                  };
  
@@ -349,7 +458,97 @@ index 23fc17e..d486897 100644
                      let vertical_offset = point(px(0.0), glyph.position.y);
                      if glyph.is_emoji {
                          window.paint_emoji(
-@@ -1058,6 +1157,79 @@ mod tests {
+@@ -813,6 +921,9 @@ fn paint_line_background(
+         wrap_boundaries,
+     );
+     window.paint_layer(line_bounds, |window| {
++        // A background fills its row, as tall as a box in it grew it.
++        let rows = layout.rows(line_height, wrap_boundaries);
++        let mut row = 0;
+         let mut decoration_runs = decoration_runs.iter();
+         let mut wraps = wrap_boundaries.iter().peekable();
+         let mut run_end = 0;
+@@ -827,7 +938,7 @@ fn paint_line_background(
+                 layout,
+                 wraps.peek(),
+             ),
+-            origin.y,
++            origin.y + rows.top(row),
+         );
+         let mut prev_glyph_position = Point::default();
+         let mut max_glyph_size = size(px(0.), px(0.));
+@@ -849,13 +960,13 @@ fn paint_line_background(
+                         window.paint_quad(fill(
+                             Bounds {
+                                 origin: *background_origin,
+-                                size: size(glyph_origin.x - background_origin.x, line_height),
++                                size: size(glyph_origin.x - background_origin.x, rows.height(row)),
+                             },
+                             *background_color,
+                         ));
+                         if glyph.index < run_end {
+                             background_origin.x = origin.x;
+-                            background_origin.y += line_height;
++                            background_origin.y = origin.y + rows.top(row + 1);
+                         } else {
+                             current_background = None;
+                         }
+@@ -869,7 +980,8 @@ fn paint_line_background(
+                         layout,
+                         wraps.peek(),
+                     );
+-                    glyph_origin.y += line_height;
++                    row += 1;
++                    glyph_origin.y = origin.y + rows.top(row);
+                 }
+                 prev_glyph_position = glyph.position;
+ 
+@@ -913,7 +1025,7 @@ fn paint_line_background(
+                     window.paint_quad(fill(
+                         Bounds {
+                             origin: background_origin,
+-                            size: size(width, line_height),
++                            size: size(width, rows.height(row)),
+                         },
+                         background_color,
+                     ));
+@@ -935,7 +1047,7 @@ fn paint_line_background(
+             window.paint_quad(fill(
+                 Bounds {
+                     origin: background_origin,
+-                    size: size(last_line_end_x - background_origin.x, line_height),
++                    size: size(last_line_end_x - background_origin.x, rows.height(row)),
+                 },
+                 background_color,
+             ));
+@@ -953,13 +1065,8 @@ fn line_paint_bounds(
+     align_width: Option<Pixels>,
+     wrap_boundaries: &[WrapBoundary],
+ ) -> Bounds<Pixels> {
+-    let mut bounds = Bounds::new(
+-        origin,
+-        size(
+-            layout.width,
+-            line_height * (wrap_boundaries.len() as f32 + 1.),
+-        ),
+-    );
++    let rows = layout.rows(line_height, wrap_boundaries);
++    let mut bounds = Bounds::new(origin, size(layout.width, rows.height_of_all()));
+     if align == TextAlign::Left || layout.len == 0 {
+         return bounds;
+     }
+@@ -982,8 +1089,8 @@ fn line_paint_bounds(
+             TextAlign::Right => align_width - width,
+         };
+         bounds = bounds.union(&Bounds::new(
+-            point(origin.x + offset, origin.y + line_height * row as f32),
+-            size(width, line_height),
++            point(origin.x + offset, origin.y + rows.top(row)),
++            size(width, rows.height(row)),
+         ));
+         row_start = row_end;
+     }
+@@ -1058,6 +1165,160 @@ mod tests {
          }
      }
  
@@ -426,30 +625,274 @@ index 23fc17e..d486897 100644
 +        assert!(inline_boxes(origin, &plain, px(20.), TextAlign::Left, None, &[]).is_empty());
 +    }
 +
++    #[test]
++    fn inline_boxes_taller_than_their_text_grow_their_row_alone() {
++        // "ab", a box 2 em wide, 2 em up and 1 em down at 10 px, then "cd";
++        // wrapped before the box and before "d", in 20 px lines.
++        let tall = crate::InlineBox::new(2., 2., 1.);
++        let glyph = |x: f32, index| ShapedGlyph {
++            id: GlyphId(1),
++            position: point(px(x), px(0.)),
++            index,
++            is_emoji: false,
++        };
++        let run = |position, glyphs| ShapedRun {
++            font_id: FontId(0),
++            position,
++            glyphs,
++        };
++        let layout = LineLayout {
++            font_size: px(10.),
++            width: px(60.),
++            ascent: px(8.),
++            descent: px(2.),
++            runs: vec![
++                run(
++                    crate::RunPosition::Baseline,
++                    vec![glyph(0., 0), glyph(10., 1)],
++                ),
++                run(crate::RunPosition::Inline(tall), vec![glyph(20., 2)]),
++                run(
++                    crate::RunPosition::Baseline,
++                    vec![glyph(40., 5), glyph(50., 6)],
++                ),
++            ],
++            len: 7,
++        };
++        let wraps = [
++            WrapBoundary {
++                run_ix: 1,
++                glyph_ix: 0,
++            },
++            WrapBoundary {
++                run_ix: 2,
++                glyph_ix: 1,
++            },
++        ];
++        let origin = point(px(100.), px(50.));
++        // The second row grew 7 px above its text and 3 below: the box
++        // stands at its top, 20 px up from the text's baseline.
++        let boxes = inline_boxes(
++            origin,
++            &layout,
++            px(20.),
++            TextAlign::Left,
++            Some(px(60.)),
++            &wraps,
++        );
++        assert_eq!(
++            boxes,
++            vec![(
++                2,
++                Bounds {
++                    origin: point(px(100.), px(50. + 20.)),
++                    size: size(px(20.), px(30.)),
++                }
++            )]
++        );
++        let bounds = line_paint_bounds(
++            origin,
++            &layout,
++            px(20.),
++            TextAlign::Center,
++            Some(px(60.)),
++            &wraps,
++        );
++        assert_eq!(bounds.top(), px(50.));
++        assert_eq!(
++            bounds.size.height,
++            px(70.),
++            "the first and last rows one line high"
++        );
++    }
++
      #[test]
      fn test_aligned_line_paint_bounds() {
          let line = make_shaped_line("abcd", &[(0, 0.), (1, 10.), (2, 20.), (3, 30.)], 40., &[]);
 diff --git a/crates/gpui/src/text_system/line_layout.rs b/crates/gpui/src/text_system/line_layout.rs
-index 1a5fa5d..1687a7d 100644
+index 1a5fa5d..770c3eb 100644
 --- a/crates/gpui/src/text_system/line_layout.rs
 +++ b/crates/gpui/src/text_system/line_layout.rs
-@@ -74,6 +74,15 @@ pub struct ShapedGlyph {
+@@ -74,6 +74,54 @@ pub struct ShapedGlyph {
  }
  
  impl LineLayout {
-+    /// How tall a line must be to hold the boxes this one holds
-+    /// (`RunPosition::Inline`) with its text, if it holds any.
-+    pub fn inline_height(&self) -> Option<Pixels> {
-+        self.runs
-+            .iter()
-+            .any(|run| run.position.inline_box().is_some())
-+            .then(|| self.ascent + self.descent.abs())
++    /// The rows of this line wrapped at `wraps`, with `line_height` between
++    /// one row's text and the next. A row holding a box (`RunPosition::Inline`)
++    /// that stands higher, or reaches lower, than its text grows by what the
++    /// box needs there, in whole pixels; the other rows keep their height.
++    pub fn rows(&self, line_height: Pixels, wraps: &[WrapBoundary]) -> LineRows {
++        let count = wraps.len() + 1;
++        let mut rows = LineRows {
++            line_height,
++            count,
++            grown: SmallVec::new(),
++        };
++        // Where the text's baseline sits in a row one line high, as
++        // `paint_line` sets it.
++        let baseline = (line_height - self.ascent - self.descent) / 2. + self.ascent;
++        let below = line_height - baseline;
++        for (run_ix, run) in self.runs.iter().enumerate() {
++            let Some(inline) = run.position.inline_box() else {
++                continue;
++            };
++            let above = (self.font_size * inline.ascent() - baseline)
++                .max(px(0.))
++                .ceil();
++            let under = (self.font_size * inline.descent() - below)
++                .max(px(0.))
++                .ceil();
++            if above == px(0.) && under == px(0.) {
++                continue;
++            }
++            if rows.grown.is_empty() {
++                rows.grown = SmallVec::from_elem(Grown::default(), count);
++            }
++            for glyph_ix in 0..run.glyphs.len() {
++                // A boundary is the glyph that starts the next row.
++                let at = WrapBoundary { run_ix, glyph_ix };
++                let row = wraps.partition_point(|wrap| *wrap <= at);
++                let grown = &mut rows.grown[row];
++                grown.above = grown.above.max(above);
++                grown.below = grown.below.max(under);
++            }
++        }
++        let mut top = px(0.);
++        for grown in &mut rows.grown {
++            grown.top = top;
++            top += line_height + grown.above + grown.below;
++        }
++        rows
 +    }
 +
      /// The index for the character at the given x coordinate
      pub fn index_for_x(&self, x: Pixels) -> Option<usize> {
          if x >= self.width {
-@@ -781,10 +790,35 @@ fn shape(
+@@ -313,6 +361,84 @@ pub struct WrapBoundary {
+     pub glyph_ix: usize,
+ }
+ 
++/// The rows a line is wrapped into (`LineLayout::rows`): each one line
++/// high, but a row holding a box taller than its text, which grows by what
++/// the box needs above the text and below it; the text keeps its place in
++/// its row, one line high (the row's band), whose top is the grown height
++/// above it.
++#[derive(Clone, Debug, Default, PartialEq)]
++pub struct LineRows {
++    line_height: Pixels,
++    count: usize,
++    /// Each row's growth and top, where a row grows; empty where none does,
++    /// every row then one line high.
++    grown: SmallVec<[Grown; 1]>,
++}
++
++#[derive(Clone, Copy, Debug, Default, PartialEq)]
++struct Grown {
++    top: Pixels,
++    above: Pixels,
++    below: Pixels,
++}
++
++impl LineRows {
++    /// How many rows there are: one at least.
++    #[allow(clippy::len_without_is_empty)]
++    pub fn len(&self) -> usize {
++        self.count
++    }
++
++    /// Whether every row is one line high.
++    pub fn is_even(&self) -> bool {
++        self.grown.is_empty()
++    }
++
++    /// Where row `row` starts, below the line's top.
++    pub fn top(&self, row: usize) -> Pixels {
++        match self.grown.get(row) {
++            Some(grown) => grown.top,
++            None if self.grown.is_empty() => self.line_height * row as f32,
++            None => self.height_of_all(),
++        }
++    }
++
++    /// How tall row `row` is.
++    pub fn height(&self, row: usize) -> Pixels {
++        self.grown.get(row).map_or(self.line_height, |grown| {
++            self.line_height + grown.above + grown.below
++        })
++    }
++
++    /// Where the text of row `row` is set, one line high, below the line's
++    /// top: under what the row grew above it.
++    pub fn band(&self, row: usize) -> Pixels {
++        self.top(row) + self.grown.get(row).map_or(px(0.), |grown| grown.above)
++    }
++
++    /// How tall the rows are together.
++    pub fn height_of_all(&self) -> Pixels {
++        match self.grown.last() {
++            Some(last) => last.top + self.line_height + last.above + last.below,
++            None => self.line_height * self.count as f32,
++        }
++    }
++
++    /// The row `y` (below the line's top) falls in; past the last row, the
++    /// count of rows, as one line high rows count them.
++    pub fn at(&self, y: Pixels) -> usize {
++        if self.grown.is_empty() {
++            return (y / self.line_height) as usize;
++        }
++        if y >= self.height_of_all() {
++            return self.count;
++        }
++        self.grown
++            .partition_point(|grown| grown.top <= y)
++            .saturating_sub(1)
++    }
++}
++
+ impl WrappedLineLayout {
+     /// The length of the underlying text, in utf8 bytes.
+     #[allow(clippy::len_without_is_empty)]
+@@ -332,10 +458,17 @@ impl WrappedLineLayout {
+     pub fn size(&self, line_height: Pixels) -> Size<Pixels> {
+         Size {
+             width: self.width(),
+-            height: line_height * (self.wrap_boundaries.len() + 1),
++            height: self.rows(line_height).height_of_all(),
+         }
+     }
+ 
++    /// The rows the line is wrapped into, a row holding a box taller than
++    /// its text grown to hold it (`LineLayout::rows`).
++    pub fn rows(&self, line_height: Pixels) -> LineRows {
++        self.unwrapped_layout
++            .rows(line_height, &self.wrap_boundaries)
++    }
++
+     /// The ascent of a line in this layout
+     pub fn ascent(&self) -> Pixels {
+         self.unwrapped_layout.ascent
+@@ -391,7 +524,7 @@ impl WrappedLineLayout {
+         line_height: Pixels,
+         closest: bool,
+     ) -> Result<usize, usize> {
+-        let wrapped_line_ix = (position.y / line_height) as usize;
++        let wrapped_line_ix = self.rows(line_height).at(position.y);
+ 
+         let wrapped_line_start_index;
+         let wrapped_line_start_x;
+@@ -456,8 +589,9 @@ impl WrappedLineLayout {
+             })
+             .chain([self.len()])
+             .enumerate();
++        let rows = self.rows(line_height);
+         for (ix, line_end_ix) in line_end_indices {
+-            let line_y = ix as f32 * line_height;
++            let line_y = rows.top(ix);
+             if index < line_start_ix {
+                 break;
+             } else if index > line_end_ix {
+@@ -781,10 +915,35 @@ fn shape(
          ..LineLayout::default()
      };
      let mut start = 0;
@@ -485,7 +928,7 @@ index 1a5fa5d..1687a7d 100644
          let scale = position.scale();
          let part = platform.layout_line(&text[start..end], font_size * scale, stretch);
          let x = layout.width;
-@@ -800,14 +834,40 @@ fn shape(
+@@ -800,14 +959,27 @@ fn shape(
          // The text's metrics at full size, whichever stretch is largest; a
          // platform may give the descent as a negative distance.
          let (ascent, descent) = (part.ascent / scale, part.descent / scale);
@@ -510,25 +953,12 @@ index 1a5fa5d..1687a7d 100644
 +        let part = platform.layout_line(" ", font_size, &[space]);
 +        (layout.ascent, layout.descent) = (part.ascent, part.descent);
 +    }
-+    // The boxes reach as high and as low as they stand: the text holding
-+    // them makes its lines that tall (`LineLayout::height`).
-+    for inline in layout
-+        .runs
-+        .iter()
-+        .filter_map(|run| run.position.inline_box())
-+    {
-+        layout.ascent = layout.ascent.max(font_size * inline.ascent());
-+        let descent = font_size * inline.descent();
-+        if layout.descent < px(0.) {
-+            layout.descent = layout.descent.min(-descent);
-+        } else {
-+            layout.descent = layout.descent.max(descent);
-+        }
-+    }
++    // The ascent and descent stay the text's: a box taller than the text
++    // grows the row it is set in, not every line (`LineLayout::rows`).
      layout
  }
  
-@@ -1071,4 +1131,53 @@ mod run_position_tests {
+@@ -1071,4 +1243,145 @@ mod run_position_tests {
          assert_eq!(run.font_size(px(20.)), px(14.));
          assert_eq!(run.rise(px(20.)), px(7.));
      }
@@ -538,7 +968,7 @@ index 1a5fa5d..1687a7d 100644
 +        let platform = NoopTextSystem::new();
 +        let plain = shape(&platform, "ab", px(20.), &[run(2, RunPosition::Baseline)]);
 +        let em = plain.width / 2.;
-+        assert_eq!(plain.inline_height(), None);
++        assert!(plain.rows(px(30.), &[]).is_even());
 +        // Two boxes 2 em wide, 1.5 em up and 0.5 em down, between "a" and
 +        // "b": one glyph each, which the platform never shapes.
 +        let tall = RunPosition::Inline(crate::InlineBox::new(2., 1.5, 0.5));
@@ -570,15 +1000,107 @@ index 1a5fa5d..1687a7d 100644
 +        assert!((line.x_for_index(4) - (em + px(40.))).abs() < px(0.01));
 +        assert!((line.x_for_index(7) - (em + px(80.))).abs() < px(0.01));
 +        assert!((line.width - (em * 2. + px(80.))).abs() < px(0.01));
-+        // The line reaches as high and as low as its boxes (this platform
-+        // gives its descent as a negative distance).
-+        assert_eq!(line.ascent, plain.ascent.max(px(30.)));
-+        assert_eq!(line.descent, -(plain.descent.abs().max(px(10.))));
-+        assert_eq!(line.inline_height(), Some(line.ascent + line.descent.abs()));
++        // The line keeps its text's ascent and descent; its row grows to
++        // hold the boxes, 1.5 em up, past a line 1 em high.
++        assert_eq!((line.ascent, line.descent), (plain.ascent, plain.descent));
++        let rows = line.rows(px(20.), &[]);
++        assert!(!rows.is_even());
++        assert!(rows.height(0) > px(20.) && rows.height(0) == rows.height(0).ceil());
 +        // A box alone stands on its font's baseline.
 +        let small = RunPosition::Inline(crate::InlineBox::new(1., 0.2, 0.1));
 +        let alone = shape(&platform, "\u{fffc}", px(20.), &[run(3, small)]);
 +        assert_eq!((alone.ascent, alone.descent), (plain.ascent, plain.descent));
 +        assert_eq!(alone.width, px(20.));
++    }
++
++    /// "ab", a box 2 em wide, 2 em up and 1 em down at 10 px, then "cd";
++    /// wrapped before the box and before "d": three rows.
++    fn wrapped_around_a_tall_box() -> (LineLayout, SmallVec<[WrapBoundary; 1]>) {
++        let glyph = |x: f32, index| ShapedGlyph {
++            id: GlyphId(1),
++            position: point(px(x), px(0.)),
++            index,
++            is_emoji: false,
++        };
++        let shaped = |position, glyphs| ShapedRun {
++            font_id: FontId(0),
++            position,
++            glyphs,
++        };
++        let tall = RunPosition::Inline(crate::InlineBox::new(2., 2., 1.));
++        let layout = LineLayout {
++            font_size: px(10.),
++            width: px(60.),
++            ascent: px(8.),
++            descent: px(2.),
++            runs: vec![
++                shaped(RunPosition::Baseline, vec![glyph(0., 0), glyph(10., 1)]),
++                shaped(tall, vec![glyph(20., 2)]),
++                shaped(RunPosition::Baseline, vec![glyph(40., 5), glyph(50., 6)]),
++            ],
++            len: 7,
++        };
++        let wraps = smallvec::smallvec![
++            WrapBoundary {
++                run_ix: 1,
++                glyph_ix: 0,
++            },
++            WrapBoundary {
++                run_ix: 2,
++                glyph_ix: 1,
++            },
++        ];
++        (layout, wraps)
++    }
++
++    #[test]
++    fn a_row_grows_by_what_its_box_needs_and_the_others_keep_their_height() {
++        let (layout, wraps) = wrapped_around_a_tall_box();
++        // 20 px lines: the text's baseline 13 px down, 7 px of line under
++        // it; the box needs 20 px above (7 more) and 10 below (3 more).
++        let rows = layout.rows(px(20.), &wraps);
++        assert_eq!(rows.len(), 3);
++        assert_eq!(
++            (0..3).map(|row| rows.top(row)).collect::<Vec<_>>(),
++            [px(0.), px(20.), px(50.)]
++        );
++        assert_eq!(
++            (0..3).map(|row| rows.height(row)).collect::<Vec<_>>(),
++            [px(20.), px(30.), px(20.)]
++        );
++        assert_eq!(rows.band(1), px(27.), "the text under what grew above it");
++        assert_eq!(rows.height_of_all(), px(70.));
++        let at = |y: f32| rows.at(px(y));
++        assert_eq!(
++            [at(-1.), at(19.9), at(20.), at(49.9), at(50.), at(70.)],
++            [0, 0, 1, 1, 2, 3]
++        );
++        // Unwrapped, the box's row is the line's.
++        assert_eq!(layout.rows(px(20.), &[]).height_of_all(), px(30.));
++        // Lines tall enough for it: every row one line high.
++        assert!(layout.rows(px(40.), &wraps).is_even());
++
++        let wrapped = WrappedLineLayout {
++            unwrapped_layout: Arc::new(layout),
++            wrap_boundaries: wraps,
++            wrap_width: Some(px(60.)),
++        };
++        assert_eq!(wrapped.size(px(20.)).height, px(70.));
++        assert_eq!(
++            wrapped.position_for_index(7, px(20.)).map(|p| p.y),
++            Some(px(50.))
++        );
++        assert_eq!(
++            wrapped.position_for_index(1, px(20.)).map(|p| p.y),
++            Some(px(0.))
++        );
++        assert_eq!(
++            wrapped.index_for_position(point(px(5.), px(55.)), px(20.)),
++            Ok(6)
++        );
++        assert_eq!(
++            wrapped.index_for_position(point(px(5.), px(45.)), px(20.)),
++            Ok(2)
++        );
 +    }
  }

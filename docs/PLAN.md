@@ -933,6 +933,8 @@ of a formula was read over AT-SPI (a probe on the a11y check's harness),
 not with Orca. MathML that uses an element `math::mathml` does not know
 (`mglyph`, `mmultiscripts`, `mlongdiv`) reads as loose letters. A visually
 hidden label alone in its block is lost (an empty block is not kept).
+GitHub's inline form, `` $`…`$ ``, is not read: it shows as a dollar, code
+and a dollar (its fenced `math` block is).
 
 **Grouping** (issue #10, 2026-11-10): the reply promised a look at
 grouping by other criteria (kind, date…); nothing is designed yet. Folders

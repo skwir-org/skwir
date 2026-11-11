@@ -92,7 +92,7 @@ carry: the script takes it from the Inter release Skwir's packages pin
 | `0057-deferred-paint-text-style` | A deferred draw paints under the text style of where it stands in the tree, as it prepaints | — |
 | `0058-rounded-mask-on-device-pixels` | A rounded content mask lies on whole device pixels, as what it holds is drawn | — |
 | `0059-unreached-mask-corners` | A primitive that reaches no rounded corner of its mask is kept by its rectangles alone, so its fragments skip the corners' distance | — |
-| `0060-inline-boxes` | A line holds boxes its caller draws (`RunPosition::Inline`): each character of an inline run is one, as wide as it says, never shaped or painted; `TextLayout::inline_boxes` says where each was drawn; a text holding one taller than its line grows its lines; `StyledText::with_said` gives what such a text says to assistive technology | — |
+| `0060-inline-boxes` | A line holds boxes its caller draws (`RunPosition::Inline`): each character of an inline run is one, as wide as it says, never shaped or painted; `TextLayout::inline_boxes` says where each was drawn; a box taller than its text grows the row it is set in, and that row alone (`LineRows`); `StyledText::with_said` gives what such a text says to assistive technology | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
 
@@ -1047,26 +1047,36 @@ hashes.
 - **Shaping.** `shape`, 0006's, takes an inline stretch itself: each
   character of it is one glyph the platform never sees, as wide as the box.
   Two boxes side by side are two characters, so runs merged or split around
-  them change nothing. The line's ascent and descent grow to its boxes';
-  a line of boxes alone stands on its font's baseline (a space shaped for
+  them change nothing. The line's ascent and descent stay its text's; a
+  line of boxes alone stands on its font's baseline (a space shaped for
   its metrics).
 - **Wrapping and hit tests** read glyph positions, so a box is a character
   a word may break before, selected and pointed at as one.
-- **Painting.** `paint_line` draws no glyph for a box; backgrounds and
-  decorations go under it as under any glyph.
+- **Painting.** `paint_line` draws no glyph for a box; decorations go
+  under it as under any glyph, backgrounds fill its row.
 - **Where.** `WrappedLine::inline_boxes` walks the glyphs as `paint_line`
   does (each wrap aligned) and gives each box's bounds on its line's
   baseline; `TextLayout::inline_boxes` gives them for the whole text, its
   alignment kept from its layout.
-- **Height.** A text holding boxes makes every line as tall as its tallest
-  needs (`LineLayout::inline_height`), so no line runs into the next; a
-  text without boxes keeps its line height.
+- **Height.** A row is one line high, but a row holding a box that stands
+  higher or reaches lower than its text, which grows by what the box needs
+  above the text and below it, in whole pixels (`LineLayout::rows`, a
+  `LineRows`); its text keeps its place one line high in it (the row's
+  band). Every row-wise answer reads them: a line's size, its paint
+  bounds, where a glyph, decoration, background or box is painted, which
+  index a position is at and where an index is. `TextLayout::row_bounds_for_index`
+  gives a row's bounds and `TextLayout::row_edges` every row's top, for
+  callers that set something under a row or cut a page between two. A
+  text without boxes, or with none taller than its lines, lays out as
+  before.
 - **What it says.** `StyledText::with_said` gives `InteractiveText` its
   words for assistive technology where the characters drawn do not say
   them.
 
-The tests are `text_system::line_layout::run_position_tests::each_character_of_an_inline_run_is_a_box_of_its_width`
-and `text_system::line::tests::inline_boxes_are_where_their_glyphs_are_painted`.
+The tests are `text_system::line_layout::run_position_tests::each_character_of_an_inline_run_is_a_box_of_its_width`,
+`text_system::line_layout::run_position_tests::a_row_grows_by_what_its_box_needs_and_the_others_keep_their_height`,
+`text_system::line::tests::inline_boxes_are_where_their_glyphs_are_painted`
+and `text_system::line::tests::inline_boxes_taller_than_their_text_grow_their_row_alone`.
 
 ## Adding or changing a patch
 

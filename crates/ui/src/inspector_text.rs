@@ -159,16 +159,20 @@ impl Sought {
 }
 
 /// Where `range` of a text laid out and placed is drawn: from its start,
-/// one line high, to its end when that is on the same line.
+/// as high as its row (taller than a line where a formula grew it), to its
+/// end when that is on the same row.
 fn spot_of(layout: &gpui::TextLayout, range: std::ops::Range<usize>) -> Option<Spot> {
     let start = layout.position_for_index(range.start)?;
+    let row = layout.row_bounds_for_index(range.start)?;
     let end = layout
         .position_for_index(range.end)
         .filter(|end| end.y == start.y)
         .unwrap_or(start);
-    let line = layout.line_height();
     Some(Spot {
-        area: gpui::Bounds::from_corners(start, gpui::point(end.x.max(start.x), start.y + line)),
+        area: gpui::Bounds::from_corners(
+            gpui::point(start.x, row.top()),
+            gpui::point(end.x.max(start.x), row.bottom()),
+        ),
         text_left: layout.bounds().left(),
     })
 }
@@ -578,10 +582,11 @@ pub fn part(
                 return;
             }
             // A note opens under its reference: where the reference is
-            // drawn now, below its line.
+            // drawn now, below its row.
             let under = clicked
                 .position_for_index(link.shown.start)
-                .map(|at| at + gpui::point(px(0.), clicked.line_height()));
+                .zip(clicked.row_bounds_for_index(link.shown.start))
+                .map(|(at, row)| gpui::point(at.x, row.bottom()));
             let _ = weak.update(cx, |s, cx| {
                 // The keys reach links too (Ctrl+Shift+O): said once.
                 s.note_pointer_use("ui.inspect", &serde_json::json!({"action": "links"}), cx);
@@ -653,7 +658,7 @@ pub fn part(
                         lines.borrow_mut().push(crate::inspector_pages::Drawn {
                             top: f32::from(bounds.top()),
                             bottom: f32::from(bounds.bottom()),
-                            line: f32::from(laid.line_height()),
+                            edges: laid.row_edges().into_iter().map(f32::from).collect(),
                         });
                     },
                     |_, (), _, _| {},

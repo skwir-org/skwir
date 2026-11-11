@@ -511,7 +511,9 @@ fn read(
         | Options::ENABLE_PLUSES_DELIMITED_METADATA_BLOCKS
         | Options::ENABLE_WIKILINKS;
     // Markdown's math, unless Jupyter's was taken out before: its
-    // placeholders are formulas again here (`placed`).
+    // placeholders are formulas again here (`placed`). A fenced `math` block
+    // is GitHub's formula set apart, which JupyterLab shows as code.
+    let fenced_math = taken.is_none();
     let events: Box<dyn Iterator<Item = Event<'_>>> = match taken {
         None => Box::new(Parser::new_ext(source, options | Options::ENABLE_MATH)),
         Some(taken) => {
@@ -720,9 +722,26 @@ fn read(
                     }
                 {
                     current.text.clear();
+                    current.runs.clear();
                     current.code = false;
                     current.language = None;
                     current.picture = Some(Picture::Ready(image));
+                }
+                if fenced_math
+                    && current.language.as_deref() == Some("math")
+                    && let Some(drawing) = {
+                        let tex = current.text.trim();
+                        formulas.ask(tex, true, written(tex, true))
+                    }
+                {
+                    // The drawing is the block's text: the code's run goes
+                    // with the code.
+                    current.text.clear();
+                    current.runs.clear();
+                    current.code = false;
+                    current.language = None;
+                    current.align = Align::Center;
+                    current.push_drawing(drawing, &Run::default());
                 }
                 flush(blocks, &mut current, &mut marker);
             }
@@ -896,6 +915,41 @@ mod tests {
 
     /// A paragraph with a formula drawn and one that cannot be, one set
     /// apart, and a row of a table holding both kinds.
+    /// GitHub's fenced `math` is a formula set apart in Markdown, as `$$`
+    /// is; in a notebook's cell it is code, as JupyterLab shows it.
+    #[test]
+    fn a_fenced_math_block_is_a_formula_set_apart_but_in_a_notebook() {
+        let source = "Before.\n\n```math\n\\frac{a}{b}\n```\n\nAfter.\n";
+        let mut notebook = Document::new(Bounds::QUICK);
+        notebook
+            .cell(source, &CancelToken::new(), |_| None)
+            .unwrap();
+        let code = &notebook.blocks[1];
+        assert!(code.code);
+        assert_eq!(code.language.as_deref(), Some("math"));
+        assert_eq!(code.text, "\\frac{a}{b}");
+        if !with_built(&skwir_platform::math::WORKER) {
+            return;
+        }
+        let blocks = parse(source);
+        assert_eq!(blocks.len(), 3, "{blocks:?}");
+        let apart = &blocks[1];
+        assert!(!apart.code);
+        assert_eq!(apart.align, Align::Center);
+        assert_eq!(apart.text, Block::DRAWN.to_string());
+        assert_eq!(
+            apart.runs.len(),
+            1,
+            "the drawing's run alone: {:?}",
+            apart.runs
+        );
+        assert_eq!(apart.said(0..apart.text.len()), "$$\\frac{a}{b}$$");
+        assert!(
+            drawings(apart)[0].descent > 0.2,
+            "the fraction's denominator"
+        );
+    }
+
     const FORMULAS: &str = "Einstein: $E = mc^2$, and *so* $\\foo{x}$.\n\n$$\n\\sum_{i=1}^n x_i\n$$\n\n| a | b |\n|---|---|\n| $\\foo{x}$ | $x^2$ |\n";
 
     fn drawings(block: &Block) -> Vec<&skwir_core::inspection::Drawing> {
