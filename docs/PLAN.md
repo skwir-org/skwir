@@ -973,8 +973,8 @@ and the grid draw headings that act; Columns, the board, Usage and the
 map show a grouped pane's order without them. A folder's group has no
 term, so its heading offers Select these alone. Left: phase 5,
 collapsing, a Board with a column per group and criteria read on demand
-(the day a picture was taken). Not compiled for Windows or macOS yet
-(`just check-cross`). A
+(the day a picture was taken). Compiled for Windows and, but for the
+shell (which `check-macos` leaves out), macOS; never run on either. A
 type's name the keys had not read, met on the window's thread (what
 arrives, placed), sorts by its MIME type until a worker reads it and the
 order is made again. Same as sort moves a name that begins with neither

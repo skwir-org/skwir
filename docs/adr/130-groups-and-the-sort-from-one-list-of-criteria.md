@@ -3,8 +3,9 @@
 Status: accepted, 2026-11-11, on the user's answers to the proposal
 "Grouping" (a page shared in the session, with mock-ups of the View
 menu, a list grouped by date and a grid grouped by kind). Built in
-phases (below): phases 1 to 4 on 2026-11-11, on Linux; macOS and
-Windows not compiled for them yet. Amends ADR-099 (the View menu's sort) and follows
+phases (below): phases 1 to 4 on 2026-11-11, run on Linux, compiled
+for Windows and, but for the shell, macOS (`just check-cross`). Amends
+ADR-099 (the View menu's sort) and follows
 ADR-121 (an order asked anew is made on a worker).
 
 ## Context

@@ -15100,3 +15100,12 @@ sorting ("Folder ▲"). In a folder, Folder is not offered.
 on demand). A heading is not reached by the keys (the cursor is on
 entries alone, ADR-130, 9): `ui.select_group` from the palette selects
 the cursor's group. Not compiled for Windows or macOS.
+
+## 2026-11-11: Grouping compiled for Windows and macOS (ADR-130)
+
+`just check-cross` after phase 4 (`0128a6d3`): clippy `-D warnings` for
+`x86_64-pc-windows-gnu` over the workspace, the shell, the binary and
+their tests included (and the media helper's script), and for
+`aarch64-apple-darwin` over it but the shell and the binary, which
+`check-macos` leaves out: both passed. Never run on either system; the
+shell's code for groups is the same gpui code on every system.
