@@ -664,6 +664,15 @@ A text document is read as its structure, or laid out as pages.
   each range as a column, clipping runs, links and selection to it and
   reporting pointer offsets in the block's coordinates. `split_blocks`
   splits only running text: a row's ranges would not survive it.
+- **A table's columns are its content's**, worked out once on the worker
+  that builds the display (`inspector_rows::Tables`, one per run of rows),
+  never measured while drawing: each column needs at least its longest
+  word, which is never broken, and its cells whole up to `READABLE`, and
+  wants its longest cell on one line, estimated from its letters on the
+  wide side. Every row lays its cells out alike from them (flex basis,
+  grow and shrink in proportion, a floor at the least), so the columns
+  line up; a table that needs more than the panel scrolls sideways, its
+  rows together on one scroll handle, its bar under its last row.
 - Headings carry a link target (`Block::anchor`): the explicit `{#id}`,
   else a slug, numbered when it repeats. `[jump](#the-plan)` resolves
   against it.

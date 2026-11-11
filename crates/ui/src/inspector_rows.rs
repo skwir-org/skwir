@@ -4,7 +4,8 @@
 //! selected hex row mean. Pure, so it is
 //! tested without a window; the shape is computed on the worker that builds
 //! the `Display`, never while painting.
-use skwir_core::inspection::Row;
+use skwir_core::inspection::{Block, BlockKind, Row};
+use std::collections::HashMap;
 
 /// Column widths and kinds of a table, from its header and the rows loaded.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -229,9 +230,203 @@ pub fn decode(bytes: &[u8]) -> Vec<(&'static str, String)> {
     values
 }
 
+/// The columns of a table read as a document's (a Markdown or HTML table,
+/// a notebook's frame), in ems of its text: the width each needs at least,
+/// its longest word, which is never broken, and its cells whole up to
+/// `READABLE`, and the width it would take, its longest cell on one line. Estimated from character counts, as
+/// `Shape` is, once on the worker that builds the display: a column given
+/// less wraps between its words; a table whose columns need more than the
+/// panel scrolls sideways, its rows together.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Columns {
+    pub least: Vec<f32>,
+    pub wanted: Vec<f32>,
+}
+
+impl Columns {
+    /// The width the columns need at least, together.
+    pub fn least_total(&self) -> f32 {
+        self.least.iter().sum()
+    }
+}
+
+/// A document's tables: the table each row is part of, known by its first
+/// row's block, and each one's columns.
+#[derive(Clone, Debug, Default)]
+pub struct Tables {
+    first: HashMap<usize, usize>,
+    columns: HashMap<usize, Columns>,
+}
+
+/// A character's width in ems, estimated on the wide side, as a short
+/// estimate breaks a word: an East Asian one is a square; Latin letters by
+/// their shapes (`m` and `w` wide, capitals and digits wider than most,
+/// `i`, `l` and the stops narrow).
+fn letter_ems(letter: char) -> f32 {
+    match letter {
+        'm' | 'w' | 'M' | 'W' | '@' | '%' => 0.95,
+        'i' | 'j' | 'l' | 'I' | '.' | ',' | ':' | ';' | '!' | '|' | '\'' => 0.32,
+        'f' | 'r' | 't' | ' ' => 0.42,
+        _ if letter.is_ascii_uppercase() => 0.74,
+        _ if letter.is_ascii_digit() => 0.62,
+        _ if letter.is_ascii() => 0.6,
+        _ if matches!(u32::from(letter), 0x1100..=0x115F | 0x2E80..=0xA4CF | 0xAC00..=0xD7A3 | 0xF900..=0xFAFF | 0xFE30..=0xFE4F | 0xFF00..=0xFF60 | 0xFFE0..=0xFFE6) => {
+            1.
+        }
+        _ => 0.66,
+    }
+}
+
+/// A header's letters are bold, and wider.
+const BOLD: f32 = 1.12;
+/// What a word may need beyond its estimate, so that it is not broken
+/// where the estimate falls short.
+const SLACK: f32 = 0.8;
+/// A longer word (an address) may break; a longer cell wraps.
+const LONGEST_WORD: f32 = 18.;
+const LONGEST_CELL: f32 = 24.;
+/// A column is never narrower than its cells up to this, in ems: a short
+/// cell (a code, a number, a date) stays on its line, and a long one wraps
+/// in a column it reads in, never a letter or two wide.
+const READABLE: f32 = 8.;
+
+impl Tables {
+    /// The tables of `blocks`: each run of rows one table.
+    pub fn of(blocks: &[Block]) -> Self {
+        let mut tables = Self::default();
+        let mut first = None;
+        for (index, block) in blocks.iter().enumerate() {
+            let BlockKind::TableRow { cells, header } = &block.kind else {
+                first = None;
+                continue;
+            };
+            let start = *first.get_or_insert(index);
+            tables.first.insert(index, start);
+            let columns = tables.columns.entry(start).or_default();
+            if columns.least.len() < cells.len() {
+                columns.least.resize(cells.len(), 0.);
+                columns.wanted.resize(cells.len(), 0.);
+            }
+            let scale = if *header { BOLD } else { 1. };
+            for (column, cell) in cells.iter().enumerate() {
+                let (word, whole) = measure(block, cell.clone());
+                let least = (word.max(whole.min(READABLE)) * scale + SLACK).min(LONGEST_WORD);
+                let wanted = (whole * scale + SLACK).min(LONGEST_CELL).max(least);
+                columns.least[column] = columns.least[column].max(least);
+                columns.wanted[column] = columns.wanted[column].max(wanted);
+            }
+        }
+        tables
+    }
+
+    /// The table `block` is a row of: its first row's block and its columns.
+    pub fn columns(&self, block: usize) -> Option<(usize, &Columns)> {
+        let first = *self.first.get(&block)?;
+        Some((first, self.columns.get(&first)?))
+    }
+
+    /// Whether `block` is the last row of its table.
+    pub fn ends(&self, block: usize) -> bool {
+        self.first.get(&(block + 1)) != self.first.get(&block)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.first.is_empty()
+    }
+}
+
+/// A cell's longest word and its whole width, in ems: a drawing (a formula)
+/// as wide as it is drawn, and never broken.
+fn measure(block: &Block, cell: std::ops::Range<usize>) -> (f32, f32) {
+    let Some(text) = block.text.get(cell.clone()) else {
+        return (0., 0.);
+    };
+    let (mut longest, mut word, mut whole) = (0f32, 0f32, 0f32);
+    for (offset, letter) in text.char_indices() {
+        let at = cell.start + offset;
+        let ems = if letter == Block::DRAWN {
+            let run = block
+                .runs
+                .get(block.runs.partition_point(|run| run.range.end <= at))
+                .filter(|run| run.range.start <= at);
+            run.and_then(|run| run.drawing.as_ref())
+                .map_or(1., |drawing| drawing.width)
+        } else {
+            letter_ems(letter)
+        };
+        if letter.is_whitespace() {
+            longest = longest.max(word);
+            word = 0.;
+        } else {
+            word += ems;
+        }
+        whole += ems;
+    }
+    (longest.max(word), whole)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn row(cells: &[&str], header: bool) -> Block {
+        let mut text = String::new();
+        let mut ranges = Vec::new();
+        for (i, cell) in cells.iter().enumerate() {
+            if i > 0 {
+                text.push('\t');
+            }
+            let start = text.len();
+            text.push_str(cell);
+            ranges.push(start..text.len());
+        }
+        Block {
+            text,
+            kind: BlockKind::TableRow {
+                cells: ranges,
+                header,
+            },
+            ..Block::default()
+        }
+    }
+
+    /// Each table's columns: at least their longest word, as much as their
+    /// longest cell; the rows of one table share them, another's are its
+    /// own.
+    #[test]
+    fn a_table_s_columns_need_their_longest_word_and_want_their_longest_cell() {
+        let blocks = vec![
+            row(&["", "State Code", "City Name"], true),
+            row(&["0", "1", "Alabaster to the north"], false),
+            Block {
+                text: "Between".into(),
+                ..Block::default()
+            },
+            row(&["a"], true),
+        ];
+        let tables = Tables::of(&blocks);
+        let (first, columns) = tables.columns(1).unwrap();
+        assert_eq!(first, 0);
+        assert_eq!(tables.columns(0).unwrap().1, columns, "one table");
+        // "State Code" is bold: its longest word is "State", 5 letters.
+        let ems =
+            |text: &str, scale: f32| text.chars().map(letter_ems).sum::<f32>() * scale + SLACK;
+        // "State Code", bold, is short: whole on its line.
+        assert!((columns.least[1] - ems("State Code", BOLD)).abs() < 1e-4);
+        assert!((columns.wanted[1] - ems("State Code", BOLD)).abs() < 1e-4);
+        // "Alabaster to the north" wraps, in a column it reads in.
+        assert!((columns.least[2] - (READABLE + SLACK)).abs() < 1e-4);
+        assert!((columns.wanted[2] - ems("Alabaster to the north", 1.)).abs() < 1e-4);
+        // A word longer than that is never broken.
+        let long = Tables::of(&[row(&["Incomprehensibilities"], false)]);
+        assert!(
+            (long.columns(0).unwrap().1.least[0] - ems("Incomprehensibilities", 1.)).abs() < 1e-4
+        );
+        assert!(!tables.ends(0) && tables.ends(1));
+        assert!(tables.columns(2).is_none());
+        assert_eq!(tables.columns(3).unwrap().0, 3, "a table of its own");
+        assert!(tables.ends(3));
+    }
 
     fn rows(cells: &[&[&str]]) -> Vec<Row> {
         cells

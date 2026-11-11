@@ -28,6 +28,8 @@ pub struct Display {
     folded: Arc<[Option<Box<str>>]>,
     /// Column widths and kinds of a table, worked out on the worker.
     table: Option<Arc<crate::inspector_rows::Shape>>,
+    /// The tables its blocks hold, their columns worked out on the worker.
+    pub(crate) tables: Arc<crate::inspector_rows::Tables>,
     /// The request this inspection answered, which its pictures for later
     /// are asked with (`inspector_pictures`); `None` for text the panel read
     /// itself.
@@ -249,6 +251,7 @@ impl Display {
             profile,
             model,
             table,
+            tables: Arc::new(crate::inspector_rows::Tables::of(&data.blocks)),
             data: Arc::new(data),
             images,
             row_icons: Arc::new(row_icons),
@@ -738,6 +741,9 @@ pub struct State {
     pub(crate) bytes: Option<crate::bytes_view::BytesView>,
     /// A table or bytes wider than the panel, scrolled sideways.
     sideways: gpui::ScrollHandle,
+    /// Each table of a document wider than the panel, scrolled sideways,
+    /// its rows together: by its first row's block.
+    pub(crate) tables: Rc<RefCell<HashMap<usize, gpui::ScrollHandle>>>,
     /// The tools the sections of this file offered (`Offered`).
     offered: Offered,
     /// What is read a screen at a time (`inspector_pages`): the pages of
@@ -858,6 +864,7 @@ impl Default for State {
             text: None,
             bytes: None,
             sideways: gpui::ScrollHandle::new(),
+            tables: Rc::default(),
             offered: Offered::default(),
             pages: Rc::default(),
         }
@@ -969,6 +976,7 @@ impl State {
         self.selection = None;
         self.dragging = false;
         self.sideways.set_offset(gpui::point(px(0.), px(0.)));
+        self.tables.borrow_mut().clear();
         self.reindex(data);
     }
     /// A new inspection replaced the content. Its `position` becomes the
@@ -3668,6 +3676,9 @@ pub fn content(
         .then(|| crate::note_popover::popover(shell, &list_style, theme, cx))
         .flatten();
     list_style.armed_link = shell.armed_link();
+    if !display.tables.is_empty() {
+        list_style.tables = Some((display.tables.clone(), state.tables.clone()));
+    }
     list_style.labels = state.labels.as_ref().map(|labels| Rc::new(labels.shown()));
     // While the find is open, what it looks for is marked; a text read
     // where it is shown is told where the match it is on was drawn.

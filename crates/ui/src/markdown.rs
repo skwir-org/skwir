@@ -95,6 +95,12 @@ pub struct MarkdownStyle {
     /// lines this frame, for the pager to end a page between two
     /// (`inspector_pages`).
     pub lines: Option<crate::inspector_pages::Texts>,
+    /// The document's tables (their columns, worked out on the worker) and
+    /// the sideways scroll of each, shared by its rows.
+    pub tables: Option<(
+        std::sync::Arc<crate::inspector_rows::Tables>,
+        std::rc::Rc<std::cell::RefCell<std::collections::HashMap<usize, gpui::ScrollHandle>>>,
+    )>,
 }
 
 /// The widest a reading column may be, in ems of its text, for a
@@ -168,6 +174,7 @@ impl MarkdownStyle {
             find_current_text: theme.find_current_text,
             code_look: None,
             lines: None,
+            tables: None,
         }
     }
 
@@ -180,6 +187,7 @@ impl MarkdownStyle {
             labels: self.labels.clone(),
             sought: self.sought.clone(),
             lines: self.lines.clone(),
+            tables: self.tables.clone(),
             // Its blocks lie on the same page.
             page: self.page,
             ..Self::new(theme, self.body_size, self.reading, None)
@@ -408,24 +416,55 @@ fn table_row(
     pane: PaneId,
     entity: WeakEntity<crate::shell::Shell>,
 ) -> AnyElement {
+    // Its table's columns, and the scroll its rows share when they need
+    // more than the panel: each row lays its cells out alike from them, so
+    // the columns line up, and scrolls sideways with the others.
+    let table = style.tables.as_ref().and_then(|(tables, scrolls)| {
+        let (first, columns) = tables.columns(index)?;
+        let scroll = scrolls
+            .borrow_mut()
+            .entry(first)
+            .or_insert_with(gpui::ScrollHandle::new)
+            .clone();
+        Some((columns.clone(), scroll, tables.ends(index)))
+    });
+    let em = style.body_size;
+    // A cell's padding (`px_2`) and its border.
+    let room = 17.;
     let mut row = div()
-        .flex_1()
-        .min_w_0()
         .flex()
         .border_b_1()
         .border_color(style.border)
         .when(header, |d| {
             d.font_weight(FontWeight::BOLD)
                 .bg(crate::color::overlay(style.page, style.table_header_bg))
+        })
+        .map(|d| match &table {
+            Some((columns, ..)) => d.w_full().min_w(px(
+                columns.least_total() * em + room * columns.least.len() as f32
+            )),
+            None => d.flex_1().min_w_0(),
         });
     // The cells are ranges of the row's own text, so each column draws its
     // stretch of it and keeps the emphasis, code and links written there.
     let id: SharedString = format!("inspection-cell-{index}").into();
     for (column, cell) in cells.iter().enumerate() {
+        let width = table.as_ref().and_then(|(columns, ..)| {
+            Some((*columns.least.get(column)?, *columns.wanted.get(column)?))
+        });
         row = row.child(
             div()
-                .flex_1()
-                .min_w_0()
+                // As wide as its content would have it, sharing what is
+                // left or short in that proportion, never narrower than its
+                // longest word.
+                .map(|d| match width {
+                    Some((least, wanted)) => d
+                        .flex_basis(px(wanted * em + room))
+                        .flex_grow(wanted)
+                        .flex_shrink(1.)
+                        .min_w(px(least * em + room)),
+                    None => d.flex_1().min_w_0(),
+                })
                 .px_2()
                 .py_1()
                 .when(column + 1 < cells.len(), |d| {
@@ -444,7 +483,33 @@ fn table_row(
                 )),
         );
     }
-    row.into_any_element()
+    let Some((_, scroll, last)) = table else {
+        return row.into_any_element();
+    };
+    div()
+        .flex_1()
+        .min_w_0()
+        .relative()
+        .child(
+            div()
+                .id(gpui::ElementId::from((
+                    SharedString::from("inspection-table"),
+                    index,
+                )))
+                .w_full()
+                .overflow_x_scroll()
+                .track_scroll(&scroll)
+                .child(row),
+        )
+        // The table's bar, under its last row, while it is wider than the
+        // panel.
+        .when(last, |d| {
+            d.child(crate::elements::scrollbar::horizontal(
+                gpui::ElementId::from((SharedString::from("inspection-table-bar"), index)),
+                scroll,
+            ))
+        })
+        .into_any_element()
 }
 
 fn code_box(

@@ -14551,3 +14551,42 @@ release build); `just release-check`; Windows and macOS. The disk filled
 twice during the runs (test builds); `just prune` gave 27 GB back each
 time.
 
+## 2026-11-11: A table's columns as wide as their content
+
+The user found a pandas frame of 29 columns drawn letter by letter in a
+notebook: the reading view gave every column an equal share of the panel
+and broke words anywhere (the "Nîme s" seen on 2026-11-10, at its worst).
+
+- `inspector_rows::Tables`, made with the display on its worker: per run
+  of table rows, each column's least width (its longest word, its cells
+  whole up to 8 ems, so a code or a date stays on its line) and wanted
+  width (its longest cell, up to 24 ems), in ems, from its letters'
+  estimated widths (wide letters, capitals, digits and narrow ones apart,
+  bold headers wider, on the wide side: a short estimate broke "Datum").
+  A formula counts at its drawing's width.
+- Each row's cells are based on their column's wanted width and grow and
+  shrink in that proportion, never under the least; a row is at least as
+  wide as its least widths together, in a box that scrolls sideways on
+  its table's scroll handle (`inspector::State::tables`), so the rows
+  move together; the last row carries the table's horizontal bar.
+
+**Cross-compiling** (the list's second step): `just check-cross` stopped
+at `crates/core/tests/listing.rs`, which does not build for Windows: the
+folders-first tests (f34cab8e, another session's) call `wait_pane`, which
+is Linux's alone. Linted apart for Windows: `skwir-ui` (gpui with patch
+0060), `-platform`, `-plugin-markdown`, `-plugin-books`, `-math-worker`
+and core's library, clean; for macOS the same but the UI, as
+`check-macos` leaves it out, clean.
+
+**Checked:** rustfmt; clippy `-D warnings` on `skwir-ui`; `skwir-ui`'s and
+`skwir`'s tests (852 passed). A new test: a table's columns, a row's
+share of them, two tables apart, a long word never broken. A debug window
+on Xvfb, a copy of the user's sample notebook: the 29-column frame in a
+narrow panel with its headers whole ("State Code", "Datum"), scrolled
+sideways by the wheel with its header, and its bar under its last row;
+in a wide panel, a five-column frame filling it, its columns by their
+content.
+
+**Seen, left as it was:** a cell of long text squeezed to its column's
+least width makes its row tall, as a browser's table does.
+
