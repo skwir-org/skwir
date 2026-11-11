@@ -98,9 +98,14 @@ like `AGENTS.md`.
   place around it says nothing more.
 - A label's words are its value (`aria_value`), as gpui's text gives
   them; a name set on a label is not said.
-- A text holding drawings (a formula, `inspection::Drawing`) says their
-  words in their place (`StyledText::with_said`, from `Block::said`): a
-  formula is its TeX, never the character it is drawn over.
+- **What a block says is not always what it shows** (`Block::said`,
+  given as `StyledText::with_said`): a drawing says its words (a formula
+  its TeX, never the character it is drawn over); what a page tells
+  screen readers to skip (`aria-hidden`) is shown and not said
+  (`Run::unsaid`); what it hides from view for them (the "visually
+  hidden" pattern) is said where it stands and not shown
+  (`Block::unseen`). A copy takes what is shown (`Block::copied`), each
+  drawing as its words. CSS decides what is seen, ARIA what is said.
 - **A terminal is read as text**: each row of the screen a text run, the
   blank cells between its runs as spaces, the cursor as the caret, built
   in the panel's `a11y_synthetic_children` from the screen it draws

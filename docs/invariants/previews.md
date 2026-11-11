@@ -363,6 +363,17 @@ A name that says nothing is not a binary file.
   its text read by their rules (`delimited::mathjax`, `$` only where its
   configuration lists it), never its `pre` or `code`. Delimited TeX is
   found by `math::delimited` alone.
+- **A formula beside a drawing of itself is typeset once**: MathML
+  carrying its TeX next to an `aria-hidden` drawing (KaTeX's spans,
+  MathJax 3's glyphs, Wikipedia's picture) is typeset in the drawing's
+  place, whichever copy the page hid (`rich_preview::pairs`); only the
+  copies just beside each other pair, so an icon elsewhere in its
+  paragraph is not one. A drawing with no formula beside it stays.
+- **The HTML reader shows what CSS shows and says what ARIA says**: the
+  "visually hidden" pattern (placed out of the flow in a box of a pixel,
+  clipped to nothing, or far off screen; `Style::unseen`) hides words
+  from view and keeps them for screen readers; `aria-hidden` keeps them
+  on screen and out of what is said (`docs/invariants/accessibility.md`).
 - **No equation numbers itself** (MathJax's default, Jupyter's): a number
   is a `\tag`'s. It is drawn apart from its formula (`Drawing::tag`) and
   set at the end of the formula's line, or an em past it where the line

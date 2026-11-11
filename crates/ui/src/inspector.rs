@@ -1936,7 +1936,7 @@ impl Shell {
                                 .data
                                 .blocks
                                 .get(i)
-                                .map(|b| b.said(0..b.text.len()).into_owned())
+                                .map(|b| b.copied(0..b.text.len()).into_owned())
                                 .or_else(|| {
                                     listed(&display.data)
                                         .get(i.saturating_sub(display.data.blocks.len()))
@@ -1949,7 +1949,7 @@ impl Shell {
                                 .data
                                 .blocks
                                 .iter()
-                                .map(|b| b.said(0..b.text.len()).into_owned());
+                                .map(|b| b.copied(0..b.text.len()).into_owned());
                             let rows = listed(&display.data).iter().map(|r| r.cells.join("\t"));
                             blocks.chain(rows).collect::<Vec<_>>().join("\n")
                         });

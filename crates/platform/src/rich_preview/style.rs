@@ -89,6 +89,11 @@ pub struct Style {
     pub size: f32,
     /// This element's own left margin and padding, in ems.
     pub indent: f32,
+    /// Hidden from view and there for a screen reader, with what it holds:
+    /// the "visually hidden" pattern pages write such words with (placed
+    /// out of the flow, in a box of a pixel, clipped to nothing, or far off
+    /// screen; `Hiding`).
+    pub unseen: bool,
 }
 impl Default for Style {
     fn default() -> Self {
@@ -104,6 +109,7 @@ impl Default for Style {
             pre: false,
             size: 1.,
             indent: 0.,
+            unseen: false,
         }
     }
 }
@@ -146,6 +152,64 @@ enum Property {
     Size(Size),
     Margin(Side, Length),
     Padding(Side, Length),
+    Hiding(Hiding),
+}
+
+/// A piece of the "visually hidden" pattern (`Style::unseen`): an element
+/// placed out of the flow (`position: absolute` or `fixed`) with a box of a
+/// pixel at most each way, a clip to nothing (`clip: rect(0 0 0 0)`,
+/// `clip-path: inset(50%)`), or an offset far off screen (`left:
+/// -10000px`). Each is `true` where the declaration says so and `false`
+/// where it says otherwise, so a later one undoes it.
+#[derive(Clone, Copy, Debug)]
+enum Hiding {
+    Placed(bool),
+    Narrow(bool),
+    Low(bool),
+    Clipped(bool),
+    Left(bool),
+    Top(bool),
+}
+
+/// How far off screen an offset sets a box at least (`Hiding::Left`).
+const AWAY: f32 = -999.;
+
+/// The piece of the pattern `name: values` is, if it is one.
+fn hiding(name: &str, values: &[Value]) -> Option<Hiding> {
+    let tiny = |values: &[Value]| match values {
+        [value] => Some(matches!(Length::parse(value)?, Length::Px(px) if px <= 1.)),
+        _ => None,
+    };
+    let away = |values: &[Value]| match values {
+        [value] => Some(matches!(Length::parse(value)?, Length::Px(px) if px <= AWAY)),
+        _ => None,
+    };
+    Some(match name {
+        "position" => match values {
+            [Value::Ident(position)] => {
+                Hiding::Placed(matches!(position.as_str(), "absolute" | "fixed"))
+            }
+            _ => return None,
+        },
+        "width" => Hiding::Narrow(tiny(values)?),
+        "height" => Hiding::Low(tiny(values)?),
+        "left" => Hiding::Left(away(values)?),
+        "top" => Hiding::Top(away(values)?),
+        "clip" => Hiding::Clipped(match values {
+            [Value::Function(name, arguments)] if name.eq_ignore_ascii_case("rect") => arguments
+                .iter()
+                .filter(|value| !matches!(value, Value::Comma))
+                .all(|value| matches!(Length::parse(value), Some(Length::Px(px)) if px <= 1.)),
+            _ => false,
+        }),
+        "clip-path" => Hiding::Clipped(match values {
+            [Value::Function(name, arguments)] if name.eq_ignore_ascii_case("inset") => {
+                matches!(arguments.first(), Some(Value::Length(percent, unit)) if unit == "%" && *percent >= 50.)
+            }
+            _ => false,
+        }),
+        _ => return None,
+    })
 }
 
 #[derive(Clone, Debug)]
@@ -386,6 +450,8 @@ impl Sheets {
         let mut style = parent.inherited();
         let (mut margin, mut padding) = (0., 0.);
         let mut script = None;
+        let (mut placed, mut narrow, mut low, mut clipped, mut left, mut top) =
+            (false, false, false, false, false, false);
         for declaration in matched {
             match declaration.property {
                 Property::Display(display) => style.display = display,
@@ -404,9 +470,16 @@ impl Sheets {
                 Property::Size(Size::Root(scale)) => style.size = scale,
                 Property::Margin(Side::Left, length) => margin = ems(length),
                 Property::Padding(Side::Left, length) => padding = ems(length),
+                Property::Hiding(Hiding::Placed(own)) => placed = own,
+                Property::Hiding(Hiding::Narrow(own)) => narrow = own,
+                Property::Hiding(Hiding::Low(own)) => low = own,
+                Property::Hiding(Hiding::Clipped(own)) => clipped = own,
+                Property::Hiding(Hiding::Left(own)) => left = own,
+                Property::Hiding(Hiding::Top(own)) => top = own,
                 Property::Page(_) | Property::Margin(..) | Property::Padding(..) => {}
             }
         }
+        style.unseen |= placed && ((narrow && low) || clipped || left || top);
         // A cell's `vertical-align` places its content in the cell, never
         // raises it (CSS 2.1, 17.5.4: `super`, `sub` and `text-top` act as
         // `baseline` there): pandas sets `top` on every cell it writes.
@@ -1059,6 +1132,15 @@ fn properties(name: &str, values: &[Value]) -> Vec<Property> {
         .into_iter()
         .flatten()
         .collect(),
+        // What places a box is a fixed-layout page's, and a piece of what
+        // hides words from view in reading mode.
+        "position" | "width" | "height" | "left" | "top" | "clip" | "clip-path" => [
+            hiding(name, values).map(Property::Hiding),
+            page(name, values).map(Property::Page),
+        ]
+        .into_iter()
+        .flatten()
+        .collect(),
         _ => one(property(name, values).or_else(|| page(name, values).map(Property::Page))),
     }
 }
@@ -1409,6 +1491,25 @@ mod tests {
             styles.insert(node.id(), style);
         }
         panic!("no element #{id}");
+    }
+
+    /// The "visually hidden" pattern as Bootstrap, `WordPress` and older
+    /// pages write it: hidden from view, there for a screen reader, with
+    /// what it holds; a pixel's box in the flow, or placed but whole, is not.
+    #[test]
+    fn words_hidden_from_view_for_a_screen_reader_are_unseen() {
+        let html = r#"<p><span id="bootstrap">a</span><span id="clipped">b</span>
+            <span id="away">c</span><span id="flow">d</span><span id="placed">e</span>
+            <span id="bootstrap-in"><b id="held">f</b></span></p>"#;
+        let css = ".x, #bootstrap, #bootstrap-in { position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0 }
+            #clipped { position: absolute; clip-path: inset(50%) }
+            #away { position: absolute; left: -10000px; top: auto }
+            #flow { width: 1px; height: 1px }
+            #placed { position: absolute; left: 2em; width: 10em }";
+        let unseen = |id: &str| style_of(html, css, id).unseen;
+        assert!(unseen("bootstrap") && unseen("clipped") && unseen("away"));
+        assert!(unseen("held"), "what it holds with it");
+        assert!(!unseen("flow") && !unseen("placed"));
     }
 
     #[test]

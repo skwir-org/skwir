@@ -43,7 +43,7 @@ impl Selection {
                     None
                 } else {
                     // A drawing is copied as what it says (a formula's TeX).
-                    b.text.get(r.clone()).map(|_| b.said(r))
+                    b.text.get(r.clone()).map(|_| b.copied(r))
                 }
             })
             .collect();
@@ -539,8 +539,10 @@ pub fn part(
     let (shown, highlights) = styled(block, range.clone(), selection.clone(), style, marks);
     let drawings = drawings_in(block, range.clone(), selection.clone(), style);
     let mut text = StyledText::new(shown).with_highlights(highlights);
-    if !drawings.is_empty() {
-        text = text.with_said(block.said(range.clone()).into_owned());
+    // What a screen reader is told where it is not what is shown: a
+    // formula's TeX, words shown only or said only.
+    if let std::borrow::Cow::Owned(said) = block.said(range.clone()) {
+        text = text.with_said(said);
     }
     let drawn = text.layout().clone();
     let down = text.layout().clone();

@@ -206,7 +206,9 @@ The player, in the panel or pinned at its foot:
 - Markdown and HTML in reading mode, with a source toggle: headings,
   emphasis, lists, tables, highlighted code, links and local images.
 - HTML keeps what its stylesheets say about emphasis, alignment, indents
-  and hidden text. It is inert: no scripts, fonts or remote content.
+  and hidden text, words hidden for screen readers alone included, which
+  a screen reader still hears. It is inert: no scripts, fonts or remote
+  content.
 - Fenced `mermaid` blocks are drawn as diagrams when
   `skwir-mermaid-worker` is installed, and stay code without it.
 - Formulas are typeset when `skwir-math-worker` is installed (the
@@ -215,7 +217,8 @@ The player, in the panel or pinned at its foot:
   Jupyter finds it (`\\(…\\)`, `\\[…\\]` and `\begin{…}` environments
   too) and the LaTeX its cells return, MathML that carries its TeX in
   HTML files, books and e-mail, and the TeX of a page written for MathJax
-  or KaTeX (an exported notebook). They are drawn in the text's color and
+  or KaTeX (an exported notebook). A page that already drew its formulas
+  (KaTeX's, Wikipedia's) shows each once, typeset from its TeX. They are drawn in the text's color and
   size, and copy as their TeX. As in Jupyter, an equation is numbered only
   by its `\tag`, set at the end of its line. Without the helper, or where
   the TeX cannot be typeset, the formula is its TeX, as code.

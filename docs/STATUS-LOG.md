@@ -14505,3 +14505,49 @@ and a `$` in code left alone.
 **Not checked:** a screen reader; Windows and macOS; `just
 release-check`, by the user's standing preference.
 
+## 2026-11-11: A formula once beside its drawing; what is seen and what is said
+
+Pages that drew their formulas showed each twice: KaTeX writes MathML that
+carries the TeX, hidden by its stylesheet, then its spans marked
+`aria-hidden`, laid out by that stylesheet the reader does not load, so
+they read as loose letters. By the user's choices, in this order:
+
+- **A formula beside a drawing of itself is typeset once**
+  (`rich_preview::pairs`, one pass over a page's `math` elements before
+  its walk): MathML carrying its TeX, or the element just around it, with
+  an `aria-hidden` element just beside it (past white space and comments)
+  is shown whatever the page hid, and that drawing and the space between
+  go. KaTeX's, MathJax 3's and Wikipedia's (its MathML `display: none`,
+  a picture shown) pair; an icon elsewhere in the paragraph does not;
+  KaTeX's `html` output, a drawing alone, stays.
+- **What is seen is CSS's and what is said is ARIA's** (ADR-065
+  amended), as a browser has it. The reader recognizes the "visually
+  hidden" pattern (`Style::unseen`: placed absolutely or fixed, with a box
+  of a pixel either way, a clip to nothing, or an offset of -999 px or
+  more), as Bootstrap, WordPress and older pages write it. What it hides
+  is said where it stands and not shown (`Block::unseen`); what is
+  `aria-hidden` is shown and not said (`Run::unsaid`). A screen reader
+  hears `Block::said`; a copy takes `Block::copied` (the old `said`: what
+  is shown, a drawing as its words). Both as is for a block without
+  either.
+
+**Checked:** rustfmt; clippy `-D warnings` on `skwir-core`, `-platform`,
+`-ui`, `-plugin-markdown`, `-math-worker`; the tests of those, `-books`,
+`-email`, `-documents` and the helper (1323 passed), `skwir-ui` and `skwir`
+(851 passed). New tests: KaTeX's, MathJax 3's and Wikipedia's pairs with
+and without the helper, KaTeX's `html` output shown and not said; the
+visually hidden pattern four ways and two that are not; said against
+copied with a word said only and a run shown only; a page with an
+`aria-hidden` icon and rating, a visually hidden label, and one both
+(neither shown nor said). Over AT-SPI, a probe on the a11y check's
+harness (`tools/test/a11y.py`'s window, a page of its own, the debug
+build): Peeked, the page's lines are heard as "Rated 4 out of 5." and
+"Energy $E = mc^2$ here.". A debug window on Xvfb: the stars shown, the
+label not, KaTeX's formula once, Wikipedia's typeset from its hidden
+MathML.
+
+**Not checked:** Orca itself; the a11y check whole (`just a11y-check`,
+release build); `just release-check`; Windows and macOS. The disk filled
+twice during the runs (test builds); `just prune` gave 27 GB back each
+time.
+

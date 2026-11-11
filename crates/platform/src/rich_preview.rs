@@ -141,6 +141,7 @@ pub fn html(
         tex: typesetter(&doc),
         ..Walk::default()
     };
+    let pairs = pairs(&doc);
     let mut stack: Vec<Context> = vec![Context::default()];
     // A subtree that is not read: hidden, too deep, or a picture. Hidden,
     // the places it names stay where it stood (a printed page's mark a
@@ -177,11 +178,29 @@ pub fn html(
                                         "table" | "thead" | "tbody" | "tfoot" | "tr" | "colgroup"
                                     )
                                 }) => {}
+                    Node::Text(_) if pairs.drawn.contains(&node.id()) => {}
                     Node::Text(text) => walk.read(&parent, text),
                     Node::Element(e) => {
                         let element = ElementRef::wrap(node).expect("an element");
                         let style = sheets.compute(element, &parent.style);
-                        if style.display == Display::None {
+                        // A drawing of a formula that stands beside it
+                        // goes; the formula shows, whatever the page hid.
+                        let hidden = (style.display == Display::None
+                            && !pairs.shown.contains(&node.id()))
+                            || pairs.drawn.contains(&node.id());
+                        if hidden {
+                            walk.anchor(&parent, e, node.id());
+                            skip = Some((node.id(), true));
+                            continue;
+                        }
+                        // Words hidden from view and there for a screen
+                        // reader are said where they stand, not shown (a
+                        // formula's copy beside its drawing is shown).
+                        if style.unseen && !parent.style.unseen && !pairs.shown.contains(&node.id())
+                        {
+                            if !parent.unsaid && e.attr("aria-hidden") != Some("true") {
+                                walk.unseen(&parent, &words_of(node));
+                            }
                             walk.anchor(&parent, e, node.id());
                             skip = Some((node.id(), true));
                             continue;
@@ -323,6 +342,9 @@ struct Context {
     list_of_notes: bool,
     /// A printed page number: kept as a place to link to, never read.
     silent: bool,
+    /// Shown and not said: inside what the page tells screen readers to
+    /// skip (`aria-hidden="true"`).
+    unsaid: bool,
 }
 impl Default for Context {
     fn default() -> Self {
@@ -347,6 +369,7 @@ impl Default for Context {
             reference: false,
             list_of_notes: false,
             silent: false,
+            unsaid: false,
         }
     }
 }
@@ -356,6 +379,7 @@ impl Context {
         let mut context = self.clone();
         context.style = style;
         let name = e.name();
+        context.unsaid |= e.attr("aria-hidden") == Some("true");
         if style.display == Display::Block {
             context.block = Some(node.id());
             context.block_style = style;
@@ -543,6 +567,9 @@ impl Walk {
                 run.range.end = run.range.end.min(end);
                 run.range.start < run.range.end
             });
+            for (at, _) in &mut block.unseen {
+                *at = (*at).min(end);
+            }
         }
         if let Some(headers) = self.row.take() {
             let header = headers && self.cells > 0;
@@ -634,7 +661,18 @@ impl Walk {
             link: context.link.clone(),
             found: false,
             drawing: None,
+            unsaid: context.unsaid,
         });
+    }
+
+    /// Words said where they stand and not shown (`Block::unseen`).
+    fn unseen(&mut self, context: &Context, words: &str) {
+        if context.silent || words.trim().is_empty() {
+            return;
+        }
+        self.begin(context);
+        let at = self.current.text.len();
+        self.current.unseen.push((at, words.to_owned()));
     }
 
     /// A text of the page, its formulas typeset where the page's own
@@ -682,6 +720,7 @@ impl Walk {
             bold: context.style.bold,
             italic: context.style.italic,
             link: context.link.clone(),
+            unsaid: context.unsaid,
             ..Run::default()
         };
         self.begin(context);
@@ -903,6 +942,113 @@ fn typesetter(doc: &Html) -> Option<crate::math::delimited::Rules> {
         .any(|written| bare.contains(written));
     }
     loads.then(|| crate::math::delimited::mathjax(dollars))
+}
+
+/// The words an element holds, as a screen reader reads them: its text, its
+/// white space one space each, its scripts and styles left out.
+fn words_of(node: NodeRef<'_, Node>) -> String {
+    let mut words = String::new();
+    let mut space = false;
+    for text in node.descendants().filter_map(|child| {
+        let script = child
+            .parent()
+            .and_then(|p| p.value().as_element())
+            .is_some_and(|e| matches!(e.name(), "script" | "style" | "template"));
+        child.value().as_text().filter(|_| !script)
+    }) {
+        for letter in text.chars() {
+            if letter.is_whitespace() {
+                space = true;
+            } else {
+                if space {
+                    words.push(' ');
+                    space = false;
+                }
+                words.push(letter);
+            }
+        }
+    }
+    if space {
+        words.push(' ');
+    }
+    words
+}
+
+/// A page's formulas set beside a drawing of themselves: MathML that
+/// carries its TeX next to a drawing the page tells screen readers to skip
+/// (`aria-hidden`), one copy for the ear and one for the eye. KaTeX hides
+/// the MathML by its stylesheet and draws its own spans; MathJax 3 draws its
+/// glyphs with the MathML after them; Wikipedia hides the MathML
+/// (`display: none`) and shows a picture. The reader typesets the TeX
+/// whichever copy the page hid, as it draws neither the spans nor a
+/// picture it does not fetch; a drawing with no formula beside it (KaTeX's
+/// `html` output) stays.
+#[derive(Default)]
+struct Pairs {
+    /// What holds a formula (the `math`, or the element just around it),
+    /// shown even where the page hides it.
+    shown: HashSet<NodeId>,
+    /// The drawings beside them, left out, and the white space between,
+    /// which would stand where a drawing went.
+    drawn: HashSet<NodeId>,
+}
+
+fn pairs(doc: &Html) -> Pairs {
+    let mut pairs = Pairs::default();
+    let hidden_from_readers = |node: NodeRef<'_, Node>| {
+        node.value()
+            .as_element()
+            .is_some_and(|e| e.attr("aria-hidden") == Some("true"))
+    };
+    for math in doc.tree.nodes() {
+        let is_math = math
+            .value()
+            .as_element()
+            .is_some_and(|e| e.name() == "math");
+        if !is_math || tex_of(math).is_none() {
+            continue;
+        }
+        let branches =
+            std::iter::once(math).chain(math.parent().filter(|p| p.value().is_element()));
+        for branch in branches {
+            let drawings: Vec<(NodeRef<'_, Node>, Vec<NodeId>)> =
+                [beside(branch, false), beside(branch, true)]
+                    .into_iter()
+                    .flatten()
+                    .filter(|(node, _)| hidden_from_readers(*node))
+                    .collect();
+            if drawings.is_empty() {
+                continue;
+            }
+            pairs.shown.insert(branch.id());
+            for (drawing, passed) in drawings {
+                pairs.drawn.insert(drawing.id());
+                pairs.drawn.extend(passed);
+            }
+            break;
+        }
+    }
+    pairs
+}
+
+/// The element beside `node`, the way `next` goes, past white space and
+/// comments, and those it passed.
+fn beside(node: NodeRef<'_, Node>, next: bool) -> Option<(NodeRef<'_, Node>, Vec<NodeId>)> {
+    let mut at = node;
+    let mut passed = Vec::new();
+    loop {
+        at = if next {
+            at.next_sibling()?
+        } else {
+            at.prev_sibling()?
+        };
+        match at.value() {
+            Node::Element(_) => return Some((at, passed)),
+            Node::Text(text) if text.trim().is_empty() => passed.push(at.id()),
+            Node::Comment(_) => passed.push(at.id()),
+            _ => return None,
+        }
+    }
 }
 
 /// The TeX a MathML element carries beside its markup
@@ -1633,6 +1779,91 @@ mod tests {
             "$5 and \\(z\\) and $10"
         );
         assert_eq!(drawn(&prices[0]), 1);
+    }
+
+    /// Formulas set beside a drawing of themselves, as KaTeX (its MathML,
+    /// then its spans), MathJax 3 (its glyphs, then its MathML) and Wikipedia
+    /// (its MathML hidden, then a picture) write them; and KaTeX's `html`
+    /// output, a drawing with no formula beside it.
+    const PAIRS: &str = r#"
+        <p>Energy <span class="katex"><span class="katex-mathml"><math><semantics><mrow><mi>E</mi><mo>=</mo><mi>m</mi><msup><mi>c</mi><mn>2</mn></msup></mrow><annotation encoding="application/x-tex">E = mc^2</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="base"><span class="strut" style="height:0.68em"></span><span class="mord mathnormal">E</span><span class="mrel">=</span><span class="mord mathnormal">m</span><span class="mord"><span class="mord mathnormal">c</span><span class="msupsub">2</span></span></span></span></span> here.</p>
+        <p>Then <mjx-container class="MathJax" jax="CHTML"><mjx-math class="MJX-TEX" aria-hidden="true"><mjx-mi>y</mjx-mi></mjx-math><mjx-assistive-mml><math><semantics><mi>y</mi><annotation encoding="application/x-tex">y</annotation></semantics></math></mjx-assistive-mml></mjx-container> too.</p>
+        <p>Area <span class="mwe-math-element"><span class="mwe-math-mathml-inline" style="display: none;"><math alttext="{\displaystyle \pi r^{2}}"><semantics><mrow><mi>&#x3C0;</mi></mrow><annotation encoding="application/x-tex">{\displaystyle \pi r^{2}}</annotation></semantics></math></span>
+        <img src="https://wikimedia.org/api/rest_v1/media/math/render/svg/0" class="mwe-math-fallback-image-inline" aria-hidden="true" alt="{\displaystyle \pi r^{2}}"></span>.</p>
+        <p>Only <span class="katex"><span class="katex-html" aria-hidden="true"><span class="mord mathnormal">x</span></span></span>.</p>"#;
+
+    fn said(blocks: &[Block]) -> Vec<String> {
+        blocks
+            .iter()
+            .map(|block| block.said(0..block.text.len()).into_owned())
+            .collect()
+    }
+
+    #[test]
+    fn a_formula_beside_a_drawing_of_itself_is_typeset_once() {
+        let Some(worker) = std::env::current_exe()
+            .ok()
+            .and_then(|exe| Some(exe.parent()?.parent()?.join("skwir-math-worker")))
+            .filter(|path| path.is_file())
+        else {
+            eprintln!("skipped: skwir-math-worker is not built");
+            return;
+        };
+        use_math_worker(&worker);
+        let blocks = read(PAIRS, Markup::Html);
+        assert_eq!(
+            said(&blocks),
+            [
+                "Energy $E = mc^2$ here.",
+                "Then $y$ too.",
+                "Area ${\\displaystyle \\pi r^{2}}$.",
+                "Only .",
+            ],
+            "KaTeX's `html` output is shown, not said, as KaTeX marks it"
+        );
+        assert_eq!(blocks[3].copied(0..blocks[3].text.len()), "Only x.");
+        let drawn: Vec<usize> = blocks
+            .iter()
+            .map(|block| {
+                block
+                    .runs
+                    .iter()
+                    .filter(|run| run.drawing.is_some())
+                    .count()
+            })
+            .collect();
+        assert_eq!(drawn, [1, 1, 1, 0]);
+    }
+
+    #[test]
+    fn without_its_helper_a_formula_beside_its_drawing_reads_as_its_tex() {
+        use_math_worker(std::path::Path::new("/nonexistent/skwir-math-worker"));
+        assert_eq!(
+            texts(&read(PAIRS, Markup::Html)),
+            [
+                "Energy E = mc^2 here.",
+                "Then y too.",
+                "Area {\\displaystyle \\pi r^{2}}.",
+                "Only x.",
+            ]
+        );
+    }
+
+    /// What a page shows the eye and tells the ear apart: an icon and a
+    /// rating's stars shown and not said (`aria-hidden`), a label said and
+    /// not shown (visually hidden), one that is both, neither.
+    #[test]
+    fn what_is_hidden_from_readers_is_shown_and_what_is_hidden_from_view_is_said() {
+        let source = r#"<style>.sr-only { position: absolute; width: 1px; height: 1px;
+            overflow: hidden; clip: rect(0 0 0 0) }</style>
+            <p><i class="icon" aria-hidden="true">✎</i> Edit, rated
+            <span aria-hidden="true">★★★★☆</span><span class="sr-only">4 out of 5</span>.
+            <span class="sr-only" aria-hidden="true">nothing</span></p>"#;
+        let blocks = read(source, Markup::Html);
+        assert_eq!(texts(&blocks), ["✎ Edit, rated ★★★★☆."]);
+        let block = &blocks[0];
+        assert_eq!(block.said(0..block.text.len()), " Edit, rated 4 out of 5.");
+        assert_eq!(block.copied(0..block.text.len()), "✎ Edit, rated ★★★★☆.");
     }
 
     #[test]

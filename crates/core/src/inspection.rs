@@ -382,6 +382,10 @@ pub struct Block {
     /// its page: the blocks of one note share it, and a reference to any of
     /// its names opens them together.
     pub note: Option<u32>,
+    /// Words said where they stand in the text and not shown: what a page
+    /// writes for screen readers alone (a visually hidden label), at the
+    /// byte of `text` before which they are said (`Block::said`).
+    pub unseen: Vec<(usize, String)>,
 }
 impl Block {
     /// The character a drawing stands in for in a block's text (`Drawing`):
@@ -434,9 +438,59 @@ impl Block {
         }
     }
 
-    /// The text of `range` as it reads: each drawing as what it says
-    /// (`Drawing::text`), the rest as it is.
+    /// The text of `range` as a screen reader says it: as copied
+    /// (`copied`), without what is shown only (`Run::unsaid`), with what is
+    /// said only (`Block::unseen`) where it stands.
     pub fn said(&self, range: std::ops::Range<usize>) -> std::borrow::Cow<'_, str> {
+        let at_end = range.end == self.text.len();
+        let unseen: Vec<&(usize, String)> = self
+            .unseen
+            .iter()
+            .filter(|(at, _)| range.contains(at) || (at_end && *at == range.end))
+            .collect();
+        let unsaid = self
+            .runs
+            .iter()
+            .any(|run| run.unsaid && run.range.start < range.end && range.start < run.range.end);
+        if unseen.is_empty() && !unsaid {
+            return self.copied(range);
+        }
+        // Cut where a run or a word said only begins or ends; runs are in
+        // their text's order.
+        let mut cuts: Vec<usize> = self
+            .runs
+            .iter()
+            .flat_map(|run| [run.range.start, run.range.end])
+            .chain(unseen.iter().map(|(at, _)| *at))
+            .filter(|at| range.contains(at))
+            .chain([range.start, range.end])
+            .collect();
+        cuts.sort_unstable();
+        cuts.dedup();
+        let mut unseen = unseen.into_iter().peekable();
+        let mut said = String::new();
+        for cut in cuts.windows(2) {
+            let (from, to) = (cut[0], cut[1]);
+            while let Some((_, words)) = unseen.next_if(|(at, _)| *at <= from) {
+                said.push_str(words);
+            }
+            let run = self
+                .runs
+                .get(self.runs.partition_point(|run| run.range.end <= from))
+                .filter(|run| run.range.start <= from);
+            if !run.is_some_and(|run| run.unsaid) {
+                said.push_str(&self.copied(from..to));
+            }
+        }
+        for (_, words) in unseen {
+            said.push_str(words);
+        }
+        std::borrow::Cow::Owned(said)
+    }
+
+    /// The text of `range` as it is copied: each drawing as what it says
+    /// (`Drawing::text`), the rest as it is shown.
+    pub fn copied(&self, range: std::ops::Range<usize>) -> std::borrow::Cow<'_, str> {
         let Some(text) = self.text.get(range.clone()) else {
             return std::borrow::Cow::Borrowed("");
         };
@@ -581,6 +635,9 @@ pub struct Run {
     /// Each character of the run is this drawing (`Block::DRAWN`), drawn
     /// where the line holds it.
     pub drawing: Option<std::sync::Arc<Drawing>>,
+    /// Shown, and not said: what a page tells screen readers to skip
+    /// (`aria-hidden`), a decoration or a copy of what is said otherwise.
+    pub unsaid: bool,
 }
 #[derive(Clone, Debug, Default)]
 pub struct Row {
@@ -631,6 +688,9 @@ pub fn split_blocks(blocks: Vec<Block>) -> Vec<Block> {
             continue;
         }
         let mut start = 0;
+        // The words said only, in their text's order, each to the piece it
+        // stands in (one at the very end to the last).
+        let mut unseen = std::mem::take(&mut block.unseen).into_iter().peekable();
         while start < block.text.len() {
             let mut end = (start + LINE_BYTES).min(block.text.len());
             while !block.text.is_char_boundary(end) {
@@ -690,6 +750,11 @@ pub fn split_blocks(blocks: Vec<Block>) -> Vec<Block> {
                 code: block.code,
                 quote: block.quote,
                 list_depth: block.list_depth,
+                unseen: std::iter::from_fn(|| {
+                    unseen.next_if(|(at, _)| *at < end || end == block.text.len())
+                })
+                .map(|(at, words)| (at.saturating_sub(start), words))
+                .collect(),
             });
             start = end;
         }
@@ -699,6 +764,47 @@ pub fn split_blocks(blocks: Vec<Block>) -> Vec<Block> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What is copied is what is shown, a drawing as its words; what a
+    /// screen reader is told leaves out what is shown only and says what is
+    /// said only, where it stands.
+    #[test]
+    fn a_block_is_copied_as_shown_and_said_as_written_for_the_ear() {
+        let stars = "★★★★☆";
+        let mut block = Block {
+            text: format!("Rated {stars}."),
+            ..Block::default()
+        };
+        let at = "Rated ".len();
+        block.runs = vec![
+            Run {
+                range: 0..at,
+                ..Run::default()
+            },
+            Run {
+                range: at..at + stars.len(),
+                unsaid: true,
+                ..Run::default()
+            },
+            Run {
+                range: at + stars.len()..block.text.len(),
+                ..Run::default()
+            },
+        ];
+        block.unseen = vec![(at + stars.len(), "4 out of 5".into())];
+        let whole = 0..block.text.len();
+        assert_eq!(block.copied(whole.clone()), "Rated ★★★★☆.");
+        assert_eq!(block.said(whole), "Rated 4 out of 5.");
+        assert_eq!(block.said(0..at), "Rated ", "a part says its own words");
+        let plain = Block {
+            text: "Plain".into(),
+            ..Block::default()
+        };
+        assert!(matches!(
+            plain.said(0..5),
+            std::borrow::Cow::Borrowed("Plain")
+        ));
+    }
     #[test]
     fn split_preserves_unicode_and_ranges() {
         let text = "é".repeat(6000);

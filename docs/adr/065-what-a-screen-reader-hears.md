@@ -141,3 +141,16 @@ places as a list (each its name and where it is) and hears each as it is
 reached. In the Map view the place reached is its file, selected as a
 click selects it. Tab was not taken: in a pane it walks the toolbars, or
 goes to the split's other pane.
+
+### 2026-11-11: a page's words for the eye and for the ear
+
+A page can show words a screen reader is told to skip (`aria-hidden`: an
+icon, a rating's stars) and hide from view words written for it alone
+(the "visually hidden" pattern: a label, "4 out of 5"). The HTML reader
+now keeps both apart as a browser does: CSS decides what is shown, ARIA
+what is said. A block carries the words shown and not said
+(`Run::unsaid`) and those said and not shown (`Block::unseen`); a screen
+reader hears `Block::said`, and a copy takes what is shown
+(`Block::copied`). Read over AT-SPI with the a11y check's harness: "Rated
+★★★★☆" with its hidden label is heard as "Rated 4 out of 5.".
+

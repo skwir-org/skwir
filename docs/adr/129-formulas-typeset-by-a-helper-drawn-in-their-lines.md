@@ -69,8 +69,6 @@ code costs about 0.73 MiB idle, used or not.
 - Without the helper every formula is its TeX, as before, set as code.
 - A formula is drawn in one ink: `\color` is not kept.
 - A formula is not searched by its TeX: Find reads the text drawn.
-- KaTeX's HTML shows its MathML typeset beside the spans its own
-  stylesheet would have drawn, which the reader cannot.
 - In a debug build, rust-embed reads the fonts from the crate's folder,
   which the helper, isolated, cannot see: it embeds them there too
   (`debug-embed`); without them RaTeX had fallen back to the system's
@@ -105,4 +103,16 @@ never in `pre` or `code`. The finder is the one a notebook's cells use
 
 The tag of a hand-written `\tag{A}` is set in math italic by RaTeX where
 KaTeX sets it upright; numbers read the same either way.
+
+### 2026-11-11: a formula beside a drawing of itself, once
+
+A page that drew its formulas keeps two copies of each: MathML that
+carries its TeX, for the ear, and a drawing marked `aria-hidden`, for the
+eye (KaTeX's spans, which its stylesheet lays out; MathJax 3's glyphs;
+Wikipedia's picture, its MathML `display: none`). The reader showed both,
+the spans as loose letters. Where the two stand just beside each other,
+the TeX is typeset in the drawing's place, whichever copy the page hid,
+as the reader draws neither the spans nor a picture it does not fetch
+(`rich_preview::pairs`). A drawing with no formula beside it (KaTeX's
+`html` output) stays, shown and not said, as KaTeX marks it.
 
