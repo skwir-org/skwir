@@ -544,6 +544,21 @@ mod args {
         field: String,
     }
 
+    /// Which group `ui.select_group` selects, and how.
+    #[derive(Deserialize, JsonSchema)]
+    pub(super) struct SelectGroup {
+        /// The group, counted from the first heading from 0; the cursor's
+        /// when omitted.
+        #[serde(default)]
+        group: Option<usize>,
+        /// Beside what is selected, rather than in its place.
+        #[serde(default)]
+        add: bool,
+        /// The pane; the active one when omitted.
+        #[serde(default)]
+        pane: Option<skwir_core::workspace::PaneId>,
+    }
+
     #[derive(Deserialize, JsonSchema)]
     pub(super) struct Settings {
         /// A setting to show (`plugin.option`).
@@ -570,9 +585,9 @@ mod args {
 use args::{
     Adjust, Amount, Ask, Bucket, Close, Continue, CopyText, Count, Cursor, Delta, Dir, Find, Fold,
     FolderItem, Folders, History, Key, Layout, ListMoveArgs, Object, On, Pace, Page, PageLink,
-    Pages, Pan, Pick, Player, Pointer, Popup, PreviewScroll, Scrub, Settings, Split, Submenu,
-    Submit, TagsPrompt, TerminalPaste, Text, TextSize, TimelineCursor, TimelineDate, Toggle,
-    Toward, Url, UsageMode, View, ViewButton,
+    Pages, Pan, Pick, Player, Pointer, Popup, PreviewScroll, Scrub, SelectGroup, Settings, Split,
+    Submenu, Submit, TagsPrompt, TerminalPaste, Text, TextSize, TimelineCursor, TimelineDate,
+    Toggle, Toward, Url, UsageMode, View, ViewButton,
 };
 
 /// The window's commands an agent may run (ADR-044): they change only
@@ -587,6 +602,7 @@ const SHOWS: &[&str] = &[
     "ui.view",
     "ui.columns",
     "ui.columns_reset",
+    "ui.select_group",
     "ui.grid_caption",
     "ui.view_button",
     "ui.view_buttons_reset",
@@ -1573,6 +1589,13 @@ pub fn declare_all(app: &App) {
         "ui.columns_reset",
         "Reset column widths",
         "Give the list's detail columns their default widths",
+    );
+    declare::<SelectGroup>(
+        app,
+        Topic::Select,
+        "ui.select_group",
+        "Select the group",
+        "Select the entries of a group the pane draws under its heading (ADR-130): group `group`, counted from the first heading from 0, else the cursor's; with `add`, beside what is selected. A heading's click and its menu's Select these run it",
     );
     declare::<Key>(
         app,

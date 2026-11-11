@@ -257,6 +257,57 @@ pub fn heading(
         })
 }
 
+/// What a heading does (ADR-130, 12): lit where the pointer is, a press
+/// selects its group (`ui.select_group`; with Ctrl, beside what is
+/// selected), the right button opens its menu (Select these, Show only
+/// these). Its pane is made the active one as a press on an entry makes
+/// it; a band never begins on a heading (`marquee::Geometry::hits`).
+pub fn acting(
+    el: gpui::Stateful<Div>,
+    group: usize,
+    pane: skwir_core::workspace::PaneId,
+    shell: gpui::WeakEntity<crate::shell::Shell>,
+    theme: &Theme,
+) -> gpui::Stateful<Div> {
+    let hover = theme.hover;
+    let menu = shell.clone();
+    el.cursor_pointer()
+        .hover(move |s| s.bg(hover))
+        .on_mouse_down(
+            gpui::MouseButton::Left,
+            move |ev: &gpui::MouseDownEvent, window, cx| {
+                let add = crate::keymap::secondary(&ev.modifiers);
+                shell
+                    .update(cx, |this, cx| {
+                        this.with_pane(pane, |this| {
+                            this.run(
+                                "ui.select_group",
+                                serde_json::json!({ "group": group, "add": add }),
+                                window,
+                                cx,
+                            );
+                        });
+                    })
+                    .ok();
+            },
+        )
+        .on_mouse_down(
+            gpui::MouseButton::Right,
+            move |ev: &gpui::MouseDownEvent, window, cx| {
+                // Its menu, not the folder's the pane opens under it.
+                cx.stop_propagation();
+                menu.update(cx, |this, cx| {
+                    this.activate_pane(pane, cx);
+                    window.focus(&this.ui().focus, cx);
+                    this.with_pane(pane, |this| {
+                        this.open_group_menu(group, ev.position, window, cx);
+                    });
+                })
+                .ok();
+            },
+        )
+}
+
 /// A heading as a screen reader hears it, where one listens: a heading
 /// among the options, named by its group and count. It is never an
 /// option: the entries' positions and count are their own.
@@ -307,6 +358,9 @@ pub struct Pinned {
     pub scale: Scale,
     pub theme: Theme,
     pub ground: gpui::Hsla,
+    /// Whose heading it is, for what it does (`acting`).
+    pub pane: skwir_core::workspace::PaneId,
+    pub shell: gpui::WeakEntity<crate::shell::Shell>,
 }
 
 impl UniformListDecoration for Pinned {
@@ -339,20 +393,22 @@ impl UniformListDecoration for Pinned {
         // Laid out as a root, an element's own offset is not kept: the
         // heading hangs in a frame the size of the list, where the view's
         // top is.
+        let heading = pinned(
+            &self.rows.spans()[n],
+            height,
+            None,
+            self.scale,
+            &self.theme,
+            self.ground,
+        )
+        .id(("pinned-heading", n));
         div()
             .size_full()
             .child(
-                pinned(
-                    &self.rows.spans()[n],
-                    height,
-                    None,
-                    self.scale,
-                    &self.theme,
-                    self.ground,
-                )
-                .absolute()
-                .top(-scroll_offset.y - push)
-                .left_0(),
+                acting(heading, n, self.pane, self.shell.clone(), &self.theme)
+                    .absolute()
+                    .top(-scroll_offset.y - push)
+                    .left_0(),
             )
             .into_any_element()
     }

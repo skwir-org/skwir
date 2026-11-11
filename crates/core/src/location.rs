@@ -837,11 +837,15 @@ pub enum SortKey {
     Tags,
     /// Its owner's name: the sorter's keys say it.
     Owner,
+    /// The folder it is in, by its path, where files from many folders are
+    /// listed (a search, a tag, the shelf; a file of the trash by where it
+    /// was put there from): the sort asks the location (`Sort::folder_of`).
+    Folder,
 }
 
 impl SortKey {
     /// Every criterion, in the order menus offer them.
-    pub const ALL: [SortKey; 12] = [
+    pub const ALL: [SortKey; 13] = [
         SortKey::Name,
         SortKey::Kind,
         SortKey::Type,
@@ -854,6 +858,7 @@ impl SortKey {
         SortKey::Rating,
         SortKey::Tags,
         SortKey::Owner,
+        SortKey::Folder,
     ];
 
     /// Whether the order depends on what a stat finds, or the providers,
@@ -923,6 +928,7 @@ impl SortKey {
                 | SortKey::Extension
                 | SortKey::Tags
                 | SortKey::Owner
+                | SortKey::Folder
         )
     }
 
@@ -941,6 +947,7 @@ impl SortKey {
             SortKey::Rating => "Rating",
             SortKey::Tags => "Tags",
             SortKey::Owner => "Owner",
+            SortKey::Folder => "Folder",
         }
     }
 
@@ -960,6 +967,7 @@ impl SortKey {
             SortKey::Rating => "rating",
             SortKey::Tags => "tags",
             SortKey::Owner => "owner",
+            SortKey::Folder => "folder",
         }
     }
 
@@ -978,7 +986,8 @@ impl SortKey {
             | SortKey::Type
             | SortKey::Extension
             | SortKey::Tags
-            | SortKey::Owner => [("A to Z", "A to Z"), ("Z to A", "Z to A")],
+            | SortKey::Owner
+            | SortKey::Folder => [("A to Z", "A to Z"), ("Z to A", "Z to A")],
         }
     }
 
@@ -989,7 +998,8 @@ impl SortKey {
         use crate::entry::keys;
         let differs = |key: &str| old.metadata.value(key) != new.metadata.value(key);
         match self {
-            SortKey::Name | SortKey::Extension => false,
+            // A name or a folder another is another entry, listed anew.
+            SortKey::Name | SortKey::Extension | SortKey::Folder => false,
             SortKey::Size => delta.size,
             SortKey::Modified | SortKey::Deleted => delta.modified,
             SortKey::Rating => delta.rating,
@@ -1844,7 +1854,7 @@ fn keyed_of<'a>(sort: &Sort, slots: impl Iterator<Item = &'a Slot>) -> Vec<SortK
 fn value_of(
     key: SortKey,
     keyer: Option<&crate::grouping::Keyer>,
-    e: &Entry,
+    e: &crate::grouping::Of<'_>,
 ) -> (u64, Option<Arc<[u8]>>) {
     use crate::entry::{Value, keys};
     let time = |k: &str| {
@@ -1892,6 +1902,12 @@ fn value_of(
             let group = keyer(e);
             (group.rank, Some(Arc::clone(&group.key)))
         }),
+        // Its path's words: a folder's files together, its subfolders' after.
+        SortKey::Folder => (
+            0,
+            e.folder
+                .map(|folder| Arc::from(crate::collate::sort_key(folder.as_os_str()))),
+        ),
     }
 }
 
@@ -2851,12 +2867,18 @@ impl Listing {
                 && key.applies_to(e)
                 && (!key.has_read(&e.metadata) || e.metadata.is_unread())
         };
+        // Where it is, asked only of a sort that needs it.
+        let folder = sort.wants_folders().then(|| sort.folder_of(e)).flatten();
+        let of = crate::grouping::Of {
+            entry: e,
+            folder: folder.as_deref(),
+        };
         let (later, group) = match sort.grouping() {
             Some((key, _)) if unread(key) => (true, None),
-            Some((_, keyer)) => (false, Some(keyer(e))),
+            Some((_, keyer)) => (false, Some(keyer(&of))),
             None => (false, None),
         };
-        let (num, words) = value_of(spec.key, sort.value(), e);
+        let (num, words) = value_of(spec.key, sort.value(), &of);
         SortKeyOf {
             later,
             extra: (group.is_some() || words.is_some()).then(|| Arc::new(Extra { group, words })),
@@ -4381,7 +4403,7 @@ mod tests {
             .collect();
         let folders = Arc::new(Group::ranked(0, "Folders").of_folders());
         let mut k = crate::grouping::Keys::new(sort, grouped);
-        k.group = Some(Arc::new(move |e: &Entry| {
+        k.group = Some(Arc::new(move |e: &crate::grouping::Of<'_>| {
             if e.is_dir() {
                 return Arc::clone(&folders);
             }
@@ -4392,7 +4414,7 @@ mod tests {
                 .unwrap_or(0);
             Arc::clone(&groups[usize::try_from(size % 3).unwrap()])
         }));
-        k.value = Some(Arc::new(|e: &Entry| {
+        k.value = Some(Arc::new(|e: &crate::grouping::Of<'_>| {
             let last = e.name.to_string_lossy().chars().last().unwrap_or(' ');
             Arc::new(Group::new(1, &last.to_string()))
         }));
@@ -4468,6 +4490,7 @@ mod tests {
                         ..SortSpec::default()
                     },
                     keys: Some(keys.clone()),
+                    folders: None,
                 };
                 let ids = listing.sorted(&sort).iter().map(|id| id.file.ino).collect();
                 let spans = listing
@@ -4521,7 +4544,7 @@ mod tests {
             .collect();
         let folders = Arc::new(Group::ranked(0, "Folders").of_folders());
         let mut keys = crate::grouping::Keys::new(SortKey::Size, Some(SortKey::Size));
-        keys.group = Some(Arc::new(move |e: &Entry| {
+        keys.group = Some(Arc::new(move |e: &crate::grouping::Of<'_>| {
             use crate::entry::{Value, keys};
             if e.is_dir() {
                 return Arc::clone(&folders);
@@ -4547,11 +4570,94 @@ mod tests {
                         ..spec
                     },
                     keys: Some(keys.clone()),
+                    folders: None,
                 };
                 assert_eq!(*listing.sorted(spec), *listing.sorted(&grouped), "{spec:?}");
                 assert!(!listing.spans_shown(&grouped).is_empty());
             }
         }
+    }
+
+    /// Sorted by Folder, entries are in their folders' order, by path, A
+    /// to Z within, as the location says where each is; a file of the
+    /// trash by where it was put there from. Grouped by Folder, each folder
+    /// a group, its keys asked with the folder.
+    #[test]
+    fn folders_sort_and_group_by_where_the_location_has_them() {
+        use crate::entry::{Provenance, Value, keys};
+        use crate::grouping::{Folders, Group, GroupBy, Keys, Of};
+        let folder_of = |ino: u64| {
+            PathBuf::from(match ino % 3 {
+                0 => "/w/b",
+                1 => "/w/a",
+                _ => "/w/a/z",
+            })
+        };
+        let mut listing = Listing::default();
+        let mut entries: Vec<Entry> = (1..=8)
+            .map(|ino| sized_entry(ino, &format!("f{}", 10 - ino), EntryKind::File, 1))
+            .collect();
+        let mut trashed = sized_entry(9, "f1", EntryKind::File, 1);
+        trashed.metadata.set(
+            keys::TRASHED_FROM,
+            Value::Text("/w/0".into()),
+            Provenance::Filesystem,
+        );
+        entries.push(trashed);
+        listing.apply(ListingEvent::Added(entries));
+        listing.apply(ListingEvent::Complete);
+        let folders = Folders(Arc::new(move |id: EntryId| Some(folder_of(id.file.ino))));
+        let inos = |order: &[EntryId]| order.iter().map(|id| id.file.ino).collect::<Vec<_>>();
+        let by_folder = Sort {
+            spec: SortSpec {
+                key: SortKey::Folder,
+                ..SortSpec::default()
+            },
+            keys: None,
+            folders: Some(folders.clone()),
+        };
+        // /w/0 (9), /w/a (1 f9, 4 f6, 7 f3), /w/a/z (2 f8, 5 f5, 8 f2), /w/b (3 f7, 6 f4).
+        assert_eq!(
+            inos(&listing.sorted(&by_folder)),
+            [9, 7, 4, 1, 8, 5, 2, 6, 3]
+        );
+        assert_eq!(
+            *listing.sorted(&by_folder),
+            *listing.compute_sorted(&by_folder)
+        );
+        let mut keys = Keys::new(SortKey::Name, Some(SortKey::Folder));
+        keys.group = Some(Arc::new(|e: &Of<'_>| {
+            Arc::new(Group::new(
+                1,
+                &e.folder
+                    .map_or_else(String::new, |f| f.display().to_string()),
+            ))
+        }));
+        let grouped = Sort {
+            spec: SortSpec {
+                group: GroupBy::Key(SortKey::Folder),
+                ..SortSpec::default()
+            },
+            keys: Some(keys),
+            folders: Some(folders),
+        };
+        listing.sorted(&grouped);
+        let spans: Vec<(String, usize)> = listing
+            .spans_shown(&grouped)
+            .iter()
+            .map(|s| (s.group.as_ref().unwrap().label.to_string(), s.len))
+            .collect();
+        assert_eq!(
+            spans,
+            [
+                ("/w/0".to_owned(), 1),
+                ("/w/a".to_owned(), 3),
+                ("/w/a/z".to_owned(), 3),
+                ("/w/b".to_owned(), 2)
+            ]
+        );
+        // Not asked where nothing sorts or groups by it.
+        assert!(!Sort::from(SortSpec::default()).wants_folders());
     }
 
     /// Galloping back finds where a run that holds to the end starts,
@@ -4715,6 +4821,7 @@ mod tests {
                     ..SortSpec::default()
                 },
                 keys,
+                folders: None,
             };
             let mut listing = Listing::default();
             let mut next = 3_000;
@@ -4823,6 +4930,7 @@ mod tests {
                         ..SortSpec::default()
                     },
                     keys: Some(keys),
+                    folders: None,
                 };
                 let mut listing = Listing::default();
                 let mut next = 0;
@@ -4889,6 +4997,7 @@ mod tests {
                 ..SortSpec::default()
             },
             keys: Some(keys.clone()),
+            folders: None,
         };
         listing.sorted(&sort);
         assert!(listing.sort_job(&sort).is_none(), "its order is made");

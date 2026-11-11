@@ -3,7 +3,7 @@
 Status: accepted, 2026-11-11, on the user's answers to the proposal
 "Grouping" (a page shared in the session, with mock-ups of the View
 menu, a list grouped by date and a grid grouped by kind). Built in
-phases (below): phases 1 to 3 on 2026-11-11, on Linux; macOS and
+phases (below): phases 1 to 4 on 2026-11-11, on Linux; macOS and
 Windows not compiled for them yet. Amends ADR-099 (the View menu's sort) and follows
 ADR-121 (an order asked anew is made on a worker).
 
@@ -164,3 +164,8 @@ ADR-121 (an order asked anew is made on a worker).
   400 ms and 1.1 ms before groups (620 ms with groups, merged as before).
 - Keys are a plugin's closures run per entry on a worker (and for what
   arrives, on the window's thread): cheap by contract, as a lens is.
+- By Folder, the sort asks the location where each entry is, as a column
+  does, on the worker that sorts: `path_of` answers from memory by
+  contract. A folder's group is called by its path from the home folder
+  (`~/notes`) and has no term: a filter tests a file by itself, not where
+  it is, so its heading's menu offers Select these alone.

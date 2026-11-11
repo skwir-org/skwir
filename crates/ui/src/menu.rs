@@ -1133,6 +1133,54 @@ impl Shell {
         cx.notify();
     }
 
+    /// A group's heading's menu (ADR-130, 12): Select these, and Show only
+    /// these where a query term keeps the group's files, the filter as it
+    /// is narrowed by it (the groups are of what the filter keeps).
+    pub fn open_group_menu(
+        &mut self,
+        group: usize,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let rows = self.ui().list.rows.clone();
+        let Some(span) = rows.spans().get(group) else {
+            return;
+        };
+        let pane = self.pane;
+        let mut items = vec![MenuItem::new(
+            "group",
+            "Select these",
+            "check",
+            0,
+            skwir_core::command::Invocation::with_args(
+                "ui.select_group",
+                &serde_json::json!({ "group": group, "pane": pane }),
+            ),
+        )];
+        if let Some(term) = span.group.as_ref().and_then(|g| g.term.clone()) {
+            let filter = {
+                let ws = self.app.workspace.read();
+                ws.pane(pane)
+                    .and_then(|p| p.filter().map(|f| f.trim().to_owned()))
+                    .filter(|f| !f.is_empty())
+            };
+            let text = filter.map_or_else(|| term.to_string(), |f| format!("{f} {term}"));
+            items.push(MenuItem::new(
+                "group",
+                "Show only these",
+                "filter",
+                300,
+                skwir_core::command::Invocation::with_args(
+                    "filter",
+                    &serde_json::json!({ "text": text, "pane": pane }),
+                ),
+            ));
+        }
+        self.menu = Some(MenuState::open(position, items, window, cx));
+        cx.notify();
+    }
+
     /// The preview's own menu: what people right-click a text for. Copy has
     /// no toolbar button; it lives here and on Ctrl+C.
     pub fn open_preview_menu(

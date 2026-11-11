@@ -359,8 +359,14 @@ around the views is in [shell.md](shell.md).
   Usage) keep folders first.
 - **The sort and the groups take one list of criteria** (ADR-130,
   `SortKey::ALL`), offered where they apply (`Shell::sort_keys`,
-  `group_keys`: Rating while ratings are kept, Deleted in the trash, what
-  only the sorter reads while there is one, Group by only then). A
+  `group_keys`: Rating while ratings are kept, Deleted in the trash,
+  Folder where files come from many folders, what only the sorter reads
+  while there is one, Group by only then). By Folder, the sort asks the
+  pane's location where each entry is (`grouping::Folders`, made by
+  `Pane::sorting` from `OpenLocation::path_of`, which answers from
+  memory), only while it sorts or groups by it, and keys are asked with
+  it (`grouping::Of`); a file of the trash is where it was put there
+  from, as the column says. A
   criterion chosen starts in its natural direction
   (`SortKey::starts_ascending`), the header's click included; chosen again,
   it turns. A direction reverses its criterion, never the names: ties
@@ -390,6 +396,15 @@ around the views is in [shell.md](shell.md).
   in place keeps its entries under it, in its group, whose heading
   counts its own (`Span::count`). Columns, the board, Usage and the map
   draw no headings.
+- **A heading acts** (ADR-130, 12, `groups::acting`): lit where the
+  pointer is; a press selects what it counts (`ui.select_group`, its own
+  entries in the tree; with Ctrl, beside what is selected), from the first
+  to the last as a band would, the view left where it is; the right button
+  opens its menu (`Shell::open_group_menu`): Select these, and Show only
+  these where a query term keeps the group's files, the filter narrowed by
+  it. The pinned heading does the same, and its pane is made the active
+  one as an entry's press makes it. `ui.select_group` without a group
+  selects the cursor's: the palette's way to it.
 - **The grid is lines** (`uniform_grid::math::Slots`): rows of tiles and,
   where groups are drawn, each group's heading before its rows, a group
   starting a row of its own; a tile's line is found by a search. The

@@ -118,9 +118,46 @@ impl Group {
     }
 }
 
+/// An entry as keys are asked of it (`Keyer`): the entry, which it reads
+/// as (`Deref`), and the folder it is in where the sort asks for one, a
+/// sort or a grouping by Folder (`Sort::folder_of`; none for a place).
+pub struct Of<'a> {
+    pub entry: &'a Entry,
+    pub folder: Option<&'a std::path::Path>,
+}
+
+impl std::ops::Deref for Of<'_> {
+    type Target = Entry;
+    fn deref(&self) -> &Entry {
+        self.entry
+    }
+}
+
+impl<'a> Of<'a> {
+    /// `entry`, in no folder the sort knows of.
+    pub fn entry(entry: &'a Entry) -> Self {
+        Of {
+            entry,
+            folder: None,
+        }
+    }
+}
+
 /// What gives an entry a group, or a criterion's value in words: answered
 /// from memory, never blocking (ADR-130, 8).
-pub type Keyer = Arc<dyn Fn(&Entry) -> Arc<Group> + Send + Sync>;
+pub type Keyer = Arc<dyn Fn(&Of<'_>) -> Arc<Group> + Send + Sync>;
+
+/// Where a listing's entries are, for a sort or a grouping by Folder: the
+/// folder each is in, as its open location knows it (`OpenLocation::path_of`,
+/// which answers from memory), asked on a worker as the order is made.
+#[derive(Clone)]
+pub struct Folders(pub Arc<dyn Fn(EntryId) -> Option<std::path::PathBuf> + Send + Sync>);
+
+impl fmt::Debug for Folders {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Folders")
+    }
+}
 
 /// What a plugin knows of entries for one sort: the value of a criterion
 /// core cannot read (a kind, a type's name, an owner's), an entry's group,
@@ -186,18 +223,24 @@ impl fmt::Debug for Keys {
     }
 }
 
-/// A sort as a listing applies it: the pane's spec, and the keys made for
-/// it. A spec alone sorts as core reads its entries: no groups, and a
-/// criterion only a plugin reads leaves the order to the names.
+/// A sort as a listing applies it: the pane's spec, the keys made for it,
+/// and where its entries are, for a sort or a grouping by Folder. A spec
+/// alone sorts as core reads its entries: no groups, a criterion only a
+/// plugin reads leaving the order to the names, and no folder known.
 #[derive(Clone, Debug, Default)]
 pub struct Sort {
     pub spec: SortSpec,
     pub keys: Option<Keys>,
+    pub folders: Option<Folders>,
 }
 
 impl From<SortSpec> for Sort {
     fn from(spec: SortSpec) -> Self {
-        Sort { spec, keys: None }
+        Sort {
+            spec,
+            keys: None,
+            folders: None,
+        }
     }
 }
 
@@ -208,6 +251,26 @@ impl From<&Sort> for Sort {
 }
 
 impl Sort {
+    /// Whether it asks where its entries are: sorted or grouped by Folder.
+    pub fn wants_folders(&self) -> bool {
+        self.spec.key == SortKey::Folder || self.spec.group_key() == Some(SortKey::Folder)
+    }
+
+    /// The folder `entry` is in, as a sort by Folder reads it: the one a
+    /// file of the trash was put there from, as the Folder column says,
+    /// else where its location has it; none for a place.
+    pub fn folder_of(&self, entry: &Entry) -> Option<std::path::PathBuf> {
+        if entry.is_place() {
+            return None;
+        }
+        entry
+            .metadata
+            .value(crate::entry::keys::TRASHED_FROM)
+            .and_then(crate::entry::Value::as_str)
+            .map(std::path::PathBuf::from)
+            .or_else(|| (self.folders.as_ref()?.0)(entry.id))
+    }
+
     /// What an order made with it is kept against: the spec, and the keys'
     /// stamp.
     pub fn stamp(&self) -> SortStamp {

@@ -15050,3 +15050,53 @@ at the top under the pinned heading.
 
 **Not done here:** a heading's click and menu, Folder (phase 4). Not
 compiled for Windows or macOS.
+
+## 2026-11-11: Headings that act, and Folder (ADR-130, phase 4)
+
+- **A heading acts** (`views::groups::acting`, in the list, the tree, the
+  grid and pinned): lit under the pointer; a press runs `ui.select_group`
+  (new, Topic::Select), which selects what the heading counts, in the tree
+  the group's own entries, first to last as a band would (the cursor on
+  the last, the view left where it is); with Ctrl, beside what is
+  selected. The right button opens its menu (`Shell::open_group_menu`):
+  Select these, and Show only these where a query term keeps the group's
+  files, running `filter` with the filter as it is and the term after it.
+  Its pane is made the active one and focused, as an entry's press does;
+  the rubber band begins on no heading. Without a group, `ui.select_group`
+  selects the cursor's: the palette's way, and the keyboard's.
+- **Folder** (`SortKey::Folder`): sorts by the path of the folder each
+  entry is in, A to Z, and groups by it, where files come from many
+  folders (offered where the Folder column applies; its header sorts by
+  it now). The sort learns where each entry is from the pane's location
+  (`grouping::Folders`, made by `Pane::sorting` only while it sorts or
+  groups by Folder, asked on the worker that sorts: `path_of` answers
+  from memory); a file of the trash by where it was put there from, as
+  the column says. Keys are asked with it: a `Keyer` takes
+  `grouping::Of` (the entry, which it reads as, and its folder), so every
+  keyer of the query plugin reads as it did. The query plugin's
+  `by_folder` makes a group a folder, in their paths' order, called by the
+  path from the home folder (`~/notes`), shared by its files; no term, as
+  a filter tests a file by itself: its heading offers Select these alone.
+
+**Checked:** rustfmt per file; clippy `-D warnings` on `skwir-core`,
+`skwir-plugin-query`, `skwir-ui` and `skwir`, all targets; `skwir-core`,
+`skwir-plugin-query` and `skwir-ui` 1 510 passed (new: sorted by Folder
+in their paths' order with a trashed file by where it came from, grouped
+by Folder each folder a span, the folder asked only where needed; the
+query plugin's folder groups: shared, ordered, called from home, no term,
+a place in No folder); the binary's `grouping`, `plugins_toggle` and
+`keymap_titles` 12 passed, new among them a search of three folders
+grouped by Folder through the real plugin (`~`-called headings, in path
+order) and sorted by it. In a window on Xvfb: grouped by Modified, a
+click on Yesterday's heading selected its 11 (the view still), Ctrl+click
+on Today's added its 11 (22); the right button on Earlier this week's:
+Select these, Show only these, which set the filter to its term (the
+pill 2026-11-09, 10 of 73 shown); in a search for `ext:txt`, Group by
+offered Folder, grouped into "~/Field notes 62" and "~/Field notes/
+sketches 1", its heading's menu Select these alone; the Folder header
+sorting ("Folder ▲"). In a folder, Folder is not offered.
+
+**Not done here:** phase 5 (collapsing, a Board by group, criteria read
+on demand). A heading is not reached by the keys (the cursor is on
+entries alone, ADR-130, 9): `ui.select_group` from the palette selects
+the cursor's group. Not compiled for Windows or macOS.

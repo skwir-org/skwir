@@ -112,7 +112,7 @@ pub const COLUMNS: [Column; 6] = [
         label: "Folder",
         description: "Show the folder each file is in, where files from many folders are listed: a search, a tag, the shelf, Recent. It is the last column to give way.",
         shown: true,
-        sort: None,
+        sort: Some(SortKey::Folder),
         width: 180.,
         right: false,
     },
@@ -251,6 +251,7 @@ impl Shell {
             .filter(|key| match key {
                 SortKey::Rating => self.column_applies(Detail::Rating),
                 SortKey::Deleted => self.column_applies(Detail::Deleted),
+                SortKey::Folder => self.column_applies(Detail::Folder),
                 key => sorter || !key.keyed(),
             })
             .map(|key| (key.title(), key))
@@ -685,9 +686,11 @@ fn grouped_row_elements(
         .map(|at| match rows.at(at) {
             Some(Row::Heading(n)) => {
                 let span = &rows.spans()[n];
+                let heading =
+                    groups::heading(span, n == 0, height, None, scale, theme).id(("heading", n));
                 // Each group's first entry says its group as well.
                 groups::expose(
-                    groups::heading(span, n == 0, height, None, scale, theme).id(("heading", n)),
+                    groups::acting(heading, n, shell.pane, cx.weak_entity(), theme),
                     span,
                     shell.a11y,
                 )
@@ -1062,6 +1065,8 @@ impl PaneView for ListView {
                 scale: files_scale(&theme),
                 theme: theme.clone(),
                 ground: theme.files_ground(shell.lowered()),
+                pane,
+                shell: cx.weak_entity(),
             })
         })
         .size_full();

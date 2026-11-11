@@ -717,19 +717,22 @@ fn grid_groups(
     let a11y = shell.a11y;
     let height = scale.f(HEADING);
     let spans = rows.clone();
+    let (pane, weak) = (shell.pane, cx.weak_entity());
     GridGroups {
         rows,
         height,
         heading: Rc::new(move |n, pinned, left, _, _| {
             let span = &spans.spans()[n];
             let left = Some(left + FRAME);
+            let act = |el| groups::acting(el, n, pane, weak.clone(), &theme);
             if pinned {
-                groups::pinned(span, height, left, scale, &theme, ground)
-                    .id(("pinned-heading", n))
-                    .into_any_element()
+                act(groups::pinned(span, height, left, scale, &theme, ground)
+                    .id(("pinned-heading", n)))
+                .into_any_element()
             } else {
                 groups::expose(
-                    groups::heading(span, n == 0, height, left, scale, &theme).id(("heading", n)),
+                    act(groups::heading(span, n == 0, height, left, scale, &theme)
+                        .id(("heading", n))),
                     span,
                     a11y,
                 )

@@ -151,3 +151,72 @@ fn a_pane_sorts_by_what_types_are_called() {
         "each type's files together"
     );
 }
+
+/// A search grouped by Folder: each folder a group, called by its path,
+/// in their paths' order, as the search knows where each file is; sorted
+/// by Folder, its files together.
+#[test]
+fn a_search_groups_by_the_folder_each_file_is_in() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+    app.plugins
+        .add(Arc::new(skwir_plugin_query::QueryPlugin::default()), &app);
+    let root = tmp.path().join("field notes");
+    std::fs::create_dir_all(root.join("maps/coast")).unwrap();
+    for (dir, name) in [
+        ("", "route.txt"),
+        ("maps", "dunes.txt"),
+        ("maps/coast", "tern.txt"),
+        ("", "notes.txt"),
+    ] {
+        std::fs::write(root.join(dir).join(name), name).unwrap();
+    }
+    let pane = app.workspace.read().active_id();
+    app.dispatch(
+        &Invocation::try_with_args(
+            "query.search",
+            &serde_json::json!({
+                "expr": "ext:txt",
+                "root": skwir_core::os_path::PathArg::from(root.clone()),
+                "pane": pane,
+            }),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(app.pump_until_complete(pane, Duration::from_secs(10)));
+    run(&app, "group", &serde_json::json!({ "by": "folder" }));
+    assert!(pump_until(&app, pane, settled), "grouped");
+    let folder = |dir: &str| {
+        let path = if dir.is_empty() {
+            root.clone()
+        } else {
+            root.join(dir)
+        };
+        skwir_core::exclusions::tilde(&path)
+    };
+    assert_eq!(
+        shown(&app, pane),
+        [
+            (
+                folder(""),
+                vec!["notes.txt".to_owned(), "route.txt".to_owned()]
+            ),
+            (folder("maps"), vec!["dunes.txt".to_owned()]),
+            (folder("maps/coast"), vec!["tern.txt".to_owned()]),
+        ]
+    );
+    // Sorted by Folder, not grouped: the same order, without headings.
+    run(&app, "group", &serde_json::json!({ "by": "none" }));
+    run(&app, "sort", &serde_json::json!({ "key": "folder" }));
+    let by_folder = |p: &Pane| {
+        p.groups().is_empty()
+            && !p.listing.is_sorting()
+            && p.order()
+                .iter()
+                .map(|id| p.entry(*id).unwrap().name_str().into_owned())
+                .collect::<Vec<_>>()
+                == ["notes.txt", "route.txt", "dunes.txt", "tern.txt"]
+    };
+    assert!(pump_until(&app, pane, by_folder), "sorted by folder");
+}

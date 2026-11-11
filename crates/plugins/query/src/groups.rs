@@ -17,7 +17,7 @@ use parking_lot::{Mutex, RwLock};
 use skwir_core::app::App;
 use skwir_core::cancel::CancelToken;
 use skwir_core::entry::{Entry, Value, keys};
-use skwir_core::grouping::{Group, Keyer, Keys};
+use skwir_core::grouping::{Group, Keyer, Keys, Of};
 use skwir_core::location::{SortKey, extension_of, tags_of};
 use skwir_core::scheduler::Priority;
 use skwir_platform::calendar::{Calendar, Period, date_string};
@@ -68,12 +68,32 @@ fn keyer(
             let dates = Dates::at(key, cal, now);
             let next = cal.day_start(dates.today + 1);
             let cal = cal.clone();
-            (Arc::new(move |e: &Entry| dates.of(e, &cal)), Some(next))
+            (Arc::new(move |e: &Of<'_>| dates.of(e, &cal)), Some(next))
         }
         SortKey::Rating => (by_rating(), None),
         SortKey::Tags => (by_tags(), None),
         SortKey::Owner => (by_owner(), None),
+        SortKey::Folder => (by_folder(), None),
     }
+}
+
+/// By the folder each is in, as the sort finds it (`Sort::folder_of`):
+/// one group a folder, in the order of their paths, called by its path
+/// from the home folder (`~/notes`); a place in none. No term keeps them:
+/// a filter tests a file by itself, not where it is.
+fn by_folder() -> Keyer {
+    let made = Made::new();
+    let none = Arc::new(Group::ranked(0, "No folder"));
+    Arc::new(move |e: &Of<'_>| match e.folder {
+        Some(folder) => made.get(folder.to_path_buf(), || Group {
+            rank: 1,
+            key: Arc::from(skwir_core::collate::sort_key(folder.as_os_str())),
+            label: Arc::from(skwir_core::exclusions::tilde(folder)),
+            folders: false,
+            term: None,
+        }),
+        None => Arc::clone(&none),
+    })
 }
 
 /// The groups made so far, by what makes them: one each.
@@ -94,7 +114,7 @@ impl<K: std::hash::Hash + Eq> Made<K> {
 /// another script a group of its own.
 fn by_name() -> Keyer {
     let made = Made::<Vec<u8>>::new();
-    Arc::new(move |e: &Entry| {
+    Arc::new(move |e: &Of<'_>| {
         let key = skwir_core::collate::sort_key(&e.name);
         let first = std::str::from_utf8(&key)
             .ok()
@@ -135,7 +155,7 @@ fn by_kind() -> Keyer {
         })
         .collect();
     let other = Arc::new(Group::ranked(0, "Other"));
-    Arc::new(move |e: &Entry| {
+    Arc::new(move |e: &Of<'_>| {
         let kind = if e.is_dir() {
             Some(Kind::Folder)
         } else {
@@ -182,7 +202,7 @@ fn by_type(app: &Weak<App>, keys: &Keys) -> Keyer {
     let changed = Arc::clone(&keys.changed);
     let asked: Arc<Mutex<std::collections::HashSet<String>>> = Arc::default();
     let unknown = Arc::new(Group::ranked(0, "Unknown type"));
-    Arc::new(move |e: &Entry| {
+    Arc::new(move |e: &Of<'_>| {
         let Some(mime) = mime::of_entry(e) else {
             return Arc::clone(&unknown);
         };
@@ -220,7 +240,7 @@ fn by_extension() -> Keyer {
     let made = Made::<String>::new();
     let folders = Arc::new(Group::ranked(0, "Folders").of_folders());
     let none = Arc::new(Group::ranked(1, "No extension"));
-    Arc::new(move |e: &Entry| {
+    Arc::new(move |e: &Of<'_>| {
         if e.is_dir() {
             return Arc::clone(&folders);
         }
@@ -255,7 +275,7 @@ fn by_size() -> Keyer {
         .map(|((_, label, term), rank)| Arc::new(Group::ranked(rank, label).with_term(*term)))
         .collect();
     let over = Arc::new(Group::ranked(6, "Over 1 GB").with_term("size>=1G"));
-    Arc::new(move |e: &Entry| {
+    Arc::new(move |e: &Of<'_>| {
         if !SortKey::Size.applies_to(e) {
             return Arc::clone(&folders);
         }
@@ -294,7 +314,7 @@ fn by_rating() -> Keyer {
             })
         })
         .collect();
-    Arc::new(move |e: &Entry| {
+    Arc::new(move |e: &Of<'_>| {
         let r = e
             .metadata
             .value(keys::RATING)
@@ -310,7 +330,7 @@ fn by_rating() -> Keyer {
 fn by_tags() -> Keyer {
     let made = Made::<String>::new();
     let none = Arc::new(Group::ranked(0, "No tags"));
-    Arc::new(move |e: &Entry| match tags_of(e) {
+    Arc::new(move |e: &Of<'_>| match tags_of(e) {
         Some(tags) => made.get(tags.clone(), || Group::new(1, &tags)),
         None => Arc::clone(&none),
     })
@@ -320,7 +340,7 @@ fn by_tags() -> Keyer {
 fn by_owner() -> Keyer {
     let made = Made::<u64>::new();
     let none = Arc::new(Group::ranked(0, "No owner"));
-    Arc::new(move |e: &Entry| {
+    Arc::new(move |e: &Of<'_>| {
         let Some(uid) = e.metadata.value(keys::UID).and_then(Value::as_u64) else {
             return Arc::clone(&none);
         };
@@ -533,7 +553,7 @@ mod tests {
         dates
             .iter()
             .map(|t| {
-                let g = group(&modified(*t));
+                let g = group(&Of::entry(&modified(*t)));
                 (
                     g.label.to_string(),
                     g.term.as_deref().map(str::to_owned),
@@ -705,7 +725,7 @@ mod tests {
             let mut e = entry(1, "f", EntryKind::File);
             e.metadata
                 .set(keys::SIZE, Value::UInt(size), Provenance::Filesystem);
-            group(&e).label.to_string()
+            group(&Of::entry(&e)).label.to_string()
         };
         let sizes = [
             0,
@@ -732,7 +752,7 @@ mod tests {
                 "Over 1 GB",
             ]
         );
-        let folders = group(&entry(2, "d", EntryKind::Directory));
+        let folders = group(&Of::entry(&entry(2, "d", EntryKind::Directory)));
         assert!(folders.folders);
         assert_eq!(&*folders.label, "Folders");
     }
@@ -751,7 +771,7 @@ mod tests {
         )
         .unwrap();
         let group = keys.group.unwrap();
-        let of = |name: &str| group(&entry(1, name, EntryKind::File));
+        let of = |name: &str| group(&Of::entry(&entry(1, name, EntryKind::File)));
         let labels = ["École", "eagle", "2024 report", "_draft", "Ωmega", "zebra"]
             .map(|name| of(name).label.to_string());
         assert_eq!(labels, ["E", "E", "0–9", "Other", "Ω", "Z"]);
@@ -779,7 +799,7 @@ mod tests {
                 e.metadata
                     .set(keys::RATING, Value::UInt(r), Provenance::User);
             }
-            let g = group(&e);
+            let g = group(&Of::entry(&e));
             (g.label.to_string(), g.term.as_deref().map(str::to_owned))
         };
         assert_eq!(of(None), ("Unrated".into(), Some("rating:0".into())));
@@ -798,7 +818,7 @@ mod tests {
         )
         .unwrap();
         let group = keys.group.unwrap();
-        let of = |name: &str, kind| group(&entry(1, name, kind));
+        let of = |name: &str, kind| group(&Of::entry(&entry(1, name, kind)));
         assert!(Arc::ptr_eq(
             &of("a.PNG", EntryKind::File),
             &of("b.png", EntryKind::File)
@@ -810,6 +830,38 @@ mod tests {
         );
         assert_eq!(&*of("README", EntryKind::File).label, "No extension");
         assert!(of("v1.2", EntryKind::Directory).folders);
+    }
+
+    /// By folder, one group a folder, in their paths' order, called by its
+    /// path from the home folder; a file not in one (a place) in none.
+    #[test]
+    fn each_folder_is_a_group_of_its_own() {
+        let keys = keys_at(
+            &Weak::new(),
+            SortKey::Name,
+            Some(SortKey::Folder),
+            &Calendar::utc(),
+            SystemTime::now(),
+        )
+        .unwrap();
+        let group = keys.group.unwrap();
+        let file = entry(1, "a.txt", EntryKind::File);
+        let home = skwir_core::os_path::home().unwrap_or_else(|| std::path::PathBuf::from("/h"));
+        let of = |folder: Option<&std::path::Path>| {
+            group(&Of {
+                entry: &file,
+                folder,
+            })
+        };
+        let notes = home.join("notes");
+        let maps = home.join("notes/maps");
+        assert!(Arc::ptr_eq(&of(Some(&notes)), &of(Some(&notes))));
+        assert!(!Arc::ptr_eq(&of(Some(&notes)), &of(Some(&maps))));
+        assert_eq!(&*of(Some(&maps)).label, "~/notes/maps");
+        assert!(of(Some(&notes)).standing(&of(Some(&maps))).is_lt());
+        assert_eq!(of(Some(&notes)).term, None, "a filter cannot say where");
+        assert_eq!(&*of(None).label, "No folder");
+        assert!(of(None).standing(&of(Some(&notes))).is_lt());
     }
 
     /// A sort by name, by size or by a date needs no keys of its own; by
@@ -829,7 +881,7 @@ mod tests {
         assert!(made(SortKey::Modified, None).is_none());
         let kind = made(SortKey::Kind, None).unwrap();
         assert!(kind.value.is_some() && kind.group.is_none());
-        let folder = (kind.value.unwrap())(&entry(1, "d", EntryKind::Directory));
+        let folder = (kind.value.unwrap())(&Of::entry(&entry(1, "d", EntryKind::Directory)));
         assert_eq!(&*folder.label, "Folders");
         assert!(folder.folders);
     }

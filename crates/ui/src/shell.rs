@@ -2985,6 +2985,21 @@ impl Shell {
                 }
             }
             "columns_reset" => self.reset_column_widths(cx),
+            "select_group" => {
+                let group = args
+                    .get("group")
+                    .and_then(serde_json::Value::as_u64)
+                    .and_then(|n| usize::try_from(n).ok());
+                let add = args
+                    .get("add")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false);
+                let pane = args
+                    .get("pane")
+                    .and_then(|p| serde_json::from_value(p.clone()).ok())
+                    .unwrap_or(self.pane);
+                self.with_pane(pane, |this| this.select_group(group, add, window, cx));
+            }
             "grid_caption" => {
                 if let Some(key) = arg("key") {
                     self.toggle_grid_caption(&key, cx);

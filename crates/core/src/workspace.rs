@@ -4042,10 +4042,21 @@ impl Pane {
     /// The sort every listing the pane shows is sorted with: its spec, and
     /// the keys made for it where it needs them (`SortSpec::needs_keys`).
     pub fn sorting(&self) -> crate::grouping::Sort {
-        crate::grouping::Sort {
+        let mut sort = crate::grouping::Sort {
             spec: self.sort,
             keys: self.keys.clone().filter(|_| self.sort.needs_keys()),
+            folders: None,
+        };
+        // Sorted or grouped by Folder: each entry's, as the location has it.
+        if sort.wants_folders()
+            && let Some(open) = &self.open
+        {
+            let open = Arc::clone(open);
+            sort.folders = Some(crate::grouping::Folders(Arc::new(move |id| {
+                open.path_of(id)?.parent().map(Path::to_path_buf)
+            })));
         }
+        sort
     }
 
     /// The keys made for the pane's sort, if any.

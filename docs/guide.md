@@ -194,7 +194,12 @@ year). The heading of the group at the top stays there as you scroll;
 the arrows, Shift and Select All pass over headings, which are never
 selected. In the tree, a folder opened keeps its files under it, in its
 own group; in the grid, each group starts a row of its own, and Up and
-Down go to the picture drawn above or below. Folders first, on
+Down go to the picture drawn above or below. A click on a heading selects
+its files (Ctrl+click adds them to what is selected); its menu offers
+Select these and Show only these, which filters the folder to the group.
+Where files come from many folders (a search, a tag, the shelf), Folder
+sorts and groups them by the folder each is in, as the Folder column's
+header does. Folders first, on
 unless you turn it off (there or in Settings › Folders and views), lists
 folders before files; off, they are sorted together, so by date the
 newest comes first whatever it is. A folder's own date changes when

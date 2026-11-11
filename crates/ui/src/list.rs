@@ -858,6 +858,57 @@ impl Shell {
         self.cursor_to(target, step, window, cx);
     }
 
+    /// `ui.select_group`: select what a group's heading counts (ADR-130,
+    /// 12), group `group` of what the pane draws, else the cursor's; with
+    /// `add`, beside what is selected. In the tree, the group's own: not
+    /// the entries of a folder opened in place under it. From the first to
+    /// the last, as a band over them selects, the view left where it is.
+    pub fn select_group(
+        &mut self,
+        group: Option<usize>,
+        add: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let rows = self.ui().list.rows.clone();
+        let Some(span) = group
+            .or_else(|| rows.group_of(self.cursor_index()?))
+            .and_then(|n| rows.spans().get(n))
+        else {
+            return;
+        };
+        let sorted = std::sync::Arc::clone(&self.ui().list.sorted);
+        let Some(group) = sorted.get(span.start..span.start + span.len) else {
+            return;
+        };
+        let (ids, at): (Vec<EntryId>, Option<usize>) = {
+            let ws = self.app.workspace.read();
+            let Some(pane) = ws.pane(self.pane) else {
+                return;
+            };
+            let own: Vec<(usize, EntryId)> = group
+                .iter()
+                .enumerate()
+                .filter(|(_, id)| pane.depth(**id) == 0)
+                .map(|(at, id)| (span.start + at, *id))
+                .collect();
+            let at = own.last().map(|(at, _)| *at);
+            (own.into_iter().map(|(_, id)| id).collect(), at)
+        };
+        let args = SelectArgs {
+            ids,
+            mode: if add {
+                SelectMode::Add
+            } else {
+                SelectMode::Replace
+            },
+            pane: Some(self.pane),
+            at,
+            ..SelectArgs::default()
+        };
+        self.run_args("select", args, window, cx);
+    }
+
     /// Ctrl+Space: select or deselect the item under the cursor.
     pub fn toggle_cursor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(id) = self.cursor_id() else {
