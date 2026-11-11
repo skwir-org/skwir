@@ -14947,3 +14947,59 @@ order shared as one list costs.
 **Not done here:** no view draws a heading yet (phase 2); the grid's
 breaks, Folder, a heading's click and menu are later phases. Not compiled
 for Windows or macOS (`just check-cross`).
+
+## 2026-11-11: Group headings in List and Tree (ADR-130, phase 2)
+
+- **Rows and positions** (`views::groups::RowMap`): made in
+  `ListState::sync` with the order, from `Pane::groups`; each group's
+  heading a row before its entries, every question a search among the
+  groups. Spans that do not cover the order group nothing. The list draws
+  rows; the cursor, ranges, Select All, the rubber band's selection
+  (`marquee::Geometry::Rows` takes the map: a band selects the entries
+  among the rows it covers, and none begins on a heading) and a screen
+  reader's position stay positions. A scroll asked by position
+  (`scroll_to`, `scroll_to_middle`, a tab's anchor) is turned into a row
+  where the list draws, with the rows then; Page Up and Down go a page of
+  rows to the entry there. A tab's anchor is the entry at the top, a
+  heading there told by a negative distance (`RowMap::anchor`).
+- **The heading**: as tall as a row, its label Small and semibold, its
+  count muted, a line above it but the first, as on the proposal's
+  mock-up. The one at the top is pinned (`groups::Pinned`, a decoration of
+  the list computed after it scrolled, as Settings › Keyboard pins its
+  captions), pushed up by the next, on the files' ground with a line under
+  it; an entry brought into view from above stops a row below the top
+  (`scroll_to_item_with_offset`). In the tree, entries of a folder opened
+  in place stay in its group, whose heading counts its own (`Span::count`,
+  new).
+- **What a screen reader hears**: a heading is a `Heading` (level 2)
+  among the options, named "Folders, 2 items"; the count and positions are
+  the entries'; a group's first entry says its group first in its
+  description (`Seat::group`).
+- **Found on the way** (phase 1): grouped by a date, size or rating while
+  sorted by name, the pane never asked for every entry's metadata, so
+  those off screen waited out of every group, after the rest, and jumped
+  into their groups when drawn. `SortSpec::needs_metadata` counts the
+  group's criterion; the sort's hydration, the name typed's cache and the
+  folder weight's `from_listing` ask it.
+
+**Checked:** rustfmt per file; clippy `-D warnings` on `skwir-core` and
+`skwir-ui`, all targets; `skwir-core`, `skwir-plugin-query` and
+`skwir-ui` 1 505 passed (new: rows and their positions, the rows drawn and
+their entries, a view's anchor coming back to its entry or heading, a
+band over a grouped list). `just a11y-check` (release build, AT-SPI): 70
+checks passed, new among them grouped by kind: a heading per group named
+by it and its count, Home 1 of 4 described by Folders, Down 2 of 4
+saying no group, Down past a heading 3 of 4 described by Documents, 4 of
+4 by Text and code, none once not grouped. In a window on Xvfb (73
+synthetic files dated across the date groups): the View menu's Group by
+fly-out (None, Same as sort, the criteria), Modified chosen and Newest
+first; headings Today 10, Yesterday 11, Earlier this week 11, folders
+first in each; the top heading pinned while scrolling and pushed up by
+the next; Down from a group's last entry to the next's first, over the
+heading; Home, Page Down twice and Page Up, the cursor in view and never
+under the pinned heading; the tree with a folder opened in place, its
+three files under it, the heading still counting 11. The grid showed the
+grouped order without headings (phase 3).
+
+**Not done here:** the grid's headings (phase 3); a heading's click and
+menu (phase 4). Not compiled for Windows or macOS.

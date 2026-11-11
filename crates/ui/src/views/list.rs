@@ -21,6 +21,7 @@ use crate::shell::Shell;
 use crate::sizes::{Part, Scale};
 use crate::theme::Theme;
 use crate::view::{Nav, PaneView};
+use crate::views::groups::{self, Row, RowMap};
 
 /// Height of a row at the default size and 100 %: the archive preview's
 /// rows too.
@@ -346,6 +347,24 @@ pub struct ListView {
     height: f32,
     /// The tree view: folders open in place.
     tree: bool,
+    /// The rows as last drawn, the groups' headings among the entries:
+    /// where the view is scrolled is told by them.
+    drawn: RowMap,
+    /// A scroll asked for by an entry's position, made a row's when the
+    /// view draws, with the rows as they are then: the order and its
+    /// headings can change between the asking and the drawing.
+    asked: Option<Asked>,
+}
+
+/// A scroll asked of the list by position (`ListView::asked`).
+#[derive(Clone, Copy, Debug)]
+enum Asked {
+    /// Into view, moving the least.
+    Near(usize),
+    /// Into the middle.
+    Middle(usize),
+    /// Back where a tab was (`RowMap::anchor`).
+    Anchor((usize, f32)),
 }
 
 impl Default for ListView {
@@ -354,6 +373,8 @@ impl Default for ListView {
             scroll: UniformListScrollHandle::default(),
             height: ROW_HEIGHT,
             tree: false,
+            drawn: RowMap::default(),
+            asked: None,
         }
     }
 }
@@ -369,11 +390,38 @@ impl ListView {
     /// Put the row `anchor` names at the top, as far into it, at the rows'
     /// height as it is now.
     fn place_anchor(&mut self, anchor: (usize, f32)) {
+        self.place_offset(row_offset(anchor, self.height));
+    }
+
+    /// Scroll to `y` (0 or less: the rows' top is `-y` above the view's).
+    fn place_offset(&mut self, y: f32) {
         let state = self.scroll.0.borrow();
         let offset = state.base_handle.offset();
-        state
-            .base_handle
-            .set_offset(gpui::point(offset.x, px(row_offset(anchor, self.height))));
+        state.base_handle.set_offset(gpui::point(offset.x, px(y)));
+    }
+
+    /// Carry out the scroll asked by position, in the rows of `rows`. A
+    /// row under the pinned heading is hidden: where groups are drawn, one
+    /// brought into view from above stops a row below the top.
+    fn scroll_as_asked(&mut self, rows: &RowMap) {
+        match self.asked.take() {
+            Some(Asked::Near(ix)) if rows.grouped() => {
+                self.scroll
+                    .scroll_to_item_with_offset(rows.row_of(ix), ScrollStrategy::Nearest, 1);
+            }
+            Some(Asked::Near(ix)) => self.scroll.scroll_to_item(ix, ScrollStrategy::Nearest),
+            Some(Asked::Middle(ix)) => {
+                self.scroll
+                    .scroll_to_item(rows.row_of(ix), ScrollStrategy::Center);
+            }
+            Some(Asked::Anchor(anchor)) => {
+                // A pending scroll (the reset of a new listing) would move
+                // it again.
+                self.scroll.0.borrow_mut().deferred_scroll_to_item = None;
+                self.place_offset(-rows.offset_of(anchor, self.height));
+            }
+            None => {}
+        }
     }
 }
 
@@ -618,12 +666,71 @@ pub(crate) fn row_elements(
         .collect()
 }
 
+/// An element for each row of `range` of a list whose groups are drawn
+/// (`rows`): a group's heading, or its entry's row as `row_elements`
+/// makes it. `data` holds the entries' among them.
+fn grouped_row_elements(
+    shell: &Shell,
+    theme: &Theme,
+    range: Range<usize>,
+    rows: &RowMap,
+    data: &[RowData],
+    tree: bool,
+    cx: &mut Context<Shell>,
+) -> Vec<Stateful<Div>> {
+    let scale = files_scale(theme);
+    let height = row_height(shell.row_zoom, scale);
+    let mut data = data.iter().peekable();
+    range
+        .map(|at| match rows.at(at) {
+            Some(Row::Heading(n)) => {
+                let span = &rows.spans()[n];
+                let el = groups::heading(span, n == 0, height, scale, theme).id(("heading", n));
+                if shell.a11y {
+                    // A heading among the options: what flat review reads.
+                    // Each group's first entry says its group as well.
+                    el.role(gpui::Role::Heading)
+                        .aria_level(2)
+                        .aria_label(groups::said(span))
+                } else {
+                    el
+                }
+            }
+            Some(Row::Entry(ix)) => match data.next_if(|r| r.ix == ix) {
+                Some(r) => {
+                    let first = rows
+                        .group_of(ix)
+                        .filter(|n| rows.spans()[*n].start == ix)
+                        .map(|n| groups::said(&rows.spans()[n]));
+                    row_in(shell, theme, r, false, tree, first, cx)
+                }
+                None => div().id(("row-gone", ix)).h(px(height)),
+            },
+            None => div().id(("row-none", at)).h(px(height)),
+        })
+        .collect()
+}
+
 pub fn row(
     shell: &Shell,
     theme: &Theme,
     r: &RowData,
     compact: bool,
     tree: bool,
+    cx: &mut Context<Shell>,
+) -> Stateful<Div> {
+    row_in(shell, theme, r, compact, tree, None, cx)
+}
+
+/// `row`, the first of its group's entries where `group` says what a
+/// screen reader hears of the group (`groups::said`).
+fn row_in(
+    shell: &Shell,
+    theme: &Theme,
+    r: &RowData,
+    compact: bool,
+    tree: bool,
+    group: Option<String>,
     cx: &mut Context<Shell>,
 ) -> Stateful<Div> {
     let ix = r.ix;
@@ -691,6 +798,7 @@ pub fn row(
     let seat = crate::views::entry::Seat {
         index: ix,
         tree: tree.then_some((r.depth, look.is_dir.then_some(r.expanded))),
+        group,
     };
     crate::views::entry::behave(el.child(line), look, seat, shell, cx)
 }
@@ -907,7 +1015,10 @@ impl PaneView for ListView {
 
     fn render(&mut self, shell: &mut Shell, _: &mut Window, cx: &mut Context<Shell>) -> AnyElement {
         let theme = cx.global::<Theme>().clone();
-        let count = shell.ui().list.sorted.len();
+        // Rows: the entries, and the groups' headings among them.
+        let rows = shell.ui().list.rows.clone();
+        let count = rows.len();
+        let entries = shell.ui().list.sorted.len();
         let pane = shell.pane;
         let tree = self.tree;
         let height = row_height(shell.row_zoom, files_scale(&theme));
@@ -925,28 +1036,44 @@ impl PaneView for ListView {
             // keep the cursor in view (`Shell::zoom_step`).
             self.place_anchor((row, within * height / before));
         }
+        self.scroll_as_asked(&rows);
+        self.drawn = rows.clone();
+        let drawn = rows.clone();
         let list = uniform_list(
             "rows",
             count,
             cx.processor(move |this: &mut Shell, range: Range<usize>, _window, cx| {
                 this.with_pane(pane, |this| {
                     let theme = cx.global::<Theme>().clone();
+                    let shown = drawn.entries_in(range.clone());
                     let list = &mut this.ui_mut().list;
                     list.visible_rows = range.len().max(1);
-                    list.visible_items = range.len();
-                    let rows = this.rows(range.clone(), icon_px, false);
-                    this.request_hydrate(rows.iter().map(|r| r.look.id).collect::<Vec<_>>());
-                    row_elements(this, &theme, range, &rows, (false, tree), cx)
+                    list.visible_items = shown.len();
+                    let data = this.rows(shown, icon_px, false);
+                    this.request_hydrate(data.iter().map(|r| r.look.id).collect::<Vec<_>>());
+                    if drawn.grouped() {
+                        grouped_row_elements(this, &theme, range, &drawn, &data, tree, cx)
+                    } else {
+                        row_elements(this, &theme, range, &data, (false, tree), cx)
+                    }
                 })
             }),
         )
         .track_scroll(&self.scroll)
+        .when(rows.grouped(), |list| {
+            list.with_decoration(groups::Pinned {
+                rows: rows.clone(),
+                scale: files_scale(&theme),
+                theme: theme.clone(),
+                ground: theme.files_ground(shell.lowered()),
+            })
+        })
         .size_full();
         let marquee = crate::elements::marquee::Marquee {
             pane,
             shell: cx.weak_entity(),
-            source: crate::elements::marquee::Source::Rows { height },
-            count,
+            source: crate::elements::marquee::Source::Rows { height, rows },
+            count: entries,
             scroll: self.scroll.0.borrow().base_handle.clone(),
             drag: shell.marquee.clone(),
         };
@@ -975,28 +1102,37 @@ impl PaneView for ListView {
     }
 
     fn scroll_to(&mut self, ix: usize) {
-        self.scroll.scroll_to_item(ix, ScrollStrategy::Nearest);
+        self.asked = Some(Asked::Near(ix));
     }
 
     fn scroll_to_middle(&mut self, ix: usize) {
-        self.scroll.scroll_to_item(ix, ScrollStrategy::Center);
+        self.asked = Some(Asked::Middle(ix));
     }
 
+    /// The entry at the top, a heading there told by a distance above it.
     fn scroll_anchor(&self) -> Option<(usize, f32)> {
-        Some(row_anchor(
-            f32::from(self.scroll.0.borrow().base_handle.offset().y),
-            self.height,
-        ))
+        let offset = -f32::from(self.scroll.0.borrow().base_handle.offset().y);
+        self.drawn.anchor(offset, self.height).or(Some((0, 0.)))
     }
 
     fn restore_anchor(&mut self, anchor: (usize, f32)) {
-        // A pending scroll (the reset of a new listing) would move it again.
-        self.scroll.0.borrow_mut().deferred_scroll_to_item = None;
-        self.place_anchor(anchor);
+        self.asked = Some(Asked::Anchor(anchor));
     }
 
+    /// A page goes a page of rows, headings among them, to the entry there
+    /// (a heading's, the first of its group).
     fn nav_delta(&self, nav: Nav, shell: &Shell) -> Option<isize> {
-        rows_nav(nav, shell)
+        let delta = rows_nav(nav, shell)?;
+        let rows = &shell.ui().list.rows;
+        let Some(cursor) = shell
+            .cursor_index()
+            .filter(|_| rows.grouped() && delta.abs() > 1)
+        else {
+            return Some(delta);
+        };
+        let row = (rows.row_of(cursor) as isize + delta).clamp(0, rows.len() as isize - 1);
+        let to = rows.entry_from(row as usize).unwrap_or(cursor);
+        Some(to as isize - cursor as isize)
     }
 
     /// In the tree, Right opens the folder under the cursor, or goes into
@@ -1054,6 +1190,7 @@ impl PaneView for ListView {
     }
 
     fn reset(&mut self) {
+        self.asked = None;
         self.scroll.scroll_to_item_strict(0, ScrollStrategy::Top);
     }
 }

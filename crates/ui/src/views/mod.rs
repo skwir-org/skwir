@@ -4,6 +4,7 @@ pub mod board;
 pub mod columns;
 pub mod entry;
 pub mod grid;
+pub mod groups;
 pub mod list;
 
 use skwir_core::registry::ViewSpec;

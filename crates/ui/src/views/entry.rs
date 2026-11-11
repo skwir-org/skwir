@@ -136,13 +136,17 @@ pub fn highlight(el: Stateful<Div>, look: &Look, theme: &Theme) -> Stateful<Div>
 /// technology says it: "readme.txt, 3 of 120", the count from the list box
 /// that holds it (`aria_size_of_set` on the container, as AccessKit reads
 /// it; the position counts from 0).
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct Seat {
     /// Its index in the order its list box holds.
     pub index: usize,
     /// In a tree: its depth, from 0, and for a folder whether it is opened
     /// in place. Its place among its siblings is then left to the levels.
     pub tree: Option<(usize, Option<bool>)>,
+    /// The first entry of a group drawn under its heading: what is heard
+    /// of the group ("Today, 3 items", `groups::said`), said first among
+    /// what describes it, as the arrows cross into the group.
+    pub group: Option<String>,
 }
 
 /// What every entry answers, given to `el`, an entry of the pane being
@@ -181,6 +185,12 @@ pub fn behave(
 /// pane container keeps the keyboard focus, and a screen reader says the
 /// entry the keys move as the focused one.
 fn expose(el: Stateful<Div>, look: &Look, seat: Seat) -> Stateful<Div> {
+    // Its group where it is the first of it, then its tags and stars, as
+    // the views draw them.
+    let described = match (seat.group, said(look)) {
+        (Some(group), Some(said)) => Some(format!("{group}; {said}")),
+        (group, said) => group.or(said),
+    };
     let el = el
         .role(if seat.tree.is_some() {
             gpui::Role::TreeItem
@@ -188,8 +198,7 @@ fn expose(el: Stateful<Div>, look: &Look, seat: Seat) -> Stateful<Div> {
             gpui::Role::ListBoxOption
         })
         .aria_label(look.name.clone())
-        // Its tags and stars, as the views draw them.
-        .when_some(said(look), StatefulInteractiveElement::aria_description)
+        .when_some(described, StatefulInteractiveElement::aria_description)
         .aria_selected(look.selected)
         .when(
             look.cursor,

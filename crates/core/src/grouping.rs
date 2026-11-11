@@ -252,6 +252,9 @@ pub struct SortStamp {
 pub struct Span {
     pub start: usize,
     pub len: usize,
+    /// How many of them are its own, what its heading counts: not the
+    /// entries of a folder opened in place, which follow the folder.
+    pub count: usize,
     pub group: Option<Arc<Group>>,
 }
 
@@ -272,16 +275,21 @@ pub fn spans_of(
                 spans.push(Span {
                     start: at,
                     len: 1,
+                    count: 0,
                     group: None,
                 });
             }
             continue;
         };
         match spans.last_mut() {
-            Some(last) if same(last.group.as_ref(), group.as_ref()) => last.len += 1,
+            Some(last) if same(last.group.as_ref(), group.as_ref()) => {
+                last.len += 1;
+                last.count += 1;
+            }
             _ => spans.push(Span {
                 start: at,
                 len: 1,
+                count: 1,
                 group,
             }),
         }

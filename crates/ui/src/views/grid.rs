@@ -503,6 +503,7 @@ fn cell(
     let seat = crate::views::entry::Seat {
         index: ix,
         tree: None,
+        group: None,
     };
     crate::views::entry::behave(el, look, seat, shell, cx).into_any_element()
 }

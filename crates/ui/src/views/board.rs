@@ -323,6 +323,7 @@ fn column(
                         let seat = crate::views::entry::Seat {
                             index: range.start + card.at,
                             tree: None,
+                            group: None,
                         };
                         card_element(this, &card, seat, &theme, cx)
                     })

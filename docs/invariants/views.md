@@ -373,6 +373,23 @@ around the views is in [shell.md](shell.md).
   each group starts is the listing's (`Listing::spans_shown`, from the
   order's ranks) mapped onto what the pane shows (`Pane::groups`): never
   asked of the keys again per row.
+- **A heading is a row, never an entry** (ADR-130, 9): a view that draws
+  groups keeps one map from its rows to positions in the order
+  (`views::groups::RowMap`, made with `ListState::sorted` from
+  `Pane::groups`, a search among the groups for every question, never a
+  walk of the rows). Drawing, scrolling and the pointer work in rows; the
+  cursor, ranges, Select All, the rubber band's selection and a screen
+  reader's position and count in positions, as when nothing is grouped.
+  A view asked to scroll to a position turns it into a row where it
+  draws (`ListView::asked`), with the rows as they are then. A heading
+  is a row as tall as an entry, its label Small and semibold, its count
+  beside it muted, a line above it but the first; the one at the top is
+  pinned (`groups::Pinned`, a decoration of the list, computed after it
+  scrolled), pushed up by the next, and a row brought into view from
+  above stops below it. The tree groups its top level: a folder opened
+  in place keeps its entries under it, in its group, whose heading
+  counts its own (`Span::count`). Columns, the board, Usage and the map
+  draw no headings; the grid's are phase 3.
 - **What changed is placed, never merged rank by rank**
   (`Listing::place`): a hydrated batch in a big folder is a thousand
   entries among a hundred thousand, a hundred times while it is read.

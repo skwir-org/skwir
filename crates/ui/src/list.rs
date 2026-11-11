@@ -210,6 +210,10 @@ fn seek_from<T: Copy + PartialEq>(
 pub struct ListState {
     /// Entry ids in display order, from the core's cached sort.
     pub sorted: std::sync::Arc<[EntryId]>,
+    /// Where `sorted`'s groups' headings stand among its entries, for the
+    /// views that draw them (ADR-130, 9): made with `sorted`, from the
+    /// pane as it stood then.
+    pub rows: crate::views::groups::RowMap,
     sorted_at: Option<(u64, u64, SortSpec, u64)>,
     /// Where each of `sorted` is, made the first time it is asked for after
     /// the order changed (`index_of`): a card or a cursor found its place by
@@ -273,6 +277,7 @@ impl Default for ListState {
     fn default() -> Self {
         ListState {
             sorted: std::sync::Arc::from([]),
+            rows: crate::views::groups::RowMap::default(),
             sorted_at: None,
             positions: std::cell::OnceCell::new(),
             pending_hydrate: HashMap::new(),
@@ -322,6 +327,7 @@ impl ListState {
             return false;
         }
         self.sorted = pane.order();
+        self.rows = crate::views::groups::RowMap::new(pane.groups(), self.sorted.len());
         self.sorted_at = Some(at);
         self.positions = std::cell::OnceCell::new();
         true
@@ -333,6 +339,7 @@ impl ListState {
 
     fn reset(&mut self) {
         self.sorted = std::sync::Arc::from([]);
+        self.rows = crate::views::groups::RowMap::default();
         self.sorted_at = None;
         self.positions = std::cell::OnceCell::new();
         self.pending_hydrate.clear();
@@ -678,10 +685,10 @@ impl Shell {
         }
     }
 
-    /// Under a sort by size, date or rating, ask for the metadata of every
-    /// entry the pane shows: until it comes, an entry sorts after the rest
-    /// (`SortKey::needs_metadata`). Asked again only when the entries or
-    /// the sort change, never per frame.
+    /// Sorted or grouped by size, a date or a rating, ask for the metadata
+    /// of every entry the pane shows: until it comes, an entry sorts after
+    /// the rest, out of every group (`SortSpec::needs_metadata`). Asked
+    /// again only when the entries or the sort change, never per frame.
     pub(crate) fn sync_sort_hydration(&mut self) {
         let pane = self.pane;
         let app = std::sync::Arc::clone(&self.app);
@@ -690,7 +697,7 @@ impl Shell {
             let Some(p) = ws.pane(pane) else { return };
             // Once listed: while a folder streams in, its names change
             // with every batch, and each look costs a pass over them.
-            if !p.sort.key.needs_metadata() || !p.listing.is_complete() {
+            if !p.sort.needs_metadata() || !p.listing.is_complete() {
                 return;
             }
             let key = (
@@ -1319,7 +1326,7 @@ impl Shell {
         let names = {
             let ws = self.app.workspace.read();
             ws.pane(self.pane)
-                .filter(|p| !p.sort.key.needs_metadata())
+                .filter(|p| !p.sort.needs_metadata())
                 .map(|p| p.listing.names_version())
         };
         if names.is_some()

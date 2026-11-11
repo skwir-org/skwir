@@ -169,7 +169,7 @@ impl Shell {
             // weighed), or any filtered by what the files' metadata says.
             let folder = p.location().is_some_and(|l| l.path().is_some());
             let reads = p.read_filter().is_some_and(|r| r.metadata);
-            let from_listing = reads || folder && p.sort.key.needs_metadata();
+            let from_listing = reads || folder && p.sort.needs_metadata();
             Key {
                 listing: p.listing.id(),
                 names: p.listing.names_version(),

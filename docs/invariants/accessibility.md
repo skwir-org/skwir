@@ -115,6 +115,12 @@ like `AGENTS.md`.
 
 - A list is a `ListBox` of `ListBoxOption`s, a tree a `Tree` of
   `TreeItem`s. The pane's lists are multiselectable.
+- **Grouped, a list counts its entries** (ADR-130): a group's heading
+  is a `Heading` (level 2) among the rows, named by its group and count
+  ("Today, 3 items", `groups::said`), for a reader's review; it is never
+  an option, so positions and the count stay the entries'. A group's
+  first entry says its group first in its description (`Seat::group`),
+  so the arrows crossing into a group say so.
 - **Position and count follow AccessKit, not the web**: an item's
   `aria_position_in_set` counts from 0, and the count is
   `aria_size_of_set` on the container. gpui's example puts both on the
@@ -139,7 +145,7 @@ like `AGENTS.md`.
 | Place | Role | Name |
 | --- | --- | --- |
 | window | frame | "‹location› — skwir" |
-| list and grid | list box of options | the location |
+| list and grid | list box of options; grouped, a heading for each group among them | the location; a heading its group and count ("Today, 3 items"), a group's first option described by them too |
 | tree | tree of items | the location |
 | columns, board | group of list boxes | the location; each column its folder |
 | an empty or failed pane | group, described by its placeholder | the location |

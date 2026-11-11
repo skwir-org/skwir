@@ -1061,6 +1061,14 @@ impl SortSpec {
         self.group.key(self.key)
     }
 
+    /// Whether its order reads what a stat or the metadata providers say
+    /// (`SortKey::needs_metadata`): by what it is sorted by, or by what it
+    /// is grouped by. Whoever orders so asks for every entry's, else
+    /// those not read yet wait after the rest until each is drawn.
+    pub fn needs_metadata(&self) -> bool {
+        self.key.needs_metadata() || self.group_key().is_some_and(SortKey::needs_metadata)
+    }
+
     /// The groups' direction: the sort's for Same as sort.
     pub fn groups_ascending(&self) -> bool {
         match self.group {

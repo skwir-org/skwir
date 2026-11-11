@@ -331,6 +331,31 @@ def children_of(w, role, name):
     return []
 
 
+def under(w, role, name, kind):
+    """The nodes of role `kind` anywhere under the node `role` `name`, in
+    the order a reader meets them."""
+    stack = [w.frame()]
+    while stack:
+        node = stack.pop()
+        if node is None:
+            continue
+        if node.get_role_name() == role and node.get_name() == name:
+            found, inside = [], [node]
+            while inside:
+                n = inside.pop(0)
+                for i in range(n.get_child_count()):
+                    child = n.get_child_at_index(i)
+                    if child is None:
+                        continue
+                    if child.get_role_name() == kind:
+                        found.append(child)
+                    else:
+                        inside.append(child)
+            return found
+        stack.extend(node.get_child_at_index(i) for i in range(node.get_child_count()))
+    return []
+
+
 def names_of(w):
     """Every name in the window, wherever it is."""
     names, stack = [], [w.frame()]
@@ -598,6 +623,37 @@ def run(w):
     check("and again: back to the files", hears(w, f"list item {fourth!r} 4 of 4 selected focused"))
     w.keys("F11", "Home")
     check("Escape: back to the entry", hears(w, f"list item {first!r} 1 of 4 selected focused"))
+
+    # Grouped (ADR-130): a heading among the rows for each group, the
+    # entries' positions and count their own, a group's first entry
+    # described by its group.
+    def headings():
+        return [n.get_name() for n in under(w, "list box", "files", "heading")]
+
+    w.cmd("group", {"by": "kind"})
+    groups = ["Folders, 2 items", "Documents, 1 item", "Text and code, 1 item"]
+    check("grouped by kind: a heading for each group, named by it and its count",
+          until(lambda: headings() == groups) or print("  headings:", headings()))
+    w.keys("Home")
+    check("Home: the first entry, 1 of 4, described by its group",
+          hears(w, f"list item {first!r} 1 of 4 selected focused")
+          and (w.focused().get_description() or "").startswith(groups[0]))
+    w.keys("Down")
+    check("Down: 2 of 4, not the first of its group, which it does not say",
+          hears(w, f"list item {second!r} 2 of 4 selected focused")
+          and "item" not in (w.focused().get_description() or ""))
+    w.keys("Down")
+    check("Down, past a heading: 3 of 4, the next group's first, which it says",
+          hears(w, f"list item {third!r} 3 of 4 selected focused")
+          and (w.focused().get_description() or "").startswith(groups[1]))
+    w.keys("Down")
+    check("Down again: 4 of 4, the last group's first",
+          hears(w, f"list item {fourth!r} 4 of 4 selected focused")
+          and (w.focused().get_description() or "").startswith(groups[2]))
+    w.cmd("group", {"by": "none"})
+    check("not grouped again: no heading", until(lambda: not headings()))
+    w.keys("Home")
+    check("Home: the first entry again", hears(w, f"list item {first!r} 1 of 4 selected focused"))
 
     w.keys("ctrl+2")
     check("the grid says the same entry", hears(w, f"list item {first!r} 1 of 4 selected focused"))

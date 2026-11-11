@@ -23,13 +23,15 @@ use crate::elements::uniform_grid::UniformGridScrollHandle;
 use crate::elements::uniform_grid::math::Slots;
 use crate::shell::Shell;
 use crate::theme::Theme;
+use crate::views::groups::{Row, RowMap};
 
 /// Where a view puts its entries, in content coordinates (origin at the top
 /// left of the scrolled content).
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum Geometry {
-    /// Full-width rows of one height.
-    Rows { height: f32 },
+    /// Full-width rows of one height, its groups' headings among them
+    /// (`RowMap`).
+    Rows { height: f32, rows: RowMap },
     /// A grid's tiles, placed from `origin` (the grid's border and
     /// padding). The gutters between them are empty: a band can begin there.
     Cells { slots: Slots, origin: (f32, f32) },
@@ -37,16 +39,31 @@ pub enum Geometry {
 
 impl Geometry {
     /// The entry under a point, if any. Rows span the width; the space after
-    /// the last entry, and beside the last column, is empty.
+    /// the last entry, and beside the last column, is empty, and so is a
+    /// heading, which is no entry.
     pub fn item_at(&self, x: f32, y: f32, count: usize) -> Option<usize> {
         if x < 0. || y < 0. {
             return None;
         }
         let index = match self {
-            Geometry::Rows { height } => (y / *height) as usize,
+            Geometry::Rows { height, rows } => match rows.at((y / *height) as usize)? {
+                Row::Entry(index) => index,
+                Row::Heading(_) => return None,
+            },
             Geometry::Cells { slots, origin } => slots.tile_at(x - origin.0, y - origin.1)?,
         };
         (index < count).then_some(index)
+    }
+
+    /// Whether a point is on something drawn, where a band does not begin:
+    /// an entry, or a group's heading.
+    pub fn hits(&self, x: f32, y: f32, count: usize) -> bool {
+        match self {
+            Geometry::Rows { height, rows } if x >= 0. && y >= 0. => {
+                rows.at((y / *height) as usize).is_some()
+            }
+            _ => self.item_at(x, y, count).is_some(),
+        }
     }
 
     /// Entries a rectangle touches, given by two opposite corners.
@@ -57,11 +74,11 @@ impl Geometry {
             return Vec::new();
         }
         match self {
-            Geometry::Rows { height } => {
-                let first = (y0 / height) as usize;
-                let last = ((y1 / height) as usize).min(count - 1);
-                (first..=last).filter(|index| *index < count).collect()
-            }
+            // The entries among the rows touched: never a heading.
+            Geometry::Rows { height, rows } => rows
+                .entries_in((y0 / height) as usize..(y1 / height) as usize + 1)
+                .filter(|index| *index < count)
+                .collect(),
             Geometry::Cells { slots, origin } => slots
                 .covered(
                     (x0 - origin.0, x1 - origin.0),
@@ -130,14 +147,17 @@ pub(crate) fn band_change(
 /// view's own prepaint, so the scroll offset and the grid's slots are this
 /// frame's, never the last one's.
 pub enum Source {
-    Rows { height: f32 },
+    Rows { height: f32, rows: RowMap },
     Grid(UniformGridScrollHandle),
 }
 
 impl Source {
     fn geometry(&self) -> Geometry {
         match self {
-            Source::Rows { height } => Geometry::Rows { height: *height },
+            Source::Rows { height, rows } => Geometry::Rows {
+                height: *height,
+                rows: rows.clone(),
+            },
             Source::Grid(grid) => Geometry::Cells {
                 slots: grid.slots(),
                 origin: grid.origin(),
@@ -257,7 +277,7 @@ impl Element for Marquee {
                 return;
             }
             let (x, y) = to_content(event.position);
-            if pressed.item_at(x, y, count).is_some() {
+            if pressed.hits(x, y, count) {
                 return;
             }
             let keep = crate::keymap::secondary(&event.modifiers) || event.modifiers.shift;
@@ -316,10 +336,14 @@ mod tests {
 
     use super::{Geometry, Slots, band_change};
     use crate::elements::uniform_grid::math::Columns;
+    use crate::views::groups::RowMap;
 
     #[test]
     fn rows_are_hit_across_their_width_and_the_space_below_is_empty() {
-        let rows = Geometry::Rows { height: 26. };
+        let rows = Geometry::Rows {
+            height: 26.,
+            rows: RowMap::flat(10),
+        };
         assert_eq!(rows.item_at(900., 30., 3), Some(1));
         assert_eq!(rows.item_at(10., 26. * 3. + 1., 3), None);
         assert_eq!(rows.covered((5., 100.), (400., 20.), 10), [0, 1, 2, 3]);
@@ -329,6 +353,29 @@ mod tests {
             "clamped to the entries"
         );
         assert!(rows.covered((0., 0.), (10., 10.), 0).is_empty());
+    }
+
+    /// Grouped, a heading is a row the band passes over and a press on it
+    /// begins none: rows 0 heading, 1 and 2 entries 0 and 1, 3 heading,
+    /// 4 and 5 entries 2 and 3.
+    #[test]
+    fn a_band_over_rows_selects_the_entries_not_the_headings() {
+        let span = |start, len| skwir_core::grouping::Span {
+            start,
+            len,
+            count: len,
+            group: None,
+        };
+        let rows = Geometry::Rows {
+            height: 20.,
+            rows: RowMap::new(std::sync::Arc::from([span(0, 2), span(2, 2)]), 4),
+        };
+        assert_eq!(rows.covered((5., 45.), (300., 85.), 4), [1, 2]);
+        assert_eq!(rows.covered((5., 0.), (300., 10.), 4), Vec::<usize>::new());
+        assert_eq!(rows.item_at(10., 65., 4), None, "a heading is no entry");
+        assert_eq!(rows.item_at(10., 85., 4), Some(2));
+        assert!(rows.hits(10., 65., 4), "but no band begins on it");
+        assert!(!rows.hits(10., 125., 4), "below the last row");
     }
 
     #[test]

@@ -186,7 +186,14 @@ round in one click, and the row under it lists what to sort by: name,
 kind, type, extension, size, the dates, rating, tags or owner. Each starts
 where you look first (names A to Z, the largest, the newest, the best
 rated), and choosing it again turns it round; files that tie are listed A
-to Z either way. Folders first, on
+to Z either way. Group by, under it, puts the files under headings: by
+the sort itself (Same as sort) or by any of those, its groups in a
+direction of their own (by date: Today, Yesterday, Earlier this week,
+Last week, Earlier this month, Last month, Earlier this year, then each
+year). The heading of the group at the top stays there as you scroll;
+the arrows, Shift and Select All pass over headings, which are never
+selected. In the tree, a folder opened keeps its files under it, in its
+own group. Folders first, on
 unless you turn it off (there or in Settings › Folders and views), lists
 folders before files; off, they are sorted together, so by date the
 newest comes first whatever it is. A folder's own date changes when
