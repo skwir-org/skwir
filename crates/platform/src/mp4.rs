@@ -25,14 +25,10 @@ const MAX_DEPTH: usize = 6;
 const LOCATION_KEY: &[u8] = b"com.apple.quicktime.location.ISO6709";
 const DATE_KEY: &[u8] = b"com.apple.quicktime.creationdate";
 
-/// Where and when the video was recorded, if it says.
-pub fn taken<S: FileSource + ?Sized>(source: &S) -> Taken {
-    let Ok(file) = source.open_reader() else {
-        return Taken::default();
-    };
-    let Ok(length) = source.length() else {
-        return Taken::default();
-    };
+/// What the boxes of `source` say, walked once.
+fn walk<S: FileSource + ?Sized>(source: &S) -> Option<Found> {
+    let file = source.open_reader().ok()?;
+    let length = source.length().ok()?;
     let mut walk = Walk {
         file: std::io::BufReader::new(file),
         boxes: 0,
@@ -40,7 +36,23 @@ pub fn taken<S: FileSource + ?Sized>(source: &S) -> Taken {
     };
     // Errors end the walk with what was found before them.
     let _ = walk.children(0, length, 0, Parent::Top);
-    let found = walk.found;
+    Some(walk.found)
+}
+
+/// How long the film or the sound lasts, in milliseconds, as its movie
+/// header says (`moov/mvhd`: a duration in its own time scale); none where
+/// it does not, or says nothing (a fragmented file's own is often 0).
+pub fn duration<S: FileSource + ?Sized>(source: &S) -> Option<u64> {
+    let (scale, duration) = walk(source)?.duration?;
+    (scale > 0 && duration > 0 && duration != u64::from(u32::MAX) && duration != u64::MAX)
+        .then(|| duration.saturating_mul(1000) / u64::from(scale))
+}
+
+/// Where and when the video was recorded, if it says.
+pub fn taken<S: FileSource + ?Sized>(source: &S) -> Taken {
+    let Some(found) = walk(source) else {
+        return Taken::default();
+    };
     Taken {
         at: found
             .apple_location
@@ -69,6 +81,8 @@ struct Found {
     apple_date: Option<String>,
     /// `moov/meta/keys`, in order: the `ilst` items name them by index.
     keys: Vec<Vec<u8>>,
+    /// `moov/mvhd`'s time scale and duration in it.
+    duration: Option<(u32, u64)>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -138,6 +152,11 @@ impl<R: Read + Seek> Walk<R> {
     ) -> std::io::Result<()> {
         match (parent, &kind) {
             (Parent::Top, b"moov") => self.children(from, to, depth + 1, Parent::Moov),
+            (Parent::Moov, b"mvhd") => {
+                let bytes = self.leaf(from, to)?;
+                self.found.duration = Self::movie_header(&bytes);
+                Ok(())
+            }
             (Parent::Moov, b"udta") => self.children(from, to, depth + 1, Parent::Udta),
             // QuickTime's `meta` has no version and flags; ISO's has four
             // bytes of them before its children.
@@ -183,6 +202,18 @@ impl<R: Read + Seek> Walk<R> {
                 Ok(())
             }
             _ => Ok(()),
+        }
+    }
+
+    /// A movie header's time scale and duration: version 0 times in 32 bits,
+    /// version 1 in 64, after the version and flags.
+    fn movie_header(bytes: &[u8]) -> Option<(u32, u64)> {
+        let be32 = |at: usize| Some(u32::from_be_bytes(bytes.get(at..at + 4)?.try_into().ok()?));
+        let be64 = |at: usize| Some(u64::from_be_bytes(bytes.get(at..at + 8)?.try_into().ok()?));
+        match bytes.first()? {
+            0 => Some((be32(12)?, u64::from(be32(16)?))),
+            1 => Some((be32(20)?, be64(24)?)),
+            _ => None,
         }
     }
 
@@ -297,6 +328,43 @@ mod tests {
         let mut file = tempfile::NamedTempFile::new().unwrap();
         std::io::Write::write_all(&mut file, bytes).unwrap();
         file
+    }
+
+    /// The movie header says how long it lasts, in its own time scale,
+    /// either version; a header that says nothing (0) is none.
+    #[test]
+    fn a_film_says_how_long_it_lasts_in_its_movie_header() {
+        fn duration_of(bytes: &[u8]) -> Option<u64> {
+            duration(file(bytes).path())
+        }
+        let header = |version: u8, scale: u32, duration: u64| {
+            let mut body = vec![version, 0, 0, 0];
+            if version == 0 {
+                body.extend([0u8; 8]);
+                body.extend(scale.to_be_bytes());
+                body.extend(u32::try_from(duration).unwrap().to_be_bytes());
+            } else {
+                body.extend([0u8; 16]);
+                body.extend(scale.to_be_bytes());
+                body.extend(duration.to_be_bytes());
+            }
+            body.extend([0u8; 80]);
+            let video = [
+                boxed(*b"ftyp", b"isom0000"),
+                boxed(*b"mdat", &[7; 500]),
+                boxed(*b"moov", &boxed(*b"mvhd", &body)),
+            ]
+            .concat();
+            duration_of(&video)
+        };
+        assert_eq!(header(0, 600, 7_407), Some(12_345));
+        assert_eq!(header(1, 48_000, 48_000 * 90), Some(90_000));
+        assert_eq!(header(0, 1000, 0), None, "a header that says nothing");
+        assert_eq!(
+            duration_of(&boxed(*b"ftyp", b"isom0000")),
+            None,
+            "no header"
+        );
     }
 
     #[test]

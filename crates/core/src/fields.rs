@@ -82,6 +82,22 @@ pub trait FieldProvider: Send + Sync {
 /// mount made up, by its path.
 pub type Identity = (crate::entry::FileId, u64, u64);
 
+/// The identity of a listing's entry, as `Fields::get_all` takes it (its
+/// file stat-ed already, no link): a file with its size and modification
+/// time known. None for anything else, which is stat-ed when read.
+pub fn identity_of_entry(e: &crate::entry::Entry) -> Option<Identity> {
+    use crate::entry::{EntryKind, keys};
+    if e.kind != EntryKind::File {
+        return None;
+    }
+    let size = e.metadata.value(keys::SIZE).and_then(Value::as_u64)?;
+    let modified = e.metadata.value(keys::MODIFIED).and_then(Value::as_time)?;
+    let nanos = modified
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_nanos()).unwrap_or(u64::MAX));
+    Some((e.file(), size, nanos))
+}
+
 /// Registry generation, provider id and cache version, captured before a read.
 type ProviderStamp = (u64, &'static str, u32);
 type MemoryKey = (ProviderStamp, Arc<str>, Identity);

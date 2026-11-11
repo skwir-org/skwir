@@ -252,6 +252,10 @@ impl Shell {
                 SortKey::Rating => self.column_applies(Detail::Rating),
                 SortKey::Deleted => self.column_applies(Detail::Deleted),
                 SortKey::Folder => self.column_applies(Detail::Folder),
+                // Read on demand (ADR-131): while something reads it.
+                key if key.field().is_some() => key
+                    .field()
+                    .is_some_and(|field| self.app.fields.knows(field)),
                 key => sorter || !key.keyed(),
             })
             .map(|key| (key.title(), key))
@@ -366,6 +370,8 @@ enum Asked {
     Middle(usize),
     /// Back where a tab was (`RowMap::anchor`).
     Anchor((usize, f32)),
+    /// A row into view, a heading the keys went to.
+    Row(usize),
 }
 
 impl Default for ListView {
@@ -415,6 +421,7 @@ impl ListView {
                 self.scroll
                     .scroll_to_item(rows.row_of(ix), ScrollStrategy::Center);
             }
+            Some(Asked::Row(row)) => self.scroll.scroll_to_item(row, ScrollStrategy::Nearest),
             Some(Asked::Anchor(anchor)) => {
                 // A pending scroll (the reset of a new listing) would move
                 // it again.
@@ -686,12 +693,25 @@ fn grouped_row_elements(
         .map(|at| match rows.at(at) {
             Some(Row::Heading(n)) => {
                 let span = &rows.spans()[n];
+                let chevron = groups::chevron(
+                    n,
+                    rows.folded(n),
+                    shell.pane,
+                    cx.weak_entity(),
+                    scale,
+                    theme,
+                );
+                let stopped = shell.heading_stop() == Some(n);
                 let heading =
-                    groups::heading(span, n == 0, height, None, scale, theme).id(("heading", n));
+                    groups::heading(span, n == 0, height, None, scale, theme, Some(chevron))
+                        .id(("heading", n))
+                        .children(shell.menu_marker(shell.pane, stopped));
+                let heading = groups::ring(heading, stopped, theme);
                 // Each group's first entry says its group as well.
                 groups::expose(
                     groups::acting(heading, n, shell.pane, cx.weak_entity(), theme),
                     span,
+                    stopped,
                     shell.a11y,
                 )
             }
@@ -1065,6 +1085,7 @@ impl PaneView for ListView {
                 scale: files_scale(&theme),
                 theme: theme.clone(),
                 ground: theme.files_ground(shell.lowered()),
+                stopped: shell.heading_stop(),
                 pane,
                 shell: cx.weak_entity(),
             })
@@ -1136,16 +1157,23 @@ impl PaneView for ListView {
         Some(to as isize - cursor as isize)
     }
 
-    /// In the tree, Right opens the folder under the cursor, or goes into
-    /// it when it is open; Left closes it, or goes to the folder it is in.
+    /// Grouped, the plain arrows stop on headings (ADR-131, 1): on one,
+    /// Left folds it and Right opens it, the pages go a page of rows. In the
+    /// tree, Right opens the folder under the cursor, or goes into it when
+    /// it is open; Left closes it, or goes to the folder it is in.
     fn nav(
         &mut self,
         nav: Nav,
-        _: crate::list::Step,
+        step: crate::list::Step,
         shell: &mut Shell,
         window: &mut Window,
         cx: &mut Context<Shell>,
     ) -> bool {
+        if step == Step::Select
+            && let Some(handled) = self.heading_nav(nav, shell, window, cx)
+        {
+            return handled;
+        }
         if !self.tree || !matches!(nav, Nav::Left | Nav::Right) {
             return false;
         }
@@ -1193,6 +1221,70 @@ impl PaneView for ListView {
     fn reset(&mut self) {
         self.asked = None;
         self.scroll.scroll_to_item_strict(0, ScrollStrategy::Top);
+    }
+}
+
+impl ListView {
+    /// A plain arrow over grouped rows, headings among them (ADR-131, 1):
+    /// `Some` when it is the headings' to answer, with whether it did.
+    fn heading_nav(
+        &mut self,
+        nav: Nav,
+        shell: &mut Shell,
+        window: &mut Window,
+        cx: &mut Context<Shell>,
+    ) -> Option<bool> {
+        let rows = shell.ui().list.rows.clone();
+        if !rows.grouped() {
+            return None;
+        }
+        let stop = shell.heading_stop();
+        let row = match stop {
+            Some(n) => rows.heading_row(n),
+            None => rows.row_of(shell.cursor_index()?),
+        };
+        match (nav, stop) {
+            (Nav::Up | Nav::Down, _) => {
+                let to = if nav == Nav::Up {
+                    row.checked_sub(1)
+                } else {
+                    Some(row + 1).filter(|to| *to < rows.len())
+                };
+                match to.and_then(|to| Some((to, rows.at(to)?))) {
+                    Some((to, Row::Heading(n))) => {
+                        shell.stop_on_heading(n, cx);
+                        self.asked = Some(Asked::Row(to));
+                        Some(true)
+                    }
+                    Some((_, Row::Entry(ix))) if stop.is_some() => {
+                        shell.cursor_to(ix as isize, Step::Select, window, cx);
+                        Some(true)
+                    }
+                    // At an end, the keys stay on the heading.
+                    None if stop.is_some() => Some(true),
+                    _ => None,
+                }
+            }
+            (Nav::Left, Some(n)) => {
+                shell.fold_from_heading(n, "fold", window, cx);
+                Some(true)
+            }
+            (Nav::Right, Some(n)) => {
+                shell.fold_from_heading(n, "unfold", window, cx);
+                Some(true)
+            }
+            (Nav::PageUp | Nav::PageDown | Nav::HalfPageUp | Nav::HalfPageDown, Some(_)) => {
+                let delta = rows_nav(nav, shell)?;
+                let to = (row as isize + delta).clamp(0, rows.len() as isize - 1) as usize;
+                let ix = rows
+                    .entry_from(to)
+                    .or_else(|| rows.entry_from(rows.len().saturating_sub(1)))?;
+                shell.cursor_to(ix as isize, Step::Select, window, cx);
+                Some(true)
+            }
+            // Home and End go to the order's ends, from wherever the keys are.
+            _ => None,
+        }
     }
 }
 

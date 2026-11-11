@@ -714,6 +714,82 @@ struct GroupsCache {
     groups: Arc<[crate::grouping::Span]>,
 }
 
+/// What names a group folded (ADR-131, 2): where it stands among those of
+/// its criterion, its rank and key, so it stays folded as keys are made
+/// again; none for the entries whose group is not read yet.
+type FoldKey = Option<(u64, Arc<[u8]>)>;
+
+fn fold_key(group: Option<&crate::grouping::Group>) -> FoldKey {
+    group.map(|g| (g.rank, Arc::clone(&g.key)))
+}
+
+/// What a pane asks to read of its entries on demand (ADR-131, 4): for
+/// its listing, each entry with where it is, its identity when the
+/// listing knows it, and the fields it lacks.
+pub struct FieldsAsked {
+    pub pane: PaneId,
+    pub listing: u64,
+    pub cancel: CancelToken,
+    pub entries: Vec<(
+        EntryId,
+        PathBuf,
+        Option<crate::fields::Identity>,
+        Vec<&'static str>,
+    )>,
+}
+
+/// What a pane last asked to read on demand: its listing, the listing's
+/// names and fields versions, the providers' revision and the fields.
+type FieldsAt = (u64, u64, u64, u64, Vec<&'static str>);
+
+/// What to do with a pane's groups (`group_fold`).
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum FoldMode {
+    /// Fold it if it is open, else open it.
+    #[default]
+    Toggle,
+    Fold,
+    Unfold,
+    /// Fold every group but it.
+    FoldOthers,
+    /// Open every group.
+    UnfoldAll,
+}
+
+/// The groups a pane folded, for the criterion it groups by then: kept
+/// while it groups by it, forgotten when it groups by another.
+#[derive(Debug, Default)]
+struct Folds {
+    by: Option<crate::location::SortKey>,
+    groups: crate::hashing::Set<FoldKey>,
+    /// Moved at each change: what the order and the views made of the
+    /// folds is made again.
+    version: u64,
+}
+
+/// The order shown and its groups with folded groups' entries left out,
+/// and what they were made from, compared by identity.
+struct FoldCache {
+    from: Arc<[EntryId]>,
+    spans_from: Arc<[crate::grouping::Span]>,
+    version: u64,
+    order: Arc<[EntryId]>,
+    spans: Arc<[crate::grouping::Span]>,
+    /// The entries left out.
+    folded: Arc<crate::hashing::Set<EntryId>>,
+}
+
 /// The groups of `order`, which holds entries of `top` (`is_top`) in
 /// `top`'s order, some left out, and entries of folders opened in place
 /// after the folder: each of `top`'s by its span of `top` (`spans`), each
@@ -838,6 +914,14 @@ pub struct Pane {
     /// The groups of the order last shown (`groups`): the order and the
     /// listing's spans they were made from, and the groups.
     groups_cache: parking_lot::Mutex<Option<GroupsCache>>,
+    /// The groups folded (ADR-131, 2), and the order and groups made of
+    /// them last.
+    folds: Folds,
+    fold_cache: parking_lot::Mutex<Option<FoldCache>>,
+    /// What was last asked to read on demand (`fields_to_read`), and the
+    /// token of its reading, cancelled when it is asked anew or no longer.
+    fields_asked: Option<FieldsAt>,
+    fields_reading: Option<CancelToken>,
     /// The order `order` last gave, what is shown: where a cursor whose
     /// entry leaves the view goes from (`Selection::retain_near`).
     shown: parking_lot::Mutex<Option<Arc<[EntryId]>>>,
@@ -1764,6 +1848,10 @@ impl Pane {
             retained: None,
             order_cache: parking_lot::Mutex::new(None),
             groups_cache: parking_lot::Mutex::new(None),
+            folds: Folds::default(),
+            fold_cache: parking_lot::Mutex::new(None),
+            fields_asked: None,
+            fields_reading: None,
             shown: parking_lot::Mutex::new(None),
             filter: None,
             read: None,
@@ -3188,6 +3276,7 @@ impl Pane {
     /// (`Selection::change`): the rest was selected, and shown, already. A
     /// pass over the whole selection happens only when one of them goes.
     pub(crate) fn retain_shown_of(&mut self, ids: &[EntryId]) {
+        let folded = self.folded_entries();
         let holds = shows(
             &self.listing,
             &self.kept,
@@ -3197,8 +3286,11 @@ impl Pane {
                 .filter(self.filter.as_deref(), self.read.as_deref()),
             self.sort,
         );
-        let hidden: crate::hashing::Set<EntryId> =
-            ids.iter().copied().filter(|id| !holds(*id)).collect();
+        let hidden: crate::hashing::Set<EntryId> = ids
+            .iter()
+            .copied()
+            .filter(|id| !holds(*id) || folded.contains(id))
+            .collect();
         if !hidden.is_empty() {
             self.selection.retain(|id| !hidden.contains(&id));
         }
@@ -3227,8 +3319,14 @@ impl Pane {
     /// `retain_shown`, the cursor going back to what is before it when its
     /// entry leaves the view (`Selection::retain_near`).
     fn keep_shown(&mut self, back: bool) {
-        let shown = self.shown.lock().clone();
-        let holds = shows(
+        // The order as shown now: a fold may have just left entries out.
+        let folded = self.folded_entries();
+        let shown = if folded.is_empty() {
+            self.shown.lock().clone()
+        } else {
+            Some(self.order())
+        };
+        let listed = shows(
             &self.listing,
             &self.kept,
             &self.expanded,
@@ -3237,6 +3335,7 @@ impl Pane {
                 .filter(self.filter.as_deref(), self.read.as_deref()),
             self.sort,
         );
+        let holds = move |id: EntryId| listed(id) && !folded.contains(&id);
         match shown {
             Some(shown) => {
                 let ways = self.found.shown().map(|tree| &tree.way_ids);
@@ -3333,6 +3432,16 @@ impl Pane {
             self.text_filter(),
             self.sort,
         )(id)
+            && !self.folded_entries().contains(&id)
+    }
+
+    /// The entries a folded group holds: not shown (ADR-131, 2).
+    fn folded_entries(&self) -> Arc<crate::hashing::Set<EntryId>> {
+        if self.any_folded() {
+            self.shown_groups().2
+        } else {
+            Arc::default()
+        }
     }
 
     fn expanded_changed(&mut self) {
@@ -3904,9 +4013,210 @@ impl Pane {
     /// the filter and the narrowing keep. What range selection, select
     /// all and the views follow.
     pub fn order(&self) -> Arc<[EntryId]> {
-        let order = self.found_order(self.flat_order());
+        let order = self.shown_groups().0;
         *self.shown.lock() = Some(Arc::clone(&order));
         order
+    }
+
+    /// The order shown and its groups' spans, made together: a folded
+    /// group's entries left out of the order (ADR-131, 2), its span kept
+    /// with none of them (`len` 0) and its count; and the entries left out.
+    fn shown_groups(
+        &self,
+    ) -> (
+        Arc<[EntryId]>,
+        Arc<[crate::grouping::Span]>,
+        Arc<crate::hashing::Set<EntryId>>,
+    ) {
+        let unfolded = self.found_order(self.flat_order());
+        let spans = self.groups_of(&unfolded);
+        if spans.is_empty() || !self.any_folded() {
+            return (unfolded, spans, Arc::default());
+        }
+        let mut cache = self.fold_cache.lock();
+        if let Some(c) = cache.as_ref()
+            && Arc::ptr_eq(&c.from, &unfolded)
+            && Arc::ptr_eq(&c.spans_from, &spans)
+            && c.version == self.folds.version
+        {
+            return (
+                Arc::clone(&c.order),
+                Arc::clone(&c.spans),
+                Arc::clone(&c.folded),
+            );
+        }
+        let mut order = Vec::with_capacity(unfolded.len());
+        let mut folded = crate::hashing::Set::default();
+        let shown: Arc<[crate::grouping::Span]> = spans
+            .iter()
+            .map(|span| {
+                let start = order.len();
+                let entries = &unfolded[span.start..span.start + span.len];
+                let fold = self.folds.groups.contains(&fold_key(span.group.as_deref()));
+                if fold {
+                    folded.extend(entries.iter().copied());
+                } else {
+                    order.extend_from_slice(entries);
+                }
+                crate::grouping::Span {
+                    start,
+                    len: if fold { 0 } else { span.len },
+                    count: span.count,
+                    group: span.group.clone(),
+                }
+            })
+            .collect();
+        let order: Arc<[EntryId]> = order.into();
+        let folded = Arc::new(folded);
+        *cache = Some(FoldCache {
+            from: unfolded,
+            spans_from: spans,
+            version: self.folds.version,
+            order: Arc::clone(&order),
+            spans: Arc::clone(&shown),
+            folded: Arc::clone(&folded),
+        });
+        (order, shown, folded)
+    }
+
+    /// Whether any group of the criterion the pane groups by is folded.
+    fn any_folded(&self) -> bool {
+        !self.folds.groups.is_empty() && self.folds.by == self.sort.group_key()
+    }
+
+    /// Fold or open the pane's groups as `mode` says, group `group` of
+    /// those it shows (`groups`) for those that name one: whether anything
+    /// changed. What was selected in a group folded is no longer.
+    pub fn fold_groups(&mut self, group: Option<usize>, mode: FoldMode) -> bool {
+        let by = self.sort.group_key();
+        if by.is_none() {
+            return false;
+        }
+        if self.folds.by != by {
+            self.folds.by = by;
+            self.folds.groups.clear();
+        }
+        let spans = self.groups();
+        // Without one, the cursor's: the group whose span holds it.
+        let group = group.or_else(|| {
+            let cursor = self.selection.cursor?;
+            let at = self.order().iter().position(|id| *id == cursor)?;
+            spans
+                .partition_point(|span| span.start <= at)
+                .checked_sub(1)
+        });
+        let key = group
+            .and_then(|n| spans.get(n))
+            .map(|span| fold_key(span.group.as_deref()));
+        let before = self.folds.groups.clone();
+        let groups = &mut self.folds.groups;
+        match (mode, key) {
+            (FoldMode::UnfoldAll, _) => groups.clear(),
+            (FoldMode::FoldOthers, Some(key)) => {
+                groups.clear();
+                groups.extend(
+                    spans
+                        .iter()
+                        .map(|span| fold_key(span.group.as_deref()))
+                        .filter(|other| *other != key),
+                );
+            }
+            (FoldMode::Fold, Some(key)) => {
+                groups.insert(key);
+            }
+            (FoldMode::Unfold, Some(key)) => {
+                groups.remove(&key);
+            }
+            (FoldMode::Toggle, Some(key)) => {
+                if !groups.remove(&key) {
+                    groups.insert(key);
+                }
+            }
+            (_, None) => {}
+        }
+        if self.folds.groups == before {
+            return false;
+        }
+        self.folds.version += 1;
+        self.retain_shown();
+        true
+    }
+
+    /// What its sort reads on demand and its listing's entries lack (ADR-131,
+    /// 4): asked once the listing is whole, again when its names change, a
+    /// file changed (`Listing::fields_version`) or the providers did
+    /// (`revision`); none otherwise. A folder is never asked, nor a place.
+    /// What was asked before and is still read is given up: a new ask
+    /// names what it lacks again, and what it read is kept (`App::fields`),
+    /// so nothing is read twice.
+    pub(crate) fn fields_to_read(&mut self, revision: u64) -> Option<FieldsAsked> {
+        let fields = self.sort.fields();
+        if fields.is_empty() {
+            if let Some(reading) = self.fields_reading.take() {
+                reading.cancel();
+            }
+            self.fields_asked = None;
+            return None;
+        }
+        if !self.listing.is_complete() || self.open.is_none() {
+            return None;
+        }
+        let at = (
+            self.listing.id(),
+            self.listing.names_version(),
+            self.listing.fields_version(),
+            revision,
+            fields.clone(),
+        );
+        if self.fields_asked.as_ref() == Some(&at) {
+            return None;
+        }
+        self.fields_asked = Some(at);
+        let entries: Vec<_> = self
+            .listing
+            .iter()
+            .filter(|e| !e.is_dir() && !e.is_place())
+            .filter_map(|e| {
+                let lacks: Vec<&'static str> = fields
+                    .iter()
+                    .copied()
+                    .filter(|field| e.metadata.value(field).is_none())
+                    .collect();
+                if lacks.is_empty() {
+                    return None;
+                }
+                Some((
+                    e.id,
+                    self.path_of(e.id)?,
+                    crate::fields::identity_of_entry(e),
+                    lacks,
+                ))
+            })
+            .collect();
+        if let Some(reading) = self.fields_reading.take() {
+            reading.cancel();
+        }
+        if entries.is_empty() {
+            return None;
+        }
+        let cancel = self.location_lifetime.child();
+        self.fields_reading = Some(cancel.clone());
+        Some(FieldsAsked {
+            pane: self.id,
+            listing: self.listing.id(),
+            cancel,
+            entries,
+        })
+    }
+
+    /// Moves whenever the groups folded change: what is shown with them.
+    pub fn folds_version(&self) -> u64 {
+        self.folds.version
+    }
+
+    /// Whether group `group` of those the pane shows is folded.
+    pub fn is_folded(&self, group: Option<&crate::grouping::Group>) -> bool {
+        self.any_folded() && self.folds.groups.contains(&fold_key(group))
     }
 
     /// The entries the filter keeps, in the order sorted.
@@ -4071,6 +4381,15 @@ impl Pane {
         keys: Option<crate::grouping::Keys>,
         made_for: Option<KeysFor>,
     ) {
+        // Grouped by another criterion, or no longer grouped: the groups
+        // folded are forgotten (ADR-131, 2).
+        let by = made_for.and_then(|(_, group, _)| group);
+        if self.folds.by.is_some() && self.folds.by != by {
+            self.folds = Folds {
+                version: self.folds.version + 1,
+                ..Folds::default()
+            };
+        }
         self.keys = keys;
         self.keys_for = made_for;
     }
@@ -4096,12 +4415,18 @@ impl Pane {
     /// laid out otherwise than its listing's order (a search as a tree)
     /// is not grouped.
     pub fn groups(&self) -> Arc<[crate::grouping::Span]> {
+        self.shown_groups().1
+    }
+
+    /// The groups of `order` (what the pane shows, folded groups' entries
+    /// in it), its spans of the listing's order mapped onto it.
+    fn groups_of(&self, order: &Arc<[EntryId]>) -> Arc<[crate::grouping::Span]> {
         let sort = self.sorting();
         if sort.grouping().is_none() {
             return Arc::from([]);
         }
         let spans = self.listing.spans_shown(&sort);
-        let order = self.order();
+        let order = Arc::clone(order);
         let top = self.listing.order_shown(&sort);
         let mut cache = self.groups_cache.lock();
         if let Some(c) = cache.as_ref()
@@ -5478,6 +5803,64 @@ mod tests {
             next_change: None,
         }));
         (p, tx)
+    }
+
+    /// Sorted by what is read on demand, a pane asks its files once a
+    /// change, never its folders; asked anew (a file arrived), the reading
+    /// before is given up, and so it is once the sort reads nothing.
+    #[test]
+    fn fields_asked_anew_give_up_the_reading_before() {
+        use crate::entry::EntryKind;
+        use crate::location::{ListingEvent, SortKey};
+        let entry = |i: u64, kind| {
+            let id = EntryId {
+                file: crate::FileId::new(1, i),
+                at: i,
+            };
+            Entry::new(id, format!("e{i}"), kind)
+        };
+        let (entries, mut paths): (Vec<Entry>, crate::hashing::Map<EntryId, PathBuf>) = (0..4)
+            .map(|i| {
+                let kind = if i == 0 {
+                    EntryKind::Directory
+                } else {
+                    EntryKind::File
+                };
+                let e = entry(i, kind);
+                let at = (e.id, PathBuf::from(format!("/r/e{i}")));
+                (e, at)
+            })
+            .unzip();
+        let late = entry(9, EntryKind::File);
+        paths.insert(late.id, PathBuf::from("/r/e9"));
+        let (_tx, events) = crossbeam_channel::unbounded();
+        let mut p = Pane::new(PaneId(1));
+        p.listing.apply(ListingEvent::Added(entries));
+        p.listing.apply(ListingEvent::Complete);
+        p.open = Some(Arc::new(Searched {
+            location: Location::from_path(Path::new("/r")),
+            events,
+            paths,
+        }));
+        assert!(
+            p.fields_to_read(0).is_none(),
+            "sorted by name: nothing to read"
+        );
+        p.sort.key = SortKey::Duration;
+        let first = p.fields_to_read(0).expect("its files asked");
+        assert_eq!(first.entries.len(), 3, "the files, not the folder");
+        assert!(p.fields_to_read(0).is_none(), "asked once a change");
+        p.listing.apply(ListingEvent::Added(vec![late]));
+        let second = p.fields_to_read(0).expect("asked again once a file came");
+        assert_eq!(second.entries.len(), 4);
+        assert!(first.cancel.is_cancelled(), "the reading before given up");
+        assert!(!second.cancel.is_cancelled());
+        p.sort.key = SortKey::Name;
+        assert!(p.fields_to_read(0).is_none());
+        assert!(
+            second.cancel.is_cancelled(),
+            "a sort reading nothing gives it up"
+        );
     }
 
     /// A folder of folders is looked over a slice at a time, the window

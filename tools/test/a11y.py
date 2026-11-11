@@ -642,12 +642,33 @@ def run(w):
     check("Down: 2 of 4, not the first of its group, which it does not say",
           hears(w, f"list item {second!r} 2 of 4 selected focused")
           and "item" not in (w.focused().get_description() or ""))
+    # A heading is a key stop (ADR-131): focused, never selected; Left
+    # folds its group and Right unfolds it. The heading says it expanded or
+    # not, which AccessKit's AT-SPI adapter (0.19) says of no element: what
+    # is checked is its group's entries leaving the list and coming back.
+    def entries():
+        return [n.get_name() for n in under(w, "list box", "files", "list item")]
+
     w.keys("Down")
-    check("Down, past a heading: 3 of 4, the next group's first, which it says",
+    check("Down, at the next group: its heading, focused, not selected",
+          hears(w, f"heading {groups[1]!r} focused"))
+    w.keys("Left")
+    check("Left on the heading: its group folded, its entry gone from the list",
+          until(lambda: said(w.focused()) == f"heading {groups[1]!r} focused"
+                and third not in entries() and fourth in entries())
+          or print("  heard:", said(w.focused()), "entries:", entries()))
+    check("and its heading kept, with its count", headings() == groups)
+    w.keys("Right")
+    check("Right: unfolded again",
+          until(lambda: said(w.focused()) == f"heading {groups[1]!r} focused"
+                and third in entries())
+          or print("  heard:", said(w.focused()), "entries:", entries()))
+    w.keys("Down")
+    check("Down from the heading: 3 of 4, its group's first, which it says",
           hears(w, f"list item {third!r} 3 of 4 selected focused")
           and (w.focused().get_description() or "").startswith(groups[1]))
-    w.keys("Down")
-    check("Down again: 4 of 4, the last group's first",
+    w.keys("Down", "Down")
+    check("Down past the last group's heading: 4 of 4, its first",
           hears(w, f"list item {fourth!r} 4 of 4 selected focused")
           and (w.focused().get_description() or "").startswith(groups[2]))
     w.keys("ctrl+2")

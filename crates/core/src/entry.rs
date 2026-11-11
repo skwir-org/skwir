@@ -418,6 +418,17 @@ pub mod keys {
     /// in no zone, since a picture rarely says its own. Read on demand
     /// (`crate::fields`), never at hydration (ADR-020).
     pub const TAKEN: &str = "taken";
+    /// A picture's size in pixels, `Value::List` of its width and height
+    /// (`Value::UInt`), read from its header on demand (ADR-131), never at
+    /// hydration.
+    pub const DIMENSIONS: &str = "dimensions";
+    /// How long a sound or a film lasts, in milliseconds (`Value::UInt`),
+    /// read on demand (ADR-131), never at hydration.
+    pub const DURATION: &str = "duration";
+    /// The fields an order reads on demand (ADR-131: `SortKey::field`),
+    /// which a listing keeps of an entry while its file stays the same: as
+    /// the file says it, or `Value::Bool(false)` where it says nothing.
+    pub const READ_ON_DEMAND: [&str; 3] = [TAKEN, DIMENSIONS, DURATION];
     /// How many files a place holds (`EntryId::is_place`), `Value::UInt`:
     /// what its row says where a folder's size would be, and what sorting
     /// by size orders places by. A place's is known when it is listed.

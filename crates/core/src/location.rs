@@ -841,19 +841,30 @@ pub enum SortKey {
     /// listed (a search, a tag, the shelf; a file of the trash by where it
     /// was put there from): the sort asks the location (`Sort::folder_of`).
     Folder,
+    /// When a picture or a film was taken, by its camera's clock
+    /// (`keys::TAKEN`), read on demand (ADR-131, `field`).
+    Taken,
+    /// A picture's size in pixels, by its area, then its width
+    /// (`keys::DIMENSIONS`), read on demand.
+    Dimensions,
+    /// How long a sound or a film lasts (`keys::DURATION`), read on demand.
+    Duration,
 }
 
 impl SortKey {
     /// Every criterion, in the order menus offer them.
-    pub const ALL: [SortKey; 13] = [
+    pub const ALL: [SortKey; 16] = [
         SortKey::Name,
         SortKey::Kind,
         SortKey::Type,
         SortKey::Extension,
         SortKey::Size,
+        SortKey::Dimensions,
+        SortKey::Duration,
         SortKey::Modified,
         SortKey::Created,
         SortKey::Accessed,
+        SortKey::Taken,
         SortKey::Deleted,
         SortKey::Rating,
         SortKey::Tags,
@@ -885,6 +896,9 @@ impl SortKey {
     /// (`applies_to`): a search's hits, stat-ed by its walk, sort by size
     /// at once.
     pub fn has_read(self, metadata: &crate::entry::Metadata) -> bool {
+        if let Some(field) = self.field() {
+            return metadata.value(field).is_some();
+        }
         match self {
             SortKey::Rating | SortKey::Tags => metadata.is_filled(),
             SortKey::Size
@@ -906,8 +920,30 @@ impl SortKey {
         match self {
             SortKey::Size => !entry.is_dir() || entry.is_place(),
             SortKey::Extension => !entry.is_dir(),
+            // A file: what reads it says whether it has one.
+            SortKey::Taken | SortKey::Dimensions | SortKey::Duration => {
+                !entry.is_dir() && !entry.is_place()
+            }
             _ => true,
         }
+    }
+
+    /// The field it reads on demand (ADR-131), from the file itself, on a
+    /// worker (`App::fields`): too costly for every listing.
+    pub fn field(self) -> Option<&'static str> {
+        use crate::entry::keys;
+        match self {
+            SortKey::Taken => Some(keys::TAKEN),
+            SortKey::Dimensions => Some(keys::DIMENSIONS),
+            SortKey::Duration => Some(keys::DURATION),
+            _ => None,
+        }
+    }
+
+    /// Whether an entry waits for something read of it before it is placed
+    /// (`needs_metadata`, or `field`): until then, after the rest.
+    pub fn waits(self) -> bool {
+        self.needs_metadata() || self.field().is_some()
     }
 
     /// Whether only a plugin reads it (a kind, a type's name, an owner's
@@ -948,6 +984,9 @@ impl SortKey {
             SortKey::Tags => "Tags",
             SortKey::Owner => "Owner",
             SortKey::Folder => "Folder",
+            SortKey::Taken => "Taken",
+            SortKey::Dimensions => "Dimensions",
+            SortKey::Duration => "Duration",
         }
     }
 
@@ -968,6 +1007,9 @@ impl SortKey {
             SortKey::Tags => "tags",
             SortKey::Owner => "owner",
             SortKey::Folder => "folder",
+            SortKey::Taken => "date taken",
+            SortKey::Dimensions => "dimensions",
+            SortKey::Duration => "duration",
         }
     }
 
@@ -976,10 +1018,15 @@ impl SortKey {
     /// first`).
     pub fn directions(self) -> [(&'static str, &'static str); 2] {
         match self {
-            SortKey::Size => [("Smallest", "smallest first"), ("Largest", "largest first")],
-            SortKey::Modified | SortKey::Created | SortKey::Accessed | SortKey::Deleted => {
-                [("Oldest", "oldest first"), ("Newest", "newest first")]
+            SortKey::Size | SortKey::Dimensions => {
+                [("Smallest", "smallest first"), ("Largest", "largest first")]
             }
+            SortKey::Duration => [("Shortest", "shortest first"), ("Longest", "longest first")],
+            SortKey::Modified
+            | SortKey::Created
+            | SortKey::Accessed
+            | SortKey::Deleted
+            | SortKey::Taken => [("Oldest", "oldest first"), ("Newest", "newest first")],
             SortKey::Rating => [("Lowest", "lowest first"), ("Highest", "highest first")],
             SortKey::Name
             | SortKey::Kind
@@ -1007,6 +1054,9 @@ impl SortKey {
             SortKey::Accessed => differs(keys::ACCESSED),
             SortKey::Tags => differs(keys::TAGS),
             SortKey::Owner => differs(keys::UID),
+            SortKey::Taken => differs(keys::TAKEN),
+            SortKey::Dimensions => differs(keys::DIMENSIONS),
+            SortKey::Duration => differs(keys::DURATION),
             // What it is or leads to changed, so its type may have.
             SortKey::Kind | SortKey::Type => {
                 old.inode_type() != new.inode_type() || old.type_name() != new.type_name()
@@ -1069,6 +1119,17 @@ impl SortSpec {
     /// The criterion the entries are grouped by, if any.
     pub fn group_key(&self) -> Option<SortKey> {
         self.group.key(self.key)
+    }
+
+    /// The fields its order reads on demand (ADR-131), by what it is sorted
+    /// by and what it is grouped by: whoever orders so asks for them.
+    pub fn fields(&self) -> Vec<&'static str> {
+        let mut fields: Vec<&'static str> = std::iter::once(self.key)
+            .chain(self.group_key())
+            .filter_map(SortKey::field)
+            .collect();
+        fields.dedup();
+        fields
     }
 
     /// Whether its order reads what a stat or the metadata providers say
@@ -1500,6 +1561,9 @@ struct Delta {
     /// again, not stat-ed for the first time.
     rewritten: bool,
     rating: bool,
+    /// What was read of an entry on demand went with a change of its file
+    /// (`keys::READ_ON_DEMAND`): to read again.
+    fields: bool,
     /// Entries were taken out.
     gone: bool,
     /// The entries that arrived or changed in place, for
@@ -1902,6 +1966,16 @@ fn value_of(
             let group = keyer(e);
             (group.rank, Some(Arc::clone(&group.key)))
         }),
+        // As the file says it, from 1: none (`Bool(false)`) is the lowest.
+        SortKey::Taken | SortKey::Duration => (
+            key.field()
+                .and_then(|field| e.metadata.value(field))
+                .and_then(Value::as_u64)
+                .map_or(0, |n| n.saturating_add(1)),
+            None,
+        ),
+        // By its area, then its width.
+        SortKey::Dimensions => (dimensions_rank(e), None),
         // Its path's words: a folder's files together, its subfolders' after.
         SortKey::Folder => (
             0,
@@ -1909,6 +1983,18 @@ fn value_of(
                 .map(|folder| Arc::from(crate::collate::sort_key(folder.as_os_str()))),
         ),
     }
+}
+
+/// A picture's size in pixels as a sort by Dimensions ranks it: its area,
+/// then its width, from 1; none the lowest.
+fn dimensions_rank(e: &Entry) -> u64 {
+    use crate::entry::{Value, keys};
+    let Some(Value::List(sides)) = e.metadata.value(keys::DIMENSIONS) else {
+        return 0;
+    };
+    let side = |at: usize| sides.get(at).and_then(Value::as_u64).unwrap_or(0);
+    let (width, height) = (side(0).min((1 << 24) - 1), side(1).min((1 << 24) - 1));
+    ((width * height).min((1 << 39) - 1) << 24 | width) + 1
 }
 
 /// `text`'s collation key.
@@ -2075,6 +2161,9 @@ pub struct Listing {
     /// leaves it alone, so work that depends only on names (a grid counting
     /// the lines each one wraps to) is not redone for every metadata batch.
     names_version: u64,
+    /// Incremented when what was read of an entry on demand went, its file
+    /// changed (ADR-131): what reads it asks again.
+    fields_version: u64,
     /// Incremented when a change can move an entry already listed under
     /// every sort: a removal, a new name or kind. Arrivals leave it alone:
     /// they are appended to `entries`, and `sorted` places them.
@@ -2156,6 +2245,7 @@ impl Default for Listing {
             left_out: 0,
             version: id,
             names_version: id,
+            fields_version: id,
             order_version: id,
             size_version: id,
             modified_version: id,
@@ -2609,6 +2699,7 @@ impl Listing {
             (delta.modified, &mut self.modified_version),
             (delta.rewritten, &mut self.rewritten_version),
             (delta.rating, &mut self.rating_version),
+            (delta.fields, &mut self.fields_version),
             (delta.any, &mut self.version),
         ] {
             if moved {
@@ -2637,6 +2728,7 @@ impl Listing {
     }
 
     fn upsert(&mut self, mut e: Entry, insert: bool, delta: &mut Delta) {
+        use crate::entry::keys;
         let id = e.id;
         match Arc::make_mut(&mut self.entries).entry(id) {
             indexmap::map::Entry::Occupied(mut slot) => {
@@ -2665,6 +2757,25 @@ impl Listing {
                     let mut known = old.metadata.clone();
                     known.merge(std::mem::take(&mut e.metadata));
                     e.metadata = known;
+                }
+                // What was read of it on demand stays while its file is the
+                // same; once the file changed, it is read again.
+                let same_file = old.metadata.value(keys::SIZE) == e.metadata.value(keys::SIZE)
+                    && old.metadata.value(keys::MODIFIED) == e.metadata.value(keys::MODIFIED);
+                for key in keys::READ_ON_DEMAND {
+                    if let Some(value) = old.metadata.value(key)
+                        && e.metadata.value(key).is_none()
+                    {
+                        if same_file {
+                            e.metadata.set(
+                                key,
+                                value.clone(),
+                                crate::entry::Provenance::Filesystem,
+                            );
+                        } else {
+                            delta.fields = true;
+                        }
+                    }
                 }
                 let d = Delta::between(old, &e);
                 if !d.any {
@@ -2742,6 +2853,40 @@ impl Listing {
     /// Changes to the set of names so far; see the field.
     pub fn names_version(&self) -> u64 {
         self.names_version
+    }
+
+    /// Moves when what was read of an entry on demand went (its file
+    /// changed): what reads it asks again.
+    pub fn fields_version(&self) -> u64 {
+        self.fields_version
+    }
+
+    /// Take what was read on demand of entries (ADR-131): each id, the
+    /// field and what the file said (`Value::Bool(false)` where nothing),
+    /// as an update of the entry, which moves it in an order by it. One
+    /// not listed any more is let go. Whether anything changed.
+    pub fn set_fields(
+        &mut self,
+        values: Vec<(EntryId, &'static str, crate::entry::Value)>,
+    ) -> bool {
+        let mut updated = crate::hashing::IndexMap::<EntryId, Entry>::default();
+        for (id, key, value) in values {
+            let Some(slot) = self.entries.get(&id) else {
+                continue;
+            };
+            if slot.entry.metadata.value(key) == Some(&value) {
+                continue;
+            }
+            updated
+                .entry(id)
+                .or_insert_with(|| slot.entry.clone())
+                .metadata
+                .set(key, value, crate::entry::Provenance::Filesystem);
+        }
+        if updated.is_empty() {
+            return false;
+        }
+        self.apply(ListingEvent::Updated(updated.into_values().collect()))
     }
 
     /// Changes to modification times so far, hydration's first ones
@@ -2863,7 +3008,7 @@ impl Listing {
         let spec = &sort.spec;
         let e = &slot.entry;
         let unread = |key: SortKey| {
-            key.needs_metadata()
+            key.waits()
                 && key.applies_to(e)
                 && (!key.has_read(&e.metadata) || e.metadata.is_unread())
         };

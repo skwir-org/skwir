@@ -1171,6 +1171,31 @@ mod tests {
         assert_eq!(flat.pinned_at(-50.), None);
     }
 
+    /// A folded group is its heading alone, between the others: H0 0..30,
+    /// tiles 0..3 30..178, H1 (folded) 178..208, H2 208..238, tiles 3..8
+    /// 238..386, 8..10 386..534.
+    #[test]
+    fn a_folded_group_is_a_heading_between_rows() {
+        let slots = Slots::grouped(
+            Columns::fit(600., 100., 12., 40.),
+            8.,
+            &[3, 0, 7],
+            30.,
+            |_| 140.,
+        );
+        assert_eq!((slots.rows(), slots.height()), (6, 534.));
+        assert_eq!(slots.origin(3), (10., 242.));
+        assert_eq!(slots.below(1), Some(4), "past both headings");
+        assert_eq!(slots.above(4), Some(1));
+        assert_eq!(
+            slots.headings_in(0..6),
+            vec![(0, 0., 0), (2, 178., 1), (3, 208., 2)]
+        );
+        assert_eq!(slots.items_in(2..4), 0..0, "two headings");
+        // The next heading pushes the folded one up.
+        assert_eq!(slots.pinned_at(-200.), Some((1, 178.)));
+    }
+
     /// Up and Down go to the tile drawn over or under, past a heading, or
     /// to the last of a shorter row.
     #[test]

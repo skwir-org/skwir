@@ -220,3 +220,134 @@ fn a_search_groups_by_the_folder_each_file_is_in() {
     };
     assert!(pump_until(&app, pane, by_folder), "sorted by folder");
 }
+
+/// A group folded leaves what the pane shows, its heading kept with its
+/// count: out of the order, of Select All and of what is selected; the
+/// others folded, all unfolded again; folds forgotten once grouped by
+/// another criterion.
+#[test]
+fn a_folded_group_leaves_what_the_pane_shows() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+    app.plugins
+        .add(Arc::new(skwir_plugin_query::QueryPlugin::default()), &app);
+    let root = tmp.path().join("field guide");
+    std::fs::create_dir(&root).unwrap();
+    std::fs::create_dir(root.join("sketches")).unwrap();
+    for name in ["dunes.jpg", "aurora.png", "packing list.txt"] {
+        std::fs::write(root.join(name), name).unwrap();
+    }
+    let pane = app.workspace.read().active_id();
+    app.navigate(pane, &Location::from_path(&root)).unwrap();
+    assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+    run(&app, "group", &serde_json::json!({ "by": "kind" }));
+    assert!(pump_until(&app, pane, settled), "grouped");
+    let counts = |app: &App| -> Vec<(String, usize, usize)> {
+        let ws = app.workspace.read();
+        ws.pane(pane)
+            .unwrap()
+            .groups()
+            .iter()
+            .map(|s| (s.group.as_ref().unwrap().label.to_string(), s.len, s.count))
+            .collect()
+    };
+    let selected = |app: &App| app.workspace.read().pane(pane).unwrap().selection.len();
+    run(&app, "select_all", &serde_json::json!({}));
+    assert_eq!(selected(&app), 4);
+    // Images, the second group.
+    run(&app, "group_fold", &serde_json::json!({ "group": 1 }));
+    assert_eq!(
+        counts(&app),
+        [
+            ("Folders".to_owned(), 1, 1),
+            ("Images".to_owned(), 0, 2),
+            ("Text and code".to_owned(), 1, 1)
+        ]
+    );
+    assert_eq!(shown(&app, pane)[1], ("Images".to_owned(), vec![]));
+    assert_eq!(selected(&app), 2, "what was selected in it no longer is");
+    run(&app, "select_all", &serde_json::json!({}));
+    assert_eq!(selected(&app), 2, "Select All leaves it out");
+    // The others folded; then every one open again.
+    run(
+        &app,
+        "group_fold",
+        &serde_json::json!({ "group": 0, "mode": "fold_others" }),
+    );
+    let lens = |app: &App| counts(app).iter().map(|c| c.1).collect::<Vec<_>>();
+    assert_eq!(lens(&app), [1, 0, 0]);
+    run(
+        &app,
+        "group_fold",
+        &serde_json::json!({ "mode": "unfold_all" }),
+    );
+    assert_eq!(lens(&app), [1, 2, 1]);
+    // Folded, then grouped the other way round: still folded; by another
+    // criterion: forgotten.
+    run(
+        &app,
+        "group_fold",
+        &serde_json::json!({ "group": 1, "mode": "fold" }),
+    );
+    run(&app, "group", &serde_json::json!({ "by": "kind" }));
+    assert!(pump_until(&app, pane, |p| settled(p) && !p.sort.group_ascending));
+    let images = |app: &App| {
+        counts(app)
+            .into_iter()
+            .find(|c| c.0 == "Images")
+            .map(|c| c.1)
+    };
+    assert_eq!(images(&app), Some(0), "the same criterion keeps it folded");
+    run(&app, "group", &serde_json::json!({ "by": "extension" }));
+    assert!(pump_until(&app, pane, |p| {
+        settled(p) && p.groups().iter().all(|s| s.len > 0)
+    }));
+    run(&app, "group", &serde_json::json!({ "by": "kind" }));
+    assert!(pump_until(&app, pane, settled));
+    assert_eq!(images(&app), Some(2), "another criterion forgot it");
+}
+
+/// Sorted by dimensions, each picture's size is read from its header on
+/// demand and the order follows it, largest first, what says none (a text)
+/// the lowest; grouped by them, in classes of megapixels.
+#[test]
+fn pictures_sort_and_group_by_their_size_read_on_demand() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+    app.plugins
+        .add(Arc::new(skwir_plugin_query::QueryPlugin::default()), &app);
+    let root = tmp.path().join("plates");
+    std::fs::create_dir(&root).unwrap();
+    for (name, w, h) in [
+        ("wide.png", 1200, 1000),
+        ("small.png", 40, 30),
+        ("tall.png", 300, 2000),
+    ] {
+        image::RgbImage::new(w, h).save(root.join(name)).unwrap();
+    }
+    std::fs::write(root.join("caption.txt"), "plates").unwrap();
+    let pane = app.workspace.read().active_id();
+    app.navigate(pane, &Location::from_path(&root)).unwrap();
+    assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+    run(&app, "sort", &serde_json::json!({ "key": "dimensions" }));
+    let names = |p: &Pane| -> Vec<String> {
+        p.order()
+            .iter()
+            .map(|id| p.entry(*id).unwrap().name_str().into_owned())
+            .collect()
+    };
+    // 1.2 MP, 0.6 MP, 1 200 px, nothing.
+    let largest = ["wide.png", "tall.png", "small.png", "caption.txt"];
+    assert!(
+        pump_until(&app, pane, |p| !p.listing.is_sorting()
+            && names(p) == largest),
+        "read and sorted, largest first"
+    );
+    run(&app, "group", &serde_json::json!({ "by": "dimensions" }));
+    assert!(pump_until(&app, pane, settled));
+    let labels: Vec<String> = shown(&app, pane)
+        .into_iter()
+        .map(|(label, _)| label)
+        .collect();
+    assert_eq!(labels, ["1 to 4 MP", "Under 1 MP", "No dimensions"]);
+}

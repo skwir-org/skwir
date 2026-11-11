@@ -943,9 +943,17 @@ as the pane, its Up and Down going to the tile drawn over or under.
 **Phase 4, built 2026-11-11:** a heading's click selects its group (Ctrl
 adds it), its menu offers Select these and Show only these (the group's
 term added to the filter); Folder sorts and groups where files come from
-many folders. What changed in an order
-is found by searches and moved once in blocks, no longer merged rank by
-rank, and the order before last is written over: a folder of 100 000
+many folders. **Phase 5, built 2026-11-11 (ADR-131, on the user's
+answers to four questions):** a heading is a key stop (Up and Down stop
+on it; Enter or Space selects its group, Left folds it, Right unfolds
+it, the Menu key opens its menu); a group folds by a chevron, the keys
+and its menu's Fold the others and Unfold all (`group_fold`), its
+entries out of the order and its heading kept; grouped, the Board's
+columns are the groups; Taken, Dimensions and Duration sort and group,
+read on demand on a worker (the geo plugin's clock; a picture's header
+by `imagesize`; an MP4's movie header, else ffprobe). What changed in an
+order is found by searches and moved once in blocks, no longer merged
+rank by rank, and the order before last is written over: a folder of 100 000
 entries hydrated by size takes about 110 ms, against about 400 ms before
 groups (24 bytes an entry more for the order kept, by the user's
 choice). Checks in `docs/STATUS-LOG.md`
@@ -968,13 +976,17 @@ not with Orca. MathML that uses an element `math::mathml` does not know
 (`mglyph`, `mmultiscripts`, `mlongdiv`) reads as loose letters. A visually
 hidden label alone in its block is lost (an empty block is not kept).
 
-**Grouping** (ADR-130, 2026-11-11): phases 1 to 4 are built: List, Tree
-and the grid draw headings that act; Columns, the board, Usage and the
-map show a grouped pane's order without them. A folder's group has no
-term, so its heading offers Select these alone. Left: phase 5,
-collapsing, a Board with a column per group and criteria read on demand
-(the day a picture was taken). Compiled for Windows and, but for the
-shell (which `check-macos` leaves out), macOS; never run on either. A
+**Grouping** (ADR-130, ADR-131, 2026-11-11): built: List, Tree and the
+grid draw headings that act and fold, the Board a column per group;
+Columns, Usage and the map show a grouped pane's order without them. A
+folder's group has no term, so its heading offers Select these alone;
+nor have Taken's, Dimensions' and Duration's, a filter not reading files.
+Folds are forgotten on restart, by decision. AccessKit's AT-SPI adapter
+(0.19) does not pass a heading's expanded state on: a reader hears a
+fold as the entries gone. A film's Taken is Apple's key alone (a movie
+header's creation time is UTC, and often 0); without ffprobe a sound
+other than an MP4's has no duration. Compiled for Windows and, but for
+the shell (which `check-macos` leaves out), macOS; never run on either. A
 type's name the keys had not read, met on the window's thread (what
 arrives, placed), sorts by its MIME type until a worker reads it and the
 order is made again. Same as sort moves a name that begins with neither

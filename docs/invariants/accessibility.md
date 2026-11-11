@@ -120,7 +120,12 @@ like `AGENTS.md`.
   ("Today, 3 items", `groups::said`), for a reader's review; it is never
   an option, so positions and the count stay the entries'. A group's
   first entry says its group first in its description (`Seat::group`),
-  so the arrows crossing into a group say so.
+  so the arrows crossing into a group say so. A heading the keys are on
+  (ADR-131, 1) is the list's active descendant, heard focused and never
+  selected, the cursor's entry then not focused; it says whether its
+  group is unfolded (`aria_expanded`), which AccessKit's AT-SPI adapter
+  (0.19) passes on for no element: on Linux a fold is heard as its
+  entries gone, the heading and its count kept (`just a11y-check`).
 - **Position and count follow AccessKit, not the web**: an item's
   `aria_position_in_set` counts from 0, and the count is
   `aria_size_of_set` on the container. gpui's example puts both on the

@@ -39,11 +39,12 @@ pub struct RowMap {
 impl RowMap {
     /// The rows of an order of `entries` grouped as `spans` say. Spans that
     /// do not cover the order from its start, one after the other (an
-    /// order and groups read apart), group nothing.
+    /// order and groups read apart), group nothing. A folded group's span
+    /// holds none of them (ADR-131, 2): its heading, with its count.
     pub fn new(spans: Arc<[Span]>, entries: usize) -> Self {
         let mut at = 0;
         let whole = spans.iter().all(|span| {
-            let follows = span.start == at && span.len > 0;
+            let follows = span.start == at && (span.len > 0 || span.count > 0);
             at += span.len;
             follows
         }) && at == entries;
@@ -149,12 +150,17 @@ impl RowMap {
     }
 
     /// The first entry at `row` or below it (a heading's, its group's
-    /// first), none past the last.
+    /// first, or a folded group's the next shown), none past the last.
     pub fn entry_from(&self, row: usize) -> Option<usize> {
         match self.at(row)? {
             Row::Entry(position) => Some(position),
-            Row::Heading(n) => Some(self.spans[n].start),
+            Row::Heading(n) => Some(self.spans[n].start).filter(|at| *at < self.entries),
         }
+    }
+
+    /// Whether group `n` is folded: its span holds none of the entries.
+    pub fn folded(&self, n: usize) -> bool {
+        self.spans.get(n).is_some_and(|span| span.len == 0)
     }
 
     /// The positions of the entries among `rows`.
@@ -181,7 +187,10 @@ impl RowMap {
         let within = offset.max(0.) - row as f32 * height;
         match self.at(row)? {
             Row::Entry(position) => Some((position, within)),
-            Row::Heading(n) => Some((self.spans[n].start, within - height)),
+            Row::Heading(n) => Some((
+                self.spans[n].start.min(self.entries.saturating_sub(1)),
+                within - height,
+            )),
         }
     }
 
@@ -211,9 +220,9 @@ pub fn said(span: &Span) -> String {
 
 /// The heading of a group as a row `height` tall: its label in Small text,
 /// the count beside it in the muted ink (ADR-117), a line above it unless
-/// it is the first, set on the files' ground as rows are. Its words begin
-/// `left` from its left edge, where a grid's tiles do; none, where a list's
-/// rows begin theirs.
+/// it is the first, set on the files' ground as rows are, after its
+/// `chevron` (`groups::chevron`). Its words begin `left` from its left
+/// edge, where a grid's tiles do; none, where a list's rows begin theirs.
 pub fn heading(
     span: &Span,
     first: bool,
@@ -221,12 +230,14 @@ pub fn heading(
     left: Option<f32>,
     scale: Scale,
     theme: &Theme,
+    chevron: Option<AnyElement>,
 ) -> Div {
     let words = div()
         .min_w_0()
         .flex()
         .items_baseline()
         .gap(scale.px(8.))
+        .children(chevron)
         .child(
             div()
                 .min_w_0()
@@ -255,6 +266,54 @@ pub fn heading(
             // In line with the rows' content, inside their 1 px ring.
             None => d.px_2().child(words.mx(px(1.))),
         })
+}
+
+/// The chevron at a heading's start that folds its group or opens it
+/// (ADR-131, 2: `group_fold`), pointing right while it is folded. Pressed,
+/// it does only that: the group is not selected.
+pub fn chevron(
+    group: usize,
+    folded: bool,
+    pane: skwir_core::workspace::PaneId,
+    shell: gpui::WeakEntity<crate::shell::Shell>,
+    scale: Scale,
+    theme: &Theme,
+) -> AnyElement {
+    let side = scale.f(12.);
+    div()
+        .id(("fold", group))
+        .flex_none()
+        .self_center()
+        .cursor_pointer()
+        .on_mouse_down(
+            gpui::MouseButton::Left,
+            move |_: &gpui::MouseDownEvent, window, cx| {
+                cx.stop_propagation();
+                shell
+                    .update(cx, |this, cx| {
+                        this.with_pane(pane, |this| {
+                            this.run(
+                                "group_fold",
+                                serde_json::json!({ "group": group, "pane": pane }),
+                                window,
+                                cx,
+                            );
+                        });
+                    })
+                    .ok();
+            },
+        )
+        .child(
+            gpui::svg()
+                .path(if folded {
+                    "toolbar/right.svg"
+                } else {
+                    "toolbar/chevron.svg"
+                })
+                .size(px(side))
+                .text_color(theme.text_muted),
+        )
+        .into_any_element()
 }
 
 /// What a heading does (ADR-130, 12): lit where the pointer is, a press
@@ -286,6 +345,8 @@ pub fn acting(
                                 window,
                                 cx,
                             );
+                            // The keys go where the press was, as on an entry.
+                            this.stop_on_heading(group, cx);
                         });
                     })
                     .ok();
@@ -311,13 +372,42 @@ pub fn acting(
 /// A heading as a screen reader hears it, where one listens: a heading
 /// among the options, named by its group and count. It is never an
 /// option: the entries' positions and count are their own.
-pub fn expose(el: gpui::Stateful<Div>, span: &Span, a11y: bool) -> gpui::Stateful<Div> {
+pub fn expose(
+    el: gpui::Stateful<Div>,
+    span: &Span,
+    stopped: bool,
+    a11y: bool,
+) -> gpui::Stateful<Div> {
     if !a11y {
         return el;
     }
+    // Folded, its span holds none of its entries; the one the keys are on
+    // is where they are, as the cursor's entry is otherwise.
     el.role(gpui::Role::Heading)
         .aria_level(2)
         .aria_label(said(span))
+        .aria_expanded(span.len > 0)
+        .when(
+            stopped,
+            gpui::StatefulInteractiveElement::aria_active_descendant,
+        )
+}
+
+/// The cursor's ring around a heading the keys are on, drawn over it as
+/// an entry's is (`entry::highlight`): in the accent, a mark.
+pub fn ring(el: gpui::Stateful<Div>, on: bool, theme: &Theme) -> gpui::Stateful<Div> {
+    if !on {
+        return el;
+    }
+    el.relative().child(
+        div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .border_1()
+            .border_color(theme.accent),
+    )
 }
 
 /// The heading pinned at the top of a view, `height` tall: on the files'
@@ -330,6 +420,7 @@ pub fn pinned(
     scale: Scale,
     theme: &Theme,
     ground: gpui::Hsla,
+    chevron: Option<AnyElement>,
 ) -> Div {
     div()
         .relative()
@@ -337,7 +428,7 @@ pub fn pinned(
         .h(px(height))
         .bg(ground)
         .occlude()
-        .child(heading(span, true, height, left, scale, theme))
+        .child(heading(span, true, height, left, scale, theme, chevron))
         .child(
             div()
                 .absolute()
@@ -358,6 +449,8 @@ pub struct Pinned {
     pub scale: Scale,
     pub theme: Theme,
     pub ground: gpui::Hsla,
+    /// The group whose heading the keys are on: ringed.
+    pub stopped: Option<usize>,
     /// Whose heading it is, for what it does (`acting`).
     pub pane: skwir_core::workspace::PaneId,
     pub shell: gpui::WeakEntity<crate::shell::Shell>,
@@ -393,6 +486,14 @@ impl UniformListDecoration for Pinned {
         // Laid out as a root, an element's own offset is not kept: the
         // heading hangs in a frame the size of the list, where the view's
         // top is.
+        let chevron = chevron(
+            n,
+            self.rows.folded(n),
+            self.pane,
+            self.shell.clone(),
+            self.scale,
+            &self.theme,
+        );
         let heading = pinned(
             &self.rows.spans()[n],
             height,
@@ -400,8 +501,10 @@ impl UniformListDecoration for Pinned {
             self.scale,
             &self.theme,
             self.ground,
+            Some(chevron),
         )
         .id(("pinned-heading", n));
+        let heading = ring(heading, self.stopped == Some(n), &self.theme);
         div()
             .size_full()
             .child(
@@ -474,6 +577,35 @@ mod tests {
         assert!(!RowMap::new(Arc::from([span(0, 2)]), 3).grouped());
         assert!(!RowMap::new(Arc::from([span(1, 2)]), 3).grouped());
         assert!(RowMap::new(Arc::from([span(0, 3)]), 3).grouped());
+    }
+
+    /// A folded group's heading is a row with no entries after it, its
+    /// count kept: rows 0 H, 1 e0, 2 e1, 3 H folded, 4 H, 5 e2.
+    #[test]
+    fn a_folded_group_is_its_heading_alone() {
+        let folded = Span {
+            start: 2,
+            len: 0,
+            count: 3,
+            group: None,
+        };
+        let rows = RowMap::new(Arc::from([span(0, 2), folded.clone(), span(2, 1)]), 3);
+        assert!(rows.grouped());
+        assert_eq!(rows.len(), 6);
+        assert_eq!(rows.at(3), Some(Row::Heading(1)));
+        assert_eq!(rows.at(4), Some(Row::Heading(2)));
+        assert_eq!(rows.at(5), Some(Row::Entry(2)));
+        assert_eq!(rows.row_of(2), 5);
+        assert_eq!(rows.group_of(2), Some(2));
+        assert_eq!(rows.entry_from(3), Some(2), "the next shown");
+        assert_eq!(rows.entries_in(3..5), 2..2);
+        assert!(rows.folded(1) && !rows.folded(0));
+        // Folded last: nothing below it.
+        let last = RowMap::new(Arc::from([span(0, 2), folded]), 2);
+        assert_eq!(last.entry_from(3), None);
+        assert_eq!(last.anchor(3. * 20., 20.).map(|a| a.0), Some(1));
+        // A span of nothing that counts nothing is no group.
+        assert!(!RowMap::new(Arc::from([span(0, 2), span(2, 0)]), 2).grouped());
     }
 
     #[test]

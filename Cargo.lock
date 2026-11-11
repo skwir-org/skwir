@@ -8371,6 +8371,7 @@ dependencies = [
  "flate2",
  "futures-lite",
  "image",
+ "imagesize 0.15.0",
  "jiff",
  "jpeg-decoder",
  "kamadak-exif",

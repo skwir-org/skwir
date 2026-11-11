@@ -91,7 +91,8 @@ impl Shell {
             name: e.name_str().into_owned(),
             is_dir: e.is_dir(),
             selected: pane.selection.contains(id),
-            cursor: pane.selection.cursor == Some(id),
+            // While the keys are on a heading, no entry is where they are.
+            cursor: pane.selection.cursor == Some(id) && self.ui().list.heading.is_none(),
             cut: self.pending.cut && self.pending.holds(e.file(), &e.name),
             only_leads: pane.only_leads(id),
             icon: self.icons.for_entry(e, || pane.path_of(id), icon_px),

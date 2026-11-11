@@ -360,6 +360,9 @@ pub struct App {
     /// them answers otherwise (`roll_keys_over`: the date groups at
     /// midnight): when, and its token.
     keys_rollover: parking_lot::Mutex<Option<(std::time::SystemTime, CancelToken)>>,
+    /// What was read on demand for the panes' orders (ADR-131, 4), each
+    /// batch for a pane's listing, taken by the next pump.
+    field_answers: Arc<parking_lot::Mutex<Vec<FieldAnswers>>>,
     /// What walks leave out (`left_out`), as read at a revision of the
     /// settings.
     /// The rules as the settings and the environment said them when last
@@ -412,6 +415,7 @@ impl App {
             weak: weak.clone(),
             filter_rollover: parking_lot::Mutex::new(None),
             keys_rollover: parking_lot::Mutex::new(None),
+            field_answers: Arc::default(),
             left_out: parking_lot::Mutex::new(None),
             private: parking_lot::Mutex::new(None),
             notifications: parking_lot::Mutex::new(Vec::new()),
@@ -1804,6 +1808,9 @@ impl App {
         // listings ask for an order (ADR-130).
         self.make_wanted_keys();
         let mut report = self.workspace.write().pump_report();
+        // What was read on demand, and what is to be read now (ADR-131).
+        self.take_field_answers(&mut report);
+        self.read_wanted_fields();
         // A folder is filled on a worker, an order asked anew made there,
         // and each taken by the pump its wake brings (ADR-120, ADR-121).
         // Never cancelled: a job for a folder left stops or is dropped, and
@@ -1846,6 +1853,104 @@ impl App {
             }
         }
         report
+    }
+
+    /// Take what was read on demand for the panes' orders into their
+    /// listings, each still the one it was read for: the panes changed.
+    fn take_field_answers(&self, report: &mut crate::workspace::PumpReport) {
+        let answers = std::mem::take(&mut *self.field_answers.lock());
+        if answers.is_empty() {
+            return;
+        }
+        let mut ws = self.workspace.write();
+        for FieldAnswers {
+            pane,
+            listing,
+            values,
+        } in answers
+        {
+            if let Some(p) = ws.pane_mut(pane)
+                && p.listing.id() == listing
+                && p.listing.set_fields(values)
+                && !report.panes_changed.contains(&pane)
+            {
+                report.panes_changed.push(pane);
+            }
+        }
+    }
+
+    /// Read what the panes' sorts read on demand and their entries lack
+    /// (ADR-131, 4: `Pane::fields_to_read`), on workers in each file's
+    /// lane (ADR-077), a job a batch, each taken by the pump its wake
+    /// brings; what no provider answers is none at once, unread. Cancelled
+    /// with the visit, and when the pane asks anew.
+    fn read_wanted_fields(&self) {
+        /// What is read before the pane takes it.
+        const BATCH: usize = 64;
+        let revision = self.fields.revision();
+        let asked: Vec<crate::workspace::FieldsAsked> = {
+            let mut ws = self.workspace.write();
+            let ids: Vec<PaneId> = ws.panes().iter().map(|p| p.id).collect();
+            ids.into_iter()
+                .filter_map(|id| ws.pane_mut(id)?.fields_to_read(revision))
+                .collect()
+        };
+        for asked in asked {
+            let crate::workspace::FieldsAsked {
+                pane,
+                listing,
+                cancel,
+                entries,
+            } = asked;
+            let wake = self.pane_waker(pane);
+            // Each remote's in its lane, so a server that stopped answering
+            // holds its own files alone; a job a batch, so the pool reads
+            // this machine's at once, and a remote's lane two at a time.
+            for (lane, entries) in crate::fs::reach::by_lane(entries, |(_, path, _, _)| path) {
+                let mut entries = entries.into_iter();
+                loop {
+                    let batch: Vec<_> = entries.by_ref().take(BATCH).collect();
+                    if batch.is_empty() {
+                        break;
+                    }
+                    let fields = Arc::clone(&self.fields);
+                    let answers = Arc::clone(&self.field_answers);
+                    let wake = Arc::clone(&wake);
+                    let cancel_read = cancel.clone();
+                    self.scheduler.spawn_in(
+                        lane,
+                        Priority::Normal,
+                        "fields.read",
+                        cancel.clone(),
+                        move || {
+                            let cancel = cancel_read;
+                            let mut values = Vec::new();
+                            for (id, path, known, keys) in &batch {
+                                if cancel.is_cancelled() {
+                                    return;
+                                }
+                                let read = fields.get_all(keys, path, *known, &cancel);
+                                values.extend(keys.iter().zip(read).map(|(key, value)| {
+                                    (*id, *key, value.unwrap_or(crate::entry::Value::Bool(false)))
+                                }));
+                            }
+                            // Cancelled while it read: what it read may be a
+                            // half answer. What was read whole is kept by
+                            // `fields`, for the ask that replaced this one.
+                            if cancel.is_cancelled() {
+                                return;
+                            }
+                            answers.lock().push(FieldAnswers {
+                                pane,
+                                listing,
+                                values,
+                            });
+                            wake();
+                        },
+                    );
+                }
+            }
+        }
     }
 
     /// Ask of each folder `asked` names whether it leads to what the
@@ -3140,6 +3245,27 @@ pub struct GroupArgs {
     pub pane: Option<PaneId>,
 }
 
+/// What was read on demand for a pane's listing (`App::read_wanted_fields`):
+/// each entry's field, as the file said it.
+struct FieldAnswers {
+    pane: PaneId,
+    listing: u64,
+    values: Vec<(EntryId, &'static str, crate::entry::Value)>,
+}
+
+/// `group_fold`: which of a pane's groups to fold or open, and how.
+#[derive(Debug, Default, Deserialize, Serialize, JsonSchema)]
+pub struct GroupFoldArgs {
+    /// The group, counted from the first heading from 0, as the pane shows
+    /// them; the cursor's when omitted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<usize>,
+    #[serde(default)]
+    pub mode: crate::workspace::FoldMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pane: Option<PaneId>,
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct EntriesArgs {
     /// The first entry to answer, counted in the pane's order.
@@ -3844,7 +3970,7 @@ mod builtin {
             Topic::View,
             "group",
             "Group",
-            "Group a pane's entries under headings (ADR-130): by `by` (none, same_as_sort: by the sort's key in its direction, or a key as `sort` takes: name, kind, type, extension, size, modified, created, accessed, deleted, rating, tags, owner), in direction `ascending` (a key starts in its own: words A to Z, the largest, the newest, the best rated first; the same key again flips it). Within each group, folders come first while they do everywhere, then the sort decides",
+            "Group a pane's entries under headings (ADR-130): by `by` (none, same_as_sort: by the sort's key in its direction, or a key as `sort` takes: name, kind, type, extension, size, modified, created, accessed, deleted, rating, tags, owner, folder; taken, dimensions, duration, read from the files on demand), in direction `ascending` (a key starts in its own: words A to Z, the largest, the newest, the best rated first; the same key again flips it). Within each group, folders come first while they do everywhere, then the sort decides",
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
                 let mut ws = app.workspace.write();
@@ -3876,6 +4002,42 @@ mod builtin {
         );
         group.forms(group_forms());
         group.shows();
+
+        let fold = c.register::<GroupFoldArgs, _>(
+            "core",
+            Topic::View,
+            "group_fold",
+            "Fold the group",
+            "Fold or open a pane's groups (ADR-131): group `group` (counted from the first heading from 0; the cursor's when omitted) as `mode` says: toggle, fold, unfold, fold_others (every group but it), unfold_all. A folded group's entries leave what the pane shows (not drawn, passed over by the keys, out of Select All and of what commands act on), its heading kept with its count; folds are kept while the pane groups by the same criterion",
+            |a, app| {
+                let pane = app.pane_or_active(a.pane);
+                let changed = app
+                    .workspace
+                    .write()
+                    .pane_mut(pane)
+                    .ok_or_else(|| anyhow::anyhow!("no such pane"))?
+                    .fold_groups(a.group, a.mode);
+                if changed {
+                    app.wake();
+                }
+                Ok(Outcome::Done)
+            },
+        );
+        fold.forms([
+            Form::new(
+                serde_json::json!({ "mode": "toggle" }),
+                "Fold or unfold the group",
+            ),
+            Form::new(
+                serde_json::json!({ "mode": "fold_others" }),
+                "Fold the other groups",
+            ),
+            Form::new(
+                serde_json::json!({ "mode": "unfold_all" }),
+                "Unfold all groups",
+            ),
+        ]);
+        fold.shows();
 
         c.register::<FilterArgs, _>(
             "core", Topic::Find,

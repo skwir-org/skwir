@@ -19,6 +19,8 @@ zip = { version = "9", default-features = false, features = ["deflate-flate2-zli
 open.workspace = true
 md5.workspace = true
 image = { workspace = true, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff", "ico", "qoi", "tga", "pnm", "exr", "dds"] }
+# A picture's size in pixels from its header, no picture decoded (ADR-131).
+imagesize = "0.15"
 jpeg-decoder.workspace = true
 png.workspace = true
 parking_lot.workspace = true

@@ -64,7 +64,11 @@ fn keyer(
         SortKey::Type => (by_type(app, keys), None),
         SortKey::Extension => (by_extension(), None),
         SortKey::Size => (by_size(), None),
-        SortKey::Modified | SortKey::Created | SortKey::Accessed | SortKey::Deleted => {
+        SortKey::Modified
+        | SortKey::Created
+        | SortKey::Accessed
+        | SortKey::Deleted
+        | SortKey::Taken => {
             let dates = Dates::at(key, cal, now);
             let next = cal.day_start(dates.today + 1);
             let cal = cal.clone();
@@ -74,6 +78,8 @@ fn keyer(
         SortKey::Tags => (by_tags(), None),
         SortKey::Owner => (by_owner(), None),
         SortKey::Folder => (by_folder(), None),
+        SortKey::Dimensions => (by_dimensions(), None),
+        SortKey::Duration => (by_duration(), None),
     }
 }
 
@@ -295,6 +301,115 @@ fn by_size() -> Keyer {
     })
 }
 
+/// By a picture's size in pixels, in classes of megapixels; Folders, which
+/// have none, first while folders come first; No dimensions for what says
+/// none. No term: a filter cannot read a picture's size.
+fn by_dimensions() -> Keyer {
+    const CLASSES: [(u64, &str); 4] = [
+        (1_000_000, "Under 1 MP"),
+        (4_000_000, "1 to 4 MP"),
+        (12_000_000, "4 to 12 MP"),
+        (24_000_000, "12 to 24 MP"),
+    ];
+    let folders = Arc::new(Group::ranked(0, "Folders").of_folders());
+    let none = Arc::new(Group::ranked(1, "No dimensions"));
+    let groups: Vec<Arc<Group>> = CLASSES
+        .iter()
+        .zip(2..)
+        .map(|((_, label), rank)| Arc::new(Group::ranked(rank, label)))
+        .collect();
+    let over = Arc::new(Group::ranked(6, "Over 24 MP"));
+    Arc::new(move |e: &Of<'_>| {
+        if !SortKey::Dimensions.applies_to(e) {
+            return Arc::clone(&folders);
+        }
+        let Some(Value::List(sides)) = e.metadata.value(keys::DIMENSIONS) else {
+            return Arc::clone(&none);
+        };
+        let side = |at: usize| sides.get(at).and_then(Value::as_u64).unwrap_or(0);
+        let area = side(0).saturating_mul(side(1));
+        CLASSES
+            .iter()
+            .position(|(below, _)| area < *below)
+            .map_or_else(|| Arc::clone(&over), |at| Arc::clone(&groups[at]))
+    })
+}
+
+/// By how long a sound or a film lasts, in classes; Folders first while
+/// folders come first; No duration for what says none. No term: a filter
+/// cannot read a length.
+fn by_duration() -> Keyer {
+    const CLASSES: [(u64, &str); 4] = [
+        (60_000, "Under 1 minute"),
+        (300_000, "1 to 5 minutes"),
+        (1_200_000, "5 to 20 minutes"),
+        (3_600_000, "20 minutes to 1 hour"),
+    ];
+    let folders = Arc::new(Group::ranked(0, "Folders").of_folders());
+    let none = Arc::new(Group::ranked(1, "No duration"));
+    let groups: Vec<Arc<Group>> = CLASSES
+        .iter()
+        .zip(2..)
+        .map(|((_, label), rank)| Arc::new(Group::ranked(rank, label)))
+        .collect();
+    let over = Arc::new(Group::ranked(6, "Over 1 hour"));
+    Arc::new(move |e: &Of<'_>| {
+        if !SortKey::Duration.applies_to(e) {
+            return Arc::clone(&folders);
+        }
+        let Some(ms) = e.metadata.value(keys::DURATION).and_then(Value::as_u64) else {
+            return Arc::clone(&none);
+        };
+        CLASSES
+            .iter()
+            .position(|(below, _)| ms < *below)
+            .map_or_else(|| Arc::clone(&over), |at| Arc::clone(&groups[at]))
+    })
+}
+
+/// What a sort by Dimensions or Duration reads of a file on demand
+/// (ADR-131, 5): a picture's size from its header, a sound's or a film's
+/// length from its boxes or ffprobe (`skwir_platform::facts`). Taken is
+/// the geo plugin's. Out of Properties, which says them from the preview.
+pub struct Facts;
+
+impl skwir_core::fields::FieldProvider for Facts {
+    fn id(&self) -> &'static str {
+        "query.facts"
+    }
+
+    fn keys(&self) -> &'static [&'static str] {
+        &[keys::DIMENSIONS, keys::DURATION]
+    }
+
+    fn accepts(&self, key: &str, name: &std::ffi::OsStr) -> bool {
+        let Some(mime) = mime::by_name(name) else {
+            return false;
+        };
+        let mime = mime.as_str();
+        match key {
+            // A drawing has no pixels of its own.
+            keys::DIMENSIONS => mime.starts_with("image/") && !mime.starts_with("image/svg"),
+            keys::DURATION => mime.starts_with("audio/") || mime.starts_with("video/"),
+            _ => false,
+        }
+    }
+
+    fn read(
+        &self,
+        key: &str,
+        path: &std::path::Path,
+        cancel: &CancelToken,
+    ) -> anyhow::Result<Option<Value>> {
+        Ok(match key {
+            keys::DIMENSIONS => skwir_platform::facts::dimensions(path)
+                .map(|(width, height)| Value::List(vec![Value::UInt(width), Value::UInt(height)])),
+            keys::DURATION => skwir_platform::facts::duration(path, cancel)?.map(Value::UInt),
+            _ => None,
+        })
+    }
+}
+
 /// By rating, one group per rating, its stars said; Unrated first going
 /// up.
 fn by_rating() -> Keyer {
@@ -373,6 +488,7 @@ struct Dates {
 impl Dates {
     fn at(key: SortKey, cal: &Calendar, now: SystemTime) -> Self {
         let (field, word) = match key {
+            SortKey::Taken => (keys::TAKEN, "taken"),
             SortKey::Created => (keys::CREATED, "created"),
             SortKey::Accessed => (keys::ACCESSED, "accessed"),
             SortKey::Deleted => (keys::TRASHED, "deleted"),
@@ -429,7 +545,7 @@ impl Dates {
             key: Arc::from([9u8]),
             ..Group::ranked(day_rank(today + 1), "In the future")
         };
-        if field != keys::TRASHED {
+        if field != keys::TRASHED && field != keys::TAKEN {
             future.term = Some(Arc::from(format!("{word}>today")));
         }
         dates.groups.push(Arc::new(future));
@@ -443,7 +559,7 @@ impl Dates {
     /// trash, which a query has no field for.
     fn term(&self, from: i64, to: i64) -> Option<String> {
         let word = self.word;
-        (to > from && self.field != keys::TRASHED).then(|| {
+        (to > from && self.says()).then(|| {
             if to - from == 1 {
                 format!("{word}:{}", date_string(from))
             } else {
@@ -452,12 +568,34 @@ impl Dates {
         })
     }
 
+    /// Whether a filter's term keeps a group's files: not in the trash,
+    /// which a query has no field for, nor by when a picture was taken,
+    /// which a filter cannot read of a file (only a search does).
+    fn says(&self) -> bool {
+        self.field != keys::TRASHED && self.field != keys::TAKEN
+    }
+
+    /// The day of `e`'s date: the user's day of its time, or the camera's
+    /// clock's own day, which says no zone.
+    fn day(&self, e: &Entry, cal: &Calendar) -> Option<i64> {
+        let value = e.metadata.value(self.field)?;
+        if self.field == keys::TAKEN {
+            let clock = value.as_u64()?;
+            let part = |by: u64| u32::try_from(clock / by % 100).ok();
+            return skwir_platform::calendar::civil_day(
+                i64::try_from(clock / 10_000_000_000).ok()?,
+                part(100_000_000)?,
+                part(1_000_000)?,
+            );
+        }
+        Some(cal.day_of(value.as_time()?))
+    }
+
     /// The group of `e`'s date.
     fn of(&self, e: &Entry, cal: &Calendar) -> Arc<Group> {
-        let Some(t) = e.metadata.value(self.field).and_then(Value::as_time) else {
+        let Some(day) = self.day(e, cal) else {
             return Arc::clone(&self.groups[8]);
         };
-        let day = cal.day_of(t);
         let at = if day > self.today {
             7
         } else if day == self.today {
@@ -482,7 +620,7 @@ impl Dates {
                 // week take its last days.
                 let earliest = self.year.min(self.last_month).min(self.last_week);
                 let term = if next <= earliest {
-                    (self.field != keys::TRASHED).then(|| format!("{}:{year}", self.word))
+                    self.says().then(|| format!("{}:{year}", self.word))
                 } else {
                     self.term(first, earliest)
                 };

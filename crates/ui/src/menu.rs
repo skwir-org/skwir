@@ -1148,16 +1148,43 @@ impl Shell {
             return;
         };
         let pane = self.pane;
-        let mut items = vec![MenuItem::new(
-            "group",
-            "Select these",
-            "check",
-            0,
-            skwir_core::command::Invocation::with_args(
-                "ui.select_group",
-                &serde_json::json!({ "group": group, "pane": pane }),
-            ),
-        )];
+        let folded = rows.folded(group);
+        let fold = |title: &str, order, mode: &str| {
+            MenuItem::new(
+                "group",
+                title,
+                "",
+                order,
+                skwir_core::command::Invocation::with_args(
+                    "group_fold",
+                    &serde_json::json!({ "group": group, "mode": mode, "pane": pane }),
+                ),
+            )
+        };
+        let mut items = vec![
+            if folded {
+                fold("Unfold", 400, "unfold")
+            } else {
+                fold("Fold", 400, "fold")
+            },
+            fold("Fold the others", 410, "fold_others"),
+        ];
+        if (0..rows.spans().len()).any(|n| rows.folded(n)) {
+            items.push(fold("Unfold all", 420, "unfold_all"));
+        }
+        // A folded group's entries are not shown: nothing to select.
+        if !folded {
+            items.push(MenuItem::new(
+                "group",
+                "Select these",
+                "check",
+                0,
+                skwir_core::command::Invocation::with_args(
+                    "ui.select_group",
+                    &serde_json::json!({ "group": group, "pane": pane }),
+                ),
+            ));
+        }
         if let Some(term) = span.group.as_ref().and_then(|g| g.term.clone()) {
             let filter = {
                 let ws = self.app.workspace.read();

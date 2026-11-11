@@ -894,6 +894,8 @@ impl Plugin for QueryPlugin {
                 keys: Arc::new(move |sort, group| groups::keys(&weak, sort, group)),
             },
         );
+        // What a sort by Dimensions or Duration reads of a file (ADR-131).
+        app.fields.register(ID, Arc::new(groups::Facts));
 
         let editor = Editor {
             saving: Arc::clone(&self.saving),

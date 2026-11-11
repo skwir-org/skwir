@@ -214,7 +214,9 @@ pub struct ListState {
     /// views that draw them (ADR-130, 9): made with `sorted`, from the
     /// pane as it stood then.
     pub rows: crate::views::groups::RowMap,
-    sorted_at: Option<(u64, u64, SortSpec, u64)>,
+    /// The heading the keys are on, if any (ADR-131, 1).
+    pub heading: Option<HeadingStop>,
+    sorted_at: Option<(u64, u64, SortSpec, (u64, u64))>,
     /// Where each of `sorted` is, made the first time it is asked for after
     /// the order changed (`index_of`): a card or a cursor found its place by
     /// walking the whole order.
@@ -262,6 +264,17 @@ pub struct ListState {
     selection_bytes: Cell<Option<SelectionBytes>>,
 }
 
+/// The heading the keys are on (ADR-131, 1): its group, by where it is
+/// among them and by itself, found again as the order changes; and the
+/// cursor the keys left there, whose moving any other way lets it go. A
+/// heading is never selected nor acted on as a file.
+#[derive(Clone, Debug)]
+pub struct HeadingStop {
+    pub group: usize,
+    pub of: Option<std::sync::Arc<skwir_core::grouping::Group>>,
+    pub cursor: Option<EntryId>,
+}
+
 /// What the selected files weigh, as last asked: for which summary and
 /// which sizes of the listing, and while a file's size is not known,
 /// where in the selection one was found, the next look's start.
@@ -278,6 +291,7 @@ impl Default for ListState {
         ListState {
             sorted: std::sync::Arc::from([]),
             rows: crate::views::groups::RowMap::default(),
+            heading: None,
             sorted_at: None,
             positions: std::cell::OnceCell::new(),
             pending_hydrate: HashMap::new(),
@@ -301,6 +315,15 @@ impl ListState {
     /// folders opened in place) when the listing's version, the opened
     /// folders or the spec changed.
     pub fn sync(&mut self, pane: &skwir_core::workspace::Pane) -> bool {
+        // The keys on a heading: let go once the cursor moved by any other
+        // way (a press, a command, a name typed).
+        if self
+            .heading
+            .as_ref()
+            .is_some_and(|stop| stop.cursor != pane.selection.cursor)
+        {
+            self.heading = None;
+        }
         let listing = &pane.listing;
         if self.listing != Some(listing.id()) {
             self.reset();
@@ -321,13 +344,25 @@ impl ListState {
             listing.version(),
             pane.tree_version(),
             pane.sort,
-            pane.filter_version(),
+            (pane.filter_version(), pane.folds_version()),
         );
         if self.sorted_at == Some(at) {
             return false;
         }
         self.sorted = pane.order();
         self.rows = crate::views::groups::RowMap::new(pane.groups(), self.sorted.len());
+        // The heading the keys are on, found again among the groups.
+        if let Some(stop) = &mut self.heading {
+            match self
+                .rows
+                .spans()
+                .iter()
+                .position(|span| skwir_core::grouping::same(span.group.as_ref(), stop.of.as_ref()))
+            {
+                Some(group) => stop.group = group,
+                None => self.heading = None,
+            }
+        }
         self.sorted_at = Some(at);
         self.positions = std::cell::OnceCell::new();
         true
@@ -340,6 +375,7 @@ impl ListState {
     fn reset(&mut self) {
         self.sorted = std::sync::Arc::from([]);
         self.rows = crate::views::groups::RowMap::default();
+        self.heading = None;
         self.sorted_at = None;
         self.positions = std::cell::OnceCell::new();
         self.pending_hydrate.clear();
@@ -826,6 +862,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<usize> {
+        self.ui_mut().list.heading = None;
         let len = self.ui().list.sorted.len();
         if len == 0 {
             return None;
@@ -907,6 +944,100 @@ impl Shell {
             ..SelectArgs::default()
         };
         self.run_args("select", args, window, cx);
+    }
+
+    /// Put the keys on group `group`'s heading (ADR-131, 1): the cursor
+    /// stays where it was, its ring on the heading.
+    pub fn stop_on_heading(&mut self, group: usize, cx: &mut Context<Self>) {
+        let cursor = self
+            .app
+            .workspace
+            .read()
+            .pane(self.pane)
+            .and_then(|p| p.selection.cursor);
+        let list = &mut self.ui_mut().list;
+        let Some(span) = list.rows.spans().get(group) else {
+            return;
+        };
+        list.heading = Some(HeadingStop {
+            group,
+            of: span.group.clone(),
+            cursor,
+        });
+        cx.notify();
+    }
+
+    /// The group whose heading the keys are on.
+    pub fn heading_stop(&self) -> Option<usize> {
+        self.ui().list.heading.as_ref().map(|stop| stop.group)
+    }
+
+    /// After a command run from a heading (its group selected, folded), the
+    /// keys stay on it, wherever the cursor went.
+    fn keep_on_heading(&mut self) {
+        let cursor = self
+            .app
+            .workspace
+            .read()
+            .pane(self.pane)
+            .and_then(|p| p.selection.cursor);
+        if let Some(stop) = &mut self.ui_mut().list.heading {
+            stop.cursor = cursor;
+        }
+    }
+
+    /// Fold or open (`mode`) the group whose heading the keys are on,
+    /// which they stay on.
+    pub fn fold_from_heading(
+        &mut self,
+        group: usize,
+        mode: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let pane = self.pane;
+        self.run(
+            "group_fold",
+            serde_json::json!({ "group": group, "mode": mode, "pane": pane }),
+            window,
+            cx,
+        );
+        self.keep_on_heading();
+        cx.notify();
+    }
+
+    /// What a key bound to a command does while the keys are on a heading
+    /// (ADR-131, 1): Enter and Space select its group, the Menu key and
+    /// Shift+F10 open its menu. Whether it took the key.
+    pub fn heading_command(
+        &mut self,
+        name: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(group) = self.heading_stop() else {
+            return false;
+        };
+        match name {
+            "open" | "ui.peek" => {
+                self.select_group(Some(group), false, window, cx);
+                self.keep_on_heading();
+                cx.notify();
+                true
+            }
+            "ui.context_menu" => {
+                self.open_group_menu(group, gpui::Point::default(), window, cx);
+                let pane = self.pane;
+                if let Some(menu) = &mut self.menu {
+                    menu.highlighted = Some(0);
+                    menu.keyboard = Some(crate::menu::KeyboardAnchor::new(
+                        crate::menu::MenuHost::Pane(pane),
+                    ));
+                }
+                true
+            }
+            _ => false,
+        }
     }
 
     /// Ctrl+Space: select or deselect the item under the cursor.
@@ -1032,6 +1163,8 @@ impl Shell {
         self.activate_pane(pane, cx);
         window.focus(&self.ui().focus, cx);
         self.press_collapse = None;
+        // A press on an entry takes the keys off a heading.
+        self.with_pane(pane, |this| this.ui_mut().list.heading = None);
         // Gone since it was drawn: the press is on nothing. An entry a
         // view lent (ADR-116) is in no order: the pane says whether it is
         // still shown.
@@ -1598,6 +1731,15 @@ impl Shell {
             .key_context(key_context)
             .children(self.menu_area_marker(pane))
             .on_key_down(cx.listener(Shell::on_pane_key_down))
+            // On a heading, Enter, Space and the Menu key are the
+            // heading's (ADR-131, 1).
+            .capture_action(
+                cx.listener(move |this, action: &keymap::RunCommand, window, cx| {
+                    if this.with_pane(pane, |this| this.heading_command(&action.name, window, cx)) {
+                        cx.stop_propagation();
+                    }
+                }),
+            )
             // Space goes on with a name being typed that a name goes on
             // with, before its binding here (Peek) runs.
             .capture_action(

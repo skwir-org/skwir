@@ -276,7 +276,11 @@ pub(crate) fn view_submenu(shell: &Shell, name: &str) -> Vec<toolbar::FlyRow> {
     let spec = shell.sort_spec();
     // Words, then dates, then what the user says of files.
     let kind = |key: SortKey| match key {
-        SortKey::Modified | SortKey::Created | SortKey::Accessed | SortKey::Deleted => 1,
+        SortKey::Modified
+        | SortKey::Created
+        | SortKey::Accessed
+        | SortKey::Taken
+        | SortKey::Deleted => 1,
         SortKey::Rating | SortKey::Tags | SortKey::Owner => 2,
         _ => 0,
     };

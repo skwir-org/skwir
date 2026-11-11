@@ -183,20 +183,33 @@ columns. The View menu, at the end of the pane's row, has every view, the
 sort, Folders first, hidden files (`Ctrl+H` or `Alt+.`) and the zoom
 (`Ctrl++`, `Ctrl+-`, `Ctrl+0`, or `Ctrl+wheel`). Sort by turns the order
 round in one click, and the row under it lists what to sort by: name,
-kind, type, extension, size, the dates, rating, tags or owner. Each starts
+kind, type, extension, size, dimensions (a picture's size in pixels),
+duration (how long a sound or a film lasts), the dates, taken (when a
+camera took the picture), rating, tags or owner. Dimensions, duration
+and taken are read from the files themselves, in the background, so the
+order fills in as they come; duration asks ffprobe, where it is
+installed, of what is not an MP4 or a QuickTime film. Each starts
 where you look first (names A to Z, the largest, the newest, the best
 rated), and choosing it again turns it round; files that tie are listed A
 to Z either way. Group by, under it, puts the files under headings: by
 the sort itself (Same as sort) or by any of those, its groups in a
 direction of their own (by date: Today, Yesterday, Earlier this week,
 Last week, Earlier this month, Last month, Earlier this year, then each
-year). The heading of the group at the top stays there as you scroll;
-the arrows, Shift and Select All pass over headings, which are never
-selected. In the tree, a folder opened keeps its files under it, in its
-own group; in the grid, each group starts a row of its own, and Up and
-Down go to the picture drawn above or below. A click on a heading selects
-its files (Ctrl+click adds them to what is selected); its menu offers
-Select these and Show only these, which filters the folder to the group.
+year). The heading of the group at the top stays there as you scroll.
+`Up` and `Down` stop on a heading on the way, as Windows' Explorer does:
+there `Enter` or `Space` selects its files, `Left` folds the group and
+`Right` opens it again, and the Menu key opens its menu; a heading is
+never selected, and `Shift` with the arrows, like Select All, passes
+over it. A folded group keeps its heading and its count; its files are
+passed over by the keys, Select All and what you do to the selection,
+until you open it, or group the folder by something else. The chevron
+at a heading's start folds it too. In the tree, a folder opened keeps
+its files under it, in its own group; in the grid, each group starts a
+row of its own, and Up and Down go to the picture drawn above or below.
+A click on a heading selects its files (Ctrl+click adds them to what is
+selected); its menu offers Select these, Show only these, which filters
+the folder to the group, Fold, Fold the others and Unfold all. The
+Board, grouped, has a column for each group.
 Where files come from many folders (a search, a tag, the shelf), Folder
 sorts and groups them by the folder each is in, as the Folder column's
 header does. Folders first, on

@@ -41,6 +41,7 @@ pub mod desktop_style;
 pub mod diagram;
 pub mod document;
 pub mod exif;
+pub mod facts;
 pub mod file;
 pub mod filesystem;
 pub mod fonts;

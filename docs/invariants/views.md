@@ -223,6 +223,12 @@ around the views is in [shell.md](shell.md).
   It asks for its columns once for each state of what is open
   (`Pane::expanded_version`): another view closes them (`Shell::sync`,
   the tree's Left), and coming back the board asks again.
+  Grouped (ADR-131, 3), its columns are the pane's groups in their
+  order, each its entries in the sort's (`BoardView::group_columns`, made
+  again only when the order or its spans change), a folded group's
+  empty with its count; a card dragged to another column does nothing
+  (a group is what a file is, not where), and the folders it had opened
+  in place are closed once, their files being in no group.
 
 ## Rubber band
 
@@ -361,10 +367,12 @@ around the views is in [shell.md](shell.md).
   `SortKey::ALL`), offered where they apply (`Shell::sort_keys`,
   `group_keys`: Rating while ratings are kept, Deleted in the trash,
   Folder where files come from many folders, what only the sorter reads
-  while there is one, Group by only then). By Folder, the sort asks the
-  pane's location where each entry is (`grouping::Folders`, made by
-  `Pane::sorting` from `OpenLocation::path_of`, which answers from
-  memory), only while it sorts or groups by it, and keys are asked with
+  while there is one, Group by only then; Taken, Dimensions and
+  Duration while a provider reads their field, ADR-131). By Folder, the
+  sort asks the pane's location where each entry is
+  (`grouping::Folders`, made by `Pane::sorting` from
+  `OpenLocation::path_of`, which answers from memory), only while it
+  sorts or groups by it, and keys are asked with
   it (`grouping::Of`); a file of the trash is where it was put there
   from, as the column says. A
   criterion chosen starts in its natural direction
@@ -372,6 +380,18 @@ around the views is in [shell.md](shell.md).
   it turns. A direction reverses its criterion, never the names: ties
   are A to Z either way. What has none (a date, a rating, tags, an
   extension, a folder's size) is the lowest.
+- **A criterion read on demand** (ADR-131, 4: `SortKey::field`, Taken,
+  Dimensions, Duration) is a field (`App::fields`), never read for
+  every listing: sorted or grouped by one, the pump asks it of the
+  entries the pane holds that may have it (`Pane::fields_to_read`: once
+  the listing is whole, again when its names change, a file changed or
+  the providers did, never per row), read on a worker in their lane, in
+  batches, and the answers, a value or none, are the listing's
+  (`Listing::set_fields`, `fields_version`), placed as they come; what
+  is not read yet waits after the rest
+  (`SortKey::waits`). The listing keeps what was read while the entry's
+  size and modification time are the same (`keys::READ_ON_DEMAND`), so a
+  hydration does not drop it. No view reads a file to sort it.
 - **The group comes first in the order** (`SortSpec::group`), so each is
   one run of it; folders first acts within each group, and a group of
   only folders comes first while it is on, whatever the groups' direction.
@@ -388,22 +408,49 @@ around the views is in [shell.md](shell.md).
   reader's position and count in positions, as when nothing is grouped.
   A view asked to scroll to a position turns it into a row where it
   draws (`ListView::asked`), with the rows as they are then. A heading
-  is a row as tall as an entry, its label Small and semibold, its count
+  is a row as tall as an entry, a chevron at its start, its label Small
+  and semibold, its count
   beside it muted, a line above it but the first; the one at the top is
   pinned (`groups::Pinned`, a decoration of the list, computed after it
   scrolled), pushed up by the next, and a row brought into view from
   above stops below it. The tree groups its top level: a folder opened
   in place keeps its entries under it, in its group, whose heading
-  counts its own (`Span::count`). Columns, the board, Usage and the map
-  draw no headings.
+  counts its own (`Span::count`). Columns, Usage and the map draw no
+  headings; the board, grouped, makes each group a column (above).
+- **A heading is a key stop** (ADR-131, 1; `list::HeadingStop`, the
+  window's, never the core's): Up from a group's first entry and Down
+  from the group before's last stop on its heading, drawn with the
+  cursor's ring (`groups::ring`), the cursor left where it was and its
+  ring not drawn; Up and Down from it go on to the entries, Shift and
+  Ctrl with the arrows go from entry to entry as before. On it, Enter
+  and Space select its group, Left folds it, Right unfolds it, the Menu
+  key and Shift+F10 open its menu (`Shell::heading_command`, before
+  the keymap's command). The stop knows its group by its place and by
+  itself, found again as the order changes, and lets go as soon as the
+  core's cursor moves any other way (a press, a command, a name typed):
+  each sync compares it with the cursor the stop was made at. A command
+  run from the heading (its group selected, folded) keeps it.
+- **A group folds** (ADR-131, 2; `group_fold`, `Pane::fold_groups`):
+  its entries leave the pane's order (`Pane::is_shown`, as a closed
+  folder's in the tree), so the keys, Select All, a range and what
+  commands act on pass them over, and what was selected of them is let
+  go; its span holds no entry (`len` 0) and keeps its count, so its
+  heading stays. Folds are the pane's, keyed by the group's rank and key
+  (`FoldKey`), kept while it is grouped by the same criterion in either
+  direction, forgotten when it is grouped by another; a fold bumps the
+  pane's order (`folds_version`), and every map from rows to positions
+  (`RowMap`, the grid's lines) holds a heading with no entries.
 - **A heading acts** (ADR-130, 12, `groups::acting`): lit where the
   pointer is; a press selects what it counts (`ui.select_group`, its own
   entries in the tree; with Ctrl, beside what is selected), from the first
   to the last as a band would, the view left where it is; the right button
-  opens its menu (`Shell::open_group_menu`): Select these, and Show only
-  these where a query term keeps the group's files, the filter narrowed by
-  it. The pinned heading does the same, and its pane is made the active
-  one as an entry's press makes it. `ui.select_group` without a group
+  opens its menu (`Shell::open_group_menu`): Select these (not while
+  folded), Show only these where a query term keeps the group's files,
+  the filter narrowed by it, Fold or Unfold, Fold the others, and Unfold
+  all while one is folded. Its chevron folds and unfolds; a press beside
+  it selects, then stops the keys on the heading. The pinned heading
+  does the same, and its pane is made the active one as an entry's press
+  makes it. `ui.select_group` without a group
   selects the cursor's: the palette's way to it.
 - **The grid is lines** (`uniform_grid::math::Slots`): rows of tiles and,
   where groups are drawn, each group's heading before its rows, a group
@@ -412,7 +459,8 @@ around the views is in [shell.md](shell.md).
   pinned, in its prepaint (`GridGroups`, `Slots::pinned_at`); a heading's
   words begin where the first column's pictures do. Up and Down go to
   the tile drawn over or under (`Slots::above`, `below`): its column in
-  the next row, past a heading, or the last of a shorter row. What a
+  the next row, or the last of a shorter row, stopping on a heading
+  between as the list does. What a
   reflow keeps (`Slots::anchor`) is the tile under the pinned heading,
   so a grid at its top stays there when it is grouped. The rubber band
   hit-tests the same lines, and begins on no heading.

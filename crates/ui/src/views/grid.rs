@@ -718,25 +718,40 @@ fn grid_groups(
     let height = scale.f(HEADING);
     let spans = rows.clone();
     let (pane, weak) = (shell.pane, cx.weak_entity());
+    // The heading the keys are on, and where the keyboard's menu hangs.
+    let stopped = shell.heading_stop();
+    let anchor = shell.host_row_anchor(crate::menu::MenuHost::Pane(pane));
     GridGroups {
         rows,
         height,
         heading: Rc::new(move |n, pinned, left, _, _| {
             let span = &spans.spans()[n];
             let left = Some(left + FRAME);
+            let on = stopped == Some(n);
             let act = |el| groups::acting(el, n, pane, weak.clone(), &theme);
+            let chevron = Some(groups::chevron(
+                n,
+                spans.folded(n),
+                pane,
+                weak.clone(),
+                scale,
+                &theme,
+            ));
             if pinned {
-                act(groups::pinned(span, height, left, scale, &theme, ground)
-                    .id(("pinned-heading", n)))
-                .into_any_element()
+                let heading = groups::pinned(span, height, left, scale, &theme, ground, chevron)
+                    .id(("pinned-heading", n));
+                act(groups::ring(heading, on, &theme)).into_any_element()
             } else {
-                groups::expose(
-                    act(groups::heading(span, n == 0, height, left, scale, &theme)
-                        .id(("heading", n))),
-                    span,
-                    a11y,
-                )
-                .into_any_element()
+                let heading = groups::heading(span, n == 0, height, left, scale, &theme, chevron)
+                    .id(("heading", n))
+                    .children(
+                        anchor
+                            .as_ref()
+                            .filter(|_| on)
+                            .map(crate::elements::popover::PopoverAnchor::marker),
+                    );
+                groups::expose(act(groups::ring(heading, on, &theme)), span, on, a11y)
+                    .into_any_element()
             }
         }),
     }
@@ -923,6 +938,99 @@ impl PaneView for GridView {
             }
         }
         Some(at as isize - cursor as isize)
+    }
+
+    /// Grouped, the plain arrows stop on headings (ADR-131, 1): Up from a
+    /// group's first row, Down from its last, and from a heading to its
+    /// group's first tile or the group before's last; on one, Left folds it
+    /// and Right opens it.
+    fn nav(
+        &mut self,
+        nav: Nav,
+        step: crate::list::Step,
+        shell: &mut Shell,
+        window: &mut Window,
+        cx: &mut Context<Shell>,
+    ) -> bool {
+        let rows = shell.ui().list.rows.clone();
+        if step != crate::list::Step::Select || !rows.grouped() {
+            return false;
+        }
+        let spans = rows.spans();
+        let tile = |shell: &mut Shell, ix: usize, window: &mut Window, cx: &mut Context<Shell>| {
+            shell.cursor_to(ix as isize, crate::list::Step::Select, window, cx);
+            true
+        };
+        match (nav, shell.heading_stop()) {
+            (Nav::Down, Some(n)) => {
+                if !rows.folded(n) {
+                    return tile(shell, spans[n].start, window, cx);
+                }
+                if n + 1 < spans.len() {
+                    shell.stop_on_heading(n + 1, cx);
+                    self.scroll.scroll_to_item(spans[n + 1].start);
+                }
+                true
+            }
+            (Nav::Up, Some(n)) => {
+                let Some(before) = n.checked_sub(1) else {
+                    return true;
+                };
+                if rows.folded(before) {
+                    shell.stop_on_heading(before, cx);
+                    true
+                } else {
+                    tile(
+                        shell,
+                        spans[before].start + spans[before].len - 1,
+                        window,
+                        cx,
+                    )
+                }
+            }
+            (Nav::Left, Some(n)) => {
+                shell.fold_from_heading(n, "fold", window, cx);
+                true
+            }
+            (Nav::Right, Some(n)) => {
+                shell.fold_from_heading(n, "unfold", window, cx);
+                true
+            }
+            (Nav::Up | Nav::Down, None) => {
+                let Some(ix) = shell.cursor_index() else {
+                    return false;
+                };
+                let Some(group) = rows.group_of(ix) else {
+                    return false;
+                };
+                let slots = self.scroll.slots();
+                let next = if nav == Nav::Up {
+                    slots.above(ix)
+                } else {
+                    slots.below(ix)
+                };
+                // Within its group, as the tiles go.
+                if next.and_then(|next| rows.group_of(next)) == Some(group) {
+                    return false;
+                }
+                let to = if nav == Nav::Up {
+                    Some(group)
+                } else {
+                    Some(group + 1)
+                };
+                match to.filter(|to| *to < spans.len()) {
+                    Some(to) => {
+                        shell.stop_on_heading(to, cx);
+                        if spans[to].len > 0 {
+                            self.scroll.scroll_to_item(spans[to].start);
+                        }
+                        true
+                    }
+                    None => false,
+                }
+            }
+            _ => false,
+        }
     }
 
     fn reset(&mut self) {

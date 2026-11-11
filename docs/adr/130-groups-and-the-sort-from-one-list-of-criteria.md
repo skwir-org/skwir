@@ -6,7 +6,9 @@ menu, a list grouped by date and a grid grouped by kind). Built in
 phases (below): phases 1 to 4 on 2026-11-11, run on Linux, compiled
 for Windows and, but for the shell, macOS (`just check-cross`). Amends
 ADR-099 (the View menu's sort) and follows
-ADR-121 (an order asked anew is made on a worker).
+ADR-121 (an order asked anew is made on a worker). Amended by ADR-131
+(2026-11-11): headings the keys reach (9, 12), and phase 5 settled and
+built.
 
 ## Context
 
@@ -141,7 +143,8 @@ ADR-121 (an order asked anew is made on a worker).
 4. Group by Folder (the sort learns each entry's folder), Show only
    these, a heading's click and menu.
 5. Later: collapsing; a Board with a column per group; criteria read on
-   demand (the day a picture was taken).
+   demand (the day a picture was taken). Settled by ADR-131 and built on
+   2026-11-11, with headings as key stops.
 
 ## Consequences
 

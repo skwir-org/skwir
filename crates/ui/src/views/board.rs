@@ -63,6 +63,9 @@ struct Column {
     /// `LocationProvider::tags_shown`), which its cards leave out.
     shown: Arc<[String]>,
     ids: Arc<[EntryId]>,
+    /// A group's (ADR-131, 3): how many it holds, folded or not; it takes
+    /// no card dragged in, a group being what a file is, not where.
+    group: Option<usize>,
 }
 
 #[derive(Default)]
@@ -99,6 +102,12 @@ pub struct BoardView {
     columns_of: Option<(ColumnsOf, Vec<Column>, Vec<EntryId>, Against)>,
     /// The files' scale when last drawn, for a page of cards.
     scale: crate::sizes::Scale,
+    /// Grouped, the groups' columns and the order and groups they were
+    /// made of (ADR-131, 3).
+    groups_of: Option<(Arc<[EntryId]>, (usize, usize), Vec<Column>)>,
+    /// The listing whose folders opened in place a grouped board closed:
+    /// once, the folders' files being no group's.
+    closed_for: Option<u64>,
 }
 
 type ColumnsOf = (u64, u64, u64, skwir_core::SortSpec, u64, u64);
@@ -151,6 +160,43 @@ impl BoardView {
             scroll.scroll_to_item(card, strategy);
         }
         self.row.scroll_to_item(k);
+    }
+
+    /// Grouped, a column a group (ADR-131, 3), in the groups' order, its
+    /// cards its entries in the sort's; a folded group's empty, its count
+    /// said. Made again only when the order or its groups change.
+    fn group_columns(&mut self, shell: &Shell) -> Vec<Column> {
+        let list = &shell.ui().list;
+        let key = list.rows.key();
+        if let Some((order, at, columns)) = &self.groups_of
+            && Arc::ptr_eq(order, &list.sorted)
+            && *at == key
+        {
+            return columns.clone();
+        }
+        let columns: Vec<Column> = list
+            .rows
+            .spans()
+            .iter()
+            .map(|span| {
+                let title = crate::views::groups::label(span).to_string();
+                Column {
+                    at: None,
+                    location: Location::new("board-group", title.clone()),
+                    title,
+                    path: None,
+                    color: None,
+                    shown: Arc::from([]),
+                    ids: list
+                        .sorted
+                        .get(span.start..span.start + span.len)
+                        .map_or_else(|| Arc::from([]), Arc::from),
+                    group: Some(span.count),
+                }
+            })
+            .collect();
+        self.groups_of = Some((Arc::clone(&list.sorted), key, columns.clone()));
+        columns
     }
 
     /// The columns of the place `shell` shows, and those not open yet;
@@ -232,6 +278,7 @@ impl BoardView {
                 color,
                 shown,
                 ids,
+                group: None,
             });
         }
         // Those shown before and gone since (their last card dragged
@@ -254,6 +301,7 @@ impl BoardView {
                         color: *color,
                         shown: Arc::from([]),
                         ids: Arc::from([]),
+                        group: None,
                     },
                 );
             }
@@ -269,6 +317,7 @@ impl BoardView {
                     color: None,
                     shown: Arc::from([]),
                     ids: loose.into(),
+                    group: None,
                 },
             );
         }
@@ -333,7 +382,7 @@ fn column(
     )
     .track_scroll(&scroll)
     .size_full();
-    let count = c.ids.len();
+    let count = c.group.unwrap_or(c.ids.len());
     let tone = c.color.map(|color| theme.tag(color));
     let header = div()
         .flex_none()
@@ -382,9 +431,10 @@ fn column(
     // A card from another column moves here (`drop_on_place` tells the
     // column it leaves), files from elsewhere come in as they come in a
     // folder or a tag.
-    col = match c.path {
-        Some(dir) => dnd::droppable_dir(col, dir, cx),
-        None => dnd::droppable_place(col, c.location, cx),
+    col = match (c.group, c.path) {
+        (Some(_), _) => col,
+        (None, Some(dir)) => dnd::droppable_dir(col, dir, cx),
+        (None, None) => dnd::droppable_place(col, c.location, cx),
     };
     col.into_any_element()
 }
@@ -559,7 +609,34 @@ impl PaneView for BoardView {
     fn render(&mut self, shell: &mut Shell, _: &mut Window, cx: &mut Context<Shell>) -> AnyElement {
         let theme = cx.global::<Theme>().clone();
         self.scale = crate::views::list::files_scale(&theme);
-        let (columns, missing, against) = self.columns(shell);
+        let grouped = shell.ui().list.rows.grouped();
+        let (columns, missing, against) = if grouped {
+            // The folders this board opened in place are closed, once: their
+            // files would be in their folder's group.
+            let pane = shell.pane;
+            let listing = shell
+                .app
+                .workspace
+                .read()
+                .pane(pane)
+                .and_then(|p| (!p.expanded().is_empty()).then(|| p.listing.id()));
+            if let Some(listing) = listing
+                && self.closed_for != Some(listing)
+            {
+                self.closed_for = Some(listing);
+                self.asked = None;
+                if let Err(error) = shell.app.dispatch(&Invocation::with_args(
+                    "expand",
+                    &serde_json::json!({ "mode": "collapse_all", "pane": pane }),
+                )) {
+                    tracing::debug!("board: {error:#}");
+                }
+            }
+            (self.group_columns(shell), Vec::new(), (0, 0))
+        } else {
+            self.closed_for = None;
+            self.columns(shell)
+        };
         // Each column is opened in place once while it stays open: its
         // cards are the pane's.
         if !missing.is_empty() && self.asked.as_ref() != Some(&(against, missing.clone())) {

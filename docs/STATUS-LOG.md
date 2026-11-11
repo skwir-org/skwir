@@ -15109,3 +15109,114 @@ their tests included (and the media helper's script), and for
 `aarch64-apple-darwin` over it but the shell and the binary, which
 `check-macos` leaves out: both passed. Never run on either system; the
 shell's code for groups is the same gpui code on every system.
+
+## 2026-11-11: Headings the keys reach, groups folded, a Board by group and criteria read on demand (ADR-131)
+
+ADR-130's phase 5, on the user's answers to four questions: headings as
+key stops, a chevron on the heading, a column per group, and Taken, a
+picture's size in pixels and a length as criteria. ADR-131 records them.
+
+- **A heading is a key stop** (`list::HeadingStop`, the window's state,
+  never the core's): Up from a group's first entry and Down from the
+  group before's last stop on its heading, drawn with the cursor's ring
+  (`groups::ring`), the cursor's entry then neither ringed nor the
+  reader's focus (`Look::cursor`). On it Enter and Space run
+  `ui.select_group`, Left and Right `group_fold`, the Menu key and
+  Shift+F10 open its menu (`Shell::heading_command`, asked before the
+  keymap's command in the pane's capture). The stop finds its group again
+  by place and by itself as the order changes, and lets go once the
+  core's cursor moves any other way (each sync compares it); a command run
+  from it keeps it. The grid stops on headings the same way
+  (`Slots::above`, `below`).
+- **Folding** (`group_fold`, Topic::View, forms toggle, fold the others,
+  unfold all; `Pane::fold_groups`, `FoldMode`): a folded group's entries
+  leave the order (`Pane::is_shown`, applied with a closed folder's: the
+  keys, Select All, ranges and commands pass them over, and what was
+  selected of them is let go); its span has `len` 0 and keeps its count,
+  which `RowMap` and the grid's lines take as a heading with no rows.
+  Folds are keyed by the group's rank and key (`FoldKey`), kept in either
+  direction of one criterion, forgotten for another (`Pane::set_keys`).
+  A chevron at each heading's start; the menu has Fold or Unfold, Fold
+  the others, Unfold all (while one is folded), Select these (not while
+  folded).
+- **The Board grouped** (`BoardView::group_columns`): a column per group
+  in their order, its cards the group's entries in the sort's, made again
+  only when the order or its spans change; a folded group's column empty
+  with its count; no column takes a card; the folders it had opened in
+  place closed once.
+- **Criteria read on demand**: `SortKey::Taken`, `Dimensions` and
+  `Duration` (`SortKey::ALL` is 16), each with a field (`SortKey::field`;
+  `keys::DIMENSIONS`, a list of width and height; `keys::DURATION`, in
+  milliseconds), offered while a provider reads it (`Fields::knows`). The
+  query plugin's `groups::Facts` reads them (`skwir_platform::facts`): a
+  picture's header by `imagesize` 0.15 (already in the lock, through the
+  print helper) on `file::open_regular`; an MP4's or a QuickTime's movie
+  header (`mp4::duration`, `mvhd` versions 0 and 1), else ffprobe's
+  `format=duration`, sandboxed (`sandbox::untrusted`), given 10 s. Taken
+  stays the geo plugin's. Sorted or grouped by one, the pump asks
+  (`Pane::fields_to_read`: once the listing is whole, again when its
+  names, a file or the providers change; a folder never) and reads on
+  workers, a job for every 64 files, each in its lane
+  (`fs::reach::by_lane`): this machine's at once on the pool, a remote's
+  two at a time. A new ask, or a sort that reads nothing, cancels the
+  reading before (what it read whole is kept by `App::fields`, so
+  nothing is read twice). The answers come back at the next pump
+  (`Listing::set_fields`, as `Updated`, placed as a hydration is), none
+  as `Bool(false)`; what was read stays while size and modified do
+  (`keys::READ_ON_DEMAND`). Taken groups as Modified does, its day the
+  clock's own (`calendar::civil_day`); Dimensions by megapixels (under 1,
+  1 to 4, 4 to 12, 12 to 24, over 24), Duration by lengths (under a
+  minute, to 5 and 20 minutes, to an hour, over); No date, No
+  dimensions, No duration for none. None has a term (a filter reads no
+  file). Cost: an ask walks the listing once a change (n), an answer is
+  found by id (`Listing::entries`), and placed by search.
+
+**Checked:** rustfmt per file; clippy `-D warnings` on `skwir-core`,
+`skwir-platform`, `skwir-plugin-query`, `skwir-ui` and `skwir`, all
+targets; `skwir-core`, `skwir-platform`, `skwir-plugin-query` and
+`skwir-ui` 1 994 passed (new among them: a folded group a heading
+between rows in the row map and alone in the grid's lines, a duration
+from an MP4's movie header of either version, a picture's size from its
+header, a length ffprobe says read in milliseconds), and the binary's
+`grouping` 5 (new: a folded group out of the order, of Select All and of
+what is selected, the others folded, all unfolded, folds kept for the
+same criterion and forgotten for another; pictures sorted and grouped by
+their size read on demand, through the real plugin). Then the reading
+was made a job a batch in each file's lane, and a new ask made to cancel
+the one before: clippy on `skwir-core`, `skwir-platform` and
+`skwir-plugin-query`, `skwir-core`'s 748 tests (new: an ask anew gives
+up the reading before, and so does a sort reading nothing), and the
+binary's `grouping` and `plugins_toggle` 11 (every plugin, the query
+plugin's new field provider with it, disables without a trace) passed.
+In a window on Xvfb (synthetic folders), grouped by Dimensions: Up from
+a folder stopped on Folders' heading in the ring, the selection kept;
+Enter selected its 2; the Menu key opened its menu (Select these, Fold,
+Fold the others, Unfold all while one was folded; no Show only these);
+Left folded it and Right opened it, its count kept; the chevron folded
+No dimensions; Fold the others and Unfold all did so. In the grid: Down
+from the heading to its first tile, Up from the first heading staying,
+Down from a group's last tile to the next heading, Left folding there.
+The Board grouped: a column "Folders 2" and one "No dimensions 71"; a
+card dragged into the other column lit no target and moved nothing on
+disk. Six PNGs from 64 × 64 to 6000 × 1000 and a text, grouped by
+Dimensions largest first: 4 to 12 MP, 1 to 4 MP, Under 1 MP, No
+dimensions; sorted by them, 6000 × 1000 before 3000 × 2000 (one area,
+the wider first). Clips made by ffmpeg (an MKV of 400 s, an MP4 of 90 s,
+an MP3 of 45 s, an Ogg of 3 s, a text), sorted and grouped by Duration:
+5 to 20 minutes (the MKV, by ffprobe), 1 to 5 minutes (the MP4, by its
+movie header), Under 1 minute (the two sounds, by ffprobe), No duration.
+Three JPEGs with an EXIF DateTimeOriginal (today, 6 days before, 2025)
+grouped by Taken: Today, Last week, 2025, No date; two MP4s with
+ffmpeg's `creation_time` stayed in No date, the geo plugin reading a
+film's Apple key alone, as before. `just a11y-check --skwir
+target/debug/skwir` passed, its grouped part now stopping on a heading
+(heard focused, not selected), Left taking its entry out of the list
+(heading and count kept), Right bringing it back. `just check-cross`
+passed on the final code, for Windows (the workspace, the shell
+included) and macOS (but for the shell and the binary).
+
+**Not done here:** never run on Windows or macOS. A reader on Linux does
+not hear a heading's expanded state (AccessKit's AT-SPI adapter 0.19
+passes it for no element). Folds are not kept across a restart (by
+decision). Not measured: reading a large folder's fields (one job per 64
+files, at Normal priority, after what is drawn).
