@@ -671,7 +671,9 @@ A text document is read as its structure, or laid out as pages.
   selection and copy need no special case. `inspector_text::part` draws
   each range as a column, clipping runs, links and selection to it and
   reporting pointer offsets in the block's coordinates. `split_blocks`
-  splits only running text: a row's ranges would not survive it.
+  splits only running text: a row's ranges would not survive it. It cuts
+  at a line's end, else after a space, never in a word, and its rest goes
+  on the piece before it (`Flow::Rest`).
 - **A table's columns are its content's**, worked out once on the worker
   that builds the display (`inspector_rows::Tables`, one per run of rows),
   never measured while drawing: each column needs at least its longest
@@ -729,6 +731,18 @@ A text document is read as its structure, or laid out as pages.
   lose the border. It lies inside the page's padding: a quotation's bar
   stands at the text's left edge, its words indented past it, never in
   the margin.
+- **A block that flows is set apart as a paragraph is**, the block
+  spacing above and below it, but where it goes on the block before it
+  (`markdown::Edges`, read from the blocks beside it, never measured): a
+  table's row on the row before (its column lines unbroken), the rest of
+  a line cut for its length on its block (`Flow::Rest`), and in reading
+  mode an item of a tight list on the item before. What a block is in
+  the flow is the reader's to say (`Block::flow`): a paragraph's first
+  block begins it (`Flow::Paragraph`: Markdown's paragraph, HTML's `p`), a
+  picture or a formula first included; an item that does is one of a
+  loose list. In reading mode the space at the edge of a list or a
+  quotation (entering or leaving one; a nested list is its list's) is
+  outside the quotation's bar, the space between its paragraphs inside.
 - Reading mode caps the column at `MarkdownStyle::measure`, centres it
   and keeps `page_padding` to the pane's edge, all in layout, never from
   a measured width. The column is for text only.

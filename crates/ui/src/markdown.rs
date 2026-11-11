@@ -16,7 +16,7 @@ use gpui::{
     AnyElement, FontWeight, Hsla, RenderImage, SharedString, WeakEntity, div, prelude::*, px,
 };
 use skwir_core::{
-    inspection::{Align, Block, BlockKind},
+    inspection::{Align, Block, BlockKind, Flow},
     workspace::PaneId,
 };
 use std::sync::Arc;
@@ -230,9 +230,76 @@ impl<'a> Shown<'a> {
     }
 }
 
+/// How a block that flows (a paragraph, an item, a picture, a table's row;
+/// not a heading, code or a rule, which keep their own spacing) is set
+/// apart from the blocks beside it, read from those blocks alone: by the
+/// block spacing above and below, as a paragraph is, but where it goes on
+/// the block before it. The rest of a line cut for its length
+/// (`Flow::Rest`) goes on its block, a table's row on the row before it,
+/// and in reading mode an item of a tight list (one that begins no
+/// paragraph) on the item before it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Edges {
+    pub above: Space,
+    pub below: Space,
+}
+
+/// The space on one side of a block (`Edges`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Space {
+    /// None: it goes on the block beside it.
+    None,
+    /// The block spacing, inside a quotation's bar.
+    #[default]
+    Inside,
+    /// The block spacing, outside a quotation's bar: in reading mode, at
+    /// the edge of a list or a quotation (entering or leaving one; a list
+    /// nested in a list is its list's).
+    Outside,
+}
+
+impl Edges {
+    /// `block`'s, between `before` and `after`.
+    pub fn of(before: Option<&Block>, block: &Block, after: Option<&Block>, reading: bool) -> Self {
+        let apart = |one: &Block, next: &Block| {
+            one.quote != next.quote || (one.list_depth == 0) != (next.list_depth == 0)
+        };
+        let row = |block: &Block| matches!(block.kind, BlockKind::TableRow { .. });
+        let goes_on = |one: &Block, next: &Block| {
+            next.flow == Flow::Rest
+                || !apart(one, next)
+                    && ((row(one) && row(next))
+                        || (reading
+                            && one.list_depth > 0
+                            && next.marker.is_some()
+                            && next.flow != Flow::Paragraph))
+        };
+        let grouped = reading && (block.list_depth > 0 || block.quote);
+        let side = |beside: Option<&Block>,
+                    goes: &dyn Fn(&Block) -> bool,
+                    edge: &dyn Fn(&Block) -> bool| {
+            match beside {
+                Some(beside) if goes(beside) => Space::None,
+                Some(beside) if !(grouped && edge(beside)) => Space::Inside,
+                None if !grouped => Space::Inside,
+                _ => Space::Outside,
+            }
+        };
+        Self {
+            above: side(before, &|before| goes_on(before, block), &|before| {
+                apart(before, block)
+            }),
+            below: side(after, &|after| goes_on(block, after), &|after| {
+                apart(block, after)
+            }),
+        }
+    }
+}
+
 pub fn block(
     block: &Block,
     index: usize,
+    edges: Edges,
     picture: Option<Shown<'_>>,
     selection: Option<inspector_text::Selection>,
     style: &MarkdownStyle,
@@ -241,10 +308,19 @@ pub fn block(
     entity: WeakEntity<crate::shell::Shell>,
 ) -> AnyElement {
     let id = ("inspect-block", index);
+    // A block that flows is set apart as a paragraph is, but where it goes
+    // on the block before it (`Edges`); in reading mode the space at the
+    // edge of a list or a quotation is outside the quotation's bar.
+    let flows = block.kind != BlockKind::Rule && block.heading == 0 && !block.code;
+    let space = px(style.block_spacing);
+    let outside = |side: Space| flows && side == Space::Outside;
+    let inside = |side: Space| side == Space::Inside;
     let row = div()
         .id(id)
         .w_full()
         .px(px(style.page_padding))
+        .when(outside(edges.above), |row| row.pt(space))
+        .when(outside(edges.below), |row| row.pb(space))
         .when_some(style.font.clone(), gpui::Styled::font_family);
     // Inside the page's margins: the block's spacing, and a quotation's bar
     // at the text's left edge, running through that spacing to the next
@@ -256,11 +332,10 @@ pub fn block(
         frame.pt(px(style.heading_top)).pb(px(style.heading_bottom))
     } else if block.code {
         frame.py(px(style.section_spacing))
-    } else if style.reading && (block.list_depth > 0 || block.quote) {
-        // Reading mode keeps the lines of a list or a quotation together.
-        frame
     } else {
-        frame.py(px(style.block_spacing))
+        frame
+            .when(inside(edges.above), |frame| frame.pt(space))
+            .when(inside(edges.below), |frame| frame.pb(space))
     };
     if block.quote {
         frame = frame.border_l_2().border_color(style.quote_border).pl_4();
@@ -555,6 +630,129 @@ fn code_box(
 #[cfg(test)]
 mod reading_width_tests {
     use super::*;
+
+    use Space::{Inside, None as Flush, Outside};
+
+    /// Each block's space above and below, between the blocks beside it.
+    fn spaced(blocks: &[Block], reading: bool) -> Vec<(Space, Space)> {
+        (0..blocks.len())
+            .map(|i| {
+                let edges = Edges::of(
+                    i.checked_sub(1).map(|before| &blocks[before]),
+                    &blocks[i],
+                    blocks.get(i + 1),
+                    reading,
+                );
+                (edges.above, edges.below)
+            })
+            .collect()
+    }
+
+    fn item(depth: u32, flow: Flow) -> Block {
+        Block {
+            list_depth: depth,
+            marker: Some("•".into()),
+            flow,
+            ..Block::default()
+        }
+    }
+
+    fn paragraph() -> Block {
+        Block {
+            flow: Flow::Paragraph,
+            ..Block::default()
+        }
+    }
+
+    #[test]
+    fn a_tight_list_keeps_together_and_is_set_apart_as_a_whole() {
+        let quoted = Block {
+            quote: true,
+            ..paragraph()
+        };
+        let blocks = [
+            paragraph(),
+            item(1, Flow::Next),
+            item(2, Flow::Next),
+            item(1, Flow::Next),
+            quoted.clone(),
+            quoted,
+            item(1, Flow::Next),
+            paragraph(),
+        ];
+        assert_eq!(
+            spaced(&blocks, true),
+            [
+                (Inside, Inside),
+                (Outside, Flush),
+                (Flush, Flush),
+                (Flush, Outside),
+                (Outside, Inside),
+                (Inside, Outside),
+                (Outside, Outside),
+                (Inside, Inside),
+            ],
+            "a tight list's items together, a nested list its list's; a quotation's \
+             paragraphs apart inside its bar, the quotation apart outside it"
+        );
+    }
+
+    #[test]
+    fn a_loose_list_s_items_a_half_a_table_s_rows_and_a_cut_line_are_spaced_as_written() {
+        let half = Block {
+            list_depth: 1,
+            ..Block::default()
+        };
+        let row = |header| Block {
+            kind: BlockKind::TableRow {
+                cells: vec![0..0, 0..0],
+                header,
+            },
+            ..Block::default()
+        };
+        let rest = Block {
+            flow: Flow::Rest,
+            ..Block::default()
+        };
+        let blocks = [
+            item(1, Flow::Paragraph),
+            item(1, Flow::Paragraph),
+            half,
+            item(1, Flow::Next),
+            row(true),
+            row(false),
+            row(false),
+            paragraph(),
+            rest,
+        ];
+        assert_eq!(
+            spaced(&blocks, true),
+            [
+                (Outside, Inside),
+                (Inside, Inside),
+                (Inside, Flush),
+                (Flush, Outside),
+                (Inside, Flush),
+                (Flush, Flush),
+                (Flush, Inside),
+                (Inside, Flush),
+                (Flush, Inside),
+            ],
+            "a loose list's items apart, a tight item after a half on it; a table's \
+             rows flush; a cut line's rest on its block"
+        );
+        // Compact, a list's items are spaced too, a table's rows flush.
+        assert_eq!(
+            spaced(&blocks, false)[2..7],
+            [
+                (Inside, Inside),
+                (Inside, Inside),
+                (Inside, Flush),
+                (Flush, Flush),
+                (Flush, Inside),
+            ]
+        );
+    }
 
     #[test]
     fn the_reading_column_follows_the_preference_and_the_text_size() {

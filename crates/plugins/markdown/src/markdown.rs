@@ -13,7 +13,7 @@ use pulldown_cmark::{
 };
 use skwir_core::{
     CancelToken,
-    inspection::{Align, Block, BlockKind, Picture, Run},
+    inspection::{Align, Block, BlockKind, Flow, Picture, Run},
 };
 use skwir_platform::{
     inspection::{check, limits, limits::Bounds},
@@ -167,7 +167,12 @@ fn push(current: &mut Block, text: &str, inline: &Inline) {
 /// item's later paragraphs must not repeat the bullet.
 fn flush(blocks: &mut Vec<Block>, current: &mut Block, marker: &mut Option<String>) {
     if current.text.is_empty() && current.picture.is_none() && current.kind == BlockKind::Text {
-        *current = Block::default();
+        // A paragraph begun is the next block's to begin: one that opens
+        // with a picture or a formula set apart flushes nothing first.
+        *current = Block {
+            flow: current.flow,
+            ..Block::default()
+        };
         return;
     }
     if current.marker.is_some() {
@@ -181,12 +186,14 @@ fn flush(blocks: &mut Vec<Block>, current: &mut Block, marker: &mut Option<Strin
 }
 
 /// Start a block in the ambient context: inside the open quotes, the open
-/// lists, and carrying the list marker that no block has taken yet.
+/// lists, carrying the list marker that no block has taken yet, and
+/// beginning the paragraph no block has begun yet (`Flow::Paragraph`).
 fn begin(current: &mut Block, quote_depth: u32, lists: &[Option<u64>], marker: Option<&str>) {
     *current = Block {
         quote: quote_depth > 0,
         list_depth: lists.len() as u32,
         marker: marker.map(str::to_owned),
+        flow: current.flow,
         ..Block::default()
     };
 }
@@ -641,9 +648,11 @@ fn read(
             Event::Start(Tag::Paragraph) => {
                 flush(blocks, &mut current, &mut marker);
                 begin(&mut current, quote_depth, &lists, marker.as_deref());
+                current.flow = Flow::Paragraph;
             }
             Event::End(TagEnd::Paragraph) => {
                 flush(blocks, &mut current, &mut marker);
+                current.flow = Flow::Next;
             }
             Event::End(TagEnd::Heading(_)) => {
                 if current.anchors.is_empty() {
@@ -915,6 +924,53 @@ mod tests {
 
     /// A paragraph with a formula drawn and one that cannot be, one set
     /// apart, and a row of a table holding both kinds.
+    /// A paragraph's first block begins it, a picture first included; a
+    /// tight list's items and the half after a picture do not.
+    #[test]
+    fn a_block_says_whether_it_begins_a_paragraph() {
+        let source = "> One.\n>\n> Two.\n\n- tight\n- items\n\nBetween.\n\n\
+                      * loose\n\n* items\n\n![a picture](missing.png) and after it.\n";
+        let blocks = super::parse(
+            source,
+            Bounds::QUICK,
+            &CancelToken::new(),
+            |_| {
+                Some(Picture::Ready(skwir_core::thumbs::Image {
+                    width: 1,
+                    height: 1,
+                    rgba: vec![0; 4].into(),
+                }))
+            },
+            None,
+        )
+        .unwrap()
+        .blocks;
+        let begun: Vec<(&str, bool, bool)> = blocks
+            .iter()
+            .map(|block| {
+                (
+                    block.text.as_str(),
+                    block.picture.is_some(),
+                    block.flow == Flow::Paragraph,
+                )
+            })
+            .collect();
+        assert_eq!(
+            begun,
+            [
+                ("One.", false, true),
+                ("Two.", false, true),
+                ("tight", false, false),
+                ("items", false, false),
+                ("Between.", false, true),
+                ("loose", false, true),
+                ("items", false, true),
+                ("", true, true),
+                ("and after it.", false, false),
+            ]
+        );
+    }
+
     /// GitHub's fenced `math` is a formula set apart in Markdown, as `$$`
     /// is; in a notebook's cell it is code, as JupyterLab shows it.
     #[test]

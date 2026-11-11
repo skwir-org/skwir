@@ -25,7 +25,7 @@ use ego_tree::{NodeId, NodeRef, iter::Edge};
 use scraper::{ElementRef, Html, Node, node::Element};
 use skwir_core::{
     CancelToken,
-    inspection::{Align, Block, BlockKind, Picture, Run, Script},
+    inspection::{Align, Block, BlockKind, Flow, Picture, Run, Script},
     thumbs::Image,
 };
 use std::{
@@ -321,6 +321,8 @@ struct Context {
     pre: bool,
     code: bool,
     quote: bool,
+    /// The nearest block is a `p`: its first block begins a paragraph.
+    paragraph: bool,
     lists: u32,
     /// How the nearest list numbers its items (`None`: bullets), and
     /// where it starts.
@@ -357,6 +359,7 @@ impl Default for Context {
             pre: false,
             code: false,
             quote: false,
+            paragraph: false,
             lists: 0,
             list: None,
             item: None,
@@ -383,6 +386,7 @@ impl Context {
         if style.display == Display::Block {
             context.block = Some(node.id());
             context.block_style = style;
+            context.paragraph = name == "p";
             // Quotes, lists and tables have a shape of their own; a page's
             // margins on them would indent them twice. The page's own
             // margins around everything are not the text's.
@@ -523,6 +527,13 @@ impl Walk {
             self.group = context.block;
             self.row = (context.row.is_some() && context.row == context.block).then_some(true);
             self.cells = 0;
+            // The first block of a `p`; the half after a picture in it goes
+            // on in the same group.
+            self.current.flow = if context.paragraph {
+                Flow::Paragraph
+            } else {
+                Flow::Next
+            };
         }
         if !self.filled() {
             self.current.anchors.append(&mut self.pending);
@@ -1401,6 +1412,30 @@ mod tests {
         assert_eq!(
             (all.blocks.len(), all.truncated),
             (limits::BLOCKS + 5, false)
+        );
+    }
+
+    /// A `p` begins a paragraph; an item's own words do not.
+    #[test]
+    fn a_block_says_whether_it_begins_a_paragraph() {
+        let blocks = read(
+            "<blockquote><p>One.</p><p>Two.</p></blockquote>\
+             <ul><li>tight</li><li>items</li></ul><ul><li><p>loose</p></li></ul>",
+            Markup::Html,
+        );
+        let begun: Vec<(&str, bool)> = blocks
+            .iter()
+            .map(|block| (block.text.as_str(), block.flow == Flow::Paragraph))
+            .collect();
+        assert_eq!(
+            begun,
+            [
+                ("One.", true),
+                ("Two.", true),
+                ("tight", false),
+                ("items", false),
+                ("loose", true)
+            ]
         );
     }
 

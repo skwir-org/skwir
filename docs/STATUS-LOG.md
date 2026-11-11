@@ -14676,3 +14676,54 @@ the notebook.
 above or below them as a whole in reading mode (each keeps its lines
 together), so a quotation after a list sits right under it.
 
+## 2026-11-11: Blocks set apart as paragraphs, but where one goes on the last
+
+Seen with the samples: in reading mode a list's and a quotation's blocks
+had no spacing at all, to keep a list's lines together. So nothing set the
+whole apart (a paragraph or a table stood 8 px from a list or a
+quotation, 16 between two paragraphs, a quotation after a list 0), and a
+quotation's paragraphs ran together. A table's rows were each spaced
+apart, in both profiles, so the lines between its columns broke between
+rows.
+
+- `Block::flow` (`inspection::Flow`): how a block follows the one before
+  it. The readers say where a paragraph begins (`Flow::Paragraph`:
+  Markdown's `Paragraph`, its first block, a picture or a formula first
+  included, kept through the empty flush they cause; HTML's `p`); the
+  half of a paragraph after what cut it, and a tight list's item, come
+  `Next`; `split_blocks` makes the rest of a line too long for one block
+  `Flow::Rest`.
+- `markdown::Edges`, from the blocks beside each (by index in the
+  inspector's list): a block that flows has the block spacing above and
+  below, as a paragraph, but none where it goes on the block before it: a
+  table's row on the row before, a cut line's rest on its block, and in
+  reading mode a tight list's item on the item before (one with a marker
+  that begins no paragraph). At the edge of a list or a quotation in
+  reading mode the space is on the row, outside the quotation's bar
+  (`Space::Outside`); between a quotation's paragraphs it is inside, the
+  bar running through it.
+- So every list, quotation and table stands 16 px from what is beside it,
+  as two paragraphs do; a tight list keeps together, a loose list's items
+  and a quotation's paragraphs are 16 px apart, and a table's rows meet.
+
+- A line too long for one block (4096 bytes) was cut at its 4096th byte,
+  in a word ("br", then "eak" on the next line): `split_blocks` cuts at a
+  line's end where one ends in it, else after a space.
+
+**Checked:** rustfmt; clippy `-D warnings` on the workspace; `skwir-core`'s,
+`-platform`'s, `-ui`'s, `skwir`'s and the Markdown, books, email and
+documents plugins' tests (2179 passed; new: where each reader says a
+paragraph begins, a picture first and a tight list's items included; the
+space on each side of a tight list, a nested one, a quotation's
+paragraphs, a loose list, a half, a table's rows and a cut line's rest, in
+both profiles; a long line cut between words, its rest going on). A debug
+window on Xvfb: a fixture with a tight and a loose list, a quotation of
+two paragraphs and a formula set apart, a table and a paragraph of 5 KB:
+every group 16 px from what is beside it, the quotation's paragraphs
+16 px apart inside its bar, the table's column line unbroken, the long
+paragraph's cut between two words with no space; the math sample's list,
+quotation and table.
+
+**Seen, left as it was:** the line before a long paragraph's cut ends
+short: the rest is a block of its own, set from a new line.
+

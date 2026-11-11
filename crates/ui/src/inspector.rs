@@ -3837,9 +3837,16 @@ pub fn content(
                 }
                 _ => None,
             };
+            let edges = crate::markdown::Edges::of(
+                i.checked_sub(1).and_then(|before| data.blocks.get(before)),
+                block,
+                data.blocks.get(i + 1),
+                list_style.reading,
+            );
             return crate::markdown::block(
                 block,
                 i,
+                edges,
                 picture,
                 selection,
                 &list_style,

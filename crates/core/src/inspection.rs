@@ -346,6 +346,24 @@ pub enum Align {
     Center,
     End,
 }
+/// How a block follows the one before it as its text runs: what sets it
+/// apart from it, or keeps it on it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Flow {
+    /// It comes next, as the document's blocks do: the words of an item of
+    /// a tight list, the half of a paragraph after what cut it (a picture,
+    /// a formula set apart).
+    #[default]
+    Next,
+    /// It begins a paragraph, as the document wrote one (Markdown's, HTML's
+    /// `p`). An item that does is one of a loose list, set apart from the
+    /// item before it in reading mode.
+    Paragraph,
+    /// The rest of the block before it, cut from a line too long for one
+    /// (`split_blocks`): it goes on that block, nothing between them.
+    Rest,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Block {
     /// The names a link can reach this block by (`#name`): a heading's slug,
@@ -361,6 +379,8 @@ pub struct Block {
     pub quote: bool,
     /// List nesting level: 0 outside a list, 1 for a top-level item.
     pub list_depth: u32,
+    /// How it follows the block before it as the text runs (`Flow`).
+    pub flow: Flow,
     /// The bullet or number that introduces a list item, drawn beside it.
     pub marker: Option<String>,
     /// Where the lines sit, as the document's own styling says.
@@ -696,11 +716,16 @@ pub fn split_blocks(blocks: Vec<Block>) -> Vec<Block> {
             while !block.text.is_char_boundary(end) {
                 end -= 1;
             }
+            // At a line's end where one ends in it, else after a space: a
+            // word is never cut in two. The rest goes on this piece
+            // (`Flow::Rest`), on a line of its own.
             if end < block.text.len()
-                && let Some(newline) = block.text[start..end].rfind('\n')
-                && newline > 0
+                && let Some(cut) = block.text[start..end]
+                    .rfind('\n')
+                    .filter(|&newline| newline > 0)
+                    .or_else(|| block.text[start..end].rfind(' ').filter(|&space| space > 0))
             {
-                end = start + newline + 1;
+                end = start + cut + 1;
             }
             let runs = block
                 .runs
@@ -739,6 +764,7 @@ pub fn split_blocks(blocks: Vec<Block>) -> Vec<Block> {
                 } else {
                     None
                 },
+                flow: if start == 0 { block.flow } else { Flow::Rest },
                 align: block.align,
                 indent: block.indent,
                 size: block.size,
@@ -825,6 +851,37 @@ mod tests {
             blocks
                 .iter()
                 .all(|b| b.text.len() <= LINE_BYTES && b.runs[0].range.end == b.text.len())
+        );
+    }
+
+    /// A line too long for one block is cut after a space, never in a word,
+    /// and its rest goes on the piece before it.
+    #[test]
+    fn a_long_line_is_cut_between_words_and_goes_on() {
+        let text = "word ".repeat(LINE_BYTES / 5 + 100);
+        let blocks = split_blocks(vec![Block {
+            flow: Flow::Paragraph,
+            runs: vec![Run {
+                range: 0..text.len(),
+                ..Run::default()
+            }],
+            text: text.clone(),
+            ..Block::default()
+        }]);
+        assert_eq!(blocks.len(), 2);
+        assert!(
+            blocks[0].text.ends_with("word "),
+            "{:?}",
+            &blocks[0].text[4080..]
+        );
+        assert!(blocks[1].text.starts_with("word"));
+        assert_eq!(
+            blocks.iter().map(|b| b.text.as_str()).collect::<String>(),
+            text
+        );
+        assert_eq!(
+            blocks.iter().map(|b| b.flow).collect::<Vec<_>>(),
+            [Flow::Paragraph, Flow::Rest]
         );
     }
 
