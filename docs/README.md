@@ -33,4 +33,7 @@
   [video playback](video-playback.md),
   [indexing and AI](indexing-and-ai.md) (a design, not built: the
   harvest, the extract provider, trigrams, vectors, model providers,
-  suggestions and organizing).
+  suggestions and organizing),
+  [internationalisation](i18n.md) (research, nothing decided: messages
+  as data, Fluent against gettext and the rest, ICU4X, right-to-left
+  limits, translators).
