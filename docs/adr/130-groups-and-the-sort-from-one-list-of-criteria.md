@@ -127,7 +127,9 @@ keys asked on every core.
     "Kind, Z to A", "None"; their fly-out holds the direction on its
     first row, then the criteria. Group by's direction is always there,
     greyed while not grouped by a criterion of its own, so a choice moves
-    no row under the pointer.)
+    no row under the pointer. And, the user's go: Folders first stands
+    under them, with the order it changes, no longer with what is shown;
+    what is listed and what is drawn with it apart by a line.)
 11. **Per pane, as the sort**: not saved across restarts. A place that
     remembers its own (Downloads by date) is for an ADR of its own.
     (Amended 2026-11-12, the user: the sort and the groups are saved

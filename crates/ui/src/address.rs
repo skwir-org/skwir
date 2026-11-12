@@ -440,9 +440,11 @@ pub(crate) fn view_submenu(shell: &Shell, name: &str) -> Vec<toolbar::FlyRow> {
 /// The View menu: how the active pane shows its folder, never how the
 /// window is arranged (that is More's). Every view as a tile, the lenses
 /// the pane row leaves out included (a narrow pane row has only the button
-/// that opens this menu); the sort and the groups, each one row saying
-/// how they are, their direction and criteria beside it (`view_submenu`);
-/// what is shown; the size, on one row.
+/// that opens this menu); the order: the sort and the groups, each one
+/// row saying how they are, their direction and criteria beside it
+/// (`view_submenu`), and Folders first; what is listed (hidden files, what
+/// the location switches); what is drawn with it (the bars above and
+/// under the files, what the view itself offers); the size, on one row.
 fn view_options(shell: &Shell) -> Vec<MenuPart> {
     use skwir_core::grouping::GroupBy;
     let views: Vec<Button> = shell
@@ -484,31 +486,31 @@ fn view_options(shell: &Shell) -> Vec<MenuPart> {
             Some(value.into()),
         ));
     }
-    // Folders before files, or sorted with them: the setting itself, in
-    // every pane, so the row never disagrees with Settings. Below the keys,
-    // as a check among their checks would read as another key.
-    let mut show = vec![
-        menu_item(
-            Button::new(
-                "menu-folders-first",
-                "",
-                "List folders before files; off, sort them together",
-                "settings.apply",
-            )
-            .args(serde_json::json!({
-                "changes": {
-                    skwir_core::location::FOLDERS_FIRST: (!spec.folders_first).to_string()
-                }
-            }))
-            .active(spec.folders_first),
-            "Folders first",
-        ),
-        menu_item(
-            Button::new("menu-hidden", "", "Show hidden files", "toggle_hidden")
-                .active(spec.show_hidden),
-            "Hidden files",
-        ),
-    ];
+    // Folders before files, or sorted with them, within each group: the
+    // order's too, under the sort and the groups (their criteria are in
+    // their submenus, so a check here reads as none of them). The setting
+    // itself, in every pane, so the row never disagrees with Settings.
+    order.push(MenuPart::Row(menu_item(
+        Button::new(
+            "menu-folders-first",
+            "",
+            "List folders before files, in every pane; off, sort them together",
+            "settings.apply",
+        )
+        .args(serde_json::json!({
+            "changes": {
+                skwir_core::location::FOLDERS_FIRST: (!spec.folders_first).to_string()
+            }
+        }))
+        .active(spec.folders_first),
+        "Folders first",
+    )));
+    // What is listed.
+    let mut show = vec![menu_item(
+        Button::new("menu-hidden", "", "Show hidden files", "toggle_hidden")
+            .active(spec.show_hidden),
+        "Hidden files",
+    )];
     // With hidden files, the files that keep another's notes beside it
     // (ADR-028): the same setting as General's, where one looks for a file
     // that seems missing.
@@ -549,12 +551,13 @@ fn view_options(shell: &Shell) -> Vec<MenuPart> {
             ));
         }
     }
-    // The kinds, years and tags of the files shown, to filter by
-    // (`quick_filters.rs`), wherever the query plugin can; and when they
-    // changed, under them, wherever the timeline's can. Both the pane's
-    // own, as its view is.
+    // What is drawn with them: the kinds, years and tags of the files
+    // shown, to filter by (`quick_filters.rs`), wherever the query plugin
+    // can; and when they changed, under them, wherever the timeline's can.
+    // Both the pane's own, as its view is.
+    let mut drawn = Vec::new();
     if shell.app.commands.get("query.narrow").is_some() {
-        show.push(menu_item(
+        drawn.push(menu_item(
             Button::new(
                 "menu-quick-filters",
                 "",
@@ -566,7 +569,7 @@ fn view_options(shell: &Shell) -> Vec<MenuPart> {
         ));
     }
     if shell.app.commands.get("timeline.histogram").is_some() {
-        show.push(menu_item(
+        drawn.push(menu_item(
             Button::new(
                 "menu-timeline",
                 "",
@@ -579,7 +582,7 @@ fn view_options(shell: &Shell) -> Vec<MenuPart> {
     }
     // Only the grid draws thumbnails in a box.
     if shell.ui().view_id == crate::view::GRID {
-        show.push(menu_item(
+        drawn.push(menu_item(
             Button::new(
                 "menu-grid-fill",
                 "",
@@ -589,7 +592,7 @@ fn view_options(shell: &Shell) -> Vec<MenuPart> {
             .active(shell.prefs.grid_fill),
             "Fill thumbnails",
         ));
-        show.push(menu_item(
+        drawn.push(menu_item(
             Button::new(
                 "menu-grid-captions",
                 "contents",
@@ -602,7 +605,7 @@ fn view_options(shell: &Shell) -> Vec<MenuPart> {
     }
     // The tree closes what it opened in one go.
     if shell.ui().view_id == crate::view::TREE {
-        show.push(menu_item(
+        drawn.push(menu_item(
             Button::new(
                 "menu-collapse-all",
                 "fold",
@@ -621,6 +624,10 @@ fn view_options(shell: &Shell) -> Vec<MenuPart> {
     parts.extend(order);
     parts.push(MenuPart::Line);
     parts.extend(show.into_iter().map(MenuPart::Row));
+    if !drawn.is_empty() {
+        parts.push(MenuPart::Line);
+        parts.extend(drawn.into_iter().map(MenuPart::Row));
+    }
     // Only where the view sizes something (`PaneView::zooms`): smaller, as
     // it was, larger, the keys in the tooltips.
     let zooms = shell.view_zooms();

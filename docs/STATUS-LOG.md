@@ -15496,3 +15496,24 @@ Xvfb, debug and release: the groups above, and the footer during the
 reading ("385,123 items · 3.2 GB · Reading… 80,967 of 385,095") over
 the name order, which stayed until the groups came whole. Not run:
 `just check-cross`, `just a11y-check`.
+
+## 2026-11-12: Folders first with the order, in the View menu
+
+The user asked whether Folders first and Hidden files stood in the
+right part of the View menu. Folders first changes the order (folders
+before files within each group), not what is shown: it now stands under
+Sort by and Group by, whose criteria are in their submenus, so a check
+there reads as none of them (the reason it was kept lower, from before
+they were one row each). Hidden files stays with what is listed
+(companion files, what the location switches), which a line now keeps
+apart from what is drawn with the files (Quick filters, the timeline,
+the grid's Fill thumbnails and Under names…, the tree's Collapse all).
+Folders first's tooltip says it is for every pane, which the sort and
+hidden files are not.
+
+**Checked:** rustfmt; clippy `-D warnings` on `skwir-ui`, all targets;
+`skwir-ui` 640 passed. In a window on Xvfb: the menu in the list and the
+grid, its parts in that order; Tab from the views reaching Sort by,
+Group by and Folders first, Down going on over each line to Hidden files
+and Quick filters.
+

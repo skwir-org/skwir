@@ -332,10 +332,12 @@ of bars, split or not.
     (`FlyRow::Choice`, one stop: Left and Right choose, Left from the
     first goes back, Enter and Space the other) and the criteria under
     it; Group by's direction is always there, greyed until a criterion of
-    its own is chosen, so nothing moves under the pointer. Then what is
-    shown (hidden files,
-    Quick filters and the timeline, Fill thumbnails…), and the size on one
-    row. What it shows of a pane is that pane's: its view, sort, hidden
+    its own is chosen, so nothing moves under the pointer; Folders first
+    under them, the order's too (it orders folders within each group).
+    Then what is listed (hidden files, companion files, what the location
+    switches), then what is drawn with it (Quick filters and the
+    timeline, Fill thumbnails…), and the size on one row, each part apart
+    by a line. What it shows of a pane is that pane's: its view, sort, hidden
     files, Quick filters above its files and the timeline under them
     (`PaneUi::quick_filters_on`, `PaneUi::timeline`), which a pane made
     from it (a split, a tab) takes. More holds the window's panel without
