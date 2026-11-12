@@ -269,8 +269,9 @@ pub fn read_globs_from_dir<P: AsRef<Path>>(dir: P) -> Vec<Glob> {
 /// match it rather than every one: a literal by the whole name (ignoring
 /// case, as `Glob::matches` compares it), a simple glob (`*.ext`) by its
 /// suffix, looked up for each suffix of the name and of its lowercase
-/// form; only the full globs (a few dozen) are tried one by one. The
-/// answer is the one trying every glob gives (`lookup_linear`).
+/// form that one could be (`Suffixes`); only the full globs (a few dozen)
+/// are tried one by one. The answer is the one trying every glob gives
+/// (`lookup_linear`).
 pub struct GlobMap {
     globs: HashSet<Glob>,
     /// The globs, in the order they were added, indexed below by position.
@@ -278,9 +279,9 @@ pub struct GlobMap {
     literal: std::collections::HashMap<UniCase<String>, Vec<usize>>,
     /// Simple globs that ignore case: matched by the name's suffixes and
     /// its lowercase form's.
-    simple: std::collections::HashMap<String, Vec<usize>>,
+    simple: Suffixes,
     /// Simple globs that do not: matched by the name's suffixes alone.
-    simple_cs: std::collections::HashMap<String, Vec<usize>>,
+    simple_cs: Suffixes,
     full: Vec<usize>,
 }
 
@@ -290,8 +291,8 @@ impl GlobMap {
             globs: HashSet::new(),
             list: Vec::new(),
             literal: std::collections::HashMap::new(),
-            simple: std::collections::HashMap::new(),
-            simple_cs: std::collections::HashMap::new(),
+            simple: Suffixes::default(),
+            simple_cs: Suffixes::default(),
             full: Vec::new(),
         }
     }
@@ -307,10 +308,8 @@ impl GlobMap {
                 .entry(UniCase::new(name.clone()))
                 .or_default()
                 .push(at),
-            GlobType::Simple(suffix) if glob.case_sensitive => {
-                self.simple_cs.entry(suffix.clone()).or_default().push(at)
-            }
-            GlobType::Simple(suffix) => self.simple.entry(suffix.clone()).or_default().push(at),
+            GlobType::Simple(suffix) if glob.case_sensitive => self.simple_cs.add(suffix, at),
+            GlobType::Simple(suffix) => self.simple.add(suffix, at),
             GlobType::Full(_) => self.full.push(at),
         }
         self.list.push(glob);
@@ -329,18 +328,14 @@ impl GlobMap {
         if let Some(at) = self.literal.get(&UniCase::new(file_name.to_owned())) {
             found.extend(at);
         }
-        for suffix in suffixes(file_name) {
-            for map in [&self.simple, &self.simple_cs] {
-                if let Some(at) = map.get(suffix) {
-                    found.extend(at);
-                }
+        for map in [&self.simple, &self.simple_cs] {
+            for at in map.matching(file_name) {
+                found.extend(at);
             }
         }
         if lowercase != file_name {
-            for suffix in suffixes(&lowercase) {
-                if let Some(at) = self.simple.get(suffix) {
-                    found.extend(at);
-                }
+            for at in self.simple.matching(&lowercase) {
+                found.extend(at);
             }
         }
         found.extend(
@@ -371,12 +366,52 @@ impl GlobMap {
     }
 }
 
-/// Every suffix of `name`, from the whole of it to the empty one.
-fn suffixes(name: &str) -> impl Iterator<Item = &str> {
-    name.char_indices()
-        .map(|(at, _)| at)
-        .chain(std::iter::once(name.len()))
-        .map(move |at| &name[at..])
+/// Simple globs by their suffix, and what a suffix of a name must be to be
+/// one of them: no longer than the longest, and starting with a byte one
+/// of them starts with. A name is looked up by those of its suffixes
+/// alone, not by every one: hashing every suffix of a name costs the
+/// square of its length (a name of 60 characters, 120 lookups), and the
+/// database's suffixes are short and nearly all start with a dot (1,409
+/// on a desktop, the longest 18 bytes, three not starting with one). Both
+/// are read from the globs as they are added: the answer is every
+/// suffix's.
+#[derive(Default)]
+struct Suffixes {
+    by_suffix: std::collections::HashMap<String, Vec<usize>>,
+    /// The longest suffix, in bytes.
+    longest: usize,
+    /// The first bytes the suffixes start with, a bit each.
+    starts: [u64; 4],
+    /// Whether a glob is `*` alone: its suffix is the empty one.
+    empty: bool,
+}
+
+impl Suffixes {
+    fn add(&mut self, suffix: &str, at: usize) {
+        match suffix.as_bytes().first() {
+            Some(&first) => self.starts[usize::from(first >> 6)] |= 1 << (first & 63),
+            None => self.empty = true,
+        }
+        self.longest = self.longest.max(suffix.len());
+        self.by_suffix
+            .entry(suffix.to_owned())
+            .or_default()
+            .push(at);
+    }
+
+    /// What the globs whose suffix `name` ends with are, by position.
+    fn matching<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a Vec<usize>> + 'a {
+        let bytes = name.as_bytes();
+        let from = name.len().saturating_sub(self.longest);
+        (from..name.len())
+            .filter(move |&at| {
+                let first = bytes[at];
+                self.starts[usize::from(first >> 6)] & (1 << (first & 63)) != 0
+                    && name.is_char_boundary(at)
+            })
+            .chain(self.empty.then_some(name.len()))
+            .filter_map(move |at| self.by_suffix.get(&name[at..]))
+    }
 }
 
 /// Of the globs that match a name, the types of the heaviest, and of
@@ -395,10 +430,7 @@ fn choose(mut matching_globs: Vec<&Glob>) -> Option<Vec<Mime>> {
 
     // Needs to be after filtering for biggest weight
     // in case it changes which glob is the longest.
-    let biggest_glob_length = matching_globs
-        .clone()
-        .map(|glob| glob.glob.len())
-        .max()?;
+    let biggest_glob_length = matching_globs.clone().map(|glob| glob.glob.len()).max()?;
 
     // "If the patterns are different, keep only the globs
     // with the longest pattern, as previously discussed."

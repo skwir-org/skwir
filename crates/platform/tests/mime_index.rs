@@ -19,6 +19,12 @@ fn names_from(glob: &str) -> Vec<String> {
         names.push(format!("FILE{}", suffix.to_uppercase()));
         names.push(format!("a.b{suffix}"));
         names.push(format!("Éte{suffix}"));
+        // Longer than any suffix, as a store's names are: only the
+        // suffixes a pattern could be are looked up.
+        names.push(format!(
+            "0123456789abcdfghijklmnpqrsvwxyz-pkg-1.2.3{suffix}"
+        ));
+        names.push(format!("ÉTÉ-ÇA-İ-{}", suffix.to_uppercase()));
         return names;
     }
     if !glob.contains(['*', '?', '[', '\\']) {

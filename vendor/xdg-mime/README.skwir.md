@@ -35,3 +35,12 @@ they apply there with `git apply -p1`.
   - `new_for_directories` reads the database from the directories its
     caller found, since Skwir reads the XDG variables in one place
     (`skwir_core::xdg`).
+- `0004-suffixes-a-pattern-can-be.patch`: a name is looked up by those
+  of its suffixes a simple pattern can be, not by every one: no longer
+  than the longest pattern, and starting with a byte one of them starts
+  with, both read from the patterns as they are added. Hashing every
+  suffix cost the square of the name's length: 3.2 µs for a name of
+  `/nix/store` (60 characters), 4.5 µs at 90, against 0.9 µs for a short
+  one, with 1,409 patterns of at most 18 bytes, all but three starting
+  with a dot. The answer is every suffix's (`mime_index.rs` compares it
+  with every pattern tried, names longer than any pattern included).
