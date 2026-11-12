@@ -15517,3 +15517,36 @@ grid, its parts in that order; Tab from the views reaching Sort by,
 Group by and Folders first, Down going on over each line to Hidden files
 and Quick filters.
 
+## 2026-11-12: One way to say each thing about an entry
+
+Asked whether hidden files could be listed last, the user agreed with
+marking them instead, then asked how that would sit beside the fading of
+cut entries and of folders a filter shows only as the way, and whether
+cut and copied entries should be marked too. One rule now
+(`docs/invariants/views.md`), each kind of thing said one way:
+
+- **What the file is is a mark** on its picture: a link or a tag's place
+  on the bottom-right corner, as before; on the bottom-left, a crossed
+  eye for an entry hidden though its name does not say so
+  (`Entry::hidden_unsaid`: Windows' attribute, a Mac's flag, or a hidden
+  folder a tag's place found it in; `.bashrc`'s dot says it, so it is not
+  marked). `icons::Marks` carries both, in every view and the columns
+  beside a pane.
+- **What it is to the view is a fade**, as before: cut, and a folder
+  shown only as the way to what a filter keeps. A hidden file shown is
+  not faded: cut and hidden faded alike would read alike, as in
+  Explorer.
+- **What a copy or a cut holds is said once, in the footer**, not on the
+  entries: no mark for either, the fade saying cut already.
+- **What is drawn is heard**: an entry's description now says "cut" and
+  "hidden" as it said "leads to what the filter keeps", before its tags.
+
+**Checked:** rustfmt; clippy `-D warnings` on `skwir-core` and
+`skwir-ui`, all targets; their unit tests, 1169 passed (new: what hides
+an entry besides its name; what fades or marks an entry is heard, before
+its tags; a hidden link keeps both its marks); `just a11y-check` on the
+debug build passed. In a window on Xvfb, a tag's place holding files
+tagged in a folder and in a hidden folder below it, hidden files shown:
+in the list and the grid, the file of the hidden folder marked with the
+crossed eye, `.secret.txt` not, a link with its arrow; cut, the marked
+file faded with its mark, the other faded unmarked.

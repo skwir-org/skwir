@@ -1171,12 +1171,34 @@ impl Link {
 /// somewhere or nowhere, or a place that is a tag's, in its color (a place
 /// is a folder holding files kept elsewhere). Every view marks entries
 /// this one way (`marked`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Mark {
+    #[default]
     None,
     Link(Link),
     /// A tag's place, the tag's color.
     Tag(usize),
+}
+
+/// What a picture is marked with (`marked`): what the entry is, a mark on
+/// its bottom-right corner, and whether it is hidden though its name does
+/// not say so (`Entry::hidden_unsaid`), one on its bottom-left. Marks say
+/// what a file is, in any view; what it is to the view (cut, only the way
+/// to what a filter keeps) is said by fading it whole, never by a mark
+/// (docs/invariants/views.md).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Marks {
+    pub mark: Mark,
+    pub hidden: bool,
+}
+
+impl From<Mark> for Marks {
+    fn from(mark: Mark) -> Self {
+        Marks {
+            mark,
+            hidden: false,
+        }
+    }
 }
 
 impl Mark {
@@ -1190,44 +1212,54 @@ impl Mark {
     }
 }
 
-/// `picture` (an icon or a thumbnail about `size` px) with `mark` on its
-/// bottom-right corner, on a badge: a bent arrow for a link (in the error
+/// `picture` (an icon or a thumbnail about `size` px) with its marks on
+/// badges: on its bottom-right corner a bent arrow for a link (in the error
 /// color for one that leads nowhere), the tag's mark in its color for a
-/// tag's place. Unmarked, it is returned as it is.
+/// tag's place; on its bottom-left, a crossed eye for an entry hidden
+/// though its name does not say so. Unmarked, it is returned as it is.
 pub fn marked(
     picture: AnyElement,
     size: f32,
-    mark: Mark,
+    marks: impl Into<Marks>,
     theme: &crate::theme::Theme,
 ) -> AnyElement {
-    let (glyph, color) = match mark {
-        Mark::None | Mark::Link(Link::None) => return picture,
-        Mark::Link(Link::Leads) => ("link", theme.text),
-        Mark::Link(Link::Broken) => ("link", theme.error),
-        Mark::Tag(color) => ("tag", theme.tag(color)),
+    let marks = marks.into();
+    let corner = match marks.mark {
+        Mark::None | Mark::Link(Link::None) => None,
+        Mark::Link(Link::Leads) => Some(("link", theme.text)),
+        Mark::Link(Link::Broken) => Some(("link", theme.error)),
+        Mark::Tag(color) => Some(("tag", theme.tag(color))),
     };
+    if corner.is_none() && !marks.hidden {
+        return picture;
+    }
     // Large enough to read on a list's 16 px icons, and growing slower
     // than the picture: a corner, never a cover.
     let badge = (size * 0.3 + 6.).round().clamp(11., 22.);
+    let on = |glyph: &str, color: gpui::Hsla| {
+        div()
+            .absolute()
+            .bottom(px(-1.))
+            .size(px(badge))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded_sm()
+            .bg(theme.bg)
+            .border_1()
+            .border_color(theme.border)
+            .child(crate::controls::glyph(glyph, color, badge - 2.))
+    };
     div()
         .relative()
         .flex_none()
         .child(picture)
-        .child(
-            div()
-                .absolute()
-                .right(px(-1.))
-                .bottom(px(-1.))
-                .size(px(badge))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded_sm()
-                .bg(theme.bg)
-                .border_1()
-                .border_color(theme.border)
-                .child(crate::controls::glyph(glyph, color, badge - 2.)),
-        )
+        .when_some(corner, |d, (glyph, color)| {
+            d.child(on(glyph, color).right(px(-1.)))
+        })
+        .when(marks.hidden, |d| {
+            d.child(on("eye-off", theme.text).left(px(-1.)))
+        })
         .into_any_element()
 }
 
@@ -1239,7 +1271,7 @@ pub fn entry_picture(
     icon: Option<&Pic>,
     is_dir: bool,
     size: f32,
-    mark: Mark,
+    marks: impl Into<Marks>,
     chosen: bool,
     theme: &crate::theme::Theme,
 ) -> AnyElement {
@@ -1258,7 +1290,7 @@ pub fn entry_picture(
             })
             .into_any_element(),
     };
-    marked(picture, size, mark, theme)
+    marked(picture, size, marks, theme)
 }
 
 /// A named icon at `size` px: in its own colors, or in `ink` (`element`).

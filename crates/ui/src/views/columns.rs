@@ -237,6 +237,8 @@ struct SideRow {
     is_dir: bool,
     icon: Option<icons::Pic>,
     link: icons::Link,
+    /// Hidden though its name does not say so: marked, as in the pane.
+    hidden: bool,
     /// Where it leads, for a place (a tag's), and its tag's color.
     place: Option<(Location, Option<usize>)>,
     /// Its tags, with their colors, as every view draws them
@@ -312,6 +314,7 @@ fn side_column(
                                 icon_px,
                             ),
                             link: icons::Link::of(e),
+                            hidden: e.hidden_unsaid(),
                             place: p.and_then(|p| p.kept_location_of(&at, e.id)).map(|leads| {
                                 let tag = e
                                     .metadata
@@ -344,8 +347,13 @@ fn side_column(
                 };
                 let target = path.as_ref().map(|dir| dir.join(&row.name));
                 let is_on_path = child.as_ref().is_some_and(|child| row.name == *child);
-                let mark =
-                    icons::Mark::of(row.link, row.place.as_ref().and_then(|(_, color)| *color));
+                let mark = icons::Marks {
+                    mark: icons::Mark::of(
+                        row.link,
+                        row.place.as_ref().and_then(|(_, color)| *color),
+                    ),
+                    hidden: row.hidden,
+                };
                 let icon = icons::entry_picture(
                     row.icon.as_ref(),
                     row.is_dir,

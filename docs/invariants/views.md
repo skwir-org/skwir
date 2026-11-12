@@ -19,10 +19,29 @@ around the views is in [shell.md](shell.md).
   (their metadata asked for what is drawn of the kept listing,
   `Shell::request_hydrate_kept`) and an option's name and place in its
   column's list box.
-- Every view marks a link, and a tag's place, with `icons::Mark`.
-- A folder shown only as the way to what a filter keeps (`Look::only_leads`,
-  ADR-126) is drawn at `ONLY_LEADS_OPACITY`, by `behave`, unless it is cut
-  or selected: what those say comes first.
+- **One way to say each kind of thing about an entry**, in every view:
+  - *What the file is* is a mark on its picture (`icons::marked`,
+    `icons::Marks`), whatever the view: a link (leading nowhere, in the
+    error color) or a tag's place on the bottom-right corner; on the
+    bottom-left, hidden though its name does not say so
+    (`Entry::hidden_unsaid`: the system's mark, Windows' attribute or a
+    Mac's flag, or a hidden folder it was found in; a name starting with
+    a dot says it already, so `.bashrc` is not marked). Marks never fade.
+  - *What it is to the view* is said by fading it whole, by `behave`:
+    shown, but not wholly part of what the view holds. A cut entry, on
+    its way out, at `CUT_OPACITY`; a folder shown only as the way to what
+    a filter keeps (`Look::only_leads`, ADR-126, and a search's folders
+    on the way, ADR-127) at `ONLY_LEADS_OPACITY`, unless it is cut or
+    selected: what those say comes first. A hidden file shown is wholly
+    shown: never faded.
+  - Muted ink is for what is said beside an entry (its details, counts),
+    never its state. What a copy or a cut holds is said once, in the
+    footer (`status-pending`), not on the entries copied.
+  - What is drawn is heard: a screen reader hears each of these with the
+    name ([accessibility.md](accessibility.md)).
+  A new state takes the way that says what it is, never one that already
+  says something else (cut and hidden both faded would read alike, as in
+  Explorer).
 - **An entry's tags are one strip** (`tags::strip`, fitted in prepaint
   by `elements/chips.rs`), wherever it is drawn: each tag a chip (its
   dot, then its own name), and as room shrinks the first ones chips and

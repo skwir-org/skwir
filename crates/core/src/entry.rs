@@ -655,6 +655,14 @@ impl Entry {
         self.hidden || self.in_hidden_folder || self.name.as_encoded_bytes().starts_with(b".")
     }
 
+    /// Whether it is hidden though its name does not say so: by the
+    /// system's mark or a hidden folder it is in, its name not starting
+    /// with a dot. What a view marks it for (`icons::Marks`), and a screen
+    /// reader hears: a dot at its name's start says it already.
+    pub fn hidden_unsaid(&self) -> bool {
+        (self.hidden || self.in_hidden_folder) && !self.name.as_encoded_bytes().starts_with(b".")
+    }
+
     pub fn name_str(&self) -> std::borrow::Cow<'_, str> {
         self.name.to_string_lossy()
     }
@@ -769,6 +777,34 @@ mod tests {
         let path = Path::new("/srv/it's here.txt");
         assert_eq!(lasting.kept_as(path), b"5:7");
         assert_eq!(made_up.kept_as(path), b"path:/srv/it's here.txt");
+    }
+
+    /// A name starting with a dot says it is hidden; only what is hidden
+    /// otherwise (the system's mark, a hidden folder it is in) is not said.
+    #[test]
+    fn what_hides_an_entry_besides_its_name_is_unsaid() {
+        let named = |name: &str| {
+            Entry::new(
+                EntryId {
+                    file: FileId::new(1, 1),
+                    at: 0,
+                },
+                name,
+                EntryKind::File,
+            )
+        };
+        let dot = named(".bashrc");
+        assert!(dot.is_hidden() && !dot.hidden_unsaid());
+        let mut marked = named("desktop.ini");
+        marked.hidden = true;
+        assert!(marked.is_hidden() && marked.hidden_unsaid());
+        let mut below = named("settings.json");
+        below.in_hidden_folder = true;
+        assert!(below.is_hidden() && below.hidden_unsaid());
+        let mut both = named(".DS_Store");
+        both.hidden = true;
+        assert!(both.is_hidden() && !both.hidden_unsaid(), "its dot says it");
+        assert!(!named("notes.txt").is_hidden() && !named("notes.txt").hidden_unsaid());
     }
 
     fn sized(file: u64, at: u64, size: u64, kind: EntryKind) -> Entry {
