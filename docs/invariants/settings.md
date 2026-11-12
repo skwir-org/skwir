@@ -333,6 +333,18 @@ The key is the owner's; the page is the subject's (ADR-072).
   category's name keeping the whole category). Escape empties it, then
   closes the dialog (`SettingsView::cancel_filter`, as the search
   does); Enter goes to the first row it kept.
+- **The Plugins and Exclusions pages list by name**, as file names are
+  (`collate`), never in a declaration's order: the plugins' categories
+  and their plugins (`settings_view::categories_by_name`, `by_name`; the
+  search's and Changed's plugins too), the exclusions' categories,
+  groups and rows (ADR-125, 13). The pages and a page's settings keep
+  the order they are declared in, which says what goes with what; the
+  Keyboard page lists by place, then as bound.
+- **An icon beside words that may wrap is `controls::noted`**: the
+  words wrap in the room left, the icon by their first line in a holder
+  one line of them tall (an empty text, so it follows the text size).
+  Words put straight in a flex row beside an icon do not wrap, and run
+  past their card.
 
 ## Plugins and their requirements
 

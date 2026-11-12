@@ -667,6 +667,28 @@ pub fn glyph(name: &str, color: gpui::Hsla, size: f32) -> gpui::Svg {
     icon(name, color, size)
 }
 
+/// An icon beside words that may run onto more lines: the words take the
+/// room left and wrap there, and the icon stands by their first line,
+/// centred in a holder one of their lines tall. That line is an empty
+/// text of the row's own size and font, so the icon follows the text
+/// size with no length of its own. The caller gives the row its text
+/// size (`text_body`) and color.
+pub fn noted(name: &str, color: gpui::Hsla, size: f32, words: impl IntoElement) -> Div {
+    div()
+        .flex()
+        .items_start()
+        .gap(sized(6.))
+        .child(
+            div()
+                .flex_none()
+                .flex()
+                .items_center()
+                .child(icon(name, color, size))
+                .child(""),
+        )
+        .child(div().flex_1().min_w_0().child(words))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{KNOB, along, knob};

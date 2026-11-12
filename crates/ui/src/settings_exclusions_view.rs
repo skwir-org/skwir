@@ -738,28 +738,18 @@ impl SettingsView {
             .or_else(|| self.errors.get(CATEGORIES_KEY))
         {
             bar = bar.child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(sized(6.))
+                controls::noted("warning", theme.error, 13., error.clone())
                     .text_body()
-                    .text_color(theme.error)
-                    .child(controls::glyph("warning", theme.error, 13.))
-                    .child(div().flex_1().min_w_0().child(error.clone())),
+                    .text_color(theme.error),
             );
         }
         // What the settings hold that cannot be read: it keeps nothing out
         // until it is fixed, and is never erased by a change here.
         if let Some(problems) = model::unreadable(&self.exclusions.catalog) {
             bar = bar.child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(sized(6.))
+                controls::noted("warning", theme.warning, 13., problems)
                     .text_body()
-                    .text_color(theme.warning)
-                    .child(controls::glyph("warning", theme.warning, 13.))
-                    .child(div().flex_1().min_w_0().child(problems)),
+                    .text_color(theme.warning),
             );
         }
         bar.into_any_element()
@@ -2143,21 +2133,9 @@ impl SettingsView {
                 .filter(|(at, _)| *at == field)
                 .map(|(_, why)| {
                     // A regex's error is several lines: the mark by the first.
-                    div()
-                        .flex()
-                        .items_start()
-                        .gap(sized(6.))
+                    controls::noted("warning", theme.error, 13., why.clone())
                         .text_body()
                         .text_color(theme.error)
-                        .child(
-                            div()
-                                .flex_none()
-                                .h(sized(20.))
-                                .flex()
-                                .items_center()
-                                .child(controls::glyph("warning", theme.error, 13.)),
-                        )
-                        .child(div().flex_1().min_w_0().child(why.clone()))
                 })
         };
         let text_field = |input: &Entity<TextInput>, field: Field| {
@@ -2300,16 +2278,14 @@ impl SettingsView {
                 let name = catalog
                     .category(&found.category)
                     .map_or_else(String::new, |c| c.name.clone());
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(sized(6.))
-                    .text_body()
-                    .text_color(theme.warning)
-                    .child(controls::glyph("info", theme.warning, 13.))
-                    .child(div().flex_1().min_w_0().child(format!(
-                        "Already in the list, in {name}: Show it, rather than a second."
-                    )))
+                controls::noted(
+                    "info",
+                    theme.warning,
+                    13.,
+                    format!("Already in the list, in {name}: Show it, rather than a second."),
+                )
+                .text_body()
+                .text_color(theme.warning)
             });
         form = form
             .children(means_line)
@@ -2564,14 +2540,9 @@ impl SettingsView {
             .child(div().text_title().child(title))
             .child(controls::field(&name, None, focused, problem.is_some(), None, theme))
             .children(problem.map(|why| {
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(sized(6.))
+                controls::noted("warning", theme.error, 13., why)
                     .text_body()
                     .text_color(theme.error)
-                    .child(controls::glyph("warning", theme.error, 13.))
-                    .child(why)
             }))
             .when(!renaming, |d| {
                 d.child(

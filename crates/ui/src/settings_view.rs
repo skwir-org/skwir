@@ -11,6 +11,7 @@ use gpui::{
     AnyElement, ClickEvent, Context, Entity, Focusable, MouseButton, SharedString, Window, div,
     prelude::*, px, relative,
 };
+use skwir_core::collate;
 use skwir_core::plugin::{Category, PluginInfo};
 use skwir_core::settings::{SettingKind, SettingSpec};
 
@@ -281,6 +282,20 @@ impl Snapshot {
             available: view.available(&row.spec),
         }
     }
+}
+
+/// Plugins as the settings list them: by name, as file names are
+/// (`collate`).
+fn by_name(plugins: &mut [PluginInfo]) {
+    plugins.sort_by_cached_key(|plugin| collate::sort_key(std::ffi::OsStr::new(&plugin.title)));
+}
+
+/// The plugins' categories as the Plugins page heads them: by name, as
+/// the Exclusions page's are.
+fn categories_by_name() -> Vec<Category> {
+    let mut categories = Category::ALL.to_vec();
+    categories.sort_by_cached_key(|c| collate::sort_key(std::ffi::OsStr::new(c.title())));
+    categories
 }
 
 /// Whether the Plugins page's filter keeps `plugin`: every word typed
@@ -1304,14 +1319,9 @@ impl SettingsView {
 
     /// Why a change was refused, under the texts of its row.
     fn error_line(error: String, theme: &Theme) -> gpui::Div {
-        div()
-            .flex()
-            .items_center()
-            .gap(sized(6.))
+        controls::noted("warning", theme.error, 13., error)
             .text_body()
             .text_color(theme.error)
-            .child(controls::glyph("warning", theme.error, 13.))
-            .child(div().flex_1().min_w_0().child(error))
     }
 
     /// The button restoring a setting's default, while it differs from it.
@@ -1627,14 +1637,9 @@ impl SettingsView {
         for (icon, text) in [("lock", may), ("plugin", from)] {
             if let Some(text) = text {
                 texts = texts.child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(sized(6.))
+                    controls::noted(icon, theme.text_muted, 13., text)
                         .text_body()
-                        .text_color(theme.text_muted)
-                        .child(controls::glyph(icon, theme.text_muted, 13.))
-                        .child(text),
+                        .text_color(theme.text_muted),
                 );
             }
         }
@@ -1654,14 +1659,9 @@ impl SettingsView {
                     )
                 };
                 texts = texts.child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(sized(6.))
+                    controls::noted(icon, color, 13., text)
                         .text_body()
-                        .text_color(color)
-                        .child(controls::glyph(icon, color, 13.))
-                        .child(text),
+                        .text_color(color),
                 );
             }
         }
@@ -1729,14 +1729,15 @@ impl SettingsView {
             .into_any_element()
     }
 
-    /// The plugins by category, each by name, those the filter keeps
+    /// The plugins by category, categories and plugins by name
+    /// (`categories_by_name`, `by_name`), those the filter keeps
     /// (`plugin_found`).
     fn page_plugins(&mut self, items: &mut Vec<AnyElement>, theme: &Theme, cx: &mut Context<Self>) {
         let typed = self.plugins_filter.read(cx).text().trim().to_owned();
         let lowered = typed.to_lowercase();
         let words: Vec<&str> = lowered.split_whitespace().collect();
         let mut shown = 0;
-        for category in Category::ALL {
+        for category in categories_by_name() {
             let mut plugins: Vec<PluginInfo> = self
                 .plugins
                 .iter()
@@ -1747,7 +1748,7 @@ impl SettingsView {
                 continue;
             }
             shown += plugins.len();
-            plugins.sort_by_key(|plugin| plugin.title.to_lowercase());
+            by_name(&mut plugins);
             Self::caption(items, category.title(), theme);
             for (index, plugin) in plugins.iter().enumerate() {
                 let edge = Edge {
@@ -1824,12 +1825,13 @@ impl SettingsView {
             .filter(|row| self.revealed.contains(&row.spec.key))
             .map(|row| Snapshot::of(row, self))
             .collect();
-        let plugins: Vec<PluginInfo> = self
+        let mut plugins: Vec<PluginInfo> = self
             .plugins
             .iter()
             .filter(|plugin| self.revealed_plugins.contains(plugin.id))
             .cloned()
             .collect();
+        by_name(&mut plugins);
         if rows.is_empty() && plugins.is_empty() {
             Self::note(
                 items,
@@ -1946,12 +1948,13 @@ impl SettingsView {
             .collect();
         let mut found = rows.len();
         self.grouped_rows(rows, items, theme, window, cx);
-        let plugins: Vec<PluginInfo> = self
+        let mut plugins: Vec<PluginInfo> = self
             .plugins
             .iter()
             .filter(|plugin| matches(query, &[&plugin.title, &plugin.description, plugin.id]))
             .cloned()
             .collect();
+        by_name(&mut plugins);
         if !plugins.is_empty() {
             found += plugins.len();
             Self::caption(items, "Plugins", theme);
@@ -1993,20 +1996,18 @@ impl Render for SettingsView {
         let mut content: Option<AnyElement> = None;
         if self.read_only {
             items.push(
-                div()
-                    .flex_none()
-                    .mt_4()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .text_body()
-                    .text_color(theme.warning)
-                    .child(controls::glyph("lock", theme.warning, 14.))
-                    .child(div().flex_1().min_w_0().child(
-                        "Your settings file is read-only (Home Manager links it, say): \
-                         a change here is not kept. Change them where they are declared.",
-                    ))
-                    .into_any_element(),
+                controls::noted(
+                    "lock",
+                    theme.warning,
+                    14.,
+                    "Your settings file is read-only (Home Manager links it, say): \
+                     a change here is not kept. Change them where they are declared.",
+                )
+                .flex_none()
+                .mt_4()
+                .text_body()
+                .text_color(theme.warning)
+                .into_any_element(),
             );
         }
         let (title, subtitle): (String, String) = if query.is_empty() {
@@ -2218,6 +2219,45 @@ mod tests {
     use super::{size_part, written_at};
     use crate::sizes::{Part, Text};
     use crate::theme::{Base, Contrast, Theme};
+
+    /// The Plugins page heads its categories by name, and lists plugins
+    /// by name, as file names are.
+    #[test]
+    fn plugins_and_their_categories_stand_by_name() {
+        use skwir_core::plugin::{Category, PluginInfo};
+        let titles: Vec<&str> = super::categories_by_name()
+            .into_iter()
+            .map(Category::title)
+            .collect();
+        assert_eq!(
+            titles,
+            [
+                "Browsing and finding",
+                "Desktop integration",
+                "Previews and thumbnails",
+                "Working with files",
+            ]
+        );
+        let plugin = |title: &str| PluginInfo {
+            id: "x",
+            title: title.into(),
+            description: String::new(),
+            category: Category::Files,
+            enabled: true,
+            enabled_by_default: true,
+            capabilities: skwir_core::permissions::Capabilities::NONE,
+            origin: None,
+        };
+        let mut plugins = vec![
+            plugin("Zip"),
+            plugin("éditeur"),
+            plugin("Audio 10"),
+            plugin("Audio 9"),
+        ];
+        super::by_name(&mut plugins);
+        let names: Vec<&str> = plugins.iter().map(|p| p.title.as_str()).collect();
+        assert_eq!(names, ["Audio 9", "Audio 10", "éditeur", "Zip"]);
+    }
 
     /// The Plugins page's filter keeps a plugin whose name, words, id,
     /// origin or category hold every word typed, case ignored.

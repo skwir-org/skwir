@@ -107,7 +107,8 @@ pub trait Plugin: Send + Sync {
 }
 
 /// What a plugin is about, so a list of plugins can be browsed by subject.
-/// The declaration order is the order they are listed in.
+/// A list heads them by their titles' order, as file names sort (the
+/// settings' Plugins page).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Category {

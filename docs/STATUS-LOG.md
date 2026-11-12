@@ -15727,3 +15727,39 @@ Previews and thumbnails…; " zzz" typed after it said No plugin matches
 “pdf zzz”; Escape emptied it and every plugin came back; "query" then
 Enter put the keyboard on Query's Settings button. Not run: `just
 a11y-check`, `just check-cross`.
+
+## 2026-11-12: Plugins by name; a requirement's line wraps
+
+The user asked for the Plugins page in name order, as the Exclusions
+page is, and for the "plocate not found" line fixed (it ran past the
+Query plugin's card).
+
+- **Name order** (`settings_view::categories_by_name`, `by_name`, by
+  `collate::sort_key`): the categories (Browsing and finding, Desktop
+  integration, Previews and thumbnails, Working with files; they were in
+  `Category`'s declaration order) and their plugins (by lowercase title
+  before), and the plugins the search finds and Changed lists (in the
+  order they were registered before). `Category`'s doc no longer says
+  its declaration is the order listed.
+- **The line:** words put straight in a flex row beside an icon never
+  wrap. `controls::noted` gives the words the room left, wrapping
+  there, and stands the icon by their first line, centred in a holder
+  one line tall (an empty text of the row's size and font, so it
+  follows the text size; the regex error's holder was a fixed 20 px).
+  It draws a plugin's What it may do, where it comes from and its
+  requirements, and the settings' other icon notes: the error line, the
+  read-only file's note, the Keyboard and Exclusions pages' errors, the
+  Exclusions page's unreadable rules and "Already in the list", the
+  category dialog's error and the Keyboard page's note of shortcuts
+  waiting for a plugin (both built as the requirement's line was, their
+  words straight in the row).
+
+**Checked:** rustfmt; clippy `-D warnings` on `skwir-ui` (all
+targets); `skwir-ui`'s tests, 647 passed (new: the categories and
+plugins by name, "Audio 9" before "Audio 10", "éditeur" before "Zip").
+In a window on Xvfb (debug build): Query's "plocate not found — …" on
+two lines inside its card, the mark by the first; the page from
+Browsing and finding to Desktop integration to Previews and thumbnails
+(3D models and prints, Archives, Audio and video, Books…). Not seen in
+the window: the other notes moved to `controls::noted`. Not run: `just
+a11y-check`, `just check-cross`.

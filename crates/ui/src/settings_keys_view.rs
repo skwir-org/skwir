@@ -397,21 +397,21 @@ impl SettingsView {
         let as_records = self.keys.as_records;
         let waiting = self.keys.keyboard.waiting.len();
         let note = (waiting > 0).then(|| {
-            div()
-                .flex_1()
-                .min_w_0()
-                .flex()
-                .items_center()
-                .gap(sized(6.))
-                .child(controls::glyph("plugin", theme.text_muted, 13.))
-                .child(if waiting == 1 {
+            controls::noted(
+                "plugin",
+                theme.text_muted,
+                13.,
+                if waiting == 1 {
                     "One of your shortcuts waits for a plugin that is off: it comes back with it."
                         .to_owned()
                 } else {
                     format!(
                         "{waiting} of your shortcuts wait for plugins that are off: they come back with them."
                     )
-                })
+                },
+            )
+            .flex_1()
+            .min_w_0()
         });
         let (accent, text) = (theme.accent, theme.text);
         let mut bar = div()
@@ -490,14 +490,9 @@ impl SettingsView {
             && let Some(error) = self.errors.get(BINDINGS_KEY)
         {
             bar = bar.child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(sized(6.))
+                controls::noted("warning", theme.error, 13., error.clone())
                     .text_body()
-                    .text_color(theme.error)
-                    .child(controls::glyph("warning", theme.error, 13.))
-                    .child(div().flex_1().min_w_0().child(error.clone())),
+                    .text_color(theme.error),
             );
         }
         bar.into_any_element()
@@ -1428,14 +1423,9 @@ impl SettingsView {
             .flex_col()
             .gap_1();
         let line = |icon: &str, color: gpui::Hsla, text: String| {
-            div()
-                .flex()
-                .items_start()
-                .gap(sized(6.))
+            controls::noted(icon, color, 13., text)
                 .text_body()
                 .text_color(color)
-                .child(controls::glyph(icon, color, 13.))
-                .child(div().flex_1().min_w_0().child(text))
         };
         let judged = self.judged(cx);
         if let Some(judged) = &judged {
