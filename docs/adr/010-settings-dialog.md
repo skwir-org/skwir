@@ -2,8 +2,8 @@
 
 Status: accepted, 2026-09-20. Amended 2026-09-25 (a page per subject),
 2026-09-27 (records, owners' checks, secrets), 2026-09-28 (the user's keys,
-ADR-024). The page of a setting is its subject's, not its namespace's,
-since ADR-072 (2026-10-19).
+ADR-024), 2026-11-12 (a narrow dialog). The page of a setting is its
+subject's, not its namespace's, since ADR-072 (2026-10-19).
 
 ## Context
 
@@ -127,3 +127,33 @@ namespace is this page, as `core` is General. Since 2026-10-13 the list
 itself is edited, and the records editor is behind Edit as records
 (ADR-024's amendment of that date); a setting's own check sees the value
 stored beside the new one.
+
+### 2026-11-12: a narrow dialog
+
+In a 460 px window the dialog kept its list of pages, 216 px at 100 %
+(ADR-117), and left the page what remained: a row's texts, holding their
+share of a card a third that wide, cut their words ("themse / lves"), and
+a control that did not fit beside them ran off the card. At 150 % a
+640 px window did the same. The user chose, of three forms (a page menu,
+an icon rail, a list then a page with a way back):
+
+- **The page menu.** The dialog lists its pages beside the page while the
+  page keeps 360 px there at the text size (`settings_view::lists_pages`,
+  from the window's width, known before layout, as the main window's
+  sidebar is). Narrower, the list goes: the page's title in the header is
+  a button that drops the pages down as a list, as a choice's dropdown
+  does, under it (`page_menu`), and the search field stands under the
+  header. The button has the list's keys: Up and Down go to the page
+  before or after (the list staying down), Enter and Right into the page;
+  Space or a click drops the list down, Escape closes it. A screen reader
+  hears a combo box, "Page", and the page shown as the selected option.
+- **A row moves its control under its texts** rather than cut a word: a
+  setting's row and a plugin's keep their texts at their share of the row
+  and their widest word, the control giving way beside them as before (a
+  choice's buttons become its dropdown, a field narrows); where even its
+  narrowest leaves the texts less, it goes on a line of its own under
+  them, against the right edge (`elements::beside`). A control that ran
+  off the card does the same.
+
+Where the list fits and no row was squeezed, the dialog is drawn as
+before, pixel for pixel (its 13 pages at 1280 px, at 100 and 150 %).

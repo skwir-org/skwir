@@ -23,7 +23,7 @@ them by topic.
 | [007](007-plugin-pane-views.md) | Plugins provide pane views; Usage is cached and watched; what Usage draws inside folders is selectable since ADR-116 | built |
 | [008](008-video-playback.md) | Video through a GStreamer helper | built; amended by 016 |
 | [009](009-structured-previews.md) | Content previews as optional plugins, bounded | built; amended by 012, 016 |
-| [010](010-settings-dialog.md) | Settings apply at once, from a schema | built |
+| [010](010-settings-dialog.md) | Settings apply at once, from a schema; amended 2026-11-12: a narrow dialog drops its list of pages for a page menu in its header, and a row puts its control under its texts rather than cut a word | built |
 | [011](011-global-allocator.md) | mimalloc, tuned, is the allocator | built |
 | [012](012-reading-mode-styles.md) | Reading mode keeps the CSS that says how text reads | built |
 | [013](013-fixed-layout-pages.md) | Fixed-layout book pages are drawn through SVG | built |

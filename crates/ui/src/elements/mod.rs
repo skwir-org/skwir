@@ -7,6 +7,7 @@ pub mod uniform_grid;
 
 pub mod adaptive;
 pub mod bars;
+pub mod beside;
 pub mod chips;
 pub mod clip;
 pub mod columns;

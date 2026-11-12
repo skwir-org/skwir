@@ -15920,3 +15920,53 @@ down the palette, 81 to 87 ticks before, 77 to 83 after.
 **Found, not from this:** at 460 px, the settings dialog's rows narrow
 to a few words a line and cut words ("themse / lves"), in the build
 before 0061 too.
+
+## 2026-11-12: A narrow settings dialog (ADR-010, amended)
+
+Found in the walk of 0061 (not 0061's: the build before it did the same),
+looked into on the user's ask: at 460 px the settings dialog kept its
+list of pages, 216 px at 100 %, and rows a third of a card wide cut their
+words ("themse / lves"); at 150 % a 640 px window did the same, and at
+640 px and 100 % some controls ran off their card (a field's Browse…, a
+dropdown). The user chose a page menu, of three forms, and rows that put
+their control under their texts.
+
+- **The page menu:** the dialog lists its pages while the page keeps
+  360 px beside them at the text size (`settings_view::lists_pages`, from
+  the window's width); narrower, the page's title in the header drops the
+  pages down (`page_menu`, the list's rows `page_entries`), the search
+  field under the header. Its keys are the list's (Up, Down, the list
+  staying down; Enter, Right into the page); Space or a click opens it,
+  Escape closes it. A screen reader hears a combo box, "Page", and in the
+  list the page shown, selected (`aria_active_descendant_for`: the list
+  is drawn apart from its button).
+- **Rows:** a setting's row and a plugin's are an `elements::beside`: a
+  wrapping line whose texts start at their share of the row and never
+  under their widest word (taffy's least width for a text, gpui 0061),
+  the control starting at its narrowest (measured on it before the line)
+  and growing to its natural width. Where both starts do not fit, the
+  control goes under the texts, against the right edge, laid out in its
+  place in `prepaint`, centered in its line as a plain row centers it.
+  An empty revert slot gives way only after the control is at its
+  narrowest.
+
+**Checked:** on Xvfb (debug build), the settings' 13 pages, the views,
+Properties, About, Shortcuts and History at 1280, 640 and 460 px, at 100
+and 150 %, against the build before (22c18fc1): at 1280 px alike but for
+the fixtures' names and times; at 640 px and 100 % only the four rows
+whose control ran off the card, now under their texts; at 460 px, and
+640 px at 150 %, the page menu. At 460 px and 200 % every row stacks and
+no word is cut; the Theme dropdown, 300 px at its narrowest, fits once
+the empty revert slot gives way. The page menu by keys (Down with it
+open, Escape, Down, Enter) and by the pointer. `just a11y-check`, with
+four new steps in a 460 px window, passed; `skwir-ui`'s tests, 648 (a new
+one: `a_narrow_dialog_gives_its_list_of_pages_up`); clippy. Frames,
+scrolling the Plugins page, three rounds alternated: 69.3 to 69.8 ms
+before, 73.6 to 74.9 after (median, about 6 %), the window thread 189 to
+191 ticks before, 203 to 205 after (about 8 %): each row lays its control
+out three times (its narrowest, its natural width, its place). A first version that measured
+the texts' widest word on a copy of them cost 17 % of a frame.
+
+**Not tested:** the element has no test of its own (`skwir-ui` has no
+gpui test context); it is checked by the walks above. Not run: `just
+check-cross`, `just smoke`.

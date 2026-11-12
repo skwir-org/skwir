@@ -200,11 +200,29 @@ The key is the owner's; the page is the subject's (ADR-072).
   draws a menu of its own.
 - A row's title and description keep a share of the row whatever the
   control (`TEXTS_SHARE`, a share rather than a width, so a large text
-  size in a narrow window still fits: ADR-117), and the control gives way
-  in what is left, never cut at the card's edge. A choice is segmented
-  buttons only while they fit beside that (`elements::adaptive::Fit`
-  measures both forms; no character counts), else a dropdown. A text
-  field narrows before the texts do.
+  size in a narrow window still fits: ADR-117), and their widest word, and
+  the control gives way in what is left, never cut at the card's edge. A
+  choice is segmented buttons only while they fit beside that
+  (`elements::adaptive::Fit` measures both forms; no character counts),
+  else a dropdown. A text field narrows before the texts do. Where even
+  the control's narrowest leaves the texts less, it goes on a line of its
+  own under them, against the right edge: a setting's row and a plugin's
+  are an `elements::beside` (ADR-010, amended 2026-11-12). Their texts
+  start at their share and never under their widest word, taffy's least
+  width for a text since gpui 0061; the control's narrowest and natural
+  widths are measured on it. An empty revert slot gives way only once the
+  control beside it is at its narrowest and still does not fit
+  (`revert_slot`).
+- **The pages are listed while there is room**: beside the page while it
+  keeps `PAGE_LEAST` there at the text size (`settings_view::lists_pages`,
+  from the window's width, known before layout). Narrower, the page's
+  title in the header is a button that drops the pages down
+  (`page_menu`, one `page_entries` for both), with the list's keys and
+  focus (`nav`: Up and Down step the pages, the list staying down, Enter
+  and Right go into the page, Space opens, Escape closes), and the search
+  field stands under the header, after the button in the stops' order.
+  The pages dropped down are a dropdown's list, not a menu: the window's
+  context menu stays the only menu the dialog has.
 - **Automatic says what it gives**, as a popup's setting row does
   (`docs/invariants/shell.md`): while the default is chosen, the segment
   it comes to now is outlined in dashes (`controls::now`; every segment

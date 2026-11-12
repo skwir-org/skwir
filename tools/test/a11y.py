@@ -200,6 +200,25 @@ class Window:
             subprocess.run([xdotool, "key", "--window", wid[0], key], env=env, check=True)
             time.sleep(0.3)
 
+    def resize(self, width=None, height=None):
+        """The window's size, set to `width` × `height` where given: what it
+        was, as (width, height)."""
+        xdotool = self.args.xdotool
+        env = self.env()
+        wid = subprocess.run([xdotool, "search", "--name", "skwir$"], env=env,
+                             capture_output=True, text=True).stdout.split()
+        if not wid:
+            fail("no window to resize")
+        shell = subprocess.run([xdotool, "getwindowgeometry", "--shell", wid[0]], env=env,
+                               capture_output=True, text=True, check=True).stdout
+        geometry = dict(line.split("=", 1) for line in shell.split() if "=" in line)
+        was = (int(geometry["WIDTH"]), int(geometry["HEIGHT"]))
+        if width is not None:
+            subprocess.run([xdotool, "windowsize", "--sync", wid[0], str(width),
+                            str(height or was[1])], env=env, check=True)
+            time.sleep(0.5)
+        return was
+
     def focused(self):
         """What a screen reader says has focus: the focused node that has no
         focused node under it."""
@@ -606,6 +625,25 @@ def run(w):
           hears(w, "page tab 'General' selected focused")
           and within(w.focused())[:2] == ["Pages", "Settings"])
     w.keys("Escape")
+    check("Escape: back to the entry", hears(w, f"list item {first!r} 1 of 4 selected focused"))
+
+    # Too narrow to list its pages, the dialog names the page shown with a
+    # combo box that drops them down (`settings_view::lists_pages`).
+    was = w.resize(460)
+    w.keys("ctrl+comma")
+    check("Ctrl+, in a narrow window: the page, a combo box of the dialog",
+          hears(w, "combo box 'Page' focused") and within(w.focused())[:1] == ["Settings"])
+    w.keys("space")
+    check("Space: the pages dropped down, the one shown said as selected",
+          hears(w, "list item 'General' selected focused")
+          and within(w.focused())[:1] == ["Pages"])
+    w.keys("Down")
+    check("Down: the next page, the list still down",
+          hears(w, "list item 'Appearance' selected focused"))
+    w.keys("Escape")
+    check("Escape: the list closed, the combo box again", hears(w, "combo box 'Page' focused"))
+    w.keys("Escape")
+    w.resize(*was)
     check("Escape: back to the entry", hears(w, f"list item {first!r} 1 of 4 selected focused"))
 
     w.keys("End", "space")

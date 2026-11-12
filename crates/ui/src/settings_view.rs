@@ -44,6 +44,38 @@ const TEXTS_SHARE: f32 = 0.35;
 /// column's dropdowns line up.
 const TABLE_CHOICE: f32 = 210.;
 
+/// The dialog's width: this share of the window, at most `DIALOG_MAX` at
+/// 100 % (it grows with the text, ADR-117).
+const DIALOG_SHARE: f32 = 0.94;
+const DIALOG_MAX: f32 = 920.;
+/// The list of pages beside the page, at 100 %.
+const PAGES_WIDTH: f32 = 216.;
+/// What the page keeps beside the list, at 100 %: a dialog narrower than
+/// both gives the list up for the page menu (`lists_pages`).
+const PAGE_LEAST: f32 = 360.;
+/// The page menu's key in `SettingsView::dropdown`: no setting's, which
+/// all have a dot (`plugin_id.name`).
+pub(crate) const PAGES_MENU: &str = "pages";
+
+/// Whether the dialog lists its pages beside the page shown: while the
+/// page keeps `PAGE_LEAST` there. Narrower, the page's title in the header
+/// opens them as a menu (`SettingsView::page_menu`) and the page takes the
+/// whole width, so its rows never narrow to a few words a line. The
+/// dialog's width is known before layout (the window's, at the text size),
+/// as the main window's sidebar's is (`Shell::sidebar_fits`).
+pub(crate) fn lists_pages(window: &Window) -> bool {
+    lists_pages_at(
+        f32::from(window.viewport_size().width),
+        crate::sizes::Scale::of(window),
+    )
+}
+
+/// `lists_pages` in a window `width` px wide, at the text size `scale`.
+fn lists_pages_at(width: f32, scale: crate::sizes::Scale) -> bool {
+    let dialog = (DIALOG_SHARE * width).min(scale.f(DIALOG_MAX));
+    dialog - scale.f(PAGES_WIDTH) >= scale.f(PAGE_LEAST)
+}
+
 /// A dropdown of more choices than this opens with a field that narrows
 /// them (`settings::Narrowed`): the icon themes, bat's themes.
 pub(crate) const FILTERED: usize = 12;
@@ -237,9 +269,15 @@ fn swatch(swatch: &skwir_core::settings::Swatch, height: f32) -> gpui::Div {
 
 /// The place of a row's revert button, held whether or not the row is
 /// modified: changing a value or restoring it never moves the texts or the
-/// control beside it.
+/// control beside it. Empty, it gives way once the control beside it is at
+/// its narrowest and still does not fit (a row of its own at a large text
+/// size, `elements::beside`), and only then: it shrinks that much slower.
 pub(crate) fn revert_slot(size: f32, button: Option<AnyElement>) -> gpui::Div {
-    div().flex_none().size(px(size)).children(button)
+    /// How much slower an empty slot shrinks than the control beside it.
+    const LAST: f32 = 1e-4;
+    let mut slot = div().size(px(size)).min_w_0();
+    slot.style().flex_shrink = Some(if button.is_some() { 0. } else { LAST });
+    slot.children(button)
 }
 
 /// What a setting row needs, detached from `self` so controls can borrow it.
@@ -364,11 +402,9 @@ impl SettingsView {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let search_focused = self.search.read(cx).is_focused(window);
-        let searching = !self.query(cx).is_empty();
         // Its pages, tabs of the dialog: the page shown is the one the
         // keys move, said as focused while the list has the keyboard.
-        let mut list = div()
+        let list = div()
             .id("settings-nav")
             .role(gpui::Role::TabList)
             .aria_label("Pages")
@@ -380,21 +416,68 @@ impl SettingsView {
             .flex()
             .flex_col()
             .gap(sized(2.))
-            .p_2();
+            .p_2()
+            .children(self.page_entries(false, theme, window, cx));
+        div()
+            .w(sized(PAGES_WIDTH))
+            .flex_none()
+            .h_full()
+            .flex()
+            .flex_col()
+            .bg(theme.surface)
+            .rounded_l_lg()
+            .border_r_1()
+            .border_color(theme.border)
+            .child(
+                div()
+                    .p_2()
+                    .pb_0()
+                    .child(self.search_field(theme, window, cx)),
+            )
+            .child(list)
+            .into_any_element()
+    }
+
+    /// The field searching every page: atop the list of pages, or under
+    /// the header where the dialog has no room for the list.
+    fn search_field(&self, theme: &Theme, window: &Window, cx: &Context<Self>) -> AnyElement {
+        let focused = self.search.read(cx).is_focused(window);
+        controls::field(&self.search, None, focused, false, Some("search"), theme)
+            .into_any_element()
+    }
+
+    /// The pages, a row each, as the list beside the page shows them (its
+    /// tabs) and as the page menu does in its place (`menu`, its options,
+    /// `page_menu`): an icon, the title, how many of its settings differ
+    /// from their defaults, and a caption before the plugins' own. The page
+    /// shown is chosen, ringed while the keyboard is on the list or the
+    /// menu's button (`nav`), and said as focused there: the menu is drawn
+    /// apart from its button, so it names the focus it answers. A click on
+    /// one goes there.
+    fn page_entries(
+        &self,
+        menu: bool,
+        theme: &Theme,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        let searching = !self.query(cx).is_empty();
         let nav_focused = self.nav.is_focused(window);
+        let mut entries = Vec::new();
         let mut plugins_caption = false;
         for page in self.pages() {
             let icon = page.builtin().map_or("", |b| b.icon);
             if matches!(page, Page::Plugin(_)) && !plugins_caption {
                 plugins_caption = true;
-                list = list.child(
+                entries.push(
                     div()
                         .px_2()
                         .pt_3()
                         .pb_1()
                         .text_small()
                         .text_color(theme.text_muted)
-                        .child("Plugin settings"),
+                        .child("Plugin settings")
+                        .into_any_element(),
                 );
             }
             let selected = !searching && page == self.page;
@@ -409,14 +492,24 @@ impl SettingsView {
             let title = self.page_title(&page);
             let target = page.clone();
             let hover = theme.hover;
-            list = list.child(
+            entries.push(
                 div()
                     .id(SharedString::from(format!("settings-page-{title}")))
-                    .role(gpui::Role::Tab)
+                    .role(if menu {
+                        gpui::Role::ListBoxOption
+                    } else {
+                        gpui::Role::Tab
+                    })
                     .when(self.a11y, |d| {
                         d.aria_label(title.clone()).aria_selected(selected)
                     })
-                    .when(selected, StatefulInteractiveElement::aria_active_descendant)
+                    .when(selected && menu, |d| {
+                        d.aria_active_descendant_for(&self.nav)
+                    })
+                    .when(
+                        selected && !menu,
+                        StatefulInteractiveElement::aria_active_descendant,
+                    )
                     .h(sized(30.))
                     .px_2()
                     .flex()
@@ -452,29 +545,90 @@ impl SettingsView {
                     .on_click(cx.listener(move |this, _, window, cx| {
                         window.focus(&this.nav, cx);
                         this.go(target.clone(), cx);
-                    })),
+                    }))
+                    .into_any_element(),
             );
         }
-        div()
-            .w(sized(216.))
-            .flex_none()
-            .h_full()
+        entries
+    }
+
+    /// The page's title in a dialog too narrow to list its pages
+    /// (`lists_pages`): a button opening them as a menu, under it, in the
+    /// list's stead. It has the list's keyboard (`nav`): Up and Down go to
+    /// the page before or after, Enter and Right into the page, Space or a
+    /// click opens the menu, Escape closes it.
+    fn page_menu(
+        &self,
+        title: String,
+        theme: &Theme,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let open = self.dropdown.as_deref() == Some(PAGES_MENU);
+        let (accent, hover) = (theme.accent, theme.hover);
+        let ring = if self.nav.is_focused(window) {
+            accent
+        } else {
+            gpui::transparent_black()
+        };
+        let mut button = div()
+            .id("settings-page-menu")
+            .role(gpui::Role::ComboBox)
+            .aria_label("Page")
+            .aria_value(title.clone())
+            .aria_expanded(open)
+            .track_focus(&self.nav)
+            .key_context("SettingsNav")
+            .relative()
             .flex()
-            .flex_col()
-            .bg(theme.surface)
-            .rounded_l_lg()
-            .border_r_1()
-            .border_color(theme.border)
-            .child(div().p_2().pb_0().child(controls::field(
-                &self.search,
-                None,
-                search_focused,
-                false,
-                Some("search"),
-                theme,
-            )))
-            .child(list)
-            .into_any_element()
+            .items_center()
+            .gap_2()
+            .px_2()
+            .rounded_md()
+            .border_1()
+            .border_color(ring)
+            .cursor_pointer()
+            .hover(move |s| s.bg(hover))
+            .child(controls::glyph("list", theme.text_muted, 16.))
+            // Narrowed to its widest word at most, never cut.
+            .child(div().text_title().child(title))
+            .child(controls::glyph("chevron", theme.text_muted, 14.))
+            .child(self.pages_anchor.marker())
+            .on_click(cx.listener(move |this, _, window, cx| {
+                window.focus(&this.nav, cx);
+                this.dropdown = (!open).then(|| PAGES_MENU.to_owned());
+                cx.notify();
+            }));
+        if open {
+            // The pages scroll in the height the popover leaves them.
+            let panel = div()
+                .id("settings-pages")
+                .role(gpui::Role::ListBox)
+                .aria_label("Pages")
+                .min_w(sized(PAGES_WIDTH))
+                .min_h_0()
+                .overflow_y_scroll()
+                .p_1()
+                .flex()
+                .flex_col()
+                .gap(sized(2.))
+                .rounded_md()
+                .border_1()
+                .border_color(theme.border)
+                .bg(theme.surface)
+                .text_color(theme.text)
+                .text_body()
+                .font_family(theme.font.clone())
+                .shadow_lg()
+                .occlude()
+                .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                    this.dropdown = None;
+                    cx.notify();
+                }))
+                .children(self.page_entries(true, theme, window, cx));
+            button = button.child(self.pages_anchor.popup(panel));
+        }
+        button.into_any_element()
     }
 
     // ------------------------------------------------------------ rows
@@ -1261,11 +1415,18 @@ impl SettingsView {
         // Built after the revert button: traversal follows the visual order.
         // It gives way before the texts' least width: a choice's buttons
         // become its dropdown, a field narrows (`elements::adaptive::Fit`,
-        // `FIELD_MIN`), never cut at the card's edge at a large text size.
+        // `FIELD_MIN`); where even that leaves the texts less than their
+        // widest word, it goes under them (`elements::beside`).
         let control = div()
             .flex_shrink_1()
             .when(!row.available, |d| d.opacity(0.5))
             .child(self.control(row, item, false, theme, window, cx));
+        let end = div()
+            .flex()
+            .items_center()
+            .gap_4()
+            .child(revert_slot(controls::HEIGHT, revert))
+            .child(control);
         let highlighted = self.highlight.as_deref() == Some(key.as_str());
         // A list's records are rows of the same card, under its own.
         let records = row.spec.kind == SettingKind::Records;
@@ -1281,9 +1442,7 @@ impl SettingsView {
                 },
             )
             .when(highlighted, |d| d.bg(theme.highlight))
-            .child(texts)
-            .child(revert_slot(controls::HEIGHT, revert))
-            .child(control)
+            .child(crate::elements::beside::beside(texts, end, TEXTS_SHARE))
             .into_any_element(),
         );
         if records {
@@ -1624,53 +1783,58 @@ impl SettingsView {
         } else {
             "Enabled".to_owned()
         };
-        let mut texts = Self::texts(title, plugin.description.clone(), theme);
-        // What it may do (ADR-044), and where one from outside skwir is.
-        let may = plugin
-            .capabilities
-            .words()
-            .map(|words| format!("May: {words}"));
-        let from = plugin
-            .origin
-            .as_ref()
-            .map(|origin| format!("From {origin}"));
-        for (icon, text) in [("lock", may), ("plugin", from)] {
-            if let Some(text) = text {
-                texts = texts.child(
-                    controls::noted(icon, theme.text_muted, 13., text)
-                        .text_body()
-                        .text_color(theme.text_muted),
-                );
+        let texts = {
+            let mut texts = Self::texts(title, plugin.description.clone(), theme);
+            // What it may do (ADR-044), and where one from outside skwir is.
+            let may = plugin
+                .capabilities
+                .words()
+                .map(|words| format!("May: {words}"));
+            let from = plugin
+                .origin
+                .as_ref()
+                .map(|origin| format!("From {origin}"));
+            for (icon, text) in [("lock", may), ("plugin", from)] {
+                if let Some(text) = text {
+                    texts = texts.child(
+                        controls::noted(icon, theme.text_muted, 13., text)
+                            .text_body()
+                            .text_color(theme.text_muted),
+                    );
+                }
             }
-        }
-        if let Some(requirements) = &self.requirements {
-            for status in requirements.iter().filter(|status| status.plugin == id) {
-                let (icon, color, text) = if status.found {
-                    ("check", theme.text_muted, format!("{} found", status.name))
-                } else {
-                    (
-                        "warning",
-                        match (plugin.enabled, status.required) {
-                            (true, true) => theme.error,
-                            (true, false) => theme.warning,
-                            (false, _) => theme.text_muted,
-                        },
-                        format!("{} not found — {}", status.name, status.purpose),
-                    )
-                };
-                texts = texts.child(
-                    controls::noted(icon, color, 13., text)
-                        .text_body()
-                        .text_color(color),
-                );
+            if let Some(requirements) = &self.requirements {
+                for status in requirements.iter().filter(|status| status.plugin == id) {
+                    let (icon, color, text) = if status.found {
+                        ("check", theme.text_muted, format!("{} found", status.name))
+                    } else {
+                        (
+                            "warning",
+                            match (plugin.enabled, status.required) {
+                                (true, true) => theme.error,
+                                (true, false) => theme.warning,
+                                (false, _) => theme.text_muted,
+                            },
+                            format!("{} not found — {}", status.name, status.purpose),
+                        )
+                    };
+                    texts = texts.child(
+                        controls::noted(icon, color, 13., text)
+                            .text_body()
+                            .text_color(color),
+                    );
+                }
             }
-        }
-        let mut row = card_row(theme, edge).child(texts);
+            texts
+        };
+        // Its Settings button and its switch, beside the texts or under
+        // them (`elements::beside`).
+        let mut end = div().flex().items_center().gap_4();
         // To where its settings are, by their subject.
         if link && plugin.enabled && self.rows.iter().any(|row| row.spec.owner() == id) {
             let focus = self.handle(&format!("plugin-settings:{id}"), cx);
             self.stop(&focus, Some(item), None);
-            row = row.child(
+            end = end.child(
                 controls::button(
                     format!("plugin-settings-{id}"),
                     "Settings",
@@ -1687,7 +1851,7 @@ impl SettingsView {
         }
         let focus = self.handle(&format!("plugin:{id}"), cx);
         self.stop(&focus, Some(item), None);
-        row = row.child(
+        end = end.child(
             controls::switch(format!("plugin-{id}"), shown, &focus, theme)
                 .when(self.a11y, |d| d.aria_label(plugin.title.clone()))
                 .when(pending, |d| d.opacity(0.5))
@@ -1697,7 +1861,11 @@ impl SettingsView {
                     }
                 })),
         );
-        items.push(row.into_any_element());
+        items.push(
+            card_row(theme, edge)
+                .child(crate::elements::beside::beside(texts, end, TEXTS_SHARE))
+                .into_any_element(),
+        );
     }
 
     // ------------------------------------------------------------ pages
@@ -1982,11 +2150,20 @@ impl Render for SettingsView {
         self.row_items.clear();
         self.record_stops.clear();
         self.record_picks.clear();
+        // The list of pages beside the page, or in a narrow dialog the
+        // page menu in the header, the search field under it: the stops
+        // follow them as they are drawn.
+        let lists = lists_pages(window);
         let search_focus = self.search.focus_handle(cx);
-        self.stop(&search_focus, None, None);
         let nav = self.nav.clone();
-        self.stop(&nav, None, None);
-        let sidebar = self.render_sidebar(&theme, window, cx);
+        if lists {
+            self.stop(&search_focus, None, None);
+            self.stop(&nav, None, None);
+        } else {
+            self.stop(&nav, None, None);
+            self.stop(&search_focus, None, None);
+        }
+        let sidebar = lists.then(|| self.render_sidebar(&theme, window, cx));
 
         let query = self.query(cx);
         let mut items: Vec<AnyElement> = Vec::new();
@@ -2107,7 +2284,11 @@ impl Render for SettingsView {
                             .flex()
                             .items_center()
                             .gap_3()
-                            .child(div().text_title().child(title))
+                            .child(if lists {
+                                div().text_title().child(title).into_any_element()
+                            } else {
+                                self.page_menu(title, &theme, window, cx)
+                            })
                             .children(status),
                     )
                     .when(!subtitle.is_empty(), |d| {
@@ -2123,6 +2304,13 @@ impl Render for SettingsView {
                 controls::icon_button("settings-close", "close", "Close", &close, &theme)
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(SettingsEvent::Close))),
             );
+        let search = (!lists).then(|| {
+            div()
+                .flex_none()
+                .px_6()
+                .pb_3()
+                .child(self.search_field(&theme, window, cx))
+        });
         // The read-only warning stays above a page that is not its items.
         let warning = (content.is_some() && !items.is_empty()).then(|| {
             div()
@@ -2164,8 +2352,8 @@ impl Render for SettingsView {
             .role(gpui::Role::Dialog)
             .aria_modal()
             .aria_label("Settings")
-            .w(relative(0.94))
-            .max_w(sized(920.))
+            .w(relative(DIALOG_SHARE))
+            .max_w(sized(DIALOG_MAX))
             .h(relative(0.9))
             .max_h(sized(680.))
             .flex()
@@ -2181,7 +2369,7 @@ impl Render for SettingsView {
             .track_focus(&self.root)
             .key_context("Settings")
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(sidebar)
+            .children(sidebar)
             .child(
                 div()
                     .flex_1()
@@ -2190,6 +2378,7 @@ impl Render for SettingsView {
                     .flex()
                     .flex_col()
                     .child(header)
+                    .children(search)
                     .children(warning)
                     .children(toolbar)
                     .child(content)
@@ -2216,7 +2405,7 @@ impl Render for SettingsView {
 
 #[cfg(test)]
 mod tests {
-    use super::{size_part, written_at};
+    use super::{lists_pages_at, size_part, written_at};
     use crate::sizes::{Part, Text};
     use crate::theme::{Base, Contrast, Theme};
 
@@ -2290,6 +2479,21 @@ mod tests {
         );
         assert!(!found("pdf audio"), "every word");
         assert!(!found("player"));
+    }
+
+    /// The dialog lists its pages while the page keeps its least width
+    /// beside the list, at any text size; narrower, the page's title opens
+    /// them as a menu (a 460 px window cut its rows' words, 2026-11-12).
+    #[test]
+    fn a_narrow_dialog_gives_its_list_of_pages_up() {
+        use crate::sizes::Scale;
+        assert!(lists_pages_at(1280., Scale::ONE));
+        assert!(lists_pages_at(640., Scale::ONE));
+        assert!(!lists_pages_at(560., Scale::ONE));
+        assert!(!lists_pages_at(460., Scale::ONE));
+        // At 150 %, the list and the page's least grow with the text.
+        assert!(lists_pages_at(1280., Scale(1.5)));
+        assert!(!lists_pages_at(800., Scale(1.5)));
     }
 
     #[test]

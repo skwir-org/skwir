@@ -84,7 +84,9 @@ working in an area, also read that area's rules (see
   `whitespace_nowrap` or `truncate`. What is laid out on its own at its
   natural size (a popup, a measure in prepaint) is given
   `AvailableSpace::max_size`: at `min_size`, its texts narrow to their
-  widest word.
+  widest word. Texts beside the controls that act on them, in a row that
+  can grow narrow, are an `elements::beside`: the controls go under the
+  texts rather than cut a word or run off the row.
 - **Tokens.** Colors, radii, shadows and fonts come from `theme.rs` (its
   header lists the scales). State colors are tokens too (`hover`,
   `selection_*`, `success`/`warning`/`error`, `scrim`); never derive one

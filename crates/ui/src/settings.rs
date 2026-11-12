@@ -2504,7 +2504,12 @@ pub struct SettingsView {
     /// Plugins whose toggle was requested and has not been observed yet.
     pub(crate) toggling: BTreeMap<String, bool>,
     pub(crate) reset_armed: bool,
+    /// The dropdown open: a setting's, by its key, or the page menu
+    /// (`settings_view::PAGES_MENU`).
     pub(crate) dropdown: Option<String>,
+    /// Where the page menu hangs: under the page's title, in a dialog too
+    /// narrow to list its pages (`settings_view::lists_pages`).
+    pub(crate) pages_anchor: PopoverAnchor,
     /// The dropdown open, when it is a long one.
     pub(crate) narrowed: Option<Narrowed>,
     /// A slider's knob held by the pointer: the value under it, worn
@@ -2696,6 +2701,7 @@ impl SettingsView {
             toggling: BTreeMap::new(),
             reset_armed: false,
             dropdown: None,
+            pages_anchor: PopoverAnchor::default(),
             narrowed: None,
             sliding: None,
             highlight: None,
@@ -3653,7 +3659,12 @@ impl SettingsView {
         let next = current
             .saturating_add_signed(delta)
             .min(pages.len().saturating_sub(1));
+        // The page menu open stays open, the page it is on moving.
+        let menu = self.dropdown.as_deref() == Some(crate::settings_view::PAGES_MENU);
         self.go(pages[next].clone(), cx);
+        if menu {
+            self.dropdown = Some(crate::settings_view::PAGES_MENU.to_owned());
+        }
     }
 
     /// Open the long dropdown of `key`, its field taking the keyboard and
