@@ -1941,7 +1941,74 @@ fn shown_with(
 
 /// `slots`' sort keys under `sort`, not sorted yet.
 fn keys_of<'a>(sort: &Sort, slots: impl Iterator<Item = &'a Slot>) -> Vec<SortKeyOf<'a>> {
-    slots.map(|slot| Listing::sort_key(sort, slot)).collect()
+    let costly = sort.keys.as_ref().is_some_and(|keys| keys.costly);
+    if !costly || crate::scheduler::on_window_thread() {
+        return slots.map(|slot| Listing::sort_key(sort, slot)).collect();
+    }
+    let slots: Vec<&Slot> = slots.collect();
+    let Some(answered) = answered_of(sort, &slots) else {
+        return slots
+            .into_iter()
+            .map(|slot| Listing::sort_key(sort, slot))
+            .collect();
+    };
+    slots
+        .into_iter()
+        .zip(answered)
+        .map(|(slot, answered)| Listing::key_answered(sort, slot, answered))
+        .collect()
+}
+
+/// What the sorter's keys answered for an entry (`Listing::answered`):
+/// its group, and its value where only a plugin reads it.
+#[derive(Clone, Default)]
+struct Answered {
+    group: Option<Arc<Group>>,
+    value: Option<Arc<Group>>,
+}
+
+/// What the sorter's keys answer for each of `slots`, in their order, on
+/// every core; none where they are too few to be worth a thread. Asked
+/// only of keys that are costly (`Keys::costly`, `keys_of`): what a
+/// plugin reads of an entry's name (its type, in the type database) costs
+/// a microsecond or more, half a second for a folder of 300 000 files on
+/// one core, while what it answers from groups it shares (a date's) costs
+/// nanoseconds, and threads asking that at once only wait on one another
+/// (an order of /nix/store by date took four times as long). Only the
+/// answers are made there, which the keys share with every entry that has
+/// them; each entry's key is made where its order is (`key_answered`), so
+/// what an order keeps is allocated by a thread that lives on, not by one
+/// gone. Never from the window's thread, where keys answer from memory
+/// and leave to a worker what reads (a type's name): threads it waited
+/// for would read there.
+fn answered_of(sort: &Sort, slots: &[&Slot]) -> Option<Vec<Answered>> {
+    /// The fewest entries a thread is started for: a thread costs tens of
+    /// microseconds, what it answers a microsecond an entry.
+    const EACH: usize = 4096;
+    let threads = std::thread::available_parallelism()
+        .map_or(1, std::num::NonZeroUsize::get)
+        .min(slots.len() / EACH);
+    if threads < 2 {
+        return None;
+    }
+    let mut answered = vec![Answered::default(); slots.len()];
+    let part = slots.len().div_ceil(threads);
+    std::thread::scope(|scope| {
+        for (out, slots) in answered.chunks_mut(part).zip(slots.chunks(part)) {
+            scope.spawn(move || {
+                for (answer, slot) in out.iter_mut().zip(slots) {
+                    *answer = Listing::answered(sort, slot);
+                }
+            });
+        }
+    });
+    Some(answered)
+}
+
+/// Whether what `key` reads of `e` is not read yet, or could not be: it
+/// waits for it (`SortKey::waits`), after the rest.
+fn unread(key: SortKey, e: &Entry) -> bool {
+    key.waits() && key.applies_to(e) && (!key.has_read(&e.metadata) || e.metadata.is_unread())
 }
 
 /// `slots`' sort keys under `sort`, in order.
@@ -1952,11 +2019,12 @@ fn keyed_of<'a>(sort: &Sort, slots: impl Iterator<Item = &'a Slot>) -> Vec<SortK
 }
 
 /// The value of `key` for `e`, as sorted: a number, then words (its
-/// collation key), each none where it has none, the lowest. `keyer` gives
-/// what only a plugin reads (`SortKey::keyed`); without it, nothing.
+/// collation key), each none where it has none, the lowest. `answered` is
+/// what the sorter's keys said of what only a plugin reads
+/// (`SortKey::keyed`); without it, nothing.
 fn value_of(
     key: SortKey,
-    keyer: Option<&crate::grouping::Keyer>,
+    answered: Option<&Arc<Group>>,
     e: &crate::grouping::Of<'_>,
 ) -> (u64, Option<Arc<[u8]>>) {
     use crate::entry::{Value, keys};
@@ -2001,8 +2069,7 @@ fn value_of(
             extension_of(e).map(|ext| Arc::from(collated(&ext.to_lowercase()))),
         ),
         SortKey::Tags => (0, tags_of(e).map(|tags| Arc::from(collated(&tags)))),
-        SortKey::Kind | SortKey::Type | SortKey::Owner => keyer.map_or((0, None), |keyer| {
-            let group = keyer(e);
+        SortKey::Kind | SortKey::Type | SortKey::Owner => answered.map_or((0, None), |group| {
             (group.rank, Some(Arc::clone(&group.key)))
         }),
         // As the file says it, from 1: none (`Bool(false)`) is the lowest.
@@ -3253,30 +3320,52 @@ impl Listing {
     /// arrivals, and equal names do not trade places from one sort to the
     /// next.
     fn sort_key<'a>(sort: &Sort, slot: &'a Slot) -> SortKeyOf<'a> {
-        let spec = &sort.spec;
+        Self::key_answered(sort, slot, Self::answered(sort, slot))
+    }
+
+    /// What the sorter's keys answer for `slot` under `sort` (ADR-130, 8):
+    /// its group, unless it is not read yet, and its value where only a
+    /// plugin reads it. Nothing where they answer nothing.
+    fn answered(sort: &Sort, slot: &Slot) -> Answered {
+        let (grouping, value) = (sort.grouping(), sort.value());
+        if grouping.is_none() && value.is_none() {
+            return Answered::default();
+        }
         let e = &slot.entry;
-        let unread = |key: SortKey| {
-            key.waits()
-                && key.applies_to(e)
-                && (!key.has_read(&e.metadata) || e.metadata.is_unread())
-        };
         // Where it is, asked only of a sort that needs it.
         let folder = sort.wants_folders().then(|| sort.folder_of(e)).flatten();
         let of = crate::grouping::Of {
             entry: e,
             folder: folder.as_deref(),
         };
-        let (later, group) = match sort.grouping() {
-            Some((key, _)) if unread(key) => (true, None),
-            Some((_, keyer)) => (false, Some(keyer(&of))),
-            None => (false, None),
+        Answered {
+            group: grouping
+                .filter(|(key, _)| !unread(*key, e))
+                .map(|(_, keyer)| keyer(&of)),
+            value: value.map(|keyer| keyer(&of)),
+        }
+    }
+
+    /// `slot`'s key under `sort`, with what the sorter's keys answered for
+    /// it (`answered`).
+    fn key_answered<'a>(sort: &Sort, slot: &'a Slot, answered: Answered) -> SortKeyOf<'a> {
+        let spec = &sort.spec;
+        let e = &slot.entry;
+        let later = sort.grouping().is_some_and(|(key, _)| unread(key, e));
+        let group = answered.group;
+        let folder = (spec.key == SortKey::Folder)
+            .then(|| sort.folder_of(e))
+            .flatten();
+        let of = crate::grouping::Of {
+            entry: e,
+            folder: folder.as_deref(),
         };
-        let (num, words) = value_of(spec.key, sort.value(), &of);
+        let (num, words) = value_of(spec.key, answered.value.as_ref(), &of);
         SortKeyOf {
             later,
             extra: (group.is_some() || words.is_some()).then(|| Arc::new(Extra { group, words })),
             file: spec.folders_first && !e.is_dir(),
-            unknown: unread(spec.key),
+            unknown: unread(spec.key, e),
             num,
             name: &slot.key,
             id: e.id,
@@ -3471,12 +3560,10 @@ impl Listing {
                 again.push(now);
             }
         }
-        again.extend(
-            self.entries.as_slice()[cache.seen..]
-                .values()
-                .filter(shown)
-                .map(|slot| Self::sort_key(&sort, slot)),
-        );
+        again.extend(keys_of(
+            &sort,
+            self.entries.as_slice()[cache.seen..].values().filter(shown),
+        ));
         again.sort_unstable_by(|a, b| Self::compare(spec, a, b));
         // Compared with, what they point at kept once what is taken out
         // let go of its own.
@@ -5370,6 +5457,73 @@ mod tests {
                 whole(&listing);
             }
         }
+    }
+
+    /// The groups of `listing`'s whole order under `sort`, told by a pass
+    /// over it: what the counts kept as it changes must say.
+    fn spans_whole(listing: &Listing, sort: &Sort) -> Vec<Span> {
+        let order = listing.compute_sorted(sort);
+        crate::grouping::spans_of(&order, |_, id| {
+            let slot = listing.entries.get(&id).expect("listed");
+            Some(Listing::answered(sort, slot).group)
+        })
+    }
+
+    /// Spans as words, to compare.
+    fn said(spans: &[Span]) -> Vec<(usize, usize, usize, Option<String>)> {
+        spans
+            .iter()
+            .map(|s| {
+                let group = s.group.as_ref().map(|g| g.label.to_string());
+                (s.start, s.len, s.count, group)
+            })
+            .collect()
+    }
+
+    /// A large order asks costly keys on every core: the order, and its
+    /// groups, are those asked one entry after the other.
+    #[test]
+    fn keys_asked_on_every_core_make_the_order_one_thread_makes() {
+        use crate::grouping::GroupBy;
+        let mut listing = Listing::default();
+        listing.apply(ListingEvent::Added(
+            (0..20_000)
+                .map(|ino| {
+                    let kind = if ino % 7 == 0 {
+                        EntryKind::Directory
+                    } else {
+                        EntryKind::File
+                    };
+                    sized_entry(ino, &format!("n{}", ino * 7_919 % 20_000), kind, ino % 13)
+                })
+                .collect(),
+        ));
+        listing.apply(ListingEvent::Complete);
+        let mut keys = test_keys(SortKey::Kind, Some(SortKey::Size));
+        keys.costly = true;
+        let sort = Sort {
+            spec: SortSpec {
+                key: SortKey::Kind,
+                group: GroupBy::Key(SortKey::Size),
+                ..SortSpec::default()
+            },
+            keys: Some(keys),
+            folders: None,
+        };
+        let one_by_one: Vec<EntryId> = {
+            let mut keyed: Vec<_> = listing
+                .entries
+                .values()
+                .map(|slot| Listing::sort_key(&sort, slot))
+                .collect();
+            keyed.sort_unstable_by(|a, b| Listing::compare(sort.spec, a, b));
+            keyed.iter().map(|key| key.id).collect()
+        };
+        assert_eq!(*listing.sorted(&sort), *one_by_one);
+        assert_eq!(
+            said(&listing.spans_shown(&sort)),
+            said(&spans_whole(&listing, &sort))
+        );
     }
 
     /// An order that reads what its entries lack waits for all of it: the

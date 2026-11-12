@@ -185,6 +185,12 @@ pub struct Keys {
     /// again (a type's name, read on a worker while its type stood for
     /// it): an order made before is made again.
     pub changed: Arc<AtomicU64>,
+    /// What they answer of an entry reads (its type, from its name in the
+    /// type database): a microsecond or more an entry, so a large order
+    /// asks them on every core. Not for what answers in nanoseconds from
+    /// groups it shares (a date, an extension): threads would only wait on
+    /// one another there.
+    pub costly: bool,
 }
 
 impl Keys {
@@ -200,6 +206,7 @@ impl Keys {
             group: None,
             next_change: None,
             changed: Arc::default(),
+            costly: false,
         }
     }
 
@@ -219,6 +226,7 @@ impl fmt::Debug for Keys {
             .field("value", &self.value.is_some())
             .field("group", &self.group.is_some())
             .field("next_change", &self.next_change)
+            .field("costly", &self.costly)
             .finish_non_exhaustive()
     }
 }

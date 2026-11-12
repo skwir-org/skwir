@@ -38,6 +38,11 @@ pub fn keys_at(
     now: SystemTime,
 ) -> Option<Keys> {
     let mut keys = Keys::new(sort, group);
+    // A kind and a type are read from the name in the type database.
+    keys.costly = [Some(sort), group]
+        .into_iter()
+        .flatten()
+        .any(|key| matches!(key, SortKey::Kind | SortKey::Type));
     if sort.keyed() {
         keys.value = Some(keyer(app, &keys, sort, cal, now).0);
     }
@@ -614,8 +619,8 @@ impl Dates {
             6
         } else {
             let year = skwir_platform::calendar::civil_from_days(day).0;
-            let (first, next) = Period::Year.around(day, cal);
             return self.years.get(year, || {
+                let (first, next) = Period::Year.around(day, cal);
                 // Last year whole, but in January, when Last month and Last
                 // week take its last days.
                 let earliest = self.year.min(self.last_month).min(self.last_week);
