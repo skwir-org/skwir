@@ -78,7 +78,10 @@ working in an area, also read that area's rules (see
   values allowed are for keyboard paging. When prepaint changes something
   that shows only in the next frame (a scroll offset), ask for that frame
   once with `window.on_next_frame`: a `refresh` asked while drawing is
-  dropped.
+  dropped. A text narrows to its widest word where its row is short, and
+  wraps (vendored gpui 0061, as CSS has it): what must stay on one line
+  (a control's label, a name cut with an ellipsis) says so,
+  `whitespace_nowrap` or `truncate`.
 - **Tokens.** Colors, radii, shadows and fonts come from `theme.rs` (its
   header lists the scales). State colors are tokens too (`hover`,
   `selection_*`, `success`/`warning`/`error`, `scrim`); never derive one

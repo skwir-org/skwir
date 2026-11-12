@@ -93,6 +93,7 @@ carry: the script takes it from the Inter release Skwir's packages pin
 | `0058-rounded-mask-on-device-pixels` | A rounded content mask lies on whole device pixels, as what it holds is drawn | — |
 | `0059-unreached-mask-corners` | A primitive that reaches no rounded corner of its mask is kept by its rectangles alone, so its fragments skip the corners' distance | — |
 | `0060-inline-boxes` | A line holds boxes its caller draws (`RunPosition::Inline`): each character of an inline run is one, as wide as it says, never shaped or painted; `TextLayout::inline_boxes` says where each was drawn; a box taller than its text grows the row it is set in, and that row alone (`LineRows`); `StyledText::with_said` gives what such a text says to assistive technology | — |
+| `0061-text-narrows-to-its-widest-word` | A text's minimum content width is its widest word (CSS's), so beside others in a row it narrows and wraps rather than running past them; Zed's was its whole line, which no row could shrink | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
 
@@ -1106,3 +1107,39 @@ Then `python3 tools/gpui/vendor.py export <dir>` writes the patches and replaces
 4. `export`, then build Skwir and run `just gpui-check`, `just lint-all`, `just
    deny` and the window checks.
 5. Measure with `just idle-pss` against the previous build, back to back.
+
+### 0061: A text narrows to its widest word
+
+A text's layout answered taffy's minimum-content probe
+(`AvailableSpace::MinContent`) unwrapped: its whole line. A flex item may
+not shrink below that, so a sentence beside an icon or a button in a row
+too narrow for both never wrapped; it ran past the row (a plugin's
+requirement under its card, 2026-11-12). CSS takes the longest word.
+
+- **The width.** `LineLayout::min_wrap_width` is the widest stretch between
+  two places the line may wrap, measured as `compute_wrap_boundaries`
+  measures a line, so wrapped there no word is cut. The places are one
+  rule both ask (`wraps_before`): before a word after a space, and before
+  any other character but a space, after the first that is not one.
+- **The probe.** A text that wraps (`WhiteSpace::Normal`, not truncated)
+  answers it with its lines' minimum content sizes
+  (`WrappedLineLayout::min_content_size`: that width, and the rows it
+  wraps into there), from the lines it was laid out in at any width, else
+  shaped unwrapped. It leaves the text's own layout as it was, so no other
+  probe is answered with it. One that does not wrap (`whitespace_nowrap`,
+  `truncate`) answers as before, its whole line: what must stay on one
+  line says so.
+- **Once a line.** The width and its wraps are worked out once for a
+  shaped line and kept with it in the line layout cache
+  (`WrappedLineLayout::min_content`), across frames.
+
+Where a row has room, nothing moves: Skwir's screens at 1280 px were drawn
+alike before and after it, pixel for pixel (33 screens; 640 and 460 px
+too, but for single-line labels that said nothing, a dropdown's, which now
+say `whitespace_nowrap`, and dialog titles that wrap now, which ran under
+the close button). Its cost, in the debug build on Xvfb: none scrolling a
+list or a grid of 2,000 files, about 3 % of a frame scrolling the
+settings' Plugins page, all sentences (65.7 against 67.6 ms, median). The
+tests are
+`text_system::line_layout::tests::test_min_wrap_width_is_the_widest_word`
+and `elements::text::tests::a_text_in_a_narrow_row_wraps`.

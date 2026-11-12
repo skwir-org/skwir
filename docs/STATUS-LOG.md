@@ -15763,3 +15763,52 @@ Browsing and finding to Desktop integration to Previews and thumbnails
 (3D models and prints, Archives, Audio and video, Books…). Not seen in
 the window: the other notes moved to `controls::noted`. Not run: `just
 a11y-check`, `just check-cross`.
+
+## 2026-11-12: A text narrows to its widest word (vendored gpui 0061)
+
+The user asked for the rest of the app checked for words that run past
+their row, as the plugin's requirement did, and a structural fix.
+
+- **The cause was gpui's.** A text answered taffy's minimum-content probe
+  unwrapped, its whole line, so as a flex item it could never shrink:
+  words beside an icon or a button in a row too narrow for both ran past
+  it, wherever no one had wrapped them in `flex_1().min_w_0()`. CSS takes
+  the longest word.
+- **0061** (`vendor/patches/0061-text-narrows-to-its-widest-word.patch`,
+  README.skwir.md): `LineLayout::min_wrap_width`, the widest stretch
+  between two places a line may wrap, by one rule the wrapped layout asks
+  too (`wraps_before`); a wrapping text answers the probe with its lines
+  wrapped there (`WrappedLineLayout::min_content_size`, worked out once a
+  line and kept in the line layout cache), never writing its own layout.
+  A text that stays on one line (`whitespace_nowrap`, `truncate`) answers
+  as before. AGENTS.md's UI layout rule says what must stay on one line
+  says so.
+- **What said nothing:** the dropdown's label (it now says
+  `whitespace_nowrap`, as a button's, a segment's and a check's do) and
+  the Exclusions page's "Excluded from".
+
+**Checked:** gpui's tests of the patched modules (`just gpui-check
+gpui`), 138 passed (new: the narrowest width is the widest word, wrapped
+there no word cut, a pixel less one is; a text beside a 40 px box in a
+120 px row wraps inside it, which with the probe answered unwrapped, as
+before, fails: 135 px on one line); `skwir-ui`'s tests, 647; clippy;
+`just a11y-check` on the debug build, passed. The same 33 screens (the
+views, Properties, previews of text, Markdown, CSV and a picture, a
+row's menu, Rename, the address field, every settings page, About,
+Shortcuts, History, Activity, a toast, tabs, the split) captured on Xvfb
+at 1280, 640 and 460 px, before (HEAD, built in a worktree) and after:
+at 1280 px alike pixel for pixel but for the fixture's path and clock;
+at 640 px the dropdowns' labels on two lines in their box, and "Excluded
+from" on two, until they said one line; at 460 px three dialog titles
+wrap, which ran under the close button. Frames, debug build, alternated,
+median: scrolling a list of 2,000 files 37.0 ms before, 36.5 after; a
+grid 30.3 and 28.9; the settings' Plugins page, all sentences, 65.7 and
+67.6 (+3 %; a first version that shaped each text again for the probe
+cost +8 %). Not run: the rest of `just gpui-check` (gpui_wgpu,
+gpui_linux), `just gpui-check-windows`, `just check-cross`, `just
+smoke`.
+
+**Found, not from this:** opening two tabs, closing them, then splitting
+leaves the new pane empty ("0 items", the address field blank) now and
+then, in the build before this too (once in three, and twice in three
+after).

@@ -9,7 +9,7 @@ use std::{
     hash::{Hash, Hasher},
     ops::Range,
     sync::{
-        Arc,
+        Arc, OnceLock,
         atomic::{AtomicUsize, Ordering},
     },
 };
@@ -257,6 +257,33 @@ impl LineLayout {
         (left, right)
     }
 
+    /// The narrowest width this line wraps to without cutting a word: the
+    /// widest stretch between two places it may wrap (`wraps_before`),
+    /// measured as `compute_wrap_boundaries` measures a line, so that
+    /// wrapped at it, no word is broken. A text's minimum content width,
+    /// as CSS has it.
+    pub fn min_wrap_width(&self, text: &str) -> Pixels {
+        let mut widest = px(0.);
+        let mut stretch_x = px(0.);
+        let mut started = false;
+        let mut prev_ch = '\0';
+        for glyph in self.runs.iter().flat_map(|run| run.glyphs.iter()) {
+            let Some(ch) = text.get(glyph.index..).and_then(|rest| rest.chars().next()) else {
+                continue;
+            };
+            if ch == '\n' {
+                continue;
+            }
+            if wraps_before(prev_ch, ch, started) {
+                widest = widest.max(glyph.position.x - stretch_x);
+                stretch_x = glyph.position.x;
+            }
+            started |= ch != ' ';
+            prev_ch = ch;
+        }
+        widest.max(self.width - stretch_x)
+    }
+
     fn compute_wrap_boundaries(
         &self,
         text: &str,
@@ -296,16 +323,9 @@ impl LineLayout {
 
             // Here is very similar to `LineWrapper::wrap_line` to determine text wrapping,
             // but there are some differences, so we have to duplicate the code here.
-            if LineWrapper::is_word_char(ch) {
-                if prev_ch == ' ' && ch != ' ' && first_non_whitespace_ix.is_some() {
-                    last_candidate_ix = Some(boundary);
-                    last_candidate_x = x;
-                }
-            } else {
-                if ch != ' ' && first_non_whitespace_ix.is_some() {
-                    last_candidate_ix = Some(boundary);
-                    last_candidate_x = x;
-                }
+            if wraps_before(prev_ch, ch, first_non_whitespace_ix.is_some()) {
+                last_candidate_ix = Some(boundary);
+                last_candidate_x = x;
             }
 
             if ch != ' ' && first_non_whitespace_ix.is_none() {
@@ -339,6 +359,20 @@ impl LineLayout {
     }
 }
 
+/// Whether a line may wrap before `ch`, coming after `prev_ch`, once a
+/// character other than a space came (`started`): before a word after a
+/// space, and before any other character but a space. The wrapped layout
+/// and the narrowest width it wraps to (`LineLayout::min_wrap_width`) ask
+/// it alike, so they never disagree.
+fn wraps_before(prev_ch: char, ch: char, started: bool) -> bool {
+    started
+        && if LineWrapper::is_word_char(ch) {
+            prev_ch == ' '
+        } else {
+            ch != ' '
+        }
+}
+
 /// A line of text that has been wrapped to fit a given width
 #[derive(Default, Debug)]
 pub struct WrappedLineLayout {
@@ -350,6 +384,11 @@ pub struct WrappedLineLayout {
 
     /// The width of the line, if it was wrapped
     pub wrap_width: Option<Pixels>,
+
+    /// Its narrowest width without cutting a word, and where it wraps
+    /// there (`min_content`): worked out once for the line, kept with it
+    /// in the cache.
+    pub(crate) min_content: OnceLock<(Pixels, SmallVec<[WrapBoundary; 1]>)>,
 }
 
 /// A boundary at which a line was wrapped
@@ -460,6 +499,34 @@ impl WrappedLineLayout {
             width: self.width(),
             height: self.rows(line_height).height_of_all(),
         }
+    }
+
+    /// The size of the line wrapped at its narrowest without cutting a
+    /// word (`LineLayout::min_wrap_width`), at most `max_lines` rows, and
+    /// how many rows: its minimum content size. Worked out once for the
+    /// line, whatever it was wrapped at.
+    pub fn min_content_size(
+        &self,
+        text: &str,
+        line_height: Pixels,
+        max_lines: Option<usize>,
+    ) -> (Size<Pixels>, usize) {
+        let (width, wraps) = &*self.min_content.get_or_init(|| {
+            let layout = &self.unwrapped_layout;
+            let width = layout.min_wrap_width(text);
+            (width, layout.compute_wrap_boundaries(text, width, None))
+        });
+        let kept = max_lines.map_or(wraps.len(), |lines| {
+            wraps.len().min(lines.saturating_sub(1))
+        });
+        let size = Size {
+            width: (*width).min(self.unwrapped_layout.width),
+            height: self
+                .unwrapped_layout
+                .rows(line_height, &wraps[..kept])
+                .height_of_all(),
+        };
+        (size, kept + 1)
     }
 
     /// The rows the line is wrapped into, a row holding a box taller than
@@ -768,6 +835,7 @@ impl LineLayoutCache {
                 unwrapped_layout,
                 wrap_boundaries,
                 wrap_width,
+                min_content: OnceLock::new(),
             });
             let key = Arc::new(CacheKey {
                 text,
@@ -1183,6 +1251,37 @@ mod tests {
         let positions = glyph_x_positions(&layout);
         assert_eq!(positions, vec![0.5, 0.5]);
     }
+
+    /// A line wrapped at its narrowest width (`min_wrap_width`) breaks only
+    /// where a word starts; a pixel narrower, it must cut its widest word.
+    #[test]
+    fn test_min_wrap_width_is_the_widest_word() {
+        let text = "ab cd efgh";
+        let mut layout = make_layout(
+            text.char_indices()
+                .map(|(index, _)| glyph_at(index as f32 * 10., index))
+                .collect(),
+        );
+        layout.len = text.len();
+        let narrowest = layout.min_wrap_width(text);
+        assert_eq!(narrowest, px(40.), "efgh");
+        let starts: Vec<usize> = layout
+            .compute_wrap_boundaries(text, narrowest, None)
+            .iter()
+            .map(|boundary| boundary.glyph_ix)
+            .collect();
+        assert_eq!(starts, [3, 6], "before cd and efgh");
+        let cut = layout.compute_wrap_boundaries(text, narrowest - px(1.), None);
+        assert!(cut.iter().any(|boundary| boundary.glyph_ix > 6), "efgh cut");
+        // Spaces before the first word are no place to wrap.
+        let text = "  ab";
+        let layout = make_layout(
+            text.char_indices()
+                .map(|(index, _)| glyph_at(index as f32 * 10., index))
+                .collect(),
+        );
+        assert_eq!(layout.min_wrap_width(text), px(100.), "its whole width");
+    }
 }
 
 #[cfg(test)]
@@ -1365,6 +1464,7 @@ mod run_position_tests {
             unwrapped_layout: Arc::new(layout),
             wrap_boundaries: wraps,
             wrap_width: Some(px(60.)),
+            min_content: OnceLock::new(),
         };
         assert_eq!(wrapped.size(px(20.)).height, px(70.));
         assert_eq!(

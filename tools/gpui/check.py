@@ -61,6 +61,9 @@ RUNS = [
         # Where a line's boxes are drawn (0060; their shaping is
         # text_system::line_layout's).
         "text_system::line::tests::inline_boxes",
+        # A text in a row too narrow wraps at its widest word (0061; that
+        # width is text_system::line_layout's).
+        "elements::text::tests::a_text_in_a_narrow_row_wraps",
     ]),
     # All of them: the atlas (an upload to a removed texture), the context,
     # the renderer and the text system (a variable face's weights, 0045).

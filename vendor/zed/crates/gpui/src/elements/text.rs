@@ -648,6 +648,52 @@ struct TextLayoutInner {
     bounds: Option<Bounds<Pixels>>,
 }
 
+/// `text` wrapped at its narrowest without cutting a word, at most
+/// `max_lines` rows: its lines' minimum content sizes
+/// (`WrappedLineLayout::min_content_size`, each worked out once and kept
+/// with its line in the cache). The lines are those the text was laid out
+/// in, at any width, else shaped now; the text's own layout is left as it
+/// was.
+/// `None` where it cannot be shaped.
+fn min_content_size(
+    element_state: &TextLayout,
+    text: &SharedString,
+    font_size: Pixels,
+    runs: &[TextRun],
+    line_height: Pixels,
+    max_lines: Option<usize>,
+    window: &mut Window,
+) -> Option<Size<Pixels>> {
+    let of = |lines: &[WrappedLine]| {
+        let mut size: Size<Pixels> = Size::default();
+        let mut rows_left = max_lines;
+        for line in lines {
+            if rows_left == Some(0) {
+                break;
+            }
+            let (line_size, rows) =
+                line.layout
+                    .min_content_size(&line.text, line_height, rows_left);
+            size.height += line_size.height;
+            size.width = size.width.max(line_size.width).ceil();
+            rows_left = rows_left.map(|left| left.saturating_sub(rows));
+        }
+        size
+    };
+    // Wrapped at any width, a line holds the same line unwrapped; cut to
+    // fit (truncated), it holds other text.
+    if let Some(inner) = element_state.0.borrow().as_ref()
+        && inner.truncate_width.is_none()
+    {
+        return Some(of(&inner.lines));
+    }
+    let lines = window
+        .text_system()
+        .shape_text(text.clone(), font_size, runs, None, None)
+        .log_err()?;
+    Some(of(&lines))
+}
+
 impl TextLayout {
     fn layout(
         &self,
@@ -673,6 +719,27 @@ impl TextLayout {
             let element_state = self.clone();
 
             move |known_dimensions, available_space, window, cx| {
+                // Its narrowest without cutting a word, as CSS's minimum
+                // content: beside others in a row, a text narrows and wraps
+                // rather than running past them. Answered unwrapped, it was
+                // its whole width, which nothing could shrink. A text that
+                // stays on one line (`whitespace_nowrap`, `truncate`) still is.
+                if text_style.white_space == WhiteSpace::Normal
+                    && text_style.text_overflow.is_none()
+                    && known_dimensions.width.is_none()
+                    && matches!(available_space.width, crate::AvailableSpace::MinContent)
+                    && let Some(size) = min_content_size(
+                        &element_state,
+                        &text,
+                        font_size,
+                        &runs,
+                        line_height,
+                        text_style.line_clamp,
+                        window,
+                    )
+                {
+                    return size;
+                }
                 let wrap_width = if text_style.white_space == WhiteSpace::Normal {
                     known_dimensions.width.or(match available_space.width {
                         crate::AvailableSpace::Definite(x) => Some(x),
@@ -1462,5 +1529,41 @@ mod tests {
             make_text_unstable_id(false).id,
             make_text_unstable_id(true).id
         );
+    }
+
+    /// A text beside a box, in a row too narrow for both, narrows to its
+    /// widest word and wraps there (its minimum content width), rather than
+    /// running past the row on one line.
+    #[crate::test]
+    fn a_text_in_a_narrow_row_wraps(cx: &mut crate::TestAppContext) {
+        use crate::{AvailableSpace, ParentElement as _, Styled as _, div, point, px, size};
+        use std::{cell::RefCell, rc::Rc};
+
+        let cx = cx.add_empty_window();
+        let row = |width: f32, seen: Rc<RefCell<Vec<Bounds<Pixels>>>>| {
+            div()
+                .flex()
+                .w(px(width))
+                .on_children_prepainted(move |bounds, _, _| *seen.borrow_mut() = bounds)
+                .child(div().flex_none().w(px(40.)).h(px(10.)))
+                // 14 characters of 0.6 em each in the test platform's text
+                // system: 134.4 px at 16 px, its widest word 48 px.
+                .child("aaaa bbbb cccc")
+        };
+        let anywhere = size(AvailableSpace::MaxContent, AvailableSpace::MaxContent);
+        let wide = Rc::new(RefCell::new(Vec::new()));
+        let kept = wide.clone();
+        cx.draw(point(px(0.), px(0.)), anywhere, move |_, _| {
+            row(1000., kept)
+        });
+        let narrow = Rc::new(RefCell::new(Vec::new()));
+        let kept = narrow.clone();
+        cx.draw(point(px(0.), px(0.)), anywhere, move |_, _| row(120., kept));
+
+        let line = wide.borrow()[1];
+        let text = narrow.borrow()[1];
+        assert!(line.size.width > px(80.), "one line, unwrapped: {line:?}");
+        assert!(text.right() <= px(120.), "within its row: {text:?}");
+        assert!(text.size.height > line.size.height, "wrapped: {text:?}");
     }
 }

@@ -343,8 +343,8 @@ The key is the owner's; the page is the subject's (ADR-072).
 - **An icon beside words that may wrap is `controls::noted`**: the
   words wrap in the room left, the icon by their first line in a holder
   one line of them tall (an empty text, so it follows the text size).
-  Words put straight in a flex row beside an icon do not wrap, and run
-  past their card.
+  Words beside an icon in a plain flex row wrap too (vendored gpui 0061),
+  but the icon stands in the middle of all their lines.
 
 ## Plugins and their requirements
 

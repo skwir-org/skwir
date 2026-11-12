@@ -667,6 +667,7 @@ impl SettingsView {
                     .child(
                         div()
                             .text_body()
+                            .whitespace_nowrap()
                             .text_color(theme.text_muted)
                             .child(model::EXCLUDED_FROM),
                     )

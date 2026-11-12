@@ -451,6 +451,9 @@ pub fn dropdown_with(
         .border_color(theme.border)
         .bg(theme.bg)
         .text_body()
+        // One line, as a button's and a segment's label: a text narrows to
+        // its widest word where room is short (vendored gpui 0061).
+        .whitespace_nowrap()
         .cursor_pointer()
         .hover(move |s| s.bg(hover))
         .focus(move |s| s.border_color(accent))

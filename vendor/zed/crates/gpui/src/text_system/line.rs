@@ -1646,6 +1646,7 @@ mod tests {
                             glyph_ix: 2,
                         }]),
                         wrap_width: Some(px(16.)),
+                        min_content: Default::default(),
                     }),
                     text: line.text,
                     decoration_runs: line.decoration_runs.into_vec(),
