@@ -261,6 +261,157 @@ pub struct Nested {
     /// The private directory an extracted member lives in; none for a file of
     /// its own that the container only names (a playlist's track).
     directory: Option<tempfile::TempDir>,
+    /// Set for the file that stands for the folder shown (its README, its
+    /// cover, `StandIns`): what the folder holds, counted as it was found.
+    /// The folder is still what the panel shows: its card, its count and
+    /// its Properties are its own.
+    stands_for: Option<Holds>,
+}
+
+/// What a folder holds, counted as it was read: its items, and how many of
+/// them are folders.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Holds {
+    pub items: usize,
+    pub folders: usize,
+}
+
+/// The names of the files that stand for a folder in its preview
+/// (`ui.folder_preview_names`): a README, an album's or a photo folder's
+/// cover. In the order they are looked for, the first a folder holds being
+/// shown; written in lower case, letter case ignored, `*` standing for any
+/// run of characters (`cover.*`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct StandIns(Arc<[String]>);
+
+impl StandIns {
+    /// The names a setting's text lists, separated by commas; `None` when
+    /// it lists none.
+    pub(crate) fn parse(text: &str) -> Option<Self> {
+        let names: Vec<String> = text
+            .split(',')
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_lowercase)
+            .collect();
+        (!names.is_empty()).then(|| Self(names.into()))
+    }
+
+    /// Where `name` stands among the names, the first being 0: `None` when
+    /// it is none of them.
+    fn rank(&self, name: &str) -> Option<usize> {
+        self.0.iter().position(|wanted| name_matches(wanted, name))
+    }
+}
+
+/// Whether `name` is the name `pattern` gives, letter case ignored, its
+/// `*` standing for any run of characters (none included). The pattern is
+/// in lower case. Greedy, stepping back only to the last `*`: at worst the
+/// pattern's length times the name's, for a few short patterns.
+fn name_matches(pattern: &str, name: &str) -> bool {
+    fn same(p: char, n: char) -> bool {
+        p == n || n.to_lowercase().eq(std::iter::once(p))
+    }
+    let pattern: Vec<char> = pattern.chars().collect();
+    let name: Vec<char> = name.chars().collect();
+    let (mut p, mut n) = (0, 0);
+    // The last `*` seen, and where in the name it was tried from.
+    let mut star: Option<(usize, usize)> = None;
+    while n < name.len() {
+        if p < pattern.len() && pattern[p] == '*' {
+            star = Some((p, n));
+            p += 1;
+        } else if p < pattern.len() && same(pattern[p], name[n]) {
+            p += 1;
+            n += 1;
+        } else if let Some((at, from)) = star {
+            // The `*` takes one more character.
+            p = at + 1;
+            n = from + 1;
+            star = Some((at, from + 1));
+        } else {
+            return false;
+        }
+    }
+    pattern[p..].iter().all(|c| *c == '*')
+}
+
+/// A folder as its preview reads it, in one pass of its names: what it
+/// holds, and the file that stands for it, if one was looked for.
+struct Folder {
+    holds: Holds,
+    /// The file standing for it: its name and its path.
+    stand_in: Option<(String, PathBuf)>,
+}
+
+/// Read the folder at `path`: count what it holds and, with `names`, find
+/// the file that stands for it, the first of them it holds: a file, or a
+/// link to one, never a folder nor a special file. Of the names one
+/// pattern gives (`cover.jpg` and `cover.png`), the lowest, so the same is
+/// always found. One read of its names, as counting alone makes; only a
+/// link whose name is wanted is followed.
+fn read_folder(
+    path: &Path,
+    names: Option<&StandIns>,
+    cancel: &CancelToken,
+) -> std::io::Result<Folder> {
+    let mut holds = Holds::default();
+    let mut best: Option<(usize, String, PathBuf)> = None;
+    for entry in std::fs::read_dir(path)?.flatten() {
+        if cancel.is_cancelled() {
+            break;
+        }
+        holds.items += 1;
+        let kind = entry.file_type().ok();
+        holds.folders += usize::from(kind.is_some_and(|kind| kind.is_dir()));
+        let Some(names) = names else {
+            continue;
+        };
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        let Some(rank) = names.rank(name) else {
+            continue;
+        };
+        if best
+            .as_ref()
+            .is_some_and(|(at, kept, _)| (*at, kept.as_str()) <= (rank, name))
+        {
+            continue;
+        }
+        let file = entry.path();
+        let regular = match kind {
+            Some(kind) if kind.is_symlink() => std::fs::metadata(&file).is_ok_and(|m| m.is_file()),
+            Some(kind) => kind.is_file(),
+            None => false,
+        };
+        if regular {
+            best = Some((rank, name.to_owned(), file));
+        }
+    }
+    Ok(Folder {
+        holds,
+        stand_in: best.map(|(_, name, file)| (name, file)),
+    })
+}
+
+/// The file found to stand for a folder, as the panel goes into it: a file
+/// of its own, typed here on the worker, by its name and, where that is not
+/// enough (`README`), by its bytes.
+fn stand_in_member(name: String, path: PathBuf, holds: Holds) -> anyhow::Result<Arc<Nested>> {
+    let entry = EntryRef::from_path(&path)
+        .ok_or_else(|| anyhow::anyhow!("The file that stands for the folder is gone"))?;
+    Ok(Arc::new(Nested {
+        mime: skwir_platform::mime::identify(std::ffi::OsStr::new(&name), &path)
+            .map(|mime| mime.to_string()),
+        target: name.clone(),
+        name,
+        entry,
+        path,
+        directory: None,
+        stands_for: Some(holds),
+    }))
 }
 
 impl Nested {
@@ -613,6 +764,13 @@ pub struct PreviewState {
     pub nested: Vec<Arc<Nested>>,
     /// A member asked for and not extracted yet: the worker's next job.
     pub descend: Option<String>,
+    /// The user left the file that stood for the folder shown (its ×, its
+    /// trail): the folder's count is shown until another entry is.
+    pub(crate) stand_in_left: bool,
+    /// What the folder shown was asked to be stood for by, as its request
+    /// went (`Shell::stand_ins_wanted`): asked again when that changes (the
+    /// Preview turned on, the names changed).
+    stand_in_asked: Option<StandIns>,
     /// The view of the container each member was opened from, kept above
     /// it (`members.rs`): one per member of `nested`, `None` for a
     /// container whose view is not kept (a playlist).
@@ -912,6 +1070,8 @@ impl Default for PreviewState {
             member_focus: None,
             menu_parked: false,
             descend: None,
+            stand_in_left: false,
+            stand_in_asked: None,
             nested_tx,
             nested_rx,
             fields: Vec::new(),
@@ -1092,10 +1252,16 @@ impl PreviewState {
     }
 
     /// Whether the entry shown is a file whose bytes are read: not a
-    /// folder, which is counted, nor what is never read
-    /// (`shown_content`). Only such a file is viewed as hex.
+    /// folder, which is counted, but the file standing for it, nor what is
+    /// never read (`shown_content`). Only such a file is viewed as hex.
     pub(crate) fn shows_bytes(&self) -> bool {
-        !self.info.is_dir && self.shown_content().is_some()
+        (!self.info.is_dir || !self.nested.is_empty()) && self.shown_content().is_some()
+    }
+
+    /// What the folder shown holds, as counted when the file standing for
+    /// it was found (`Nested::stands_for`): `None` while none does.
+    pub(crate) fn stands_for(&self) -> Option<Holds> {
+        self.nested.first()?.stands_for
     }
 
     /// A request for the file shown `depth` members deep (0 is the entry),
@@ -1620,6 +1786,7 @@ fn extract_member(
         // Nothing was written for a file of its own: the empty directory goes
         // now, here on the worker.
         directory: (!member.own_file).then_some(directory),
+        stands_for: None,
     })))
 }
 
@@ -1634,18 +1801,11 @@ fn compute(
     cancel: &CancelToken,
 ) -> PreviewContent {
     if is_dir {
-        return match std::fs::read_dir(path) {
-            Ok(entries) => {
-                let (mut items, mut folders) = (0, 0);
-                for entry in entries.flatten() {
-                    if cancel.is_cancelled() {
-                        break;
-                    }
-                    items += 1;
-                    folders += usize::from(entry.file_type().is_ok_and(|kind| kind.is_dir()));
-                }
-                PreviewContent::Dir { items, folders }
-            }
+        return match read_folder(path, None, cancel) {
+            Ok(Folder { holds, .. }) => PreviewContent::Dir {
+                items: holds.items,
+                folders: holds.folders,
+            },
             Err(e) => PreviewContent::Error(e.to_string()),
         };
     }
@@ -2034,9 +2194,10 @@ impl Shell {
         }
         // Properties alone: what a preview read goes, its player and the
         // keys it held with it, as when the panel closes. A folder's stays:
-        // its preview is what it holds, which Properties says.
+        // its preview is what it holds, which Properties says; not the file
+        // standing for it, which is a preview.
         if !previews
-            && !self.preview.info.is_dir
+            && (!self.preview.info.is_dir || !self.preview.nested.is_empty())
             && (self.preview.content.is_some() || self.preview.phase == PreviewPhase::Loading)
         {
             self.preview.walk = Walk::default();
@@ -2129,8 +2290,22 @@ impl Shell {
             .version
             .as_ref()
             .is_some_and(|before| before.rewritten(&version));
-        if self.preview.key.as_ref() != Some(&key) || (rewritten && !self.preview.nested.is_empty())
-        {
+        // Not the file standing for a folder, which is no member written
+        // out of it: the folder changed is read again, its file found
+        // again, and the same one read again in place (`preview_request`).
+        let stale = rewritten
+            && self
+                .preview
+                .nested
+                .first()
+                .is_some_and(|member| member.stands_for.is_none());
+        // A folder is another preview when what is to stand for it changes
+        // (the Preview turned on or off, the names): asked again.
+        let restand = entry.is_dir()
+            && self.preview.key.as_ref() == Some(&key)
+            && self.preview.phase != PreviewPhase::Queued
+            && self.preview.stand_in_asked != self.stand_ins_wanted();
+        if self.preview.key.as_ref() != Some(&key) || stale || restand {
             if self
                 .preview
                 .autoplay
@@ -2142,6 +2317,8 @@ impl Shell {
             self.cancel_preview(window, cx);
             self.preview.key = Some(key.clone());
             self.preview.phase = PreviewPhase::Queued;
+            // Left for another entry: the next folder is stood for again.
+            self.preview.stand_in_left = false;
             // The step taken in the pane's order: a walk's goes on, and
             // what was read ahead for a walk that broke goes.
             let sorted = Arc::clone(&self.ui().list.sorted);
@@ -2345,6 +2522,24 @@ impl Shell {
         }
         self.sync_count(cx);
         while let Ok((generation, member)) = self.preview.nested_rx.try_recv() {
+            // The file standing for the folder takes the first place, as
+            // found again once the folder changed: another file there is
+            // another preview, not the last one's read again in place.
+            if generation == self.preview.generation && member.stands_for.is_some() {
+                if self
+                    .preview
+                    .nested
+                    .first()
+                    .is_some_and(|shown| shown.path != member.path)
+                {
+                    self.preview.refresh = false;
+                }
+                let before = std::mem::replace(&mut self.preview.nested, vec![member]);
+                self.discard_nested(before);
+                self.preview.containers = vec![None];
+                self.preview.descend = None;
+                continue;
+            }
             if generation == self.preview.generation && self.preview.nested.len() < NESTING {
                 self.preview.nested.push(member);
                 let container = self.preview.container_asked.take();
@@ -2356,6 +2551,16 @@ impl Shell {
         }
         while let Ok(result) = self.preview.rx.try_recv() {
             if result.generation == self.preview.generation {
+                // The folder read again holds nothing to stand for it any
+                // more: its count is shown.
+                if matches!(result.content, PreviewContent::Dir { .. })
+                    && self.preview.stands_for().is_some()
+                {
+                    let before = std::mem::take(&mut self.preview.nested);
+                    self.discard_nested(before);
+                    self.preview.containers.clear();
+                    self.preview.refresh = false;
+                }
                 self.preview_arrived(result, window, cx);
             }
         }
@@ -2522,6 +2727,16 @@ impl Shell {
     /// opened again at the page it was on. A player that is live keeps
     /// playing: what it holds open is what it plays. Only text is drawn in
     /// the theme's colours, so a theme change re-reads nothing else.
+    /// The names a folder shown is to be stood for by (its README, its
+    /// cover): `ui.folder_preview_file`'s, while a preview is drawn and
+    /// the user did not leave the file found (`stand_in_left`). `None`
+    /// counts the folder.
+    pub(crate) fn stand_ins_wanted(&self) -> Option<StandIns> {
+        self.folder_stand_ins
+            .clone()
+            .filter(|_| self.preview.previews() && !self.preview.stand_in_left)
+    }
+
     fn preview_changed(
         &mut self,
         before: Option<Version>,
@@ -2951,6 +3166,20 @@ impl Shell {
         let previews = Arc::clone(&self.app.previews);
         let wake = self.waker();
         let is_dir = entry.is_dir();
+        // What is to stand for a folder (`stand_ins_wanted`), looked for as
+        // the folder is first read, and again once it changed (a refresh,
+        // the file shown standing for it): never for a page turned, a find,
+        // another way of looking at the file, which read the one found.
+        let wanted = self.stand_ins_wanted().filter(|_| is_dir);
+        self.preview.stand_in_asked.clone_from(&wanted);
+        let seek = wanted.filter(|_| {
+            descend.is_none()
+                && match self.preview.nested.as_slice() {
+                    [] => true,
+                    [shown] => shown.stands_for.is_some() && self.preview.refresh,
+                    _ => false,
+                }
+        });
         // The file's own name, while its type is not settled: the worker
         // reads the bytes to settle it, once.
         let unsettled = (!is_dir && self.preview.info.typing != Typing::Settled)
@@ -2966,7 +3195,8 @@ impl Shell {
         // before any was, at the side the content's area says.
         let page_side = self.preview.page_side;
         let area = Arc::clone(&self.preview.area);
-        let open_document = !is_dir && !self.preview.reader.tried;
+        // A folder's is the file standing for it, known on the worker.
+        let open_document = !self.preview.reader.tried;
         let lifetime = self.preview.reader.lifetime.clone();
         let media_lifetime = self.preview.media.lifetime();
         // Never a second player for one file: the pinned track is shown
@@ -3030,13 +3260,46 @@ impl Shell {
                 // went down into. Everything below treats it as any file.
                 let mut request = request;
                 // Whether the entry itself is shown, not a member of it.
-                let own = nested.is_none() && descend.is_none();
+                let mut own = nested.is_none() && descend.is_none();
                 let source = |member: &Nested, request: &mut PreviewRequest, path: &mut PathBuf| {
                     request.retarget(member.entry.clone(), member.mime.clone());
                     path.clone_from(&member.path);
                 };
-                if let Some(member) = &nested {
+                // A folder is read for what it holds and, in the same pass,
+                // the file to stand for it, previewed from here on as the
+                // file it is; one that holds none is counted.
+                let mut is_dir = is_dir;
+                if let Some(names) = seek.as_ref().filter(|_| is_dir) {
+                    let folder = match read_folder(&path, Some(names), &cancel) {
+                        Ok(folder) => folder,
+                        Err(error) => {
+                            return send(
+                                PreviewContent::Error(error.to_string()),
+                                true,
+                                None,
+                                None,
+                            );
+                        }
+                    };
+                    let counted = PreviewContent::Dir {
+                        items: folder.holds.items,
+                        folders: folder.holds.folders,
+                    };
+                    let Some((name, file)) = folder.stand_in else {
+                        return send(counted, true, None, None);
+                    };
+                    // Gone since it was listed: the folder is counted.
+                    let Ok(member) = stand_in_member(name, file, folder.holds) else {
+                        return send(counted, true, None, None);
+                    };
+                    source(&member, &mut request, &mut path);
+                    let _ = nested_tx.send((generation, member));
+                    (own, is_dir) = (false, false);
+                } else if let Some(member) = &nested {
                     source(member, &mut request, &mut path);
+                    // Only files are gone into: a folder's is what stands
+                    // for it.
+                    is_dir = false;
                 }
                 if let Some(target) = descend {
                     match extract_member(
@@ -3338,7 +3601,7 @@ impl Shell {
                 let reused = session.is_some();
                 let reader = if let Some(session) = session {
                     Ok(Some(session))
-                } else if open_document {
+                } else if open_document && !is_dir {
                     previews.open_document(&request, &lifetime)
                 } else {
                     Ok(None)
@@ -4392,6 +4655,15 @@ impl Shell {
                 }
             },
         );
+    }
+
+    /// The user goes back up to `depth`: up to the folder itself (0) from
+    /// the file standing for it, which is not looked for again while the
+    /// folder is shown (`stand_in_left`).
+    pub(crate) fn leave_stand_in(&mut self, depth: usize) {
+        if depth == 0 && self.preview.stands_for().is_some() {
+            self.preview.stand_in_left = true;
+        }
     }
 
     /// Go back up to `depth` members deep; 0 is the entry itself. The views
@@ -7839,5 +8111,92 @@ mod tests {
         assert_eq!(walk.next(pane, &resorted), Some(resorted[6]));
         resorted.swap(5, 9);
         assert_eq!(walk.next(pane, &resorted), None, "its place moved");
+    }
+
+    /// A folder's file is found by its names in their order, letter case
+    /// ignored, `*` taking any run of characters, none included.
+    #[test]
+    fn a_folder_s_file_is_found_by_its_names_in_their_order() {
+        use super::{StandIns, name_matches};
+        assert!(name_matches("readme.md", "README.md"));
+        assert!(name_matches("readme.md", "ReadMe.MD"));
+        assert!(!name_matches("readme.md", "README.md.bak"));
+        assert!(!name_matches("readme", "README.md"), "a name, not a prefix");
+        assert!(name_matches("cover.*", "Cover.jpg"));
+        assert!(name_matches("cover.*", "cover."), "a run of none");
+        assert!(!name_matches("cover.*", "covers.jpg"));
+        assert!(name_matches("*.nfo", "Album (2001).nfo"));
+        assert!(
+            name_matches("a*b*c", "aXbYbZc"),
+            "steps back to the last star"
+        );
+        assert!(!name_matches("a*b*c", "aXbYbZ"));
+        assert!(name_matches("léame", "LÉAME"), "letter case beyond ASCII");
+        assert!(name_matches("*", ""));
+        let names = StandIns::parse(" README.md , ,cover.*,").unwrap();
+        assert_eq!(names.rank("readme.md"), Some(0));
+        assert_eq!(names.rank("COVER.PNG"), Some(1));
+        assert_eq!(names.rank("notes.md"), None);
+        assert!(
+            StandIns::parse(" , ").is_none(),
+            "no names: nothing looked for"
+        );
+    }
+
+    /// The folder is read once for its count and its file: the first name
+    /// it holds, of one pattern's the lowest, a file or a link to one,
+    /// never a folder named so.
+    #[test]
+    fn a_folder_is_read_once_for_its_count_and_its_file() {
+        use super::{StandIns, read_folder};
+        let cancel = skwir_core::CancelToken::new();
+        let dir = tempfile::tempdir().unwrap();
+        let at = |name: &str| dir.path().join(name);
+        std::fs::create_dir(at("README.md")).unwrap();
+        std::fs::write(at("cover.png"), b"png").unwrap();
+        std::fs::write(at("cover.jpg"), b"jpg").unwrap();
+        std::fs::write(at("notes.txt"), b"notes").unwrap();
+        let names = StandIns::parse(crate::settings::FOLDER_PREVIEW_NAMES_DEFAULT).unwrap();
+        let folder = read_folder(dir.path(), Some(&names), &cancel).unwrap();
+        assert_eq!((folder.holds.items, folder.holds.folders), (4, 1));
+        let (name, path) = folder.stand_in.unwrap();
+        assert_eq!(name, "cover.jpg", "a folder named README is no README");
+        assert_eq!(path, at("cover.jpg"));
+        std::fs::write(at("readme"), b"what this is").unwrap();
+        let folder = read_folder(dir.path(), Some(&names), &cancel).unwrap();
+        assert_eq!(folder.stand_in.unwrap().0, "readme", "README before covers");
+        let counted = read_folder(dir.path(), None, &cancel).unwrap();
+        assert_eq!(counted.holds.items, 5);
+        assert!(
+            counted.stand_in.is_none(),
+            "counted only when none is wanted"
+        );
+        #[cfg(unix)]
+        {
+            let other = tempfile::tempdir().unwrap();
+            std::fs::write(other.path().join("target.md"), b"# Linked").unwrap();
+            std::os::unix::fs::symlink(
+                other.path().join("target.md"),
+                other.path().join("README.md"),
+            )
+            .unwrap();
+            std::os::unix::fs::symlink(
+                other.path().join("missing"),
+                other.path().join("README.org"),
+            )
+            .unwrap();
+            let folder = read_folder(other.path(), Some(&names), &cancel).unwrap();
+            assert_eq!(
+                folder.stand_in.unwrap().0,
+                "README.md",
+                "a link to a file stands"
+            );
+            std::fs::remove_file(other.path().join("README.md")).unwrap();
+            let folder = read_folder(other.path(), Some(&names), &cancel).unwrap();
+            assert!(
+                folder.stand_in.is_none(),
+                "a link that leads nowhere does not"
+            );
+        }
     }
 }

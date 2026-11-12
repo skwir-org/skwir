@@ -16107,3 +16107,51 @@ and what is heard); `plugins_toggle`, `keymap_titles`; clippy;
 `just a11y-check`. Not looked at: two windows (the wake that marks what
 another plays), the tree and the board views, a film's badge while it
 plays pinned in the dock.
+
+## 2026-11-12: a folder shown by its README or its cover
+
+Asked by the user: a folder's preview shows its README, the folder
+selected in its parent and the one a pane is in with nothing selected;
+on by default, the README names offered, and covers at once (the
+user's choices).
+
+- **What stands for it** (`preview::StandIns`, `ui.folder_preview_file`
+  on, `ui.folder_preview_names` = `README.md, README.org, README.rst,
+  README.txt, README, cover.*, folder.*, .folder.*`; Settings › Folders
+  and views › Previews): the first name the folder holds, letter case
+  ignored, `*` any run of characters, of one pattern's files the lowest
+  name; a file or a link to one only.
+- **Found where the folder is counted** (`read_folder`): the preview's
+  worker already read every name to count them; now it matches them in
+  the same pass (each name against a few patterns, linear in the
+  folder), and stats only a wanted name that is a link. No read of the
+  folder beyond the one it had.
+- **A member of its own** (`Nested::stands_for`, a playlist's track's
+  way): previewed as the file it is, with its bar and the ×, the card's
+  trail "docs › README.md"; the card, the count and Properties stay the
+  folder's. The × and the trail leave it for the count until another
+  entry is shown (`stand_in_left`). Only while a preview is drawn
+  (`Shell::stand_ins_wanted`): with Properties alone, the folder is
+  counted, as before; Preview turned on asks the folder again.
+- **The folder changed** is read again and its file found again: the
+  same file read again in place (its place kept), another one shown as
+  another preview, none leaving the count.
+
+**Checked:** on Xvfb (debug build): the pane's folder (nothing selected)
+showing its README; a folder selected showing its README, an album its
+`Cover.JPG` (before `cover.png`), a folder without one its count; the ×
+back to the count; Properties over the README saying the folder's
+(Contains, no Markdown details); Properties alone, the count; Preview
+on again, the README; a file added to the folder shown (README kept,
+scrolled place kept on a long one), README renamed away (count), a
+`README.txt` written (shown, as text); Space on a folder (its README in
+peek, Escape closes). `skwir-ui`'s tests, 654 (new:
+`a_folder_s_file_is_found_by_its_names_in_their_order`,
+`a_folder_is_read_once_for_its_count_and_its_file`); the settings,
+`plugins_toggle`, `keymap_titles` and `escape_keys` tests; clippy;
+`just a11y-check`.
+
+**Not done:** a README written in place (not saved by a rename) while
+its folder is shown is read again only once the folder changes or is
+shown again: the folder's date does not move. Not looked at: a remote
+folder; Windows and macOS (`check-cross` not run).

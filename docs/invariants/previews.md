@@ -861,7 +861,7 @@ is still to come are in `docs/preview-frame.md`.
 ### Location and waiting
 
 - **Nothing selected shows where the pane is.** A folder is previewed as
-  a selected one would be (its items, Properties), named as the sidebar
+  a selected one would be (its file or its items, Properties), named as the sidebar
   names it, with a Volume group in Properties (the volume's sidebar name,
   device, filesystem, free space). The folder is stat-ed and the volume
   measured on a worker (`Shell::here`, `VolumeFacts`), again when the
@@ -870,6 +870,31 @@ is still to come are in `docs/preview-frame.md`.
 - A location that is not a folder (a search, the shelf, Recent) shows
   its name and count in the header and nothing below: no tools, no empty
   Properties.
+- **A folder is shown by the file that stands for it**
+  (`ui.folder_preview_file`, on by default; `preview::StandIns`): its
+  README, an album's or a photo folder's cover, the first of
+  `ui.folder_preview_names` it holds (letter case ignored, `*` any run of
+  characters; of one pattern's files, the lowest name). Only a file, or
+  a link to one, stands; never a folder or a special file of that name.
+  - It is found in the read that counts the folder (`read_folder`), on
+    the preview's worker: one pass of its names, a stat only for a
+    wanted name's link; the folder shown has its listing, but a pattern
+    would walk it, which the window's thread never does.
+  - The file is a member of its own (`Nested::stands_for`, as a
+    playlist's track): previewed as the file it is, its bar the file's,
+    the card's trail "folder › README.md". The card, the count and
+    Properties stay the folder's (`properties::measure`,
+    `content_group`): never the file's pages, pixels or facts.
+  - Only while a preview is drawn (`Shell::stand_ins_wanted`): with
+    Properties alone the folder is counted, as before. What is wanted
+    changing (Preview, the names) asks the folder again.
+  - The bar's × and the trail leave it for the folder's count
+    (`stand_in_left`) until another entry is shown; it is never looked
+    for again meanwhile.
+  - The folder changed is read again and the file found again: the same
+    file is read again in place, keeping its place; another is another
+    preview; none leaves the count. A page turned, a find, the bytes ask
+    nothing of the folder.
 - **A wait shows only once it has lasted.** The panel has one delayed
   loading signal (`Shell::sync_busy`, `preview_busy`), like the pane's
   (`loading.rs`): a request slower than `BUSY_AFTER` (200 ms) shows
@@ -975,7 +1000,7 @@ is still to come are in `docs/preview-frame.md`.
   not close.
   - What it shows: Preview alone, the preview, or with nothing to
     preview the type's icon under the card (a folder's saying how many
-    items it holds) and why there is none; Properties alone, Properties
+    items it holds, where no file stands for it) and why there is none; Properties alone, Properties
     filling the panel (`properties::Room::Panel`); both, Properties over
     the preview, or with nothing to preview as tall as it says, the
     reason under it.
@@ -1195,8 +1220,10 @@ is still to come are in `docs/preview-frame.md`.
 - **A folder has no bar** (`preview::controls`): Properties counts what
   it holds, and what is done to it is the pane's menu's (Open With…,
   Copy Path). So from the moment it is chosen, not once it is counted:
-  a bar saying "Loading…" would go as the count came. A file with
-  nothing to show keeps its bar, for View as hex or Full preview.
+  a bar saying "Loading…" would go as the count came. The file that
+  stands for it (Location and waiting) brings its own bar, with the ×
+  of a member. A file with nothing to show keeps its bar, for View as
+  hex or Full preview.
 - An item states the narrowest of the three variants that still shows
   it (`keep`). Text and a page give way alike: a tool in the same place
   has the same `keep`.

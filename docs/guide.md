@@ -558,6 +558,12 @@ PDFs and office documents, books, comics, e-mail, notebooks, pictures,
 audio and video, fonts, 3D models, circuit boards, maps and tracks,
 archives, and the bytes of any file.
 
+- A folder shows its README in the preview, or the cover of an album or
+  of a photo folder (`cover.jpg`, `folder.jpg`), when it holds one: the
+  folder selected, or the one you are in while nothing is selected. Its
+  card, its count and its Properties stay the folder's; the bar's × leaves
+  the file for the folder's count. Settings › Folders and views › Previews
+  turns it off or changes the names looked for, in their order.
 - A table (CSV, a spreadsheet, a database, JSON Lines) sorts by a
   column when you click its header. Drag the edge at a header's right to
   widen or narrow its column, and double-click it to fit the column to

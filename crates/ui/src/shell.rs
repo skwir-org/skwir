@@ -408,6 +408,10 @@ pub struct Shell {
     /// `reading.width`: the reading column's widest, in ems, or `None`
     /// for the whole panel (`markdown::measure`).
     pub reading_measure: Option<f32>,
+    /// `ui.folder_preview_file` and `ui.folder_preview_names`: the files
+    /// that stand for a folder in its preview; `None` while it is off or
+    /// names none.
+    pub(crate) folder_stand_ins: Option<crate::preview::StandIns>,
     /// The reading width before Full width was switched on from a preview,
     /// to return to when it is switched off.
     reading_width_before: Option<String>,
@@ -790,6 +794,9 @@ impl Shell {
             ),
             captions: [false; crate::views::grid::CAPTIONS.len()],
             reading_measure: crate::markdown::measure("comfortable"),
+            folder_stand_ins: crate::preview::StandIns::parse(
+                crate::settings::FOLDER_PREVIEW_NAMES_DEFAULT,
+            ),
             reading_width_before: None,
             zoom_wheel: crate::reader_scroll::WheelTurn::default(),
             tab_wheel: crate::reader_scroll::WheelTurn::default(),
@@ -3637,6 +3644,20 @@ impl Shell {
                 smooth: self.switch(crate::settings::MODEL_SMOOTH_KEY, false),
             };
             self.prefs.contents_pinned = self.switch(crate::settings::CONTENTS_PINNED_KEY, false);
+            self.folder_stand_ins = self
+                .switch(crate::settings::FOLDER_PREVIEW_FILE_KEY, true)
+                .then(|| {
+                    crate::preview::StandIns::parse(
+                        &crate::settings::preference(
+                            self,
+                            crate::settings::FOLDER_PREVIEW_NAMES_KEY,
+                        )
+                        .unwrap_or_else(|| {
+                            crate::settings::FOLDER_PREVIEW_NAMES_DEFAULT.to_owned()
+                        }),
+                    )
+                })
+                .flatten();
             self.read_player_prefs();
             self.columns = crate::views::list::PerColumn(
                 crate::views::list::COLUMNS

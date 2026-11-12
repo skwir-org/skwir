@@ -1393,6 +1393,13 @@ fn measure(shell: &Shell) -> Option<Row> {
     if let Some(PreviewContent::Dir { items, folders }) = &preview.content {
         return Some(contains(*items, *folders));
     }
+    // A folder shown by the file standing for it is measured by what it
+    // holds, never by that file's pages, length or pixels.
+    if preview.info.is_dir
+        && let Some(holds) = preview.stands_for()
+    {
+        return Some(contains(holds.items, holds.folders));
+    }
     if shell.shows_player() {
         return Some(match preview.media.state.duration {
             Some(duration) => Row::new("Duration", crate::media::time(duration))
@@ -1461,7 +1468,10 @@ fn contains(items: usize, folders: usize) -> Row {
 fn content_group(shell: &Shell) -> Option<Group> {
     let preview = &shell.preview;
     let mut rows = Vec::new();
-    match &preview.content {
+    // A folder's are its own: what the file standing for it says of itself
+    // is that file's.
+    let content = preview.content.as_ref().filter(|_| !preview.info.is_dir);
+    match content {
         Some(PreviewContent::Image {
             document: None,
             facts,
@@ -1483,7 +1493,7 @@ fn content_group(shell: &Shell) -> Option<Group> {
         }
         _ => {}
     }
-    if shell.shows_player() {
+    if shell.shows_player() && !preview.info.is_dir {
         let state = &preview.media.state;
         for (label, value) in [
             ("Title", &state.title),

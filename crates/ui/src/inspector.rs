@@ -2266,10 +2266,12 @@ impl Shell {
                     && self.preview.inspection.request.target.is_none() =>
             {
                 let depth = self.preview.nested.len() - 1;
+                self.leave_stand_in(depth);
                 self.preview_ascend(depth, window, cx);
             }
             "ascend" => {
                 let depth = args["depth"].as_u64().unwrap_or(0) as usize;
+                self.leave_stand_in(depth);
                 self.preview_ascend(depth, window, cx);
             }
             _ => {}

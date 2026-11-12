@@ -160,6 +160,16 @@ pub const SLIDESHOW_KEY: &str = "reading.slideshow";
 /// Whether the picture the next step shows is decoded ahead
 /// (`Shell::read_ahead_next`).
 pub const READ_AHEAD_KEY: &str = "reading.read_ahead";
+/// Whether a folder's preview shows the file that stands for it, its
+/// README or its cover (`preview::StandIns`).
+pub const FOLDER_PREVIEW_FILE_KEY: &str = "ui.folder_preview_file";
+/// The names of the files that stand for a folder, in the order they are
+/// looked for.
+pub const FOLDER_PREVIEW_NAMES_KEY: &str = "ui.folder_preview_names";
+/// `FOLDER_PREVIEW_NAMES_KEY`'s default: READMEs as forges show them, then
+/// the covers music players and the desktops' file managers read.
+pub const FOLDER_PREVIEW_NAMES_DEFAULT: &str =
+    "README.md, README.org, README.rst, README.txt, README, cover.*, folder.*, .folder.*";
 /// The paces a slideshow goes at: the setting's choices and its bar's.
 pub const SLIDESHOW_PACES: [(&str, &str); 4] = [
     ("3", "3 seconds"),
@@ -1716,6 +1726,27 @@ pub fn declare(app: &App) {
     );
     app.settings.declare(
         SettingSpec::toggle(
+            FOLDER_PREVIEW_FILE_KEY,
+            "Show a README or a cover",
+            "In the preview, show a folder by the file that says what it holds: its README, or the cover of an album or of a photo folder. The first of the names below that it holds is shown. Its card, its count and its Properties stay the folder's; the × leaves the file for the folder's count. Off, a folder's preview says how many items it holds.",
+            true,
+        )
+        .page(page::VIEWS)
+        .section("Previews"),
+    );
+    app.settings.declare(
+        SettingSpec::text(
+            FOLDER_PREVIEW_NAMES_KEY,
+            "Names",
+            "The names looked for, the first first, separated by commas. Letter case is ignored, and * stands for any characters: cover.* finds cover.jpg and cover.png.",
+            FOLDER_PREVIEW_NAMES_DEFAULT,
+        )
+        .page(page::VIEWS)
+        .section("Previews")
+        .under(FOLDER_PREVIEW_FILE_KEY),
+    );
+    app.settings.declare(
+        SettingSpec::toggle(
             READ_AHEAD_KEY,
             "Read ahead",
             "While you step through pictures, in the preview panel, in peek or on the whole screen, decode the next one before you reach it, so it shows at once. The preview reads ahead in the panel once two steps went the same way, and holds one more picture in memory meanwhile. Off, each picture is decoded when you reach it.",
@@ -2052,9 +2083,9 @@ static BUILTIN: [Builtin; 13] = [
         owner: None,
         title: "Folders and views",
         icon: "grid",
-        intro: "How a folder shows its files: their order, the grid, the list's columns, and the thumbnails drawn for them.",
+        intro: "How a folder shows its files: their order, the grid, the list's columns, the thumbnails drawn for them, and what its preview shows.",
         when_used: true,
-        sections: &["Sorting", "Grid", "List columns", "Thumbnails"],
+        sections: &["Sorting", "Grid", "List columns", "Thumbnails", "Previews"],
     },
     Builtin {
         page: Page::Notes,
@@ -4277,9 +4308,10 @@ mod tests {
                 .iter()
                 .any(|(section, key)| section == "Tabs" && key == TABS_AT_KEY)
         );
+        // Thumbnails' are the plugin's, not declared here.
         assert_eq!(
             sections(&specs, &Page::Views),
-            ["Sorting", "Grid", "List columns"]
+            ["Sorting", "Grid", "List columns", "Previews"]
         );
         // The core's order of folders heads the page of how folders show.
         assert_eq!(
