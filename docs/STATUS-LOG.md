@@ -15812,3 +15812,32 @@ smoke`.
 leaves the new pane empty ("0 items", the address field blank) now and
 then, in the build before this too (once in three, and twice in three
 after).
+
+## 2026-11-12: A command acts on the tabs as they are now
+
+Found while checking 0061, and investigated on the user's ask: opening
+two tabs, closing them and splitting left the new pane empty now and
+then ("0 items", the address blank), in the build before 0061 too.
+
+- **Cause:** the shell carried out the commands asked from elsewhere
+  (`Inbox::front`) before following the workspace's tabs
+  (`sync_tabs`, at the end of `sync_pumped`). A script's `tab.close` runs
+  in the core at once; a `ui.split` reaching the window before a sync
+  followed it ran with `Shell::pane` the closed tab's pane:
+  `toggle_split` found no location to show, and `add_pane_from`, its
+  pane gone, added an empty pane to the tab shown.
+- **Fix:** each request from elsewhere follows the tabs first, on the
+  active pane as the workspace has it; the user's gate (`admit`) follows
+  them when their revision moved (`Shell::follow_tabs`), keeping a pane
+  `with_pane` chose while the tab shown holds it (keys pressed in one
+  turn, Ctrl+W then F3, had the same gap).
+
+**Checked:** on Xvfb (debug build), rounds of `tab.new` twice,
+`tab.close` twice, `ui.split`, then `tab.list` asked whether both panes
+show a location: in the list view by `skwir cmd`, before 4 empty in 12
+(then 0 in 12, 0 in 12 over 2,000 files: it depends on the window's
+pace); `tab.close` twice and `ui.split` on one MCP connection, back to
+back, before 3 in 6 and 2 in 12; after, 0 in 48 in all (12 of each). `skwir-ui`'s
+tests, 647; clippy; `just a11y-check` (splits and tabs by keys), passed.
+Not tried: the keys' own gap (Ctrl+W then F3 in one turn), which the
+same follow covers.

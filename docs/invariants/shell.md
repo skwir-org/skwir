@@ -1683,6 +1683,16 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   without moving the focus, and a key pressed here is not theirs to
   redirect. What is asked from elsewhere (`Inbox::front`) goes through
   `admit_here`, and leaves the active window as it is.
+- **A command acts on the workspace as it is now.** The shell follows
+  the tabs once a sync (`sync_tabs`), but a command may change them in
+  the core (a script's `tab.close`, Ctrl+W) before the next one acts
+  with no sync between. So what is asked from elsewhere follows them
+  (`sync_tabs`) before each request, on the active pane as the workspace
+  has it, and the user's gate (`admit`) follows them when their revision
+  moved (`Shell::follow_tabs`), keeping a pane a caller chose
+  (`with_pane`) while the tab shown holds it. Before, `ui.split` asked
+  right after `tab.close` split a pane that was gone, and the new pane
+  showed nothing.
 - **The active window is the one used last** (ADR-122): the core keeps
   the windows in the order they were used (`Workspace::used`), so closing
   the active one goes to the one used before it. That change is the

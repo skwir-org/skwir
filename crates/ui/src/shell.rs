@@ -2312,6 +2312,7 @@ impl Shell {
     /// track that ended in one behind another): they leave the active
     /// window as it is.
     fn admit(&mut self, name: &str, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        self.follow_tabs(window, cx);
         if !self.admit_here(name, window, cx) {
             return false;
         }
@@ -2320,6 +2321,23 @@ impl Shell {
             crate::finishing::raised(cx, self.window_id);
         }
         true
+    }
+
+    /// Follow the workspace's tabs before the user's command acts, when
+    /// they moved since the last sync: a command just before it (Ctrl+W,
+    /// a script's `tab.close`) may have closed the pane this window last
+    /// followed, or shown another tab, and a split, a view or a sort asked
+    /// of a pane gone acts on nothing. The pane a caller chose
+    /// (`with_pane`) stays chosen while the tab shown holds it.
+    fn follow_tabs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.app.workspace.read().revision() == self.tabs_revision {
+            return;
+        }
+        let chosen = self.pane;
+        self.sync_tabs(window, cx);
+        if self.panes.iter().any(|ui| ui.id == chosen) {
+            self.pane = chosen;
+        }
     }
 
     /// Whether `name` runs now in this window. When the dialog open takes
@@ -3643,6 +3661,10 @@ impl Shell {
             && self.takes_now(&request.name)
         {
             let request = self.front_waiting.pop_front().expect("one waits");
+            // On the active pane as the workspace has it now: one asked
+            // before (a tab closed, another shown, a pane made active) may
+            // have changed it, here or in the core, with no sync between.
+            self.sync_tabs(window, cx);
             if self.admit_here(&request.name, window, cx) {
                 self.carry_out(&request.name, request.args, window, cx);
             }
