@@ -15550,3 +15550,52 @@ tagged in a folder and in a hidden folder below it, hidden files shown:
 in the list and the grid, the file of the hidden folder marked with the
 crossed eye, `.secret.txt` not, a link with its arrow; cut, the marked
 file faded with its mark, the other faded unmarked.
+
+## 2026-11-12: A folder remembers its order (ADR-132)
+
+The user asked for an option to remember the sort and the groups per
+folder, and where it would be kept. Proposed and chosen: a toggle per
+folder, the pane's own order set aside while it shows one and back once
+it leaves or the folder forgets (the user: switching back at once is the
+most obvious, and keeps the pane's order); kept by Skwir alone. Reading
+Dolphin's attribute, GVfs's metadata (GNOME Files, Thunar), Finder's
+`.DS_Store` and Explorer's bags was weighed and left out (the user: a
+niche); the ADR records what each holds and when it writes it.
+
+- **The row and the command**: View's "Remember for this folder" ("this
+  place" elsewhere; greyed over a search), under Sort by and Group by;
+  `remember_order` (`on`, toggled when omitted; `pane`), an act an agent
+  asks for, which a search refuses.
+- **What a pane shows** (`Pane::own`, `show_order`, `sort_with`,
+  `own_sort`): a navigation looks the place up before opening
+  (`App::open_in`), so a folder remembered by date is read for its order
+  from its first listing; `sort` and `group` made where it remembers change
+  its record, and every pane showing it follows
+  (`Workspace::remember_order`); a pane asleep in a tab not shown takes it
+  when woken. Tabs keep the pane's own.
+- **Where it is kept**: `core.orders` in `data.toml`, what the user makes
+  (ADR-057; the state folder first proposed, then this, as saved searches
+  and pinned tags are); `orders::Orders` reads it record by record,
+  keeping what does not read, and never writes over a value that is no
+  list; saved on a worker; another skwir's change taken in by
+  `settings::changed`.
+- **What moves**: the executor's observer follows a plan's renames and
+  moves (an undo's too), swaps and deletions; the pump follows a folder
+  shown that moved. The folders at or below one are a run of a
+  path-ordered map, found in O(log n + k).
+
+**Checked:** rustfmt; clippy `-D warnings` on `skwir-core` and
+`skwir-ui` (all targets) and `skwir`'s tests; `skwir-core`'s tests, 763
+passed (new: five on `Orders`, reading and writing, a value that is no
+list, moves at and below a folder, swaps, deletion; three integration
+tests: a folder remembered, left, come back to and forgotten, hidden
+files staying the pane's; a split pane told of a change, a tab asleep
+showing it once woken, tabs keeping the pane's own; a rename and its undo
+taking the records along), `skwir-ui`'s 642, and `skwir`'s grouping,
+plugins and key-title tests, 15 (new: a search refuses to remember, and
+shows the pane's own). In a window on Xvfb (debug build): the row under
+Group by; clicked, `data.toml` held the folder's record; sorted by date
+there, the record followed; another folder showed the pane's Name, A to
+Z; back, newest first, the row checked; clicked off, Name, A to Z at
+once and the record gone; remembered by size, the app started again
+opened the folder largest first. Not run: `just check-cross`.

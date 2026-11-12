@@ -332,7 +332,10 @@ of bars, split or not.
     (`FlyRow::Choice`, one stop: Left and Right choose, Left from the
     first goes back, Enter and Space the other) and the criteria under
     it; Group by's direction is always there, greyed until a criterion of
-    its own is chosen, so nothing moves under the pointer; Folders first
+    its own is chosen, so nothing moves under the pointer; Remember for
+    this folder under them (ADR-132: the folder shown so wherever it is
+    shown, the pane's own order set aside; "this place" elsewhere, greyed
+    over a search, so no row moves); Folders first
     under them, the order's too (it orders folders within each group).
     Then what is listed (hidden files, companion files, what the location
     switches), then what is drawn with it (Quick filters and the

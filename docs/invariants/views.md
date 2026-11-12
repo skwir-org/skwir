@@ -382,6 +382,14 @@ around the views is in [shell.md](shell.md).
   none, below every value, and nothing waits for it to be read. Orders
   that are no pane's sort (the address's completions, an archive's tree,
   Usage) keep folders first.
+- **A folder that remembers its order** (ADR-132) is shown in it in every
+  pane: `Pane::sort` is what is shown, the pane's own set aside in
+  `Pane::own` meanwhile (`show_order`, from `App::open_in` alone), and
+  what is kept of a pane (its tab, a tab opened from it) is
+  `Pane::own_sort`, never `sort`. A change of the sort or the groups
+  made where it remembers is the folder's (`Workspace::remember_order`,
+  every pane showing it told). Its record is looked up in memory before
+  the folder opens, so it is read for that order from the first listing.
 - **A folder comes read for an order that reads it** (ADR-120,
   amended): a pane sorted or grouped by what a stat or the metadata
   providers say (`SortSpec::needs_metadata`) opens its locations saying

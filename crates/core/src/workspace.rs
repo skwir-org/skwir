@@ -10,6 +10,7 @@ use indexmap::IndexSet;
 use crate::cancel::CancelToken;
 use crate::entry::{Entry, EntryId};
 use crate::location::{Listing, Location, OpenLocation, SortSpec};
+use crate::orders::{Order, Orders};
 
 /// Identifier of a pane within the workspace.
 #[derive(
@@ -859,6 +860,11 @@ pub struct Pane {
     /// `listing.order_shown(sort)`, the order before while a worker makes
     /// this one (ADR-121).
     pub sort: SortSpec,
+    /// The pane's own order, set aside while the place it shows remembers
+    /// one of its own (ADR-132), which `sort` shows then; back once it
+    /// shows a place that remembers none (`show_order`). None while it
+    /// shows its own.
+    own: Option<Order>,
     /// What the sorter knows of the entries for `sort` (ADR-130): made by
     /// `App::make_keys_again` whenever `sort` needs them; every listing the
     /// pane shows is sorted with them (`sorting`).
@@ -1836,6 +1842,7 @@ impl Pane {
             drawn_left: None,
             selection: Selection::default(),
             sort: SortSpec::default(),
+            own: None,
             keys: None,
             keys_for: None,
             history: Vec::new(),
@@ -2838,6 +2845,33 @@ impl Pane {
     pub(crate) fn set_show_hidden(&mut self, show: bool) {
         self.sort.show_hidden = show;
         self.retain_shown();
+    }
+
+    /// Whether the place shown remembers its order (ADR-132): `sort` is
+    /// that place's, the pane's own set aside.
+    pub fn keeps_order(&self) -> bool {
+        self.own.is_some()
+    }
+
+    /// The pane's own sort: what it shows where no place remembers an
+    /// order, what its tab keeps and a tab opened from it starts with.
+    pub fn own_sort(&self) -> SortSpec {
+        self.sort_with(None)
+    }
+
+    /// What it shows with `kept`, the order of a place that remembers
+    /// one, else its own.
+    pub(crate) fn sort_with(&self, kept: Option<Order>) -> SortSpec {
+        kept.or(self.own)
+            .map_or(self.sort, |order| order.applied(self.sort))
+    }
+
+    /// Show the order of the place it shows: `kept`, the one that place
+    /// remembers, its own set aside meanwhile; none, its own again.
+    pub(crate) fn show_order(&mut self, kept: Option<Order>) {
+        let sort = self.sort_with(kept);
+        self.own = kept.map(|_| self.own.unwrap_or_else(|| Order::of(self.sort)));
+        self.sort = sort;
     }
 
     /// Let go of what the pane shows while its tab is not shown (ADR-018):
@@ -4573,6 +4607,9 @@ pub struct Workspace {
     /// in every pane's sort: given each pane as it is made (`push_pane`)
     /// and to all of them when it changes (`set_folders_first`).
     folders_first: bool,
+    /// The orders places remember (ADR-132), as the data file holds them:
+    /// a pane showing one of them shows it so (`Pane::show_order`).
+    orders: Orders,
 }
 
 /// A window's tabs, one shown at a time (ADR-122).
@@ -4673,6 +4710,7 @@ impl Default for Workspace {
             holding: false,
             revision: 0,
             folders_first: SortSpec::default().folders_first,
+            orders: Orders::default(),
         };
         w.add_window(None, Vec::new());
         w
@@ -4732,6 +4770,46 @@ impl Workspace {
         for pane in &mut self.panes {
             pane.sort.folders_first = first;
         }
+    }
+
+    /// The orders places remember (ADR-132).
+    pub fn orders(&self) -> &Orders {
+        &self.orders
+    }
+
+    /// The order `at` remembers, if it remembers one.
+    pub fn order_of(&self, at: &Location) -> Option<Order> {
+        self.orders.of(at)
+    }
+
+    /// Remember `order` for `at`, or forget its own, and show it so in
+    /// every pane that shows it: whether that changed anything.
+    pub(crate) fn remember_order(&mut self, at: &Location, order: Option<Order>) -> bool {
+        if !self.orders.set(at, order) {
+            return false;
+        }
+        for pane in &mut self.panes {
+            if pane.location() == Some(at) {
+                pane.show_order(order);
+            }
+        }
+        true
+    }
+
+    /// Take the orders as the data file says now (changed by another
+    /// skwir, or read at the start): each pane shows its place's.
+    pub(crate) fn set_orders(&mut self, orders: Orders) {
+        self.orders = orders;
+        for pane in &mut self.panes {
+            let kept = pane.location().and_then(|at| self.orders.of(at));
+            pane.show_order(kept);
+        }
+    }
+
+    /// Follow what a plan changed (`Orders::follow`): whether what the
+    /// places remember changed.
+    pub(crate) fn follow_orders(&mut self, changes: &[crate::op::Change]) -> bool {
+        self.orders.follow(changes)
     }
 
     /// A new pane in the tab shown: the other side of a split.
@@ -5197,8 +5275,24 @@ impl Workspace {
     /// changed and whether events are still waiting.
     pub fn pump_report(&mut self) -> PumpReport {
         let mut r = PumpReport::default();
+        // A folder shown that moved, whatever moved it, takes along what it
+        // and the folders it holds remember (ADR-132): looked for only
+        // while any place remembers an order.
+        let remembers = !self.orders.is_empty();
+        let mut moved = Vec::new();
         for p in &mut self.panes {
+            let before = if remembers {
+                p.location().and_then(Location::path)
+            } else {
+                None
+            };
             let pumped = p.pump(PUMP_BUDGET);
+            if let Some(before) = before
+                && let Some(now) = p.location().and_then(Location::path)
+                && now != before
+            {
+                moved.push((before, now));
+            }
             r.leads.extend(p.folders_to_ask());
             let n = pumped + usize::from(p.take_leads()) + usize::from(p.take_found_tree());
             if n > 0 {
@@ -5221,6 +5315,9 @@ impl Workspace {
             r.jobs
                 .extend(p.jobs_wanted().into_iter().map(|job| (p.id, job)));
             r.found.extend(p.found_tree_asked());
+        }
+        for (from, to) in moved {
+            r.orders_moved |= self.orders.moved(&from, &to);
         }
         r
     }
@@ -5254,6 +5351,9 @@ pub struct PumpReport {
     /// The folders whose way to what a lens keeps is still to be found
     /// out: `App::pump_report` hands them to a worker.
     pub leads: Vec<LeadsAsked>,
+    /// What places remember of their order moved with a folder shown
+    /// (ADR-132): `App::pump_report` writes it down.
+    pub orders_moved: bool,
     /// The searches to lay out as trees: `App::pump_report` hands them to
     /// a worker.
     pub found: Vec<FoundAsked>,

@@ -966,7 +966,13 @@ asked on every core; a name's type is looked up by the suffixes a pattern
 can be (xdg-mime patch 0004). In the release build, by Modified 1.9 s
 (0.8 s of the window's thread) becomes 1.1 s (2 ms), by Kind or Type
 1.3 s becomes 0.3 s; in the debug build 13 s (5.5 s) and 17 s become
-11.6 s (38 ms) and 1.9 s.
+11.6 s (38 ms) and 1.9 s. **A folder remembers its order, 2026-11-12**
+(ADR-132, the user's ask): View's Remember for this folder keeps its
+sort and groups, shown so in every pane, the pane's own set aside and
+back once it leaves or the folder forgets; any place but a search; kept
+in `data.toml` (`core.orders`), following Skwir's renames and moves and a
+folder shown that moves. Other file managers' stores are not read (the
+user's choice).
 
 ## What is left
 

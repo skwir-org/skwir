@@ -351,3 +351,57 @@ fn pictures_sort_and_group_by_their_size_read_on_demand() {
         .collect();
     assert_eq!(labels, ["1 to 4 MP", "Under 1 MP", "No dimensions"]);
 }
+
+/// A search remembers no order (ADR-132): its terms are what it is. The
+/// folder it searched does, and the search shows the pane's own.
+#[test]
+fn a_search_remembers_no_order_and_shows_the_pane_s_own() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+    app.plugins
+        .add(Arc::new(skwir_plugin_query::QueryPlugin::default()), &app);
+    let root = tmp.path().join("field notes");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("route.txt"), "route").unwrap();
+    let pane = app.workspace.read().active_id();
+    run(
+        &app,
+        "navigate",
+        &serde_json::json!({ "location": skwir_core::os_path::PathArg::from(root.clone()) }),
+    );
+    assert!(app.pump_until_complete(pane, Duration::from_secs(10)));
+    run(&app, "remember_order", &serde_json::json!({}));
+    run(&app, "sort", &serde_json::json!({ "key": "size" }));
+    app.dispatch(
+        &Invocation::try_with_args(
+            "query.search",
+            &serde_json::json!({
+                "expr": "ext:txt",
+                "root": skwir_core::os_path::PathArg::from(root.clone()),
+                "pane": pane,
+            }),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(app.pump_until_complete(pane, Duration::from_secs(10)));
+    let p = |app: &App| {
+        let ws = app.workspace.read();
+        let p = ws.pane(pane).unwrap();
+        (p.keeps_order(), p.sort.key)
+    };
+    assert_eq!(p(&app), (false, SortKey::Name), "the pane's own");
+    let refused = app
+        .dispatch(&Invocation::with_args(
+            "remember_order",
+            &serde_json::json!({ "on": true }),
+        ))
+        .unwrap_err();
+    assert!(format!("{refused:#}").contains("search"), "{refused:#}");
+    assert!(
+        app.workspace
+            .read()
+            .order_of(&Location::from_path(&root))
+            .is_some_and(|order| order.key == SortKey::Size)
+    );
+}

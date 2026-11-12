@@ -486,6 +486,41 @@ fn view_options(shell: &Shell) -> Vec<MenuPart> {
             Some(value.into()),
         ));
     }
+    // Whether the place shown is sorted and grouped so wherever it is
+    // shown, apart from the pane's order (ADR-132): under what it
+    // remembers, above folders first, which is every pane's. Greyed over a
+    // search, whose terms are what it is, so no row moves between them.
+    let shown = {
+        let ws = shell.app.workspace.read();
+        ws.pane(shell.pane)
+            .and_then(|p| Some((p.location()?.clone(), p.keeps_order())))
+    };
+    if let Some((at, remembers)) = shown {
+        let search = shell.app.is_search(&at);
+        let (label, tooltip) = if search {
+            (
+                "Remember for this place",
+                "A search's order is not remembered: its terms are what it is",
+            )
+        } else if at.is_path() {
+            (
+                "Remember for this folder",
+                "Show this folder sorted and grouped as now wherever it is shown, apart from the pane's order; off, it takes the pane's",
+            )
+        } else {
+            (
+                "Remember for this place",
+                "Show this place sorted and grouped as now wherever it is shown, apart from the pane's order; off, it takes the pane's",
+            )
+        };
+        order.push(MenuPart::Row(menu_item(
+            Button::new("menu-remember-order", "", tooltip, "remember_order")
+                .args(serde_json::json!({ "on": !remembers, "pane": shell.pane }))
+                .active(remembers)
+                .enabled(!search),
+            label,
+        )));
+    }
     // Folders before files, or sorted with them, within each group: the
     // order's too, under the sort and the groups (their criteria are in
     // their submenus, so a check here reads as none of them). The setting

@@ -53,6 +53,7 @@ pub mod media;
 pub mod metadata;
 pub mod notes;
 pub mod op;
+pub mod orders;
 pub mod os_path;
 pub mod pending;
 pub mod permissions;

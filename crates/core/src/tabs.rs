@@ -19,7 +19,7 @@ use crate::entry::EntryId;
 use crate::location::{Location, SortSpec};
 use crate::os_path::PathArg;
 use crate::settings::{STARTUP, SettingSpec};
-use crate::workspace::{PaneId, Selection, StepLeft, TabId, WindowId};
+use crate::workspace::{Pane, PaneId, Selection, StepLeft, TabId, WindowId};
 
 /// Application data: the windows shown and their tabs, as they were
 /// last (ADR-122).
@@ -131,7 +131,9 @@ pub struct SavedTab {
     pub filters: Vec<String>,
     /// By pane, how it was sorted and grouped (ADR-130, 11, amended): its
     /// criterion and direction, its groups and theirs, and hidden files;
-    /// folders first is the user's setting, which every pane takes. Left
+    /// folders first is the user's setting, which every pane takes. The
+    /// pane's own, never that of a folder that remembers its own (ADR-132),
+    /// which it shows again from what it remembers. Left
     /// out when each pane sorts as a new one does. A sort this Skwir
     /// cannot read (a later one's criterion) is a new pane's: the windows
     /// still come back.
@@ -495,7 +497,7 @@ impl App {
             // In the window of the pane it opens from.
             let window = ws.window_of(from).unwrap_or_else(|| ws.active_window_id());
             let source = ws.pane(from);
-            let sort = source.map(|p| p.sort).unwrap_or_default();
+            let sort = source.map(Pane::own_sort).unwrap_or_default();
             let lens = source.and_then(|p| p.lens().cloned());
             let location = match location {
                 Some(location) => location,
@@ -619,7 +621,7 @@ impl App {
                 history: p.history.clone(),
                 history_pos: p.history_pos,
                 steps: p.steps_left(),
-                sort: p.sort,
+                sort: p.own_sort(),
                 selection: p.kept_selection().clone(),
             })
             .collect();
@@ -753,7 +755,7 @@ impl App {
             let from = from.unwrap_or_else(|| ws.active_id());
             let made_from = ws.window_of(from);
             let source = ws.pane(from);
-            let sort = source.map(|p| p.sort).unwrap_or_default();
+            let sort = source.map(Pane::own_sort).unwrap_or_default();
             let lens = source.and_then(|p| p.lens().cloned());
             let location = match location {
                 Some(location) => location,
@@ -1006,7 +1008,7 @@ impl App {
                     continue;
                 };
                 filters.push(pane.and_then(|p| p.filter()).unwrap_or_default().to_owned());
-                sorts.push(pane.map(|p| p.sort).unwrap_or_default());
+                sorts.push(pane.map(Pane::own_sort).unwrap_or_default());
                 if *id == tab.active {
                     active = panes.len();
                 }

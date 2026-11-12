@@ -1278,6 +1278,10 @@ pub(crate) fn changed(app: &crate::App, keys: &[String]) {
         apply_folders_first(app);
         app.wake();
     }
+    if keys.iter().any(|key| key == crate::orders::ORDERS) {
+        crate::orders::apply(app);
+        app.wake();
+    }
     if keys
         .iter()
         .any(|key| key == crate::exclusions::SHELL_VARIABLES_KEY)

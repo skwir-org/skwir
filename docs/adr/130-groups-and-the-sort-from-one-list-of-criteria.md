@@ -134,7 +134,9 @@ keys asked on every core.
     remembers its own (Downloads by date) is for an ADR of its own.
     (Amended 2026-11-12, the user: the sort and the groups are saved
     with the pane's tab and come back with it when the windows do,
-    `core.startup = last`; a place's own is still for an ADR of its own.)
+    `core.startup = last`; a place's own is still for an ADR of its own.
+    Settled by ADR-132, 2026-11-12: a folder remembers its order when
+    asked, the pane's own set aside meanwhile; the tab keeps the pane's.)
 12. **A heading acts** (phase 4): a click selects its group; its menu
     offers Select these and Show only these, which sets the group's
     query term as the lens (ADR-107). Collapsing comes later.

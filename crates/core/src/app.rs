@@ -606,6 +606,7 @@ impl App {
         // General's own settings before the tabs': a page shows its
         // settings in the order they are declared.
         crate::settings::register(&app);
+        crate::orders::register(&app);
         crate::tabs::register(&app);
         crate::keymap::declare(&app.settings, app.weak());
         crate::exclusions::declare(&app.settings);
@@ -1741,13 +1742,16 @@ impl App {
             .is_some_and(|provider| provider.follows_hidden(&location));
         let (kept, hidden_shown, reads_metadata) = {
             let mut ws = self.workspace.write();
+            // Sorted as the place remembers, else as the pane does
+            // (ADR-132), from the first listing on.
+            let order = ws.order_of(&location);
             let p = ws
                 .pane_mut(pane)
                 .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
             (
                 p.take_kept(&location),
                 p.sort.show_hidden,
-                p.sort.needs_metadata(),
+                p.sort_with(order).needs_metadata(),
             )
         };
         let (open, listing) = match kept {
@@ -1763,6 +1767,7 @@ impl App {
             ),
         };
         let mut ws = self.workspace.write();
+        let order = ws.order_of(&location);
         let p = ws
             .pane_mut(pane)
             .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
@@ -1778,6 +1783,7 @@ impl App {
         } else {
             p.replace_open(open, listing, lensed);
         }
+        p.show_order(order);
         p.set_listed_hidden(follows_hidden.then_some(hidden_shown));
         then(p, &location);
         drop(ws);
@@ -1826,6 +1832,9 @@ impl App {
         // listings ask for an order (ADR-130).
         self.make_wanted_keys();
         let mut report = self.workspace.write().pump_report();
+        if report.orders_moved {
+            crate::orders::save(self);
+        }
         // What was read on demand, and what is to be read now (ADR-131).
         self.take_field_answers(&mut report);
         self.read_wanted_fields();
@@ -3253,6 +3262,30 @@ pub struct SortArgs {
     pub pane: Option<PaneId>,
 }
 
+/// What the place `pane` shows remembers, made the order it shows now,
+/// where it remembers one (ADR-132): whether that changed it. Under the
+/// caller's lock, so no other change comes between.
+fn remembered_anew(ws: &mut crate::workspace::Workspace, pane: PaneId) -> bool {
+    let Some(p) = ws.pane(pane).filter(|p| p.keeps_order()) else {
+        return false;
+    };
+    let Some(at) = p.location().cloned() else {
+        return false;
+    };
+    let order = crate::orders::Order::of(p.sort);
+    ws.remember_order(&at, Some(order))
+}
+
+/// `remember_order`: whether the place a pane shows remembers its order.
+#[derive(Debug, Default, Deserialize, Serialize, JsonSchema)]
+pub struct RememberOrderArgs {
+    /// Remember (true) or forget (false); toggled when omitted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pane: Option<PaneId>,
+}
+
 /// `group`: what a pane's entries are grouped by, and which way.
 #[derive(Debug, Default, Deserialize, Serialize, JsonSchema)]
 pub struct GroupArgs {
@@ -3974,7 +4007,11 @@ mod builtin {
                     p.set_show_hidden(h);
                 }
                 let keyed = p.sort.key != before.key;
+                let remembered = remembered_anew(&mut ws, pane);
                 drop(ws);
+                if remembered {
+                    crate::orders::save(app);
+                }
                 if keyed {
                     app.make_keys_again(Some(pane));
                 }
@@ -4011,7 +4048,11 @@ mod builtin {
                     p.sort.group_ascending = ascending;
                 }
                 let regrouped = p.sort.group_key() != before.group_key();
+                let remembered = remembered_anew(&mut ws, pane);
                 drop(ws);
+                if remembered {
+                    crate::orders::save(app);
+                }
                 if regrouped {
                     app.make_keys_again(Some(pane));
                 }
@@ -4021,6 +4062,52 @@ mod builtin {
         );
         group.forms(group_forms());
         group.shows();
+
+        c.register::<RememberOrderArgs, _>(
+            "core",
+            Topic::View,
+            "remember_order",
+            "Remember this folder's order",
+            "Remember how the folder a pane shows is sorted and grouped (ADR-132), or forget it (`on`; toggled when omitted): a folder that remembers is shown so in every pane, a change of its sort or groups made there changing what it remembers, the pane's own order set aside while it shows it and back once it shows another; forgotten, the pane's own comes back. Any place but a search, whose terms are what it is (the trash, a tag's place); hidden files stay the pane's, folders first the user's",
+            |a, app| {
+                let pane = app.pane_or_active(a.pane);
+                let (at, on) = {
+                    let ws = app.workspace.read();
+                    let p = ws
+                        .pane(pane)
+                        .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
+                    let at = p
+                        .location()
+                        .cloned()
+                        .ok_or_else(|| anyhow::anyhow!("the pane shows nothing"))?;
+                    anyhow::ensure!(
+                        !ws.orders().is_unreadable(),
+                        "{} in the data file holds no list: mend it, or take it out, to remember an order",
+                        crate::orders::ORDERS
+                    );
+                    (at, a.on.unwrap_or(!p.keeps_order()))
+                };
+                // Asked of its provider with no lock held.
+                anyhow::ensure!(
+                    !(on && app.is_search(&at)),
+                    "a search's order is not remembered: its terms are what it is"
+                );
+                let mut ws = app.workspace.write();
+                // Remembered as the pane shows it now, still there.
+                let order = ws
+                    .pane(pane)
+                    .filter(|p| p.location() == Some(&at))
+                    .map(|p| crate::orders::Order::of(p.sort))
+                    .ok_or_else(|| anyhow::anyhow!("the pane went elsewhere"))?;
+                let changed = ws.remember_order(&at, on.then_some(order));
+                drop(ws);
+                if changed {
+                    crate::orders::save(app);
+                    app.wake();
+                }
+                Ok(Outcome::Done)
+            },
+        );
 
         let fold = c.register::<GroupFoldArgs, _>(
             "core",
