@@ -468,6 +468,7 @@ impl Shared {
         if cancel.is_cancelled() {
             return;
         }
+        let first = previous.is_none();
         let mut dir = match self.folder.read() {
             Ok(d) => d,
             Err(e) => {
@@ -546,6 +547,19 @@ impl Shared {
         }
         self.listed
             .store(true, std::sync::atomic::Ordering::Release);
+        // The pane's order reads what a stat finds (a date, a size, an
+        // owner, tags): every entry is read before the listing completes,
+        // so the folder appears whole in that order, in its groups, rather
+        // than moving as rows are read (ADR-120, amended). Its names are
+        // all known now, which the metadata providers read beside it.
+        if first && self.ctx.reads_metadata {
+            for chunk in seen.chunks(self.ctx.batch_size.max(1)) {
+                if cancel.is_cancelled() {
+                    return;
+                }
+                self.hydrate(chunk);
+            }
+        }
         self.tx.send(ListingEvent::Complete);
         if !stayed.is_empty() {
             let s = Arc::clone(self);

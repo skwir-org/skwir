@@ -363,6 +363,16 @@ around the views is in [shell.md](shell.md).
   none, below every value, and nothing waits for it to be read. Orders
   that are no pane's sort (the address's completions, an archive's tree,
   Usage) keep folders first.
+- **A folder comes read for an order that reads it** (ADR-120,
+  amended): a pane sorted or grouped by what a stat or the metadata
+  providers say (`SortSpec::needs_metadata`) opens its locations saying
+  so (`OpenContext::reads_metadata`, from `App::open_in` and `open_for`),
+  and the folder provider reads every entry's (`hydrate`, its names all
+  known) before its listing completes: the folder appears in its order
+  and its groups at once, never every file in one group, then moved. A
+  provider that cannot leaves it to the view's hydration
+  (`Shell::sync_sort_hydration`), as an order chosen while a folder is
+  shown does.
 - **The sort and the groups take one list of criteria** (ADR-130,
   `SortKey::ALL`), offered where they apply (`Shell::sort_keys`,
   `group_keys`: Rating while ratings are kept, Deleted in the trash,

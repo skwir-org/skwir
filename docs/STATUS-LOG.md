@@ -15367,3 +15367,33 @@ a folder of 46 files, the first sync after `open` had its 46 rows in 5
 groups, no empty one before; into one of 30 000 (filled in 352 ms), the
 folder left's 3 rows in 2 groups for the hold, then empty at 173 ms, then
 whole at 436 ms; Down pressed 15 ms after Enter ended the hold at once.
+
+## 2026-11-12: A folder grouped by date appears in its groups
+
+The user saw, sorted by Name and grouped by Modified, a folder gone back
+to show its files in one group, then share them out. The sync's debug
+line said it: after Back, 19 rows in 1 group ("Unknown", no date read),
+38 ms later in 4. A folder's listing reads names only (ADR-120: nothing
+hydrated while it is filled); the view asks for every entry's metadata
+once the folder is shown (`Shell::sync_sort_hydration`), and until each
+answer an entry is in no date's group. Going back opens the folder anew:
+the folder left is let go once the one gone to is shown.
+
+- A pane whose order reads what a stat or the metadata providers say
+  (`SortSpec::needs_metadata`) opens its locations saying so
+  (`OpenContext::reads_metadata`, from `App::open_in` and `open_for`).
+  The folder provider then reads every entry, with its names all known,
+  before it sends Complete (`fs::path_provider`, `Shared::list` and its
+  `hydrate` in batches; only a first listing, a refresh keeping what is
+  shown). The fill takes the updates with the names, and the folder is
+  taken whole, read and in its groups. Other providers leave it to the
+  view, as before.
+
+**Checked:** rustfmt; clippy `-D warnings` on `skwir-core` and
+`skwir-plugin-query`, all targets; `skwir-core` and `skwir-plugin-query`
+876 passed (new: sorted by name, nothing of a folder read before it is
+drawn; sorted by Modified, its three files read when it completes and
+in date order at once). In a window on Xvfb, grouped by Modified: Back
+from a subfolder, the first sync 19 rows in 4 groups, the dates shown;
+the same in the grid, the folder left's file drawn under the new address
+until then.

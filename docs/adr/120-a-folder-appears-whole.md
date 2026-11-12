@@ -50,7 +50,13 @@ the streaming past a second removed (this record says the last).
    and the trail change at once; a folder ready within it takes their
    place directly, and any command ends the wait. The view draws them
    from the folder left's listing, its location closed
-   (`Pane::drawn_entry`); no command finds them.) The footer says nothing at
+   (`Pane::drawn_entry`); no command finds them. The same day: a pane
+   sorted or grouped by what a stat or the metadata providers read (a
+   date, a size, an owner, tags) showed a folder first with nothing
+   read, every file in one group, then moved them as rows were read;
+   such a pane's folder is now read of every entry before its listing
+   completes (`OpenContext::reads_metadata`, the folder provider's
+   listing), and appears in its groups at once.) The footer says nothing at
    first, then, with the banner after 200 ms as before, "Loading…" and
    how many entries have been read ("Loading… 120 000 items",
    "Loading location… 120 000 items").
@@ -96,7 +102,9 @@ the streaming past a second removed (this record says the last).
 - A folder on a slow disk or server shows its count for as long as it
   takes, and nothing of it until it is whole.
 - Nothing is hydrated while a folder is filled: no row is shown to ask
-  for it. The rows shown first are asked for once they appear.
+  for it. The rows shown first are asked for once they appear. But for
+  a pane whose order reads it (amended 2026-11-12): the folder provider
+  reads every entry's before it says the listing is complete.
 - What streams (a large search, a large trash) is still built on the
   window's thread, its tables growing there.
 - The listing filled on a worker is allocated there and freed on a

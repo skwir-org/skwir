@@ -283,6 +283,14 @@ pub struct OpenContext {
     /// A search that does not say follows it
     /// ([`LocationProvider::follows_hidden`]).
     pub hidden_shown: bool,
+    /// Whether the order of the pane it is opened for reads what a stat or
+    /// the metadata providers say (`SortSpec::needs_metadata`: sorted or
+    /// grouped by a date, a size, an owner, a rating, tags). A folder then
+    /// reads it of every entry before it says it is complete, so that it
+    /// appears in that order at once rather than moving as each entry is
+    /// read (ADR-120, amended). A provider that cannot leaves it to the
+    /// view's hydration, as without it; no pane, no.
+    pub reads_metadata: bool,
 }
 
 impl OpenContext {

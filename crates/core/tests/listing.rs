@@ -419,6 +419,71 @@ fn the_folder_left_is_drawn_until_the_one_gone_to_is_whole() {
     assert!(!p.keeps_any());
 }
 
+/// Sorted by what a stat finds, a folder is read whole before it is shown:
+/// each entry hydrated once its listing completes, so it appears in that
+/// order at once, in its groups, never moving as rows are read (ADR-120,
+/// amended). Sorted by name, nothing of it is read before it is drawn.
+#[test]
+fn a_folder_sorted_by_date_is_read_before_it_appears() {
+    use skwir_core::command::Invocation;
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("dated notes");
+    std::fs::create_dir(&dir).unwrap();
+    for (name, secs) in [
+        ("b old.txt", 1_740_787_200),
+        ("a new.txt", 1_793_491_200),
+        ("c middle's.txt", 1_767_225_600),
+    ] {
+        let path = dir.join(name);
+        std::fs::write(&path, b"x").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(std::time::UNIX_EPOCH + Duration::from_secs(secs))
+            .unwrap();
+    }
+    let app = app(tmp.path());
+    let pane = active(&app);
+    let shown = |app: &skwir_core::App| -> (Vec<String>, usize) {
+        let ws = app.workspace.read();
+        let p = ws.pane(pane).unwrap();
+        let names = p
+            .order()
+            .iter()
+            .map(|id| p.entry(*id).unwrap().name_str().into_owned())
+            .collect();
+        let read = p
+            .listing
+            .iter()
+            .filter(|e| e.metadata.is_hydrated())
+            .count();
+        (names, read)
+    };
+    navigate(&app, &dir);
+    assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+    assert_eq!(shown(&app).1, 0, "by name, nothing read before it is drawn");
+    navigate(&app, tmp.path());
+    assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+    // The folder left let go, as the window's next sync does: going back
+    // opens it anew rather than taking it as it stood.
+    app.keep_locations(pane, &[]);
+    app.dispatch(&Invocation::with_args(
+        "sort",
+        &serde_json::json!({ "key": "modified" }),
+    ))
+    .unwrap();
+    navigate(&app, &dir);
+    assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+    let (names, read) = shown(&app);
+    assert_eq!(read, 3, "every entry read before the folder is shown");
+    assert_eq!(
+        names,
+        ["a new.txt", "c middle's.txt", "b old.txt"],
+        "newest first, at once"
+    );
+}
+
 #[test]
 fn forward_returns_where_back_came_from_and_a_new_navigation_forgets_it() {
     let tmp = tempfile::tempdir().unwrap();
@@ -953,6 +1018,7 @@ fn virtual_locations_hydrate_by_path_in_one_batch() {
         hints: std::sync::Arc::clone(&app.hints),
         companions: std::sync::Arc::clone(&app.companions),
         hidden_shown: false,
+        reads_metadata: false,
     };
     let (sink, rx) = ctx.channel();
     let id = |ino| skwir_core::EntryId {
@@ -1015,6 +1081,7 @@ fn what_cannot_be_read_is_answered_unreadable() {
         hints: std::sync::Arc::clone(&app.hints),
         companions: std::sync::Arc::clone(&app.companions),
         hidden_shown: false,
+        reads_metadata: false,
     };
     let (sink, rx) = ctx.channel();
     let id = skwir_core::EntryId {

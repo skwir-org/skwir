@@ -30,6 +30,7 @@ impl Search {
             hints: Arc::default(),
             companions: Arc::default(),
             hidden_shown: false,
+            reads_metadata: false,
         };
         let location = skwir_plugin_query::location_for(expression, Some(root));
         let open = provider.open(&location, ctx).unwrap();

@@ -380,7 +380,10 @@ working in an area, also read that area's rules (see
   (`fill_job`, `PumpReport::fills`), and takes it whole and sorted once
   complete, failed or redirected; "Loading…" says how many were read.
   Meanwhile the view draws the files of the folder left, `tabs::HOLD` at
-  most (`Pane::drawn_entry`, never what a command finds).
+  most (`Pane::drawn_entry`, never what a command finds). For a pane
+  whose order reads a stat or the metadata providers, the folder
+  provider reads every entry's before the listing completes
+  (`OpenContext::reads_metadata`).
   The window's thread builds no folder it opens. An order asked anew
   (a column's header) is made on a worker too, the order before shown
   until it is back (ADR-121, `Listing::order_shown`, `sort_job`): what

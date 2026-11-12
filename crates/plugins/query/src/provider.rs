@@ -1814,6 +1814,7 @@ mod tests {
             hints: Arc::default(),
             companions: Arc::default(),
             hidden_shown: false,
+            reads_metadata: false,
         };
         let query = lang::parse(&location.rest).unwrap();
         let rule: Rule = Arc::new(|| Arc::new(LeftOut::none()));

@@ -1165,7 +1165,12 @@ impl App {
     /// what it sends wakes the pane's window alone (ADR-122).
     fn open_for(&self, pane: PaneId, location: &Location) -> anyhow::Result<Arc<dyn OpenLocation>> {
         self.agent_may_open(location)?;
-        self.open_waking(location, self.pane_waker(pane))
+        let reads_metadata = self
+            .workspace
+            .read()
+            .pane(pane)
+            .is_some_and(|p| p.sort.needs_metadata());
+        self.open_waking_with(location, self.pane_waker(pane), false, reads_metadata)
     }
 
     /// `location` opened, what it sends waking with `waker`.
@@ -1174,15 +1179,18 @@ impl App {
         location: &Location,
         waker: Waker,
     ) -> anyhow::Result<Arc<dyn OpenLocation>> {
-        self.open_waking_with(location, waker, false)
+        self.open_waking_with(location, waker, false, false)
     }
 
-    /// `location` opened for a pane showing hidden files or not.
+    /// `location` opened for a pane showing hidden files or not, whose
+    /// order reads its entries' metadata or not
+    /// (`OpenContext::reads_metadata`).
     fn open_waking_with(
         &self,
         location: &Location,
         waker: Waker,
         hidden_shown: bool,
+        reads_metadata: bool,
     ) -> anyhow::Result<Arc<dyn OpenLocation>> {
         let provider = self
             .provider(&location.scheme)
@@ -1199,6 +1207,7 @@ impl App {
                 hints: Arc::clone(&self.hints),
                 companions: Arc::clone(&self.companions),
                 hidden_shown,
+                reads_metadata,
             },
         )
     }
@@ -1730,17 +1739,26 @@ impl App {
         let follows_hidden = self
             .provider(&location.scheme)
             .is_some_and(|provider| provider.follows_hidden(&location));
-        let (kept, hidden_shown) = {
+        let (kept, hidden_shown, reads_metadata) = {
             let mut ws = self.workspace.write();
             let p = ws
                 .pane_mut(pane)
                 .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
-            (p.take_kept(&location), p.sort.show_hidden)
+            (
+                p.take_kept(&location),
+                p.sort.show_hidden,
+                p.sort.needs_metadata(),
+            )
         };
         let (open, listing) = match kept {
             Some(kept) => kept,
             None => (
-                self.open_waking_with(&location, self.pane_waker(pane), hidden_shown)?,
+                self.open_waking_with(
+                    &location,
+                    self.pane_waker(pane),
+                    hidden_shown,
+                    reads_metadata,
+                )?,
                 self.new_listing(&location),
             ),
         };
@@ -1997,6 +2015,7 @@ impl App {
             hints,
             companions: Arc::clone(&self.companions),
             hidden_shown: asked.show_hidden,
+            reads_metadata: false,
         };
         // A worker stays free of it, for what the window asks meanwhile.
         let looks = self
