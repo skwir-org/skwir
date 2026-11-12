@@ -1185,18 +1185,38 @@ pub enum Mark {
 /// not say so (`Entry::hidden_unsaid`), one on its bottom-left. Marks say
 /// what a file is, in any view; what it is to the view (cut, only the way
 /// to what a filter keeps) is said by fading it whole, never by a mark
-/// (docs/invariants/views.md).
+/// (docs/invariants/views.md). What plays (`plays`) is a badge of its own
+/// in the middle of the picture, the player's, which a click steers.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Marks {
     pub mark: Mark,
     pub hidden: bool,
+    pub plays: Option<Plays>,
 }
 
 impl From<Mark> for Marks {
     fn from(mark: Mark) -> Self {
         Marks {
             mark,
-            hidden: false,
+            ..Marks::default()
+        }
+    }
+}
+
+/// The file the player plays (`playing::NowPlaying`), as its picture says
+/// it: playing, or paused where it stands.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Plays {
+    Playing,
+    Paused,
+}
+
+impl Plays {
+    /// What a screen reader hears of it with the entry's name.
+    pub fn said(self) -> &'static str {
+        match self {
+            Plays::Playing => "playing",
+            Plays::Paused => "paused",
         }
     }
 }
@@ -1216,7 +1236,9 @@ impl Mark {
 /// badges: on its bottom-right corner a bent arrow for a link (in the error
 /// color for one that leads nowhere), the tag's mark in its color for a
 /// tag's place; on its bottom-left, a crossed eye for an entry hidden
-/// though its name does not say so. Unmarked, it is returned as it is.
+/// though its name does not say so; in its middle, round, a speaker while
+/// it plays and the pause bars while it is paused (`playing_badge`).
+/// Unmarked, it is returned as it is.
 pub fn marked(
     picture: AnyElement,
     size: f32,
@@ -1230,7 +1252,7 @@ pub fn marked(
         Mark::Link(Link::Broken) => Some(("link", theme.error)),
         Mark::Tag(color) => Some(("tag", theme.tag(color))),
     };
-    if corner.is_none() && !marks.hidden {
+    if corner.is_none() && !marks.hidden && marks.plays.is_none() {
         return picture;
     }
     // Large enough to read on a list's 16 px icons, and growing slower
@@ -1260,7 +1282,70 @@ pub fn marked(
         .when(marks.hidden, |d| {
             d.child(on("eye-off", theme.text).left(px(-1.)))
         })
+        .when_some(marks.plays, |d, plays| {
+            d.child(playing_badge(plays, size, theme))
+        })
         .into_any_element()
+}
+
+/// The side of the badge saying what plays on a picture of `size` px: a
+/// share of a large picture (a tile's), which is seen around it, and the
+/// whole of a small one (a list's icon), where a share would be a glyph
+/// too small to read; between 12 and 32 px.
+pub(crate) fn playing_side(size: f32) -> f32 {
+    (size * 0.4 + 4.).max(size.min(20.)).clamp(12., 32.).round()
+}
+
+/// A round badge in the middle of a picture: a speaker while its file
+/// plays, the pause bars while it is paused, in the accent on its own
+/// ground, chosen or not. A click on it pauses or plays on (the core's
+/// `player.request`, which the window that plays carries out, ADR-122);
+/// the press is its own, so the entry under it is neither selected nor
+/// dragged.
+fn playing_badge(plays: Plays, size: f32, theme: &crate::theme::Theme) -> gpui::Div {
+    let disc = playing_side(size);
+    let (glyph, tip) = match plays {
+        Plays::Playing => ("volume", "Playing · click to pause"),
+        Plays::Paused => ("pause", "Paused · click to play"),
+    };
+    // The picture around it answers as the entry does: only the disc is
+    // the player's.
+    div()
+        .absolute()
+        .inset_0()
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(
+            div()
+                .id("playing-badge")
+                .size(px(disc))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded_full()
+                .bg(theme.bg)
+                .border_1()
+                .border_color(theme.border)
+                .child(crate::controls::glyph(
+                    glyph,
+                    theme.accent,
+                    (disc * 0.7).round(),
+                ))
+                .cursor_pointer()
+                .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(|_, window, cx| {
+                    cx.stop_propagation();
+                    window.dispatch_action(
+                        Box::new(crate::keymap::RunCommand {
+                            name: "player.request".into(),
+                            args: serde_json::json!({ "request": "play_pause" }),
+                        }),
+                        cx,
+                    );
+                })
+                .tooltip(move |_, cx| crate::toolbar::tooltip(tip.into(), cx)),
+        )
 }
 
 /// An entry's picture at `size` px when it has no thumbnail: its theme
@@ -1306,6 +1391,17 @@ mod tests {
     };
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
+
+    /// What plays is said on a list's icon whole, its glyph readable, and
+    /// on a tile's picture by a share of it, the picture seen around.
+    #[test]
+    fn the_playing_badge_is_a_small_picture_whole_and_a_large_one_s_share() {
+        assert_eq!(super::playing_side(16.), 16.);
+        assert_eq!(super::playing_side(24.), 20.);
+        assert_eq!(super::playing_side(64.), 30.);
+        assert_eq!(super::playing_side(256.), 32.);
+        assert_eq!(super::playing_side(8.), 12.);
+    }
 
     #[test]
     fn skwirs_icon_is_drawn_at_the_side_asked() {

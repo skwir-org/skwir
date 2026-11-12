@@ -588,6 +588,12 @@ archives, and the bytes of any file.
   folder's pictures as a slideshow.
 - Music and video can keep playing while you browse, in a player at the
   foot of the panel, steered by the desktop's media keys.
+- **Play**, in a file's menu, plays without opening the preview: music in
+  that player (the tracks selected, in their order, or a playlist's; a
+  song alone with the rest of its folder after it), a film in the large
+  preview `Space` opens. The file playing has a speaker on its icon in
+  every view, the pause bars while paused; a click on it pauses or plays
+  on.
 - Some kinds need a program Skwir does not carry; Settings › Plugins says
   which, and what to install.
 - **Print…** (`Ctrl+P`, the file's menu, the preview's More menu) prints

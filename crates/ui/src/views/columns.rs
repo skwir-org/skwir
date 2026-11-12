@@ -353,6 +353,7 @@ fn side_column(
                         row.place.as_ref().and_then(|(_, color)| *color),
                     ),
                     hidden: row.hidden,
+                    plays: this.plays(&row.name, || target.clone()),
                 };
                 let icon = icons::entry_picture(
                     row.icon.as_ref(),

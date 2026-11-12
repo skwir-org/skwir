@@ -3209,6 +3209,7 @@ impl Shell {
             }
             "inspect" => self.inspect_command(args, window, cx),
             "media_control" => self.media_control(args, cx),
+            "media_play" => self.media_play(window, cx),
             "media_pin" => self.media_pin(cx),
             "media_keep_playing" => {
                 let on = args.get("on").and_then(serde_json::Value::as_bool);

@@ -258,6 +258,95 @@ pub struct Opened {
     path: PathBuf,
     lifetime: CancelToken,
     session: anyhow::Result<Option<Arc<dyn MediaSession>>>,
+    /// Started from the files (`Shell::start_pin`): the queue it was
+    /// resolved to and where the track stands in it, a pin of its own.
+    start: Option<(Vec<PathBuf>, usize)>,
+}
+
+/// What the preview registry plays `path` with: the file it leads to, a
+/// link's target, typed by its name.
+fn request_for(path: &std::path::Path) -> anyhow::Result<PreviewRequest> {
+    let (entry, content) = skwir_core::fs::content_path(path)
+        .and_then(|content| Some((EntryRef::from_path(&*content)?, content)))
+        .ok_or_else(|| anyhow::anyhow!("{} is no file to play", path.display()))?;
+    Ok(PreviewRequest {
+        entry,
+        mime: skwir_platform::mime::by_name(content.as_os_str()).map(|mime| mime.to_string()),
+        page: 1,
+        seconds: None,
+        max_side: 0,
+        text_size: None,
+        fit: None,
+        held: skwir_core::preview::HeldSlot::default(),
+    })
+}
+
+/// A session playing `path`, opened on a worker; its `lifetime` is its own.
+fn open_track(
+    previews: &skwir_core::preview::Previews,
+    path: &std::path::Path,
+    lifetime: &CancelToken,
+    wake: skwir_core::location::Waker,
+) -> anyhow::Result<Option<Arc<dyn MediaSession>>> {
+    previews.open_media(&request_for(path)?, lifetime, wake)
+}
+
+/// The tracks `wanted` plays, in order, a playlist's own tracks in its
+/// place (its rows as its preview reads them, each a file of its own),
+/// and where `index`'s first track stands among them; at most
+/// `Shell::QUEUE_TRACKS`. On a worker.
+fn resolve_queue(
+    previews: &skwir_core::preview::Previews,
+    wanted: Vec<(PathBuf, crate::media::Played)>,
+    index: usize,
+    members: &std::path::Path,
+    job: &CancelToken,
+) -> (Vec<PathBuf>, usize) {
+    use crate::media::Played;
+    // Only files of their own are taken, so nothing should be written; a
+    // directory of its own, gone with the job, makes sure of it.
+    let scratch = wanted
+        .iter()
+        .any(|(_, played)| *played == Played::Playlist)
+        .then(|| {
+            std::fs::create_dir_all(members).ok()?;
+            tempfile::Builder::new()
+                .prefix("queue-")
+                .tempdir_in(members)
+                .ok()
+        })
+        .flatten();
+    let view = skwir_core::inspection::InspectRequest::default();
+    let mut queue = Vec::new();
+    let mut start = 0;
+    for (at, (path, played)) in wanted.into_iter().enumerate() {
+        if job.is_cancelled() || queue.len() >= Shell::QUEUE_TRACKS {
+            break;
+        }
+        if at == index {
+            start = queue.len();
+        }
+        if played != Played::Playlist {
+            queue.push(path);
+            continue;
+        }
+        let (Some(scratch), Ok(request)) = (&scratch, request_for(&path)) else {
+            continue;
+        };
+        let Ok(Some(list)) = previews.inspect(&request, &view, job) else {
+            continue;
+        };
+        for target in list.rows.iter().filter_map(|row| row.target.as_deref()) {
+            if job.is_cancelled() || queue.len() >= Shell::QUEUE_TRACKS {
+                break;
+            }
+            let member = previews.extract(&request, &view, target, scratch.path(), job);
+            if let Some(member) = member.ok().flatten().filter(|m| m.own_file) {
+                queue.push(member.path);
+            }
+        }
+    }
+    (queue, start)
 }
 
 /// The shell's part of the pin that is not the pin itself.
@@ -305,6 +394,34 @@ pub struct PlayerState {
     /// of its own and drew its cover.
     opening: Option<CancelToken>,
     covering: Option<CancelToken>,
+    /// The file the views mark as playing (`Shell::plays`): the program's
+    /// `NowPlaying`, read at each sync, so every window marks the one that
+    /// plays, whichever window plays it.
+    marked: Option<Marked>,
+}
+
+/// What plays, as the views find it among their entries: by name first,
+/// then by path, so a row that is not it costs a comparison of names.
+#[derive(Debug, PartialEq)]
+struct Marked {
+    path: PathBuf,
+    name: std::ffi::OsString,
+    plays: crate::icons::Plays,
+}
+
+impl Marked {
+    fn of(now: &NowPlaying) -> Option<Marked> {
+        let plays = match now.status {
+            skwir_core::media::PlaybackStatus::Playing => crate::icons::Plays::Playing,
+            skwir_core::media::PlaybackStatus::Paused
+            | skwir_core::media::PlaybackStatus::Ended => crate::icons::Plays::Paused,
+        };
+        Some(Marked {
+            name: now.path.file_name()?.to_owned(),
+            path: now.path.clone(),
+            plays,
+        })
+    }
 }
 
 /// What played when the window last looked (`Shell::sync_player`), from
@@ -348,6 +465,7 @@ impl Default for PlayerState {
             focus: None,
             opening: None,
             covering: None,
+            marked: None,
         }
     }
 }
@@ -386,6 +504,27 @@ impl PinPlace {
 }
 
 impl Shell {
+    /// Whether the entry named `name`, at `path` (asked only when the
+    /// name is the one), is the file that plays, and how.
+    pub(crate) fn plays(
+        &self,
+        name: &std::ffi::OsStr,
+        path: impl FnOnce() -> Option<PathBuf>,
+    ) -> Option<crate::icons::Plays> {
+        let marked = self.player.marked.as_ref()?;
+        (marked.name == name && path().as_ref() == Some(&marked.path)).then_some(marked.plays)
+    }
+
+    /// What the views mark as playing, read again from the core: drawn
+    /// again where it changed.
+    fn mark_playing(&mut self, cx: &mut Context<Self>) {
+        let marked = self.app.player.get().and_then(|now| Marked::of(&now));
+        if marked != self.player.marked {
+            self.player.marked = marked;
+            cx.notify();
+        }
+    }
+
     /// Where the pin is drawn, `None` without one.
     pub fn pin_place(&self) -> Option<PinPlace> {
         let pinned = self.player.pinned.as_ref()?;
@@ -697,9 +836,23 @@ impl Shell {
                 });
             return (vec![path.to_owned()], 0);
         }
+        match self.preview.pane() {
+            Some(pane) => self.folder_queue(pane, path, video),
+            None => (vec![path.to_owned()], 0),
+        }
+    }
+
+    /// The files of the same kind as `path` (music, or films) in `pane`,
+    /// in its order, and where `path` stands among them: what a pin walks.
+    fn folder_queue(
+        &self,
+        pane: skwir_core::workspace::PaneId,
+        path: &std::path::Path,
+        video: bool,
+    ) -> (Vec<PathBuf>, usize) {
         let sorted = self.ui().list.sorted.clone();
         let ws = self.app.workspace.read();
-        let Some(pane) = self.preview.pane().and_then(|pane| ws.pane(pane)) else {
+        let Some(pane) = ws.pane(pane) else {
             return (vec![path.to_owned()], 0);
         };
         let queue: Vec<PathBuf> = sorted
@@ -745,26 +898,10 @@ impl Shell {
         self.app
             .scheduler
             .spawn(Priority::Visible, "player-open", job.clone(), move || {
-                // The session's own: it outlives this job once opened.
+                // The session's own: it outlives this job once opened. A
+                // link plays, and is typed as, what it leads to.
                 let lifetime = CancelToken::new();
-                // A link plays, and is typed as, what it leads to.
-                let session = skwir_core::fs::content_path(&path)
-                    .and_then(|content| Some((EntryRef::from_path(&*content)?, content)))
-                    .ok_or_else(|| anyhow::anyhow!("{} is no file to play", path.display()))
-                    .and_then(|(entry, content)| {
-                        let request = PreviewRequest {
-                            entry,
-                            mime: skwir_platform::mime::by_name(content.as_os_str())
-                                .map(|mime| mime.to_string()),
-                            page: 1,
-                            seconds: None,
-                            max_side: 0,
-                            text_size: None,
-                            fit: None,
-                            held: skwir_core::preview::HeldSlot::default(),
-                        };
-                        previews.open_media(&request, &lifetime, wake.clone())
-                    });
+                let session = open_track(&previews, &path, &lifetime, wake.clone());
                 // Skipped while it opened: let go of at once.
                 if job.is_cancelled() {
                     lifetime.cancel();
@@ -775,9 +912,237 @@ impl Shell {
                     path,
                     lifetime,
                     session,
+                    start: None,
                 });
                 wake();
             });
+    }
+
+    /// Play `wanted` in the pinned player from its `index`th: a
+    /// playlist's tracks in its place, resolved and the track opened on a
+    /// worker, then pinned in the place of any pin (`pin_started`). What
+    /// was being opened for the pin is late from now.
+    fn start_pin(&mut self, wanted: Vec<(PathBuf, crate::media::Played)>, index: usize) {
+        self.player.generation += 1;
+        let generation = self.player.generation;
+        let (previews, tx, wake) = (
+            Arc::clone(&self.app.previews),
+            self.player.tx.clone(),
+            self.waker(),
+        );
+        let members = crate::preview::members_dir(self.app.cache.root());
+        let job = self.app.lifetime().child();
+        if let Some(before) = self.player.opening.replace(job.clone()) {
+            before.cancel();
+        }
+        self.app
+            .scheduler
+            .spawn(Priority::Visible, "player-start", job.clone(), move || {
+                let (queue, index) = resolve_queue(&previews, wanted, index, &members, &job);
+                let lifetime = CancelToken::new();
+                let (path, session) = match queue.get(index) {
+                    Some(path) => (
+                        path.clone(),
+                        open_track(&previews, path, &lifetime, wake.clone()),
+                    ),
+                    None => (
+                        PathBuf::new(),
+                        Err(anyhow::anyhow!(
+                            "These playlists list no track to play here"
+                        )),
+                    ),
+                };
+                if job.is_cancelled() {
+                    lifetime.cancel();
+                    return;
+                }
+                let _ = tx.send(Opened {
+                    generation,
+                    path,
+                    lifetime,
+                    session,
+                    start: Some((queue, index)),
+                });
+                wake();
+            });
+    }
+
+    /// A track started from the files (`start_pin`) opened: it is pinned
+    /// with its queue, in the place of any pin, and plays alone: what the
+    /// preview plays pauses, and a pin it showed is its own again.
+    fn pin_started(
+        &mut self,
+        session: Arc<dyn MediaSession>,
+        lifetime: CancelToken,
+        path: PathBuf,
+        (queue, index): (Vec<PathBuf>, usize),
+        cx: &mut Context<Self>,
+    ) {
+        let volume = self
+            .player
+            .pinned
+            .as_ref()
+            .map_or_else(|| Playback::default().volume, |pinned| pinned.state.volume);
+        if self.preview_is_pinned() {
+            self.unpin_preview();
+        }
+        if let Some(shown) = &self.preview.media.session
+            && self.preview.media.state.playing()
+        {
+            let _ = shown.control(Control::Play(false));
+        }
+        let _ = session.control(Control::Volume(volume));
+        // Opened while the window is not shown: no frames until it is.
+        if !self.preview.window_shown {
+            let _ = session.control(Control::Frames(false));
+        }
+        let _ = session.control(Control::Play(true));
+        let video = skwir_platform::mime::by_name(path.as_os_str())
+            .is_some_and(|mime| mime.as_str().starts_with("video/"));
+        let mut pin = Pinned {
+            session,
+            queued: None,
+            lifetime,
+            state: Playback {
+                volume,
+                ..Playback::default()
+            },
+            path,
+            queue,
+            index,
+            order: Vec::new(),
+            video,
+            cover: None,
+            frame: None,
+            recycled: crate::media::Recycled::default(),
+            scrub: None,
+            icon: None,
+        };
+        pin.reorder(self.prefs.player.continue_with);
+        self.set_pin(Some(pin));
+        if video && self.player.height < crate::dock::TALL_FROM {
+            self.player.height = crate::dock::VIDEO_HEIGHT;
+        }
+        self.player.focus.get_or_insert_with(|| cx.focus_handle());
+        self.remember_session();
+        cx.notify();
+    }
+
+    /// `ui.media_play` (Play, in the files' menu): what is selected plays
+    /// without the preview opened for it. A film alone opens in the quick
+    /// preview, as Space does, and plays there; music plays in the pinned
+    /// player: the tracks selected in the pane's order, a playlist's in its
+    /// place; a track alone with the folder's around it, as a pin walks
+    /// them. What the preview shows, or is about to, plays there, and the
+    /// pin's own track plays on: never two players for one file.
+    pub fn media_play(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        use crate::media::Played;
+        let pane = self.pane;
+        let picked: Vec<(skwir_core::EntryId, PathBuf, Played)> = {
+            let sorted = Arc::clone(&self.ui().list.sorted);
+            let ws = self.app.workspace.read();
+            let Some(p) = ws.pane(pane) else {
+                return;
+            };
+            sorted
+                .iter()
+                .filter(|id| p.selection.contains(**id))
+                .filter_map(|&id| {
+                    let played = crate::media::played(p.entry(id)?)?;
+                    Some((id, p.path_of(id)?, played))
+                })
+                .take(Self::QUEUE_TRACKS)
+                .collect()
+        };
+        let cursor = self.cursor_id();
+        let film = picked
+            .iter()
+            .find(|(id, _, played)| *played == Played::Film && cursor == Some(*id))
+            .or_else(|| picked.iter().find(|(_, _, played)| *played == Played::Film))
+            .map(|(id, ..)| *id);
+        let wanted: Vec<(skwir_core::EntryId, PathBuf, Played)> = picked
+            .into_iter()
+            .filter(|(_, _, played)| *played != Played::Film)
+            .collect();
+        match wanted.as_slice() {
+            [] => match film {
+                Some(id) => self.play_film(id, window, cx),
+                None => self.set_status("Nothing selected plays", false, cx),
+            },
+            [(id, path, Played::Track)] => {
+                if self.preview_shows(pane, *id) {
+                    self.play_shown(pane, *id, cx);
+                } else if self
+                    .player
+                    .pinned
+                    .as_ref()
+                    .is_some_and(|pinned| pinned.path == *path)
+                {
+                    self.player_request(PlayerRequest::Play, window, cx);
+                } else {
+                    let (queue, index) = self.folder_queue(pane, path, false);
+                    let queue = queue.into_iter().map(|path| (path, Played::Track));
+                    self.start_pin(queue.collect(), index);
+                }
+            }
+            _ => {
+                let wanted = wanted.into_iter().map(|(_, path, played)| (path, played));
+                self.start_pin(wanted.collect(), 0);
+            }
+        }
+    }
+
+    /// Whether the preview (the panel's Preview, or peek) shows entry `id`
+    /// of `pane`, or is on its way to it, itself and not a member.
+    fn preview_shows(&self, pane: skwir_core::workspace::PaneId, id: skwir_core::EntryId) -> bool {
+        self.preview.previews()
+            && self.preview.nested.is_empty()
+            && self.preview.pane() == Some(pane)
+            && self.preview.entry_id() == Some(id)
+    }
+
+    /// Play what the preview shows: at once where its player is open, else
+    /// once it is (the wish a step makes, `Autoplay`).
+    fn play_shown(
+        &mut self,
+        pane: skwir_core::workspace::PaneId,
+        id: skwir_core::EntryId,
+        cx: &mut Context<Self>,
+    ) {
+        if self.preview.media.session.is_some() {
+            self.media_send(Control::Play(true), cx);
+        } else {
+            self.preview.autoplay = Some(crate::preview::Autoplay {
+                pane,
+                id,
+                member: None,
+            });
+            cx.notify();
+        }
+    }
+
+    /// A film plays in the quick preview, as Space opens it on the cursor:
+    /// the cursor goes to it first where it is elsewhere.
+    fn play_film(&mut self, id: skwir_core::EntryId, window: &mut Window, cx: &mut Context<Self>) {
+        let pane = self.pane;
+        if self.cursor_id() != Some(id)
+            && let Some(index) = self.ui().list.index_of(id)
+        {
+            self.cursor_to(index as isize, crate::list::Step::Select, window, cx);
+        }
+        if self.preview_shows(pane, id) && self.preview.media.session.is_some() {
+            self.media_send(Control::Play(true), cx);
+        } else {
+            self.preview.autoplay = Some(crate::preview::Autoplay {
+                pane,
+                id,
+                member: None,
+            });
+        }
+        if !self.preview.peek {
+            self.open_peek(window, cx);
+        }
+        cx.notify();
     }
 
     /// Step the pin's queue. Without a pin, or while the panel shows it, the
@@ -893,6 +1258,22 @@ impl Shell {
                 opened.lifetime.cancel();
                 continue;
             }
+            if let Some(start) = opened.start {
+                match opened.session {
+                    Ok(Some(session)) => {
+                        self.pin_started(session, opened.lifetime, opened.path, start, cx);
+                    }
+                    Ok(None) => {
+                        opened.lifetime.cancel();
+                        self.set_status("This track cannot be played here", true, cx);
+                    }
+                    Err(error) => {
+                        opened.lifetime.cancel();
+                        self.set_status(format!("{error:#}"), true, cx);
+                    }
+                }
+                continue;
+            }
             let Some(pinned) = &mut self.player.pinned else {
                 opened.lifetime.cancel();
                 continue;
@@ -931,6 +1312,20 @@ impl Shell {
                     self.set_status(format!("{error:#}"), true, cx);
                 }
             }
+            cx.notify();
+        }
+
+        // The pin went on to the file the preview shows with a player of
+        // its own (a start from the files, a step of the dock): the preview
+        // asks again and shows the pin's (`show_pinned`), never a second
+        // player for one file.
+        if let Some(pinned) = &self.player.pinned
+            && self.preview.media.session.is_some()
+            && !self.preview_is_pinned()
+            && self.preview.playing_path().as_ref() == Some(&pinned.path)
+        {
+            self.cancel_preview(window, cx);
+            self.preview.phase = crate::preview::PreviewPhase::Queued;
             cx.notify();
         }
 
@@ -1046,6 +1441,7 @@ impl Shell {
             cx.notify();
         }
         self.publish_now_playing(cx);
+        self.mark_playing(cx);
     }
 
     /// ↑ and ↓ over the player: the volume, a step at a time, of whatever
@@ -1251,7 +1647,14 @@ impl Shell {
         });
         if now.is_some() || self.player.published {
             self.player.published = now.is_some();
+            let before = self.app.player.revision();
             self.app.player.publish(now);
+            // The other windows mark what plays too: a change they are
+            // told of (a track, playing or paused, not the position
+            // running on) wakes them.
+            if self.app.player.revision() != before && crate::finishing::window_count(cx) > 1 {
+                self.app.wake();
+            }
         }
     }
 }

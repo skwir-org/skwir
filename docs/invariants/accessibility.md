@@ -134,9 +134,11 @@ like `AGENTS.md`.
   whether it is opened (`aria_expanded`), not its position: a reader
   counts siblings by level.
 - **An entry says what `entry::behave` gives it** (`views/entry.rs`): its
-  name, then as its description what fades or marks it ("cut", "hidden"
-  for one hidden though its name does not say so, "leads to what the
-  filter keeps" for a folder dimmed as only the way, ADR-126) and its
+  name, then as its description whether it plays ("playing", "paused",
+  what the badge on its picture says), what fades or marks it ("cut",
+  "hidden" for one hidden though its name does not say so, "leads to
+  what the filter keeps" for a folder dimmed as only the way, ADR-126)
+  and its
   tags and stars (`tags::said`: "Tagged Paris, print; 4 stars", the names
   its chips show, without those its place says), whether it is selected, its `Seat` (index, depth in a
   tree), and on the cursor the active descendant. A side column's row

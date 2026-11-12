@@ -9,7 +9,9 @@
 //! (`KEEP_PLAYING`, `AUTOPLAY`, `CONTINUE`); with the plugin off there is no
 //! player, and nothing reads them.
 
-use skwir_core::{App, plugin::Plugin, settings::SettingSpec};
+use skwir_core::{
+    App, command::Invocation, plugin::Plugin, registry::MenuItem, settings::SettingSpec,
+};
 use skwir_platform::{
     media::ReplayGain,
     preview::{MediaPreviews, SharedTuning, VIDEO_PROVIDER},
@@ -167,6 +169,29 @@ impl Plugin for PreviewPlugin {
         Self::register_video(app);
         app.thumbnails
             .register(ID, Arc::new(skwir_platform::thumb_providers::AudioCovers));
+        // Play, after Open With, which stays beside the default Open (its
+        // row stands at its first application's, 5, else at Other
+        // Application…'s, 8), and before Open Terminal Here (10): music,
+        // however many (a playlist filed as audio gives its tracks), in
+        // the player at the panel's foot; a film alone, in the quick
+        // preview. The shell carries it out.
+        for when in ["selection kind:audio", "single kind:video"] {
+            app.registry.menus.add(
+                ID,
+                MenuItem {
+                    menu: "context".into(),
+                    title: "Play".into(),
+                    command: Invocation::new("ui.media_play"),
+                    when: Some(when.into()),
+                    order: 9,
+                    icon: Some("play".into()),
+                    submenu: None,
+                    checked: None,
+                    choice: None,
+                    color: None,
+                },
+            );
+        }
     }
 }
 

@@ -56,6 +56,8 @@ pub struct Look {
     pub place: Option<(Location, Option<usize>)>,
     /// A folder's own path: where files dropped on it go.
     pub path: Option<PathBuf>,
+    /// The file the player plays, playing or paused (`Shell::plays`).
+    pub plays: Option<icons::Plays>,
 }
 
 impl Look {
@@ -64,6 +66,7 @@ impl Look {
         icons::Marks {
             mark: icons::Mark::of(self.link, self.place.as_ref().and_then(|(_, tag)| *tag)),
             hidden: self.hidden,
+            plays: self.plays,
         }
     }
 
@@ -117,6 +120,7 @@ impl Shell {
             ring: self.ring_of(e),
             place,
             path: if e.is_dir() { pane.path_of(id) } else { None },
+            plays: self.plays(&e.name, || pane.path_of(id)),
         })
     }
 }
@@ -222,19 +226,26 @@ fn expose(el: Stateful<Div>, look: &Look, seat: Seat) -> Stateful<Div> {
     }
 }
 
-/// What is said of an entry beside its name: what dims or marks it (cut,
-/// hidden though its name does not say so, only the way to what a filter
-/// keeps), its tags and stars; what is drawn is heard.
+/// What is said of an entry beside its name: whether it plays, what dims
+/// or marks it (cut, hidden though its name does not say so, only the way
+/// to what a filter keeps), its tags and stars; what is drawn is heard.
 fn said(look: &Look) -> Option<String> {
     let states = [
         (look.cut, "cut"),
         (look.hidden, "hidden"),
         (look.only_leads, "leads to what the filter keeps"),
     ];
-    let words: Vec<String> = states
+    let words: Vec<String> = look
+        .plays
+        .map(icons::Plays::said)
         .into_iter()
-        .filter(|(on, _)| *on)
-        .map(|(_, word)| word.to_owned())
+        .chain(
+            states
+                .into_iter()
+                .filter(|(on, _)| *on)
+                .map(|(_, word)| word),
+        )
+        .map(str::to_owned)
         .chain(crate::tags::said(&look.tags, look.rating))
         .collect();
     (!words.is_empty()).then(|| words.join(", "))
@@ -292,6 +303,7 @@ mod tests {
             ring: None,
             place: None,
             path: None,
+            plays: None,
         }
     }
 
@@ -321,6 +333,18 @@ mod tests {
             said(&leads).as_deref(),
             Some("cut, leads to what the filter keeps")
         );
+        // What plays first: it is what the badge on its picture says.
+        let playing = Look {
+            plays: Some(crate::icons::Plays::Paused),
+            tags: vec![("work".into(), 0)],
+            ..look()
+        };
+        assert_eq!(said(&playing).as_deref(), Some("paused, Tagged work"));
+        assert_eq!(
+            playing.mark().plays,
+            Some(crate::icons::Plays::Paused),
+            "and its picture is marked with it"
+        );
     }
 
     /// The hidden mark goes with the entry's other one, not in its place.
@@ -336,6 +360,7 @@ mod tests {
             crate::icons::Marks {
                 mark: crate::icons::Mark::Link(crate::icons::Link::Leads),
                 hidden: true,
+                plays: None,
             }
         );
     }

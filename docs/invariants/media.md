@@ -270,6 +270,13 @@ binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
   opening for the old one is dropped.
 - Starting another track moves the pin, or with Keep playing off stops the
   pinned one. Never two playing at once.
+- A track started from the files (Play, `ui.media_play`) is pinned once
+  it opens, Keep playing on or off: the pin is where it plays, the
+  preview not shown for it (`Shell::pin_started`). It takes the place of
+  any pin; what the preview plays pauses, and a pin the preview showed
+  is the preview's again. The queue is what was played (the selection,
+  a playlist's tracks), so Next stops at its end; a track alone walks
+  its folder's.
 - While the panel shows the pinned session, every step (panel, dock,
   desktop) moves the selection in the pin's order, and the selection follows
   when the session advances by itself (`Shell::select_track`). The panel

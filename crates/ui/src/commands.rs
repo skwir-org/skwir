@@ -722,6 +722,7 @@ const SHOWS: &[&str] = &[
     "ui.preview_match",
     "ui.reader_search",
     "ui.media_control",
+    "ui.media_play",
     "ui.media_pin",
     "ui.media_keep_playing",
     "ui.media_autoplay",
@@ -2584,6 +2585,12 @@ pub fn declare_all(app: &App) {
         "ui.media_control",
         "Player: control",
         "Play, pause, seek or set the volume of what the preview plays",
+    );
+    none(
+        Topic::Player,
+        "ui.media_play",
+        "Player: play the selection",
+        "Play what is selected without opening the preview: music in the player at the foot of the panel, the tracks selected in their order (a playlist's tracks in its place, a track alone with the folder's around it); a film in the quick preview",
     );
     none(
         Topic::Player,

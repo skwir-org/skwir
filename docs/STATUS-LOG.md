@@ -16061,3 +16061,49 @@ disabled for the first, enabled for the second. `skwir-ui`'s tests, 650
 (a new one: `a_document_without_headings_offers_contents_it_has_not`);
 clippy. Not looked at on screen: the button on a bar wide enough to hold
 it, a book or a message.
+
+## 2026-11-12: Play from the files' menu; what plays is marked in the views
+
+Asked by the user: a way to start a file playing without opening the
+preview, and a sign in the views of the file that plays (none showed
+it). Their choices: a badge on the picture; a film plays in the quick
+preview, as Space opens it; several selected play in order.
+
+- **Play** in the files' menu, after Open With, which stays beside the
+  default Open (`ui.media_play`; the media
+  plugin's two items, `selection kind:audio` and `single kind:video`,
+  gone with it). Music goes to the pin, Keep playing on or off
+  (`Shell::start_pin`, `pin_started`): the tracks selected, in the
+  pane's order, a playlist's tracks in its place (`preview::playlist`,
+  its rows read and taken as its preview takes them), a track alone with
+  the folder's around it; resolved and opened on a worker. A film opens
+  in the quick preview and plays there (`Autoplay`, the wish a step
+  makes). A track the preview shows, or is about to, plays there, and
+  the pin's own plays on.
+- **Never two players for one file**: a pin that goes on to the file the
+  preview shows with a player of its own (a start, and before it a step
+  of the dock) has the preview ask again, which shows the pin's.
+- **What plays is marked** (`icons::Marks::plays`): a round badge in the
+  middle of the picture, in every view (list, grid, columns, tree,
+  board): a speaker while it plays, the pause bars while paused, in the
+  accent on its own ground; a share of a tile's picture, the whole of a
+  list's 16 px icon (`playing_side`: a share there left a 7 px glyph). A
+  click on it pauses or plays on (`player.request`); its press is its
+  own. It is the program's `NowPlaying`, so every window marks it; a
+  change of it wakes the other windows. A screen reader hears "playing"
+  or "paused" first in the entry's description.
+
+**Checked:** on Xvfb (debug build), the menu's Play on a track, two
+tracks, a playlist (`.m3u`, its first track first) and a film (the
+film in the quick preview, playing); `player.now` after
+each: the track, playing, Next stopping at the selection's end; the
+badge in the grid, the list (playing, paused) and the columns, its
+tooltip, two clicks on it (playing, paused) and the selection moved
+away (still pinned, paused); with the panel open, two tracks selected
+from the one shown: one media worker afterwards, the panel showing the
+pin's. `skwir-ui`'s tests, 655 (new: `what_play_does_goes_by_the_type`,
+`the_playing_badge_is_a_small_picture_whole_and_a_large_one_s_share`,
+and what is heard); `plugins_toggle`, `keymap_titles`; clippy;
+`just a11y-check`. Not looked at: two windows (the wake that marks what
+another plays), the tree and the board views, a film's badge while it
+plays pinned in the dock.

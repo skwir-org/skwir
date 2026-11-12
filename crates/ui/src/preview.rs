@@ -4126,7 +4126,7 @@ impl Shell {
             && (self.preview.inspection.outline || self.preview.reader.outlines)
     }
 
-    fn cancel_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn cancel_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let contents = self.contents_kept();
         self.cancel_pending_preview();
         // Everything that can hold the keyboard goes with the preview: its

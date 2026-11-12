@@ -869,6 +869,38 @@ pub(crate) fn is_track(entry: &skwir_core::Entry, kind: &str) -> bool {
     skwir_platform::mime::of_entry(entry).is_some_and(|mime| mime.as_str().starts_with(kind))
 }
 
+/// What Play (`ui.media_play`) does with a file: music goes to the pinned
+/// player, a film to the quick preview, a playlist gives its tracks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Played {
+    Track,
+    Film,
+    Playlist,
+}
+
+/// What `entry` plays as, if anything: by its type (`mime::of_entry`, a
+/// link's target's), a playlist by the one question the previews ask
+/// (`preview::playlist`), whatever kind its type is filed under.
+pub(crate) fn played(entry: &skwir_core::Entry) -> Option<Played> {
+    let mime = skwir_platform::mime::of_entry(entry)?;
+    played_as(&mime, entry.type_name())
+}
+
+fn played_as(mime: &skwir_platform::mime::Mime, name: &std::ffi::OsStr) -> Option<Played> {
+    if skwir_platform::preview::playlist(std::path::Path::new(name), Some(mime.as_str())).is_some()
+    {
+        return Some(Played::Playlist);
+    }
+    let kind = mime.as_str();
+    if kind.starts_with("audio/") {
+        Some(Played::Track)
+    } else if kind.starts_with("video/") {
+        Some(Played::Film)
+    } else {
+        None
+    }
+}
+
 /// A film on the whole screen (`fullscreen::render`): it fills the screen
 /// whatever its size, a small one enlarged, and answers clicks as a player.
 pub(crate) fn film(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
@@ -1487,6 +1519,24 @@ pub fn audio_content(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Play goes by the file's type: music to the pin, a film to the quick
+    /// preview, a playlist (filed as audio or video by the database) gives
+    /// its tracks; anything else does not play.
+    #[test]
+    fn what_play_does_goes_by_the_type() {
+        let played = |name: &str| {
+            let name = std::ffi::OsStr::new(name);
+            played_as(&skwir_platform::mime::by_name(name)?, name)
+        };
+        assert_eq!(played("song.flac"), Some(Played::Track));
+        assert_eq!(played("song.ogg"), Some(Played::Track));
+        assert_eq!(played("film.mkv"), Some(Played::Film));
+        assert_eq!(played("mix.m3u"), Some(Played::Playlist));
+        assert_eq!(played("mix.pls"), Some(Played::Playlist));
+        assert_eq!(played("notes.txt"), None);
+        assert_eq!(played("photo.png"), None);
+    }
 
     #[test]
     fn a_seek_is_asked_for_on_release_of_a_press_it_saw() {

@@ -147,6 +147,7 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
     ("ui.preview_goto", "{}", "Preview: go to page or chapter…"),
     ("ui.preview_open_external", "{}", "Preview: open externally"),
     ("ui.preview_copy_path", "{}", "Preview: copy path"),
+    ("ui.media_play", "{}", "Player: play the selection"),
     ("ui.media_pin", "{}", "Player: pin or let go of this track"),
     (
         "ui.media_keep_playing",

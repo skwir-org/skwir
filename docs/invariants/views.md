@@ -34,6 +34,18 @@ around the views is in [shell.md](shell.md).
     on the way, ADR-127) at `ONLY_LEADS_OPACITY`, unless it is cut or
     selected: what those say comes first. A hidden file shown is wholly
     shown: never faded.
+  - *What plays* (the program's `playing::NowPlaying`, whichever
+    window plays it) is a round badge in the middle of its picture
+    (`icons::Marks::plays`, `playing_badge`): a speaker while it plays,
+    the pause bars while paused, in the accent on its own ground; a
+    share of a tile's picture, the whole of a list's icon, whose glyph
+    would be too small to read otherwise (`playing_side`). It is the one
+    mark that acts: a click on it pauses or plays on (`player.request`),
+    its press its own, the entry neither selected nor dragged. Static:
+    it changes when what plays starts, pauses or changes, never with the
+    position, and draws no frame of its own. Found by name, then by
+    path (`Shell::plays`), so a row that is not it costs a comparison of
+    names.
   - Muted ink is for what is said beside an entry (its details, counts),
     never its state. What a copy or a cut holds is said once, in the
     footer (`status-pending`), not on the entries copied.

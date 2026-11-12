@@ -1924,3 +1924,16 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   closed, a strip in the last pane's footer. A click that shows the track
   (the dock, the strip's title) turns Preview on. Playback rules:
   [media.md](media.md).
+- **Play** in the files' menu (`ui.media_play`, after Open With, which
+  stays beside the default Open; the media
+  plugin's items: `kind:audio`, any number, and a `kind:video` alone)
+  plays without the preview opened for it. Music goes to the pin
+  (`Shell::start_pin`): the tracks selected in the pane's order, a
+  playlist's tracks in its place (`preview::playlist`, its rows read as
+  its preview reads them, each a file of its own), a track alone with
+  the folder's around it, as a pin walks them; resolved and opened on a
+  worker, pinned once it opens, Keep playing on or off. A film opens in
+  the quick preview, as Space does, the cursor on it, and plays there
+  (the wish a step makes, `Autoplay`). Never two players for one file:
+  a track the preview shows, or is about to, plays there, and the pin's
+  own plays on.
