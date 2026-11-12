@@ -322,9 +322,17 @@ The key is the owner's; the page is the subject's (ADR-072).
   them); it stays the last overlay child of the shell root.
 - `ui.settings` takes `{ "key": "plugin.option" }` or
   `{ "page": "plugins" }`; a plugin's id as the page goes where its
-  settings are, as the Plugins page's Settings button does. Report a problem whose remedy is a setting with
-  `App::notify_about_setting` (or `Shell::set_status_about`): its toast
-  links to it.
+  settings are, as the Plugins page's Settings button does. `filter`
+  narrows the Keyboard page's list or the Plugins page's, and `role`
+  picks the Exclusions page's list (`agents` brings Secrets up). Report
+  a problem whose remedy is a setting with `App::notify_about_setting`
+  (or `Shell::set_status_about`): its toast links to it.
+- **A page that lists many has its own filter** above the list: the
+  Keyboard page's (an action's words or its keys), the Exclusions
+  page's and the Plugins page's (every word typed in what a row says, a
+  category's name keeping the whole category). Escape empties it, then
+  closes the dialog (`SettingsView::cancel_filter`, as the search
+  does); Enter goes to the first row it kept.
 
 ## Plugins and their requirements
 

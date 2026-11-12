@@ -15697,3 +15697,33 @@ GnuPG, pass), … Wallets; on Searches the headings from AI models and
 agents to Yours; Toolchains unfolded after The system's, its groups by
 language. Not run: `just check-cross`, the a11y check (the page's
 names and roles are unchanged).
+
+## 2026-11-12: A filter on the Plugins page
+
+The user asked for a filter box on Settings › Plugins, to find a plugin
+among the 40-odd.
+
+- **The field** (`SettingsView::plugins_filter`, "Filter by name or
+  what it does", heard as "Filter plugins") stands above the list, as
+  the Keyboard and Exclusions pages' filters do (`plugins_toolbar`).
+- **What it keeps** (`settings_view::plugin_found`): a plugin whose
+  name, what it does, its id, where it comes from or its category's
+  name holds every word typed, case ignored; its category's name keeps
+  the whole category. Categories it leaves empty are left out; nothing
+  kept says "No plugin matches “…”".
+- **Keys:** Escape empties it, then closes the dialog; Enter goes to the
+  first plugin's first control. The four filters' Escape is one
+  function now (`SettingsView::cancel_filter`).
+- `ui.settings {page: "plugins", filter}` narrows it, as `filter` does
+  the Keyboard page's.
+
+**Checked:** rustfmt; clippy `-D warnings` on `skwir-ui` (all
+targets); `skwir-ui`'s tests, 646 passed (new: the filter keeps what
+holds every word, by name, words, id, origin and category). In a window
+on Xvfb (debug build): the page with its field above Browsing and
+finding; `ui.settings {page: "plugins", filter: "pdf"}` kept Printing,
+Smaller copies and XMP under Working with files, then Documents under
+Previews and thumbnails…; " zzz" typed after it said No plugin matches
+“pdf zzz”; Escape emptied it and every plugin came back; "query" then
+Enter put the keyboard on Query's Settings button. Not run: `just
+a11y-check`, `just check-cross`.

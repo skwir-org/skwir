@@ -2467,6 +2467,8 @@ pub struct SettingsView {
     pub(crate) exclusions: crate::settings_exclusions_view::ExclusionsPage,
     pub(crate) page: Page,
     pub(crate) search: Entity<TextInput>,
+    /// The Plugins page's filter (`settings_view::plugin_found`).
+    pub(crate) plugins_filter: Entity<TextInput>,
     pub(crate) rows: Vec<Row>,
     pub(crate) plugins: Vec<PluginInfo>,
     /// `None` until the first probe finishes.
@@ -2580,6 +2582,11 @@ impl SettingsView {
         let filter = keys.filter.clone();
         let exclusions = crate::settings_exclusions_view::ExclusionsPage::new(cx);
         let exclusions_filter = exclusions.filter.clone();
+        let plugins_filter = cx.new(|cx| {
+            let mut input = TextInput::new("Filter by name or what it does", cx);
+            input.set_label("Filter plugins");
+            input
+        });
         let subscriptions = vec![
             cx.subscribe_in(
                 &search,
@@ -2589,14 +2596,7 @@ impl SettingsView {
                         this.scroll.set_offset(gpui::Point::default());
                         cx.notify();
                     }
-                    InputEvent::Cancel => {
-                        if input.read(cx).text().is_empty() {
-                            cx.emit(SettingsEvent::Close);
-                        } else {
-                            input.update(cx, |input, cx| input.set_text("", cx));
-                            cx.notify();
-                        }
-                    }
+                    InputEvent::Cancel => Self::cancel_filter(input, cx),
                     InputEvent::Submit => this.step_focus(1, window, cx),
                 },
             ),
@@ -2610,14 +2610,7 @@ impl SettingsView {
                         this.keys.list.scroll_to_item(0, gpui::ScrollStrategy::Top);
                         cx.notify();
                     }
-                    InputEvent::Cancel => {
-                        if input.read(cx).text().is_empty() {
-                            cx.emit(SettingsEvent::Close);
-                        } else {
-                            input.update(cx, |input, cx| input.set_text("", cx));
-                            cx.notify();
-                        }
-                    }
+                    InputEvent::Cancel => Self::cancel_filter(input, cx),
                     InputEvent::Submit => {
                         window.focus(&this.keys.focus, cx);
                         this.keys_key("first", window, cx);
@@ -2635,18 +2628,25 @@ impl SettingsView {
                             .scroll_to_item(0, gpui::ScrollStrategy::Top);
                         cx.notify();
                     }
-                    InputEvent::Cancel => {
-                        if input.read(cx).text().is_empty() {
-                            cx.emit(SettingsEvent::Close);
-                        } else {
-                            input.update(cx, |input, cx| input.set_text("", cx));
-                            cx.notify();
-                        }
-                    }
+                    InputEvent::Cancel => Self::cancel_filter(input, cx),
                     InputEvent::Submit => {
                         window.focus(&this.exclusions.focus, cx);
                         this.exclusions_key("first", window, cx);
                     }
+                },
+            ),
+            // The Plugins page's filter, as the others; Enter goes to the
+            // first plugin it kept.
+            cx.subscribe_in(
+                &plugins_filter,
+                window,
+                |this, input, event: &InputEvent, window, cx| match event {
+                    InputEvent::Changed => {
+                        this.scroll.set_offset(gpui::Point::default());
+                        cx.notify();
+                    }
+                    InputEvent::Cancel => Self::cancel_filter(input, cx),
+                    InputEvent::Submit => this.step_focus(1, window, cx),
                 },
             ),
         ];
@@ -2667,6 +2667,7 @@ impl SettingsView {
             app,
             page: Page::General,
             search,
+            plugins_filter,
             rows: Vec::new(),
             requirements: None,
             found: std::collections::HashSet::new(),
@@ -3543,6 +3544,17 @@ impl SettingsView {
                 .count()
     }
 
+    /// Escape in the search or a page's filter: it empties what is typed,
+    /// then, empty, closes the dialog.
+    fn cancel_filter(input: &Entity<TextInput>, cx: &mut Context<Self>) {
+        if input.read(cx).text().is_empty() {
+            cx.emit(SettingsEvent::Close);
+        } else {
+            input.update(cx, |input, cx| input.set_text("", cx));
+            cx.notify();
+        }
+    }
+
     /// `{ "key": "plugin.option" }` or `{ "page": "plugins" }`; a plugin's
     /// id as the page goes where its settings are.
     pub fn open_target(
@@ -3584,6 +3596,12 @@ impl SettingsView {
                 _ => skwir_core::exclusions::Role::Searches,
             };
             self.show_exclusions(role, cx);
+        }
+        if let Some(filter) = text("filter").filter(|_| self.page == Page::Plugins) {
+            self.plugins_filter
+                .update(cx, |input, cx| input.set_text(filter, cx));
+            window.focus(&self.plugins_filter.focus_handle(cx), cx);
+            return;
         }
         if let Some(filter) = text("filter").filter(|_| self.page == Page::Keyboard) {
             self.keys.find = None;

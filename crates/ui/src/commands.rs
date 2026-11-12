@@ -572,7 +572,9 @@ mod args {
         #[serde(default)]
         page: Option<String>,
         /// What the Keyboard page's list is narrowed to, with `page`
-        /// `keyboard`: words of the actions' or keys (`ctrl+t`).
+        /// `keyboard`: words of the actions' or keys (`ctrl+t`); the
+        /// Plugins page's, with `page` `plugins`: words of a plugin's
+        /// name, what it does, its id or its category.
         #[serde(default)]
         filter: Option<String>,
         /// What the Exclusions page lists, with `page` `exclusions`:

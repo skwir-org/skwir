@@ -283,6 +283,25 @@ impl Snapshot {
     }
 }
 
+/// Whether the Plugins page's filter keeps `plugin`: every word typed
+/// (`words`, lowercase) is in its name, what it does, its id, where it
+/// comes from or its category's name, which keeps its every plugin.
+fn plugin_found(plugin: &PluginInfo, words: &[&str]) -> bool {
+    if words.is_empty() {
+        return true;
+    }
+    let texts = [
+        plugin.title.to_lowercase(),
+        plugin.description.to_lowercase(),
+        plugin.id.to_lowercase(),
+        plugin.origin.as_deref().unwrap_or_default().to_lowercase(),
+        plugin.category.title().to_lowercase(),
+    ];
+    words
+        .iter()
+        .all(|word| texts.iter().any(|text| text.contains(word)))
+}
+
 fn matches(query: &str, haystack: &[&str]) -> bool {
     haystack
         .iter()
@@ -1683,6 +1702,66 @@ impl SettingsView {
 
     // ------------------------------------------------------------ pages
 
+    /// What the Plugins page shows above its list: its filter.
+    fn plugins_toolbar(
+        &mut self,
+        theme: &Theme,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let focus = self.plugins_filter.focus_handle(cx);
+        self.stop(&focus, None, None);
+        let focused = self.plugins_filter.read(cx).is_focused(window);
+        div()
+            .flex_none()
+            .px_6()
+            .pb_3()
+            .flex()
+            .items_center()
+            .child(controls::field(
+                &self.plugins_filter,
+                None,
+                focused,
+                false,
+                Some("search"),
+                theme,
+            ))
+            .into_any_element()
+    }
+
+    /// The plugins by category, each by name, those the filter keeps
+    /// (`plugin_found`).
+    fn page_plugins(&mut self, items: &mut Vec<AnyElement>, theme: &Theme, cx: &mut Context<Self>) {
+        let typed = self.plugins_filter.read(cx).text().trim().to_owned();
+        let lowered = typed.to_lowercase();
+        let words: Vec<&str> = lowered.split_whitespace().collect();
+        let mut shown = 0;
+        for category in Category::ALL {
+            let mut plugins: Vec<PluginInfo> = self
+                .plugins
+                .iter()
+                .filter(|plugin| plugin.category == category && plugin_found(plugin, &words))
+                .cloned()
+                .collect();
+            if plugins.is_empty() {
+                continue;
+            }
+            shown += plugins.len();
+            plugins.sort_by_key(|plugin| plugin.title.to_lowercase());
+            Self::caption(items, category.title(), theme);
+            for (index, plugin) in plugins.iter().enumerate() {
+                let edge = Edge {
+                    first: index == 0,
+                    last: index + 1 == plugins.len(),
+                };
+                self.plugin_row(plugin, true, edge, items, theme, cx);
+            }
+        }
+        if shown == 0 && !words.is_empty() {
+            Self::note(items, format!("No plugin matches “{typed}”."), theme);
+        }
+    }
+
     fn page_general(
         &mut self,
         items: &mut Vec<AnyElement>,
@@ -1937,26 +2016,8 @@ impl Render for SettingsView {
                 Page::General => self.page_general(&mut items, &theme, window, cx),
                 Page::Changed => self.page_changed(&mut items, &theme, window, cx),
                 Page::Plugins => {
-                    for category in Category::ALL {
-                        let mut plugins: Vec<PluginInfo> = self
-                            .plugins
-                            .iter()
-                            .filter(|plugin| plugin.category == category)
-                            .cloned()
-                            .collect();
-                        if plugins.is_empty() {
-                            continue;
-                        }
-                        plugins.sort_by_key(|plugin| plugin.title.to_lowercase());
-                        Self::caption(&mut items, category.title(), &theme);
-                        for (index, plugin) in plugins.iter().enumerate() {
-                            let edge = Edge {
-                                first: index == 0,
-                                last: index + 1 == plugins.len(),
-                            };
-                            self.plugin_row(plugin, true, edge, &mut items, &theme, cx);
-                        }
-                    }
+                    toolbar = Some(self.plugins_toolbar(&theme, window, cx));
+                    self.page_plugins(&mut items, &theme, cx);
                 }
                 Page::Keyboard => {
                     toolbar = Some(self.keys_toolbar(&theme, window, cx));
@@ -2157,6 +2218,39 @@ mod tests {
     use super::{size_part, written_at};
     use crate::sizes::{Part, Text};
     use crate::theme::{Base, Contrast, Theme};
+
+    /// The Plugins page's filter keeps a plugin whose name, words, id,
+    /// origin or category hold every word typed, case ignored.
+    #[test]
+    fn the_plugins_filter_keeps_what_holds_every_word() {
+        use skwir_core::plugin::{Category, PluginInfo};
+        let plugin = PluginInfo {
+            id: "pdf-reader",
+            title: "PDF reader".into(),
+            description: "Reads documents page by page".into(),
+            category: Category::ALL[0],
+            enabled: true,
+            enabled_by_default: true,
+            capabilities: skwir_core::permissions::Capabilities::NONE,
+            origin: Some("Somewhere Else".into()),
+        };
+        let found = |typed: &str| {
+            let lowered = typed.to_lowercase();
+            let words: Vec<&str> = lowered.split_whitespace().collect();
+            super::plugin_found(&plugin, &words)
+        };
+        assert!(found(""));
+        assert!(found("pdf"));
+        assert!(found("READS page"), "words from its name and what it does");
+        assert!(found("pdf-reader"), "its id");
+        assert!(found("somewhere"), "where it comes from");
+        assert!(
+            found(&Category::ALL[0].title().to_lowercase()),
+            "its category"
+        );
+        assert!(!found("pdf audio"), "every word");
+        assert!(!found("player"));
+    }
 
     #[test]
     fn a_text_size_s_choices_are_written_at_the_size_each_gives() {
