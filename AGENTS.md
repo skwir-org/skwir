@@ -383,7 +383,10 @@ working in an area, also read that area's rules (see
   most (`Pane::drawn_entry`, never what a command finds). For a pane
   whose order reads a stat or the metadata providers, the folder
   provider reads every entry's before the listing completes
-  (`OpenContext::reads_metadata`).
+  (`OpenContext::reads_metadata`); an order asked anew that reads what
+  the entries lack is made once the listing has read it
+  (`Listing::reading_wanted`, ADR-121 amended), what moves meanwhile
+  left where it was.
   The window's thread builds no folder it opens. An order asked anew
   (a column's header) is made on a worker too, the order before shown
   until it is back (ADR-121, `Listing::order_shown`, `sort_job`): what

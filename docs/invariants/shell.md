@@ -1152,6 +1152,11 @@ of bars, split or not.
   (`Pane::entry`). Whatever draws a row or a tile reads them so, its
   picture included (`Shell::thumb`: one made already is shown, none is
   asked for, its path being no location's now).
+- **An order that waits for its reading says so** (ADR-121, amended):
+  while the listing reads what its order needs of the entries
+  (`Listing::reading`), the footer adds "Reading… N of M" once it has
+  for 200 ms (`loading::State::reading`, a timer as for "Loading…",
+  never a clock read while drawing), and the order before stays drawn.
 
 ## Properties and links
 

@@ -976,6 +976,14 @@ not with Orca. MathML that uses an element `math::mathml` does not know
 (`mglyph`, `mmultiscripts`, `mlongdiv`) reads as loose letters. A visually
 hidden label alone in its block is lost (an empty block is not kept).
 
+**Big folders** (ADR-121 amended, 2026-11-12): a sort by a stat waits
+for the metadata providers' pass too (tags, comments: 9.3 s of the
+11.6 s grouping `/nix/store` by Modified takes in the debug build),
+which it does not need; a reading of the stat alone would end sooner.
+What is read on demand (Taken, Dimensions, Duration) is still placed
+64 entries at a time. Compiled for Windows and macOS not checked for
+this change (`just check-cross`).
+
 **Grouping** (ADR-130, ADR-131, 2026-11-11): built: List, Tree and the
 grid draw headings that act and fold, the Board a column per group;
 Columns, Usage and the map show a grouped pane's order without them. A

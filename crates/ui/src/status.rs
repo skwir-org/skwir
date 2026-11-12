@@ -122,12 +122,25 @@ pub(crate) fn render(
 ) -> AnyElement {
     let theme = cx.global::<Theme>().clone();
     let selection = shell.selection_ctx();
-    let (held, count, complete, error, is_query, sweep, total, as_of, reads, left_out, looking) = {
+    let (
+        held,
+        count,
+        complete,
+        error,
+        is_query,
+        sweep,
+        total,
+        as_of,
+        reads,
+        left_out,
+        looking,
+        read,
+    ) = {
         let ws = shell.app.workspace.read();
         let pane = ws.pane(shell.pane);
         pane.map_or(
             (
-                None, 0, true, None, false, None, None, None, false, 0, false,
+                None, 0, true, None, false, None, None, None, false, 0, false, None,
             ),
             |p| {
                 (
@@ -144,6 +157,7 @@ pub(crate) fn render(
                     p.read_filter().is_some_and(|r| r.metadata),
                     p.listing.left_out(),
                     p.looks_below(),
+                    p.listing.reading(),
                 )
             },
         )
@@ -182,6 +196,16 @@ pub(crate) fn render(
         .flatten();
     let items = match listed {
         Some(bytes) => format!("{items} · {}", format::size(bytes)),
+        None => items,
+    };
+    // An order that reads what its entries lack is made once it is read
+    // (ADR-121, amended): how far the reading went, past 200 ms.
+    let items = match read.filter(|_| crate::loading::reading(shell, shell.pane)) {
+        Some((read, asked)) => format!(
+            "{items} · Reading… {} of {}",
+            format::thousands(read),
+            format::thousands(asked)
+        ),
         None => items,
     };
     // A filter that reads what files' metadata says shows them as it

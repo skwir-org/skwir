@@ -821,9 +821,9 @@ pub enum SortKey {
     /// An entry not stat-ed yet sorts after those that are, in either
     /// direction, as for every key below that reads metadata
     /// (`needs_metadata`): a pane sorted by one asks for every entry's
-    /// metadata (`Pane::unknown`). A folder has no size (`applies_to`):
-    /// it sorts as none, below every file, an empty one included. A place
-    /// by how many files it holds.
+    /// metadata (`Listing::reading_wanted`). A folder has no size
+    /// (`applies_to`): it sorts as none, below every file, an empty one
+    /// included. A place by how many files it holds.
     Size,
     Modified,
     /// The user's rating (`keys::RATING`); unrated sorts as none.
@@ -1196,6 +1196,10 @@ struct SortCache {
     moved: Vec<Moved>,
     /// Entries placed that the listing let go of since.
     gone: IdSet,
+    /// Entries placed that moved while the order waited for its reading
+    /// (`Listing::reading_wanted`), left where they were: the order is made
+    /// whole on a worker once read (`Listing::order_before`).
+    unplaced: bool,
 }
 
 impl SortCache {
@@ -1222,6 +1226,7 @@ impl SortCache {
             extras,
             moved: Vec::new(),
             gone: IdSet::default(),
+            unplaced: false,
         }
     }
 
@@ -1871,6 +1876,7 @@ impl SortJob {
 pub enum ListingJob {
     Fill(FillJob),
     Sort(SortJob),
+    Read(ReadJob),
 }
 
 impl ListingJob {
@@ -1878,6 +1884,7 @@ impl ListingJob {
         match self {
             ListingJob::Fill(job) => job.run(),
             ListingJob::Sort(job) => job.run(),
+            ListingJob::Read(job) => job.run(),
         }
     }
 
@@ -1886,7 +1893,31 @@ impl ListingJob {
         match self {
             ListingJob::Fill(_) => "listing.fill",
             ListingJob::Sort(_) => "listing.sort",
+            ListingJob::Read(_) => "listing.read",
         }
+    }
+}
+
+/// What an order waits to read of a listing's entries
+/// (`Listing::reading_wanted`), asked of its location from a worker: a
+/// plugin's location is never called under the workspace's lock.
+pub struct ReadJob {
+    pub open: Arc<dyn OpenLocation>,
+    pub ids: Vec<EntryId>,
+}
+
+impl ReadJob {
+    /// Ask for them, after what is drawn (`OpenLocation::hydrate`).
+    pub fn run(self) {
+        self.open.hydrate(&self.ids, Priority::Normal);
+    }
+}
+
+impl fmt::Debug for ReadJob {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ReadJob")
+            .field("ids", &self.ids.len())
+            .finish_non_exhaustive()
     }
 }
 
@@ -2238,6 +2269,70 @@ pub struct Listing {
     /// the order before is shown (`order_shown`), and the listing takes
     /// no events.
     sorting: Option<Sorting>,
+    /// What the pane's order reads of the entries and is being read
+    /// (`reading_wanted`): until each is read, the order waits.
+    reading: Option<Reading>,
+}
+
+/// The reading an order waits for (ADR-121, amended): what a sort by a
+/// stat or by what the providers read (a size, a date, an owner, tags)
+/// needs of the entries shown, asked once the listing is whole. Until all
+/// of it is read, the order shown stays as it is (the one before, or what
+/// moved left where it was), and the order is then made whole on a
+/// worker: placed as each batch of a reading came, a grouped folder of
+/// 385 000 entries spent two seconds of the window's thread placing 377
+/// of them, one pass over the order each.
+///
+/// What it asked is told without a list of ids: the entries are kept in
+/// the order they came, so what came before `asked_to` was asked if it
+/// waited, what came after is asked at the next pump. How many still wait
+/// is kept as each is answered: read, unreadable, or gone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Reading {
+    /// What an entry waits for: the sort's criteria that read
+    /// (`SortKey::needs_metadata`), and whether hidden files are shown.
+    reads: Reads,
+    /// Whether companions were shown: an entry waits only if shown.
+    companions: bool,
+    /// The order's version it was counted at: what is shown changed
+    /// otherwise (a companion's file came) is counted again.
+    order_version: u64,
+    /// The entries before this one, in the order they came, were asked.
+    asked_to: usize,
+    /// How many were asked in all, and how many of them still wait.
+    asked: usize,
+    waiting: usize,
+}
+
+/// What an order reads of its entries (`Reading::reads`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Reads {
+    key: Option<SortKey>,
+    group: Option<SortKey>,
+    show_hidden: bool,
+}
+
+impl Reads {
+    fn of(spec: SortSpec) -> Self {
+        let reads = |key: SortKey| key.needs_metadata().then_some(key);
+        Reads {
+            key: reads(spec.key),
+            group: spec.group_key().and_then(reads),
+            show_hidden: spec.show_hidden,
+        }
+    }
+
+    /// Whether `e` lacks what it reads (`SortKey::has_read`: a size or a
+    /// date from a stat, tags or a rating from the providers), where it
+    /// applies (`SortKey::applies_to`: a folder has no size); a place
+    /// counts its files from the start.
+    fn lacks(self, e: &Entry) -> bool {
+        !e.is_place()
+            && [self.key, self.group]
+                .into_iter()
+                .flatten()
+                .any(|key| key.applies_to(e) && !key.has_read(&e.metadata))
+    }
 }
 
 impl Default for Listing {
@@ -2277,6 +2372,7 @@ impl Default for Listing {
             fill: None,
             counted: 0,
             sorting: None,
+            reading: None,
         }
     }
 }
@@ -2420,12 +2516,15 @@ impl Listing {
 
     /// The sort of the order it holds, when that order is current but for
     /// another sort than `sort`: the one to show while `sort`'s is made.
+    /// Also when it is `sort`'s, but what moved in it while it waited for
+    /// its reading was left where it was: once read, it is made whole.
     fn order_before(&self, sort: &Sort) -> Option<Sort> {
         let cache = self.sort_cache.lock();
         let c = cache.as_ref()?;
         let current =
             c.stamp == self.order_version && c.companions_shown == self.companions_shown();
-        (current && !c.holds(&sort.stamp())).then(|| c.sort.clone())
+        let read = c.unplaced && !self.reading_holds();
+        (current && (!c.holds(&sort.stamp()) || read)).then(|| c.sort.clone())
     }
 
     /// The sort that makes `spec`'s order on a worker (ADR-121), when the
@@ -2440,6 +2539,11 @@ impl Listing {
             return None;
         }
         self.let_go_of_sort();
+        // An order that reads what its entries lack is made once they are
+        // read: the order before stays shown meanwhile.
+        if sort.spec.needs_metadata() && self.reading_holds() {
+            return None;
+        }
         self.order_before(&sort)?;
         let cancel = CancelToken::new();
         let companions = self.companions_shown();
@@ -2563,6 +2667,108 @@ impl Listing {
         self.companions.as_ref().is_some_and(|c| c.shown())
     }
 
+    /// What the order by `spec` waits to read of the entries shown, for
+    /// the pane to ask of the location (`OpenLocation::hydrate`, ADR-121
+    /// amended): once the listing is whole, every entry that lacks what
+    /// it reads (`Reads::lacks`); after, each that came since; every one
+    /// again when what it reads changed, or what is shown did otherwise
+    /// than by a change of the entry (a companion's file came). Empty when
+    /// nothing is to be asked. An order that reads nothing forgets it.
+    pub fn reading_wanted(&mut self, spec: SortSpec) -> Vec<EntryId> {
+        let mut spec = spec;
+        spec.show_hidden |= self.hidden_asked;
+        if !spec.needs_metadata() {
+            self.reading = None;
+            return Vec::new();
+        }
+        if !self.complete || self.fill.is_some() {
+            return Vec::new();
+        }
+        let reads = Reads::of(spec);
+        let companions = self.companions_shown();
+        let kept = self
+            .reading
+            .filter(|r| r.reads == reads && r.companions == companions);
+        let counted = kept.filter(|r| r.order_version == self.order_version);
+        let from = counted.map_or(0, |r| r.asked_to);
+        if counted.is_some() && from == self.entries.len() {
+            return Vec::new();
+        }
+        let ids: Vec<EntryId> = self.entries.as_slice()[from..]
+            .values()
+            .filter(|slot| self.reading_waits(reads, companions, slot))
+            .map(|slot| slot.entry.id)
+            .collect();
+        // Counted again from the start: what was read stays read.
+        let (asked, waiting) = match (counted, kept) {
+            (Some(r), _) => (r.asked + ids.len(), r.waiting + ids.len()),
+            (None, Some(r)) => (r.asked - r.waiting + ids.len(), ids.len()),
+            (None, None) => (ids.len(), ids.len()),
+        };
+        self.reading = Some(Reading {
+            reads,
+            companions,
+            order_version: self.order_version,
+            asked_to: self.entries.len(),
+            asked,
+            waiting,
+        });
+        ids
+    }
+
+    /// Wait for no reading: the listing is no longer in the pane's order
+    /// (a folder opened in place, closed). What moved meanwhile is placed
+    /// when its order is made again.
+    pub fn let_go_of_reading(&mut self) {
+        self.reading = None;
+    }
+
+    /// How far the reading the order waits for went (`reading_wanted`):
+    /// how many of those asked were read, and how many were asked; none
+    /// once all were.
+    pub fn reading(&self) -> Option<(usize, usize)> {
+        self.reading
+            .filter(|r| r.waiting > 0)
+            .map(|r| (r.asked - r.waiting, r.asked))
+    }
+
+    /// Whether the order waits for its reading: what moves meanwhile is
+    /// not placed, and no order that reads is made.
+    fn reading_holds(&self) -> bool {
+        self.reading.is_some_and(|r| r.waiting > 0)
+    }
+
+    /// Whether `slot` waits for what `reads` reads: shown, and lacking it.
+    fn reading_waits(&self, reads: Reads, companions: bool, slot: &Slot) -> bool {
+        let spec = SortSpec {
+            show_hidden: reads.show_hidden,
+            ..SortSpec::default()
+        };
+        reads.lacks(&slot.entry) && shown_with(spec, slot, companions, |owner| self.is_named(owner))
+    }
+
+    /// Whether the entry `id` is one the reading asked (`Some`), and
+    /// whether it still waits.
+    fn read_state(&self, id: EntryId) -> Option<bool> {
+        let r = self.reading?;
+        let (at, _, slot) = self.entries.get_full(&id)?;
+        (at < r.asked_to).then(|| self.reading_waits(r.reads, r.companions, slot))
+    }
+
+    /// The entry `id` the reading asked, which waited when it was `was`,
+    /// has changed: answered, it waits no more.
+    fn note_read(&mut self, id: EntryId, was: Option<bool>) {
+        let Some(was) = was else { return };
+        let now = self.read_state(id).unwrap_or(false);
+        if let Some(r) = self.reading.as_mut() {
+            match (was, now) {
+                (true, false) => r.waiting -= 1,
+                (false, true) => r.waiting += 1,
+                _ => {}
+            }
+        }
+    }
+
     /// Apply one event. Returns whether the listing changed.
     pub fn apply(&mut self, event: ListingEvent) -> bool {
         let mut delta = Delta::default();
@@ -2602,6 +2808,25 @@ impl Listing {
                         }
                     }
                 }
+                // What the reading asked that goes: answered, and no more
+                // before where it asks from.
+                if let Some(r) = self.reading {
+                    let (mut before, mut waited) = (0, 0);
+                    let mut told = crate::hashing::Set::<EntryId>::default();
+                    for id in &ids {
+                        if let Some(state) = self.read_state(*id)
+                            && told.insert(*id)
+                        {
+                            before += 1;
+                            waited += usize::from(state);
+                        }
+                    }
+                    self.reading = Some(Reading {
+                        asked_to: r.asked_to - before,
+                        waiting: r.waiting - waited,
+                        ..r
+                    });
+                }
                 for id in &ids {
                     if let Some(slot) = self.entries.get(id) {
                         let hash = self.name_hasher.hash_one(slot.entry.name.as_os_str());
@@ -2627,6 +2852,7 @@ impl Listing {
             ListingEvent::Unreadable(ids) => {
                 use crate::entry::{Provenance, Value, keys};
                 for id in ids {
+                    let was = self.reading.and_then(|_| self.read_state(id));
                     let Some(slot) = Arc::make_mut(&mut self.entries).get_mut(&id) else {
                         continue;
                     };
@@ -2639,6 +2865,7 @@ impl Listing {
                         Value::Bool(true),
                         Provenance::Filesystem,
                     );
+                    self.note_read(id, was);
                     delta.touched.push(id);
                     delta.any = true;
                 }
@@ -2735,7 +2962,14 @@ impl Listing {
         }
     }
 
-    fn upsert(&mut self, mut e: Entry, insert: bool, delta: &mut Delta) {
+    fn upsert(&mut self, e: Entry, insert: bool, delta: &mut Delta) {
+        let was = self.reading.and_then(|_| self.read_state(e.id));
+        let id = e.id;
+        self.upsert_entry(e, insert, delta);
+        self.note_read(id, was);
+    }
+
+    fn upsert_entry(&mut self, mut e: Entry, insert: bool, delta: &mut Delta) {
         use crate::entry::keys;
         let id = e.id;
         match Arc::make_mut(&mut self.entries).entry(id) {
@@ -2795,7 +3029,13 @@ impl Listing {
                     && slot.index() < c.seen
                     && c.moves(&d, old, &e)
                 {
-                    c.moved.push(Moved::of(Self::sort_key(&c.sort, slot.get())));
+                    // While the order waits for its reading, it is made
+                    // whole once read (`order_before`).
+                    if self.reading.is_some_and(|r| r.waiting > 0) {
+                        c.unplaced = true;
+                    } else {
+                        c.moved.push(Moved::of(Self::sort_key(&c.sort, slot.get())));
+                    }
                 }
                 if d.name {
                     let before = self.name_hasher.hash_one(old.name.as_os_str());
@@ -5130,6 +5370,108 @@ mod tests {
                 whole(&listing);
             }
         }
+    }
+
+    /// An order that reads what its entries lack waits for all of it: the
+    /// order before stays shown, the reading counts what was asked as each
+    /// is answered (read, unreadable, gone), what came since is asked next,
+    /// what is not shown is not; once all is read, the order is made whole
+    /// on a worker (ADR-121, amended).
+    #[test]
+    fn an_order_that_reads_is_made_once_its_entries_are_read() {
+        let bare = |ino: u64| {
+            Entry::new(
+                EntryId {
+                    file: crate::FileId::new(1, ino),
+                    at: 0,
+                },
+                format!("f{ino:02}"),
+                EntryKind::File,
+            )
+        };
+        let sized = |ino: u64| sized_entry(ino, &format!("f{ino:02}"), EntryKind::File, 50 - ino);
+        let id = |ino: u64| bare(ino).id;
+        let mut listing = Listing::default();
+        let mut hidden = bare(99);
+        hidden.name = ".hidden".into();
+        listing.apply(ListingEvent::Added(
+            (1..=10).map(bare).chain([hidden]).collect(),
+        ));
+        listing.apply(ListingEvent::Complete);
+        let by_name = Sort::from(SortSpec::default());
+        let before = listing.sorted(&by_name);
+        let by_size = Sort::from(SortSpec {
+            key: SortKey::Size,
+            ..SortSpec::default()
+        });
+        let mut asked = listing.reading_wanted(by_size.spec);
+        asked.sort();
+        assert_eq!(asked, (1..=10).map(id).collect::<Vec<_>>());
+        assert!(
+            listing.reading_wanted(by_size.spec).is_empty(),
+            "asked once"
+        );
+        assert!(listing.sort_job(&by_size).is_none(), "it waits");
+        assert_eq!(*listing.order_shown(&by_size), *before);
+        listing.apply(ListingEvent::Updated((1..=5).map(sized).collect()));
+        listing.apply(ListingEvent::Removed(vec![id(6)]));
+        listing.apply(ListingEvent::Unreadable(vec![id(7)]));
+        assert_eq!(listing.reading(), Some((7, 10)));
+        assert!(listing.sort_job(&by_size).is_none(), "it still waits");
+        // What comes meanwhile is asked at the next look.
+        listing.apply(ListingEvent::Added(vec![bare(11)]));
+        assert_eq!(listing.reading_wanted(by_size.spec), vec![id(11)]);
+        assert_eq!(listing.reading(), Some((7, 11)));
+        listing.apply(ListingEvent::Updated([8, 9, 10, 11].map(sized).to_vec()));
+        assert_eq!(listing.reading(), None);
+        let job = listing.sort_job(&by_size).expect("made once read");
+        job.run();
+        assert!(listing.take_sorted());
+        assert_eq!(
+            *listing.order_shown(&by_size),
+            *listing.compute_sorted(&by_size)
+        );
+        // An order that reads nothing forgets it.
+        assert!(listing.reading_wanted(by_name.spec).is_empty());
+        assert!(listing.reading.is_none());
+    }
+
+    /// What moves in an order while it waits for its reading stays where it
+    /// was; once all is read, the order is made whole on a worker.
+    #[test]
+    fn what_moves_while_its_order_reads_stays_until_read() {
+        let bare = |ino: u64| {
+            Entry::new(
+                EntryId {
+                    file: crate::FileId::new(1, ino),
+                    at: 0,
+                },
+                format!("f{ino}"),
+                EntryKind::File,
+            )
+        };
+        let sized = |ino: u64| sized_entry(ino, &format!("f{ino}"), EntryKind::File, ino * 3 % 7);
+        let mut listing = Listing::default();
+        listing.apply(ListingEvent::Added((1..=6).map(bare).collect()));
+        listing.apply(ListingEvent::Complete);
+        let by_size = Sort::from(SortSpec {
+            key: SortKey::Size,
+            ..SortSpec::default()
+        });
+        let first = listing.sorted(&by_size);
+        assert_eq!(listing.reading_wanted(by_size.spec).len(), 6);
+        listing.apply(ListingEvent::Updated((1..=3).map(sized).collect()));
+        assert_eq!(*listing.sorted(&by_size), *first, "left where they were");
+        assert!(listing.sort_job(&by_size).is_none());
+        listing.apply(ListingEvent::Updated((4..=6).map(sized).collect()));
+        let job = listing.sort_job(&by_size).expect("made once read");
+        job.run();
+        assert!(listing.take_sorted());
+        assert_eq!(
+            *listing.order_shown(&by_size),
+            *listing.compute_sorted(&by_size)
+        );
+        assert!(listing.sort_job(&by_size).is_none(), "made");
     }
 
     /// Keys whose answers changed (a type's name read on a worker) leave

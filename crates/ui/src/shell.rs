@@ -3828,7 +3828,6 @@ impl Shell {
         // Its buttons act on this pane: drawn while it is the one drawn.
         let banner = crate::loading::message(self, id)
             .map(|banner| crate::loading::render(banner, self, cx));
-        self.sync_sort_hydration();
         self.sync_selection_hydration();
         self.sync_lent_hydration();
         let narrow = crate::quick_filters::render(self, cx);

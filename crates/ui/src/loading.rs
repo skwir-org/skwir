@@ -21,6 +21,10 @@ pub struct State {
     /// answering (`message`): asked again while it is listed, never once
     /// it is.
     remote: Option<Task<()>>,
+    /// The order waits for what it reads of the entries (ADR-121,
+    /// amended): said by the footer once it has for 200 ms, as "Loading…".
+    pub reading: bool,
+    reading_timer: Option<Task<()>>,
 }
 
 impl Shell {
@@ -34,11 +38,12 @@ impl Shell {
                         pane.id,
                         pane.open.clone(),
                         !pane.listing.is_complete() && pane.listing.error().is_none(),
+                        pane.listing.reading().is_some(),
                     )
                 })
                 .collect()
         };
-        for (pane, open, pending) in pending {
+        for (pane, open, pending, reading) in pending {
             let Some(ui) = self.panes.iter_mut().find(|ui| ui.id == pane) else {
                 continue;
             };
@@ -52,6 +57,29 @@ impl Shell {
                     open: open.clone(),
                     ..State::default()
                 };
+            }
+            if !reading {
+                ui.loading.reading = false;
+                ui.loading.reading_timer = None;
+            } else if !ui.loading.reading && ui.loading.reading_timer.is_none() {
+                ui.loading.reading_timer = Some(cx.spawn(async move |this, cx| {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(200))
+                        .await;
+                    let _ = this.update(cx, |shell, cx| {
+                        let still = shell
+                            .app
+                            .workspace
+                            .read()
+                            .pane(pane)
+                            .is_some_and(|p| p.listing.reading().is_some());
+                        if let Some(ui) = shell.panes.iter_mut().find(|ui| ui.id == pane) {
+                            ui.loading.reading_timer = None;
+                            ui.loading.reading = still;
+                        }
+                        cx.notify();
+                    });
+                }));
             }
             if !pending || open.is_none() {
                 ui.loading.visible = false;
@@ -115,6 +143,16 @@ pub fn pending(shell: &Shell, pane: PaneId) -> bool {
         .iter()
         .find(|ui| ui.id == pane)
         .is_some_and(|ui| ui.loading.visible)
+}
+
+/// Whether the footer says how far the reading the order waits for went:
+/// once it has for 200 ms (`State::reading`).
+pub fn reading(shell: &Shell, pane: PaneId) -> bool {
+    shell
+        .panes
+        .iter()
+        .find(|ui| ui.id == pane)
+        .is_some_and(|ui| ui.loading.reading)
 }
 
 /// What the banner above a pane's view says, and the ways out it offers:

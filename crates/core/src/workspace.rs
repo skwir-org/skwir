@@ -3126,17 +3126,36 @@ impl Pane {
     /// order once whole; an order asked anew of a listing shown (ADR-121).
     /// The window's thread builds no folder it opens, nor sorts one anew.
     pub fn jobs_wanted(&mut self) -> Vec<crate::location::ListingJob> {
-        use crate::location::ListingJob;
+        use crate::location::{ListingJob, ReadJob};
         let sort = self.sorting();
         let mut jobs = Vec::new();
-        let listings = std::iter::once((self.open.as_ref(), &mut self.listing)).chain(
-            self.kept
-                .iter_mut()
-                .map(|kept| (kept.open.as_ref(), &mut kept.listing)),
+        let expanded = &self.expanded;
+        // What the order reads is read of what the pane's order holds: the
+        // listing shown and the folders opened in place, not a column
+        // beside it.
+        let listings = std::iter::once((self.open.as_ref(), &mut self.listing, true)).chain(
+            self.kept.iter_mut().map(|kept| {
+                let in_order = expanded.iter().any(|o| o.location == kept.location);
+                (kept.open.as_ref(), &mut kept.listing, in_order)
+            }),
         );
-        for (open, listing) in listings {
+        for (open, listing, in_order) in listings {
             let Some(open) = open else { continue };
             jobs.extend(listing.fill_job(open.events(), &sort).map(ListingJob::Fill));
+            if in_order {
+                let ids = listing.reading_wanted(sort.spec);
+                if !ids.is_empty() {
+                    tracing::debug!(n = ids.len(), "read for the order");
+                    jobs.push(ListingJob::Read(ReadJob {
+                        open: Arc::clone(open),
+                        ids,
+                    }));
+                }
+            } else {
+                // A folder no longer opened in place: its order waits for
+                // nothing.
+                listing.let_go_of_reading();
+            }
             jobs.extend(listing.sort_job(&sort).map(ListingJob::Sort));
         }
         jobs
@@ -4360,35 +4379,6 @@ impl Pane {
         after
             .and_then(|after| after.iter().position(unknown).map(|i| from + i))
             .or_else(|| before.and_then(|before| before.iter().position(unknown)))
-    }
-
-    /// The entries the pane shows whose fact its sort is by has not been
-    /// read yet (`SortKey::has_read`: a size or a date from a stat, a
-    /// rating from the providers), folders too but by size, which they
-    /// have none of (`SortKey::applies_to`; places count their files from
-    /// the start): what a sort by size, date or rating places after the
-    /// rest until it comes (`SortKey::needs_metadata`), so whoever sorts
-    /// so asks for them.
-    pub fn unknown(&self) -> Vec<EntryId> {
-        let keys: Vec<crate::location::SortKey> = std::iter::once(self.sort.key)
-            .chain(self.sort.group_key())
-            .filter(|key| key.needs_metadata())
-            .collect();
-        if keys.is_empty() {
-            return Vec::new();
-        }
-        self.order()
-            .iter()
-            .copied()
-            .filter(|id| {
-                self.entry(*id).is_some_and(|e| {
-                    !e.is_place()
-                        && keys
-                            .iter()
-                            .any(|key| key.applies_to(e) && !key.has_read(&e.metadata))
-                })
-            })
-            .collect()
     }
 
     /// The sort every listing the pane shows is sorted with: its spec, and

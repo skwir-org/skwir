@@ -370,9 +370,13 @@ around the views is in [shell.md](shell.md).
   and the folder provider reads every entry's (`hydrate`, its names all
   known) before its listing completes: the folder appears in its order
   and its groups at once, never every file in one group, then moved. A
-  provider that cannot leaves it to the view's hydration
-  (`Shell::sync_sort_hydration`), as an order chosen while a folder is
-  shown does.
+  provider that cannot leaves it to the reading the listing asks once
+  whole, as an order chosen while a folder is shown does (ADR-121,
+  amended: `Listing::reading_wanted`, asked by `Pane::jobs_wanted`): the
+  order before stays shown, what moves in it is left where it was, and
+  once everything is read the order is made whole on a worker, never
+  placed batch by batch; the footer says "Reading… N of M" past 200 ms.
+  The shell asks no reading of a whole pane.
 - **The sort and the groups take one list of criteria** (ADR-130,
   `SortKey::ALL`), offered where they apply (`Shell::sort_keys`,
   `group_keys`: Rating while ratings are kept, Deleted in the trash,

@@ -243,10 +243,6 @@ pub struct ListState {
     /// The listing's `removed_version` when `pending_hydrate` last let go
     /// of the entries taken out.
     removed: u64,
-    /// What `sync_sort_hydration` last asked the metadata of the whole
-    /// pane for: the listing, its names, the folders opened, the sort and
-    /// the filter.
-    sort_hydrated: Option<(u64, u64, u64, SortSpec, u64)>,
     /// What `sync_selection_hydration` last asked for: the listing and the
     /// selection's revision.
     selection_hydrated: Option<(u64, u64)>,
@@ -304,7 +300,6 @@ impl Default for ListState {
             pending_hydrate: HashMap::new(),
             listing: None,
             removed: 0,
-            sort_hydrated: None,
             selection_hydrated: None,
             lent_hydrated: None,
             visible_rows: 20,
@@ -421,7 +416,6 @@ impl ListState {
         self.sorted_at = None;
         self.positions = std::cell::OnceCell::new();
         self.pending_hydrate.clear();
-        self.sort_hydrated = None;
         self.selection_hydrated = None;
         self.lent_hydrated = None;
         self.selection.set(None);
@@ -607,7 +601,7 @@ impl Shell {
         self.ask_hydrate(ids, true);
     }
 
-    /// Ask for the metadata of entries not drawn (`Pane::unknown`), after
+    /// Ask for the metadata of entries not drawn, after
     /// those that are.
     pub fn request_hydrate_off_screen(&mut self, ids: impl IntoIterator<Item = EntryId>) {
         self.ask_hydrate(ids, false);
@@ -761,37 +755,6 @@ impl Shell {
         ) {
             tracing::warn!("hydrate: {e:#}");
         }
-    }
-
-    /// Sorted or grouped by size, a date or a rating, ask for the metadata
-    /// of every entry the pane shows: until it comes, an entry sorts after
-    /// the rest, out of every group (`SortSpec::needs_metadata`). Asked
-    /// again only when the entries or the sort change, never per frame.
-    pub(crate) fn sync_sort_hydration(&mut self) {
-        let pane = self.pane;
-        let app = std::sync::Arc::clone(&self.app);
-        let (key, unknown) = {
-            let ws = app.workspace.read();
-            let Some(p) = ws.pane(pane) else { return };
-            // Once listed: while a folder streams in, its names change
-            // with every batch, and each look costs a pass over them.
-            if !p.sort.needs_metadata() || !p.listing.is_complete() {
-                return;
-            }
-            let key = (
-                p.listing.id(),
-                p.listing.names_version(),
-                p.tree_members_version(),
-                p.sort,
-                p.filter_version(),
-            );
-            if self.ui().list.sort_hydrated == Some(key) {
-                return;
-            }
-            (key, p.unknown())
-        };
-        self.ui_mut().list.sort_hydrated = Some(key);
-        self.request_hydrate_off_screen(unknown);
     }
 
     fn pane_key_context(&self) -> KeyContext {
