@@ -9,7 +9,8 @@ ADR-099 (the View menu's sort) and follows
 ADR-121 (an order asked anew is made on a worker). Amended by ADR-131
 (2026-11-11): headings the keys reach (9, 12), and phase 5 settled and
 built; and on 2026-11-12 (below): groups told from their counts, costly
-keys asked on every core.
+keys asked on every core; what sorts, shows (a column and a caption for
+every criterion), Under names a submenu.
 
 ## Context
 
@@ -223,3 +224,29 @@ order that reads waits for its reading, amended the same day).
   0.9 µs for a short one); now only those starting with a byte a
   pattern starts with and no longer than the longest, both read from
   the database.
+
+## Amended 2026-11-12: what sorts, shows
+
+Asked by the user, "for consistency", with Dolphin in mind (its Sort By
+and its Additional Information list the same roles). The list showed six
+details and the grid's tiles the same and the tags, while the sort had
+sixteen criteria: a folder could be sorted by Created, Accessed, Taken,
+Dimensions, Duration, Owner or Kind and none of them seen.
+
+- **Every criterion is a detail**, a column of the list and a caption
+  under the grid's names, but the name and its extension (the name says
+  them) and the tags (shown by the name, and a caption). Each is offered
+  where it applies, as the sort's criterion is: Taken, Dimensions and
+  Duration while a plugin reads them, Owner where the system keeps
+  owners by number (Unix). All are off until chosen. Their order is the
+  sort's, sizes after Size, dates after Modified, Kind after Type.
+- **What is read on demand is read while shown** (ADR-131, 4): a pane
+  asks for its files' fields while its view shows them, as a sort by
+  them does (`Pane::show_fields`), once for both.
+- **Under names is a submenu** of the View menu, beside its row, as Sort
+  by and Group by are (ADR-099): its row says what the tiles say
+  ("Kind, Dimensions") and its rows, in the sort's order and groups,
+  keep it open, a check on each chosen. The popup that took the menu's
+  place is gone.
+- Not done (offered, not chosen): Dolphin's Permissions, Group, a link's
+  target and Comment, and Pages and a song's tags, which need readers.

@@ -1,7 +1,8 @@
 //! Human names of file types ("PDF document") for the Type column and the
-//! preview header. The names come from the MIME database's per-type files,
-//! so they are resolved once per type on a worker; until the answer arrives a
-//! row shows a name derived from its extension.
+//! preview header, and their kinds ("Image") for the Kind column. The names
+//! come from the MIME database's per-type files, so they are resolved once
+//! per type on a worker, with the type's kind; until the answer arrives a
+//! row shows a name derived from its extension, and no kind.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -9,13 +10,34 @@ use std::sync::{Arc, Mutex};
 use skwir_core::App;
 use skwir_platform::mime::Mime;
 
-type Resolved = Vec<(String, Option<String>)>;
+/// A type, its name, and what its kind is called: `Other` for none.
+type Resolved = Vec<(String, Option<String>, &'static str)>;
 
 #[derive(Default)]
 pub struct TypeNames {
     known: HashMap<String, Option<Arc<str>>>,
+    kinds: HashMap<String, Arc<str>>,
     wanted: HashSet<String>,
     results: Arc<Mutex<Resolved>>,
+}
+
+/// What one file of `kind` is: `Image`, `Audio`, `Text` (a group of them
+/// is called by `Kind::title`).
+fn one_of(kind: skwir_platform::mime::Kind) -> &'static str {
+    use skwir_platform::mime::Kind;
+    match kind {
+        Kind::Folder => "Folder",
+        Kind::Image => "Image",
+        Kind::Video => "Video",
+        Kind::Audio => "Audio",
+        Kind::Document => "Document",
+        Kind::Spreadsheet => "Spreadsheet",
+        Kind::Presentation => "Presentation",
+        Kind::Text => "Text",
+        Kind::Archive => "Archive",
+        Kind::Font => "Font",
+        Kind::Program => "Program",
+    }
 }
 
 /// The type of a link that leads nowhere (a link that resolves is named
@@ -66,6 +88,18 @@ impl TypeNames {
         self.known.get(mime).cloned().flatten()
     }
 
+    /// What a file of `mime` is (`Image`, `Other`) once its type was read;
+    /// otherwise note that it is wanted.
+    pub fn kind(&mut self, mime: &Mime) -> Option<Arc<str>> {
+        if let Some(kind) = self.kinds.get(mime.as_str()) {
+            return Some(Arc::clone(kind));
+        }
+        if !self.known.contains_key(mime.as_str()) {
+            self.wanted.insert(mime.as_str().to_owned());
+        }
+        None
+    }
+
     /// Resolve what `get` missed, in one job. Call once after building rows.
     pub fn request(&mut self, app: &Arc<App>) {
         if self.wanted.is_empty() {
@@ -86,8 +120,14 @@ impl TypeNames {
                 let resolved: Resolved = types
                     .into_iter()
                     .map(|mime| {
-                        let name = Mime(mime.clone()).description();
-                        (mime, name)
+                        let one = Mime(mime.clone());
+                        let name = one.description();
+                        // Its first kind, as a sort by kind finds it.
+                        let kind = skwir_platform::mime::kinds(&one)
+                            .into_iter()
+                            .next()
+                            .map_or("Other", one_of);
+                        (mime, name, kind)
                     })
                     .collect();
                 if let Ok(mut slot) = results.lock() {
@@ -107,8 +147,9 @@ impl TypeNames {
         };
         let found = std::mem::take(&mut *slot);
         drop(slot);
-        let changed = found.iter().any(|(_, name)| name.is_some());
-        for (mime, name) in found {
+        let changed = !found.is_empty();
+        for (mime, name, kind) in found {
+            self.kinds.insert(mime.clone(), Arc::from(kind));
             self.known.insert(mime, name.map(Arc::from));
         }
         changed

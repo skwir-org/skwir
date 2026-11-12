@@ -15970,3 +15970,39 @@ the texts' widest word on a copy of them cost 17 % of a frame.
 **Not tested:** the element has no test of its own (`skwir-ui` has no
 gpui test context); it is checked by the walks above. Not run: `just
 check-cross`, `just smoke`.
+
+## 2026-11-12: What sorts, shows; Under names a submenu (ADR-130, amended)
+
+Asked by the user, "for consistency", Dolphin in mind; their choices, of
+the options: Under names a submenu, and every sort criterion shown.
+
+- **Under names** is a row of the View menu (the grid's) opening the
+  captions beside it, as Sort by and Group by do (ADR-099), its row saying
+  what the tiles say ("Kind, Dimensions, Duration") or None, its rows in
+  the sort's order and groups, each keeping it open. The popup that took
+  the menu's place (`grid_captions`) is gone.
+- **Seven details** added, a list column and a grid caption each, off
+  until chosen: Dimensions, Duration (sizes, after Size), Created,
+  Accessed, Taken (dates, after Modified), Kind and Owner (after Type).
+  With them every `SortKey` but Name and Extension is a `Detail`. A row
+  keeps what it says of each detail asked (`RowData::said`), for the
+  list's cells and the grid's captions alike; a picture's dimensions say
+  `4032 × 3024`, a duration `3:24`, Taken the camera's clock as the
+  dates say theirs, an owner its name (its number where none is known),
+  a kind `Image` (read with the type's name, on a worker:
+  `TypeNames::kind`; `Other` for none).
+- **What a view shows is read as a sort reads it** (ADR-131, 4): a pane
+  told what its columns or captions read on demand (`App::show_fields`,
+  from `Shell::fields_shown` at each sync) asks its files for it with its
+  sort's fields, once for both.
+
+**Checked:** on Xvfb (debug build), the View menu with Under names open
+(its fly-out beside the row, the captions checked), the grid saying
+Kind, Dimensions and Duration (`64 × 48` for a picture, `0:04` for a
+four-second sound, dashes elsewhere), the list with Dimensions,
+Duration, Created and Kind (Owner dropped first in a 1280 px window, as
+a narrow pane drops columns from the last). `skwir-ui`'s tests, 648 (the
+captions still the tags then the columns); `skwir-core`'s, 766 (a view's
+fields asked, once with its sort's, given up when no longer shown); the
+grouping and plugin toggle tests; `just a11y-check`; clippy. Not run:
+`just check-cross`; Taken on a picture with a camera's clock.

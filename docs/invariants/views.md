@@ -292,7 +292,9 @@ around the views is in [shell.md](shell.md).
   any picture; names from the 128 px step (`tags::NAMED_FROM`), dots
   below.
 - **Captions** (`grid::CAPTIONS`, `ui.grid_caption_*`, off until chosen
-  in Settings or the View menu's Under names): a line under every name
+  in Settings or the View menu's Under names, a submenu beside its row,
+  as Sort by's, listing them in the sort's order and groups): a line
+  under every name
   for each one chosen that applies here (`Shell::caption_applies`, as
   the list's columns apply), said or blank, the same lines on every
   tile; `GridView::tile_height` counts them, `measure` still counts only
@@ -361,6 +363,18 @@ around the views is in [shell.md](shell.md).
   alignment) feeds the header, rows, the header's menu, the View menu's
   sorts and Settings. A column that applies only somewhere says where
   (`Shell::column_applies`).
+- **What sorts, shows** (ADR-130, amended 2026-11-12): every criterion the
+  pane sorts by is a column and a caption under the grid's names, but the
+  name and its extension, and the tags, which a row shows by the name.
+  A new `SortKey` gets its `Detail`. A row says each detail it is asked
+  for once (`RowData::said`, built by `Shell::rows_showing`), read by the
+  list's cells and the grid's captions alike. What is read on demand
+  (Taken, Dimensions, Duration: `keys::READ_ON_DEMAND`) is read for the
+  pane's files while its view shows it (`Shell::fields_shown`,
+  `App::show_fields`), as a sort by it reads it, and shown only while a
+  plugin reads it. A type's kind is read with its name, on a worker
+  (`TypeNames::kind`); an owner by name from the system's table, by
+  number where it has none.
 - Name and detail columns sit in one wrapping flex line one row tall
   (`views/list.rs::line`, shared by header and rows): columns drop whole,
   last first, and the name, the only child that grows, takes the room.

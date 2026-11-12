@@ -36,7 +36,6 @@ impl Shell {
         let kind = match args.get("kind").and_then(serde_json::Value::as_str) {
             Some("view_options") => VIEW_OPTIONS,
             Some("view_buttons") => VIEW_BUTTONS,
-            Some("grid_captions") => GRID_CAPTIONS,
             Some(crate::map_view::BACKGROUNDS) => crate::map_view::BACKGROUNDS,
             Some(crate::dock::MENU) => crate::dock::MENU,
             Some(crate::timeline::DATES_MENU) => crate::timeline::DATES_MENU,
@@ -47,7 +46,7 @@ impl Shell {
             if kind == VIEW_OPTIONS {
                 // The focus of the rows whose submenus open beside them, in
                 // the popup's tab order as its other rows.
-                popup.sub.parents = [SORT_BY, GROUP_BY]
+                popup.sub.parents = [SORT_BY, GROUP_BY, UNDER_NAMES]
                     .into_iter()
                     .map(|name| (name.into(), cx.focus_handle().tab_stop(true).tab_index(0)))
                     .collect();
@@ -62,13 +61,14 @@ pub(crate) const VIEW_OPTIONS: &str = "view_options";
 /// The View menu's submenus: what to sort by, what to group by (ADR-130).
 const SORT_BY: &str = "Sort by";
 const GROUP_BY: &str = "Group by";
+/// What the grid's tiles say under their names, a submenu as the sort's.
+const UNDER_NAMES: &str = "Under names";
 /// The pane row's buttons (which views have one, whether Up is there):
 /// the view buttons' right-click, the Menu key on one, the same on the one
 /// button that stands for them, or the View menu's Buttons row.
 const VIEW_BUTTONS: &str = "view_buttons";
 /// What the grid's tiles say under their names: the View menu's Under
 /// names row, in the grid.
-const GRID_CAPTIONS: &str = "grid_captions";
 const MORE: &str = "more";
 
 /// The views the user gave a button, or took it from (`ui.view_button`,
@@ -170,7 +170,7 @@ fn view_control(
         Button::new(id, icon, title, "ui.toolbar_menu")
             .args(serde_json::json!({"kind": VIEW_OPTIONS}))
             .anchor_if(anchor, !(wide && choosing))
-            .active(matches!(open, Some(VIEW_OPTIONS | GRID_CAPTIONS)))
+            .active(open == Some(VIEW_OPTIONS))
             .dropdown()
     };
     let views = shell.available_views();
@@ -326,16 +326,7 @@ pub(crate) fn view_submenu(shell: &Shell, name: &str) -> Vec<toolbar::FlyRow> {
     use skwir_core::grouping::GroupBy;
     use toolbar::FlyRow;
     let spec = shell.sort_spec();
-    // Words, then dates, then what the user says of files.
-    let kind = |key: SortKey| match key {
-        SortKey::Modified
-        | SortKey::Created
-        | SortKey::Accessed
-        | SortKey::Taken
-        | SortKey::Deleted => 1,
-        SortKey::Rating | SortKey::Tags | SortKey::Owner => 2,
-        _ => 0,
-    };
+    let kind = family;
     let mut rows = Vec::new();
     let by = |rows: &mut Vec<FlyRow>, keys: Vec<SortKey>, row: &dyn Fn(SortKey) -> Button| {
         let mut last = None;
@@ -432,9 +423,54 @@ pub(crate) fn view_submenu(shell: &Shell, name: &str) -> Vec<toolbar::FlyRow> {
                 )
             });
         }
+        // Each caption checked while chosen, in the sort's order and
+        // groups; a row keeps the submenu open, for the next.
+        UNDER_NAMES => {
+            let said = shell.grid_captions();
+            let mut last = None;
+            for (i, spec, key) in under_names(shell) {
+                if last.is_some_and(|last| last != kind(key)) {
+                    rows.push(FlyRow::Line);
+                }
+                last = Some(kind(key));
+                let on = said.contains(&spec.caption);
+                // A tooltip is kept as built: it says what the row is about.
+                let tip = format!(
+                    "Whether each tile says its {} under its name",
+                    spec.label.to_lowercase()
+                );
+                rows.push(FlyRow::Row(menu_item(
+                    Button::new(
+                        format!("menu-caption-{i}"),
+                        if on { "check" } else { "" },
+                        tip,
+                        "ui.grid_caption",
+                    )
+                    .args(serde_json::json!({ "key": spec.setting }))
+                    .active(on)
+                    .keeps_open(),
+                    spec.label,
+                )));
+            }
+        }
         _ => {}
     }
     rows
+}
+
+/// The groups the View menu's submenus list criteria in: words (and
+/// sizes), then dates, then what the user says of files.
+fn family(key: skwir_core::SortKey) -> u8 {
+    use skwir_core::SortKey;
+    match key {
+        SortKey::Modified
+        | SortKey::Created
+        | SortKey::Accessed
+        | SortKey::Taken
+        | SortKey::Deleted => 1,
+        SortKey::Rating | SortKey::Tags | SortKey::Owner => 2,
+        _ => 0,
+    }
 }
 
 /// The View menu: how the active pane shows its folder, never how the
@@ -634,16 +670,6 @@ fn view_options(shell: &Shell) -> Vec<MenuPart> {
             .active(shell.prefs.grid_fill),
             "Fill thumbnails",
         ));
-        drawn.push(menu_item(
-            Button::new(
-                "menu-grid-captions",
-                "contents",
-                "Choose what each tile says under its name: its tags, its size, when it changed…",
-                "ui.toolbar_menu",
-            )
-            .args(serde_json::json!({ "kind": GRID_CAPTIONS })),
-            "Under names…",
-        ));
     }
     // The tree closes what it opened in one go.
     if shell.ui().view_id == crate::view::TREE {
@@ -669,6 +695,25 @@ fn view_options(shell: &Shell) -> Vec<MenuPart> {
     if !drawn.is_empty() {
         parts.push(MenuPart::Line);
         parts.extend(drawn.into_iter().map(MenuPart::Row));
+    }
+    // What the tiles say under their names, one row saying which ("Size,
+    // Modified"), opening them beside it to choose.
+    if shell.ui().view_id == crate::view::GRID {
+        let said: Vec<&str> = under_names(shell)
+            .into_iter()
+            .filter(|(_, spec, _)| shell.grid_captions().contains(&spec.caption))
+            .map(|(_, spec, _)| spec.label)
+            .collect();
+        let value = if said.is_empty() {
+            "None".to_owned()
+        } else {
+            said.join(", ")
+        };
+        parts.push(MenuPart::Sub(
+            UNDER_NAMES.into(),
+            UNDER_NAMES.into(),
+            Some(value.into()),
+        ));
     }
     // Only where the view sizes something (`PaneView::zooms`): smaller, as
     // it was, larger, the keys in the tooltips.
@@ -711,37 +756,25 @@ fn view_options(shell: &Shell) -> Vec<MenuPart> {
     parts
 }
 
-/// What the grid's tiles say under their names: each caption that applies
-/// here (`views::grid::CAPTIONS`), checked when chosen. A row keeps the
-/// menu open, for the next.
-fn grid_captions_menu(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
-    let said = shell.grid_captions();
-    let rows = crate::views::grid::CAPTIONS
+/// What the grid's tiles can say under their names here (`Shell::caption_applies`),
+/// each caption with its place in `views::grid::CAPTIONS` and the criterion
+/// that sorts by it, in Sort by's order: as the sort's submenu lists them.
+fn under_names(
+    shell: &Shell,
+) -> Vec<(
+    usize,
+    &'static crate::views::grid::CaptionSpec,
+    skwir_core::SortKey,
+)> {
+    use skwir_core::SortKey;
+    let mut captions: Vec<_> = crate::views::grid::CAPTIONS
         .iter()
         .enumerate()
         .filter(|(_, spec)| shell.caption_applies(spec.caption))
-        .map(|(i, spec)| {
-            let on = said.contains(&spec.caption);
-            // A tooltip is kept as built: it says what the row is about.
-            let tip = format!(
-                "Whether each tile says its {} under its name",
-                spec.label.to_lowercase()
-            );
-            menu_item(
-                Button::new(
-                    format!("menu-caption-{i}"),
-                    if on { "check" } else { "" },
-                    tip,
-                    "ui.grid_caption",
-                )
-                .args(serde_json::json!({ "key": spec.setting }))
-                .active(on)
-                .keeps_open(),
-                spec.label,
-            )
-        })
+        .filter_map(|(i, spec)| Some((i, spec, spec.sorts_by()?)))
         .collect();
-    vec![("Under names", rows)]
+    captions.sort_by_key(|(_, _, key)| SortKey::ALL.iter().position(|k| k == key));
+    captions
 }
 
 /// The pane row's buttons: the views', under a heading whose switch says
@@ -935,19 +968,6 @@ fn layout_values(shell: &Shell, what: &'static str) -> Vec<Button> {
             .segment()
     }));
     buttons
-}
-
-/// A popup's titled groups as its parts, a group with nothing to offer
-/// left out, title and all.
-fn titled(groups: Vec<(&'static str, Vec<Button>)>) -> Vec<MenuPart> {
-    groups
-        .into_iter()
-        .filter(|(_, items)| !items.is_empty())
-        .flat_map(|(title, items)| {
-            std::iter::once(MenuPart::Title(title.into(), None))
-                .chain(items.into_iter().map(MenuPart::Row))
-        })
-        .collect()
 }
 
 /// What the More menu's Undo and Redo say: each names what it takes back
@@ -1288,9 +1308,7 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
                 .toolbar_menu
                 .as_ref()
                 .map(|menu| menu.kind)
-                .filter(|kind| {
-                    active && [VIEW_OPTIONS, VIEW_BUTTONS, GRID_CAPTIONS].contains(kind)
-                }),
+                .filter(|kind| active && [VIEW_OPTIONS, VIEW_BUTTONS].contains(kind)),
             nav: shell
                 .nav_menu
                 .as_ref()
@@ -1359,7 +1377,6 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
         let mut panel = toolbar::menu_panel(popup, "ui.toolbar_menu", &theme, cx);
         let parts = match kind {
             VIEW_BUTTONS => view_buttons_menu(shell),
-            GRID_CAPTIONS => titled(grid_captions_menu(shell)),
             _ => view_options(shell),
         };
         panel = toolbar::menu_parts(panel, parts, shell, &theme, cx)
@@ -1374,7 +1391,8 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
         } else {
             anchor.popup(panel)
         });
-        // Sort by's or Group by's criteria, beside their row.
+        // Sort by's or Group by's criteria, or what is said under the
+        // names, beside their row.
         if let Some(name) = popup.sub.open.clone() {
             let fly = toolbar::fly_out(popup, &name, view_submenu(shell, &name), shell, &theme, cx);
             bar = bar.child(popup.sub.row.popup_beside(4, crate::menu::SUB_INSET, fly));

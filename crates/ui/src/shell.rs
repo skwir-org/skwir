@@ -3719,9 +3719,13 @@ impl Shell {
             // What the location says of itself (its trail, its verbs),
             // read when it changed, outside the lock.
             crate::trail::sync(self);
-            let (wanted, close, found_as_tree) = {
+            // What its view shows that is read on demand (a column of when
+            // each picture was taken), read as its sort's is (ADR-131).
+            let fields = self.fields_shown();
+            let (wanted, close, found_as_tree, fields) = {
                 let ws = app.workspace.read();
                 let Some(pane) = ws.pane(id) else { continue };
+                let fields = (pane.fields_shown() != fields.as_slice()).then_some(fields);
                 let view = self.ui().views.get(self.ui().view_id);
                 let lays_out = view.is_some_and(|view| view.lays_found_out_as_tree());
                 let found_as_tree = (pane.wants_found_tree() != lays_out).then_some(lays_out);
@@ -3735,10 +3739,14 @@ impl Shell {
                     (!wanted.is_empty() || pane.keeps_any()).then_some(wanted),
                     close,
                     found_as_tree,
+                    fields,
                 )
             };
             if let Some(found_as_tree) = found_as_tree {
                 app.set_found_as_tree(id, found_as_tree);
+            }
+            if let Some(fields) = fields {
+                app.show_fields(id, &fields);
             }
             if close {
                 app.collapse_all(id);

@@ -83,16 +83,28 @@ pub struct Column {
     pub right: bool,
 }
 
-/// The detail columns, by their place in `COLUMNS`.
+/// The detail columns, by their place in `COLUMNS`: every criterion the
+/// pane sorts by but its name and extension (what shows, sorts; what
+/// sorts, shows), and the tags, which a row shows by its name.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Detail {
     Folder,
     Deleted,
     Size,
+    Dimensions,
+    Duration,
     Modified,
+    Created,
+    Accessed,
+    Taken,
     Type,
+    Kind,
+    Owner,
     Rating,
 }
+
+/// How many detail columns there are.
+pub const DETAILS: usize = 13;
 
 impl Detail {
     pub fn column(self) -> &'static Column {
@@ -104,7 +116,7 @@ impl Detail {
 /// pane drops them whole from the last (`line`): Folder, first of them
 /// where it is shown at all, is the last to give way, then in the trash
 /// when each file was put there.
-pub const COLUMNS: [Column; 6] = [
+pub const COLUMNS: [Column; DETAILS] = [
     Column {
         detail: Detail::Folder,
         key: "folder",
@@ -139,6 +151,28 @@ pub const COLUMNS: [Column; 6] = [
         right: true,
     },
     Column {
+        detail: Detail::Dimensions,
+        key: "dimensions",
+        setting: "ui.column_dimensions",
+        label: "Dimensions",
+        description: "Show the size of pictures in pixels, where a plugin reads it of them.",
+        shown: false,
+        sort: Some(SortKey::Dimensions),
+        width: 100.,
+        right: true,
+    },
+    Column {
+        detail: Detail::Duration,
+        key: "duration",
+        setting: "ui.column_duration",
+        label: "Duration",
+        description: "Show how long sounds and films last, where a plugin reads it of them.",
+        shown: false,
+        sort: Some(SortKey::Duration),
+        width: 72.,
+        right: true,
+    },
+    Column {
         detail: Detail::Modified,
         key: "modified",
         setting: "ui.column_modified",
@@ -146,6 +180,39 @@ pub const COLUMNS: [Column; 6] = [
         description: "Show when each item last changed.",
         shown: true,
         sort: Some(SortKey::Modified),
+        width: 136.,
+        right: false,
+    },
+    Column {
+        detail: Detail::Created,
+        key: "created",
+        setting: "ui.column_created",
+        label: "Created",
+        description: "Show when each item was made, where the system keeps it.",
+        shown: false,
+        sort: Some(SortKey::Created),
+        width: 136.,
+        right: false,
+    },
+    Column {
+        detail: Detail::Accessed,
+        key: "accessed",
+        setting: "ui.column_accessed",
+        label: "Accessed",
+        description: "Show when each item was last read, as the system keeps it.",
+        shown: false,
+        sort: Some(SortKey::Accessed),
+        width: 136.,
+        right: false,
+    },
+    Column {
+        detail: Detail::Taken,
+        key: "taken",
+        setting: "ui.column_taken",
+        label: "Taken",
+        description: "Show when pictures and films were taken, by their camera's clock, where a plugin reads it of them.",
+        shown: false,
+        sort: Some(SortKey::Taken),
         width: 136.,
         right: false,
     },
@@ -158,6 +225,28 @@ pub const COLUMNS: [Column; 6] = [
         shown: true,
         sort: Some(SortKey::Type),
         width: 150.,
+        right: false,
+    },
+    Column {
+        detail: Detail::Kind,
+        key: "kind",
+        setting: "ui.column_kind",
+        label: "Kind",
+        description: "Show what kind of file each is, such as Image or Document.",
+        shown: false,
+        sort: Some(SortKey::Kind),
+        width: 110.,
+        right: false,
+    },
+    Column {
+        detail: Detail::Owner,
+        key: "owner",
+        setting: "ui.column_owner",
+        label: "Owner",
+        description: "Show who owns each item.",
+        shown: false,
+        sort: Some(SortKey::Owner),
+        width: 100.,
         right: false,
     },
     Column {
@@ -175,7 +264,7 @@ pub const COLUMNS: [Column; 6] = [
 
 /// One value per detail column, read by `Detail`.
 #[derive(Clone, Copy, PartialEq, Debug)]
-pub struct PerColumn<T>(pub [T; 6]);
+pub struct PerColumn<T>(pub [T; DETAILS]);
 
 impl<T> std::ops::Index<Detail> for PerColumn<T> {
     type Output = T;
@@ -283,8 +372,40 @@ impl Shell {
             Detail::Rating => self.rated(),
             Detail::Folder => !place.folder && !one_folder,
             Detail::Deleted => place.verbs.restore.is_some() && !one_folder,
-            Detail::Size | Detail::Modified | Detail::Type => true,
+            Detail::Size
+            | Detail::Modified
+            | Detail::Created
+            | Detail::Accessed
+            | Detail::Type
+            | Detail::Kind => true,
+            // Read on demand (ADR-131): while something reads it.
+            Detail::Dimensions | Detail::Duration | Detail::Taken => detail
+                .column()
+                .sort
+                .and_then(SortKey::field)
+                .is_some_and(|field| self.app.fields.knows(field)),
+            // A file says its owner where the system keeps one by number.
+            Detail::Owner => cfg!(unix),
         }
+    }
+
+    /// What the pane's view shows that is read on demand (ADR-131): what
+    /// the list's columns or the grid's captions read of each file, as its
+    /// sort reads them (`App::show_fields`).
+    pub fn fields_shown(&self) -> Vec<&'static str> {
+        let view = self.ui().view_id;
+        let shown = if view == crate::view::LIST || view == crate::view::TREE {
+            self.shown_columns()
+        } else if view == crate::view::GRID {
+            crate::views::grid::caption_columns(&self.grid_captions())
+        } else {
+            return Vec::new();
+        };
+        COLUMNS
+            .iter()
+            .filter(|column| shown[column.detail])
+            .filter_map(|column| column.sort.and_then(SortKey::field))
+            .collect()
     }
 
     /// Whether the header's menu offers `detail`: where it applies, and
@@ -439,14 +560,10 @@ pub struct RowData {
     pub ix: usize,
     pub look: crate::views::entry::Look,
     pub hydrated: bool,
-    pub size: String,
-    pub modified: String,
-    /// Exact timestamp, shown as the date's tooltip.
-    pub modified_exact: String,
-    /// When it was put in the trash, and exactly.
-    pub deleted: String,
-    pub deleted_exact: String,
-    pub kind: std::sync::Arc<str>,
+    /// What it says in each detail asked for, read by `Detail`: blank
+    /// where none was (`rows_showing`), and in Rating, whose stars are
+    /// `rating`.
+    pub said: PerColumn<Said>,
     /// Half stars, from 1 to 10.
     pub rating: Option<u64>,
     /// How many opened folders deep it is (`Pane::depth`), and for a
@@ -456,9 +573,23 @@ pub struct RowData {
     /// Whether it can be opened in place: under the tree of what a search
     /// found, a folder with something found in it.
     pub opens: bool,
-    /// The folder it is in, and its whole path, where files from many
-    /// folders are listed.
-    pub folder: Option<(String, String)>,
+}
+
+/// What a row says in a detail: the words drawn, and what pointing at
+/// them adds, if anything (a folder's whole path, a date's exact time).
+#[derive(Clone, Default, Debug, PartialEq)]
+pub struct Said {
+    pub text: String,
+    pub whole: String,
+}
+
+impl Said {
+    fn text(text: impl Into<String>) -> Self {
+        Said {
+            text: text.into(),
+            whole: String::new(),
+        }
+    }
 }
 
 impl Shell {
@@ -483,17 +614,26 @@ impl Shell {
     ) -> Vec<RowData> {
         let mut out = Vec::with_capacity(range.len());
         let friendly = self.prefs.friendly_dates;
-        let now = (friendly && (columns[Detail::Modified] || columns[Detail::Deleted]))
-            .then(jiff::Zoned::now);
+        let dated = [
+            Detail::Modified,
+            Detail::Created,
+            Detail::Accessed,
+            Detail::Taken,
+            Detail::Deleted,
+        ];
+        let now = (friendly && dated.iter().any(|detail| columns[*detail])).then(jiff::Zoned::now);
         // A date as the column says it, and exactly for its tooltip.
-        let date = |time: Option<std::time::SystemTime>| -> (String, String) {
+        let date = |time: Option<std::time::SystemTime>| -> Said {
             let exact = time.map_or_else(String::new, format::time);
             let shown = match (time, &now) {
                 (None, _) => "—".to_owned(),
                 (Some(time), Some(now)) => format::friendly_time(time, now),
                 (Some(_), None) => exact.clone(),
             };
-            (shown, exact)
+            Said {
+                text: shown,
+                whole: exact,
+            }
         };
         let app = std::sync::Arc::clone(&self.app);
         let ws = app.workspace.read();
@@ -513,90 +653,115 @@ impl Shell {
                 expanded: e.is_dir() && pane.is_open_at(id),
                 opens: e.is_dir() && pane.opens_here(id),
                 depth: pane.depth(id),
-                size: String::new(),
-                modified: String::new(),
-                modified_exact: String::new(),
-                deleted: String::new(),
-                deleted_exact: String::new(),
-                kind: std::sync::Arc::from(""),
+                said: PerColumn(std::array::from_fn(|_| Said::default())),
                 hydrated: e.metadata.is_hydrated(),
                 rating: None,
-                folder: None,
             };
-            if columns[Detail::Folder] && !e.is_place() {
-                // A file of the trash is from the folder it was put
-                // there from, which restoring it puts it back in.
-                let from = e
-                    .metadata
-                    .value(keys::TRASHED_FROM)
-                    .and_then(skwir_core::Value::as_str)
-                    .map(std::path::PathBuf::from);
-                row.folder = from
-                    .or_else(|| pane.path_of(id)?.parent().map(ToOwned::to_owned))
-                    .map(|dir| {
+            let value = |key: &str| e.metadata.value(key);
+            let time = |key: &str| value(key).and_then(skwir_core::Value::as_time);
+            // What its type's database says of it: a place by what it is,
+            // a folder as one, a link that leads nowhere as such.
+            let typed = |words: &str| -> Option<std::sync::Arc<str>> {
+                if e.is_place() {
+                    Some(
+                        value(keys::PLACE_KIND)
+                            .and_then(skwir_core::Value::as_str)
+                            .unwrap_or("Place")
+                            .into(),
+                    )
+                } else if e.is_dir() {
+                    Some(words.into())
+                } else if e.is_broken_link() {
+                    Some(crate::typenames::BROKEN_LINK.into())
+                } else {
+                    None
+                }
+            };
+            for column in COLUMNS.iter().filter(|column| columns[column.detail]) {
+                let said = match column.detail {
+                    Detail::Rating => {
+                        row.rating = value(keys::RATING).and_then(skwir_core::Value::as_u64);
+                        continue;
+                    }
+                    Detail::Folder if e.is_place() => continue,
+                    Detail::Folder => {
+                        // A file of the trash is from the folder it was put
+                        // there from, which restoring it puts it back in.
+                        let from = value(keys::TRASHED_FROM)
+                            .and_then(skwir_core::Value::as_str)
+                            .map(std::path::PathBuf::from);
+                        let Some(dir) =
+                            from.or_else(|| pane.path_of(id)?.parent().map(ToOwned::to_owned))
+                        else {
+                            continue;
+                        };
                         let name = dir.file_name().map_or_else(
                             || dir.display().to_string(),
                             |n| n.to_string_lossy().into_owned(),
                         );
-                        (name, dir.display().to_string())
-                    });
-            }
-            if columns[Detail::Rating] {
-                row.rating = e
-                    .metadata
-                    .value(keys::RATING)
-                    .and_then(skwir_core::Value::as_u64);
-            }
-            if columns[Detail::Size] {
-                row.size = match e
-                    .metadata
-                    .value(keys::SIZE)
-                    .and_then(skwir_core::Value::as_u64)
-                {
-                    Some(s) if !e.is_dir() => format::size(s),
-                    // A place says how many files it holds.
-                    _ => match e
-                        .metadata
-                        .value(keys::FILES)
-                        .and_then(skwir_core::Value::as_u64)
-                    {
-                        Some(n) => format::count(usize::try_from(n).unwrap_or(usize::MAX), "file"),
-                        None => "—".to_owned(),
-                    },
+                        Said {
+                            text: name,
+                            whole: dir.display().to_string(),
+                        }
+                    }
+                    Detail::Size => Said::text(
+                        match value(keys::SIZE).and_then(skwir_core::Value::as_u64) {
+                            Some(s) if !e.is_dir() => format::size(s),
+                            // A place says how many files it holds.
+                            _ => match value(keys::FILES).and_then(skwir_core::Value::as_u64) {
+                                Some(n) => {
+                                    format::count(usize::try_from(n).unwrap_or(usize::MAX), "file")
+                                }
+                                None => "—".to_owned(),
+                            },
+                        },
+                    ),
+                    Detail::Dimensions => Said::text(dimensions(value(keys::DIMENSIONS))),
+                    Detail::Duration => Said::text(
+                        value(keys::DURATION)
+                            .and_then(skwir_core::Value::as_u64)
+                            .map_or_else(
+                                || "—".to_owned(),
+                                // Milliseconds, said as a player says them.
+                                |ms| crate::media::time(ms as f64 / 1000.),
+                            ),
+                    ),
+                    Detail::Modified => date(time(keys::MODIFIED)),
+                    Detail::Created => date(time(keys::CREATED)),
+                    Detail::Accessed => date(time(keys::ACCESSED)),
+                    Detail::Deleted => date(time(keys::TRASHED)),
+                    Detail::Taken => date(
+                        value(keys::TAKEN)
+                            .and_then(skwir_core::Value::as_u64)
+                            .and_then(on_the_clock),
+                    ),
+                    Detail::Type => Said::text(&*typed("Folder").unwrap_or_else(|| {
+                        // Typed only where the column shows it.
+                        skwir_platform::mime::of_entry(e)
+                            .as_ref()
+                            .and_then(|mime| self.type_names.get(mime))
+                            .unwrap_or_else(|| crate::typenames::fallback_of(e).into())
+                    })),
+                    Detail::Kind => Said::text(&*typed("Folder").unwrap_or_else(|| {
+                        skwir_platform::mime::of_entry(e)
+                            .as_ref()
+                            .and_then(|mime| self.type_names.kind(mime))
+                            .unwrap_or_else(|| "".into())
+                    })),
+                    Detail::Owner => Said::text(
+                        value(keys::UID)
+                            .and_then(skwir_core::Value::as_u64)
+                            .map_or_else(
+                                || "—".to_owned(),
+                                // By its name, else its number.
+                                |uid| {
+                                    skwir_platform::users::user(uid)
+                                        .unwrap_or_else(|| uid.to_string())
+                                },
+                            ),
+                    ),
                 };
-            }
-            if columns[Detail::Modified] {
-                (row.modified, row.modified_exact) = date(
-                    e.metadata
-                        .value(keys::MODIFIED)
-                        .and_then(skwir_core::Value::as_time),
-                );
-            }
-            if columns[Detail::Deleted] {
-                (row.deleted, row.deleted_exact) = date(
-                    e.metadata
-                        .value(keys::TRASHED)
-                        .and_then(skwir_core::Value::as_time),
-                );
-            }
-            if columns[Detail::Type] {
-                row.kind = if e.is_place() {
-                    e.metadata
-                        .value(keys::PLACE_KIND)
-                        .and_then(skwir_core::Value::as_str)
-                        .unwrap_or("Place")
-                        .into()
-                } else if e.is_dir() {
-                    "Folder".into()
-                } else if e.is_broken_link() {
-                    crate::typenames::BROKEN_LINK.into()
-                } else {
-                    // Typed only where the column shows it.
-                    skwir_platform::mime::of_entry(e)
-                        .as_ref()
-                        .and_then(|mime| self.type_names.get(mime))
-                        .unwrap_or_else(|| crate::typenames::fallback_of(e).into())
-                };
+                row.said[column.detail] = said;
             }
             out.push(row);
         }
@@ -871,32 +1036,57 @@ fn cell(shell: &Shell, detail: Detail, color: gpui::Hsla, height: f32, scale: Sc
 /// whole when pointed at, before what the column adds (a folder's path, the
 /// exact time).
 fn detail(r: &RowData, detail: Detail, cell: Div, scale: Scale, theme: &Theme) -> AnyElement {
-    let (name, text, also) = match detail {
-        Detail::Rating => {
-            return cell
-                .flex()
-                .items_center()
-                .children(
-                    r.rating
-                        .map(|stars| crate::tags::stars(stars, scale.f(12.), theme)),
-                )
-                .into_any_element();
-        }
-        Detail::Folder => {
-            let (name, whole) = r.folder.clone().unwrap_or_default();
-            ("folder", name, whole)
-        }
-        Detail::Size => ("size", r.size.clone(), String::new()),
-        Detail::Modified => ("modified", r.modified.clone(), r.modified_exact.clone()),
-        Detail::Deleted => ("deleted", r.deleted.clone(), r.deleted_exact.clone()),
-        Detail::Type => ("type", r.kind.to_string(), String::new()),
-    };
+    if detail == Detail::Rating {
+        return cell
+            .flex()
+            .items_center()
+            .children(
+                r.rating
+                    .map(|stars| crate::tags::stars(stars, scale.f(12.), theme)),
+            )
+            .into_any_element();
+    }
+    let said = &r.said[detail];
     crate::elements::clip::clipped_with(
-        cell.id((name, r.ix)).min_w_0().truncate(),
-        text,
-        (!also.is_empty()).then(|| also.into()),
+        cell.id((detail.column().key, r.ix)).min_w_0().truncate(),
+        said.text.clone(),
+        (!said.whole.is_empty()).then(|| said.whole.clone().into()),
     )
     .into_any_element()
+}
+
+/// A picture's size as a column says it: `4032 × 3024`, a dash while
+/// unknown or where it has none.
+fn dimensions(value: Option<&skwir_core::Value>) -> String {
+    let Some(skwir_core::Value::List(sides)) = value else {
+        return "—".to_owned();
+    };
+    match (
+        sides.first().and_then(skwir_core::Value::as_u64),
+        sides.get(1).and_then(skwir_core::Value::as_u64),
+    ) {
+        (Some(width), Some(height)) => format!("{width} × {height}"),
+        _ => "—".to_owned(),
+    }
+}
+
+/// When a camera's clock (`keys::TAKEN`: `20260701083000`, in no zone)
+/// says a picture was taken, as the time it is here at that hour: said as
+/// every date is, it reads as the clock read.
+fn on_the_clock(clock: u64) -> Option<std::time::SystemTime> {
+    let part = |by: u64| i8::try_from(clock / by % 100).ok();
+    let civil = jiff::civil::DateTime::new(
+        i16::try_from(clock / 10_000_000_000).ok()?,
+        part(100_000_000)?,
+        part(1_000_000)?,
+        part(10_000)?,
+        part(100)?,
+        part(1)?,
+        0,
+    )
+    .ok()?;
+    let zoned = civil.to_zoned(jiff::tz::TimeZone::system()).ok()?;
+    Some(std::time::SystemTime::from(zoned.timestamp()))
 }
 
 /// A header's label, sorting by `key` when clicked, with the order's

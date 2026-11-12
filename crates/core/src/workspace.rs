@@ -948,6 +948,9 @@ pub struct Pane {
     /// token of its reading, cancelled when it is asked anew or no longer.
     fields_asked: Option<FieldsAt>,
     fields_reading: Option<CancelToken>,
+    /// What its view shows that is read on demand (a column of when each
+    /// picture was taken, `show_fields`): read as what its sort reads is.
+    fields_shown: Vec<&'static str>,
     /// The order `order` last gave, what is shown: where a cursor whose
     /// entry leaves the view goes from (`Selection::retain_near`).
     shown: parking_lot::Mutex<Option<Arc<[EntryId]>>>,
@@ -1881,6 +1884,7 @@ impl Pane {
             fold_cache: parking_lot::Mutex::new(None),
             fields_asked: None,
             fields_reading: None,
+            fields_shown: Vec::new(),
             shown: parking_lot::Mutex::new(None),
             filter: None,
             read: None,
@@ -2636,6 +2640,22 @@ impl Pane {
     /// Whether the view shown lays a search out as a tree.
     pub fn wants_found_tree(&self) -> bool {
         self.found.wanted
+    }
+
+    /// What its view shows that is read on demand (`keys::READ_ON_DEMAND`):
+    /// a column, or a caption under the grid's names. Read for its files
+    /// as what the sort reads is (`fields_to_read`). Whether it changed.
+    pub fn show_fields(&mut self, fields: &[&'static str]) -> bool {
+        if self.fields_shown == fields {
+            return false;
+        }
+        self.fields_shown = fields.to_vec();
+        true
+    }
+
+    /// What `show_fields` last said its view shows.
+    pub fn fields_shown(&self) -> &[&'static str] {
+        &self.fields_shown
     }
 
     /// How many it found, when a tree shows them among the folders on the
@@ -4383,15 +4403,20 @@ impl Pane {
         true
     }
 
-    /// What its sort reads on demand and its listing's entries lack (ADR-131,
-    /// 4): asked once the listing is whole, again when its names change, a
+    /// What its sort, and its view (`show_fields`), read on demand and its
+    /// listing's entries lack (ADR-131, 4): asked once the listing is whole, again when its names change, a
     /// file changed (`Listing::fields_version`) or the providers did
     /// (`revision`); none otherwise. A folder is never asked, nor a place.
     /// What was asked before and is still read is given up: a new ask
     /// names what it lacks again, and what it read is kept (`App::fields`),
     /// so nothing is read twice.
     pub(crate) fn fields_to_read(&mut self, revision: u64) -> Option<FieldsAsked> {
-        let fields = self.sort.fields();
+        let mut fields = self.sort.fields();
+        for field in &self.fields_shown {
+            if !fields.contains(field) {
+                fields.push(field);
+            }
+        }
         if fields.is_empty() {
             if let Some(reading) = self.fields_reading.take() {
                 reading.cancel();
@@ -6109,10 +6134,11 @@ mod tests {
 
     /// Sorted by what is read on demand, a pane asks its files once a
     /// change, never its folders; asked anew (a file arrived), the reading
-    /// before is given up, and so it is once the sort reads nothing.
+    /// before is given up, and so it is once the sort reads nothing. What
+    /// its view shows is asked alike (`show_fields`).
     #[test]
     fn fields_asked_anew_give_up_the_reading_before() {
-        use crate::entry::EntryKind;
+        use crate::entry::{EntryKind, keys};
         use crate::location::{ListingEvent, SortKey};
         let entry = |i: u64, kind| {
             let id = EntryId {
@@ -6163,6 +6189,31 @@ mod tests {
             second.cancel.is_cancelled(),
             "a sort reading nothing gives it up"
         );
+        // A view showing what is read on demand (a column of when each
+        // picture was taken) has it read as a sort by it would.
+        assert!(p.show_fields(&[keys::TAKEN]));
+        assert!(!p.show_fields(&[keys::TAKEN]), "said again: no change");
+        let shown = p.fields_to_read(0).expect("what the view shows asked");
+        assert_eq!(shown.entries.len(), 4);
+        assert!(
+            shown
+                .entries
+                .iter()
+                .all(|(.., lacks)| lacks == &[keys::TAKEN])
+        );
+        // Sorted by it as well, it is the same reading: not asked again.
+        p.sort.key = SortKey::Taken;
+        assert!(
+            p.fields_to_read(0).is_none(),
+            "the same field, already asked"
+        );
+        p.sort.key = SortKey::Name;
+        assert!(p.show_fields(&[]));
+        assert!(
+            p.fields_to_read(0).is_none(),
+            "shown no longer, nothing read"
+        );
+        assert!(shown.cancel.is_cancelled(), "its reading given up");
     }
 
     /// A folder of folders is looked over a slice at a time, the window

@@ -3129,6 +3129,20 @@ impl App {
         }
     }
 
+    /// What `pane`'s view shows that is read on demand (ADR-131): read for
+    /// its files as what its sort reads (`Pane::show_fields`), from the
+    /// next pump on.
+    pub fn show_fields(&self, pane: PaneId, fields: &[&'static str]) {
+        let moved = self
+            .workspace
+            .write()
+            .pane_mut(pane)
+            .is_some_and(|p| p.show_fields(fields));
+        if moved {
+            self.wake();
+        }
+    }
+
     /// Close every folder `pane` opened in place: what a view that does not
     /// draw them asks (only the tree does).
     pub fn collapse_all(&self, pane: PaneId) {

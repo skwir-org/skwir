@@ -75,9 +75,20 @@ pub struct CaptionSpec {
     pub description: &'static str,
 }
 
+impl CaptionSpec {
+    /// The criterion that sorts by what it says: the View menu lists the
+    /// captions in the sort's order and groups.
+    pub fn sorts_by(&self) -> Option<skwir_core::SortKey> {
+        match self.caption {
+            Caption::Tags => Some(skwir_core::SortKey::Tags),
+            Caption::Detail(detail) => detail.column().sort,
+        }
+    }
+}
+
 /// The captions in the order they stand under a name: the tags, then the
 /// details as the list's columns stand.
-pub const CAPTIONS: [CaptionSpec; 7] = [
+pub const CAPTIONS: [CaptionSpec; 1 + crate::views::list::DETAILS] = [
     CaptionSpec {
         caption: Caption::Tags,
         setting: "ui.grid_caption_tags",
@@ -107,6 +118,20 @@ pub const CAPTIONS: [CaptionSpec; 7] = [
         description: "Under each name in the grid, the size of the file, or how many files a place holds.",
     },
     CaptionSpec {
+        caption: Caption::Detail(Detail::Dimensions),
+        setting: "ui.grid_caption_dimensions",
+        label: "Dimensions",
+        title: "Dimensions under names",
+        description: "Under each name in the grid, a picture's size in pixels, where a plugin reads it.",
+    },
+    CaptionSpec {
+        caption: Caption::Detail(Detail::Duration),
+        setting: "ui.grid_caption_duration",
+        label: "Duration",
+        title: "Duration under names",
+        description: "Under each name in the grid, how long a sound or a film lasts, where a plugin reads it.",
+    },
+    CaptionSpec {
         caption: Caption::Detail(Detail::Modified),
         setting: "ui.grid_caption_modified",
         label: "Modified",
@@ -114,11 +139,46 @@ pub const CAPTIONS: [CaptionSpec; 7] = [
         description: "Under each name in the grid, when it last changed.",
     },
     CaptionSpec {
+        caption: Caption::Detail(Detail::Created),
+        setting: "ui.grid_caption_created",
+        label: "Created",
+        title: "Creation under names",
+        description: "Under each name in the grid, when it was made, where the system keeps it.",
+    },
+    CaptionSpec {
+        caption: Caption::Detail(Detail::Accessed),
+        setting: "ui.grid_caption_accessed",
+        label: "Accessed",
+        title: "Last access under names",
+        description: "Under each name in the grid, when it was last read, as the system keeps it.",
+    },
+    CaptionSpec {
+        caption: Caption::Detail(Detail::Taken),
+        setting: "ui.grid_caption_taken",
+        label: "Taken",
+        title: "When taken under names",
+        description: "Under each name in the grid, when a picture or a film was taken, by its camera's clock, where a plugin reads it.",
+    },
+    CaptionSpec {
         caption: Caption::Detail(Detail::Type),
         setting: "ui.grid_caption_type",
         label: "Type",
         title: "Type under names",
         description: "Under each name in the grid, the kind of file, such as PDF document.",
+    },
+    CaptionSpec {
+        caption: Caption::Detail(Detail::Kind),
+        setting: "ui.grid_caption_kind",
+        label: "Kind",
+        title: "Kind under names",
+        description: "Under each name in the grid, what kind of file it is, such as Image or Document.",
+    },
+    CaptionSpec {
+        caption: Caption::Detail(Detail::Owner),
+        setting: "ui.grid_caption_owner",
+        label: "Owner",
+        title: "Owner under names",
+        description: "Under each name in the grid, who owns it.",
     },
     CaptionSpec {
         caption: Caption::Detail(Detail::Rating),
@@ -568,24 +628,16 @@ fn caption_lines(
                     row.rating
                         .map(|stars| crate::tags::stars(stars, 12., theme)),
                 ),
-                Caption::Detail(Detail::Folder) => {
-                    let (name, whole) = row.folder.clone().unwrap_or_default();
-                    line.child(text(&name, &whole))
+                Caption::Detail(detail) => {
+                    let said = &row.said[*detail];
+                    line.child(text(&said.text, &said.whole))
                 }
-                Caption::Detail(Detail::Size) => line.child(text(&row.size, "")),
-                Caption::Detail(Detail::Modified) => {
-                    line.child(text(&row.modified, &row.modified_exact))
-                }
-                Caption::Detail(Detail::Deleted) => {
-                    line.child(text(&row.deleted, &row.deleted_exact))
-                }
-                Caption::Detail(Detail::Type) => line.child(text(&row.kind, "")),
             }
         }))
 }
 
 /// The details `captions` say, as the list's columns would.
-fn caption_columns(captions: &[Caption]) -> PerColumn<bool> {
+pub(crate) fn caption_columns(captions: &[Caption]) -> PerColumn<bool> {
     let mut columns = PerColumn([false; COLUMNS.len()]);
     for caption in captions {
         if let Caption::Detail(detail) = caption {
