@@ -1179,6 +1179,9 @@ struct SortCache {
     spare: Option<Arc<[EntryId]>>,
     /// Where each group starts in `ids`, once asked (`Listing::spans`).
     spans: Option<Arc<[Span]>>,
+    /// How many entries each group holds, while it is grouped: what
+    /// `spans` is told from.
+    runs: Option<Runs>,
     /// Whether companions were shown when `ids` was made.
     companions_shown: bool,
     /// How many entries the listing held when `ids` was made: the ones
@@ -1210,7 +1213,11 @@ impl SortCache {
         sort: Sort,
         companions_shown: bool,
         ids: Arc<[EntryId]>,
-        (ranks, extras): (Vec<Rank>, Extras),
+        Ranked {
+            ranks,
+            extras,
+            runs,
+        }: Ranked,
         seen: usize,
     ) -> Self {
         SortCache {
@@ -1218,6 +1225,7 @@ impl SortCache {
             made: sort.stamp(),
             sort,
             spans: None,
+            runs,
             ids,
             spare: None,
             companions_shown,
@@ -1340,11 +1348,104 @@ impl Moved {
     }
 }
 
-/// The ranks of `keyed`, in its order, and what they point at.
-fn ranks_of(keyed: &[SortKeyOf<'_>]) -> (Vec<Rank>, Extras) {
+/// An order's ranks, what they point at, and its groups' counts.
+#[derive(Debug)]
+struct Ranked {
+    ranks: Vec<Rank>,
+    extras: Extras,
+    runs: Option<Runs>,
+}
+
+/// The ranks of `keyed`, in its order under `sort`, what they point at,
+/// and while it is grouped how many each group holds.
+fn ranks_of(sort: &Sort, keyed: &[SortKeyOf<'_>]) -> Ranked {
     let mut extras = Extras::default();
     let ranks = keyed.iter().map(|key| Rank::of(key, &mut extras)).collect();
-    (ranks, extras)
+    let runs = sort.grouping().is_some().then(|| {
+        let mut runs = Runs::default();
+        for key in keyed {
+            runs.push(sort.spec, key.extra.as_ref().and_then(|e| e.group.as_ref()));
+        }
+        runs
+    });
+    Ranked {
+        ranks,
+        extras,
+        runs,
+    }
+}
+
+/// The groups of an order, in it, and how many of its entries each holds:
+/// each starts where those before it end (`Listing::spans_shown`). Kept as
+/// entries are placed and taken out, so that a change in a grouped order
+/// is told in its groups without a pass over the whole order (ADR-130):
+/// a group's entries are one run of it, the order being by group first,
+/// those not read yet last (`Listing::compare`).
+#[derive(Debug, Default)]
+struct Runs(Vec<(Option<Arc<Group>>, usize)>);
+
+impl Runs {
+    /// Where groups `a` and `b` stand in an order by `spec`: by
+    /// `group_order`, none (not read yet) after every group.
+    fn order(spec: SortSpec, a: Option<&Group>, b: Option<&Group>) -> std::cmp::Ordering {
+        a.is_none()
+            .cmp(&b.is_none())
+            .then_with(|| group_order(spec, a, b))
+    }
+
+    /// One more of `group` after the rest: what an order made whole holds,
+    /// in its order.
+    fn push(&mut self, spec: SortSpec, group: Option<&Arc<Group>>) {
+        match self.0.last_mut() {
+            Some((last, n)) if Self::order(spec, last.as_deref(), group.map(|g| &**g)).is_eq() => {
+                *n += 1;
+            }
+            _ => self.0.push((group.cloned(), 1)),
+        }
+    }
+
+    /// One more of `group`, wherever it stands.
+    fn add(&mut self, spec: SortSpec, group: Option<&Arc<Group>>) {
+        let found = self
+            .0
+            .binary_search_by(|(g, _)| Self::order(spec, g.as_deref(), group.map(|g| &**g)));
+        match found {
+            Ok(at) => self.0[at].1 += 1,
+            Err(at) => self.0.insert(at, (group.cloned(), 1)),
+        }
+    }
+
+    /// One fewer of `group`: gone with the last of it.
+    fn take(&mut self, spec: SortSpec, group: Option<&Group>) {
+        let found = self
+            .0
+            .binary_search_by(|(g, _)| Self::order(spec, g.as_deref(), group));
+        debug_assert!(found.is_ok(), "{group:?} counted in its order");
+        if let Ok(at) = found {
+            self.0[at].1 -= 1;
+            if self.0[at].1 == 0 {
+                self.0.remove(at);
+            }
+        }
+    }
+
+    /// Where each group starts in the order, and how many it holds.
+    fn spans(&self) -> Vec<Span> {
+        let mut start = 0;
+        self.0
+            .iter()
+            .map(|(group, n)| {
+                let span = Span {
+                    start,
+                    len: *n,
+                    count: *n,
+                    group: group.clone(),
+                };
+                start += n;
+                span
+            })
+            .collect()
+    }
 }
 
 /// What an order's ranks point at (`Rank::extra`): 0 is none, `n` the
@@ -1804,7 +1905,7 @@ struct Sorting {
 #[derive(Debug)]
 struct Sorted {
     ids: Arc<[EntryId]>,
-    ranks: (Vec<Rank>, Extras),
+    ranks: Ranked,
 }
 
 /// A sort of a listing shown, for a worker (`Listing::sort_job`): the
@@ -1860,7 +1961,7 @@ impl SortJob {
             keyed.sort_unstable_by(|a, b| Listing::compare(sort.spec, a, b));
             Sorted {
                 ids: keyed.iter().map(|key| key.id).collect(),
-                ranks: ranks_of(&keyed),
+                ranks: ranks_of(&sort, &keyed),
             }
         };
         drop(entries);
@@ -2557,8 +2658,9 @@ impl Listing {
 
     /// Where each group starts in the order shown for `sort`
     /// (`order_shown`), its label and its count (ADR-130); empty when it is
-    /// not grouped. Made from the order's ranks, which hold each entry's
-    /// group, once per order.
+    /// not grouped. Told from how many each group holds, which the order
+    /// keeps as entries are placed (`Runs`): as many steps as groups, not
+    /// entries.
     pub fn spans_shown(&self, sort: impl Into<Sort>) -> Arc<[Span]> {
         let sort = sort.into();
         self.order_shown(&sort);
@@ -2572,11 +2674,10 @@ impl Listing {
         if let Some(spans) = &c.spans {
             return Arc::clone(spans);
         }
-        let (ranks, extras) = (&c.ranks, &c.extras);
-        let spans: Arc<[Span]> = crate::grouping::spans_of(&c.ids, |at, _| {
-            Some(extras.get(ranks[at].extra).and_then(|e| e.group.clone()))
-        })
-        .into();
+        let spans: Arc<[Span]> = match &c.runs {
+            Some(runs) => runs.spans().into(),
+            None => Arc::from([]),
+        };
         c.spans = Some(Arc::clone(&spans));
         spans
     }
@@ -3298,12 +3399,13 @@ impl Listing {
         }
         let keyed = self.keyed(&sort);
         let ids: Arc<[EntryId]> = keyed.iter().map(|key| key.id).collect();
+        let ranked = ranks_of(&sort, &keyed);
         *cache = Some(SortCache::new(
             self.order_version,
             sort,
             companions_shown,
             Arc::clone(&ids),
-            ranks_of(&keyed),
+            ranked,
             self.entries.len(),
         ));
         ids
@@ -3570,6 +3672,14 @@ impl Listing {
         let mut new: Vec<Rank> = again.iter().map(|key| Rank::with(key, 0)).collect();
         let ranks = &mut cache.ranks;
         let extras = &mut cache.extras;
+        // Each group's count, one fewer for each taken out, one more for
+        // each placed.
+        let runs = &mut cache.runs;
+        if let Some(runs) = runs.as_mut() {
+            for key in &again {
+                runs.add(spec, key.extra.as_ref().and_then(|e| e.group.as_ref()));
+            }
+        }
         let keep = |new: &mut [Rank], extras: &mut Extras| {
             for (rank, key) in new.iter_mut().zip(&again) {
                 rank.extra = extras.add(key.extra.as_ref());
@@ -3588,6 +3698,9 @@ impl Listing {
                 ins[j] = end;
             }
             for &at in &drops {
+                if let Some(runs) = runs.as_mut() {
+                    runs.take(spec, extras.group(ranks[at].extra));
+                }
                 extras.free(ranks[at].extra);
             }
             keep(&mut new, extras);
@@ -3600,6 +3713,9 @@ impl Listing {
             ranks.retain(|r| {
                 let kept = !taken.holds(r.id);
                 if !kept {
+                    if let Some(runs) = runs.as_mut() {
+                        runs.take(spec, extras.group(r.extra));
+                    }
                     extras.free(r.extra);
                 }
                 kept
@@ -5434,6 +5550,12 @@ mod tests {
                     assert_eq!(
                         *listing.sorted(&sort),
                         *listing.compute_sorted(&sort),
+                        "{:?}",
+                        sort.spec
+                    );
+                    assert_eq!(
+                        said(&listing.spans_shown(&sort)),
+                        said(&spans_whole(listing, &sort)),
                         "{:?}",
                         sort.spec
                     );

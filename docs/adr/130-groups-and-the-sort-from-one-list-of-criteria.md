@@ -8,7 +8,8 @@ for Windows and, but for the shell, macOS (`just check-cross`). Amends
 ADR-099 (the View menu's sort) and follows
 ADR-121 (an order asked anew is made on a worker). Amended by ADR-131
 (2026-11-11): headings the keys reach (9, 12), and phase 5 settled and
-built.
+built; and on 2026-11-12 (below): groups told from their counts, costly
+keys asked on every core.
 
 ## Context
 
@@ -183,3 +184,38 @@ built.
   contract. A folder's group is called by its path from the home folder
   (`~/notes`) and has no term: a filter tests a file by itself, not where
   it is, so its heading's menu offers Select these alone.
+
+## Amended 2026-11-12: groups told from their counts, costly keys on every core
+
+Grouping `/nix/store` (385 113 entries) was very slow (the user's
+report); three of its four causes were here, the fourth ADR-121's (an
+order that reads waits for its reading, amended the same day).
+
+- **A group's span is told from how many it holds** (`Runs`, kept with
+  the order's ranks): made with the order, on the worker that sorts
+  (`ranks_of`), then one more or one fewer for each entry placed or
+  taken out (`Listing::place`). Every change in a grouped order told
+  its groups by a pass over the whole order: 3.7 ms for one file of a
+  folder of 385 000 entries, 1.2 s for 377 batches, and 33 ms of the
+  window's thread (debug build) to take an order made on a worker. Now
+  as many steps as groups (0.3 ms for the 377 batches, 0.1 ms to take
+  an order).
+- **Keys that read are asked on every core** in a sort made on a worker
+  (`Keys::costly`, set by the query plugin for Kind and Type, whose
+  answer is the type read from the name in the type database: about a
+  microsecond a name). Only the answers are made there, which entries
+  share (`answered_of`, scoped threads); each entry's key is made by the
+  sort's own thread, so what the order keeps is allocated by a thread
+  that lives on. Keys that answer from groups they share in nanoseconds
+  (a date's, an extension's) are asked on one: twenty threads asking
+  them at once made a sort by date four times as long. On the window's
+  thread, never: keys answer there from memory and leave what reads to
+  a worker. Grouping `/nix/store` by Kind took 1.3 s in the release
+  build, about 0.3 s now (17 s and 1.9 s in the debug build); 16 bytes
+  an entry while the sort runs.
+- **A name's type is read by the suffixes a pattern can be** (the
+  vendored xdg-mime's patch 0004): looking up every suffix of a name
+  cost the square of its length (3.2 µs for a store name's, against
+  0.9 µs for a short one); now only those starting with a byte a
+  pattern starts with and no longer than the longest, both read from
+  the database.

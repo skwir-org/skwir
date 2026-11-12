@@ -15422,3 +15422,77 @@ once), 226 run: 225 passed, 4 skipped, and
 `remote_folders::rclone_copies_within_its_mount_on_the_server` missed
 its minute in a batch of 82 run at once, as recorded on 2026-10-26
 under load; alone it passed in 1.4 s, and its file twice whole (39).
+
+## 2026-11-12: Grouping a folder of 385 000 entries
+
+The user found grouping `/nix/store` very slow and asked why, and
+whether it could be better. Measured in a window of its own (Xvfb,
+`skwir cmd group`), from the command to the groups settled:
+
+| Group by | release before | release after | debug before | debug after |
+| --- | --- | --- | --- | --- |
+| Kind, Type | 1.3 s | 0.3 s | 17 s | 1.9 s |
+| Extension | 0.2 s | 0.25 s | 1.2 s | 1.6 s |
+| Modified (sorted by name) | 1.9 s, 0.8 s of the window's thread in 66 syncs (15 ms the longest) | 1.1 s, 2.2 ms in 112 syncs (0.7 ms) | 13.3 s, 5.5 s in 159 syncs of ~30 ms | 11.6 s, 38 ms in 262 syncs (0.5 ms) |
+
+The machine was loaded while the "after" column was measured (load 8
+to 20, swap in use); same-run comparisons of the core probe below.
+
+Four causes, a fix each, all chosen by the user:
+
+- **A name's type cost the square of its length.** The vendored
+  xdg-mime looked a name up by every suffix, each hashed whole: 0.9 µs
+  for `a1.jpg`, 3.2 µs for a store name, 4.5 µs at 90 characters
+  (`mime::by_name`, 50 000 unique names a case). Patch 0004 looks up
+  only the suffixes a simple pattern can be: no longer than the longest
+  (18 bytes on this desktop's 1,409) and starting with a byte one starts
+  with (a dot but for three), both read from the patterns. Typing a
+  store name took 1.65 µs in the same conditions, `mime_by_name_us`
+  71 ms for 100 000 names (120 ms recorded before).
+- **Keys were made on one core.** The worker's sort asked the query
+  plugin's keys entry by entry: 1.2 s of Kind's 1.3 s typing 336 000
+  names. Keys that read (`Keys::costly`: Kind, Type) are now asked on
+  every core (`answered_of`, scoped threads; only the shared answers
+  made there). Asked so, keys that answer from shared groups behind a
+  mutex (a date's, an extension's) made a sort by date four times as
+  long; they stay on one thread. The date keys no longer work out a
+  year's bounds for every entry of that year.
+- **The stats a sort by date needed were placed batch by batch.** After
+  the order was made (every entry not read yet), the shell asked every
+  entry's metadata, which came in 377 batches, each placed in the order
+  on the window's thread: 0.8 s there of 1.9 s in the release build. An
+  order that reads what the entries lack now waits for it (ADR-121,
+  amended): the listing asks the reading itself
+  (`Listing::reading_wanted`, `ListingJob::Read`), counts what it asked
+  without a list of ids, leaves what moves where it was, and once all
+  is read the order is made on a worker; the footer says "Reading… N of
+  M" past 200 ms. The shell's `sync_sort_hydration` and `Pane::unknown`
+  are gone. In the core probe (same run): 377 batches placed cost
+  1.12 s, applied while the order waits 91 ms (1.1 ms the longest), then
+  one sort of 0.2 s on a worker.
+- **Groups were told by a pass over the order** after every change:
+  1.2 to 1.4 s for the 377 batches, 3.7 ms for one file, 33 ms of the
+  window's thread (debug) to take an order a worker made. Each group's
+  count is now kept with the order (`Runs`), made on the worker that
+  sorts and moved by one as entries are placed: 0.3 ms for the 377
+  batches, 0.1 ms to take an order.
+
+What is left: a sort by a stat waits for the metadata providers' pass
+too (9.3 s of the debug build's 11.6 s is that reading); on-demand
+fields are still placed as they come.
+
+**Checked:** rustfmt; clippy `-D warnings` on `skwir-core`,
+`skwir-platform`, `skwir-ui` and `skwir-plugin-query`, all targets;
+their tests 2001 passed (new: the order and the groups made on every
+core equal those made one entry after the other; an order that reads
+waits for its reading, counting what is answered, read, unreadable or
+gone, and what came since; what moves while it reads stays until read;
+the groups' counts against a pass over the whole order, through
+arrivals, moves and removals; names longer than any pattern typed as
+every pattern tried types them); the binary's 230 passed, 4 skipped;
+`bench-check` for `listing_sort_hydrate_us` (139 ms, loaded),
+`listing_sort_update_us` (0.47 ms) and `mime_by_name_us`. In a window on
+Xvfb, debug and release: the groups above, and the footer during the
+reading ("385,123 items · 3.2 GB · Reading… 80,967 of 385,095") over
+the name order, which stayed until the groups came whole. Not run:
+`just check-cross`, `just a11y-check`.
