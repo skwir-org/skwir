@@ -15841,3 +15841,32 @@ back, before 3 in 6 and 2 in 12; after, 0 in 48 in all (12 of each). `skwir-ui`'
 tests, 647; clippy; `just a11y-check` (splits and tabs by keys), passed.
 Not tried: the keys' own gap (Ctrl+W then F3 in one turn), which the
 same follow covers.
+
+## 2026-11-12: A tooltip keeps its words on a line (0061, amended)
+
+Reported by the user after 0061: tooltips went to the line at each word,
+narrowed to their widest ("Bookmark / this folder / · Ctrl+D").
+
+- **Cause:** gpui lays a tooltip and what a drag shows out on their own
+  at `AvailableSpace::min_size`. While a text's minimum content width was
+  its line, that meant as wide as their words; 0061 made the minimum the
+  widest word, so they took that width. Skwir's own popovers were laid
+  out at max-content already.
+- **Fix, in 0061:** both are laid out at `AvailableSpace::max_size`
+  (new, beside `min_size`); a text there keeps to its line and wraps
+  only where a width it was given is too narrow (a tooltip's `max_w`,
+  480 px at 100 %). Skwir's popovers and `AdaptiveRow`'s measure of
+  its variants, laid out at max-content already, say
+  `AvailableSpace::max_size` too, and AGENTS.md's UI layout rule says
+  what is laid out on its own is given it.
+
+**Checked:** `window::tests::what_is_laid_out_on_its_own_keeps_its_words_on_a_line`
+(a tooltip and a drag, three lines in a block at most 100 px wide)
+passes, and fails at `min_size` for each (every word a line, 48 px
+wide); `just gpui-check gpui`, 139 passed. On Xvfb (debug build): the
+bookmark button's tooltip on one line (three lines in the build
+before); a long file name's tooltip wraps within 480 px; a file dragged
+shows its name on one line. The patch applies to the tree before 0061
+and gives the vendored tree. `skwir-ui`'s tests, 647; clippy. Not run:
+the rest of `just gpui-check`, `just gpui-check-windows`, `just
+check-cross`, `just smoke`.

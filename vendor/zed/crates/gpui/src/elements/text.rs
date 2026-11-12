@@ -1536,7 +1536,7 @@ mod tests {
     /// running past the row on one line.
     #[crate::test]
     fn a_text_in_a_narrow_row_wraps(cx: &mut crate::TestAppContext) {
-        use crate::{AvailableSpace, ParentElement as _, Styled as _, div, point, px, size};
+        use crate::{AvailableSpace, ParentElement as _, Styled as _, div, point, px};
         use std::{cell::RefCell, rc::Rc};
 
         let cx = cx.add_empty_window();
@@ -1550,7 +1550,7 @@ mod tests {
                 // system: 134.4 px at 16 px, its widest word 48 px.
                 .child("aaaa bbbb cccc")
         };
-        let anywhere = size(AvailableSpace::MaxContent, AvailableSpace::MaxContent);
+        let anywhere = AvailableSpace::max_size();
         let wide = Rc::new(RefCell::new(Vec::new()));
         let kept = wide.clone();
         cx.draw(point(px(0.), px(0.)), anywhere, move |_, _| {

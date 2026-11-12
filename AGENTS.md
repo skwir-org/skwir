@@ -81,7 +81,10 @@ working in an area, also read that area's rules (see
   dropped. A text narrows to its widest word where its row is short, and
   wraps (vendored gpui 0061, as CSS has it): what must stay on one line
   (a control's label, a name cut with an ellipsis) says so,
-  `whitespace_nowrap` or `truncate`.
+  `whitespace_nowrap` or `truncate`. What is laid out on its own at its
+  natural size (a popup, a measure in prepaint) is given
+  `AvailableSpace::max_size`: at `min_size`, its texts narrow to their
+  widest word.
 - **Tokens.** Colors, radii, shadows and fonts come from `theme.rs` (its
   header lists the scales). State colors are tokens too (`hover`,
   `selection_*`, `success`/`warning`/`error`, `scrim`); never derive one

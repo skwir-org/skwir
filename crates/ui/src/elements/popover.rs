@@ -212,11 +212,7 @@ impl PopoverAnchor {
                         .max_h((view.height - MARGIN * 2.).max(px(120.)))
                         .child(panel)
                         .into_any_element();
-                    let size = popup.layout_as_root(
-                        size(AvailableSpace::MaxContent, AvailableSpace::MaxContent),
-                        window,
-                        cx,
-                    );
+                    let size = popup.layout_as_root(AvailableSpace::max_size(), window, cx);
                     // Its panel's edge meets the menu's: the row's edge
                     // plus the menu's own inset, less the two borders.
                     let reach = inset - px(2.);
@@ -355,11 +351,7 @@ fn place(
                             .child(panel()?),
                     )
                     .into_any_element();
-                popup.layout_as_root(
-                    size(AvailableSpace::MaxContent, AvailableSpace::MaxContent),
-                    window,
-                    cx,
-                );
+                popup.layout_as_root(AvailableSpace::max_size(), window, cx);
                 popup.prepaint_at(gpui::Point::default(), window, cx);
                 Some(popup)
             },

@@ -93,7 +93,7 @@ carry: the script takes it from the Inter release Skwir's packages pin
 | `0058-rounded-mask-on-device-pixels` | A rounded content mask lies on whole device pixels, as what it holds is drawn | — |
 | `0059-unreached-mask-corners` | A primitive that reaches no rounded corner of its mask is kept by its rectangles alone, so its fragments skip the corners' distance | — |
 | `0060-inline-boxes` | A line holds boxes its caller draws (`RunPosition::Inline`): each character of an inline run is one, as wide as it says, never shaped or painted; `TextLayout::inline_boxes` says where each was drawn; a box taller than its text grows the row it is set in, and that row alone (`LineRows`); `StyledText::with_said` gives what such a text says to assistive technology | — |
-| `0061-text-narrows-to-its-widest-word` | A text's minimum content width is its widest word (CSS's), so beside others in a row it narrows and wraps rather than running past them; Zed's was its whole line, which no row could shrink | — |
+| `0061-text-narrows-to-its-widest-word` | A text's minimum content width is its widest word (CSS's), so beside others in a row it narrows and wraps rather than running past them; Zed's was its whole line, which no row could shrink. A tooltip and what a drag shows are laid out as wide as their words (`AvailableSpace::max_size`) | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
 
@@ -1132,6 +1132,13 @@ requirement under its card, 2026-11-12). CSS takes the longest word.
 - **Once a line.** The width and its wraps are worked out once for a
   shaped line and kept with it in the line layout cache
   (`WrappedLineLayout::min_content`), across frames.
+- **What is laid out on its own.** A tooltip and what a drag shows were
+  laid out at `AvailableSpace::min_size`, which meant as wide as their
+  words while a text's minimum was its line. With the minimum now a word,
+  they narrowed to their widest (a toolbar button's tooltip, 2026-11-12). They
+  are laid out at `AvailableSpace::max_size` (new, beside `min_size`): a
+  text there keeps to its line and wraps only where a width it was given
+  (a `max_w`) is too narrow.
 
 Where a row has room, nothing moves: Skwir's screens at 1280 px were drawn
 alike before and after it, pixel for pixel (33 screens; 640 and 460 px
@@ -1141,5 +1148,7 @@ the close button). Its cost, in the debug build on Xvfb: none scrolling a
 list or a grid of 2,000 files, about 3 % of a frame scrolling the
 settings' Plugins page, all sentences (65.7 against 67.6 ms, median). The
 tests are
-`text_system::line_layout::tests::test_min_wrap_width_is_the_widest_word`
-and `elements::text::tests::a_text_in_a_narrow_row_wraps`.
+`text_system::line_layout::tests::test_min_wrap_width_is_the_widest_word`,
+`elements::text::tests::a_text_in_a_narrow_row_wraps` and
+`window::tests::what_is_laid_out_on_its_own_keeps_its_words_on_a_line`
+(it fails at `min_size`, for a tooltip and for a drag).

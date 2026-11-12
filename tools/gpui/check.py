@@ -64,6 +64,9 @@ RUNS = [
         # A text in a row too narrow wraps at its widest word (0061; that
         # width is text_system::line_layout's).
         "elements::text::tests::a_text_in_a_narrow_row_wraps",
+        # What is laid out on its own (a tooltip, what a drag shows) as wide
+        # as its words, not its widest word (0061).
+        "window::tests::what_is_laid_out_on_its_own",
     ]),
     # All of them: the atlas (an upload to a removed texture), the context,
     # the renderer and the text system (a variable face's weights, 0045).

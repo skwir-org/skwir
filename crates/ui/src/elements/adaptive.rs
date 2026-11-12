@@ -174,13 +174,7 @@ impl Element for Fit {
         let sizes: Vec<gpui::Size<Pixels>> = self
             .variants
             .iter_mut()
-            .map(|variant| {
-                variant.layout_as_root(
-                    size(AvailableSpace::MaxContent, AvailableSpace::MaxContent),
-                    window,
-                    cx,
-                )
-            })
+            .map(|variant| variant.layout_as_root(AvailableSpace::max_size(), window, cx))
             .collect();
         let widest = sizes.iter().map(|s| s.width).fold(px(0.), Pixels::max);
         let narrowest = if self.cuts {

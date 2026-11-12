@@ -3856,7 +3856,7 @@ impl Window {
             if !cx.platform_draws_drag(self.handle.window_id()) {
                 let mut element = active_drag.view.clone().into_any_element();
                 let offset = self.mouse_position() - active_drag.cursor_offset;
-                element.prepaint_as_root(offset, AvailableSpace::min_size(), self, cx);
+                element.prepaint_as_root(offset, AvailableSpace::max_size(), self, cx);
                 active_drag_element = Some(element);
             }
             cx.active_drag = Some(active_drag);
@@ -3938,7 +3938,7 @@ impl Window {
             };
             let mut element = tooltip_request.tooltip.view.clone().into_any_element();
             let mouse_position = tooltip_request.tooltip.mouse_position;
-            let tooltip_size = element.layout_as_root(AvailableSpace::min_size(), self, cx);
+            let tooltip_size = element.layout_as_root(AvailableSpace::max_size(), self, cx);
 
             let mut tooltip_bounds =
                 Bounds::new(mouse_position + point(px(1.), px(1.)), tooltip_size);
@@ -8186,18 +8186,19 @@ mod tests {
         cell::{Cell, RefCell},
         path::PathBuf,
         rc::Rc,
+        sync::Arc,
         time::Duration,
     };
 
     use crate::{
-        AnyWindowHandle, AppContext as _, BackGestureEvent, BackGesturePhase, Bounds, ContentMask,
-        Context, DispatchPhase, DragMoveEvent, Empty, ExternalDragPayload, ExternalPaths,
-        FileDragPaths, FileDropEvent, FocusHandle, InputEvent as _, InteractiveElement as _,
-        IntoElement, KeyDownEvent, Keystroke, LongPressEvent, MouseButton, MouseDownEvent,
-        MouseMoveEvent, ParentElement, Pixels, PlatformInput, Point, Render, RequestFrameOptions,
-        ScaledPixels, StatefulInteractiveElement as _, Styled, TestAppContext, ThermalState,
-        TouchDragEvent, TouchEvent, TouchId, TouchPhase, Underline, UnderlineStyle, Window,
-        WindowAppearance, WindowOptions, canvas, div, hsla, point, px, size,
+        AnyDrag, AnyView, AnyWindowHandle, AppContext as _, BackGestureEvent, BackGesturePhase,
+        Bounds, ContentMask, Context, DispatchPhase, DragMoveEvent, Empty, ExternalDragPayload,
+        ExternalPaths, FileDragPaths, FileDropEvent, FocusHandle, InputEvent as _,
+        InteractiveElement as _, IntoElement, KeyDownEvent, Keystroke, LongPressEvent, MouseButton,
+        MouseDownEvent, MouseMoveEvent, ParentElement, Pixels, PlatformInput, Point, Render,
+        RequestFrameOptions, ScaledPixels, StatefulInteractiveElement as _, Styled, TestAppContext,
+        ThermalState, TouchDragEvent, TouchEvent, TouchId, TouchPhase, Underline, UnderlineStyle,
+        Window, WindowAppearance, WindowOptions, canvas, div, hsla, point, px, size,
     };
 
     #[gpui::test]
@@ -10288,6 +10289,94 @@ mod tests {
                 );
             })
             .unwrap();
+    }
+
+    /// A text in what is laid out on its own: three lines of words in a
+    /// block at most 100 px wide, as a tooltip is, each line's bounds seen
+    /// as it prepaints.
+    struct Words(Rc<RefCell<Vec<Bounds<Pixels>>>>);
+
+    impl Render for Words {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let seen = self.0.clone();
+            div()
+                .max_w(px(100.))
+                .on_children_prepainted(move |bounds, _, _| *seen.borrow_mut() = bounds)
+                // 0.6 em a character at 16 px in the test platform's text
+                // system: "aaaa bbbb" is 86.4 px, "aaaa bbbb cccc" 134.4.
+                .child("aaaa")
+                .child("aaaa bbbb")
+                .child("aaaa bbbb cccc")
+        }
+    }
+
+    struct TipOwner(Rc<RefCell<Vec<Bounds<Pixels>>>>);
+
+    impl Render for TipOwner {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let seen = self.0.clone();
+            div().size_full().child(
+                div()
+                    .id("target")
+                    .w(px(50.))
+                    .h(px(50.))
+                    .tooltip(move |_, cx| cx.new(|_| Words(seen.clone())).into()),
+            )
+        }
+    }
+
+    /// A tooltip and what a drag shows are laid out on their own, as wide
+    /// as their content (`AvailableSpace::max_size`): their words wrap
+    /// only where the width they were given is too narrow, never at each
+    /// word, as a text's min-content width (its widest word) would have it.
+    #[gpui::test]
+    fn what_is_laid_out_on_its_own_keeps_its_words_on_a_line(cx: &mut TestAppContext) {
+        fn check(what: &str, seen: &[Bounds<Pixels>]) {
+            let &[word, fits, long] = seen else {
+                panic!("{what}: three lines prepainted, got {seen:?}");
+            };
+            assert_eq!(
+                fits.size.height, word.size.height,
+                "{what}: what fits stays on one line: {seen:?}"
+            );
+            assert!(
+                long.size.height > word.size.height && long.size.width <= px(100.),
+                "{what}: what is too wide wraps within its width: {seen:?}"
+            );
+        }
+
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        let window: AnyWindowHandle = cx
+            .add_window({
+                let seen = seen.clone();
+                move |_, _| TipOwner(seen)
+            })
+            .into();
+        cx.update_window(window, |_, window, cx| {
+            window.draw(cx).clear(cx);
+            window.simulate_mouse_move(point(px(10.), px(10.)), cx);
+            window.draw(cx).clear(cx);
+        })
+        .unwrap();
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        cx.update_window(window, |_, window, cx| window.draw(cx).clear(cx))
+            .unwrap();
+        check("a tooltip", &seen.take());
+
+        cx.update_window(window, |_, window, cx| {
+            let view: AnyView = cx.new(|_| Words(seen.clone())).into();
+            cx.active_drag = Some(AnyDrag {
+                view,
+                value: Arc::new(()),
+                cursor_offset: Point::default(),
+                cursor_style: None,
+                external_payload_source: None,
+            });
+            window.draw(cx).clear(cx);
+        })
+        .unwrap();
+        check("what a drag shows", &seen.take());
     }
 }
 

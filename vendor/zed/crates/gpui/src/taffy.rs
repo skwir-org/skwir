@@ -716,6 +716,28 @@ impl AvailableSpace {
             height: Self::MinContent,
         }
     }
+
+    /// Returns a `Size` with both width and height set to `AvailableSpace::MaxContent`.
+    ///
+    /// What an element laid out on its own is given when it is as wide as
+    /// its content: a tooltip, what a drag shows. A text there keeps to one
+    /// line, wrapped only where a width it was given (a `max_w`) is too
+    /// narrow; at `min_size` it would narrow to its widest word.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use gpui::AvailableSpace;
+    /// let max_content_size = AvailableSpace::max_size();
+    /// assert_eq!(max_content_size.width, AvailableSpace::MaxContent);
+    /// assert_eq!(max_content_size.height, AvailableSpace::MaxContent);
+    /// ```
+    pub const fn max_size() -> Size<Self> {
+        Size {
+            width: Self::MaxContent,
+            height: Self::MaxContent,
+        }
+    }
 }
 
 impl From<AvailableSpace> for TaffyAvailableSpace {
