@@ -15654,3 +15654,46 @@ measure), alternated, own share median: grid 124.5 and 124.6 MiB, list
 122.1 and 121.7 MiB, the grid about 2.6 MiB more; first frame 96–110 ms
 both. Not run: `just idle-pss` on the session's display (it opens
 windows there), `just check-cross`, `just smoke`.
+
+## 2026-11-12: Exclusions listed by name (ADR-125, amended)
+
+The user asked how the Exclusions page is ordered and chose name order,
+the categories too, with no order to pick.
+
+- **Before:** categories in `builtin.toml`'s order (Secrets first, Yours
+  last), the user's after them; rows in the file's order, each group
+  where it first came (Toolchains: Rust, Go, JavaScript, Dart, Python…,
+  Version managers, Package managers, Lean, Terraform, Pulumi); one
+  tool's rows for two systems apart (GitHub CLI at lines 1279 and 1365).
+  The user's rows were placed at the end of their category, then read
+  back from the settings, which keep no order (a table by id), in id
+  order.
+- **Now** (`settings_exclusions::categories`, `place`): categories by
+  name, skwir's and the user's alike, in the headings, a row's Move to
+  and the dialog's picker; in a category, the rows of no group, then
+  each group by name, each by what the entry is (its folder where it
+  says nothing), by `collate::sort_key`, as file names are. A stable
+  sort keeps one tool's rows for two systems in the catalog's order. The
+  rows are made as before, linear in the catalog, plus a sort of what an
+  unfolded category shows, and of the dozen categories. `added` no
+  longer places a row: the names do.
+- **Privacy's link** unfolds Secrets and scrolls it to the top
+  (`scroll_to_item_strict`: Secrets, now eighth, was in view, so the
+  plain scroll left the page where it was). `ui.settings` takes the
+  `role` the shell already handled: its arguments refused it ("unknown
+  field `role`").
+- A copy (Duplicate) is scrolled to, where its name puts it (not tried
+  in the window).
+
+**Checked:** rustfmt; clippy `-D warnings` on `skwir-ui` (all
+targets); `skwir-ui`'s tests, 645 passed (new: rows by name, Toolchains'
+groups and Secrets' in order; the user's rows by name added and read
+back, which the old placement would not give, by reading it: the one
+added first first; the user's categories among skwir's by name); `skwir`'s `plugins_toggle` (every command's schema),
+6. In a window on Xvfb (debug build): `ui.settings {page: "exclusions",
+role: "agents"}` opened the page with Secrets at the top, its own row
+then Browsers, Found by what they hold (Chromium's, Firefox, GnuPG,
+GnuPG, pass), … Wallets; on Searches the headings from AI models and
+agents to Yours; Toolchains unfolded after The system's, its groups by
+language. Not run: `just check-cross`, the a11y check (the page's
+names and roles are unchanged).

@@ -5,7 +5,8 @@ Status: accepted 2026-11-08 with the user, from issue #6 (a tagged
 Windows compiled only. Replaces the private folders' list of ADR-044
 (`privacy.folders`, `privacy.marker`, read on as a 0.3.1 file's) and
 ADR-092's `extract.exclude` (the Index role); amends ADR-026 (what a
-search's walk does not reach).
+search's walk does not reach). Amended 2026-11-12 (see Amendments: the
+page lists by name).
 
 ## Context
 
@@ -113,7 +114,8 @@ search's walk does not reach).
    removed; the user's own categories; filters (text, Only on this
    computer, Changed). A row's menu is the shared context menu (Move to
    a real submenu). No Undo: a tick undoes itself, and no other settings
-   page has one. Privacy opens it on Agents.
+   page has one. Privacy opens it on Agents. (Amended: listed by name,
+   13.)
 10. **A path may start at a variable** (`$CARGO_HOME/registry`,
    `${CARGO_HOME:-~/.cargo}/registry`, the shell's syntax, a default
    nesting another; a list's first folder, where tools write; each one of
@@ -140,6 +142,26 @@ search's walk does not reach).
    skwir does not becomes the user's, in Secrets; what 0.3.1 shipped that
    it no longer listed stays unticked for agents; `.private` off unticks
    its rule. Home Manager's declared old keys keep working.
+
+## Amendments
+
+2026-11-12, the user's choice, on their question how the page is
+ordered (it listed in the order of `builtin.toml`, the research's, which
+says nothing to whoever reads it):
+
+13. **The page lists by name**, as file names are (`collate`): the
+   categories, skwir's and the user's alike
+   (`settings_exclusions::categories`: the headings, a row's Move to,
+   the dialog's picker); in each, the rows of no group first, then each
+   group by its name, and in each by what the entry is, its folder where
+   it says nothing (`place`). The settings keep no order, so the order is
+   the names' alone: a row added, renamed or read back stands where its
+   name puts it (it used to come back elsewhere once saved), and one
+   tool's rows for two systems stand together. No order to choose: every
+   rule applies alike, none before another, so an order only helps
+   finding, which the filters do too. Privacy's link, and `ui.settings`
+   with `role: "agents"` (which the command's arguments now take), bring
+   Secrets to the top wherever its name puts it.
 
 ## Consequences
 

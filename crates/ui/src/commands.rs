@@ -575,6 +575,10 @@ mod args {
         /// `keyboard`: words of the actions' or keys (`ctrl+t`).
         #[serde(default)]
         filter: Option<String>,
+        /// What the Exclusions page lists, with `page` `exclusions`:
+        /// `searches` (by default) or `agents`, its Secrets unfolded.
+        #[serde(default)]
+        role: Option<String>,
     }
 
     #[derive(Deserialize, JsonSchema)]

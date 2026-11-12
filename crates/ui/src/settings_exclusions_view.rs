@@ -325,12 +325,25 @@ impl SettingsView {
     pub(crate) fn show_exclusions(&mut self, role: Role, cx: &mut Context<Self>) {
         self.go(crate::settings::Page::Exclusions, cx);
         self.exclusions.role = role;
-        // Asked for what agents never see: the secrets, unfolded.
+        // Asked for what agents never see: the secrets, unfolded, at the
+        // top, wherever their name puts them.
         if role == Role::Agents {
             self.exclusions.fold(SECRETS, false);
         }
         self.exclusions.rows.take();
-        self.exclusions.list.scroll_to_item(0, ScrollStrategy::Top);
+        let secrets = Cursor::Category(SECRETS.to_owned());
+        let at = if role == Role::Agents {
+            self.exclusion_rows(cx)
+                .iter()
+                .position(|r| r.cursor().as_ref() == Some(&secrets))
+                .unwrap_or(0)
+        } else {
+            0
+        };
+        // Strict: Secrets in view, lower down, is still brought up.
+        self.exclusions
+            .list
+            .scroll_to_item_strict(at, ScrollStrategy::Top);
         cx.notify();
     }
 
@@ -1327,11 +1340,8 @@ impl SettingsView {
                 if !entry.builtin {
                     items.push(item("Edit…", "rename", 200, of("edit")));
                 }
-                for (n, category) in self
-                    .exclusions
-                    .catalog
-                    .categories
-                    .iter()
+                for (n, category) in model::categories(&self.exclusions.catalog)
+                    .into_iter()
                     .filter(|c| c.id != entry.category)
                     .enumerate()
                 {
@@ -1430,6 +1440,8 @@ impl SettingsView {
                 self.exclusions.cursor = Some(Cursor::Entry(copy.clone()));
                 self.exclusions.reveal(&copy);
                 self.propose_exclusions(after, said, window, cx);
+                // Shown where its name puts it.
+                self.reveal_cursor(cx);
                 // The copy is there to be changed.
                 if self.exclusions.asking.is_none() {
                     self.open_entry_dialog(Some(copy), None, window, cx);
@@ -2308,9 +2320,8 @@ impl SettingsView {
         let category_name = catalog
             .category(&category)
             .map_or_else(|| category.clone(), |c| c.name.clone());
-        let ids: Vec<(String, String)> = catalog
-            .categories
-            .iter()
+        let ids: Vec<(String, String)> = model::categories(&catalog)
+            .into_iter()
             .map(|c| (c.id.clone(), c.name.clone()))
             .collect();
         let step_ids = ids.clone();

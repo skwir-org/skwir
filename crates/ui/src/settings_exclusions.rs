@@ -6,10 +6,12 @@
 //! gpui: drawn by `settings_exclusions_view.rs`.
 
 use std::collections::{HashMap, HashSet};
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
+use skwir_core::collate;
 use skwir_core::exclusions::{
-    Catalog, Entry, Matcher, Names, Role, Switches, Written, YOURS, unique_id,
+    Catalog, Category, Entry, Matcher, Names, Role, Switches, Written, YOURS, unique_id,
 };
 
 /// The roles the page offers: the index is not built.
@@ -320,11 +322,42 @@ pub(crate) fn category_changed(catalog: &Catalog, id: &str) -> bool {
         .is_some_and(|c| !c.builtin || c.shipped != Some(c.switches))
 }
 
-/// The rows for `ask`: each category in the catalog's order (skwir's,
-/// then the user's), its heading, then its entries: those of no group
-/// first, then each group under its sub-heading, in the order each group
-/// first comes. Linear in the
-/// catalog (a sort within each category).
+/// The categories as the page lists them, wherever it does (its headings,
+/// a row's Move to, the dialog's picker): by name, as file names are
+/// (`collate`), skwir's and the user's alike.
+pub(crate) fn categories(catalog: &Catalog) -> Vec<&Category> {
+    let mut categories: Vec<&Category> = catalog.categories.iter().collect();
+    categories.sort_by_cached_key(|c| collate::sort_key(OsStr::new(&c.name)));
+    categories
+}
+
+/// A row's place: its group's sort key (none first), then its name's.
+type Place = (Option<Box<[u8]>>, Box<[u8]>);
+
+/// Where a row stands among its category's: those of no group first, then
+/// each group by its name, and in each by what the entry is (its folder
+/// where it says nothing), as file names are (`collate`). The order is
+/// the names', never the catalog's: a row added, or read again from the
+/// settings, which keep none, stands where its name puts it.
+fn place(entry: &Entry, shown_as: &str) -> Place {
+    let name = if entry.what.is_empty() {
+        shown_as
+    } else {
+        &entry.what
+    };
+    (
+        entry
+            .group
+            .as_deref()
+            .map(|group| collate::sort_key(OsStr::new(group))),
+        collate::sort_key(OsStr::new(name)),
+    )
+}
+
+/// The rows for `ask`: each category by name (`categories`), its
+/// heading, then its entries in their places (`place`), each group under
+/// its sub-heading. Linear in the catalog, and a sort of what each
+/// category unfolded shows.
 pub(crate) fn rows(catalog: &Catalog, ask: &Ask<'_>) -> Vec<Row> {
     let words: Vec<String> = ask
         .filter
@@ -340,7 +373,7 @@ pub(crate) fn rows(catalog: &Catalog, ask: &Ask<'_>) -> Vec<Row> {
             .push(at);
     }
     let mut rows = Vec::new();
-    for category in &catalog.categories {
+    for category in categories(catalog) {
         let on = category.switches.get(ask.role);
         let members = by_category
             .get(category.id.as_str())
@@ -350,11 +383,10 @@ pub(crate) fn rows(catalog: &Catalog, ask: &Ask<'_>) -> Vec<Row> {
         // Folded, its entries are counted, not made into rows.
         let folded = !filtering && !ask.changed_only && !ask.unfolded.contains(&category.id);
         let mut counted = 0;
-        let mut lines: Vec<(usize, Line)> = Vec::new();
+        let mut lines: Vec<(Place, Line)> = Vec::new();
         let mut here_narrowed = false;
         let mut found_narrowed = false;
         let mut kept = 0;
-        let mut groups: HashMap<Option<&str>, usize> = HashMap::new();
         for &at in members {
             let entry = &catalog.entries[at];
             let keeps = catalog.keeps(entry, ask.role);
@@ -407,15 +439,8 @@ pub(crate) fn rows(catalog: &Catalog, ask: &Ask<'_>) -> Vec<Row> {
             if absent {
                 badges.push(Badge::Absent);
             }
-            // The ungrouped first, then each group in the order it first
-            // comes, however the list interleaves them.
-            let next = groups.len() + 1;
-            let group = match entry.group.as_deref() {
-                None => 0,
-                Some(name) => *groups.entry(Some(name)).or_insert(next),
-            };
             lines.push((
-                group,
+                place(entry, &shown_as),
                 Line {
                     id: entry.id.clone(),
                     at,
@@ -477,8 +502,9 @@ pub(crate) fn rows(catalog: &Catalog, ask: &Ask<'_>) -> Vec<Row> {
             rows.push(Row::Empty(category.id.clone(), why));
             continue;
         }
-        // The ungrouped, then each group together: stable.
-        lines.sort_by_key(|(group, _)| *group);
+        // Stable: two entries alike (one tool's on two systems) keep the
+        // catalog's order.
+        lines.sort_by(|(a, _), (b, _)| a.cmp(b));
         let their_groups: Vec<Option<String>> = lines
             .iter()
             .map(|(_, line)| catalog.entries[line.at].group.clone())
@@ -776,9 +802,9 @@ pub(crate) fn ticks_for(role: Role) -> Switches {
     }
 }
 
-/// The user's entry `draft` makes, added at the end of its category, its
-/// ticks the role's (`ticks_for`). Its id is made from what it is, else
-/// from its folder.
+/// The user's entry `draft` makes, in its category, its ticks the role's
+/// (`ticks_for`): it is listed where its name puts it (`rows`). Its id is
+/// made from what it is, else from its folder.
 pub(crate) fn added(
     catalog: &Catalog,
     matcher: Matcher,
@@ -797,25 +823,16 @@ pub(crate) fn added(
     } else {
         YOURS.to_owned()
     };
-    // At the end of its category's entries, before the next category's.
-    let at = next
-        .entries
-        .iter()
-        .rposition(|e| e.category == category)
-        .map_or(next.entries.len(), |at| at + 1);
-    next.entries.insert(
-        at,
-        Entry {
-            id: id.clone(),
-            builtin: false,
-            category,
-            shipped_category: None,
-            what: what.to_owned(),
-            group: None,
-            matcher,
-            ticks: ticks_for(role),
-        },
-    );
+    next.entries.push(Entry {
+        id: id.clone(),
+        builtin: false,
+        category,
+        shipped_category: None,
+        what: what.to_owned(),
+        group: None,
+        matcher,
+        ticks: ticks_for(role),
+    });
     (next, id)
 }
 
@@ -846,7 +863,7 @@ pub(crate) fn removed(catalog: &Catalog, id: &str) -> Catalog {
 pub(crate) fn new_category(catalog: &Catalog, name: &str) -> (Catalog, String) {
     let mut next = catalog.clone();
     let id = unique_id(name, &catalog.category_ids());
-    next.categories.push(skwir_core::exclusions::Category {
+    next.categories.push(Category {
         id: id.clone(),
         name: name.trim().to_owned(),
         builtin: false,
@@ -988,8 +1005,8 @@ mod tests {
         })
     }
 
-    /// Every category heads its entries, in the catalog's order, and
-    /// every entry is listed once with nothing filtering.
+    /// Every category heads its entries, by name, and every entry is
+    /// listed once with nothing filtering.
     #[test]
     fn every_category_heads_its_entries() {
         let catalog = shipped();
@@ -998,12 +1015,19 @@ mod tests {
         let headings: Vec<&str> = rows
             .iter()
             .filter_map(|r| match r {
-                Row::Heading(h) => Some(h.id.as_str()),
+                Row::Heading(h) => Some(h.name.as_str()),
                 _ => None,
             })
             .collect();
-        let order: Vec<&str> = catalog.categories.iter().map(|c| c.id.as_str()).collect();
-        assert_eq!(headings, order);
+        assert_eq!(headings.len(), catalog.categories.len());
+        assert_eq!(headings.first(), Some(&"AI models and agents"));
+        assert_eq!(headings.last(), Some(&"Yours"));
+        assert!(
+            headings
+                .windows(2)
+                .all(|w| collate::compare(OsStr::new(w[0]), OsStr::new(w[1])).is_lt()),
+            "{headings:?}"
+        );
         let listed = rows.iter().filter(|r| matches!(r, Row::Entry(_))).count();
         assert_eq!(listed, catalog.entries.len());
         // An entry stands under its own category's heading.
@@ -1043,6 +1067,101 @@ mod tests {
                 Row::Empty(..) => {}
             }
         }
+    }
+
+    /// The rows of a category in their places: those of no group, then each
+    /// group by name, in each by what the entry is.
+    fn in_places(catalog: &Catalog, rows: &[Row]) {
+        let mut before: Option<(&str, Place)> = None;
+        for row in rows {
+            match row {
+                Row::Entry(line) => {
+                    let at = place(&catalog.entries[line.at], &line.pattern);
+                    if let Some((category, previous)) = &before
+                        && *category == line.category
+                    {
+                        assert!(*previous <= at, "{} out of its place", line.pattern);
+                    }
+                    before = Some((&line.category, at));
+                }
+                Row::Heading(_) => before = None,
+                Row::Group(_) | Row::Empty(..) => {}
+            }
+        }
+    }
+
+    /// skwir's rows stand by name: Toolchains' languages in order, Secrets'
+    /// own before its groups.
+    #[test]
+    fn rows_stand_by_name() {
+        let catalog = shipped();
+        let (here, unfolded) = (HashMap::new(), open(&catalog));
+        let rows = rows(&catalog, &ask(Role::Agents, "", &here, &unfolded));
+        in_places(&catalog, &rows);
+        let groups: Vec<&str> = rows
+            .iter()
+            .filter_map(|r| match r {
+                Row::Group(g) => Some(g.as_str()),
+                _ => None,
+            })
+            .collect();
+        let at = |name: &str| groups.iter().position(|g| *g == name).unwrap();
+        assert!(at("Go") < at("Python") && at("Python") < at("Rust"));
+        assert!(at("Browsers") < at("Wallets"));
+    }
+
+    /// One of the user's stands where its name puts it as soon as it is
+    /// added, and there still once read back from the settings, which keep
+    /// no order.
+    #[test]
+    fn yours_stand_by_name_added_and_read_back() {
+        let mut catalog = shipped();
+        for (pattern, what) in [("~/zz", "Zeta's notes"), ("~/aa", "Alpha notes")] {
+            let draft = Draft {
+                pattern: pattern.into(),
+                what: what.into(),
+                category: YOURS.into(),
+                ..Draft::default()
+            };
+            catalog = added(&catalog, draft.matcher().unwrap(), &draft, Role::Searches).0;
+        }
+        let (here, unfolded) = (HashMap::new(), open(&catalog));
+        let names = |catalog: &Catalog| -> Vec<String> {
+            rows(catalog, &ask(Role::Searches, "", &here, &unfolded))
+                .iter()
+                .filter_map(|r| match r {
+                    Row::Entry(line) if line.category == YOURS => Some(line.what.clone()),
+                    _ => None,
+                })
+                .collect()
+        };
+        assert_eq!(names(&catalog), ["Alpha notes", "Zeta's notes"]);
+        let (categories, entries) = catalog.values();
+        let read = Catalog::from_values(Some(&categories), Some(&entries), &Legacy::default());
+        assert_eq!(names(&read), names(&catalog));
+    }
+
+    /// The user's categories stand among skwir's by name, in the headings
+    /// as in a row's Move to.
+    #[test]
+    fn categories_stand_by_name() {
+        let (catalog, id) = new_category(&shipped(), "Photos");
+        let names: Vec<&str> = categories(&catalog)
+            .into_iter()
+            .map(|c| c.name.as_str())
+            .collect();
+        let at = |name: &str| names.iter().position(|n| *n == name).unwrap();
+        assert!(at("Games") < at("Photos") && at("Photos") < at("Project environments"));
+        let (here, unfolded) = (HashMap::new(), open(&catalog));
+        let headings: Vec<String> = rows(&catalog, &ask(Role::Searches, "", &here, &unfolded))
+            .iter()
+            .filter_map(|r| match r {
+                Row::Heading(h) => Some(h.name.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(headings, names);
+        assert!(catalog.category(&id).is_some());
     }
 
     /// What each entry means, worked out once for the catalog, lists the
@@ -1422,9 +1541,6 @@ mod tests {
             e.ticks.get(Role::Index),
             "a private folder is kept from the index too"
         );
-        // Placed after its category's others.
-        let at = catalog.entries.iter().position(|e| e.id == id).unwrap();
-        assert_eq!(catalog.entries[at - 1].category, "skwir.secrets");
         // Another with the same words gets an id of its own.
         let (catalog, second) = added(
             &catalog,
