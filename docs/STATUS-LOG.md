@@ -16037,3 +16037,27 @@ line). `skwir-ui`'s tests, 649 (a new one:
 (the palette and the tag editor said as before); clippy. Not looked at
 on screen: Choose, the tag editor and a form's list, which share the
 helper.
+
+## 2026-11-12: Contents is a document's, disabled where it has none
+
+Asked by the user: a PDF's bar has Contents whatever the PDF holds,
+disabled where it has no outline; a Markdown file without a heading had
+no Contents at all. The inspector offered it where a section had
+headings (`inspector::Offered`), so the tool was the file's, not its
+kind's.
+
+- **Offered by the kind** (`inspector::headed`): every Markdown, HTML,
+  notebook, word processor's document, book and message has Contents,
+  disabled where it lists nothing. A code file already had it from its
+  grammar (disabled until its definitions are found, and where there are
+  none); a text file, a table, an archive have none.
+- **A book listing nothing** (no contents of its own, no heading in the
+  section) has none to show: Contents is disabled, where it opened a
+  drawer saying "No contents".
+
+**Checked:** on Xvfb (debug build), a Markdown file without a heading
+and one with a heading: at that panel's width Contents is in More,
+disabled for the first, enabled for the second. `skwir-ui`'s tests, 650
+(a new one: `a_document_without_headings_offers_contents_it_has_not`);
+clippy. Not looked at on screen: the button on a bar wide enough to hold
+it, a book or a message.

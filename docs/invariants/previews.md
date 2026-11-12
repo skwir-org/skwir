@@ -1343,7 +1343,15 @@ is still to come are in `docs/preview-frame.md`.
   ASCII text is matched where it is, case ignored, so a document mostly
   ASCII is not held twice.
 - **Contents** is one drawer (`outline.rs`) for a document's outline, a
-  file's headings and a book's chapters, offered where there are some.
+  file's headings and a book's chapters.
+  - **Offered by what the file is**, disabled where it has none: every
+    document the reader shows (a PDF without an outline, a comic), every
+    Markdown, HTML, notebook, word processor's document, book and message
+    (`inspector::headed`), a code file whose grammar finds definitions
+    (until they are found, and where there are none). A text file, a
+    table, an archive have no Contents; a section of another kind that
+    has headings offers it (`inspector::Offered`). A book whose contents
+    and section list nothing has none to show, never an empty drawer.
   - **What it lists**: a book's own contents, never the headings of the
     chapter shown above them, which named its chapters twice. The
     headings of the section shown that its rows do not name stand under

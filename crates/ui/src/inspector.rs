@@ -776,7 +776,9 @@ impl Offered {
                 ..Offered::default()
             };
         }
-        self.contents |= display.contents.is_some() || display.outlined();
+        // A document's kind, or a code file's grammar, offers them from
+        // the start; a section with headings of another kind, from it.
+        self.contents |= headed(data.kind) || display.contents.is_some() || display.outlined();
         self.folds |= folds(data);
         self.sized |= !data.blocks.is_empty()
             || matches!(data.kind, InspectionKind::Table | InspectionKind::Hex);
@@ -3230,7 +3232,20 @@ fn contains_folded(text: &str, folded: &str) -> bool {
 
 /// Whether what is shown has contents: headings, or a book's chapters.
 fn has_contents(data: &Inspection) -> bool {
-    data.blocks.iter().any(|block| block.heading > 0) || data.kind == InspectionKind::Book
+    data.blocks.iter().any(|block| block.heading > 0)
+        || (data.kind == InspectionKind::Book && !data.rows.is_empty())
+}
+
+/// Whether files of `kind` are written in headed parts, which Contents
+/// lists: a document's headings (Markdown, HTML, a notebook, a word
+/// processor's), a book's chapters, a message's. Their bar has Contents
+/// whatever one holds, disabled where it has none, as a PDF's is
+/// (`reader::toolbar`): the tool is the kind's, never the file's.
+fn headed(kind: InspectionKind) -> bool {
+    matches!(
+        kind,
+        InspectionKind::Markdown | InspectionKind::Book | InspectionKind::Mail
+    )
 }
 
 /// Whether what is shown has something to fold: an archive's folders, a
@@ -4588,6 +4603,38 @@ mod tests {
         );
         let state = State::default();
         assert!(!state.offered.contents, "a new file starts again");
+    }
+
+    /// A document, a book or a message without headings has Contents,
+    /// disabled, as a PDF without an outline has (`headed`); a text file
+    /// has none.
+    #[test]
+    fn a_document_without_headings_offers_contents_it_has_not() {
+        use super::*;
+        let shown = |kind| {
+            let display = Display::new(
+                Inspection {
+                    kind,
+                    blocks: vec![Block {
+                        text: "Text".into(),
+                        ..Block::default()
+                    }],
+                    ..Inspection::default()
+                },
+                &crate::code_preview::CodeTheme::own(false),
+            );
+            let mut state = State::default();
+            state.arrived(&display, false);
+            (state.offered.contents, display.contents.is_some())
+        };
+        for kind in [
+            InspectionKind::Markdown,
+            InspectionKind::Book,
+            InspectionKind::Mail,
+        ] {
+            assert_eq!(shown(kind), (true, false), "{kind:?}");
+        }
+        assert_eq!(shown(InspectionKind::Text), (false, false));
     }
 
     /// The part shown: a book's chapter by the section shown and where in
