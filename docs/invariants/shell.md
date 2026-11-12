@@ -326,8 +326,14 @@ of bars, split or not.
     back from where they went; the views' rows wait there, dimmed, as
     chosen.
   - The View menu hangs from the active pane's row: every view as a tile
-    (Buttons… at the end of their title), the sort keys with the direction
-    on the Sort by row in the key's words, what is shown (hidden files,
+    (Buttons… at the end of their title), Sort by and Group by each one
+    row saying how they are (`Button::value`: "Name, A to Z"), their
+    fly-out the direction in the key's words on its first row
+    (`FlyRow::Choice`, one stop: Left and Right choose, Left from the
+    first goes back, Enter and Space the other) and the criteria under
+    it; Group by's direction is always there, greyed until a criterion of
+    its own is chosen, so nothing moves under the pointer. Then what is
+    shown (hidden files,
     Quick filters and the timeline, Fill thumbnails…), and the size on one
     row. What it shows of a pane is that pane's: its view, sort, hidden
     files, Quick filters above its files and the timeline under them

@@ -15263,3 +15263,44 @@ with `core.startup = last`, a synthetic folder sorted by Size and
 grouped by Kind from the View menu, Quit (`state.toml` kept the tab's
 sort), started again without a folder: the pane back sorted by Size,
 largest first, under the same Kind headings.
+
+## 2026-11-12: Sort by and Group by, one row each
+
+The user found Sort by read wrong: its name stood on the row of the
+direction, and the criterion it named was the row under it, unnamed.
+Of three layouts offered (the name on the criterion's row, the direction
+under it; the direction in the submenu; one row with arrows), the user
+chose the direction in the submenu, as Windows' Explorer and Dolphin
+have it. ADR-099, 5, and ADR-130, 10, amended.
+
+- **One row each** (`MenuPart::Sub` with a value, `Button::value`):
+  "Sort by" and what it is ("Name, A to Z", "Size, largest first",
+  `address::said`) before its chevron; "Group by" the same, or None, or
+  Same as sort. A screen reader hears the row as "Sort by: Name, A to Z".
+- **The submenu**: the direction first, in the criterion's words
+  (`toolbar::FlyRow::Choice`), a line, then the criteria as before (and
+  Group by's None and Same as sort). Its values are drawn as the menu's
+  segments but never focused (`Button::no_stop`): the row is one stop
+  of the keyboard, ringed while it has it, a radio group whose chosen
+  value is its active descendant. Left and Right choose the value before
+  or after, Left from the first goes back to the menu's row, as on a
+  context menu's setting; Enter and Space the other one
+  (`ui.toolbar_submenu`'s `value`, the place `toolbar_choice`). Group
+  by's direction is always there, greyed while not grouped by a
+  criterion of its own (Same as sort's shows the sort's), so a choice in
+  it moves no row under the pointer, and the keyboard's stops stay where
+  they were (`Submenu::rows` is made once a submenu opens).
+- `preview_bar::Tool` allows `large_enum_variant` as `FlyRow` does: the
+  button grew by its value.
+
+**Checked:** rustfmt; clippy `-D warnings` on `skwir-ui`, all targets;
+`skwir-ui` 640 passed; the binary's `keymap_titles` 3 (the new forms of
+`ui.toolbar_submenu` each its own title); `just a11y-check --skwir
+target/debug/skwir` passed (it does not open the View menu). In a window on Xvfb: the View
+menu read "Sort by … Name, A to Z ›" and "Group by … None ›"; its
+submenu opened (beside, on the left for want of room) with the
+direction ringed on top; Right chose Z to A (the row then "Name, Z to
+A", the list reversed), Left A to Z, Left again went back to the row;
+Group by's submenu opened by Down and Right, its direction greyed; Kind
+chosen there by the pointer lit the direction in place, no row moved,
+the row "Kind, A to Z"; a press on Z to A turned the groups.

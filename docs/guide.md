@@ -180,23 +180,25 @@ work where the keyboard is, by topic.
 ## Views
 
 `Ctrl+1`, `Ctrl+2` and `Ctrl+3` show the folder as a list, a grid or
-columns. The View menu, at the end of the pane's row, has every view, the
-sort, Folders first, hidden files (`Ctrl+H` or `Alt+.`) and the zoom
-(`Ctrl++`, `Ctrl+-`, `Ctrl+0`, or `Ctrl+wheel`). Sort by turns the order
-round in one click, and the row under it lists what to sort by: name,
-kind, type, extension, size, dimensions (a picture's size in pixels),
-duration (how long a sound or a film lasts), the dates, taken (when a
-camera took the picture), rating, tags or owner. Dimensions, duration
-and taken are read from the files themselves, in the background, so the
-order fills in as they come; duration asks ffprobe, where it is
-installed, of what is not an MP4 or a QuickTime film. Each starts
-where you look first (names A to Z, the largest, the newest, the best
-rated), and choosing it again turns it round; files that tie are listed A
-to Z either way. Group by, under it, puts the files under headings: by
-the sort itself (Same as sort) or by any of those, its groups in a
-direction of their own (by date: Today, Yesterday, Earlier this week,
-Last week, Earlier this month, Last month, Earlier this year, then each
-year). The heading of the group at the top stays there as you scroll.
+columns. The View menu, at the end of the pane's row, has every view,
+the sort, Folders first, hidden files (`Ctrl+H` or `Alt+.`) and the zoom
+(`Ctrl++`, `Ctrl+-`, `Ctrl+0`, or `Ctrl+wheel`). Sort by says how the
+files are sorted ("Name, A to Z"); beside it, its direction comes first,
+then what to sort by: name, kind, type, extension, size, dimensions (a
+picture's size in pixels), duration (how long a sound or a film lasts),
+the dates, taken (when a camera took the picture), rating, tags or
+owner. Dimensions, duration and taken are read from the files
+themselves, in the background, so the order fills in as they come;
+duration asks ffprobe, where it is installed, of what is not an MP4 or a
+QuickTime film. Each starts where you look first (names A to Z, the
+largest, the newest, the best rated), and its column's header, clicked
+again, turns it round; files that tie are listed A to Z either way.
+Group by, under it, puts the files under headings, said and chosen the
+same way: by the sort itself (Same as sort) or by any of those, its
+groups in a direction of their own (by date: Today, Yesterday, Earlier
+this week, Last week, Earlier this month, Last month, Earlier this year,
+then each year). The heading of the group at the top stays there as you
+scroll.
 `Up` and `Down` stop on a heading on the way, as Windows' Explorer does:
 there `Enter` or `Space` selects its files, `Left` folds the group and
 `Right` opens it again, and the Menu key opens its menu; a heading is

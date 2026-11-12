@@ -218,6 +218,10 @@ mod args {
         step: Option<i64>,
         #[serde(default)]
         end: Option<bool>,
+        /// On a setting's row: the value before (-1) or after (1), or the
+        /// next one round (0).
+        #[serde(default)]
+        value: Option<i64>,
     }
 
     /// Activity's toggle: `close` closes it (`pointer`: by a press outside
@@ -839,6 +843,21 @@ const KEY_FORMS: &[(&str, &str, &str)] = &[
         "ui.toolbar_submenu",
         r#"{"back":true}"#,
         "Back from the submenu",
+    ),
+    (
+        "ui.toolbar_submenu",
+        r#"{"value":1}"#,
+        "Next value in the submenu",
+    ),
+    (
+        "ui.toolbar_submenu",
+        r#"{"value":-1}"#,
+        "Previous value in the submenu",
+    ),
+    (
+        "ui.toolbar_submenu",
+        r#"{"value":0}"#,
+        "Change the value in the submenu",
     ),
     // The timeline's bars.
     ("ui.timeline_cursor", r#"{"by":-1}"#, "Previous bar"),
@@ -2365,7 +2384,7 @@ pub fn declare_all(app: &App) {
         Topic::Preview,
         "ui.toolbar_submenu",
         "Preview menu: submenu",
-        "Open a submenu of the preview's More beside its row (`open`, or `here`: the one whose row has the keyboard), go back to its row (`back`), or move the keyboard along its rows (`step`, `end`)",
+        "Open a submenu of the preview's More or the View menu beside its row (`open`, or `here`: the one whose row has the keyboard), go back to its row (`back`), move the keyboard along its rows (`step`, `end`), or choose the value before (`value` -1), after (1) or the next round (0) on a setting's row",
     );
     none(
         Topic::Preview,

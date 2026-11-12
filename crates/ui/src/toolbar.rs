@@ -187,6 +187,11 @@ pub struct Button {
     /// A popup's row that opens a submenu beside it (`opens_beside`):
     /// whether that submenu is open.
     beside: Option<bool>,
+    /// What a setting's row says it is set to, at its end (`value`).
+    value: Option<SharedString>,
+    /// Whether the keyboard stops on it; not a value its row's stop
+    /// answers for (`no_stop`).
+    stop: bool,
 }
 
 /// A tag's colors on a button (a narrowing by that tag), in place of
@@ -253,6 +258,8 @@ impl Button {
             keeps_open: false,
             now: false,
             beside: None,
+            value: None,
+            stop: true,
         }
     }
     pub fn title(&self) -> SharedString {
@@ -306,6 +313,36 @@ impl Button {
         self.keeps_open = true;
         self.beside = Some(open);
         self
+    }
+    /// What a setting's row is set to, said at its end before its chevron
+    /// (the View menu's Sort by: "Name, A to Z"), and with its name to a
+    /// screen reader.
+    pub fn value(mut self, value: impl Into<SharedString>) -> Self {
+        self.value = Some(value.into());
+        self
+    }
+    /// A value of a setting whose row is the one keyboard stop (a
+    /// submenu's setting, `FlyRow::Choice`): drawn and pressed as any,
+    /// never focused itself; the row's Left and Right choose it.
+    pub fn no_stop(mut self) -> Self {
+        self.stop = false;
+        self
+    }
+    /// Run what it runs, as a press does: the value the keys chose on a
+    /// row that answers for its values (`no_stop`).
+    pub(crate) fn press(&self, shell: &mut Shell, window: &mut Window, cx: &mut Context<Shell>) {
+        if self.enabled {
+            let pane = shell.pane;
+            invoke(
+                shell,
+                pane,
+                &self.command,
+                self.args.clone(),
+                !self.keeps_open,
+                window,
+                cx,
+            );
+        }
     }
     /// Draw the chevron of a button that opens a menu.
     pub fn dropdown(mut self) -> Self {
@@ -377,6 +414,10 @@ impl Button {
         let said = shell.a11y.then(|| {
             let described = self.label.is_some().then(|| self.title.clone());
             let named = self.label.clone().unwrap_or_else(|| self.title.clone());
+            let named: SharedString = match &self.value {
+                Some(value) => format!("{named}: {value}").into(),
+                None => named,
+            };
             (named, described, keys.clone())
         });
         let menu_keys = keys.clone().filter(|_| menu);
@@ -496,9 +537,8 @@ impl Button {
             })
             // Keep the handle alive when navigation disables this button.
             // Dropping the focused handle would also lose ancestor shortcuts.
-            .focusable()
-            .tab_index(0)
-            .tab_stop(enabled)
+            // A value its row answers for is never focused itself.
+            .when(self.stop, |d| d.focusable().tab_index(0).tab_stop(enabled))
             .when(self.active && !menu && !value && !switch, |d| {
                 d.chosen(&theme)
             })
@@ -589,15 +629,25 @@ impl Button {
                         .flex_none(),
                 )
             })
-            // A submenu's row, as a context menu's (`menu::row_element`).
+            // A submenu's row, as a context menu's (`menu::row_element`),
+            // what it is set to before its chevron.
             .when(beside.is_some(), |d| {
-                d.child(div().flex_1()).child(
-                    svg()
-                        .path("toolbar/chevron-right.svg")
-                        .size(px(13.))
-                        .flex_none()
-                        .text_color(theme.text_muted),
-                )
+                d.child(div().flex_1())
+                    .children(self.value.map(|value| {
+                        div()
+                            .flex_none()
+                            .pl_4()
+                            .text_body()
+                            .text_color(theme.text_muted)
+                            .child(value)
+                    }))
+                    .child(
+                        svg()
+                            .path("toolbar/chevron-right.svg")
+                            .size(px(13.))
+                            .flex_none()
+                            .text_color(theme.text_muted),
+                    )
             })
             .children(self.anchor.map(|anchor| anchor.marker()))
             .when(revealed, |d| d.child(reveal_marker()))
@@ -973,14 +1023,28 @@ impl Submenu {
 #[allow(clippy::large_enum_variant)]
 pub enum FlyRow {
     Row(Button),
+    /// A setting named, its values on one row (`Button::segment`): one stop
+    /// of the keyboard, whose Left and Right choose the value before or
+    /// after (`ui.toolbar_submenu`'s `value`), as a context menu's setting.
+    Choice(SharedString, Vec<Button>),
     Line,
 }
 
 /// How many of `rows` the keyboard reaches.
 pub fn row_count(rows: &[FlyRow]) -> usize {
-    rows.iter()
-        .filter(|row| matches!(row, FlyRow::Row(_)))
-        .count()
+    rows.iter().filter(|row| row.stops()).count()
+}
+
+impl FlyRow {
+    /// Whether the keyboard stops on it.
+    fn stops(&self) -> bool {
+        !matches!(self, FlyRow::Line)
+    }
+}
+
+/// The row of `rows` the keyboard reaches `at`th.
+pub fn stop_at(rows: Vec<FlyRow>, at: usize) -> Option<FlyRow> {
+    rows.into_iter().filter(FlyRow::stops).nth(at)
 }
 
 impl Shell {
@@ -1017,7 +1081,8 @@ impl Shell {
     }
 }
 
-/// The row of `popup`'s submenu `name`, called `label`, `icon` before it:
+/// The row of `popup`'s submenu `name`, called `label`, `icon` before it,
+/// what it is set to (`value`) at its end, before its chevron:
 /// pressed (Enter, Space, Right), it opens the submenu with the keyboard
 /// on its first row; the pointer resting on it opens it too, and resting
 /// on another row of the popup closes it (`Shell::popup_sub_rest`). Lit
@@ -1028,17 +1093,20 @@ pub fn submenu_row(
     name: &str,
     icon: impl Into<SharedString>,
     label: SharedString,
+    value: Option<SharedString>,
     shell: &Shell,
     cx: &mut Context<Shell>,
 ) -> gpui::AnyElement {
     let theme = cx.global::<Theme>().clone();
     let open = popup.sub.open.as_deref() == Some(name);
-    let mut row = Button::new(id, icon, label.to_string(), "ui.toolbar_submenu")
+    let mut button = Button::new(id, icon, label.to_string(), "ui.toolbar_submenu")
         .args(serde_json::json!({ "open": name }))
         .label(label)
-        .opens_beside(open)
-        .anchor_if(&popup.sub.row, true)
-        .render(shell, cx);
+        .opens_beside(open);
+    if let Some(value) = value {
+        button = button.value(value);
+    }
+    let mut row = button.anchor_if(&popup.sub.row, true).render(shell, cx);
     if let Some(focus) = popup.sub.parent(name) {
         row = row.track_focus(focus);
     }
@@ -1078,6 +1146,42 @@ pub fn fly_out(
                 }
                 at += 1;
                 row.into_any_element()
+            }
+            FlyRow::Choice(name, values) => {
+                // One stop: its values are never focused, the row says the
+                // one chosen (its active descendant) to a screen reader.
+                let a11y = shell.a11y;
+                let mut values_row = div()
+                    .id(crate::elements::known_by("popup-submenu-choice", &name))
+                    .role(gpui::Role::RadioGroup)
+                    .when(a11y, |d| d.aria_label(name.clone()))
+                    .key_context(CHOICE_ROW)
+                    .flex()
+                    .flex_none()
+                    .gap(sized(2.))
+                    .p(sized(2.))
+                    .rounded_md()
+                    .border_1()
+                    .border_color(theme.border)
+                    .bg(theme.bg)
+                    .focus(|s| s.border_color(theme.accent))
+                    .children(values.into_iter().map(|value| {
+                        let chosen = value.active;
+                        value.no_stop().render(shell, cx).when(a11y && chosen, |d| {
+                            gpui::StatefulInteractiveElement::aria_active_descendant(d)
+                        })
+                    }));
+                if let Some(focus) = popup.sub.rows.get(at) {
+                    values_row = values_row.track_focus(focus);
+                }
+                at += 1;
+                div()
+                    .flex()
+                    .flex_none()
+                    .px_2()
+                    .py_1()
+                    .child(values_row)
+                    .into_any_element()
             }
             FlyRow::Line => div()
                 .flex_none()
@@ -1240,8 +1344,9 @@ pub enum MenuPart {
     /// Values as tiles, four to a row (`Button::tile`).
     Tiles(Vec<Button>),
     /// The row of a submenu of the popup open, by its name, called by its
-    /// label (`submenu_row`): its rows beside it (`Shell::submenu_rows`).
-    Sub(SharedString, SharedString),
+    /// label, saying what it is set to (`submenu_row`): its rows beside it
+    /// (`Shell::submenu_rows`).
+    Sub(SharedString, SharedString, Option<SharedString>),
 }
 
 /// `panel` holding `parts`, as a context menu holds its rows.
@@ -1275,13 +1380,14 @@ pub fn menu_parts(
                 .bg(theme.border)
                 .into_any_element(),
             MenuPart::Row(button) => button.render(shell, cx).into_any_element(),
-            MenuPart::Sub(name, label) => match shell.toolbar_menu.as_ref() {
+            MenuPart::Sub(name, label, value) => match shell.toolbar_menu.as_ref() {
                 Some(popup) => submenu_row(
                     popup,
                     format!("popup-submenu-{name}"),
                     &name,
                     "",
                     label,
+                    value,
                     shell,
                     cx,
                 ),
@@ -1343,6 +1449,9 @@ pub fn menu_parts(
 /// The flag a value's key context carries (`Button::segment`,
 /// `Button::tile`): Left and Right walk to the values beside it.
 pub(crate) const CHOICE: &str = "choice";
+/// The key context of a submenu's setting (`FlyRow::Choice`), one stop
+/// whose Left and Right choose its values (`keymap::PLACES`).
+pub(crate) const CHOICE_ROW: &str = "ToolbarChoice";
 /// The key context's flag on a popup's row that opens a submenu
 /// (`Button::opens_beside`).
 pub(crate) const SUBMENU: &str = "submenu";

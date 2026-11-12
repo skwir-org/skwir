@@ -9,7 +9,11 @@ submenus beside, choices in a row" and "The file menu, regrouped"); not
 compiled for Windows or macOS yet (`just check-cross` not run).
 Decision 5 amended by ADR-130 (2026-11-11): the sort's criteria in a
 submenu beside the row naming the one chosen, under its direction's row,
-and Group by the same.
+and Group by the same. Amended again on 2026-11-12, the user's pick of
+three layouts (the name read on the direction's row, not on the
+criterion it named): Sort by and Group by are one row each that says
+how they are ("Name, A to Z"), their submenu the direction on its first
+row, one stop of the keyboard, then the criteria.
 
 ## Context
 

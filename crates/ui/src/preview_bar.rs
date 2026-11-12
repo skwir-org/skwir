@@ -87,6 +87,9 @@ pub enum Slot {
 /// seek bar. It is built once per variant and never appears in the menu.
 pub type Widget = Rc<dyn Fn(&Shell, &mut Context<Shell>) -> AnyElement>;
 
+// A bar's few tools, made for one frame and drawn at once: boxing each
+// button would allocate more than the widgets' room costs.
+#[allow(clippy::large_enum_variant)]
 pub enum Tool {
     Button(Button),
     Widget(Widget),
@@ -564,6 +567,7 @@ fn submenu_row(
         name,
         icon,
         name.to_owned().into(),
+        None,
         shell,
         cx,
     )

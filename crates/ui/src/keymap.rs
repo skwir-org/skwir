@@ -371,6 +371,34 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
         r#"{"back":true}"#,
         Some("toolbar_submenu"),
     ),
+    // A setting of a submenu (Sort by's direction), one stop: Left and
+    // Right choose the value before or after, Left from the first goes
+    // back, as on a context menu's setting; Enter and Space the next one,
+    // round (`toolbar::FlyRow::Choice`).
+    (
+        "left",
+        "ui.toolbar_submenu",
+        r#"{"value":-1}"#,
+        Some("toolbar_choice"),
+    ),
+    (
+        "right",
+        "ui.toolbar_submenu",
+        r#"{"value":1}"#,
+        Some("toolbar_choice"),
+    ),
+    (
+        "enter",
+        "ui.toolbar_submenu",
+        r#"{"value":0}"#,
+        Some("toolbar_choice"),
+    ),
+    (
+        "space",
+        "ui.toolbar_submenu",
+        r#"{"value":0}"#,
+        Some("toolbar_choice"),
+    ),
     // The timeline's bars: one at a time, Shift extending what is chosen,
     // the page keys a window of them.
     (
@@ -1434,6 +1462,7 @@ pub(crate) const PLACES: &[Place] = &[
     inside("toolbar_button", "ToolbarButton", "Toolbars"),
     inside("toolbar_popup", "ToolbarPopup", "Toolbars"),
     inside("toolbar_submenu", "ToolbarSubmenu", "Toolbars"),
+    inside("toolbar_choice", crate::toolbar::CHOICE_ROW, "Toolbars"),
     inside("shortcuts", "Shortcuts", "Shortcut overview"),
     inside("about", "About", "About skwir"),
     inside("settings", "Settings", "Settings"),

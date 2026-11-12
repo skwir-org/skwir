@@ -265,10 +265,53 @@ fn menu_item(button: Button, label: impl Into<gpui::SharedString>) -> Button {
     button.label(label).menu()
 }
 
-/// The View menu's submenu `name`: every criterion that applies here
-/// (`Shell::sort_keys`), the one chosen checked, in groups of words, dates
-/// and notes; Group by's after None and Same as sort (ADR-130). The one
-/// chosen again keeps its direction, which the row of its name turns.
+/// A direction of `key` for the View menu's submenus, each in the key's
+/// words (A to Z, Largest), `ascending` the one chosen; `enabled` while
+/// they can be chosen (Group by while grouped by a criterion of its own).
+fn directions(
+    key: skwir_core::SortKey,
+    ascending: bool,
+    command: &str,
+    enabled: bool,
+) -> Vec<Button> {
+    use crate::toast::capitalized;
+    let [(up, up_tip), (down, down_tip)] = key.directions();
+    [(true, "up", up, up_tip), (false, "down", down, down_tip)]
+        .into_iter()
+        .map(|(going_up, icon, label, tip)| {
+            Button::new(
+                format!(
+                    "{command}-{}",
+                    if going_up { "ascending" } else { "descending" }
+                ),
+                icon,
+                capitalized(tip),
+                command.to_owned(),
+            )
+            .args(serde_json::json!({ "ascending": going_up }))
+            .label(label)
+            .active(ascending == going_up)
+            .enabled(enabled)
+            .segment()
+        })
+        .collect()
+}
+
+/// What a sort or a group by `key` going `ascending` is, as its row says
+/// it: "Name, A to Z", "Size, largest first".
+fn said(key: skwir_core::SortKey, ascending: bool) -> String {
+    let [(_, up), (_, down)] = key.directions();
+    format!("{}, {}", key.title(), if ascending { up } else { down })
+}
+
+/// The View menu's submenu `name`: the direction first, in the criterion's
+/// words, then every criterion that applies here (`Shell::sort_keys`), the
+/// one chosen checked, in groups of words, dates and notes; Group by's
+/// after None and Same as sort (ADR-130). Group by's direction is always
+/// there, so that nothing moves under the pointer as a choice makes it
+/// apply or not: while not grouped by a criterion of its own it cannot be
+/// chosen, and Same as sort shows the sort's. The one chosen again keeps
+/// its direction.
 pub(crate) fn view_submenu(shell: &Shell, name: &str) -> Vec<toolbar::FlyRow> {
     use skwir_core::SortKey;
     use skwir_core::grouping::GroupBy;
@@ -297,6 +340,11 @@ pub(crate) fn view_submenu(shell: &Shell, name: &str) -> Vec<toolbar::FlyRow> {
     };
     match name {
         SORT_BY => {
+            rows.push(FlyRow::Choice(
+                "Direction".into(),
+                directions(spec.key, spec.ascending, "sort", true),
+            ));
+            rows.push(FlyRow::Line);
             let keys = shell.sort_keys().into_iter().map(|(_, key)| key).collect();
             by(&mut rows, keys, &|key| {
                 let current = spec.key == key;
@@ -335,6 +383,18 @@ pub(crate) fn view_submenu(shell: &Shell, name: &str) -> Vec<toolbar::FlyRow> {
                     label.to_owned(),
                 )
             };
+            let mut values = match spec.group {
+                GroupBy::Key(key) => directions(key, spec.group_ascending, "group", true),
+                GroupBy::SameAsSort => directions(spec.key, spec.ascending, "group", false),
+                GroupBy::None => directions(spec.key, true, "group", false),
+            };
+            if spec.group == GroupBy::None {
+                for value in &mut values {
+                    value.active = false;
+                }
+            }
+            rows.push(FlyRow::Choice("Direction".into(), values));
+            rows.push(FlyRow::Line);
             rows.push(FlyRow::Row(plain(GroupBy::None, "None", "Do not group")));
             rows.push(FlyRow::Row(plain(
                 GroupBy::SameAsSort,
@@ -371,12 +431,10 @@ pub(crate) fn view_submenu(shell: &Shell, name: &str) -> Vec<toolbar::FlyRow> {
 /// The View menu: how the active pane shows its folder, never how the
 /// window is arranged (that is More's). Every view as a tile, the lenses
 /// the pane row leaves out included (a narrow pane row has only the button
-/// that opens this menu); the sort and the groups, each its direction on
-/// the row of its name over the criterion, chosen beside it
-/// (`view_submenu`); what is shown; the size, on one row.
+/// that opens this menu); the sort and the groups, each one row saying
+/// how they are, their direction and criteria beside it (`view_submenu`);
+/// what is shown; the size, on one row.
 fn view_options(shell: &Shell) -> Vec<MenuPart> {
-    use crate::toast::capitalized;
-    use skwir_core::SortKey;
     use skwir_core::grouping::GroupBy;
     let views: Vec<Button> = shell
         .available_views()
@@ -397,46 +455,25 @@ fn view_options(shell: &Shell) -> Vec<MenuPart> {
     .args(serde_json::json!({ "kind": VIEW_BUTTONS }))
     .label("Buttons…");
     let spec = shell.sort_spec();
-    // The sort and the groups each a direction, in its criterion's words,
-    // over a row naming the criterion that opens them all beside it
-    // (ADR-130): one click to turn either, two to choose another.
-    let directions = |key: SortKey, ascending: bool, command: &str, id: &str| -> Vec<Button> {
-        let [(up, up_tip), (down, down_tip)] = key.directions();
-        [(true, "up", up, up_tip), (false, "down", down, down_tip)]
-            .into_iter()
-            .map(|(going_up, icon, label, tip)| {
-                Button::new(
-                    format!("{id}-{}", if going_up { "ascending" } else { "descending" }),
-                    icon,
-                    capitalized(tip),
-                    command.to_owned(),
-                )
-                .args(serde_json::json!({ "ascending": going_up }))
-                .label(label)
-                .active(ascending == going_up)
-                .segment()
-            })
-            .collect()
-    };
-    let mut order = vec![
-        MenuPart::Choice(
-            "Sort by".into(),
-            directions(spec.key, spec.ascending, "sort", "sort"),
-        ),
-        MenuPart::Sub(SORT_BY.into(), spec.key.title().into()),
-    ];
+    // The sort and the groups each one row saying how they are ("Name, A
+    // to Z"), which opens beside it their direction and their criteria.
+    let mut order = vec![MenuPart::Sub(
+        SORT_BY.into(),
+        SORT_BY.into(),
+        Some(said(spec.key, spec.ascending).into()),
+    )];
     // Grouped only while the sorter is there, which makes every group.
     if !shell.group_keys().is_empty() {
-        let (directions, label) = match spec.group {
-            GroupBy::Key(key) => (
-                directions(key, spec.group_ascending, "group", "group"),
-                key.title(),
-            ),
-            GroupBy::SameAsSort => (Vec::new(), "Same as sort"),
-            GroupBy::None => (Vec::new(), "None"),
+        let value = match spec.group {
+            GroupBy::Key(key) => said(key, spec.group_ascending),
+            GroupBy::SameAsSort => "Same as sort".to_owned(),
+            GroupBy::None => "None".to_owned(),
         };
-        order.push(MenuPart::Choice("Group by".into(), directions));
-        order.push(MenuPart::Sub(GROUP_BY.into(), label.into()));
+        order.push(MenuPart::Sub(
+            GROUP_BY.into(),
+            GROUP_BY.into(),
+            Some(value.into()),
+        ));
     }
     // Folders before files, or sorted with them: the setting itself, in
     // every pane, so the row never disagrees with Settings. Below the keys,

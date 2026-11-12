@@ -121,7 +121,12 @@ built.
     fly-out adding None and Same as sort, its direction shown only for a
     criterion of its own. Each is a command: `sort` as before, `group`
     (`by`, `ascending`, `pane`), with palette forms ("Group by kind");
-    Group by has no default key.
+    Group by has no default key. (Amended 2026-11-12, the user: Sort by
+    and Group by are one row each saying how they are, "Name, A to Z",
+    "Kind, Z to A", "None"; their fly-out holds the direction on its
+    first row, then the criteria. Group by's direction is always there,
+    greyed while not grouped by a criterion of its own, so a choice moves
+    no row under the pointer.)
 11. **Per pane, as the sort**: not saved across restarts. A place that
     remembers its own (Downloads by date) is for an ADR of its own.
     (Amended 2026-11-12, the user: the sort and the groups are saved

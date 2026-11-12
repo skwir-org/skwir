@@ -1864,15 +1864,20 @@ impl Shell {
     /// (More's, the View menu's). `open` shows one, the keyboard on its
     /// first row (Right, Enter or Space on its row, or a press); `back`
     /// closes it, the keyboard back on its row (Left, Escape); `step` walks
-    /// its rows, `end` reaches its last (`true`) or first. A submenu's rows
-    /// are walked here, not by gpui's tab order, which does not reach a
-    /// panel drawn beside the popup.
+    /// its rows, `end` reaches its last (`true`) or first; `value` chooses
+    /// on a setting's row (`submenu_value`). A submenu's rows are walked
+    /// here, not by gpui's tab order, which does not reach a panel drawn
+    /// beside the popup.
     pub fn toolbar_submenu(
         &mut self,
         args: &serde_json::Value,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Some(step) = args.get("value").and_then(serde_json::Value::as_i64) {
+            self.submenu_value(step, window, cx);
+            return;
+        }
         let here = args.get("here").and_then(serde_json::Value::as_bool) == Some(true);
         let open = match args.get("open").and_then(serde_json::Value::as_str) {
             Some(name) => Some(name.to_owned()),
@@ -1930,6 +1935,44 @@ impl Shell {
             if let Some(row) = to.and_then(|to| sub.rows.get(to)) {
                 window.focus(row, cx);
             }
+        }
+        cx.notify();
+    }
+
+    /// On the open submenu's setting the keyboard is on
+    /// (`toolbar::FlyRow::Choice`), choose the value before (`step` -1),
+    /// after (1) or the next one round (0), as a press would; Left from
+    /// the first goes back to the submenu's row, as from a context menu's
+    /// setting. Anywhere else, nothing.
+    fn submenu_value(&mut self, step: i64, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((name, at)) = self.submenu_popup().and_then(|popup| {
+            let at = popup
+                .sub
+                .rows
+                .iter()
+                .position(|row| row.is_focused(window))?;
+            Some((popup.sub.open.clone()?, at))
+        }) else {
+            return;
+        };
+        let Some(crate::toolbar::FlyRow::Choice(_, values)) =
+            crate::toolbar::stop_at(self.submenu_rows(&name), at)
+        else {
+            return;
+        };
+        let chosen = values.iter().position(|value| value.active);
+        let to = match (step.signum(), chosen) {
+            (0, Some(at)) => Some((at + 1) % values.len()),
+            (0 | 1, None) => Some(0),
+            (1, Some(at)) => (at + 1 < values.len()).then_some(at + 1),
+            (_, Some(at)) if at > 0 => Some(at - 1),
+            _ => {
+                self.toolbar_submenu(&serde_json::json!({ "back": true }), window, cx);
+                return;
+            }
+        };
+        if let Some(value) = to.and_then(|to| values.get(to)) {
+            value.press(self, window, cx);
         }
         cx.notify();
     }
