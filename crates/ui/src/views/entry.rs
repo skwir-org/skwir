@@ -78,7 +78,7 @@ impl Shell {
     /// Entry `id` of `pane` as every view draws it, its icon at `icon_px`.
     /// Under the caller's lock: `pane` is read from it.
     pub fn look(&mut self, pane: &Pane, id: EntryId, icon_px: u16) -> Option<Look> {
-        let e = pane.entry(id)?;
+        let e = pane.drawn_entry(id)?;
         let place = pane.location_of(id).map(|place| {
             let tag = e
                 .metadata

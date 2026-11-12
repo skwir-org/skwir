@@ -260,7 +260,9 @@ impl GridView {
             return;
         }
         let ws = shell.app.workspace.read();
-        let listing = ws.pane(shell.pane).map(|pane| &pane.listing);
+        // The entries drawn: the folder left's while the one gone to is
+        // filled elsewhere (`Pane::drawn_entry`).
+        let pane = ws.pane(shell.pane);
         let started = std::time::Instant::now();
         if self.wrapped_at.as_ref() != Some(&at) {
             self.wrapped.clear();
@@ -274,7 +276,7 @@ impl GridView {
             .sorted
             .iter()
             .map(|id| {
-                let Some(entry) = listing.and_then(|listing| listing.get(*id)) else {
+                let Some(entry) = pane.and_then(|pane| pane.drawn_entry(*id)) else {
                     return 1;
                 };
                 let hash = {
@@ -375,7 +377,7 @@ fn cell(
         .workspace
         .read()
         .pane(shell.pane)
-        .and_then(|pane| pane.entry(id))
+        .and_then(|pane| pane.drawn_entry(id))
         .map(mosaic_of)
         .unwrap_or_default();
     // A filled box shows the short side of the thumbnail at full size.

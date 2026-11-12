@@ -504,7 +504,7 @@ impl Shell {
             let Some(&id) = self.ui().list.sorted.get(ix) else {
                 break;
             };
-            let (Some(e), Some(look)) = (pane.entry(id), self.look(pane, id, icon_px)) else {
+            let (Some(e), Some(look)) = (pane.drawn_entry(id), self.look(pane, id, icon_px)) else {
                 continue;
             };
             let mut row = RowData {

@@ -346,6 +346,9 @@ pub struct Shell {
     /// deadline.
     pub(crate) held_since: Option<Instant>,
     pub(crate) hold_timer: Option<gpui::Task<()>>,
+    /// Syncs once `tabs::HOLD` has passed while a pane draws the files of
+    /// the folder it left (`ListState::holds_left`).
+    files_hold: Option<gpui::Task<()>>,
     pub key_hints: keymap::Hints,
     /// What `key_hints` and GPUI's bindings were built from.
     pub(crate) keys: Installed,
@@ -743,6 +746,7 @@ impl Shell {
             presented_tab: None,
             held_since: None,
             hold_timer: None,
+            files_hold: None,
             key_hints: keymap::Hints::new(keymap.hints),
             keys: Installed {
                 stamp: keymap.stamp,
@@ -2250,6 +2254,11 @@ impl Shell {
         if self.presented.is_some() && !name.starts_with("tab.") {
             self.present(false, window, cx);
         }
+        // What a command acts on is the folder gone to: the files of the
+        // one left, drawn while it is filled, go at the next sync.
+        for ui in &mut self.panes {
+            ui.list.end_hold();
+        }
         true
     }
 
@@ -3639,6 +3648,18 @@ impl Shell {
                 (location, resorted, list.listing() != before)
             };
             resorted_any |= resorted;
+            // The files of the folder left drawn while the one gone to is
+            // filled: shown as it is once the wait is over, whatever wakes.
+            if self.ui().list.holding() && self.files_hold.is_none() {
+                self.files_hold = Some(cx.spawn_in(window, async move |this, cx| {
+                    cx.background_executor().timer(crate::tabs::HOLD).await;
+                    let _ = this.update_in(cx, |this, window, cx| {
+                        this.files_hold = None;
+                        this.sync(window, cx);
+                        cx.notify();
+                    });
+                }));
+            }
             if replaced {
                 for v in self.ui_mut().views.values_mut() {
                     v.reset();
@@ -3678,6 +3699,7 @@ impl Shell {
                 applied,
                 resorted = resorted_any,
                 rows = self.ui().list.sorted.len(),
+                groups = self.ui().list.rows.spans().len(),
                 took_us = t0.elapsed().as_micros() as u64,
                 "sync"
             );

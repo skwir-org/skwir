@@ -334,6 +334,91 @@ fn pending_opens_report_errors_asynchronously_and_can_be_replaced() {
     );
 }
 
+/// While the folder gone to is filled elsewhere (ADR-120), a view may
+/// draw the files of the one left (`Pane::drawn_entry`, ADR-120 amended):
+/// its listing stays once the view lets the folder go, its location
+/// closed; no command finds those files (`Pane::entry`), and they go once
+/// the folder gone to is whole.
+#[test]
+fn the_folder_left_is_drawn_until_the_one_gone_to_is_whole() {
+    use skwir_core::{App, app::AppConfig, cancel::CancelToken, command::Invocation};
+    let tmp = tempfile::tempdir().unwrap();
+    let (left, gone_to) = (tmp.path().join("folder left"), tmp.path().join("gone to"));
+    std::fs::create_dir(&left).unwrap();
+    std::fs::create_dir(&gone_to).unwrap();
+    std::fs::write(left.join("it's here.txt"), b"x").unwrap();
+    std::fs::write(gone_to.join("new one.txt"), b"y").unwrap();
+    // One worker, never stood in for: held, it keeps the folder unfilled.
+    let config = AppConfig {
+        workers: 1,
+        stand_ins: false,
+        ..AppConfig::ephemeral(tmp.path())
+    };
+    let app = App::new(config).unwrap();
+    let pane = active(&app);
+    let go = |to: &std::path::Path| {
+        app.dispatch(&Invocation::with_args(
+            "navigate",
+            &serde_json::json!({ "location": to }),
+        ))
+        .unwrap();
+    };
+    go(&left);
+    assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+    let id = app
+        .workspace
+        .read()
+        .pane(pane)
+        .unwrap()
+        .listing
+        .iter()
+        .next()
+        .unwrap()
+        .id;
+    let (entered, ready) = std::sync::mpsc::channel();
+    let (release, blocked) = std::sync::mpsc::channel::<()>();
+    app.scheduler.spawn(
+        Priority::Visible,
+        "test.gate",
+        CancelToken::new(),
+        move || {
+            entered.send(()).unwrap();
+            let _ = blocked.recv_timeout(Duration::from_secs(10));
+        },
+    );
+    ready.recv_timeout(Duration::from_secs(5)).unwrap();
+    go(&gone_to);
+    // The view keeps nothing: the folder left is let go, but its files.
+    app.keep_locations(pane, &[]);
+    {
+        let ws = app.workspace.read();
+        let p = ws.pane(pane).unwrap();
+        assert!(
+            p.listing.is_held(),
+            "the folder gone to waits for its worker"
+        );
+        assert!(
+            p.entry(id).is_none(),
+            "no command finds the folder left's files"
+        );
+        assert_eq!(
+            p.drawn_entry(id).map(|e| e.name_str().into_owned()),
+            Some("it's here.txt".to_owned()),
+            "a view still draws them"
+        );
+    }
+    release.send(()).unwrap();
+    assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+    app.keep_locations(pane, &[]);
+    let ws = app.workspace.read();
+    let p = ws.pane(pane).unwrap();
+    assert!(
+        p.drawn_entry(id).is_none(),
+        "gone once the folder gone to is whole"
+    );
+    assert!(!p.keeps_any());
+}
+
 #[test]
 fn forward_returns_where_back_came_from_and_a_new_navigation_forgets_it() {
     let tmp = tempfile::tempdir().unwrap();

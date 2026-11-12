@@ -216,6 +216,11 @@ pub struct ListState {
     pub rows: crate::views::groups::RowMap,
     /// The heading the keys are on, if any (ADR-131, 1).
     pub heading: Option<HeadingStop>,
+    /// Since when the files of the folder left are drawn while the one
+    /// gone to is filled elsewhere (ADR-120, amended: `holds_left`), and
+    /// whether a command ended that.
+    held_since: Option<std::time::Instant>,
+    hold_ended: bool,
     sorted_at: Option<(u64, u64, SortSpec, (u64, u64))>,
     /// Where each of `sorted` is, made the first time it is asked for after
     /// the order changed (`index_of`): a card or a cursor found its place by
@@ -292,6 +297,8 @@ impl Default for ListState {
             sorted: std::sync::Arc::from([]),
             rows: crate::views::groups::RowMap::default(),
             heading: None,
+            held_since: None,
+            hold_ended: false,
             sorted_at: None,
             positions: std::cell::OnceCell::new(),
             pending_hydrate: HashMap::new(),
@@ -326,6 +333,9 @@ impl ListState {
         }
         let listing = &pane.listing;
         if self.listing != Some(listing.id()) {
+            if self.holds_left(listing) {
+                return false;
+            }
             self.reset();
             self.listing = Some(listing.id());
             // A name typed in the listing before has ended; one typed in
@@ -372,10 +382,42 @@ impl ListState {
         self.sorted_at.map(|(v, _, _, _)| v)
     }
 
+    /// Whether the files of the folder left stay drawn (ADR-120, amended):
+    /// `listing`, the one gone to, is filled elsewhere and holds nothing
+    /// yet, and it was gone to less than `tabs::HOLD` ago, as a tab left
+    /// stays drawn while the one shown gets ready, no command having ended
+    /// that. Then the window goes from one folder to the next with no
+    /// empty frame between, the address and the trail having changed at
+    /// once; past it, the folder gone to is shown empty, "Loading…" said
+    /// in time. Starts the wait.
+    fn holds_left(&mut self, listing: &skwir_core::location::Listing) -> bool {
+        if !listing.is_held() || self.listing.is_none() || self.sorted.is_empty() || self.hold_ended
+        {
+            return false;
+        }
+        let since = *self.held_since.get_or_insert_with(std::time::Instant::now);
+        since.elapsed() < crate::tabs::HOLD
+    }
+
+    /// Whether it draws the files of the folder left (`holds_left`).
+    pub fn holding(&self) -> bool {
+        self.held_since.is_some() && !self.hold_ended
+    }
+
+    /// A command was run: what it acts on is the folder gone to, which
+    /// the next sync shows, whatever it holds yet.
+    pub fn end_hold(&mut self) {
+        if self.held_since.is_some() {
+            self.hold_ended = true;
+        }
+    }
+
     fn reset(&mut self) {
         self.sorted = std::sync::Arc::from([]);
         self.rows = crate::views::groups::RowMap::default();
         self.heading = None;
+        self.held_since = None;
+        self.hold_ended = false;
         self.sorted_at = None;
         self.positions = std::cell::OnceCell::new();
         self.pending_hydrate.clear();

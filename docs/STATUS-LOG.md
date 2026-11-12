@@ -15329,3 +15329,41 @@ by … Modified, newest ›"; at 200 % interface text, "Group by …
 Dimensions, smallest ›" whole beside its whole name, the submenu moved
 up to stay in the window. The preview's More was not opened (same
 code).
+
+## 2026-11-12: No empty frame on entering a folder (ADR-120 amended)
+
+The user saw a flicker entering a folder grouped, and thought it the
+grouping. It was not: the sync's debug line, given the groups' count,
+showed one sync right after `open` with no rows (the folder gone to
+still filled on a worker, ADR-120's empty view), then the folder whole
+16 to 19 ms later, grouped already (the fill sorts with the pane's keys);
+the same without groups. Of three answers (the files only held, the
+whole pane held, as it was) the user chose the files: their rule from
+ADR-120's day (never the old view held over 150 ms) left room for it.
+
+- **The files of the folder left stay drawn** while the one gone to is
+  filled, `tabs::HOLD` (150 ms) at most (`ListState::holds_left`): the
+  list keeps its order and rows until the new listing is taken or the
+  wait is over, a timer then syncing (`Shell::files_hold`); the address
+  and the trail change at once. Any command ends it first
+  (`Shell::admit_here`, `ListState::end_hold`).
+- **What is drawn is not what is acted on.** The core keeps the folder
+  left's listing while the one gone to is held, its location closed at
+  once, as it was (`Pane::drawn_left`, filled by `keep_only`), and
+  `Pane::drawn_entry` reads it for the views (the list's rows, every
+  view's look, the grid's tiles and their names' lines); `Pane::entry`,
+  which commands use, never does. A first try kept the folder left whole
+  in `left`, its location open: a test of pending opens
+  (`pending_opens_report_errors_asynchronously_and_can_be_replaced`)
+  caught one publishing late, hence the listing alone.
+- The sync's debug line says its groups (`groups=`).
+
+**Checked:** rustfmt; clippy `-D warnings` on `skwir-core` and
+`skwir-ui`, all targets; `skwir-core` and `skwir-ui` 1 390 passed (new:
+while the folder gone to waits for its one worker, a view draws the
+folder left's file, no command finds it, it goes once the folder is
+whole and nothing is kept). In a window on Xvfb, grouped by Kind: into
+a folder of 46 files, the first sync after `open` had its 46 rows in 5
+groups, no empty one before; into one of 30 000 (filled in 352 ms), the
+folder left's 3 rows in 2 groups for the hold, then empty at 173 ms, then
+whole at 436 ms; Down pressed 15 ms after Enter ended the hold at once.

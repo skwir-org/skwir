@@ -31,7 +31,8 @@ the streaming past a second removed (this record says the last).
   rehash 6.5 ms).
 - **Holding the old view** until the new one is ready (as tabs do,
   ADR-018's 150 ms) was refused for navigation: a click that changes
-  nothing for longer than that feels unanswered.
+  nothing for longer than that feels unanswered. (Amended 2026-11-12,
+  below: the files alone held, 150 ms at most.)
 - **Streaming past a second was dropped** (the user, 2026-11-06): while
   a folder streams one cannot really act on it, and keeping it would
   keep building folders on the window's thread, with the tables'
@@ -42,7 +43,14 @@ the streaming past a second removed (this record says the last).
 1. **A folder opened shows nothing of it until it is whole.** The pane
    goes to the folder at once (its address, its trail, an empty view),
    and the folder's entries appear together, sorted, when its listing
-   completes, however long that takes. The footer says nothing at
+   completes, however long that takes. (Amended 2026-11-12, the user's
+   choice: the empty view drew one frame before a folder that came at
+   once, a flicker, with groups the more seen. The files of the folder
+   left stay drawn instead, for `tabs::HOLD` at most, while the address
+   and the trail change at once; a folder ready within it takes their
+   place directly, and any command ends the wait. The view draws them
+   from the folder left's listing, its location closed
+   (`Pane::drawn_entry`); no command finds them.) The footer says nothing at
    first, then, with the banner after 200 ms as before, "Loading…" and
    how many entries have been read ("Loading… 120 000 items",
    "Loading location… 120 000 items").

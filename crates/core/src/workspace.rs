@@ -850,6 +850,10 @@ pub struct Pane {
     /// The location navigation just left, until the view says whether it
     /// keeps it: entering a folder makes the one left a column beside it.
     left: Option<Kept>,
+    /// The entries of the folder left, while the one gone to is filled
+    /// elsewhere (ADR-120, amended), for the view to draw meanwhile
+    /// (`drawn_entry`): its listing alone, its location closed.
+    drawn_left: Option<Listing>,
     pub selection: Selection,
     /// Sort and hidden-file settings, as asked; views render
     /// `listing.order_shown(sort)`, the order before while a worker makes
@@ -1829,6 +1833,7 @@ impl Pane {
             listing: Listing::default(),
             kept: Vec::new(),
             left: None,
+            drawn_left: None,
             selection: Selection::default(),
             sort: SortSpec::default(),
             keys: None,
@@ -2042,6 +2047,7 @@ impl Pane {
         self.location_lifetime.cancel();
         self.location_lifetime = CancelToken::new();
         let old_listing = std::mem::replace(&mut self.listing, listing);
+        self.drawn_left = None;
         self.left = self
             .open
             .replace(open)
@@ -2120,6 +2126,7 @@ impl Pane {
         self.listing = listing;
         self.open = Some(open);
         self.left = None;
+        self.drawn_left = None;
         self.selection = Selection::default();
         self.reveal = None;
         self.restore = None;
@@ -2859,6 +2866,7 @@ impl Pane {
         self.kept.clear();
         self.opened_moved();
         self.left = None;
+        self.drawn_left = None;
         self.lent.let_go();
     }
 
@@ -2946,10 +2954,21 @@ impl Pane {
             .chain(self.expanded.iter().map(|o| o.location.clone()))
             .collect();
         let before = self.kept.len();
-        if let Some(left) = self.left.take()
-            && wanted.contains(&left.location)
-        {
-            self.kept.push(left);
+        match self.left.take() {
+            Some(left) if wanted.contains(&left.location) => self.kept.push(left),
+            // While the folder gone to is filled elsewhere (ADR-120), the
+            // view may draw the files of the one left until it is whole
+            // (`Pane::drawn_entry`): its listing stays, its location is
+            // closed, so nothing of it is read or sent any more.
+            Some(left) if self.listing.is_held() => {
+                let (open, listing) = left.into_shown();
+                open.close();
+                self.drawn_left = Some(listing);
+            }
+            _ => {}
+        }
+        if !self.listing.is_held() {
+            self.drawn_left = None;
         }
         let pushed = self.kept.len() > before;
         self.kept.retain(|k| wanted.contains(&k.location));
@@ -2993,7 +3012,10 @@ impl Pane {
 
     /// Whether anything is kept or waiting to be: `keep_only` has work.
     pub fn keeps_any(&self) -> bool {
-        !self.kept.is_empty() || self.left.is_some() || !self.expanded.is_empty()
+        !self.kept.is_empty()
+            || self.left.is_some()
+            || self.drawn_left.is_some()
+            || !self.expanded.is_empty()
     }
 
     /// The listing of a location kept beside the one shown.
@@ -3808,6 +3830,7 @@ impl Pane {
         if self.left.as_ref().is_some_and(under) {
             self.left = None;
         }
+        self.drawn_left = None;
         self.kept.retain(|k| !under(k));
         self.opened_moved();
     }
@@ -3820,6 +3843,7 @@ impl Pane {
         if self.left.as_ref().is_some_and(|k| gone(&k.location)) {
             self.left = None;
         }
+        self.drawn_left = None;
         self.kept.retain(|k| !gone(&k.location));
         self.opened_moved();
     }
@@ -3846,6 +3870,24 @@ impl Pane {
             .get(id)
             .or_else(|| self.opened_of(id).and_then(|(_, k)| k.listing.get(id)))
             .or_else(|| self.lent.entries.get(&id).map(|loan| &loan.entry))
+    }
+
+    /// An entry as a view draws it: one the pane holds (`entry`), or, while
+    /// the folder gone to is filled elsewhere (ADR-120), one of the folder
+    /// left, whose files the view may still draw until the new one is
+    /// whole (ADR-120, amended). Never what a command acts on: the pane's
+    /// order and selection are the folder gone to's.
+    pub fn drawn_entry(&self, id: EntryId) -> Option<&Entry> {
+        self.entry(id).or_else(|| {
+            if !self.listing.is_held() {
+                return None;
+            }
+            self.left
+                .as_ref()
+                .map(|left| &left.listing)
+                .or(self.drawn_left.as_ref())?
+                .get(id)
+        })
     }
 
     /// The entry the pane shows of the file `file` at `path`: of a file

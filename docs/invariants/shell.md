@@ -1131,7 +1131,8 @@ of bars, split or not.
   the banner names no plugin). Leaving a location stops what opens or
   lists it; the server stays connected.
 - **A folder appears whole (ADR-120).** A pane goes to a folder at once
-  (address, trail, an empty view) and shows its entries together, sorted,
+  (address, trail, an empty view, its files drawn meanwhile, below) and
+  shows its entries together, sorted,
   once a worker has listed the whole folder (`Listing::filled_elsewhere`),
   however long it takes. While it is filled, the footer says nothing,
   then, with the banner after 200 ms, "Loading…" and how many entries
@@ -1139,8 +1140,16 @@ of bars, split or not.
   listing to end (a held listing is not complete). What streams
   (`LocationProvider::streams`: a search, the Trash, Nearby) shows as it
   comes. A refresh reads into the listing shown and never empties the
-  view. The old view is never held for a navigation: only a tab shown
-  again keeps the one left, for `tabs::HOLD`.
+  view. Navigating, the address and the trail change at once and the
+  files of the folder left stay drawn while the one gone to is filled
+  (ADR-120, amended: `ListState::holds_left`), `tabs::HOLD` at most, as
+  a tab left is: a folder ready within it takes their place with no empty
+  frame between, one that is not shows empty, "Loading…" said in time.
+  Any command ends the wait first (`Shell::admit_here`): what it acts on
+  is the folder gone to. Their entries are the pane's to draw only
+  (`Pane::drawn_entry`: the folder left's listing kept, its location
+  closed, `Pane::drawn_left`), never what a command finds
+  (`Pane::entry`).
 
 ## Properties and links
 
