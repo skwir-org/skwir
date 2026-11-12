@@ -298,10 +298,19 @@ fn directions(
 }
 
 /// What a sort or a group by `key` going `ascending` is, as its row says
-/// it: "Name, A to Z", "Size, largest first".
+/// it: the criterion and the word of its direction's button beside it,
+/// "Name, A to Z", "Modified, newest", short enough for the row to keep
+/// its name whole.
 fn said(key: skwir_core::SortKey, ascending: bool) -> String {
-    let [(_, up), (_, down)] = key.directions();
-    format!("{}, {}", key.title(), if ascending { up } else { down })
+    let [(up, _), (down, _)] = key.directions();
+    let word = if ascending { up } else { down };
+    // A word goes on in the phrase in small letters; A to Z stays.
+    let word = if word.contains(' ') {
+        word.to_owned()
+    } else {
+        word.to_lowercase()
+    };
+    format!("{}, {word}", key.title())
 }
 
 /// The View menu's submenu `name`: the direction first, in the criterion's

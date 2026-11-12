@@ -15304,3 +15304,28 @@ A", the list reversed), Left A to Z, Left again went back to the row;
 Group by's submenu opened by Down and Right, its direction greyed; Kind
 chosen there by the pointer lit the direction in place, no row moved,
 the row "Kind, A to Z"; a press on Z to A turned the groups.
+
+## 2026-11-12: Each submenu beside its row; a setting's name kept whole
+
+Two things the user saw in the View menu:
+
+- **Both submenus opened beside Group by.** Every submenu row marked
+  the one anchor the submenu is placed by (`Submenu::row`), and the
+  last row drawn won: in the View menu Group by, in the preview's More
+  its last submenu. Only the open one's row marks it now
+  (`toolbar::submenu_row`).
+- **The name was cut, not the state** ("G… Modified, newest first").
+  A setting's row keeps its name whole and cuts what it is set to only
+  when the two do not fit, its tooltip then saying it whole
+  (`Button::value`). The user chose, of four ways, the state in the
+  words of the direction's button beside it: "Modified, newest", "Size,
+  largest", "Name, A to Z" (`address::said`); the longest, "Dimensions,
+  smallest", is 20 characters, against 26.
+
+**Checked:** rustfmt; clippy `-D warnings` on `skwir-ui`, all targets;
+`skwir-ui` 640 passed. In a window on Xvfb: Sort by's submenu level with
+Sort by, Group by's with Group by; grouped by Modified, the row "Group
+by … Modified, newest ›"; at 200 % interface text, "Group by …
+Dimensions, smallest ›" whole beside its whole name, the submenu moved
+up to stay in the window. The preview's More was not opened (same
+code).

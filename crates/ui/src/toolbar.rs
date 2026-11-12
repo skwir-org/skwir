@@ -421,9 +421,13 @@ impl Button {
             (named, described, keys.clone())
         });
         let menu_keys = keys.clone().filter(|_| menu);
-        let title: SharedString = match keys {
-            Some(keys) => format!("{} · {keys}", self.title).into(),
-            None => self.title,
+        // A setting's row keeps its name whole and cuts what it is set to
+        // when the two do not fit, which its tooltip then says whole.
+        let has_value = self.value.is_some();
+        let title: SharedString = match (&self.value, keys) {
+            (Some(value), _) => format!("{}: {value}", self.title).into(),
+            (None, Some(keys)) => format!("{} · {keys}", self.title).into(),
+            (None, None) => self.title,
         };
         let (active, dropdown, open) = (
             self.active,
@@ -599,10 +603,13 @@ impl Button {
             // A label too long for a menu keeps both ends, as names do.
             .children(label.map(|label| {
                 div()
-                    .when(menu || switch, gpui::Styled::flex_1)
-                    .min_w_0()
-                    .overflow_hidden()
-                    .text_ellipsis_middle()
+                    .when(has_value, gpui::Styled::flex_none)
+                    .when(!has_value, |d| {
+                        d.when(menu || switch, gpui::Styled::flex_1)
+                            .min_w_0()
+                            .overflow_hidden()
+                            .text_ellipsis_middle()
+                    })
                     .child(label)
             }))
             // A menu row says its keys, as a context menu's does.
@@ -635,8 +642,9 @@ impl Button {
                 d.child(div().flex_1())
                     .children(self.value.map(|value| {
                         div()
-                            .flex_none()
+                            .min_w_0()
                             .pl_4()
+                            .truncate()
                             .text_body()
                             .text_color(theme.text_muted)
                             .child(value)
@@ -1106,7 +1114,10 @@ pub fn submenu_row(
     if let Some(value) = value {
         button = button.value(value);
     }
-    let mut row = button.anchor_if(&popup.sub.row, true).render(shell, cx);
+    // Only the open one's row says where the submenu stands: every row
+    // marking the one anchor, the last drawn won, and each submenu opened
+    // beside it.
+    let mut row = button.anchor_if(&popup.sub.row, open).render(shell, cx);
     if let Some(focus) = popup.sub.parent(name) {
         row = row.track_focus(focus);
     }
