@@ -555,16 +555,28 @@ pub struct Kept {
     /// Closed when the kept location goes, unless it was taken to be shown.
     open: Option<Arc<dyn OpenLocation>>,
     pub listing: Listing,
+    /// The order its folder remembers (ADR-132): a column beside the pane
+    /// is sorted so, else as the pane's own (`Pane::sorting_of`), so no
+    /// column moves as the pane goes from one to the next.
+    order: Option<Order>,
+    /// What the sorter knows of its entries, where its order is not the
+    /// pane's and wants keys (`Pane::column_keys_wanted`), and what they
+    /// were made for.
+    keys: Option<crate::grouping::Keys>,
+    keys_for: Option<KeysFor>,
 }
 
 impl Kept {
-    fn new(open: Arc<dyn OpenLocation>, listing: Listing) -> Self {
+    fn new(open: Arc<dyn OpenLocation>, listing: Listing, order: Option<Order>) -> Self {
         let location = listing.address(open.as_ref()).clone();
         Kept {
             path: location.path(),
             location,
             open: Some(open),
             listing,
+            order,
+            keys: None,
+            keys_for: None,
         }
     }
 
@@ -865,6 +877,10 @@ pub struct Pane {
     /// shows a place that remembers none (`show_order`). None while it
     /// shows its own.
     own: Option<Order>,
+    /// The view the place shown remembers (ADR-132), which the shell shows
+    /// in place of the pane's own where both are views a folder may
+    /// remember; none where it remembers none.
+    place_view: Option<Arc<str>>,
     /// What the sorter knows of the entries for `sort` (ADR-130): made by
     /// `App::make_keys_again` whenever `sort` needs them; every listing the
     /// pane shows is sorted with them (`sorting`).
@@ -1843,6 +1859,7 @@ impl Pane {
             selection: Selection::default(),
             sort: SortSpec::default(),
             own: None,
+            place_view: None,
             keys: None,
             keys_for: None,
             history: Vec::new(),
@@ -2055,10 +2072,13 @@ impl Pane {
         self.location_lifetime = CancelToken::new();
         let old_listing = std::mem::replace(&mut self.listing, listing);
         self.drawn_left = None;
+        // The folder left keeps the order it was shown in, if it remembers
+        // one: as a column, it does not move.
+        let order = self.keeps_order().then(|| Order::of(self.sort));
         self.left = self
             .open
             .replace(open)
-            .map(|old| Kept::new(old, old_listing));
+            .map(|old| Kept::new(old, old_listing, order));
         // Nothing of the old location survives, the cursor included.
         self.selection = Selection::default();
         self.reveal = None;
@@ -2867,11 +2887,128 @@ impl Pane {
     }
 
     /// Show the order of the place it shows: `kept`, the one that place
-    /// remembers, its own set aside meanwhile; none, its own again.
-    pub(crate) fn show_order(&mut self, kept: Option<Order>) {
+    /// remembers, its own set aside meanwhile, and `view`, the view it
+    /// remembers; none, its own again.
+    pub(crate) fn show_order(&mut self, kept: Option<Order>, view: Option<Arc<str>>) {
         let sort = self.sort_with(kept);
         self.own = kept.map(|_| self.own.unwrap_or_else(|| Order::of(self.sort)));
+        self.place_view = view.filter(|_| kept.is_some());
         self.sort = sort;
+    }
+
+    /// The view the place shown remembers (ADR-132), if it remembers one.
+    pub fn place_view(&self) -> Option<&Arc<str>> {
+        self.place_view.as_ref()
+    }
+
+    /// The sort of a column beside the pane (ADR-132): its folder's, the
+    /// one it remembers, else the pane's own; a folder opened in place is
+    /// in the pane's order, as what it holds is shown among the pane's.
+    fn column_spec(&self, kept: &Kept) -> SortSpec {
+        if self.expanded.iter().any(|o| o.location == kept.location) {
+            return self.sort;
+        }
+        kept.order
+            .map_or_else(|| self.own_sort(), |order| order.applied(self.sort))
+    }
+
+    /// How a location kept beside the pane is sorted (`column_spec`), with
+    /// the keys made for it: the pane's where its sort is the pane's.
+    fn sorting_of(&self, kept: &Kept) -> crate::grouping::Sort {
+        let spec = self.column_spec(kept);
+        let wanted = (spec.key, spec.group_key());
+        let keys = if !spec.needs_keys() {
+            None
+        } else if self
+            .keys_for
+            .is_some_and(|(key, group, _)| (key, group) == wanted)
+        {
+            self.keys.clone()
+        } else {
+            kept.keys.clone().filter(|_| {
+                kept.keys_for
+                    .is_some_and(|(key, group, _)| (key, group) == wanted)
+            })
+        };
+        let mut sort = crate::grouping::Sort {
+            spec,
+            keys,
+            folders: None,
+        };
+        if sort.wants_folders()
+            && let Some(open) = &kept.open
+        {
+            let open = Arc::clone(open);
+            sort.folders = Some(crate::grouping::Folders(Arc::new(move |id| {
+                open.path_of(id)?.parent().map(Path::to_path_buf)
+            })));
+        }
+        sort
+    }
+
+    /// How the location `at`, kept beside the pane (a column), is sorted:
+    /// as its folder remembers, else as the pane's own (ADR-132); the
+    /// pane's sort where nothing is kept there.
+    pub fn kept_sorting(&self, at: &Location) -> crate::grouping::Sort {
+        self.kept
+            .iter()
+            .find(|k| &k.location == at)
+            .map_or_else(|| self.sorting(), |kept| self.sorting_of(kept))
+    }
+
+    /// The columns whose order wants keys the pane's do not answer, and
+    /// what for: those whose keys are not that yet, or all of them
+    /// (`all`, the keys made again everywhere).
+    pub(crate) fn column_keys_wanted(&self, revision: u64, all: bool) -> Vec<(Location, KeysFor)> {
+        self.kept
+            .iter()
+            .filter_map(|kept| {
+                let spec = self.column_spec(kept);
+                let wanted = (spec.key, spec.group_key(), revision);
+                (spec.needs_keys()
+                    && self.keys_wanted_for(revision) != Some(wanted)
+                    && (all || kept.keys_for != Some(wanted)))
+                .then(|| (kept.location.clone(), wanted))
+            })
+            .collect()
+    }
+
+    /// Sort the column at `at` with `keys`, made for `made_for`, while it
+    /// still wants them.
+    pub(crate) fn set_column_keys(
+        &mut self,
+        at: &Location,
+        keys: Option<crate::grouping::Keys>,
+        made_for: KeysFor,
+    ) {
+        let revision = made_for.2;
+        let still = self
+            .column_keys_wanted(revision, true)
+            .into_iter()
+            .any(|(there, wanted)| &there == at && wanted == made_for);
+        if let Some(kept) = self.kept.iter_mut().find(|k| &k.location == at)
+            && still
+        {
+            kept.keys = keys;
+            kept.keys_for = Some(made_for);
+        }
+    }
+
+    /// When the first of its keys, the columns' too, answers otherwise
+    /// (`Keys::next_change`: the date groups at midnight).
+    pub(crate) fn keys_next_change(&self) -> Option<std::time::SystemTime> {
+        self.keys
+            .iter()
+            .chain(self.kept.iter().filter_map(|k| k.keys.as_ref()))
+            .filter_map(|keys| keys.next_change)
+            .min()
+    }
+
+    /// What its columns remember of their order, as `orders` says now.
+    fn columns_remember(&mut self, orders: &Orders) {
+        for kept in self.kept.iter_mut().chain(self.left.as_mut()) {
+            kept.order = orders.of(&kept.location);
+        }
     }
 
     /// Let go of what the pane shows while its tab is not shown (ADR-018):
@@ -3039,8 +3176,13 @@ impl Pane {
         self.retain_shown();
     }
 
-    pub(crate) fn add_kept(&mut self, open: Arc<dyn OpenLocation>, listing: Listing) {
-        self.kept.push(Kept::new(open, listing));
+    pub(crate) fn add_kept(
+        &mut self,
+        open: Arc<dyn OpenLocation>,
+        listing: Listing,
+        order: Option<Order>,
+    ) {
+        self.kept.push(Kept::new(open, listing, order));
         self.opened_moved();
     }
 
@@ -3161,7 +3303,11 @@ impl Pane {
     /// The window's thread builds no folder it opens, nor sorts one anew.
     pub fn jobs_wanted(&mut self) -> Vec<crate::location::ListingJob> {
         use crate::location::{ListingJob, ReadJob};
-        let sort = self.sorting();
+        // Each column in its own order (ADR-132), the listing shown and the
+        // folders opened in place in the pane's.
+        let sorts: Vec<crate::grouping::Sort> = std::iter::once(self.sorting())
+            .chain(self.kept.iter().map(|kept| self.sorting_of(kept)))
+            .collect();
         let mut jobs = Vec::new();
         let expanded = &self.expanded;
         // What the order reads is read of what the pane's order holds: the
@@ -3173,9 +3319,9 @@ impl Pane {
                 (kept.open.as_ref(), &mut kept.listing, in_order)
             }),
         );
-        for (open, listing, in_order) in listings {
+        for ((open, listing, in_order), sort) in listings.zip(&sorts) {
             let Some(open) = open else { continue };
-            jobs.extend(listing.fill_job(open.events(), &sort).map(ListingJob::Fill));
+            jobs.extend(listing.fill_job(open.events(), sort).map(ListingJob::Fill));
             if in_order {
                 let ids = listing.reading_wanted(sort.spec);
                 if !ids.is_empty() {
@@ -3190,7 +3336,7 @@ impl Pane {
                 // nothing.
                 listing.let_go_of_reading();
             }
-            jobs.extend(listing.sort_job(&sort).map(ListingJob::Sort));
+            jobs.extend(listing.sort_job(sort).map(ListingJob::Sort));
         }
         jobs
     }
@@ -4788,21 +4934,45 @@ impl Workspace {
         if !self.orders.set(at, order) {
             return false;
         }
-        for pane in &mut self.panes {
-            if pane.location() == Some(at) {
-                pane.show_order(order);
-            }
-        }
+        self.tell_panes(Some(at));
         true
+    }
+
+    /// Remember `view` as the one `at` is shown in (ADR-132), where it
+    /// remembers its order, and show it so in every pane that shows it:
+    /// whether that changed anything.
+    pub(crate) fn remember_view(&mut self, at: &Location, view: Option<Arc<str>>) -> bool {
+        if !self.orders.set_view(at, view) {
+            return false;
+        }
+        self.tell_panes(Some(at));
+        true
+    }
+
+    /// The view `at` remembers, if it remembers one.
+    pub fn view_of(&self, at: &Location) -> Option<Arc<str>> {
+        self.orders.view_of(at)
     }
 
     /// Take the orders as the data file says now (changed by another
     /// skwir, or read at the start): each pane shows its place's.
     pub(crate) fn set_orders(&mut self, orders: Orders) {
         self.orders = orders;
+        self.tell_panes(None);
+    }
+
+    /// Show what `at` remembers (every place's, for none) in every pane
+    /// showing it, and in the columns beside them.
+    fn tell_panes(&mut self, at: Option<&Location>) {
         for pane in &mut self.panes {
-            let kept = pane.location().and_then(|at| self.orders.of(at));
-            pane.show_order(kept);
+            if let Some(shown) = pane.location().cloned()
+                && at.is_none_or(|at| at == &shown)
+            {
+                pane.show_order(self.orders.of(&shown), self.orders.view_of(&shown));
+            } else if at.is_none() {
+                pane.show_order(None, None);
+            }
+            pane.columns_remember(&self.orders);
         }
     }
 
@@ -6237,6 +6407,7 @@ mod tests {
                 paths: crate::hashing::Map::default(),
             }),
             Listing::default(),
+            None,
         );
         let pump = |p: &mut Pane, event| {
             tx.send(event).unwrap();
@@ -6324,6 +6495,7 @@ mod tests {
                 paths: crate::hashing::Map::default(),
             }),
             Listing::default(),
+            None,
         );
         let open = p.expanded_version();
         tx.send(ListingEvent::Added((1..=10).map(file).collect()))

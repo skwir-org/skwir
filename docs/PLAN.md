@@ -972,7 +972,10 @@ sort and groups, shown so in every pane, the pane's own set aside and
 back once it leaves or the folder forgets; any place but a search; kept
 in `data.toml` (`core.orders`), following Skwir's renames and moves and a
 folder shown that moves. Other file managers' stores are not read (the
-user's choice).
+user's choice). The same day, on the user's go: a first start shows the
+grid, as most file managers do; a folder remembers the list or grid it
+is shown in too, never in place of the columns, the tree or a lens; each
+column of the columns is in its own folder's order.
 
 ## What is left
 

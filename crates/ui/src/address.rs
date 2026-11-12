@@ -505,17 +505,24 @@ fn view_options(shell: &Shell) -> Vec<MenuPart> {
         } else if at.is_path() {
             (
                 "Remember for this folder",
-                "Show this folder sorted and grouped as now wherever it is shown, apart from the pane's order; off, it takes the pane's",
+                "Show this folder sorted and grouped as now wherever it is shown, in this view where the pane shows the list or the grid, apart from the pane's own; off, it takes the pane's",
             )
         } else {
             (
                 "Remember for this place",
-                "Show this place sorted and grouped as now wherever it is shown, apart from the pane's order; off, it takes the pane's",
+                "Show this place sorted and grouped as now wherever it is shown, in this view where the pane shows the list or the grid, apart from the pane's own; off, it takes the pane's",
             )
         };
+        let mut args = serde_json::json!({ "on": !remembers, "pane": shell.pane });
+        // The view shown, where a folder may remember it (the list, the
+        // grid): not the columns nor the tree, which are the pane's.
+        let view = shell.ui().view_id;
+        if shell.app.remembered_view(view) {
+            args["view"] = serde_json::json!(view);
+        }
         order.push(MenuPart::Row(menu_item(
             Button::new("menu-remember-order", "", tooltip, "remember_order")
-                .args(serde_json::json!({ "on": !remembers, "pane": shell.pane }))
+                .args(args)
                 .active(remembers)
                 .enabled(!search),
             label,

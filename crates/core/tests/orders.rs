@@ -228,3 +228,97 @@ fn a_folder_renamed_takes_its_order_along_and_back_when_undone() {
         Some(SortKey::Modified)
     );
 }
+
+/// A column beside the pane is in its own folder's order (ADR-132): the
+/// one it remembers, else the pane's own, so none moves as the pane goes
+/// from one to the next; the folder shown in its own.
+#[test]
+fn each_column_is_in_its_own_folder_s_order() {
+    let dir = home_tempdir();
+    tree(dir.path());
+    let (sorted, inside) = (
+        dir.path().join("it's sorted"),
+        dir.path().join("it's sorted/inside"),
+    );
+    let app = app(dir.path());
+    navigate(&app, &sorted);
+    let pane = active(&app);
+    run(&app, "remember_order", serde_json::json!({}));
+    run(
+        &app,
+        "sort",
+        serde_json::json!({ "key": "size", "ascending": false }),
+    );
+    // Into the folder below, the one above kept as a column.
+    navigate(&app, &inside);
+    let (root, above) = (
+        Location::from_path(dir.path()),
+        Location::from_path(&sorted),
+    );
+    app.keep_locations(pane, &[root.clone(), above.clone()]);
+    let ws = app.workspace.read();
+    let p = ws.pane(pane).unwrap();
+    assert_eq!(p.sort.key, SortKey::Name, "the pane's own, below");
+    assert_eq!(p.kept_sorting(&above).spec.key, SortKey::Size, "its own");
+    assert_eq!(
+        p.kept_sorting(&root).spec.key,
+        SortKey::Name,
+        "the pane's own"
+    );
+    drop(ws);
+
+    // Back up: the column of the folder left is in the pane's own order.
+    navigate(&app, &sorted);
+    let inner = Location::from_path(&inside);
+    app.keep_locations(pane, &[root.clone(), inner.clone()]);
+    let ws = app.workspace.read();
+    let p = ws.pane(pane).unwrap();
+    assert_eq!(p.sort.key, SortKey::Size, "the folder's, shown");
+    assert_eq!(p.kept_sorting(&inner).spec.key, SortKey::Name);
+    assert_eq!(p.kept_sorting(&root).spec.key, SortKey::Name);
+}
+
+/// Remembered with the view it is shown in, where a folder may remember
+/// it (the shell gives the one shown); a view of the pane's own (the
+/// columns) is not remembered.
+#[test]
+fn a_folder_remembers_the_view_it_is_shown_in() {
+    use skwir_core::registry::ViewSpec;
+    let dir = home_tempdir();
+    tree(dir.path());
+    let sorted = dir.path().join("it's sorted");
+    let app = app(dir.path());
+    let revision = std::sync::Arc::default();
+    app.registry.views.add(
+        "test",
+        ViewSpec::named("grid", "Grid", "grid", std::sync::Arc::clone(&revision)).remembered(),
+    );
+    app.registry.views.add(
+        "test",
+        ViewSpec::named("columns", "Columns", "columns", revision),
+    );
+    navigate(&app, &sorted);
+    let pane = active(&app);
+    run(
+        &app,
+        "remember_order",
+        serde_json::json!({ "view": "columns" }),
+    );
+    let at = Location::from_path(&sorted);
+    assert_eq!(app.workspace.read().view_of(&at), None, "the pane's");
+    assert!(app.remember_view(pane, "grid"));
+    assert_eq!(app.workspace.read().view_of(&at).as_deref(), Some("grid"));
+    assert_eq!(
+        app.workspace
+            .read()
+            .pane(pane)
+            .unwrap()
+            .place_view()
+            .map(|view| &**view),
+        Some("grid")
+    );
+    assert!(!app.remember_view(pane, "columns"));
+    run(&app, "remember_order", serde_json::json!({ "on": false }));
+    assert!(!app.remember_view(pane, "grid"), "nothing remembered");
+    assert_eq!(app.workspace.read().pane(pane).unwrap().place_view(), None);
+}

@@ -1,8 +1,9 @@
 //! The orders places remember (ADR-132): a folder, or any place but a
 //! search, the user asked to remember how it is sorted and grouped is
 //! shown so wherever it is shown, the pane's own order set aside while it
-//! is. What the user makes in skwir, kept in the data file (ADR-057)
-//! under [`ORDERS`], one record a place.
+//! is, and in the view it was shown in where that is one a folder may
+//! remember (the list, the grid). What the user makes in skwir, kept in
+//! the data file (ADR-057) under [`ORDERS`], one record a place.
 
 use std::collections::BTreeMap;
 use std::ops::Bound;
@@ -65,6 +66,16 @@ impl Order {
     }
 }
 
+/// What a place remembers: its order, and the view it is shown in, a
+/// view's id the shell knows (a view a folder may remember,
+/// `ViewSpec::remembered`); none while it was remembered in a view that
+/// is the pane's (the columns, the tree).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Remembered {
+    pub order: Order,
+    pub view: Option<Arc<str>>,
+}
+
 /// One record as the data file keeps it.
 #[derive(Serialize, Deserialize)]
 struct Record {
@@ -75,6 +86,8 @@ struct Record {
     group: GroupBy,
     #[serde(default = "going_up")]
     group_ascending: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    view: Option<String>,
 }
 
 /// The orders places remember, as the data file holds them: found by
@@ -83,7 +96,7 @@ struct Record {
 #[derive(Clone, Debug, Default)]
 pub struct Orders {
     /// By place, in the order they were remembered.
-    by_place: IndexMap<Location, Order>,
+    by_place: IndexMap<Location, Remembered>,
     /// The folders among them by path, each with its place as kept. Path
     /// order compares components, so the folders at or below one are one
     /// run of it, found from it.
@@ -118,7 +131,8 @@ impl Orders {
                         group: read.group,
                         group_ascending: read.group_ascending,
                     };
-                    orders.put(read.at, order);
+                    let view = read.view.filter(|view| !view.is_empty()).map(Arc::from);
+                    orders.put(read.at, Remembered { order, view });
                 }
                 Err(error) => {
                     tracing::warn!(
@@ -142,13 +156,15 @@ impl Orders {
         let records = self
             .by_place
             .iter()
-            .filter_map(|(at, order)| {
+            .filter_map(|(at, kept)| {
+                let order = kept.order;
                 toml::Value::try_from(Record {
                     at: at.clone(),
                     key: order.key,
                     ascending: order.ascending,
                     group: order.group,
                     group_ascending: order.group_ascending,
+                    view: kept.view.as_deref().map(str::to_owned),
                 })
                 .map_err(|error| tracing::warn!(%at, %error, "a place's order is not written"))
                 .ok()
@@ -173,19 +189,40 @@ impl Orders {
 
     /// The order `at` remembers, if it remembers one.
     pub fn of(&self, at: &Location) -> Option<Order> {
-        self.by_place.get(at).copied()
+        self.by_place.get(at).map(|kept| kept.order)
     }
 
-    /// Remember `order` for `at`, or forget its own: whether that changed
-    /// anything.
+    /// The view `at` remembers, if it remembers one.
+    pub fn view_of(&self, at: &Location) -> Option<Arc<str>> {
+        self.by_place.get(at).and_then(|kept| kept.view.clone())
+    }
+
+    /// Remember `order` for `at`, the view it remembers kept, or forget
+    /// all it remembers: whether that changed anything.
     pub fn set(&mut self, at: &Location, order: Option<Order>) -> bool {
-        match order {
-            Some(order) if self.of(at) == Some(order) => false,
-            Some(order) => {
-                self.put(at.clone(), order);
+        match (order, self.by_place.get_mut(at)) {
+            (Some(order), Some(kept)) if kept.order == order => false,
+            (Some(order), Some(kept)) => {
+                kept.order = order;
                 true
             }
-            None => self.take(at).is_some(),
+            (Some(order), None) => {
+                self.put(at.clone(), Remembered { order, view: None });
+                true
+            }
+            (None, _) => self.take(at).is_some(),
+        }
+    }
+
+    /// Remember `view` as the one `at` is shown in, or none, where `at`
+    /// remembers its order: whether that changed anything.
+    pub fn set_view(&mut self, at: &Location, view: Option<Arc<str>>) -> bool {
+        match self.by_place.get_mut(at) {
+            Some(kept) if kept.view != view => {
+                kept.view = view;
+                true
+            }
+            _ => false,
         }
     }
 
@@ -217,9 +254,9 @@ impl Orders {
     pub fn moved(&mut self, from: &Path, to: &Path) -> bool {
         let taken = self.taken_below(from);
         let any = !taken.is_empty();
-        for (path, order) in taken {
+        for (path, kept) in taken {
             if let Some(path) = moved_path(&path, from, to) {
-                self.put(Location::from_path(path), order);
+                self.put(Location::from_path(path), kept);
             }
         }
         any
@@ -231,14 +268,14 @@ impl Orders {
         let at_a = self.taken_below(a);
         let at_b = self.taken_below(b);
         let any = !at_a.is_empty() || !at_b.is_empty();
-        for (path, order) in at_a {
+        for (path, kept) in at_a {
             if let Some(path) = moved_path(&path, a, b) {
-                self.put(Location::from_path(path), order);
+                self.put(Location::from_path(path), kept);
             }
         }
-        for (path, order) in at_b {
+        for (path, kept) in at_b {
             if let Some(path) = moved_path(&path, b, a) {
-                self.put(Location::from_path(path), order);
+                self.put(Location::from_path(path), kept);
             }
         }
         any
@@ -246,7 +283,7 @@ impl Orders {
 
     /// Take out what `folder` and the folders below it remember, each
     /// with its path: in the time of what is there, found from it.
-    fn taken_below(&mut self, folder: &Path) -> Vec<(PathBuf, Order)> {
+    fn taken_below(&mut self, folder: &Path) -> Vec<(PathBuf, Remembered)> {
         let below: Vec<PathBuf> = self
             .paths
             .range::<Path, _>((Bound::Included(folder), Bound::Unbounded))
@@ -257,21 +294,21 @@ impl Orders {
             .into_iter()
             .filter_map(|path| {
                 let at = self.paths.remove(&path)?;
-                let order = self.by_place.shift_remove(&at)?;
-                Some((path, order))
+                let kept = self.by_place.shift_remove(&at)?;
+                Some((path, kept))
             })
             .collect()
     }
 
-    /// Remember `order` at `at`, in place of what it remembered.
-    fn put(&mut self, at: Location, order: Order) {
+    /// Remember `kept` at `at`, in place of what it remembered.
+    fn put(&mut self, at: Location, kept: Remembered) {
         if let Some(path) = at.path() {
             self.paths.insert(path, at.clone());
         }
-        self.by_place.insert(at, order);
+        self.by_place.insert(at, kept);
     }
 
-    fn take(&mut self, at: &Location) -> Option<Order> {
+    fn take(&mut self, at: &Location) -> Option<Remembered> {
         if let Some(path) = at.path() {
             self.paths.remove(&path);
         }
@@ -414,6 +451,33 @@ mod tests {
             Some(&later),
             "kept as written"
         );
+    }
+
+    #[test]
+    fn a_place_remembers_a_view_with_its_order_and_takes_it_along() {
+        let mut orders = Orders::default();
+        assert!(
+            !orders.set_view(&at("/files/a"), Some("grid".into())),
+            "no view without an order"
+        );
+        orders.set(&at("/files/a"), Some(by_date()));
+        assert!(orders.set_view(&at("/files/a"), Some("grid".into())));
+        assert!(!orders.set_view(&at("/files/a"), Some("grid".into())));
+        // A new order keeps the view.
+        let by_name = Order {
+            key: SortKey::Name,
+            ..by_date()
+        };
+        assert!(orders.set(&at("/files/a"), Some(by_name)));
+        assert_eq!(orders.view_of(&at("/files/a")).as_deref(), Some("grid"));
+        let read = Orders::read(orders.to_value());
+        assert_eq!(read.view_of(&at("/files/a")).as_deref(), Some("grid"));
+        assert_eq!(read.of(&at("/files/a")), Some(by_name));
+        let mut read = read;
+        read.moved(Path::new("/files/a"), Path::new("/files/b"));
+        assert_eq!(read.view_of(&at("/files/b")).as_deref(), Some("grid"));
+        assert!(read.set(&at("/files/b"), None));
+        assert_eq!(read.view_of(&at("/files/b")), None);
     }
 
     #[test]

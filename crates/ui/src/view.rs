@@ -192,6 +192,7 @@ pub fn spec(
         revision: Arc::default(),
         factory,
         role: skwir_core::registry::ViewRole::Listing,
+        remembered: false,
     }
 }
 
@@ -208,6 +209,11 @@ pub fn instantiate(spec: &ViewSpec) -> Option<Box<dyn PaneView>> {
 
 pub const LIST: &str = "list";
 pub const GRID: &str = "grid";
+/// What a pane shows where nothing says otherwise (a first start, a view
+/// gone with its plugin): the grid, as most file managers start
+/// (2026-11-12, the user's choice). A window comes back in the view it was
+/// left in, and a pane made from another takes that one's.
+pub const FIRST: &str = GRID;
 pub const COLUMNS: &str = "columns";
 pub const TREE: &str = "tree";
 pub const BOARD: &str = "board";

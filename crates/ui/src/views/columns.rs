@@ -29,7 +29,7 @@ use gpui::{
     Window, div, point, prelude::*, px, uniform_list,
 };
 use skwir_core::location::Trail;
-use skwir_core::{EntryId, Location, SortSpec};
+use skwir_core::{EntryId, Location};
 
 use crate::dnd;
 use crate::elements::zoom_wheel::{self, Zoomed};
@@ -525,15 +525,11 @@ impl PaneView for ColumnsView {
     ) -> AnyElement {
         let theme = cx.global::<Theme>().clone();
         let pane = shell.pane;
-        let (base, spec, cursor, complete) = {
+        let (base, cursor, complete) = {
             let ws = shell.app.workspace.read();
             let p = ws.pane(pane);
             (
                 p.and_then(|p| p.location().cloned()),
-                p.map_or_else(
-                    || skwir_core::grouping::Sort::from(SortSpec::default()),
-                    skwir_core::workspace::Pane::sorting,
-                ),
                 p.and_then(|p| p.selection.cursor),
                 p.is_some_and(|p| p.listing.is_complete()),
             )
@@ -574,10 +570,15 @@ impl PaneView for ColumnsView {
             self.ancestors
                 .iter_mut()
                 .map(|a| {
-                    let Some(listing) = pane.and_then(|p| p.kept(&a.location)) else {
+                    let Some(p) = pane else {
                         return Arc::from([]);
                     };
-                    let ids = listing.order_shown(&spec);
+                    let Some(listing) = p.kept(&a.location) else {
+                        return Arc::from([]);
+                    };
+                    // Each column in its own folder's order (ADR-132), so
+                    // none moves as the pane goes from one to the next.
+                    let ids = listing.order_shown(p.kept_sorting(&a.location));
                     // Looked for again only when its names change: every
                     // batch of metadata moved the listing's version. Not
                     // while it is held back, which shows nothing yet.
@@ -603,9 +604,15 @@ impl PaneView for ColumnsView {
         let next = self.next.shown.borrow().clone().map(|next| {
             let ids = {
                 let ws = shell.app.workspace.read();
-                ws.pane(pane)
-                    .and_then(|p| p.kept(&next))
-                    .map_or_else(|| Arc::from([]), |listing| listing.order_shown(&spec))
+                ws.pane(pane).map_or_else(
+                    || Arc::from([]),
+                    |p| {
+                        p.kept(&next).map_or_else(
+                            || Arc::from([]),
+                            |listing| listing.order_shown(p.kept_sorting(&next)),
+                        )
+                    },
+                )
             };
             (next, ids)
         });

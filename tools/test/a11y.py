@@ -420,6 +420,9 @@ def run(w):
     check("the window is named by the folder it shows",
           until(lambda: w.frame().get_name() == "files — skwir"))
 
+    # A first start shows the grid (`view::FIRST`): the list is heard
+    # first, the grid further on.
+    w.cmd("ui.view", {"id": "list"})
     w.keys()
     check("the file list has the focus, named by its folder",
           hears(w, "list box 'files' focused"))

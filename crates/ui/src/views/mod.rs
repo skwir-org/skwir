@@ -14,12 +14,14 @@ use crate::view::{self, spec};
 /// The specs registered under owner `ui`.
 pub fn specs() -> Vec<ViewSpec> {
     vec![
+        // The two a folder may remember as its view (ADR-132).
         spec(
             view::LIST,
             "List",
             0,
             || Box::new(list::ListView::default()),
-        ),
+        )
+        .remembered(),
         // Beside the list it extends, in the View menu: a button only
         // while shown. No Ctrl+digit: the others keep theirs, and Usage
         // and the map have the next ones.
@@ -29,7 +31,8 @@ pub fn specs() -> Vec<ViewSpec> {
             "Grid",
             2,
             || Box::new(grid::GridView::default()),
-        ),
+        )
+        .remembered(),
         spec(view::COLUMNS, "Columns", 3, || {
             Box::new(columns::ColumnsView::default())
         }),

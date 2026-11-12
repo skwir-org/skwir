@@ -971,6 +971,39 @@ impl App {
     /// by a criterion only it read is by name; turned on, it makes them
     /// (`PluginHost`). Every listing the pane shows is sorted anew with
     /// them, on a worker (ADR-121).
+    /// Remember `view` as the one the place `pane` shows is shown in
+    /// (ADR-132), where that place remembers its order: the shell asks it
+    /// when a view a folder may remember is chosen there. Whether that
+    /// changed what it remembers.
+    pub fn remember_view(&self, pane: PaneId, view: &str) -> bool {
+        if !self.remembered_view(view) {
+            return false;
+        }
+        let changed = {
+            let mut ws = self.workspace.write();
+            let Some(at) = ws
+                .pane(pane)
+                .filter(|p| p.keeps_order())
+                .and_then(|p| p.location().cloned())
+            else {
+                return false;
+            };
+            ws.remember_view(&at, Some(view.into()))
+        };
+        if changed {
+            crate::orders::save(self);
+        }
+        changed
+    }
+
+    /// Whether `view` is one a folder may remember (`ViewSpec::remembered`).
+    pub fn remembered_view(&self, view: &str) -> bool {
+        self.registry
+            .views
+            .find(|spec| &*spec.id == view)
+            .is_some_and(|spec| spec.remembered)
+    }
+
     pub(crate) fn make_keys_again(&self, pane: Option<PaneId>) {
         if self.make_keys(|p, _| pane.is_none_or(|id| p.id == id)) {
             self.wake();
@@ -988,14 +1021,26 @@ impl App {
 
     /// Make the keys of the panes `which` picks: whether it picked any.
     fn make_keys(&self, which: impl Fn(&crate::workspace::Pane, u64) -> bool) -> bool {
+        // Each pane's, and those of the columns beside it whose order is
+        // not the pane's (ADR-132): theirs as they want them, every one
+        // with the pane's where the pane's are made again.
+        type Asked = (PaneId, Option<Location>, Option<crate::workspace::KeysFor>);
         let revision = self.registry.sorters.revision();
-        let asked: Vec<(PaneId, Option<crate::workspace::KeysFor>)> = self
+        let asked: Vec<Asked> = self
             .workspace
             .read()
             .panes()
             .iter()
-            .filter(|p| which(p, revision))
-            .map(|p| (p.id, p.keys_wanted_for(revision)))
+            .flat_map(|p| {
+                let again = which(p, revision);
+                let own = again.then(|| (p.id, None, p.keys_wanted_for(revision)));
+                let id = p.id;
+                own.into_iter().chain(
+                    p.column_keys_wanted(revision, again)
+                        .into_iter()
+                        .map(move |(at, made_for)| (id, Some(at), Some(made_for))),
+                )
+            })
             .collect();
         // Nothing made, nothing to wait for anew: the pump asks this of
         // every pane each time, and leaves the waiter alone.
@@ -1006,19 +1051,22 @@ impl App {
         let sorter = self.registry.sorters.all().into_iter().next();
         let made: Vec<_> = asked
             .into_iter()
-            .map(|(id, made_for)| {
+            .map(|(id, at, made_for)| {
                 let keys = made_for
                     .zip(sorter.as_ref())
                     .and_then(|((sort, group, _), sorter)| (sorter.keys)(sort, group));
-                (id, made_for, keys)
+                (id, at, made_for, keys)
             })
             .collect();
         let mut ws = self.workspace.write();
-        for (id, made_for, keys) in made {
-            if let Some(p) = ws.pane_mut(id)
-                && p.keys_wanted_for(revision) == made_for
-            {
-                p.set_keys(keys, made_for);
+        for (id, at, made_for, keys) in made {
+            let Some(p) = ws.pane_mut(id) else { continue };
+            match (at, made_for) {
+                (Some(at), Some(made_for)) => p.set_column_keys(&at, keys, made_for),
+                (None, _) if p.keys_wanted_for(revision) == made_for => {
+                    p.set_keys(keys, made_for);
+                }
+                _ => {}
             }
         }
         drop(ws);
@@ -1035,7 +1083,7 @@ impl App {
             .read()
             .panes()
             .iter()
-            .filter_map(|p| p.keys().and_then(|k| k.next_change))
+            .filter_map(crate::workspace::Pane::keys_next_change)
             .min();
         self.wait_until(
             |app| &app.keys_rollover,
@@ -1767,7 +1815,7 @@ impl App {
             ),
         };
         let mut ws = self.workspace.write();
-        let order = ws.order_of(&location);
+        let (order, view) = (ws.order_of(&location), ws.view_of(&location));
         let p = ws
             .pane_mut(pane)
             .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
@@ -1783,7 +1831,7 @@ impl App {
         } else {
             p.replace_open(open, listing, lensed);
         }
-        p.show_order(order);
+        p.show_order(order, view);
         p.set_listed_hidden(follows_hidden.then_some(hidden_shown));
         then(p, &location);
         drop(ws);
@@ -1809,8 +1857,11 @@ impl App {
             match self.open_for(pane, &location) {
                 Ok(open) => {
                     let listing = self.new_listing(&location);
-                    if let Some(p) = self.workspace.write().pane_mut(pane) {
-                        p.add_kept(open, listing);
+                    let mut ws = self.workspace.write();
+                    // A column in its own folder's order (ADR-132).
+                    let order = ws.order_of(&location);
+                    if let Some(p) = ws.pane_mut(pane) {
+                        p.add_kept(open, listing, order);
                     }
                 }
                 Err(error) => tracing::warn!(%location, "cannot keep: {error:#}"),
@@ -2993,8 +3044,11 @@ impl App {
             match self.open_for(pane, &location) {
                 Ok(open) => {
                     let listing = self.new_listing(&location);
-                    if let Some(p) = self.workspace.write().pane_mut(pane) {
-                        p.add_kept(open, listing);
+                    let mut ws = self.workspace.write();
+                    // A column in its own folder's order (ADR-132).
+                    let order = ws.order_of(&location);
+                    if let Some(p) = ws.pane_mut(pane) {
+                        p.add_kept(open, listing, order);
                     }
                 }
                 Err(error) => tracing::warn!(%location, "cannot open in place: {error:#}"),
@@ -3282,6 +3336,10 @@ pub struct RememberOrderArgs {
     /// Remember (true) or forget (false); toggled when omitted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub on: Option<bool>,
+    /// The view it is shown in, remembered with its order when one a
+    /// folder may remember (`list`, `grid`); the shell gives the one shown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub view: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pane: Option<PaneId>,
 }
@@ -4068,7 +4126,7 @@ mod builtin {
             Topic::View,
             "remember_order",
             "Remember this folder's order",
-            "Remember how the folder a pane shows is sorted and grouped (ADR-132), or forget it (`on`; toggled when omitted): a folder that remembers is shown so in every pane, a change of its sort or groups made there changing what it remembers, the pane's own order set aside while it shows it and back once it shows another; forgotten, the pane's own comes back. Any place but a search, whose terms are what it is (the trash, a tag's place); hidden files stay the pane's, folders first the user's",
+            "Remember how the folder a pane shows is sorted and grouped (ADR-132), and the view it is shown in (`view`: list or grid), or forget it (`on`; toggled when omitted): a folder that remembers is shown so in every pane, a change of its sort, groups or view made there changing what it remembers, the pane's own order and view set aside while it shows it and back once it shows another; forgotten, the pane's own come back. Its view is shown only while the pane shows a view a folder may remember, never in place of the columns or the tree; each column of the columns is in its own folder's order. Any place but a search, whose terms are what it is (the trash, a tag's place); hidden files stay the pane's, folders first the user's",
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
                 let (at, on) = {
@@ -4092,6 +4150,11 @@ mod builtin {
                     !(on && app.is_search(&at)),
                     "a search's order is not remembered: its terms are what it is"
                 );
+                let view: Option<Arc<str>> = a
+                    .view
+                    .as_deref()
+                    .filter(|view| app.remembered_view(view))
+                    .map(Arc::from);
                 let mut ws = app.workspace.write();
                 // Remembered as the pane shows it now, still there.
                 let order = ws
@@ -4099,7 +4162,10 @@ mod builtin {
                     .filter(|p| p.location() == Some(&at))
                     .map(|p| crate::orders::Order::of(p.sort))
                     .ok_or_else(|| anyhow::anyhow!("the pane went elsewhere"))?;
-                let changed = ws.remember_order(&at, on.then_some(order));
+                let mut changed = ws.remember_order(&at, on.then_some(order));
+                if on && view.is_some() {
+                    changed |= ws.remember_view(&at, view);
+                }
                 drop(ws);
                 if changed {
                     crate::orders::save(app);

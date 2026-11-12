@@ -160,13 +160,13 @@ impl Shell {
         // Quick filters and its timeline shown or not.
         let (view, quick_filters, timeline) = if self.panes.is_empty() {
             (
-                crate::view::LIST,
+                crate::view::FIRST,
                 false,
                 crate::timeline::TimelineState::default(),
             )
         } else {
             let ui = self.ui();
-            (ui.view_id, ui.quick_filters_on, ui.timeline.like())
+            (ui.own_view(), ui.quick_filters_on, ui.timeline.like())
         };
         let mut pool: HashMap<PaneId, crate::shell::PaneUi> = self
             .panes

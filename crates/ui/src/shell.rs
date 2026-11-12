@@ -54,6 +54,13 @@ pub struct PaneUi {
     /// Registry revision the registrations above were reconciled against.
     views_revision: u64,
     pub view_id: &'static str,
+    /// The pane's own view, set aside while the folder it shows is shown
+    /// in the view that folder remembers (ADR-132, `Shell::sync_place_views`);
+    /// none while it shows its own.
+    pub(crate) own_view: Option<&'static str>,
+    /// The view the place shown remembered when last looked at, so a sync
+    /// acts only on a change.
+    place_view: Option<std::sync::Arc<str>>,
     /// The view showing the listing last (list, grid, columns), where a
     /// lens goes back to.
     pub listing_view: &'static str,
@@ -103,10 +110,16 @@ pub struct PaneUi {
 }
 
 impl PaneUi {
+    /// Its own view: what it shows wherever no folder's view is shown
+    /// (ADR-132), and what a window, a tab or a pane made from it keeps.
+    pub(crate) fn own_view(&self) -> &'static str {
+        self.own_view.unwrap_or(self.view_id)
+    }
+
     /// What it carries to the window its tab moves to.
     pub(crate) fn carried(&self) -> Carried {
         Carried {
-            view_id: self.view_id,
+            view_id: self.own_view(),
             quick_filters_on: self.quick_filters_on,
             timeline: self.timeline.like(),
         }
@@ -1034,7 +1047,7 @@ impl Shell {
             self.split_share = share;
         }
         // The views this build and its plugins have were instantiated with
-        // the panes; a remembered one that is gone leaves the List.
+        // the panes; a remembered one that is gone leaves the first view.
         for pane in &mut self.panes {
             if let Some(known) = pane.views.keys().find(|k| ***k == *session.view).copied() {
                 pane.view_id = known;
@@ -1146,8 +1159,10 @@ impl Shell {
             view_registrations,
             views_revision,
             views,
-            view_id: view::LIST,
-            listing_view: view::LIST,
+            view_id: view::FIRST,
+            own_view: None,
+            place_view: None,
+            listing_view: view::FIRST,
             usage: UsageState::default(),
             loading: crate::loading::State::default(),
             omni: None,
@@ -1923,8 +1938,51 @@ impl Shell {
                 pane.usage = UsageState::default();
             }
             if !pane.views.contains_key(pane.view_id) {
-                pane.view_id = view::LIST;
+                pane.view_id = view::FIRST;
             }
+            if pane
+                .own_view
+                .is_some_and(|own| !pane.views.contains_key(own))
+            {
+                pane.own_view = Some(view::FIRST);
+            }
+        }
+    }
+
+    /// Show each pane's folder in the view it remembers (ADR-132), where
+    /// the pane's own is a view a folder may remember too, the pane's own
+    /// set aside; its own again once it shows a place that remembers none.
+    /// A pane in the columns, the tree or a lens stays there.
+    fn sync_place_views(&mut self) {
+        let wanted: Vec<Option<std::sync::Arc<str>>> = {
+            let ws = self.app.workspace.read();
+            self.panes
+                .iter()
+                .map(|ui| ws.pane(ui.id).and_then(|p| p.place_view().cloned()))
+                .collect()
+        };
+        let app = &self.app;
+        for (ui, wanted) in self.panes.iter_mut().zip(wanted) {
+            if ui.place_view == wanted {
+                continue;
+            }
+            let own = ui.own_view();
+            let shown = wanted
+                .as_deref()
+                .and_then(|view| ui.views.keys().find(|k| **k == view).copied())
+                .filter(|_| app.remembered_view(own));
+            match shown {
+                Some(view) => {
+                    ui.own_view = Some(own);
+                    ui.view_id = view;
+                }
+                None => {
+                    if let Some(own) = ui.own_view.take() {
+                        ui.view_id = own;
+                    }
+                }
+            }
+            ui.place_view = wanted;
         }
     }
 
@@ -1943,7 +2001,34 @@ impl Shell {
                 if listing {
                     self.ui_mut().listing_view = leaving;
                 }
-                self.ui_mut().view_id = k;
+                // Where the folder shown remembers its order, a view a
+                // folder may remember is that folder's (ADR-132); any other
+                // is the pane's own.
+                let pane = self.pane;
+                let folder_view = self.app.remembered_view(k)
+                    && self
+                        .app
+                        .workspace
+                        .read()
+                        .pane(pane)
+                        .is_some_and(skwir_core::workspace::Pane::keeps_order);
+                let own_remembered = self.app.remembered_view(self.ui().own_view());
+                let ui = self.ui_mut();
+                if folder_view {
+                    // Left from a view of the pane's own (the columns): the
+                    // pane's own is this one too.
+                    if !own_remembered {
+                        ui.own_view = None;
+                    } else if ui.own_view.is_none() {
+                        ui.own_view = Some(ui.view_id);
+                    }
+                    ui.view_id = k;
+                    ui.place_view = Some(k.into());
+                    self.app.remember_view(pane, k);
+                } else {
+                    ui.own_view = None;
+                    ui.view_id = k;
+                }
                 self.remember_session();
                 let ix = self.cursor_index();
                 self.with_view(|v, _| {
@@ -3415,6 +3500,7 @@ impl Shell {
         }
         let t0 = Instant::now();
         self.sync_views();
+        self.sync_place_views();
         self.sync_keymap(cx);
         // What the program took from the core for this window
         // (`finishing::deliver`).

@@ -314,7 +314,7 @@ impl Shell {
     /// This window's shape right now.
     pub(crate) fn session(&self) -> Session {
         Session {
-            view: self.ui().view_id.to_owned(),
+            view: self.ui().own_view().to_owned(),
             zoom: self.zoom,
             row_zoom: self.row_zoom,
             levels: self.levels,

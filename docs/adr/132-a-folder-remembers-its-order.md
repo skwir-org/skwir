@@ -2,7 +2,8 @@
 
 Status: accepted, 2026-11-12, on the user's answers (asked in the session
 that built it). Built the same day and run on Linux. Settles what
-ADR-130 left "for an ADR of its own" (decision 11).
+ADR-130 left "for an ADR of its own" (decision 11). Amended the same day
+(see Amendments: the view too, each column its own order).
 
 ## Context
 
@@ -32,8 +33,8 @@ ADR-130 left "for an ADR of its own" (decision 11).
 2. **Shown so wherever it is shown**: every pane that shows it, and
    every window. A change of its sort or groups made there (a header, Sort
    by, Group by) changes what it remembers, and every pane showing it
-   follows. Folders opened in place and the columns above it take the
-   order the pane shows.
+   follows. Folders opened in place take the order the pane shows.
+   (Amended: each column is in its own folder's order, 9.)
 3. **The pane's own order is set aside, never overwritten**
    (`Pane::own`): leaving the folder for one that remembers none shows
    the pane's own again, as it was. Turned off, the folder shows the
@@ -70,6 +71,31 @@ ADR-130 left "for an ADR of its own" (decision 11).
    inherited). Reading them would need, each, to be read only where its
    own program heeds it, one answer per folder in a fixed order, and the
    menu saying where an order comes from.
+
+## Amendments
+
+2026-11-12, the user's go, on their question whether a view remembered
+would not change under the pointer in the columns:
+
+8. **A folder remembers the view it is shown in** too, where that is
+   one a folder may remember (`ViewSpec::remembered`: the list and the
+   grid): the row's press remembers the one shown, and another of them
+   chosen there is the folder's (`App::remember_view`). It is shown only
+   while the pane's own view is one of those, the pane's own set aside
+   in the shell (`PaneUi::own_view`, `Shell::sync_place_views`) as the
+   order is in the core, and back once the pane leaves. **A pane in the
+   columns, the tree or a lens stays there**: going from folder to
+   folder never changes the view, as Finder keeps a window in column
+   view. Chosen there, a view of the pane's (the columns) is the pane's,
+   and one a folder may remember is the folder's and, from the columns,
+   the pane's too. The window, a tab and a pane made from another keep
+   the pane's own (`PaneUi::own_view()`).
+9. **Each column is in its own folder's order**: the one it remembers,
+   else the pane's own (`Pane::kept_sorting`, `Kept::order`), so no
+   column moves as the pane goes from one to the next; the folder shown
+   in its own. A column whose order wants keys the pane's do not answer
+   (by kind, type, owner, tags) has its own, made with the pane's
+   (`Pane::column_keys_wanted`). The tree keeps one order, its root's.
 
 ## Consequences
 

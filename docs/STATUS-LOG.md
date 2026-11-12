@@ -15599,3 +15599,58 @@ there, the record followed; another folder showed the pane's Name, A to
 Z; back, newest first, the row checked; clicked off, Name, A to Z at
 once and the record gone; remembered by size, the app started again
 opened the folder largest first. Not run: `just check-cross`.
+
+## 2026-11-12: The grid first, a folder's view, each column its own order (ADR-132, amended)
+
+The user asked what Skwir's first view is (the list) and what other file
+managers start in (GNOME Files, Dolphin, Finder, Thunar, Nemo: icons;
+Explorer by folder type, the commanders a list), and chose the grid for a
+first start. They liked a folder remembering its view too, and asked
+whether a view remembered would not change under the pointer in the
+columns; proposed and chosen: a folder's view is a list or a grid, shown
+only while the pane's own is one of those, so a pane in the columns, the
+tree or a lens stays there. The same question showed the order did move
+in the columns: a column above took the order of a folder below that
+remembered one.
+
+- **The first view** (`view::FIRST`, the grid): a pane with nothing to
+  take a view from (a first start, a view gone with its plugin). A window
+  still comes back in the view it was left in, a tab and a split take
+  their pane's.
+- **A folder's view** (`Remembered::view`, `ViewSpec::remembered` on the
+  list and the grid): the row's press remembers the view shown
+  (`remember_order`'s `view`), a list or grid chosen there is the
+  folder's (`App::remember_view`); the shell shows it in place of the
+  pane's own, set aside (`PaneUi::own_view`, `Shell::sync_place_views`),
+  only while that is a list or a grid. From the columns, a list or grid
+  chosen in such a folder is the pane's own too. The window's shape, a
+  tab moved and a tab opened keep the pane's own view.
+- **Each column its own order** (`Kept::order`, `Pane::kept_sorting`,
+  `column_spec`): the order its folder remembers, else the pane's own,
+  in the columns' draw and in their fill and sort jobs; keys of their own
+  where the pane's do not answer them (`Pane::column_keys_wanted`, made
+  in `App::make_keys` with the pane's, each column's midnight change
+  counted). The folder left becomes a column with the order it was shown
+  in.
+
+**Checked:** rustfmt; clippy `-D warnings` on `skwir-core` and
+`skwir-ui` (all targets) and `skwir`'s tests; `skwir-core`'s tests, 766
+passed (new: a place remembers a view with its order and takes it along;
+each column in its own folder's order, the folder left a column in the
+order it was shown in; the view remembered only where a folder may
+remember it), `skwir-ui`'s 642, `skwir`'s whole suite, 231. `just
+a11y-check` on the debug build, 76 checks passed, once it chooses the
+list before the list's checks (a first start now shows the grid). In a
+window on Xvfb (debug build): a first start in the grid; Downloads
+remembered by size in the grid, Plain in the pane's list, Downloads
+again in its grid; in the columns, going into Downloads stayed in the
+columns, its column smallest first and the one above by name, and back
+up its column kept its order; the list chosen there from the columns
+became the folder's and the pane's; the window's shape kept the pane's
+own view (`grid`) while Downloads showed its list. Idle memory of the
+`dist` build, `idle-pss.py`'s fixture on Xvfb with lavapipe (its
+buffers counted as the process's own there, so not the budget's
+measure), alternated, own share median: grid 124.5 and 124.6 MiB, list
+122.1 and 121.7 MiB, the grid about 2.6 MiB more; first frame 96–110 ms
+both. Not run: `just idle-pss` on the session's display (it opens
+windows there), `just check-cross`, `just smoke`.

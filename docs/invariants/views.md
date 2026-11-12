@@ -390,6 +390,13 @@ around the views is in [shell.md](shell.md).
   made where it remembers is the folder's (`Workspace::remember_order`,
   every pane showing it told). Its record is looked up in memory before
   the folder opens, so it is read for that order from the first listing.
+  Each column beside the pane is in its own folder's order
+  (`Pane::kept_sorting`: the one it remembers, else the pane's own),
+  never the pane's `sort`, with keys of its own where the pane's do not
+  answer it. The view it remembers (a list or a grid,
+  `ViewSpec::remembered`) is the shell's to show (`PaneUi::own_view`),
+  only while the pane's own is one of those: a pane in the columns, the
+  tree or a lens is never moved out of it by a folder.
 - **A folder comes read for an order that reads it** (ADR-120,
   amended): a pane sorted or grouped by what a stat or the metadata
   providers say (`SortSpec::needs_metadata`) opens its locations saying

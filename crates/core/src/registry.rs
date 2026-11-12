@@ -171,6 +171,11 @@ pub struct ViewSpec {
     /// Producers increment this before waking the app, avoiding per-frame data queries.
     pub revision: Arc<AtomicU64>,
     pub role: ViewRole,
+    /// A folder may remember it as the view it is shown in (ADR-132): a
+    /// view of one folder's entries (the list, the grid). Not one the pane
+    /// moves through folders in (the columns, the tree) nor a lens: while
+    /// a pane shows one of those, no folder changes its view.
+    pub remembered: bool,
 }
 
 /// What a view is for, which decides where it is offered. Every view is in
@@ -206,7 +211,15 @@ impl ViewSpec {
             factory: Arc::new(ViewRenderer(id)),
             revision,
             role: ViewRole::Listing,
+            remembered: false,
         }
+    }
+
+    /// A view a folder may remember (`remembered`).
+    #[must_use]
+    pub fn remembered(mut self) -> Self {
+        self.remembered = true;
+        self
     }
 
     /// A view offered as a [`ViewRole::Lens`].

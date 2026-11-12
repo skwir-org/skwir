@@ -1715,7 +1715,10 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   every 2 s, saved on a worker), so a window closed alone is forgotten
   and a crash loses none. A new window takes its own shape (restored,
   reopened), else its source window's, else `ui.session`, the shape of
-  the window used last.
+  the window used last. With none (a first start), its panes show the
+  grid (`view::FIRST`, as most file managers start; the user's choice,
+  2026-11-12). The shape keeps the pane's own view, never a folder's
+  (ADR-132, `PaneUi::own_view`).
 - **Where a window was and how big** is in its shape
   (`session::Placement`, ADR-122 point 7): its size as a window,
   whether it was maximized, and its place with the display it was on (a
