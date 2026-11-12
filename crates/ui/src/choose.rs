@@ -371,6 +371,16 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                 .child(c.empty.clone()),
         );
     }
+    let list = modal::scrolled(
+        list,
+        "choose-results",
+        &c.picker,
+        c.filtered.len(),
+        modal::PICKER_ROWS,
+        28.,
+        |shell| shell.choose.as_mut().map(|c| &mut c.picker),
+        cx,
+    );
     let option = c.option.as_ref().map(|option| {
         div()
             .id("choose-option")

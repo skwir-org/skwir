@@ -53,7 +53,25 @@ pub enum Scrolls {
     Items(ListState),
     /// `elements::rows`: scrolls by row, counted at the average row.
     Rows(crate::elements::rows::Scroll),
+    /// A window of rows over a longer list, which moves a whole row at a
+    /// time (a picker's, `modal::Picker`).
+    Steps(Steps),
 }
+
+/// A window of `shown` rows from row `top` of `len`, and what moves it to
+/// start at another: the bar measures it in rows, `STEP` each.
+#[derive(Clone)]
+pub struct Steps {
+    pub top: usize,
+    pub shown: usize,
+    pub len: usize,
+    pub to: Rc<dyn Fn(usize, &mut gpui::Window, &mut App)>,
+}
+
+/// What a row of `Steps` counts for: any length, as the bar sizes its
+/// thumb by the share in sight; more than one, as it shows a thumb only
+/// where more than one is hidden.
+const STEP: f32 = 16.;
 
 impl From<ScrollHandle> for Scrolls {
     fn from(handle: ScrollHandle) -> Self {
@@ -83,8 +101,8 @@ impl Scrolls {
                 max: f32::from(handle.max_offset().along(axis)),
                 viewport: f32::from(handle.bounds().size.along(axis)),
             },
-            // A list scrolls only up and down.
-            Scrolls::Items(_) if axis == Axis::Horizontal => Metrics::NONE,
+            // A list scrolls only up and down, as a window of rows does.
+            Scrolls::Items(_) | Scrolls::Steps(_) if axis == Axis::Horizontal => Metrics::NONE,
             Scrolls::Items(list) => Metrics {
                 offset: -f32::from(list.scroll_px_offset_for_scrollbar().y),
                 max: f32::from(list.max_offset_for_scrollbar().y),
@@ -102,10 +120,15 @@ impl Scrolls {
                     viewport,
                 }
             }
+            Scrolls::Steps(steps) => Metrics {
+                offset: steps.top as f32 * STEP,
+                max: steps.len.saturating_sub(steps.shown) as f32 * STEP,
+                viewport: steps.shown.min(steps.len) as f32 * STEP,
+            },
         }
     }
 
-    fn scroll_to(&self, axis: Axis, to: f32) {
+    fn scroll_to(&self, axis: Axis, to: f32, window: &mut gpui::Window, cx: &mut App) {
         match self {
             Scrolls::Offset(handle) => {
                 handle.set_offset(handle.offset().apply_along(axis, |_| px(-to)));
@@ -115,6 +138,8 @@ impl Scrolls {
                 Axis::Vertical => scroll.borrow_mut().scroll_vertically_to(to),
                 Axis::Horizontal => scroll.borrow_mut().scroll_horizontally_to(to),
             },
+            // The nearest row: a window moves a row at a time.
+            Scrolls::Steps(steps) => (steps.to)((to / STEP).round().max(0.) as usize, window, cx),
         }
     }
 
@@ -342,7 +367,7 @@ impl Element for Scrollbar {
             let down = grab.clone();
             let hit = hitbox.clone();
             let handle = scrolls.clone();
-            window.on_mouse_event(move |event: &MouseDownEvent, phase, window, _| {
+            window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
                 if !phase.bubble() || event.button != MouseButton::Left || !hit.is_hovered(window) {
                     return;
                 }
@@ -352,7 +377,7 @@ impl Element for Scrollbar {
                     f32::from(event.position.along(axis) - thumb.origin.along(axis))
                 } else {
                     let middle = f32::from(thumb.size.along(axis)) / 2.;
-                    handle.scroll_to(axis, to_offset(event.position, middle));
+                    handle.scroll_to(axis, to_offset(event.position, middle), window, cx);
                     middle
                 };
                 down.0.set(Some(grabbed));
@@ -362,7 +387,7 @@ impl Element for Scrollbar {
 
             let moved = grab.clone();
             let handle = scrolls.clone();
-            window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, _| {
+            window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
                 if !phase.bubble() {
                     return;
                 }
@@ -375,7 +400,7 @@ impl Element for Scrollbar {
                     handle.dragging(false);
                     return;
                 }
-                handle.scroll_to(axis, to_offset(event.position, grabbed));
+                handle.scroll_to(axis, to_offset(event.position, grabbed), window, cx);
                 window.refresh();
             });
 

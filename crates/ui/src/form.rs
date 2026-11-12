@@ -1612,5 +1612,17 @@ fn list_of(
                 )),
         );
     }
-    list.into_any_element()
+    let mut window = picker;
+    window.top = start;
+    modal::scrolled(
+        list,
+        "form-options",
+        &window,
+        shown.len(),
+        rows,
+        28.,
+        move |shell| Some(shell.form.as_mut()?.picker_of(at)),
+        cx,
+    )
+    .into_any_element()
 }

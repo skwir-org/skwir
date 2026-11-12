@@ -16006,3 +16006,34 @@ captions still the tags then the columns); `skwir-core`'s, 766 (a view's
 fields asked, once with its sort's, given up when no longer shown); the
 grouping and plugin toggle tests; `just a11y-check`; clippy. Not run:
 `just check-cross`; Taken on a picture with a camera's clock.
+
+## 2026-11-12: A picker's list scrolls under a scrollbar
+
+Asked by the user for the command palette; made for every picker, which
+share one list (`modal::Picker`): the palette, Choose, the tag editor and
+a form's choices. A picker builds the rows of its window alone (14 of the
+palette's hundreds), so it had no offset for a scrollbar to follow, and
+the wheel did nothing over it.
+
+- **The bar follows the window** (`scrollbar::Scrolls::Steps`, made each
+  frame from where the window stands and how many rows there are): a
+  drag of the thumb or a press on the track moves the window to the
+  nearest row, through the picker the shell keeps (`modal::scrolled`).
+- **The wheel moves it** a row a notch, a touchpad's small steps added up
+  (`Picker::wheel`); Ctrl and the wheel stay the text size's.
+- **The highlight comes along** (`Picker::scroll`): what Enter takes is
+  always in sight, as the keys already kept it.
+- **A palette row is one line** (vendored gpui 0061 lets a text narrow
+  and wrap): a long title (a setting's, "Settings: Reading › Grammars ›
+  Where grammars were looked for") wrapped into the row under it; it is
+  cut now, said whole when pointed at (`elements::clip`), the command's
+  name and keys kept whole.
+
+**Checked:** on Xvfb (debug build), the palette's bar at its top, five
+notches of the wheel (the window down, the highlight on its first row),
+a drag of the thumb to the middle (the settings' commands, each one
+line). `skwir-ui`'s tests, 649 (a new one:
+`a_window_scrolled_brings_the_highlight_along`); `just a11y-check`
+(the palette and the tag editor said as before); clippy. Not looked at
+on screen: Choose, the tag editor and a form's list, which share the
+helper.

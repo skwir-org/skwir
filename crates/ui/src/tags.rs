@@ -1296,6 +1296,16 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                 .child("No tags yet: type one and press Enter"),
         );
     }
+    let list = modal::scrolled(
+        list,
+        "tag-rows",
+        &e.picker,
+        e.shown.len(),
+        modal::PICKER_ROWS,
+        28.,
+        |shell| shell.tag_editor.as_mut().map(|e| &mut e.picker),
+        cx,
+    );
     let footer = modal::footer(
         "Enter on an empty field applies",
         [

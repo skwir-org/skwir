@@ -677,14 +677,29 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                         }
                         this.palette_submit(window, cx);
                     }))
-                    .child(div().child(item.title.clone()))
-                    .child(div().text_small().text_color(muted).child(name))
+                    // One line, a title too long cut, said whole when
+                    // pointed at; the command's name and keys kept whole.
+                    .child(crate::elements::clip::clipped(
+                        div().id("command-title").min_w_0().truncate(),
+                        item.title.clone(),
+                    ))
+                    .child(
+                        div()
+                            .flex_none()
+                            .whitespace_nowrap()
+                            .text_small()
+                            .text_color(muted)
+                            .child(name),
+                    )
                     .child(div().flex_1())
-                    .children(
-                        item.keys
-                            .clone()
-                            .map(|k| div().text_small().text_color(muted).child(k)),
-                    ),
+                    .children(item.keys.clone().map(|k| {
+                        div()
+                            .flex_none()
+                            .whitespace_nowrap()
+                            .text_small()
+                            .text_color(muted)
+                            .child(k)
+                    })),
             );
         }
         if p.filtered.is_empty() {
@@ -696,6 +711,16 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                     .child("No matching command"),
             );
         }
+        let list = modal::scrolled(
+            list,
+            "palette-results",
+            &p.picker,
+            p.filtered.len(),
+            modal::PICKER_ROWS,
+            26.,
+            |shell| shell.palette.as_mut().map(|p| &mut p.picker),
+            cx,
+        );
         panel = panel.child(list);
     }
     Some(modal::modal(

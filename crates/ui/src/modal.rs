@@ -495,12 +495,17 @@ pub fn option(
 }
 
 /// A picker's list: which rows are on screen and which one Enter runs. The
-/// highlight never leaves the rows shown: moving past an edge scrolls.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// highlight never leaves the rows shown: moving past an edge scrolls, and
+/// the rows scrolled (by the wheel, by the scrollbar, `scrolled`) bring it
+/// along.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Picker {
     pub highlighted: usize,
     /// First row shown.
     pub top: usize,
+    /// What the wheel turned of a row not moved yet: a touchpad's small
+    /// steps add up.
+    turned: f32,
 }
 
 /// A move along a list (`ui.list_move`): rows at a time, round its ends;
@@ -593,6 +598,88 @@ impl Picker {
     pub fn shown(&self, len: usize) -> std::ops::Range<usize> {
         self.top.min(len)..(self.top + PICKER_ROWS).min(len)
     }
+
+    /// The window of `rows` of the `len` starting at row `top`, as far as
+    /// the last row lets it, the highlight brought into it: what Enter
+    /// takes is always in sight.
+    pub fn scroll(&mut self, top: usize, len: usize, rows: usize) {
+        self.top = top.min(len.saturating_sub(rows));
+        let last = (self.top + rows).min(len).saturating_sub(1).max(self.top);
+        self.highlighted = self.highlighted.clamp(self.top, last);
+    }
+
+    /// The window moved by what the wheel turned, in rows (down when
+    /// positive), whole rows at a time.
+    pub fn wheel(&mut self, rows: f32, len: usize, shown: usize) {
+        self.turned += rows;
+        let whole = self.turned.trunc();
+        if whole == 0. {
+            return;
+        }
+        self.turned -= whole;
+        let top = self.top.saturating_add_signed(whole as isize);
+        self.scroll(top, len, shown);
+    }
+}
+
+/// `list`, a picker's rows (`picker`'s window of `rows` of the `len`), with
+/// a scrollbar over its right edge that moves the window, as the wheel
+/// does a row a notch (a touchpad by its rows, each `row` px tall at 100 %),
+/// the highlight brought along (`Picker::scroll`). `find` is where the
+/// shell keeps the picker, for a move to change it.
+pub fn scrolled(
+    list: Stateful<Div>,
+    id: &'static str,
+    picker: &Picker,
+    len: usize,
+    rows: usize,
+    row: f32,
+    find: impl for<'a> Fn(&'a mut Shell) -> Option<&'a mut Picker> + 'static,
+    cx: &mut Context<Shell>,
+) -> Stateful<Div> {
+    let find = Rc::new(find);
+    let shell = cx.entity().downgrade();
+    let moved = Rc::clone(&find);
+    let steps = scrollbar::Steps {
+        top: picker.top.min(len),
+        shown: rows,
+        len,
+        to: Rc::new(move |top, _, cx| {
+            shell
+                .update(cx, |shell, cx| {
+                    if let Some(picker) = moved(shell) {
+                        picker.scroll(top, len, rows);
+                        cx.notify();
+                    }
+                })
+                .ok();
+        }),
+    };
+    list.relative()
+        .on_scroll(
+            cx.listener(move |shell, event: &gpui::ScrollEvent, window, cx| {
+                // Ctrl and the wheel size the text: someone else's.
+                if crate::keymap::secondary(&event.modifiers) {
+                    return;
+                }
+                let line = crate::sizes::Scale::of(window).px(row);
+                let turned = match event.delta {
+                    gpui::ScrollDelta::Lines(lines) => -lines.y,
+                    gpui::ScrollDelta::Pixels(_) => {
+                        -f32::from(event.delta.pixel_delta(line).y) / f32::from(line)
+                    }
+                };
+                if let Some(picker) = find(shell) {
+                    picker.wheel(turned, len, rows);
+                    cx.stop_propagation();
+                    cx.notify();
+                }
+            }),
+        )
+        .child(scrollbar::vertical(
+            SharedString::from(format!("{id}-scrollbar")),
+            Scrolls::Steps(steps),
+        ))
 }
 
 #[cfg(test)]
@@ -613,6 +700,33 @@ mod tests {
         };
         let laid = 24. / crate::sizes::REM * rem;
         assert!((rows.row(scale) - laid).abs() < 1e-4);
+    }
+
+    /// Scrolled by the wheel or the scrollbar, the window goes as far as
+    /// the last row lets it, and the highlight comes along: what Enter takes
+    /// is always in sight.
+    #[test]
+    fn a_window_scrolled_brings_the_highlight_along() {
+        let mut picker = Picker::default();
+        picker.scroll(10, 30, PICKER_ROWS);
+        assert_eq!((picker.top, picker.highlighted), (10, 10));
+        picker.scroll(100, 30, PICKER_ROWS);
+        assert_eq!(picker.top, 30 - PICKER_ROWS, "no further than the last row");
+        picker.highlighted = 29;
+        picker.scroll(0, 30, PICKER_ROWS);
+        assert_eq!(picker.highlighted, PICKER_ROWS - 1, "brought up into it");
+        // A touchpad's small steps add up to a row.
+        let mut picker = Picker::default();
+        picker.wheel(0.4, 30, PICKER_ROWS);
+        assert_eq!(picker.top, 0);
+        picker.wheel(0.7, 30, PICKER_ROWS);
+        assert_eq!(picker.top, 1);
+        picker.wheel(-3., 30, PICKER_ROWS);
+        assert_eq!(picker.top, 0, "never above the first");
+        // Fewer rows than the window: nowhere to go.
+        let mut short = Picker::default();
+        short.scroll(5, 3, PICKER_ROWS);
+        assert_eq!((short.top, short.highlighted), (0, 0));
     }
 
     #[test]
