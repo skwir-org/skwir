@@ -1,7 +1,7 @@
-0061 text-narrows-to-its-widest-word: a text's minimum content width is its widest word, so beside others in a row it wraps rather than running past them (LineLayout::min_wrap_width, WrappedLineLayout::min_content_size); a tooltip and what a drag shows are laid out at AvailableSpace::max_size
+0061 text-narrows-to-its-widest-word: a text's minimum content width is its widest word, so beside others in a row it wraps rather than running past them (LineLayout::min_wrap_width, WrappedLineLayout::min_content_size); a layout a text keeps answers another width only where it is the same there; a tooltip and what a drag shows are laid out at AvailableSpace::max_size
 
 diff --git a/crates/gpui/src/elements/text.rs b/crates/gpui/src/elements/text.rs
-index 377dc627..9d1b4842 100644
+index 377dc627..a0e460c0 100644
 --- a/crates/gpui/src/elements/text.rs
 +++ b/crates/gpui/src/elements/text.rs
 @@ -648,6 +648,52 @@ struct TextLayoutInner {
@@ -85,7 +85,28 @@ index 377dc627..9d1b4842 100644
                  let wrap_width = if text_style.white_space == WhiteSpace::Normal {
                      known_dimensions.width.or(match available_space.width {
                          crate::AvailableSpace::Definite(x) => Some(x),
-@@ -1463,4 +1530,40 @@ mod tests {
+@@ -709,9 +776,19 @@ impl TextLayout {
+                 // 4. the cached layout was not truncated (a truncated layout answers an
+                 //    unconstrained probe with the truncated size, which poisons intrinsic
+                 //    sizing with whatever width some earlier measure pass happened to use)
++                // 5. a layout made at another width answers only where it is the same at
++                //    this one: no line of it wrapped, and its widest fits (a probe with
++                //    no width, max-content, fits any). Laid out at a box's minimum
++                //    content width first (its widest word), it would answer that probe
++                //    with that width and its rows, and keep the text there
+                 if let Some(text_layout) = element_state.0.borrow().as_ref()
+                     && let Some(size) = text_layout.size
+-                    && (wrap_width.is_none() || wrap_width == text_layout.wrap_width)
++                    && (wrap_width == text_layout.wrap_width
++                        || (text_layout
++                            .lines
++                            .iter()
++                            .all(|line| line.wrap_boundaries.is_empty())
++                            && wrap_width.is_none_or(|width| size.width <= width)))
+                     && truncate_width.is_none()
+                     && text_layout.truncate_width.is_none()
+                 {
+@@ -1463,4 +1540,77 @@ mod tests {
              make_text_unstable_id(true).id
          );
      }
@@ -124,6 +145,43 @@ index 377dc627..9d1b4842 100644
 +        assert!(line.size.width > px(80.), "one line, unwrapped: {line:?}");
 +        assert!(text.right() <= px(120.), "within its row: {text:?}");
 +        assert!(text.size.height > line.size.height, "wrapped: {text:?}");
++    }
++
++    /// A text laid out at its widest word first, as a box it lies in is
++    /// measured for its minimum content width, keeps its line once the box
++    /// has room: a probe with no width is not answered by that narrow layout
++    /// (a command palette's titles stood a word a line, 2026-11-12).
++    #[crate::test]
++    fn a_text_laid_out_narrow_first_keeps_its_line(cx: &mut crate::TestAppContext) {
++        use crate::{AvailableSpace, ParentElement as _, Styled as _, div, point, px, size};
++        use std::{cell::RefCell, rc::Rc};
++
++        let cx = cx.add_empty_window();
++        let seen = Rc::new(RefCell::new(Vec::new()));
++        let kept = seen.clone();
++        let window = size(px(1000.), px(800.)).map(AvailableSpace::Definite);
++        // As a dialog stands in its overlay: a box of a width of its own, an
++        // item of a row, which measures its minimum, and a row of words in it
++        // whose first takes the width its words ask.
++        cx.draw(point(px(0.), px(0.)), window, move |_, _| {
++            div().size_full().flex().justify_center().child(
++                div().w(px(560.)).flex().flex_col().child(
++                    div()
++                        .h(px(26.))
++                        .flex()
++                        .items_center()
++                        .on_children_prepainted(move |bounds, _, _| *kept.borrow_mut() = bounds)
++                        // 0.6 em a character at 16 px: 134.4 px, its widest
++                        // word 48.
++                        .child(div().child("aaaa bbbb cccc"))
++                        .child(div().child("dd"))
++                        .child(div().flex_1()),
++                ),
++            )
++        });
++
++        let title = seen.borrow()[0];
++        assert!(title.size.width > px(130.), "its whole line: {title:?}");
 +    }
  }
 diff --git a/crates/gpui/src/taffy.rs b/crates/gpui/src/taffy.rs

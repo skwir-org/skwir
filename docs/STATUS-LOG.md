@@ -15870,3 +15870,53 @@ shows its name on one line. The patch applies to the tree before 0061
 and gives the vendored tree. `skwir-ui`'s tests, 647; clippy. Not run:
 the rest of `just gpui-check`, `just gpui-check-windows`, `just
 check-cross`, `just smoke`.
+
+## 2026-11-12: What the first walk left out (0061, amended again)
+
+On the user's ask, the states the first before-and-after walk of 0061 left
+out, walked in the build before it (0905be89) and after, debug, on Xvfb.
+
+- **Walked:** 53 states at 1280, 640 and 460 px (160 captures a build):
+  tooltips of the toolbars, the sidebar, a disk and a cut name; a drag of
+  one file and of six; the toolbar's menus (view options, More, view
+  buttons, captions), Back's history, the parents, a file's menu and its
+  Open With fly-out, the folder's menu; the prompts (rename, tags, new
+  folder, new file, rename six), the palette, Quick filters, Find, the
+  address's completions, Activity, a review (a folder a script asked for,
+  cancelled), a toast; the preview of a text, Markdown, a CSV, a picture
+  and a sound, with the preview's More, Open With, text and zoom menus;
+  the columns view, a split, two tabs, the terminal. Not walked: the
+  pinned player (`ui.player` wants a request).
+- **Found, both 0061's:** the command palette's titles a word a line,
+  over the rows below, and the bulk rename's Case chip a word a line.
+- **Cause:** a text keeps the layout it was last measured at, and gpui
+  answered a probe with no width (max-content) from it whatever width it
+  was made at. 0061 lays a text out at its widest word wherever a box it
+  lies in is measured for its minimum content width (the palette, 560 px,
+  is an item of a row); the row then asked each title how wide it would
+  be, and got its widest word.
+- **Fix, in 0061:** a kept layout answers a measure at another width only
+  where it is the same there: no line of it wrapped, and its widest fits
+  (any, for a probe with no width). A first rule, answering a probe with
+  no width only from a layout that did not wrap, cost 6 to 12 % of a
+  frame (texts laid out twice again).
+
+**Checked:** the walk again: alike before and after, but for what the
+fixtures change (the clock in Activity, free space, the fixtures' names
+in the columns view and Properties). The first walk's screens again (the
+views, Properties, the settings' 13 pages, About, Shortcuts, History, at
+the three widths): alike but for those and the dialog titles that wrap
+since 0061; the Plugins page scrolled to its end, 15 steps, pixel for
+pixel once both builds had the helpers beside them. The new test
+`elements::text::tests::a_text_laid_out_narrow_first_keeps_its_line`
+fails with the old rule (48 × 78 px, a word a line). `just gpui-check
+gpui`, 140; gpui's text, div, list and window tests, 131; `skwir-ui`'s,
+647. Frames, three rounds alternated under the machine's own load (one of
+the old build's three runs left out, slowed by it): scrolling the
+Plugins page, the window thread 186 and 191 ticks before, 189 to 202
+after, frames 68.5 and 70.2 ms against 70.8 to 72.5 (median); stepping
+down the palette, 81 to 87 ticks before, 77 to 83 after.
+
+**Found, not from this:** at 460 px, the settings dialog's rows narrow
+to a few words a line and cut words ("themse / lves"), in the build
+before 0061 too.

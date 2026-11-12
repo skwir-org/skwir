@@ -93,7 +93,7 @@ carry: the script takes it from the Inter release Skwir's packages pin
 | `0058-rounded-mask-on-device-pixels` | A rounded content mask lies on whole device pixels, as what it holds is drawn | — |
 | `0059-unreached-mask-corners` | A primitive that reaches no rounded corner of its mask is kept by its rectangles alone, so its fragments skip the corners' distance | — |
 | `0060-inline-boxes` | A line holds boxes its caller draws (`RunPosition::Inline`): each character of an inline run is one, as wide as it says, never shaped or painted; `TextLayout::inline_boxes` says where each was drawn; a box taller than its text grows the row it is set in, and that row alone (`LineRows`); `StyledText::with_said` gives what such a text says to assistive technology | — |
-| `0061-text-narrows-to-its-widest-word` | A text's minimum content width is its widest word (CSS's), so beside others in a row it narrows and wraps rather than running past them; Zed's was its whole line, which no row could shrink. A tooltip and what a drag shows are laid out as wide as their words (`AvailableSpace::max_size`) | — |
+| `0061-text-narrows-to-its-widest-word` | A text's minimum content width is its widest word (CSS's), so beside others in a row it narrows and wraps rather than running past them; Zed's was its whole line, which no row could shrink. A layout a text keeps answers another width only where it is the same there. A tooltip and what a drag shows are laid out as wide as their words (`AvailableSpace::max_size`) | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
 
@@ -1132,6 +1132,16 @@ requirement under its card, 2026-11-12). CSS takes the longest word.
 - **Once a line.** The width and its wraps are worked out once for a
   shaped line and kept with it in the line layout cache
   (`WrappedLineLayout::min_content`), across frames.
+- **A narrow layout answers only its width.** A text keeps the layout
+  it was last measured at, and Zed's answered a probe with no width
+  (max-content) from it whatever width it was made at. A box measured
+  for its minimum content width lays its texts out at their widest word;
+  a row then asking one how wide it would be got that width back and kept
+  it there (the command palette's titles a word a line, the bulk rename's
+  Case chip, 2026-11-12). A kept layout answers a measure at another
+  width only where it is the same there: no line of it wrapped, and its
+  widest fits (any, for a probe with no width), which also spares laying
+  a text out again at a width it fits.
 - **What is laid out on its own.** A tooltip and what a drag shows were
   laid out at `AvailableSpace::min_size`, which meant as wide as their
   words while a text's minimum was its line. With the minimum now a word,
@@ -1146,9 +1156,19 @@ too, but for single-line labels that said nothing, a dropdown's, which now
 say `whitespace_nowrap`, and dialog titles that wrap now, which ran under
 the close button). Its cost, in the debug build on Xvfb: none scrolling a
 list or a grid of 2,000 files, about 3 % of a frame scrolling the
-settings' Plugins page, all sentences (65.7 against 67.6 ms, median). The
-tests are
+settings' Plugins page, all sentences (65.7 against 67.6 ms, median).
+A second walk, of what the first left out (53 states at 1280, 640 and
+460 px: tooltips, drags, menus and their fly-outs, prompts, the command
+palette, a review, previews and their menus, the columns view, a split,
+tabs, the terminal), found the two a narrow layout kept, and draws alike
+since but for what the fixtures change (a clock, free
+space). With the rule for a kept layout, scrolling the Plugins page costs
+about 3 % of a frame and 5 % of the window thread's time, the palette
+nothing; a first rule, which laid such texts out twice again, cost 6 to
+12 %. The tests are
 `text_system::line_layout::tests::test_min_wrap_width_is_the_widest_word`,
-`elements::text::tests::a_text_in_a_narrow_row_wraps` and
+`elements::text::tests::a_text_in_a_narrow_row_wraps`,
+`elements::text::tests::a_text_laid_out_narrow_first_keeps_its_line`
+(it fails with Zed's rule for a kept layout) and
 `window::tests::what_is_laid_out_on_its_own_keeps_its_words_on_a_line`
 (it fails at `min_size`, for a tooltip and for a drag).
