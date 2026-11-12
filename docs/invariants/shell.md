@@ -1149,7 +1149,9 @@ of bars, split or not.
   is the folder gone to. Their entries are the pane's to draw only
   (`Pane::drawn_entry`: the folder left's listing kept, its location
   closed, `Pane::drawn_left`), never what a command finds
-  (`Pane::entry`).
+  (`Pane::entry`). Whatever draws a row or a tile reads them so, its
+  picture included (`Shell::thumb`: one made already is shown, none is
+  asked for, its path being no location's now).
 
 ## Properties and links
 

@@ -15397,3 +15397,28 @@ in date order at once). In a window on Xvfb, grouped by Modified: Back
 from a subfolder, the first sync 19 rows in 4 groups, the dates shown;
 the same in the grid, the folder left's file drawn under the new address
 until then.
+
+## 2026-11-12: The folder left keeps its pictures while it is drawn
+
+The user saw, going back from a folder of pictures, their thumbnails
+turn to icons for an instant before the folder gone back to appeared.
+The files of the folder left are drawn during the wait (ADR-120,
+amended, above), but `Shell::thumb` asked the pane for each tile's entry
+by `Pane::entry`, which knows only the folder gone to: no entry, no
+picture, the type's icon in its place. It reads `Pane::drawn_entry` now,
+as every row and tile drawn does: a picture made already is shown, and
+none is asked for, the folder left's paths being no location's.
+
+**Checked:** rustfmt; clippy `-D warnings` on `skwir-ui`, all targets;
+`skwir-ui` 640 passed. In a window on Xvfb, the grid: from a folder of
+six pictures, up and back into a parent of 20 001 files, the frame
+during the wait showing the six thumbnails under the new address, then
+the parent whole (69 ms after Back).
+
+**The three of 2026-11-12 together** (the hold, a folder read for its
+order, its pictures): clippy `-D warnings` on `skwir`, all targets, and
+the binary's 37 test files in six batches (the disk held no more at
+once), 226 run: 225 passed, 4 skipped, and
+`remote_folders::rclone_copies_within_its_mount_on_the_server` missed
+its minute in a batch of 82 run at once, as recorded on 2026-10-26
+under load; alone it passed in 1.4 s, and its file twice whole (39).

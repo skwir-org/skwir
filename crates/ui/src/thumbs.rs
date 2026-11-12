@@ -168,8 +168,11 @@ impl Shell {
                 return ThumbView::Unavailable;
             };
             // An entry of the pane, shown or of a folder opened in place
-            // (the tree's, the board's cards).
-            let Some(e) = pane.entry(id) else {
+            // (the tree's, the board's cards), or of the folder left while
+            // its files are still drawn (`Pane::drawn_entry`): its picture
+            // made already is shown, none is asked for it, its path being
+            // no location's now.
+            let Some(e) = pane.drawn_entry(id) else {
                 return ThumbView::Unavailable;
             };
             if e.is_dir() {
