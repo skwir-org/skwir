@@ -2101,12 +2101,29 @@ fn earlier_row(
     row.into_any_element()
 }
 
+/// How many folders an action's card names when pointed at: those after
+/// are counted. A restore puts files back into as many folders as they
+/// came from, and the card is drawn at each frame.
+const INTO_NAMED: usize = 3;
+
 /// Where an action goes, as its card says it when pointed at (ADR-135):
-/// the whole path of each folder it brings something into, its title
-/// naming them alone.
+/// the whole path of each folder it brings something into, the first
+/// `INTO_NAMED`, then how many others; its title naming them alone.
 fn into_said(folders: &[std::path::PathBuf]) -> Option<SharedString> {
-    let paths: Vec<String> = folders.iter().map(|f| f.display().to_string()).collect();
-    (!paths.is_empty()).then(|| format!("Into {}", paths.join(", ")).into())
+    let named: Vec<String> = folders
+        .iter()
+        .take(INTO_NAMED)
+        .map(|f| f.display().to_string())
+        .collect();
+    let others = folders.len().saturating_sub(INTO_NAMED);
+    (!named.is_empty()).then(|| {
+        let mut said = format!("Into {}", named.join(", "));
+        if others > 0 {
+            said.push_str(" and ");
+            said.push_str(&crate::format::count(others, "other folder"));
+        }
+        said.into()
+    })
 }
 
 /// The card of the running plan `running` in Activity: its title, how far
@@ -2439,6 +2456,27 @@ mod tests {
     use crate::toast::{Running, waiting_words};
     use skwir_core::op::{PlanId, RunKind, Transfer};
     use std::time::Duration;
+
+    /// A card pointed at names the first folders its action brings
+    /// something into, and counts the others: a restore into thousands of
+    /// folders is no tooltip of thousands of paths.
+    #[test]
+    fn an_action_into_many_folders_names_the_first_and_counts_the_rest() {
+        let folders: Vec<std::path::PathBuf> = ["/a", "/b", "/c", "/d", "/e"]
+            .iter()
+            .map(std::path::PathBuf::from)
+            .collect();
+        assert_eq!(
+            super::into_said(&folders).as_deref(),
+            Some("Into /a, /b, /c and 2 other folders")
+        );
+        assert_eq!(
+            super::into_said(&folders[..4]).as_deref(),
+            Some("Into /a, /b, /c and 1 other folder")
+        );
+        assert_eq!(super::into_said(&folders[..1]).as_deref(), Some("Into /a"));
+        assert_eq!(super::into_said(&[]), None);
+    }
 
     fn running(plan: u64, title: &str, total: usize) -> Running {
         Running::for_test(PlanId(plan), title, RunKind::Apply, total)
