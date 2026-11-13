@@ -59,7 +59,11 @@ is binding, like `AGENTS.md`.
   container** (`Previews::extract`, chosen as `inspect` is: the one the
   view names, else the type's): the worker asks it with the provider
   of the container's view kept above (`Display::origin`), so a commit
-  is the history's, never its folder's or its file's type's.
+  is the history's, never its folder's or its file's type's. A
+  history's row names its commit by its target, the id then the name
+  the file had in it where it was renamed since
+  (`inspection::commit_target`): what reads the commit's id (Copy hash,
+  `Ctrl+C`) reads `commit_of`, never the target whole.
 - `accepts` settles a shared name, on a worker: by the bytes' type when
   the MIME database knows both formats (a GIMP brush's `.gbr`), else by
   the file's start (`.nc`: NetCDF or a CNC program; a Gerber `.gbr`).

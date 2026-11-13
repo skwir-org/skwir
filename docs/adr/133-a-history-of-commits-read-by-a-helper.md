@@ -2,7 +2,9 @@
 
 Status: accepted, 2026-11-13, on the user's answers (asked in the session
 that built it: History a way of looking rather than a setting, gix in a
-helper of its own, in the main package). Built on Linux.
+helper of its own, in the main package). Built on Linux. Amended
+2026-11-13: a file followed across its renames (2), on the user's ask;
+the files' state in the views is ADR-134's.
 
 ## Context
 
@@ -82,7 +84,22 @@ helper of its own, in the main package). Built on Linux.
      entry in the commit's tree differs from every parent's (git's
      history simplified as `git log -- path` keeps it, a merge shown
      where it changed it against each side); without a graph, as
-     `git log` draws none. Renames are not followed yet.
+     `git log` draws none.
+   - **A file is followed across its renames**, as `git log --follow`
+     follows it, along each line of history apart (`rename.rs`): each
+     commit knows the file's name in it, `HEAD`'s the one asked, a
+     parent's given by its newest child. Where a child has the file and
+     a parent nothing of that name, where it came from is looked for
+     among the files the child took out: the same file first (its blob),
+     else the regular file most alike, 50 % at least, by git's estimate
+     (its spans hashed); one whose size rules it out never read, 1,000
+     compared at most, none past 8 MiB, within the deadline; once a
+     rename. A commit from before a rename names the file as it was then
+     (the log's `path`, a row's target `inspection::commit_target`), and
+     its patch is read under that name; the rename's shows it as
+     `git show -M` does (its similarity, both names, then what changed).
+     A folder is not followed, nor a copy (`--follow`'s), and a merge
+     joining two names is kept, as a path's history keeps it.
    - The first 500, quickly; Full preview the rest, to 100,000. The
      helper stops at 10 s (50 s asked whole), and says it did.
    - In `--date-order`: newest first, never a parent before all its
@@ -129,7 +146,9 @@ helper of its own, in the main package). Built on Linux.
   repository made meanwhile shows its History after that.
 - The History button can come a moment after the preview, as the
   repository is looked for beside it; a folder's bar comes with it.
+- On skwir's own 1,601 commits, following a file costs what its plain
+  history does (0.1 s), the same commits as git's.
 - Later, as said with the user: History as a place in the pane, the
   commits as rows at full width, a commit opened as a folder of what it
-  changed, its tree browsed as an archive's; renames followed; the
-  files' state (changed, new, ignored) in the views.
+  changed, its tree browsed as an archive's. The files' state in the
+  views is ADR-134.

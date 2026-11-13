@@ -181,6 +181,13 @@ pub const CAPTIONS: [CaptionSpec; 1 + crate::views::list::DETAILS] = [
         description: "Under each name in the grid, who owns it.",
     },
     CaptionSpec {
+        caption: Caption::Detail(Detail::Vcs),
+        setting: "ui.grid_caption_vcs",
+        label: "Git",
+        title: "Git state under names",
+        description: "Under each name in the grid, what Git says of it in a repository: changed, staged, new, in conflict or ignored.",
+    },
+    CaptionSpec {
         caption: Caption::Detail(Detail::Rating),
         setting: "ui.grid_caption_rating",
         label: "Rating",

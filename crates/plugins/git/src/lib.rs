@@ -1,23 +1,34 @@
 //! A folder's and a file's history of commits, and each commit's patch
 //! (ADR-133): a way of looking (`PreviewProvider::way`) the preview offers
-//! wherever the entry is in a repository, read by `skwir-git-worker`.
+//! wherever the entry is in a repository, read by `skwir-git-worker`. And
+//! what the files of a folder shown are to their repository (ADR-134,
+//! `state`), which the views mark.
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use skwir_core::{
     App, CancelToken,
-    inspection::{Block, InspectRequest, Inspection, InspectionKind, REFS_JOIN, RefKind, Row},
+    inspection::{
+        Block, InspectRequest, Inspection, InspectionKind, REFS_JOIN, RefKind, Row, commit_name,
+        commit_of, commit_target,
+    },
     plugin::Plugin,
     preview::{Member, PreviewProvider, PreviewRequest, Way},
 };
 use skwir_platform::git::{self, Repo};
 
 pub mod lanes;
+pub mod state;
 
 /// The provider's id: what the preview names when it asks for a history.
 pub const HISTORY: &str = "git.history";
 
-pub struct GitPlugin;
+#[derive(Default)]
+pub struct GitPlugin {
+    /// The files' state, while registered: told when a window comes to the
+    /// front and when its setting changes.
+    states: Mutex<Option<Arc<state::States>>>,
+}
 
 impl Plugin for GitPlugin {
     fn id(&self) -> &'static str {
@@ -27,7 +38,7 @@ impl Plugin for GitPlugin {
         "Git"
     }
     fn description(&self) -> &'static str {
-        "A folder's and a file's history of commits in a Git repository, the graph of its merges, and what each commit changed"
+        "A folder's and a file's history of commits in a Git repository, the graph of its merges and what each commit changed, and the files' state marked in the views"
     }
     fn category(&self) -> skwir_core::plugin::Category {
         skwir_core::plugin::Category::Previews
@@ -40,7 +51,47 @@ impl Plugin for GitPlugin {
         skwir_core::permissions::Capabilities::of(&[Capability::Read, Capability::Programs])
     }
     fn register(&self, app: &App) {
+        app.settings.declare(
+            skwir_core::settings::SettingSpec::toggle(
+                state::SHOWN,
+                "Show the files' Git state",
+                "Mark files changed, staged, new or in conflict, and the folders that hold them, in folders kept in a Git repository. The list's Git column says the same.",
+                true,
+            )
+            .page(skwir_core::settings::page::VIEWS)
+            .section("Git"),
+        );
         app.previews.register(self.id(), Arc::new(Provider));
+        let states = Arc::new(state::States::new(app));
+        app.vcs.register(self.id(), Arc::clone(&states) as _);
+        if let Ok(mut held) = self.states.lock() {
+            *held = Some(states);
+        }
+    }
+    fn on_settings_changed(&self, app: &App, keys: &[String]) {
+        if keys.iter().any(|key| key == state::SHOWN)
+            && let Some(states) = self.states()
+        {
+            states.settings_changed(app);
+            app.wake();
+        }
+    }
+    fn on_looked_at(&self, app: &App) {
+        if let Some(states) = self.states() {
+            states.looked_at();
+            app.wake();
+        }
+    }
+    fn on_disable(&self, _app: &App) {
+        if let Ok(mut held) = self.states.lock() {
+            *held = None;
+        }
+    }
+}
+
+impl GitPlugin {
+    fn states(&self) -> Option<Arc<state::States>> {
+        self.states.lock().ok()?.clone()
     }
 }
 
@@ -99,7 +150,8 @@ impl PreviewProvider for Provider {
     ) -> anyhow::Result<Option<Member>> {
         let (repo, path) =
             located(request).ok_or_else(|| anyhow::anyhow!("Not in a Git repository"))?;
-        let (written, _) = git::patch(&repo, target, &path, into, view.whole, cancel)?;
+        let (id, name) = asked(target, &path);
+        let (written, _) = git::patch(&repo, id, name, into, view.whole, cancel)?;
         let name = written
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
@@ -110,6 +162,13 @@ impl PreviewProvider for Provider {
             own_file: false,
         }))
     }
+}
+
+/// The commit a row's target opens, and the name its patch is read under:
+/// the file's in that commit where it had another (`commit_target`), else
+/// `path`, the entry's own.
+fn asked<'a>(target: &'a str, path: &'a str) -> (&'a str, &'a str) {
+    (commit_of(target), commit_name(target).unwrap_or(path))
 }
 
 /// A history's inspection: a row a commit, the graph of the merges down
@@ -142,7 +201,8 @@ fn history(log: &git::Log, path: &str, whole: bool) -> Inspection {
                 when(commit.time, &zone),
                 names(&commit.refs, log.head.as_deref()),
             ],
-            target: Some(commit.id.clone()),
+            // Opened under the name the file had in it.
+            target: Some(commit_target(&commit.id, commit.path.as_deref())),
             graph: lanes.next().map(Box::new),
             ..Row::default()
         })
@@ -243,7 +303,7 @@ fn when(seconds: i64, zone: &jiff::tz::TimeZone) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{history, when};
+    use super::{asked, history, when};
     use skwir_core::inspection::{InspectionKind, REFS_JOIN};
     use skwir_platform::git::{Commit, Log};
 
@@ -266,6 +326,7 @@ mod tests {
             } else {
                 Vec::new()
             },
+            path: None,
         }
     }
 
@@ -312,6 +373,29 @@ mod tests {
             false,
         );
         assert_eq!(none.blocks[0].text, "No commit changed it");
+    }
+
+    /// A commit from before the file's rename opens under the name the
+    /// file had in it; the others under its own, the id copied whole.
+    #[test]
+    fn a_commit_opens_under_the_name_the_file_had_in_it() {
+        let mut renamed = commit("b", &["a"]);
+        renamed.path = Some("old name.txt".into());
+        let log = Log {
+            head: Some("main".into()),
+            commits: vec![commit("c", &["b"]), renamed],
+            more: false,
+            stopped: false,
+        };
+        let shown = history(&log, "docs/new.txt", false);
+        let targets: Vec<&str> = shown
+            .rows
+            .iter()
+            .map(|row| row.target.as_deref().unwrap())
+            .collect();
+        assert_eq!(targets, ["c", "b old name.txt"]);
+        assert_eq!(asked(targets[0], "docs/new.txt"), ("c", "docs/new.txt"));
+        assert_eq!(asked(targets[1], "docs/new.txt"), ("b", "old name.txt"));
     }
 
     #[test]

@@ -26,7 +26,14 @@ around the views is in [shell.md](shell.md).
     bottom-left, hidden though its name does not say so
     (`Entry::hidden_unsaid`: the system's mark, Windows' attribute or a
     Mac's flag, or a hidden folder it was found in; a name starting with
-    a dot says it already, so `.bashrc` is not marked). Marks never fade.
+    a dot says it already, so `.bashrc` is not marked); on the
+    top-right, what its repository says of it (ADR-134: `Marks::vcs`,
+    `icons::vcs_mark`, read from `keys::VCS`, which the pane sets from a
+    `vcs::StatesProvider`'s answer, never a view): each state its own
+    shape, so none is told by its color alone (a sign for a conflict, a
+    dot for a change, a check for what is staged, a plus for what is
+    new), a folder the strongest below it, what is ignored unmarked.
+    Marks never fade.
   - *What it is to the view* is said by fading it whole, by `behave`:
     shown, but not wholly part of what the view holds. A cut entry, on
     its way out, at `CUT_OPACITY`; a folder shown only as the way to what
@@ -386,7 +393,10 @@ around the views is in [shell.md](shell.md).
   `App::show_fields`), as a sort by it reads it, and shown only while a
   plugin reads it. A type's kind is read with its name, on a worker
   (`TypeNames::kind`); an owner by name from the system's table, by
-  number where it has none.
+  number where it has none. The Git column (`Detail::Vcs`, ADR-134) is
+  offered wherever a version control provider is, in a folder, not only
+  once a repository answered: a column that came as the answer did
+  would move the others a moment after the folder showed.
 - Name and detail columns sit in one wrapping flex line one row tall
   (`views/list.rs::line`, shared by header and rows): columns drop whole,
   last first, and the name, the only child that grows, takes the room.

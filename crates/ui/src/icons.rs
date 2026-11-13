@@ -1192,6 +1192,9 @@ pub struct Marks {
     pub mark: Mark,
     pub hidden: bool,
     pub plays: Option<Plays>,
+    /// What its repository says of it (ADR-134): a mark on its top-right
+    /// corner (`vcs_mark`), none for what is ignored.
+    pub vcs: Option<skwir_core::vcs::State>,
 }
 
 impl From<Mark> for Marks {
@@ -1232,13 +1235,33 @@ impl Mark {
     }
 }
 
+/// The glyph and the color of the mark a state of its repository puts on
+/// an entry's picture (ADR-134), each its own shape, so no state is told
+/// by its color alone: a sign in the error color for a conflict, a dot in
+/// the warning color for a change, a check for what is staged and a plus
+/// for what is new, in the success color. What is ignored is not marked.
+pub fn vcs_mark(
+    state: skwir_core::vcs::State,
+    theme: &crate::theme::Theme,
+) -> Option<(&'static str, gpui::Hsla)> {
+    use skwir_core::vcs::State;
+    match state {
+        State::Conflict => Some(("warning", theme.error)),
+        State::Changed => Some(("dot", theme.warning)),
+        State::Staged => Some(("check", theme.success)),
+        State::New => Some(("plus", theme.success)),
+        State::Ignored => None,
+    }
+}
+
 /// `picture` (an icon or a thumbnail about `size` px) with its marks on
 /// badges: on its bottom-right corner a bent arrow for a link (in the error
 /// color for one that leads nowhere), the tag's mark in its color for a
 /// tag's place; on its bottom-left, a crossed eye for an entry hidden
-/// though its name does not say so; in its middle, round, a speaker while
-/// it plays and the pause bars while it is paused (`playing_badge`).
-/// Unmarked, it is returned as it is.
+/// though its name does not say so; on its top-right, what its repository
+/// says of it (`vcs_mark`); in its middle, round, a speaker while it plays
+/// and the pause bars while it is paused (`playing_badge`). Unmarked, it is
+/// returned as it is.
 pub fn marked(
     picture: AnyElement,
     size: f32,
@@ -1252,7 +1275,8 @@ pub fn marked(
         Mark::Link(Link::Broken) => Some(("link", theme.error)),
         Mark::Tag(color) => Some(("tag", theme.tag(color))),
     };
-    if corner.is_none() && !marks.hidden && marks.plays.is_none() {
+    let vcs = marks.vcs.and_then(|state| vcs_mark(state, theme));
+    if corner.is_none() && !marks.hidden && marks.plays.is_none() && vcs.is_none() {
         return picture;
     }
     // Large enough to read on a list's 16 px icons, and growing slower
@@ -1261,7 +1285,6 @@ pub fn marked(
     let on = |glyph: &str, color: gpui::Hsla| {
         div()
             .absolute()
-            .bottom(px(-1.))
             .size(px(badge))
             .flex()
             .items_center()
@@ -1277,10 +1300,13 @@ pub fn marked(
         .flex_none()
         .child(picture)
         .when_some(corner, |d, (glyph, color)| {
-            d.child(on(glyph, color).right(px(-1.)))
+            d.child(on(glyph, color).bottom(px(-1.)).right(px(-1.)))
         })
         .when(marks.hidden, |d| {
-            d.child(on("eye-off", theme.text).left(px(-1.)))
+            d.child(on("eye-off", theme.text).bottom(px(-1.)).left(px(-1.)))
+        })
+        .when_some(vcs, |d, (glyph, color)| {
+            d.child(on(glyph, color).top(px(-1.)).right(px(-1.)))
         })
         .when_some(marks.plays, |d, plays| {
             d.child(playing_badge(plays, size, theme))

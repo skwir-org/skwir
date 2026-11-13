@@ -755,6 +755,22 @@ pub struct FieldsAsked {
 /// names and fields versions, the providers' revision and the fields.
 type FieldsAt = (u64, u64, u64, u64, Vec<&'static str>);
 
+/// What a pane asks its folder's version control (ADR-134,
+/// `Pane::states_to_read`): the folder its listing shows, to say of its
+/// entries and of those of the folders it opened in place.
+pub struct StatesAsked {
+    pub pane: PaneId,
+    pub listing: u64,
+    pub folder: PathBuf,
+    pub cancel: CancelToken,
+}
+
+/// What a pane last asked of the version control: its listing; its
+/// listings' names and the files written in them (the shown one's and the
+/// opened ones' summed); the folders it opened in place; the providers'
+/// revision; and the generation of the answer it holds.
+type StatesAt = (u64, u64, u64, u64, u64);
+
 /// What to do with a pane's groups (`group_fold`).
 #[derive(
     Clone,
@@ -948,6 +964,12 @@ pub struct Pane {
     /// token of its reading, cancelled when it is asked anew or no longer.
     fields_asked: Option<FieldsAt>,
     fields_reading: Option<CancelToken>,
+    /// What was last asked of the version control (`states_to_read`), the
+    /// token of its reading, and who said what its entries hold, with its
+    /// answer's key (`vcs::Answer::key`): what tells it changed.
+    states_asked: Option<StatesAt>,
+    states_reading: Option<CancelToken>,
+    states_said: Option<(&'static str, u64)>,
     /// What its view shows that is read on demand (a column of when each
     /// picture was taken, `show_fields`): read as what its sort reads is.
     fields_shown: Vec<&'static str>,
@@ -1884,6 +1906,9 @@ impl Pane {
             fold_cache: parking_lot::Mutex::new(None),
             fields_asked: None,
             fields_reading: None,
+            states_asked: None,
+            states_reading: None,
+            states_said: None,
             fields_shown: Vec::new(),
             shown: parking_lot::Mutex::new(None),
             filter: None,
@@ -4473,6 +4498,174 @@ impl Pane {
             cancel,
             entries,
         })
+    }
+
+    /// What its folder's version control is to say of its entries (ADR-134):
+    /// asked once its listing is whole, again when its names change, a
+    /// file is written in it or in a folder it opened in place, it opens
+    /// one, the providers change, or the provider says the answer it gave
+    /// may have (`StatesProvider::generation`: its repository moved, a
+    /// window came to the front). A place, a search or a remote mount
+    /// (where each file's stat is a request) is not asked, and what was
+    /// said of its entries goes; so does it once no provider is left.
+    pub(crate) fn states_to_read(
+        &mut self,
+        providers: &crate::vcs::StatesProviders,
+    ) -> Option<StatesAsked> {
+        let folder = self.location().and_then(Location::path);
+        let askable = folder
+            .as_ref()
+            .is_some_and(|folder| crate::fs::reach::of(folder).is_none())
+            && !providers.is_empty();
+        if !askable {
+            if let Some(reading) = self.states_reading.take() {
+                reading.cancel();
+            }
+            self.states_asked = None;
+            if self.states_said.is_some() {
+                self.forget_states();
+            }
+            return None;
+        }
+        if !self.listing.is_complete() || self.open.is_none() {
+            return None;
+        }
+        let folder = folder?;
+        let listings = self.listings().fold(0u64, |sum, listing| {
+            sum.wrapping_add(listing.names_version())
+                .wrapping_add(listing.rewritten_version())
+        });
+        let generation = self
+            .states_said
+            .map_or(0, |(id, key)| providers.generation(id, key));
+        let at = (
+            self.listing.id(),
+            listings,
+            self.tree_members_version,
+            providers.revision(),
+            generation,
+        );
+        if self.states_asked.as_ref() == Some(&at) {
+            return None;
+        }
+        self.states_asked = Some(at);
+        if let Some(reading) = self.states_reading.take() {
+            reading.cancel();
+        }
+        let cancel = self.location_lifetime.child();
+        self.states_reading = Some(cancel.clone());
+        Some(StatesAsked {
+            pane: self.id,
+            listing: self.listing.id(),
+            folder,
+            cancel,
+        })
+    }
+
+    /// Take what the version control said (`said`: who, and what; `None`
+    /// where none knows the folder) into the entries of the listing it was
+    /// asked for, if it is still the one shown, and of the folders opened
+    /// in place below it, each by its path from the folder: an entry it
+    /// says nothing of is as the last commit has it. Whether any changed.
+    pub(crate) fn take_states(
+        &mut self,
+        listing: u64,
+        said: Option<(&'static str, crate::vcs::Answer)>,
+    ) -> bool {
+        if self.listing.id() != listing {
+            return false;
+        }
+        let Some(folder) = self.location().and_then(Location::path) else {
+            return false;
+        };
+        let Some((id, answer)) = said else {
+            self.states_said = None;
+            return self.forget_states();
+        };
+        self.states_said = Some((id, answer.key));
+        let states = crate::vcs::States::new(&answer);
+        let value = |state: Option<crate::vcs::State>| match state {
+            Some(state) => crate::entry::Value::Text(state.word().into()),
+            None => crate::entry::Value::Bool(false),
+        };
+        let shown: Vec<_> = self
+            .listing
+            .iter()
+            .map(|e| {
+                (
+                    e.id,
+                    crate::entry::keys::VCS,
+                    value(states.of(&e.name_str(), e.is_dir())),
+                )
+            })
+            .collect();
+        let changed = self.listing.set_fields(shown);
+        let mut kept_changed = false;
+        for kept in &mut self.kept {
+            let Some(below) = kept
+                .path
+                .as_deref()
+                .and_then(|path| path.strip_prefix(&folder).ok())
+                .filter(|below| !below.as_os_str().is_empty())
+            else {
+                continue;
+            };
+            let parts: Option<Vec<&str>> = below
+                .components()
+                .map(|part| part.as_os_str().to_str())
+                .collect();
+            let Some(parts) = parts else {
+                continue;
+            };
+            let below = parts.join("/");
+            let values: Vec<_> = kept
+                .listing
+                .iter()
+                .map(|e| {
+                    let relative = format!("{below}/{}", e.name_str());
+                    (
+                        e.id,
+                        crate::entry::keys::VCS,
+                        value(states.of(&relative, e.is_dir())),
+                    )
+                })
+                .collect();
+            kept_changed |= kept.listing.set_fields(values);
+        }
+        if kept_changed {
+            self.tree_version += 1;
+        }
+        changed || kept_changed
+    }
+
+    /// Let go of what the version control said of the entries: each is
+    /// said nothing of (`Value::Bool(false)`), which a listing keeps as any
+    /// answer. Whether any changed.
+    fn forget_states(&mut self) -> bool {
+        self.states_said = None;
+        let forget = |listing: &mut Listing| {
+            let said: Vec<_> = listing
+                .iter()
+                .filter(|e| crate::vcs::State::of(e).is_some())
+                .map(|e| {
+                    (
+                        e.id,
+                        crate::entry::keys::VCS,
+                        crate::entry::Value::Bool(false),
+                    )
+                })
+                .collect();
+            listing.set_fields(said)
+        };
+        let changed = forget(&mut self.listing);
+        let mut kept_changed = false;
+        for kept in &mut self.kept {
+            kept_changed |= forget(&mut kept.listing);
+        }
+        if kept_changed {
+            self.tree_version += 1;
+        }
+        changed || kept_changed
     }
 
     /// Moves whenever the groups folded change: what is shown with them.

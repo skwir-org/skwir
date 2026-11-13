@@ -85,6 +85,7 @@ fn keyer(
         SortKey::Folder => (by_folder(), None),
         SortKey::Dimensions => (by_dimensions(), None),
         SortKey::Duration => (by_duration(), None),
+        SortKey::Vcs => (by_vcs(), None),
     }
 }
 
@@ -442,6 +443,33 @@ fn by_rating() -> Keyer {
             .unwrap_or(0)
             .min(10);
         Arc::clone(&groups[usize::try_from(r).unwrap_or(0)])
+    })
+}
+
+/// By what its repository says of it (ADR-134), the most pressing first:
+/// in conflict, changed, staged, new, then Unchanged (what is as the last
+/// commit has it, and what no repository holds), the ignored last. No
+/// term keeps them: no query reads the state.
+fn by_vcs() -> Keyer {
+    use skwir_core::vcs::State;
+    let group = |state: Option<State>| {
+        let label = state.map_or("Unchanged", State::title);
+        Arc::new(Group::ranked(u64::from(State::rank(state)), label))
+    };
+    let unchanged = group(None);
+    let said: Vec<(State, Arc<Group>)> = State::ALL
+        .into_iter()
+        .map(|state| (state, group(Some(state))))
+        .collect();
+    Arc::new(move |e: &Of<'_>| {
+        let state = e
+            .metadata
+            .value(keys::VCS)
+            .and_then(Value::as_str)
+            .and_then(State::of_word);
+        state
+            .and_then(|state| said.iter().find(|(known, _)| *known == state))
+            .map_or_else(|| Arc::clone(&unchanged), |(_, group)| Arc::clone(group))
     })
 }
 

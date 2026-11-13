@@ -557,7 +557,8 @@ crates/skwir       the binary: wires plugins and starts the UI
 crates/*-worker    optional helper processes: pdf (PDFium, loaded at runtime),
                    poppler, mupdf (AGPL, ADR-014), djvulibre and djvu
                    (djvu-rs, pure Rust; ADR-061), media (GStreamer), archive
-                   (libarchive), mermaid, math and model (pure Rust), module (a
+                   (libarchive), mermaid, math and model (pure Rust), git
+                   (gitoxide: histories and the files' state, ADR-133/134), module (a
                    plugin's WebAssembly module, Wasmtime), kmtp (a phone
                    KDE's kmtpd holds, as a FUSE folder; ADR-097)
 crates/plugins/*   one crate per plugin

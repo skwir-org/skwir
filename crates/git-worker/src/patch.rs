@@ -1,13 +1,13 @@
 //! A commit's patch, as `git show` prints it: its header and message, then
 //! a unified diff of each file it changed against its first parent.
-use crate::tree::{self, Entry};
+use crate::rename::{self, Source};
+use crate::tree::{self, Change, Entry};
 use crate::{Deadline, Result};
 use gix::ObjectId;
 use gix::bstr::{BString, ByteSlice};
 use gix::objs::tree::EntryKind;
 use imara_diff::{Algorithm, Diff, Hunk, InternedInput};
 use serde::Serialize;
-use std::cmp::Ordering;
 
 /// Lines of context around a change, and the gap two changes are shown
 /// apart past (git's: their contexts would not meet).
@@ -24,13 +24,6 @@ pub(crate) struct Wrote {
     files: usize,
     bytes: usize,
     cut: bool,
-}
-
-/// A file the commit changed, and what it was and is.
-struct Change {
-    path: BString,
-    old: Option<Entry>,
-    new: Option<Entry>,
 }
 
 /// The patch, whole lines only, `bound` bytes at most.
@@ -58,7 +51,10 @@ impl Patch {
 }
 
 /// The patch of commit `id`, the files under `path` alone (all of them for
-/// none), `bound` bytes at most: what is written, and what was.
+/// none), `bound` bytes at most: what is written, and what was. A file
+/// `path` names that the commit has and its first parent lacks is shown
+/// renamed from the file it came from, if any, as `git show -M` shows it
+/// (`rename::source`).
 pub(crate) fn patch(
     repo: &gix::Repository,
     id: ObjectId,
@@ -113,7 +109,20 @@ pub(crate) fn patch(
     let new = tree::entry_at(repo, new_root, path)?;
     let mut changes = Vec::new();
     let prefix: BString = path.join(&b'/').into();
-    changed(repo, &prefix, old, new, &mut changes)?;
+    let renamed = match (old_root, old, new) {
+        (Some(old_root), None, Some(new)) if !path.is_empty() && new.is_file() => {
+            rename::source(repo, old_root, new_root, &prefix, new, deadline)?
+        }
+        _ => None,
+    };
+    match &renamed {
+        Some(source) => changes.push(Change {
+            path: prefix,
+            old: Some(source.entry),
+            new,
+        }),
+        None => tree::changed(repo, &prefix, old, new, &mut changes)?,
+    }
     let mut late = false;
     for change in &changes {
         if out.cut {
@@ -123,7 +132,7 @@ pub(crate) fn patch(
             late = true;
             break;
         }
-        file(repo, change, &mut out)?;
+        file(repo, change, renamed.as_ref(), &mut out)?;
     }
     let cut = out.cut || late;
     if out.cut {
@@ -146,87 +155,6 @@ pub(crate) fn patch(
 /// `id`'s first seven hexadecimal digits, as git abbreviates in a patch.
 fn abbreviated(id: ObjectId) -> String {
     id.to_hex_with_len(7).to_string()
-}
-
-/// The order of tree entries: by name, a tree's as if it ended in `/`.
-fn order(a: (&[u8], bool), b: (&[u8], bool)) -> Ordering {
-    fn key((name, tree): (&[u8], bool)) -> impl Iterator<Item = u8> + '_ {
-        name.iter().copied().chain(tree.then_some(b'/'))
-    }
-    key(a).cmp(key(b))
-}
-
-/// The files that differ between `old` and `new`, the entries at `path`
-/// (a tree's files, recursively), in tree order.
-fn changed(
-    repo: &gix::Repository,
-    path: &BString,
-    old: Option<Entry>,
-    new: Option<Entry>,
-    out: &mut Vec<Change>,
-) -> Result<()> {
-    let old_tree = old.filter(|entry| entry.is_tree());
-    let new_tree = new.filter(|entry| entry.is_tree());
-    let old_file = old.filter(|entry| !entry.is_tree());
-    let new_file = new.filter(|entry| !entry.is_tree());
-    // A file and a tree of one name are two entries, the file first.
-    if old_file != new_file {
-        out.push(Change {
-            path: path.clone(),
-            old: old_file,
-            new: new_file,
-        });
-    }
-    if old_tree.map(|e| e.id) == new_tree.map(|e| e.id) {
-        return Ok(());
-    }
-    let old_entries = match old_tree {
-        Some(tree) => tree::entries(repo, tree.id)?,
-        None => Vec::new(),
-    };
-    let new_entries = match new_tree {
-        Some(tree) => tree::entries(repo, tree.id)?,
-        None => Vec::new(),
-    };
-    let join = |name: &BString| -> BString {
-        if path.is_empty() {
-            name.clone()
-        } else {
-            let mut joined = path.clone();
-            joined.push(b'/');
-            joined.extend_from_slice(name);
-            joined
-        }
-    };
-    let (mut o, mut n) = (0, 0);
-    while o < old_entries.len() || n < new_entries.len() {
-        let pick = match (old_entries.get(o), new_entries.get(n)) {
-            (Some((a, ea)), Some((b, eb))) => order((a, ea.is_tree()), (b, eb.is_tree())),
-            (Some(_), None) => Ordering::Less,
-            _ => Ordering::Greater,
-        };
-        match pick {
-            Ordering::Less => {
-                let (name, entry) = &old_entries[o];
-                changed(repo, &join(name), Some(*entry), None, out)?;
-                o += 1;
-            }
-            Ordering::Greater => {
-                let (name, entry) = &new_entries[n];
-                changed(repo, &join(name), None, Some(*entry), out)?;
-                n += 1;
-            }
-            Ordering::Equal => {
-                let ((name, a), (_, b)) = (&old_entries[o], &new_entries[n]);
-                if a != b {
-                    changed(repo, &join(name), Some(*a), Some(*b), out)?;
-                }
-                o += 1;
-                n += 1;
-            }
-        }
-    }
-    Ok(())
 }
 
 /// What an entry holds, as a patch shows it: a file's bytes, a link's
@@ -253,10 +181,18 @@ fn mode(entry: Entry) -> &'static [u8] {
     entry.mode.kind().as_octal_str().as_bytes()
 }
 
-/// One file's part of the patch.
-fn file(repo: &gix::Repository, change: &Change, out: &mut Patch) -> Result<()> {
+/// One file's part of the patch; `renamed` says where it came from when
+/// it was renamed, as git writes a rename: its similarity, its two names,
+/// then what changed in it, if anything did.
+fn file(
+    repo: &gix::Repository,
+    change: &Change,
+    renamed: Option<&Source>,
+    out: &mut Patch,
+) -> Result<()> {
     let path = change.path.as_slice();
-    out.line(&[b"diff --git a/", path, b" b/", path]);
+    let was = renamed.map_or(path, |source| source.path.as_slice());
+    out.line(&[b"diff --git a/", was, b" b/", path]);
     let zero = b"0000000".as_slice();
     let old_id = change.old.map(|entry| abbreviated(entry.id));
     let new_id = change.new.map(|entry| abbreviated(entry.id));
@@ -278,16 +214,24 @@ fn file(repo: &gix::Repository, change: &Change, out: &mut Patch) -> Result<()> 
             index(out, None);
         }
         (Some(old), Some(new)) => {
-            if mode(old) == mode(new) {
-                index(out, Some(mode(new)));
-            } else {
+            let same_mode = mode(old) == mode(new);
+            if !same_mode {
                 out.line(&[b"old mode ", mode(old)]);
                 out.line(&[b"new mode ", mode(new)]);
-                if old.id == new.id {
-                    return Ok(());
-                }
-                index(out, None);
             }
+            if let Some(source) = renamed {
+                out.line(&[
+                    b"similarity index ",
+                    source.percent().to_string().as_bytes(),
+                    b"%",
+                ]);
+                out.line(&[b"rename from ", was]);
+                out.line(&[b"rename to ", path]);
+            }
+            if old.id == new.id {
+                return Ok(());
+            }
+            index(out, same_mode.then(|| mode(new)));
         }
         (None, None) => return Ok(()),
     }
@@ -300,7 +244,7 @@ fn file(repo: &gix::Repository, change: &Change, out: &mut Patch) -> Result<()> 
         None => Some(Vec::new()),
     };
     let old_name: Vec<u8> = match change.old {
-        Some(_) => [b"a/".as_slice(), path].concat(),
+        Some(_) => [b"a/".as_slice(), was].concat(),
         None => b"/dev/null".to_vec(),
     };
     let new_name: Vec<u8> = match change.new {

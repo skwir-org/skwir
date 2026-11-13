@@ -1996,7 +1996,9 @@ impl Shell {
                                         .get(i.saturating_sub(display.data.blocks.len()))
                                         .map(|r| match (&r.target, display.data.kind) {
                                             // A commit is copied as its id, whole.
-                                            (Some(id), InspectionKind::History) => id.clone(),
+                                            (Some(target), InspectionKind::History) => {
+                                                skwir_core::inspection::commit_of(target).to_owned()
+                                            }
                                             _ => r.cells.join("\t"),
                                         })
                                 })

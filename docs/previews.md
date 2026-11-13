@@ -544,7 +544,10 @@ The player, in the panel or pinned at its foot:
   the branch checked out. The repository's top
   folder draws the graph of its merges down the commits' start; a
   folder's or a file's lists the commits that changed it, as
-  `git log -- path` does. Renames are not followed yet.
+  `git log -- path` does. A file is followed across its renames, as
+  `git log --follow` follows it (the same file, else one 50 % alike,
+  among those the commit took out): each commit's patch is read under
+  the name the file had then, and the rename's shows both names.
 - **Contents** lists the tags, newest first, each with its day; the one
   the commits at the top went into is highlighted as you scroll, and
   choosing one selects its commit. Disabled where there are none.

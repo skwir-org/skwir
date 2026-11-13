@@ -58,6 +58,9 @@ pub struct Look {
     pub path: Option<PathBuf>,
     /// The file the player plays, playing or paused (`Shell::plays`).
     pub plays: Option<icons::Plays>,
+    /// What its repository says of it (ADR-134, `keys::VCS`): marked on its
+    /// picture, said with its name.
+    pub vcs: Option<skwir_core::vcs::State>,
 }
 
 impl Look {
@@ -67,6 +70,7 @@ impl Look {
             mark: icons::Mark::of(self.link, self.place.as_ref().and_then(|(_, tag)| *tag)),
             hidden: self.hidden,
             plays: self.plays,
+            vcs: self.vcs,
         }
     }
 
@@ -121,6 +125,7 @@ impl Shell {
             place,
             path: if e.is_dir() { pane.path_of(id) } else { None },
             plays: self.plays(&e.name, || pane.path_of(id)),
+            vcs: skwir_core::vcs::State::of(e),
         })
     }
 }
@@ -239,16 +244,28 @@ fn said(look: &Look) -> Option<String> {
         .plays
         .map(icons::Plays::said)
         .into_iter()
+        .map(str::to_owned)
+        .chain(look.vcs.and_then(|state| vcs_said(state, look.is_dir)))
         .chain(
             states
                 .into_iter()
                 .filter(|(on, _)| *on)
-                .map(|(_, word)| word),
+                .map(|(_, word)| word.to_owned()),
         )
-        .map(str::to_owned)
         .chain(crate::tags::said(&look.tags, look.rating))
         .collect();
     (!words.is_empty()).then(|| words.join(", "))
+}
+
+/// What a screen reader hears of the mark its repository's state puts on
+/// an entry (`icons::vcs_mark`): a file's state, what a folder holds below
+/// it; nothing for what is ignored, which is not marked.
+fn vcs_said(state: skwir_core::vcs::State, is_dir: bool) -> Option<String> {
+    if state == skwir_core::vcs::State::Ignored {
+        return None;
+    }
+    let words = if is_dir { state.below() } else { state.title() };
+    Some(words.to_lowercase())
 }
 
 /// Its name, cut in the middle when too long (the extension tells files
@@ -304,6 +321,7 @@ mod tests {
             place: None,
             path: None,
             plays: None,
+            vcs: None,
         }
     }
 
@@ -345,6 +363,25 @@ mod tests {
             Some(crate::icons::Plays::Paused),
             "and its picture is marked with it"
         );
+        // What its repository says: a file's state, what a folder holds,
+        // nothing for what is ignored, as its picture is marked.
+        let changed = Look {
+            vcs: Some(skwir_core::vcs::State::Changed),
+            ..look()
+        };
+        assert_eq!(said(&changed).as_deref(), Some("changed"));
+        assert_eq!(changed.mark().vcs, Some(skwir_core::vcs::State::Changed));
+        let holds = Look {
+            is_dir: true,
+            vcs: Some(skwir_core::vcs::State::Staged),
+            ..look()
+        };
+        assert_eq!(said(&holds).as_deref(), Some("holds staged changes"));
+        let ignored = Look {
+            vcs: Some(skwir_core::vcs::State::Ignored),
+            ..look()
+        };
+        assert_eq!(said(&ignored), None);
     }
 
     /// The hidden mark goes with the entry's other one, not in its place.
@@ -361,6 +398,7 @@ mod tests {
                 mark: crate::icons::Mark::Link(crate::icons::Link::Leads),
                 hidden: true,
                 plays: None,
+                vcs: None,
             }
         );
     }

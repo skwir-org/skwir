@@ -857,11 +857,15 @@ pub enum SortKey {
     Dimensions,
     /// How long a sound or a film lasts (`keys::DURATION`), read on demand.
     Duration,
+    /// What its repository says of it (`keys::VCS`, ADR-134), the most
+    /// pressing first: in conflict, changed, staged, new, then what is as
+    /// the last commit has it, the ignored last (`vcs::State::rank`).
+    Vcs,
 }
 
 impl SortKey {
     /// Every criterion, in the order menus offer them.
-    pub const ALL: [SortKey; 16] = [
+    pub const ALL: [SortKey; 17] = [
         SortKey::Name,
         SortKey::Kind,
         SortKey::Type,
@@ -876,6 +880,7 @@ impl SortKey {
         SortKey::Deleted,
         SortKey::Rating,
         SortKey::Tags,
+        SortKey::Vcs,
         SortKey::Owner,
         SortKey::Folder,
     ];
@@ -973,6 +978,7 @@ impl SortKey {
                 | SortKey::Tags
                 | SortKey::Owner
                 | SortKey::Folder
+                | SortKey::Vcs
         )
     }
 
@@ -995,6 +1001,7 @@ impl SortKey {
             SortKey::Taken => "Taken",
             SortKey::Dimensions => "Dimensions",
             SortKey::Duration => "Duration",
+            SortKey::Vcs => "Git",
         }
     }
 
@@ -1018,6 +1025,7 @@ impl SortKey {
             SortKey::Taken => "date taken",
             SortKey::Dimensions => "dimensions",
             SortKey::Duration => "duration",
+            SortKey::Vcs => "Git state",
         }
     }
 
@@ -1036,6 +1044,10 @@ impl SortKey {
             | SortKey::Deleted
             | SortKey::Taken => [("Oldest", "oldest first"), ("Newest", "newest first")],
             SortKey::Rating => [("Lowest", "lowest first"), ("Highest", "highest first")],
+            SortKey::Vcs => [
+                ("Changes first", "changes first"),
+                ("Changes last", "changes last"),
+            ],
             SortKey::Name
             | SortKey::Kind
             | SortKey::Type
@@ -1065,6 +1077,7 @@ impl SortKey {
             SortKey::Taken => differs(keys::TAKEN),
             SortKey::Dimensions => differs(keys::DIMENSIONS),
             SortKey::Duration => differs(keys::DURATION),
+            SortKey::Vcs => differs(keys::VCS),
             // What it is or leads to changed, so its type may have.
             SortKey::Kind | SortKey::Type => {
                 old.inode_type() != new.inode_type() || old.type_name() != new.type_name()
@@ -2183,6 +2196,15 @@ fn value_of(
         ),
         // By its area, then its width.
         SortKey::Dimensions => (dimensions_rank(e), None),
+        SortKey::Vcs => (
+            u64::from(crate::vcs::State::rank(
+                e.metadata
+                    .value(keys::VCS)
+                    .and_then(Value::as_str)
+                    .and_then(crate::vcs::State::of_word),
+            )),
+            None,
+        ),
         // Its path's words: a folder's files together, its subfolders' after.
         SortKey::Folder => (
             0,
@@ -3186,6 +3208,18 @@ impl Listing {
                             delta.fields = true;
                         }
                     }
+                }
+                // What the version control said of it stays until it says
+                // again (ADR-134): the pane asks it anew once a file was
+                // written (`rewritten_version`).
+                if let Some(value) = old.metadata.value(keys::VCS)
+                    && e.metadata.value(keys::VCS).is_none()
+                {
+                    e.metadata.set(
+                        keys::VCS,
+                        value.clone(),
+                        crate::entry::Provenance::Filesystem,
+                    );
                 }
                 let d = Delta::between(old, &e);
                 if !d.any {

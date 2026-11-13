@@ -50,7 +50,8 @@ pub enum InspectionKind {
     /// A 3D model the asker turns (`Inspection::mesh`).
     Model,
     /// A history of commits, newest first (ADR-133): each row a commit
-    /// whose `target` (its whole id) opens it, its cells its summary, its
+    /// whose `target` opens it (its whole id, and the file's name in it
+    /// where it had another: `commit_target`), its cells its summary, its
     /// short id, its author, its date and the names at it (branches,
     /// tags), joined by `REFS_JOIN`; its `graph`, where the history draws
     /// one, its part of the graph of merges.
@@ -60,6 +61,28 @@ pub enum InspectionKind {
 /// What joins the names at a commit in a history row's fifth cell, each
 /// written as its kind says (`RefKind::written`).
 pub const REFS_JOIN: &str = "\u{1f}";
+
+/// A history row's `target`: the commit's whole id, then, where the file
+/// whose history it is had another name in that commit (before a rename),
+/// that name after a space. An id never holds a space; a name may, so the
+/// target is split at its first.
+pub fn commit_target(id: &str, name: Option<&str>) -> String {
+    match name {
+        Some(name) => format!("{id} {name}"),
+        None => id.to_owned(),
+    }
+}
+
+/// The commit a history row's target opens, its whole id (`commit_target`).
+pub fn commit_of(target: &str) -> &str {
+    target.split_once(' ').map_or(target, |(id, _)| id)
+}
+
+/// The file's name in the commit a history row's target opens, where it
+/// had another than its own (`commit_target`).
+pub fn commit_name(target: &str) -> Option<&str> {
+    target.split_once(' ').map(|(_, name)| name)
+}
 
 /// What a name at a commit is: the branch checked out, another local
 /// branch, a remote-tracking one, a tag.
@@ -876,6 +899,20 @@ pub fn split_blocks(blocks: Vec<Block>) -> Vec<Block> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A history row opens its commit, under the name the file had in it
+    /// where it had another, a name with spaces whole.
+    #[test]
+    fn a_commit_s_target_holds_its_id_and_the_file_s_name_in_it() {
+        let id = "c9cb00b4025ca661f0182a64ff7f09ce00004a9c";
+        assert_eq!(commit_target(id, None), id);
+        assert_eq!(commit_of(id), id);
+        assert_eq!(commit_name(id), None);
+        let target = commit_target(id, Some("old docs/a b.md"));
+        assert_eq!(target, format!("{id} old docs/a b.md"));
+        assert_eq!(commit_of(&target), id);
+        assert_eq!(commit_name(&target), Some("old docs/a b.md"));
+    }
 
     /// What is copied is what is shown, a drawing as its words; what a
     /// screen reader is told leaves out what is shown only and says what is

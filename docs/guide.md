@@ -186,8 +186,8 @@ the sort, Folders first, hidden files (`Ctrl+H` or `Alt+.`) and the zoom
 files are sorted ("Name, A to Z"); beside it, its direction comes first,
 then what to sort by: name, kind, type, extension, size, dimensions (a
 picture's size in pixels), duration (how long a sound or a film lasts),
-the dates, taken (when a camera took the picture), rating, tags or
-owner. Dimensions, duration and taken are read from the files
+the dates, taken (when a camera took the picture), rating, tags,
+Git state or owner. Dimensions, duration and taken are read from the files
 themselves, in the background, so the order fills in as they come;
 duration asks ffprobe, where it is installed, of what is not an MP4 or a
 QuickTime film. Each starts where you look first (names A to Z, the
@@ -225,6 +225,18 @@ Usage view weighs it), sorts as having none. The zoom sizes pictures and icons;
 names and details have a text size of their own, from 80 to 200 %
 (Settings › Appearance › Files text size, or "Files text: larger" and
 "smaller" in the palette), and rows and labels grow with it.
+
+In a folder kept in a Git repository, each file's picture is marked, on
+its top-right corner, with what Git says of it: a dot for a file changed
+since it was staged or committed, a check for one staged, a plus for one
+Git does not keep yet, a sign for one in conflict; a folder takes the
+mark of the most pressing thing it holds. What Git ignores is not
+marked. The list's Git column (from its header's menu) says it in words,
+ignored included, and the files sort and group by it. A commit, a
+`git add` or a checkout made elsewhere shows at once; a change deeper in
+the folder shows when you come back to the window, or press `F5`.
+Settings › Folders and views › Git turns it off. Nothing a repository's
+configuration names is run, and nothing is written to it.
 
 - **List.** The header's menu chooses the columns; click a header to sort
   by it. Where files from many folders are listed (a search, a tag, the
@@ -570,7 +582,7 @@ archives, and the bytes of any file.
   and the arrows walk the commits. Right-click a commit to copy its
   hash (whole, or short as shown) or its summary. Chosen on a folder, History stays on
   for every folder in a repository until you turn it off; on a file, it
-  is for that file.
+  is for that file. A file's history follows it across its renames.
 - A table (CSV, a spreadsheet, a database, JSON Lines) sorts by a
   column when you click its header. Drag the edge at a header's right to
   widen or narrow its column, and double-click it to fit the column to

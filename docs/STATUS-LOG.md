@@ -16312,3 +16312,59 @@ v0.1 highlighted once its commit was above the top. `skwir-ui`'s tests,
 two new (`a_history_s_contents_are_its_tags_where_its_commits_went`, the
 timing) and History in `a_document_without_headings_offers_contents_it_has_not`;
 clippy.
+
+## 2026-11-13: renames followed in a file's history, the files' Git state in the views (ADR-133 amended, ADR-134)
+
+Asked by the user, the two History follow-ups left in PLAN; the state's
+display chosen by the user (a mark on the picture and a Git column, a
+folder summing what is below it, the ignored unmarked, on by default).
+
+- **Renames** (`git-worker/src/rename.rs`, `log.rs`, `patch.rs`): each
+  commit knows the file's name in it, a parent's from its newest child;
+  where a parent lacks the name, its source among the files the child
+  took out (the same blob, else git's span-hash estimate ≥ 50 %, a size
+  that rules it out never read, 1,000 compared at most, none past
+  8 MiB). A row's target is the commit's id then the name it had
+  (`inspection::commit_target`), the shell copying the id alone
+  (`commit_of`); the rename's patch as `git show -M`.
+- **State** (`git-worker/src/status.rs`, gix's `excludes` added): the
+  index against `HEAD` (folders whose cache tree is `HEAD`'s skipped),
+  against the disk (stat, size, racy, else the raw bytes hashed; eight
+  threads at most), the untracked walked with the ignore patterns, the
+  user's file found by `git::excludes_file`. Core: `vcs` (`State`,
+  `Answer`, `States`, `StatesProvider`), `keys::VCS`, `SortKey::Vcs`,
+  `Pane::states_to_read`/`take_states` (asked as fields are, in the
+  folder's lane; kept across an update), `App::read_wanted_states`. The
+  git plugin's `state.rs`: the provider, its repositories' git folders
+  followed (`fs::Settled`), `on_looked_at`, `git.states`. The shell:
+  `icons::vcs_mark` on the top-right corner, the `dot` glyph,
+  `Detail::Vcs` (off until shown), its grid caption, what a screen reader
+  hears; the query plugin groups by it.
+
+**Measured** (optimized helper, warm): a repository of 100,000 tracked
+files, two changed, one staged, a new folder, an ignored one: its whole
+work tree 0.13 s on one thread, 0.07 s once stat-ed on eight
+(`git status`: 0.04 s), 23 MiB; a folder below 0.01 s. Following a file
+on skwir's own 1,601 commits: 0.10–0.12 s, as its plain history
+(`git log --follow`: 0.15 s), the same commits.
+
+**Checked:** the helper's status against `git status --porcelain` on
+four repositories (every state, a folder below, a file touched and one
+made executable, a merge's conflict, a folder new or ignored whole, no
+commit yet, the user's patterns file); its renames against
+`git log --follow` and `git show -M` (byte for byte on this repository's
+two real renames). Core's pane path with a stand-in provider
+(`vcs_states`: said once whole, asked once while nothing moves, again on
+the provider's generation and on a file written, gone with it). On
+Xvfb, a repository with a file in each state: the grid's and the list's
+marks and the Git column (New, Staged, Ignored, Changed; `docs`,
+`target`, `build.log` unmarked); a `git add` then a commit made in a
+terminal shown within 1.5 s; a file shown edited marked Changed; an
+edit below `docs` shown after F5; a file renamed and edited: its History
+the three commits `git log --follow` lists, the oldest's patch under its
+old name, the rename's `similarity index 58%` as git says it. Tests of
+the crates touched (2,065, and the binary's toggle, settings and
+grouping tests, 18); clippy on them; `just check-cross` (Windows and
+macOS, the helper included: its first build for either); `just deny`;
+`just notices` made again (five crates more). The helper, stripped,
+release profile: 2.51 MB at 9b8f5366, 2.89 MB now.

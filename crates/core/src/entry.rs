@@ -425,6 +425,12 @@ pub mod keys {
     /// How long a sound or a film lasts, in milliseconds (`Value::UInt`),
     /// read on demand (ADR-131), never at hydration.
     pub const DURATION: &str = "duration";
+    /// What the entry is to its repository (ADR-134: `vcs::State::word`),
+    /// `Value::Text`, or `Value::Bool(false)` where the system said it is
+    /// as the last commit has it; a folder's, the strongest below it. Set
+    /// by the pane from a `vcs::StatesProvider`'s answer, never at
+    /// hydration, and kept across the file's updates until said again.
+    pub const VCS: &str = "vcs";
     /// The fields an order reads on demand (ADR-131: `SortKey::field`),
     /// which a listing keeps of an entry while its file stays the same: as
     /// the file says it, or `Value::Bool(false)` where it says nothing.

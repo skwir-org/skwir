@@ -246,6 +246,8 @@ struct SideRow {
     tags: Vec<(String, usize)>,
     /// Its rating in half stars: what a screen reader hears with its tags.
     rating: Option<u64>,
+    /// What its repository says of it, where it was said (ADR-134).
+    vcs: Option<skwir_core::vcs::State>,
 }
 
 /// A column beside the pane's, a list box named `title` for assistive
@@ -332,6 +334,7 @@ fn side_column(
                                 .metadata
                                 .value(skwir_core::entry::keys::RATING)
                                 .and_then(skwir_core::Value::as_u64),
+                            vcs: skwir_core::vcs::State::of(e),
                         })
                     })
                     .collect()
@@ -354,6 +357,7 @@ fn side_column(
                     ),
                     hidden: row.hidden,
                     plays: this.plays(&row.name, || target.clone()),
+                    vcs: row.vcs,
                 };
                 let icon = icons::entry_picture(
                     row.icon.as_ref(),

@@ -100,11 +100,13 @@ pub enum Detail {
     Type,
     Kind,
     Owner,
+    /// What its repository says of it (ADR-134).
+    Vcs,
     Rating,
 }
 
 /// How many detail columns there are.
-pub const DETAILS: usize = 13;
+pub const DETAILS: usize = 14;
 
 impl Detail {
     pub fn column(self) -> &'static Column {
@@ -250,6 +252,17 @@ pub const COLUMNS: [Column; DETAILS] = [
         right: false,
     },
     Column {
+        detail: Detail::Vcs,
+        key: "vcs",
+        setting: "ui.column_vcs",
+        label: "Git",
+        description: "Show what Git says of each file in a repository: changed, staged, new, in conflict or ignored, and of a folder what it holds.",
+        shown: false,
+        sort: Some(SortKey::Vcs),
+        width: 104.,
+        right: false,
+    },
+    Column {
         detail: Detail::Rating,
         key: "rating",
         setting: "ui.column_rating",
@@ -339,6 +352,7 @@ impl Shell {
             .into_iter()
             .filter(|key| match key {
                 SortKey::Rating => self.column_applies(Detail::Rating),
+                SortKey::Vcs => self.column_applies(Detail::Vcs),
                 SortKey::Deleted => self.column_applies(Detail::Deleted),
                 SortKey::Folder => self.column_applies(Detail::Folder),
                 // Read on demand (ADR-131): while something reads it.
@@ -370,6 +384,9 @@ impl Shell {
         let one_folder = place.trail.as_ref().is_some_and(|trail| trail.one_folder);
         match detail {
             Detail::Rating => self.rated(),
+            // Wherever a version control may say it: a folder's files (a
+            // folder in no repository says nothing).
+            Detail::Vcs => place.folder && !self.app.vcs.is_empty(),
             Detail::Folder => !place.folder && !one_folder,
             Detail::Deleted => place.verbs.restore.is_some() && !one_folder,
             Detail::Size
@@ -748,6 +765,9 @@ impl Shell {
                             .and_then(|mime| self.type_names.kind(mime))
                             .unwrap_or_else(|| "".into())
                     })),
+                    Detail::Vcs => Said::text(
+                        skwir_core::vcs::State::of(e).map_or("", skwir_core::vcs::State::title),
+                    ),
                     Detail::Owner => Said::text(
                         value(keys::UID)
                             .and_then(skwir_core::Value::as_u64)

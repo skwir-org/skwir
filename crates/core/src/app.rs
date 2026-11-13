@@ -303,6 +303,8 @@ pub struct App {
     pub metadata: Arc<crate::metadata::MetadataProviders>,
     /// Fields read when asked, not at hydration (ADR-023).
     pub fields: Arc<crate::fields::Fields>,
+    /// What a version control says of a folder's files (ADR-134).
+    pub vcs: Arc<crate::vcs::StatesProviders>,
     /// Indexes a search asks where files may be first (ADR-026).
     pub hints: Arc<crate::hints::Hints>,
     /// Where files' notes are kept, and how each place is read and
@@ -363,6 +365,9 @@ pub struct App {
     /// What was read on demand for the panes' orders (ADR-131, 4), each
     /// batch for a pane's listing, taken by the next pump.
     field_answers: Arc<parking_lot::Mutex<Vec<FieldAnswers>>>,
+    /// What the version control said of the panes' folders (ADR-134), taken
+    /// by the next pump.
+    state_answers: Arc<parking_lot::Mutex<Vec<StateAnswer>>>,
     /// What walks leave out (`left_out`), as read at a revision of the
     /// settings.
     /// The rules as the settings and the environment said them when last
@@ -416,6 +421,7 @@ impl App {
             filter_rollover: parking_lot::Mutex::new(None),
             keys_rollover: parking_lot::Mutex::new(None),
             field_answers: Arc::default(),
+            state_answers: Arc::default(),
             left_out: parking_lot::Mutex::new(None),
             private: parking_lot::Mutex::new(None),
             notifications: parking_lot::Mutex::new(Vec::new()),
@@ -427,6 +433,7 @@ impl App {
             ),
             metadata: Arc::new(crate::metadata::MetadataProviders::gated(Arc::clone(&gate))),
             fields,
+            vcs: Arc::new(crate::vcs::StatesProviders::gated(Arc::clone(&gate))),
             hints: Arc::new(crate::hints::Hints::gated(Arc::clone(&gate))),
             notes: Arc::new(crate::notes::NoteStores::default()),
             companions: Arc::new(crate::companions::Companions::gated(Arc::clone(&gate))),
@@ -831,6 +838,7 @@ impl App {
         self.thumbnails.unregister_owner(owner);
         self.metadata.unregister_owner(owner);
         self.fields.unregister_owner(owner);
+        self.vcs.unregister_owner(owner);
         self.hints.unregister_owner(owner);
         self.notes.unregister_owner(owner);
         for key in self.notes.take_declared(owner) {
@@ -1889,6 +1897,9 @@ impl App {
         // What was read on demand, and what is to be read now (ADR-131).
         self.take_field_answers(&mut report);
         self.read_wanted_fields();
+        // What the version control says of the folders shown (ADR-134).
+        self.take_state_answers(&mut report);
+        self.read_wanted_states();
         // A folder is filled on a worker, an order asked anew made there,
         // and each taken by the pump its wake brings (ADR-120, ADR-121).
         // Never cancelled: a job for a folder left stops or is dropped, and
@@ -1954,6 +1965,81 @@ impl App {
             {
                 report.panes_changed.push(pane);
             }
+        }
+    }
+
+    /// Take what the version control said of the panes' folders into their
+    /// listings, each still the one it was asked for: the panes changed.
+    fn take_state_answers(&self, report: &mut crate::workspace::PumpReport) {
+        let answers = std::mem::take(&mut *self.state_answers.lock());
+        if answers.is_empty() {
+            return;
+        }
+        let mut ws = self.workspace.write();
+        for StateAnswer {
+            pane,
+            listing,
+            said,
+        } in answers
+        {
+            if let Some(p) = ws.pane_mut(pane)
+                && p.take_states(listing, said)
+                && !report.panes_changed.contains(&pane)
+            {
+                report.panes_changed.push(pane);
+            }
+        }
+    }
+
+    /// Ask the version control what the panes' folders hold
+    /// (`Pane::states_to_read`, ADR-134), a job a folder in its lane, its
+    /// answer taken by the pump its wake brings. One that fails says
+    /// nothing; one cancelled (the pane asked anew, or left) is dropped.
+    fn read_wanted_states(&self) {
+        let asked: Vec<crate::workspace::StatesAsked> = {
+            let mut ws = self.workspace.write();
+            let ids: Vec<PaneId> = ws.panes().iter().map(|p| p.id).collect();
+            ids.into_iter()
+                .filter_map(|id| ws.pane_mut(id)?.states_to_read(&self.vcs))
+                .collect()
+        };
+        for crate::workspace::StatesAsked {
+            pane,
+            listing,
+            folder,
+            cancel,
+        } in asked
+        {
+            let wake = self.pane_waker(pane);
+            let vcs = Arc::clone(&self.vcs);
+            let answers = Arc::clone(&self.state_answers);
+            let lane = crate::fs::reach::lane(&folder);
+            let cancel_read = cancel.clone();
+            self.scheduler.spawn_in(
+                lane,
+                Priority::Background,
+                "vcs.states",
+                cancel,
+                move || {
+                    let cancel = cancel_read;
+                    let said = match vcs.states(&folder, &cancel) {
+                        Ok(said) => said,
+                        Err(error) => {
+                            tracing::debug!(folder = %folder.display(), "no state said: {error:#}");
+                            None
+                        }
+                    };
+                    if cancel.is_cancelled() {
+                        return;
+                    }
+                    answers.lock().push(StateAnswer {
+                        pane,
+                        listing,
+                        said,
+                    });
+                    wake();
+                },
+            );
         }
     }
 
@@ -3375,6 +3461,14 @@ struct FieldAnswers {
     pane: PaneId,
     listing: u64,
     values: Vec<(EntryId, &'static str, crate::entry::Value)>,
+}
+
+/// What the version control said of a pane's folder
+/// (`App::read_wanted_states`): who, and what; nothing where none knows it.
+struct StateAnswer {
+    pane: PaneId,
+    listing: u64,
+    said: Option<(&'static str, crate::vcs::Answer)>,
 }
 
 /// `group_fold`: which of a pane's groups to fold or open, and how.

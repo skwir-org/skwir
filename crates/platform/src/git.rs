@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use skwir_core::CancelToken;
+use skwir_core::vcs::State;
 
 /// The helper. Plugins that require it name this, not the literals.
 pub const WORKER: crate::process::Worker = crate::process::Worker {
@@ -37,6 +38,12 @@ const KEPT_FOLDERS: usize = 256;
 const ALTERNATES: usize = 8;
 /// Folders walked up at most, looking for a repository.
 const DEPTH: usize = 64;
+/// Paths a status says at most: past them, the rest is not said.
+const STATES: usize = 20_000;
+/// A status's answer at most, per path: its name escaped, and its state.
+const ANSWER_PER_STATE: u64 = 1024;
+/// How long a status reads before it answers what it found.
+const STATUS_DEADLINE: Duration = Duration::from_secs(10);
 
 /// A repository, as found on the disk: what the helper is to read.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -45,6 +52,9 @@ pub struct Repo {
     pub git_dir: PathBuf,
     /// Where its files are checked out; `None` for a bare repository.
     pub work_tree: Option<PathBuf>,
+    /// The folder its references and objects are in: its git folder, or
+    /// the main one a linked worktree shares.
+    pub common_dir: PathBuf,
     /// What the helper reads: the git folder, the common one a linked
     /// worktree shares, and the folders their alternates name.
     pub readable: Vec<PathBuf>,
@@ -131,6 +141,7 @@ impl Repo {
         Repo {
             git_dir,
             work_tree,
+            common_dir: common,
             readable,
         }
     }
@@ -192,6 +203,11 @@ pub struct Commit {
     /// (`remote: origin/main`, `tag: v1`).
     #[serde(default)]
     pub refs: Vec<String>,
+    /// In a file's history, the file's name in this commit where it had
+    /// another than the one asked (before a rename), as the repository
+    /// names it from its top.
+    #[serde(default)]
+    pub path: Option<String>,
 }
 
 /// A history, newest first, parents after their children.
@@ -215,6 +231,22 @@ pub struct Patched {
     pub cut: bool,
 }
 
+/// What the files under a folder are to its repository, as the helper
+/// reads them.
+#[derive(Clone, Debug, Deserialize)]
+pub struct Status {
+    /// The folder itself, new or ignored as a whole (all it holds is too).
+    pub folder: Option<State>,
+    /// Each path not as `HEAD` has it, `/`-separated from the folder, at
+    /// its strongest: a file (one gone from the disk too), or a folder new
+    /// or ignored whole.
+    pub states: Vec<(String, State)>,
+    /// More paths than the helper says were found.
+    pub cut: bool,
+    /// The helper stopped at its deadline.
+    pub stopped: bool,
+}
+
 #[derive(Serialize)]
 #[serde(tag = "ask", rename_all = "lowercase")]
 enum Ask {
@@ -232,6 +264,14 @@ enum Ask {
         bytes: u64,
         deadline_ms: u64,
     },
+    Status {
+        git_dir: PathBuf,
+        work_tree: PathBuf,
+        path: String,
+        excludes_file: Option<PathBuf>,
+        limit: usize,
+        deadline_ms: u64,
+    },
 }
 
 /// The commits of `repo` that changed `path` (as `Repo::relative` names
@@ -241,12 +281,21 @@ pub fn log(repo: &Repo, path: &str, whole: bool, cancel: &CancelToken) -> anyhow
     let deadline = if whole { DEADLINE_WHOLE } else { DEADLINE };
     let work = tempfile::tempdir()?;
     let output = (limit as u64 + 1) * ANSWER_PER_COMMIT;
-    let stdout = run(repo, work.path(), deadline, output, cancel, |_| Ask::Log {
-        git_dir: repo.git_dir.clone(),
-        path: path.to_owned(),
-        limit,
-        deadline_ms: millis(deadline),
-    })?;
+    let stdout = run(
+        repo,
+        &[],
+        Ran::History,
+        work.path(),
+        deadline,
+        output,
+        cancel,
+        |_| Ask::Log {
+            git_dir: repo.git_dir.clone(),
+            path: path.to_owned(),
+            limit,
+            deadline_ms: millis(deadline),
+        },
+    )?;
     Ok(serde_json::from_slice(&stdout)?)
 }
 
@@ -267,37 +316,182 @@ pub fn patch(
     let name = format!("{}.patch", &id[..id.len().min(12)]);
     let deadline = if whole { DEADLINE_WHOLE } else { DEADLINE };
     // Written in its working folder, `into`, named as the helper sees it.
-    let stdout = run(repo, into, deadline, 4096, cancel, |inside| Ask::Patch {
-        git_dir: repo.git_dir.clone(),
-        commit: id.to_owned(),
-        path: path.to_owned(),
-        out: inside.join(&name),
-        bytes: if whole { PATCH_WHOLE } else { PATCH },
-        deadline_ms: millis(deadline),
-    })?;
+    let stdout = run(
+        repo,
+        &[],
+        Ran::History,
+        into,
+        deadline,
+        4096,
+        cancel,
+        |inside| Ask::Patch {
+            git_dir: repo.git_dir.clone(),
+            commit: id.to_owned(),
+            path: path.to_owned(),
+            out: inside.join(&name),
+            bytes: if whole { PATCH_WHOLE } else { PATCH },
+            deadline_ms: millis(deadline),
+        },
+    )?;
     let patched: Patched = serde_json::from_slice(&stdout)?;
     let written = into.join(&name);
     anyhow::ensure!(written.is_file(), "The patch was not written");
     Ok((written, patched))
 }
 
+/// What the files under `path` (as `Repo::relative` names it; "" for the
+/// whole work tree) are to `repo` (ADR-134), as `git status` tells them.
+/// The helper reads the work tree, the repository's folders and the user's
+/// file of patterns ignored everywhere, and nothing else.
+pub fn status(repo: &Repo, path: &str, cancel: &CancelToken) -> anyhow::Result<Status> {
+    let work_tree = repo
+        .work_tree
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("A bare repository has no files checked out"))?;
+    let excludes_file = excludes_file();
+    let mut also = vec![work_tree.clone()];
+    also.extend(excludes_file.clone());
+    let work = tempfile::tempdir()?;
+    let output = (STATES as u64 + 1) * ANSWER_PER_STATE;
+    let stdout = run(
+        repo,
+        &also,
+        Ran::Status,
+        work.path(),
+        STATUS_DEADLINE,
+        output,
+        cancel,
+        |_| Ask::Status {
+            git_dir: repo.git_dir.clone(),
+            work_tree,
+            path: path.to_owned(),
+            excludes_file,
+            limit: STATES,
+            deadline_ms: millis(STATUS_DEADLINE),
+        },
+    )?;
+    Ok(serde_json::from_slice(&stdout)?)
+}
+
+/// The user's file of patterns ignored in every repository, as git finds
+/// it: `core.excludesFile` in the user's configuration (`~/.gitconfig`
+/// read after `$XDG_CONFIG_HOME/git/config`, so its word wins), else
+/// `$XDG_CONFIG_HOME/git/ignore`; `None` where there is none. The
+/// configuration is read as text, its includes not followed: what the
+/// helper, isolated from it, is told.
+pub fn excludes_file() -> Option<PathBuf> {
+    let home = skwir_core::os_path::home();
+    let xdg = crate::xdg::config_home().map(|config| config.join("git"));
+    let mut named = None;
+    for config in [
+        xdg.as_ref().map(|git| git.join("config")),
+        home.as_ref().map(|home| home.join(".gitconfig")),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if let Some(text) = read_config(&config)
+            && let Some(value) = excludes_named(&text)
+        {
+            named = Some(value);
+        }
+    }
+    let file = match named {
+        Some(value) => match value.strip_prefix("~/") {
+            Some(rest) => home?.join(rest),
+            None => PathBuf::from(value),
+        },
+        None => xdg?.join("ignore"),
+    };
+    (file.is_absolute() && file.is_file()).then_some(file)
+}
+
+/// A configuration file whole, a user's at most this long.
+fn read_config(path: &Path) -> Option<String> {
+    let bytes = skwir_core::fs::file::read_regular(path, 1 << 20).ok()?;
+    String::from_utf8(bytes).ok()
+}
+
+/// The last `excludesFile` of a `[core]` section in a git configuration's
+/// text (names case ignored, a value's quotes taken off).
+fn excludes_named(text: &str) -> Option<String> {
+    let mut core = false;
+    let mut found = None;
+    for line in text.lines() {
+        let line = line.trim();
+        if let Some(section) = line.strip_prefix('[') {
+            let name = section.split([']', ' ', '"']).next().unwrap_or_default();
+            core = name.eq_ignore_ascii_case("core");
+            continue;
+        }
+        if !core || line.starts_with(['#', ';']) {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        if key.trim().eq_ignore_ascii_case("excludesfile") {
+            let value = value.trim();
+            let value = value
+                .strip_prefix('"')
+                .and_then(|value| value.strip_suffix('"'))
+                .unwrap_or(value);
+            found = Some(value.to_owned());
+        }
+    }
+    found.filter(|value| !value.is_empty())
+}
+
 fn millis(duration: Duration) -> u64 {
     u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
 }
 
-/// Run the helper isolated, the repository's folders readable and `work`
-/// its working folder, on what `ask` makes of that folder as it sees it
-/// (`/work` in a sandbox): what it printed, or why it failed.
+/// What the helper is run for: what a failure says could not be done.
+#[derive(Clone, Copy)]
+enum Ran {
+    History,
+    Status,
+}
+
+impl Ran {
+    /// What it needs the helper for, as `Worker::require` says it.
+    fn need(self) -> &'static str {
+        match self {
+            Ran::History => "show a history of commits",
+            Ran::Status => "show the files' Git state",
+        }
+    }
+
+    /// What a failure says could not be read.
+    fn failed(self) -> &'static str {
+        match self {
+            Ran::History => "The history cannot be read",
+            Ran::Status => "The files' Git state cannot be read",
+        }
+    }
+}
+
+/// Run the helper isolated, the repository's folders and `also` readable
+/// and `work` its working folder, on what `ask` makes of that folder as it
+/// sees it (`/work` in a sandbox): what it printed, or why it failed.
+#[allow(clippy::too_many_arguments)]
 fn run(
     repo: &Repo,
+    also: &[PathBuf],
+    ran: Ran,
     work: &Path,
     deadline: Duration,
     output: u64,
     cancel: &CancelToken,
     ask: impl FnOnce(&Path) -> Ask,
 ) -> anyhow::Result<Vec<u8>> {
-    let worker = WORKER.require("show a history of commits")?;
-    let readable: Vec<&Path> = repo.readable.iter().map(PathBuf::as_path).collect();
+    let worker = WORKER.require(ran.need())?;
+    let readable: Vec<&Path> = repo
+        .readable
+        .iter()
+        .chain(also)
+        .map(PathBuf::as_path)
+        .collect();
     let mut untrusted = crate::sandbox::fed_reading_writing(
         &worker,
         work,
@@ -316,7 +510,8 @@ fn run(
     .map_err(|error| crate::process::explain(&worker, cancel, error))?;
     anyhow::ensure!(
         finished.status.success(),
-        "The history cannot be read: {}",
+        "{}: {}",
+        ran.failed(),
         finished.stderr.trim()
     );
     Ok(finished.stdout)

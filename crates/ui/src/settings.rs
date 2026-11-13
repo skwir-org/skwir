@@ -2083,9 +2083,16 @@ static BUILTIN: [Builtin; 13] = [
         owner: None,
         title: "Folders and views",
         icon: "grid",
-        intro: "How a folder shows its files: their order, the grid, the list's columns, the thumbnails drawn for them, and what its preview shows.",
+        intro: "How a folder shows its files: their order, the grid, the list's columns, the thumbnails drawn for them, what its preview shows, and what Git says of them.",
         when_used: true,
-        sections: &["Sorting", "Grid", "List columns", "Thumbnails", "Previews"],
+        sections: &[
+            "Sorting",
+            "Grid",
+            "List columns",
+            "Thumbnails",
+            "Previews",
+            "Git",
+        ],
     },
     Builtin {
         page: Page::Notes,

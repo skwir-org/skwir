@@ -298,7 +298,12 @@ impl crate::shell::Shell {
             let row = crate::inspector::listed(&display.data)
                 .get(index.checked_sub(display.data.blocks.len())?)?;
             let cell = |i: usize| row.cells.get(i).cloned().unwrap_or_default();
-            Some((row.target.clone()?, cell(1), cell(0)))
+            let target = row.target.as_deref()?;
+            Some((
+                skwir_core::inspection::commit_of(target).to_owned(),
+                cell(1),
+                cell(0),
+            ))
         };
         let found = if parked {
             self.with_parked(choose).flatten()

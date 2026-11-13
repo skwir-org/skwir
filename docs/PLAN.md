@@ -984,17 +984,21 @@ Gathered on 2026-10-20 from the notes of this plan and of
 may have covered one: check the source before starting it. Work that
 closes an item removes its line; work that leaves one adds it here.
 
-**History** (ADR-133, 2026-11-13): built on Linux; the helper is in
-every package's list, Windows' and macOS's builds not made or checked
-(`just check-cross`, `package-windows`, `package-macos`). To come, as
-said with the user: History as a place in the pane (full width, a commit
-opened as a folder of what it changed, its tree browsed as an
-archive's); renames followed in a file's history; the files' state
-(changed, new, ignored) in the views. A history is not read again when
-the repository changes while it is shown. A folder's or a file's
-history draws no graph (as `git log -- path`); a shallow clone, a linked
-worktree and a submodule are handled by the helper but were not tried
-in the window.
+**History and the files' Git state** (ADR-133, ADR-134, 2026-11-13):
+built on Linux, renames followed in a file's history and the files'
+state marked in the views the same day; the helper is in every
+package's list, compiled for Windows and macOS (`check-cross`), their
+packages not made (`package-windows`, `package-macos`). To come, as said with the user:
+History as a place in the pane (full width, a commit opened as a folder
+of what it changed, its tree browsed as an archive's). A history is not
+read again when the repository changes while it is shown (the files'
+state is). A folder's or a file's history draws no graph (as
+`git log -- path`); a copy is not followed, a folder not across a
+rename. A shallow clone, a linked worktree and a submodule are handled
+by the helper but were not tried in the window. A filtered file (Git
+LFS, converted ends of line) touched but unchanged reads as changed; a
+submodule's own state is not said; what changes below a folder shown is
+told when a window comes to the front or by F5.
 
 **Formulas** (ADR-129, 2026-11-10): the helper is in every package, apart
 on Linux; Windows' was tried under Wine, macOS's built and looked over,

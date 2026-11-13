@@ -515,3 +515,249 @@ fn what_is_past_its_bounds_is_refused_with_a_reason() {
         refused(request(&"0".repeat(40)).as_bytes());
     }
 }
+
+/// The commits listed and the name each says the file had in it (none
+/// where it is the one asked).
+fn named(answer: &Value) -> Vec<(String, Option<String>)> {
+    answer["commits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|commit| {
+            (
+                commit["id"].as_str().unwrap().to_owned(),
+                commit["path"].as_str().map(str::to_owned),
+            )
+        })
+        .collect()
+}
+
+/// What `git log --follow` lists of `path`.
+fn followed(repo: &Repo, path: &str) -> Vec<String> {
+    lines(&repo.git(&["log", "--follow", "--format=%H", "--", path]))
+}
+
+/// A file renamed as it was (`git mv`), edited, renamed again with edits
+/// into a folder (a dissimilar file deleted beside it), edited; then a
+/// file made of little of one deleted with it. Its commits, oldest first.
+fn renamed_repo() -> (Repo, Vec<String>) {
+    let repo = Repo::new();
+    let text = numbered(30);
+    repo.write("a.txt", text.as_bytes());
+    repo.write("keep.txt", b"kept apart\n");
+    let entries = (1..=40).fold(String::new(), |mut text, n| {
+        use std::fmt::Write as _;
+        let _ = writeln!(text, "entry {n}");
+        text
+    });
+    repo.write("e.txt", entries.as_bytes());
+    repo.write(
+        "other.txt",
+        b"something else entirely\nwith its own words\nnothing alike\n",
+    );
+    let mut commits = vec![repo.commit("Add a")];
+    let text = text.replace("line 2\n", "line two\n");
+    repo.write("a.txt", text.as_bytes());
+    commits.push(repo.commit("Edit a"));
+    repo.git(&["mv", "a.txt", "b.txt"]);
+    commits.push(repo.commit("Rename a to b"));
+    repo.write("keep.txt", b"kept apart, changed\n");
+    commits.push(repo.commit("Elsewhere"));
+    let text = text.replace("line 9\n", "line nine\n");
+    repo.write("b.txt", text.as_bytes());
+    commits.push(repo.commit("Edit b"));
+    let text = text
+        .replace("line 20\n", "line twenty\n")
+        .replace("line 21\n", "");
+    std::fs::remove_file(repo.root.join("b.txt")).unwrap();
+    std::fs::remove_file(repo.root.join("other.txt")).unwrap();
+    repo.write("dir/c.txt", text.as_bytes());
+    commits.push(repo.commit("Move b into dir as c, edited"));
+    repo.write("dir/c.txt", format!("{text}line 31\n").as_bytes());
+    commits.push(repo.commit("Edit c"));
+    std::fs::remove_file(repo.root.join("e.txt")).unwrap();
+    repo.write(
+        "d.txt",
+        format!("{}entry 1\n", "new words\n".repeat(40)).as_bytes(),
+    );
+    commits.push(repo.commit("Make d of little of e"));
+    (repo, commits)
+}
+
+/// A file is followed across its renames as `git log --follow` follows
+/// it, the same file first, then one at least half alike; each commit from
+/// before a rename names the file as it was named in it. A file mostly new
+/// is not another's renamed.
+#[test]
+fn a_file_is_followed_across_its_renames_as_git_follows_it() {
+    if !has_git() {
+        return;
+    }
+    let (repo, c) = renamed_repo();
+    let answer = log(&repo, "dir/c.txt", 500);
+    assert_eq!(ids(&answer), followed(&repo, "dir/c.txt"));
+    let name = |n: &str| Some(n.to_owned());
+    assert_eq!(
+        named(&answer),
+        [
+            (c[6].clone(), None),
+            (c[5].clone(), None),
+            (c[4].clone(), name("b.txt")),
+            (c[2].clone(), name("b.txt")),
+            (c[1].clone(), name("a.txt")),
+            (c[0].clone(), name("a.txt")),
+        ]
+    );
+    let answer = log(&repo, "d.txt", 500);
+    assert_eq!(ids(&answer), [c[7].clone()]);
+    assert_eq!(ids(&answer), followed(&repo, "d.txt"));
+    // A folder is not followed.
+    assert_eq!(
+        ids(&log(&repo, "dir", 500)),
+        lines(&repo.git(&["rev-list", "HEAD", "--", "dir"]))
+    );
+}
+
+/// A rename's patch is what `git show -M` prints of the file's two names:
+/// the same file as its names alone, one edited with its similarity and
+/// what changed; an older commit's, under the name the file had in it.
+#[test]
+fn a_rename_s_patch_is_what_git_show_prints() {
+    if !has_git() {
+        return;
+    }
+    let (repo, c) = renamed_repo();
+    let shown = |commit: &str, paths: &[&str]| {
+        let mut args = vec![
+            "show",
+            "-M",
+            "--histogram",
+            "--no-ext-diff",
+            "--no-textconv",
+            commit,
+            "--",
+        ];
+        args.extend_from_slice(paths);
+        repo.git(&args)
+    };
+    let (answer, written) = patch(&repo, &c[2], "b.txt", 1 << 20);
+    assert_eq!(written, shown(&c[2], &["a.txt", "b.txt"]));
+    assert!(written.contains("similarity index 100%\nrename from a.txt\nrename to b.txt\n"));
+    assert_eq!(answer["files"], 1);
+    let (_, written) = patch(&repo, &c[5], "dir/c.txt", 1 << 20);
+    assert_eq!(written, shown(&c[5], &["b.txt", "dir/c.txt"]));
+    assert!(written.contains("rename from b.txt\nrename to dir/c.txt\n"));
+    assert!(!written.contains("other.txt"));
+    let (_, written) = patch(&repo, &c[1], "a.txt", 1 << 20);
+    assert_eq!(written, shown(&c[1], &["a.txt"]));
+    // Made of little of another: added, as git shows it.
+    let (_, written) = patch(&repo, &c[7], "d.txt", 1 << 20);
+    assert_eq!(written, shown(&c[7], &["d.txt"]));
+    assert!(written.contains("new file mode"));
+}
+
+/// A rename made on a side branch and merged back is followed on that
+/// branch, as git follows it; and along each line of history apart: where
+/// the main line changed the file under its old name meanwhile, its commit
+/// is listed under that name, the side's under the new one, and the merge
+/// that joined them as a path's history lists it (git's `--follow` leaves
+/// that merge out).
+#[test]
+fn a_rename_on_a_side_branch_is_followed_on_its_line() {
+    if !has_git() {
+        return;
+    }
+    let repo = Repo::new();
+    let text = numbered(30);
+    repo.write("a.txt", text.as_bytes());
+    repo.write("keep.txt", b"kept apart\n");
+    let base = repo.commit("Add a");
+    repo.git(&["checkout", "-q", "-b", "side"]);
+    std::fs::remove_file(repo.root.join("a.txt")).unwrap();
+    repo.write("b.txt", text.replace("line 2\n", "line two\n").as_bytes());
+    let renamed = repo.commit("Rename a to b on the side");
+    repo.write(
+        "b.txt",
+        text.replace("line 2\n", "line two\n")
+            .replace("line 5\n", "line five\n")
+            .as_bytes(),
+    );
+    let edited = repo.commit("Edit b on the side");
+    repo.git(&["checkout", "-q", "main"]);
+    repo.write("keep.txt", b"kept apart, changed\n");
+    repo.commit("Elsewhere on main");
+    repo.minute.set(repo.minute.get() + 1);
+    repo.git(&["merge", "-q", "--no-ff", "-m", "Merge side", "side"]);
+    let answer = log(&repo, "b.txt", 500);
+    assert_eq!(ids(&answer), [edited, renamed.clone(), base.clone()]);
+    assert_eq!(ids(&answer), followed(&repo, "b.txt"));
+
+    let repo = Repo::new();
+    repo.write("a.txt", text.as_bytes());
+    let base = repo.commit("Add a");
+    repo.git(&["checkout", "-q", "-b", "side"]);
+    repo.git(&["mv", "a.txt", "b.txt"]);
+    repo.write("b.txt", text.replace("line 2\n", "line two\n").as_bytes());
+    let renamed = repo.commit("Rename a to b on the side");
+    repo.write(
+        "b.txt",
+        text.replace("line 2\n", "line two\n")
+            .replace("line 5\n", "line five\n")
+            .as_bytes(),
+    );
+    let later = repo.commit("Edit b on the side");
+    repo.git(&["checkout", "-q", "main"]);
+    repo.write(
+        "a.txt",
+        text.replace("line 28\n", "line 28, on main\n").as_bytes(),
+    );
+    let main = repo.commit("Edit a on main");
+    repo.minute.set(repo.minute.get() + 1);
+    repo.git(&["merge", "-q", "--no-ff", "-m", "Merge side", "side"]);
+    let merge = repo.head();
+    let merged = std::fs::read_to_string(repo.root.join("b.txt")).unwrap();
+    assert!(merged.contains("line two\n") && merged.contains("line 28, on main\n"));
+    let name = |n: &str| Some(n.to_owned());
+    let answer = log(&repo, "b.txt", 500);
+    assert_eq!(
+        named(&answer),
+        [
+            (merge.clone(), None),
+            (main, name("a.txt")),
+            (later, None),
+            (renamed, None),
+            (base, name("a.txt")),
+        ]
+    );
+    let mut listed = ids(&answer);
+    listed.retain(|id| *id != merge);
+    assert_eq!(listed, followed(&repo, "b.txt"));
+}
+
+/// A file made under a name deleted by an earlier commit, or made again
+/// with what a file deleted earlier held, is not a rename: renames are
+/// found in the commit that made the file alone, as git finds them.
+#[test]
+fn a_name_deleted_earlier_and_made_again_is_not_a_rename() {
+    if !has_git() {
+        return;
+    }
+    let repo = Repo::new();
+    let held = numbered(10);
+    repo.write("old.txt", held.as_bytes());
+    repo.write("a.txt", b"the first a\n");
+    repo.commit("Add old and a");
+    std::fs::remove_file(repo.root.join("old.txt")).unwrap();
+    std::fs::remove_file(repo.root.join("a.txt")).unwrap();
+    repo.commit("Delete both");
+    repo.write("new.txt", held.as_bytes());
+    repo.write("a.txt", b"another a altogether, made again\n");
+    let made = repo.commit("Make new and a again");
+    let answer = log(&repo, "new.txt", 500);
+    assert_eq!(ids(&answer), [made]);
+    assert_eq!(ids(&answer), followed(&repo, "new.txt"));
+    let answer = log(&repo, "a.txt", 500);
+    assert_eq!(ids(&answer).len(), 3);
+    assert_eq!(ids(&answer), followed(&repo, "a.txt"));
+    assert!(named(&answer).iter().all(|(_, name)| name.is_none()));
+}

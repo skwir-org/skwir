@@ -41,6 +41,8 @@ struct Snapshot {
     metadata: Vec<&'static str>,
     /// Fields read on demand (a picture's position).
     fields: Vec<&'static str>,
+    /// What says the files' state in a version control (ADR-134: Git).
+    vcs: Vec<&'static str>,
     /// Indexes a search asks first (the tags plugin's, Baloo).
     hints: Vec<&'static str>,
     /// Where notes are kept (ADR-027: the desktop's attributes, the Finder's).
@@ -118,6 +120,7 @@ fn snapshot(app: &App) -> Snapshot {
         .collect(),
         metadata: app.metadata.ids(),
         fields: app.fields.ids(),
+        vcs: app.vcs.ids(),
         hints: app.hints.ids(),
         notes: app.notes.ids(),
         companions: app.companions.ids(),

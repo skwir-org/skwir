@@ -1,9 +1,9 @@
 //! The commits that reached `HEAD`, as `git log --date-order` lists them,
 //! those that changed a path alone when one is asked.
-use crate::tree::Lookups;
-use crate::{Deadline, Result};
+use crate::tree::{Entry, Lookups};
+use crate::{Deadline, Result, rename};
 use gix::ObjectId;
-use gix::bstr::ByteSlice;
+use gix::bstr::{BString, ByteSlice};
 use gix::refs::Category;
 use serde::Serialize;
 use std::cmp::Reverse;
@@ -13,6 +13,8 @@ use std::collections::{BinaryHeap, HashMap};
 const SUMMARY: usize = 300;
 /// An author's name or address kept at most, in characters.
 const NAME: usize = 200;
+/// A commit no child has given the file's name in it yet.
+const UNNAMED: u32 = u32::MAX;
 
 #[derive(Serialize)]
 pub(crate) struct Log {
@@ -39,6 +41,10 @@ struct Commit {
     offset: i32,
     summary: String,
     refs: Vec<String>,
+    /// In a file's history, the file's name in this commit, where it is
+    /// not the one asked (before a rename).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path: Option<String>,
 }
 
 /// A commit as the walk read it.
@@ -49,8 +55,46 @@ struct Node {
     parents: Vec<u32>,
 }
 
+/// The names a file had along its history, each looked up in the trees
+/// once a tree and a depth (`Lookups`): the one asked first.
+struct Followed {
+    names: Vec<BString>,
+    lookups: Vec<Lookups>,
+    known: HashMap<BString, u32>,
+}
+
+impl Followed {
+    fn new(path: &[&[u8]]) -> Self {
+        let name: BString = path.join(&b'/').into();
+        Self {
+            names: vec![name.clone()],
+            lookups: vec![Lookups::new(path)],
+            known: HashMap::from([(name, 0)]),
+        }
+    }
+
+    /// The place of `name`, given one the first time.
+    fn of(&mut self, name: BString) -> u32 {
+        if let Some(at) = self.known.get(&name) {
+            return *at;
+        }
+        let at = self.names.len() as u32;
+        let components: Vec<&[u8]> = name.split(|byte| *byte == b'/').collect();
+        self.lookups.push(Lookups::new(&components));
+        self.names.push(name.clone());
+        self.known.insert(name, at);
+        at
+    }
+
+    /// What tree `tree` holds under name `at`.
+    fn entry(&mut self, repo: &gix::Repository, at: u32, tree: ObjectId) -> Result<Option<Entry>> {
+        self.lookups[at as usize].at(repo, tree)
+    }
+}
+
 /// The log of `repo` from `HEAD`: `limit` commits at most, those that
-/// changed `path` alone when it is not empty.
+/// changed `path` alone when it is not empty, a file followed across its
+/// renames.
 ///
 /// The order is git's `--date-order`, which needs every commit's children
 /// known before it is placed: the history is read whole first, by gix's
@@ -59,6 +103,14 @@ struct Node {
 /// placed, the newest ready placed first (a binary heap): n log n in the
 /// commits, each read once. Read past the deadline, what was read is placed
 /// and answered.
+///
+/// A file (not a folder) is followed as `git log --follow` follows it, but
+/// along each line of history apart: each commit knows the file's name in
+/// it, `HEAD`'s the one asked, a parent's given by its first child placed
+/// (its newest). Where a child has the file and a parent has nothing under
+/// its name, the parent's name is the file's the child renamed it from, if
+/// any (`rename::source`, a tree diff of the two): asked once a rename, and
+/// where the file begins.
 pub(crate) fn log(
     repo: &gix::Repository,
     path: &[&[u8]],
@@ -116,18 +168,28 @@ pub(crate) fn log(
         }
     }
     let refs = refs(repo)?;
-    let mut lookups = Lookups::new(path);
-    // The entry at `path` in each commit's tree, looked up once.
-    let mut entries: Vec<Option<Option<ObjectId>>> = vec![None; nodes.len()];
-    let mut entry = |at: u32, lookups: &mut Lookups<'_>| -> Result<Option<ObjectId>> {
-        if let Some(known) = entries[at as usize] {
+    let mut names = Followed::new(path);
+    // Each commit's tree, read once.
+    let mut trees: Vec<Option<ObjectId>> = vec![None; nodes.len()];
+    let mut tree = |at: u32, nodes: &[Node]| -> Result<ObjectId> {
+        if let Some(known) = trees[at as usize] {
             return Ok(known);
         }
-        let tree = repo.find_commit(nodes[at as usize].id)?.tree_id()?.detach();
-        let found = lookups.at(repo, tree)?.map(|entry| entry.id);
-        entries[at as usize] = Some(found);
-        Ok(found)
+        let id = repo.find_commit(nodes[at as usize].id)?.tree_id()?.detach();
+        trees[at as usize] = Some(id);
+        Ok(id)
     };
+    // A file is followed; a folder, or what `HEAD` lacks, is not.
+    let follow = !path.is_empty() && {
+        let top = place.get(&tip).copied().unwrap_or_default();
+        nodes.get(top as usize).is_some()
+            && names
+                .entry(repo, 0, tree(top, &nodes)?)?
+                .is_some_and(Entry::is_file)
+    };
+    // The file's name in each commit, by place in `names`; `UNNAMED` until
+    // a child names it (the tip is named the one asked).
+    let mut name_of = vec![UNNAMED; nodes.len()];
     // Ready: every child placed. The newest first, and of two as new the
     // one the walk read first.
     let mut ready: BinaryHeap<(i64, Reverse<u32>)> = nodes
@@ -143,7 +205,7 @@ pub(crate) fn log(
             more = true;
             break;
         }
-        if commits.len() % 64 == 0 && deadline.passed() {
+        if (follow || commits.len() % 64 == 0) && deadline.passed() {
             stopped = true;
             break;
         }
@@ -155,18 +217,44 @@ pub(crate) fn log(
                 ready.push((nodes[*parent as usize].time, Reverse(*parent)));
             }
         }
+        let name = match name_of[at as usize] {
+            UNNAMED => 0,
+            name => name,
+        };
         let kept = path.is_empty() || {
-            let own = entry(at, &mut lookups)?;
+            let own_tree = tree(at, &nodes)?;
+            let own = names.entry(repo, name, own_tree)?;
+            // Unchanged against a parent that has it alike under one name.
+            let mut differs = true;
+            for parent in &node.parents {
+                let theirs_tree = tree(*parent, &nodes)?;
+                let mut theirs_name = name;
+                let mut theirs = names.entry(repo, name, theirs_tree)?;
+                if follow
+                    && theirs.is_none()
+                    && let Some(file) = own.filter(|entry| entry.is_file())
+                    && let Some(source) = rename::source(
+                        repo,
+                        theirs_tree,
+                        own_tree,
+                        &names.names[name as usize],
+                        file,
+                        deadline,
+                    )?
+                {
+                    theirs_name = names.of(source.path);
+                    theirs = Some(source.entry);
+                }
+                if name_of[*parent as usize] == UNNAMED {
+                    name_of[*parent as usize] = theirs_name;
+                }
+                if theirs_name == name && theirs == own {
+                    differs = false;
+                }
+            }
             if node.parents.is_empty() {
                 own.is_some()
             } else {
-                let mut differs = true;
-                for parent in &node.parents {
-                    if entry(*parent, &mut lookups)? == own {
-                        differs = false;
-                        break;
-                    }
-                }
                 differs
             }
         };
@@ -193,6 +281,7 @@ pub(crate) fn log(
             offset: time.offset,
             summary: cut(message.summary().to_str_lossy().trim(), SUMMARY),
             refs: refs.get(&node.id).cloned().unwrap_or_default(),
+            path: (name != 0).then(|| names.names[name as usize].to_str_lossy().into_owned()),
         });
     }
     Ok(Log {

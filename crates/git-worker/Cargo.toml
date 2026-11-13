@@ -8,11 +8,13 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-# gitoxide, its objects, references and walks alone (ADR-133): no
-# attributes or filters are built, and its command runner, which its
-# protocol brings, is called only by a network client, not built either:
-# nothing a repository's configuration names can be run.
-gix = { version = "0.90.0", default-features = false, features = ["sha1"] }
+# gitoxide, its objects, references and walks alone (ADR-133), and its
+# index and ignore patterns, to tell a file's state (`excludes`, ADR-134):
+# no attributes or filters are built (`status` and `dirwalk` would bring
+# them, with `command`), and its command runner, which its protocol
+# brings, is called only by a network client, not built either: nothing a
+# repository's configuration names can be run.
+gix = { version = "0.90.0", default-features = false, features = ["sha1", "excludes"] }
 # The line diff gix's own would bring the filters with.
 imara-diff = "0.2.0"
 serde.workspace = true
