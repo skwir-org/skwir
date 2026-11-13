@@ -50,6 +50,16 @@ default with a setting). Built on Linux.
      (`skip-worktree`) or said unchanged (`assume-unchanged`) as git
      takes them; nothing written, no lock taken, the index not
      refreshed; 20,000 paths at most, 10 s at most.
+   - As the repository's configuration says files are compared and what
+     is told, else the user's, else git's defaults: `core.fileMode` (an
+     executable bit not as the index has it is a change only where it is
+     on: a drive that keeps no such bit, exFAT or NTFS, says every file
+     executable), `core.symlinks`, `core.ignoreCase`, `core.trustCTime`,
+     `core.checkStat`, and `status.showUntrackedFiles` (`no`: nothing new
+     or ignored is said, as a repository of one's home files asks). The
+     user's are read by skwir with the user's patterns file
+     (`git::User`) and told the helper, which takes each where the
+     repository says nothing, as git lets the repository's word win.
    - Isolated as for a history (ADR-133, 4), the work tree and the
      user's patterns file readable too.
 2. **Core keeps the state, not the plugin** (`vcs`): a provider answers
@@ -105,5 +115,6 @@ default with a setting). Built on Linux.
   the front.
 - A submodule's own state is not said; a copy, not a move, is not
   followed (ADR-133).
-- `core.excludesFile` is read from the user's two configuration files as
-  text, their includes not followed.
+- `core.excludesFile` and the settings above are read from the user's
+  two configuration files as text, their includes not followed; the
+  system's configuration is not read.

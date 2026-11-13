@@ -19,7 +19,7 @@ use gix::index::entry::{Flags, Mode, Stage, Stat};
 use gix::objs::tree::EntryKind;
 use serde::Serialize;
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::Read;
 use std::path::Path;
 use std::sync::atomic::{self, AtomicBool};
@@ -59,6 +59,111 @@ pub(crate) struct Status {
     stopped: bool,
 }
 
+/// How the repository's files are compared with what the index kept of
+/// them, and what is told of what it does not track: as its configuration
+/// says, else as the user's says (`user`, which skwir reads for the
+/// helper, kept from it: `git::User`), else as git does by default. The
+/// repository's word wins over the user's, as in git.
+// Each flag is one of git's settings, named as git names it.
+#[allow(clippy::struct_excessive_bools)]
+pub(crate) struct Settings {
+    /// `core.fileMode`: an executable bit not as the index has it is a
+    /// change. Off where the drive keeps no such bit (exFAT, NTFS), which
+    /// says every file executable.
+    file_mode: bool,
+    /// `core.symlinks`: a link is checked out as one; off, as a file that
+    /// holds its target.
+    symlinks: bool,
+    /// `core.ignoreCase`: a name on the disk is the index's in any case.
+    ignore_case: bool,
+    /// `status.showUntrackedFiles` other than `no`: what the index does
+    /// not track is told, new or ignored. A repository of one's home files
+    /// says `no`, which leaves the rest of the home folder unsaid.
+    untracked: bool,
+    /// `core.trustCTime` and `core.checkStat`: what of a stat says a file
+    /// is as it was.
+    stat: gix::index::entry::stat::Options,
+}
+
+impl Settings {
+    pub(crate) fn of(repo: &gix::Repository, user: &BTreeMap<String, String>) -> Self {
+        let config = repo.config_snapshot();
+        let users = |key: &str| user.get(&key.to_ascii_lowercase());
+        let flag = |key: &str, default: bool| {
+            config
+                .boolean(key)
+                .or_else(|| users(key).and_then(|value| truth(value)))
+                .unwrap_or(default)
+        };
+        let word = |key: &str| {
+            config
+                .string(key)
+                .map(|value| value.to_str_lossy().to_ascii_lowercase())
+                .or_else(|| users(key).map(|value| value.to_ascii_lowercase()))
+        };
+        Settings {
+            file_mode: flag("core.fileMode", true),
+            symlinks: flag("core.symlinks", true),
+            ignore_case: flag("core.ignoreCase", false),
+            untracked: !matches!(
+                word("status.showUntrackedFiles").as_deref(),
+                Some("no" | "false" | "off" | "0")
+            ),
+            stat: gix::index::entry::stat::Options {
+                trust_ctime: flag("core.trustCTime", true),
+                check_stat: word("core.checkStat").as_deref() != Some("minimal"),
+                use_nsec: false,
+                use_stdev: false,
+            },
+        }
+    }
+}
+
+/// A boolean as git writes one.
+fn truth(value: &str) -> Option<bool> {
+    match value.to_ascii_lowercase().as_str() {
+        "true" | "yes" | "on" | "1" => Some(true),
+        "false" | "no" | "off" | "0" | "" => Some(false),
+        _ => None,
+    }
+}
+
+/// The index asked of a name found on the disk: as it is, or in any case
+/// where the repository says its names are (`Settings::ignore_case`).
+struct Names<'s> {
+    state: &'s gix::index::State,
+    icase: Option<gix::index::AccelerateLookup<'s>>,
+}
+
+impl<'s> Names<'s> {
+    fn new(state: &'s gix::index::State, ignore_case: bool) -> Self {
+        Names {
+            state,
+            icase: ignore_case.then(|| state.prepare_icase_backing()),
+        }
+    }
+
+    /// Whether it tracks `path` itself: a file, or a submodule.
+    fn tracks(&self, path: &BStr) -> bool {
+        match &self.icase {
+            Some(lookup) => self.state.entry_by_path_icase(path, true, lookup).is_some(),
+            None => self.state.entry_index_by_path(path).is_ok(),
+        }
+    }
+
+    /// Whether it tracks files below `path`.
+    fn holds(&self, path: &BStr) -> bool {
+        if let Some(lookup) = &self.icase {
+            return self.state.path_is_directory_icase(path, true, lookup);
+        }
+        let mut inside = path.to_owned();
+        inside.push(b'/');
+        self.state
+            .prefixed_entries_range(inside.as_bstr())
+            .is_some()
+    }
+}
+
 /// What was found, each path at its strongest.
 struct Found {
     states: HashMap<BString, State>,
@@ -93,11 +198,13 @@ impl Found {
 }
 
 /// The status of the files under `path` (the whole work tree for none) of
-/// `repo`, checked out in `work_tree`: `limit` paths at most.
+/// `repo`, checked out in `work_tree`, compared as `settings` says: `limit`
+/// paths at most.
 pub(crate) fn status(
     repo: &gix::Repository,
     work_tree: &Path,
     path: &[&[u8]],
+    settings: &Settings,
     limit: usize,
     deadline: &Deadline,
 ) -> Result<Status> {
@@ -110,6 +217,7 @@ pub(crate) fn status(
         )
     };
     let state: &gix::index::State = &index;
+    let names = Names::new(state, settings.ignore_case);
     let prefix: BString = path.join(&b'/').into();
     let under = |prefix: &BStr| -> BString {
         let mut under = prefix.to_owned();
@@ -137,7 +245,8 @@ pub(crate) fn status(
         // Nothing tracked under it: the folder is new or ignored whole.
         let ignored =
             above || (!prefix.is_empty() && excluded(&mut excludes, prefix.as_bstr(), true)?);
-        let folder = if prefix.is_empty() {
+        // What is not tracked is not told: nothing is said of it.
+        let folder = if prefix.is_empty() || !settings.untracked {
             None
         } else if ignored {
             Some(State::Ignored)
@@ -151,10 +260,10 @@ pub(crate) fn status(
             stopped: false,
             looked: 0,
         };
-        if prefix.is_empty() {
+        if prefix.is_empty() && settings.untracked {
             // A repository with nothing tracked: its files are new.
             walk(
-                state,
+                &names,
                 &mut excludes,
                 work_tree,
                 &prefix,
@@ -196,19 +305,23 @@ pub(crate) fn status(
         repo, state, &prefix, head, cached, entries, &mut found, deadline,
     )?;
     // The files against the index: what is changed, in conflict.
-    changed(repo, state, work_tree, entries, &mut found, deadline)?;
-    // What is on the disk and not in the index: new, or ignored.
-    let folder_ignored =
-        above || (!prefix.is_empty() && excluded(&mut excludes, prefix.as_bstr(), true)?);
-    walk(
-        state,
-        &mut excludes,
-        work_tree,
-        &prefix,
-        folder_ignored,
-        &mut found,
-        deadline,
+    changed(
+        repo, state, work_tree, entries, settings, &mut found, deadline,
     )?;
+    // What is on the disk and not in the index: new, or ignored.
+    if settings.untracked {
+        let folder_ignored =
+            above || (!prefix.is_empty() && excluded(&mut excludes, prefix.as_bstr(), true)?);
+        walk(
+            &names,
+            &mut excludes,
+            work_tree,
+            &prefix,
+            folder_ignored,
+            &mut found,
+            deadline,
+        )?;
+    }
     Ok(answered(found, prefix.as_bstr(), None))
 }
 
@@ -457,6 +570,7 @@ fn changed(
     state: &gix::index::State,
     work_tree: &Path,
     entries: &[gix::index::Entry],
+    settings: &Settings,
     found: &mut Found,
     deadline: &Deadline,
 ) -> Result<()> {
@@ -481,7 +595,7 @@ fn changed(
     let shares: Vec<std::ops::Range<usize>> = bounds.windows(2).map(|w| w[0]..w[1]).collect();
     let said: Vec<Result<Vec<(BString, State)>>> = if shares.len() == 1 {
         vec![looked_at(
-            kind, state, work_tree, entries, &stopped, deadline,
+            kind, state, work_tree, entries, settings, &stopped, deadline,
         )]
     } else {
         std::thread::scope(|scope| {
@@ -491,7 +605,7 @@ fn changed(
                     let entries = &entries[share.clone()];
                     let stopped = &stopped;
                     scope.spawn(move || {
-                        looked_at(kind, state, work_tree, entries, stopped, deadline)
+                        looked_at(kind, state, work_tree, entries, settings, stopped, deadline)
                     })
                 })
                 .collect();
@@ -518,15 +632,17 @@ fn changed(
 
 /// `changed`, for a share of the index's entries: what each path is, where
 /// it is not as the index has it. A file that cannot be read is not said.
+#[allow(clippy::too_many_arguments)]
 fn looked_at(
     kind: gix::hash::Kind,
     state: &gix::index::State,
     work_tree: &Path,
     entries: &[gix::index::Entry],
+    settings: &Settings,
     stopped: &AtomicBool,
     deadline: &Deadline,
 ) -> Result<Vec<(BString, State)>> {
-    let options = gix::index::entry::stat::Options::default();
+    let options = settings.stat;
     let written = state.timestamp();
     let mut said = Vec::new();
     let mut at = 0;
@@ -580,12 +696,17 @@ fn looked_at(
             }
             Err(_) => continue,
         };
-        let link = entry.mode == Mode::SYMLINK;
+        // A link checked out as a file holding its target where the
+        // repository keeps no links (`core.symlinks`): compared as a file.
+        let link = entry.mode == Mode::SYMLINK && settings.symlinks;
         if (link && !meta.is_symlink()) || (!link && !meta.is_file()) {
             said.push((path.to_owned(), State::Changed));
             continue;
         }
-        if !link && executable_differs(entry.mode, &meta) {
+        if entry.mode != Mode::SYMLINK
+            && settings.file_mode
+            && executable_differs(entry.mode, &meta)
+        {
             said.push((path.to_owned(), State::Changed));
             continue;
         }
@@ -660,7 +781,7 @@ fn hashed(kind: gix::hash::Kind, bytes: &mut dyn Read, size: u64) -> Result<Obje
 /// holds a file not ignored, ignored where all it holds is, nothing where
 /// it holds nothing, as git says it. A repository's `.git` is never said.
 fn walk(
-    state: &gix::index::State,
+    names: &Names<'_>,
     excludes: &mut gix::AttributeStack<'_>,
     work_tree: &Path,
     dir: &BString,
@@ -691,19 +812,14 @@ fn walk(
         }
         path.extend_from_slice(name);
         let folder = item.file_type().is_ok_and(|kind| kind.is_dir());
-        if folder {
-            let mut inside = path.clone();
-            inside.push(b'/');
-            if state.prefixed_entries_range(inside.as_bstr()).is_some() {
-                let below = ignored || excluded(excludes, path.as_bstr(), true)?;
-                walk(state, excludes, work_tree, &path, below, found, deadline)?;
-                continue;
-            }
-            // A submodule checked out there: its own repository says.
-            if state.entry_index_by_path(path.as_bstr()).is_ok() {
-                continue;
-            }
-        } else if state.entry_index_by_path(path.as_bstr()).is_ok() {
+        // A file the index tracks, or a submodule checked out there (its
+        // own repository says what it holds).
+        if names.tracks(path.as_bstr()) {
+            continue;
+        }
+        if folder && names.holds(path.as_bstr()) {
+            let below = ignored || excluded(excludes, path.as_bstr(), true)?;
+            walk(names, excludes, work_tree, &path, below, found, deadline)?;
             continue;
         }
         if ignored || excluded(excludes, path.as_bstr(), folder)? {

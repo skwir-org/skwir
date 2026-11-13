@@ -37,11 +37,14 @@
 //! `{"files": 3, "bytes": 1234, "cut": false}`. And
 //!
 //! ```json
-//! {"ask": "status", "git_dir": "/r/.git", "work_tree": "/r", "path": "crates", "excludes_file": "/h/.config/git/ignore"}
+//! {"ask": "status", "git_dir": "/r/.git", "work_tree": "/r", "path": "crates", "excludes_file": "/h/.config/git/ignore",
+//!  "user": {"core.filemode": "false"}}
 //! ```
 //!
 //! answers what the files under `path` are to the repository, as
-//! `git status` tells them (`status.rs`): each path not as `HEAD` has it,
+//! `git status` tells them (`status.rs`), compared as the repository's
+//! configuration says, else as the user's settings (`user`, which skwir
+//! reads) say: each path not as `HEAD` has it,
 //! from `path`, at its strongest, a folder new or ignored whole said as one
 //! (`folder` when it is `path` itself):
 //!
@@ -116,6 +119,10 @@ enum Ask {
         /// `core.excludesFile`), which skwir finds: the user's and the
         /// system's configuration is not read here.
         excludes_file: Option<PathBuf>,
+        /// The settings of the user's configuration that change how files
+        /// are compared (`status::Settings`), by their names in lowercase.
+        #[serde(default)]
+        user: std::collections::BTreeMap<String, String>,
         #[serde(default = "default_states")]
         limit: usize,
         deadline_ms: Option<u64>,
@@ -292,6 +299,7 @@ fn run() -> Result<()> {
             work_tree,
             path,
             excludes_file,
+            user,
             limit,
             deadline_ms,
         } => {
@@ -302,10 +310,12 @@ fn run() -> Result<()> {
             }
             let deadline = Deadline::of(deadline_ms)?;
             let repo = open_ignoring(&git_dir, excludes_file.as_deref())?;
+            let settings = status::Settings::of(&repo, &user);
             serde_json::to_vec(&status::status(
                 &repo,
                 &work_tree,
                 &components(&path)?,
+                &settings,
                 limit,
                 &deadline,
             )?)?

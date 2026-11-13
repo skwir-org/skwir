@@ -269,6 +269,7 @@ enum Ask {
         work_tree: PathBuf,
         path: String,
         excludes_file: Option<PathBuf>,
+        user: std::collections::BTreeMap<String, String>,
         limit: usize,
         deadline_ms: u64,
     },
@@ -342,13 +343,17 @@ pub fn patch(
 /// What the files under `path` (as `Repo::relative` names it; "" for the
 /// whole work tree) are to `repo` (ADR-134), as `git status` tells them.
 /// The helper reads the work tree, the repository's folders and the user's
-/// file of patterns ignored everywhere, and nothing else.
+/// file of patterns ignored everywhere, and nothing else; what the user's
+/// configuration says of how files are compared it is told (`User`).
 pub fn status(repo: &Repo, path: &str, cancel: &CancelToken) -> anyhow::Result<Status> {
     let work_tree = repo
         .work_tree
         .clone()
         .ok_or_else(|| anyhow::anyhow!("A bare repository has no files checked out"))?;
-    let excludes_file = excludes_file();
+    let User {
+        excludes_file,
+        settings,
+    } = User::read();
     let mut also = vec![work_tree.clone()];
     also.extend(excludes_file.clone());
     let work = tempfile::tempdir()?;
@@ -366,6 +371,7 @@ pub fn status(repo: &Repo, path: &str, cancel: &CancelToken) -> anyhow::Result<S
             work_tree,
             path: path.to_owned(),
             excludes_file,
+            user: settings,
             limit: STATES,
             deadline_ms: millis(STATUS_DEADLINE),
         },
@@ -373,37 +379,65 @@ pub fn status(repo: &Repo, path: &str, cancel: &CancelToken) -> anyhow::Result<S
     Ok(serde_json::from_slice(&stdout)?)
 }
 
-/// The user's file of patterns ignored in every repository, as git finds
-/// it: `core.excludesFile` in the user's configuration (`~/.gitconfig`
-/// read after `$XDG_CONFIG_HOME/git/config`, so its word wins), else
-/// `$XDG_CONFIG_HOME/git/ignore`; `None` where there is none. The
-/// configuration is read as text, its includes not followed: what the
-/// helper, isolated from it, is told.
-pub fn excludes_file() -> Option<PathBuf> {
-    let home = skwir_core::os_path::home();
-    let xdg = crate::xdg::config_home().map(|config| config.join("git"));
-    let mut named = None;
-    for config in [
-        xdg.as_ref().map(|git| git.join("config")),
-        home.as_ref().map(|home| home.join(".gitconfig")),
-    ]
-    .into_iter()
-    .flatten()
-    {
-        if let Some(text) = read_config(&config)
-            && let Some(value) = excludes_named(&text)
+/// The settings of the user's configuration that change what `git status`
+/// says of a file (ADR-134): how a file is compared with what the index
+/// kept of it, and whether what is not tracked is told. The helper takes
+/// each where the repository's own configuration says nothing, as git
+/// lets a repository's word win over the user's.
+const USER_SETTINGS: [&str; 6] = [
+    "core.filemode",
+    "core.symlinks",
+    "core.ignorecase",
+    "core.trustctime",
+    "core.checkstat",
+    "status.showuntrackedfiles",
+];
+
+/// What the user's configuration tells the helper, which is isolated from
+/// it: read as text from `$XDG_CONFIG_HOME/git/config`, then
+/// `~/.gitconfig`, so the latter's word wins, as git reads them; their
+/// includes not followed.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct User {
+    /// The file of patterns ignored in every repository: `core.excludesFile`,
+    /// else `$XDG_CONFIG_HOME/git/ignore`; `None` where there is none.
+    pub excludes_file: Option<PathBuf>,
+    /// The `USER_SETTINGS` it sets, by their names in lowercase, a name
+    /// without a value said `true`, as git takes it.
+    pub settings: std::collections::BTreeMap<String, String>,
+}
+
+impl User {
+    pub fn read() -> User {
+        let home = skwir_core::os_path::home();
+        let xdg = crate::xdg::config_home().map(|config| config.join("git"));
+        let mut found = std::collections::BTreeMap::new();
+        for config in [
+            xdg.as_ref().map(|git| git.join("config")),
+            home.as_ref().map(|home| home.join(".gitconfig")),
+        ]
+        .into_iter()
+        .flatten()
         {
-            named = Some(value);
+            if let Some(text) = read_config(&config) {
+                settings_in(&text, &mut found);
+            }
+        }
+        let named = found
+            .remove("core.excludesfile")
+            .filter(|value| !value.is_empty());
+        let file = match named {
+            Some(value) => match value.strip_prefix("~/") {
+                Some(rest) => home.map(|home| home.join(rest)),
+                None => Some(PathBuf::from(value)),
+            },
+            None => xdg.map(|git| git.join("ignore")),
+        };
+        User {
+            excludes_file: file.filter(|file| file.is_absolute() && file.is_file()),
+            settings: found,
         }
     }
-    let file = match named {
-        Some(value) => match value.strip_prefix("~/") {
-            Some(rest) => home?.join(rest),
-            None => PathBuf::from(value),
-        },
-        None => xdg?.join("ignore"),
-    };
-    (file.is_absolute() && file.is_file()).then_some(file)
 }
 
 /// A configuration file whole, a user's at most this long.
@@ -412,34 +446,36 @@ fn read_config(path: &Path) -> Option<String> {
     String::from_utf8(bytes).ok()
 }
 
-/// The last `excludesFile` of a `[core]` section in a git configuration's
-/// text (names case ignored, a value's quotes taken off).
-fn excludes_named(text: &str) -> Option<String> {
-    let mut core = false;
-    let mut found = None;
+/// The `core.excludesFile` and `USER_SETTINGS` a git configuration's text
+/// sets, into `found`, a later one's word winning: names case ignored, a
+/// value's quotes and a comment after it taken off, a name alone `true`.
+fn settings_in(text: &str, found: &mut std::collections::BTreeMap<String, String>) {
+    let mut section = String::new();
     for line in text.lines() {
         let line = line.trim();
-        if let Some(section) = line.strip_prefix('[') {
-            let name = section.split([']', ' ', '"']).next().unwrap_or_default();
-            core = name.eq_ignore_ascii_case("core");
+        if let Some(header) = line.strip_prefix('[') {
+            // A subsection (`[remote "origin"]`) is no section asked of.
+            section = match header.split_once(']') {
+                Some((name, _)) if !name.contains(['"', ' ']) => name.to_ascii_lowercase(),
+                _ => String::new(),
+            };
             continue;
         }
-        if !core || line.starts_with(['#', ';']) {
+        if section.is_empty() || line.is_empty() || line.starts_with(['#', ';']) {
             continue;
         }
-        let Some((key, value)) = line.split_once('=') else {
+        let (key, value) = line.split_once('=').unwrap_or((line, "true"));
+        let name = format!("{section}.{}", key.trim().to_ascii_lowercase());
+        if name != "core.excludesfile" && !USER_SETTINGS.contains(&name.as_str()) {
             continue;
+        }
+        let value = value.trim();
+        let value = match value.strip_prefix('"') {
+            Some(quoted) => quoted.split_once('"').map_or(quoted, |(inside, _)| inside),
+            None => value.split(['#', ';']).next().unwrap_or_default().trim(),
         };
-        if key.trim().eq_ignore_ascii_case("excludesfile") {
-            let value = value.trim();
-            let value = value
-                .strip_prefix('"')
-                .and_then(|value| value.strip_suffix('"'))
-                .unwrap_or(value);
-            found = Some(value.to_owned());
-        }
+        found.insert(name, value.to_owned());
     }
-    found.filter(|value| !value.is_empty())
 }
 
 fn millis(duration: Duration) -> u64 {
@@ -520,6 +556,35 @@ fn run(
 #[cfg(test)]
 mod tests {
     use super::Repo;
+
+    /// The user's settings that change a file's state are read as git reads
+    /// them: names in any case, a later word winning, a name alone true, a
+    /// value's quotes and comment taken off; another section's not.
+    #[test]
+    fn the_user_s_settings_are_read_as_git_reads_them() {
+        let mut found = std::collections::BTreeMap::new();
+        super::settings_in(
+            "[core]\n\tfileMode = false\n\texcludesFile = \"~/my ignore\" ; mine\n\
+             [status]\n\tshowUntrackedFiles = no # dotfiles\n\
+             [remote \"origin\"]\n\tfilemode = true\n\
+             [core]\n\tignoreCase\n",
+            &mut found,
+        );
+        super::settings_in("[core]\nfilemode = true\n", &mut found);
+        let found: Vec<(&str, &str)> = found
+            .iter()
+            .map(|(name, value)| (name.as_str(), value.as_str()))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                ("core.excludesfile", "~/my ignore"),
+                ("core.filemode", "true"),
+                ("core.ignorecase", "true"),
+                ("status.showuntrackedfiles", "no"),
+            ]
+        );
+    }
 
     /// A repository is found by its `.git` folder above, or by a `.git`
     /// file naming its git folder (a linked worktree's), never from inside

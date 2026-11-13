@@ -328,3 +328,61 @@ fn a_repository_without_a_commit_and_the_user_s_ignored_patterns() {
     assert_eq!(said["scratch.tmp"], "ignored");
     assert_eq!(said, repo.git_status(""), "as git reads the same file");
 }
+
+/// How files are compared and what is told is the repository's
+/// configuration's word, else the user's (which skwir reads and tells the
+/// helper, kept from it): a drive that keeps no executable bit
+/// (`core.fileMode` off) changes no file by it; a repository of one's home
+/// files (`status.showUntrackedFiles=no`) says nothing of what it does not
+/// track; the repository's word wins over the user's, as in git.
+#[test]
+fn the_repository_s_configuration_and_the_user_s_say_how_files_are_compared() {
+    if !has_git() {
+        return;
+    }
+    let repo = Repo::new();
+    repo.write("run.sh", b"echo\n");
+    repo.commit("first");
+    repo.write("other.txt", b"o\n");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(
+            repo.root.join("run.sh"),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+    }
+    let with = |user: Value| {
+        states(&ask(&json!({
+            "ask": "status",
+            "git_dir": repo.root.join(".git"),
+            "work_tree": repo.root,
+            "path": "",
+            "user": user,
+        })))
+    };
+    // `git init` said the file mode is kept: the user's word, where the
+    // repository says nothing.
+    repo.git(&["config", "--unset", "core.fileMode"]);
+    let said = with(json!({"core.filemode": "false"}));
+    assert!(!said.contains_key("run.sh"), "{said:?}");
+    assert_eq!(said["other.txt"], "new");
+    let said = with(json!({"status.showuntrackedfiles": "no"}));
+    assert!(!said.contains_key("other.txt"), "{said:?}");
+    #[cfg(unix)]
+    assert_eq!(said["run.sh"], "changed");
+    // The repository's own word wins.
+    repo.git(&["config", "core.fileMode", "true"]);
+    repo.git(&["config", "status.showUntrackedFiles", "normal"]);
+    let said = with(json!({"core.filemode": "false", "status.showuntrackedfiles": "no"}));
+    #[cfg(unix)]
+    assert_eq!(said["run.sh"], "changed");
+    assert_eq!(said["other.txt"], "new");
+    repo.git(&["config", "core.fileMode", "false"]);
+    repo.git(&["config", "status.showUntrackedFiles", "no"]);
+    let said = states(&status(&repo, "", None));
+    assert!(said.is_empty(), "{said:?}");
+    let git = repo.git(&["--no-optional-locks", "status", "--porcelain"]);
+    assert_eq!(git, "", "as git says it");
+}
