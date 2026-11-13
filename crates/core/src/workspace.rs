@@ -736,6 +736,27 @@ fn fold_key(group: Option<&crate::grouping::Group>) -> FoldKey {
     group.map(|g| (g.rank, Arc::clone(&g.key)))
 }
 
+/// The longest the window holds what it showed while what replaces it is
+/// made (ADR-120, amended): the files of the folder left while the one
+/// gone to is filled elsewhere (`Pane::drawn_entry`), a tab left while
+/// the one shown is made (skwir-ui's `tabs::HOLD`). The user's bound.
+pub const HOLD: std::time::Duration = std::time::Duration::from_millis(150);
+
+/// The folder left, drawn while the one gone to is filled elsewhere
+/// (`Pane::drawn_left`), until `until`.
+#[derive(Debug)]
+struct DrawnLeft {
+    listing: Listing,
+    until: std::time::Instant,
+}
+
+impl DrawnLeft {
+    /// Whether its time to be drawn is over.
+    fn over(&self) -> bool {
+        std::time::Instant::now() >= self.until
+    }
+}
+
 /// What a pane asks to read of its entries on demand (ADR-131, 4): for
 /// one listing of its order (its own, a folder's it opened in place),
 /// each entry with where it is, its identity when the listing knows it,
@@ -983,8 +1004,9 @@ pub struct Pane {
     left: Option<Kept>,
     /// The entries of the folder left, while the one gone to is filled
     /// elsewhere (ADR-120, amended), for the view to draw meanwhile
-    /// (`drawn_entry`): its listing alone, its location closed.
-    drawn_left: Option<Listing>,
+    /// (`drawn_entry`): its listing alone, its location closed, [`HOLD`]
+    /// at most, let go of at the first sync after.
+    drawn_left: Option<DrawnLeft>,
     pub selection: Selection,
     /// Sort and hidden-file settings, as asked; views render
     /// `listing.order_shown(sort)`, the order before while a worker makes
@@ -3284,11 +3306,14 @@ impl Pane {
             Some(left) if self.listing.is_held() => {
                 let (open, listing) = left.into_shown();
                 open.close();
-                self.drawn_left = Some(listing);
+                self.drawn_left = Some(DrawnLeft {
+                    listing,
+                    until: std::time::Instant::now() + HOLD,
+                });
             }
             _ => {}
         }
-        if !self.listing.is_held() {
+        if !self.listing.is_held() || self.drawn_left.as_ref().is_some_and(DrawnLeft::over) {
             self.drawn_left = None;
         }
         let pushed = self.kept.len() > before;
@@ -4235,7 +4260,11 @@ impl Pane {
             self.left
                 .as_ref()
                 .map(|left| &left.listing)
-                .or(self.drawn_left.as_ref())?
+                .or(self
+                    .drawn_left
+                    .as_ref()
+                    .filter(|drawn| !drawn.over())
+                    .map(|drawn| &drawn.listing))?
                 .get(id)
         })
     }

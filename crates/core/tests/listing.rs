@@ -407,6 +407,20 @@ fn the_folder_left_is_drawn_until_the_one_gone_to_is_whole() {
             "a view still draws them"
         );
     }
+    // Past the bound, the folder gone to still waiting: drawn no more, and
+    // let go of at the next sync.
+    std::thread::sleep(skwir_core::workspace::HOLD + Duration::from_millis(20));
+    {
+        let ws = app.workspace.read();
+        let p = ws.pane(pane).unwrap();
+        assert!(p.listing.is_held());
+        assert!(p.drawn_entry(id).is_none(), "drawn for the bound at most");
+    }
+    app.keep_locations(pane, &[]);
+    assert!(
+        !app.workspace.read().pane(pane).unwrap().keeps_any(),
+        "let go of"
+    );
     release.send(()).unwrap();
     assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
     app.keep_locations(pane, &[]);

@@ -47,8 +47,9 @@ use crate::theme::Theme;
 /// How long the tab left stays drawn while the tab shown gets ready. Up to
 /// 100 000 entries and a search of 10 000 results are ready within it
 /// (ADR-018 addendum); past it the tab shown streams in as a navigation
-/// does.
-pub const HOLD: std::time::Duration = std::time::Duration::from_millis(150);
+/// does. The core's bound (`workspace::HOLD`), which the files of a
+/// folder left are drawn for too.
+pub const HOLD: std::time::Duration = skwir_core::workspace::HOLD;
 
 /// A tab being dragged along the strip, to put it elsewhere.
 #[derive(Clone, Copy, Debug)]
