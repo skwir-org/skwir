@@ -119,11 +119,13 @@ impl Group {
 }
 
 /// An entry as keys are asked of it (`Keyer`): the entry, which it reads
-/// as (`Deref`), and the folder it is in where the sort asks for one, a
-/// sort or a grouping by Folder (`Sort::folder_of`; none for a place).
+/// as (`Deref`), the folder it is in where the sort asks for one, a sort
+/// or a grouping by Folder (`Sort::folder_of`; none for a place), and its
+/// name's collation key where the listing holds it, made once per name.
 pub struct Of<'a> {
     pub entry: &'a Entry,
     pub folder: Option<&'a std::path::Path>,
+    pub collated: Option<&'a [u8]>,
 }
 
 impl std::ops::Deref for Of<'_> {
@@ -139,6 +141,16 @@ impl<'a> Of<'a> {
         Of {
             entry,
             folder: None,
+            collated: None,
+        }
+    }
+
+    /// Its name's collation key ([`crate::collate::sort_key`]): the
+    /// listing's, else made now.
+    pub fn collated_name(&self) -> std::borrow::Cow<'a, [u8]> {
+        match self.collated {
+            Some(key) => std::borrow::Cow::Borrowed(key),
+            None => std::borrow::Cow::Owned(crate::collate::sort_key(&self.entry.name).into_vec()),
         }
     }
 }

@@ -3775,6 +3775,7 @@ impl Listing {
         let of = crate::grouping::Of {
             entry: e,
             folder: folder.as_deref(),
+            collated: Some(&slot.key),
         };
         Answered {
             group: grouping
@@ -3797,6 +3798,7 @@ impl Listing {
         let of = crate::grouping::Of {
             entry: e,
             folder: folder.as_deref(),
+            collated: Some(&slot.key),
         };
         let (num, words) = value_of(spec.key, answered.value.as_ref(), &of);
         SortKeyOf {

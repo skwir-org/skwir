@@ -124,30 +124,31 @@ impl<K: std::hash::Hash + Eq> Made<K> {
 
 /// By the first letter as the name sort folds it (É with E): 0–9 for a
 /// number, Other for a name that begins with neither, first; a letter of
-/// another script a group of its own.
+/// another script a group of its own. Read from the name's collation key
+/// the listing holds (`Of::collated_name`), each group found by its first
+/// character: nothing made per entry.
 fn by_name() -> Keyer {
-    let made = Made::<Vec<u8>>::new();
+    let made = Made::<char>::new();
     Arc::new(move |e: &Of<'_>| {
-        let key = skwir_core::collate::sort_key(&e.name);
+        let key = e.collated_name();
         let first = std::str::from_utf8(&key)
             .ok()
             .and_then(|k| k.chars().next())
             .or_else(|| String::from_utf8_lossy(&key).chars().next());
         match first {
             // A run of digits starts with the marker `0`.
-            Some('0') => made.get(b"0".to_vec(), || Group::ranked(1, "0–9")),
-            Some(c) if c.is_alphabetic() => {
+            Some('0') => made.get('0', || Group::ranked(1, "0–9")),
+            Some(c) if c.is_alphabetic() => made.get(c, || {
                 let mut bytes = [0; 4];
-                let bytes = c.encode_utf8(&mut bytes).as_bytes().to_vec();
-                made.get(bytes.clone(), || Group {
+                Group {
                     rank: 2,
-                    key: Arc::from(bytes),
+                    key: Arc::from(c.encode_utf8(&mut bytes).as_bytes()),
                     label: Arc::from(c.to_uppercase().collect::<String>()),
                     folders: false,
                     term: None,
-                })
-            }
-            _ => made.get(Vec::new(), || Group::ranked(0, "Other")),
+                }
+            }),
+            _ => made.get('\0', || Group::ranked(0, "Other")),
         }
     })
 }
@@ -1059,6 +1060,7 @@ mod tests {
             group(&Of {
                 entry: &file,
                 folder,
+                collated: None,
             })
         };
         let notes = home.join("notes");
