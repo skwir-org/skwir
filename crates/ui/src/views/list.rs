@@ -259,7 +259,8 @@ pub const COLUMNS: [Column; DETAILS] = [
         description: "Show what Git says of each file in a repository: changed, staged, new, in conflict or ignored, and of a folder what it holds.",
         shown: false,
         sort: Some(SortKey::Vcs),
-        width: 104.,
+        // A folder's says what it holds: "Holds staged changes".
+        width: 160.,
         right: false,
     },
     Column {
@@ -858,9 +859,15 @@ impl Shell {
                         .and_then(|mime| self.type_names.kind(mime))
                         .unwrap_or_else(|| "".into())
                 })),
-                Detail::Vcs => Said::text(
-                    skwir_core::vcs::State::of(e).map_or("", skwir_core::vcs::State::title),
-                ),
+                // A folder's is what it holds, as a screen reader hears it
+                // (`entry::vcs_said`): "Holds changes".
+                Detail::Vcs => Said::text(skwir_core::vcs::State::of(e).map_or("", |state| {
+                    if e.is_dir() {
+                        state.below()
+                    } else {
+                        state.title()
+                    }
+                })),
                 Detail::Owner => Said::text(
                     value(keys::UID)
                         .and_then(skwir_core::Value::as_u64)

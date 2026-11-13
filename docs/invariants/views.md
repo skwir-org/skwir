@@ -403,7 +403,10 @@ around the views is in [shell.md](shell.md).
   number where it has none. The Git column (`Detail::Vcs`, ADR-134) is
   offered wherever a version control provider is, in a folder, not only
   once a repository answered: a column that came as the answer did
-  would move the others a moment after the folder showed.
+  would move the others a moment after the folder showed. It says a
+  file's state ("Changed"), and of a folder what it holds ("Holds
+  changes"), as a screen reader hears the entry and the grid's caption
+  writes it.
 - Name and detail columns sit in one wrapping flex line one row tall
   (`views/list.rs::line`, shared by header and rows): columns drop whole,
   last first, and the name, the only child that grows, takes the room.
