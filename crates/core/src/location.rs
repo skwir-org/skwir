@@ -1905,8 +1905,10 @@ struct Sorting {
     /// `sort`'s stamp when it was asked.
     made: SortStamp,
     companions_shown: bool,
-    /// The listing's version when it was asked: one changed since (by a
-    /// change made to it directly, as its events wait) is sorted again.
+    /// The listing's version when it was asked: one changed since is
+    /// sorted again. Its events and what is changed directly wait for the
+    /// order (`Listing::direct`): only what changes what is shown otherwise
+    /// moves it (companions shown or not).
     version: u64,
     order: Receiver<Sorted>,
     /// Ends the sort once nothing waits for it.
@@ -2469,6 +2471,23 @@ pub struct Listing {
     /// What the pane's order reads of the entries and is being read
     /// (`reading_wanted`): until each is read, the order waits.
     reading: Option<Reading>,
+    /// The changes made to it directly (`apply`, `set_fields`) while a sort
+    /// on a worker held its entries (`is_sorting`), in the order made:
+    /// applied by the next `drain`, once the order is back, as its events
+    /// are. No change copies the entries a sort reads, nor voids the order
+    /// it makes (ADR-121).
+    direct: Vec<Direct>,
+}
+
+/// A change made to a listing directly while a sort held its entries
+/// (`Listing::direct`).
+#[derive(Debug)]
+enum Direct {
+    Event(ListingEvent),
+    /// What was read on demand, or what the version control said
+    /// (`Listing::set_fields`): the entries it updates are made from the
+    /// listing's as they are when it is applied.
+    Fields(Vec<(EntryId, &'static str, crate::entry::Value)>),
 }
 
 /// The reading an order waits for (ADR-121, amended): what a sort by a
@@ -2570,6 +2589,7 @@ impl Default for Listing {
             counted: 0,
             sorting: None,
             reading: None,
+            direct: Vec::new(),
         }
     }
 }
@@ -2842,8 +2862,10 @@ impl Listing {
     }
 
     /// Whether what a worker made waits to be taken (a folder filled, an
-    /// order made): the next pump takes it, and the job's one wake may
-    /// have been spent on a pump that had no budget left for this listing.
+    /// order made), or what was changed directly while a sort ran waits to
+    /// be applied now that none holds the entries: the next pump takes it,
+    /// and the job's one wake may have been spent on a pump that had no
+    /// budget left for this listing.
     pub fn has_result(&self) -> bool {
         self.fill
             .as_ref()
@@ -2852,6 +2874,7 @@ impl Listing {
                 .sorting
                 .as_ref()
                 .is_some_and(|sorting| !sorting.order.is_empty())
+            || (!self.direct.is_empty() && !self.is_sorting())
     }
 
     /// Take the order a worker made, if it came: shown from now on.
@@ -3022,8 +3045,33 @@ impl Listing {
         }
     }
 
-    /// Apply one event. Returns whether the listing changed.
+    /// Apply one event. Returns whether the listing changed. While a sort
+    /// on a worker holds its entries (`is_sorting`), the event is kept and
+    /// applied by the next `drain` once the order is back: nothing then
+    /// changed yet.
     pub fn apply(&mut self, event: ListingEvent) -> bool {
+        if self.is_sorting() {
+            self.direct.push(Direct::Event(event));
+            return false;
+        }
+        self.apply_now(event)
+    }
+
+    /// Apply what was changed directly while a sort held the entries
+    /// (`direct`), in the order it was: how many of them changed the
+    /// listing.
+    fn apply_direct(&mut self) -> usize {
+        let mut n = 0;
+        for change in std::mem::take(&mut self.direct) {
+            n += usize::from(match change {
+                Direct::Event(event) => self.apply_now(event),
+                Direct::Fields(values) => self.set_fields_now(values),
+            });
+        }
+        n
+    }
+
+    fn apply_now(&mut self, event: ListingEvent) -> bool {
         let mut delta = Delta::default();
         match event {
             ListingEvent::Added(batch) => {
@@ -3132,8 +3180,8 @@ impl Listing {
                     .map(|(old, new)| (*old, new.id))
                     .collect();
                 let gone: Vec<EntryId> = held.iter().map(|(old, _)| *old).collect();
-                let removed = self.apply(ListingEvent::Removed(gone));
-                let added = self.apply(ListingEvent::Added(news));
+                let removed = self.apply_now(ListingEvent::Removed(gone));
+                let added = self.apply_now(ListingEvent::Added(news));
                 self.renamed.extend(held);
                 // A listing no holder asks (a test's, a tool's) keeps the
                 // latest only.
@@ -3377,8 +3425,22 @@ impl Listing {
     /// Take what was read on demand of entries (ADR-131): each id, the
     /// field and what the file said (`Value::Bool(false)` where nothing),
     /// as an update of the entry, which moves it in an order by it. One
-    /// not listed any more is let go. Whether anything changed.
+    /// not listed any more is let go. Whether anything changed: while a
+    /// sort on a worker holds the entries (`is_sorting`), nothing yet, the
+    /// values kept and taken by the next `drain` once the order is back
+    /// (`has_result`), into the entries as they are then.
     pub fn set_fields(
+        &mut self,
+        values: Vec<(EntryId, &'static str, crate::entry::Value)>,
+    ) -> bool {
+        if self.is_sorting() {
+            self.direct.push(Direct::Fields(values));
+            return false;
+        }
+        self.set_fields_now(values)
+    }
+
+    fn set_fields_now(
         &mut self,
         values: Vec<(EntryId, &'static str, crate::entry::Value)>,
     ) -> bool {
@@ -3399,7 +3461,7 @@ impl Listing {
         if updated.is_empty() {
             return false;
         }
-        self.apply(ListingEvent::Updated(updated.into_values().collect()))
+        self.apply_now(ListingEvent::Updated(updated.into_values().collect()))
     }
 
     /// Changes to modification times so far, hydration's first ones
@@ -3883,10 +3945,12 @@ impl Listing {
             return usize::from(sorted);
         }
         let started = std::time::Instant::now();
-        let mut n = usize::from(sorted);
+        // What was changed directly while the sort ran, before what the
+        // location sent since: in the order it came.
+        let mut n = usize::from(sorted) + self.apply_direct();
         for _ in 0..rx.len() {
             let Ok(ev) = rx.try_recv() else { break };
-            n += usize::from(self.apply(ev));
+            n += usize::from(self.apply_now(ev));
             if started.elapsed() >= budget {
                 break;
             }
@@ -4287,16 +4351,38 @@ mod tests {
         // Dropped unrun: let go of by the next drain.
         listing.drain(&rx, long);
 
-        // Changed under it, by a change made to it directly: made again.
+        // Changed directly while it runs (an event applied by hand, what was
+        // read on demand): the changes wait for the order, the entries it
+        // reads never copied, then are placed in it.
         let job = listing.sort_job(backwards).unwrap();
-        listing.apply(ListingEvent::Added(vec![file(5, "e")]));
+        let entries = Arc::as_ptr(&listing.entries);
+        assert!(!listing.apply(ListingEvent::Added(vec![file(5, "e")])));
+        let b = listing.find_by_name(OsStr::new("b")).unwrap().id;
+        let pixels = crate::entry::Value::List(vec![
+            crate::entry::Value::UInt(4),
+            crate::entry::Value::UInt(3),
+        ]);
+        assert!(!listing.set_fields(vec![(b, crate::entry::keys::DIMENSIONS, pixels.clone())]));
+        assert_eq!(Arc::as_ptr(&listing.entries), entries, "nothing copied");
+        assert!(!listing.has_result(), "the sort holds the entries");
         job.run();
-        assert_eq!(listing.drain(&rx, long), 0);
+        assert!(listing.has_result());
+        assert_eq!(
+            listing.drain(&rx, long),
+            3,
+            "the order, then what was changed meanwhile"
+        );
         assert!(!listing.is_sorting());
-        assert_eq!(names(&listing, backwards), [".a", "b", "c", "d", "e"]);
-        listing.sort_job(backwards).unwrap().run();
-        listing.drain(&rx, long);
+        assert!(!listing.has_result());
         assert_eq!(names(&listing, backwards), ["e", "d", "c", "b"]);
+        assert_eq!(
+            listing
+                .get(b)
+                .unwrap()
+                .metadata
+                .value(crate::entry::keys::DIMENSIONS),
+            Some(&pixels)
+        );
 
         // Never run: asked again.
         drop(listing.sort_job(by_name));

@@ -41,11 +41,19 @@ entries lack is made once they are read.
    sort alone, which lets go of them before sending its order; until the
    order is back the listing takes no events (they wait in its channel,
    and are no backlog to pump again for), so the next change finds the
-   entries its own (`Arc::make_mut`) and copies nothing.
+   entries its own (`Arc::make_mut`) and copies nothing. A change made to
+   the listing directly meanwhile (`Listing::apply` by hand, what is read
+   on demand or what the version control says, `Listing::set_fields`)
+   waits too (`Listing::direct`), applied by the drain that takes the
+   order, before the events that came since: no path copies the entries
+   a sort reads, nor voids its order (amended 2026-11-13: answers read
+   on demand, applied as they came, copied a folder of 100 000 entries on
+   the window's thread at each batch and voided each order asked anew).
 4. **The last asked wins.** A sort asked for another order while one
    runs lets the first go (its order is dropped when it comes). A
-   listing changed directly under its sort is sorted again; a sort
-   never run is asked again.
+   listing whose shown entries changed otherwise under its sort
+   (companions shown or hidden) is sorted again; a sort never run is
+   asked again.
 5. **Sorted on the window's thread still:** a listing that has no order
    to show yet (a search's first results), and one whose order no longer
    holds (an entry renamed or hidden in place, a companion arriving,

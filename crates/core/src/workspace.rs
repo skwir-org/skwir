@@ -3344,12 +3344,13 @@ impl Pane {
     /// Whether listing events are waiting to be applied, the kept
     /// locations' included.
     pub fn backlog(&self) -> bool {
-        !self.listing.is_held()
-            && !self.listing.is_sorting()
-            && self
-                .open
-                .as_ref()
-                .is_some_and(|open| !open.events().is_empty())
+        self.listing.has_result()
+            || !self.listing.is_held()
+                && !self.listing.is_sorting()
+                && self
+                    .open
+                    .as_ref()
+                    .is_some_and(|open| !open.events().is_empty())
             || self.kept.iter().any(Kept::backlog)
             || self.leading.pass.is_some()
     }
