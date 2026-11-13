@@ -42,9 +42,12 @@ default with a setting). Built on Linux.
    - what the index does not track, walked where the index tracks files
      below: new, or ignored (the repository's `.gitignore` files, its
      `info/exclude`, and the user's file of patterns, which skwir finds
-     in their configuration, `git::excludes_file`, the helper being kept
-     from it); a folder tracking nothing said whole, new at its first
-     file not ignored, ignored when all it holds is, nothing when empty;
+     in their configuration, `git::User`, the helper being kept from
+     it); a folder tracking nothing said whole, new at its first file not
+     ignored, ignored when all it holds is, nothing when empty. Asked
+     itself, such a folder is said new, what it holds that is ignored
+     said apart, as git says each of them (an empty folder in it is said
+     new with it: no state says nothing);
    - each path at its strongest (conflict, changed, staged, new,
      ignored); a submodule, a file kept out of the work tree
      (`skip-worktree`) or said unchanged (`assume-unchanged`) as git

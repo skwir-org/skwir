@@ -406,3 +406,27 @@ fn a_folder_taken_out_of_the_index_is_its_files_each() {
     assert_eq!(said["dir/deep/b.txt"], "staged");
     assert_eq!(said, repo.git_status(""));
 }
+
+/// A folder asked that the index tracks nothing in is new, but for what it
+/// holds that is ignored, said apart as git says each of them: a log the
+/// patterns ignore is not a new file.
+#[test]
+fn a_folder_asked_that_tracks_nothing_says_what_it_holds_is_ignored() {
+    if !has_git() {
+        return;
+    }
+    let repo = Repo::new();
+    repo.write(".gitignore", b"*.log\nbuild/\n");
+    repo.commit("first");
+    repo.write("logs/a.log", b"l\n");
+    repo.write("logs/n.txt", b"n\n");
+    repo.write("logs/build/out", b"o\n");
+    repo.write("logs/old/b.log", b"l\n");
+    let said = status(&repo, "logs", None);
+    assert_eq!(said["folder"], "new");
+    let states = states(&said);
+    assert_eq!(states["a.log"], "ignored");
+    assert_eq!(states["build"], "ignored", "a folder the patterns ignore");
+    assert_eq!(states["old"], "ignored", "a folder all of which they do");
+    assert!(!states.contains_key("n.txt"), "new, as the folder is");
+}

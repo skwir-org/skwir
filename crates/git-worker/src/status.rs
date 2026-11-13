@@ -245,14 +245,6 @@ pub(crate) fn status(
         // Nothing tracked under it: the folder is new or ignored whole.
         let ignored =
             above || (!prefix.is_empty() && excluded(&mut excludes, prefix.as_bstr(), true)?);
-        // What is not tracked is not told: nothing is said of it.
-        let folder = if prefix.is_empty() || !settings.untracked {
-            None
-        } else if ignored {
-            Some(State::Ignored)
-        } else {
-            Some(State::New)
-        };
         let mut found = Found {
             states: HashMap::new(),
             limit,
@@ -260,7 +252,10 @@ pub(crate) fn status(
             stopped: false,
             looked: 0,
         };
-        if prefix.is_empty() && settings.untracked {
+        // What is not tracked is not told: nothing is said of it.
+        let folder = if !settings.untracked {
+            None
+        } else if prefix.is_empty() {
             // A repository with nothing tracked: its files are new.
             walk(
                 &names,
@@ -271,7 +266,15 @@ pub(crate) fn status(
                 &mut found,
                 deadline,
             )?;
-        }
+            None
+        } else if ignored {
+            Some(State::Ignored)
+        } else {
+            // New, but for what it holds that is ignored, said apart: as
+            // git says each of them from the folder.
+            ignored_in(&mut excludes, work_tree, &prefix, &mut found, deadline)?;
+            Some(State::New)
+        };
         return Ok(answered(found, prefix.as_bstr(), folder));
     };
     let entries = &state.entries()[range];
@@ -843,6 +846,44 @@ fn walk(
             found.add(path.as_bstr(), State::New);
         } else if let Some(held) = holds(excludes, work_tree, &path, found, deadline)? {
             found.add(path.as_bstr(), held);
+        }
+    }
+    Ok(())
+}
+
+/// What a folder the index tracks nothing in (`dir`, asked whole, said
+/// new) holds that is not new: each name the patterns ignore, or a folder
+/// all of which they do (`holds`). An empty folder in it is said new with
+/// it: no state says nothing.
+fn ignored_in(
+    excludes: &mut gix::AttributeStack<'_>,
+    work_tree: &Path,
+    dir: &BString,
+    found: &mut Found,
+    deadline: &Deadline,
+) -> Result<()> {
+    let Ok(read) = std::fs::read_dir(work_tree.join(gix::path::from_bstr(dir.as_bstr())?)) else {
+        return Ok(());
+    };
+    for item in read {
+        if found.late(deadline) {
+            return Ok(());
+        }
+        let Ok(item) = item else {
+            continue;
+        };
+        let name = item.file_name();
+        let Ok(name) = gix::path::os_str_into_bstr(&name) else {
+            continue;
+        };
+        let mut path = dir.clone();
+        path.push(b'/');
+        path.extend_from_slice(name);
+        let folder = item.file_type().is_ok_and(|kind| kind.is_dir());
+        if excluded(excludes, path.as_bstr(), folder)?
+            || folder && holds(excludes, work_tree, &path, found, deadline)? == Some(State::Ignored)
+        {
+            found.add(path.as_bstr(), State::Ignored);
         }
     }
     Ok(())
