@@ -1185,22 +1185,20 @@ impl Shell {
                 ),
             ));
         }
-        if let Some(term) = span.group.as_ref().and_then(|g| g.term.clone()) {
-            let filter = {
-                let ws = self.app.workspace.read();
-                ws.pane(pane)
-                    .and_then(|p| p.filter().map(|f| f.trim().to_owned()))
-                    .filter(|f| !f.is_empty())
-            };
-            let text = filter.map_or_else(|| term.to_string(), |f| format!("{f} {term}"));
+        // The term is kept besides what filters the pane by the reader of
+        // its words (`query.filter`'s `also`), which knows their grammar:
+        // the shell writes none.
+        if let Some(term) = span.group.as_ref().and_then(|g| g.term.clone())
+            && self.app.commands.get("query.filter").is_some()
+        {
             items.push(MenuItem::new(
                 "group",
                 "Show only these",
                 "filter",
                 300,
                 skwir_core::command::Invocation::with_args(
-                    "filter",
-                    &serde_json::json!({ "text": text, "pane": pane }),
+                    "query.filter",
+                    &serde_json::json!({ "facet": "also", "value": term, "pane": pane }),
                 ),
             ));
         }

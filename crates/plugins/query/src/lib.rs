@@ -227,11 +227,12 @@ struct LocationArgs {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct RefineArgs {
     /// A chip's id: `words`, `kind`, `modified`, `created`, `accessed`,
-    /// `taken`, `size`, `tag`, `content`, `where` or `advanced`.
+    /// `taken`, `size`, `tag`, `content`, `where` or `advanced`; or `also`,
+    /// a query term kept besides the rest (a group's heading's).
     facet: String,
     /// What to set it to (a kind toggles, `where` takes `subtree`, `here`,
-    /// `hidden` or `excluded`, `advanced` the index of the part to remove); omitted,
-    /// the facet is cleared.
+    /// `hidden` or `excluded`, `advanced` the index of the part to remove,
+    /// `also` the term); omitted, the facet is cleared.
     #[serde(default)]
     value: Option<String>,
     #[serde(default)]
@@ -1993,6 +1994,67 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(steps(), before);
+    }
+
+    /// A group's heading's Show only these (ADR-130, 12) keeps its term
+    /// besides what the filter keeps, both holding: over `list OR dog`, the
+    /// pictures among those two, never every list besides.
+    // Types from the free desktops' database (step E, ADR-035).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_groups_term_narrows_the_filter_as_it_is() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("it's here");
+        std::fs::create_dir(&root).unwrap();
+        tree(&root);
+        let pics = root.join("pics");
+        std::fs::write(pics.join("list.txt"), "a list").unwrap();
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        app.plugins.add(Arc::new(QueryPlugin::default()), &app);
+        let pane = app.workspace.read().active_id();
+        app.navigate(pane, &Location::from_path(&pics)).unwrap();
+        assert!(app.pump_until_complete(pane, Duration::from_secs(10)));
+        let shown = || -> BTreeSet<String> {
+            let ws = app.workspace.read();
+            let p = ws.pane(pane).unwrap();
+            p.order()
+                .iter()
+                .filter_map(|id| p.entry(*id))
+                .map(|e| e.name_str().into_owned())
+                .collect()
+        };
+        let comes_to = |want: &[&str]| {
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            while shown() != set(want) {
+                assert!(std::time::Instant::now() < deadline, "{:?}", shown());
+                app.pump();
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        };
+        app.dispatch(&Invocation::with_args(
+            "filter",
+            &serde_json::json!({ "text": "list OR dog", "pane": pane }),
+        ))
+        .unwrap();
+        comes_to(&["dog.JPG", "list.txt"]);
+        app.dispatch(&Invocation::with_args(
+            "query.filter",
+            &serde_json::json!({ "facet": "also", "value": "kind:image", "pane": pane }),
+        ))
+        .unwrap();
+        comes_to(&["dog.JPG"]);
+        let filter = app
+            .workspace
+            .read()
+            .pane(pane)
+            .unwrap()
+            .filter()
+            .map(str::to_owned);
+        assert_eq!(
+            filter.as_deref(),
+            Some("kind:image (name:list OR name:dog)"),
+            "the OR whole, beside the group's term"
+        );
     }
 
     /// A lens (ADR-107) shows a folder's folders and the files it keeps,

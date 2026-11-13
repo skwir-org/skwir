@@ -450,6 +450,13 @@ pub fn refine(expr: &str, facet: &str, value: Option<&str>) -> Result<String, St
                     .to_string(),
             );
         }
+        // What a group's heading keeps (ADR-130, 12: Show only these), kept
+        // besides the rest: in its facet where that is free, else as a part
+        // of its own, so every part still holds.
+        ("also", Some(term)) => {
+            let more = lang::parse(term.trim()).map_err(|e| e.to_string())?;
+            p.merge(Parts::of(&more));
+        }
         ("where", Some("subtree")) => q.depth = None,
         ("where", Some("here")) => q.depth = Some(1),
         ("where", Some("hidden")) => {
@@ -1344,5 +1351,34 @@ mod tests {
             };
             assert_eq!(meaning(&back), meaning(q), "{q} -> {again} -> {back}");
         }
+    }
+
+    /// What a group's heading keeps is kept besides the filter, each part
+    /// still holding: an OR stays whole, a facet set already stays and the
+    /// group's beside it.
+    #[test]
+    fn a_groups_term_is_kept_besides_the_rest() {
+        let parts = |text: &str| {
+            let q = lang::parse(text).unwrap();
+            let mut parts: Vec<String> = items(&q).into_iter().map(print).collect();
+            parts.sort();
+            parts
+        };
+        let also = |expr, term| refine(expr, "also", Some(term)).unwrap();
+        assert_eq!(parts(&also("", "kind:image")), ["kind:image"]);
+        assert_eq!(
+            parts(&also("a OR b", "kind:image")),
+            ["(name:a OR name:b)", "kind:image"],
+            "never a OR (b kind:image)"
+        );
+        assert_eq!(
+            parts(&also("dunes kind:document", "kind:image")),
+            ["kind:document", "kind:image", "name:dunes"]
+        );
+        assert_eq!(
+            parts(&also("modified:this-week", "size>=1G")),
+            ["modified:this-week", "size>=1G"]
+        );
+        assert!(refine("dunes", "also", Some("(kind:image")).is_err());
     }
 }

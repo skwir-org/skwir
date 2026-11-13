@@ -599,7 +599,10 @@ around the views is in [shell.md](shell.md).
   to the last as a band would, the view left where it is; the right button
   opens its menu (`Shell::open_group_menu`): Select these (not while
   folded), Show only these where a query term keeps the group's files,
-  the filter narrowed by it, Fold or Unfold, Fold the others, and Unfold
+  the filter narrowed by it (`query.filter`'s `also`: the reader of the
+  filter's words keeps the term besides them, each part still holding;
+  the shell writes no query text), Fold or Unfold, Fold the others, and
+  Unfold
   all while one is folded. Its chevron folds and unfolds; a press beside
   it selects, then stops the keys on the heading. The pinned heading
   does the same, and its pane is made the active one as an entry's press
