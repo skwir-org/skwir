@@ -9337,7 +9337,6 @@ dependencies = [
  "crossbeam-channel",
  "parking_lot",
  "rmcp",
- "rustix",
  "schemars",
  "serde",
  "serde_json",

@@ -257,20 +257,16 @@ pub trait Connector: Send + Sync {
 /// that the address can be read back from it after Skwir restarts
 /// (principle 3: nothing kept but the mount itself).
 pub fn mounts_folder() -> Option<PathBuf> {
-    // macOS has no runtime folder: the user's own temporary one, which no
-    // other user enters. Never the cache, which a start sweeps
-    // (`skwir_core::cache`).
-    #[cfg(target_os = "macos")]
-    {
-        Some(std::env::temp_dir().join("skwir").join("remote"))
-    }
     // Windows: Skwir's local application data, the user's own (ADR-086:
     // rclone's mounts through WinFsp are folders there).
     #[cfg(not(unix))]
     {
         skwir_core::folders::state().map(|dir| dir.join("remote"))
     }
-    #[cfg(all(unix, not(target_os = "macos")))]
+    // Skwir's runtime folder: on macOS, which has no runtime folder, the
+    // user's own temporary one, which no other user enters. Never the
+    // cache, which a start sweeps (`skwir_core::cache`).
+    #[cfg(unix)]
     {
         skwir_core::folders::runtime().map(|folder| folder.join("remote"))
     }

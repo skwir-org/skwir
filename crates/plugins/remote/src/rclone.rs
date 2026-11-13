@@ -689,7 +689,7 @@ impl Rclone {
         const NO_WINDOW: u32 = 0x0800_0000;
         let folder = crate::connector::mounts_folder()
             .ok_or_else(|| anyhow::anyhow!("there is no folder to mount in"))?;
-        mounter::make_private(&folder)?;
+        skwir_core::folders::private(&folder)?;
         skwir_core::fs::reach::mounts_in(folder.clone(), FSTYPE);
         let point = folder.join(crate::connector::point_name(self.id(), top));
         if skwir_core::fs::reach::of(&point).is_some_and(|r| r.point == point) {

@@ -681,11 +681,13 @@ ADR-077 (which revises ADR-021).
   publishes before its folder is shown (`Remotes::publish_mounted`), so
   F5 there finds what its program is told (`Known::forget`). Nothing is
   published once the plugin is disabled.
-- A mount Skwir makes is under `$XDG_RUNTIME_DIR/skwir/remote/` (on
-  macOS, which has no runtime folder, the user's temporary folder; on
-  Windows, Skwir's local application data: never the cache, which a start
-  sweeps), rclone's remote control's sockets beside it (`rc`), named by
-  `connector::point_name` so its address reads back from it: nothing else
+- A mount Skwir makes is under `remote/` in skwir's runtime folder
+  (`folders::runtime`: `$XDG_RUNTIME_DIR/skwir`, or the user's own in the
+  temporary folder where the session has none, as on macOS; on Windows,
+  Skwir's local application data: never the cache, which a start sweeps),
+  made with `folders::private` as all there is, rclone's remote
+  control's sockets beside it (`rc`), named by `connector::point_name` so
+  its address reads back from it: nothing else
   is kept. It outlives Skwir, as GVfs's do.
 - A tool that daemonizes is run until it has mounted
   (`process::run_leaving`): cancelled, it and what it started are stopped;

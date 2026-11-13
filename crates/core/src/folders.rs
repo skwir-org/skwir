@@ -63,13 +63,40 @@ pub fn cache() -> Option<PathBuf> {
 }
 
 /// The folder a running skwir keeps what is the session's alone in:
-/// `$XDG_RUNTIME_DIR/skwir`, where the session has a runtime folder.
+/// `$XDG_RUNTIME_DIR/skwir`, where the session has a runtime folder; else,
+/// on Unix, one of the user's in the temporary folder: macOS's own
+/// `$TMPDIR/skwir` (the user's alone), elsewhere `/tmp/skwir-<uid>`, a
+/// name no other user's skwir takes. None on Windows, which has none.
 /// Anything there may be a socket another program of the user's connects
 /// to, so what makes it, or a folder in it, makes it with [`private`]: one
 /// made with the default mode is open to all, and a socket made there
-/// reachable by them.
+/// reachable by them. Every part of skwir names it through here, so all
+/// agree on one folder.
 pub fn runtime() -> Option<PathBuf> {
-    crate::xdg::runtime_dir().map(|dir| dir.join("skwir"))
+    #[cfg(unix)]
+    {
+        Some(runtime_of(crate::xdg::runtime_dir()))
+    }
+    #[cfg(not(unix))]
+    {
+        crate::xdg::runtime_dir().map(|dir| dir.join("skwir"))
+    }
+}
+
+/// [`runtime`] on Unix, the session's runtime folder being `session`.
+#[cfg(unix)]
+fn runtime_of(session: Option<PathBuf>) -> PathBuf {
+    if let Some(dir) = session {
+        return dir.join("skwir");
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::env::temp_dir().join("skwir")
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        std::env::temp_dir().join(format!("skwir-{}", rustix::process::getuid().as_raw()))
+    }
 }
 
 /// `folder` made the user's alone: made where it is missing, with any
@@ -109,7 +136,25 @@ pub fn private(folder: &Path) -> std::io::Result<()> {
 mod tests {
     use std::os::unix::fs::PermissionsExt as _;
 
-    use super::private;
+    use super::{private, runtime_of};
+
+    /// The session's runtime folder holds skwir's; where it has none, the
+    /// user's own in the temporary folder, named for the user on Linux.
+    #[test]
+    fn the_runtime_folder_is_the_session_s_else_the_user_s_own() {
+        let session = std::path::Path::new("/run/user/1234");
+        assert_eq!(
+            runtime_of(Some(session.to_path_buf())),
+            session.join("skwir")
+        );
+        let fallback = runtime_of(None);
+        assert_eq!(fallback.parent(), Some(std::env::temp_dir().as_path()));
+        #[cfg(not(target_os = "macos"))]
+        assert_eq!(
+            fallback.file_name().and_then(|n| n.to_str()),
+            Some(format!("skwir-{}", rustix::process::getuid().as_raw()).as_str())
+        );
+    }
 
     fn mode(path: &std::path::Path) -> u32 {
         std::fs::symlink_metadata(path)

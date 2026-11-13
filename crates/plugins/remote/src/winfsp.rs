@@ -130,7 +130,7 @@ pub fn keep_login(point: &Path, at: &At) -> anyhow::Result<()> {
     };
     let file = login_file(point).ok_or_else(|| anyhow::anyhow!("no folder for its login"))?;
     if let Some(folder) = file.parent() {
-        crate::mounter::make_private(folder)?;
+        skwir_core::folders::private(folder)?;
     }
     let text = serde_json::json!({ "port": port, "user": user, "pass": pass }).to_string();
     std::fs::write(&file, text.as_bytes())?;
@@ -186,7 +186,7 @@ pub fn keep_at_login(point: &Path, login: &Login) -> anyhow::Result<()> {
         anyhow::bail!("no folder for its login");
     };
     if let Some(folder) = kept.parent() {
-        crate::mounter::make_private(folder)?;
+        skwir_core::folders::private(folder)?;
     }
     let login = if let Some(kept) = kept_at_login(point) {
         kept

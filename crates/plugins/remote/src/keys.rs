@@ -443,7 +443,7 @@ fn private_folder() -> anyhow::Result<PathBuf> {
     let folder = connector::mounts_folder()
         .and_then(|folder| folder.parent().map(Path::to_path_buf))
         .ok_or_else(|| anyhow::anyhow!("there is no runtime folder"))?;
-    mounter::make_private(&folder)?;
+    skwir_core::folders::private(&folder)?;
     Ok(folder)
 }
 

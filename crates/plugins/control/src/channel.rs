@@ -18,19 +18,14 @@ impl Address {
     }
 }
 
-/// Where the user's skwir listens: `$XDG_RUNTIME_DIR/skwir/control.sock`
-/// (Linux), the user's own `$TMPDIR` on macOS, else a folder of the user's
-/// in the temporary folder; `\\.\pipe\skwir-control-<user>` on Windows.
+/// Where the user's skwir listens: `control.sock` in skwir's runtime
+/// folder (`folders::runtime`: `$XDG_RUNTIME_DIR/skwir` on Linux, the
+/// user's own `$TMPDIR` on macOS, else a folder of the user's in the
+/// temporary folder); `\\.\pipe\skwir-control-<user>` on Windows.
 pub fn address() -> Option<Address> {
     #[cfg(unix)]
     {
-        let folder = match skwir_core::folders::runtime() {
-            Some(folder) => folder,
-            None if cfg!(target_os = "macos") => std::env::temp_dir().join("skwir"),
-            None => {
-                std::env::temp_dir().join(format!("skwir-{}", rustix::process::getuid().as_raw()))
-            }
-        };
+        let folder = skwir_core::folders::runtime()?;
         Some(Address(folder.join("control.sock")))
     }
     #[cfg(windows)]

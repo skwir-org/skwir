@@ -124,7 +124,7 @@ impl Connector for Sshfs {
         let control = crate::ssh_mount::control_path(&point).filter(|control| {
             control
                 .parent()
-                .is_some_and(|folder| mounter::make_private(folder).is_ok())
+                .is_some_and(|folder| skwir_core::folders::private(folder).is_ok())
         });
         if let Some(control) = &control {
             let _ = std::fs::remove_file(control);

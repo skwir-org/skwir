@@ -23,7 +23,7 @@ use crate::connector::{self, Ask, Recognised};
 pub fn point_for(connector: &str, top: &Address) -> anyhow::Result<PathBuf> {
     let folder = connector::mounts_folder()
         .ok_or_else(|| anyhow::anyhow!("there is no runtime folder to mount in"))?;
-    make_private(&folder)?;
+    skwir_core::folders::private(&folder)?;
     let point = folder.join(connector::point_name(connector, top));
     if skwir_core::fs::reach::of(&point).is_some_and(|remote| remote.point == point) {
         // Mounted already. A mount whose program died answers nothing and
@@ -45,8 +45,10 @@ pub fn point_for(connector: &str, top: &Address) -> anyhow::Result<PathBuf> {
     Ok(point)
 }
 
-/// `folder` and the folders above it up to the runtime folder, made with
-/// only the user allowed in.
+/// `folder` and the folders above it, made where missing with only the
+/// user allowed in: the user's `~/.ssh`, which is not skwir's to close or
+/// refuse. What skwir keeps in its runtime folder is made with
+/// `folders::private`, which does (AGENTS.md).
 pub(crate) fn make_private(folder: &Path) -> std::io::Result<()> {
     let mut builder = std::fs::DirBuilder::new();
     builder.recursive(true);
@@ -321,7 +323,7 @@ impl Askpass {
         let folder = connector::mounts_folder()
             .and_then(|f| f.parent().map(Path::to_path_buf))
             .ok_or_else(|| anyhow::anyhow!("there is no runtime folder"))?;
-        make_private(&folder)?;
+        skwir_core::folders::private(&folder)?;
         let attempt = cancel.clone();
         let (ask, cancel) = (Arc::clone(ask), cancel.clone());
         let server = skwir_platform::askpass::Server::start(&folder, move |question| {
