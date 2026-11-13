@@ -1,5 +1,6 @@
 //! Built-in pane views.
 
+pub mod arriving;
 pub mod board;
 pub mod columns;
 pub mod entry;

@@ -765,6 +765,19 @@ pub struct StatesAsked {
     pub cancel: CancelToken,
 }
 
+/// Where something a plan brings into a pane's folder stands in what the
+/// pane shows (`Pane::stands`, ADR-135).
+#[derive(Clone, Debug)]
+pub struct Stand {
+    /// The place in the listing's order (`Pane::listed_order`) of the
+    /// first entry after it; the order's length past the last.
+    pub at: usize,
+    /// Its place among what is brought, as the order would have them.
+    pub among: usize,
+    /// The group it would be in, where the pane groups.
+    pub group: Option<Arc<crate::grouping::Group>>,
+}
+
 /// What a pane last asked of the version control: its listing; its
 /// listings' names and the files written in them (the shown one's and the
 /// opened ones' summed); the folders it opened in place; the providers'
@@ -4846,6 +4859,39 @@ impl Pane {
     /// is not grouped.
     pub fn groups(&self) -> Arc<[crate::grouping::Span]> {
         self.shown_groups().1
+    }
+
+    /// The listing's order as the pane sorts it (`Listing::order_shown`):
+    /// what `stands` places in, before the folders opened in place, the
+    /// filter and the folds make what the pane shows of it (`order`).
+    pub fn listed_order(&self) -> Arc<[EntryId]> {
+        self.listing.order_shown(self.sorting())
+    }
+
+    /// Where each of `likes`, what plans bring into the pane's folder as it
+    /// will be (ADR-135), stands, if the pane would show it: not a hidden
+    /// name while hidden files are not shown, nor one its filter would not
+    /// keep (a term it cannot tell yet, as for an entry not read); placed
+    /// in the listing's order (`listed_order`, `Listing::standing`), among
+    /// the others as the order would have them, with the group it would be
+    /// in where the pane groups.
+    pub fn stands(&self, likes: &[&Entry]) -> Vec<Option<Stand>> {
+        let sort = self.sorting();
+        let (at, among) = self.listing.standing(&sort, likes);
+        let filter = self.text_filter();
+        let grouping = sort.grouping();
+        likes
+            .iter()
+            .zip(at.into_iter().zip(among))
+            .map(|(like, (at, among))| {
+                let hidden = !self.sort.show_hidden && like.is_hidden();
+                if hidden || !shown(filter.as_ref(), like) {
+                    return None;
+                }
+                let group = grouping.map(|(_, keyer)| keyer(&crate::grouping::Of::entry(like)));
+                Some(Stand { at, among, group })
+            })
+            .collect()
     }
 
     /// The groups of `order` (what the pane shows, folded groups' entries

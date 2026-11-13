@@ -1449,6 +1449,9 @@ pub struct Executor {
     /// version then: read again only once the lane changed (or one of them
     /// was cancelled), not each time it is drawn.
     waiting_kept: Mutex<Option<WaitingKept>>,
+    /// What each plan asked brings into folders, until its run ends
+    /// (ADR-135, `arriving_in`).
+    arriving: super::arriving::Index,
 }
 
 /// What [`Executor::waiting`] read, at the lane's version, with the tokens
@@ -1549,11 +1552,13 @@ struct Ended<'a>(&'a Executor, u64);
 
 impl Drop for Ended<'_> {
     fn drop(&mut self) {
+        let mut plan = None;
         let idle = {
             let mut lane = self.0.lane.lock();
             lane.version += 1;
             if let Some(at) = lane.started.iter().position(|b| b.seq == self.1) {
                 let begun = lane.started.remove(at);
+                plan = begun.plan;
                 if let Some(target) = begun.target {
                     lane.targeted.retain(|t| *t != target);
                     // Its entry, still marked as being taken back (a run
@@ -1576,10 +1581,13 @@ impl Drop for Ended<'_> {
             }
             idle
         };
+        // What it brought and did not land (it failed, it was cancelled)
+        // is brought no more: the folders it was for are shown without it.
+        let brought = plan.is_some_and(|plan| self.0.arriving.forget(plan));
         // Its end was told (`Finished`) while it was still among those
         // started: whoever waits for nothing to run (a program without a
         // window, ADR-115) hears it now, once, with no lock held.
-        if idle {
+        if idle || brought {
             self.0.wake();
         }
         self.0.dispatch();
@@ -1615,6 +1623,7 @@ impl Executor {
             looking: Mutex::default(),
             look_every: Mutex::new(LOOK_EVERY),
             waiting_kept: Mutex::new(None),
+            arriving: super::arriving::Index::default(),
         })
     }
 
@@ -2933,6 +2942,10 @@ impl Executor {
             Work::Execute { plan, .. } => Some(plan.steps.len()),
             Work::Replay(..) => None,
         };
+        let brings = match &work {
+            Work::Execute { plan, .. } => Some((Arc::clone(plan), cancel.clone())),
+            Work::Replay(..) => None,
+        };
         lane.queue.push_back(Job {
             seq,
             work,
@@ -2947,6 +2960,94 @@ impl Executor {
             refused: None,
             chain,
         });
+        drop(lane);
+        if let Some((plan, cancel)) = brings {
+            self.read_arrivals(plan, &cancel);
+        }
+    }
+
+    /// What `plan`, just asked, brings into folders (ADR-135): noted now,
+    /// read on a worker, in the lane of what its first step reads, each
+    /// item's source stat-ed once; told to whoever shows those folders when
+    /// read, unless its run has read its own by then.
+    fn read_arrivals(&self, plan: Arc<Plan>, cancel: &CancelToken) {
+        let asked = self.arriving.asked(plan.id, cancel);
+        let Some(this) = self.me.upgrade() else {
+            return;
+        };
+        let lane = plan
+            .steps
+            .first()
+            .and_then(|step| step.describe().subject().map(crate::fs::reach::lane))
+            .unwrap_or(crate::scheduler::Lane::SHARED);
+        self.scheduler.spawn_in(
+            lane,
+            Priority::Visible,
+            "op.arriving",
+            cancel.clone(),
+            move || {
+                let arrivals = super::arriving::arrivals_of(
+                    &plan,
+                    false,
+                    asked,
+                    &HashMap::new(),
+                    crate::fs::stat::stat_path,
+                );
+                if !arrivals.is_empty() && this.arriving.fill(plan.id, arrivals, false) {
+                    this.wake();
+                }
+            },
+        );
+    }
+
+    /// What `plan` brings as it runs, its steps unfolded and its names
+    /// settled (ADR-135): each item by its own steps, what was read as it
+    /// was asked kept, what was not read now, on the plan's thread.
+    fn arrivals_run(&self, plan: &Plan) {
+        let Some((asked, known)) = self.arriving.known(plan.id) else {
+            return;
+        };
+        let arrivals =
+            super::arriving::arrivals_of(plan, true, asked, &known, crate::fs::stat::stat_path);
+        if self.arriving.fill(plan.id, arrivals, true) {
+            self.wake();
+        }
+    }
+
+    /// What the plans waiting and running bring into `folder` (ADR-135),
+    /// not landed yet, in the order asked, each with how far it has come:
+    /// what the window shows there before it lands. Read from memory, each
+    /// plan's meter once; nothing is read from the disk.
+    pub fn arriving_in(&self, folder: &Path) -> Vec<super::arriving::Arriving> {
+        let arrivals = self.arriving.in_folder(folder);
+        if arrivals.is_empty() {
+            return Vec::new();
+        }
+        let plans: HashSet<PlanId> = arrivals.iter().map(|a| a.plan).collect();
+        let read: HashMap<PlanId, (super::arriving::StepsRead, bool)> = self
+            .running
+            .lock()
+            .iter()
+            .filter(|active| plans.contains(&active.plan))
+            .map(|active| {
+                (
+                    active.plan,
+                    (active.meter.steps_read(), active.pause.is_paused()),
+                )
+            })
+            .collect();
+        arrivals
+            .into_iter()
+            .filter_map(|arrival| {
+                let read = read.get(&arrival.plan);
+                let state = super::arriving::state_of(&arrival, read.map(|(read, _)| read))?;
+                Some(super::arriving::Arriving {
+                    arrival,
+                    state,
+                    paused: read.is_some_and(|(_, paused)| *paused),
+                })
+            })
+            .collect()
     }
 
     /// Work out what the queued jobs touch, in the order asked, and start
@@ -3724,6 +3825,8 @@ impl Executor {
         waits: &Waits,
         shown: Shown<'_>,
     ) -> ExecResult {
+        // What it brings, as it will be done.
+        self.arrivals_run(plan);
         let Run {
             seq,
             first,
@@ -5079,6 +5182,60 @@ mod tests {
         assert!(logged(&log, "began /stick/dest/videos"));
         second.opened();
         assert!(logged(&log, "ended /stick/dest/videos"));
+    }
+
+    /// What plans bring into a folder (ADR-135): a heavy one running, two
+    /// waiting their turn behind it, each by its name there, in the order
+    /// asked; nothing said of the folder above. One cancelled while it
+    /// waits brings nothing from then on, and what a plan brought goes as
+    /// its run ends.
+    #[test]
+    fn what_plans_bring_into_a_folder_waits_runs_and_goes() {
+        use super::super::arriving::Arrives;
+        let executor = Executor::new(Scheduler::new(2));
+        let log = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let first = Gate::new("/stick/dest/it's one", true, false, &log);
+        executor.execute(first.plan(), CancelToken::new());
+        assert!(logged(&log, "began /stick/dest/it's one"));
+        let second = Gate::new("/stick/dest/two", true, false, &log);
+        executor.execute(second.plan(), CancelToken::new());
+        let third = Gate::new("/stick/dest/three", true, true, &log);
+        let cancel = CancelToken::new();
+        executor.execute(third.plan(), cancel.clone());
+        let dest = Path::new("/stick/dest");
+        let brought = |names: &[&str]| {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                let arriving = executor.arriving_in(dest);
+                let now: Vec<String> = arriving
+                    .iter()
+                    .map(|a| a.arrival.name.to_string_lossy().into_owned())
+                    .collect();
+                if now == names || Instant::now() > deadline {
+                    break arriving;
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        };
+        let arriving = brought(&["it's one", "two", "three"]);
+        let states: Vec<Arrives> = arriving.iter().map(|a| a.state).collect();
+        assert_eq!(
+            states,
+            [Arrives::Starting, Arrives::Waiting, Arrives::Waiting],
+            "the first running, the others waiting"
+        );
+        let made = &arriving[0].arrival.like;
+        assert_eq!(made.name, "it's one");
+        assert!(!made.is_dir(), "a file made, as its step says");
+        assert!(executor.arriving_in(Path::new("/stick")).is_empty());
+        cancel.cancel();
+        assert_eq!(executor.arriving_in(dest).len(), 2, "cancelled, at once");
+        first.opened();
+        let arriving = brought(&["two"]);
+        assert_eq!(arriving.len(), 1);
+        assert_eq!(arriving[0].state, Arrives::Starting);
+        second.opened();
+        assert!(brought(&[]).is_empty(), "every run ended");
     }
 
     /// Heavy plans on two servers run at once; on one, they take turns

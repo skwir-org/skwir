@@ -999,7 +999,12 @@ of bars, split or not.
   a line until unfolded (`ui.activity_earlier`). Open as a popup, it
   stays where it opened until closed. Standing,
   it is a place of its own (`keymap::ACTIVITY`): `ui.activity` gives it
-  the keyboard, Escape gives it back to the files. A click on the strip
+  the keyboard, Escape gives it back to the files. With `plan`
+  (`Shell::show_activity_of`: what a plan brings into a folder pressed,
+  ADR-135), `ui.activity` opens it where it would open and never
+  closes it, and the frame after, once the cards are drawn, gives the
+  keyboard to that plan's Pause, or to its Cancel while it waits, which
+  scrolls it into view. A click on the strip
   or on Activity standing leaves the keyboard where it was, so the keys go
   on acting on the pane. What is under way is read once a frame
   (`Shell::under_way`, passed to the strip, Activity and the footer).

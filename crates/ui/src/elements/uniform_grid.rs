@@ -623,7 +623,7 @@ type Built = (
     math::Columns,
     f32,
     u64,
-    Option<((usize, usize), u32)>,
+    Option<((usize, usize, usize), u32)>,
 );
 
 /// Scroll handle for a [`UniformGrid`]; keep it in the view and pass it each frame.
@@ -816,9 +816,10 @@ impl Element for UniformGrid {
         );
         // Groups that do not hold the tiles, one after the other, group
         // nothing.
-        let groups = self.groups.clone().filter(|g| {
-            g.rows.spans().iter().map(|span| span.len).sum::<usize>() == self.item_count
-        });
+        let groups = self
+            .groups
+            .clone()
+            .filter(|g| g.rows.tile_lens().iter().sum::<usize>() == self.item_count);
         let built_from = (
             self.item_count,
             columns,
@@ -841,10 +842,13 @@ impl Element for UniformGrid {
             .filter(|h| h.0.borrow().built_from == Some(built_from))
             .map(|h| h.0.borrow().layout.slots.clone());
         let slots = reuse.unwrap_or_else(|| match &groups {
-            Some(g) => {
-                let lens: Vec<usize> = g.rows.spans().iter().map(|span| span.len).collect();
-                math::Slots::grouped(columns, gap.1, &lens, g.height, &*self.heights.of)
-            }
+            Some(g) => math::Slots::grouped(
+                columns,
+                gap.1,
+                g.rows.tile_lens(),
+                g.height,
+                &*self.heights.of,
+            ),
             None => math::Slots::new(columns, gap.1, self.item_count, &*self.heights.of),
         });
         let cols = columns.cols;

@@ -104,7 +104,7 @@ pub struct BoardView {
     scale: crate::sizes::Scale,
     /// Grouped, the groups' columns and the order and groups they were
     /// made of (ADR-131, 3).
-    groups_of: Option<(Arc<[EntryId]>, (usize, usize), Vec<Column>)>,
+    groups_of: Option<(Arc<[EntryId]>, (usize, usize, usize), Vec<Column>)>,
     /// The listing whose folders opened in place a grouped board closed:
     /// once, the folders' files being no group's.
     closed_for: Option<u64>,

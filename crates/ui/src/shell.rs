@@ -2774,7 +2774,10 @@ impl Shell {
                 self.reveal_focused_row(window, cx);
             }
             "toolbar_menu" => self.toggle_toolbar_menu(args, window, cx),
-            "activity" => self.toggle_activity(args, window, cx),
+            "activity" => match args.get("plan").and_then(serde_json::Value::as_u64) {
+                Some(plan) => self.show_activity_of(skwir_core::op::PlanId(plan), window, cx),
+                None => self.toggle_activity(args, window, cx),
+            },
             "activity_pin" => self.toggle_activity_pin(window, cx),
             "activity_earlier" => self.toggle_activity_earlier(cx),
             "activity_cancel_all" => {
@@ -3777,15 +3780,22 @@ impl Shell {
             if let Some(wanted) = wanted {
                 app.keep_locations(id, &wanted);
             }
-            let (location, resorted, replaced) = {
+            let (location, resorted, replaced, due) = {
                 let ws = app.workspace.read();
                 let Some(pane) = ws.pane(id) else { continue };
                 let location = pane.location().map(ToString::to_string).unwrap_or_default();
                 let list = &mut self.ui_mut().list;
                 let before = list.listing();
                 let resorted = list.sync(pane);
-                (location, resorted, list.listing() != before)
+                // What plans bring into its folder, among its rows (ADR-135).
+                let (_, due) = list.sync_arriving(pane, &app.executor, std::time::Instant::now());
+                (location, resorted, list.listing() != before, due)
             };
+            // What arrives once it lasted, shown then: one timer, never a
+            // loop.
+            if let Some(due) = due {
+                crate::work::wake_after(&self.work, &app, due, cx);
+            }
             resorted_any |= resorted;
             // The files of the folder left drawn while the one gone to is
             // filled: shown as it is once the wait is over, whatever wakes.

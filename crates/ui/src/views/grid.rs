@@ -46,7 +46,7 @@ use crate::sizes::{Part, Scale};
 use crate::theme::Theme;
 use crate::thumbs::ThumbView;
 use crate::view::{Nav, PaneView};
-use crate::views::groups;
+use crate::views::groups::{self, Tile};
 use crate::views::list::{COLUMNS, Detail, PerColumn, RowData, files_scale};
 
 /// Zoom steps for `ui.zoom`: the side of a tile's box.
@@ -250,6 +250,16 @@ pub struct GridView {
     revision: u64,
     /// How many captions the tiles were counted with.
     captions: usize,
+    /// Lines each tile's name needs, in the order drawn: `lines`, with
+    /// what arrives among them (ADR-135); `lines` itself while nothing
+    /// does.
+    tile_lines: Rc<[u8]>,
+    /// What `tile_lines` was made for: the rows, and `lines`.
+    tiles_for: Option<((usize, usize, usize), usize)>,
+    /// Lines the name of what arrives needs, by a hash of the name.
+    arriving_wrapped: HashMap<u64, u8>,
+    /// The rows last drawn: what a position asked for is a tile of.
+    drawn: crate::views::groups::RowMap,
 }
 
 /// Whether the lines counted for `last` (an order and a zoom) are not
@@ -266,6 +276,16 @@ fn stale(
     !last.is_some_and(|(counted, at)| {
         *at == zoom && (std::sync::Arc::ptr_eq(counted, order) || **counted == **order)
     })
+}
+
+/// What wraps the tiles' names: the interface font at the files' Body
+/// size, as they are drawn (ADR-073, ADR-117).
+fn names_wrapper(cx: &gpui::App) -> gpui::LineWrapperHandle {
+    let theme = cx.global::<Theme>();
+    cx.text_system().line_wrapper(
+        gpui::font(theme.font.clone()),
+        theme.sizes.body(Part::Files),
+    )
 }
 
 /// Border and padding around a tile's content, on each side.
@@ -312,6 +332,29 @@ impl GridView {
     }
 
     /// Count the lines every name wraps to, when what they depend on changed.
+    /// The entry drawn over the one at `position` (`up`) or under it, in
+    /// its column, past what arrives there (ADR-135), as the tiles were
+    /// last laid out.
+    fn tile_step(
+        &self,
+        slots: &crate::elements::uniform_grid::math::Slots,
+        position: usize,
+        up: bool,
+    ) -> Option<usize> {
+        let mut tile = self.drawn.tile_of(position);
+        loop {
+            tile = if up {
+                slots.above(tile)
+            } else {
+                slots.below(tile)
+            }?;
+            match self.drawn.at_tile(tile)? {
+                Tile::Entry(position) => return Some(position),
+                Tile::Arriving(_) => {}
+            }
+        }
+    }
+
     fn measure(&mut self, shell: &Shell, cx: &gpui::App) {
         let list = &shell.ui().list;
         // Names wrap in the interface font at the files' size, which may
@@ -335,7 +378,7 @@ impl GridView {
             self.wrapped.clear();
             self.wrapped_at = Some(at);
         }
-        let mut wrapper = cx.text_system().line_wrapper(gpui::font(font), font_size);
+        let mut wrapper = names_wrapper(cx);
         let width = px(Self::label_width(shell.zoom, scale));
         let mut wrapped_now = 0usize;
         let counted = &mut self.wrapped;
@@ -380,6 +423,54 @@ impl GridView {
             took_us = started.elapsed().as_micros() as u64,
             "grid names measured"
         );
+    }
+
+    /// The lines of each tile, what arrives among the entries (ADR-135):
+    /// made again when the rows or the entries' lines change, each name of
+    /// what arrives wrapped once.
+    fn measure_tiles(&mut self, shell: &Shell, cx: &gpui::App) {
+        let list = &shell.ui().list;
+        let rows = &list.rows;
+        let made_for = (rows.key(), Rc::as_ptr(&self.lines).cast::<()>().addr());
+        if self.tiles_for == Some(made_for) {
+            return;
+        }
+        self.tiles_for = Some(made_for);
+        self.revision += 1;
+        if !rows.arrives() {
+            self.tile_lines = Rc::clone(&self.lines);
+            return;
+        }
+        let scale = files_scale(cx.global::<crate::theme::Theme>());
+        let mut wrapper = names_wrapper(cx);
+        let width = px(Self::label_width(shell.zoom, scale));
+        let counted = &mut self.arriving_wrapped;
+        let lines = &self.lines;
+        self.tile_lines = (0..rows.tiles())
+            .map(|tile| match rows.at_tile(tile) {
+                Some(Tile::Entry(position)) => lines.get(position).copied().unwrap_or(1),
+                Some(Tile::Arriving(i)) => {
+                    let Some(arriving) = list.arriving.get(i) else {
+                        return 1;
+                    };
+                    let name = arriving.arrival.like.name_str();
+                    let hash = {
+                        let mut hasher = std::hash::DefaultHasher::new();
+                        name.hash(&mut hasher);
+                        hasher.finish()
+                    };
+                    *counted.entry(hash).or_insert_with(|| {
+                        crate::name_lines::count(&name, width, usize::from(MAX_LINES), &mut wrapper)
+                            as u8
+                    })
+                }
+                None => 1,
+            })
+            .collect();
+        // Bounded by what arrives: the names of what landed let go of.
+        if self.arriving_wrapped.len() > 4 * list.arriving.len() + 256 {
+            self.arriving_wrapped.clear();
+        }
     }
 
     /// An icon fills its box, like a square thumbnail does: a theme's glyph
@@ -439,6 +530,7 @@ fn cell(
     let scale = files_scale(theme);
     let (ix, look, id) = (row.ix, &row.look, row.look.id);
     let act = Shell::tag_act(shell.pane, Some(id), false, cx);
+    let on = shell.ui().list.arriving_on.get(&id).cloned();
     let pictures = shell
         .app
         .workspace
@@ -523,6 +615,12 @@ fn cell(
         look,
         theme,
     )
+    // Something landing on it (a folder merged into): its tint under it,
+    // its pill at its top right (ADR-135).
+    .children(
+        on.as_ref()
+            .map(|arriving| crate::views::arriving::tint(arriving, theme)),
+    )
     .child(
         div()
             .size(px(zoom as f32))
@@ -574,13 +672,101 @@ fn cell(
     ))
     .when(!captions.is_empty(), |d| {
         d.child(caption_lines(row, captions, scale, theme, act.clone()))
-    });
+    })
+    .children(on.as_ref().map(|arriving| {
+        div()
+            .absolute()
+            .top(px(FRAME))
+            .right(px(FRAME))
+            .child(crate::views::arriving::pill(arriving, theme))
+    }));
     let seat = crate::views::entry::Seat {
         index: ix,
         tree: None,
         group,
     };
     crate::views::entry::behave(el, look, seat, shell, cx).into_any_element()
+}
+
+/// What arrives's tile (ADR-135): its picture (its icon: nothing is there
+/// yet to make a thumbnail of), its name and its captions, dimmed, a tint
+/// behind it from its left, its pill at its top right.
+#[allow(clippy::too_many_arguments)]
+fn arriving_cell(
+    shell: &mut Shell,
+    theme: &Theme,
+    row: &RowData,
+    arriving: &skwir_core::op::arriving::Arriving,
+    i: usize,
+    lines: u8,
+    captions: &[Caption],
+    cx: &mut Context<Shell>,
+) -> AnyElement {
+    let zoom = shell.zoom;
+    let scale = files_scale(theme);
+    let look = &row.look;
+    let icon_px = GridView::icon(zoom).0;
+    let picture = icons::entry_picture(
+        look.icon.as_ref(),
+        look.is_dir,
+        icon_px,
+        icons::Mark::None,
+        false,
+        theme,
+    );
+    let dim = crate::views::arriving::OPACITY;
+    let act = Shell::tag_act(shell.pane, None, false, cx);
+    let el = div()
+        .id(("arriving-tile", i))
+        .relative()
+        .size_full()
+        .flex()
+        .flex_col()
+        .items_center()
+        .p(px(FRAME - 1.))
+        .gap(px(LABEL_GAP))
+        .rounded_md()
+        .overflow_hidden()
+        // The ring an entry's highlight draws, unseen: what arrives lines
+        // up with the tiles around it.
+        .border_1()
+        .border_color(gpui::transparent_black())
+        .child(crate::views::arriving::tint(arriving, theme))
+        .child(
+            div()
+                .size(px(zoom as f32))
+                .flex_none()
+                .flex()
+                .items_end()
+                .justify_center()
+                .opacity(dim)
+                .child(icons::marked(picture, icon_px, look.mark(), theme)),
+        )
+        .child(crate::elements::clip::clipped(
+            div()
+                .id(("arriving-label", i))
+                .w_full()
+                .opacity(dim)
+                .text_body()
+                .line_height(scale.px(LABEL_LINE))
+                .text_center()
+                .overflow_hidden()
+                .text_ellipsis_middle()
+                .line_clamp(usize::from(lines)),
+            shown_name(&look.name, lines, zoom, scale, theme, cx),
+        ))
+        .when(!captions.is_empty(), |d| {
+            d.child(caption_lines(row, captions, scale, theme, act).opacity(dim))
+        })
+        .child(
+            div()
+                .absolute()
+                .top(px(FRAME))
+                .right(px(FRAME))
+                .child(crate::views::arriving::pill(arriving, theme)),
+        );
+    let el = crate::views::arriving::acting(el, arriving, shell, cx);
+    crate::views::arriving::expose(el, &look.name, arriving, shell.a11y).into_any_element()
 }
 
 /// A tile's captions under its name, a line each, said or blank.
@@ -833,19 +1019,23 @@ impl PaneView for GridView {
 
     fn render(&mut self, shell: &mut Shell, _: &mut Window, cx: &mut Context<Shell>) -> AnyElement {
         self.measure(shell, cx);
+        self.measure_tiles(shell, cx);
         let captions: Rc<[Caption]> = shell.grid_captions().into();
         if captions.len() != self.captions {
             self.captions = captions.len();
             self.revision += 1;
         }
-        let lines = self.lines.clone();
-        let count = shell.ui().list.sorted.len();
+        let lines = self.tile_lines.clone();
         let zoom = shell.zoom;
         let scale = files_scale(cx.global::<Theme>());
         let pane = shell.pane;
         let said = Rc::clone(&captions);
-        // The groups, each starting a row of its own under its heading.
+        // The groups, each starting a row of its own under its heading, and
+        // what arrives among the tiles (ADR-135).
         let rows = shell.ui().list.rows.clone();
+        self.drawn = rows.clone();
+        let count = rows.tiles();
+        let entries = shell.ui().list.sorted.len();
         let first_of = {
             let rows = rows.clone();
             move |ix: usize| {
@@ -854,14 +1044,16 @@ impl PaneView for GridView {
                     .map(|n| groups::said(&rows.spans()[n]))
             }
         };
+        let drawn = rows.clone();
         let render = cx.processor(
             move |this: &mut Shell, (range, cols): (Range<usize>, usize), _, cx| {
                 this.with_pane(pane, |this| {
                     let theme = cx.global::<Theme>().clone();
+                    let shown = drawn.entries_in_tiles(range.clone());
                     let list = &mut this.ui_mut().list;
                     list.visible_rows = range.len().div_ceil(cols.max(1)).max(1);
-                    list.visible_items = range.len();
-                    let ids: Vec<EntryId> = range
+                    list.visible_items = shown.len();
+                    let ids: Vec<EntryId> = shown
                         .clone()
                         .filter_map(|ix| this.ui().list.sorted.get(ix).copied())
                         .collect();
@@ -869,21 +1061,45 @@ impl PaneView for GridView {
                     this.request_hydrate(ids);
                     // What every tile shows, and the details its captions
                     // say, read as the list reads its rows.
-                    let rows = this.rows_showing(
-                        range.clone(),
-                        GridView::icon(zoom).1,
-                        caption_columns(&said),
-                    );
+                    let rows =
+                        this.rows_showing(shown, GridView::icon(zoom).1, caption_columns(&said));
+                    let arriving = if drawn.arrives() {
+                        this.arriving_data(
+                            range.clone().filter_map(|tile| match drawn.at_tile(tile)? {
+                                Tile::Arriving(i) => Some(i),
+                                Tile::Entry(_) => None,
+                            }),
+                            GridView::icon(zoom).1,
+                            caption_columns(&said),
+                        )
+                    } else {
+                        Vec::new()
+                    };
                     // An entry gone between the order's reading and its
                     // own is a blank: the tiles after it keep their places.
                     let mut rows = rows.iter().peekable();
+                    let mut arriving = arriving.iter().peekable();
                     let cells = range
-                        .map(|ix| match rows.next_if(|row| row.ix == ix) {
-                            Some(row) => {
-                                let lines = lines.get(ix).copied().unwrap_or(1);
-                                cell(this, &theme, row, lines, &said, first_of(ix), cx)
+                        .map(|tile| {
+                            let lines = lines.get(tile).copied().unwrap_or(1);
+                            match drawn.at_tile(tile) {
+                                Some(Tile::Entry(ix)) => match rows.next_if(|row| row.ix == ix) {
+                                    Some(row) => {
+                                        cell(this, &theme, row, lines, &said, first_of(ix), cx)
+                                    }
+                                    None => div().into_any_element(),
+                                },
+                                Some(Tile::Arriving(i)) => {
+                                    let it = this.ui().list.arriving.get(i).cloned();
+                                    match (arriving.next_if(|(n, _)| *n == i), it) {
+                                        (Some((_, row)), Some(it)) => arriving_cell(
+                                            this, &theme, row, &it, i, lines, &said, cx,
+                                        ),
+                                        _ => div().into_any_element(),
+                                    }
+                                }
+                                None => div().into_any_element(),
                             }
-                            None => div().into_any_element(),
                         })
                         .collect::<Vec<_>>();
                     let app = std::sync::Arc::clone(&this.app);
@@ -899,7 +1115,7 @@ impl PaneView for GridView {
             TileHeights {
                 revision: self.revision,
                 of: {
-                    let lines = self.lines.clone();
+                    let lines = self.tile_lines.clone();
                     let captions = captions.len();
                     Rc::new(move |ix| {
                         GridView::tile_height(
@@ -915,15 +1131,18 @@ impl PaneView for GridView {
         )
         .gap(size(px(GUTTER.0), px(GUTTER.1)))
         .max_gap(px(MAX_GUTTER))
-        .groups(rows.grouped().then(|| grid_groups(rows, scale, shell, cx)))
+        .groups(
+            rows.grouped()
+                .then(|| grid_groups(rows.clone(), scale, shell, cx)),
+        )
         .track_scroll(self.scroll.clone())
         .size_full()
         .px_1();
         let marquee = crate::elements::marquee::Marquee {
             pane,
             shell: cx.weak_entity(),
-            source: crate::elements::marquee::Source::Grid(self.scroll.clone()),
-            count,
+            source: crate::elements::marquee::Source::Grid(self.scroll.clone(), rows),
+            count: entries,
             scroll: self.scroll.0.borrow().base_handle.clone(),
             drag: shell.marquee.clone(),
         };
@@ -945,19 +1164,23 @@ impl PaneView for GridView {
     }
 
     fn scroll_to(&mut self, ix: usize) {
-        self.scroll.scroll_to_item(ix);
+        self.scroll.scroll_to_item(self.drawn.tile_of(ix));
     }
 
     fn scroll_to_middle(&mut self, ix: usize) {
-        self.scroll.scroll_to_item_middle(ix);
+        self.scroll.scroll_to_item_middle(self.drawn.tile_of(ix));
     }
 
+    /// The entry at the top: what arrives there told by the entry after it.
     fn scroll_anchor(&self) -> Option<(usize, f32)> {
-        Some(self.scroll.anchor())
+        let (tile, within) = self.scroll.anchor();
+        let entry = self.drawn.entry_of_tile(tile).unwrap_or(tile);
+        Some((entry, within))
     }
 
-    fn restore_anchor(&mut self, anchor: (usize, f32)) {
-        self.scroll.scroll_to_anchor(anchor);
+    fn restore_anchor(&mut self, (ix, within): (usize, f32)) {
+        self.scroll
+            .scroll_to_anchor((self.drawn.tile_of(ix), within));
     }
 
     /// Up and Down go to the tile drawn over or under the cursor, in its
@@ -986,11 +1209,7 @@ impl PaneView for GridView {
         let slots = self.scroll.slots();
         let mut at = cursor;
         for _ in 0..steps.unsigned_abs() {
-            let next = if steps < 0 {
-                slots.above(at)
-            } else {
-                slots.below(at)
-            };
+            let next = self.tile_step(&slots, at, steps < 0);
             match next {
                 Some(next) => at = next,
                 // Past the first row or the last: to the order's end.
@@ -1029,7 +1248,7 @@ impl PaneView for GridView {
                 }
                 if n + 1 < spans.len() {
                     shell.stop_on_heading(n + 1, cx);
-                    self.scroll.scroll_to_item(spans[n + 1].start);
+                    self.scroll.scroll_to_item(rows.tile_of(spans[n + 1].start));
                 }
                 true
             }
@@ -1065,11 +1284,7 @@ impl PaneView for GridView {
                     return false;
                 };
                 let slots = self.scroll.slots();
-                let next = if nav == Nav::Up {
-                    slots.above(ix)
-                } else {
-                    slots.below(ix)
-                };
+                let next = self.tile_step(&slots, ix, nav == Nav::Up);
                 // Within its group, as the tiles go.
                 if next.and_then(|next| rows.group_of(next)) == Some(group) {
                     return false;
@@ -1083,7 +1298,7 @@ impl PaneView for GridView {
                     Some(to) => {
                         shell.stop_on_heading(to, cx);
                         if spans[to].len > 0 {
-                            self.scroll.scroll_to_item(spans[to].start);
+                            self.scroll.scroll_to_item(rows.tile_of(spans[to].start));
                         }
                         true
                     }

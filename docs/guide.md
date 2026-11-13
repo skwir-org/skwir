@@ -88,6 +88,15 @@ work where the keyboard is, by topic.
   middle of a large file from a slow server; meanwhile its card says
   "Stopping…" while it takes back what it left half done.
   `skwir cmd running` says the same of what runs.
+- **Where a copy lands.** What a copy, a move to another drive, an
+  extraction or a restore brings into the folder shown appears there
+  before it lands, where it will be in the folder's order and groups:
+  dimmed, a tint behind it growing as it comes, and a pill saying how far
+  ("42 %", "waiting", "paused"). Pointing at it says where it comes from
+  and how long is left; a click opens its action in Activity. It is never
+  selected, and the keys go past it; once it lands, its real row takes its
+  place. A folder merged into one already there shows the same tint and
+  pill on its own row. In the list, the tree and the grid.
 - **Toasts** say what was done ("Moved “a.txt” to Trash"), one at a
   time, with Undo; a long action says how much it moved in how long
   ("30.0 MB in 17 s").

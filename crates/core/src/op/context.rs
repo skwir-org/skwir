@@ -573,6 +573,27 @@ impl Meter {
         }
     }
 
+    /// How far its steps are, for what it brings into a folder (ADR-135):
+    /// the steps ended, the bytes of the one under way, as `reading` counts
+    /// them (what a batch counted for the steps after it left out), and
+    /// the steps a batch finished ahead of their turn. Reads no clock and
+    /// moves nothing a reading keeps.
+    pub(super) fn steps_read(&self) -> super::arriving::StepsRead {
+        let steps = *self.steps.lock();
+        let done = self
+            .done
+            .load(Ordering::Relaxed)
+            .saturating_add(self.arriving.load(Ordering::Relaxed));
+        let total = self.total.load(Ordering::Relaxed);
+        let counted = total.saturating_sub(steps.total);
+        super::arriving::StepsRead {
+            ended: steps.ended,
+            step_done: done.saturating_sub(steps.done),
+            step_total: counted.saturating_sub(steps.others.min(counted)),
+            ahead: self.finished_ahead.lock().iter().copied().collect(),
+        }
+    }
+
     /// What the window and the `running` command show of the plan: how far
     /// it went, how fast it goes, and how long it has left (ADR-113).
     pub(super) fn reading(&self, paused: bool) -> Reading {

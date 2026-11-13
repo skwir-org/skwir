@@ -977,12 +977,43 @@ grid, as most file managers do; a folder remembers the list or grid it
 is shown in too, never in place of the columns, the tree or a lens; each
 column of the columns is in its own folder's order.
 
+## Where a copy lands (ADR-135, 2026-11-13)
+
+Asked by the user again (set aside on 2026-11-03 for the strip alone):
+the files a paste, an extraction or a transfer brings, seen in the folder
+they go to before they land, without taxing it. Using the copies'
+staging folders as the cue was weighed and set aside (named apart from
+where each lands, nothing while a copy waits, no share known); the
+executor says it instead, from memory (`Executor::arriving_in`). The
+user chose: in place, where each will land in the pane's order and
+groups; a tint behind it to how far it came; a press opening its card
+in Activity. Built: core's `op::arriving` (each plan's items as asked,
+then as it runs, its sources stat-ed once on a worker, its states from
+the meter), `Listing::standing` and `Pane::stands` (placed among the
+order's ranks, in its group, not where the pane would not show it); the
+shell's `RowMap` holding what arrives as rows and tiles that are no
+position (`Row::Arriving`, `Tile::Arriving`), the list, the tree and the
+grid drawing it (`views::arriving`), an entry already there (a merge)
+drawn with its share, `ui.activity` with `plan`. Checks in
+`docs/STATUS-LOG.md` (2026-11-13).
+
 ## What is left
 
 Gathered on 2026-10-20 from the notes of this plan and of
 `docs/STATUS-LOG.md`, each as recorded on the date it gives. Later work
 may have covered one: check the source before starting it. Work that
 closes an item removes its line; work that leaves one adds it here.
+
+**Where a copy lands** (ADR-135, 2026-11-13): built on Linux, the list,
+the tree and the grid. Kept for later by the user: the columns and the
+board draw nothing arriving; grouped, an item whose group holds no file
+yet stands after every group; a filter's term that needs what is not
+read of a file yet (its tags) leaves its placeholder out; sorted by
+Created or Accessed, a file may move as it lands; a mark on what other
+programs write (a download, a `cp`: the watcher's writes, no share).
+Also left: only the pane's own folder, not one opened in place; undos
+and redos show nothing; a server's batch fills an item at once. Windows
+and macOS not compiled for it yet (`check-cross`).
 
 **History and the files' Git state** (ADR-133, ADR-134, 2026-11-13):
 built on Linux, renames followed in a file's history and the files'

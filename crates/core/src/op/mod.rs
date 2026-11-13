@@ -7,6 +7,7 @@
 //! each step checks whether it is already done before acting.
 
 pub mod access;
+pub mod arriving;
 mod builtin;
 pub mod clash;
 mod context;

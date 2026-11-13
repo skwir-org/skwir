@@ -16368,3 +16368,58 @@ grouping tests, 18); clippy on them; `just check-cross` (Windows and
 macOS, the helper included: its first build for either); `just deny`;
 `just notices` made again (five crates more). The helper, stripped,
 release profile: 2.51 MB at 9b8f5366, 2.89 MB now.
+
+## 2026-11-13: where a copy lands (ADR-135)
+
+**Built** (the user's answers: in place, a tint behind the row, a press
+opening the action's card). Core: `op::arriving` (`Arrival`, `Arrives`,
+`Arriving`; an index the executor keeps by plan and by folder, noted in
+`enqueue_in`, read on a worker in the lane of the first step's source,
+read again from the plan as it runs in `run_execute`, let go of in
+`Ended`, said of no more once cancelled), `Meter::steps_read`,
+`Executor::arriving_in`; `Listing::standing` (the order's ranks searched
+for an entry not held, as `place` does); `Pane::stands` and
+`Pane::listed_order`. The shell: `RowMap::arriving` (`Row::Arriving`,
+`Tile::Arriving`, `Placed`; the rows that are no entry kept as one sorted
+list with the headings, a grid's tiles beside them, every question a
+search), `ListState::sync_arriving` (each sync: what lasted
+`SHOWN_AFTER`, placed again only when the order, its groups or what
+arrives change; a timer for the next due), `views::arriving` (look,
+pill, tint, tooltip, press, what a screen reader hears), the list's and
+the grid's rows and tiles of it, an entry already listed drawn with its
+share (`arriving_on`), the grid in tiles (`GridView::drawn`, `tile_step`,
+`measure_tiles`), the marquee and the board on the new rows,
+`ui.activity` with `plan` (`Shell::show_activity_of`).
+
+**Not measured:** what placing costs on a large folder (a search among
+the ranks for each item, again at each change of the order); what ten
+thousand items pasted at once keep and redraw.
+
+**Checked:** unit tests: an item's state from its plan's steps
+(waiting, starting, a share by bytes and by steps, whole ahead, landed);
+the executor saying what a plan running and two waiting bring into a
+folder, in the order asked, nothing of the folder above, one cancelled
+gone at once, each gone as its run ends (Gate steps); `Listing::standing`
+by name folders first and by size, one not sized last; `RowMap` with
+what arrives flat, grouped (in its group, at its group's end, after every
+group) and in a folded group (not drawn), rows and tiles. An integration
+test (`core/tests/arriving.rs`): a real copy of a file and a folder held
+behind a step of the test's own, each read from its source (3000 bytes, a
+folder), standing between `a.txt` and `z.txt` and first among folders,
+left out by a filter that does not keep it, gone once landed. On Xvfb,
+2.9 GB copied from tmpfs into a folder on the disk and paused: the grid
+and the list showed the three items where they land (the folder first,
+the files by name), dimmed, the pill "paused", the tint at the share
+reached; the tooltip "From skwir-arrive-src · paused"; a press gave the
+keyboard to the card's Resume in Activity standing, nothing selected;
+resumed, "54 %" and its tint, "waiting" for the next, each landing where
+its placeholder stood, nothing moving. Grouped by kind: each in its group,
+an Ogg file with no audio group yet after every group; Down from Music
+went past a placeholder to `letter.pdf`, Up from it to the Documents
+heading; the grid grouped alike. Cancel took every placeholder away at
+once. A folder merged into its namesake: the existing row tinted by its
+steps (4 of 5, 89 %) with its pill, not dimmed. The tests of core and
+the shell, 1,435: the text sizes' table failed once (the tiles' names
+wrapped at a size written twice), fixed by one wrapper for them, its
+exception gone from the table. Clippy on core and the shell. Not run:
+`just test` whole, `just check-cross`, `just a11y-check`.

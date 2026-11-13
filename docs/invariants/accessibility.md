@@ -126,6 +126,12 @@ like `AGENTS.md`.
   group is unfolded (`aria_expanded`), which AccessKit's AT-SPI adapter
   (0.19) passes on for no element: on Linux a fold is heard as its
   entries gone, the heading and its count kept (`just a11y-check`).
+- **What arrives is counted out too** (ADR-135): what a plan brings that
+  has not landed is a `ListBoxOption` disabled among the rows
+  (`views::arriving::expose`), named by its name there and described by
+  how far it has come ("arriving, 42 %", "arriving, waiting"); never an
+  option the keys reach nor one selected, and no position, so the
+  entries' positions and count stay theirs.
 - **Position and count follow AccessKit, not the web**: an item's
   `aria_position_in_set` counts from 0, and the count is
   `aria_size_of_set` on the container. gpui's example puts both on the
@@ -153,7 +159,7 @@ like `AGENTS.md`.
 | Place | Role | Name |
 | --- | --- | --- |
 | window | frame | "‹location› — skwir" |
-| list and grid | list box of options; grouped, a heading for each group among them | the location; a heading its group and count ("Today, 3 items"), a group's first option described by them too |
+| list and grid | list box of options; grouped, a heading for each group among them; what a plan brings and has not landed, an option disabled among them (ADR-135) | the location; a heading its group and count ("Today, 3 items"), a group's first option described by them too; what arrives its name, described by how far it has come |
 | tree | tree of items | the location |
 | columns, board | group of list boxes | the location; each column its folder |
 | an empty or failed pane | group, described by its placeholder | the location |

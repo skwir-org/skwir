@@ -17,23 +17,54 @@ use skwir_core::grouping::Span;
 use crate::sizes::{Scale, TextSizes};
 use crate::theme::Theme;
 
-/// What a row of a view that groups is.
+/// What a row of a view is: a group's heading, an entry, or what a plan
+/// brings that has not landed (ADR-135). Only an entry has a position.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Row {
     /// The heading of the `n`th group.
     Heading(usize),
     /// The entry at this position of the order.
     Entry(usize),
+    /// The `n`th of what arrives, as the view was given them.
+    Arriving(usize),
+}
+
+/// What a tile of a grid is: an entry, or what arrives (a grid's headings
+/// are lines of their own, no tile).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Tile {
+    Entry(usize),
+    Arriving(usize),
+}
+
+/// Where what a plan brings is drawn (ADR-135): before the entry at `at`
+/// in the order (after the last at its length), in group `group` where
+/// the view groups; in no group shown, after every group.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Placed {
+    pub at: usize,
+    pub group: Option<usize>,
 }
 
 /// Where each row of a view is in the order it draws: the entries of each
-/// group under its heading. Not grouped, row and position are one.
-/// Every question is a search among the groups, never a walk of the rows.
+/// group under its heading, and what arrives among them where it will
+/// land. Neither grouped nor arriving, row and position are one. Every
+/// question is a search among the rows that are no entry, never a walk of
+/// the rows.
 #[derive(Clone, Debug, Default)]
 pub struct RowMap {
     /// Empty while not grouped.
     spans: Arc<[Span]>,
     entries: usize,
+    /// The rows that are no entry, in the order drawn, each with its row.
+    extras: Arc<[(usize, Row)]>,
+    /// The row of each group's heading.
+    headings: Arc<[usize]>,
+    /// The tiles of a grid that are no entry, in order: each tile, and
+    /// which of what arrives it is.
+    tiles: Arc<[(usize, usize)]>,
+    /// How many tiles each group holds, what arrives in it among them.
+    lens: Arc<[usize]>,
 }
 
 impl RowMap {
@@ -42,43 +73,127 @@ impl RowMap {
     /// order and groups read apart), group nothing. A folded group's span
     /// holds none of them (ADR-131, 2): its heading, with its count.
     pub fn new(spans: Arc<[Span]>, entries: usize) -> Self {
+        Self::arriving(spans, entries, &[])
+    }
+
+    /// `new`, with what arrives placed as `arriving` says (ADR-135): in
+    /// its group before the entry it goes before, or at the group's end
+    /// for one past it; after every group, in none shown; in a folded
+    /// group, not drawn. Those that go before the same entry in the order
+    /// given.
+    pub fn arriving(spans: Arc<[Span]>, entries: usize, arriving: &[Placed]) -> Self {
         let mut at = 0;
         let whole = spans.iter().all(|span| {
             let follows = span.start == at && (span.len > 0 || span.count > 0);
             at += span.len;
             follows
         }) && at == entries;
+        let spans: Arc<[Span]> = if whole { spans } else { Arc::from([]) };
+        let grouped = !spans.is_empty();
+        // Each in a group shown, or none (`usize::MAX`, after them all).
+        let group_of = |placed: &Placed| match placed.group {
+            Some(n) if n < spans.len() => Some(n),
+            _ => None,
+        };
+        let mut order: Vec<usize> = (0..arriving.len())
+            .filter(|&i| !grouped || group_of(&arriving[i]).is_none_or(|n| spans[n].len > 0))
+            .collect();
+        order.sort_by_key(|&i| {
+            let placed = &arriving[i];
+            let group = if grouped {
+                group_of(placed).unwrap_or(usize::MAX)
+            } else {
+                0
+            };
+            (group, placed.at.min(entries), i)
+        });
+        let mut extras = Vec::with_capacity(spans.len() + order.len());
+        let mut headings = Vec::with_capacity(spans.len());
+        let mut tiles = Vec::with_capacity(order.len());
+        let mut lens = Vec::with_capacity(spans.len());
+        // The rows, and the tiles, before the next that is no entry.
+        let (mut rows_before, mut tiles_before) = (0, 0);
+        let mut next = 0;
+        if grouped {
+            for (n, span) in spans.iter().enumerate() {
+                headings.push(span.start + rows_before);
+                extras.push((span.start + rows_before, Row::Heading(n)));
+                rows_before += 1;
+                let mut len = span.len;
+                while let Some(&i) = order.get(next)
+                    && group_of(&arriving[i]) == Some(n)
+                {
+                    let at = arriving[i].at.clamp(span.start, span.start + span.len);
+                    extras.push((at + rows_before, Row::Arriving(i)));
+                    tiles.push((at + tiles_before, i));
+                    rows_before += 1;
+                    tiles_before += 1;
+                    len += 1;
+                    next += 1;
+                }
+                lens.push(len);
+            }
+        }
+        // Not grouped, each where it lands; grouped, those in no group
+        // shown, after them all, in the last group's tiles.
+        for &i in &order[next..] {
+            let at = if grouped {
+                entries
+            } else {
+                arriving[i].at.min(entries)
+            };
+            extras.push((at + rows_before, Row::Arriving(i)));
+            tiles.push((at + tiles_before, i));
+            rows_before += 1;
+            tiles_before += 1;
+            if let Some(last) = lens.last_mut() {
+                *last += 1;
+            }
+        }
         RowMap {
-            spans: if whole { spans } else { Arc::from([]) },
+            spans,
             entries,
+            extras: extras.into(),
+            headings: headings.into(),
+            tiles: tiles.into(),
+            lens: lens.into(),
         }
     }
 
     /// An order of `entries` not grouped.
     pub fn flat(entries: usize) -> Self {
-        RowMap {
-            spans: Arc::from([]),
-            entries,
-        }
+        Self::new(Arc::from([]), entries)
     }
 
     pub fn grouped(&self) -> bool {
         !self.spans.is_empty()
     }
 
-    /// Which groups these are, for what is laid out from them to be kept
-    /// while they are the same: the groups of another order are another
+    /// Whether each row is its entry: nothing grouped, nothing arriving.
+    pub fn plain(&self) -> bool {
+        self.extras.is_empty()
+    }
+
+    /// Whether something arrives among the rows.
+    pub fn arrives(&self) -> bool {
+        !self.tiles.is_empty()
+    }
+
+    /// Which rows these are, for what is laid out from them to be kept
+    /// while they are the same: the rows of another order are another
     /// list of them.
-    pub fn key(&self) -> (usize, usize) {
+    pub fn key(&self) -> (usize, usize, usize) {
         (
             Arc::as_ptr(&self.spans).cast::<()>().addr(),
-            self.spans.len(),
+            Arc::as_ptr(&self.extras).cast::<()>().addr(),
+            self.extras.len(),
         )
     }
 
-    /// How many rows there are: the entries and the headings.
+    /// How many rows there are: the entries, the headings and what
+    /// arrives.
     pub fn len(&self) -> usize {
-        self.entries + self.spans.len()
+        self.entries + self.extras.len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -91,26 +206,31 @@ impl RowMap {
 
     /// The row of group `n`'s heading.
     pub fn heading_row(&self, n: usize) -> usize {
-        self.spans[n].start + n
+        self.headings[n]
     }
 
-    /// The group whose heading or entries `row` is, the last whose
-    /// heading is not below it.
+    /// The group whose heading or rows `row` is, the last whose heading is
+    /// not below it.
     pub fn group_at(&self, row: usize) -> Option<usize> {
         if self.spans.is_empty() || row >= self.len() {
             return None;
         }
-        // Headings' rows grow with their group: the last at or above.
-        let (mut lo, mut hi) = (0, self.spans.len());
-        while hi - lo > 1 {
-            let mid = lo + (hi - lo) / 2;
-            if self.heading_row(mid) <= row {
-                lo = mid;
-            } else {
-                hi = mid;
-            }
-        }
-        Some(lo)
+        Some(
+            self.headings
+                .partition_point(|heading| *heading <= row)
+                .saturating_sub(1),
+        )
+    }
+
+    /// Where `row` is among the rows that are no entry: `Ok` the one it
+    /// is, else how many are above it.
+    fn extra_at(&self, row: usize) -> Result<usize, usize> {
+        self.extras.binary_search_by_key(&row, |(at, _)| *at)
+    }
+
+    /// How many entries are above the `k`th row that is no entry.
+    fn entries_above(&self, k: usize) -> usize {
+        self.extras[k].0 - k
     }
 
     /// What `row` is.
@@ -118,15 +238,10 @@ impl RowMap {
         if row >= self.len() {
             return None;
         }
-        let Some(n) = self.group_at(row) else {
-            return Some(Row::Entry(row));
-        };
-        if row == self.heading_row(n) {
-            Some(Row::Heading(n))
-        } else {
-            // Above it, the headings of the groups up to its own.
-            Some(Row::Entry(row - n - 1))
-        }
+        Some(match self.extra_at(row) {
+            Ok(k) => self.extras[k].1,
+            Err(above) => Row::Entry(row - above),
+        })
     }
 
     /// The group the entry at `position` is in.
@@ -141,20 +256,31 @@ impl RowMap {
         )
     }
 
-    /// The row of the entry at `position`.
+    /// The row of the entry at `position`: after every row that is no
+    /// entry with no more entries above it.
     pub fn row_of(&self, position: usize) -> usize {
-        match self.group_of(position) {
-            Some(n) => position + n + 1,
-            None => position,
+        let (mut lo, mut hi) = (0, self.extras.len());
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            if self.entries_above(mid) <= position {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
         }
+        position + lo
     }
 
     /// The first entry at `row` or below it (a heading's, its group's
-    /// first, or a folded group's the next shown), none past the last.
+    /// first, or a folded group's the next shown; what arrives, the entry
+    /// it goes before), none past the last.
     pub fn entry_from(&self, row: usize) -> Option<usize> {
-        match self.at(row)? {
-            Row::Entry(position) => Some(position),
-            Row::Heading(n) => Some(self.spans[n].start).filter(|at| *at < self.entries),
+        if row >= self.len() {
+            return None;
+        }
+        match self.extra_at(row) {
+            Ok(k) => Some(self.entries_above(k)).filter(|at| *at < self.entries),
+            Err(above) => Some(row - above),
         }
     }
 
@@ -170,25 +296,25 @@ impl RowMap {
             return 0..0;
         }
         let start = self.entry_from(rows.start).unwrap_or(self.entries);
-        let end = match self.at(rows.end - 1) {
-            Some(Row::Entry(position)) => position + 1,
-            Some(Row::Heading(n)) => self.spans[n].start,
-            None => self.entries,
-        };
+        let above_end = self.extras.partition_point(|(at, _)| *at < rows.end);
+        let end = rows.end - above_end;
         start..end.max(start)
     }
 
     /// The entry at the top of a view scrolled to `offset` (pixels down)
     /// over rows `height` tall, and how far above the view begins from
-    /// that entry's row: a heading at the top is told by a negative
-    /// distance, so that the view comes back to it.
+    /// that entry's row: a heading, or what arrives, at the top is told by
+    /// a negative distance, so that the view comes back to it.
     pub fn anchor(&self, offset: f32, height: f32) -> Option<(usize, f32)> {
         let row = (offset.max(0.) / height).floor() as usize;
         let within = offset.max(0.) - row as f32 * height;
-        match self.at(row)? {
-            Row::Entry(position) => Some((position, within)),
-            Row::Heading(n) => Some((
-                self.spans[n].start.min(self.entries.saturating_sub(1)),
+        if row >= self.len() {
+            return None;
+        }
+        match self.extra_at(row) {
+            Err(above) => Some((row - above, within)),
+            Ok(k) => Some((
+                self.entries_above(k).min(self.entries.saturating_sub(1)),
                 within - height,
             )),
         }
@@ -198,6 +324,65 @@ impl RowMap {
     pub fn offset_of(&self, (position, within): (usize, f32), height: f32) -> f32 {
         let position = position.min(self.entries.saturating_sub(1));
         (self.row_of(position) as f32 * height + within.clamp(-height, height - 1.)).max(0.)
+    }
+
+    /// How many tiles a grid draws: the entries and what arrives.
+    pub fn tiles(&self) -> usize {
+        self.entries + self.tiles.len()
+    }
+
+    /// How many tiles each group holds, in a grid that groups.
+    pub fn tile_lens(&self) -> &[usize] {
+        &self.lens
+    }
+
+    /// What tile `tile` is.
+    pub fn at_tile(&self, tile: usize) -> Option<Tile> {
+        if tile >= self.tiles() {
+            return None;
+        }
+        Some(
+            match self.tiles.binary_search_by_key(&tile, |(at, _)| *at) {
+                Ok(k) => Tile::Arriving(self.tiles[k].1),
+                Err(above) => Tile::Entry(tile - above),
+            },
+        )
+    }
+
+    /// The tile of the entry at `position`.
+    pub fn tile_of(&self, position: usize) -> usize {
+        let (mut lo, mut hi) = (0, self.tiles.len());
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            if self.tiles[mid].0 - mid <= position {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        position + lo
+    }
+
+    /// The positions of the entries among `tiles`.
+    pub fn entries_in_tiles(&self, tiles: Range<usize>) -> Range<usize> {
+        let tiles = tiles.start.min(self.tiles())..tiles.end.min(self.tiles());
+        if tiles.is_empty() {
+            return 0..0;
+        }
+        let before = |tile: usize| tile - self.tiles.partition_point(|(at, _)| *at < tile);
+        before(tiles.start)..before(tiles.end)
+    }
+
+    /// The entry at tile `tile`, or the first after it where it is what
+    /// arrives (`None` past the last).
+    pub fn entry_of_tile(&self, tile: usize) -> Option<usize> {
+        match self.at_tile(tile)? {
+            Tile::Entry(position) => Some(position),
+            Tile::Arriving(_) => {
+                let above = self.tiles.partition_point(|(at, _)| *at < tile);
+                Some(tile - above).filter(|at| *at < self.entries)
+            }
+        }
     }
 }
 
@@ -609,6 +794,106 @@ mod tests {
         assert_eq!(last.anchor(3. * 20., 20.).map(|a| a.0), Some(1));
         // A span of nothing that counts nothing is no group.
         assert!(!RowMap::new(Arc::from([span(0, 2), span(2, 0)]), 2).grouped());
+    }
+
+    fn placed(at: usize, group: Option<usize>) -> Placed {
+        Placed { at, group }
+    }
+
+    /// What arrives is a row before the entry it goes before, those before
+    /// the same entry in the order given, one past the last at the end; a
+    /// tile alike: rows 0 e0, 1 A0, 2 A2, 3 e1, 4 e2, 5 e3, 6 A1.
+    #[test]
+    fn what_arrives_is_a_row_and_a_tile_where_it_lands() {
+        let rows = RowMap::arriving(
+            Arc::from([]),
+            4,
+            &[placed(1, None), placed(4, None), placed(1, None)],
+        );
+        assert!(!rows.plain() && rows.arrives() && !rows.grouped());
+        assert_eq!(rows.len(), 7);
+        let all: Vec<Row> = (0..7).map(|r| rows.at(r).unwrap()).collect();
+        assert_eq!(
+            all,
+            [
+                Row::Entry(0),
+                Row::Arriving(0),
+                Row::Arriving(2),
+                Row::Entry(1),
+                Row::Entry(2),
+                Row::Entry(3),
+                Row::Arriving(1),
+            ]
+        );
+        for position in 0..4 {
+            assert_eq!(rows.at(rows.row_of(position)), Some(Row::Entry(position)));
+            assert_eq!(
+                rows.at_tile(rows.tile_of(position)),
+                Some(Tile::Entry(position))
+            );
+        }
+        assert_eq!(rows.entry_from(1), Some(1), "the entry it goes before");
+        assert_eq!(rows.entry_from(6), None, "none after the last");
+        assert_eq!(rows.entries_in(0..3), 0..1);
+        assert_eq!(rows.entries_in(2..6), 1..4);
+        assert_eq!(rows.tiles(), 7);
+        assert_eq!(rows.at_tile(2), Some(Tile::Arriving(2)));
+        assert_eq!(rows.entries_in_tiles(1..4), 1..2);
+        assert_eq!(rows.entry_of_tile(1), Some(1));
+        // Nothing arriving: as before.
+        assert!(RowMap::arriving(Arc::from([]), 4, &[]).plain());
+    }
+
+    /// Grouped, what arrives is in its group, before its entry or at its
+    /// end, and in none shown after them all; a grid's tiles count it in
+    /// its group: rows 0 H, 1 e0, 2 A0, 3 e1, 4 H, 5 e2, 6 A1, 7 H, 8 e3,
+    /// 9 e4, 10 e5, 11 A2.
+    #[test]
+    fn grouped_what_arrives_is_in_its_group() {
+        let rows = RowMap::arriving(
+            Arc::from([span(0, 2), span(2, 1), span(3, 3)]),
+            6,
+            &[placed(1, Some(0)), placed(3, Some(1)), placed(0, None)],
+        );
+        assert_eq!(rows.len(), 12);
+        assert_eq!(rows.at(2), Some(Row::Arriving(0)));
+        assert_eq!(rows.at(4), Some(Row::Heading(1)));
+        assert_eq!(rows.at(6), Some(Row::Arriving(1)), "its group's end");
+        assert_eq!(rows.at(7), Some(Row::Heading(2)));
+        assert_eq!(rows.at(11), Some(Row::Arriving(2)), "after every group");
+        assert_eq!(rows.heading_row(2), 7);
+        assert_eq!(rows.row_of(2), 5);
+        assert_eq!(rows.row_of(5), 10);
+        assert_eq!(rows.group_at(6), Some(1));
+        assert_eq!(rows.entry_from(6), Some(3));
+        assert_eq!(rows.entries_in(4..8), 2..3);
+        assert_eq!(rows.tile_lens(), [3, 2, 4]);
+        assert_eq!(rows.at_tile(4), Some(Tile::Arriving(1)));
+        assert_eq!(rows.tile_of(3), 5);
+        assert_eq!(rows.entries_in_tiles(0..5), 0..3);
+        // A view scrolled to what arrives comes back to the entry after it.
+        let h = 20.;
+        assert_eq!(rows.anchor(2. * h + 3., h).map(|a| a.0), Some(1));
+    }
+
+    /// What arrives in a folded group is not drawn: its heading alone.
+    #[test]
+    fn what_arrives_in_a_folded_group_is_not_drawn() {
+        let folded = Span {
+            start: 2,
+            len: 0,
+            count: 3,
+            group: None,
+        };
+        let rows = RowMap::arriving(
+            Arc::from([span(0, 2), folded]),
+            2,
+            &[placed(2, Some(1)), placed(1, Some(0))],
+        );
+        assert_eq!(rows.len(), 5);
+        assert_eq!(rows.at(2), Some(Row::Arriving(1)));
+        assert_eq!(rows.at(4), Some(Row::Heading(1)));
+        assert_eq!(rows.tile_lens(), [3, 0]);
     }
 
     #[test]

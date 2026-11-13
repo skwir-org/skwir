@@ -433,7 +433,6 @@ mod tests {
         ("elements/treemap.rs", "px(self.size)", 1, NAMED_ABOVE),
         ("elements/treemap.rs", "px(size)", 1, NAMED_ABOVE),
         ("nav_menu.rs", "size", 1, NAMED_ABOVE),
-        ("views/grid.rs", "font_size", 1, NAMED_ABOVE),
     ];
 
     /// `text`'s code without its comments, what its strings hold and its

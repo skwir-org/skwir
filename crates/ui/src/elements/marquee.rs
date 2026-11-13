@@ -23,7 +23,7 @@ use crate::elements::uniform_grid::UniformGridScrollHandle;
 use crate::elements::uniform_grid::math::Slots;
 use crate::shell::Shell;
 use crate::theme::Theme;
-use crate::views::groups::{Row, RowMap};
+use crate::views::groups::{Row, RowMap, Tile};
 
 /// Where a view puts its entries, in content coordinates (origin at the top
 /// left of the scrolled content).
@@ -33,8 +33,13 @@ pub enum Geometry {
     /// (`RowMap`).
     Rows { height: f32, rows: RowMap },
     /// A grid's tiles, placed from `origin` (the grid's border and
-    /// padding). The gutters between them are empty: a band can begin there.
-    Cells { slots: Slots, origin: (f32, f32) },
+    /// padding), each an entry or what arrives (`rows`). The gutters
+    /// between them are empty: a band can begin there.
+    Cells {
+        slots: Slots,
+        origin: (f32, f32),
+        rows: RowMap,
+    },
 }
 
 impl Geometry {
@@ -48,9 +53,16 @@ impl Geometry {
         let index = match self {
             Geometry::Rows { height, rows } => match rows.at((y / *height) as usize)? {
                 Row::Entry(index) => index,
-                Row::Heading(_) => return None,
+                Row::Heading(_) | Row::Arriving(_) => return None,
             },
-            Geometry::Cells { slots, origin } => slots.tile_at(x - origin.0, y - origin.1)?,
+            Geometry::Cells {
+                slots,
+                origin,
+                rows,
+            } => match rows.at_tile(slots.tile_at(x - origin.0, y - origin.1)?)? {
+                Tile::Entry(index) => index,
+                Tile::Arriving(_) => return None,
+            },
         };
         (index < count).then_some(index)
     }
@@ -62,7 +74,21 @@ impl Geometry {
             Geometry::Rows { height, rows } if x >= 0. && y >= 0. => {
                 rows.at((y / *height) as usize).is_some()
             }
-            Geometry::Cells { slots, origin } if slots.heading_at(y - origin.1).is_some() => true,
+            Geometry::Cells { slots, origin, .. } if slots.heading_at(y - origin.1).is_some() => {
+                true
+            }
+            // What arrives answers its own press: no band begins on it.
+            Geometry::Cells {
+                slots,
+                origin,
+                rows,
+            } if slots
+                .tile_at(x - origin.0, y - origin.1)
+                .and_then(|tile| rows.at_tile(tile))
+                .is_some_and(|tile| matches!(tile, Tile::Arriving(_))) =>
+            {
+                true
+            }
             _ => self.item_at(x, y, count).is_some(),
         }
     }
@@ -80,12 +106,21 @@ impl Geometry {
                 .entries_in((y0 / height) as usize..(y1 / height) as usize + 1)
                 .filter(|index| *index < count)
                 .collect(),
-            Geometry::Cells { slots, origin } => slots
+            // The entries among the tiles touched: never what arrives.
+            Geometry::Cells {
+                slots,
+                origin,
+                rows,
+            } => slots
                 .covered(
                     (x0 - origin.0, x1 - origin.0),
                     (y0 - origin.1, y1 - origin.1),
                 )
                 .into_iter()
+                .filter_map(|tile| match rows.at_tile(tile)? {
+                    Tile::Entry(index) => Some(index),
+                    Tile::Arriving(_) => None,
+                })
                 .filter(|index| *index < count)
                 .collect(),
         }
@@ -149,7 +184,7 @@ pub(crate) fn band_change(
 /// frame's, never the last one's.
 pub enum Source {
     Rows { height: f32, rows: RowMap },
-    Grid(UniformGridScrollHandle),
+    Grid(UniformGridScrollHandle, RowMap),
 }
 
 impl Source {
@@ -159,9 +194,10 @@ impl Source {
                 height: *height,
                 rows: rows.clone(),
             },
-            Source::Grid(grid) => Geometry::Cells {
+            Source::Grid(grid, rows) => Geometry::Cells {
                 slots: grid.slots(),
                 origin: grid.origin(),
+                rows: rows.clone(),
             },
         }
     }
@@ -385,6 +421,7 @@ mod tests {
         let cells = Geometry::Cells {
             slots: Slots::new(Columns::fit(464., 100., 16., 40.), 16., 10, |_| 120.),
             origin: (4., 0.),
+            rows: RowMap::flat(10),
         };
         assert_eq!(cells.item_at(130., 150., 10), Some(5));
         assert_eq!(cells.item_at(124., 150., 10), None, "in the gutter");

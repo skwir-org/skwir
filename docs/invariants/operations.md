@@ -196,6 +196,19 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   what it held: its staging folders removed (its context dropped, a
   round trip a name on a server) before, while its card still says it
   stops. A card gone, the next plan on that server starts at once.
+- **What a plan brings into a folder** (ADR-135, `op::arriving`) is
+  the executor's to say (`Executor::arriving_in`), never read from the
+  destination nor its staging folder: noted as the plan is asked
+  (`enqueue_in`), its items read on a worker in the lane of what its
+  first step reads (each source stat-ed once, `arrivals_of`); from its
+  run's start, read again from the plan as it runs (`arrivals_run`: its
+  steps unfolded and its names settled, what was stat-ed kept), so each
+  item's steps are the meter's (`Meter::steps_read`); let go of as its
+  run ends (`Ended`), the window woken, and said of no more once its
+  token is cancelled. A plan's id names its arrivals, as its meter and
+  its events do. Only what brings something (`arriving::brought`: a
+  copy, a move to another folder, what a step makes, a restore): a
+  rename and a link are there at once.
 - A plan is told started (`ExecEvent::Started`, as asked) before its
   checks (unfolding, names taken, the dry run, room), which may read
   whole trees: Pause and Cancel reach it there (`Executor::show`), and

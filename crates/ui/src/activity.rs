@@ -431,7 +431,7 @@ pub(crate) fn announced(
 }
 
 /// `fraction` as the strip says it: "42 %", never 100 before the end.
-fn percent(fraction: f32) -> String {
+pub(crate) fn percent(fraction: f32) -> String {
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let percent = (fraction.clamp(0., 1.) * 100.).floor() as u32;
     format!("{percent} %")
@@ -604,6 +604,47 @@ impl Shell {
             self.work.borrow_mut().stopped = None;
         }
         cx.notify();
+    }
+
+    /// `ui.activity` with `plan`: Activity open, standing or as its popup,
+    /// the keyboard on that action's card (its Pause), or on its row's
+    /// Cancel while it waits, once drawn: what a press on what it brings
+    /// into a folder opens (ADR-135). Never closes it.
+    pub(crate) fn show_activity_of(
+        &mut self,
+        plan: PlanId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.activity_open() {
+            self.toggle_activity(&serde_json::json!({}), window, cx);
+        }
+        let shell = cx.weak_entity();
+        window.on_next_frame(move |window, cx| {
+            shell
+                .update(cx, |this, cx| this.focus_card(plan, window, cx))
+                .ok();
+        });
+        cx.notify();
+    }
+
+    /// The keyboard on `plan`'s card, or on its Cancel while it waits: the
+    /// card brought into view as the keyboard reaches it (`Reveal`).
+    fn focus_card(&mut self, plan: PlanId, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some((pause, _)) = self.activity.cards.get(&plan) {
+            window.focus(&pause.clone(), cx);
+            return;
+        }
+        let asked = self
+            .app
+            .executor
+            .waiting()
+            .into_iter()
+            .find(|waiting| waiting.plan == Some(plan))
+            .map(|waiting| waiting.asked);
+        if let Some(cancel) = asked.and_then(|asked| self.activity.waiting.get(&asked)) {
+            window.focus(&cancel.clone(), cx);
+        }
     }
 
     /// `ui.activity_pin`: fold Activity into the footer's strip, where it

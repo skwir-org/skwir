@@ -554,7 +554,9 @@ impl ListView {
                 self.scroll
                     .scroll_to_item_with_offset(rows.row_of(ix), ScrollStrategy::Nearest, 1);
             }
-            Some(Asked::Near(ix)) => self.scroll.scroll_to_item(ix, ScrollStrategy::Nearest),
+            Some(Asked::Near(ix)) => self
+                .scroll
+                .scroll_to_item(rows.row_of(ix), ScrollStrategy::Nearest),
             Some(Asked::Middle(ix)) => {
                 self.scroll
                     .scroll_to_item(rows.row_of(ix), ScrollStrategy::Center);
@@ -630,28 +632,7 @@ impl Shell {
         columns: PerColumn<bool>,
     ) -> Vec<RowData> {
         let mut out = Vec::with_capacity(range.len());
-        let friendly = self.prefs.friendly_dates;
-        let dated = [
-            Detail::Modified,
-            Detail::Created,
-            Detail::Accessed,
-            Detail::Taken,
-            Detail::Deleted,
-        ];
-        let now = (friendly && dated.iter().any(|detail| columns[*detail])).then(jiff::Zoned::now);
-        // A date as the column says it, and exactly for its tooltip.
-        let date = |time: Option<std::time::SystemTime>| -> Said {
-            let exact = time.map_or_else(String::new, format::time);
-            let shown = match (time, &now) {
-                (None, _) => "—".to_owned(),
-                (Some(time), Some(now)) => format::friendly_time(time, now),
-                (Some(_), None) => exact.clone(),
-            };
-            Said {
-                text: shown,
-                whole: exact,
-            }
-        };
+        let date = self.dates_said(columns);
         let app = std::sync::Arc::clone(&self.app);
         let ws = app.workspace.read();
         let Some(pane) = ws.pane(self.pane) else {
@@ -664,131 +645,225 @@ impl Shell {
             let (Some(e), Some(look)) = (pane.drawn_entry(id), self.look(pane, id, icon_px)) else {
                 continue;
             };
-            let mut row = RowData {
-                ix,
-                look,
-                expanded: e.is_dir() && pane.is_open_at(id),
-                opens: e.is_dir() && pane.opens_here(id),
-                depth: pane.depth(id),
-                said: PerColumn(std::array::from_fn(|_| Said::default())),
-                hydrated: e.metadata.is_hydrated(),
-                rating: None,
-            };
-            let value = |key: &str| e.metadata.value(key);
-            let time = |key: &str| value(key).and_then(skwir_core::Value::as_time);
-            // What its type's database says of it: a place by what it is,
-            // a folder as one, a link that leads nowhere as such.
-            let typed = |words: &str| -> Option<std::sync::Arc<str>> {
-                if e.is_place() {
-                    Some(
-                        value(keys::PLACE_KIND)
-                            .and_then(skwir_core::Value::as_str)
-                            .unwrap_or("Place")
-                            .into(),
-                    )
-                } else if e.is_dir() {
-                    Some(words.into())
-                } else if e.is_broken_link() {
-                    Some(crate::typenames::BROKEN_LINK.into())
-                } else {
-                    None
-                }
-            };
-            for column in COLUMNS.iter().filter(|column| columns[column.detail]) {
-                let said = match column.detail {
-                    Detail::Rating => {
-                        row.rating = value(keys::RATING).and_then(skwir_core::Value::as_u64);
-                        continue;
-                    }
-                    Detail::Folder if e.is_place() => continue,
-                    Detail::Folder => {
-                        // A file of the trash is from the folder it was put
-                        // there from, which restoring it puts it back in.
-                        let from = value(keys::TRASHED_FROM)
-                            .and_then(skwir_core::Value::as_str)
-                            .map(std::path::PathBuf::from);
-                        let Some(dir) =
-                            from.or_else(|| pane.path_of(id)?.parent().map(ToOwned::to_owned))
-                        else {
-                            continue;
-                        };
-                        let name = dir.file_name().map_or_else(
-                            || dir.display().to_string(),
-                            |n| n.to_string_lossy().into_owned(),
-                        );
-                        Said {
-                            text: name,
-                            whole: dir.display().to_string(),
-                        }
-                    }
-                    Detail::Size => Said::text(
-                        match value(keys::SIZE).and_then(skwir_core::Value::as_u64) {
-                            Some(s) if !e.is_dir() => format::size(s),
-                            // A place says how many files it holds.
-                            _ => match value(keys::FILES).and_then(skwir_core::Value::as_u64) {
-                                Some(n) => {
-                                    format::count(usize::try_from(n).unwrap_or(usize::MAX), "file")
-                                }
-                                None => "—".to_owned(),
-                            },
-                        },
-                    ),
-                    Detail::Dimensions => Said::text(dimensions(value(keys::DIMENSIONS))),
-                    Detail::Duration => Said::text(
-                        value(keys::DURATION)
-                            .and_then(skwir_core::Value::as_u64)
-                            .map_or_else(
-                                || "—".to_owned(),
-                                // Milliseconds, said as a player says them.
-                                |ms| crate::media::time(ms as f64 / 1000.),
-                            ),
-                    ),
-                    Detail::Modified => date(time(keys::MODIFIED)),
-                    Detail::Created => date(time(keys::CREATED)),
-                    Detail::Accessed => date(time(keys::ACCESSED)),
-                    Detail::Deleted => date(time(keys::TRASHED)),
-                    Detail::Taken => date(
-                        value(keys::TAKEN)
-                            .and_then(skwir_core::Value::as_u64)
-                            .and_then(on_the_clock),
-                    ),
-                    Detail::Type => Said::text(&*typed("Folder").unwrap_or_else(|| {
-                        // Typed only where the column shows it.
-                        skwir_platform::mime::of_entry(e)
-                            .as_ref()
-                            .and_then(|mime| self.type_names.get(mime))
-                            .unwrap_or_else(|| crate::typenames::fallback_of(e).into())
-                    })),
-                    Detail::Kind => Said::text(&*typed("Folder").unwrap_or_else(|| {
-                        skwir_platform::mime::of_entry(e)
-                            .as_ref()
-                            .and_then(|mime| self.type_names.kind(mime))
-                            .unwrap_or_else(|| "".into())
-                    })),
-                    Detail::Vcs => Said::text(
-                        skwir_core::vcs::State::of(e).map_or("", skwir_core::vcs::State::title),
-                    ),
-                    Detail::Owner => Said::text(
-                        value(keys::UID)
-                            .and_then(skwir_core::Value::as_u64)
-                            .map_or_else(
-                                || "—".to_owned(),
-                                // By its name, else its number.
-                                |uid| {
-                                    skwir_platform::users::user(uid)
-                                        .unwrap_or_else(|| uid.to_string())
-                                },
-                            ),
-                    ),
-                };
-                row.said[column.detail] = said;
-            }
+            let folder = || pane.path_of(id)?.parent().map(ToOwned::to_owned);
+            let mut row = self.row_data(e, look, ix, columns, &date, &folder);
+            row.expanded = e.is_dir() && pane.is_open_at(id);
+            row.opens = e.is_dir() && pane.opens_here(id);
+            row.depth = pane.depth(id);
             out.push(row);
         }
         drop(ws);
         self.type_names.request(&app);
         self.icons.request(&app);
         out
+    }
+
+    /// How the date columns among `columns` say a date: as the column
+    /// says it, and exactly for its tooltip.
+    pub(crate) fn dates_said(
+        &self,
+        columns: PerColumn<bool>,
+    ) -> impl Fn(Option<std::time::SystemTime>) -> Said + use<> {
+        let friendly = self.prefs.friendly_dates;
+        let dated = [
+            Detail::Modified,
+            Detail::Created,
+            Detail::Accessed,
+            Detail::Taken,
+            Detail::Deleted,
+        ];
+        let now = (friendly && dated.iter().any(|detail| columns[*detail])).then(jiff::Zoned::now);
+        move |time: Option<std::time::SystemTime>| -> Said {
+            let exact = time.map_or_else(String::new, format::time);
+            let shown = match (time, &now) {
+                (None, _) => "—".to_owned(),
+                (Some(time), Some(now)) => format::friendly_time(time, now),
+                (Some(_), None) => exact.clone(),
+            };
+            Said {
+                text: shown,
+                whole: exact,
+            }
+        }
+    }
+
+    /// The rows of what arrives among `rows` (ADR-135), by which of what
+    /// arrives each is, as `rows` (the list's columns) shows them.
+    pub(crate) fn arriving_rows(
+        &mut self,
+        rows: &RowMap,
+        range: Range<usize>,
+        icon_px: u16,
+    ) -> Vec<(usize, RowData)> {
+        let columns = self.shown_columns();
+        self.arriving_data(
+            range.filter_map(|at| match rows.at(at)? {
+                Row::Arriving(i) => Some(i),
+                _ => None,
+            }),
+            icon_px,
+            columns,
+        )
+    }
+
+    /// The rows of what arrives `which` (ADR-135), with the details of
+    /// `columns`: each as its file will be, at the top of a tree.
+    pub(crate) fn arriving_data(
+        &mut self,
+        which: impl Iterator<Item = usize>,
+        icon_px: u16,
+        columns: PerColumn<bool>,
+    ) -> Vec<(usize, RowData)> {
+        let date = self.dates_said(columns);
+        let which: Vec<(usize, skwir_core::op::arriving::Arriving)> = which
+            .filter_map(|i| Some((i, self.ui().list.arriving.get(i)?.clone())))
+            .collect();
+        let rows = which
+            .into_iter()
+            .map(|(i, arriving)| {
+                let look = self.arriving_look(&arriving, icon_px);
+                let folder = arriving.arrival.folder.clone();
+                let folder = move || Some(folder.clone());
+                let row = self.row_data(&arriving.arrival.like, look, i, columns, &date, &folder);
+                (i, row)
+            })
+            .collect();
+        let app = std::sync::Arc::clone(&self.app);
+        self.type_names.request(&app);
+        self.icons.request(&app);
+        rows
+    }
+
+    /// What row `ix` says of entry `e`, drawn as `look`: the details of
+    /// `columns`, dates as `date` says them, its folder by `folder` where
+    /// the Folder column asks. What a pane says of where it is in a tree
+    /// is the caller's.
+    pub(crate) fn row_data(
+        &mut self,
+        e: &skwir_core::Entry,
+        look: crate::views::entry::Look,
+        ix: usize,
+        columns: PerColumn<bool>,
+        date: &dyn Fn(Option<std::time::SystemTime>) -> Said,
+        folder: &dyn Fn() -> Option<std::path::PathBuf>,
+    ) -> RowData {
+        let mut row = RowData {
+            ix,
+            look,
+            expanded: false,
+            opens: false,
+            depth: 0,
+            said: PerColumn(std::array::from_fn(|_| Said::default())),
+            hydrated: e.metadata.is_hydrated(),
+            rating: None,
+        };
+        let value = |key: &str| e.metadata.value(key);
+        let time = |key: &str| value(key).and_then(skwir_core::Value::as_time);
+        // What its type's database says of it: a place by what it is,
+        // a folder as one, a link that leads nowhere as such.
+        let typed = |words: &str| -> Option<std::sync::Arc<str>> {
+            if e.is_place() {
+                Some(
+                    value(keys::PLACE_KIND)
+                        .and_then(skwir_core::Value::as_str)
+                        .unwrap_or("Place")
+                        .into(),
+                )
+            } else if e.is_dir() {
+                Some(words.into())
+            } else if e.is_broken_link() {
+                Some(crate::typenames::BROKEN_LINK.into())
+            } else {
+                None
+            }
+        };
+        for column in COLUMNS.iter().filter(|column| columns[column.detail]) {
+            let said = match column.detail {
+                Detail::Rating => {
+                    row.rating = value(keys::RATING).and_then(skwir_core::Value::as_u64);
+                    continue;
+                }
+                Detail::Folder if e.is_place() => continue,
+                Detail::Folder => {
+                    // A file of the trash is from the folder it was put
+                    // there from, which restoring it puts it back in.
+                    let from = value(keys::TRASHED_FROM)
+                        .and_then(skwir_core::Value::as_str)
+                        .map(std::path::PathBuf::from);
+                    let Some(dir) = from.or_else(folder) else {
+                        continue;
+                    };
+                    let name = dir.file_name().map_or_else(
+                        || dir.display().to_string(),
+                        |n| n.to_string_lossy().into_owned(),
+                    );
+                    Said {
+                        text: name,
+                        whole: dir.display().to_string(),
+                    }
+                }
+                Detail::Size => Said::text(
+                    match value(keys::SIZE).and_then(skwir_core::Value::as_u64) {
+                        Some(s) if !e.is_dir() => format::size(s),
+                        // A place says how many files it holds.
+                        _ => match value(keys::FILES).and_then(skwir_core::Value::as_u64) {
+                            Some(n) => {
+                                format::count(usize::try_from(n).unwrap_or(usize::MAX), "file")
+                            }
+                            None => "—".to_owned(),
+                        },
+                    },
+                ),
+                Detail::Dimensions => Said::text(dimensions(value(keys::DIMENSIONS))),
+                Detail::Duration => Said::text(
+                    value(keys::DURATION)
+                        .and_then(skwir_core::Value::as_u64)
+                        .map_or_else(
+                            || "—".to_owned(),
+                            // Milliseconds, said as a player says them.
+                            |ms| crate::media::time(ms as f64 / 1000.),
+                        ),
+                ),
+                Detail::Modified => date(time(keys::MODIFIED)),
+                Detail::Created => date(time(keys::CREATED)),
+                Detail::Accessed => date(time(keys::ACCESSED)),
+                Detail::Deleted => date(time(keys::TRASHED)),
+                Detail::Taken => date(
+                    value(keys::TAKEN)
+                        .and_then(skwir_core::Value::as_u64)
+                        .and_then(on_the_clock),
+                ),
+                Detail::Type => Said::text(&*typed("Folder").unwrap_or_else(|| {
+                    // Typed only where the column shows it.
+                    skwir_platform::mime::of_entry(e)
+                        .as_ref()
+                        .and_then(|mime| self.type_names.get(mime))
+                        .unwrap_or_else(|| crate::typenames::fallback_of(e).into())
+                })),
+                Detail::Kind => Said::text(&*typed("Folder").unwrap_or_else(|| {
+                    skwir_platform::mime::of_entry(e)
+                        .as_ref()
+                        .and_then(|mime| self.type_names.kind(mime))
+                        .unwrap_or_else(|| "".into())
+                })),
+                Detail::Vcs => Said::text(
+                    skwir_core::vcs::State::of(e).map_or("", skwir_core::vcs::State::title),
+                ),
+                Detail::Owner => Said::text(
+                    value(keys::UID)
+                        .and_then(skwir_core::Value::as_u64)
+                        .map_or_else(
+                            || "—".to_owned(),
+                            // By its name, else its number.
+                            |uid| {
+                                skwir_platform::users::user(uid).unwrap_or_else(|| uid.to_string())
+                            },
+                        ),
+                ),
+            };
+            row.said[column.detail] = said;
+        }
+        row
     }
 }
 
@@ -859,21 +934,23 @@ pub(crate) fn row_elements(
         .collect()
 }
 
-/// An element for each row of `range` of a list whose groups are drawn
-/// (`rows`): a group's heading, or its entry's row as `row_elements`
-/// makes it. `data` holds the entries' among them.
+/// An element for each row of `range` of a list whose rows are not all
+/// entries (`rows`): a group's heading, what arrives (ADR-135), or an
+/// entry's row as `row_elements` makes it. `data` holds the entries' and
+/// what arrives's among them.
 fn grouped_row_elements(
     shell: &Shell,
     theme: &Theme,
     range: Range<usize>,
     rows: &RowMap,
-    data: &[RowData],
+    (data, arriving): (&[RowData], &[(usize, RowData)]),
     tree: bool,
     cx: &mut Context<Shell>,
 ) -> Vec<Stateful<Div>> {
     let scale = files_scale(theme);
     let height = row_height(shell.row_zoom, scale);
     let mut data = data.iter().peekable();
+    let mut arriving = arriving.iter().peekable();
     range
         .map(|at| match rows.at(at) {
             Some(Row::Heading(n)) => {
@@ -910,9 +987,84 @@ fn grouped_row_elements(
                 }
                 None => div().id(("row-gone", ix)).h(px(height)),
             },
+            Some(Row::Arriving(i)) => match (
+                arriving.next_if(|(n, _)| *n == i),
+                shell.ui().list.arriving.get(i),
+            ) {
+                (Some((_, r)), Some(it)) => arriving_row(shell, theme, r, it, i, cx),
+                _ => div().id(("arriving-gone", i)).h(px(height)),
+            },
             None => div().id(("row-none", at)).h(px(height)),
         })
         .collect()
+}
+
+/// What arrives's row (ADR-135): drawn as its file's will be, at the top
+/// of a tree, dimmed, its tint behind it, its pill after its name.
+fn arriving_row(
+    shell: &Shell,
+    theme: &Theme,
+    r: &RowData,
+    arriving: &skwir_core::op::arriving::Arriving,
+    i: usize,
+    cx: &mut Context<Shell>,
+) -> Stateful<Div> {
+    let look = &r.look;
+    let muted = theme.text_muted;
+    let scale = files_scale(theme);
+    let height = row_height(shell.row_zoom, scale);
+    let icon = look.picture(icon_px(shell.row_zoom), theme);
+    let name = div()
+        .flex()
+        .items_center()
+        .gap_1()
+        .child(crate::views::entry::name(
+            div()
+                .id(("arriving-name", i))
+                .opacity(crate::views::arriving::OPACITY),
+            look,
+        ))
+        .child(crate::views::arriving::pill(arriving, theme));
+    let mut line = line(name, NAME_MIN, height, scale);
+    let shown = shell.shown_columns();
+    for column in COLUMNS.iter().filter(|column| shown[column.detail]) {
+        let cell = cell(shell, column.detail, muted, height, scale)
+            .opacity(crate::views::arriving::OPACITY);
+        line = line.child(detail(r, column.detail, cell, scale, theme));
+    }
+    let el = div()
+        .id(("arriving", i))
+        .relative()
+        .h(px(height))
+        .w_full()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap_2()
+        .px_2()
+        // The ring an entry's highlight draws, unseen: what arrives lines
+        // up with the rows around it.
+        .border_1()
+        .border_color(gpui::transparent_black())
+        .child(crate::views::arriving::tint(arriving, theme))
+        .child(
+            div()
+                .relative()
+                .flex()
+                .items_center()
+                .gap_2()
+                .flex_1()
+                .min_w_0()
+                .child(
+                    div()
+                        .flex_none()
+                        .opacity(crate::views::arriving::OPACITY)
+                        .child(icon),
+                )
+                .child(line),
+        );
+    let el = crate::views::arriving::acting(el, arriving, shell, cx);
+    crate::views::arriving::expose(el, &look.name, arriving, shell.a11y)
 }
 
 pub fn row(
@@ -959,6 +1111,14 @@ fn row_in(
         look,
         theme,
     );
+    // Something landing on it (a folder merged into): its tint under it,
+    // its pill after its name (ADR-135).
+    let on = shell.ui().list.arriving_on.get(&look.id);
+    let el = match on {
+        Some(arriving) => el.child(crate::views::arriving::tint(arriving, theme)),
+        None => el,
+    };
+    let pill = on.map(|arriving| crate::views::arriving::pill(arriving, theme));
     // In the tree the icon is part of the name, indented with it: the
     // detail columns stay aligned at every depth and give way together.
     let (el, icon) = if tree {
@@ -977,6 +1137,7 @@ fn row_in(
         })
         // A name keeps its end: the extension tells files apart.
         .child(crate::views::entry::name(div().id(("name", ix)), look))
+        .children(pill)
         // The tags take only what the name leaves (no basis of their own):
         // where chips do not fit they give way to dots, then to "+N", and
         // the name never gives way to them.
@@ -1280,10 +1441,12 @@ impl PaneView for ListView {
                     list.visible_items = shown.len();
                     let data = this.rows(shown, icon_px, false);
                     this.request_hydrate(data.iter().map(|r| r.look.id).collect::<Vec<_>>());
-                    if drawn.grouped() {
-                        grouped_row_elements(this, &theme, range, &drawn, &data, tree, cx)
-                    } else {
+                    if drawn.plain() {
                         row_elements(this, &theme, range, &data, (false, tree), cx)
+                    } else {
+                        let arriving = this.arriving_rows(&drawn, range.clone(), icon_px);
+                        let given = (&data[..], &arriving[..]);
+                        grouped_row_elements(this, &theme, range, &drawn, given, tree, cx)
                     }
                 })
             }),
@@ -1358,7 +1521,7 @@ impl PaneView for ListView {
         let rows = &shell.ui().list.rows;
         let Some(cursor) = shell
             .cursor_index()
-            .filter(|_| rows.grouped() && delta.abs() > 1)
+            .filter(|_| !rows.plain() && delta.abs() > 1)
         else {
             return Some(delta);
         };
@@ -1455,11 +1618,20 @@ impl ListView {
         };
         match (nav, stop) {
             (Nav::Up | Nav::Down, _) => {
-                let to = if nav == Nav::Up {
-                    row.checked_sub(1)
-                } else {
-                    Some(row + 1).filter(|to| *to < rows.len())
+                let next_row = |from: usize| {
+                    if nav == Nav::Up {
+                        from.checked_sub(1)
+                    } else {
+                        Some(from + 1).filter(|to| *to < rows.len())
+                    }
                 };
+                // What arrives is no stop: the keys go past it.
+                let mut to = next_row(row);
+                while let Some(at) = to
+                    && matches!(rows.at(at), Some(Row::Arriving(_)))
+                {
+                    to = next_row(at);
+                }
                 match to.and_then(|to| Some((to, rows.at(to)?))) {
                     Some((to, Row::Heading(n))) => {
                         shell.stop_on_heading(n, cx);

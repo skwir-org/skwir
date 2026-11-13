@@ -2678,6 +2678,62 @@ impl Listing {
         }
     }
 
+    /// Where each of `likes`, entries it does not hold (what a plan brings,
+    /// ADR-135), would stand in the order shown for `sort` (`order_shown`):
+    /// the place of the first shown entry after it, the order's length past
+    /// the last; and where they stand among themselves, as the order would
+    /// have them. Searched among the order's ranks, as arrivals are placed
+    /// (`place`): a few comparisons each, none of them looking an entry up
+    /// unless two names begin alike for 16 bytes. Whether each is shown
+    /// (a hidden name, a filter) is not asked here.
+    pub fn standing(&self, sort: impl Into<Sort>, likes: &[&Entry]) -> (Vec<usize>, Vec<usize>) {
+        let sort = sort.into();
+        let sort = self.order_before(&sort).unwrap_or(sort);
+        let order = self.sorted(&sort);
+        let slots: Vec<Slot> = likes
+            .iter()
+            .map(|e| Slot::new((*e).clone(), None))
+            .collect();
+        let keys: Vec<SortKeyOf<'_>> = slots.iter().map(|s| Self::sort_key(&sort, s)).collect();
+        let mut among: Vec<usize> = (0..keys.len()).collect();
+        among.sort_by(|a, b| Self::compare(sort.spec, &keys[*a], &keys[*b]));
+        let mut rank = vec![0; keys.len()];
+        for (at, i) in among.into_iter().enumerate() {
+            rank[i] = at;
+        }
+        let ranked: Option<Vec<usize>> = {
+            let cache = self.sort_cache.lock();
+            cache
+                .as_ref()
+                .filter(|c| Arc::ptr_eq(&c.ids, &order) && c.ranks.len() == order.len())
+                .map(|c| {
+                    keys.iter()
+                        .map(|key| {
+                            let probe = Rank::with(key, 0);
+                            c.ranks.partition_point(|placed| {
+                                self.compare_rank(sort.spec, &c.extras, placed, key, &probe)
+                                    .is_lt()
+                            })
+                        })
+                        .collect()
+                })
+        };
+        // No ranks beside the order (it is being made again): each entry
+        // probed is keyed as it is compared.
+        let at = ranked.unwrap_or_else(|| {
+            keys.iter()
+                .map(|key| {
+                    order.partition_point(|id| {
+                        self.entries.get(id).is_some_and(|slot| {
+                            Self::compare(sort.spec, &Self::sort_key(&sort, slot), key).is_lt()
+                        })
+                    })
+                })
+                .collect()
+        });
+        (at, rank)
+    }
+
     /// Where each group starts in the order shown for `sort`
     /// (`order_shown`), its label and its count (ADR-130); empty when it is
     /// not grouped. Told from how many each group holds, which the order
@@ -3972,6 +4028,66 @@ mod tests {
         for kept in ["%+1", "%-1", "% 1", "%4", "%", "%zz"] {
             assert_eq!(unescape(kept), kept.as_bytes(), "{kept}");
         }
+    }
+
+    /// Where entries the listing does not hold would stand in its order
+    /// (ADR-135): by name, folders first, among themselves as the order
+    /// would have them; by size, where their size puts them, one not sized
+    /// after the rest; the order searched as ranked, and as made again.
+    #[test]
+    fn what_arrives_stands_where_the_order_would_place_it() {
+        let entry = |ino, name: &str, kind, size: Option<u64>| {
+            let mut e = Entry::new(
+                EntryId {
+                    file: crate::FileId::new(1, ino),
+                    at: 0,
+                },
+                name,
+                kind,
+            );
+            if let Some(size) = size {
+                e.metadata.set(
+                    crate::entry::keys::SIZE,
+                    crate::entry::Value::UInt(size),
+                    crate::entry::Provenance::Filesystem,
+                );
+            }
+            e
+        };
+        let mut listing = Listing::default();
+        listing.apply(ListingEvent::Added(vec![
+            entry(1, "b.txt", EntryKind::File, Some(30)),
+            entry(2, "d.txt", EntryKind::File, Some(10)),
+            entry(3, "Photos", EntryKind::Directory, None),
+        ]));
+        let by_name = SortSpec::default();
+        let order: Vec<String> = listing
+            .order_shown(by_name)
+            .iter()
+            .map(|id| listing.get(*id).unwrap().name_str().into_owned())
+            .collect();
+        assert_eq!(order, ["Photos", "b.txt", "d.txt"]);
+        let c = entry(10, "c.txt", EntryKind::File, Some(20));
+        let a = entry(11, "a folder", EntryKind::Directory, None);
+        let e = entry(12, "l'été.txt", EntryKind::File, None);
+        let likes = [&c, &a, &e];
+        let (at, among) = listing.standing(by_name, &likes);
+        assert_eq!(at, [2, 0, 3], "between b and d; first; last");
+        assert_eq!(among, [1, 0, 2]);
+        // By size: 10, 20 (c), 30; not sized, after them all.
+        let by_size = SortSpec {
+            key: SortKey::Size,
+            ..by_name
+        };
+        if let Some(job) = listing.sort_job(by_size) {
+            job.run();
+        }
+        listing.drain(
+            &crossbeam_channel::never(),
+            std::time::Duration::from_secs(1),
+        );
+        let (at, _) = listing.standing(by_size, &[&c, &e]);
+        assert_eq!(at, [2, 3]);
     }
 
     /// A folder opened is filled on a worker (ADR-120): what stands for it

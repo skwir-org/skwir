@@ -225,13 +225,17 @@ mod args {
     }
 
     /// Activity's toggle: `close` closes it (`pointer`: by a press outside
-    /// it), and never opens it.
+    /// it), and never opens it; `plan`, the id of an action under way or
+    /// waiting, opens it on that action's card (what arrives in a folder,
+    /// pressed, ADR-135) and never closes it.
     #[derive(Deserialize, JsonSchema)]
     pub(super) struct Toggle {
         #[serde(default)]
         close: bool,
         #[serde(default)]
         pointer: bool,
+        #[serde(default)]
+        plan: Option<u64>,
     }
 
     /// A dialog's toggle: `close` closes it, and never opens it.

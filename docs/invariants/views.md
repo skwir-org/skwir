@@ -502,6 +502,25 @@ around the views is in [shell.md](shell.md).
   in place keeps its entries under it, in its group, whose heading
   counts its own (`Span::count`). Columns, Usage and the map draw no
   headings; the board, grouped, makes each group a column (above).
+- **What arrives is a row, never an entry** (ADR-135): what plans bring
+  into the pane's folder and has not landed (`ListState::arriving`,
+  from `Executor::arriving_in` at each sync, once it lasted
+  `work::SHOWN_AFTER`) is placed in the same map, where it will land
+  (`Pane::stands`, then `RowMap::arriving`: before the entry it goes
+  before, in its group), and so is never a position: the cursor, ranges,
+  Select All, the rubber band and a screen reader's count pass it over,
+  and the arrows go past it (`heading_nav`, `GridView::tile_step`). A
+  grid's tiles are its entries and what arrives (`RowMap::at_tile`,
+  `tile_of`, `tile_lens`); what the grid is asked in positions (scroll
+  to, an anchor, the band, Up and Down) it turns into tiles with the
+  rows it last drew (`GridView::drawn`). What arrives is placed again
+  only when the order, its groups or what arrives change; otherwise a
+  sync takes how far each has come. It is drawn by `views::arriving`
+  (dimmed at `OPACITY`, its tint and its pill), answers its own press
+  (Activity, never a selection) and is drawn in no view that keeps no
+  `RowMap` (the columns, the board). An entry already listed under its
+  name (`ListState::arriving_on`) is drawn as itself with the tint and
+  the pill.
 - **A heading is a key stop** (ADR-131, 1; `list::HeadingStop`, the
   window's, never the core's): Up from a group's first entry and Down
   from the group before's last stop on its heading, drawn with the
