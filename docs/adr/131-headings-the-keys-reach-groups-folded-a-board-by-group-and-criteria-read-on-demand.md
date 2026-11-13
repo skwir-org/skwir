@@ -46,7 +46,11 @@ Built on 2026-11-11 and run on Linux. Amends ADR-130, decisions 9 and
    dragged to another column does nothing, a group being what a file is,
    not where. Not grouped, the Board is as before. Grouped, it closes
    once the folders it had opened in place, their files being in no
-   group of the pane's.
+   group of the pane's. (Amended 2026-11-13: as many columns as a folder's
+   folders get, `MAX_COLUMNS`; past them the last column holds the cards
+   of the groups left, in order, saying how many, so a search grouped by
+   Folder lays out a dozen columns, not thousands, and no card goes
+   unseen.)
 4. **Criteria read on demand**: Taken (the camera's clock of pictures and
    films), Dimensions (a picture's size in pixels: by its area, then its
    width) and Duration (how long a sound or a film lasts), each a

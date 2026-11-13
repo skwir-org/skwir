@@ -264,9 +264,16 @@ around the views is in [shell.md](shell.md).
   Grouped (ADR-131, 3), its columns are the pane's groups in their
   order, each its entries in the sort's (`BoardView::group_columns`, made
   again only when the order or its spans change), a folded group's
-  empty with its count; a card dragged to another column does nothing
-  (a group is what a file is, not where), and the folders it had opened
-  in place are closed once, their files being in no group.
+  empty with its count, at most `MAX_COLUMNS`: past them, the last column
+  holds the cards of every group left, in order, and says how many
+  groups it holds ("15 more groups"), so no card goes unseen and no frame
+  lays out thousands of columns (a search grouped by Folder). A card
+  dragged to another column does nothing (a group is what a file is, not
+  where), and the folders it had opened in place are closed once, their
+  files being in no group. What arrives is placed among each column's
+  cards once per placement (`ListState::rows`' key, the columns drawn),
+  in one pass over it, never per frame; Left and Right go past a column
+  with neither a card nor an entry (a folded group's).
 
 ## Rubber band
 

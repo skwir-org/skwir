@@ -6,7 +6,9 @@
 //! a field the tag editor's choice. A folder's folders are one too, a card
 //! dragged moving the file. The columns are opened in place (ADR-025:
 //! `opens_in_place`), so the cards are the pane's entries, selected and
-//! acted on as the list's rows; at most `MAX_COLUMNS` are. A column
+//! acted on as the list's rows; at most `MAX_COLUMNS` are. Grouped, a
+//! column is a group, as many of them, the last holding every group left
+//! (ADR-131, 3). A column
 //! emptied stays while the board shows the place (a tag no file has is
 //! no tag: it would vanish under the card dragged out of it), to take
 //! cards back. The keys move along a column (Up, Down, the pages, Home,
@@ -14,9 +16,9 @@
 //! move in the pane's order, so Shift extends the selection as anywhere.
 
 use crate::sizes::TextSizes;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use gpui::{
@@ -35,6 +37,7 @@ use crate::thumbs::ThumbView;
 use crate::view::{Nav, PaneView};
 
 /// The most columns opened: a folder of hundreds of folders is no board.
+/// Grouped, the most columns drawn: the last holds the groups left.
 pub const MAX_COLUMNS: usize = 12;
 /// A column's width and a card's height at 100 %, drawn at the files'
 /// scale (ADR-117); a card is never shorter than its picture needs, which
@@ -66,6 +69,9 @@ struct Column {
     /// A group's (ADR-131, 3): how many it holds, folded or not; it takes
     /// no card dragged in, a group being what a file is, not where.
     group: Option<usize>,
+    /// The pane's groups it holds: one, or every group left past the
+    /// columns a board draws (`MAX_COLUMNS`); none for a folder's.
+    groups: Range<usize>,
 }
 
 #[derive(Default)]
@@ -111,6 +117,10 @@ pub struct BoardView {
     /// Each column's rows as last drawn, by its location: its cards, and
     /// what arrives among them (ADR-135), which is no card.
     arriving: HashMap<Location, (crate::views::groups::RowMap, Vec<usize>)>,
+    /// What `arriving` was placed for: the pane's rows (`RowMap::key`,
+    /// which a new placement of what arrives makes anew) with the columns
+    /// drawn (`drawn`); placed again only when one of them changes.
+    arriving_for: Option<(usize, usize, usize)>,
 }
 
 type ColumnsOf = (u64, u64, u64, skwir_core::SortSpec, u64, u64);
@@ -172,7 +182,11 @@ impl BoardView {
 
     /// Grouped, a column a group (ADR-131, 3), in the groups' order, its
     /// cards its entries in the sort's; a folded group's empty, its count
-    /// said. Made again only when the order or its groups change.
+    /// said. As many columns as a folder's folders get (`MAX_COLUMNS`):
+    /// past them, the last holds the cards of every group left, in order,
+    /// saying how many groups, so none goes unseen and a search grouped by
+    /// Folder lays out a dozen columns, never thousands. Made again only
+    /// when the order or its groups change.
     fn group_columns(&mut self, shell: &Shell) -> Vec<Column> {
         let list = &shell.ui().list;
         let key = list.rows.key();
@@ -182,27 +196,7 @@ impl BoardView {
         {
             return columns.clone();
         }
-        let columns: Vec<Column> = list
-            .rows
-            .spans()
-            .iter()
-            .map(|span| {
-                let title = crate::views::groups::label(span).to_string();
-                Column {
-                    at: None,
-                    location: Location::new("board-group", title.clone()),
-                    title,
-                    path: None,
-                    color: None,
-                    shown: Arc::from([]),
-                    ids: list
-                        .sorted
-                        .get(span.start..span.start + span.len)
-                        .map_or_else(|| Arc::from([]), Arc::from),
-                    group: Some(span.count),
-                }
-            })
-            .collect();
+        let columns = group_columns(&list.rows, &list.sorted);
         self.groups_of = Some((Arc::clone(&list.sorted), key, columns.clone()));
         columns
     }
@@ -287,6 +281,7 @@ impl BoardView {
                 shown,
                 ids,
                 group: None,
+                groups: 0..0,
             });
         }
         // Those shown before and gone since (their last card dragged
@@ -310,6 +305,7 @@ impl BoardView {
                         shown: Arc::from([]),
                         ids: Arc::from([]),
                         group: None,
+                        groups: 0..0,
                     },
                 );
             }
@@ -326,6 +322,7 @@ impl BoardView {
                     shown: Arc::from([]),
                     ids: loose.into(),
                     group: None,
+                    groups: 0..0,
                 },
             );
         }
@@ -335,6 +332,58 @@ impl BoardView {
             (pane.listing.id(), pane.expanded_version()),
         )
     }
+}
+
+/// The columns of a board grouped as `rows` says, `sorted` the order
+/// (`BoardView::group_columns`): one a group, `MAX_COLUMNS` at most, the
+/// last then every group left.
+fn group_columns(rows: &crate::views::groups::RowMap, sorted: &[EntryId]) -> Vec<Column> {
+    let spans = rows.spans();
+    let cards = |from: usize, to: usize| -> Arc<[EntryId]> {
+        sorted
+            .get(from..to)
+            .map_or_else(|| Arc::from([]), Arc::from)
+    };
+    let column = |title: String, location, ids, count, groups| Column {
+        at: None,
+        location,
+        title,
+        path: None,
+        color: None,
+        shown: Arc::from([]),
+        ids,
+        group: Some(count),
+        groups,
+    };
+    let own = if spans.len() > MAX_COLUMNS {
+        MAX_COLUMNS - 1
+    } else {
+        spans.len()
+    };
+    let mut columns: Vec<Column> = spans[..own]
+        .iter()
+        .enumerate()
+        .map(|(n, span)| {
+            let title = crate::views::groups::label(span).to_string();
+            column(
+                title.clone(),
+                Location::new("board-group", title),
+                cards(span.start, span.start + span.len),
+                span.count,
+                n..n + 1,
+            )
+        })
+        .collect();
+    if let (Some(first), Some(last)) = (spans.get(own), spans.last()) {
+        columns.push(column(
+            crate::format::count(spans.len() - own, "more group"),
+            Location::new("board-groups", "more"),
+            cards(first.start, last.start + last.len),
+            spans[own..].iter().map(|span| span.count).sum(),
+            own..spans.len(),
+        ));
+    }
+    columns
 }
 
 /// What a card shows, read under the workspace lock.
@@ -470,22 +519,56 @@ fn column(
 /// its group where the board groups, else in the folder it is. Its rows (a
 /// card a row, what arrives among them, as `ListState::rows` has it), and
 /// which of `ListState::arriving` each that arrives is.
-fn arriving_rows(
+fn arriving_columns(
     shell: &Shell,
-    c: &Column,
-    k: usize,
+    columns: &[Column],
     grouped: bool,
-) -> (crate::views::groups::RowMap, Vec<usize>) {
+) -> HashMap<Location, (crate::views::groups::RowMap, Vec<usize>)> {
     let list = &shell.ui().list;
-    let mine: Vec<usize> = (0..list.arriving.len())
-        .filter(|&i| {
-            if grouped {
-                list.arriving_placed.get(i).and_then(|p| p.group) == Some(k)
-            } else {
-                c.path.as_deref() == Some(list.arriving[i].arrival.folder.as_path())
+    let mut mine: Vec<Vec<usize>> = vec![Vec::new(); columns.len()];
+    if grouped {
+        // The column holding each of the pane's groups.
+        let mut column_of = vec![None; list.rows.spans().len()];
+        for (k, c) in columns.iter().enumerate() {
+            for n in c.groups.clone() {
+                if let Some(slot) = column_of.get_mut(n) {
+                    *slot = Some(k);
+                }
             }
-        })
-        .collect();
+        }
+        for (i, placed) in list.arriving_placed.iter().enumerate() {
+            if let Some(k) = placed
+                .group
+                .and_then(|n| column_of.get(n).copied().flatten())
+            {
+                mine[k].push(i);
+            }
+        }
+    } else {
+        let column_of: HashMap<&Path, usize> = columns
+            .iter()
+            .enumerate()
+            .filter_map(|(k, c)| Some((c.path.as_deref()?, k)))
+            .collect();
+        for (i, arriving) in list.arriving.iter().enumerate() {
+            if let Some(&k) = column_of.get(arriving.arrival.folder.as_path()) {
+                mine[k].push(i);
+            }
+        }
+    }
+    columns
+        .iter()
+        .zip(mine)
+        .map(|(c, mine)| (c.location.clone(), arriving_rows(list, c, mine)))
+        .collect()
+}
+
+/// Column `c`'s rows: its cards, and `mine` of what arrives among them.
+fn arriving_rows(
+    list: &crate::list::ListState,
+    c: &Column,
+    mine: Vec<usize>,
+) -> (crate::views::groups::RowMap, Vec<usize>) {
     if mine.is_empty() {
         return (crate::views::groups::RowMap::flat(c.ids.len()), mine);
     }
@@ -796,17 +879,21 @@ impl PaneView for BoardView {
         if !same {
             self.drawn = drawn;
             self.drawn_index = std::cell::OnceCell::new();
+            // The scrolls of columns gone go with them.
+            let shown: HashSet<&Location> = columns.iter().map(|c| &c.location).collect();
+            self.scrolls.retain(|location, _| shown.contains(location));
         }
         self.order = Arc::clone(&shell.ui().list.sorted);
         for c in &columns {
             self.scrolls.entry(c.location.clone()).or_default();
         }
-        // What arrives in each column, among its cards (ADR-135).
-        self.arriving = columns
-            .iter()
-            .enumerate()
-            .map(|(k, c)| (c.location.clone(), arriving_rows(shell, c, k, grouped)))
-            .collect();
+        // What arrives in each column, among its cards (ADR-135): placed
+        // once per placement of what arrives and per columns drawn.
+        let placed = shell.ui().list.rows.key();
+        if !same || self.arriving_for != Some(placed) {
+            self.arriving = arriving_columns(shell, &columns, grouped);
+            self.arriving_for = Some(placed);
+        }
         if let Some((ix, strategy)) = self.wanted.take() {
             self.scroll_card(ix, strategy);
         }
@@ -875,16 +962,25 @@ impl PaneView for BoardView {
         };
         let half = (page / 2).max(1) as isize;
         let target = match nav {
+            // Past a column with neither a card nor an entry of its own
+            // (a folded group's).
             Nav::Left | Nav::Right => {
-                let beside = if nav == Nav::Left {
-                    k.checked_sub(1)
-                } else {
-                    Some(k + 1)
-                };
-                let (at, _, ids) = self.drawn.get(beside?)?;
-                ids.get(card.unwrap_or(0).min(ids.len().saturating_sub(1)))
-                    .copied()
-                    .or(*at)
+                let mut beside = k;
+                loop {
+                    beside = if nav == Nav::Left {
+                        beside.checked_sub(1)?
+                    } else {
+                        beside + 1
+                    };
+                    let (at, _, ids) = self.drawn.get(beside)?;
+                    let reached = ids
+                        .get(card.unwrap_or(0).min(ids.len().saturating_sub(1)))
+                        .copied()
+                        .or(*at);
+                    if reached.is_some() {
+                        break reached;
+                    }
+                }
             }
             // In a column with no card, its own entry.
             _ => match nav {
@@ -911,6 +1007,7 @@ impl PaneView for BoardView {
         self.drawn.clear();
         self.drawn_index = std::cell::OnceCell::new();
         self.seen.clear();
+        self.arriving_for = None;
     }
 }
 
@@ -958,5 +1055,47 @@ mod tests {
         assert_eq!(index[&id(3)], (1, Some(0)), "its first card");
         assert_eq!(index[&id(5)], (2, None), "an empty column's own entry");
         assert_eq!(index[&id(6)], (3, Some(1)), "a card in its own column");
+    }
+
+    /// Grouped, a column a group, `MAX_COLUMNS` at most: past them, the
+    /// last holds every group left, in order, saying how many, so no card
+    /// goes unseen; a folded group's column is empty, its count said.
+    #[test]
+    fn past_the_columns_drawn_the_last_holds_every_group_left() {
+        use skwir_core::grouping::Span;
+        let id = |ino| EntryId {
+            file: FileId::new(1, ino),
+            at: ino,
+        };
+        let span = |start, len, count| Span {
+            start,
+            len,
+            count,
+            group: None,
+        };
+        // Twenty groups of one, the second folded (two files).
+        let mut spans = vec![span(0, 1, 1), span(1, 0, 2)];
+        spans.extend((1..19).map(|n| span(n, 1, 1)));
+        let sorted: Vec<EntryId> = (0..19).map(id).collect();
+        let rows = crate::views::groups::RowMap::new(Arc::from(spans), sorted.len());
+        assert!(rows.grouped());
+        let columns = group_columns(&rows, &sorted);
+        assert_eq!(columns.len(), MAX_COLUMNS);
+        assert_eq!(columns[1].ids.len(), 0, "folded");
+        assert_eq!(columns[1].group, Some(2), "its count said");
+        let last = &columns[MAX_COLUMNS - 1];
+        assert_eq!(last.title, "9 more groups");
+        assert_eq!(last.groups, MAX_COLUMNS - 1..20);
+        assert_eq!(&*last.ids, &sorted[10..]);
+        let cards: usize = columns.iter().map(|c| c.ids.len()).sum();
+        assert_eq!(cards, sorted.len(), "every card in a column");
+        // As many groups as columns: one each.
+        let few = crate::views::groups::RowMap::new(
+            Arc::from((0..MAX_COLUMNS).map(|n| span(n, 1, 1)).collect::<Vec<_>>()),
+            MAX_COLUMNS,
+        );
+        let columns = group_columns(&few, &sorted[..MAX_COLUMNS]);
+        assert_eq!(columns.len(), MAX_COLUMNS);
+        assert!(columns.iter().all(|c| c.groups.len() == 1));
     }
 }
