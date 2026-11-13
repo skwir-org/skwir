@@ -3993,9 +3993,9 @@ impl Shell {
         // at their lower right, where the list shows sizes and dates rather
         // than names; above Activity while it is open there (its strip draws
         // both). On the whole screen the answer is said over the preview
-        // instead.
-        let answer = (last && self.preview.fullscreen.is_none() && !self.activity_open())
-            .then(|| crate::toast::render_answer(self, cx))
+        // instead: one place a frame (`Shell::answer_at`).
+        let answer = last
+            .then(|| crate::toast::render_answer(self, crate::toast::AnswerAt::Files, cx))
             .flatten();
         let file_area = if last {
             div()
@@ -4289,14 +4289,10 @@ impl Render for Shell {
             .clone()
             .map(gpui::IntoElement::into_any_element);
         // The whole screen covers the window: what answers the user is
-        // said over it (else over the last pane's files, `render_pane`).
-        let toast_over = self
-            .preview
-            .fullscreen
-            .is_some()
-            .then(|| crate::toast::render_answer(self, cx))
-            .flatten()
-            .map(|answer| {
+        // said over it (else over the last pane's files, `render_pane`, or
+        // above Activity: `Shell::answer_at`).
+        let toast_over =
+            crate::toast::render_answer(self, crate::toast::AnswerAt::Screen, cx).map(|answer| {
                 div()
                     .absolute()
                     .bottom(crate::sizes::sized(38.))

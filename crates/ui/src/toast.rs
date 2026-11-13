@@ -893,14 +893,52 @@ pub fn pace(t: &Transfer) -> Option<String> {
     (!said.is_empty()).then(|| said.join(" · "))
 }
 
-/// The answer said last, as a card: what it says, its buttons, and Close.
-/// Its caller places it: over the files at the last pane's lower right,
-/// above Activity's strip, above Activity open there (`activity::panel`),
-/// or over the preview on the whole screen. Not while the History is open,
-/// where it would cover it: one said meanwhile keeps its time, which
-/// begins once it is drawn (`ToastState::drawn`).
-pub fn render_answer(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
-    if shell.undo_history_open() {
+/// Where the answer said last is drawn: one place a frame
+/// (`Shell::answer_at`), so it is never drawn twice.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AnswerAt {
+    /// Over the files at the last pane's lower right, above Activity's
+    /// strip (`Shell::render_pane`).
+    Files,
+    /// Above Activity, open there (`activity::panel`), which it would
+    /// otherwise cover.
+    Activity,
+    /// Over the preview on the whole screen.
+    Screen,
+}
+
+impl AnswerAt {
+    /// Over the whole screen while the preview is there, else above
+    /// Activity while it is drawn, else over the files.
+    fn of(whole_screen: bool, activity_shown: bool) -> AnswerAt {
+        if whole_screen {
+            AnswerAt::Screen
+        } else if activity_shown {
+            AnswerAt::Activity
+        } else {
+            AnswerAt::Files
+        }
+    }
+}
+
+impl Shell {
+    /// Where the answer said last is drawn this frame (`AnswerAt`).
+    pub(crate) fn answer_at(&self) -> AnswerAt {
+        AnswerAt::of(self.preview.fullscreen.is_some(), self.activity_shown())
+    }
+}
+
+/// The answer said last, as a card: what it says, its buttons, and Close,
+/// where `at` is the place it is drawn this frame (`Shell::answer_at`),
+/// else nothing. Not while the History is open, where it would cover it:
+/// one said meanwhile keeps its time, which begins once it is drawn
+/// (`ToastState::drawn`).
+pub fn render_answer(
+    shell: &mut Shell,
+    at: AnswerAt,
+    cx: &mut Context<Shell>,
+) -> Option<AnyElement> {
+    if shell.undo_history_open() || shell.answer_at() != at {
         return None;
     }
     let toast = shell.toasts.current.clone()?;
@@ -1807,6 +1845,18 @@ mod tests {
             ),
             "Moved “it's a draft.txt” to Archive 2026"
         );
+    }
+
+    /// The answer has one place a frame: over the whole screen, whatever
+    /// Activity does under it; above Activity while it is drawn; else over
+    /// the files.
+    #[test]
+    fn the_answer_is_drawn_in_one_place() {
+        use super::AnswerAt;
+        assert_eq!(AnswerAt::of(true, true), AnswerAt::Screen);
+        assert_eq!(AnswerAt::of(true, false), AnswerAt::Screen);
+        assert_eq!(AnswerAt::of(false, true), AnswerAt::Activity);
+        assert_eq!(AnswerAt::of(false, false), AnswerAt::Files);
     }
 
     /// A toast held back while the History is open keeps its time: it

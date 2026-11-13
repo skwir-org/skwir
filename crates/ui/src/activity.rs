@@ -535,6 +535,27 @@ impl Shell {
         self.activity.open.is_some()
     }
 
+    /// Whether Activity, open, is drawn: not while an overlay covers the
+    /// window (`files_covered`), which it would float over, open as it
+    /// stays meanwhile.
+    pub(crate) fn activity_shown(&self) -> bool {
+        self.activity_open() && !self.files_covered()
+    }
+
+    /// Whether what covers the whole window, drawn in its tree rather than
+    /// deferred, is up: Settings, the shortcuts, About, peek, the preview
+    /// on the whole screen. A deferred draw paints after all of them, so
+    /// what floats over the files that way and stays (Activity) is not
+    /// drawn meanwhile; the popups and dialogs that open over them are
+    /// deferred above it.
+    pub(crate) fn files_covered(&self) -> bool {
+        self.settings.is_some()
+            || self.shortcuts.is_some()
+            || self.about.is_some()
+            || self.preview.peek
+            || self.preview.fullscreen.is_some()
+    }
+
     /// Whether Activity has something to show for the spell of work, as
     /// `under` runs: under way, waiting (any of what it lists, which a
     /// count of the queue tells), or stopped.
@@ -563,7 +584,9 @@ impl Shell {
         if !self.activity_holds(under) {
             self.activity.folded = false;
             if self.activity.open == Some(Opened::Spell) {
-                self.close_activity(window, cx);
+                // Closed while the frame is drawn: the keyboard goes back
+                // once it is (`close_activity`).
+                self.close_activity(true, window, cx);
             }
         } else if self.activity.open.is_none()
             && !self.activity.folded
@@ -611,7 +634,9 @@ impl Shell {
             return;
         }
         self.open_by_hand();
-        if !pointer {
+        // Covered, it is open for when the window shows the files again,
+        // and the keyboard stays where it is (`activity_shown`).
+        if !pointer && !self.files_covered() {
             // One place for the keyboard at a time: the popup open closes.
             self.close_popup(window, cx);
             self.focus_activity(window, cx);
@@ -667,21 +692,36 @@ impl Shell {
         }
         self.activity.folded = self.activity_holds(&self.under_way());
         self.work.borrow_mut().stopped = None;
-        self.close_activity(window, cx);
+        self.close_activity(false, window, cx);
         cx.notify();
     }
 
     /// Activity closed, the keyboard it had given back to the files: what
-    /// it is on is drawn no more.
-    fn close_activity(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// it is on is drawn no more. `drawing`: closed while the frame is
+    /// drawn (`sync_unfolded`), where a focus moved asks for a frame that is
+    /// dropped (AGENTS.md, UI layout): the keyboard moves once it is drawn,
+    /// and that asks for the frame that shows it.
+    fn close_activity(&mut self, drawing: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.activity.open = None;
-        if self
+        if !self
             .activity
             .panel
             .as_ref()
             .is_some_and(|focus| focus.contains_focused(window, cx))
         {
-            window.focus(&self.ui().focus, cx);
+            return;
+        }
+        let files = self.ui().focus.clone();
+        if drawing {
+            // Unless the keyboard went somewhere meanwhile.
+            let had = window.focused(cx);
+            window.on_next_frame(move |window, cx| {
+                if window.focused(cx) == had {
+                    window.focus(&files, cx);
+                }
+            });
+        } else {
+            window.focus(&files, cx);
         }
     }
 
@@ -1413,23 +1453,24 @@ pub fn strip(
 /// Activity, open above its strip (`Shell::activity_open`), over the files:
 /// its heading, and what `body` holds beneath, scrolled, `PANEL_MOST` high
 /// at most; the latest answer is said above it, where it would be covered
-/// at the files' foot (`toast::render_answer`). A click elsewhere leaves it
-/// open, and a click in it leaves the keyboard where it was: the keys go on
-/// acting on the pane while it is open.
+/// at the files' foot (`toast::AnswerAt::Activity`). A click elsewhere
+/// leaves it open, and a click in it leaves the keyboard where it was: the
+/// keys go on acting on the pane while it is open. Not drawn while an
+/// overlay covers the window (`Shell::activity_shown`).
 fn panel(
     shell: &mut Shell,
     under: &Under,
     theme: &Theme,
     cx: &mut Context<Shell>,
 ) -> Option<AnyElement> {
-    if !shell.activity_open() {
+    if !shell.activity_shown() {
         return None;
     }
     let focus = shell.activity_focus(cx);
     let reveal = shell.activity.reveal.clone();
     let heading = heading(shell, theme, cx);
     let body = body(shell, under, &reveal, theme, cx);
-    let answer = crate::toast::render_answer(shell, cx);
+    let answer = crate::toast::render_answer(shell, crate::toast::AnswerAt::Activity, cx);
     let panel = div()
         .id("activity")
         .role(gpui::Role::Group)

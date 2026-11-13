@@ -972,7 +972,11 @@ of bars, split or not.
   floating** above the strip, over the files at their lower right
   (`activity::panel`; ADR-114, amended 2026-11-13; at most
   `PANEL_MOST`, 520 px, and the room above the strip, scrolled beyond;
-  drawn under the popups and menus, `PANEL_PRIORITY`): each action's
+  drawn under the popups and menus, `PANEL_PRIORITY`; not drawn while
+  what covers the window in its tree is up, Settings, the shortcuts,
+  About, peek or the whole screen, which a deferred draw would paint
+  over, and open again as they go: `Shell::activity_shown`,
+  `files_covered`; `ui.activity` then gives it no keyboard): each action's
   card under a header over the queue with Cancel all while several are
   under way or waiting, what waits (each with its Cancel, Cancel
   waiting for several), the action an error stopped with its Retry
@@ -995,7 +999,9 @@ of bars, split or not.
   it has it; a click on the strip (`pointer`) opens it or folds it. It
   is a place of its own (`keymap::ACTIVITY`): Escape gives the keyboard
   back to the files and leaves it open; folded, or folding itself, with
-  the keyboard, it gives the keyboard back (`Shell::close_activity`).
+  the keyboard, it gives the keyboard back (`Shell::close_activity`;
+  folding itself as a frame is drawn, once it is, unless the keyboard
+  went elsewhere meanwhile).
   **It opens by itself for a long action** (amended 2026-11-07): once an
   action asked in this window has been under way, waiting or running,
   for `ui.activity_unfold_ms` (1.5 s by default, a slider under the
@@ -1023,8 +1029,9 @@ of bars, split or not.
   title names the folder it brings into by its name
   (`op::transfer_title`); pointed at, it says each folder's whole path
   (`Executor::brings_into`). The latest answer is said above it while
-  it is open (`toast::render_answer`, drawn by the panel), never held
-  back for it. What is under way is read once a frame
+  it is drawn (`toast::AnswerAt::Activity`, drawn by the panel), never
+  held back for it: one place a frame (`Shell::answer_at`: the whole
+  screen, else above Activity, else over the files). What is under way is read once a frame
   (`Shell::under_way`, passed to the strip, Activity and the footer).
   The button the keyboard reaches in Activity scrolls into view, once,
   as it arrives (`activity::Reveal`). An action an error stopped stays in the strip, in the error's
