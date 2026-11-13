@@ -3050,7 +3050,7 @@ impl Executor {
     /// The folders `plan`, waiting or running, brings something into
     /// (ADR-135): where its action is said to go when pointed at, its title
     /// naming them by their names alone (`op::folder_said`).
-    pub fn brings_into(&self, plan: PlanId) -> Vec<PathBuf> {
+    pub fn brings_into(&self, plan: PlanId) -> Arc<[PathBuf]> {
         self.arriving.folders_of(plan)
     }
 
@@ -3059,35 +3059,45 @@ impl Executor {
     /// what the window shows there before it lands. Read from memory, each
     /// plan's meter once; nothing is read from the disk.
     pub fn arriving_in(&self, folder: &Path) -> Vec<super::arriving::Arriving> {
-        let arrivals = self.arriving.in_folder(folder);
-        if arrivals.is_empty() {
+        let plans = self.arriving.in_folder(folder);
+        if plans.is_empty() {
             return Vec::new();
         }
-        let plans: HashSet<PlanId> = arrivals.iter().map(|a| a.plan).collect();
-        let read: HashMap<PlanId, (super::arriving::StepsRead, bool)> = self
+        // The plans running, few: each plan's items are told how far they
+        // are under its meter's locks, once for all of them.
+        let running: Vec<(PlanId, Arc<Meter>, bool)> = self
             .running
             .lock()
             .iter()
-            .filter(|active| plans.contains(&active.plan))
             .map(|active| {
                 (
                     active.plan,
-                    (active.meter.steps_read(), active.pause.is_paused()),
+                    Arc::clone(&active.meter),
+                    active.pause.is_paused(),
                 )
             })
             .collect();
-        arrivals
-            .into_iter()
-            .filter_map(|arrival| {
-                let read = read.get(&arrival.plan);
-                let state = super::arriving::state_of(&arrival, read.map(|(read, _)| read))?;
-                Some(super::arriving::Arriving {
-                    arrival,
-                    state,
-                    paused: read.is_some_and(|(_, paused)| *paused),
-                })
-            })
-            .collect()
+        let mut out = Vec::with_capacity(plans.iter().map(|those| those.len()).sum());
+        for those in plans {
+            let Some(plan) = those.first().map(|a| a.plan) else {
+                continue;
+            };
+            let mut tell = |read: Option<&super::arriving::StepsRead<'_>>, paused: bool| {
+                out.extend(those.iter().filter_map(|arrival| {
+                    let state = super::arriving::state_of(arrival, read)?;
+                    Some(super::arriving::Arriving {
+                        arrival: Arc::clone(arrival),
+                        state,
+                        paused,
+                    })
+                }));
+            };
+            match running.iter().find(|(p, ..)| *p == plan) {
+                Some((_, meter, paused)) => meter.steps_read(|read| tell(Some(read), *paused)),
+                None => tell(None, false),
+            }
+        }
+        out
     }
 
     /// Work out what the queued jobs touch, in the order asked, and start

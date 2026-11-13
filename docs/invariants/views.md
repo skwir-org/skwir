@@ -520,8 +520,15 @@ around the views is in [shell.md](shell.md).
   `tile_of`, `tile_lens`); what the grid is asked in positions (scroll
   to, an anchor, the band, Up and Down) it turns into tiles with the
   rows it last drew (`GridView::drawn`). What arrives is placed again
-  only when the order, its groups or what arrives change; otherwise a
-  sync takes how far each has come. It is drawn by `views::arriving`
+  only when the order, its groups or what arrives change, never because
+  the listing's version moved (metadata read): each item is keyed once
+  for how the pane shows it (`Pane::keying`, `Pane::keyed`,
+  `ListState::arriving_keys`), then placed by a search among the order's
+  ranks (`Listing::stand`), no key made again; one gone (landed,
+  cancelled) leaves its row, the others where they were. Otherwise a
+  sync takes how far each has come, the executor telling each plan's
+  items under its meter's locks, nothing copied
+  (`Executor::arriving_in`, `Meter::steps_read`). It is drawn by `views::arriving`
   (dimmed at `OPACITY`, its tint stopping `SHORT` of the end, its pill)
   and answers its own press (Activity, never a selection). What arrives
   in a folder opened in place is placed among that folder's entries, a

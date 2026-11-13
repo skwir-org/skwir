@@ -799,6 +799,17 @@ pub struct Stand {
     pub group: Option<Arc<crate::grouping::Group>>,
 }
 
+/// What the keys of what arrives in a listing were made for
+/// (`Pane::keying`, ADR-135): the sort of its order shown, whether hidden
+/// names are shown, and the filter as it stood. Keys made for one hold
+/// while it does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Keying {
+    sort: crate::grouping::SortStamp,
+    show_hidden: bool,
+    filter: u64,
+}
+
 /// What a pane last asked of the version control: its listing; its
 /// listings' names and the files written in them (the shown one's and the
 /// opened ones' summed); the folders it opened in place; the providers'
@@ -4984,22 +4995,69 @@ impl Pane {
 
     /// `stands`, among the entries of `listing`, the pane's own or that of
     /// a folder it opened in place (`opened_listings`): placed in its order
-    /// as the pane sorts it (`Listing::order_shown`).
+    /// as the pane sorts it (`Listing::order_shown`), each keyed once
+    /// (`keyed`).
     pub fn stands_in(&self, listing: &Listing, likes: &[&Entry]) -> Vec<Option<Stand>> {
-        let sort = self.sorting();
-        let (at, among) = listing.standing(&sort, likes);
+        let (sort, _) = self.keying(listing);
+        let keyed = self.keyed(&sort, likes);
+        let shown: Vec<(usize, &crate::location::Keyed)> = keyed
+            .iter()
+            .enumerate()
+            .filter_map(|(i, keyed)| Some((i, keyed.as_ref()?)))
+            .collect();
+        // In their order among themselves: each searched from where the
+        // one before stands.
+        let mut order: Vec<usize> = (0..shown.len()).collect();
+        order.sort_by(|a, b| shown[*a].1.against(shown[*b].1));
+        let them: Vec<&crate::location::Keyed> = order.iter().map(|&j| shown[j].1).collect();
+        let at = listing
+            .stand(&sort, &them)
+            .expect("keyed for the sort it is placed by");
+        let mut stands = vec![None; likes.len()];
+        for (among, (j, at)) in order.into_iter().zip(at).enumerate() {
+            let (i, keyed) = shown[j];
+            stands[i] = Some(Stand {
+                at,
+                among,
+                group: keyed.group().cloned(),
+            });
+        }
+        stands
+    }
+
+    /// The sort what arrives in `listing` (the pane's own, or that of a
+    /// folder it opened in place) is keyed for (ADR-135): that of its
+    /// order shown (`Listing::sort_shown`); and what keys made for it hold
+    /// for (`Keying`): that sort, whether hidden names are shown, and the
+    /// filter as it stands.
+    pub fn keying(&self, listing: &Listing) -> (crate::grouping::Sort, Keying) {
+        let sort = listing.sort_shown(self.sorting());
+        let keying = Keying {
+            sort: sort.stamp(),
+            show_hidden: self.sort.show_hidden,
+            filter: self.filter_version,
+        };
+        (sort, keying)
+    }
+
+    /// Each of `likes` (what plans bring, as it will be) keyed for `sort`
+    /// (`keying`) where the pane would show it: not a hidden name while
+    /// hidden files are not shown, nor one its filter would not keep (a
+    /// term it cannot tell yet, as for an entry not read). Placed by
+    /// `Listing::stand` as the order changes, never keyed again while the
+    /// keying holds.
+    pub fn keyed(
+        &self,
+        sort: &crate::grouping::Sort,
+        likes: &[&Entry],
+    ) -> Vec<Option<crate::location::Keyed>> {
         let filter = self.text_filter();
-        let grouping = sort.grouping();
         likes
             .iter()
-            .zip(at.into_iter().zip(among))
-            .map(|(like, (at, among))| {
+            .map(|like| {
                 let hidden = !self.sort.show_hidden && like.is_hidden();
-                if hidden || !shown(filter.as_ref(), like) {
-                    return None;
-                }
-                let group = grouping.map(|(_, keyer)| keyer(&crate::grouping::Of::entry(like)));
-                Some(Stand { at, among, group })
+                (!hidden && shown(filter.as_ref(), like))
+                    .then(|| crate::location::Keyed::new(sort, like))
             })
             .collect()
     }

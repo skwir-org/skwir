@@ -4,7 +4,7 @@
 
 use crate::sizes::sized;
 use std::cell::Cell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -221,6 +221,126 @@ struct Placing {
     arriving: skwir_core::op::arriving::Arriving,
 }
 
+/// An item arriving by its identity: what it is drawn and keyed as, held
+/// where it is kept so that no other takes its address meanwhile.
+pub(crate) fn arrival_key(arriving: &skwir_core::op::arriving::Arriving) -> usize {
+    std::sync::Arc::as_ptr(&arriving.arrival).addr()
+}
+
+/// What arrives in one folder a view shows (ADR-135), keyed once for how
+/// it is shown there (`keying`: for the pane's, `Pane::keying`): placed
+/// again by a search among the order's ranks as the order changes
+/// (`Listing::stand`), never keyed again while the keying holds; an item
+/// new keyed alone and merged in among the others.
+pub(crate) struct ArrivingKeys<K> {
+    keying: Option<K>,
+    /// Each item by its identity, held, with its keys: none where it is
+    /// not shown (a hidden name, a filter that leaves it out).
+    by: HashMap<
+        usize,
+        (
+            std::sync::Arc<skwir_core::op::arriving::Arrival>,
+            Option<skwir_core::location::Keyed>,
+        ),
+    >,
+    /// Those shown, as the order would have them among themselves.
+    order: Vec<usize>,
+}
+
+impl<K> Default for ArrivingKeys<K> {
+    fn default() -> Self {
+        ArrivingKeys {
+            keying: None,
+            by: HashMap::new(),
+            order: Vec::new(),
+        }
+    }
+}
+
+impl<K: PartialEq> ArrivingKeys<K> {
+    /// Keep the keys of `mine`, what arrives there now, for `keying`, each
+    /// new one keyed by `key` (none where it is not shown): those gone let
+    /// go of, those new merged in among the rest; all keyed anew once the
+    /// keying changed.
+    pub(crate) fn update(
+        &mut self,
+        keying: K,
+        mine: &[&skwir_core::op::arriving::Arriving],
+        key: impl FnOnce(&[&skwir_core::Entry]) -> Vec<Option<skwir_core::location::Keyed>>,
+    ) {
+        if self.keying.as_ref() != Some(&keying) {
+            self.by.clear();
+            self.order.clear();
+            self.keying = Some(keying);
+        }
+        let present: HashSet<usize> = mine.iter().map(|a| arrival_key(a)).collect();
+        if self.by.len() != present.len() || self.by.keys().any(|k| !present.contains(k)) {
+            self.keep_only(&present);
+        }
+        let new: Vec<&skwir_core::op::arriving::Arriving> = mine
+            .iter()
+            .filter(|a| !self.by.contains_key(&arrival_key(a)))
+            .copied()
+            .collect();
+        if new.is_empty() {
+            return;
+        }
+        let likes: Vec<&skwir_core::Entry> = new.iter().map(|a| &a.arrival.like).collect();
+        let mut added = Vec::new();
+        for (arriving, keyed) in new.iter().zip(key(&likes)) {
+            let key = arrival_key(arriving);
+            if keyed.is_some() {
+                added.push(key);
+            }
+            self.by
+                .insert(key, (std::sync::Arc::clone(&arriving.arrival), keyed));
+        }
+        let by = &self.by;
+        let keyed = |key: &usize| by[key].1.as_ref().expect("only those shown are ordered");
+        added.sort_by(|a, b| keyed(a).against(keyed(b)));
+        let old = std::mem::take(&mut self.order);
+        let mut order = Vec::with_capacity(old.len() + added.len());
+        let (mut i, mut j) = (0, 0);
+        while i < old.len() && j < added.len() {
+            if keyed(&added[j]).against(keyed(&old[i])).is_lt() {
+                order.push(added[j]);
+                j += 1;
+            } else {
+                order.push(old[i]);
+                i += 1;
+            }
+        }
+        order.extend_from_slice(&old[i..]);
+        order.extend_from_slice(&added[j..]);
+        self.order = order;
+    }
+
+    /// Only those of `present` kept, in their order.
+    pub(crate) fn keep_only(&mut self, present: &HashSet<usize>) {
+        self.by.retain(|key, _| present.contains(key));
+        let by = &self.by;
+        self.order.retain(|key| by.contains_key(key));
+    }
+
+    /// The keys of those shown, in their order.
+    pub(crate) fn shown(&self) -> impl Iterator<Item = &skwir_core::location::Keyed> {
+        self.keyed().map(|(_, keyed)| keyed)
+    }
+
+    /// Those shown, in their order, each by its identity with its keys.
+    pub(crate) fn keyed(&self) -> impl Iterator<Item = (usize, &skwir_core::location::Keyed)> {
+        self.order.iter().filter_map(|key| {
+            let keyed = self.by.get(key)?.1.as_ref()?;
+            Some((*key, keyed))
+        })
+    }
+
+    /// Whether none is shown.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.order.is_empty()
+    }
+}
+
 pub struct ListState {
     /// Entry ids in display order, from the core's cached sort.
     pub sorted: std::sync::Arc<[EntryId]>,
@@ -247,9 +367,16 @@ pub struct ListState {
     /// into, a file written in place, one placed whose step has not ended):
     /// drawn with how far it has come.
     pub arriving_on: HashMap<EntryId, skwir_core::op::arriving::Arriving>,
+    /// The groups no file is in yet that what arrives is placed in
+    /// (`Placed::fresh` names them), as `rows` was made with them.
+    arriving_fresh: Vec<crate::views::groups::Fresh>,
     /// What `rows` placed what arrives for: the order, the groups, and
     /// what arrives, by identity.
     arriving_for: Option<(usize, usize, Vec<usize>)>,
+    /// What arrives in each folder the pane shows (its own, `None`; one
+    /// opened in place, by the entry it opens at), keyed once for how the
+    /// pane shows it: placed again by a search as the order changes.
+    arriving_keys: HashMap<Option<EntryId>, ArrivingKeys<skwir_core::workspace::Keying>>,
     /// Since when the files of the folder left are drawn while the one
     /// gone to is filled elsewhere (ADR-120, amended: `holds_left`), and
     /// whether a command ended that.
@@ -331,8 +458,10 @@ impl Default for ListState {
             arriving: Vec::new(),
             arriving_depth: Vec::new(),
             arriving_placed: Vec::new(),
+            arriving_fresh: Vec::new(),
             arriving_on: HashMap::new(),
             arriving_for: None,
+            arriving_keys: HashMap::new(),
             held_since: None,
             hold_ended: false,
             sorted_at: None,
@@ -394,11 +523,21 @@ impl ListState {
         if self.sorted_at == Some(at) {
             return false;
         }
-        self.sorted = pane.order();
-        self.groups = pane.groups();
-        self.rows = crate::views::groups::RowMap::new(self.groups.clone(), self.sorted.len());
-        // What arrives is placed again among the rows made anew.
-        self.arriving_for = None;
+        let sorted = pane.order();
+        let groups = pane.groups();
+        // The version moves with any metadata read; the order and its groups
+        // only when what is shown or where moved. The same, the rows stay as
+        // made, what arrives where it was placed (ADR-135).
+        let same = std::sync::Arc::ptr_eq(&sorted, &self.sorted)
+            && std::sync::Arc::ptr_eq(&groups, &self.groups);
+        self.sorted = sorted;
+        self.groups = groups;
+        if !same {
+            self.rows = crate::views::groups::RowMap::new(self.groups.clone(), self.sorted.len());
+            // What arrives is placed again among the rows made anew.
+            self.arriving_for = None;
+            self.positions = std::cell::OnceCell::new();
+        }
         // The heading the keys are on, found again among the groups.
         if let Some(stop) = &mut self.heading {
             match self
@@ -412,7 +551,6 @@ impl ListState {
             }
         }
         self.sorted_at = Some(at);
-        self.positions = std::cell::OnceCell::new();
         true
     }
 
@@ -458,8 +596,10 @@ impl ListState {
         self.arriving.clear();
         self.arriving_depth.clear();
         self.arriving_placed.clear();
+        self.arriving_fresh.clear();
         self.arriving_on.clear();
         self.arriving_for = None;
+        self.arriving_keys.clear();
         self.held_since = None;
         self.hold_ended = false;
         self.sorted_at = None;
@@ -479,7 +619,9 @@ impl ListState {
     /// it opened in place, as the executor says it now (ADR-135): each item
     /// asked `work::SHOWN_AFTER` ago or more, placed among the rows where it
     /// will land, or on the entry already listed under its name. Placed
-    /// again only when the order, its groups or what arrives changed;
+    /// again only when the order, its groups or what arrives changed, each
+    /// item keyed once (`ArrivingKeys`) and placed by a search; one gone
+    /// (landed, cancelled) leaves its row, the others where they were;
     /// otherwise how far each has come is all that is taken. Nothing for a
     /// pane that shows no folder, or whose folder is still being read.
     /// Whether anything drawn changed, and when the next item waiting to be
@@ -530,31 +672,37 @@ impl ListState {
                     .is_none_or(|was| was.state != a.state || was.paused != a.paused)
             });
         self.arriving_on = on;
-        let key = |a: &Arriving| std::sync::Arc::as_ptr(&a.arrival).addr();
         let placed_for = (
             std::sync::Arc::as_ptr(&self.sorted).cast::<()>().addr(),
             std::sync::Arc::as_ptr(&self.groups).cast::<()>().addr(),
-            ghosts.iter().map(|(_, a)| key(a)).collect::<Vec<usize>>(),
+            ghosts
+                .iter()
+                .map(|(_, a)| arrival_key(a))
+                .collect::<Vec<usize>>(),
         );
         // Nothing arrives, nothing did: the rows stay as made.
         if ghosts.is_empty() && self.arriving.is_empty() {
+            self.arriving_keys.clear();
             self.arriving_for = Some(placed_for);
             return (on_moved, due);
         }
-        if self.arriving_for.as_ref() == Some(&placed_for) {
-            // The same, where they were: how far each has come.
-            let now: HashMap<usize, &Arriving> = ghosts.iter().map(|(_, a)| (key(a), a)).collect();
-            let mut moved = on_moved;
-            for mine in &mut self.arriving {
-                if let Some(new) = now.get(&key(mine))
-                    && (mine.state != new.state || mine.paused != new.paused)
-                {
-                    mine.state = new.state;
-                    mine.paused = new.paused;
-                    moved = true;
-                }
+        if let Some((sorted, groups, was)) = self.arriving_for.as_ref()
+            && (*sorted, *groups) == (placed_for.0, placed_for.1)
+        {
+            if *was == placed_for.2 {
+                // The same, where they were: how far each has come.
+                let moved = self.take_states(&ghosts) || on_moved;
+                return (moved, due);
             }
-            return (moved, due);
+            // Only some gone (landed, cancelled), the order as it was: the
+            // others stay where they were placed.
+            let was: HashSet<usize> = was.iter().copied().collect();
+            if placed_for.2.iter().all(|key| was.contains(key)) {
+                self.take_states(&ghosts);
+                self.let_go_of_gone(&placed_for.2);
+                self.arriving_for = Some(placed_for);
+                return (true, due);
+            }
         }
         let was_drawn = !self.arriving.is_empty();
         self.arriving_for = Some(placed_for);
@@ -565,18 +713,20 @@ impl ListState {
         // The groups no file is in yet that what arrives will be in, each
         // once, where it stands among the pane's (`Pane::fresh_before`).
         let mut fresh: Vec<crate::views::groups::Fresh> = Vec::new();
+        let mut keys_of = std::mem::take(&mut self.arriving_keys);
+        keys_of.retain(|at, _| sources.iter().any(|(opened, ..)| opened == at));
         for (source, (opened_at, listing, _)) in sources.iter().enumerate() {
-            let mine: Vec<Arriving> = ghosts
+            let mine: Vec<&Arriving> = ghosts
                 .iter()
                 .filter(|(s, _)| *s == source)
-                .map(|(_, a)| a.clone())
+                .map(|(_, a)| a)
                 .collect();
-            if mine.is_empty() {
+            let keys = keys_of.entry(*opened_at).or_default();
+            let (sort, keying) = pane.keying(listing);
+            keys.update(keying, &mine, |likes| pane.keyed(&sort, likes));
+            if keys.is_empty() {
                 continue;
             }
-            let likes: Vec<&skwir_core::Entry> = mine.iter().map(|a| &a.arrival.like).collect();
-            let stands = pane.stands_in(listing, &likes);
-            let top = pane.sorted_of(listing);
             let (end, depth, group_at) = match opened_at {
                 None => (self.sorted.len(), 0, None),
                 // An opened folder not shown (filtered out, its group
@@ -589,18 +739,26 @@ impl ListState {
                     (self.below_end(pane, folder, depth), depth, Some(folder))
                 }
             };
-            let at_of = self.positions_of_listed(&top, &stands, end);
-            for (arriving, stand) in mine.into_iter().zip(stands) {
-                let Some(stand) = stand else {
+            let them: Vec<&skwir_core::location::Keyed> = keys.shown().collect();
+            let Some(ats) = listing.stand(&sort, &them) else {
+                continue;
+            };
+            let by_key: HashMap<usize, &Arriving> =
+                mine.iter().map(|a| (arrival_key(a), *a)).collect();
+            let top = pane.sorted_of(listing);
+            let at_of = self.positions_of_listed(&top, &ats, end);
+            for (among, ((key, keyed), listed_at)) in keys.keyed().zip(ats).enumerate() {
+                let Some(arriving) = by_key.get(&key) else {
                     continue;
                 };
-                let at = at_of.get(&stand.at).copied().unwrap_or(end);
+                let at = at_of.get(&listed_at).copied().unwrap_or(end);
+                let wants = keyed.group();
                 let group = match group_at {
-                    None => self.group_for(at, stand.group.as_ref()),
+                    None => self.group_for(at, wants),
                     Some(folder) => self.rows.group_of(folder),
                 };
                 // Grouped, in a group none of the pane's is: its own.
-                let in_fresh = match (&stand.group, group) {
+                let in_fresh = match (wants, group) {
                     (Some(new), None) if group_at.is_none() && self.rows.grouped() => Some(
                         fresh
                             .iter()
@@ -618,15 +776,17 @@ impl ListState {
                 kept.push(Placing {
                     at,
                     depth,
-                    among: stand.among,
+                    among,
                     group,
                     fresh: in_fresh,
-                    arriving,
+                    arriving: (*arriving).clone(),
                 });
             }
         }
+        self.arriving_keys = keys_of;
         // Before the same entry, the deeper first: what arrives at the end
-        // of a folder opened comes before what goes after it.
+        // of a folder opened comes before what goes after it. Each source's
+        // stands in order already: a merge of runs.
         kept.sort_by_key(|p| (p.at, std::cmp::Reverse(p.depth), p.among));
         let placed: Vec<crate::views::groups::Placed> = kept
             .iter()
@@ -645,7 +805,76 @@ impl ListState {
             &fresh,
         );
         self.arriving_placed = placed;
+        self.arriving_fresh = fresh;
         (was_drawn || !self.arriving.is_empty() || on_moved, due)
+    }
+
+    /// How far each of what is drawn arriving has come, as `ghosts` says
+    /// it now. Whether any moved.
+    fn take_states(&mut self, ghosts: &[(usize, skwir_core::op::arriving::Arriving)]) -> bool {
+        let now: HashMap<usize, &skwir_core::op::arriving::Arriving> =
+            ghosts.iter().map(|(_, a)| (arrival_key(a), a)).collect();
+        let mut moved = false;
+        for mine in &mut self.arriving {
+            if let Some(new) = now.get(&arrival_key(mine))
+                && (mine.state != new.state || mine.paused != new.paused)
+            {
+                mine.state = new.state;
+                mine.paused = new.paused;
+                moved = true;
+            }
+        }
+        moved
+    }
+
+    /// What arrives now is `present` (by identity), all of it drawn
+    /// already: those drawn and gone leave their rows, the others stay
+    /// where they were placed, the groups no file is in yet that nothing
+    /// arrives in any more go too, and their keys are let go of.
+    fn let_go_of_gone(&mut self, present: &[usize]) {
+        let present: HashSet<usize> = present.iter().copied().collect();
+        let stays: Vec<bool> = self
+            .arriving
+            .iter()
+            .map(|a| present.contains(&arrival_key(a)))
+            .collect();
+        let mut at = 0;
+        self.arriving.retain(|_| {
+            at += 1;
+            stays[at - 1]
+        });
+        let mut at = 0;
+        self.arriving_depth.retain(|_| {
+            at += 1;
+            stays[at - 1]
+        });
+        let mut at = 0;
+        self.arriving_placed.retain(|_| {
+            at += 1;
+            stays[at - 1]
+        });
+        // The groups no file is in yet still arrived in, numbered anew.
+        let mut renumbered: HashMap<usize, usize> = HashMap::new();
+        let mut fresh = Vec::new();
+        for placed in &mut self.arriving_placed {
+            if let Some(k) = placed.fresh {
+                let new = *renumbered.entry(k).or_insert_with(|| {
+                    fresh.push(self.arriving_fresh[k].clone());
+                    fresh.len() - 1
+                });
+                placed.fresh = Some(new);
+            }
+        }
+        self.arriving_fresh = fresh;
+        for keys in self.arriving_keys.values_mut() {
+            keys.keep_only(&present);
+        }
+        self.rows = crate::views::groups::RowMap::arriving(
+            self.groups.clone(),
+            self.sorted.len(),
+            &self.arriving_placed,
+            &self.arriving_fresh,
+        );
     }
 
     /// Where what is below the folder at `folder` ends among what the pane
@@ -669,10 +898,10 @@ impl ListState {
     fn positions_of_listed(
         &self,
         top: &[EntryId],
-        stands: &[Option<skwir_core::workspace::Stand>],
+        stands: &[usize],
         end: usize,
     ) -> HashMap<usize, usize> {
-        let mut ats: Vec<usize> = stands.iter().flatten().map(|stand| stand.at).collect();
+        let mut ats: Vec<usize> = stands.to_vec();
         ats.sort_unstable_by(|a, b| b.cmp(a));
         ats.dedup();
         let flat = std::ptr::eq(top, &raw const self.sorted[..]);

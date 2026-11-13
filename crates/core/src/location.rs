@@ -1889,6 +1889,106 @@ impl SortKeyOf<'_> {
     }
 }
 
+/// The first place from `from` on, of `len`, that `before` no longer
+/// holds of (`before` holding of a run from the start, then of none), all
+/// before `from` known to hold: probed a step after `from`, then twice as
+/// far each time, then searched between the last two probes. As cheap as
+/// a search from the start for one, and a walk for many in order.
+fn gallop(len: usize, from: usize, before: impl Fn(usize) -> bool) -> usize {
+    if from >= len || !before(from) {
+        return from;
+    }
+    // `before(low)` holds; the answer is past it, at `high` at most.
+    let (mut low, mut step) = (from, 1usize);
+    let mut high = from + 1;
+    while high < len && before(high) {
+        low = high;
+        step = step.saturating_mul(2);
+        high = from.saturating_add(step);
+    }
+    let (mut a, mut b) = (low + 1, high.min(len));
+    while a < b {
+        let mid = a + (b - a) / 2;
+        if before(mid) {
+            a = mid + 1;
+        } else {
+            b = mid;
+        }
+    }
+    a
+}
+
+/// An entry no listing holds (what a plan brings, ADR-135), keyed once for
+/// the sort of the order it is placed in: what [`Listing::stand`] searches
+/// the order's ranks by each time that order changes, no key made again.
+/// What the sort reads of it and its name's collation key, not the entry.
+#[derive(Clone, Debug)]
+pub struct Keyed {
+    stamp: SortStamp,
+    later: bool,
+    extra: Option<Arc<Extra>>,
+    file: bool,
+    unknown: bool,
+    num: u64,
+    name: Box<[u8]>,
+    id: EntryId,
+}
+
+impl Keyed {
+    /// `entry` keyed for `sort`, as a listing keys what it holds.
+    pub fn new(sort: &Sort, entry: &Entry) -> Self {
+        let slot = Slot::new(entry.clone(), None);
+        let SortKeyOf {
+            later,
+            extra,
+            file,
+            unknown,
+            num,
+            id,
+            ..
+        } = Listing::sort_key(sort, &slot);
+        Keyed {
+            stamp: sort.stamp(),
+            later,
+            extra,
+            file,
+            unknown,
+            num,
+            name: slot.key,
+            id,
+        }
+    }
+
+    fn key(&self) -> SortKeyOf<'_> {
+        SortKeyOf {
+            later: self.later,
+            extra: self.extra.clone(),
+            file: self.file,
+            unknown: self.unknown,
+            num: self.num,
+            name: &self.name,
+            id: self.id,
+        }
+    }
+
+    /// The sort it was keyed for.
+    pub fn stamp(&self) -> SortStamp {
+        self.stamp
+    }
+
+    /// Where it stands against `other`, keyed for the same sort, in an
+    /// order of that sort.
+    pub fn against(&self, other: &Keyed) -> std::cmp::Ordering {
+        Listing::compare(self.stamp.spec, &self.key(), &other.key())
+    }
+
+    /// The group it is in, where its sort groups; none while what groups
+    /// it is not read (after every group).
+    pub fn group(&self) -> Option<&Arc<Group>> {
+        self.extra.as_ref()?.group.as_ref()
+    }
+}
+
 /// Every version of every listing is read from this one clock, so a value
 /// names one state of one listing. A pane that reopens its folder gets a
 /// new listing whose versions cannot repeat the old one's: work keyed on a
@@ -2746,60 +2846,96 @@ impl Listing {
         }
     }
 
+    /// The sort the order shown for `sort` is made with (`order_shown`):
+    /// another's while `sort`'s is made on a worker (ADR-121). What
+    /// arrives is keyed for it ([`Keyed`]).
+    pub fn sort_shown(&self, sort: impl Into<Sort>) -> Sort {
+        let sort = sort.into();
+        self.order_before(&sort).unwrap_or(sort)
+    }
+
     /// Where each of `likes`, entries it does not hold (what a plan brings,
     /// ADR-135), would stand in the order shown for `sort` (`order_shown`):
     /// the place of the first shown entry after it, the order's length past
     /// the last; and where they stand among themselves, as the order would
-    /// have them. Searched among the order's ranks, as arrivals are placed
-    /// (`place`): a few comparisons each, none of them looking an entry up
-    /// unless two names begin alike for 16 bytes. Whether each is shown
-    /// (a hidden name, a filter) is not asked here.
+    /// have them. Each keyed once ([`Keyed`]), then placed by
+    /// [`Listing::stand`]. Whether each is shown (a hidden name, a filter)
+    /// is not asked here.
     pub fn standing(&self, sort: impl Into<Sort>, likes: &[&Entry]) -> (Vec<usize>, Vec<usize>) {
-        let sort = sort.into();
-        let sort = self.order_before(&sort).unwrap_or(sort);
-        let order = self.sorted(&sort);
-        let slots: Vec<Slot> = likes
-            .iter()
-            .map(|e| Slot::new((*e).clone(), None))
-            .collect();
-        let keys: Vec<SortKeyOf<'_>> = slots.iter().map(|s| Self::sort_key(&sort, s)).collect();
-        let mut among: Vec<usize> = (0..keys.len()).collect();
-        among.sort_by(|a, b| Self::compare(sort.spec, &keys[*a], &keys[*b]));
-        let mut rank = vec![0; keys.len()];
+        let sort = self.sort_shown(sort);
+        let keyed: Vec<Keyed> = likes.iter().map(|e| Keyed::new(&sort, e)).collect();
+        let mut among: Vec<usize> = (0..keyed.len()).collect();
+        among.sort_by(|a, b| keyed[*a].against(&keyed[*b]));
+        let mut rank = vec![0; keyed.len()];
         for (at, i) in among.into_iter().enumerate() {
             rank[i] = at;
         }
+        let keyed: Vec<&Keyed> = keyed.iter().collect();
+        let at = self
+            .stand(&sort, &keyed)
+            .expect("keyed for the sort it is placed by");
+        (at, rank)
+    }
+
+    /// Where each of `keyed` (entries it does not hold, keyed for `sort`,
+    /// the order shown's: [`Listing::sort_shown`]) would stand in the order
+    /// shown: the place of the first entry after it, the order's length
+    /// past the last. Searched among the order's ranks, as arrivals are
+    /// placed (`place`): a few comparisons each, none of them looking an
+    /// entry up unless two names begin alike for 16 bytes, and no key made
+    /// again. Given in their order among themselves (as `Keyed::against`
+    /// has them), each is searched from where the one before stands, a
+    /// step and then twice as far (a galloping search): placing as many as
+    /// the order holds is a walk of it, not a search from its start for
+    /// each. `None` where one was keyed for another sort, to be keyed
+    /// again.
+    pub fn stand(&self, sort: &Sort, keyed: &[&Keyed]) -> Option<Vec<usize>> {
+        let stamp = sort.stamp();
+        if keyed.iter().any(|k| k.stamp != stamp) {
+            return None;
+        }
+        let order = self.sorted(sort);
+        // Where each of `keyed` stands, `before(i, key)` saying whether the
+        // `i`th of `len` comes before `key`.
+        let walk = |len: usize, before: &dyn Fn(usize, &SortKeyOf<'_>) -> bool| {
+            let mut from = 0;
+            let mut last: Option<&Keyed> = None;
+            keyed
+                .iter()
+                .map(|keyed| {
+                    // One out of order: searched from the start.
+                    if last.is_some_and(|last| keyed.against(last).is_lt()) {
+                        from = 0;
+                    }
+                    last = Some(keyed);
+                    let key = keyed.key();
+                    from = gallop(len, from, |i| before(i, &key));
+                    from
+                })
+                .collect::<Vec<usize>>()
+        };
         let ranked: Option<Vec<usize>> = {
             let cache = self.sort_cache.lock();
             cache
                 .as_ref()
                 .filter(|c| Arc::ptr_eq(&c.ids, &order) && c.ranks.len() == order.len())
                 .map(|c| {
-                    keys.iter()
-                        .map(|key| {
-                            let probe = Rank::with(key, 0);
-                            c.ranks.partition_point(|placed| {
-                                self.compare_rank(sort.spec, &c.extras, placed, key, &probe)
-                                    .is_lt()
-                            })
-                        })
-                        .collect()
+                    walk(c.ranks.len(), &|i, key| {
+                        let probe = Rank::with(key, 0);
+                        self.compare_rank(sort.spec, &c.extras, &c.ranks[i], key, &probe)
+                            .is_lt()
+                    })
                 })
         };
         // No ranks beside the order (it is being made again): each entry
         // probed is keyed as it is compared.
-        let at = ranked.unwrap_or_else(|| {
-            keys.iter()
-                .map(|key| {
-                    order.partition_point(|id| {
-                        self.entries.get(id).is_some_and(|slot| {
-                            Self::compare(sort.spec, &Self::sort_key(&sort, slot), key).is_lt()
-                        })
-                    })
+        Some(ranked.unwrap_or_else(|| {
+            walk(order.len(), &|i, key| {
+                self.entries.get(&order[i]).is_some_and(|slot| {
+                    Self::compare(sort.spec, &Self::sort_key(sort, slot), key).is_lt()
                 })
-                .collect()
-        });
-        (at, rank)
+            })
+        }))
     }
 
     /// Where each group starts in the order shown for `sort`
@@ -4139,6 +4275,19 @@ mod tests {
         assert_eq!(unescape("%41%e9%E9"), [b'A', 0xe9, 0xe9]);
         for kept in ["%+1", "%-1", "% 1", "%4", "%", "%zz"] {
             assert_eq!(unescape(kept), kept.as_bytes(), "{kept}");
+        }
+    }
+
+    /// A galloping search from any place before the answer finds it, as a
+    /// search from the start does.
+    #[test]
+    fn a_galloping_search_finds_what_a_search_from_the_start_finds() {
+        for len in 0..40 {
+            for answer in 0..=len {
+                for from in 0..=answer {
+                    assert_eq!(super::gallop(len, from, |i| i < answer), answer);
+                }
+            }
         }
     }
 

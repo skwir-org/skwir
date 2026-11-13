@@ -96,6 +96,11 @@ pub struct Report {
     /// the pane's order will have them (ADR-135, `Pane::stands`), as a
     /// pane does again each time its order or what arrives changes.
     pub arriving_stands: Stat,
+    /// 100 000 items arriving in that folder, keyed once for the pane's
+    /// order (`Pane::keyed`), placed again where the order will have them
+    /// (`Listing::stand`), as a pane does each time its order changes while
+    /// they come (each landing changes it): the placing alone.
+    pub arriving_placed_again: Stat,
     /// 10 000 of 20 000 empty files in a scratch folder deleted for good
     /// by a plan, through the executor: from applying it to its end.
     pub delete_tail: Stat,
@@ -125,7 +130,7 @@ pub struct Report {
 
 impl Report {
     /// Each measurement by its key in the budgets file.
-    fn metrics(&self) -> [(&'static str, &Stat); 32] {
+    fn metrics(&self) -> [(&'static str, &Stat); 33] {
         [
             ("first_batch_us", &self.first_batch),
             ("list_getdents_us", &self.list_getdents),
@@ -153,6 +158,7 @@ impl Report {
             ("mime_by_name_us", &self.mime_by_name),
             ("entry_at_selection_us", &self.entry_at_selection),
             ("arriving_stands_us", &self.arriving_stands),
+            ("arriving_placed_again_us", &self.arriving_placed_again),
             ("delete_tail_us", &self.delete_tail),
             ("tags_forget_us", &self.tags_forget),
             ("history_put_us", &self.history_put),
@@ -180,11 +186,12 @@ const OWN_DATA: [&str; 11] = [
 ];
 
 /// The measurements of the flat tree alone.
-const FLAT_ONLY: [&str; 11] = [
+const FLAT_ONLY: [&str; 12] = [
     "listing_sort_hydrate_us",
     "listing_sort_update_us",
     "entry_at_selection_us",
     "arriving_stands_us",
+    "arriving_placed_again_us",
     "delete_tail_us",
     "tags_forget_us",
     "mime_by_name_us",
@@ -986,6 +993,59 @@ const ARRIVING: usize = 10_000;
 /// its files so they stand all along its order, each a file with a size,
 /// as what a copy brings is read; only the placing is timed.
 fn arriving_stands(app: &skwir_core::App, dir: &Path, runs: usize) -> Stat {
+    let (pane, likes) = arriving_likes(app, dir, 10, ARRIVING);
+    timed(runs, || {
+        let ws = app.workspace.read();
+        let pane = ws.pane(pane).expect("pane");
+        let likes: Vec<&skwir_core::Entry> = likes.iter().collect();
+        let stands = pane.stands(&likes);
+        assert!(stands.iter().all(Option::is_some), "each shown");
+        stands.len()
+    })
+}
+
+/// How many items arrive in [`arriving_placed_again`].
+const ARRIVING_AGAIN: usize = 100_000;
+
+/// [`Report::arriving_placed_again`]: `dir` listed in a pane of `app`, and
+/// `ARRIVING_AGAIN` items arriving in it, one beside each of its files,
+/// keyed once for the pane's order as a pane keys them; only the placing
+/// again is timed.
+fn arriving_placed_again(app: &skwir_core::App, dir: &Path, runs: usize) -> Stat {
+    let (pane, likes) = arriving_likes(app, dir, 1, ARRIVING_AGAIN);
+    let (sort, keyed) = {
+        let ws = app.workspace.read();
+        let pane = ws.pane(pane).expect("pane");
+        let (sort, _) = pane.keying(&pane.listing);
+        let likes: Vec<&skwir_core::Entry> = likes.iter().collect();
+        let keyed: Vec<skwir_core::location::Keyed> = pane
+            .keyed(&sort, &likes)
+            .into_iter()
+            .map(|keyed| keyed.expect("each shown"))
+            .collect();
+        (sort, keyed)
+    };
+    let mut keyed: Vec<&skwir_core::location::Keyed> = keyed.iter().collect();
+    keyed.sort_by(|a, b| a.against(b));
+    timed(runs, || {
+        let ws = app.workspace.read();
+        let pane = ws.pane(pane).expect("pane");
+        let at = pane.listing.stand(&sort, &keyed).expect("keyed for it");
+        assert!(at.windows(2).all(|two| two[0] <= two[1]), "in order");
+        at.len()
+    })
+}
+
+/// `dir` listed in a pane of `app`, sorted by name, and `count` items
+/// arriving in it, named after every `every`th of its files so they stand
+/// all along its order, each a file with a size, as what a copy brings is
+/// read.
+fn arriving_likes(
+    app: &skwir_core::App,
+    dir: &Path,
+    every: usize,
+    count: usize,
+) -> (skwir_core::workspace::PaneId, Vec<skwir_core::Entry>) {
     use skwir_core::entry::{Entry, EntryKind, Provenance, Value, keys};
     use skwir_core::location::Location;
     let dir = skwir_core::os_path::canonical(dir).expect("tree");
@@ -1002,8 +1062,8 @@ fn arriving_stands(app: &skwir_core::App, dir: &Path, runs: usize) -> Stat {
         let listing = &ws.pane(pane).expect("pane").listing;
         listing
             .iter()
-            .step_by(10)
-            .take(ARRIVING)
+            .step_by(every)
+            .take(count)
             .map(|e| {
                 let mut name = e.name.clone();
                 name.push(" (copy)");
@@ -1014,15 +1074,8 @@ fn arriving_stands(app: &skwir_core::App, dir: &Path, runs: usize) -> Stat {
             })
             .collect()
     };
-    assert_eq!(likes.len(), ARRIVING, "as many arriving");
-    timed(runs, || {
-        let ws = app.workspace.read();
-        let pane = ws.pane(pane).expect("pane");
-        let likes: Vec<&Entry> = likes.iter().collect();
-        let stands = pane.stands(&likes);
-        assert!(stands.iter().all(Option::is_some), "each shown");
-        stands.len()
-    })
+    assert_eq!(likes.len(), count, "as many arriving");
+    (pane, likes)
 }
 
 /// How many empty files [`delete_tail`] makes, and deletes every other of.
@@ -1386,6 +1439,9 @@ pub fn run(root: &Path, profile: Profile, runs: usize, only: &Only) -> Report {
     let arriving_stands = measured(flat && want("arriving_stands_us"), || {
         arriving_stands(&app, &single, runs)
     });
+    let arriving_placed_again = measured(flat && want("arriving_placed_again_us"), || {
+        arriving_placed_again(&app, &single, runs)
+    });
     Report {
         files: profile.file_count(),
         runs,
@@ -1426,6 +1482,7 @@ pub fn run(root: &Path, profile: Profile, runs: usize, only: &Only) -> Report {
         mime_by_name,
         entry_at_selection,
         arriving_stands,
+        arriving_placed_again,
         delete_tail: measured(flat && want("delete_tail_us"), || delete_tail(runs)),
         tags_forget: measured(flat && want("tags_forget_us"), || tags_forget(runs)),
         history_put: measured(flat && want("history_put_us"), || history_put(runs)),

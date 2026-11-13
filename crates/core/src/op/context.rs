@@ -622,12 +622,17 @@ impl Meter {
         }
     }
 
-    /// How far its steps are, for what it brings into a folder (ADR-135):
-    /// the steps ended, the bytes of the one under way, as `reading` counts
-    /// them (what a batch counted for the steps after it left out), and
-    /// the steps a batch finished ahead of their turn. Reads no clock and
-    /// moves nothing a reading keeps.
-    pub(super) fn steps_read(&self) -> super::arriving::StepsRead {
+    /// How far its steps are, for what it brings into a folder (ADR-135),
+    /// lent to `read` while it tells its items how far each is: the steps
+    /// ended, the bytes of the one under way, as `reading` counts them
+    /// (what a batch counted for the steps after it left out), the steps a
+    /// batch finished ahead of their turn and those it took, borrowed under
+    /// their locks, never copied (a batch of 100,000 steps keeps as many).
+    /// Reads no clock and moves nothing a reading keeps.
+    pub(super) fn steps_read<R>(
+        &self,
+        read: impl FnOnce(&super::arriving::StepsRead<'_>) -> R,
+    ) -> R {
         let steps = *self.steps.lock();
         let done = self
             .done
@@ -635,13 +640,16 @@ impl Meter {
             .saturating_add(self.arriving.load(Ordering::Relaxed));
         let total = self.total.load(Ordering::Relaxed);
         let counted = total.saturating_sub(steps.total);
-        super::arriving::StepsRead {
+        // As `unbatch` takes them: what was finished, then what was taken.
+        let ahead = self.finished_ahead.lock();
+        let batching = self.batching.lock();
+        read(&super::arriving::StepsRead {
             ended: steps.ended,
             step_done: done.saturating_sub(steps.done),
             step_total: counted.saturating_sub(steps.others.min(counted)),
-            ahead: self.finished_ahead.lock().iter().copied().collect(),
-            batching: self.batching.lock().clone(),
-        }
+            ahead: &ahead,
+            batching: &batching,
+        })
     }
 
     /// What the window and the `running` command show of the plan: how far
@@ -2600,7 +2608,7 @@ mod tests {
         meter.begin(3);
         meter.counted(1, 100);
         meter.counted(2, 100);
-        let of = |step: usize| meter.steps_read().batching[&step];
+        let of = |step: usize| meter.steps_read(|read| read.batching[&step]);
         assert!(!of(1).tells, "untold until a transfer takes it");
         meter.batch_tells([1, 2], true);
         meter.writing(1, 100);

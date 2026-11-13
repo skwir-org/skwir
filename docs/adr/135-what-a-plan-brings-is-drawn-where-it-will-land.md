@@ -97,7 +97,12 @@ press opening the action's card in Activity). Built on Linux.
   again when the order changes (each landing changes it): 11.2 ms for
   10,000 items among 100,000 entries, on the window's thread
   (`arriving_stands_us`, release). The rows that are no entry are
-  searched, never walked.
+  searched, never walked. Each item is keyed once for how the pane shows
+  it, so that placing again is the search alone, each from where the one
+  before it stands (a galloping search: 17.8 ms for 100,000 items among
+  100,000 entries, `arriving_placed_again_us`, under load), and only a
+  change of the order, its groups or what arrives places again, never
+  metadata read; an item gone leaves its row, the others staying.
 - **Limits kept for later** (the user's list): the columns and the board
   draw no arrivals; in a grouped view, an item whose group holds no file
   yet stands after every group; sorted by Created or Accessed, a file

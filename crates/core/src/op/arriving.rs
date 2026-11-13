@@ -74,19 +74,21 @@ pub struct Arriving {
     pub paused: bool,
 }
 
-/// What a plan's run read of its steps for its items (`Meter::steps_read`).
-#[derive(Clone, Debug, Default)]
-pub(super) struct StepsRead {
+/// What a plan's run read of its steps for its items (`Meter::steps_read`),
+/// borrowed from its meter while its items are told how far they are: no
+/// copy of what a batch of 100,000 steps keeps, at each look.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct StepsRead<'a> {
     /// The steps ended, the next one under way.
     pub ended: usize,
     /// The bytes of the step under way: moved, and announced.
     pub step_done: u64,
     pub step_total: u64,
     /// The steps after it a batch finished ahead of their turn (ADR-078).
-    pub ahead: HashSet<usize>,
+    pub ahead: &'a HashSet<usize>,
     /// The steps a batch under way took: their bytes copied so far, where
     /// its transfer tells them, and in all.
-    pub batching: HashMap<usize, Batching>,
+    pub batching: &'a HashMap<usize, Batching>,
 }
 
 /// A step a batch under way took (ADR-078), as its meter keeps it.
@@ -103,7 +105,7 @@ pub(super) struct Batching {
 
 /// Where `arrival` stands as its plan's run read it, `None` once it landed
 /// (its steps ended) or where its run ended.
-pub(super) fn state_of(arrival: &Arrival, read: Option<&StepsRead>) -> Option<Arrives> {
+pub(super) fn state_of(arrival: &Arrival, read: Option<&StepsRead<'_>>) -> Option<Arrives> {
     let Some(read) = read else {
         // Its plan not running: waiting, unless it ran (its steps known),
         // and its run is over.
@@ -121,21 +123,22 @@ pub(super) fn state_of(arrival: &Arrival, read: Option<&StepsRead>) -> Option<Ar
     }
     // Taken by a batch: by its own bytes where its transfer tells them;
     // nothing told yet by one that tells each, not begun; else by the
-    // batch's, which the step under way runs.
-    let batched: Vec<Batching> = steps
-        .clone()
-        .filter_map(|step| read.batching.get(&step).copied())
-        .collect();
-    if !batched.is_empty() {
-        let (done, total) = batched.iter().fold((0u64, 0u64), |(d, t), b| {
-            (d.saturating_add(b.done), t.saturating_add(b.total))
-        });
+    // batch's, which the step under way runs. Read in one pass, nothing
+    // kept: asked of every item arriving at each look.
+    let (mut taken, mut done, mut total, mut tells) = (false, 0u64, 0u64, false);
+    for b in steps.clone().filter_map(|step| read.batching.get(&step)) {
+        taken = true;
+        done = done.saturating_add(b.done);
+        total = total.saturating_add(b.total);
+        tells |= b.tells;
+    }
+    if taken {
         if done > 0 && total > 0 {
             return Some(Arrives::Moving(
                 (done as f64 / total as f64).clamp(0., 1.) as f32
             ));
         }
-        if batched.iter().any(|b| b.tells) {
+        if tells {
             return Some(Arrives::Waiting);
         }
         let batch = if read.step_total > 0 {
@@ -403,12 +406,27 @@ struct Inner {
 }
 
 /// A plan asked: its token, when it was asked, whether its arrivals are
-/// those of its run, and what they are.
+/// those of its run, and what they are, by the folder each lands in, those
+/// folders in its order: a folder asked of is answered with its own, never
+/// a walk of all a plan brings (a restore of 100,000 files into as many
+/// folders).
 struct Record {
     cancel: CancelToken,
     asked: Instant,
     runs: bool,
-    arrivals: Arc<[Arc<Arrival>]>,
+    /// Its arrivals by folder, in its order.
+    by_folder: HashMap<PathBuf, Arc<[Arc<Arrival>]>>,
+    /// The folders it brings something into, each once, in its order.
+    folders: Arc<[PathBuf]>,
+}
+
+impl Record {
+    fn arrivals(&self) -> impl Iterator<Item = &Arc<Arrival>> {
+        self.folders
+            .iter()
+            .filter_map(|folder| self.by_folder.get(folder))
+            .flat_map(|those| those.iter())
+    }
 }
 
 impl Index {
@@ -420,7 +438,8 @@ impl Index {
             cancel: cancel.clone(),
             asked: Instant::now(),
             runs: false,
-            arrivals: Arc::from([]),
+            by_folder: HashMap::new(),
+            folders: Arc::from([]),
         });
         record.asked
     }
@@ -431,8 +450,7 @@ impl Index {
         let inner = self.inner.lock();
         let record = inner.plans.get(&plan)?;
         let known = record
-            .arrivals
-            .iter()
+            .arrivals()
             .filter_map(|a| Some((a.from.clone()?, a.like.clone())))
             .collect();
         Some((record.asked, known))
@@ -442,6 +460,16 @@ impl Index {
     /// while it is (asked and not ended), and never the asked plan's over
     /// its run's. Whether they were kept.
     pub(super) fn fill(&self, plan: PlanId, arrivals: Vec<Arc<Arrival>>, runs: bool) -> bool {
+        let mut by_folder: HashMap<PathBuf, Vec<Arc<Arrival>>> = HashMap::new();
+        let mut order: Vec<PathBuf> = Vec::new();
+        for arrival in arrivals {
+            if let Some(those) = by_folder.get_mut(&arrival.folder) {
+                those.push(arrival);
+            } else {
+                order.push(arrival.folder.clone());
+                by_folder.insert(arrival.folder.clone(), vec![arrival]);
+            }
+        }
         let mut inner = self.inner.lock();
         let Inner { plans, folders } = &mut *inner;
         let Some(record) = plans.get_mut(&plan) else {
@@ -450,25 +478,16 @@ impl Index {
         if record.runs && !runs {
             return false;
         }
-        for folder in record.arrivals.iter().map(|a| &a.folder) {
-            if let Some(those) = folders.get_mut(folder) {
-                those.retain(|p| *p != plan);
-                if those.is_empty() {
-                    folders.remove(folder);
-                }
-            }
-        }
-        let mut told = HashSet::new();
-        for arrival in &arrivals {
-            if told.insert(&arrival.folder) {
-                folders
-                    .entry(arrival.folder.clone())
-                    .or_default()
-                    .push(plan);
-            }
+        unlist(folders, plan, &record.folders);
+        for folder in &order {
+            folders.entry(folder.clone()).or_default().push(plan);
         }
         record.runs = runs;
-        record.arrivals = arrivals.into();
+        record.by_folder = by_folder
+            .into_iter()
+            .map(|(folder, those)| (folder, Arc::from(those)))
+            .collect();
+        record.folders = order.into();
         true
     }
 
@@ -480,34 +499,22 @@ impl Index {
         let Some(record) = plans.remove(&plan) else {
             return false;
         };
-        for arrival in record.arrivals.iter() {
-            if let Some(those) = folders.get_mut(&arrival.folder) {
-                those.retain(|p| *p != plan);
-                if those.is_empty() {
-                    folders.remove(&arrival.folder);
-                }
-            }
-        }
-        !record.arrivals.is_empty()
+        unlist(folders, plan, &record.folders);
+        !record.folders.is_empty()
     }
 
     /// The folders `plan` brings something into, each once, in its order.
-    pub(super) fn folders_of(&self, plan: PlanId) -> Vec<PathBuf> {
+    pub(super) fn folders_of(&self, plan: PlanId) -> Arc<[PathBuf]> {
         let inner = self.inner.lock();
-        let mut seen = HashSet::new();
-        inner.plans.get(&plan).map_or_else(Vec::new, |record| {
-            record
-                .arrivals
-                .iter()
-                .filter(|a| seen.insert(&a.folder))
-                .map(|a| a.folder.clone())
-                .collect()
-        })
+        inner
+            .plans
+            .get(&plan)
+            .map_or_else(|| Arc::from([]), |record| Arc::clone(&record.folders))
     }
 
-    /// What the plans not cancelled bring into `folder`, in the order they
-    /// were asked and their items in theirs.
-    pub(super) fn in_folder(&self, folder: &Path) -> Vec<Arc<Arrival>> {
+    /// What the plans not cancelled bring into `folder`, each plan's
+    /// together, in the order they were asked and their items in theirs.
+    pub(super) fn in_folder(&self, folder: &Path) -> Vec<Arc<[Arc<Arrival>]>> {
         let inner = self.inner.lock();
         let Some(plans) = inner.folders.get(folder) else {
             return Vec::new();
@@ -520,10 +527,20 @@ impl Index {
         records.sort_by_key(|record| record.asked);
         records
             .into_iter()
-            .flat_map(|record| record.arrivals.iter())
-            .filter(|arrival| arrival.folder == folder)
-            .cloned()
+            .filter_map(|record| record.by_folder.get(folder).map(Arc::clone))
             .collect()
+    }
+}
+
+/// `plan` no longer brings anything into `its` folders.
+fn unlist(folders: &mut HashMap<PathBuf, Vec<PlanId>>, plan: PlanId, its: &[PathBuf]) {
+    for folder in its {
+        if let Some(those) = folders.get_mut(folder) {
+            those.retain(|p| *p != plan);
+            if those.is_empty() {
+                folders.remove(folder);
+            }
+        }
     }
 }
 
@@ -543,11 +560,32 @@ mod tests {
         }
     }
 
-    fn read(ended: usize, done: u64, total: u64, ahead: &[usize]) -> StepsRead {
-        StepsRead {
+    /// A reading of a plan's steps, kept for the tests to lend.
+    struct Read {
+        ended: usize,
+        done: u64,
+        total: u64,
+        ahead: HashSet<usize>,
+        batching: HashMap<usize, Batching>,
+    }
+
+    impl Read {
+        fn lent(&self) -> StepsRead<'_> {
+            StepsRead {
+                ended: self.ended,
+                step_done: self.done,
+                step_total: self.total,
+                ahead: &self.ahead,
+                batching: &self.batching,
+            }
+        }
+    }
+
+    fn read(ended: usize, done: u64, total: u64, ahead: &[usize]) -> Read {
+        Read {
             ended,
-            step_done: done,
-            step_total: total,
+            done,
+            total,
             ahead: ahead.iter().copied().collect(),
             batching: HashMap::new(),
         }
@@ -567,16 +605,25 @@ mod tests {
             tells,
         };
         batch.batching.insert(3, taken(0, false));
-        assert_eq!(state_of(&item, Some(&batch)), Some(Arrives::Copying(0.4)));
+        assert_eq!(
+            state_of(&item, Some(&batch.lent())),
+            Some(Arrives::Copying(0.4))
+        );
         batch.batching.insert(3, taken(25, false));
-        assert_eq!(state_of(&item, Some(&batch)), Some(Arrives::Moving(0.5)));
+        assert_eq!(
+            state_of(&item, Some(&batch.lent())),
+            Some(Arrives::Moving(0.5))
+        );
         // One that tells each: not told yet, not begun (a later session).
         batch.batching.insert(3, taken(0, true));
-        assert_eq!(state_of(&item, Some(&batch)), Some(Arrives::Waiting));
+        assert_eq!(state_of(&item, Some(&batch.lent())), Some(Arrives::Waiting));
         batch.batching.insert(3, taken(10, true));
-        assert_eq!(state_of(&item, Some(&batch)), Some(Arrives::Moving(0.2)));
+        assert_eq!(
+            state_of(&item, Some(&batch.lent())),
+            Some(Arrives::Moving(0.2))
+        );
         batch.batching.clear();
-        assert_eq!(state_of(&item, Some(&batch)), Some(Arrives::Waiting));
+        assert_eq!(state_of(&item, Some(&batch.lent())), Some(Arrives::Waiting));
     }
 
     #[test]
@@ -585,34 +632,34 @@ mod tests {
         assert_eq!(state_of(&arrival(None), None), Some(Arrives::Waiting));
         let checking = read(0, 0, 0, &[]);
         assert_eq!(
-            state_of(&arrival(None), Some(&checking)),
+            state_of(&arrival(None), Some(&checking.lent())),
             Some(Arrives::Starting)
         );
         // Its steps 2 to 4 of a plan: those before it under way.
         let item = arrival(Some(2..4));
         assert_eq!(
-            state_of(&item, Some(&read(1, 5, 10, &[]))),
+            state_of(&item, Some(&read(1, 5, 10, &[]).lent())),
             Some(Arrives::Waiting)
         );
         // Its first step under way, nothing moved yet, then half of it.
         assert_eq!(
-            state_of(&item, Some(&read(2, 0, 0, &[]))),
+            state_of(&item, Some(&read(2, 0, 0, &[]).lent())),
             Some(Arrives::Starting)
         );
         assert_eq!(
-            state_of(&item, Some(&read(2, 5, 10, &[]))),
+            state_of(&item, Some(&read(2, 5, 10, &[]).lent())),
             Some(Arrives::Moving(0.25))
         );
         // Its first step ended: half way, by its steps.
         assert_eq!(
-            state_of(&item, Some(&read(3, 0, 10, &[]))),
+            state_of(&item, Some(&read(3, 0, 10, &[]).lent())),
             Some(Arrives::Moving(0.5))
         );
         // Its steps ended: landed.
-        assert_eq!(state_of(&item, Some(&read(4, 0, 0, &[]))), None);
+        assert_eq!(state_of(&item, Some(&read(4, 0, 0, &[]).lent())), None);
         // A batch finished its steps ahead of their turn: whole.
         assert_eq!(
-            state_of(&item, Some(&read(1, 0, 0, &[2, 3]))),
+            state_of(&item, Some(&read(1, 0, 0, &[2, 3]).lent())),
             Some(Arrives::Moving(1.))
         );
         // Its run over, not landed: nothing said.
