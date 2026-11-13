@@ -66,11 +66,18 @@ static FOUND: Mutex<Option<HashMap<PathBuf, (Instant, Option<Repo>)>>> = Mutex::
 impl Repo {
     /// The repository `path` is in (a file's folder's, a folder's own),
     /// found by its `.git` folder or file in it or above it, or by being a
-    /// bare one itself; kept a minute by folder, so stepping through a
-    /// folder's files asks the disk once. Never a path inside a git folder.
-    /// Reads the disk: on a worker, in the path's lane.
+    /// bare one itself (a folder alone: a file in a bare repository, its
+    /// `config` or `HEAD`, is one of its parts, in no history); kept a
+    /// minute by folder, so stepping through a folder's files asks the
+    /// disk once. Never a path inside a git folder. Reads the disk: on a
+    /// worker, in the path's lane.
     pub fn find(path: &Path, folder: bool) -> Option<Repo> {
         let start = if folder { path } else { path.parent()? };
+        Self::found_from(start).filter(|repo| folder || repo.work_tree.is_some())
+    }
+
+    /// `find`'s repository for the folder `start`, kept a minute.
+    fn found_from(start: &Path) -> Option<Repo> {
         let now = Instant::now();
         if let Some((at, found)) = FOUND
             .lock()
@@ -121,9 +128,17 @@ impl Repo {
         None
     }
 
+    /// The repository of `git_dir`. What its pointers name is made readable
+    /// to the helper only where it is what they say: a common folder that
+    /// holds objects and references, an alternate that is a store of
+    /// objects (its `pack` folder); a repository made to name another
+    /// folder (`commondir: /etc`) has it left out, and is read as if it
+    /// named none.
     fn of(git_dir: PathBuf, work_tree: Option<PathBuf>) -> Repo {
         let common = read_small(&git_dir.join("commondir"))
-            .map_or_else(|| git_dir.clone(), |text| git_dir.join(text.trim()));
+            .map(|text| git_dir.join(text.trim()))
+            .filter(|common| common.join("objects").is_dir() && common.join("refs").is_dir())
+            .unwrap_or_else(|| git_dir.clone());
         let mut readable = vec![git_dir.clone()];
         if common != git_dir {
             readable.push(common.clone());
@@ -135,7 +150,8 @@ impl Repo {
                     .map(str::trim)
                     .filter(|line| !line.is_empty() && !line.starts_with('#'))
                     .take(ALTERNATES)
-                    .map(|line| objects.join(line)),
+                    .map(|line| objects.join(line))
+                    .filter(|store| store.join("pack").is_dir()),
             );
         }
         Repo {
@@ -612,12 +628,53 @@ mod tests {
         assert_eq!(repo.relative(&top).as_deref(), Some(""));
         assert!(Repo::find(&git.join("objects"), true).is_none(), "inside");
         assert_eq!(Repo::find(&git, true), None, "a .git folder itself");
+        // A bare repository is one as a folder; a file in it is none's.
+        let bare = dir.path().join("bare.git");
+        for part in ["objects/pack", "refs"] {
+            std::fs::create_dir_all(bare.join(part)).unwrap();
+        }
+        std::fs::write(bare.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        let found = Repo::find(&bare, true).unwrap();
+        assert_eq!(
+            (found.git_dir.as_path(), found.work_tree),
+            (bare.as_path(), None)
+        );
+        assert_eq!(
+            Repo::find(&bare.join("HEAD"), false),
+            None,
+            "one of its parts"
+        );
+        // What its pointers name is readable only where it is a git
+        // folder's part: an alternate that is a store of objects.
+        let elsewhere = dir.path().join("elsewhere");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        std::fs::create_dir_all(bare.join("objects/info")).unwrap();
+        std::fs::write(
+            bare.join("objects/info/alternates"),
+            format!(
+                "{}\n{}\n",
+                elsewhere.display(),
+                bare.join("objects").display()
+            ),
+        )
+        .unwrap();
+        let repo = Repo::of(bare.clone(), None);
+        assert_eq!(repo.readable, [bare.clone(), bare.join("objects")]);
         // A linked worktree: a `.git` file, its folder sharing the main one's.
         let linked = dir.path().join("linked");
         let own = git.join("worktrees").join("linked");
         std::fs::create_dir_all(&own).unwrap();
         std::fs::write(own.join("HEAD"), "ref: refs/heads/side\n").unwrap();
         std::fs::write(own.join("commondir"), "../..\n").unwrap();
+        // One that names a folder not a repository's is read as if alone.
+        let odd = git.join("worktrees").join("odd");
+        std::fs::create_dir_all(&odd).unwrap();
+        std::fs::write(odd.join("HEAD"), "ref: refs/heads/odd\n").unwrap();
+        std::fs::write(odd.join("commondir"), format!("{}\n", elsewhere.display())).unwrap();
+        assert_eq!(
+            Repo::of(odd.clone(), None).readable,
+            std::slice::from_ref(&odd)
+        );
         std::fs::create_dir_all(&linked).unwrap();
         std::fs::write(linked.join(".git"), format!("gitdir: {}\n", own.display())).unwrap();
         let repo = Repo::find(&linked, true).unwrap();

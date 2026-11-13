@@ -127,7 +127,10 @@ the files' state in the views is ADR-134's.
    - JSON on standard input, JSON on standard output (`log`, `patch`).
    - Isolated as every helper reading what a file holds (`sandbox`):
      the repository's git folder, its common folder and its alternates
-     readable, the patch's folder writable, nothing else; opened
+     readable, each only where it is what its pointer says (a folder of
+     objects and references, a store of objects: `Repo::of`), so a
+     repository made to name another folder opens nothing more; the
+     patch's folder writable, nothing else; opened
      isolated from the user's and the system's configuration
      (`gix::open::Options::isolated`).
    - Nothing it reads is run, fetched or written to the repository: no
