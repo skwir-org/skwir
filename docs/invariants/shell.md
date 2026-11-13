@@ -1004,7 +1004,9 @@ of bars, split or not.
   ADR-135), `ui.activity` opens it where it would open and never
   closes it, and the frame after, once the cards are drawn, gives the
   keyboard to that plan's Pause, or to its Cancel while it waits, which
-  scrolls it into view. A click on the strip
+  scrolls it into view. A card's title names the folder it brings into
+  by its name (`op::transfer_title`); pointed at, it says each folder's
+  whole path (`Executor::brings_into`). A click on the strip
   or on Activity standing leaves the keyboard where it was, so the keys go
   on acting on the pane. What is under way is read once a frame
   (`Shell::under_way`, passed to the strip, Activity and the footer).

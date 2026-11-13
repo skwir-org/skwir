@@ -740,6 +740,7 @@ impl Shared {
         let mut replaced = Vec::new();
         // A companion keeps its file's notes (ADR-028: a Mac's `._x`, a
         // sidecar): when it changes, the file's notes did.
+        let writing = c.writing;
         let mut names = c.names;
         let owners: Vec<std::ffi::OsString> = names
             .iter()
@@ -755,6 +756,14 @@ impl Shared {
             if stated == Stated::Unread {
                 // There, unread: what is listed of it stays.
                 continue;
+            }
+            // Another program writes it still (ADR-135).
+            if writing.contains(&name) && !e.is_dir() {
+                e.metadata.set(
+                    crate::entry::keys::WRITING,
+                    crate::entry::Value::Bool(true),
+                    crate::entry::Provenance::Filesystem,
+                );
             }
             let mut names = self.names.lock();
             if stated == Stated::Found {

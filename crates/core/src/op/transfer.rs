@@ -271,6 +271,11 @@ pub struct Told<'a> {
     /// its item counts as done from then. Said only; one it never tells
     /// counts once the transfer returns.
     pub made: &'a (dyn Fn(&OsStr) + Sync),
+    /// How many bytes of one of the names it was given it has copied so
+    /// far (a folder's: of all it holds), where it can tell: what the
+    /// folder it goes to shows of it as it comes (ADR-135). Said only; one
+    /// it never tells is said copying with the rest of its batch.
+    pub writing: &'a (dyn Fn(&OsStr, u64) + Sync),
 }
 
 /// What a transfer heeds as it goes: the plan's cancel and its pause.
@@ -983,6 +988,16 @@ pub struct Left {
     pub bytes: Option<u64>,
 }
 
+/// Tells the meter, as a batch ends however it ends, that what it took and
+/// did not make is no longer copying with it (ADR-135).
+struct Unbatch<'a>(&'a StepContext, Vec<usize>);
+
+impl Drop for Unbatch<'_> {
+    fn drop(&mut self) {
+        self.0.unbatch(&self.1);
+    }
+}
+
 /// Make the copies `taken` of the folder `from` at once in `dest`, and
 /// tell their steps: those a batch places itself at their targets
 /// (module documentation), the rest in a folder of the plan's staging
@@ -996,6 +1011,18 @@ fn batch(from: &Path, dest: &Path, taken: &[Taken], ctx: &StepContext) -> Result
         ctx.batched(&t.src, Batched::Counted);
         ctx.counted_ahead(t.step, t.bytes);
     }
+    // However it ends, what it took and did not make is no longer said
+    // copying (ADR-135): its step copies its own.
+    let _ends = Unbatch(ctx, taken.iter().map(|t| t.step).collect());
+    // How far each name it was given has come, where its transfer tells.
+    let by_name: HashMap<&OsStr, usize> =
+        taken.iter().map(|t| (t.name.as_os_str(), t.step)).collect();
+    let writer = ctx.writer();
+    let writing = |name: &OsStr, done: u64| {
+        if let Some(&step) = by_name.get(name) {
+            writer(step, done);
+        }
+    };
     // What a move's source is as it is copied: changed after, its step
     // leaves it (`builtin::move_entry`).
     let states: HashMap<&Path, CopiedAs> = taken
@@ -1101,6 +1128,7 @@ fn batch(from: &Path, dest: &Path, taken: &[Taken], ctx: &StepContext) -> Result
                 copied: &staged_copied,
                 placed: &|_| {},
                 made: &made,
+                writing: &writing,
             };
             run(from, (&staged, alone), &into, &aside, &told, ctx)?;
             let made: u64 = staged.iter().map(|t| t.bytes).sum();
@@ -1132,6 +1160,7 @@ fn batch(from: &Path, dest: &Path, taken: &[Taken], ctx: &StepContext) -> Result
                     made(name);
                 },
                 made: &made,
+                writing: &writing,
             };
             let ran = run(from, (&placed, alone), dest, &aside, &told, ctx);
             let said = said.into_inner();
@@ -1280,6 +1309,7 @@ fn batch_in_place(
         copied: &copied,
         placed: &made,
         made: &made,
+        writing: &|_, _| {},
     };
     let ran = run(from, (&here, is_alone(taken)), dest, &aside, &told, ctx);
     let cancelled = ctx.cancel_token().is_cancelled();
@@ -1598,6 +1628,7 @@ fn run(
         copied,
         placed: told.placed,
         made: told.made,
+        writing: told.writing,
     };
     let read = |ran: anyhow::Result<()>| {
         if ran.is_ok() {
@@ -2070,6 +2101,7 @@ mod tests {
         copied: &|_| {},
         placed: &|_| {},
         made: &|_| {},
+        writing: &|_, _| {},
     };
 
     /// A folder of the test's on the home's file system, which keeps
@@ -3098,6 +3130,7 @@ mod tests {
             copied: &|_| {},
             placed: &placed,
             made: &made,
+            writing: &|_, _| {},
         };
         copy_at_once(&from, &names, &into, &aside, &tells, &control).unwrap();
         let mut said = std::mem::take(&mut *told.lock());

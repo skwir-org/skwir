@@ -31,19 +31,34 @@ pub struct Changes {
     /// The watched directory itself is gone (deleted, or its filesystem
     /// unmounted).
     pub deleted: bool,
+    /// Of `names`, those still being written as they are told (ADR-135):
+    /// written to and not closed since on Linux, written to in the last
+    /// `QUIET` elsewhere, where no close is told. What another program
+    /// writes (a download, a copy in a terminal) is marked so.
+    pub writing: HashSet<OsString>,
 }
 
 impl Changes {
     /// What `later` says added to this: changes not applied yet, taken as
     /// one.
     pub fn merge(&mut self, later: Changes) {
+        // What is told later says how it stands now.
+        for name in &later.names {
+            self.writing.remove(name);
+        }
         self.names.extend(later.names);
         self.rescan |= later.rescan;
         self.itself |= later.itself;
         self.moved |= later.moved;
         self.deleted |= later.deleted;
+        self.writing.extend(later.writing);
     }
 }
+
+/// Where no close is told (macOS, Windows), how long after its last write
+/// a name is no longer said to be written (ADR-135): told again then.
+#[cfg(not(target_os = "linux"))]
+pub const QUIET: Duration = Duration::from_secs(2);
 
 /// What is told of a folder's changes. It is called on the watcher's own
 /// thread, which every folder shares: it hands the changes on (to a
@@ -123,6 +138,8 @@ mod imp {
         /// they are told (`WRITTEN_WINDOW`): with `pending` when it is told
         /// first.
         written: Option<(HashSet<OsString>, Instant)>,
+        /// The names written to and not closed since (ADR-135).
+        open: HashSet<OsString>,
     }
 
     impl Subscriber {
@@ -154,6 +171,17 @@ mod imp {
         /// the names only written to, or those alone once they waited
         /// enough.
         fn take_due(&mut self, now: Instant) -> Option<Changes> {
+            let mut changes = self.take_names(now)?;
+            changes.writing = changes
+                .names
+                .iter()
+                .filter(|name| self.open.contains(*name))
+                .cloned()
+                .collect();
+            Some(changes)
+        }
+
+        fn take_names(&mut self, now: Instant) -> Option<Changes> {
             if self.pending.as_ref().is_some_and(|(_, at)| *at <= now) {
                 let (mut changes, _) = self.pending.take()?;
                 if let Some((written, _)) = self.written.take() {
@@ -260,6 +288,7 @@ mod imp {
                 cancel: cancel.clone(),
                 pending: None,
                 written: None,
+                open: HashSet::new(),
             });
             (wd, id)
         });
@@ -404,12 +433,21 @@ mod imp {
                 return;
             };
             for s in subscribers.iter_mut() {
-                // Only written to: it waits (`WRITTEN_WINDOW`).
+                // Only written to: it waits (`WRITTEN_WINDOW`), being
+                // written until closed or gone.
                 if let Some(name) = name
                     && mask.difference(EventMask::ISDIR) == EventMask::MODIFY
                 {
+                    s.open.insert(name.to_os_string());
                     s.written(name, now);
                     continue;
+                }
+                if let Some(name) = name
+                    && mask.intersects(
+                        EventMask::CLOSE_WRITE | EventMask::DELETE | EventMask::MOVED_FROM,
+                    )
+                {
+                    s.open.remove(name);
                 }
                 let changes = s.gathered(now);
                 if mask.contains(EventMask::MOVE_SELF) {
@@ -543,6 +581,9 @@ mod imp {
         window: Duration,
         pending: Option<(Changes, Instant)>,
         written: Option<(HashSet<OsString>, Instant)>,
+        /// The names written to, by when they last were (ADR-135): being
+        /// written until `QUIET` after, then told again.
+        open: std::collections::HashMap<OsString, Instant>,
     }
 
     impl Gathered {
@@ -557,6 +598,7 @@ mod imp {
         /// `name` was written to, and nothing else happened to it yet: it
         /// waits, unless it is told already.
         fn written(&mut self, name: &OsStr, now: Instant) {
+            self.open.insert(name.to_os_string(), now);
             if self
                 .pending
                 .as_ref()
@@ -573,12 +615,40 @@ mod imp {
         fn due(&self) -> Option<Instant> {
             let pending = self.pending.as_ref().map(|(_, at)| *at);
             let written = self.written.as_ref().map(|(_, at)| *at);
-            pending.into_iter().chain(written).min()
+            let quiet = self.open.values().map(|at| *at + super::QUIET).min();
+            pending.into_iter().chain(written).chain(quiet).min()
+        }
+
+        /// What is told by `now` (`take_names`), with what of it is still
+        /// being written; the names gone quiet told again, written no more.
+        fn take(&mut self, now: Instant) -> Option<Changes> {
+            let quiet: HashSet<OsString> = self
+                .open
+                .iter()
+                .filter(|(_, at)| **at + super::QUIET <= now)
+                .map(|(name, _)| name.clone())
+                .collect();
+            for name in &quiet {
+                self.open.remove(name);
+            }
+            let mut changes = match self.take_names(now) {
+                Some(changes) => changes,
+                None if quiet.is_empty() => return None,
+                None => Changes::default(),
+            };
+            changes.names.extend(quiet);
+            changes.writing = changes
+                .names
+                .iter()
+                .filter(|name| self.open.contains_key(*name))
+                .cloned()
+                .collect();
+            Some(changes)
         }
 
         /// What is told by `now`: the window's changes with the names only
         /// written to, or those alone once they waited enough.
-        fn take(&mut self, now: Instant) -> Option<Changes> {
+        fn take_names(&mut self, now: Instant) -> Option<Changes> {
             if self.pending.as_ref().is_some_and(|(_, at)| *at <= now) {
                 let (mut changes, _) = self.pending.take()?;
                 if let Some((written, _)) = self.written.take() {
@@ -608,6 +678,7 @@ mod imp {
             window,
             pending: None,
             written: None,
+            open: std::collections::HashMap::new(),
         };
         loop {
             let ev = match gathered.due() {
@@ -677,6 +748,13 @@ mod imp {
                 if written {
                     gathered.written(name, now);
                 } else {
+                    // Gone, or renamed away: written no more.
+                    if matches!(
+                        ev.kind,
+                        EventKind::Remove(_) | EventKind::Modify(ModifyKind::Name(_))
+                    ) {
+                        gathered.open.remove(name);
+                    }
                     gathered.changes(now).names.insert(name.to_os_string());
                 }
             } else if watched(Some(&p)) {
@@ -828,7 +906,8 @@ mod tests {
     }
 
     /// A file only written to (a download) is told once a second, not at
-    /// each window; closed, it is told at once.
+    /// each window, as being written (ADR-135); closed, it is told at once,
+    /// written no more.
     #[cfg(target_os = "linux")]
     #[test]
     fn a_file_only_written_to_waits_and_its_close_is_told_at_once() {
@@ -846,16 +925,22 @@ mod tests {
             std::thread::sleep(Duration::from_millis(100));
         }
         let mut told = 0;
+        let mut writing = 0;
         while let Some(left) =
             (started + Duration::from_millis(1300)).checked_duration_since(Instant::now())
         {
             match rx.recv_timeout(left) {
-                Ok(c) if named(&c) => told += 1,
+                Ok(c) if named(&c) => {
+                    told += 1;
+                    writing +=
+                        usize::from(c.writing.contains(std::ffi::OsStr::new("growing.part")));
+                }
                 Ok(_) => {}
                 Err(_) => break,
             }
         }
         assert!(told <= 2, "told {told} times in a second of writes");
+        assert_eq!(writing, told, "told as being written");
         let closed = Instant::now();
         drop(file);
         let deadline = closed + SOON;
@@ -863,6 +948,7 @@ mod tests {
         while let Some(left) = deadline.checked_duration_since(Instant::now()) {
             match rx.recv_timeout(left) {
                 Ok(c) if named(&c) => {
+                    assert!(c.writing.is_empty(), "closed: written no more");
                     seen = Some(closed.elapsed());
                     break;
                 }

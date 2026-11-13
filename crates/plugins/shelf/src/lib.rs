@@ -351,7 +351,11 @@ fn plan_into(items: &[ShelfItem], dest: &Path, copy: bool, app: &App) -> anyhow:
     }
     let verb = if copy { "copy" } else { "move" };
     Ok(Outcome::Plan(Plan::with_steps(
-        format!("{verb} {} shelved items to {}", steps.len(), dest.display()),
+        format!(
+            "{verb} {} shelved items to {}",
+            steps.len(),
+            skwir_core::op::folder_said(dest)
+        ),
         steps,
     )))
 }

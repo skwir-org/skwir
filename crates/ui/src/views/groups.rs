@@ -6,6 +6,7 @@
 //! selection, a screen reader's position and count) in positions, as
 //! when nothing is grouped.
 
+use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -23,10 +24,30 @@ use crate::theme::Theme;
 pub enum Row {
     /// The heading of the `n`th group.
     Heading(usize),
+    /// The heading of the `n`th group no file is in yet, which only what
+    /// arrives is in (`RowMap::fresh`).
+    Fresh(usize),
     /// The entry at this position of the order.
     Entry(usize),
     /// The `n`th of what arrives, as the view was given them.
     Arriving(usize),
+}
+
+/// A group no file is in yet, which what arrives will be in (ADR-135):
+/// drawn before the `before`th of the pane's groups (after them all at
+/// their count), never one of them, so their numbers stay the core's.
+#[derive(Clone, Debug)]
+pub struct Fresh {
+    pub before: usize,
+    pub group: Arc<skwir_core::grouping::Group>,
+}
+
+/// A group as a grid draws its lines, in the order drawn: one of the
+/// pane's, or one no file is in yet.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Drawn {
+    Group(usize),
+    Fresh(usize),
 }
 
 /// What a tile of a grid is: an entry, or what arrives (a grid's headings
@@ -39,11 +60,13 @@ pub enum Tile {
 
 /// Where what a plan brings is drawn (ADR-135): before the entry at `at`
 /// in the order (after the last at its length), in group `group` where
-/// the view groups; in no group shown, after every group.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// the view groups, or under the heading of `fresh`, a group no file is
+/// in yet; in no group shown, after every group.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Placed {
     pub at: usize,
     pub group: Option<usize>,
+    pub fresh: Option<usize>,
 }
 
 /// Where each row of a view is in the order it draws: the entries of each
@@ -63,8 +86,12 @@ pub struct RowMap {
     /// The tiles of a grid that are no entry, in order: each tile, and
     /// which of what arrives it is.
     tiles: Arc<[(usize, usize)]>,
-    /// How many tiles each group holds, what arrives in it among them.
+    /// How many tiles each group drawn holds, what arrives in it among
+    /// them, in the order drawn (`drawn`).
     lens: Arc<[usize]>,
+    /// The groups no file is in yet, and every group in the order drawn.
+    fresh: Arc<[Fresh]>,
+    drawn: Arc<[Drawn]>,
 }
 
 impl RowMap {
@@ -73,15 +100,21 @@ impl RowMap {
     /// order and groups read apart), group nothing. A folded group's span
     /// holds none of them (ADR-131, 2): its heading, with its count.
     pub fn new(spans: Arc<[Span]>, entries: usize) -> Self {
-        Self::arriving(spans, entries, &[])
+        Self::arriving(spans, entries, &[], &[])
     }
 
     /// `new`, with what arrives placed as `arriving` says (ADR-135): in
     /// its group before the entry it goes before, or at the group's end
-    /// for one past it; after every group, in none shown; in a folded
-    /// group, not drawn. Those that go before the same entry in the order
-    /// given.
-    pub fn arriving(spans: Arc<[Span]>, entries: usize, arriving: &[Placed]) -> Self {
+    /// for one past it; under the heading of a group no file is in yet
+    /// (`fresh`), drawn where that group stands among the others; after
+    /// every group, in none shown; in a folded group, not drawn. Those that
+    /// go before the same entry in the order given.
+    pub fn arriving(
+        spans: Arc<[Span]>,
+        entries: usize,
+        arriving: &[Placed],
+        fresh: &[Fresh],
+    ) -> Self {
         let mut at = 0;
         let whole = spans.iter().all(|span| {
             let follows = span.start == at && (span.len > 0 || span.count > 0);
@@ -90,49 +123,98 @@ impl RowMap {
         }) && at == entries;
         let spans: Arc<[Span]> = if whole { spans } else { Arc::from([]) };
         let grouped = !spans.is_empty();
-        // Each in a group shown, or none (`usize::MAX`, after them all).
-        let group_of = |placed: &Placed| match placed.group {
-            Some(n) if n < spans.len() => Some(n),
-            _ => None,
+        // The groups in the order drawn: each group no file is in yet
+        // before the one it stands before.
+        let mut fresh_order: Vec<usize> = if grouped {
+            (0..fresh.len()).collect()
+        } else {
+            Vec::new()
+        };
+        fresh_order.sort_by_key(|&k| (fresh[k].before.min(spans.len()), k));
+        let mut drawn: Vec<Drawn> = Vec::with_capacity(spans.len() + fresh_order.len());
+        let mut f = 0;
+        for n in 0..spans.len() {
+            while let Some(&k) = fresh_order.get(f)
+                && fresh[k].before.min(spans.len()) <= n
+            {
+                drawn.push(Drawn::Fresh(k));
+                f += 1;
+            }
+            drawn.push(Drawn::Group(n));
+        }
+        drawn.extend(fresh_order[f..].iter().map(|&k| Drawn::Fresh(k)));
+        let place_of: HashMap<Drawn, usize> =
+            drawn.iter().enumerate().map(|(d, g)| (*g, d)).collect();
+        // Each in the group drawn it is in, or none (`usize::MAX`, after
+        // them all).
+        let drawn_of = |placed: &Placed| -> Option<usize> {
+            if !grouped {
+                return None;
+            }
+            let group = match (placed.fresh, placed.group) {
+                (Some(k), _) if k < fresh.len() => Drawn::Fresh(k),
+                (_, Some(n)) if n < spans.len() => Drawn::Group(n),
+                _ => return None,
+            };
+            place_of.get(&group).copied()
         };
         let mut order: Vec<usize> = (0..arriving.len())
-            .filter(|&i| !grouped || group_of(&arriving[i]).is_none_or(|n| spans[n].len > 0))
+            .filter(|&i| {
+                !grouped
+                    || !matches!(
+                        drawn_of(&arriving[i]).map(|d| drawn[d]),
+                        Some(Drawn::Group(n)) if spans[n].len == 0
+                    )
+            })
             .collect();
         order.sort_by_key(|&i| {
             let placed = &arriving[i];
             let group = if grouped {
-                group_of(placed).unwrap_or(usize::MAX)
+                drawn_of(placed).unwrap_or(usize::MAX)
             } else {
                 0
             };
             (group, placed.at.min(entries), i)
         });
-        let mut extras = Vec::with_capacity(spans.len() + order.len());
+        let mut extras = Vec::with_capacity(drawn.len() + order.len());
         let mut headings = Vec::with_capacity(spans.len());
         let mut tiles = Vec::with_capacity(order.len());
-        let mut lens = Vec::with_capacity(spans.len());
+        let mut lens = Vec::with_capacity(drawn.len());
         // The rows, and the tiles, before the next that is no entry.
         let (mut rows_before, mut tiles_before) = (0, 0);
         let mut next = 0;
-        if grouped {
-            for (n, span) in spans.iter().enumerate() {
-                headings.push(span.start + rows_before);
-                extras.push((span.start + rows_before, Row::Heading(n)));
-                rows_before += 1;
-                let mut len = span.len;
-                while let Some(&i) = order.get(next)
-                    && group_of(&arriving[i]) == Some(n)
-                {
-                    let at = arriving[i].at.clamp(span.start, span.start + span.len);
-                    extras.push((at + rows_before, Row::Arriving(i)));
-                    tiles.push((at + tiles_before, i));
-                    rows_before += 1;
-                    tiles_before += 1;
-                    len += 1;
-                    next += 1;
+        for (d, group) in drawn.iter().enumerate() {
+            // Where its entries are: a group no file is in yet stands where
+            // the group after it begins.
+            let (heading, from, to) = match *group {
+                Drawn::Group(n) => (
+                    Row::Heading(n),
+                    spans[n].start,
+                    spans[n].start + spans[n].len,
+                ),
+                Drawn::Fresh(k) => {
+                    let start = spans.get(fresh[k].before).map_or(entries, |s| s.start);
+                    (Row::Fresh(k), start, start)
                 }
-                lens.push(len);
+            };
+            if let Drawn::Group(_) = group {
+                headings.push(from + rows_before);
             }
+            extras.push((from + rows_before, heading));
+            rows_before += 1;
+            let mut len = to - from;
+            while let Some(&i) = order.get(next)
+                && drawn_of(&arriving[i]) == Some(d)
+            {
+                let at = arriving[i].at.clamp(from, to);
+                extras.push((at + rows_before, Row::Arriving(i)));
+                tiles.push((at + tiles_before, i));
+                rows_before += 1;
+                tiles_before += 1;
+                len += 1;
+                next += 1;
+            }
+            lens.push(len);
         }
         // Not grouped, each where it lands; grouped, those in no group
         // shown, after them all, in the last group's tiles.
@@ -157,7 +239,25 @@ impl RowMap {
             headings: headings.into(),
             tiles: tiles.into(),
             lens: lens.into(),
+            fresh: if grouped {
+                fresh.to_vec().into()
+            } else {
+                Arc::from([])
+            },
+            drawn: drawn.into(),
         }
+    }
+
+    /// The groups no file is in yet, whose headings only what arrives
+    /// follows (`Row::Fresh`).
+    pub fn fresh(&self) -> &[Fresh] {
+        &self.fresh
+    }
+
+    /// Every group in the order drawn: what a grid's `n`th group of lines
+    /// is (`tile_lens`).
+    pub fn drawn(&self) -> &[Drawn] {
+        &self.drawn
     }
 
     /// An order of `entries` not grouped.
@@ -418,6 +518,42 @@ pub fn heading(
     theme: &Theme,
     chevron: Option<AnyElement>,
 ) -> Div {
+    let words = (label(span), span.count.to_string());
+    heading_saying(words, first, height, left, scale, theme, chevron)
+}
+
+/// The heading of a group no file is in yet (ADR-135): as a group's, its
+/// label, "arriving" where a count would be, dimmed as what it heads,
+/// with nothing to fold.
+pub fn fresh_heading(
+    fresh: &Fresh,
+    first: bool,
+    height: f32,
+    left: Option<f32>,
+    scale: Scale,
+    theme: &Theme,
+) -> Div {
+    let words = (Arc::clone(&fresh.group.label), "arriving".to_owned());
+    heading_saying(words, first, height, left, scale, theme, None)
+        .opacity(crate::views::arriving::OPACITY)
+}
+
+/// What a screen reader hears of a group no file is in yet.
+pub fn fresh_said(fresh: &Fresh) -> String {
+    format!("{}, arriving", fresh.group.label)
+}
+
+/// A heading's row saying `(label, count)`: `heading`'s, a group's or one
+/// no file is in yet's.
+fn heading_saying(
+    (label, count): (Arc<str>, String),
+    first: bool,
+    height: f32,
+    left: Option<f32>,
+    scale: Scale,
+    theme: &Theme,
+    chevron: Option<AnyElement>,
+) -> Div {
     let words = div()
         .min_w_0()
         .flex()
@@ -432,14 +568,14 @@ pub fn heading(
                 .truncate()
                 .font_weight(gpui::FontWeight::SEMIBOLD)
                 .text_color(theme.text)
-                .child(label(span).to_string()),
+                .child(label.to_string()),
         )
         .child(
             div()
                 .flex_none()
                 .text_small()
                 .text_color(theme.text_muted)
-                .child(span.count.to_string()),
+                .child(count),
         );
     div()
         .h(px(height))
@@ -797,7 +933,11 @@ mod tests {
     }
 
     fn placed(at: usize, group: Option<usize>) -> Placed {
-        Placed { at, group }
+        Placed {
+            at,
+            group,
+            fresh: None,
+        }
     }
 
     /// What arrives is a row before the entry it goes before, those before
@@ -809,6 +949,7 @@ mod tests {
             Arc::from([]),
             4,
             &[placed(1, None), placed(4, None), placed(1, None)],
+            &[],
         );
         assert!(!rows.plain() && rows.arrives() && !rows.grouped());
         assert_eq!(rows.len(), 7);
@@ -841,7 +982,7 @@ mod tests {
         assert_eq!(rows.entries_in_tiles(1..4), 1..2);
         assert_eq!(rows.entry_of_tile(1), Some(1));
         // Nothing arriving: as before.
-        assert!(RowMap::arriving(Arc::from([]), 4, &[]).plain());
+        assert!(RowMap::arriving(Arc::from([]), 4, &[], &[]).plain());
     }
 
     /// Grouped, what arrives is in its group, before its entry or at its
@@ -854,6 +995,7 @@ mod tests {
             Arc::from([span(0, 2), span(2, 1), span(3, 3)]),
             6,
             &[placed(1, Some(0)), placed(3, Some(1)), placed(0, None)],
+            &[],
         );
         assert_eq!(rows.len(), 12);
         assert_eq!(rows.at(2), Some(Row::Arriving(0)));
@@ -876,6 +1018,55 @@ mod tests {
         assert_eq!(rows.anchor(2. * h + 3., h).map(|a| a.0), Some(1));
     }
 
+    /// What arrives in a group no file is in yet has its own heading,
+    /// drawn where that group stands among the others, which keep their
+    /// numbers: rows 0 H0, 1 e0, 2 e1, 3 F0, 4 A0, 5 H1, 6 e2.
+    #[test]
+    fn a_group_no_file_is_in_yet_has_its_own_heading() {
+        let fresh = Fresh {
+            before: 1,
+            group: Arc::new(skwir_core::grouping::Group::new(5, "Documents")),
+        };
+        let arrives = Placed {
+            at: 2,
+            group: None,
+            fresh: Some(0),
+        };
+        let rows = RowMap::arriving(
+            Arc::from([span(0, 2), span(2, 1)]),
+            3,
+            &[arrives],
+            std::slice::from_ref(&fresh),
+        );
+        assert_eq!(rows.len(), 7);
+        let all: Vec<Row> = (0..7).map(|r| rows.at(r).unwrap()).collect();
+        assert_eq!(
+            all,
+            [
+                Row::Heading(0),
+                Row::Entry(0),
+                Row::Entry(1),
+                Row::Fresh(0),
+                Row::Arriving(0),
+                Row::Heading(1),
+                Row::Entry(2),
+            ]
+        );
+        assert_eq!(
+            rows.heading_row(1),
+            5,
+            "the pane's groups keep their numbers"
+        );
+        assert_eq!(rows.row_of(2), 6);
+        assert_eq!(
+            rows.drawn(),
+            [Drawn::Group(0), Drawn::Fresh(0), Drawn::Group(1)]
+        );
+        assert_eq!(rows.tile_lens(), [2, 1, 1]);
+        assert_eq!(rows.at_tile(2), Some(Tile::Arriving(0)));
+        assert_eq!(rows.fresh()[0].group.label.as_ref(), "Documents");
+    }
+
     /// What arrives in a folded group is not drawn: its heading alone.
     #[test]
     fn what_arrives_in_a_folded_group_is_not_drawn() {
@@ -889,6 +1080,7 @@ mod tests {
             Arc::from([span(0, 2), folded]),
             2,
             &[placed(2, Some(1)), placed(1, Some(0))],
+            &[],
         );
         assert_eq!(rows.len(), 5);
         assert_eq!(rows.at(2), Some(Row::Arriving(1)));

@@ -87,16 +87,22 @@ work where the keyboard is, by topic.
   Cancel stops an action within a second or two, even in the
   middle of a large file from a slow server; meanwhile its card says
   "Stopping…" while it takes back what it left half done.
-  `skwir cmd running` says the same of what runs.
+  `skwir cmd running` says the same of what runs, `skwir cmd arriving`
+  what it brings into the folder shown.
 - **Where a copy lands.** What a copy, a move to another drive, an
   extraction or a restore brings into the folder shown appears there
   before it lands, where it will be in the folder's order and groups:
   dimmed, a tint behind it growing as it comes, and a pill saying how far
-  ("42 %", "waiting", "paused"). Pointing at it says where it comes from
-  and how long is left; a click opens its action in Activity. It is never
-  selected, and the keys go past it; once it lands, its real row takes its
-  place. A folder merged into one already there shows the same tint and
-  pill on its own row. In the list, the tree and the grid.
+  ("42 %", "waiting", "copying", "paused"). Pointing at it says where it
+  comes from and how long is left; a click opens its action in Activity.
+  It is never selected, and the keys go past it; once it lands, its real
+  row takes its place. A folder merged into one already there shows the
+  same tint and pill on its own row; grouped, an item of a kind the
+  folder has none of yet comes under a dimmed heading of its own. In
+  every view, folders opened in the tree and the board's columns too.
+  A file another program is writing (a download, a copy in a terminal)
+  says "writing" beside its growing size. An action's card names the
+  folder it goes to; pointing at its title gives the whole path.
 - **Toasts** say what was done ("Moved “a.txt” to Trash"), one at a
   time, with Undo; a long action says how much it moved in how long
   ("30.0 MB in 17 s").

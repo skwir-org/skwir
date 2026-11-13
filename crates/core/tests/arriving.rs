@@ -127,6 +127,22 @@ fn a_copy_waiting_stands_where_it_will_land_and_goes_once_landed() {
         Some(3000)
     );
     assert!(arriving[1].arrival.like.is_dir());
+    // As scripts and agents ask it.
+    let said = match app
+        .dispatch(&Invocation::with_args(
+            "arriving",
+            &serde_json::json!({ "folder": dest }),
+        ))
+        .unwrap()
+    {
+        skwir_core::command::Outcome::Value(value) => value,
+        other => panic!("arriving answers a value, not {other:?}"),
+    };
+    assert_eq!(said[0]["name"], "big file.bin");
+    assert_eq!(said[0]["state"], "waiting");
+    assert_eq!(said[0]["kind"], "file");
+    assert_eq!(said[0]["size"], 3000);
+    assert_eq!(said[1]["kind"], "folder");
 
     // Where the pane would show them: folders first, by name.
     let likes: Vec<Entry> = arriving.iter().map(|a| a.arrival.like.clone()).collect();
@@ -163,4 +179,73 @@ fn a_copy_waiting_stands_where_it_will_land_and_goes_once_landed() {
     assert!(until(&app, &dest, <[Arriving]>::is_empty).is_empty());
     assert!(dest.join("big file.bin").is_file());
     assert!(dest.join("a folder/inside.txt").is_file());
+}
+
+/// What arrives is read as a listing reads its entries: its notes, which a
+/// copy keeps (a provider's rating here), so a filter or a sort by them
+/// places it; a copy is a file made anew, created and read when asked, a
+/// move within its volume the file it was.
+#[test]
+fn what_arrives_is_read_with_its_notes_and_dated_as_its_file_will_be() {
+    use skwir_core::entry::{Provenance, Value, keys};
+    use skwir_core::metadata::MetadataProvider;
+    struct Rated;
+    impl MetadataProvider for Rated {
+        fn id(&self) -> &'static str {
+            "rated"
+        }
+        fn fill(&self, _: &std::path::Path, entries: &mut [Entry]) {
+            for e in entries {
+                e.metadata
+                    .set(keys::RATING, Value::UInt(8), Provenance::Filesystem);
+            }
+        }
+    }
+    let tmp = home_tempdir();
+    let from = tmp.path().join("from");
+    std::fs::create_dir_all(&from).unwrap();
+    std::fs::write(from.join("copied.txt"), b"c").unwrap();
+    std::fs::write(from.join("moved.txt"), b"m").unwrap();
+    let dest = tmp.path().join("dest");
+    std::fs::create_dir_all(&dest).unwrap();
+    let app = app(&tmp.path().join("state"));
+    app.metadata.register("rated", Arc::new(Rated));
+    let created = |entry: &Entry| entry.metadata.value(keys::CREATED).and_then(Value::as_time);
+    let moved_was = skwir_core::fs::stat::stat_path(&from.join("moved.txt")).unwrap();
+    std::thread::sleep(Duration::from_millis(20));
+    let asked = std::time::SystemTime::now();
+    let held = Held::new();
+    let plan = Plan::with_steps(
+        "copy and move",
+        vec![
+            Box::new(held.clone()),
+            Box::new(Copy::from_settings(
+                EntryRef::from_path(from.join("copied.txt")).unwrap(),
+                dest.clone(),
+                &app.settings,
+            )),
+            Box::new(skwir_core::op::Move::new(
+                EntryRef::from_path(from.join("moved.txt")).unwrap(),
+                dest.clone(),
+            )),
+        ],
+    );
+    app.executor.execute(plan, CancelToken::new());
+    let arriving = until(&app, &dest, |a| a.len() == 2);
+    assert_eq!(arriving.len(), 2);
+    let (copied, moved) = (&arriving[0].arrival.like, &arriving[1].arrival.like);
+    for like in [copied, moved] {
+        assert_eq!(like.metadata.value(keys::RATING), Some(&Value::UInt(8)));
+        assert!(like.metadata.is_filled(), "read whole, as an entry listed");
+    }
+    let made = created(copied).expect("a copy is dated");
+    assert!(
+        made + Duration::from_secs(1) >= asked,
+        "created as it was asked"
+    );
+    if let Some(was) = created(&moved_was) {
+        assert_eq!(created(moved), Some(was), "a move keeps its file's");
+    }
+    held.open();
+    assert!(until(&app, &dest, <[Arriving]>::is_empty).is_empty());
 }

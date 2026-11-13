@@ -1452,7 +1452,15 @@ pub struct Executor {
     /// What each plan asked brings into folders, until its run ends
     /// (ADR-135, `arriving_in`).
     arriving: super::arriving::Index,
+    /// How what an item brings is made from is read (`set_reader`): a
+    /// stat alone where none is set.
+    reader: Mutex<Option<Reader>>,
 }
+
+/// Reads what a plan's item is made from as a listing reads its entries
+/// (`fs::hydrate_path`: stat-ed, then its notes), on a worker or a plan's
+/// thread (ADR-135).
+pub type Reader = Arc<dyn Fn(&Path) -> Option<crate::entry::Entry> + Send + Sync>;
 
 /// What [`Executor::waiting`] read, at the lane's version, with the tokens
 /// of the jobs it read: one cancelled since waits no more.
@@ -1594,6 +1602,19 @@ impl Drop for Ended<'_> {
     }
 }
 
+/// Lets go of what an undo's or a redo's run brought into folders
+/// (ADR-135) however it leaves, the window woken: a plan's is let go of
+/// with its job (`Ended`), which names no undo.
+struct Brought<'a>(&'a Executor, PlanId);
+
+impl Drop for Brought<'_> {
+    fn drop(&mut self) {
+        if self.0.arriving.forget(self.1) {
+            self.0.wake();
+        }
+    }
+}
+
 impl Executor {
     pub fn new(scheduler: Scheduler) -> Arc<Self> {
         let (tx, rx) = unbounded();
@@ -1624,6 +1645,7 @@ impl Executor {
             look_every: Mutex::new(LOOK_EVERY),
             waiting_kept: Mutex::new(None),
             arriving: super::arriving::Index::default(),
+            reader: Mutex::new(None),
         })
     }
 
@@ -1759,6 +1781,21 @@ impl Executor {
 
     /// The companion rules every step carries files beside a file by
     /// (ADR-028).
+    /// Read what plans' items are made from with `reader` from now on
+    /// (ADR-135): the App's reads their notes too, so what arrives sorts
+    /// and is filtered by its tags and rating.
+    pub fn set_reader(&self, reader: Option<Reader>) {
+        *self.reader.lock() = reader;
+    }
+
+    /// What reads what an item is made from: the one set, else a stat.
+    fn reader(&self) -> Reader {
+        self.reader
+            .lock()
+            .clone()
+            .unwrap_or_else(|| Arc::new(crate::fs::stat::stat_path))
+    }
+
     pub fn set_companions(&self, companions: Arc<crate::companions::Companions>) {
         *self.companions.lock() = companions;
     }
@@ -2975,6 +3012,7 @@ impl Executor {
         let Some(this) = self.me.upgrade() else {
             return;
         };
+        let read = self.reader();
         let lane = plan
             .steps
             .first()
@@ -2986,13 +3024,8 @@ impl Executor {
             "op.arriving",
             cancel.clone(),
             move || {
-                let arrivals = super::arriving::arrivals_of(
-                    &plan,
-                    false,
-                    asked,
-                    &HashMap::new(),
-                    crate::fs::stat::stat_path,
-                );
+                let arrivals =
+                    super::arriving::arrivals_of(&plan, false, asked, &HashMap::new(), &*read);
                 if !arrivals.is_empty() && this.arriving.fill(plan.id, arrivals, false) {
                     this.wake();
                 }
@@ -3007,11 +3040,18 @@ impl Executor {
         let Some((asked, known)) = self.arriving.known(plan.id) else {
             return;
         };
-        let arrivals =
-            super::arriving::arrivals_of(plan, true, asked, &known, crate::fs::stat::stat_path);
+        let read = self.reader();
+        let arrivals = super::arriving::arrivals_of(plan, true, asked, &known, &*read);
         if self.arriving.fill(plan.id, arrivals, true) {
             self.wake();
         }
+    }
+
+    /// The folders `plan`, waiting or running, brings something into
+    /// (ADR-135): where its action is said to go when pointed at, its title
+    /// naming them by their names alone (`op::folder_said`).
+    pub fn brings_into(&self, plan: PlanId) -> Vec<PathBuf> {
+        self.arriving.folders_of(plan)
     }
 
     /// What the plans waiting and running bring into `folder` (ADR-135),
@@ -4148,6 +4188,11 @@ impl Executor {
             Direction::Redo => entry_title.clone(),
         };
         let id = run.id;
+        // What it brings back into folders (an undo of a move, of a move to
+        // the Trash), as its run's (ADR-135), let go of as it ends.
+        self.arriving.asked(id, cancel);
+        self.arrivals_run(&run);
+        let _brought = Brought(self, id);
         let shown = self.show(seq, &run, cancel, direction.into(), touched.is_heavy());
         let mut r = self.apply_plan(&run, id, cancel, shown, None, |r, back, _| {
             let back = back.map(|p| p.steps).unwrap_or_default();
@@ -5236,6 +5281,34 @@ mod tests {
         assert_eq!(arriving[0].state, Arrives::Starting);
         second.opened();
         assert!(brought(&[]).is_empty(), "every run ended");
+    }
+
+    /// What an undo brings back into a folder arrives as a plan's does
+    /// (ADR-135), and goes as its run ends.
+    #[test]
+    fn what_an_undo_brings_back_arrives_and_goes() {
+        let executor = Executor::new(Scheduler::new(2));
+        let log = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let held = Arc::new((parking_lot::Mutex::new(false), parking_lot::Condvar::new()));
+        let made = Gate::new("/stick/back/it's here", true, true, &log).undo_held(&held);
+        let r = executor.execute_blocking(&made.plan(), &CancelToken::new());
+        assert_eq!(r.applied, 1);
+        assert!(executor.undo(CancelToken::new()));
+        assert!(logged(&log, "undid /stick/back/it's here"));
+        let dest = Path::new("/stick/back");
+        let names: Vec<String> = executor
+            .arriving_in(dest)
+            .iter()
+            .map(|a| a.arrival.name.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, ["it's here"]);
+        *held.0.lock() = true;
+        held.1.notify_all();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !executor.arriving_in(dest).is_empty() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(executor.arriving_in(dest).is_empty(), "its run ended");
     }
 
     /// Heavy plans on two servers run at once; on one, they take turns

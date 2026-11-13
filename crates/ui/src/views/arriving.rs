@@ -8,7 +8,7 @@
 //! Activity. An entry already listed under its name (a folder merged into)
 //! is drawn as itself, with the tint and the pill.
 
-use gpui::{Context, Div, InteractiveElement, Stateful, div, prelude::*, relative};
+use gpui::{Context, Div, InteractiveElement, Stateful, div, prelude::*, px, relative};
 use skwir_core::op::arriving::{Arrives, Arriving};
 
 use crate::shell::Shell;
@@ -21,7 +21,7 @@ pub const OPACITY: f32 = 0.6;
 /// How far it has come, from 0 to 1, for its tint.
 pub fn fraction(arriving: &Arriving) -> f32 {
     match arriving.state {
-        Arrives::Moving(fraction) => fraction,
+        Arrives::Moving(fraction) | Arrives::Copying(fraction) => fraction,
         Arrives::Waiting | Arrives::Starting => 0.,
     }
 }
@@ -32,6 +32,7 @@ pub fn words(arriving: &Arriving) -> String {
         _ if arriving.paused => "paused".to_owned(),
         Arrives::Waiting => "waiting".to_owned(),
         Arrives::Starting => "starting".to_owned(),
+        Arrives::Copying(_) => "copying".to_owned(),
         Arrives::Moving(fraction) => crate::activity::percent(fraction),
     }
 }
@@ -42,6 +43,7 @@ pub fn said(arriving: &Arriving) -> String {
         _ if arriving.paused => format!("arriving, paused at {}", percent_of(arriving)),
         Arrives::Waiting => "arriving, waiting".to_owned(),
         Arrives::Starting => "arriving, starting".to_owned(),
+        Arrives::Copying(_) => "arriving, copying".to_owned(),
         Arrives::Moving(_) => format!("arriving, {}", percent_of(arriving)),
     }
 }
@@ -72,16 +74,41 @@ pub fn pill(arriving: &Arriving, theme: &Theme) -> Div {
         .child(words(arriving))
 }
 
-/// The tint behind it, from its start to how far it has come: laid under
-/// what it draws, as the highlight of a line found is (`highlight`).
+/// How far short of its end the tint stops, whole: a row or a tile tinted
+/// end to end reads as one chosen.
+const SHORT: f32 = 12.;
+
+/// The pill of a file another program writes still (ADR-135,
+/// `Look::writing`): Small, in the muted ink, as what waits says it.
+pub fn writing_pill(theme: &Theme) -> Div {
+    div()
+        .flex_none()
+        .px(crate::sizes::sized(6.))
+        .rounded_full()
+        .text_small()
+        .whitespace_nowrap()
+        .border_1()
+        .border_color(theme.border)
+        .text_color(theme.text_muted)
+        .child("writing")
+}
+
+/// The tint behind it, from its start to how far it has come, stopping
+/// `SHORT` before its end: laid under what it draws, as the highlight of a
+/// line found is (`highlight`).
 pub fn tint(arriving: &Arriving, theme: &Theme) -> Div {
     div()
         .absolute()
         .top_0()
+        .bottom_0()
         .left_0()
-        .h_full()
-        .w(relative(fraction(arriving)))
-        .bg(theme.highlight)
+        .right(px(SHORT))
+        .child(
+            div()
+                .h_full()
+                .w(relative(fraction(arriving)))
+                .bg(theme.highlight),
+        )
 }
 
 /// What pointing at it says: where it comes from and how its action goes.
@@ -108,6 +135,8 @@ fn tip(shell: &Shell, arriving: &Arriving) -> String {
         _ if arriving.paused => "paused".to_owned(),
         Arrives::Waiting => "waits its turn".to_owned(),
         Arrives::Starting => "getting ready".to_owned(),
+        // Its server's tool says nothing of each file until it is whole.
+        Arrives::Copying(_) => "copying with the others".to_owned(),
         Arrives::Moving(_) => percent_of(arriving),
     };
     [from, Some(how), left]
@@ -188,6 +217,48 @@ impl Shell {
             path: None,
             plays: None,
             vcs: None,
+            writing: false,
         }
     }
+}
+
+/// What arrives as a row of a column, its name alone (the columns view's):
+/// its picture and name dimmed, the tint behind it, its pill after it.
+pub fn compact_row(
+    shell: &mut Shell,
+    arriving: &Arriving,
+    i: usize,
+    theme: &Theme,
+    cx: &mut Context<Shell>,
+) -> Stateful<Div> {
+    let icon_px = shell.row_zoom;
+    let height = crate::views::list::row_height(icon_px, crate::views::list::files_scale(theme));
+    let look = shell.arriving_look(arriving, u16::try_from(icon_px).unwrap_or(u16::MAX));
+    let el = div()
+        .id(("arriving-row", i))
+        .relative()
+        .h(px(height))
+        .w_full()
+        .flex()
+        .items_center()
+        .gap_2()
+        .px_2()
+        .child(tint(arriving, theme))
+        .child(
+            div()
+                .flex_none()
+                .opacity(OPACITY)
+                .child(look.picture(crate::views::list::icon_px(icon_px), theme)),
+        )
+        .child(crate::views::entry::name(
+            div()
+                .id(("arriving-row-name", i))
+                .flex_1()
+                .min_w_0()
+                .opacity(OPACITY),
+            &look,
+        ))
+        .child(pill(arriving, theme));
+    let el = acting(el, arriving, shell, cx);
+    expose(el, &look.name, arriving, shell.a11y)
 }

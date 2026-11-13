@@ -4861,6 +4861,18 @@ impl Pane {
         self.shown_groups().1
     }
 
+    /// The folders the pane opened in place (ADR-025) with their listings,
+    /// shallowest first: what it shows of each beside its own.
+    pub fn opened_listings(&self) -> impl Iterator<Item = (&Opened, &Listing)> + '_ {
+        opened(&self.kept, &self.expanded).map(|(o, k)| (o, &k.listing))
+    }
+
+    /// `listing`'s order as the pane sorts it: the order `stands_in` places
+    /// among, the pane's own listing's being `listed_order`.
+    pub fn sorted_of(&self, listing: &Listing) -> Arc<[EntryId]> {
+        listing.order_shown(self.sorting())
+    }
+
     /// The listing's order as the pane sorts it (`Listing::order_shown`):
     /// what `stands` places in, before the folders opened in place, the
     /// filter and the folds make what the pane shows of it (`order`).
@@ -4876,8 +4888,15 @@ impl Pane {
     /// the others as the order would have them, with the group it would be
     /// in where the pane groups.
     pub fn stands(&self, likes: &[&Entry]) -> Vec<Option<Stand>> {
+        self.stands_in(&self.listing, likes)
+    }
+
+    /// `stands`, among the entries of `listing`, the pane's own or that of
+    /// a folder it opened in place (`opened_listings`): placed in its order
+    /// as the pane sorts it (`Listing::order_shown`).
+    pub fn stands_in(&self, listing: &Listing, likes: &[&Entry]) -> Vec<Option<Stand>> {
         let sort = self.sorting();
-        let (at, among) = self.listing.standing(&sort, likes);
+        let (at, among) = listing.standing(&sort, likes);
         let filter = self.text_filter();
         let grouping = sort.grouping();
         likes
@@ -4892,6 +4911,21 @@ impl Pane {
                 Some(Stand { at, among, group })
             })
             .collect()
+    }
+
+    /// Where `group`, which none of `spans` (the pane's groups, `groups`)
+    /// is, would stand among them (ADR-135): before the first that comes
+    /// after it, `spans.len()` after them all. What a heading of what
+    /// arrives in a group no file is in yet is placed by.
+    pub fn fresh_before(
+        &self,
+        group: &crate::grouping::Group,
+        spans: &[crate::grouping::Span],
+    ) -> usize {
+        let spec = self.sorting().spec;
+        spans.partition_point(|span| {
+            crate::location::group_order(spec, span.group.as_deref(), Some(group)).is_lt()
+        })
     }
 
     /// The groups of `order` (what the pane shows, folded groups' entries

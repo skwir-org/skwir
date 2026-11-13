@@ -108,6 +108,9 @@ pub struct BoardView {
     /// The listing whose folders opened in place a grouped board closed:
     /// once, the folders' files being no group's.
     closed_for: Option<u64>,
+    /// Each column's rows as last drawn, by its location: its cards, and
+    /// what arrives among them (ADR-135), which is no card.
+    arriving: HashMap<Location, (crate::views::groups::RowMap, Vec<usize>)>,
 }
 
 type ColumnsOf = (u64, u64, u64, skwir_core::SortSpec, u64, u64);
@@ -157,7 +160,12 @@ impl BoardView {
         };
         let (_, location, _) = &self.drawn[k];
         if let (Some(card), Some(scroll)) = (card, self.scrolls.get(location)) {
-            scroll.scroll_to_item(card, strategy);
+            // Among its column's rows, what arrives among them.
+            let row = self
+                .arriving
+                .get(location)
+                .map_or(card, |(rows, _)| rows.row_of(card));
+            scroll.scroll_to_item(row, strategy);
         }
         self.row.scroll_to_item(k);
     }
@@ -352,29 +360,48 @@ fn column(
     let scroll = view.scrolls.get(&c.location).cloned().unwrap_or_default();
     let ids = Arc::clone(&c.ids);
     let shown = Arc::clone(&c.shown);
+    // Its cards, and what arrives among them (ADR-135).
+    let (rows, arriving) = view
+        .arriving
+        .get(&c.location)
+        .cloned()
+        .unwrap_or_else(|| (crate::views::groups::RowMap::flat(ids.len()), Vec::new()));
+    let count = rows.len();
     let list = uniform_list(
         crate::elements::known_by("board-column", &c.location),
-        ids.len(),
+        count,
         cx.processor(move |this: &mut Shell, range: Range<usize>, _, cx| {
             this.with_pane(pane, |this| {
                 let theme = cx.global::<Theme>().clone();
-                let mut cards = cards(this, &ids[range.clone()]);
+                let held = rows.entries_in(range.clone());
+                let mut cards = cards(this, &ids[held.clone()]);
                 // The column says its tag: its cards leave it out.
                 for card in &mut cards {
                     card.look.tags.retain(|(tag, _)| {
                         !shown.iter().any(|s| skwir_core::metadata::same_tag(s, tag))
                     });
                 }
-                cards
-                    .into_iter()
-                    .map(|card| {
-                        // A card stands among its column's.
-                        let seat = crate::views::entry::Seat {
-                            index: range.start + card.at,
-                            tree: None,
-                            group: None,
-                        };
-                        card_element(this, &card, seat, &theme, cx)
+                let mut cards = cards.into_iter().peekable();
+                range
+                    .map(|at| match rows.at(at) {
+                        Some(crate::views::groups::Row::Arriving(j)) => {
+                            arriving_card(this, arriving.get(j).copied(), &theme, cx)
+                        }
+                        Some(crate::views::groups::Row::Entry(card_at)) => {
+                            match cards.next_if(|card| held.start + card.at == card_at) {
+                                // A card stands among its column's.
+                                Some(card) => {
+                                    let seat = crate::views::entry::Seat {
+                                        index: card_at,
+                                        tree: None,
+                                        group: None,
+                                    };
+                                    card_element(this, &card, seat, &theme, cx)
+                                }
+                                None => div().into_any_element(),
+                            }
+                        }
+                        _ => div().into_any_element(),
                     })
                     .collect::<Vec<_>>()
             })
@@ -437,6 +464,113 @@ fn column(
         (None, None) => dnd::droppable_place(col, c.location, cx),
     };
     col.into_any_element()
+}
+
+/// What arrives in column `c` (the `k`th), among its cards (ADR-135): in
+/// its group where the board groups, else in the folder it is. Its rows (a
+/// card a row, what arrives among them, as `ListState::rows` has it), and
+/// which of `ListState::arriving` each that arrives is.
+fn arriving_rows(
+    shell: &Shell,
+    c: &Column,
+    k: usize,
+    grouped: bool,
+) -> (crate::views::groups::RowMap, Vec<usize>) {
+    let list = &shell.ui().list;
+    let mine: Vec<usize> = (0..list.arriving.len())
+        .filter(|&i| {
+            if grouped {
+                list.arriving_placed.get(i).and_then(|p| p.group) == Some(k)
+            } else {
+                c.path.as_deref() == Some(list.arriving[i].arrival.folder.as_path())
+            }
+        })
+        .collect();
+    if mine.is_empty() {
+        return (crate::views::groups::RowMap::flat(c.ids.len()), mine);
+    }
+    // Before the first card that comes after it in the pane's order.
+    let placed: Vec<crate::views::groups::Placed> = mine
+        .iter()
+        .map(|&i| {
+            let at = list.arriving_placed.get(i).map_or(usize::MAX, |p| p.at);
+            let slot = c
+                .ids
+                .partition_point(|id| list.index_of(*id).is_some_and(|ix| ix < at));
+            crate::views::groups::Placed {
+                at: slot,
+                ..Default::default()
+            }
+        })
+        .collect();
+    (
+        crate::views::groups::RowMap::arriving(Arc::from([]), c.ids.len(), &placed, &[]),
+        mine,
+    )
+}
+
+/// What arrives as a card (ADR-135): its picture and its name, dimmed,
+/// the tint behind it, its pill; no card the keys reach nor one selected,
+/// its press its action's card in Activity.
+fn arriving_card(
+    shell: &mut Shell,
+    i: Option<usize>,
+    theme: &Theme,
+    cx: &mut Context<Shell>,
+) -> AnyElement {
+    let Some(arriving) = i.and_then(|i| shell.ui().list.arriving.get(i).cloned()) else {
+        return div().into_any_element();
+    };
+    let i = i.unwrap_or_default();
+    let look = shell.arriving_look(&arriving, PICTURE as u16);
+    let scale = crate::views::list::files_scale(theme);
+    let height = card_height(scale);
+    let dim = crate::views::arriving::OPACITY;
+    let el = div()
+        .id(("arriving-card", i))
+        .relative()
+        .h(px(height))
+        .flex_1()
+        .min_w_0()
+        .px_2()
+        .flex()
+        .items_center()
+        .gap_2()
+        .rounded_md()
+        .overflow_hidden()
+        .border_1()
+        .border_color(theme.border)
+        .bg(theme.surface)
+        .child(crate::views::arriving::tint(&arriving, theme))
+        .child(
+            div()
+                .flex_none()
+                .opacity(dim)
+                .child(look.picture(PICTURE, theme)),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .items_center()
+                .gap_1()
+                .child(crate::views::entry::name(
+                    div().id("arriving-card-name").text_body().opacity(dim),
+                    &look,
+                ))
+                .child(crate::views::arriving::pill(&arriving, theme)),
+        );
+    let el = crate::views::arriving::acting(el, &arriving, shell, cx);
+    let el = crate::views::arriving::expose(el, &look.name, &arriving, shell.a11y);
+    div()
+        .w_full()
+        .h(px(height + 4.))
+        .px_1()
+        .py(px(2.))
+        .flex()
+        .child(el)
+        .into_any_element()
 }
 
 /// What the cards of `ids` show, read under the lock.
@@ -667,6 +801,12 @@ impl PaneView for BoardView {
         for c in &columns {
             self.scrolls.entry(c.location.clone()).or_default();
         }
+        // What arrives in each column, among its cards (ADR-135).
+        self.arriving = columns
+            .iter()
+            .enumerate()
+            .map(|(k, c)| (c.location.clone(), arriving_rows(shell, c, k, grouped)))
+            .collect();
         if let Some((ix, strategy)) = self.wanted.take() {
             self.scroll_card(ix, strategy);
         }

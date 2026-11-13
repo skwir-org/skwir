@@ -388,6 +388,11 @@ pub mod keys {
     pub const RATING: &str = "rating";
     /// The user's comment on a file, `Value::Text`, from `user.xdg.comment`.
     pub const COMMENT: &str = "comment";
+    /// Being written by a program as it was last read, `Value::Bool(true)`,
+    /// set only then: written to and not closed since (Linux), or written
+    /// in the last two seconds where no close is told (ADR-135). What a
+    /// download or a copy another program makes shows as it comes.
+    pub const WRITING: &str = "writing";
     /// Where a downloaded file came from, `Value::Text` (a URL), from
     /// `user.xdg.origin.url` as browsers, wget and curl record it.
     pub const ORIGIN: &str = "origin";

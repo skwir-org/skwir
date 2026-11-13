@@ -1556,9 +1556,11 @@ fn body(
     let cards = under.count();
     for (running, transfer) in &under.plans {
         let focus = shell.activity.cards[&running.plan].clone();
+        let into = into_said(&shell.app.executor.brings_into(running.plan));
         parts.push(
             progress_card(
                 running,
+                into,
                 transfer,
                 (&focus.0, &focus.1),
                 reveal,
@@ -2052,11 +2054,20 @@ fn earlier_row(
     row.into_any_element()
 }
 
+/// Where an action goes, as its card says it when pointed at (ADR-135):
+/// the whole path of each folder it brings something into, its title
+/// naming them alone.
+fn into_said(folders: &[std::path::PathBuf]) -> Option<SharedString> {
+    let paths: Vec<String> = folders.iter().map(|f| f.display().to_string()).collect();
+    (!paths.is_empty()).then(|| format!("Into {}", paths.join(", ")).into())
+}
+
 /// The card of the running plan `running` in Activity: its title, how far
 /// it is, how fast and how long, and its Pause and Cancel, which `focus`
 /// holds.
 fn progress_card(
     running: &Running,
+    into: Option<SharedString>,
     transfer: &Transfer,
     focus: (&FocusHandle, &FocusHandle),
     reveal: &Reveal,
@@ -2108,7 +2119,7 @@ fn progress_card(
                 .flex()
                 .flex_col()
                 .gap_1()
-                .child(crate::elements::clip::clipped(
+                .child(crate::elements::clip::clipped_with(
                     div()
                         .id(("activity-card-title", plan.0))
                         .min_w_0()
@@ -2116,6 +2127,7 @@ fn progress_card(
                         .whitespace_nowrap()
                         .text_ellipsis(),
                     capitalized(&running.title),
+                    into,
                 ))
                 .child(
                     div()

@@ -151,6 +151,11 @@ pub(super) struct Meter {
     /// steps place them after the batch. Each leaves as its step ends, so
     /// what a reading counts is how many there are. Said, never acted on.
     finished_ahead: Mutex<HashSet<usize>>,
+    /// The steps a batch under way took, with their bytes copied so far
+    /// where its transfer tells them (`Told::writing`) and in all: what
+    /// arrives says it is copying (ADR-135). A step leaves as it ends, or
+    /// as the batch ends without making it.
+    batching: Mutex<HashMap<usize, (u64, u64)>>,
     /// The steps of the plan, once it began ([`Self::begin`]).
     items: AtomicUsize,
     /// What its steps were sized at before it began, when they were.
@@ -324,6 +329,7 @@ impl Meter {
     /// waits for what that step was sized at. A step after the one under
     /// way has them apart from that one's own, which it counts still.
     pub(super) fn counted(&self, step: usize, bytes: u64) {
+        self.batching.lock().insert(step, (0, bytes));
         let mut steps = self.steps.lock();
         if step > steps.ended {
             steps.others = steps.others.saturating_add(bytes);
@@ -337,8 +343,31 @@ impl Meter {
 
     /// The step `step`'s copy was finished ahead of its turn, by a batch.
     pub(super) fn finished_ahead(&self, step: usize) {
+        if let Some((done, total)) = self.batching.lock().get_mut(&step) {
+            *done = *total;
+        }
         if self.finished_ahead.lock().insert(step) {
             self.moved_now();
+        }
+    }
+
+    /// The batch copying step `step` has copied `done` bytes of it, as its
+    /// transfer tells (ADR-135): said only.
+    pub(super) fn writing(&self, step: usize, done: u64) {
+        if let Some((was, total)) = self.batching.lock().get_mut(&step) {
+            *was = done.min(*total).max(*was);
+        }
+    }
+
+    /// The batch that took `steps` ended: those it did not finish copy
+    /// their own when their turn comes, and are no longer said copying.
+    pub(super) fn unbatch(&self, steps: &[usize]) {
+        let finished = self.finished_ahead.lock();
+        let mut batching = self.batching.lock();
+        for step in steps {
+            if !finished.contains(step) {
+                batching.remove(step);
+            }
         }
     }
 
@@ -450,6 +479,7 @@ impl Meter {
         }
         // Its item counts as ended now, no longer as finished ahead.
         self.finished_ahead.lock().remove(&steps.ended);
+        self.batching.lock().remove(&steps.ended);
         steps.ended += 1;
         steps.done = self.done.load(Ordering::Relaxed);
         steps.total = self.total.load(Ordering::Relaxed);
@@ -591,6 +621,7 @@ impl Meter {
             step_done: done.saturating_sub(steps.done),
             step_total: counted.saturating_sub(steps.others.min(counted)),
             ahead: self.finished_ahead.lock().iter().copied().collect(),
+            batching: self.batching.lock().clone(),
         }
     }
 
@@ -2025,6 +2056,19 @@ impl StepContext {
     /// waits for them.
     pub(super) fn counted_ahead(&self, step: usize, bytes: u64) {
         self.meter.counted(step, bytes);
+    }
+
+    /// What says, from a batch's threads, how far the copy of a step it
+    /// took has come (ADR-135, `Told::writing`): said only.
+    pub(super) fn writer(&self) -> impl Fn(usize, u64) + Send + Sync + use<> {
+        let meter = Arc::clone(&self.meter);
+        move |step, done| meter.writing(step, done)
+    }
+
+    /// The batch that took `steps` ended: those it did not make are no
+    /// longer said copying.
+    pub(super) fn unbatch(&self, steps: &[usize]) {
+        self.meter.unbatch(steps);
     }
 
     /// What a batch that failed counted is taken back (ADR-078): `bytes`

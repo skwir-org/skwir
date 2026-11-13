@@ -131,7 +131,9 @@ like `AGENTS.md`.
   (`views::arriving::expose`), named by its name there and described by
   how far it has come ("arriving, 42 %", "arriving, waiting"); never an
   option the keys reach nor one selected, and no position, so the
-  entries' positions and count stay theirs.
+  entries' positions and count stay theirs. A group no file is in yet
+  is a `Heading` named "Videos, arriving" (`groups::fresh_said`). A file
+  another program writes is described "being written".
 - **Position and count follow AccessKit, not the web**: an item's
   `aria_position_in_set` counts from 0, and the count is
   `aria_size_of_set` on the container. gpui's example puts both on the

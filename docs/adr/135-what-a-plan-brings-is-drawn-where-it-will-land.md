@@ -88,11 +88,16 @@ press opening the action's card in Activity). Built on Linux.
 ## Consequences
 
 - **Memory.** Each item is kept while its plan runs: its name, its
-  source's path and the five fields a view reads of it, a few hundred
-  bytes. Ten thousand files pasted keep a few MB while they come.
+  source's path and the fields a view reads of it, about 1.35 KB in all
+  (measured, 100,000 items: 132 MB), mostly the fields' map, one node of
+  it whatever their number. Ten thousand files pasted keep 13 MB while
+  they come. A compact form rebuilt as an entry where it is placed would
+  keep a few hundred bytes for more work at each placing: not chosen.
 - **Placing** costs a search among the order's ranks for each item, made
-  again when the order changes (each landing changes it). The rows that
-  are no entry are searched, never walked.
+  again when the order changes (each landing changes it): 11.2 ms for
+  10,000 items among 100,000 entries, on the window's thread
+  (`arriving_stands_us`, release). The rows that are no entry are
+  searched, never walked.
 - **Limits kept for later** (the user's list): the columns and the board
   draw no arrivals; in a grouped view, an item whose group holds no file
   yet stands after every group; sorted by Created or Accessed, a file
@@ -101,3 +106,67 @@ press opening the action's card in Activity). Built on Linux.
 - **Other limits:** only the pane's own folder shows what arrives, not
   one opened in place; undos and redos are not shown; a server's batch
   says a file only once it is whole, so it fills at once.
+
+## Amended 2026-11-13: the follow-ups and the limits
+
+On the user's answers the same day (a group no file is in yet its own
+dimmed heading; a batch's items copying, rsync telling each; a "writing"
+pill on what another program writes; the full tint stopping short; a
+title naming the folder), the follow-ups and the limits found are built:
+
+- **What arrives is read as an entry would be**
+  (`Executor::set_reader`, the App's `fs::hydrate_path`): stat-ed, then
+  its notes (tags, rating, comment) read by the metadata providers, so a
+  filter, a sort and groups by them place it. A copy, and a move to
+  another volume, is a file made anew: created and last read when asked
+  (`arriving::moved_to`); a move within its volume keeps its file's dates.
+- **Undos and redos bring what they put back** (a move undone, a file
+  put back from the Trash): noted as their run starts, let go of as it
+  ends (`Brought`); nothing while one waits its turn.
+- **Folders opened in place** (the tree, the board's columns): each is a
+  folder the executor answers for (`Pane::opened_listings`,
+  `Pane::stands_in`); what arrives in one is placed among its entries,
+  one level deeper, in its folder's group (`ListState::sync_arriving`).
+- **The board** draws what arrives as cards in the column of the folder
+  it lands in, or of its group, among the cards and never one of them
+  (each column its `RowMap`); **the columns view** in the folder shown's
+  column, and in each column beside it, placed in that folder's own
+  order (`columns::side_arriving`).
+- **A group no file is in yet** has a heading of its own where that group
+  stands among the pane's (`Pane::fresh_before`, `groups::Fresh`,
+  `Row::Fresh`, `Drawn::Fresh` in a grid's lines): dimmed, "arriving"
+  where a count is, no stop of the keys, nothing to fold or select; never
+  one of the pane's groups, whose numbers stay the core's. A grouped board
+  draws no column for it.
+- **A batch's items say they copy** (ADR-078): the meter keeps the steps
+  a batch under way took (`Meter::batching`), each "copying" at the
+  batch's share where its transfer says nothing of each until whole
+  (`Arrives::Copying`), by its own bytes where it does: a transfer tells
+  them (`Told::writing`); rsync's from what it says, its order the names'
+  bytes, a folder's line as it begins it, each file once whole, the bytes
+  between counted to the name it is in (`rsync::Writing`).
+- **What another program writes** (a download, a copy in a terminal) is
+  marked as it comes: the watcher tells which names it tells are still
+  written (`Changes::writing`: written to and not closed since on Linux,
+  written in the last `QUIET`, 2 s, elsewhere, then told again), the
+  folder's provider marks the entry (`keys::WRITING`), and the views draw
+  a "writing" pill beside its size, never dimmed; no name is taken for a
+  download's by its suffix.
+- **The tint stops short** of a row's or a tile's end (`arriving::SHORT`,
+  12 px), so one whole never reads as chosen.
+- **A transfer's title names its folder** (`op::transfer_title`,
+  `op::folder_said`: "copy 3 items to Projects", "copy “a.txt” to
+  Projects"), its whole path on the card's tooltip while it runs or waits
+  (`Executor::brings_into`): titles are drawn on one line, by a card, a
+  toast and the History.
+
+Left: a grouped board shows no arrival in a group no file is in yet;
+an undo waiting its turn shows nothing; sftp, GVfs, KIO and rclone say
+nothing of a file until it is whole (their items say "copying" at the
+batch's share; OpenSSH's `sftp`, run with its lines on its input, says
+nothing until a session's files end, its meter drawn on a terminal
+alone); rsync's order taken as its names' bytes, an item it
+copies out of that order shows the bytes in flight on the next one until
+its line comes; macOS and Windows tell a file being written by its
+writes, not its close. Two folders of one name are told apart by the
+card's tooltip, not its title.

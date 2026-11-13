@@ -208,7 +208,15 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   token is cancelled. A plan's id names its arrivals, as its meter and
   its events do. Only what brings something (`arriving::brought`: a
   copy, a move to another folder, what a step makes, a restore): a
-  rename and a link are there at once.
+  rename and a link are there at once. What each is made from is read as
+  a listing reads its entries (`Executor::set_reader`: stat-ed, then its
+  notes), a copy dated as made when asked. An undo's or a redo's run
+  notes what it brings as it starts and lets it go as it ends
+  (`Brought`). The steps a batch under way took are the meter's
+  (`Meter::batching`, from `counted` to their end, or the batch's,
+  `Unbatch`), each with the bytes its transfer told of it
+  (`Told::writing`): what arrives says it copies with the batch
+  (`Arrives::Copying`), or how far it came.
 - A plan is told started (`ExecEvent::Started`, as asked) before its
   checks (unfolding, names taken, the dry run, room), which may read
   whole trees: Pause and Cancel reach it there (`Executor::show`), and

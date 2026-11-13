@@ -163,6 +163,89 @@ fn made_of(line: &[u8]) -> Option<&[u8]> {
         .then(|| &rest[at + 1..])
 }
 
+/// The bytes and the path of a line of rsync's naming what it made
+/// (`PLACED`).
+fn placed_of(line: &[u8]) -> Option<(u64, &[u8])> {
+    let rest = line.strip_prefix(PLACED.as_bytes())?;
+    let at = rest.iter().position(|&b| b == b':')?;
+    let bytes = std::str::from_utf8(&rest[..at]).ok()?.parse().ok()?;
+    Some((bytes, &rest[at + 1..]))
+}
+
+/// How far rsync has come with each name it was given (ADR-135), from what
+/// it says: it copies them in its order (their names' bytes), a folder's
+/// line said as it begins it and its files after it, each file said once
+/// whole with its bytes; what it copied in all and has not said whole is
+/// the file it copies now, of the name it is in, else the next one not
+/// made.
+struct Writing {
+    order: Vec<OsString>,
+    /// Of each name, the bytes rsync said whole.
+    whole: HashMap<OsString, u64>,
+    /// The names given alone that it said whole.
+    made: HashSet<OsString>,
+    /// Which of `order` it copies now.
+    now: Option<usize>,
+    /// The bytes it said whole, in all.
+    said: u64,
+}
+
+impl Writing {
+    fn new(names: &[OsString]) -> Self {
+        let mut order = names.to_vec();
+        order.sort_by(|a, b| a.as_encoded_bytes().cmp(b.as_encoded_bytes()));
+        Writing {
+            now: (!order.is_empty()).then_some(0),
+            order,
+            whole: HashMap::new(),
+            made: HashSet::new(),
+            said: 0,
+        }
+    }
+
+    /// The name `path` is in, given to rsync, and whether it is that name
+    /// itself.
+    fn name_of(&self, path: &[u8]) -> Option<(usize, bool)> {
+        let (top, rest) = match path.iter().position(|&b| b == b'/') {
+            Some(at) => (&path[..at], &path[at + 1..]),
+            None => (path, &[][..]),
+        };
+        let at = self
+            .order
+            .iter()
+            .position(|name| name.as_encoded_bytes() == top)?;
+        Some((at, rest.is_empty() && !path.ends_with(b"/")))
+    }
+
+    /// rsync said `path` whole, `bytes` of it: how far its name has come.
+    fn placed(&mut self, bytes: u64, path: &[u8]) -> Option<(OsString, u64)> {
+        let (at, alone) = self.name_of(path)?;
+        let name = self.order[at].clone();
+        let whole = self.whole.entry(name.clone()).or_default();
+        *whole = whole.saturating_add(bytes);
+        let so_far = *whole;
+        self.said = self.said.saturating_add(bytes);
+        if alone {
+            self.made.insert(name.clone());
+            self.now = (at + 1..self.order.len()).find(|n| !self.made.contains(&self.order[*n]));
+        } else {
+            self.now = Some(at);
+        }
+        Some((name, so_far))
+    }
+
+    /// rsync copied `total` bytes in all: how far the name it copies now
+    /// has come.
+    fn copied(&self, total: u64) -> Option<(OsString, u64)> {
+        let name = self.order.get(self.now?)?;
+        let whole = self.whole.get(name).copied().unwrap_or(0);
+        Some((
+            name.clone(),
+            whole.saturating_add(total.saturating_sub(self.said)),
+        ))
+    }
+}
+
 /// The entry of its own a path rsync says it made names, once it is whole:
 /// a file or a link given to it (no `/` in its path). A folder's own line
 /// comes as rsync makes it, before what it holds, and recursing as it
@@ -306,6 +389,7 @@ impl Transfer for Rsync {
         control: &Control,
     ) -> anyhow::Result<()> {
         let (copied, placed, made, temp) = (told.copied, told.placed, told.made, aside.temp);
+        let mut writing = Writing::new(names);
         let rsync = program().ok_or_else(|| anyhow::anyhow!("rsync is not installed"))?;
         let (remote_side, local_side, upward) = match (self.mount_of(from), self.mount_of(into)) {
             (None, Some(mount)) => (mount, from, true),
@@ -398,6 +482,11 @@ impl Transfer for Rsync {
             &mut |bytes: &[u8]| {
                 for &b in bytes {
                     if b == b'\r' || b == b'\n' {
+                        if let Some((bytes, path)) = placed_of(&line)
+                            && let Some((name, so_far)) = writing.placed(bytes, path)
+                        {
+                            (told.writing)(&name, so_far);
+                        }
                         if let Some(path) = made_of(&line) {
                             // Beside what is there, files alone: each
                             // placed. In a folder of its own, the files
@@ -409,6 +498,9 @@ impl Transfer for Rsync {
                             }
                         } else if let Some(n) = copied_of(&line) {
                             copied(n);
+                            if let Some((name, so_far)) = writing.copied(n) {
+                                (told.writing)(&name, so_far);
+                            }
                         }
                         line.clear();
                     } else {
@@ -420,6 +512,9 @@ impl Transfer for Rsync {
                 // it said again at its end counts no more).
                 if let Some(n) = copied_of(&line) {
                     copied(n);
+                    if let Some((name, so_far)) = writing.copied(n) {
+                        (told.writing)(&name, so_far);
+                    }
                 }
             },
         )?;
@@ -444,6 +539,57 @@ impl Transfer for Rsync {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What rsync says as it goes, its order the names' (a folder's line
+    /// as it begins it, each file once whole, its bytes in all on the
+    /// progress lines between): each name's bytes so far, the one it copies
+    /// now carrying what is not said whole yet.
+    #[test]
+    fn how_far_rsync_has_come_with_each_name_is_told_from_what_it_says() {
+        let names: Vec<OsString> = ["b.bin", "tree", "a.bin"].map(OsString::from).to_vec();
+        let mut writing = Writing::new(&names);
+        let said = |w: &Option<(OsString, u64)>| {
+            w.as_ref()
+                .map(|(name, bytes)| (name.to_string_lossy().into_owned(), *bytes))
+        };
+        // a.bin first: its name's order.
+        assert_eq!(
+            said(&writing.copied(32_768)),
+            Some(("a.bin".into(), 32_768))
+        );
+        assert_eq!(
+            said(&writing.placed(2_097_447, b"a.bin")),
+            Some(("a.bin".into(), 2_097_447))
+        );
+        // Then b.bin, carrying what is not said whole.
+        assert_eq!(
+            said(&writing.copied(4_292_608)),
+            Some(("b.bin".into(), 2_195_161))
+        );
+        assert_eq!(
+            said(&writing.placed(3_146_151, b"b.bin")),
+            Some(("b.bin".into(), 3_146_151))
+        );
+        // The folder: its line as it begins, its files said whole in it.
+        assert_eq!(said(&writing.placed(0, b"tree/")), Some(("tree".into(), 0)));
+        assert_eq!(
+            said(&writing.copied(5_767_168)),
+            Some(("tree".into(), 523_570))
+        );
+        assert_eq!(
+            said(&writing.placed(1_048_743, b"tree/x.bin")),
+            Some(("tree".into(), 1_048_743))
+        );
+        assert_eq!(
+            said(&writing.placed(1_048_743, b"tree/y.bin")),
+            Some(("tree".into(), 2_097_486))
+        );
+        assert_eq!(
+            writing.placed(1, b"elsewhere.bin"),
+            None,
+            "not a name given"
+        );
+    }
 
     #[test]
     fn what_rsync_made_is_told_by_its_entry_once_whole() {

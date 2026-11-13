@@ -18,6 +18,7 @@
 
 use crate::theme::Chosen;
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -38,6 +39,7 @@ use crate::list::Step;
 use crate::shell::Shell;
 use crate::theme::Theme;
 use crate::view::{Nav, PaneView};
+use crate::views::groups::Row;
 use crate::views::list::{files_scale, row_elements, row_height};
 
 const MAX_ANCESTORS: usize = 3;
@@ -87,6 +89,101 @@ pub struct ColumnsView {
     row: ScrollHandle,
     /// Another folder is shown: the strip goes to its end, where it is.
     to_end: Rc<Cell<bool>>,
+    /// The last column's rows as last drawn: its entries, and what arrives
+    /// among them (ADR-135), never an entry.
+    last_rows: crate::views::groups::RowMap,
+    /// What arrives in each column beside it, placed among its entries,
+    /// with what it was placed for (its order, what arrives).
+    side_arriving: HashMap<Location, SideArriving>,
+}
+
+/// What arrives in a column beside the pane's (ADR-135): the order and
+/// what arrives it was placed for, its rows, and what arrives.
+#[derive(Clone)]
+struct SideArriving {
+    made_for: (usize, Vec<usize>),
+    rows: crate::views::groups::RowMap,
+    arriving: Vec<skwir_core::op::arriving::Arriving>,
+}
+
+/// What plans bring into the folder of the column at `location` (ADR-135),
+/// shown once lasted as in the pane's (`work::SHOWN_AFTER`), placed among
+/// `ids`, its order, as an entry would be; `kept` what was placed last.
+fn side_arriving(
+    shell: &Shell,
+    location: &Location,
+    ids: &Arc<[EntryId]>,
+    kept: Option<&SideArriving>,
+) -> SideArriving {
+    use skwir_core::op::arriving::Arriving;
+    let none = || SideArriving {
+        made_for: (0, Vec::new()),
+        rows: crate::views::groups::RowMap::flat(ids.len()),
+        arriving: Vec::new(),
+    };
+    let Some(path) = location.path() else {
+        return none();
+    };
+    let now = std::time::Instant::now();
+    let ws = shell.app.workspace.read();
+    let Some(pane) = ws.pane(shell.pane) else {
+        return none();
+    };
+    let Some(listing) = pane.kept(location) else {
+        return none();
+    };
+    let shows_hidden = pane.sort.show_hidden;
+    let ghosts: Vec<Arriving> = shell
+        .app
+        .executor
+        .arriving_in(&path)
+        .into_iter()
+        .filter(|a| a.arrival.asked + crate::work::SHOWN_AFTER <= now)
+        .filter(|a| listing.find_by_name(&a.arrival.name).is_none())
+        .filter(|a| shows_hidden || !a.arrival.like.is_hidden())
+        .collect();
+    let made_for = (
+        Arc::as_ptr(ids).cast::<()>().addr(),
+        ghosts
+            .iter()
+            .map(|a| Arc::as_ptr(&a.arrival).addr())
+            .collect::<Vec<usize>>(),
+    );
+    if let Some(kept) = kept
+        && kept.made_for == made_for
+    {
+        // Where they were: how far each has come.
+        let now: HashMap<usize, &Arriving> = ghosts
+            .iter()
+            .map(|a| (Arc::as_ptr(&a.arrival).addr(), a))
+            .collect();
+        let mut again = kept.clone();
+        for mine in &mut again.arriving {
+            if let Some(new) = now.get(&Arc::as_ptr(&mine.arrival).addr()) {
+                (*new).clone_into(mine);
+            }
+        }
+        return again;
+    }
+    if ghosts.is_empty() {
+        return SideArriving { made_for, ..none() };
+    }
+    let likes: Vec<&skwir_core::Entry> = ghosts.iter().map(|a| &a.arrival.like).collect();
+    let (at, among) = listing.standing(pane.kept_sorting(location), &likes);
+    let mut order: Vec<usize> = (0..ghosts.len()).collect();
+    order.sort_by_key(|&i| (at[i], among[i]));
+    let placed: Vec<crate::views::groups::Placed> = order
+        .iter()
+        .map(|&i| crate::views::groups::Placed {
+            at: at[i],
+            ..Default::default()
+        })
+        .collect();
+    SideArriving {
+        made_for,
+        rows: crate::views::groups::RowMap::arriving(Arc::from([]), ids.len(), &placed, &[]),
+        arriving: order.into_iter().map(|i| ghosts[i].clone()).collect(),
+    }
 }
 
 /// The folder or place the cursor of the pane drawn is on: where going into
@@ -255,7 +352,7 @@ struct SideRow {
 fn side_column(
     view: &ColumnsView,
     side: Side,
-    ids: Arc<[EntryId]>,
+    (ids, arriving): (Arc<[EntryId]>, SideArriving),
     pane: skwir_core::workspace::PaneId,
     title: Option<gpui::SharedString>,
     theme: &Theme,
@@ -284,10 +381,17 @@ fn side_column(
     // What the rows read their listing by, in the closure that draws them.
     let at = location.clone();
     let count = ids.len();
+    let SideArriving {
+        rows: side_rows,
+        arriving: side_arriving,
+        ..
+    } = arriving;
     let list = uniform_list(
         ids_of(if next { "column-next" } else { "column" }),
-        ids.len(),
+        side_rows.len(),
         cx.processor(move |this: &mut Shell, range: Range<usize>, _window, cx| {
+            // Its entries among the rows, what arrives among them.
+            let held = side_rows.entries_in(range.clone());
             let theme = cx.global::<Theme>().clone();
             let icon_px = u16::try_from(this.row_zoom).unwrap_or(u16::MAX);
             let height = row_height(this.row_zoom, files_scale(&theme));
@@ -301,7 +405,7 @@ fn side_column(
                 let ws = this.app.workspace.read();
                 let listing = ws.pane(pane).and_then(|p| p.kept(&at));
                 let p = ws.pane(pane);
-                ids[range.clone()]
+                ids[held.clone()]
                     .iter()
                     .map(|id| listing?.get(*id))
                     .map(|e| {
@@ -343,7 +447,27 @@ fn side_column(
             this.request_hydrate_kept(&at, rows.iter().flatten().map(|row| row.id));
             let a11y = this.a11y;
             let mut out = Vec::with_capacity(rows.len());
-            for (ix, row) in range.zip(rows) {
+            let mut entries = held.zip(rows);
+            for drawn in range {
+                let (ix, row) = match side_rows.at(drawn) {
+                    Some(Row::Arriving(j)) => {
+                        out.push(match side_arriving.get(j) {
+                            Some(it) => {
+                                crate::views::arriving::compact_row(this, it, j, &theme, cx)
+                            }
+                            None => div().id(("arriving-gone", j)).h(px(height)),
+                        });
+                        continue;
+                    }
+                    Some(Row::Entry(ix)) => match entries.next() {
+                        Some((i, row)) if i == ix => (ix, row),
+                        _ => {
+                            out.push(div().id(("row-gone", ix)).h(px(height)));
+                            continue;
+                        }
+                    },
+                    _ => continue,
+                };
                 let Some(row) = row else {
                     out.push(div().id(("row-gone", ix)).h(px(height)));
                     continue;
@@ -639,11 +763,14 @@ impl PaneView for ColumnsView {
                 .then(|| gpui::SharedString::from(shell.app.location_title(location)))
         };
         for (k, ids) in orders.into_iter().enumerate() {
-            let named = title(&self.ancestors[k].location);
+            let location = self.ancestors[k].location.clone();
+            let named = title(&location);
+            let arriving = side_arriving(shell, &location, &ids, self.side_arriving.get(&location));
+            self.side_arriving.insert(location, arriving.clone());
             columns = columns.child(side_column(
                 self,
                 Side::Above(k),
-                ids,
+                (ids, arriving),
                 pane,
                 named,
                 &theme,
@@ -651,17 +778,55 @@ impl PaneView for ColumnsView {
             ));
         }
         let count = shell.ui().list.sorted.len();
+        // What arrives in the folder shown, among its rows (ADR-135): where
+        // the pane placed it, with no heading, which no column draws.
+        let placed: Vec<crate::views::groups::Placed> = shell
+            .ui()
+            .list
+            .arriving_placed
+            .iter()
+            .map(|p| crate::views::groups::Placed {
+                at: p.at,
+                ..Default::default()
+            })
+            .collect();
+        let rows = crate::views::groups::RowMap::arriving(Arc::from([]), count, &placed, &[]);
+        self.last_rows = rows.clone();
         let last = uniform_list(
             "column-last",
-            count,
+            rows.len(),
             cx.processor(move |this: &mut Shell, range: Range<usize>, _window, cx| {
                 this.with_pane(pane, |this| {
                     let theme = cx.global::<Theme>().clone();
                     this.ui_mut().list.visible_rows = range.len().max(1);
                     let icon_px = u16::try_from(this.row_zoom).unwrap_or(u16::MAX);
-                    let rows = this.rows(range.clone(), icon_px, true);
-                    this.request_hydrate(rows.iter().map(|r| r.look.id).collect::<Vec<_>>());
-                    row_elements(this, &theme, range, &rows, (true, false), cx)
+                    let held = rows.entries_in(range.clone());
+                    let data = this.rows(held.clone(), icon_px, true);
+                    this.request_hydrate(data.iter().map(|r| r.look.id).collect::<Vec<_>>());
+                    if rows.plain() {
+                        return row_elements(this, &theme, range, &data, (true, false), cx);
+                    }
+                    let height = row_height(this.row_zoom, files_scale(&theme));
+                    let mut data = data.iter().peekable();
+                    range
+                        .map(|at| match rows.at(at) {
+                            Some(Row::Arriving(i)) => {
+                                match this.ui().list.arriving.get(i).cloned() {
+                                    Some(it) => crate::views::arriving::compact_row(
+                                        this, &it, i, &theme, cx,
+                                    ),
+                                    None => div().id(("arriving-gone", i)).h(px(height)),
+                                }
+                            }
+                            Some(Row::Entry(ix)) => match data.next_if(|r| r.ix == ix) {
+                                Some(r) => {
+                                    crate::views::list::row(this, &theme, r, true, false, cx)
+                                }
+                                None => div().id(("row-gone", ix)).h(px(height)),
+                            },
+                            _ => div().id(("row-none", at)).h(px(height)),
+                        })
+                        .collect::<Vec<_>>()
                 })
             }),
         )
@@ -702,7 +867,17 @@ impl PaneView for ColumnsView {
         columns = columns.child(match next {
             Some((next, ids)) => {
                 let named = title(&next);
-                side_column(self, Side::Next(next), ids, pane, named, &theme, cx)
+                let arriving = side_arriving(shell, &next, &ids, self.side_arriving.get(&next));
+                self.side_arriving.insert(next.clone(), arriving.clone());
+                side_column(
+                    self,
+                    Side::Next(next),
+                    (ids, arriving),
+                    pane,
+                    named,
+                    &theme,
+                    cx,
+                )
             }
             None => div()
                 .w(files_scale(&theme).px(COLUMN_W))
@@ -726,11 +901,13 @@ impl PaneView for ColumnsView {
     }
 
     fn scroll_to(&mut self, ix: usize) {
-        self.scroll.scroll_to_item(ix, ScrollStrategy::Nearest);
+        self.scroll
+            .scroll_to_item(self.last_rows.row_of(ix), ScrollStrategy::Nearest);
     }
 
     fn scroll_to_middle(&mut self, ix: usize) {
-        self.scroll.scroll_to_item(ix, ScrollStrategy::Center);
+        self.scroll
+            .scroll_to_item(self.last_rows.row_of(ix), ScrollStrategy::Center);
     }
 
     fn kept_locations(&self, shown: Option<&Location>, trail: Option<&Trail>) -> Vec<Location> {

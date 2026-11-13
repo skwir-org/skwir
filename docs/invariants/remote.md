@@ -280,7 +280,12 @@ ADR-077 (which revises ADR-021).
   probe says nothing about backend support and remains retryable. A lone
   file within one remote goes in a batch where a transfer serves it,
   which its step would bring here and send back. A server a tool does
-  not reach is remembered for its mount. rsync keeps a file it was
+  not reach is remembered for its mount. A transfer says, where it can,
+  how far it came with each name it was given (`Told::writing`, ADR-135):
+  rsync from what it says (`rsync::Writing`: its order its names' bytes,
+  a folder's line as it begins it, each file once whole, the bytes
+  between counted to the name it is in); sftp, GVfs, KIO and rclone say
+  nothing until a file is whole. rsync keeps a file it was
   writing when cut short in the staging folder (`--partial-dir`, an
   absolute path on the receiving side, else none), which its retry goes
   on from (ADR-080, 7). Skwir's own batch and sftp's go on from the file

@@ -92,6 +92,10 @@ pub struct Report {
     /// entry found again in the pane by its reference
     /// (`Pane::entry_at`), as `tags.toggle` finds them: the finding alone.
     pub entry_at_selection: Stat,
+    /// 10 000 items arriving in the folder listed in a pane, placed where
+    /// the pane's order will have them (ADR-135, `Pane::stands`), as a
+    /// pane does again each time its order or what arrives changes.
+    pub arriving_stands: Stat,
     /// 10 000 of 20 000 empty files in a scratch folder deleted for good
     /// by a plan, through the executor: from applying it to its end.
     pub delete_tail: Stat,
@@ -121,7 +125,7 @@ pub struct Report {
 
 impl Report {
     /// Each measurement by its key in the budgets file.
-    fn metrics(&self) -> [(&'static str, &Stat); 31] {
+    fn metrics(&self) -> [(&'static str, &Stat); 32] {
         [
             ("first_batch_us", &self.first_batch),
             ("list_getdents_us", &self.list_getdents),
@@ -148,6 +152,7 @@ impl Report {
             ("listing_sort_update_us", &self.listing_sort_update),
             ("mime_by_name_us", &self.mime_by_name),
             ("entry_at_selection_us", &self.entry_at_selection),
+            ("arriving_stands_us", &self.arriving_stands),
             ("delete_tail_us", &self.delete_tail),
             ("tags_forget_us", &self.tags_forget),
             ("history_put_us", &self.history_put),
@@ -175,10 +180,11 @@ const OWN_DATA: [&str; 11] = [
 ];
 
 /// The measurements of the flat tree alone.
-const FLAT_ONLY: [&str; 10] = [
+const FLAT_ONLY: [&str; 11] = [
     "listing_sort_hydrate_us",
     "listing_sort_update_us",
     "entry_at_selection_us",
+    "arriving_stands_us",
     "delete_tail_us",
     "tags_forget_us",
     "mime_by_name_us",
@@ -972,6 +978,53 @@ fn entry_at_selection(app: &skwir_core::App, dir: &Path, runs: usize) -> Stat {
     })
 }
 
+/// How many items arrive in [`arriving_stands`].
+const ARRIVING: usize = 10_000;
+
+/// [`Report::arriving_stands`]: `dir` listed in a pane of `app` (sorted by
+/// name), and `ARRIVING` items arriving in it, named after every tenth of
+/// its files so they stand all along its order, each a file with a size,
+/// as what a copy brings is read; only the placing is timed.
+fn arriving_stands(app: &skwir_core::App, dir: &Path, runs: usize) -> Stat {
+    use skwir_core::entry::{Entry, EntryKind, Provenance, Value, keys};
+    use skwir_core::location::Location;
+    let dir = skwir_core::os_path::canonical(dir).expect("tree");
+    let pane = app.workspace.read().active_id();
+    app.navigate(pane, &Location::from_path(&dir))
+        .expect("navigate");
+    assert!(
+        app.pump_until_complete(pane, STREAM_DEADLINE),
+        "listing {} did not complete",
+        dir.display()
+    );
+    let likes: Vec<Entry> = {
+        let ws = app.workspace.read();
+        let listing = &ws.pane(pane).expect("pane").listing;
+        listing
+            .iter()
+            .step_by(10)
+            .take(ARRIVING)
+            .map(|e| {
+                let mut name = e.name.clone();
+                name.push(" (copy)");
+                let mut like = Entry::new(e.id, name, EntryKind::File);
+                like.metadata
+                    .set(keys::SIZE, Value::UInt(4096), Provenance::Filesystem);
+                like
+            })
+            .collect()
+    };
+    assert_eq!(likes.len(), ARRIVING, "as many arriving");
+    timed(runs, || {
+        let ws = app.workspace.read();
+        let pane = ws.pane(pane).expect("pane");
+        let likes: Vec<&Entry> = likes.iter().collect();
+        let stands = pane.stands(&likes);
+        assert!(stands.iter().all(Option::is_some), "each shown");
+        stands.len()
+    })
+}
+
 /// How many empty files [`delete_tail`] makes, and deletes every other of.
 const DELETE_TAIL_FILES: usize = 20_000;
 
@@ -1330,6 +1383,9 @@ pub fn run(root: &Path, profile: Profile, runs: usize, only: &Only) -> Report {
     let entry_at_selection = measured(flat && want("entry_at_selection_us"), || {
         entry_at_selection(&app, &single, runs)
     });
+    let arriving_stands = measured(flat && want("arriving_stands_us"), || {
+        arriving_stands(&app, &single, runs)
+    });
     Report {
         files: profile.file_count(),
         runs,
@@ -1369,6 +1425,7 @@ pub fn run(root: &Path, profile: Profile, runs: usize, only: &Only) -> Report {
         listing_sort_update,
         mime_by_name,
         entry_at_selection,
+        arriving_stands,
         delete_tail: measured(flat && want("delete_tail_us"), || delete_tail(runs)),
         tags_forget: measured(flat && want("tags_forget_us"), || tags_forget(runs)),
         history_put: measured(flat && want("history_put_us"), || history_put(runs)),

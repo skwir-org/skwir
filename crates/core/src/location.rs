@@ -2265,7 +2265,14 @@ pub fn tags_of(e: &Entry) -> Option<String> {
 // Out of line: only grouped orders come here, and the comparisons that do
 // stay small enough to be inlined into every sort and merge.
 #[inline(never)]
-fn group_order(spec: SortSpec, a: Option<&Group>, b: Option<&Group>) -> std::cmp::Ordering {
+/// Where group `a` stands against `b` under `spec`, as an order has them
+/// (`Listing::compare`): what places a group no entry is in yet among
+/// those that are (ADR-135, `Pane::fresh_before`).
+pub(crate) fn group_order(
+    spec: SortSpec,
+    a: Option<&Group>,
+    b: Option<&Group>,
+) -> std::cmp::Ordering {
     let (Some(a), Some(b)) = (a, b) else {
         return std::cmp::Ordering::Equal;
     };

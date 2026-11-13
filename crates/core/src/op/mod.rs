@@ -54,8 +54,8 @@ pub use executor::AT_ONCE as ACTIONS_AT_ONCE;
 pub use executor::JOURNAL_ENTRIES as HISTORY_ENTRIES;
 pub use executor::{
     Can, ChangeObserver, Done, ExecEvent, ExecResult, Executor, History, HistoryRow, JournalEntry,
-    PlanObserver, Progress, RunKind, RunningPlan, SecretAsker, Since, Transfer, Verdict, Waiting,
-    WaitsFor, counts_as_action,
+    PlanObserver, Progress, Reader, RunKind, RunningPlan, SecretAsker, Since, Transfer, Verdict,
+    Waiting, WaitsFor, counts_as_action,
 };
 pub use order::{RenameOrderError, RenameRequest, order_renames};
 pub use staging::Staging;
@@ -968,6 +968,33 @@ pub struct Plan {
     pub items: Option<Box<Items>>,
 }
 
+/// A folder as a title names it (ADR-135): by its name, "/" by itself.
+/// Its whole path is said where its action is pointed at
+/// (`Executor::brings_into`), never in the title, which a card, a toast
+/// and the History draw on one line.
+pub fn folder_said(folder: &Path) -> String {
+    folder.file_name().map_or_else(
+        || folder.display().to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    )
+}
+
+/// A transfer's title (ADR-135): `verb`, what it takes (one by its name,
+/// "“a.txt”"; several by their count, "3 items"), then `into` and the
+/// folder it goes to by its name ([`folder_said`]): "copy 3 items to
+/// Projects", "link “a.txt” in Projects".
+pub fn transfer_title(verb: &str, taken: &[&Path], into: &str, dest: &Path) -> String {
+    let what = match taken {
+        [one] => format!(
+            "“{}”",
+            one.file_name()
+                .map_or_else(|| one.to_string_lossy(), |name| name.to_string_lossy())
+        ),
+        many => format!("{} items", many.len()),
+    };
+    format!("{verb} {what} {into} {}", folder_said(dest))
+}
+
 /// A plan's items as the user asked for them: the first one's change and
 /// how many there are, and where each was put.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -1277,6 +1304,24 @@ impl Plan {
 mod tests {
     use super::{Change, Follow, Followed, Through, Words, io_words, said};
     use std::path::{Path, PathBuf};
+
+    /// A transfer's title names what it takes and the folder by its name,
+    /// never its whole path (ADR-135).
+    #[test]
+    fn a_transfer_is_titled_by_what_it_takes_and_its_folder_s_name() {
+        let dest = Path::new("/home/someone/l'été 2026");
+        let one = [Path::new("/elsewhere/it's a.txt")];
+        assert_eq!(
+            super::transfer_title("copy", &one, "to", dest),
+            "copy “it's a.txt” to l'été 2026"
+        );
+        let two = [Path::new("/a/one"), Path::new("/a/two")];
+        assert_eq!(
+            super::transfer_title("link", &two, "in", dest),
+            "link 2 items in l'été 2026"
+        );
+        assert_eq!(super::folder_said(Path::new("/")), "/");
+    }
 
     /// Said from a folder, a change writes what is inside it from there,
     /// anything else whole; said alone, every path whole.

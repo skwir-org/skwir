@@ -673,13 +673,15 @@ fn cell(
     .when(!captions.is_empty(), |d| {
         d.child(caption_lines(row, captions, scale, theme, act.clone()))
     })
-    .children(on.as_ref().map(|arriving| {
-        div()
-            .absolute()
-            .top(px(FRAME))
-            .right(px(FRAME))
-            .child(crate::views::arriving::pill(arriving, theme))
-    }));
+    .children(
+        on.as_ref()
+            .map(|arriving| crate::views::arriving::pill(arriving, theme))
+            .or_else(|| {
+                look.writing
+                    .then(|| crate::views::arriving::writing_pill(theme))
+            })
+            .map(|pill| div().absolute().top(px(FRAME)).right(px(FRAME)).child(pill)),
+    );
     let seat = crate::views::entry::Seat {
         index: ix,
         tree: None,
@@ -971,7 +973,28 @@ fn grid_groups(
     GridGroups {
         rows,
         height,
-        heading: Rc::new(move |n, pinned, left, _, _| {
+        heading: Rc::new(move |drawn, pinned, left, _, _| {
+            // A group no file is in yet (ADR-135): its own heading, dimmed,
+            // nothing to fold, never pinned as one of the pane's.
+            let n = match spans.drawn().get(drawn) {
+                Some(groups::Drawn::Group(n)) => *n,
+                Some(groups::Drawn::Fresh(k)) => {
+                    let Some(fresh) = spans.fresh().get(*k) else {
+                        return div().into_any_element();
+                    };
+                    return groups::fresh_heading(
+                        fresh,
+                        drawn == 0,
+                        height,
+                        Some(left + FRAME),
+                        scale,
+                        &theme,
+                    )
+                    .id(("fresh-heading", *k))
+                    .into_any_element();
+                }
+                None => return div().into_any_element(),
+            };
             let span = &spans.spans()[n];
             let left = Some(left + FRAME);
             let on = stopped == Some(n);

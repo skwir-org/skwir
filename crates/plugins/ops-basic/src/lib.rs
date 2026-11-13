@@ -288,11 +288,13 @@ fn paste(clipboard: &Mutex<Clipboard>, a: PasteArgs, app: &App) -> anyhow::Resul
             }
         })
         .collect();
-    let title = format!(
-        "{} to {}",
-        if cut { "move" } else { "copy" },
-        dest.display()
-    );
+    let sources: Vec<std::path::PathBuf> = steps
+        .iter()
+        .filter_map(|step| step.describe().subject().map(std::path::Path::to_path_buf))
+        .collect();
+    let taken: Vec<&std::path::Path> = sources.iter().map(std::path::PathBuf::as_path).collect();
+    let verb = if cut { "move" } else { "copy" };
+    let title = skwir_core::op::transfer_title(verb, &taken, "to", &dest);
     Ok(Outcome::Plan(Plan::with_steps(title, steps)))
 }
 

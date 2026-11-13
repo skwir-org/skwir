@@ -60,6 +60,9 @@ pub enum Arrives {
     /// This far, from 0 to 1: its bytes moved, or its steps ended where
     /// it has several.
     Moving(f32),
+    /// Copied by a batch with others (ADR-078) whose transfer says nothing
+    /// of each until it is whole: the batch is this far, from 0 to 1.
+    Copying(f32),
 }
 
 /// An item arriving, and how far it has come.
@@ -81,6 +84,9 @@ pub(super) struct StepsRead {
     pub step_total: u64,
     /// The steps after it a batch finished ahead of their turn (ADR-078).
     pub ahead: HashSet<usize>,
+    /// The steps a batch under way took: their bytes copied so far, where
+    /// its transfer tells them, and in all.
+    pub batching: HashMap<usize, (u64, u64)>,
 }
 
 /// Where `arrival` stands as its plan's run read it, `None` once it landed
@@ -100,6 +106,28 @@ pub(super) fn state_of(arrival: &Arrival, read: Option<&StepsRead>) -> Option<Ar
     }
     if steps.clone().all(|step| read.ahead.contains(&step)) {
         return Some(Arrives::Moving(1.));
+    }
+    // Taken by a batch: by its own bytes where its transfer tells them,
+    // else by the batch's, which the step under way runs.
+    let batched: Vec<(u64, u64)> = steps
+        .clone()
+        .filter_map(|step| read.batching.get(&step).copied())
+        .collect();
+    if !batched.is_empty() {
+        let (done, total) = batched.iter().fold((0u64, 0u64), |(d, t), (done, total)| {
+            (d.saturating_add(*done), t.saturating_add(*total))
+        });
+        if done > 0 && total > 0 {
+            return Some(Arrives::Moving(
+                (done as f64 / total as f64).clamp(0., 1.) as f32
+            ));
+        }
+        let batch = if read.step_total > 0 {
+            read.step_done.min(read.step_total) as f64 / read.step_total as f64
+        } else {
+            0.
+        };
+        return Some(Arrives::Copying(batch as f32));
     }
     if steps.start > read.ended {
         return Some(Arrives::Waiting);
@@ -126,6 +154,10 @@ struct Item {
     placed: PathBuf,
     from: Option<PathBuf>,
     made: Option<Made>,
+    /// A copy: a file made anew, dated as it is made where it was
+    /// created and read (a move to another volume is one too, told by
+    /// what it is made from).
+    copied: bool,
 }
 
 /// What a step makes new, as it says it.
@@ -135,24 +167,44 @@ enum Made {
     File,
 }
 
-/// What `change` brings, if it brings something: what it is made from,
-/// what is made where nothing is, and where it lands. What a link or a
-/// rename makes is not brought: it is there at once, as a move within its
-/// folder is.
-fn brought(change: &Change) -> Option<(Option<PathBuf>, Option<Made>, &PathBuf)> {
+/// What a change brings ([`brought`]): what it is made from, what is made
+/// where nothing is, whether it is copied, and where it lands.
+struct Brings<'a> {
+    from: Option<PathBuf>,
+    made: Option<Made>,
+    copied: bool,
+    to: &'a Path,
+}
+
+/// What `change` brings, if it brings something. What a link or a rename
+/// makes is not brought: it is there at once, as a move within its folder
+/// is.
+fn brought(change: &Change) -> Option<Brings<'_>> {
+    let brings = |from: &Path, copied, to| Brings {
+        from: Some(from.to_path_buf()),
+        made: None,
+        copied,
+        to,
+    };
     match change {
-        Change::Copy { from, to } => Some((Some(from.clone()), None, to)),
+        Change::Copy { from, to } => Some(brings(from, true, to)),
         Change::Move { from, to } => {
-            (from.parent() != to.parent()).then(|| (Some(from.clone()), None, to))
+            (from.parent() != to.parent()).then(|| brings(from, false, to))
         }
         Change::Create {
             path, directory, ..
-        } => Some((
-            None,
-            Some(if *directory { Made::Folder } else { Made::File }),
-            path,
-        )),
-        Change::Restore { path } => Some((None, None, path)),
+        } => Some(Brings {
+            from: None,
+            made: Some(if *directory { Made::Folder } else { Made::File }),
+            copied: false,
+            to: path,
+        }),
+        Change::Restore { path } => Some(Brings {
+            from: None,
+            made: None,
+            copied: false,
+            to: path,
+        }),
         _ => None,
     }
 }
@@ -162,6 +214,13 @@ fn brought(change: &Change) -> Option<(Option<PathBuf>, Option<Made>, &PathBuf)>
 /// something ([`brought`]).
 fn items_of(plan: &Plan) -> Vec<Item> {
     let changes: Vec<Change> = plan.steps.iter().map(|step| step.describe()).collect();
+    let item = |steps, brings: Brings<'_>, placed: &Path| Item {
+        steps,
+        placed: placed.to_path_buf(),
+        from: brings.from,
+        made: brings.made,
+        copied: brings.copied,
+    };
     if let Some(items) = plan.items.as_deref()
         && items.placed.len() == items.count
         && let Some(each) = items.each(changes.len())
@@ -174,13 +233,7 @@ fn items_of(plan: &Plan) -> Vec<Item> {
                     ItemSaid::Step(at) => changes.get(*at)?,
                     ItemSaid::Asked(change) => change,
                 };
-                let (from, made, _) = brought(change)?;
-                Some(Item {
-                    steps,
-                    placed: placed.clone(),
-                    from,
-                    made,
-                })
+                Some(item(steps, brought(change)?, placed))
             })
             .collect();
     }
@@ -188,31 +241,37 @@ fn items_of(plan: &Plan) -> Vec<Item> {
         .iter()
         .enumerate()
         .filter_map(|(at, change)| {
-            let (from, made, to) = brought(change)?;
-            Some(Item {
-                steps: at..at + 1,
-                placed: to.clone(),
-                from,
-                made,
-            })
+            let brings = brought(change)?;
+            let to = brings.to;
+            Some(item(at..at + 1, brings, to))
         })
         .collect()
 }
 
-/// What a view reads of what is brought: what it sorts and groups by, and
-/// what it says of it. The rest of a stat is not kept: a paste of ten
-/// thousand files keeps ten thousand of these while it runs.
-const KEPT: [&str; 5] = [
+/// What a view reads of what is brought: what it sorts, groups and filters
+/// by, and what it says of it; its notes (tags, rating, comment), which a
+/// copy keeps, where they were read (`Executor::set_reader`). The rest is
+/// not kept: a paste of ten thousand files keeps ten thousand of these
+/// while it runs.
+const KEPT: [&str; 11] = [
     keys::SIZE,
     keys::MODIFIED,
     keys::CREATED,
     keys::ACCESSED,
     keys::MODE,
+    keys::UID,
+    keys::GID,
+    keys::TAGS,
+    keys::TAG_COLORS,
+    keys::RATING,
+    keys::COMMENT,
 ];
 
 /// `entry` as it will be at `placed`, under `name`, with only what a view
-/// reads of it ([`KEPT`]).
-fn moved_to(entry: Entry, placed: &Path, name: &OsString) -> Entry {
+/// reads of it ([`KEPT`]), read as it was (`Metadata::is_filled`). Made
+/// anew (`made_at`: a copy, a move to another volume), it was created and
+/// last read then.
+fn moved_to(entry: Entry, placed: &Path, name: &OsString, made_at: Option<SystemTime>) -> Entry {
     let mut like = Entry::new(
         EntryId::at_path(entry.id.file, placed),
         name.clone(),
@@ -226,40 +285,50 @@ fn moved_to(entry: Entry, placed: &Path, name: &OsString) -> Entry {
                 .set(key, field.value.clone(), field.provenance.clone());
         }
     }
+    if let Some(at) = made_at {
+        for key in [keys::CREATED, keys::ACCESSED] {
+            like.metadata
+                .set(key, Value::Time(at), Provenance::Filesystem);
+        }
+    }
+    if entry.metadata.is_filled() {
+        like.metadata.mark_filled();
+    }
     like
 }
 
-/// What `placed` will be, made from `from` (read by `read`, a stat), or
-/// made new: a folder or a file, dated now. What cannot be read is a
-/// file, nothing else known of it.
+/// What `placed` will be, made from `from` (read by `read`), or made new:
+/// a folder or a file, dated now. What cannot be read is a file, nothing
+/// else known of it.
 fn like_of(
-    placed: &Path,
+    item: &Item,
     name: &OsString,
-    from: Option<&Path>,
-    made: Option<Made>,
+    made_at: impl Fn(&Entry) -> Option<SystemTime>,
     read: &mut impl FnMut(&Path) -> Option<Entry>,
 ) -> Entry {
-    if let Some(like) = from.and_then(&mut *read) {
-        return moved_to(like, placed, name);
+    if let Some(from) = item.from.as_deref().and_then(&mut *read) {
+        let at = made_at(&from);
+        return moved_to(from, &item.placed, name, at);
     }
-    let kind = match made {
+    let kind = match item.made {
         Some(Made::Folder) => EntryKind::Directory,
         Some(Made::File) | None => EntryKind::File,
     };
     let mut like = Entry::new(EntryId::UNKNOWN, name.clone(), kind);
-    if made.is_some() {
+    if item.made.is_some() {
         let now = Value::Time(SystemTime::now());
-        like.metadata
-            .set(keys::MODIFIED, now.clone(), Provenance::Filesystem);
-        like.metadata
-            .set(keys::CREATED, now, Provenance::Filesystem);
+        for key in [keys::MODIFIED, keys::CREATED, keys::ACCESSED] {
+            like.metadata.set(key, now.clone(), Provenance::Filesystem);
+        }
     }
     like
 }
 
 /// The arrivals of `plan`, asked at `asked`: their steps among its own when
 /// `runs` (the plan as it runs), else none yet. What each is made from is
-/// taken from `known` where it was read before, else `read`.
+/// taken from `known` where it was read before, else `read`. A copy, and a
+/// move to another volume (what it is made from on another device than
+/// its folder, each folder stat-ed once), are dated as made when asked.
 pub(super) fn arrivals_of(
     plan: &Plan,
     runs: bool,
@@ -267,20 +336,29 @@ pub(super) fn arrivals_of(
     known: &HashMap<PathBuf, Entry>,
     mut read: impl FnMut(&Path) -> Option<Entry>,
 ) -> Vec<Arc<Arrival>> {
+    let asked_at = SystemTime::now()
+        .checked_sub(asked.elapsed())
+        .unwrap_or_else(SystemTime::now);
+    let mut devices: HashMap<PathBuf, Option<u64>> = HashMap::new();
     items_of(plan)
         .into_iter()
         .filter_map(|item| {
             let folder = item.placed.parent()?.to_path_buf();
             let name = item.placed.file_name()?.to_os_string();
+            let device = devices
+                .entry(folder.clone())
+                .or_insert_with(|| crate::fs::stat::id_of(&folder).map(|id| id.dev));
+            let device = *device;
+            let made_at = |from: &Entry| {
+                let anew = item.copied || device.is_some_and(|dev| dev != from.id.file.dev);
+                anew.then_some(asked_at)
+            };
             let like = match item.from.as_deref().and_then(|from| known.get(from)) {
-                Some(known) => moved_to(known.clone(), &item.placed, &name),
-                None => like_of(
-                    &item.placed,
-                    &name,
-                    item.from.as_deref(),
-                    item.made,
-                    &mut read,
-                ),
+                Some(known) => {
+                    let at = made_at(known);
+                    moved_to(known.clone(), &item.placed, &name, at)
+                }
+                None => like_of(&item, &name, made_at, &mut read),
             };
             Some(Arc::new(Arrival {
                 plan: plan.id,
@@ -397,6 +475,20 @@ impl Index {
         !record.arrivals.is_empty()
     }
 
+    /// The folders `plan` brings something into, each once, in its order.
+    pub(super) fn folders_of(&self, plan: PlanId) -> Vec<PathBuf> {
+        let inner = self.inner.lock();
+        let mut seen = HashSet::new();
+        inner.plans.get(&plan).map_or_else(Vec::new, |record| {
+            record
+                .arrivals
+                .iter()
+                .filter(|a| seen.insert(&a.folder))
+                .map(|a| a.folder.clone())
+                .collect()
+        })
+    }
+
     /// What the plans not cancelled bring into `folder`, in the order they
     /// were asked and their items in theirs.
     pub(super) fn in_folder(&self, folder: &Path) -> Vec<Arc<Arrival>> {
@@ -441,7 +533,23 @@ mod tests {
             step_done: done,
             step_total: total,
             ahead: ahead.iter().copied().collect(),
+            batching: HashMap::new(),
         }
+    }
+
+    /// Taken by a batch, an item copies with it: by its own bytes where
+    /// the transfer tells them, else at the batch's share; once the batch
+    /// let it go unmade, it waits for its turn again.
+    #[test]
+    fn an_item_a_batch_took_copies_with_it() {
+        let item = arrival(Some(3..4));
+        let mut batch = read(1, 40, 100, &[]);
+        batch.batching.insert(3, (0, 50));
+        assert_eq!(state_of(&item, Some(&batch)), Some(Arrives::Copying(0.4)));
+        batch.batching.insert(3, (25, 50));
+        assert_eq!(state_of(&item, Some(&batch)), Some(Arrives::Moving(0.5)));
+        batch.batching.clear();
+        assert_eq!(state_of(&item, Some(&batch)), Some(Arrives::Waiting));
     }
 
     #[test]

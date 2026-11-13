@@ -16423,3 +16423,57 @@ the shell, 1,435: the text sizes' table failed once (the tiles' names
 wrapped at a size written twice), fixed by one wrapper for them, its
 exception gone from the table. Clippy on core and the shell. Not run:
 `just test` whole, `just check-cross`, `just a11y-check`.
+
+## 2026-11-13: where a copy lands, the follow-ups (ADR-135 amended)
+
+**Built** (the user's answers: a group no file is in yet its own dimmed
+heading; a batch's items copying, rsync telling each; a "writing" pill
+on what another program writes; the full tint stopping short; a title
+naming its folder). Core: `Executor::set_reader` (the App's
+`fs::hydrate_path`), `arriving::moved_to` dating a copy (and a move to
+another device) as made when asked, notes kept with the five fields;
+an undo's and a redo's run noted and let go of (`Brought`);
+`Pane::opened_listings`, `stands_in`, `sorted_of`, `fresh_before`
+(`location::group_order` shared); the meter's `batching`, `writing`,
+`unbatch`, `Arrives::Copying`; `Told::writing`, the batch's `Unbatch`;
+`watch::Changes::writing` (Linux: written and not closed; elsewhere:
+`QUIET`, told again), `keys::WRITING` set by the folder's provider;
+`op::transfer_title`, `op::folder_said`, `Executor::brings_into`. The
+remote plugin's `rsync::Writing`. The shell: what arrives in folders
+opened in place (`arriving_depth`, `arriving_placed`), the board's
+columns and the columns view's (`side_arriving`, `compact_row`),
+`groups::Fresh`, `Row::Fresh`, `Drawn`, `fresh_heading`, the
+`writing_pill`, the tint's `SHORT`, Activity's card tooltip. The tiles'
+names wrapped by one helper (`names_wrapper`).
+
+**Checked:** unit tests: an item a batch took copying at the batch's
+share, by its own bytes once told, waiting again once let go of; rsync's
+lines turned into each name's bytes (files in order, a folder's line,
+its files, a name not given); a transfer's title; `RowMap` with a group
+no file is in yet (its heading before the group it stands before, the
+pane's groups keeping their numbers, a grid's lines); the watcher telling
+a file written as being written, and closed, written no more; the
+executor bringing back what an undo puts back. Integration: a copy and a
+move held mid-way, both read with a provider's rating, the copy created
+as asked, the move keeping its file's date. On Xvfb, 1.5 GB copied from
+tmpfs and paused, grouped by kind: a video under a dimmed "Videos,
+arriving" heading after every group (list and grid), the tint stopping
+short, a file being written by a script "writing" then plain once
+closed, the card "Copy 3 items to Projects" with "Into …/Projects" on
+its tooltip; a second copy into a folder opened in the tree, waiting
+behind the first, indented under it; the board's cards in the folder's
+and the subfolder's columns, counts left alone; the columns view's
+folder shown and the column of the folder under the cursor; Cancel all
+taking every placeholder away. Tests of core, the shell, the remote,
+ops-basic and shelf plugins (1,590) and the binary's paste and toggle
+tests; clippy on those crates, and for Windows (core, the shell, remote).
+**Measured:** placing 10,000 items among the 100,000 entries of
+`bench-data/flat100k` (`arriving_stands_us`, a new metric, release):
+11.2 ms, budget 35 ms. 100,000 items kept by the executor: 132 MB, about
+1.35 KB each, mostly their fields' map (a probe test, removed). The `arriving`
+command answers what arrives in a folder for scripts and agents. SFTP
+per name was set aside: OpenSSH's `sftp`, given its lines on its input,
+says nothing until a session's files end.
+
+Not run: `just test` whole, `just a11y-check`, `just remote-check` (the
+rsync per-name share was not tried against a server), macOS.

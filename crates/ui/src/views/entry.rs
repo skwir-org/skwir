@@ -61,6 +61,9 @@ pub struct Look {
     /// What its repository says of it (ADR-134, `keys::VCS`): marked on its
     /// picture, said with its name.
     pub vcs: Option<skwir_core::vcs::State>,
+    /// Another program writes it still (ADR-135, `keys::WRITING`): a pill
+    /// says so, its size growing as it comes.
+    pub writing: bool,
 }
 
 impl Look {
@@ -126,6 +129,10 @@ impl Shell {
             path: if e.is_dir() { pane.path_of(id) } else { None },
             plays: self.plays(&e.name, || pane.path_of(id)),
             vcs: skwir_core::vcs::State::of(e),
+            writing: matches!(
+                e.metadata.value(skwir_core::entry::keys::WRITING),
+                Some(skwir_core::Value::Bool(true))
+            ),
         })
     }
 }
@@ -236,6 +243,7 @@ fn expose(el: Stateful<Div>, look: &Look, seat: Seat) -> Stateful<Div> {
 /// to what a filter keeps), its tags and stars; what is drawn is heard.
 fn said(look: &Look) -> Option<String> {
     let states = [
+        (look.writing, "being written"),
         (look.cut, "cut"),
         (look.hidden, "hidden"),
         (look.only_leads, "leads to what the filter keeps"),
@@ -322,6 +330,7 @@ mod tests {
             path: None,
             plays: None,
             vcs: None,
+            writing: false,
         }
     }
 

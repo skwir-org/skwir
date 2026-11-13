@@ -53,7 +53,7 @@ impl Geometry {
         let index = match self {
             Geometry::Rows { height, rows } => match rows.at((y / *height) as usize)? {
                 Row::Entry(index) => index,
-                Row::Heading(_) | Row::Arriving(_) => return None,
+                Row::Heading(_) | Row::Fresh(_) | Row::Arriving(_) => return None,
             },
             Geometry::Cells {
                 slots,

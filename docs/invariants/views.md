@@ -516,11 +516,26 @@ around the views is in [shell.md](shell.md).
   rows it last drew (`GridView::drawn`). What arrives is placed again
   only when the order, its groups or what arrives change; otherwise a
   sync takes how far each has come. It is drawn by `views::arriving`
-  (dimmed at `OPACITY`, its tint and its pill), answers its own press
-  (Activity, never a selection) and is drawn in no view that keeps no
-  `RowMap` (the columns, the board). An entry already listed under its
-  name (`ListState::arriving_on`) is drawn as itself with the tint and
-  the pill.
+  (dimmed at `OPACITY`, its tint stopping `SHORT` of the end, its pill)
+  and answers its own press (Activity, never a selection). What arrives
+  in a folder opened in place is placed among that folder's entries, a
+  level deeper, in its group (`ListState::arriving_depth`). The board
+  keeps a `RowMap` for each column, its cards and what arrives among them
+  (in the folder's column, or its group's); the columns view one for the
+  folder shown's column, from the pane's placements without headings,
+  and one for each column beside it, placed in its folder's own order
+  (`side_arriving`). An entry already listed under its name
+  (`ListState::arriving_on`) is drawn as itself with the tint and the
+  pill; one another program writes (`Look::writing`, `keys::WRITING`) with
+  a "writing" pill.
+- **A group no file is in yet** (ADR-135, amended) is a heading of its
+  own (`Row::Fresh`, `RowMap::fresh`), placed where the group stands
+  among the pane's (`Pane::fresh_before`), what arrives in it under it:
+  never one of the pane's groups, so a heading's number is always the
+  core's (`group_fold`, `ui.select_group`), never a key stop, nothing to
+  fold or select, dimmed, "arriving" where a count is. A grid's lines are
+  its groups in the order drawn (`RowMap::drawn`, `Drawn`), which the
+  grid's heading maker turns back into one of the pane's or a fresh one.
 - **A heading is a key stop** (ADR-131, 1; `list::HeadingStop`, the
   window's, never the core's): Up from a group's first entry and Down
   from the group before's last stop on its heading, drawn with the

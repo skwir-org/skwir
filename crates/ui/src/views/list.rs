@@ -724,7 +724,9 @@ impl Shell {
                 let look = self.arriving_look(&arriving, icon_px);
                 let folder = arriving.arrival.folder.clone();
                 let folder = move || Some(folder.clone());
-                let row = self.row_data(&arriving.arrival.like, look, i, columns, &date, &folder);
+                let mut row =
+                    self.row_data(&arriving.arrival.like, look, i, columns, &date, &folder);
+                row.depth = self.ui().list.arriving_depth.get(i).copied().unwrap_or(0);
                 (i, row)
             })
             .collect();
@@ -987,11 +989,27 @@ fn grouped_row_elements(
                 }
                 None => div().id(("row-gone", ix)).h(px(height)),
             },
+            // A group no file is in yet (ADR-135): no stop, nothing to fold.
+            Some(Row::Fresh(k)) => match rows.fresh().get(k) {
+                Some(fresh) => {
+                    let heading = groups::fresh_heading(fresh, at == 0, height, None, scale, theme)
+                        .id(("fresh-heading", k));
+                    if shell.a11y {
+                        heading
+                            .role(gpui::Role::Heading)
+                            .aria_level(2)
+                            .aria_label(groups::fresh_said(fresh))
+                    } else {
+                        heading
+                    }
+                }
+                None => div().id(("fresh-gone", k)).h(px(height)),
+            },
             Some(Row::Arriving(i)) => match (
                 arriving.next_if(|(n, _)| *n == i),
                 shell.ui().list.arriving.get(i),
             ) {
-                (Some((_, r)), Some(it)) => arriving_row(shell, theme, r, it, i, cx),
+                (Some((_, r)), Some(it)) => arriving_row(shell, theme, r, it, (i, tree), cx),
                 _ => div().id(("arriving-gone", i)).h(px(height)),
             },
             None => div().id(("row-none", at)).h(px(height)),
@@ -1006,18 +1024,32 @@ fn arriving_row(
     theme: &Theme,
     r: &RowData,
     arriving: &skwir_core::op::arriving::Arriving,
-    i: usize,
+    (i, tree): (usize, bool),
     cx: &mut Context<Shell>,
 ) -> Stateful<Div> {
     let look = &r.look;
     let muted = theme.text_muted;
     let scale = files_scale(theme);
     let height = row_height(shell.row_zoom, scale);
-    let icon = look.picture(icon_px(shell.row_zoom), theme);
+    let icon = div()
+        .flex_none()
+        .opacity(crate::views::arriving::OPACITY)
+        .child(look.picture(icon_px(shell.row_zoom), theme));
+    // In the tree, indented with its name under the folder it arrives in.
+    let (in_row, in_name) = if tree {
+        (None, Some(icon))
+    } else {
+        (Some(icon), None)
+    };
     let name = div()
         .flex()
         .items_center()
         .gap_1()
+        .when_some(in_name, |d, icon| {
+            d.pl(px(r.depth as f32 * scale.f(INDENT)))
+                .child(disclosure(r, muted, scale, cx))
+                .child(icon)
+        })
         .child(crate::views::entry::name(
             div()
                 .id(("arriving-name", i))
@@ -1055,12 +1087,7 @@ fn arriving_row(
                 .gap_2()
                 .flex_1()
                 .min_w_0()
-                .child(
-                    div()
-                        .flex_none()
-                        .opacity(crate::views::arriving::OPACITY)
-                        .child(icon),
-                )
+                .children(in_row)
                 .child(line),
         );
     let el = crate::views::arriving::acting(el, arriving, shell, cx);
@@ -1118,7 +1145,12 @@ fn row_in(
         Some(arriving) => el.child(crate::views::arriving::tint(arriving, theme)),
         None => el,
     };
-    let pill = on.map(|arriving| crate::views::arriving::pill(arriving, theme));
+    let pill = on
+        .map(|arriving| crate::views::arriving::pill(arriving, theme))
+        .or_else(|| {
+            look.writing
+                .then(|| crate::views::arriving::writing_pill(theme))
+        });
     // In the tree the icon is part of the name, indented with it: the
     // detail columns stay aligned at every depth and give way together.
     let (el, icon) = if tree {
@@ -1628,7 +1660,7 @@ impl ListView {
                 // What arrives is no stop: the keys go past it.
                 let mut to = next_row(row);
                 while let Some(at) = to
-                    && matches!(rows.at(at), Some(Row::Arriving(_)))
+                    && matches!(rows.at(at), Some(Row::Arriving(_) | Row::Fresh(_)))
                 {
                     to = next_row(at);
                 }

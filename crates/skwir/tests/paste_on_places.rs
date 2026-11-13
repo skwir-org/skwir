@@ -170,7 +170,11 @@ fn files_copied_are_not_pasted_in_the_trash() {
     let Outcome::Plan(plan) = s.app.dispatch(&Invocation::new("clipboard_paste")).unwrap() else {
         panic!("a plan that copies it")
     };
-    assert!(plan.title.starts_with("copy to "), "{}", plan.title);
+    assert!(
+        plan.title.starts_with("copy “notes one.txt” to "),
+        "{}",
+        plan.title
+    );
 }
 
 /// A cut pasted on a tag, its plan dismissed: another plan's notes on the

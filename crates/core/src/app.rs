@@ -158,7 +158,7 @@ pub enum Asker {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ClashQuestion {
     pub id: u64,
-    /// The plan's title: "copy to /example/folder".
+    /// The plan's title: "copy 3 items to folder".
     pub title: String,
     pub clashes: Vec<op::clash::Clash>,
 }
@@ -496,6 +496,12 @@ impl App {
             app.notes.keep_snapshots(app.cache.namespace("notes"));
             app.executor.set_companions(Arc::clone(&app.companions));
             app.executor.set_transfers(Arc::clone(&app.transfers));
+            // What plans bring into folders, read as a listing reads its
+            // entries: its notes too (ADR-135).
+            let metadata = Arc::clone(&app.metadata);
+            app.executor.set_reader(Some(Arc::new(move |path: &Path| {
+                crate::fs::hydrate_path(path, &metadata)
+            })));
             // What a plan's transfers changed beside a mount (a tool's
             // copies onto a server), the folders showing it read again.
             let told = Arc::downgrade(&app);
@@ -3760,6 +3766,47 @@ impl MkdirArgs {
     }
 }
 
+/// `arriving`'s arguments: the folder asked of.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ArrivingArgs {
+    /// The folder, an absolute path; the folder the pane shows when
+    /// omitted.
+    #[serde(default)]
+    pub folder: Option<PathArg>,
+    #[serde(default)]
+    pub pane: Option<PaneId>,
+}
+
+/// What `arriving` answers of `arriving`: each item's name, the plan that
+/// brings it, how far it has come, and what it will be (ADR-135).
+fn arriving_said(arriving: &[op::arriving::Arriving]) -> serde_json::Value {
+    use op::arriving::Arrives;
+    serde_json::Value::Array(
+        arriving
+            .iter()
+            .map(|a| {
+                let (state, fraction) = match a.state {
+                    Arrives::Waiting => ("waiting", None),
+                    Arrives::Starting => ("starting", None),
+                    Arrives::Copying(f) => ("copying", Some(f)),
+                    Arrives::Moving(f) => ("moving", Some(f)),
+                };
+                let like = &a.arrival.like;
+                serde_json::json!({
+                    "name": PathArg::from(std::path::Path::new(&a.arrival.name)),
+                    "plan": a.arrival.plan,
+                    "state": state,
+                    "fraction": fraction,
+                    "paused": a.paused,
+                    "from": a.arrival.from.as_deref().map(PathArg::from),
+                    "kind": if like.is_dir() { "folder" } else { "file" },
+                    "size": like.metadata.value(crate::entry::keys::SIZE).and_then(crate::Value::as_u64),
+                })
+            })
+            .collect(),
+    )
+}
+
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct HydrateArgs {
     pub ids: Vec<EntryId>,
@@ -3828,10 +3875,12 @@ mod builtin {
         app: &App,
         pane: Option<PaneId>,
         entries: Vec<op::EntryArg>,
-        title: &str,
+        title: impl FnOnce(&[&Path]) -> String,
         f: impl Fn(EntryRef) -> Box<dyn op::Operation>,
     ) -> anyhow::Result<Outcome> {
         let refs = app.targets(pane, entries)?;
+        let taken: Vec<&Path> = refs.iter().map(|r| r.path.as_path()).collect();
+        let title = title(&taken);
         Ok(Outcome::Plan(Plan::with_steps(
             title,
             refs.into_iter().map(f).collect(),
@@ -4653,7 +4702,7 @@ mod builtin {
                         app,
                         a.pane,
                         a.entries,
-                        &format!("move to {}", dest.display()),
+                        |taken| op::transfer_title("move", taken, "to", &dest),
                         |e| Box::new(op::Move::new(e, dest.clone())),
                     )?,
                     a.on_conflict,
@@ -4674,7 +4723,7 @@ mod builtin {
                         app,
                         a.pane,
                         a.entries,
-                        &format!("copy to {}", dest.display()),
+                        |taken| op::transfer_title("copy", taken, "to", &dest),
                         |e| Box::new(op::Copy::from_settings(e, dest.clone(), &app.settings)),
                     )?,
                     a.on_conflict,
@@ -4695,7 +4744,7 @@ mod builtin {
                         app,
                         a.pane,
                         a.entries,
-                        &format!("link in {}", dest.display()),
+                        |taken| op::transfer_title("link", taken, "in", &dest),
                         |e| Box::new(op::Link::new(e, dest.clone())),
                     )?,
                     a.on_conflict,
@@ -4722,7 +4771,7 @@ mod builtin {
                     (None, Some(group)) => format!("change group ({group})"),
                     _ => "change access and group".to_owned(),
                 };
-                targets_plan(app, a.targets.pane, a.targets.entries, &title, |e| {
+                targets_plan(app, a.targets.pane, a.targets.entries, |_| title, |e| {
                     Box::new(op::access::SetAccess {
                         entry: e,
                         mode: a.mode.clone(),
@@ -4818,9 +4867,13 @@ mod builtin {
                     .is_empty()
                     .then(|| app.selection_kept(app.pane_or_active(a.pane)))
                     .flatten();
-                let plan = targets_plan(app, a.pane, a.entries, "delete permanently", |e| {
-                    Box::new(op::Delete { entry: e })
-                })?;
+                let plan = targets_plan(
+                    app,
+                    a.pane,
+                    a.entries,
+                    |_| "delete permanently".into(),
+                    |e| Box::new(op::Delete { entry: e }),
+                )?;
                 Ok(match (plan, kept.and_then(|k| k.said())) {
                     (Outcome::Plan(plan), Some(note)) => Outcome::Plan(plan.with_note(note)),
                     (plan, _) => plan,
@@ -5041,6 +5094,21 @@ mod builtin {
             "Running actions",
             "Return the actions running, in the order they started: each one's title, steps ended, bytes done and in all when known (planned), speed in bytes a second and time left in seconds while they can be told, and the files a server still takes (ADR-113)",
             |_, app| Ok(Outcome::Value(serde_json::to_value(app.executor.running())?)),
+        )
+        .data();
+
+        c.register::<ArrivingArgs, _>(
+            "core", Topic::Files,
+            "arriving",
+            "Arriving in a folder",
+            "Return what the actions waiting and running bring into a folder (the pane's when none is given) and has not landed (ADR-135): each item's name there, the plan that brings it, its state (waiting, starting, copying with others at the batch's fraction, moving at its own fraction from 0 to 1), whether its action is paused, what it is copied or moved from, and whether it is a folder or a file of what size",
+            |a, app| {
+                let folder = match &a.folder {
+                    Some(folder) => crate::os_path::absolute(folder)?.to_owned(),
+                    None => app.pane_dir(app.pane_or_active(a.pane))?,
+                };
+                Ok(Outcome::Value(arriving_said(&app.executor.arriving_in(&folder))))
+            },
         )
         .data();
 

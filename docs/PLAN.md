@@ -995,7 +995,13 @@ shell's `RowMap` holding what arrives as rows and tiles that are no
 position (`Row::Arriving`, `Tile::Arriving`), the list, the tree and the
 grid drawing it (`views::arriving`), an entry already there (a merge)
 drawn with its share, `ui.activity` with `plan`. Checks in
-`docs/STATUS-LOG.md` (2026-11-13).
+`docs/STATUS-LOG.md` (2026-11-13). **The follow-ups, the same day** (the
+user's answers): what arrives read with its notes and dated as its file
+will be; undos and redos; folders opened in place, the board and the
+columns; a group no file is in yet its own dimmed heading; a batch's
+items copying, rsync telling each; what another program writes marked
+"writing"; the full tint stopping short; a transfer's title naming its
+folder, the path on its card's tooltip.
 
 ## What is left
 
@@ -1004,16 +1010,17 @@ Gathered on 2026-10-20 from the notes of this plan and of
 may have covered one: check the source before starting it. Work that
 closes an item removes its line; work that leaves one adds it here.
 
-**Where a copy lands** (ADR-135, 2026-11-13): built on Linux, the list,
-the tree and the grid. Kept for later by the user: the columns and the
-board draw nothing arriving; grouped, an item whose group holds no file
-yet stands after every group; a filter's term that needs what is not
-read of a file yet (its tags) leaves its placeholder out; sorted by
-Created or Accessed, a file may move as it lands; a mark on what other
-programs write (a download, a `cp`: the watcher's writes, no share).
-Also left: only the pane's own folder, not one opened in place; undos
-and redos show nothing; a server's batch fills an item at once. Windows
-and macOS not compiled for it yet (`check-cross`).
+**Where a copy lands** (ADR-135, amended 2026-11-13): built on Linux in
+every view of files, the follow-ups the user kept and the limits found
+done the same day. Left: a grouped board shows no arrival in a group no
+file is in yet; an undo waiting its turn shows nothing; sftp, GVfs, KIO
+and rclone say nothing of a file until it is whole ("copying" at the
+batch's share); rsync's order is taken as its names' bytes; macOS and
+Windows tell a file being written by its writes, not its close (not
+tried there); SFTP says nothing of a file until its session ends
+(OpenSSH's `sftp` in batch: a pseudo-terminal and its meter would); an
+item keeps about 1.35 KB while it comes (10,000: 13 MB), a compact form
+being more work at each placing, not chosen.
 
 **History and the files' Git state** (ADR-133, ADR-134, 2026-11-13):
 built on Linux, renames followed in a file's history and the files'
