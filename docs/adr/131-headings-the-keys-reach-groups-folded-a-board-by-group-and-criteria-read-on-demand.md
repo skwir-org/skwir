@@ -39,7 +39,12 @@ Built on 2026-11-11 and run on Linux. Amends ADR-130, decisions 9 and
    and of what commands act on; its heading stays, with its count.
    Folding is a command (`group_fold`), per pane, kept while the pane is
    grouped by the same criterion, its direction changed included,
-   forgotten when it is grouped by another and on restart.
+   forgotten when it is grouped by another and on restart. (Amended
+   2026-11-13: a fold takes files out only under a view that draws the
+   headings, the way back to them, the list, the tree and the grid; under
+   the columns, the board, Usage or the map every file stays shown, the
+   folds kept. The footer counts a folded group's files among the items
+   and says how many are folded.)
 3. **Grouped, the Board's columns are the groups** (amends ADR-130's
    phase 5), in their order, each column's cards its entries in the
    sort's order, in place of the folder's folders or a tag's tags; a card

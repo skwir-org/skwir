@@ -171,6 +171,14 @@ pub trait PaneView {
     fn lays_found_out_as_tree(&self) -> bool {
         false
     }
+    /// Whether the view draws the pane's groups' headings, a folded group
+    /// as its heading, which opens it again (ADR-131, 2): the list, the
+    /// tree and the grid do. Under any other, the core folds nothing away
+    /// (`App::set_folds_drawn`): a file there would be hidden with no
+    /// heading to bring it back.
+    fn draws_headings(&self) -> bool {
+        false
+    }
 }
 
 /// What a view's `ViewSpec::factory` holds: a constructor.

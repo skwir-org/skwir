@@ -1452,6 +1452,10 @@ impl PaneView for ListView {
         self.tree
     }
 
+    fn draws_headings(&self) -> bool {
+        true
+    }
+
     fn render(&mut self, shell: &mut Shell, _: &mut Window, cx: &mut Context<Shell>) -> AnyElement {
         let theme = cx.global::<Theme>().clone();
         // Rows: the entries, and the groups' headings among them.

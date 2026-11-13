@@ -1151,6 +1151,10 @@ impl PaneView for GridView {
         crate::view::GRID
     }
 
+    fn draws_headings(&self) -> bool {
+        true
+    }
+
     fn render(&mut self, shell: &mut Shell, _: &mut Window, cx: &mut Context<Shell>) -> AnyElement {
         self.measure(shell, cx);
         self.measure_tiles(shell, cx);

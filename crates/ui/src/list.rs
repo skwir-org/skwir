@@ -344,6 +344,10 @@ impl<K: PartialEq> ArrivingKeys<K> {
 pub struct ListState {
     /// Entry ids in display order, from the core's cached sort.
     pub sorted: std::sync::Arc<[EntryId]>,
+    /// `sorted` with the entries of its folded groups in it
+    /// (`Pane::order_unfolded`, `sorted` itself while nothing is folded):
+    /// what the pane lists, as its footer counts and weighs it.
+    pub listed: std::sync::Arc<[EntryId]>,
     /// Where `sorted`'s groups' headings stand among its entries, for the
     /// views that draw them (ADR-130, 9): made with `sorted`, from the
     /// pane as it stood then.
@@ -452,6 +456,7 @@ impl Default for ListState {
     fn default() -> Self {
         ListState {
             sorted: std::sync::Arc::from([]),
+            listed: std::sync::Arc::from([]),
             rows: crate::views::groups::RowMap::default(),
             heading: None,
             groups: std::sync::Arc::from([]),
@@ -532,6 +537,7 @@ impl ListState {
             && std::sync::Arc::ptr_eq(&groups, &self.groups);
         self.sorted = sorted;
         self.groups = groups;
+        self.listed = pane.order_unfolded();
         if !same {
             self.rows = crate::views::groups::RowMap::new(self.groups.clone(), self.sorted.len());
             // What arrives is placed again among the rows made anew.
@@ -590,6 +596,7 @@ impl ListState {
 
     fn reset(&mut self) {
         self.sorted = std::sync::Arc::from([]);
+        self.listed = std::sync::Arc::from([]);
         self.rows = crate::views::groups::RowMap::default();
         self.heading = None;
         self.groups = std::sync::Arc::from([]);

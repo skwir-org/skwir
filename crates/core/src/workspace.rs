@@ -1084,6 +1084,12 @@ pub struct Pane {
     /// them last.
     folds: Folds,
     fold_cache: parking_lot::Mutex<Option<FoldCache>>,
+    /// Whether the view shown draws its groups' headings, where a folded
+    /// group stays as its heading (`PaneView::draws_headings`): only then do
+    /// folds take their entries out of the order. Under a view that draws
+    /// none (the columns, Usage, the map, the board) every file stays
+    /// shown; the folds are kept for when one is drawn again.
+    folds_drawn: bool,
     /// What was asked to read on demand of each listing of its order
     /// (`fields_to_read`), with the token of its reading, cancelled when it
     /// rests on something else or the listing leaves the order.
@@ -2031,6 +2037,7 @@ impl Pane {
             groups_cache: parking_lot::Mutex::new(None),
             folds: Folds::default(),
             fold_cache: parking_lot::Mutex::new(None),
+            folds_drawn: true,
             fields_asked: Vec::new(),
             states_asked: None,
             states_reading: None,
@@ -4500,9 +4507,43 @@ impl Pane {
         (order, shown, folded)
     }
 
-    /// Whether any group of the criterion the pane groups by is folded.
+    /// Whether any group of the criterion the pane groups by is folded,
+    /// under a view that draws the folded group's heading.
     fn any_folded(&self) -> bool {
-        !self.folds.groups.is_empty() && self.folds.by == self.sort.group_key()
+        self.folds_drawn && !self.folds.groups.is_empty() && self.folds.by == self.sort.group_key()
+    }
+
+    /// Whether the view shown draws its groups' headings, so that a fold
+    /// takes a group's entries out (`folds_drawn`): what the shell's view
+    /// says (`PaneView::draws_headings`). Whether what is shown changed:
+    /// the folded groups' entries come back, or leave (what was selected of
+    /// them let go).
+    pub(crate) fn set_folds_drawn(&mut self, drawn: bool) -> bool {
+        if self.folds_drawn == drawn {
+            return false;
+        }
+        let folded = !self.folds.groups.is_empty();
+        self.folds_drawn = drawn;
+        if !folded {
+            return false;
+        }
+        self.folds.version += 1;
+        if drawn {
+            self.retain_shown();
+        }
+        true
+    }
+
+    /// Whether a fold takes a group's entries out here (`set_folds_drawn`).
+    pub fn folds_drawn(&self) -> bool {
+        self.folds_drawn
+    }
+
+    /// The order shown with the entries of its folded groups in it: what
+    /// the pane lists, as its footer counts and weighs it; the order itself
+    /// (`order`, the same) when nothing is folded.
+    pub fn order_unfolded(&self) -> Arc<[EntryId]> {
+        self.found_order(self.flat_order())
     }
 
     /// Fold or open the pane's groups as `mode` says, group `group` of

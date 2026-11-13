@@ -3232,6 +3232,21 @@ impl App {
         true
     }
 
+    /// Whether `pane`'s view draws its groups' headings (ADR-131, 2): only
+    /// then does a folded group's heading stand for its entries, which
+    /// leave the order (`Pane::set_folds_drawn`); under any other view,
+    /// every file is shown.
+    pub fn set_folds_drawn(&self, pane: PaneId, drawn: bool) {
+        let moved = self
+            .workspace
+            .write()
+            .pane_mut(pane)
+            .is_some_and(|p| p.set_folds_drawn(drawn));
+        if moved {
+            self.wake();
+        }
+    }
+
     /// Show a search in `pane` as the tree of its folders, or as it comes.
     pub fn set_found_as_tree(&self, pane: PaneId, wanted: bool) {
         let moved = self
@@ -4363,7 +4378,7 @@ mod builtin {
             Topic::View,
             "group_fold",
             "Fold the group",
-            "Fold or open a pane's groups (ADR-131): group `group` (counted from the first heading from 0; the cursor's when omitted) as `mode` says: toggle, fold, unfold, fold_others (every group but it), unfold_all. A folded group's entries leave what the pane shows (not drawn, passed over by the keys, out of Select All and of what commands act on), its heading kept with its count; folds are kept while the pane groups by the same criterion",
+            "Fold or open a pane's groups (ADR-131): group `group` (counted from the first heading from 0; the cursor's when omitted) as `mode` says: toggle, fold, unfold, fold_others (every group but it), unfold_all. A folded group's entries leave what the pane shows (not drawn, passed over by the keys, out of Select All and of what commands act on), its heading kept with its count; folds are kept while the pane groups by the same criterion, and take effect only under a view that draws the groups' headings (the list, the tree, the grid): under any other, every file stays shown",
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
                 let changed = app

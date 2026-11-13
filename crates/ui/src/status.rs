@@ -145,7 +145,9 @@ pub(crate) fn render(
             |p| {
                 (
                     p.listing.filling_count(),
-                    p.found_count().unwrap_or(shell.ui().list.sorted.len()),
+                    // What it lists, a folded group's files counted in as
+                    // its heading counts them (ADR-131, 2).
+                    p.found_count().unwrap_or(shell.ui().list.listed.len()),
                     p.listing.is_complete(),
                     p.listing.error().map(str::to_owned),
                     shell.ui().place.search,
@@ -225,11 +227,23 @@ pub(crate) fn render(
     let as_of = as_of.map(|as_of| as_of_said(&as_of, &jiff::Zoned::now()));
     // What a search walked past (ADR-125): said, never silently.
     let left_out = (left_out > 0).then(|| format!("{left_out} excluded"));
+    // What folded groups hold, counted in the items: said, as what a
+    // search leaves out is.
+    let folded = {
+        let list = &shell.ui().list;
+        list.listed.len().saturating_sub(list.sorted.len())
+    };
+    let folded = (folded > 0).then(|| format!("{} folded", format::thousands(folded)));
     // What it says is the status line a screen reader reads when asked,
     // never announced: it changes with every key.
     let mut said = shell.a11y.then(|| {
         let mut said = items.clone();
-        for text in as_of.iter().map(|(text, _)| text).chain(left_out.as_ref()) {
+        for text in as_of
+            .iter()
+            .map(|(text, _)| text)
+            .chain(left_out.as_ref())
+            .chain(folded.as_ref())
+        {
             said.push_str(", ");
             said.push_str(text);
         }
@@ -272,6 +286,21 @@ pub(crate) fn render(
                 .tooltip(|_, cx| {
                     crate::toolbar::tooltip(
                         "Files and folders your exclusions leave out (Settings › Exclusions) were walked past: excluded:yes searches them too"
+                            .into(),
+                        cx,
+                    )
+                })
+                .child(text),
+        );
+    }
+    if let Some(text) = folded {
+        bar = bar.child(
+            div()
+                .id("listing-folded")
+                .flex_none()
+                .tooltip(|_, cx| {
+                    crate::toolbar::tooltip(
+                        "Files in folded groups: a heading's chevron, or Right on it, opens its group again"
                             .into(),
                         cx,
                     )

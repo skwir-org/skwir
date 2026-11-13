@@ -179,8 +179,9 @@ impl Shell {
                 from_listing,
             }
         };
-        // What the pane shows, as its views draw it (`ListState::sync`).
-        let order = Arc::clone(&self.ui().list.sorted);
+        // What the pane lists, as its views draw it (`ListState::sync`),
+        // a folded group's files counted in as its heading counts them.
+        let order = Arc::clone(&self.ui().list.listed);
         let weight = &self.ui().weight;
         let same_order = weight
             .order
@@ -328,7 +329,7 @@ fn listed_bytes(p: &skwir_core::workspace::Pane, unknown_at: usize) -> Listed {
         return Listed::Unknown(at);
     }
     Listed::Bytes(skwir_core::entry::weight(
-        p.order().iter().filter_map(|id| p.entry(*id)),
+        p.order_unfolded().iter().filter_map(|id| p.entry(*id)),
     ))
 }
 

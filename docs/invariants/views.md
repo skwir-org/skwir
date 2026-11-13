@@ -263,8 +263,10 @@ around the views is in [shell.md](shell.md).
   the tree's Left), and coming back the board asks again.
   Grouped (ADR-131, 3), its columns are the pane's groups in their
   order, each its entries in the sort's (`BoardView::group_columns`, made
-  again only when the order or its spans change), a folded group's
-  empty with its count, at most `MAX_COLUMNS`: past them, the last column
+  again only when the order or its spans change), every group's cards
+  there, a folded one's too (the board draws no heading to open it
+  again, so nothing is folded away under it), at most `MAX_COLUMNS`:
+  past them, the last column
   holds the cards of every group left, in order, and says how many
   groups it holds ("15 more groups"), so no card goes unseen and no frame
   lays out thousands of columns (a search grouped by Folder). A card
@@ -273,7 +275,7 @@ around the views is in [shell.md](shell.md).
   files being in no group. What arrives is placed among each column's
   cards once per placement (`ListState::rows`' key, the columns drawn),
   in one pass over it, never per frame; Left and Right go past a column
-  with neither a card nor an entry (a folded group's).
+  with neither a card nor an entry.
 
 ## Rubber band
 
@@ -588,7 +590,15 @@ around the views is in [shell.md](shell.md).
   (`FoldKey`), kept while it is grouped by the same criterion in either
   direction, forgotten when it is grouped by another; a fold bumps the
   pane's order (`folds_version`), and every map from rows to positions
-  (`RowMap`, the grid's lines) holds a heading with no entries. Every
+  (`RowMap`, the grid's lines) holds a heading with no entries. Folds
+  take files out only under a view that draws the headings, the way
+  back to them (`PaneView::draws_headings`: the list, the tree, the
+  grid; told by the shell's sync, `App::set_folds_drawn`): under the
+  columns, the board, Usage or the map every file stays shown, the folds
+  kept for when headings are drawn again. The footer counts what folded
+  groups hold among the items, as their headings count them, and says
+  how many are folded ("40 folded", `ListState::listed`,
+  `Pane::order_unfolded`); what the files weigh weighs them too. Every
   group folded, the view draws their headings alone, the way back to the
   files: never an empty folder's placeholder (`placeholder::of` asks
   `RowMap::grouped`), and Up and Down, with no entry to be on, stop on the

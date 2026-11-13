@@ -268,6 +268,23 @@ fn a_folded_group_leaves_what_the_pane_shows() {
     assert_eq!(selected(&app), 2, "what was selected in it no longer is");
     run(&app, "select_all", &serde_json::json!({}));
     assert_eq!(selected(&app), 2, "Select All leaves it out");
+    // Under a view that draws no heading (the columns, Usage), nothing is
+    // folded away: there would be no heading to open it again. The fold is
+    // kept for when headings are drawn again, its entries then left out.
+    let listed = |app: &App| {
+        let ws = app.workspace.read();
+        let p = ws.pane(pane).unwrap();
+        (p.order().len(), p.order_unfolded().len())
+    };
+    assert_eq!(listed(&app), (2, 4), "listed: the folded group's files too");
+    app.set_folds_drawn(pane, false);
+    assert_eq!(listed(&app), (4, 4));
+    assert_eq!(counts(&app)[1], ("Images".to_owned(), 2, 2));
+    run(&app, "select_all", &serde_json::json!({}));
+    assert_eq!(selected(&app), 4, "every file shown, every file selected");
+    app.set_folds_drawn(pane, true);
+    assert_eq!(listed(&app), (2, 4));
+    assert_eq!(selected(&app), 2, "what is folded away again let go");
     // The others folded; then every one open again.
     run(
         &app,
