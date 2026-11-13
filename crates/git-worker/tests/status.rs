@@ -386,3 +386,23 @@ fn the_repository_s_configuration_and_the_user_s_say_how_files_are_compared() {
     let git = repo.git(&["--no-optional-locks", "status", "--porcelain"]);
     assert_eq!(git, "", "as git says it");
 }
+
+/// A folder taken out of the index whole (`git rm -r --cached`) is its
+/// files, each staged as gone, and the folder left on the disk new, as git
+/// says them: never the folder staged as one, its files unmarked.
+#[test]
+fn a_folder_taken_out_of_the_index_is_its_files_each() {
+    if !has_git() {
+        return;
+    }
+    let repo = Repo::new();
+    repo.write("dir/a.txt", b"a\n");
+    repo.write("dir/deep/b.txt", b"b\n");
+    repo.write("kept.txt", b"k\n");
+    repo.commit("first");
+    repo.git(&["rm", "-r", "-q", "--cached", "dir"]);
+    let said = states(&status(&repo, "", None));
+    assert_eq!(said["dir/a.txt"], "staged");
+    assert_eq!(said["dir/deep/b.txt"], "staged");
+    assert_eq!(said, repo.git_status(""));
+}

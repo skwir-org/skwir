@@ -472,9 +472,24 @@ fn staged(
             _ => Ordering::Greater,
         };
         match pick {
-            // In `HEAD` alone: taken out of the index.
+            // In `HEAD` alone: taken out of the index, a folder's files
+            // each (`git rm -r --cached`), as git says them: the files on
+            // the disk are its, not the folder's.
             Ordering::Less => {
-                found.add(join(&tree[t].0).as_bstr(), State::Staged);
+                let (name, entry) = &tree[t];
+                let path = join(name);
+                if entry.is_tree() {
+                    let mut gone = Vec::new();
+                    if !crate::tree::changed(repo, &path, Some(*entry), None, deadline, &mut gone)?
+                    {
+                        found.stopped = true;
+                    }
+                    for change in gone {
+                        found.add(change.path.as_bstr(), State::Staged);
+                    }
+                } else {
+                    found.add(path.as_bstr(), State::Staged);
+                }
                 t += 1;
             }
             Ordering::Greater => {
