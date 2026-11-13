@@ -43,7 +43,7 @@
 //! ([`Transfer::show`]): a look at the folder during the plan may have
 //! kept what it held then.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -888,7 +888,14 @@ fn takes(from: &Path, dest: &Path, sources: &[Source], ctx: &StepContext) -> Vec
     let Ok(listed) = std::fs::read_dir(from) else {
         return Vec::new();
     };
-    let listed: Vec<OsString> = listed.flatten().map(|e| e.file_name()).collect();
+    // The names a companion of the folder belongs to (a Mac's `._x`, a
+    // sidecar), each asked once of the rules: one with a companion is no
+    // batch's (asked of every source, a walk of the folder for each was
+    // quadratic in a folder of 100,000).
+    let owned: HashSet<OsString> = listed
+        .flatten()
+        .filter_map(|e| rules.owner(&e.file_name()))
+        .collect();
     let mut names: HashMap<&OsStr, usize> = HashMap::new();
     for Source { src, .. } in sources {
         if let Some(name) = src.file_name() {
@@ -918,11 +925,8 @@ fn takes(from: &Path, dest: &Path, sources: &[Source], ctx: &StepContext) -> Vec
             // recursive destinations and resolution errors for that check.
             continue;
         }
-        let alone = names.get(name) == Some(&1)
-            && rules.owner(name).is_none()
-            && !listed
-                .iter()
-                .any(|other| rules.owner(other).as_deref() == Some(name));
+        let alone =
+            names.get(name) == Some(&1) && rules.owner(name).is_none() && !owned.contains(name);
         if !alone {
             continue;
         }
