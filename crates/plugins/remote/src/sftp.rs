@@ -128,7 +128,10 @@ impl Sftp {
         sftp: &Path,
         mount: &Mount,
         files: Vec<(Vec<String>, u64)>,
-        ran: &(dyn Fn(u64) + Sync),
+        (ran, following): (
+            &(dyn Fn(u64) + Sync),
+            Option<&crate::following::Following<'_>>,
+        ),
         control: &Control,
     ) -> anyhow::Result<()> {
         if files.is_empty() {
@@ -149,7 +152,7 @@ impl Sftp {
                 bytes,
             })
             .collect();
-        crate::runs::at_once("sftp", runs, AT_ONCE, ran, control)
+        crate::runs::at_once_following("sftp", runs, AT_ONCE, ran, following, control)
     }
 }
 
@@ -309,7 +312,7 @@ impl Sftp {
         }
         let total = AtomicU64::new(0);
         let ran = |bytes: u64| (told.copied)(total.fetch_add(bytes, Ordering::Relaxed) + bytes);
-        self.run(sftp, mount, copies, &ran, control)?;
+        self.run(sftp, mount, copies, (&ran, None), control)?;
         // Its time given before it takes its name: one taken meanwhile is
         // another's, never touched. Each folder read once first: sshfs
         // looks up a name it does not know one at a time, a round trip
@@ -320,7 +323,7 @@ impl Sftp {
             let _ = std::fs::read_dir(folder).map(Iterator::count);
         }
         skwir_core::op::transfer::give_times(&timed)?;
-        self.run(sftp, mount, placing, &|_| {}, control)?;
+        self.run(sftp, mount, placing, (&|_| {}, None), control)?;
         layout.finish()?;
         self.made.fetch_add(1, Ordering::Relaxed);
         Ok(())
@@ -381,12 +384,24 @@ impl Transfer for Sftp {
             for tree in beside.trees {
                 crate::runs::tree(tree, 0, &mut leaves, &mut folders)?;
             }
-            self.run(sftp, &mount, lines("rm", &leaves)?, &|_| {}, control)?;
+            self.run(
+                sftp,
+                &mount,
+                lines("rm", &leaves)?,
+                (&|_| {}, None),
+                control,
+            )?;
             // `rmdir` takes an empty folder alone: the deepest first.
             folders.sort_by_key(|(depth, _)| std::cmp::Reverse(*depth));
             for level in folders.chunk_by(|a, b| a.0 == b.0) {
                 let paths: Vec<PathBuf> = level.iter().map(|(_, path)| path.clone()).collect();
-                self.run(sftp, &mount, lines("rmdir", &paths)?, &|_| {}, control)?;
+                self.run(
+                    sftp,
+                    &mount,
+                    lines("rmdir", &paths)?,
+                    (&|_| {}, None),
+                    control,
+                )?;
             }
             Ok(())
         })?;
@@ -494,7 +509,10 @@ impl Transfer for Sftp {
         }
         let total = AtomicU64::new(0);
         let ran = |bytes: u64| (told.copied)(total.fetch_add(bytes, Ordering::Relaxed) + bytes);
-        if let Err(error) = self.run(sftp, &mount, files, &ran, control) {
+        // `sftp` in batch says nothing until its session ends: how far each
+        // name came is read from the files it reads (ADR-135).
+        let following = crate::following::Following::new([from.to_path_buf()], names, told.writing);
+        if let Err(error) = self.run(sftp, &mount, files, (&ran, Some(&following)), control) {
             // ssh's own failure (255) for the user's ssh, which asks
             // nothing: the server is not reached so.
             let unreached = error

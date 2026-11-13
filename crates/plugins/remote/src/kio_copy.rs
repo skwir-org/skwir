@@ -186,7 +186,10 @@ impl KioCopy {
         word: &str,
         runs: &[(PathBuf, Vec<(PathBuf, u64)>)],
         at_once: usize,
-        ran: &(dyn Fn(u64) + Sync),
+        (ran, following): (
+            &(dyn Fn(u64) + Sync),
+            Option<&crate::following::Following<'_>>,
+        ),
         control: &Control,
     ) -> anyhow::Result<()> {
         let kioclient =
@@ -208,7 +211,7 @@ impl KioCopy {
                 }
             })
             .collect();
-        crate::runs::at_once("kioclient", runs, at_once, ran, control)
+        crate::runs::at_once_following("kioclient", runs, at_once, ran, following, control)
     }
 
     /// Tell kio-fuse to read its servers again: what `kioclient` wrote
@@ -370,7 +373,23 @@ impl Transfer for KioCopy {
             .collect();
         let total = AtomicU64::new(0);
         let ran = |bytes: u64| copied(total.fetch_add(bytes, Ordering::Relaxed) + bytes);
-        let outcome = self.each_at("copy", &runs(files.clone()), AT_ONCE, &ran, control);
+        // `kioclient` says nothing of each until it ends: how far each name
+        // came is read from what it and its workers have open (ADR-135).
+        let following = crate::following::Following::new(
+            [Some(from), Some(into), temp]
+                .into_iter()
+                .flatten()
+                .map(Path::to_path_buf),
+            names,
+            told.writing,
+        );
+        let outcome = self.each_at(
+            "copy",
+            &runs(files.clone()),
+            AT_ONCE,
+            (&ran, Some(&following)),
+            control,
+        );
         // What it wrote beside the mount, kio-fuse reads anew.
         self.forget();
         if let Err(error) = outcome {
@@ -395,7 +414,7 @@ impl Transfer for KioCopy {
                 by_folder.entry(folder).or_default().push((src, bytes));
             }
             let again: Vec<(PathBuf, Vec<(PathBuf, u64)>)> = by_folder.into_iter().collect();
-            let outcome = self.each_at("copy", &again, 1, &ran, control);
+            let outcome = self.each_at("copy", &again, 1, (&ran, Some(&following)), control);
             self.forget();
             outcome?;
         }
@@ -413,7 +432,7 @@ impl Transfer for KioCopy {
                     .iter()
                     .map(|(made, _)| (made.clone(), into.to_path_buf(), 0))
                     .collect();
-                let outcome = self.each_at("move", &runs(moves), AT_ONCE, &|_| {}, control);
+                let outcome = self.each_at("move", &runs(moves), AT_ONCE, (&|_| {}, None), control);
                 self.forget();
                 let left: std::collections::HashSet<OsString> = std::fs::read_dir(temp)?
                     .flatten()

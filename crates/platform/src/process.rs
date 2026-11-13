@@ -836,7 +836,190 @@ pub fn run_watching(
     held: &dyn Fn() -> bool,
     watch: &mut (dyn FnMut(&[u8]) + Send),
 ) -> anyhow::Result<Finished> {
-    watched(command, input, cancel, Limit::None, held, watch)
+    watched(command, input, cancel, Limit::None, held, watch, &|_| {})
+}
+
+/// [`run_watching`], `look` given its process's id as it runs, every
+/// `CHECK_EVERY`: what follows the files it has open
+/// ([`open_files`]) where it says nothing of each (ADR-135).
+///
+/// # Errors
+/// When it cannot start, or is cancelled.
+pub fn run_looking(
+    command: &mut Command,
+    input: Option<&[u8]>,
+    cancel: &CancelToken,
+    held: &dyn Fn() -> bool,
+    watch: &mut (dyn FnMut(&[u8]) + Send),
+    look: &dyn Fn(u32),
+) -> anyhow::Result<Finished> {
+    watched(command, input, cancel, Limit::None, held, watch, look)
+}
+
+/// A regular file a process has open, and how far into it it has read or
+/// written (ADR-135).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OpenFile {
+    pub path: PathBuf,
+    pub at: u64,
+}
+
+/// The files process `pid` and those it started have open, each with its
+/// offset, as the system says: on Linux `/proc`'s `fd` and `fdinfo`, on
+/// macOS `proc_pidinfo` (the process alone); none elsewhere, which says
+/// no other process's offsets. What a helper copying files says of none
+/// of them as it goes (sftp, gio) is followed so: it reads a file it sends
+/// from its start, and writes one it brings from its start.
+pub fn open_files(pid: u32) -> Vec<OpenFile> {
+    #[cfg(target_os = "linux")]
+    {
+        let mut pids = vec![pid];
+        if let Some(own) = i32::try_from(pid)
+            .ok()
+            .and_then(rustix::process::Pid::from_raw)
+        {
+            pids.extend(
+                descendants(own)
+                    .into_iter()
+                    .filter_map(|child| u32::try_from(child.as_raw_nonzero().get()).ok()),
+            );
+        }
+        pids.into_iter().flat_map(open_files_of).collect()
+    }
+    #[cfg(target_os = "macos")]
+    {
+        mac_open::open_files_of(pid)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        let _ = pid;
+        Vec::new()
+    }
+}
+
+/// `pid`'s open regular files, from `/proc`: each descriptor's link, and
+/// its `pos` in `fdinfo`. A link to no path (a pipe, a socket) or to a
+/// file removed since is left out.
+#[cfg(target_os = "linux")]
+fn open_files_of(pid: u32) -> Vec<OpenFile> {
+    let Ok(fds) = std::fs::read_dir(format!("/proc/{pid}/fd")) else {
+        return Vec::new();
+    };
+    fds.flatten()
+        .filter_map(|fd| {
+            let path = std::fs::read_link(fd.path()).ok()?;
+            if !path.is_absolute() || path.as_os_str().as_encoded_bytes().ends_with(b" (deleted)") {
+                return None;
+            }
+            let info =
+                std::fs::read_to_string(format!("/proc/{pid}/fdinfo/{}", fd.file_name().display()))
+                    .ok()?;
+            let at = info
+                .lines()
+                .find_map(|line| line.strip_prefix("pos:"))?
+                .trim()
+                .parse()
+                .ok()?;
+            Some(OpenFile { path, at })
+        })
+        .collect()
+}
+
+/// A process's open files on macOS (`libproc`): its descriptors
+/// (`PROC_PIDLISTFDS`), then each vnode's path and offset
+/// (`PROC_PIDFDVNODEPATHINFO`).
+#[cfg(target_os = "macos")]
+mod mac_open {
+    use super::OpenFile;
+    use std::os::unix::ffi::OsStrExt;
+
+    /// `struct proc_fileinfo` of `<sys/proc_info.h>`, which libc leaves out.
+    // Its fields keep the C names, as the header has them.
+    #[allow(clippy::struct_field_names)]
+    #[repr(C)]
+    struct ProcFileinfo {
+        fi_openflags: u32,
+        fi_status: u32,
+        fi_offset: libc::off_t,
+        fi_type: i32,
+        fi_guardflags: u32,
+    }
+
+    /// `struct vnode_fdinfowithpath`.
+    #[repr(C)]
+    struct VnodeFdinfoWithPath {
+        pfi: ProcFileinfo,
+        pvip: libc::vnode_info_path,
+    }
+
+    const PROC_PIDFDVNODEPATHINFO: libc::c_int = 2;
+
+    // libproc's calls write at most the size given into the buffers this
+    // makes, each as large as it says: no other way to read another
+    // process's descriptors on macOS.
+    #[allow(unsafe_code)]
+    pub(super) fn open_files_of(pid: u32) -> Vec<OpenFile> {
+        let Ok(pid) = libc::c_int::try_from(pid) else {
+            return Vec::new();
+        };
+        let unit = std::mem::size_of::<libc::proc_fdinfo>();
+        // SAFETY: a null buffer asks for the size needed.
+        let needed =
+            unsafe { libc::proc_pidinfo(pid, libc::PROC_PIDLISTFDS, 0, std::ptr::null_mut(), 0) };
+        let Ok(needed) = usize::try_from(needed) else {
+            return Vec::new();
+        };
+        // Room for descriptors opened since.
+        let mut fds: Vec<libc::proc_fdinfo> = Vec::with_capacity(needed / unit + 8);
+        let room = libc::c_int::try_from(fds.capacity() * unit).unwrap_or(libc::c_int::MAX);
+        // SAFETY: `fds` holds `room` bytes; the call writes no more.
+        let got = unsafe {
+            libc::proc_pidinfo(pid, libc::PROC_PIDLISTFDS, 0, fds.as_mut_ptr().cast(), room)
+        };
+        let Ok(got) = usize::try_from(got) else {
+            return Vec::new();
+        };
+        // SAFETY: the call wrote `got` bytes of whole entries.
+        unsafe { fds.set_len((got / unit).min(fds.capacity())) };
+        fds.iter()
+            .filter(|fd| fd.proc_fdtype == libc::PROX_FDTYPE_VNODE as u32)
+            .filter_map(|fd| {
+                let mut info = std::mem::MaybeUninit::<VnodeFdinfoWithPath>::zeroed();
+                let size =
+                    libc::c_int::try_from(std::mem::size_of::<VnodeFdinfoWithPath>()).ok()?;
+                // SAFETY: `info` is `size` bytes, zeroed.
+                let wrote = unsafe {
+                    libc::proc_pidfdinfo(
+                        pid,
+                        fd.proc_fd,
+                        PROC_PIDFDVNODEPATHINFO,
+                        info.as_mut_ptr().cast(),
+                        size,
+                    )
+                };
+                if wrote != size {
+                    return None;
+                }
+                // SAFETY: the call filled it whole.
+                let info = unsafe { info.assume_init() };
+                // Only a regular file.
+                if (info.pvip.vip_vi.vi_stat.vst_mode & libc::S_IFMT) != libc::S_IFREG {
+                    return None;
+                }
+                let bytes: Vec<u8> = info
+                    .pvip
+                    .vip_path
+                    .iter()
+                    .flatten()
+                    .take_while(|c| **c != 0)
+                    .map(|c| *c as u8)
+                    .collect();
+                let path = std::path::PathBuf::from(std::ffi::OsStr::from_bytes(&bytes));
+                let at = u64::try_from(info.pfi.fi_offset).ok()?;
+                path.is_absolute().then_some(OpenFile { path, at })
+            })
+            .collect()
+    }
 }
 
 /// How a helper's work is followed: told how far it went, from 0 to 1,
@@ -1028,7 +1211,15 @@ fn helper(
                 said: &said,
             },
         };
-        let finished = watched(command, None, cancel, limit, &|| follow.held(), &mut watch)?;
+        let finished = watched(
+            command,
+            None,
+            cancel,
+            limit,
+            &|| follow.held(),
+            &mut watch,
+            &|_| {},
+        )?;
         if !line.is_empty() {
             take(&line, &mut kept, &mut too_much);
         }
@@ -1077,6 +1268,7 @@ fn watched(
     limit: Limit<'_>,
     held: &dyn Fn() -> bool,
     watch: &mut (dyn FnMut(&[u8]) + Send),
+    look: &dyn Fn(u32),
 ) -> anyhow::Result<Finished> {
     let program = Path::new(command.get_program())
         .file_name()
@@ -1115,6 +1307,7 @@ fn watched(
         .take()
         .context("its output was not piped")?;
     let exit = ExitSignal::of(&child);
+    let pid = child.child.id();
     let status = std::thread::scope(|s| {
         s.spawn(move || {
             let mut buf = [0u8; 8192];
@@ -1178,6 +1371,9 @@ fn watched(
             if held() != holding {
                 holding = !holding;
                 child.hold(holding);
+            }
+            if !holding {
+                look(pid);
             }
             exit.wait(CHECK_EVERY);
         }

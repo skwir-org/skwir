@@ -284,8 +284,12 @@ ADR-077 (which revises ADR-021).
   how far it came with each name it was given (`Told::writing`, ADR-135):
   rsync from what it says (`rsync::Writing`: its order its names' bytes,
   a folder's line as it begins it, each file once whole, the bytes
-  between counted to the name it is in); sftp, GVfs, KIO and rclone say
-  nothing until a file is whole. rsync keeps a file it was
+  between counted to the name it is in); sftp in batch, `gio` and
+  `kioclient` say nothing of each, and are followed by the files they
+  have open (`Following`, `process::open_files`, from `runs::at_once_following`:
+  how far into each file, under which name given; none on Windows);
+  rclone's copies within a server tell each name as each file is copied.
+  rsync keeps a file it was
   writing when cut short in the staging folder (`--partial-dir`, an
   absolute path on the receiving side, else none), which its retry goes
   on from (ADR-080, 7). Skwir's own batch and sftp's go on from the file

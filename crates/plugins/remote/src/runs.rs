@@ -47,6 +47,22 @@ pub(crate) fn at_once(
     ran: &(dyn Fn(u64) + Sync),
     control: &Control,
 ) -> anyhow::Result<()> {
+    at_once_following(tool, runs, at_once, ran, None, control)
+}
+
+/// [`at_once`], what each run's process has open followed by `following`
+/// as it runs (ADR-135): how far each name it was given came.
+///
+/// # Errors
+/// As [`at_once`].
+pub(crate) fn at_once_following(
+    tool: &'static str,
+    runs: Vec<Run>,
+    at_once: usize,
+    ran: &(dyn Fn(u64) + Sync),
+    following: Option<&crate::following::Following<'_>>,
+    control: &Control,
+) -> anyhow::Result<()> {
     let workers = at_once.min(runs.len());
     let queue = Mutex::new(runs.into_iter().collect::<std::collections::VecDeque<_>>());
     let stop = AtomicBool::new(false);
@@ -62,14 +78,26 @@ pub(crate) fn at_once(
                     let Some(mut run) = queue.lock().pop_front() else {
                         return;
                     };
-                    let ended = skwir_platform::process::run_watching(
+                    let looked = std::sync::atomic::AtomicU32::new(0);
+                    let look = |pid: u32| {
+                        looked.store(pid, Ordering::Relaxed);
+                        if let Some(following) = following {
+                            following.look(pid);
+                        }
+                    };
+                    let ran_to_end = skwir_platform::process::run_looking(
                         &mut run.command,
                         run.input.as_deref(),
                         control.cancel(),
                         &|| control.is_paused(),
                         &mut |_: &[u8]| {},
-                    )
-                    .and_then(|finished| {
+                        &look,
+                    );
+                    // What it had open last is done, as it ended.
+                    if let Some(following) = following {
+                        following.ended(looked.load(Ordering::Relaxed));
+                    }
+                    let ended = ran_to_end.and_then(|finished| {
                         if finished.status.success() {
                             Ok(())
                         } else {

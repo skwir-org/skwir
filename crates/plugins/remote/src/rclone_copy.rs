@@ -245,6 +245,8 @@ impl Transfer for RcloneCopy {
         let mut copied = 0u64;
         for name in names {
             checkpoint(control)?;
+            // Each file it copies there told whole: how far its name came.
+            let mut in_name = 0u64;
             let src = from.join(name);
             let dst = made_in.join(name);
             let (src_at, dst_at) = (
@@ -258,7 +260,9 @@ impl Transfer for RcloneCopy {
                 &dst_at,
                 &mut |bytes| {
                     copied += bytes;
+                    in_name += bytes;
                     (told.copied)(copied);
+                    (told.writing)(name, in_name);
                 },
                 control,
             )?;

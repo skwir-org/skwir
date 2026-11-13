@@ -17,6 +17,7 @@ pub mod address;
 mod bus;
 mod configure;
 pub mod connector;
+mod following;
 pub mod fstab;
 pub mod gio_copy;
 pub mod gvfs;

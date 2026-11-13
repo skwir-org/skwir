@@ -254,7 +254,7 @@ impl GioCopy {
         ran: &(dyn Fn(u64) + Sync),
         control: &Control,
     ) -> anyhow::Result<()> {
-        self.each_at(words, runs, AT_ONCE, ran, control)
+        self.each_at(words, runs, AT_ONCE, (ran, None), control)
     }
 
     /// [`GioCopy::each`], `at_once` at a time.
@@ -263,7 +263,10 @@ impl GioCopy {
         words: &[&str],
         runs: &[(PathBuf, Vec<(PathBuf, u64)>)],
         at_once: usize,
-        ran: &(dyn Fn(u64) + Sync),
+        (ran, following): (
+            &(dyn Fn(u64) + Sync),
+            Option<&crate::following::Following<'_>>,
+        ),
         control: &Control,
     ) -> anyhow::Result<()> {
         let gio = program().ok_or_else(|| anyhow::anyhow!("gio (GLib) is not installed"))?;
@@ -278,7 +281,7 @@ impl GioCopy {
                 }
             })
             .collect();
-        crate::runs::at_once("gio", runs, at_once, ran, control)
+        crate::runs::at_once_following("gio", runs, at_once, ran, following, control)
     }
 }
 
@@ -404,7 +407,23 @@ impl Transfer for GioCopy {
             .collect();
         let total = AtomicU64::new(0);
         let ran = |bytes: u64| copied(total.fetch_add(bytes, Ordering::Relaxed) + bytes);
-        if let Err(error) = self.each(COPY, &runs(files.clone()), &ran, control) {
+        // `gio` says nothing of each until it ends: how far each name came
+        // is read from what it has open (ADR-135).
+        let following = crate::following::Following::new(
+            [Some(from), Some(into), temp]
+                .into_iter()
+                .flatten()
+                .map(Path::to_path_buf),
+            names,
+            told.writing,
+        );
+        if let Err(error) = self.each_at(
+            COPY,
+            &runs(files.clone()),
+            AT_ONCE,
+            (&ran, Some(&following)),
+            control,
+        ) {
             if control.is_cancelled() || !error.is::<crate::runs::Failed>() {
                 return Err(error);
             }
@@ -426,7 +445,7 @@ impl Transfer for GioCopy {
                 by_folder.entry(folder).or_default().push((src, bytes));
             }
             let again: Vec<(PathBuf, Vec<(PathBuf, u64)>)> = by_folder.into_iter().collect();
-            self.each_at(COPY, &again, 1, &ran, control)?;
+            self.each_at(COPY, &again, 1, (&ran, Some(&following)), control)?;
         }
         layout.finish()?;
         if let Some(temp) = temp {

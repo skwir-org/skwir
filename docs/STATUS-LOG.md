@@ -16477,3 +16477,45 @@ says nothing until a session's files end.
 
 Not run: `just test` whole, `just a11y-check`, `just remote-check` (the
 rsync per-name share was not tried against a server), macOS.
+
+## 2026-11-13: what a helper has open says how far it came (ADR-135 amended)
+
+**Built** (the user's choice of three: the files a helper has open, over
+a pseudo-terminal and its meter or an SFTP client of Skwir's own):
+`process::open_files` (Linux: `/proc/<pid>/fd` and `fdinfo`, the process
+and its descendants; macOS: `proc_pidinfo` and `proc_pidfdinfo`, the
+`proc_fileinfo` layout declared beside libc's), `process::run_looking`
+(the helper's id every `CHECK_EVERY` while it runs); the remote
+plugin's `following::Following` (each open file named by the copy's
+local folder it is under and the name given, the longest a tool's own
+name begins with; a file closed done at its size; read every 250 ms)
+and `runs::at_once_following`, given by the sftp, `gio` and `kioclient`
+copies; rclone's copies within a server tell each name as each file is
+copied; the meter keeps an item a byte short of its end until made.
+
+**Checked:** unit tests (each name's bytes from the files open, closed
+whole, the longest name; a shell standing in for sftp that reads a file
+a thousand bytes at a time, followed as it read and whole as it ended).
+The tests of the platform, the remote plugin and core (1,400); clippy on
+them for Linux, Windows and macOS (cross). `just remote-check` on
+e7cbf961: 188 of 190 passed, the two failing (rclone's configurations
+listed as places within 30 s and 60 s) passing alone, run again at a
+load average of 9 rather than 22. `just remote-check` on this tree: its
+192 tests passed (the AFC copies through `gio` followed so), then the
+NFS and AFP harness failed, twice, at its own `ls` of GVfs's bridge
+after `gio mount` (an I/O error); AFC, Nearby and the keyrings (6, 6, 2)
+passed. `just a11y-check` passed.
+
+**Found by the check, not this change's:** GVfs's FUSE bridge keeps a
+mount's name a moment after it goes, so the same export mounted again
+at once answers an I/O error for about a second. The harness's connector
+test mounts and ejects the export its next step mounts: without it, the
+harness passed; with it, the bridge answered at its second look, a
+second later. Skwir's connector meets it too: the test run twice at once
+failed its second run listing the folder it was handed (EIO), so a
+server ejected and connected to again within a second opens on an error.
+Not fixed here.
+
+Not tried: macOS at all; a real sftp or `kioclient` copy followed so
+(`just remote-check` passes over their copies, which do not look at the
+share shown).

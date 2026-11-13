@@ -170,3 +170,23 @@ copies out of that order shows the bytes in flight on the next one until
 its line comes; macOS and Windows tell a file being written by its
 writes, not its close. Two folders of one name are told apart by the
 card's tooltip, not its title.
+
+## Amended 2026-11-13: what a helper has open says how far it came
+
+Asked the same day (SFTP said nothing of a file until its session ended;
+a pseudo-terminal and its meter, or a client of Skwir's own, weighed): a
+helper that says nothing of each file (OpenSSH's `sftp` in batch, `gio`,
+`kioclient` and the workers it starts) is followed by the files it has
+open (`process::open_files`: `/proc`'s `fd` and `fdinfo` on Linux, the
+process and what it started; `proc_pidinfo` on macOS, the process
+alone): a file it sends is read from its start, one it brings written
+from its start, and one it closed is done. Each is known by the copy's
+local folder it is under and the name given there, or the longest name
+given its first part begins with (`remote::Following`, read every 250 ms
+from `process::run_looking`). An item stays short of its end until its
+copy is told made (`Meter::writing`): what was read ahead of what the
+server took is not whole. rclone's copies within a server tell each
+name's bytes as each of its files is copied. Windows tells no other
+process's offsets: its items say "copying" at the batch's share. Linux
+tried; macOS compiled only.
+

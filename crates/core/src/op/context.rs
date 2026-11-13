@@ -354,8 +354,10 @@ impl Meter {
     /// The batch copying step `step` has copied `done` bytes of it, as its
     /// transfer tells (ADR-135): said only.
     pub(super) fn writing(&self, step: usize, done: u64) {
+        // Whole only once made (`finished_ahead`): what a tool read ahead
+        // of what its server took is not.
         if let Some((was, total)) = self.batching.lock().get_mut(&step) {
-            *was = done.min(*total).max(*was);
+            *was = done.min(total.saturating_sub(1)).max(*was);
         }
     }
 

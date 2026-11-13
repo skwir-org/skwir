@@ -1013,14 +1013,15 @@ closes an item removes its line; work that leaves one adds it here.
 **Where a copy lands** (ADR-135, amended 2026-11-13): built on Linux in
 every view of files, the follow-ups the user kept and the limits found
 done the same day. Left: a grouped board shows no arrival in a group no
-file is in yet; an undo waiting its turn shows nothing; sftp, GVfs, KIO
-and rclone say nothing of a file until it is whole ("copying" at the
-batch's share); rsync's order is taken as its names' bytes; macOS and
+file is in yet; an undo waiting its turn shows nothing; what sftp, GVfs
+and KIO copy is followed by the files their helpers have open on Linux
+and macOS (compiled only), not on Windows; there, and rclone everywhere,
+nothing is said of a file until it is whole ("copying" at the batch's
+share); rsync's order is taken as its names' bytes; macOS and
 Windows tell a file being written by its writes, not its close (not
-tried there); SFTP says nothing of a file until its session ends
-(OpenSSH's `sftp` in batch: a pseudo-terminal and its meter would); an
-item keeps about 1.35 KB while it comes (10,000: 13 MB), a compact form
-being more work at each placing, not chosen.
+tried there); an item keeps about 1.35 KB while it comes
+(10,000: 13 MB), a compact form being more work at each placing, not
+chosen.
 
 **History and the files' Git state** (ADR-133, ADR-134, 2026-11-13):
 built on Linux, renames followed in a file's history and the files'
@@ -1557,7 +1558,12 @@ above; each with the design its fixer proposed):
   through Skwir's GVfs connector and let go of it, `gio mount` of it
   again leaves GVfs's bridge answering an I/O error, so
   `gvfs_nfs_and_afp_take_by_gio_what_it_does_better` does not run. With
-  Skwir's test left out the harness passes. Not looked into.
+  Skwir's test left out the harness passes. Looked into 2026-11-13: the
+  bridge keeps a mount's name a moment after it goes, and the same
+  mount made again at once answers EIO for about a second (listed at
+  the second look). Skwir's connector meets it as well: the test run
+  twice at once fails its second listing, so a server ejected and
+  connected to again within a second opens on an error.
 - Types by extension: the documents plugin's engine and Pandoc's
   format, the XMP field provider; JSON Lines and JSON with comments,
   which the database does not name. JSON Lines table cells print
