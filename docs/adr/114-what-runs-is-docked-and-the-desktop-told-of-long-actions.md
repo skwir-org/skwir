@@ -202,16 +202,59 @@ and macOS otherwise compiled only.
      window's shape (`activity_folded`); the popup's pin unfolds it
      again. What windows remembered before (`activity_pinned`, off by
      default) is not read: every window takes the new default.
+
+   Amended 2026-11-13 (the user asked, choosing how a fold lasts from
+   three answers): two Activities, a popup over the files that closed at
+   the next click and a tray above the footer that took room, with a pin
+   in one and a chevron in the other, were one too many. **Activity is
+   one panel, floating** above the strip at the files' lower right, over
+   them (400 px wide, at most 520 px high, scrolled beyond; drawn under
+   the popups and menus, which open over it), and the tray is gone, its
+   pin with it (`ui.activity_pin`).
+   - **It stays open**: a click elsewhere leaves it open, and a click in
+     it leaves the keyboard where it was. It never takes the keyboard by
+     itself: `ui.activity` (Ctrl+Shift+J) gives it the keyboard, and
+     folds it once it has it; Escape gives the keyboard back to the
+     files and leaves it open. A click on the strip opens it or folds
+     it, the keyboard left where it was. Its own place in the window's
+     Tab order (`keymap::ACTIVITY`, "Activity").
+   - **It opens by itself** where the tray unfolded (an action asked in
+     the window under way for `ui.activity_unfold_ms`), and, opened so,
+     folds itself once the spell of work has nothing more to show. So
+     does Activity opened by hand (the strip, `ui.activity`, a
+     notification, what arrives in a folder pressed) while something is
+     under way, waits or stopped: what it was opened to follow has ended
+     (the user saw one stay once its copy was cancelled). Opened with
+     nothing under way, to read Earlier or from a notice of what ended,
+     it stays until folded.
+   - **Its chevron folds it into the strip for the spell of work**: it
+     does not open by itself again until nothing runs, waits or stopped,
+     and the next long action opens it again. The user chose this over
+     a fold remembered with the window (which a look at Earlier, folded
+     after, would have turned into never opening by itself) and over
+     never opening by itself. A switch turns opening by itself off
+     (`ui.activity_opens`, on by default, the delay's slider under it).
+     What windows remembered (`activity_folded`) is not read.
+   - **Earlier is folded at its foot**, as it was in the tray: a line
+     saying how many it holds ("Earlier (3)") until unfolded, folded
+     again in each window as it opens; the action an error stopped is
+     said above it, under "Stopped", with its Retry.
 4. **Answers stay toasts**, one at a time, at the last pane's lower right,
    above the strip (or Activity pinned): there the list shows sizes and
    dates rather than names. On the whole screen, over the preview, as
    before. While Activity is open, no toast is drawn: one said meanwhile
    is held back and drawn once it closes, for its time (amended
-   2026-11-03: Earlier held every answer before).
+   2026-11-03: Earlier held every answer before). Amended 2026-11-13:
+   Activity, which now opens by itself and stays for a whole long copy,
+   would have held back every answer of the meanwhile (a trashed file's
+   Undo) for minutes; the answer is said above it instead, right-aligned
+   with it.
 5. **An action an error stopped stays in the strip**, in the error's
    colour, "Copy …: stopped" with Retry and Dismiss, until it is retried
    (from anywhere), Activity is opened, or it is dismissed; only one that
    was shown as a card there (a quick rename that fails has its answer).
+   Amended 2026-11-13: Activity shows it at its top while it is open, so
+   it is seen once Activity is folded, not opened.
 6. **The desktop is told of long actions it is not watched for**: an
    action that ran 5 s or more (the same 5 s after which its answer says
    what it moved in how long) and finished or stopped, or one waiting for
@@ -266,7 +309,9 @@ and macOS otherwise compiled only.
   when short; with two panes, which row? Far from Undo and the answers.
 - **A tray that takes room by default**, as Double Commander's panel: the
   list loses rows for the whole of the action, Chrome's old trade, and
-  the panes jump as actions start and end. Kept as the pinned choice.
+  the panes jump as actions start and end. Kept as the pinned choice,
+  then as Activity unfolded for a long action (2026-11-07), until
+  2026-11-13, when the floating panel took its place.
 - **The card shown for a few seconds before folding into the strip**: the
   action was just asked for, and the strip shows that it began.
 - **Progress in a notification**: GNOME draws none; the taskbar shows it.
@@ -277,7 +322,8 @@ and macOS otherwise compiled only.
 ## Consequences
 
 - The files are covered only by an answer, for its few seconds, at the
-  pane's lower right.
+  pane's lower right, and, since 2026-11-13, by Activity while it is open
+  (for a long action, by itself).
 - What a toast said is found again in Activity's Earlier until the window
   closes, unless it was an action's that the Undo history holds.
 - The window keeps whether it has the focus (`Shell::window_active`).

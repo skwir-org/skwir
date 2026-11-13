@@ -68,20 +68,24 @@ work where the keyboard is, by topic.
   Pause and Cancel act on what it shows: one action alone, or the whole
   queue (Pause all, Cancel all) when there are several. One an error
   stopped stays there in red until it is retried or dismissed.
-- **Activity** (a click on what runs, or `Ctrl+Shift+J`) shows each
-  action's card: how much of how much, and under the bar how fast it
-  goes and how long it has left (`2.0 MB/s · about 3 min left`), once a
-  few seconds of it tell, with Pause and Cancel; Cancel all over the
-  whole queue; what waits its turn, each with Cancel; and Earlier, what
-  failed, was cancelled or cannot be undone this session, with Retry, and
-  the messages toasts gave (what was done is in the Undo history). An
-  action you asked that lasts (1.5 s, Unfold Activity after in General's
-  More settings) unfolds Activity above the footer of its window until
-  nothing is left to show, three cards high at most, Earlier folded to a
-  line at its foot: it takes room rather than covering the files, and
-  leaves the keyboard where it is. Its chevron folds it into the
-  footer's strip for that window; the pin in Activity opened from the
-  strip unfolds it again. Onto a server that
+- **Activity** (a click on what runs, or `Ctrl+Shift+J`) floats above
+  the footer, over the files' lower right, and shows each action's card:
+  how much of how much, and under the bar how fast it goes and how long
+  it has left (`2.0 MB/s · about 3 min left`), once a few seconds of it
+  tell, with Pause and Cancel; Cancel all over the whole queue; what
+  waits its turn, each with Cancel; and, folded at its foot until you
+  unfold it, Earlier with how many it holds ("Earlier (3)"): what
+  failed, was cancelled or cannot be undone this session, with Retry,
+  and the messages toasts gave (what was done is in the Undo history).
+  It stays open when you click elsewhere, and leaves the keyboard where
+  it is: `Ctrl+Shift+J` takes the keyboard there, and again folds it;
+  Escape gives the keyboard back and leaves it open. An action you asked
+  that lasts (1.5 s, Open Activity after in General's More settings)
+  opens it by itself. Opened while something runs, it goes once nothing
+  is left to show; opened with nothing under way, it stays until you
+  fold it. Its chevron folds it
+  into the footer's strip until what runs has ended; the next long
+  action opens it again, unless Open Activity by itself is off. Onto a server that
   takes what is copied after (rclone's caches), a copy first says "then
   sent to the server", then the sending's own speed and time left.
   Cancel stops an action within a second or two, even in the

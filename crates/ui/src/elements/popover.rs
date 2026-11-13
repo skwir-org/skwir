@@ -137,6 +137,20 @@ impl PopoverAnchor {
         )
     }
 
+    /// `panel` standing above the anchor, reaching left from its right
+    /// edge, drawn at `priority` among deferred draws: what stays open at
+    /// the window's foot while popups open over it (Activity).
+    pub fn stand_above(&self, priority: usize, panel: AnyElement) -> AnyElement {
+        let mut panel = Some(panel);
+        hang(
+            std::slice::from_ref(self),
+            priority,
+            gpui::Anchor::BottomRight,
+            Room::Side,
+            move || panel.take(),
+        )
+    }
+
     /// A menu under the first of `anchors` drawn this frame: one opened
     /// from the keyboard hangs from the row it is about, or from the pane
     /// when no row is. Drawn at `priority` among deferred draws. It takes

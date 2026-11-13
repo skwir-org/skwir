@@ -1014,7 +1014,6 @@ impl Shell {
         self.preview.turned_types = session.turned_types;
         self.preview.folder_way = session.folder_way;
         self.layout.split = session.split_panes;
-        self.activity.folded = session.activity_folded;
         if session.player_height > 0. {
             self.player.height = session.player_height;
         }
@@ -2778,7 +2777,6 @@ impl Shell {
                 Some(plan) => self.show_activity_of(skwir_core::op::PlanId(plan), window, cx),
                 None => self.toggle_activity(args, window, cx),
             },
-            "activity_pin" => self.toggle_activity_pin(window, cx),
             "activity_earlier" => self.toggle_activity_earlier(cx),
             "activity_cancel_all" => {
                 self.activity_cancel_all();
@@ -3988,17 +3986,15 @@ impl Shell {
         // What runs, read once a frame for the footer and Activity.
         let under = last.then(|| self.under_way());
         if let Some(under) = &under {
-            self.sync_unfolded(under);
+            self.sync_unfolded(under, window, cx);
         }
         let footer = status::render(self, under.as_ref(), cx);
-        // The window's own, with its state: Activity pinned above the
-        // footer, and the last answer over the files at their lower right,
-        // where the list shows sizes and dates rather than names. On the
-        // whole screen the answer is said over the preview instead.
-        let tray = under
-            .as_ref()
-            .and_then(|under| crate::activity::tray(self, under, &theme, cx));
-        let answer = (last && self.preview.fullscreen.is_none())
+        // The window's own, with its state: the last answer over the files
+        // at their lower right, where the list shows sizes and dates rather
+        // than names; above Activity while it is open there (its strip draws
+        // both). On the whole screen the answer is said over the preview
+        // instead.
+        let answer = (last && self.preview.fullscreen.is_none() && !self.activity_open())
             .then(|| crate::toast::render_answer(self, cx))
             .flatten();
         let file_area = if last {
@@ -4068,7 +4064,6 @@ impl Shell {
             .children(banner)
             .child(file_area)
             .children(strip)
-            .children(tray)
             .child(footer)
             .children(edge);
         if theme.cards {

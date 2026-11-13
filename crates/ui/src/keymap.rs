@@ -78,8 +78,9 @@ pub const MAP: &str = "MapPreview";
 pub const MODEL: &str = "ModelPreview";
 /// The pinned player's dock.
 pub const PLAYER: &str = "Player";
-/// Activity standing above the footer, once `ui.activity` gave it the
-/// keyboard (`activity::tray`): Escape gives the keyboard back.
+/// Activity open above the footer, once `ui.activity` gave it the
+/// keyboard (`activity::panel`): Escape gives the keyboard back, and
+/// Activity stays open.
 pub const ACTIVITY: &str = "Activity";
 pub const REVIEW: &str = "Review";
 /// `ui.choose`'s picker.
@@ -1448,7 +1449,7 @@ pub(crate) const PLACES: &[Place] = &[
     place("fullscreen", FULLSCREEN, "Preview on the whole screen"),
     place("slideshow", SLIDESHOW, "Picture on the whole screen"),
     place("player", PLAYER, "Pinned player"),
-    place("activity", ACTIVITY, "Pinned Activity"),
+    place("activity", ACTIVITY, "Activity"),
     place("terminal", TERMINAL, "Terminal"),
     place("timeline", TIMELINE, "Timeline"),
     inside("palette", PALETTE, "Command palette"),
@@ -2990,12 +2991,12 @@ mod tests {
         assert_eq!(title(serde_json::json!({})), None);
     }
 
-    /// Activity standing is a place the keyboard reaches and leaves: Escape
+    /// Activity open is a place the keyboard reaches and leaves: Escape
     /// there gives it back to the files.
     #[test]
-    fn pinned_activity_is_a_place_left_by_escape() {
+    fn activity_is_a_place_left_by_escape() {
         assert_eq!(context_of(Some("activity")), super::ACTIVITY);
-        assert_eq!(context_label(super::ACTIVITY), "Pinned Activity");
+        assert_eq!(context_label(super::ACTIVITY), "Activity");
         assert!(
             super::BUILTIN
                 .iter()

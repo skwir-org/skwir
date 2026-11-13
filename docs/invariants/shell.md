@@ -167,8 +167,8 @@ Views are in [views.md](views.md); what locations decide, in
   tab shown). What is drawn on an area as a thing of its own (a picture,
   a page, a selection, a chip, a card's mark) and what is drawn over the
   window (menus, popovers, tooltips, toasts, dialogs, Peek, the whole
-  screen) keeps `bg` and `surface`, opaque; so does Activity standing above the footer, its popover kept
-  open, read at a glance whatever is behind. A part drawn both in the
+  screen) keeps `bg` and `surface`, opaque; so does Activity, open
+  above the footer, read at a glance whatever is behind. A part drawn both in the
   panel and over the window (a preview's content area, Properties, a
   container's kept rows) is handed the grounds it paints
   (`theme::Grounds`).
@@ -209,7 +209,9 @@ Views are in [views.md](views.md); what locations decide, in
   active (`Shell::drawn_focus`), or to the Settings dialog while it is
   open, never to the pane behind it. Never refocus by hand after closing
   something.
-- **One popup at a time,** all through `Shell::toggle_popup`. A press
+- **One popup at a time,** all through `Shell::toggle_popup` (Activity
+  is none: it stays open beside them, under them, and its giving the
+  keyboard closes the one open). A press
   outside closes it and says so (`pointer` in its close command,
   `Shell::note_dismissed`); if that press is on the popup's own button,
   it stays closed. Any button's click closes the open popup the same way,
@@ -966,54 +968,68 @@ of bars, split or not.
   several), then the strip's words as ever; its buttons hidden while
   it names another than the one they act on. The program is woken for
   the strip's own changes by one timer at a time, holding `Work`, not
-  the window (`work::wake_after`), never a loop. A click, or `ui.activity` (Ctrl+Shift+J),
-  opens Activity above it (one popup at a time, `toggle_popup`): each
-  action's card under a header over the queue with Cancel all while
-  several are under way or waiting, what waits (each with its Cancel,
-  Cancel waiting for several), and Earlier, this session's answers the
-  Undo history does not hold, with their Retry and Undo, twenty at most, in memory only:
-  an action that failed, was cancelled or that no journal keeps, and
-  every answer a toast says that is no action's (a print's, a message);
-  an action done and kept by the journal is the History's alone
-  (`Work::ended`); a message said again as the last one was is that one,
-  moved to now (`activity::keep`). Its heading (its name, and what
-  folds it) stays while its rows scroll beneath it, beside a scrollbar.
-  **Activity unfolds for a long action** (ADR-114, amended 2026-11-07):
-  once an action asked in this window has been under way, waiting or
-  running, for `ui.activity_unfold_ms` (1.5 s by default, a slider in
-  General's Actions), it stands above the last pane's footer, taking
-  room rather than covering the files, never taking the keyboard, and
-  stays for the spell of work, until nothing runs, waits or stopped
+  the window (`work::wake_after`), never a loop. **Activity is one panel,
+  floating** above the strip, over the files at their lower right
+  (`activity::panel`; ADR-114, amended 2026-11-13; at most
+  `PANEL_MOST`, 520 px, and the room above the strip, scrolled beyond;
+  drawn under the popups and menus, `PANEL_PRIORITY`): each action's
+  card under a header over the queue with Cancel all while several are
+  under way or waiting, what waits (each with its Cancel, Cancel
+  waiting for several), the action an error stopped with its Retry
+  (under "Stopped"), and Earlier folded at its foot, a line saying how
+  many it holds until unfolded (`ui.activity_earlier`): this session's
+  answers the Undo history does not hold, with their Retry and Undo,
+  twenty at most, in memory only: an action that failed, was cancelled
+  or that no journal keeps, and every answer a toast says that is no
+  action's (a print's, a message); an action done and kept by the
+  journal is the History's alone (`Work::ended`); a message said again
+  as the last one was is that one, moved to now (`activity::keep`). Its
+  heading (its name, and the chevron that folds it) stays while its rows
+  scroll beneath it, beside a scrollbar; it opens at its top. **It stays
+  open**: it is no popup (`toolbar_menu`), so a click elsewhere leaves
+  it, and a click on it or on the strip leaves the keyboard where it
+  was, so the keys go on acting on the pane. It never takes the
+  keyboard by itself: `ui.activity` (Ctrl+Shift+J) gives it the
+  keyboard (its first button once drawn: `activity::once_drawn`, as what
+  is asked for the next frame runs before it is drawn) and folds it once
+  it has it; a click on the strip (`pointer`) opens it or folds it. It
+  is a place of its own (`keymap::ACTIVITY`): Escape gives the keyboard
+  back to the files and leaves it open; folded, or folding itself, with
+  the keyboard, it gives the keyboard back (`Shell::close_activity`).
+  **It opens by itself for a long action** (amended 2026-11-07): once an
+  action asked in this window has been under way, waiting or running,
+  for `ui.activity_unfold_ms` (1.5 s by default, a slider under the
+  switch `ui.activity_opens` in General's Actions), it opens
+  (`activity::Opened::Spell`), and folds itself once the spell of
+  work has nothing more to show, nothing running, waiting or stopped
   (`Shell::sync_unfolded`, `Work::unfolds_in`; the program woken then,
   by the strip's one timer). An action is asked in the window that ran
   its command (`finishing::ran`, a reviewed proposal's too), else in the
   window in front as it joined (an undo, a retry, a script's; a task, a
-  print). Quicker
-  ones, and those of other windows, the strip says alone. Its chevron
-  folds it into the strip (`ui.activity_pin`, remembered with the
-  window's shape: `activity_folded`); the popup's pin, pressed while it
-  is folded, unfolds it, standing at once with something to show.
-  Standing, it is at most `TRAY_MOST` (260 px, about three cards; half
-  a low pane) and scrolled beyond, and the strip steps aside; it shows
-  the action an error stopped and folds the rest of Earlier at its foot,
-  a line until unfolded (`ui.activity_earlier`). Open as a popup, it
-  stays where it opened until closed. Standing,
-  it is a place of its own (`keymap::ACTIVITY`): `ui.activity` gives it
-  the keyboard, Escape gives it back to the files. With `plan`
-  (`Shell::show_activity_of`: what a plan brings into a folder pressed,
-  ADR-135), `ui.activity` opens it where it would open and never
-  closes it, and the frame after, once the cards are drawn, gives the
-  keyboard to that plan's Pause, or to its Cancel while it waits, which
-  scrolls it into view. A card's title names the folder it brings into
-  by its name (`op::transfer_title`); pointed at, it says each folder's
-  whole path (`Executor::brings_into`). A click on the strip
-  or on Activity standing leaves the keyboard where it was, so the keys go
-  on acting on the pane. What is under way is read once a frame
+  print). Quicker ones, and those of other windows, the strip says
+  alone. Opened by hand (the strip, `ui.activity`, a notification) while
+  something is under way, waits or stopped, it goes with the spell too;
+  opened with nothing under way, to read Earlier or from a notice of
+  what ended (`Opened::Ended`), it stays until folded
+  (`Shell::open_by_hand`).
+  **Its chevron folds it for the spell of work** (`ui.activity` with
+  `close`, `Shell::fold_activity`): it does not open by itself again
+  until the spell has nothing more to show, and the next long action
+  opens it again; nothing of it is remembered with the window. With
+  `plan` (`Shell::show_activity_of`: what a plan brings into a folder
+  pressed, ADR-135), `ui.activity` opens it and never folds it, and
+  once the cards are drawn gives the keyboard to that plan's Pause, or
+  to its Cancel while it waits, which scrolls it into view. A card's
+  title names the folder it brings into by its name
+  (`op::transfer_title`); pointed at, it says each folder's whole path
+  (`Executor::brings_into`). The latest answer is said above it while
+  it is open (`toast::render_answer`, drawn by the panel), never held
+  back for it. What is under way is read once a frame
   (`Shell::under_way`, passed to the strip, Activity and the footer).
   The button the keyboard reaches in Activity scrolls into view, once,
   as it arrives (`activity::Reveal`). An action an error stopped stays in the strip, in the error's
-  colour, until retried (from anywhere), Activity opened, or dismissed;
-  only one that was a card there. Progress bars:
+  colour, until retried (from anywhere), Activity folded (which showed
+  it), or dismissed; only one that was a card there. Progress bars:
   [operations.md](operations.md). A card's bar moves by the plan's bytes
   where its total is known (sized before it began), its items counted
   beside; under the bar, quieter, its speed and time left as the core
@@ -1058,10 +1074,11 @@ of bars, split or not.
   became; no toast is drawn while it is open, and one said meanwhile
   keeps its time, which begins once it is drawn.
 - **One answer at a time** (`toast.rs`), over the files at the last
-  pane's lower right, above the strip or Activity standing, where the list
-  shows sizes and dates rather than names; over the preview on the whole
-  screen. Not while Activity or the History is open: one said meanwhile
-  is held back and drawn once it closes, for its time.
+  pane's lower right, above the strip or above Activity open there (the
+  panel draws it), where the list shows sizes and dates rather than
+  names; over the preview on the whole screen. Not while the History is
+  open: one said meanwhile is held back and drawn once it closes, for
+  its time.
   A plan that ran
   5 s or more and moved bytes says them in its toast, and how long it
   ran ("4.8 GB in 3 min 20 s"). A toast stays at least as long as its

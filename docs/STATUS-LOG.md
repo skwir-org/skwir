@@ -16709,3 +16709,59 @@ provider's); `site` showed its `index.html` in reading mode once added;
 names unfolded; `index.html` dragged first made `both` show it over its
 README; Revert gave the eight back and `both` its README. Not tried:
 Windows' and macOS' clippy (no system's code changed).
+
+## 2026-11-13: Activity is one floating panel (ADR-114 amended)
+
+The user asked to keep only Activity's floating panel, staying open when
+clicking outside, with a down chevron folding it into the footer, and
+Earlier folded there with its count, as the tray had it. Asked how a
+fold lasts, the user chose until the spell of work ends (the next long
+action opens it again; a switch turns opening by itself off) over a
+fold remembered with the window and over never opening by itself.
+**Built:** the popup (`toolbar_menu`'s `activity`) and the tray above
+the footer are one panel, `activity::panel`, drawn by the strip, which
+stays under it: anchored at the strip's right edge (`PopoverAnchor::
+stand_above`, under the popups at deferred priority 2), 400 px wide,
+520 px high at most and the room above the strip, occluding what is
+under it. It is no popup: a click elsewhere leaves it open, a click on
+it or on the strip (`ui.activity` with `pointer`) leaves the keyboard
+where it was. `ActivityState::open` says what it was opened for
+(`Opened::Spell`, by itself for an action asked in the window that
+lasted `ui.activity_unfold_ms` or by hand while something was under
+way, folding itself once the spell has nothing more to show;
+`Opened::Ended`, by hand with nothing under way, staying until folded:
+the user saw one opened by hand stay once its copy was cancelled, and
+asked; `Shell::open_by_hand`); `folded` is the spell's, cleared
+as the spell ends, and set too when `ui.activity_opens` (new, on, the
+delay's slider under it) is off. Ctrl+Shift+J gives it the keyboard
+(its first button, a frame after it is drawn: `once_drawn`, as what is
+asked for the next frame runs before that frame is drawn), and folds it
+once it has it; Escape gives the keyboard back and leaves it open;
+folding with the keyboard in it gives the keyboard to the pane
+(`close_activity`). Folding sees what an error stopped, which it shows
+under "Stopped". Earlier is folded at its foot, "Earlier (N)", in every
+case. The answer is said above it while it is open (the panel draws
+`toast::render_answer`), no longer held back. Gone: `ui.activity_pin`,
+the pin, `TRAY_MOST`, `Shows`, the window's `activity_folded` (not read
+from older state files). The strip's chevron points up to open it
+(several actions) and down while it is open, as Undo's does.
+**Checked:** clippy, the UI tests (665). In a window (Xvfb, lavapipe,
+200,000 files of 64 B copied): the panel opened by itself about 2 s in
+and went as the copy ended, its answer then at the files' foot; paused
+from its card, it stayed through a click on the files; its chevron
+folded it, and it stayed folded 3 s on while the copy waited; the strip
+opened and folded it; Ctrl+Shift+J opened it with the keyboard on its
+chevron, again folded it; Escape left it open, the keyboard gone; the
+line unfolded Earlier's row; with `ui.activity_opens` off, a 6 s copy
+left the strip alone; Settings shows the switch in General's Actions. A
+copy of 30,000 files ending within 1.5 s left the strip alone, as asked.
+After the rule for opening by hand changed (a second build): opened by
+Ctrl+Shift+J during a copy, it went as the copy ended; a copy cancelled
+from it by the keyboard said "Stopping…" for about 1.3 s, then it went,
+the keyboard back with the pane, the answer at the files' foot in the
+same frame; opened by Ctrl+Shift+J with nothing under way, it stayed
+(3 s on) with "Earlier (1)" folded and the answer above it. Once, in
+the first build, a cancel's answer was not yet drawn 1.5 s after its
+card had gone, the strip silent meanwhile; not seen again in a capture
+every 0.35 s. Not tried: Windows' and
+macOS' clippy (no system's code changed).

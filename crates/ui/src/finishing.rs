@@ -676,9 +676,7 @@ impl Inbox {
     }
 }
 
-/// How the desktop is told while windows are up: looked at while one of
-/// them has the focus.
-/// After how long an action a window asked unfolds Activity there
+/// After how long an action a window asked opens Activity there
 /// (`ui.activity_unfold_ms`).
 fn unfold_after(app: &skwir_core::App) -> std::time::Duration {
     let ms = app
@@ -688,6 +686,8 @@ fn unfold_after(app: &skwir_core::App) -> std::time::Duration {
     std::time::Duration::from_millis(u64::try_from(ms).unwrap_or(0))
 }
 
+/// How the desktop is told while windows are up: looked at while one of
+/// them has the focus.
 fn watched(cx: &App) -> Watched {
     let state = cx.global::<Finishing>();
     let looked_at = state.windows.iter().any(|(_, handle)| {
@@ -739,7 +739,7 @@ fn answer_desktop(cx: &mut App, asked: Vec<Asked>) {
     if shown && let Some(window) = active_handle(cx) {
         let _ = window.update(cx, |shell, window, cx| {
             window.activate_window_with_token(token.as_deref());
-            if !shell.activity_open() && !shell.activity_tray_shown() {
+            if !shell.activity_open() {
                 shell.toggle_activity(&serde_json::json!({}), window, cx);
             }
         });
@@ -1366,7 +1366,7 @@ fn open_window(
         // above is laid out.
         if activity {
             cx.on_next_frame(window, |shell, window, cx| {
-                if !shell.activity_open() && !shell.activity_tray_shown() {
+                if !shell.activity_open() {
                     shell.toggle_activity(&serde_json::json!({}), window, cx);
                 }
             });

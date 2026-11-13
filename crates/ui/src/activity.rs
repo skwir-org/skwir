@@ -3,18 +3,19 @@
 //! Work under way is the window's state, which ends the last pane's
 //! footer (`status.rs`): a strip there says how far what runs has gone, in
 //! as many words as the footer has room for (`Fit`), with Pause and Cancel
-//! for a single action. A click on it opens Activity above it: each
+//! for a single action. Activity floats above it, over the files: each
 //! action's card (its bar, speed and time left, Pause and Cancel), what
 //! waits its turn, and what ended this session that the History does not
-//! hold (`Earlier`: what failed, was cancelled or cannot be undone, and
-//! the answers that are no action's), with its Retry or Undo, kept in
-//! memory only. Pinned, Activity stands above the footer instead, taking
-//! room rather than covering the files, while there is something under
-//! way to show. Nothing floats over the files but the latest answer
-//! (`toast.rs`).
+//! hold (`Earlier`, folded to a line until unfolded: what failed, was
+//! cancelled or cannot be undone, and the answers that are no action's),
+//! with its Retry or Undo, kept in memory only. It opens by itself once an
+//! action the window asked lasted, and when asked (the strip, `ui.activity`);
+//! it stays where it is until its chevron folds it into the strip, a click
+//! elsewhere included (ADR-114, amended 2026-11-13). The latest answer
+//! (`toast.rs`) is said above it while it is open.
 //!
 //! An action an error stopped stays in the strip, in the error's colour,
-//! until it is retried, Activity is opened, or it is dismissed.
+//! until it is retried, Activity is folded, or it is dismissed.
 
 use crate::sizes::TextSizes;
 use crate::sizes::sized;
@@ -40,16 +41,17 @@ use crate::toast::{
     Action, Running, Toast, Tone, bar, capitalized, pace, sending, share, waiting_words,
 };
 
-/// Activity's popup, as `Shell::toggle_popup` and `toolbar_menu` know it.
-pub const POPUP: &str = "activity";
-
 /// What `Earlier` keeps: the answers of this session the History does not
 /// hold, newest first.
 pub(crate) const EARLIER: usize = 20;
 
-/// The most Activity standing takes above the footer, its heading included:
-/// about three running actions' cards; what it holds beyond scrolls.
-const TRAY_MOST: f32 = 260.;
+/// The most Activity takes above the footer, its heading included; what it
+/// holds beyond scrolls. Never more than the room above the strip.
+const PANEL_MOST: f32 = 520.;
+
+/// Where Activity is drawn among what is drawn over the window: under the
+/// popups and menus (`PopoverAnchor`'s 3), which open over it.
+const PANEL_PRIORITY: usize = 2;
 
 /// The key of the next answer kept in `Earlier`.
 static NEXT_ENDED: AtomicU64 = AtomicU64::new(1);
@@ -158,20 +160,31 @@ struct StripFocus {
     dismiss: FocusHandle,
 }
 
+/// What Activity was opened for, which says when it goes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Opened {
+    /// The spell of work under way: by itself, for an action the window
+    /// asked that lasted (`ui.activity_unfold_ms`), or by hand while
+    /// something ran, waited or stopped. It folds itself once the spell
+    /// has nothing more to show.
+    Spell,
+    /// What ended, opened by hand with nothing under way (Earlier, a
+    /// notification of what ended): it stays until folded.
+    Ended,
+}
+
 /// Activity as the window shows it; what runs and what was said of it is
 /// `Work`'s (`work.rs`), which outlives the window.
 #[derive(Default)]
 pub struct ActivityState {
-    /// Activity folded into the footer's strip by its chevron: it opens
-    /// over the files when asked, never by itself (remembered with the
-    /// window). Unfolded, as by default, it stands above the footer once
-    /// an action the window asked lasted (ADR-114, amended 2026-11-07).
-    pub folded: bool,
-    /// Activity unfolded for this spell of work: an action the window
-    /// asked lasted `ui.activity_unfold_ms` (`Work::unfolds_in`), or it was
-    /// unfolded by hand. Kept until it has nothing to show, so that it
-    /// never folds and unfolds between the actions of a spell.
-    stands: bool,
+    /// Activity open above the strip, and what it was opened for: a click
+    /// elsewhere leaves it open, and its chevron folds it (ADR-114,
+    /// amended 2026-11-13).
+    pub(crate) open: Option<Opened>,
+    /// Folded by hand for this spell of work: it does not open by itself
+    /// again until the spell has nothing more to show; the next long
+    /// action opens it again.
+    folded: bool,
     anchor: PopoverAnchor,
     /// Each card's Pause and Cancel, by plan; each task's Cancel.
     cards: HashMap<PlanId, (FocusHandle, FocusHandle)>,
@@ -185,24 +198,22 @@ pub struct ActivityState {
     /// The header's Cancel all, which cancels the whole queue.
     cancel_all: Option<FocusHandle>,
     strip: Option<StripFocus>,
-    pin: Option<FocusHandle>,
-    /// Earlier unfolded at the foot of Activity standing
-    /// (`ui.activity_earlier`), and the button that folds it.
+    /// The heading's chevron, which folds it.
+    chevron: Option<FocusHandle>,
+    /// Earlier unfolded at Activity's foot (`ui.activity_earlier`), and the
+    /// line that folds it.
     earlier_unfolded: bool,
     fold: Option<FocusHandle>,
-    /// What `ui.activity` gives the keyboard to while it stands.
-    tray: Option<FocusHandle>,
-    /// What brings the button the keyboard reaches into view: in the
-    /// popup, made again as it opens (it opens at its top), and standing.
-    popup_reveal: Reveal,
-    tray_reveal: Reveal,
+    /// What `ui.activity` gives the keyboard to.
+    panel: Option<FocusHandle>,
+    /// What brings the button the keyboard reaches into view.
+    reveal: Reveal,
 }
 
 /// What brings the button the keyboard reaches into view in Activity's
-/// rows, which scroll under its heading: the popup's, at most 520 px, and
-/// the standing tray's, at most `TRAY_MOST`. Toolbar popups do it by their
-/// rows' key context (`toolbar::RevealRow`); Activity's buttons are its
-/// own.
+/// rows, which scroll under its heading, `PANEL_MOST` high at most.
+/// Toolbar popups do it by their rows' key context (`toolbar::RevealRow`);
+/// Activity's buttons are its own.
 #[derive(Clone, Default)]
 pub(crate) struct Reveal {
     pub(crate) scroll: ScrollHandle,
@@ -519,14 +530,12 @@ impl Shell {
         self.work.borrow().under_way(&self.app)
     }
 
-    /// Whether Activity's popup is open.
+    /// Whether Activity is open above its strip.
     pub(crate) fn activity_open(&self) -> bool {
-        self.toolbar_menu
-            .as_ref()
-            .is_some_and(|popup| popup.kind == POPUP)
+        self.activity.open.is_some()
     }
 
-    /// Whether Activity has something to stand above the footer for, as
+    /// Whether Activity has something to show for the spell of work, as
     /// `under` runs: under way, waiting (any of what it lists, which a
     /// count of the queue tells), or stopped.
     fn activity_holds(&self, under: &Under) -> bool {
@@ -536,91 +545,160 @@ impl Shell {
             || self.app.executor.queued() > 0
     }
 
-    /// Whether Activity stands above the footer as `under` runs: unfolded
-    /// for this spell (`sync_unfolded`), with something to show, unless it
-    /// is open as a popup, which stays where it opened until it is closed
-    /// (the strip draws it).
-    pub(crate) fn activity_tray_shown_for(&self, under: &Under) -> bool {
-        self.activity_stands() && self.activity_holds(under)
-    }
-
-    /// `activity_tray_shown_for` what runs now, for what is asked between
-    /// frames (a command, the desktop).
-    pub(crate) fn activity_tray_shown(&self) -> bool {
-        self.activity_stands() && self.activity_holds(&self.under_way())
-    }
-
-    fn activity_stands(&self) -> bool {
-        !self.activity.folded && self.activity.stands && !self.activity_open()
-    }
-
-    /// Before each frame of the last pane: Activity unfolds above its
-    /// footer once an action this window asked has lasted
-    /// `ui.activity_unfold_ms`, where it was asked and nowhere else
-    /// (`Work::unfolds_in`; ADR-114, amended 2026-11-07), and stays for the
-    /// spell of work, until it has nothing to show. Quicker ones, and
-    /// those asked elsewhere, the strip says alone.
-    pub(crate) fn sync_unfolded(&mut self, under: &Under) {
+    /// Before each frame of the last pane: Activity opens by itself once an
+    /// action this window asked has lasted `ui.activity_unfold_ms`, where
+    /// it was asked and nowhere else (`Work::unfolds_in`; ADR-114, amended
+    /// 2026-11-07 and 2026-11-13), unless it was folded in this spell of
+    /// work or `ui.activity_opens` is off; and, opened so, it folds itself
+    /// once the spell has nothing more to show, as it does opened by hand
+    /// while something was under way; the next long action opens it
+    /// again. Quicker ones, and those asked elsewhere, the strip says
+    /// alone. Opened by hand with nothing under way, it stays until folded.
+    pub(crate) fn sync_unfolded(
+        &mut self,
+        under: &Under,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if !self.activity_holds(under) {
-            self.activity.stands = false;
-        } else if !self.activity.stands
+            self.activity.folded = false;
+            if self.activity.open == Some(Opened::Spell) {
+                self.close_activity(window, cx);
+            }
+        } else if self.activity.open.is_none()
+            && !self.activity.folded
             && self
                 .work
                 .borrow()
                 .unfolds_in(self.window_id, std::time::Instant::now())
         {
-            self.activity.stands = true;
+            // Asked once a spell: off, it is as if folded until the spell
+            // ends.
+            if self
+                .app
+                .settings
+                .get::<bool>(crate::settings::ACTIVITY_OPENS_KEY)
+                .unwrap_or(true)
+            {
+                self.open_activity(Opened::Spell);
+            } else {
+                self.activity.folded = true;
+            }
         }
     }
 
-    /// `ui.activity`: open Activity above its strip, or close it (`args`:
-    /// `close`, `pointer`, as every popup's toggle). Pinned and shown, it
-    /// is already open: the keyboard goes to it.
+    /// `ui.activity`: open Activity above its strip, or fold it (`args`:
+    /// `close` folds it; `pointer`, a click on the strip, leaves the
+    /// keyboard where it was and folds it when open). From the keyboard it
+    /// gives Activity the keyboard, and folds it once it has it. Opened so,
+    /// it goes with the spell of work under way, or, with nothing under
+    /// way, stays until folded (`open_by_hand`).
     pub(crate) fn toggle_activity(
         &mut self,
         args: &serde_json::Value,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let closing = args.get("close").and_then(serde_json::Value::as_bool) == Some(true);
-        if !closing && self.activity_tray_shown() {
-            // One popup at a time: the one open closes.
-            self.close_popup(window, cx);
-            let focus = self
-                .activity
-                .tray
-                .get_or_insert_with(|| cx.focus_handle().tab_stop(false))
-                .clone();
-            // Its first button: the tray itself is no stop.
-            window.focus(&focus, cx);
-            window.focus_next(cx);
-            cx.notify();
+        let said = |key: &str| args.get(key).and_then(serde_json::Value::as_bool) == Some(true);
+        let pointer = said("pointer");
+        let has_keyboard = self
+            .activity
+            .panel
+            .as_ref()
+            .is_some_and(|focus| focus.contains_focused(window, cx));
+        if said("close") || (self.activity_open() && (pointer || has_keyboard)) {
+            self.fold_activity(window, cx);
             return;
         }
-        if self.toggle_popup(POPUP, args, window, cx) {
-            self.toolbar_menu = Some(crate::toolbar::Popup::new(POPUP, window, cx));
-            self.activity.popup_reveal = Reveal::default();
-            // Seen: the strip says it no more.
-            self.work.borrow_mut().stopped = None;
+        self.open_by_hand();
+        if !pointer {
+            // One place for the keyboard at a time: the popup open closes.
+            self.close_popup(window, cx);
+            self.focus_activity(window, cx);
         }
         cx.notify();
     }
 
-    /// `ui.activity` with `plan`: Activity open, standing or as its popup,
-    /// the keyboard on that action's card (its Pause), or on its row's
-    /// Cancel while it waits, once drawn: what a press on what it brings
-    /// into a folder opens (ADR-135). Never closes it.
+    /// Activity open for what `opened` says, at its top, unless it is
+    /// open already: what it was opened for stays.
+    fn open_activity(&mut self, opened: Opened) {
+        if self.activity.open.is_none() {
+            self.activity.reveal = Reveal::default();
+            self.activity.open = Some(opened);
+        }
+    }
+
+    /// Activity opened by hand: for the spell of work while something is
+    /// under way, waits or stopped, going with it; else for what ended,
+    /// staying until folded.
+    fn open_by_hand(&mut self) {
+        let opened = if self.activity_holds(&self.under_way()) {
+            Opened::Spell
+        } else {
+            Opened::Ended
+        };
+        self.open_activity(opened);
+    }
+
+    /// The keyboard on Activity's first button, once it is drawn: Activity
+    /// itself is no stop.
+    fn focus_activity(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let focus = self.activity_focus(cx);
+        once_drawn(window, move |window, cx| {
+            window.focus(&focus, cx);
+            window.focus_next(cx);
+        });
+    }
+
+    fn activity_focus(&mut self, cx: &mut Context<Self>) -> FocusHandle {
+        self.activity
+            .panel
+            .get_or_insert_with(|| cx.focus_handle().tab_stop(false))
+            .clone()
+    }
+
+    /// Fold Activity into its strip, for this spell of work: it does not
+    /// open by itself again until the spell has nothing more to show. What
+    /// an error stopped, which it showed, is seen: the strip says it no
+    /// more. The keyboard it had goes back to the files.
+    pub(crate) fn fold_activity(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.activity.open.is_none() {
+            return;
+        }
+        self.activity.folded = self.activity_holds(&self.under_way());
+        self.work.borrow_mut().stopped = None;
+        self.close_activity(window, cx);
+        cx.notify();
+    }
+
+    /// Activity closed, the keyboard it had given back to the files: what
+    /// it is on is drawn no more.
+    fn close_activity(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.activity.open = None;
+        if self
+            .activity
+            .panel
+            .as_ref()
+            .is_some_and(|focus| focus.contains_focused(window, cx))
+        {
+            window.focus(&self.ui().focus, cx);
+        }
+    }
+
+    /// `ui.activity` with `plan`: Activity open, the keyboard on that
+    /// action's card (its Pause), or on its row's Cancel while it waits,
+    /// once drawn: what a press on what it brings into a folder opens
+    /// (ADR-135). Never folds it.
     pub(crate) fn show_activity_of(
         &mut self,
         plan: PlanId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.activity_open() {
-            self.toggle_activity(&serde_json::json!({}), window, cx);
-        }
+        self.open_by_hand();
+        self.close_popup(window, cx);
         let shell = cx.weak_entity();
-        window.on_next_frame(move |window, cx| {
+        once_drawn(window, move |window, cx| {
             shell
                 .update(cx, |this, cx| this.focus_card(plan, window, cx))
                 .ok();
@@ -647,25 +725,8 @@ impl Shell {
         }
     }
 
-    /// `ui.activity_pin`: fold Activity into the footer's strip, where it
-    /// opens over the files when asked, or unfold it again, to stand above
-    /// the footer once an action asked here lasted.
-    pub(crate) fn toggle_activity_pin(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.activity.folded = !self.activity.folded;
-        self.remember_session();
-        // Unfolded by hand with something to show, it stands at once,
-        // where the popup was.
-        if !self.activity.folded && self.activity_holds(&self.under_way()) {
-            self.activity.stands = true;
-            if self.activity_open() {
-                self.close_popup(window, cx);
-            }
-        }
-        cx.notify();
-    }
-
-    /// `ui.activity_earlier`: unfold Earlier at the foot of Activity
-    /// standing, or fold it again.
+    /// `ui.activity_earlier`: unfold Earlier at Activity's foot, or fold it
+    /// again.
     pub(crate) fn toggle_activity_earlier(&mut self, cx: &mut Context<Self>) {
         self.activity.earlier_unfolded = !self.activity.earlier_unfolded;
         cx.notify();
@@ -708,6 +769,13 @@ impl Shell {
         }
         self.work.borrow_mut().carded.extend(plans);
     }
+}
+
+/// `then` once the next frame is drawn, with what it draws anew (Activity
+/// opened, its buttons) in the window's Tab order: what is asked for the
+/// next frame runs before it is drawn.
+fn once_drawn(window: &Window, then: impl FnOnce(&mut Window, &mut gpui::App) + 'static) {
+    window.on_next_frame(move |window, _| window.on_next_frame(then));
 }
 
 /// The scroll offset that shows `row` whole in `area`, scrolled by
@@ -1125,9 +1193,6 @@ pub fn strip(
     theme: &Theme,
     cx: &mut Context<Shell>,
 ) -> Option<AnyElement> {
-    if shell.activity_tray_shown_for(under) {
-        return None;
-    }
     let open = shell.activity_open();
     // Shown while anything of the spell runs or waits, an action handed
     // over to the next included (what is admitted and not yet told
@@ -1281,12 +1346,23 @@ pub fn strip(
                     .whitespace_nowrap()
                     .child(words.clone())
             })
-            .when(several, |d| {
-                d.child(controls::glyph("up", theme.text_muted, 11.))
+            // A chevron points where Activity goes: up to open it, where
+            // there is more to see than the strip says, down to fold it.
+            .when(several || open, |d| {
+                d.child(controls::glyph(
+                    if open { "chevron" } else { "chevron-up" },
+                    theme.text_muted,
+                    11.,
+                ))
             })
             .press(
                 |this, window, cx| {
-                    this.run("ui.activity", serde_json::json!({}), window, cx);
+                    this.run(
+                        "ui.activity",
+                        serde_json::json!({"pointer": true}),
+                        window,
+                        cx,
+                    );
                 },
                 cx,
             );
@@ -1306,7 +1382,7 @@ pub fn strip(
                 .into_any_element(),
         );
     }
-    let popup = popover(shell, under, theme, cx);
+    let panel = panel(shell, under, theme, cx);
     // Said once, as a toast is: polite, while it is announced (its words
     // stay the same meanwhile, so it is not said again).
     let heard = announce.filter(|_| a11y).map(|Announced { heard, .. }| {
@@ -1329,14 +1405,18 @@ pub fn strip(
                 cuts: false,
                 start: false,
             })
-            .children(popup)
+            .children(panel)
             .into_any_element(),
     )
 }
 
-/// Activity, opened above its strip: its heading, and what `body` holds
-/// beneath, scrolled.
-fn popover(
+/// Activity, open above its strip (`Shell::activity_open`), over the files:
+/// its heading, and what `body` holds beneath, scrolled, `PANEL_MOST` high
+/// at most; the latest answer is said above it, where it would be covered
+/// at the files' foot (`toast::render_answer`). A click elsewhere leaves it
+/// open, and a click in it leaves the keyboard where it was: the keys go on
+/// acting on the pane while it is open.
+fn panel(
     shell: &mut Shell,
     under: &Under,
     theme: &Theme,
@@ -1345,91 +1425,59 @@ fn popover(
     if !shell.activity_open() {
         return None;
     }
-    let reveal = shell.activity.popup_reveal.clone();
-    let heading = heading(shell, false, theme, cx);
-    let body = body(shell, under, Shows::All, &reveal, theme, cx);
-    let popup = shell.toolbar_menu.as_ref()?;
-    let panel = crate::toolbar::popup_panel(popup, "ui.activity", theme, cx)
+    let focus = shell.activity_focus(cx);
+    let reveal = shell.activity.reveal.clone();
+    let heading = heading(shell, theme, cx);
+    let body = body(shell, under, &reveal, theme, cx);
+    let answer = crate::toast::render_answer(shell, cx);
+    let panel = div()
+        .id("activity")
         .role(gpui::Role::Group)
         .aria_label("Activity")
+        // A place of its own, as the pinned player is: Escape gives the
+        // keyboard back to the pane (`keymap::PLACES`).
+        .key_context(crate::keymap::ACTIVITY)
+        .track_focus(&focus)
+        // Its own place in the window's Tab order, its buttons walked in
+        // theirs (as `toolbar::Popup`'s).
+        .tab_group()
+        .tab_index(1)
+        .capture_any_mouse_down(|_, window, _| window.prevent_default())
+        // What is under it is not pressed through it.
+        .occlude()
+        .w(sized(400.))
+        .min_h_0()
+        .max_h(sized(PANEL_MOST))
+        .flex()
+        .flex_col()
+        .rounded_lg()
+        .border_1()
+        .border_color(theme.border)
+        .bg(theme.bg)
+        .text_color(theme.text)
+        .shadow_md()
         // Its rows scroll, beside their scrollbar.
         .overflow_hidden()
-        .w(sized(400.))
-        .max_h(sized(520.))
-        .p_0()
-        .gap_0()
         .child(heading)
-        .child(scrolled("activity-popup", body, &reveal));
-    Some(shell.activity.anchor.popup_above_for(
-        &crate::elements::adaptive::Chosen::default(),
-        vec![panel.into_any_element()],
-    ))
-}
-
-/// Activity standing above the last pane's footer, unfolded for this spell
-/// of work (`Shell::sync_unfolded`) while something is under way
-/// (`under`): what runs and waits, taking room rather than covering
-/// the files, `TRAY_MOST` high at most (half the pane, in a low one),
-/// scrolled beyond.
-pub fn tray(
-    shell: &mut Shell,
-    under: &Under,
-    theme: &Theme,
-    cx: &mut Context<Shell>,
-) -> Option<AnyElement> {
-    if !shell.activity_tray_shown_for(under) {
-        return None;
-    }
-    let focus = shell
-        .activity
-        .tray
-        .get_or_insert_with(|| cx.focus_handle().tab_stop(false))
-        .clone();
-    let reveal = shell.activity.tray_reveal.clone();
-    let heading = heading(shell, true, theme, cx);
-    let body = body(shell, under, Shows::Pinned, &reveal, theme, cx);
+        .child(scrolled("activity", body, &reveal));
+    let column = div()
+        .flex()
+        .flex_col()
+        .items_end()
+        .min_h_0()
+        .gap_2()
+        .children(answer.map(|answer| div().flex_none().child(answer)))
+        .child(panel);
     Some(
-        div()
-            .id("activity-tray")
-            .role(gpui::Role::Group)
-            .aria_label("Activity")
-            // A place of its own, as the pinned player is: Escape gives
-            // the keyboard back to the pane (`keymap::PLACES`).
-            .key_context(crate::keymap::ACTIVITY)
-            .track_focus(&focus)
-            // Its own place in the window's Tab order, its buttons walked
-            // in theirs (as `toolbar::Popup`'s).
-            .tab_group()
-            .tab_index(1)
-            // A click in it leaves the keyboard where it was, as on the
-            // strip: the keys go on acting on the pane while it stands.
-            .capture_any_mouse_down(|_, window, _| window.prevent_default())
-            .flex_none()
-            .max_h(gpui::relative(0.5))
-            .flex()
-            .flex_col()
-            .border_t_1()
-            .border_color(theme.border)
-            // Opaque whatever the files' ground: Activity standing is its
-            // popover kept open, read at a glance over any background.
-            .bg(theme.bg)
-            .text_color(theme.text)
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .min_h_0()
-                    .max_h(crate::sizes::sized(TRAY_MOST))
-                    .child(heading)
-                    .child(scrolled("activity-tray", body, &reveal)),
-            )
-            .into_any_element(),
+        shell
+            .activity
+            .anchor
+            .stand_above(PANEL_PRIORITY, column.into_any_element()),
     )
 }
 
 /// Activity's `body`, scrolled by `reveal` (which brings the button the
-/// keyboard reaches into view) beside its scrollbar: in the popup, and
-/// standing.
+/// keyboard reaches into view) beside its scrollbar.
 fn scrolled(id: &'static str, body: Vec<AnyElement>, reveal: &Reveal) -> AnyElement {
     div()
         .relative()
@@ -1453,60 +1501,22 @@ fn scrolled(id: &'static str, body: Vec<AnyElement>, reveal: &Reveal) -> AnyElem
         .into_any_element()
 }
 
-/// How Activity shows `Earlier` (ADR-114, amended 2026-11-03).
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Shows {
-    /// All it keeps: in the popup.
-    All,
-    /// Standing: the action an error stopped, which the tray stands for
-    /// while its Retry waits (`Work::stopped`), and the rest folded at its
-    /// foot, a line until unfolded (`ui.activity_earlier`).
-    Pinned,
-}
-
-/// Activity's name and what folds it, above its rows, which scroll
-/// beneath it: standing above the footer (`standing`), its chevron folds
-/// it into the strip; in the popup, its pin, pressed while it is unfolded,
-/// folds it, and unfolds it again (ADR-114, amended 2026-11-07).
-fn heading(
-    shell: &mut Shell,
-    standing: bool,
-    theme: &Theme,
-    cx: &mut Context<Shell>,
-) -> AnyElement {
-    let unfolded = !shell.activity.folded;
-    let focus = shell.activity.pin.get_or_insert_with(|| stop(cx)).clone();
-    let button = if standing {
-        controls::icon_button(
-            "activity-fold",
-            "chevron",
-            "Fold into the footer",
-            &focus,
-            theme,
-        )
-        .tooltip(|_, cx| crate::toolbar::tooltip("Fold Activity into the footer".into(), cx))
-    } else {
-        let tip: SharedString = if unfolded {
-            "Fold Activity into the footer"
-        } else {
-            "Unfold Activity above the footer when an action lasts"
-        }
-        .into();
-        controls::icon_button(
-            "activity-pin",
-            "pin",
-            "Unfold above the footer",
-            &focus,
-            theme,
-        )
-        .aria_toggled(if unfolded {
-            gpui::Toggled::True
-        } else {
-            gpui::Toggled::False
-        })
-        .when(unfolded, |d| d.chosen(theme))
-        .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), cx))
-    };
+/// Activity's name and its chevron, which folds it into the strip, above
+/// its rows, which scroll beneath it (ADR-114, amended 2026-11-13).
+fn heading(shell: &mut Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
+    let focus = shell
+        .activity
+        .chevron
+        .get_or_insert_with(|| stop(cx))
+        .clone();
+    let button = controls::icon_button(
+        "activity-fold",
+        "chevron",
+        "Fold into the footer",
+        &focus,
+        theme,
+    )
+    .tooltip(|_, cx| crate::toolbar::tooltip("Fold Activity into the footer".into(), cx));
     div()
         .flex()
         .flex_none()
@@ -1523,20 +1533,26 @@ fn heading(
         )
         .child(button.size(px(24.)).press(
             |this, window, cx| {
-                this.run("ui.activity_pin", serde_json::json!({}), window, cx);
+                this.run(
+                    "ui.activity",
+                    serde_json::json!({"close": true}),
+                    window,
+                    cx,
+                );
             },
             cx,
         ))
         .into_any_element()
 }
 
-/// What Activity holds under its heading, in the popup or standing, as
-/// `under` runs: the cards of what runs, what waits, and what of `Earlier`
-/// it `shows`; `reveal` brings the button the keyboard reaches into view.
+/// What Activity holds under its heading, as `under` runs: the cards of
+/// what runs, what waits, the action an error stopped (while its Retry
+/// waits, `Work::stopped`), and the rest of `Earlier` folded at its foot, a
+/// line saying how many it holds until unfolded (`ui.activity_earlier`);
+/// `reveal` brings the button the keyboard reaches into view.
 fn body(
     shell: &mut Shell,
     under: &Under,
-    shows: Shows,
     reveal: &Reveal,
     theme: &Theme,
     cx: &mut Context<Shell>,
@@ -1620,21 +1636,15 @@ fn body(
                 .or_insert_with(|| stop(cx));
         }
     }
-    // Pinned, the action an error stopped is said; the rest is folded.
+    // The action an error stopped is said; the rest is folded.
     let stopped = shell.work.borrow().stopped.as_ref().map(|s| s.plan);
-    let (said, folded): (Vec<Ended>, Vec<Ended>) = match shows {
-        Shows::All => (
-            shell.work.borrow().earlier.iter().cloned().collect(),
-            Vec::new(),
-        ),
-        Shows::Pinned => shell
-            .work
-            .borrow()
-            .earlier
-            .iter()
-            .cloned()
-            .partition(|ended| stopped.is_some() && ended.plan == stopped),
-    };
+    let (said, folded): (Vec<Ended>, Vec<Ended>) = shell
+        .work
+        .borrow()
+        .earlier
+        .iter()
+        .cloned()
+        .partition(|ended| stopped.is_some() && ended.plan == stopped);
     let unfolded = shell.activity.earlier_unfolded;
     let fold =
         (!folded.is_empty()).then(|| shell.activity.fold.get_or_insert_with(|| stop(cx)).clone());
@@ -1670,10 +1680,7 @@ fn body(
                 .border_color(theme.border)
                 .text_small()
                 .text_color(theme.text_muted)
-                .child(match shows {
-                    Shows::All => "Earlier",
-                    Shows::Pinned => "Stopped",
-                })
+                .child("Stopped")
                 .into_any_element(),
         );
         parts.push(list("activity-earlier", &said, cx));
@@ -1706,9 +1713,9 @@ fn body(
     parts
 }
 
-/// Earlier folded at the foot of Activity standing, `count` answers: a line
-/// that unfolds them (`ui.activity_earlier`), its chevron a disclosure's,
-/// as a sidebar group's: right while folded, down unfolded.
+/// Earlier folded at Activity's foot, `count` answers: a line that unfolds
+/// them (`ui.activity_earlier`), saying how many, its chevron a
+/// disclosure's, as a sidebar group's: right while folded, down unfolded.
 fn earlier_fold(
     count: usize,
     unfolded: bool,
@@ -2043,8 +2050,7 @@ fn earlier_row(
             .child(reveal.marker(focus))
             .press(
                 move |this, window, cx| {
-                    // Its answer is said as any is, the popup closed.
-                    this.close_popup(window, cx);
+                    // Its answer is said as any is, above Activity.
                     this.run(&action.command, action.args.clone(), window, cx);
                 },
                 cx,

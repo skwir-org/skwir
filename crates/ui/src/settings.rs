@@ -126,7 +126,10 @@ pub const TABS_IN_SIDEBAR: &str = "sidebar";
 /// Whether a folder's trail starts at the root rather than at the
 /// sidebar's folder that holds it (`Shell::sync_roots`).
 pub const FULL_PATH_KEY: &str = "ui.full_path";
-/// After how long an action a window asked unfolds Activity above its
+/// Whether Activity opens by itself for an action a window asked that
+/// lasts (ADR-114, amended 2026-11-13).
+pub const ACTIVITY_OPENS_KEY: &str = "ui.activity_opens";
+/// After how long an action a window asked opens Activity above its
 /// footer, in milliseconds (ADR-114, amended 2026-11-07).
 pub const ACTIVITY_UNFOLD_KEY: &str = "ui.activity_unfold_ms";
 /// `ACTIVITY_UNFOLD_KEY`'s default.
@@ -1537,16 +1540,27 @@ pub fn declare(app: &App) {
         .section("Address"),
     );
     app.settings.declare(
+        SettingSpec::toggle(
+            ACTIVITY_OPENS_KEY,
+            "Open Activity by itself",
+            "Activity opens above the footer, over the files, with an action's progress, its speed and its buttons, once an action you asked in the window lasts. Its chevron folds it into the footer until what runs has ended; the next long action opens it again. Off, it opens only from the footer's strip, or Ctrl+Shift+J.",
+            true,
+        )
+        .page(page::GENERAL)
+        .section("Actions"),
+    );
+    app.settings.declare(
         SettingSpec::integer(
             ACTIVITY_UNFOLD_KEY,
-            "Unfold Activity after",
-            "How long an action you asked runs before Activity unfolds above the footer, with its progress, its speed and its buttons. Until then, and for anything quicker, the footer's strip says how it goes. Activity's chevron folds it into the footer of its window, and its pin unfolds it again.",
+            "Open Activity after",
+            "How long an action you asked runs before Activity opens. Until then, and for anything quicker, the footer's strip says how it goes.",
             ACTIVITY_UNFOLD_DEFAULT,
             (500, 5000),
         )
         .step(500)
         .unit_of("s", 1000)
         .slider()
+        .under(ACTIVITY_OPENS_KEY)
         .page(page::GENERAL)
         .section("Actions"),
     );

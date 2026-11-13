@@ -410,7 +410,12 @@ above the footer while something runs, taking room rather than
 covering the files; since 2026-11-07 (the user's choice from a canvas
 of mock-ups) it unfolds there by default once an action asked in the
 window lasted 1.5 s (`ui.activity_unfold_ms`), its chevron folding it
-into the strip. An action an error stopped stays in the strip,
+into the strip. Since 2026-11-13 (the user asked) Activity is one
+floating panel over the files' lower right instead of a popup and a
+tray: it opens by itself for a long action (a switch,
+`ui.activity_opens`), stays open through clicks elsewhere, and its
+chevron folds it until the spell of work ends; Earlier is folded at its
+foot with its count, and the answer is said above it. An action an error stopped stays in the strip,
 red, until retried, seen or dismissed. One answer at a time, at the
 last pane's lower right. A long action that ends, stops or waits for its
 server while the window is in the background is a notification, taken
@@ -583,7 +588,8 @@ was Activity's Earlier not redundant with it, and too tall pinned?
   what failed (with Retry), was cancelled or cannot be undone, and
   messages. Pinned, Activity is 260 px high at most, about three cards,
   Earlier folded to a line at its foot (`ui.activity_earlier`). A toast
-  said while Activity is open is drawn once it closes.
+  said while Activity is open is drawn once it closes (until 2026-11-13:
+  then said above it).
 
 Checks in `docs/STATUS-LOG.md` (2026-11-03, "The History's scroll").
 

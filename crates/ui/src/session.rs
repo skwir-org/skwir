@@ -91,12 +91,6 @@ pub struct Session {
     pub timeline_date: String,
     /// How tall the pinned player's dock was dragged.
     pub player_height: f32,
-    /// Whether Activity was folded into the footer's strip by its chevron,
-    /// opening over the files only when asked, rather than standing above
-    /// the footer once an action lasted (ADR-114, amended 2026-11-07).
-    /// What windows wrote before, `activity_pinned` (off by default), is
-    /// not read: every window takes the new default.
-    pub activity_folded: bool,
     /// Whether the terminal was open under the panes.
     pub terminal: bool,
     /// How tall its edge was dragged; 0 until then.
@@ -349,7 +343,6 @@ impl Shell {
             timeline_size: self.timeline().measure == crate::timeline::Measure::Size,
             timeline_date: crate::timeline::DATES[self.timeline().date].0.to_owned(),
             player_height: self.player.height,
-            activity_folded: self.activity.folded,
             terminal: self.terminal.open,
             terminal_height: self.terminal.height.unwrap_or(0.),
             column_widths: crate::views::list::COLUMNS

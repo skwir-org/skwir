@@ -224,10 +224,11 @@ mod args {
         value: Option<i64>,
     }
 
-    /// Activity's toggle: `close` closes it (`pointer`: by a press outside
-    /// it), and never opens it; `plan`, the id of an action under way or
-    /// waiting, opens it on that action's card (what arrives in a folder,
-    /// pressed, ADR-135) and never closes it.
+    /// Activity's toggle: `close` folds it, and never opens it; `pointer`,
+    /// a press on its strip, opens or folds it, leaving the keyboard where
+    /// it was; `plan`, the id of an action under way or waiting, opens it
+    /// on that action's card (what arrives in a folder, pressed, ADR-135)
+    /// and never folds it.
     #[derive(Deserialize, JsonSchema)]
     pub(super) struct Toggle {
         #[serde(default)]
@@ -665,7 +666,6 @@ const SHOWS: &[&str] = &[
     "ui.toggle_sidebar",
     "ui.toolbar_menu",
     "ui.activity",
-    "ui.activity_pin",
     "ui.activity_earlier",
     "ui.undo_history",
     "ui.toolbar_close",
@@ -2101,19 +2101,13 @@ pub fn declare_all(app: &App) {
         Topic::Window,
         "ui.activity",
         "Activity",
-        "Open or close Activity, above its strip in the footer: what runs, with Pause and Cancel, what waits, and what ended this session that the Undo history does not hold (what failed, was cancelled or cannot be undone, and answers that are no action's), with Retry or Undo (ADR-114). Pinned and shown, it takes the keyboard",
-    );
-    none(
-        Topic::Window,
-        "ui.activity_pin",
-        "Fold or unfold Activity",
-        "Fold Activity into the footer's strip of this window, where it opens over the files when asked; again to unfold it, standing above the footer, taking room rather than covering the files, once an action asked in the window lasted (Unfold Activity after, 1.5 s by default) (ADR-114)",
+        "Open Activity above its strip in the footer, with the keyboard, or fold it once it has the keyboard: what runs, with Pause and Cancel, what waits, and what ended this session that the Undo history does not hold (what failed, was cancelled or cannot be undone, and answers that are no action's), with Retry or Undo. It stays open until folded, and opens by itself once an action asked in the window lasts (Open Activity after, 1.5 s by default) (ADR-114)",
     );
     none(
         Topic::Window,
         "ui.activity_earlier",
         "Show Earlier in Activity",
-        "Unfold Earlier at the foot of Activity kept open above the footer, or fold it again: what ended this session that the Undo history does not hold",
+        "Unfold Earlier at the foot of Activity, or fold it again: what ended this session that the Undo history does not hold",
     );
     none(
         Topic::Files,

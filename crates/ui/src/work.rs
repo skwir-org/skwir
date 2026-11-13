@@ -77,14 +77,14 @@ pub(crate) struct Work {
     /// Those announced, while under way.
     announced: HashSet<PlanId>,
     /// The window each action under way was asked in, as first seen while
-    /// windows are up (`Askers`): Activity unfolds there once it lasted
+    /// windows are up (`Askers`): Activity opens there once it lasted
     /// (ADR-114, amended 2026-11-07).
     asked_in: HashMap<PlanId, WindowId>,
     /// What runs that is no plan (a task: a print), by id, when it was
     /// first seen and in the window in front then, as nothing says who
-    /// asked for one: it unfolds Activity there as a plan does.
+    /// asked for one: it opens Activity there as a plan does.
     tasks_asked_in: HashMap<u64, (Instant, WindowId)>,
-    /// After how long they unfold it (`ui.activity_unfold_ms`), as the
+    /// After how long they open it (`ui.activity_unfold_ms`), as the
     /// last `watch` was told; `None` without a window.
     unfold_after: Option<Duration>,
     /// The light actions waiting since `SHOWN_AFTER` or more: counted
@@ -150,7 +150,7 @@ pub(crate) const SHOWN_AFTER: Duration = Duration::from_millis(300);
 pub(crate) const ANNOUNCED_FOR: Duration = Duration::from_secs(2);
 
 /// Who asked what joins, while windows are up, and after how long Activity
-/// unfolds there (`ui.activity_unfold_ms`): the window that ran its
+/// opens there (`ui.activity_unfold_ms`): the window that ran its
 /// command (`finishing::ran`), else the one in front, where an undo, a
 /// retry or a script's action was asked from.
 #[derive(Clone, Copy)]
@@ -355,7 +355,7 @@ impl Work {
     /// `SHOWN_AFTER` after it joined is shown (counted, as one of several
     /// steps is at once) and announced once, the latest of them on the
     /// strip's tint for `ANNOUNCED_FOR`. Each is noted with the window that
-    /// asked it, while windows are up (`askers`): it unfolds Activity there
+    /// asked it, while windows are up (`askers`): it opens Activity there
     /// once it lasted their `unfold_after` (`unfolds_in`). What is no longer
     /// under way is let go of. Returns when the strip or Activity changes
     /// next by itself, to wake the window then. `now` is the caller's, a
@@ -445,7 +445,7 @@ impl Work {
     }
 
     /// Whether an action asked in `window` has been under way, waiting or
-    /// running, for `unfold_after` or more by `now`: Activity unfolds there
+    /// running, for `unfold_after` or more by `now`: Activity opens there
     /// (`Shell::sync_unfolded`). Never without a window.
     pub(crate) fn unfolds_in(&self, window: WindowId, now: Instant) -> bool {
         let Some(after) = self.unfold_after else {
