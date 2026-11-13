@@ -1496,10 +1496,26 @@ is still to come are in `docs/preview-frame.md`.
   chooses the mechanism. Text in reading mode changes size (the
   inspector's text size). An image is a picture (`preview::picture`,
   `zoom_tools` in its bar): whole by default (Fit), as wide as the panel
-  (Fit width), or at a share of its own size. A page zooms in the reader,
+  (Fit width), or at a share of its own size. A film's picture (its
+  poster, its frames, a still) is laid out the same way, without Fit
+  width. A page zooms in the reader,
   a PDF's, a fixed-layout book's or a comic's alike
   (`docs/invariants/reader.md`). A book an engine laid out into pages is
   laid out again at the new text size.
+- **What Fit makes of what is shown follows how it is seen**
+  (`preview::ShownAs`, `Lay::scale`), never a switch: what is looked at
+  keeps its pixels, what is watched or read fills its view. A picture's
+  Fit shrinks it to the panel and never enlarges it, as image viewers do
+  (a small picture's pixels, an icon's, are what is seen). A film's Fit
+  makes it as large as the panel, a small one enlarged, as players do,
+  in the panel, on the whole screen and in the dock alike; a film larger
+  than its view is shrunk as a picture is. A film has no Fit width (a
+  portrait film would grow taller than the panel and scroll, which is no
+  way to watch it): its button and its popup entry are left out, and the
+  command asked of a film fits it. 100% shows a film at its own size.
+  The GPU enlarges what is there: a poster is never asked past the
+  film's own pixels, and frames come at the film's size, whatever the
+  box.
 - A picture is laid out at its own size (100%: its size before it was
   shrunk for display), never at its pixels', which only fill its box.
   After layout it compares the device pixels it covers with those it
@@ -1535,8 +1551,9 @@ is still to come are in `docs/preview-frame.md`.
   player or a reader never ends it.
 - **Drawn from the frame's own pieces** (`preview::frame`, `controls`,
   `content_area`, `content`), so every kind is there with its keys and
-  tools and nothing is drawn twice. Only a film has a picture of its
-  own there (`media::film`: enlarged to the screen, a player's clicks).
+  tools and nothing is drawn twice: a film too, its Fit filling the
+  screen as it fills the panel (`preview::ShownAs::Film`), its picture
+  answering clicks as a player.
   What is looked at lies on `stage` (black in both looks), what is read on
   paper; a picture or a film on its way waits on its letterbox
   (`on_paper`), so stepping through them never flashes paper.

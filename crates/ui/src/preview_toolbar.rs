@@ -23,13 +23,16 @@ pub fn zoom_label(shell: &Shell) -> String {
     )
 }
 
-/// The zoom button's own popup: a picker of values, like a combo box.
+/// The zoom button's own popup: a picker of values, like a combo box. A
+/// film has no Fit width (`preview::ShownAs::Film`).
 fn zoom_menu(shell: &Shell, cx: &mut Context<Shell>) -> Div {
     let mut menu = div().flex().flex_col().gap_1();
-    for (id, icon, label, value) in [
+    let fits = [
         ("menu-fit", "fit", label::FIT, "reset"),
         ("menu-width", "width", label::FIT_WIDTH, "width"),
-    ] {
+    ];
+    let film = shell.preview.shows_film();
+    for (id, icon, label, value) in fits.into_iter().filter(|fit| !(film && fit.3 == "width")) {
         menu = menu.child(
             Button::new(id, icon, label, "ui.preview_zoom")
                 .label(label)
@@ -62,10 +65,11 @@ fn zoom_menu(shell: &Shell, cx: &mut Context<Shell>) -> Div {
     menu.child(presets)
 }
 
-/// Zoom, for whatever is looked at rather than read: a picture or a page.
-/// The same five tools in the same order in both. A book laid out into pages
-/// by its engine is read: its steps size its text (`Shell::preview_zoom`),
-/// and say so.
+/// Zoom, for whatever is looked at rather than read: a picture, a film or
+/// a page. The same five tools in the same order in all, but a film's four:
+/// it has no Fit width, its Fit filling the panel (`preview::ShownAs::Film`).
+/// A book laid out into pages by its engine is read: its steps size its
+/// text (`Shell::preview_zoom`), and say so.
 pub fn zoom_tools(bar: &mut Bar, shell: &Shell) {
     let fit = shell.preview.zoom.is_none() && !shell.preview.fit_width;
     let step = |id, icon, title, dir| {
@@ -106,11 +110,14 @@ pub fn zoom_tools(bar: &mut Bar, shell: &Shell) {
         1,
         step("preview-fit", "fit", label::FIT, "reset").active(fit),
     ));
-    bar.push(Item::button(
-        Slot::View,
-        0,
-        step("preview-width", "width", label::FIT_WIDTH, "width").active(shell.preview.fit_width),
-    ));
+    if !shell.preview.shows_film() {
+        bar.push(Item::button(
+            Slot::View,
+            0,
+            step("preview-width", "width", label::FIT_WIDTH, "width")
+                .active(shell.preview.fit_width),
+        ));
+    }
     bar.popups.push((
         "zoom",
         std::rc::Rc::new(|shell, theme, cx| {

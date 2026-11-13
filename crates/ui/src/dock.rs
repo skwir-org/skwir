@@ -171,9 +171,10 @@ pub fn render(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Option<AnyE
     // The picture answers clicks as a player (`media::clickable`); the rest
     // of the dock, transport aside, shows the track.
     let picture: AnyElement = if pinned.video {
-        // Only the frame plays and pauses, placed where it is drawn: shrunk
-        // to fit, never grown. The letterbox round it shows the track, as
-        // the ring round a cover's disc does.
+        // Only the frame plays and pauses, placed where it is drawn: as
+        // large as the dock, a small film enlarged, as a film's Fit is
+        // everywhere (`preview::ShownAs::Film`). The letterbox round it shows
+        // the track, as the ring round a cover's disc does.
         let frame = pinned.frame.as_ref().map(|(image, ..)| {
             let film = div()
                 .relative()
@@ -187,7 +188,7 @@ pub fn render(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Option<AnyE
                     .occlude()
                     .into_any_element(),
                 image: image.size(0),
-                fit: gpui::ObjectFit::ScaleDown,
+                fit: gpui::ObjectFit::Contain,
             }
         });
         let letterbox = div()

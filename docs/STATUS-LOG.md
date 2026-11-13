@@ -16628,3 +16628,37 @@ the loose two said "waiting", untinted, while the folder went 28, 65,
 96, 100 %, then 100 % and 81 % a second into their own run (one frame
 said "waiting" as it began: the follower's first look). Not tried:
 Windows (the batch's share stays there by `tells_each`), macOS.
+
+## 2026-11-13: a film's Fit fills its view
+
+**Asked:** a small film stayed small in a large panel (Fit never
+enlarged it, as a picture's does not), while the whole screen enlarged
+it and the dock shrank it only: should a film fill the panel, and how
+without a confusing control? Decided with the user: no new button and no
+setting; a film's Fit makes it as large as its view, a small one
+enlarged, as players do; a picture's Fit stays shrink-only, as image
+viewers have it; a film has no Fit width. On a film larger than its view
+nothing changes, which is why a button of its own would read as broken.
+**Built:** `preview::ShownAs` (picture, film, page) says what Fit makes
+of what is shown, read by the layout (`preview::picture`), the zoom
+steps (`Lay::scale`, shared by `Lay::placed` and `Shell::picture_scale`)
+and the bar (`PreviewState::shows_film`: no Fit width button nor popup
+entry; `ui.preview_zoom` asked for width fits a film). The whole screen
+draws a film through the panel's code (`media::film`, which only
+enlarged, is gone), so it follows the zoom too; the dock lays its frame
+out with `Contain`, its click area with it (it was `ScaleDown`).
+**Checked:** a layout test (`fit_enlarges_a_small_film_and_never_a_small_picture`),
+the UI's tests (663) and clippy. In a window (Xvfb, lavapipe, films made
+by ffmpeg's `testsrc`): a 320 × 240 film filled a 717 px panel across, a
+180 × 320 one its height, a 1920 × 1080 one shrank to the panel's width;
+the whole screen filled with the poster and while playing, the click
+playing it; the dock, made tall, enlarged the small film and played from
+a click near its corner, outside where `ScaleDown` had put it. With
+Still frames (no player): the bar showed Zoom out, Fit, Zoom in and the
+Fit button, no Fit width; 100% showed 320 × 240, Zoom out from Fit went
+to 179 %, and Fit width asked by command left a portrait film fitted; a
+64 × 48 picture stayed at its size, its Fit width there. A film playing
+has the player's bar, which never had zoom tools: Fit is how it is
+drawn. Not tried: Windows' and macOS' clippy of the UI (no system's
+code changed), `just a11y-check` (the whole screen's film now carries
+the panel's Video role).

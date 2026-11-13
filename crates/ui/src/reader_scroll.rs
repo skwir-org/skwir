@@ -726,7 +726,7 @@ impl Shell {
                 own: opened.1,
                 zoom,
                 fit_width,
-                picture: false,
+                shown_as: crate::preview::ShownAs::Page,
             };
             return crate::preview::zoom_toward(&scroll.single, before, to, pointer);
         }

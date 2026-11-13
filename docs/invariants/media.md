@@ -179,7 +179,8 @@ binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
 ## Clicks and fullscreen controls
 
 - Fullscreen is the preview's, for every kind (previews.md, "The whole
-  screen"): a film is drawn there enlarged (`media::film`); its bar is
+  screen"): a film is drawn there as in the panel, its Fit filling the
+  screen (previews.md, "What Fit makes of what is shown"); its bar is
   the panel's, over the picture, and hides when the pointer rests
   (`fullscreen_bar_floats`: a picture's, a film's and music's), the
   pointer with it, scrubbing keeping it.
@@ -301,7 +302,9 @@ binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
 - Its height is dragged on its top edge and remembered with the window's
   shape: decided in render, never measured. Below `TALL_FROM` it is a row,
   above it the halo figure. A film takes the height it gets (`VIDEO_HEIGHT`
-  in a compact dock).
+  in a compact dock), as large as the dock lets it be, a small one
+  enlarged, as a film's Fit is everywhere; its click area is the frame
+  as drawn (`OnPicture` with the same `ObjectFit::Contain`).
 - The pin is drawn in one place, always one (`player::PinPlace`, from the
   panel's switches and what the preview shows): the preview while it shows
   the pinned session or is opening a track that will; else the dock,

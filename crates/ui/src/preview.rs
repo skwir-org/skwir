@@ -1278,6 +1278,12 @@ impl PreviewState {
         (!self.info.is_dir || !self.nested.is_empty()) && self.shown_content().is_some()
     }
 
+    /// Whether what is shown is a film's picture (`ShownAs::Film`): its
+    /// poster, its frames, a still of it.
+    pub(crate) fn shows_film(&self) -> bool {
+        self.content.as_ref().and_then(ShownAs::of) == Some(ShownAs::Film)
+    }
+
     /// What the folder shown holds, as counted when the file standing for
     /// it was found (`Nested::stands_for`): `None` while none does.
     pub(crate) fn stands_for(&self) -> Option<Holds> {
@@ -5412,6 +5418,12 @@ impl Shell {
             self.follow_book_size(window, cx);
             return;
         }
+        // A film has no Fit width (`ShownAs::Film`): asked, it is fitted.
+        let direction = if direction == "width" && self.preview.shows_film() {
+            "reset"
+        } else {
+            direction
+        };
         // A step from Fit or Fit width starts at the scale they show, so
         // Zoom out never makes a large picture larger.
         let shown = self.preview.zoom.or_else(|| self.picture_scale());
@@ -5452,12 +5464,12 @@ impl Shell {
                 let opened = (page.page, (page.width, page.height));
                 self.reader_zoom_toward(opened, (zoom, fit_width), to, pointer);
             }
-            Some(PreviewContent::Image { width, height, .. }) => {
+            Some(content @ PreviewContent::Image { width, height, .. }) => {
                 let before = Lay {
                     own: (*width as f32, *height as f32),
                     zoom,
                     fit_width,
-                    picture: true,
+                    shown_as: ShownAs::of(content).unwrap_or(ShownAs::Picture),
                 };
                 zoom_toward(&self.preview.picture_scroll, before, to, pointer);
             }
@@ -5465,18 +5477,29 @@ impl Shell {
         }
     }
 
-    /// The scale Fit or Fit width shows the picture at: an image's, from the
-    /// bounds its container had in the last prepaint; a document's pages',
-    /// as they reported it (`Shell::document_shown`). Read when a key asks,
-    /// never to lay anything out. `None` before it was drawn.
+    /// The scale Fit or Fit width shows the picture or the film at, from the
+    /// bounds its container had in the last prepaint (`Lay::scale`); a
+    /// document's pages', as they reported it (`Shell::document_shown`).
+    /// Read when a key asks, never to lay anything out. `None` before it
+    /// was drawn.
     fn picture_scale(&self) -> Option<f32> {
-        let (scroll, (width, height)) = match &self.preview.content {
-            Some(PreviewContent::Image {
-                width,
-                height,
-                document: None,
-                ..
-            }) => (&self.preview.picture_scroll, (*width, *height)),
+        let (scroll, lay) = match &self.preview.content {
+            Some(
+                content @ PreviewContent::Image {
+                    width,
+                    height,
+                    document: None,
+                    ..
+                },
+            ) => (
+                &self.preview.picture_scroll,
+                Lay {
+                    own: (*width as f32, *height as f32),
+                    zoom: None,
+                    fit_width: self.preview.fit_width,
+                    shown_as: ShownAs::of(content)?,
+                },
+            ),
             // A document's pages report the scale they are shown at.
             Some(PreviewContent::Image {
                 document: Some(_), ..
@@ -5484,16 +5507,7 @@ impl Shell {
             _ => return None,
         };
         let bounds = scroll.bounds().size;
-        let (across, down) = (
-            f32::from(bounds.width) / width.max(1) as f32,
-            f32::from(bounds.height) / height.max(1) as f32,
-        );
-        let scale = if self.preview.fit_width {
-            across
-        } else {
-            // Contain never enlarges a small picture.
-            across.min(down).min(1.)
-        };
+        let scale = lay.scale((f32::from(bounds.width), f32::from(bounds.height)));
         (scale.is_finite() && scale > 0.).then_some(scale)
     }
 
@@ -6383,8 +6397,13 @@ pub(crate) fn content(
                 } else {
                     picture(
                         image,
-                        (*width, *height),
-                        (None, false),
+                        Lay {
+                            own: (*width as f32, *height as f32),
+                            zoom: None,
+                            fit_width: false,
+                            // A film's thumbnail never stands in for it.
+                            shown_as: ShownAs::Picture,
+                        },
                         &p.picture_scroll,
                         "preview-placeholder",
                         None,
@@ -6437,15 +6456,17 @@ pub(crate) fn content(
                 None => div().into_any_element(),
             }
         }
-        Some(PreviewContent::Image {
-            image,
-            width,
-            height,
-            document,
-            pixels,
-            ink,
-            ..
-        }) => {
+        Some(
+            shown @ PreviewContent::Image {
+                image,
+                width,
+                height,
+                document,
+                pixels,
+                ink,
+                ..
+            },
+        ) => {
             let picture = if let Some(document) = document.as_ref().filter(|_| interactive) {
                 crate::reader::page_element(
                     shell,
@@ -6457,8 +6478,16 @@ pub(crate) fn content(
             } else {
                 picture(
                     image,
-                    (*width, *height),
-                    (p.zoom, p.fit_width),
+                    Lay {
+                        own: (*width as f32, *height as f32),
+                        zoom: p.zoom,
+                        fit_width: p.fit_width,
+                        // A page drawn here (the panel behind peek) is a
+                        // picture of it.
+                        shown_as: ShownAs::of(shown)
+                            .filter(|shown_as| *shown_as == ShownAs::Film)
+                            .unwrap_or(ShownAs::Picture),
+                    },
                     &p.picture_scroll,
                     "preview-image-scroll",
                     // A picture shown smaller than its own size was decoded
@@ -6889,32 +6918,87 @@ pub(crate) const PANE_KEEP_HEIGHT: f32 = 160.;
 /// The tab strip above the panes, when it shows (`tabs::render`).
 const TOOLBAR_HEIGHT: f32 = crate::tabs::STRIP_HEIGHT;
 
-/// How a picture or a page lies in the view that scrolls it (`picture`,
-/// `reader::page_element`), for a zoom to keep what is under the pointer
-/// where it is (`Shell::preview_zoom_toward`).
+/// What a `Lay` lays out, which says what Fit makes of it and where a zoom
+/// puts it: what is looked at keeps its pixels, what is watched or read
+/// fills its view.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ShownAs {
+    /// A picture, looked at: Fit shrinks it to its view and never enlarges
+    /// it, as image viewers do (a small picture's pixels are what is seen).
+    /// At a zoom, shorter than its view, it sits in the middle.
+    Picture,
+    /// A film, watched (its poster, its frames, a still of it): Fit makes it
+    /// as large as its view, a small one enlarged, as players do, in the
+    /// panel and on the whole screen alike. It has no Fit width, which would
+    /// make it taller than its view. At a zoom, as a picture; 100% shows it
+    /// at its own size.
+    Film,
+    /// A document's page, read: Fit makes it as large as its view. At a
+    /// zoom it starts at the corner.
+    Page,
+}
+
+impl ShownAs {
+    /// What `content` is laid out as, if it is laid out (`PreviewContent::Image`).
+    pub(crate) fn of(content: &PreviewContent) -> Option<Self> {
+        match content {
+            PreviewContent::Image {
+                document: Some(_), ..
+            } => Some(Self::Page),
+            PreviewContent::Image {
+                detail: Some(PreviewInfo::Video { .. }),
+                ..
+            } => Some(Self::Film),
+            PreviewContent::Image { .. } => Some(Self::Picture),
+            _ => None,
+        }
+    }
+}
+
+/// How a picture, a film or a page lies in the view that scrolls it
+/// (`picture`, `reader::page_element`), for a zoom to keep what is under
+/// the pointer where it is (`Shell::preview_zoom_toward`) and to start from
+/// the scale Fit shows (`Shell::picture_scale`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Lay {
     /// Its own size: what 100% shows.
     pub own: (f32, f32),
     pub zoom: Option<f32>,
     pub fit_width: bool,
-    /// A picture: at a zoom, shorter than its view, it sits in the middle,
-    /// and Fit never enlarges it. A page at a zoom starts at the corner.
-    pub picture: bool,
+    pub shown_as: ShownAs,
 }
 
 impl Lay {
+    /// The scale it is shown at in `view`: its zoom's, else Fit width's or
+    /// Fit's.
+    fn scale(&self, view: (f32, f32)) -> f32 {
+        let (width, height) = (self.own.0.max(1.), self.own.1.max(1.));
+        if let Some(zoom) = self.zoom {
+            return zoom;
+        }
+        if self.fit_width {
+            return view.0 / width;
+        }
+        let whole = (view.0 / width).min(view.1 / height);
+        if self.shown_as == ShownAs::Picture {
+            whole.min(1.)
+        } else {
+            whole
+        }
+    }
+
     /// Where it starts and how long it is, across then down, from the
     /// view's corner, scrolled by `offset` (a `ScrollHandle`'s, 0 or less).
     fn placed(&self, view: (f32, f32), offset: (f32, f32)) -> [(f32, f32); 2] {
         let (width, height) = (self.own.0.max(1.), self.own.1.max(1.));
-        if let Some(zoom) = self.zoom {
+        let scale = self.scale(view);
+        if self.zoom.is_some() {
             let axis = |own: f32, view: f32, offset: f32| {
-                let long = own * zoom;
-                let middle = if self.picture {
-                    ((view - long) / 2.).max(0.)
-                } else {
+                let long = own * scale;
+                let middle = if self.shown_as == ShownAs::Page {
                     0.
+                } else {
+                    ((view - long) / 2.).max(0.)
                 };
                 (middle + offset, long)
             };
@@ -6924,13 +7008,9 @@ impl Lay {
             ];
         }
         if self.fit_width {
-            return [(0., view.0), (offset.1, height * view.0 / width)];
+            return [(0., view.0), (offset.1, height * scale)];
         }
         // Whole, in the middle.
-        let mut scale = (view.0 / width).min(view.1 / height);
-        if self.picture {
-            scale = scale.min(1.);
-        }
         let (across, down) = (width * scale, height * scale);
         [
             ((view.0 - across) / 2., across),
@@ -7012,12 +7092,14 @@ pub(crate) fn arrow(handle: &gpui::ScrollHandle, dx: i32, dy: i32) -> bool {
     moved.is_some()
 }
 
-/// A picture as every preview shows one: whole in the panel (Fit), as wide
-/// as the panel (Fit width), or at a share of its own size, scrolling in
-/// both directions past the panel, with a scrollbar when it scrolls. Pages
-/// of a document are the reader's (`elements::document`).
+/// A picture or a film as every preview shows one, as `lay` says: whole in
+/// the panel (Fit: a picture never larger than its own size, a film as
+/// large as the panel, `ShownAs`), as wide as the panel (Fit width, a
+/// picture's), or at a share of its own size, scrolling in both directions
+/// past the panel, with a scrollbar when it scrolls. Pages of a document
+/// are the reader's (`elements::document`).
 ///
-/// Its layout is its own size (`own`, what 100% is), never its pixels': the
+/// Its layout is its own size (`lay.own`, what 100% is), never its pixels': the
 /// pixels may be fewer (shrunk for display) or more (drawn again for a
 /// zoom), and only fill the box. After layout, `sharpen` compares the device
 /// pixels the picture covers with the ones it has and asks for more when
@@ -7029,14 +7111,13 @@ pub(crate) fn arrow(handle: &gpui::ScrollHandle, dx: i32, dy: i32) -> bool {
 /// are.
 pub(crate) fn picture(
     image: &Arc<gpui::RenderImage>,
-    own: (u32, u32),
-    (zoom, fit_width): (Option<f32>, bool),
+    lay: Lay,
     scroll: &gpui::ScrollHandle,
     id: &'static str,
     sharpen: Option<Sharpen>,
     backdrop: Option<gpui::Hsla>,
 ) -> AnyElement {
-    let (width, height) = (own.0.max(1) as f32, own.1.max(1) as f32);
+    let (width, height) = (lay.own.0.max(1.), lay.own.1.max(1.));
     let scrolling = |content: AnyElement| {
         div()
             .relative()
@@ -7093,7 +7174,7 @@ pub(crate) fn picture(
         u32::try_from(size.width.0.max(size.height.0)).unwrap_or(0)
     };
     let watch = sharpen.map(|sharpen| sharpen.watch(raster, (width, height)));
-    if let Some(zoom) = zoom {
+    if let Some(zoom) = lay.zoom {
         // Smaller than the panel, it sits in the middle, as whole; larger,
         // the wrapper grows with it and it scrolls from its corner. Across
         // the column, a stretched wrapper would keep the panel's width and
@@ -7123,7 +7204,7 @@ pub(crate) fn picture(
                 )
                 .into_any_element(),
         )
-    } else if fit_width {
+    } else if lay.fit_width {
         // As wide as the panel, as tall as its proportions say.
         scrolling(
             div()
@@ -7140,9 +7221,10 @@ pub(crate) fn picture(
                 .into_any_element(),
         )
     } else {
-        // Whole, and never larger than its own size. It never scrolls; it
-        // sits in the same tracked container so the zoom steps know the
-        // scale it is shown at (`picture_scale`).
+        // Whole: a picture never larger than its own size, a film as large
+        // as the panel (`Lay::scale`). It never scrolls; it sits in the
+        // same tracked container so the zoom steps know the scale it is
+        // shown at (`picture_scale`).
         scrolling(
             div()
                 .flex_1()
@@ -7155,8 +7237,9 @@ pub(crate) fn picture(
                     div()
                         .relative()
                         .size_full()
-                        .max_w(px(width))
-                        .max_h(px(height))
+                        .when(lay.shown_as == ShownAs::Picture, |d| {
+                            d.max_w(px(width)).max_h(px(height))
+                        })
                         .children(backdrop)
                         .child(pixels)
                         .children(watch),
@@ -7568,7 +7651,7 @@ pub fn render_peek(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement>
 #[cfg(test)]
 mod tests {
     use super::{
-        Counted, Lay, PeekPress, SHARPEN_STEP, SourceTypes, Version, arrowed, count_waits,
+        Counted, Lay, PeekPress, SHARPEN_STEP, ShownAs, SourceTypes, Version, arrowed, count_waits,
         max_width, picture_written, selection_stamp, sharper, still_counts, zoomed_offset,
     };
     use skwir_core::workspace::{PaneId, Selection};
@@ -7702,7 +7785,7 @@ mod tests {
             own: (1000., 800.),
             zoom: Some(1.),
             fit_width: false,
-            picture: true,
+            shown_as: ShownAs::Picture,
         };
         // Its middle under the pointer in the middle of the view, its
         // corners at the view's corners, stay there twice as large.
@@ -7731,7 +7814,7 @@ mod tests {
             own: (600., 800.),
             zoom: Some(0.5),
             fit_width: false,
-            picture: false,
+            shown_as: ShownAs::Page,
         };
         let page_view = (400., 600.);
         let zoomed = zoomed_offset(page, 1., page_view, (0., 0.), (150., 200.));
@@ -7747,6 +7830,53 @@ mod tests {
         // Only as far as it scrolls: its edge stops it.
         let edge = zoomed_offset(page, 1., (500., 600.), (0., 0.), (150., 200.));
         close(edge, (-100., -200.));
+    }
+
+    #[test]
+    fn fit_enlarges_a_small_film_and_never_a_small_picture() {
+        let view = (1200., 800.);
+        let picture = Lay {
+            own: (640., 480.),
+            zoom: None,
+            fit_width: false,
+            shown_as: ShownAs::Picture,
+        };
+        // Looked at, a picture keeps its pixels: at its own size, in the
+        // middle.
+        assert_eq!(picture.scale(view), 1.);
+        assert_eq!(picture.placed(view, (0., 0.)), [(280., 640.), (160., 480.)]);
+        // Watched, a film fills its view: as tall as it, in the middle
+        // across.
+        let film = Lay {
+            shown_as: ShownAs::Film,
+            ..picture
+        };
+        let scale = 800. / 480.;
+        assert!((film.scale(view) - scale).abs() < 1e-6);
+        let [(left, across), (top, down)] = film.placed(view, (0., 0.));
+        assert!((across - 640. * scale).abs() < 1e-3 && (down - 800.).abs() < 1e-3);
+        assert!((left - (1200. - across) / 2.).abs() < 1e-3 && top.abs() < 1e-3);
+        // Larger than its view, both are shrunk alike.
+        let large = Lay {
+            own: (3840., 2160.),
+            ..film
+        };
+        let large_picture = Lay {
+            shown_as: ShownAs::Picture,
+            ..large
+        };
+        assert_eq!(large.scale(view), large_picture.scale(view));
+        assert!((large.scale(view) - 1200. / 3840.).abs() < 1e-6);
+        // At a zoom, 100% shows a film at its own size, in the middle as a
+        // picture is.
+        let actual = Lay {
+            zoom: Some(1.),
+            ..film
+        };
+        assert_eq!(
+            actual.placed(view, (0., 0.)),
+            picture.placed(view, (0., 0.))
+        );
     }
 
     #[test]

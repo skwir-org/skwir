@@ -901,58 +901,6 @@ fn played_as(mime: &skwir_platform::mime::Mime, name: &std::ffi::OsStr) -> Optio
     }
 }
 
-/// A film on the whole screen (`fullscreen::render`): it fills the screen
-/// whatever its size, a small one enlarged, and answers clicks as a player.
-pub(crate) fn film(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
-    let Some(PreviewContent::Image {
-        image,
-        width,
-        height,
-        ..
-    }) = &shell.preview.content
-    else {
-        return None;
-    };
-    // The poster asks for the screen's pixels, as a picture does; the
-    // player's frames are what they are.
-    let watch = shell.preview.media.poster_shown().then(|| {
-        let size = image.size(0);
-        let raster = u32::try_from(size.width.0.max(size.height.0)).unwrap_or(0);
-        crate::preview::Sharpen {
-            shell: cx.entity().downgrade(),
-            asked: shell.preview.picture_side,
-            most: (*width).max(*height),
-        }
-        .watch(raster, (*width as f32, *height as f32))
-    });
-    // The surface is a flex child: give it a column to fill.
-    Some(
-        div()
-            .absolute()
-            .inset_0()
-            .flex()
-            .flex_col()
-            .child(surface(
-                "video-fullscreen-surface",
-                div()
-                    .absolute()
-                    .size_full()
-                    .child(
-                        gpui::img(image.clone())
-                            .absolute()
-                            .size_full()
-                            .object_fit(gpui::ObjectFit::Contain),
-                    )
-                    .children(watch)
-                    .into_any_element(),
-                Flash::Preview,
-                shell,
-                cx,
-            ))
-            .into_any_element(),
-    )
-}
-
 /// A frame of a film as a picture for GPUI: the worker sends BGRA, which is
 /// what GPUI wants, so the buffer moves in without a copy.
 pub(crate) fn frame_image(frame: Frame) -> Option<(Arc<RenderImage>, u32, u32)> {

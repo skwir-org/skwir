@@ -518,15 +518,12 @@ pub const SLIDESHOW_POPUP: &str = "slideshow";
 pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let fullscreen = shell.preview.fullscreen.as_ref()?;
     let theme = cx.global::<Theme>().clone();
-    let shows = shell.fullscreen_shows();
     // What is read stays on paper; what is looked at is on the stage.
     let paper = crate::preview::on_paper(shell);
     let floats = shell.fullscreen_bar_floats();
-    let inner = match shows {
-        Some(Shows::Film) => crate::media::film(shell, cx),
-        _ => None,
-    }
-    .unwrap_or_else(|| crate::preview::content(shell, &theme, true, theme.stage, cx));
+    // A film too, as the panel draws it: Fit makes it as large as the
+    // screen, a small one enlarged (`preview::ShownAs::Film`).
+    let inner = crate::preview::content(shell, &theme, true, theme.stage, cx);
     // On paper, or on the stage: opaque, over the whole window.
     let grounds = crate::theme::Grounds {
         letterbox: theme.stage,
