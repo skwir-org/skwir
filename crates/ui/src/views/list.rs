@@ -343,8 +343,9 @@ impl Shell {
 
     /// What the pane sorts by here, each with what menus call it: every
     /// criterion (ADR-130) that applies here, as its column would (Rating
-    /// while ratings are kept, Deleted in the trash), those only the
-    /// sorter reads (a kind, a type's name, an owner) while there is one.
+    /// while ratings are kept, Deleted in the trash, Owner where the system
+    /// keeps one by number), those only the sorter reads (a kind, a type's
+    /// name, an owner) while there is one.
     /// The View menu offers these, and the palette only their sorts.
     pub fn sort_keys(&self) -> Vec<(&'static str, SortKey)> {
         let sorter = !self.app.registry.sorters.all().is_empty();
@@ -355,6 +356,8 @@ impl Shell {
                 SortKey::Vcs => self.column_applies(Detail::Vcs),
                 SortKey::Deleted => self.column_applies(Detail::Deleted),
                 SortKey::Folder => self.column_applies(Detail::Folder),
+                // Where the system keeps an owner by number, as its column.
+                SortKey::Owner => sorter && self.column_applies(Detail::Owner),
                 // Read on demand (ADR-131): while something reads it.
                 key if key.field().is_some() => key
                     .field()
