@@ -8,7 +8,7 @@
 //! state is the system's, never the file's: a listing keeps it across a
 //! file's updates until the system says it again.
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::CancelToken;
@@ -109,74 +109,142 @@ impl State {
 /// whole, or each path below it not as the last commit has it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Answer {
-    /// The folder asked is new or ignored as a whole: all it holds is too.
+    /// The folder its paths are from: the one asked, or one above it the
+    /// pane also shows (`StatesProvider::states`'s `above`).
+    pub root: PathBuf,
+    /// What all `root` holds is, unless a path says otherwise: new or
+    /// ignored as a whole.
     pub folder: Option<State>,
-    /// Each path below the folder, `/`-separated from it, not as the last
+    /// Each path below `root`, `/`-separated from it, not as the last
     /// commit has it: a file (one no listing holds, gone from the disk,
     /// too), or a folder new or ignored whole.
     pub states: Vec<(String, State)>,
+    /// Every path below `root` was looked at: what `states` does not name
+    /// is as the last commit has it. Not whole (the provider stopped at
+    /// its limits), it says what it found and nothing of the rest.
+    pub whole: bool,
     /// What tells this answer changed: the provider's `generation(key)`.
     pub key: u64,
 }
 
-/// An answer, ready to say what any entry under the folder asked is: its
-/// own state, else for a folder the strongest below it (`Ignored` not
-/// summed), else what a folder above it is whole. Made in the answer's
-/// paths times their depth; each entry then said in its own depth.
+/// An answer, ready to say what any entry under its root is: its own
+/// state, else for a folder the strongest below it (`Ignored` not summed),
+/// else what a folder above it is whole, else what the root is. Made on a
+/// worker, in the answer's paths times their depth, with the names said
+/// in each folder (`named_at`), so a listing is told what changed in it
+/// by its names, never walked entry by entry for what nobody said.
 #[derive(Debug, Default)]
 pub struct States {
+    root: PathBuf,
     folder: Option<State>,
     own: HashMap<String, State>,
     below: HashMap<String, State>,
+    /// The names said in each folder below the root (`""` for the root),
+    /// own or held below.
+    named: HashMap<String, Vec<String>>,
+    whole: bool,
+    key: u64,
 }
 
 impl States {
-    pub fn new(answer: &Answer) -> Self {
+    pub fn new(answer: Answer) -> Self {
         let mut own = HashMap::with_capacity(answer.states.len());
         let mut below: HashMap<String, State> = HashMap::new();
+        let mut named: HashMap<String, std::collections::HashSet<String>> = HashMap::new();
+        let mut name = |path: &str| {
+            let (level, name) = path.rsplit_once('/').unwrap_or(("", path));
+            named
+                .entry(level.to_owned())
+                .or_default()
+                .insert(name.to_owned());
+        };
         for (path, state) in &answer.states {
             let path = path.trim_end_matches('/');
+            if path.is_empty() {
+                continue;
+            }
             own.entry(path.to_owned())
                 .and_modify(|known: &mut State| *known = (*known).min(*state))
                 .or_insert(*state);
+            name(path);
             if *state == State::Ignored {
                 continue;
             }
             let mut end = path.len();
             while let Some(slash) = path[..end].rfind('/') {
                 end = slash;
-                let known = below.entry(path[..end].to_owned()).or_insert(*state);
-                *known = (*known).min(*state);
+                let folder = &path[..end];
+                if let Some(known) = below.get_mut(folder) {
+                    *known = (*known).min(*state);
+                } else {
+                    below.insert(folder.to_owned(), *state);
+                    name(folder);
+                }
             }
         }
         States {
+            root: answer.root,
             folder: answer.folder,
             own,
             below,
+            named: named
+                .into_iter()
+                .map(|(level, names)| (level, names.into_iter().collect()))
+                .collect(),
+            whole: answer.whole,
+            key: answer.key,
         }
     }
 
-    /// What the entry at `relative` (from the folder asked, `/`-separated)
-    /// is; `is_dir` for a folder, which holds what is below it.
+    /// The folder its paths are from (`Answer::root`).
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// What tells it changed (`Answer::key`).
+    pub fn key(&self) -> u64 {
+        self.key
+    }
+
+    /// Whether every path was looked at (`Answer::whole`): an entry it
+    /// says nothing of is as the last commit has it.
+    pub fn is_whole(&self) -> bool {
+        self.whole
+    }
+
+    /// What the entry at `relative` (from the root, `/`-separated) is;
+    /// `is_dir` for a folder, which holds what is below it.
     pub fn of(&self, relative: &str, is_dir: bool) -> Option<State> {
-        if self.folder.is_some() {
-            return self.folder;
-        }
         if let Some(state) = self.own.get(relative) {
             return Some(*state);
         }
         if is_dir && let Some(state) = self.below.get(relative) {
             return Some(*state);
         }
-        // Inside a folder new or ignored as a whole.
-        let mut end = relative.len();
-        while let Some(slash) = relative[..end].rfind('/') {
-            end = slash;
-            if let Some(state @ (State::New | State::Ignored)) = self.own.get(&relative[..end]) {
-                return Some(*state);
-            }
+        match relative.rsplit_once('/') {
+            Some((up, _)) => self.default_at(up),
+            None => self.folder,
         }
-        None
+    }
+
+    /// The names said in the folder at `level` (from the root, `""` for
+    /// the root itself): the entries of its listing an answer names.
+    pub fn named_at(&self, level: &str) -> &[String] {
+        self.named.get(level).map_or(&[], Vec::as_slice)
+    }
+
+    /// What every entry of the folder at `level` is that no name says
+    /// otherwise: the folder, or one above it, new or ignored as a whole,
+    /// else what the root is (`Answer::folder`).
+    pub fn default_at(&self, level: &str) -> Option<State> {
+        let mut at = Some(level);
+        while let Some(path) = at.filter(|path| !path.is_empty()) {
+            if let Some(state @ (State::New | State::Ignored)) = self.own.get(path).copied() {
+                return Some(state);
+            }
+            at = path.rsplit_once('/').map(|(up, _)| up);
+        }
+        self.folder
     }
 }
 
@@ -186,7 +254,16 @@ pub trait StatesProvider: Send + Sync {
     /// What the entries of `folder` and below are, read now, on a worker in
     /// the folder's lane; `Ok(None)` when it is in no repository the
     /// provider knows, or the provider shows nothing now (its setting).
-    fn states(&self, folder: &Path, cancel: &CancelToken) -> anyhow::Result<Option<Answer>>;
+    /// `above` are the folders above it the pane shows too (a columns
+    /// view's): the answer may be from the highest of them in the same
+    /// repository (`Answer::root`), so one answer says what all of them
+    /// hold.
+    fn states(
+        &self,
+        folder: &Path,
+        above: &[PathBuf],
+        cancel: &CancelToken,
+    ) -> anyhow::Result<Option<Answer>>;
     /// Moves when what an answer of `key` (`Answer::key`) said may have
     /// changed: its repository's index or `HEAD` did, a window came to the
     /// front (what is below a folder shown has no watch). Asked by the
@@ -228,17 +305,19 @@ impl StatesProviders {
         self.list.is_empty()
     }
 
-    /// What the first provider that knows `folder` says of it, and its id.
+    /// What the first provider that knows `folder` says of it (and of the
+    /// folders `above` it shown too), and its id.
     pub fn states(
         &self,
         folder: &Path,
+        above: &[PathBuf],
         cancel: &CancelToken,
     ) -> anyhow::Result<Option<(&'static str, Answer)>> {
         for provider in self.list.all() {
             if cancel.is_cancelled() {
                 return Ok(None);
             }
-            if let Some(answer) = provider.states(folder, cancel)? {
+            if let Some(answer) = provider.states(folder, above, cancel)? {
                 return Ok(Some((provider.id(), answer)));
             }
         }
@@ -260,7 +339,7 @@ mod tests {
 
     /// A file is its own state; a folder the strongest below it, what is
     /// ignored not summed; what is inside a folder new or ignored whole is
-    /// it; a folder asked that is new whole makes all it holds new.
+    /// it; a root new whole makes all it holds new but what a path says.
     #[test]
     fn an_entry_is_its_own_state_or_the_strongest_below_it() {
         let answer = Answer {
@@ -274,8 +353,9 @@ mod tests {
                 ("logs/x.log".into(), State::Ignored),
             ],
             key: 1,
+            ..Answer::default()
         };
-        let states = States::new(&answer);
+        let states = States::new(answer);
         assert_eq!(states.of("src/a.rs", false), Some(State::Changed));
         assert_eq!(
             states.of("src", true),
@@ -290,11 +370,43 @@ mod tests {
         assert_eq!(states.of("logs", true), None, "ignored is not summed");
         assert_eq!(states.of("README.md", false), None);
         assert_eq!(states.of("src", false), None, "a file of a folder's name");
-        let whole = States::new(&Answer {
+        let whole = States::new(Answer {
             folder: Some(State::New),
+            states: vec![("a.log".into(), State::Ignored)],
             ..Answer::default()
         });
         assert_eq!(whole.of("anything", false), Some(State::New));
+        assert_eq!(whole.of("a.log", false), Some(State::Ignored), "said apart");
+    }
+
+    /// Each folder's listing is told the names said in it, and what the
+    /// rest of it is: a folder new or ignored whole, else nothing.
+    #[test]
+    fn each_folder_is_told_the_names_said_in_it() {
+        let states = States::new(Answer {
+            states: vec![
+                ("src/a.rs".into(), State::Changed),
+                ("src/deep/b.rs".into(), State::Staged),
+                ("notes/".into(), State::New),
+                ("top.txt".into(), State::Staged),
+            ],
+            whole: true,
+            ..Answer::default()
+        });
+        let sorted = |level: &str| {
+            let mut names = states.named_at(level).to_vec();
+            names.sort();
+            names
+        };
+        assert_eq!(sorted(""), ["notes", "src", "top.txt"]);
+        assert_eq!(sorted("src"), ["a.rs", "deep"]);
+        assert_eq!(sorted("src/deep"), ["b.rs"]);
+        assert!(sorted("docs").is_empty());
+        assert_eq!(states.default_at(""), None);
+        assert_eq!(states.default_at("src/deep"), None);
+        assert_eq!(states.default_at("notes"), Some(State::New));
+        assert_eq!(states.default_at("notes/inside"), Some(State::New));
+        assert!(states.is_whole());
     }
 
     #[test]

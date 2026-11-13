@@ -1,11 +1,12 @@
 //! What a version control says of a folder's files reaches the pane's
 //! entries (ADR-134): asked once the listing is whole, again when the
 //! provider says its answer moved, kept across a file's update until said
-//! again, and gone with the provider.
+//! again, and gone with the provider; a partial answer never says an entry
+//! is as committed; the columns above the folder are told with it.
 mod common;
 
 use std::ffi::OsStr;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -19,17 +20,37 @@ struct Fake {
     asked: AtomicUsize,
 }
 
+impl Fake {
+    fn new(answer: Answer) -> Arc<Self> {
+        Arc::new(Fake {
+            answer: Mutex::new(answer),
+            generation: AtomicU64::new(0),
+            asked: AtomicUsize::new(0),
+        })
+    }
+}
+
+/// Its answer from the highest folder shown, as a repository holding
+/// them all would give it, unless its answer names a root of its own.
 impl StatesProvider for Fake {
     fn id(&self) -> &'static str {
         "fake.states"
     }
     fn states(
         &self,
-        _folder: &Path,
+        folder: &Path,
+        above: &[PathBuf],
         _cancel: &skwir_core::CancelToken,
     ) -> anyhow::Result<Option<Answer>> {
         self.asked.fetch_add(1, Ordering::AcqRel);
-        Ok(Some(self.answer.lock().unwrap().clone()))
+        let mut answer = self.answer.lock().unwrap().clone();
+        if answer.root.as_os_str().is_empty() {
+            answer.root = above
+                .iter()
+                .min_by_key(|up| up.components().count())
+                .map_or_else(|| folder.to_owned(), Clone::clone);
+        }
+        Ok(Some(answer))
     }
     fn generation(&self, _key: u64) -> u64 {
         self.generation.load(Ordering::Acquire)
@@ -65,17 +86,14 @@ fn a_folder_s_entries_take_what_its_version_control_says() {
         std::fs::write(dir.join(name), b"x").unwrap();
     }
     let app = common::app(&tmp.path().join("state"));
-    let fake = Arc::new(Fake {
-        answer: Mutex::new(Answer {
-            folder: None,
-            states: vec![
-                ("a.txt".into(), State::Changed),
-                ("sub dir/c.txt".into(), State::New),
-            ],
-            key: 7,
-        }),
-        generation: AtomicU64::new(0),
-        asked: AtomicUsize::new(0),
+    let fake = Fake::new(Answer {
+        states: vec![
+            ("a.txt".into(), State::Changed),
+            ("sub dir/c.txt".into(), State::New),
+        ],
+        whole: true,
+        key: 7,
+        ..Answer::default()
     });
     app.vcs.register("fake", Arc::clone(&fake) as _);
     common::navigate(&app, &dir);
@@ -100,9 +118,10 @@ fn a_folder_s_entries_take_what_its_version_control_says() {
     );
     // The repository moved (a commit elsewhere): asked again.
     *fake.answer.lock().unwrap() = Answer {
-        folder: None,
         states: vec![("b.txt".into(), State::Staged)],
+        whole: true,
         key: 7,
+        ..Answer::default()
     };
     fake.generation.fetch_add(1, Ordering::AcqRel);
     assert!(pump_until(&app, |app| state_of(app, "b.txt") == Some(State::Staged)));
@@ -130,6 +149,7 @@ fn a_folder_s_entries_take_what_its_version_control_says() {
     let asked = fake.asked.load(Ordering::Acquire);
     std::thread::sleep(Duration::from_millis(20));
     std::fs::write(dir.join("b.txt"), b"written again").unwrap();
+    // At its pace: just asked (the repository moved), the write waits.
     assert!(
         pump_until(&app, |_| fake.asked.load(Ordering::Acquire) > asked),
         "a file written asks again"
@@ -138,4 +158,94 @@ fn a_folder_s_entries_take_what_its_version_control_says() {
     // The provider gone: nothing is said of any entry.
     app.vcs.unregister_owner("fake");
     assert!(pump_until(&app, |app| state_of(app, "b.txt").is_none()));
+}
+
+/// An answer that stopped short (the provider's limits) says what it
+/// found: an entry it does not name keeps what it was said to be, never
+/// said as committed; a whole answer then lets it go.
+#[test]
+fn a_partial_answer_never_says_an_entry_is_as_committed() {
+    let tmp = common::home_tempdir();
+    let dir = tmp.path().join("partial");
+    std::fs::create_dir_all(&dir).unwrap();
+    for name in ["a.txt", "b.txt"] {
+        std::fs::write(dir.join(name), b"x").unwrap();
+    }
+    let app = common::app(&tmp.path().join("state"));
+    let fake = Fake::new(Answer {
+        states: vec![("a.txt".into(), State::Changed)],
+        whole: true,
+        key: 1,
+        ..Answer::default()
+    });
+    app.vcs.register("fake", Arc::clone(&fake) as _);
+    common::navigate(&app, &dir);
+    assert!(pump_until(&app, |app| state_of(app, "a.txt") == Some(State::Changed)));
+    *fake.answer.lock().unwrap() = Answer {
+        states: vec![("b.txt".into(), State::Staged)],
+        whole: false,
+        key: 1,
+        ..Answer::default()
+    };
+    fake.generation.fetch_add(1, Ordering::AcqRel);
+    assert!(pump_until(&app, |app| state_of(app, "b.txt") == Some(State::Staged)));
+    assert_eq!(
+        state_of(&app, "a.txt"),
+        Some(State::Changed),
+        "not reached: left as it was"
+    );
+    *fake.answer.lock().unwrap() = Answer {
+        states: vec![("b.txt".into(), State::Staged)],
+        whole: true,
+        key: 1,
+        ..Answer::default()
+    };
+    fake.generation.fetch_add(1, Ordering::AcqRel);
+    assert!(pump_until(&app, |app| state_of(app, "a.txt").is_none()));
+}
+
+/// The columns above a folder (a columns view's) are told with it, from
+/// one answer of the highest of them: going down leaves no column marked
+/// as it was, and one kept fresh is marked too.
+#[test]
+fn the_columns_above_a_folder_are_told_with_it() {
+    let tmp = common::home_tempdir();
+    let top = tmp.path().join("top");
+    let inside = top.join("in side");
+    std::fs::create_dir_all(&inside).unwrap();
+    std::fs::write(top.join("t.txt"), b"x").unwrap();
+    std::fs::write(inside.join("i.txt"), b"x").unwrap();
+    let app = common::app(&tmp.path().join("state"));
+    let fake = Fake::new(Answer {
+        states: vec![("in side/i.txt".into(), State::Changed)],
+        whole: true,
+        key: 1,
+        ..Answer::default()
+    });
+    app.vcs.register("fake", Arc::clone(&fake) as _);
+    common::navigate(&app, &inside);
+    let pane = common::active(&app);
+    app.keep_locations(pane, &[skwir_core::location::Location::from_path(&top)]);
+    let column = |app: &App, name: &str| {
+        let ws = app.workspace.read();
+        let p = ws.pane(pane).unwrap();
+        let kept = p.kept(&skwir_core::location::Location::from_path(&top))?;
+        State::of(kept.find_by_name(OsStr::new(name))?)
+    };
+    assert!(
+        pump_until(&app, |app| column(app, "in side") == Some(State::Changed)),
+        "the column above holds what is below it"
+    );
+    assert_eq!(state_of(&app, "i.txt"), Some(State::Changed));
+    // Committed elsewhere: the column above is told too.
+    *fake.answer.lock().unwrap() = Answer {
+        states: vec![("t.txt".into(), State::Staged)],
+        whole: true,
+        key: 1,
+        ..Answer::default()
+    };
+    fake.generation.fetch_add(1, Ordering::AcqRel);
+    assert!(pump_until(&app, |app| column(app, "t.txt") == Some(State::Staged)));
+    assert_eq!(column(&app, "in side"), None);
+    assert_eq!(state_of(&app, "i.txt"), None);
 }

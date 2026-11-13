@@ -1974,7 +1974,8 @@ impl App {
     }
 
     /// Take what the version control said of the panes' folders into their
-    /// listings, each still the one it was asked for: the panes changed.
+    /// listings, each still the one it was asked for and the latest asked:
+    /// the panes changed.
     fn take_state_answers(&self, report: &mut crate::workspace::PumpReport) {
         let answers = std::mem::take(&mut *self.state_answers.lock());
         if answers.is_empty() {
@@ -1984,11 +1985,12 @@ impl App {
         for StateAnswer {
             pane,
             listing,
+            asking,
             said,
         } in answers
         {
             if let Some(p) = ws.pane_mut(pane)
-                && p.take_states(listing, said)
+                && p.take_states(listing, asking, said)
                 && !report.panes_changed.contains(&pane)
             {
                 report.panes_changed.push(pane);
@@ -1998,8 +2000,9 @@ impl App {
 
     /// Ask the version control what the panes' folders hold
     /// (`Pane::states_to_read`, ADR-134), a job a folder in its lane, its
-    /// answer taken by the pump its wake brings. One that fails says
-    /// nothing; one cancelled (the pane asked anew, or left) is dropped.
+    /// answer made ready to take there (`vcs::States`) and taken by the
+    /// pump its wake brings. One that fails says nothing; one cancelled
+    /// (the pane asked anew, or left) is dropped.
     fn read_wanted_states(&self) {
         let asked: Vec<crate::workspace::StatesAsked> = {
             let mut ws = self.workspace.write();
@@ -2011,7 +2014,9 @@ impl App {
         for crate::workspace::StatesAsked {
             pane,
             listing,
+            asking,
             folder,
+            above,
             cancel,
         } in asked
         {
@@ -2027,8 +2032,8 @@ impl App {
                 cancel,
                 move || {
                     let cancel = cancel_read;
-                    let said = match vcs.states(&folder, &cancel) {
-                        Ok(said) => said,
+                    let said = match vcs.states(&folder, &above, &cancel) {
+                        Ok(said) => said.map(|(id, answer)| (id, crate::vcs::States::new(answer))),
                         Err(error) => {
                             tracing::debug!(folder = %folder.display(), "no state said: {error:#}");
                             None
@@ -2040,6 +2045,7 @@ impl App {
                     answers.lock().push(StateAnswer {
                         pane,
                         listing,
+                        asking,
                         said,
                     });
                     wake();
@@ -3488,11 +3494,13 @@ struct FieldAnswers {
 }
 
 /// What the version control said of a pane's folder
-/// (`App::read_wanted_states`): who, and what; nothing where none knows it.
+/// (`App::read_wanted_states`): who, and what, ready to take; nothing
+/// where none knows it. For the pane's asking `asking` of `listing`.
 struct StateAnswer {
     pane: PaneId,
     listing: u64,
-    said: Option<(&'static str, crate::vcs::Answer)>,
+    asking: u64,
+    said: Option<(&'static str, crate::vcs::States)>,
 }
 
 /// `group_fold`: which of a pane's groups to fold or open, and how.

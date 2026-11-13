@@ -776,13 +776,64 @@ pub(crate) type FieldRead = (
     crate::entry::Value,
 );
 
+/// Write what `states` says into the entries of `listing`, the folder at
+/// `level` below its root (ADR-134): the entries it names, found by their
+/// names; the rest of a folder new or ignored whole; and, where the answer
+/// is whole, a state held before by an entry it no longer names, which is
+/// now as the last commit has it. What a partial answer did not reach is
+/// left as it was, never said as committed; an entry nobody said anything
+/// of holds no value. Only what differs reaches `set_fields`. Whether any
+/// changed.
+fn take_vcs(listing: &mut Listing, states: &crate::vcs::States, level: &str) -> bool {
+    use crate::entry::{Value, keys};
+    use crate::vcs::State;
+    let word = |state: State| Value::Text(state.word().into());
+    let mut values = Vec::new();
+    let mut said = crate::hashing::Set::<EntryId>::default();
+    for name in states.named_at(level) {
+        let path = if level.is_empty() {
+            name.clone()
+        } else {
+            format!("{level}/{name}")
+        };
+        for e in listing.named(OsStr::new(name.as_str())) {
+            said.insert(e.id);
+            let state = states.of(&path, e.is_dir());
+            if State::of(e) != state {
+                values.push((e.id, keys::VCS, state.map_or(Value::Bool(false), word)));
+            }
+        }
+    }
+    match states.default_at(level) {
+        Some(state) => values.extend(
+            listing
+                .iter()
+                .filter(|e| !said.contains(&e.id) && State::of(e) != Some(state))
+                .map(|e| (e.id, keys::VCS, word(state))),
+        ),
+        None if states.is_whole() => values.extend(
+            listing
+                .iter()
+                .filter(|e| !said.contains(&e.id) && State::of(e).is_some())
+                .map(|e| (e.id, keys::VCS, Value::Bool(false))),
+        ),
+        None => {}
+    }
+    !values.is_empty() && listing.set_fields(values)
+}
+
 /// What a pane asks its folder's version control (ADR-134,
 /// `Pane::states_to_read`): the folder its listing shows, to say of its
-/// entries and of those of the folders it opened in place.
+/// entries and of those of the folders it opened in place, and the folders
+/// above it its view shows too (a columns view's), which the answer may
+/// cover. `asking` tells this asking from the next: only the latest one's
+/// answer is taken.
 pub struct StatesAsked {
     pub pane: PaneId,
     pub listing: u64,
+    pub asking: u64,
     pub folder: PathBuf,
+    pub above: Vec<PathBuf>,
     pub cancel: CancelToken,
 }
 
@@ -811,10 +862,16 @@ pub struct Keying {
 }
 
 /// What a pane last asked of the version control: its listing; its
-/// listings' names and the files written in them (the shown one's and the
-/// opened ones' summed); the folders it opened in place; the providers'
-/// revision; and the generation of the answer it holds.
+/// listings' names (the shown one's, the opened ones' and the columns'
+/// above, summed with their ids); the folders it opened in place; the
+/// providers' revision; and the generation of the answer it holds.
 type StatesAt = (u64, u64, u64, u64, u64);
+
+/// How often files written in a pane's folders ask its version control
+/// again at most: a file written each second (a log, a download) would
+/// read the whole folder's state each second. The first write after a
+/// quiet while asks at once.
+const STATES_WRITTEN_PACE: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// What to do with a pane's groups (`group_fold`).
 #[derive(
@@ -1009,11 +1066,14 @@ pub struct Pane {
     /// (`fields_to_read`), with the token of its reading, cancelled when it
     /// rests on something else or the listing leaves the order.
     fields_asked: Vec<FieldsAt>,
-    /// What was last asked of the version control (`states_to_read`), the
-    /// token of its reading, and who said what its entries hold, with its
-    /// answer's key (`vcs::Answer::key`): what tells it changed.
-    states_asked: Option<StatesAt>,
+    /// What was last asked of the version control (`states_to_read`),
+    /// with the files written then and when, the token of its reading, the
+    /// asking it was (`StatesAsked::asking`), and who said what its
+    /// entries hold, with its answer's key (`vcs::Answer::key`): what
+    /// tells it changed.
+    states_asked: Option<(StatesAt, u64, std::time::Instant)>,
     states_reading: Option<CancelToken>,
+    states_asking: u64,
     states_said: Option<(&'static str, u64)>,
     /// What its view shows that is read on demand (a column of when each
     /// picture was taken, `show_fields`): read as what its sort reads is.
@@ -1952,6 +2012,7 @@ impl Pane {
             fields_asked: Vec::new(),
             states_asked: None,
             states_reading: None,
+            states_asking: 0,
             states_said: None,
             fields_shown: Vec::new(),
             shown: parking_lot::Mutex::new(None),
@@ -4616,13 +4677,16 @@ impl Pane {
     }
 
     /// What its folder's version control is to say of its entries (ADR-134):
-    /// asked once its listing is whole, again when its names change, a
-    /// file is written in it or in a folder it opened in place, it opens
-    /// one, the providers change, or the provider says the answer it gave
-    /// may have (`StatesProvider::generation`: its repository moved, a
-    /// window came to the front). A place, a search or a remote mount
-    /// (where each file's stat is a request) is not asked, and what was
-    /// said of its entries goes; so does it once no provider is left.
+    /// asked once its listing is whole, again when its names change, it
+    /// opens a folder in place, the providers change, or the provider says
+    /// the answer it gave may have (`StatesProvider::generation`: its
+    /// repository moved, a window came to the front); when a file is
+    /// written in it, in a folder it opened or in a column above it, at
+    /// once after a quiet while, else every `STATES_WRITTEN_PACE`. The
+    /// columns above it its view shows are asked of with it (`above`). A
+    /// place, a search or a remote mount (where each file's stat is a
+    /// request) is not asked, and what was said of its entries goes; so
+    /// does it once no provider is left.
     pub(crate) fn states_to_read(
         &mut self,
         providers: &crate::vcs::StatesProviders,
@@ -4646,106 +4710,98 @@ impl Pane {
             return None;
         }
         let folder = folder?;
-        let listings = self.listings().fold(0u64, |sum, listing| {
-            sum.wrapping_add(listing.names_version())
-                .wrapping_add(listing.rewritten_version())
-        });
+        let above: Vec<&Kept> = self
+            .kept
+            .iter()
+            .filter(|kept| {
+                kept.path
+                    .as_deref()
+                    .is_some_and(|path| path != folder && folder.starts_with(path))
+            })
+            .collect();
+        let (mut names, mut written) = (0u64, 0u64);
+        for listing in self
+            .listings()
+            .chain(above.iter().map(|kept| &kept.listing))
+        {
+            names = names
+                .wrapping_add(listing.id())
+                .wrapping_add(listing.names_version());
+            written = written.wrapping_add(listing.rewritten_version());
+        }
+        let above: Vec<PathBuf> = above.iter().filter_map(|kept| kept.path.clone()).collect();
         let generation = self
             .states_said
             .map_or(0, |(id, key)| providers.generation(id, key));
         let at = (
             self.listing.id(),
-            listings,
+            names,
             self.tree_members_version,
             providers.revision(),
             generation,
         );
-        if self.states_asked.as_ref() == Some(&at) {
+        let now = std::time::Instant::now();
+        if let Some((asked, was_written, when)) = &self.states_asked
+            && *asked == at
+            && (*was_written == written || now.duration_since(*when) < STATES_WRITTEN_PACE)
+        {
             return None;
         }
-        self.states_asked = Some(at);
+        self.states_asked = Some((at, written, now));
         if let Some(reading) = self.states_reading.take() {
             reading.cancel();
         }
+        self.states_asking += 1;
         let cancel = self.location_lifetime.child();
         self.states_reading = Some(cancel.clone());
         Some(StatesAsked {
             pane: self.id,
             listing: self.listing.id(),
+            asking: self.states_asking,
             folder,
+            above,
             cancel,
         })
     }
 
-    /// Take what the version control said (`said`: who, and what; `None`
-    /// where none knows the folder) into the entries of the listing it was
-    /// asked for, if it is still the one shown, and of the folders opened
-    /// in place below it, each by its path from the folder: an entry it
-    /// says nothing of is as the last commit has it. Whether any changed.
+    /// Take what the version control said (`said`: who, and what, made
+    /// ready on the worker; `None` where none knows the folder) into the
+    /// entries of the listing it was asked for, if it is still the one
+    /// shown and this the latest asking, of the folders opened in place
+    /// below it and of the columns above it under the answer's root, each
+    /// by its path from that root (`take_vcs`). Whether any changed.
     pub(crate) fn take_states(
         &mut self,
         listing: u64,
-        said: Option<(&'static str, crate::vcs::Answer)>,
+        asking: u64,
+        said: Option<(&'static str, crate::vcs::States)>,
     ) -> bool {
-        if self.listing.id() != listing {
+        if self.listing.id() != listing || self.states_asking != asking {
             return false;
         }
         let Some(folder) = self.location().and_then(Location::path) else {
             return false;
         };
-        let Some((id, answer)) = said else {
-            self.states_said = None;
+        let Some((id, states)) = said else {
             return self.forget_states();
         };
-        self.states_said = Some((id, answer.key));
-        let states = crate::vcs::States::new(&answer);
-        let value = |state: Option<crate::vcs::State>| match state {
-            Some(state) => crate::entry::Value::Text(state.word().into()),
-            None => crate::entry::Value::Bool(false),
-        };
-        let shown: Vec<_> = self
-            .listing
-            .iter()
-            .map(|e| {
-                (
-                    e.id,
-                    crate::entry::keys::VCS,
-                    value(states.of(&e.name_str(), e.is_dir())),
-                )
-            })
-            .collect();
-        let changed = self.listing.set_fields(shown);
-        let mut kept_changed = false;
-        for kept in &mut self.kept {
-            let Some(below) = kept
-                .path
-                .as_deref()
-                .and_then(|path| path.strip_prefix(&folder).ok())
-                .filter(|below| !below.as_os_str().is_empty())
-            else {
-                continue;
-            };
-            let parts: Option<Vec<&str>> = below
+        self.states_said = Some((id, states.key()));
+        let level_of = |path: &Path| -> Option<String> {
+            let parts: Option<Vec<&str>> = path
+                .strip_prefix(states.root())
+                .ok()?
                 .components()
                 .map(|part| part.as_os_str().to_str())
                 .collect();
-            let Some(parts) = parts else {
-                continue;
-            };
-            let below = parts.join("/");
-            let values: Vec<_> = kept
-                .listing
-                .iter()
-                .map(|e| {
-                    let relative = format!("{below}/{}", e.name_str());
-                    (
-                        e.id,
-                        crate::entry::keys::VCS,
-                        value(states.of(&relative, e.is_dir())),
-                    )
-                })
-                .collect();
-            kept_changed |= kept.listing.set_fields(values);
+            Some(parts?.join("/"))
+        };
+        let changed =
+            level_of(&folder).is_some_and(|level| take_vcs(&mut self.listing, &states, &level));
+        let mut kept_changed = false;
+        for kept in &mut self.kept {
+            if let Some(level) = kept.path.as_deref().and_then(level_of) {
+                kept_changed |= take_vcs(&mut kept.listing, &states, &level);
+            }
         }
         if kept_changed {
             self.tree_version += 1;

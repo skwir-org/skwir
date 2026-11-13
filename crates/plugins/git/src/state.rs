@@ -208,26 +208,45 @@ impl StatesProvider for States {
         ID
     }
 
-    /// A folder in a repository's checked-out files, read by the helper; a
-    /// bare repository, a folder in none, or the setting off say nothing.
-    fn states(&self, folder: &Path, cancel: &CancelToken) -> anyhow::Result<Option<Answer>> {
+    /// A folder in a repository's checked-out files, read by the helper
+    /// from the highest folder shown above it in the same repository (a
+    /// columns view's), so one reading marks them all; a bare repository,
+    /// a folder in none, or the setting off say nothing. What the helper
+    /// stopped short of (its limits) is said not whole.
+    fn states(
+        &self,
+        folder: &Path,
+        above: &[PathBuf],
+        cancel: &CancelToken,
+    ) -> anyhow::Result<Option<Answer>> {
         if !self.shown.load(Ordering::Acquire) {
             return Ok(None);
         }
         let Some(repo) = Repo::find(folder, true) else {
             return Ok(None);
         };
-        if repo.work_tree.is_none() {
+        let Some(work_tree) = &repo.work_tree else {
             return Ok(None);
-        }
-        let Some(relative) = repo.relative(folder) else {
+        };
+        let root = above
+            .iter()
+            .filter(|up| {
+                up.starts_with(work_tree)
+                    && folder.starts_with(up)
+                    && Repo::find(up, true).as_ref() == Some(&repo)
+            })
+            .min_by_key(|up| up.components().count())
+            .map_or(folder, PathBuf::as_path);
+        let Some(relative) = repo.relative(root) else {
             return Ok(None);
         };
         let key = self.follow(&repo);
         let status = git::status(&repo, &relative, cancel)?;
         Ok(Some(Answer {
+            root: root.to_owned(),
             folder: status.folder,
             states: status.states,
+            whole: !status.cut && !status.stopped,
             key,
         }))
     }

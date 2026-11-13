@@ -64,16 +64,31 @@ default with a setting). Built on Linux.
      user's patterns file readable too.
 2. **Core keeps the state, not the plugin** (`vcs`): a provider answers
    for a folder (`vcs::StatesProvider`), its paths below it and their
-   states (`vcs::Answer`); the pane writes each entry's into its metadata
-   (`keys::VCS`: the state's word, `Bool(false)` for none), a folder's
-   the strongest below it, what is ignored not summed (`vcs::States`),
-   in its listing and in the folders it opened in place.
+   states (`vcs::Answer`), from that folder or from the highest of the
+   folders above it the pane shows too (a columns view's) in the same
+   repository (`Answer::root`), so one answer marks every column; the
+   pane writes each entry's into its metadata (`keys::VCS`: the state's
+   word; `Bool(false)` where a state it held is no longer said; nothing
+   for an entry nobody said anything of), a folder's the strongest below
+   it, what is ignored not summed (`vcs::States`), in its listing, in the
+   folders it opened in place and in the columns above it.
+   - **Made ready on the worker** (`vcs::States`, with the names said in
+     each folder): the pane finds the entries an answer names by their
+     names, and only what differs reaches the listing; the rest of a
+     listing is walked only for a folder new or ignored whole, or to let
+     go of a state no longer said.
+   - **Whole or not** (`Answer::whole`): an answer that stopped at the
+     provider's limits says what it found and leaves the rest as it was,
+     never said as committed.
    - **Asked** on a worker in the folder's lane, once the listing is
-     whole, again when its names change, a file whose time was known is
-     written in it or in a folder it opened, it opens one, the providers
-     change, or the provider's answer moves (`StatesProvider::generation`,
-     from memory); never for a place, a search or a remote mount. What an
-     answer said stays across a file's update until the next.
+     whole, again when its names change or a column's above, it opens a
+     folder in place, the providers change, or the provider's answer moves
+     (`StatesProvider::generation`, from memory); when a file whose time
+     was known is written in it, in a folder it opened or in a column
+     above, at once after a quiet while and then every 5 s at most, not
+     at each write (a log written each second); never for a place, a
+     search or a remote mount. Only the latest asking's answer is taken.
+     What an answer said stays across a file's update until the next.
    - Gone with the provider (its plugin off, its setting off): every
      entry said nothing of.
 3. **The Git plugin answers** (`state.rs`), for a folder in a
