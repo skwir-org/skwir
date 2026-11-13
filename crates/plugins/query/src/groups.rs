@@ -6,7 +6,8 @@
 //! Each group is made once per keys and shared by every entry in it. Keys
 //! answer from memory: a type's name not read yet is read on a worker, the
 //! type itself standing for it meanwhile, and the keys say they changed
-//! once it is (`Keys::changed`).
+//! once it is (`Keys::changed`); so are the users' names, an owner's
+//! number standing for its name.
 
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
@@ -81,7 +82,7 @@ fn keyer(
         }
         SortKey::Rating => (by_rating(), None),
         SortKey::Tags => (by_tags(), None),
-        SortKey::Owner => (by_owner(), None),
+        SortKey::Owner => (by_owner(app, keys), None),
         SortKey::Folder => (by_folder(), None),
         SortKey::Dimensions => (by_dimensions(), None),
         SortKey::Duration => (by_duration(), None),
@@ -484,19 +485,55 @@ fn by_tags() -> Keyer {
     })
 }
 
-/// By the owner's name, or its number where the system names none.
-fn by_owner() -> Keyer {
+/// By the owner's name, or its number where the system names none. The
+/// names are read once (`users::load`, on a worker): asked before they
+/// are, an owner's number stands for its name, kept by no group, and the
+/// keys say they changed once the names are there, so that an order made
+/// meanwhile is made again with them.
+fn by_owner(app: &Weak<App>, keys: &Keys) -> Keyer {
+    if !skwir_platform::users::loaded() {
+        read_names(app, keys);
+    }
     let made = Made::<u64>::new();
     let none = Arc::new(Group::ranked(0, "No owner"));
     Arc::new(move |e: &Of<'_>| {
         let Some(uid) = e.metadata.value(keys::UID).and_then(Value::as_u64) else {
             return Arc::clone(&none);
         };
+        if !skwir_platform::users::loaded() {
+            return Arc::new(Group::new(1, &uid.to_string()));
+        }
         made.get(uid, || {
             let name = skwir_platform::users::user(uid).unwrap_or_else(|| uid.to_string());
             Group::new(1, &name)
         })
     })
+}
+
+/// Read the users' names: here, off the window's thread (a script's, an
+/// agent's, a test's, which may wait on a file); from the window's, on a
+/// worker, the keys saying they changed once read.
+fn read_names(app: &Weak<App>, keys: &Keys) {
+    if !skwir_core::scheduler::on_window_thread() {
+        skwir_platform::users::load();
+        return;
+    }
+    let Some(app) = app.upgrade() else {
+        return;
+    };
+    let (changed, woken) = (Arc::clone(&keys.changed), app.weak());
+    app.scheduler.spawn(
+        Priority::Visible,
+        "query.user-names",
+        CancelToken::new(),
+        move || {
+            skwir_platform::users::load();
+            changed.fetch_add(1, Ordering::AcqRel);
+            if let Some(app) = woken.upgrade() {
+                app.wake();
+            }
+        },
+    );
 }
 
 /// The date groups of a day (ADR-130, 7), each the first that holds it,
