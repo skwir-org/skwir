@@ -3874,6 +3874,7 @@ fn arriving_said(arriving: &[op::arriving::Arriving]) -> serde_json::Value {
                     Arrives::Starting => ("starting", None),
                     Arrives::Copying(f) => ("copying", Some(f)),
                     Arrives::Moving(f) => ("moving", Some(f)),
+                    Arrives::Landed => ("landed", None),
                 };
                 let like = &a.arrival.like;
                 serde_json::json!({
@@ -5185,7 +5186,7 @@ mod builtin {
             "core", Topic::Files,
             "arriving",
             "Arriving in a folder",
-            "Return what the actions waiting and running bring into a folder (the pane's when none is given) and has not landed (ADR-135): each item's name there, the plan that brings it, its state (waiting, starting, copying with others at the batch's fraction, moving at its own fraction from 0 to 1), whether its action is paused, what it is copied or moved from, and whether it is a folder or a file of what size",
+            "Return what the actions waiting and running bring into a folder (the pane's when none is given) and has not landed (ADR-135): each item's name there, the plan that brings it, its state (waiting, starting, copying with others at the batch's fraction, moving at its own fraction from 0 to 1, landed: in place while its action goes on), whether its action is paused, what it is copied or moved from, and whether it is a folder or a file of what size",
             |a, app| {
                 let folder = match &a.folder {
                     Some(folder) => crate::os_path::absolute(folder)?.to_owned(),

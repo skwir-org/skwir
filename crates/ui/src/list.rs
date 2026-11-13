@@ -221,6 +221,11 @@ struct Placing {
     arriving: skwir_core::op::arriving::Arriving,
 }
 
+/// How long what landed (`Arrives::Landed`) is drawn at most while its
+/// folder does not list it: the watcher tells a name at once, so a row
+/// waits a few frames at most, never for a name another file took.
+const LANDED_SHOWN: Duration = Duration::from_secs(1);
+
 /// An item arriving by its identity: what it is drawn and keyed as, held
 /// where it is kept so that no other takes its address meanwhile.
 pub(crate) fn arrival_key(arriving: &skwir_core::op::arriving::Arriving) -> usize {
@@ -381,6 +386,12 @@ pub struct ListState {
     /// opened in place, by the entry it opens at), keyed once for how the
     /// pane shows it: placed again by a search as the order changes.
     arriving_keys: HashMap<Option<EntryId>, ArrivingKeys<skwir_core::workspace::Keying>>,
+    /// What was drawn landed (`Arrives::Landed`) and is not listed yet, by
+    /// identity: since when, and it (held, so that its identity stays its
+    /// own).
+    arriving_landed: HashMap<usize, (Instant, skwir_core::op::arriving::Arriving)>,
+    /// When the timer set to draw what arrives again fires (`arrival_timer`).
+    arriving_timer: Option<Instant>,
     /// Since when the files of the folder left are drawn while the one
     /// gone to is filled elsewhere (ADR-120, amended: `holds_left`), and
     /// whether a command ended that.
@@ -467,6 +478,8 @@ impl Default for ListState {
             arriving_on: HashMap::new(),
             arriving_for: None,
             arriving_keys: HashMap::new(),
+            arriving_landed: HashMap::new(),
+            arriving_timer: None,
             held_since: None,
             hold_ended: false,
             sorted_at: None,
@@ -607,6 +620,7 @@ impl ListState {
         self.arriving_on.clear();
         self.arriving_for = None;
         self.arriving_keys.clear();
+        self.arriving_landed.clear();
         self.held_since = None;
         self.hold_ended = false;
         self.sorted_at = None;
@@ -639,7 +653,7 @@ impl ListState {
         executor: &skwir_core::op::Executor,
         now: Instant,
     ) -> (bool, Option<Instant>) {
-        use skwir_core::op::arriving::Arriving;
+        use skwir_core::op::arriving::{Arrives, Arriving};
         // Where something may arrive: the pane's folder, then each folder
         // it opened in place, by the entry it opens at.
         let mut sources: Vec<(Option<EntryId>, &skwir_core::location::Listing, PathBuf)> =
@@ -657,6 +671,12 @@ impl ListState {
         let mut due: Option<Instant> = None;
         let mut ghosts: Vec<(usize, Arriving)> = Vec::new();
         let mut on = HashMap::new();
+        // What landed and is not listed yet, drawn whole until it is, at
+        // most `LANDED_SHOWN` from when it was first drawn landed, its
+        // plan ended meanwhile or not: its row and its entry's follow each
+        // other with no gap between.
+        let mut landed: HashMap<usize, (Instant, usize, Arriving)> = HashMap::new();
+        let was_landed = std::mem::take(&mut self.arriving_landed);
         for (source, (_, listing, folder)) in sources.iter().enumerate() {
             for arriving in executor.arriving_in(folder) {
                 let shown_at = arriving.arrival.asked + crate::work::SHOWN_AFTER;
@@ -664,13 +684,49 @@ impl ListState {
                     due = Some(due.map_or(shown_at, |due| due.min(shown_at)));
                     continue;
                 }
-                match listing.find_by_name(&arriving.arrival.name) {
-                    Some(entry) => {
+                let listed = listing.find_by_name(&arriving.arrival.name);
+                match (listed, arriving.state) {
+                    // In place and listed: nothing of it is drawn.
+                    (Some(_), Arrives::Landed) => {}
+                    (Some(entry), _) => {
                         on.insert(entry.id, arriving);
                     }
-                    None => ghosts.push((source, arriving)),
+                    (None, Arrives::Landed) => {
+                        let key = arrival_key(&arriving);
+                        let since = was_landed.get(&key).map_or(now, |(since, _)| *since);
+                        landed.insert(key, (since, source, arriving));
+                    }
+                    (None, _) => ghosts.push((source, arriving)),
                 }
             }
+        }
+        // Drawn landed before, its plan ended since: drawn on.
+        let source_of: HashMap<&std::path::Path, usize> = sources
+            .iter()
+            .enumerate()
+            .map(|(source, (_, _, folder))| (folder.as_path(), source))
+            .collect();
+        for (key, (since, was)) in was_landed {
+            let Some(&source) = source_of.get(was.arrival.folder.as_path()) else {
+                continue;
+            };
+            if !landed.contains_key(&key)
+                && sources[source].1.find_by_name(&was.arrival.name).is_none()
+            {
+                landed.insert(key, (since, source, was));
+            }
+        }
+        // In one order from sync to sync: what is drawn is the same.
+        let mut landed: Vec<(usize, (Instant, usize, Arriving))> = landed.into_iter().collect();
+        landed.sort_unstable_by_key(|(key, _)| *key);
+        for (key, (since, source, arriving)) in landed {
+            let until = since + LANDED_SHOWN;
+            if until <= now {
+                continue;
+            }
+            due = Some(due.map_or(until, |due| due.min(until)));
+            self.arriving_landed.insert(key, (since, arriving.clone()));
+            ghosts.push((source, arriving));
         }
         let on_moved = on.len() != self.arriving_on.len()
             || on.iter().any(|(id, a)| {
@@ -814,6 +870,21 @@ impl ListState {
         self.arriving_placed = placed;
         self.arriving_fresh = fresh;
         (was_drawn || !self.arriving.is_empty() || on_moved, due)
+    }
+
+    /// Whether a timer is to be set for `due` (`sync_arriving`'s), to draw
+    /// what arrives again then: not where one set fires at or before it,
+    /// later than `now`. One timer for the pane, never a loop.
+    pub fn arrival_timer(&mut self, due: Option<Instant>, now: Instant) -> Option<Instant> {
+        let due = due?;
+        if self
+            .arriving_timer
+            .is_some_and(|set| set > now && set <= due)
+        {
+            return None;
+        }
+        self.arriving_timer = Some(due);
+        Some(due)
     }
 
     /// How far each of what is drawn arriving has come, as `ghosts` says

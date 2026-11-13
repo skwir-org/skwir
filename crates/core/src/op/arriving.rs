@@ -75,6 +75,10 @@ pub enum Arrives {
     /// Copied by a batch with others (ADR-078) whose transfer says nothing
     /// of each until it is whole: the batch is this far, from 0 to 1.
     Copying(f32),
+    /// Its steps ended: it is in place, while its plan runs on. Drawn whole
+    /// until the folder lists it, so that its row and its entry's follow
+    /// each other with no gap; the entry listed, nothing is drawn of it.
+    Landed,
 }
 
 /// An item arriving, and how far it has come.
@@ -115,8 +119,8 @@ pub(super) struct Batching {
     pub tells: bool,
 }
 
-/// Where `arrival` stands as its plan's run read it, `None` once it landed
-/// (its steps ended) or where its run ended.
+/// Where `arrival` stands as its plan's run read it: landed once its steps
+/// ended; `None` where it has none, or where its run ended.
 pub(super) fn state_of(arrival: &Arrival, read: Option<&StepsRead<'_>>) -> Option<Arrives> {
     let Some(read) = read else {
         // Its plan not running: waiting, unless it ran (its steps known),
@@ -127,8 +131,11 @@ pub(super) fn state_of(arrival: &Arrival, read: Option<&StepsRead<'_>>) -> Optio
         // Its plan checks itself before its steps.
         return Some(Arrives::Starting);
     };
-    if steps.end <= read.ended || steps.is_empty() {
+    if steps.is_empty() {
         return None;
+    }
+    if steps.end <= read.ended {
+        return Some(Arrives::Landed);
     }
     if steps.clone().all(|step| read.ahead.contains(&step)) {
         return Some(Arrives::Moving(1.));
@@ -766,7 +773,10 @@ mod tests {
             Some(Arrives::Moving(0.5))
         );
         // Its steps ended: landed.
-        assert_eq!(state_of(&item, Some(&read(4, 0, 0, &[]).lent())), None);
+        assert_eq!(
+            state_of(&item, Some(&read(4, 0, 0, &[]).lent())),
+            Some(Arrives::Landed)
+        );
         // A batch finished its steps ahead of their turn: whole.
         assert_eq!(
             state_of(&item, Some(&read(1, 0, 0, &[2, 3]).lent())),

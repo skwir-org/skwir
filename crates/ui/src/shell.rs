@@ -3838,13 +3838,15 @@ impl Shell {
                 let before = list.listing();
                 let resorted = list.sync(pane);
                 // What plans bring into its folder, among its rows (ADR-135).
-                let (_, due) = list.sync_arriving(pane, &app.executor, std::time::Instant::now());
+                let now = std::time::Instant::now();
+                let (_, due) = list.sync_arriving(pane, &app.executor, now);
+                let due = list.arrival_timer(due, now);
                 (location, resorted, list.listing() != before, due)
             };
-            // What arrives once it lasted, shown then: one timer, never a
-            // loop.
+            // What arrives once it lasted, shown then, and what landed let
+            // go of: one timer for the pane, waking its window alone.
             if let Some(due) = due {
-                crate::work::wake_after(&self.work, &app, due, cx);
+                crate::work::wake_at(due, app.pane_waker(id), cx);
             }
             resorted_any |= resorted;
             // The files of the folder left drawn while the one gone to is

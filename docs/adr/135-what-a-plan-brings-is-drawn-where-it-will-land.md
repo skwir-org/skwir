@@ -44,7 +44,10 @@ press opening the action's card in Activity). Built on Linux.
      memory says the volumes, is made anew); what a step makes, by what
      the step says, dated now.
    - **How far each has come**, read from its plan's meter when asked:
-     waiting, starting, a share, paused. The share is the bytes of its
+     waiting, starting, a share, paused; landed once its steps ended,
+     drawn whole until its folder lists it (a second at most, its plan
+     ended meanwhile or not), so its row never leaves before its entry
+     comes. The share is the bytes of its
      step, or its steps ended where it has several; whole once a batch
      finished it ahead of its turn (ADR-078).
    - A plan cancelled brings nothing from then on. Nothing is read from

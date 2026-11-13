@@ -123,6 +123,17 @@ pub(crate) fn wake_after(
     .detach();
 }
 
+/// Call `wake` at `at`: what one pane or one window shows, due then
+/// (ADR-122: only the window it concerns draws). One timer, never a loop.
+pub(crate) fn wake_at(at: Instant, wake: skwir_core::location::Waker, cx: &mut gpui::App) {
+    let wait = at.saturating_duration_since(Instant::now());
+    cx.spawn(async move |cx| {
+        cx.background_executor().timer(wait).await;
+        wake();
+    })
+    .detach();
+}
+
 impl Work {
     /// Whether a timer is to be set for `at`, noting it: not when one at
     /// or before it is set already.

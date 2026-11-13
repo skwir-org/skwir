@@ -22,6 +22,7 @@ pub const OPACITY: f32 = 0.6;
 pub fn fraction(arriving: &Arriving) -> f32 {
     match arriving.state {
         Arrives::Moving(fraction) | Arrives::Copying(fraction) => fraction,
+        Arrives::Landed => 1.,
         Arrives::Waiting | Arrives::Starting => 0.,
     }
 }
@@ -34,6 +35,7 @@ pub fn words(arriving: &Arriving) -> String {
         Arrives::Starting => "starting".to_owned(),
         Arrives::Copying(_) => "copying".to_owned(),
         Arrives::Moving(fraction) => crate::activity::percent(fraction),
+        Arrives::Landed => crate::activity::percent(1.),
     }
 }
 
@@ -44,7 +46,7 @@ pub fn said(arriving: &Arriving) -> String {
         Arrives::Waiting => "arriving, waiting".to_owned(),
         Arrives::Starting => "arriving, starting".to_owned(),
         Arrives::Copying(_) => "arriving, copying".to_owned(),
-        Arrives::Moving(_) => format!("arriving, {}", percent_of(arriving)),
+        Arrives::Moving(_) | Arrives::Landed => format!("arriving, {}", percent_of(arriving)),
     }
 }
 
@@ -55,7 +57,7 @@ fn percent_of(arriving: &Arriving) -> String {
 /// The pill: Small, a count; the accent's fill under a share moving, the
 /// muted ink on the files' ground otherwise.
 pub fn pill(arriving: &Arriving, theme: &Theme) -> Div {
-    let moving = matches!(arriving.state, Arrives::Moving(_)) && !arriving.paused;
+    let moving = matches!(arriving.state, Arrives::Moving(_) | Arrives::Landed) && !arriving.paused;
     div()
         .flex_none()
         .px(crate::sizes::sized(6.))
@@ -111,8 +113,9 @@ pub fn tint(arriving: &Arriving, theme: &Theme) -> Div {
         )
 }
 
-/// What pointing at it says: where it comes from and how its action goes.
-fn tip(shell: &Shell, arriving: &Arriving) -> String {
+/// What pointing at it says: where it comes from and how its action goes,
+/// read as it is pointed at (`acting`), never as each row is drawn.
+fn tip(app: &skwir_core::App, arriving: &Arriving) -> String {
     let arrival = &arriving.arrival;
     let from = arrival
         .from
@@ -125,8 +128,7 @@ fn tip(shell: &Shell, arriving: &Arriving) -> String {
             );
             format!("From {name}")
         });
-    let left = shell
-        .app
+    let left = app
         .executor
         .transfer(arrival.plan)
         .and_then(|transfer| transfer.left)
@@ -138,6 +140,7 @@ fn tip(shell: &Shell, arriving: &Arriving) -> String {
         // Its server's tool says nothing of each file until it is whole.
         Arrives::Copying(_) => "copying with the others".to_owned(),
         Arrives::Moving(_) => percent_of(arriving),
+        Arrives::Landed => "in place".to_owned(),
     };
     [from, Some(how), left]
         .into_iter()
@@ -157,9 +160,9 @@ pub fn acting(
 ) -> Stateful<Div> {
     let plan = arriving.arrival.plan;
     let pane = shell.pane;
-    let said = tip(shell, arriving);
+    let (app, it) = (std::sync::Arc::clone(&shell.app), arriving.clone());
     el.cursor_pointer()
-        .tooltip(move |_, cx| crate::toolbar::tooltip(said.clone().into(), cx))
+        .tooltip(move |_, cx| crate::toolbar::tooltip(tip(&app, &it).into(), cx))
         .on_mouse_down(
             gpui::MouseButton::Left,
             cx.listener(move |this, _: &gpui::MouseDownEvent, window, cx| {

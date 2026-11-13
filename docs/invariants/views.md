@@ -547,7 +547,10 @@ around the views is in [shell.md](shell.md).
   cancelled) leaves its row, the others where they were. Otherwise a
   sync takes how far each has come, the executor telling each plan's
   items under its meter's locks, nothing copied
-  (`Executor::arriving_in`, `Meter::steps_read`). It is drawn by `views::arriving`
+  (`Executor::arriving_in`, `Meter::steps_read`). What landed is drawn
+  whole until its folder lists it (`Arrives::Landed`), `LANDED_SHOWN` at
+  most, its plan ended meanwhile or not: its row and its entry's follow
+  each other with no gap; listed, nothing of it is drawn. It is drawn by `views::arriving`
   (dimmed at `OPACITY`, its tint stopping `SHORT` of the end, its pill)
   and answers its own press (Activity, never a selection). What arrives
   in a folder opened in place is placed among that folder's entries, a
