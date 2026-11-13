@@ -662,6 +662,9 @@ static TABLE: Mutex<Option<(Instant, Arc<Table>)>> = Mutex::new(None);
 struct Table {
     remotes: Vec<Arc<Remote>>,
     made_up: Vec<(u64, u64)>,
+    // Windows lists no table: its volumes are told by a path's drive or
+    // share (`volume_of`), and its list stays empty, never read.
+    #[cfg_attr(windows, allow(dead_code))]
     points: Vec<PathBuf>,
 }
 
