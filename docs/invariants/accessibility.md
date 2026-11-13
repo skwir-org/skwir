@@ -143,7 +143,8 @@ like `AGENTS.md`.
   counts siblings by level.
 - **An entry says what `entry::behave` gives it** (`views/entry.rs`): its
   name, then as its description whether it plays ("playing", "paused",
-  what the badge on its picture says), what fades or marks it ("cut",
+  what the badge on its picture says; the badge itself a button named
+  by what a click on it does, "Pause" or "Play"), what fades or marks it ("cut",
   "hidden" for one hidden though its name does not say so, "leads to
   what the filter keeps" for a folder dimmed as only the way, ADR-126)
   and its

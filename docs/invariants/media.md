@@ -278,6 +278,14 @@ binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
   is the preview's again. The queue is what was played (the selection,
   a playlist's tracks), so Next stops at its end; a track alone walks
   its folder's.
+- What the pin opens (a track, a playlist's, its cover) is read on a
+  worker in the lane of its remote (`fs::reach::lane`; a selection
+  across remotes in its first file's), never in the lane every folder
+  shares. It is typed there as a preview types it (`player::request_for`,
+  `mime::identify`: the bytes where the name is not enough), and the pin
+  is a film's (its picture, a dock tall enough) by that type
+  (`Opened::video`), never by the name alone: a Theora `.ogg` the
+  folder's names called music is shown as the film it is.
 - While the panel shows the pinned session, every step (panel, dock,
   desktop) moves the selection in the pin's order, and the selection follows
   when the session advances by itself (`Shell::select_track`). The panel

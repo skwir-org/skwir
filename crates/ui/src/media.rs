@@ -251,24 +251,13 @@ impl Shell {
     /// never while painting.
     fn random_track(&self) -> Option<skwir_core::EntryId> {
         let (kind, here) = (self.media_kind()?, self.preview.entry_id()?);
-        let ws = self.app.workspace.read();
-        let pane = ws.pane(self.pane)?;
-        let tracks: Vec<_> = self
-            .ui()
-            .list
-            .sorted
-            .iter()
-            .filter(|id| {
-                **id != here
-                    && pane
-                        .listing
-                        .get(**id)
-                        .is_some_and(|entry| is_track(entry, kind))
-            })
-            .take(Self::QUEUE_TRACKS)
-            .copied()
-            .collect();
-        (!tracks.is_empty()).then(|| tracks[crate::player::random_below(tracks.len())])
+        // Typed as a selection is, off the workspace's lock.
+        let tracks = self.typed_in_order(
+            self.pane,
+            |_, id| id != here,
+            |mime, _| mime.as_str().starts_with(kind).then_some(()),
+        );
+        (!tracks.is_empty()).then(|| tracks[crate::player::random_below(tracks.len())].0)
     }
 
     /// The entry of the pane the panel previews whose file is `path`.
@@ -878,15 +867,32 @@ pub(crate) enum Played {
     Playlist,
 }
 
-/// What `entry` plays as, if anything: by its type (`mime::of_entry`, a
-/// link's target's), a playlist by the one question the previews ask
-/// (`preview::playlist`), whatever kind its type is filed under.
-pub(crate) fn played(entry: &skwir_core::Entry) -> Option<Played> {
-    let mime = skwir_platform::mime::of_entry(entry)?;
-    played_as(&mime, entry.type_name())
+/// The types of entries read under the workspace's lock (each its
+/// `Entry::inode_type` and `Entry::type_name`, a link's target's), in their
+/// order, typed once the lock is let go as a selection is
+/// (`mime::by_names`: past a few, a suffix is asked once, so a hundred
+/// thousand names cost a few hundred questions, not a hundred thousand).
+pub(crate) fn types_of<'a>(
+    parts: impl ExactSizeIterator<Item = (Option<&'static str>, &'a std::ffi::OsStr)> + Clone,
+) -> Vec<Option<skwir_platform::mime::Mime>> {
+    let named = skwir_platform::mime::by_names(parts.clone().map(|(_, name)| name));
+    parts
+        .zip(named)
+        .map(|((inode, _), named)| match inode {
+            Some(inode) => Some(skwir_platform::mime::Mime(inode.to_owned())),
+            None => named,
+        })
+        .collect()
 }
 
-fn played_as(mime: &skwir_platform::mime::Mime, name: &std::ffi::OsStr) -> Option<Played> {
+/// What a file of type `mime` named `name` plays as, if anything: a
+/// playlist by the one question the previews ask (`preview::playlist`),
+/// whatever kind its type is filed under, else music or a film by its
+/// type's kind.
+pub(crate) fn played_as(
+    mime: &skwir_platform::mime::Mime,
+    name: &std::ffi::OsStr,
+) -> Option<Played> {
     if skwir_platform::preview::playlist(std::path::Path::new(name), Some(mime.as_str())).is_some()
     {
         return Some(Played::Playlist);
@@ -1468,6 +1474,31 @@ pub fn audio_content(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Entries past a few are typed by their suffix, once each, an
+    /// inode's type before its name: what Play and a pin's queue ask of a
+    /// whole folder.
+    #[test]
+    fn many_entries_are_typed_as_one_selection() {
+        // More than a few names: asked by suffix, the inode's type first.
+        let names: Vec<std::ffi::OsString> = (0..200)
+            .map(|n| format!("song {n}.flac").into())
+            .chain([std::ffi::OsString::from("Album")])
+            .collect();
+        let parts = names.iter().enumerate().map(|(at, name)| {
+            let inode = (at == 200).then_some("inode/directory");
+            (inode, name.as_os_str())
+        });
+        let types = types_of(parts);
+        assert_eq!(types.len(), 201);
+        let flac = skwir_platform::mime::by_name(std::ffi::OsStr::new("song.flac"));
+        assert!(flac.is_some());
+        assert!(types[..200].iter().all(|mime| *mime == flac));
+        assert_eq!(
+            types[200].as_ref().map(skwir_platform::mime::Mime::as_str),
+            Some("inode/directory")
+        );
+    }
 
     /// Play goes by the file's type: music to the pin, a film to the quick
     /// preview, a playlist (filed as audio or video by the database) gives

@@ -1330,9 +1330,11 @@ pub(crate) fn playing_side(size: f32) -> f32 {
 /// dragged.
 fn playing_badge(plays: Plays, size: f32, theme: &crate::theme::Theme) -> gpui::Div {
     let disc = playing_side(size);
-    let (glyph, tip) = match plays {
-        Plays::Playing => ("volume", "Playing · click to pause"),
-        Plays::Paused => ("pause", "Paused · click to play"),
+    // What a click does is its name: the badge is a button of its own,
+    // the entry's description saying what plays (`entry::said`).
+    let (glyph, tip, name) = match plays {
+        Plays::Playing => ("volume", "Playing · click to pause", "Pause"),
+        Plays::Paused => ("pause", "Paused · click to play", "Play"),
     };
     // The picture around it answers as the entry does: only the disc is
     // the player's.
@@ -1345,6 +1347,8 @@ fn playing_badge(plays: Plays, size: f32, theme: &crate::theme::Theme) -> gpui::
         .child(
             div()
                 .id("playing-badge")
+                .role(gpui::Role::Button)
+                .aria_label(name)
                 .size(px(disc))
                 .flex()
                 .items_center()

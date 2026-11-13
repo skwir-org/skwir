@@ -258,37 +258,62 @@ pub struct Opened {
     path: PathBuf,
     lifetime: CancelToken,
     session: anyhow::Result<Option<Arc<dyn MediaSession>>>,
+    /// Whether it is a film, by the type read where it was opened
+    /// (`plays_video`), never by its name alone.
+    video: bool,
     /// Started from the files (`Shell::start_pin`): the queue it was
     /// resolved to and where the track stands in it, a pin of its own.
     start: Option<(Vec<PathBuf>, usize)>,
 }
 
-/// What the preview registry plays `path` with: the file it leads to, a
-/// link's target, typed by its name.
-fn request_for(path: &std::path::Path) -> anyhow::Result<PreviewRequest> {
+/// What the preview registry plays `path` with, at `max_side`: the file it
+/// leads to, a link's target, typed as a preview types it, by its name and,
+/// where the name is not enough (an `.ogg`, music or a film), its bytes.
+/// Reads the file: on a worker, in its remote's lane (`fs::reach::lane`).
+fn request_for(path: &std::path::Path, max_side: u32) -> anyhow::Result<PreviewRequest> {
     let (entry, content) = skwir_core::fs::content_path(path)
         .and_then(|content| Some((EntryRef::from_path(&*content)?, content)))
         .ok_or_else(|| anyhow::anyhow!("{} is no file to play", path.display()))?;
+    let mime = content
+        .file_name()
+        .and_then(|name| skwir_platform::mime::identify(name, &content))
+        .map(|mime| mime.to_string());
     Ok(PreviewRequest {
         entry,
-        mime: skwir_platform::mime::by_name(content.as_os_str()).map(|mime| mime.to_string()),
+        mime,
         page: 1,
         seconds: None,
-        max_side: 0,
+        max_side,
         text_size: None,
         fit: None,
         held: skwir_core::preview::HeldSlot::default(),
     })
 }
 
-/// A session playing `path`, opened on a worker; its `lifetime` is its own.
+/// Whether what `request` plays is a film: its type, as `request_for`
+/// read it.
+fn plays_video(request: &PreviewRequest) -> bool {
+    request
+        .mime
+        .as_deref()
+        .is_some_and(|mime| mime.starts_with("video/"))
+}
+
+/// A session playing `path`, opened on a worker, and whether it is a film
+/// (`plays_video`); its `lifetime` is its own.
 fn open_track(
     previews: &skwir_core::preview::Previews,
     path: &std::path::Path,
     lifetime: &CancelToken,
     wake: skwir_core::location::Waker,
-) -> anyhow::Result<Option<Arc<dyn MediaSession>>> {
-    previews.open_media(&request_for(path)?, lifetime, wake)
+) -> (anyhow::Result<Option<Arc<dyn MediaSession>>>, bool) {
+    match request_for(path, 0) {
+        Ok(request) => (
+            previews.open_media(&request, lifetime, wake),
+            plays_video(&request),
+        ),
+        Err(error) => (Err(error), false),
+    }
 }
 
 /// The tracks `wanted` plays, in order, a playlist's own tracks in its
@@ -330,7 +355,7 @@ fn resolve_queue(
             queue.push(path);
             continue;
         }
-        let (Some(scratch), Ok(request)) = (&scratch, request_for(&path)) else {
+        let (Some(scratch), Ok(request)) = (&scratch, request_for(&path, 0)) else {
             continue;
         };
         let Ok(Some(list)) = previews.inspect(&request, &view, job) else {
@@ -640,6 +665,14 @@ impl Shell {
         cx.notify();
     }
 
+    /// The dock's height for what the pin plays: a film needs room to be
+    /// seen; music is fine in a row.
+    fn dock_for(&mut self, video: bool) {
+        if video && self.player.height < crate::dock::TALL_FROM {
+            self.player.height = crate::dock::VIDEO_HEIGHT;
+        }
+    }
+
     /// Whether anything of the window's plays: the pin, or the panel's
     /// session.
     fn plays_here(&self) -> bool {
@@ -696,10 +729,7 @@ impl Shell {
             _ => pin.reorder(self.prefs.player.continue_with),
         }
         self.set_pin(Some(pin));
-        // A film needs room to be seen; music is fine in a row.
-        if video && self.player.height < crate::dock::TALL_FROM {
-            self.player.height = crate::dock::VIDEO_HEIGHT;
-        }
+        self.dock_for(video);
         self.player.focus.get_or_insert_with(|| cx.focus_handle());
         self.remember_session();
         cx.notify();
@@ -798,9 +828,13 @@ impl Shell {
             let members = crate::preview::members_dir(self.app.cache.root());
             let cancel = self.app.lifetime().child();
             let job = cancel.clone();
-            self.app
-                .scheduler
-                .spawn(Priority::Normal, "player-queue", cancel, move || {
+            let lane = skwir_core::fs::reach::lane(&request.entry.path);
+            self.app.scheduler.spawn_in(
+                lane,
+                Priority::Normal,
+                "player-queue",
+                cancel,
+                move || {
                     // Only files of their own are taken, so nothing should be
                     // written; a directory of its own, gone with the job,
                     // makes sure of it.
@@ -833,7 +867,8 @@ impl Shell {
                         let _ = tx.send((current, paths));
                         wake();
                     }
-                });
+                },
+            );
             return (vec![path.to_owned()], 0);
         }
         match self.preview.pane() {
@@ -850,26 +885,81 @@ impl Shell {
         path: &std::path::Path,
         video: bool,
     ) -> (Vec<PathBuf>, usize) {
-        let sorted = self.ui().list.sorted.clone();
-        let ws = self.app.workspace.read();
-        let Some(pane) = ws.pane(pane) else {
-            return (vec![path.to_owned()], 0);
-        };
-        let queue: Vec<PathBuf> = sorted
-            .iter()
-            .filter_map(|id| {
-                let entry = pane.entry(*id)?;
-                let kind = if video { "video/" } else { "audio/" };
-                crate::media::is_track(entry, kind)
-                    .then(|| pane.path_of(*id))
-                    .flatten()
-            })
-            .take(Self::QUEUE_TRACKS)
+        let kind = if video { "video/" } else { "audio/" };
+        let kept = self.typed_in_order(
+            pane,
+            |_, _| true,
+            |mime, _| mime.as_str().starts_with(kind).then_some(()),
+        );
+        let queue: Vec<PathBuf> = self
+            .with_paths(pane, kept)
+            .into_iter()
+            .map(|(_, path, ())| path)
             .collect();
         match queue.iter().position(|track| track == path) {
             Some(index) => (queue, index),
             None => (vec![path.to_owned()], 0),
         }
+    }
+
+    /// The entries of `pane` that `wanted` picks, in the order shown, that
+    /// `keep` takes by their type and name: at most `QUEUE_TRACKS`. What it
+    /// needs is read under the workspace's lock and typed once it is let
+    /// go, as a selection is (`media::types_of`): a hundred thousand
+    /// entries are a few hundred questions, never one each on the window's
+    /// thread under the lock.
+    pub(crate) fn typed_in_order<T>(
+        &self,
+        pane: skwir_core::workspace::PaneId,
+        wanted: impl Fn(&skwir_core::workspace::Pane, skwir_core::EntryId) -> bool,
+        keep: impl Fn(&skwir_platform::mime::Mime, &std::ffi::OsStr) -> Option<T>,
+    ) -> Vec<(skwir_core::EntryId, T)> {
+        let sorted = Arc::clone(&self.ui().list.sorted);
+        let parts: Vec<(
+            skwir_core::EntryId,
+            Option<&'static str>,
+            std::ffi::OsString,
+        )> = {
+            let ws = self.app.workspace.read();
+            let Some(p) = ws.pane(pane) else {
+                return Vec::new();
+            };
+            sorted
+                .iter()
+                .filter(|id| wanted(p, **id))
+                .filter_map(|&id| {
+                    let entry = p.entry(id)?;
+                    Some((id, entry.inode_type(), entry.type_name().to_owned()))
+                })
+                .collect()
+        };
+        let types = crate::media::types_of(
+            parts
+                .iter()
+                .map(|(_, inode, name)| (*inode, name.as_os_str())),
+        );
+        parts
+            .iter()
+            .zip(types)
+            .filter_map(|((id, _, name), mime)| Some((*id, keep(&mime?, name)?)))
+            .take(Self::QUEUE_TRACKS)
+            .collect()
+    }
+
+    /// `kept`, each with the path `pane` lists it at: one taking of the
+    /// workspace's lock.
+    fn with_paths<T>(
+        &self,
+        pane: skwir_core::workspace::PaneId,
+        kept: Vec<(skwir_core::EntryId, T)>,
+    ) -> Vec<(skwir_core::EntryId, PathBuf, T)> {
+        let ws = self.app.workspace.read();
+        let Some(p) = ws.pane(pane) else {
+            return Vec::new();
+        };
+        kept.into_iter()
+            .filter_map(|(id, kept)| Some((id, p.path_of(id)?, kept)))
+            .collect()
     }
 
     /// A queue is a folder's worth of music, not a disk's.
@@ -895,13 +985,18 @@ impl Shell {
         if let Some(before) = self.player.opening.replace(job.clone()) {
             before.cancel();
         }
-        self.app
-            .scheduler
-            .spawn(Priority::Visible, "player-open", job.clone(), move || {
+        // A remote's track is opened in its lane (ADR-077).
+        let lane = skwir_core::fs::reach::lane(&path);
+        self.app.scheduler.spawn_in(
+            lane,
+            Priority::Visible,
+            "player-open",
+            job.clone(),
+            move || {
                 // The session's own: it outlives this job once opened. A
                 // link plays, and is typed as, what it leads to.
                 let lifetime = CancelToken::new();
-                let session = open_track(&previews, &path, &lifetime, wake.clone());
+                let (session, video) = open_track(&previews, &path, &lifetime, wake.clone());
                 // Skipped while it opened: let go of at once.
                 if job.is_cancelled() {
                     lifetime.cancel();
@@ -912,10 +1007,12 @@ impl Shell {
                     path,
                     lifetime,
                     session,
+                    video,
                     start: None,
                 });
                 wake();
-            });
+            },
+        );
     }
 
     /// Play `wanted` in the pinned player from its `index`th: a
@@ -935,21 +1032,36 @@ impl Shell {
         if let Some(before) = self.player.opening.replace(job.clone()) {
             before.cancel();
         }
-        self.app
-            .scheduler
-            .spawn(Priority::Visible, "player-start", job.clone(), move || {
+        // Read in the lane of the remote it is on (ADR-077): what Play is
+        // given is a pane's, one folder's, or a search's, whose first file
+        // names the lane; one that spans remotes is read in that one's.
+        let lane = wanted
+            .get(index)
+            .or_else(|| wanted.first())
+            .map_or(skwir_core::scheduler::Lane::SHARED, |(path, _)| {
+                skwir_core::fs::reach::lane(path)
+            });
+        self.app.scheduler.spawn_in(
+            lane,
+            Priority::Visible,
+            "player-start",
+            job.clone(),
+            move || {
                 let (queue, index) = resolve_queue(&previews, wanted, index, &members, &job);
                 let lifetime = CancelToken::new();
-                let (path, session) = match queue.get(index) {
+                let (path, (session, video)) = match queue.get(index) {
                     Some(path) => (
                         path.clone(),
                         open_track(&previews, path, &lifetime, wake.clone()),
                     ),
                     None => (
                         PathBuf::new(),
-                        Err(anyhow::anyhow!(
-                            "These playlists list no track to play here"
-                        )),
+                        (
+                            Err(anyhow::anyhow!(
+                                "These playlists list no track to play here"
+                            )),
+                            false,
+                        ),
                     ),
                 };
                 if job.is_cancelled() {
@@ -961,21 +1073,25 @@ impl Shell {
                     path,
                     lifetime,
                     session,
+                    video,
                     start: Some((queue, index)),
                 });
                 wake();
-            });
+            },
+        );
     }
 
     /// A track started from the files (`start_pin`) opened: it is pinned
     /// with its queue, in the place of any pin, and plays alone: what the
-    /// preview plays pauses, and a pin it showed is its own again.
+    /// preview plays pauses, and a pin it showed is its own again. `video`:
+    /// a film, by the type read where it was opened.
     fn pin_started(
         &mut self,
         session: Arc<dyn MediaSession>,
         lifetime: CancelToken,
         path: PathBuf,
         (queue, index): (Vec<PathBuf>, usize),
+        video: bool,
         cx: &mut Context<Self>,
     ) {
         let volume = self
@@ -997,8 +1113,6 @@ impl Shell {
             let _ = session.control(Control::Frames(false));
         }
         let _ = session.control(Control::Play(true));
-        let video = skwir_platform::mime::by_name(path.as_os_str())
-            .is_some_and(|mime| mime.as_str().starts_with("video/"));
         let mut pin = Pinned {
             session,
             queued: None,
@@ -1020,9 +1134,7 @@ impl Shell {
         };
         pin.reorder(self.prefs.player.continue_with);
         self.set_pin(Some(pin));
-        if video && self.player.height < crate::dock::TALL_FROM {
-            self.player.height = crate::dock::VIDEO_HEIGHT;
-        }
+        self.dock_for(video);
         self.player.focus.get_or_insert_with(|| cx.focus_handle());
         self.remember_session();
         cx.notify();
@@ -1038,22 +1150,12 @@ impl Shell {
     pub fn media_play(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         use crate::media::Played;
         let pane = self.pane;
-        let picked: Vec<(skwir_core::EntryId, PathBuf, Played)> = {
-            let sorted = Arc::clone(&self.ui().list.sorted);
-            let ws = self.app.workspace.read();
-            let Some(p) = ws.pane(pane) else {
-                return;
-            };
-            sorted
-                .iter()
-                .filter(|id| p.selection.contains(**id))
-                .filter_map(|&id| {
-                    let played = crate::media::played(p.entry(id)?)?;
-                    Some((id, p.path_of(id)?, played))
-                })
-                .take(Self::QUEUE_TRACKS)
-                .collect()
-        };
+        let picked = self.typed_in_order(
+            pane,
+            |p, id| p.selection.contains(id),
+            crate::media::played_as,
+        );
+        let picked: Vec<(skwir_core::EntryId, PathBuf, Played)> = self.with_paths(pane, picked);
         let cursor = self.cursor_id();
         let film = picked
             .iter()
@@ -1182,24 +1284,15 @@ impl Shell {
         if let Some(before) = self.player.covering.replace(job.clone()) {
             before.cancel();
         }
-        self.app.scheduler.spawn(
+        // A remote's track is read in its lane (ADR-077).
+        self.app.scheduler.spawn_in(
+            skwir_core::fs::reach::lane(&track),
             Priority::Background,
             "player-cover",
             job.clone(),
             move || {
                 let cover = || -> Option<(PathBuf, skwir_core::thumbs::Image)> {
-                    let content = skwir_core::fs::content_path(&track)?;
-                    let request = PreviewRequest {
-                        entry: EntryRef::from_path(&*content)?,
-                        mime: skwir_platform::mime::by_name(content.as_os_str())
-                            .map(|mime| mime.to_string()),
-                        page: 1,
-                        seconds: None,
-                        max_side: 512,
-                        text_size: None,
-                        fit: None,
-                        held: skwir_core::preview::HeldSlot::default(),
-                    };
+                    let request = request_for(&track, 512).ok()?;
                     let image = previews.render(&request, &job).ok()??.image;
                     let picture =
                         image::RgbaImage::from_raw(image.width, image.height, image.rgba.to_vec())?;
@@ -1261,7 +1354,14 @@ impl Shell {
             if let Some(start) = opened.start {
                 match opened.session {
                     Ok(Some(session)) => {
-                        self.pin_started(session, opened.lifetime, opened.path, start, cx);
+                        self.pin_started(
+                            session,
+                            opened.lifetime,
+                            opened.path,
+                            start,
+                            opened.video,
+                            cx,
+                        );
                     }
                     Ok(None) => {
                         opened.lifetime.cancel();
@@ -1295,6 +1395,11 @@ impl Shell {
                         pinned.index = index;
                     }
                     pinned.path = opened.path;
+                    // What it is, as read where it was opened: a queue made
+                    // by names (`folder_queue`) may hold a film its name
+                    // called music (a Theora `.ogg`).
+                    let became_film = opened.video && !pinned.video;
+                    pinned.video = opened.video;
                     pinned.state = Playback {
                         volume: pinned.state.volume,
                         ..Playback::default()
@@ -1302,6 +1407,9 @@ impl Shell {
                     // Another track: its own cover comes when found.
                     pinned.set_cover(None, &mut self.player.retired);
                     pinned.set_frame(None, &mut self.player.retired);
+                    if became_film {
+                        self.dock_for(true);
+                    }
                 }
                 Ok(None) => {
                     opened.lifetime.cancel();
@@ -1749,6 +1857,36 @@ pub(crate) fn request(
 #[cfg(test)]
 mod tests {
     use super::{Continue, PinPlace, shuffled, step};
+
+    /// What the pin plays is a film by the type its bytes say where the
+    /// name does not settle it: an `.ogg` holding Theora is a film, one
+    /// holding Vorbis music, a link typed as what it leads to.
+    #[test]
+    fn a_film_is_told_by_its_bytes_where_its_name_is_ambiguous() {
+        let dir = tempfile::tempdir().unwrap();
+        let ogg = |name: &str, codec: &[u8]| {
+            // An Ogg page's header, then the first packet's codec at 28.
+            let mut bytes = b"OggS".to_vec();
+            bytes.resize(28, 0);
+            bytes.extend_from_slice(codec);
+            bytes.resize(64, 0);
+            let path = dir.path().join(name);
+            std::fs::write(&path, bytes).unwrap();
+            path
+        };
+        let film = ogg("clip.ogg", b"\x80theora");
+        let song = ogg("song.ogg", b"\x01vorbis");
+        let video =
+            |path: &std::path::Path| super::plays_video(&super::request_for(path, 0).unwrap());
+        assert!(video(&film), "Theora in an .ogg is a film");
+        assert!(!video(&song), "Vorbis in an .ogg is music");
+        #[cfg(unix)]
+        {
+            let link = dir.path().join("trailer");
+            std::os::unix::fs::symlink(&film, &link).unwrap();
+            assert!(video(&link), "a link is what it leads to");
+        }
+    }
 
     #[test]
     fn the_pin_is_drawn_in_one_place_whatever_the_switches() {
