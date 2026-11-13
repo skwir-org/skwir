@@ -869,119 +869,133 @@ impl Remotes {
         };
         let this = self.clone();
         let weak = app.weak();
-        app.scheduler.spawn(
-            Priority::Background,
-            "remote-refresh",
-            lifetime.clone(),
-            move || {
-                let mounted = Arc::new(this.mounted());
-                let newest = {
-                    let mut state = this.state.lock();
-                    let newest = state.mounts_generation == mounts_at;
-                    if newest {
-                        state.mounted = Arc::clone(&mounted);
-                        state.note_said();
-                        state
-                            .lost
-                            .retain(|point| mounted.iter().any(|m| m.remote.point == *point));
-                        state
-                            .space
-                            .retain(|point, _| mounted.iter().any(|m| m.remote.point == *point));
-                        state
-                            .features
-                            .retain(|point, _| mounted.iter().any(|m| m.remote.point == *point));
-                    }
-                    newest
-                };
-                // A later whole refresh reads the servers: not this one.
-                let servers = servers && this.state.lock().servers_generation == servers_at;
-                if !newest && !servers {
-                    return;
-                }
-                let Some(app) = weak.upgrade() else {
-                    return;
-                };
+        let token = lifetime.clone();
+        let refresh = move || {
+            if lifetime.is_cancelled() {
+                return;
+            }
+            let mounted = Arc::new(this.mounted());
+            let newest = {
+                let mut state = this.state.lock();
+                let newest = state.mounts_generation == mounts_at;
                 if newest {
-                    this.publish(&app);
-                    this.ask_alive(&app, mounted.iter(), &lifetime);
+                    state.mounted = Arc::clone(&mounted);
+                    state.note_said();
+                    state
+                        .lost
+                        .retain(|point| mounted.iter().any(|m| m.remote.point == *point));
+                    state
+                        .space
+                        .retain(|point, _| mounted.iter().any(|m| m.remote.point == *point));
+                    state
+                        .features
+                        .retain(|point, _| mounted.iter().any(|m| m.remote.point == *point));
                 }
-                // The servers kept (Skwir's list, KDE's network folders),
-                // then the tools' that are not those: read again where
-                // asked, else as last read.
-                let listed = servers.then(|| {
-                    let mut listed = servers::listed(&app);
-                    for connector in this.connectors.iter() {
-                        if connector.unavailable().is_none() {
-                            for server in connector.servers(&reading) {
-                                if !listed.iter().any(|s| s.address == server.address) {
-                                    listed.push(server);
-                                }
+                newest
+            };
+            // A later whole refresh reads the servers: not this one.
+            let servers = servers && this.state.lock().servers_generation == servers_at;
+            if !newest && !servers {
+                return;
+            }
+            let Some(app) = weak.upgrade() else {
+                return;
+            };
+            if newest {
+                this.publish(&app);
+                this.ask_alive(&app, mounted.iter(), &lifetime);
+            }
+            // The servers kept (Skwir's list, KDE's network folders),
+            // then the tools' that are not those: read again where
+            // asked, else as last read.
+            let listed = servers.then(|| {
+                let mut listed = servers::listed(&app);
+                for connector in this.connectors.iter() {
+                    if connector.unavailable().is_none() {
+                        for server in connector.servers(&reading) {
+                            if !listed.iter().any(|s| s.address == server.address) {
+                                listed.push(server);
                             }
                         }
                     }
-                    listed
-                });
-                drop(app);
-                // Whether each server is near, for its thumbnails. A
-                // device is near, its name (a serial) never looked up. A
-                // remote of rclone's configuration is named, not addressed
-                // (as `automatic_cache` has it): its name is no host, and
-                // looked up it went to the network's resolvers and took
-                // the whole wait (`lan::RESOLVING`), one after another,
-                // before the servers were published. What is known of a
-                // host stays known.
-                let known = this.state.lock().local.clone();
-                let near: Vec<(String, Option<bool>)> = mounted
-                    .iter()
-                    .filter_map(|m| m.recognised.address.as_ref())
-                    .filter(|a| {
-                        a.scheme.device().is_none()
-                            && a.scheme != Scheme::Rclone
-                            && !known.contains_key(&a.host)
-                    })
-                    .map(|a| (a.host.clone(), lan::local(&a.host)))
-                    .collect();
-                // Which of them connect at login: their manager's files.
-                let kept = listed
-                    .clone()
-                    .unwrap_or_else(|| this.state.lock().servers.clone());
-                let at_login = this.login_manager().map_or_else(
-                    |_| std::collections::HashSet::new(),
-                    |manager| {
-                        manager.installed_of(
-                            mounted
-                                .iter()
-                                .filter_map(|m| m.recognised.address.clone())
-                                .chain(kept.iter().map(|s| s.address.clone()))
-                                .filter_map(|a| configure::login_id(&a)),
-                        )
-                    },
-                );
-                {
-                    let mut state = this.state.lock();
-                    for (host, near) in near {
-                        state.local.entry(host).or_insert(near);
-                    }
-                    let newest = if servers {
-                        state.servers_generation == servers_at
-                    } else {
-                        state.mounts_generation == mounts_at
-                    };
-                    if !newest {
-                        return;
-                    }
-                    let listed = listed.unwrap_or_else(|| state.servers.clone());
-                    if state.servers != listed || state.at_login != at_login {
-                        this.records.changed();
-                    }
-                    state.servers = listed;
-                    state.at_login = at_login;
                 }
-                if let Some(app) = weak.upgrade() {
-                    this.publish(&app);
+                listed
+            });
+            drop(app);
+            // Whether each server is near, for its thumbnails. A
+            // device is near, its name (a serial) never looked up. A
+            // remote of rclone's configuration is named, not addressed
+            // (as `automatic_cache` has it): its name is no host, and
+            // looked up it went to the network's resolvers and took
+            // the whole wait (`lan::RESOLVING`), one after another,
+            // before the servers were published. What is known of a
+            // host stays known.
+            let known = this.state.lock().local.clone();
+            let near: Vec<(String, Option<bool>)> = mounted
+                .iter()
+                .filter_map(|m| m.recognised.address.as_ref())
+                .filter(|a| {
+                    a.scheme.device().is_none()
+                        && a.scheme != Scheme::Rclone
+                        && !known.contains_key(&a.host)
+                })
+                .map(|a| (a.host.clone(), lan::local(&a.host)))
+                .collect();
+            // Which of them connect at login: their manager's files.
+            let kept = listed
+                .clone()
+                .unwrap_or_else(|| this.state.lock().servers.clone());
+            let at_login = this.login_manager().map_or_else(
+                |_| std::collections::HashSet::new(),
+                |manager| {
+                    manager.installed_of(
+                        mounted
+                            .iter()
+                            .filter_map(|m| m.recognised.address.clone())
+                            .chain(kept.iter().map(|s| s.address.clone()))
+                            .filter_map(|a| configure::login_id(&a)),
+                    )
+                },
+            );
+            {
+                let mut state = this.state.lock();
+                for (host, near) in near {
+                    state.local.entry(host).or_insert(near);
                 }
-            },
-        );
+                let newest = if servers {
+                    state.servers_generation == servers_at
+                } else {
+                    state.mounts_generation == mounts_at
+                };
+                if !newest {
+                    return;
+                }
+                let listed = listed.unwrap_or_else(|| state.servers.clone());
+                if state.servers != listed || state.at_login != at_login {
+                    this.records.changed();
+                }
+                state.servers = listed;
+                state.at_login = at_login;
+            }
+            if let Some(app) = weak.upgrade() {
+                this.publish(&app);
+            }
+        };
+        if servers {
+            // A tool asked its servers is waited for as long as it takes,
+            // until the next read of them cancels it (`Connector::servers`):
+            // on a thread of its own, never holding one of the workers every
+            // folder shares meanwhile.
+            if let Err(error) = std::thread::Builder::new()
+                .name("skwir-remote-servers".into())
+                .spawn(refresh)
+            {
+                tracing::warn!("no thread to read the servers ({error})");
+            }
+        } else {
+            app.scheduler
+                .spawn(Priority::Background, "remote-refresh", token, refresh);
+        }
     }
 
     /// Ask each of `mounted` whether its program still answers, and how
