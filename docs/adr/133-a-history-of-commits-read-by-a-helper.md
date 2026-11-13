@@ -89,12 +89,15 @@ the files' state in the views is ADR-134's.
      follows it, along each line of history apart (`rename.rs`): each
      commit knows the file's name in it, `HEAD`'s the one asked, a
      parent's given by its newest child. Where a child has the file and
-     a parent nothing of that name, where it came from is looked for
-     among the files the child took out: the same file first (its blob),
+     its first parent nothing of that name, where it came from is looked
+     for among the files the child took out: the same file first (its blob),
      else the regular file most alike, 50 % at least, by git's estimate
      (its spans hashed); one whose size rules it out never read, 1,000
-     compared at most, none past 8 MiB, within the deadline; once a
-     rename. A commit from before a rename names the file as it was then
+     compared at most, none past 8 MiB, within the deadline (the tree
+     diff too, 256 folders deep at most); once a rename. A merge's other
+     parents are not looked in, as `--follow` looks along first parents:
+     a side that lacks the file is a line where it was not made yet, and
+     its diff against the merge can be the whole repository's. A commit from before a rename names the file as it was then
      (the log's `path`, a row's target `inspection::commit_target`), and
      its patch is read under that name; the rename's shows it as
      `git show -M` does (its similarity, both names, then what changed).

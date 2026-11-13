@@ -1,6 +1,6 @@
 //! What a tree holds, read without gix's diff (which would bring its
 //! filters): its entries, and the entry at a path.
-use crate::Result;
+use crate::{Deadline, Result};
 use gix::ObjectId;
 use gix::bstr::{BString, ByteSlice};
 use gix::objs::tree::{EntryKind, EntryMode};
@@ -63,14 +63,41 @@ fn order(a: (&[u8], bool), b: (&[u8], bool)) -> Ordering {
 
 /// The files that differ between `old` and `new`, the entries at `path`
 /// (a tree's files, recursively), in tree order: a subtree alike on both
-/// sides (one id) is not read, so the cost is in what changed.
+/// sides (one id) is not read, so the cost is in what changed. Whether it
+/// was read whole: it stops at `deadline`, and goes no deeper than
+/// `crate::DEPTH` trees (a repository made to be deeper would exhaust
+/// the stack), what was found so far in `out`.
 pub(crate) fn changed(
     repo: &gix::Repository,
     path: &BString,
     old: Option<Entry>,
     new: Option<Entry>,
+    deadline: &Deadline,
     out: &mut Vec<Change>,
+) -> Result<bool> {
+    let mut whole = true;
+    changed_below(repo, path, old, new, deadline, 0, out, &mut whole)?;
+    Ok(whole)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn changed_below(
+    repo: &gix::Repository,
+    path: &BString,
+    old: Option<Entry>,
+    new: Option<Entry>,
+    deadline: &Deadline,
+    depth: usize,
+    out: &mut Vec<Change>,
+    whole: &mut bool,
 ) -> Result<()> {
+    if !*whole {
+        return Ok(());
+    }
+    if depth > crate::DEPTH || deadline.passed() {
+        *whole = false;
+        return Ok(());
+    }
     let old_tree = old.filter(|entry| entry.is_tree());
     let new_tree = new.filter(|entry| entry.is_tree());
     let old_file = old.filter(|entry| !entry.is_tree());
@@ -114,18 +141,45 @@ pub(crate) fn changed(
         match pick {
             Ordering::Less => {
                 let (name, entry) = &old_entries[o];
-                changed(repo, &join(name), Some(*entry), None, out)?;
+                changed_below(
+                    repo,
+                    &join(name),
+                    Some(*entry),
+                    None,
+                    deadline,
+                    depth + 1,
+                    out,
+                    whole,
+                )?;
                 o += 1;
             }
             Ordering::Greater => {
                 let (name, entry) = &new_entries[n];
-                changed(repo, &join(name), None, Some(*entry), out)?;
+                changed_below(
+                    repo,
+                    &join(name),
+                    None,
+                    Some(*entry),
+                    deadline,
+                    depth + 1,
+                    out,
+                    whole,
+                )?;
                 n += 1;
             }
             Ordering::Equal => {
                 let ((name, a), (_, b)) = (&old_entries[o], &new_entries[n]);
                 if a != b {
-                    changed(repo, &join(name), Some(*a), Some(*b), out)?;
+                    changed_below(
+                        repo,
+                        &join(name),
+                        Some(*a),
+                        Some(*b),
+                        deadline,
+                        depth + 1,
+                        out,
+                        whole,
+                    )?;
                 }
                 o += 1;
                 n += 1;

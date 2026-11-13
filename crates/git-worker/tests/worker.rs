@@ -761,3 +761,29 @@ fn a_name_deleted_earlier_and_made_again_is_not_a_rename() {
     assert_eq!(ids(&answer), followed(&repo, "a.txt"));
     assert!(named(&answer).iter().all(|(_, name)| name.is_none()));
 }
+
+/// A file is followed along first parents alone, as `--follow` looks: a
+/// merge whose other side lacks the file, and deleted there a file alike,
+/// is no rename of it: that side was a line where the file was not made.
+#[test]
+fn a_file_is_followed_along_first_parents_alone() {
+    if !has_git() {
+        return;
+    }
+    let repo = Repo::new();
+    let text = numbered(20);
+    repo.write("README", b"r\n");
+    repo.commit("Base");
+    repo.git(&["checkout", "-q", "-b", "side"]);
+    repo.write("old.txt", text.as_bytes());
+    let side = repo.commit("Add old on the side");
+    repo.git(&["checkout", "-q", "main"]);
+    repo.write("new.txt", text.as_bytes());
+    let made = repo.commit("Add new on main");
+    repo.minute.set(repo.minute.get() + 1);
+    repo.git(&["merge", "-q", "--no-commit", "--no-ff", "side"]);
+    repo.git(&["rm", "-q", "-f", "old.txt"]);
+    repo.commit("Merge side, old taken out");
+    let answer = log(&repo, "new.txt", 500);
+    assert_eq!(ids(&answer), [made], "not {side}");
+}

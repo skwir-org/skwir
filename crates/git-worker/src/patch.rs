@@ -115,15 +115,15 @@ pub(crate) fn patch(
         }
         _ => None,
     };
+    let mut late = false;
     match &renamed {
         Some(source) => changes.push(Change {
             path: prefix,
             old: Some(source.entry),
             new,
         }),
-        None => tree::changed(repo, &prefix, old, new, &mut changes)?,
+        None => late = !tree::changed(repo, &prefix, old, new, deadline, &mut changes)?,
     }
-    let mut late = false;
     for change in &changes {
         if out.cut {
             break;

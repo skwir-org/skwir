@@ -120,10 +120,10 @@ impl Followed {
 /// A file (not a folder) is followed as `git log --follow` follows it, but
 /// along each line of history apart: each commit knows the file's name in
 /// it, `HEAD`'s the one asked, a parent's given by its first child placed
-/// (its newest). Where a child has the file and a parent has nothing under
-/// its name, the parent's name is the file's the child renamed it from, if
-/// any (`rename::source`, a tree diff of the two): asked once a rename, and
-/// where the file begins.
+/// (its newest). Where a child has the file and its first parent has
+/// nothing under its name, the parent's name is the file's the child
+/// renamed it from, if any (`rename::source`, a tree diff of the two):
+/// asked once a rename, and where the file begins.
 pub(crate) fn log(
     repo: &gix::Repository,
     path: &[&[u8]],
@@ -257,11 +257,16 @@ fn log_within(
             let own = names.entry(repo, name, own_tree)?;
             // Unchanged against a parent that has it alike under one name.
             let mut differs = true;
-            for parent in &node.parents {
+            for (k, parent) in node.parents.iter().enumerate() {
                 let theirs_tree = tree(*parent, &nodes)?;
                 let mut theirs_name = name;
                 let mut theirs = names.entry(repo, name, theirs_tree)?;
+                // Along first parents alone, as `--follow` looks: a merge's
+                // other side lacking the file is a line where it was not
+                // made yet, not one it was renamed from (and its tree diff
+                // against the merge can be the repository's whole).
                 if follow
+                    && k == 0
                     && theirs.is_none()
                     && let Some(file) = own.filter(|entry| entry.is_file())
                     && let Some(source) = rename::source(

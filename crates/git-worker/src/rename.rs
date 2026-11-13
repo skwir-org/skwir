@@ -39,10 +39,10 @@ impl Source {
 /// tree `old_root` has and `new_root` lacks, the same one first (by its id,
 /// of the same base name first), else the most alike of the regular files
 /// at least half alike (of two as alike, the one of the same base name).
-/// The trees are compared where they differ alone (`tree::changed`); a
-/// file whose size is not within half of the target's cannot be half alike
-/// and is not read, nor one larger than 8 MiB, nor more than 1000. None
-/// when nothing qualifies, or the deadline passed.
+/// The trees are compared where they differ alone (`tree::changed`, to the
+/// deadline); a file whose size is not within half of the target's cannot
+/// be half alike and is not read, nor one larger than 8 MiB, nor more than
+/// 1000. None when nothing qualifies, or the deadline passed first.
 pub(crate) fn source(
     repo: &gix::Repository,
     old_root: gix::ObjectId,
@@ -60,6 +60,7 @@ pub(crate) fn source(
         &BString::default(),
         Some(Entry::tree(old_root)),
         Some(Entry::tree(new_root)),
+        deadline,
         &mut changes,
     )?;
     // Deleted, and of the target's kind: a link is renamed to a link.
