@@ -61,9 +61,10 @@ pub struct PaneUi {
     /// The view the place shown remembered when last looked at, so a sync
     /// acts only on a change.
     place_view: Option<std::sync::Arc<str>>,
-    /// The view showing the listing last (list, grid, columns), where a
-    /// lens goes back to.
-    pub listing_view: &'static str,
+    /// The pane's own view while a lens is shown over it (`set_view`): what
+    /// a view a folder remembers sets aside when one is chosen from the
+    /// lens, as it would from the pane's own (ADR-132).
+    own_under_lens: Option<&'static str>,
     pub usage: UsageState,
     pub loading: crate::loading::State,
     /// The address field while it is typed in (`omnibox.rs`).
@@ -107,6 +108,45 @@ pub struct PaneUi {
     /// The address field's events, its hint taken, the start of its text,
     /// and its focus lost.
     _sub: (Subscription, Subscription, Subscription, Subscription),
+}
+
+/// The views a pane holds (ADR-132): the one `shown`, its `own` set aside
+/// while a folder's is shown, and its own `under_lens` while a lens is
+/// shown over it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Views {
+    shown: &'static str,
+    own: Option<&'static str>,
+    under_lens: Option<&'static str>,
+}
+
+impl Views {
+    /// Once view `k` is chosen: a `lens` over the pane's own, which stays
+    /// the pane's under it; a view a folder remembers there the folder's
+    /// (`folder`), the pane's own set aside where that is one a folder may
+    /// remember too (`remembered`), else this one the pane's own as well;
+    /// any other the pane's own.
+    fn choose(
+        self,
+        k: &'static str,
+        lens: bool,
+        folder: bool,
+        remembered: impl Fn(&str) -> bool,
+    ) -> Views {
+        let own = self.under_lens.or(self.own).unwrap_or(self.shown);
+        let (own, under_lens) = if lens {
+            (None, Some(own))
+        } else if folder {
+            (remembered(own).then_some(own), None)
+        } else {
+            (None, None)
+        };
+        Views {
+            shown: k,
+            own,
+            under_lens,
+        }
+    }
 }
 
 impl PaneUi {
@@ -1169,7 +1209,7 @@ impl Shell {
             view_id: view::FIRST,
             own_view: None,
             place_view: None,
-            listing_view: view::FIRST,
+            own_under_lens: None,
             usage: UsageState::default(),
             loading: crate::loading::State::default(),
             omni: None,
@@ -1953,6 +1993,12 @@ impl Shell {
             {
                 pane.own_view = Some(view::FIRST);
             }
+            if pane
+                .own_under_lens
+                .is_some_and(|own| !pane.views.contains_key(own))
+            {
+                pane.own_under_lens = Some(view::FIRST);
+            }
         }
     }
 
@@ -1998,16 +2044,15 @@ impl Shell {
         let known = self.ui().views.keys().find(|k| **k == id).copied();
         match known {
             Some(k) => {
-                let leaving = self.ui().view_id;
-                let listing = self
+                // A lens (Usage, the map) is shown over the pane's own view,
+                // never in its place: the list or grid left for it is still
+                // the pane's when one comes back (ADR-132).
+                let lens = self
                     .app
                     .registry
                     .views
-                    .find(|s| &*s.id == leaving)
-                    .is_none_or(|s| s.role == skwir_core::registry::ViewRole::Listing);
-                if listing {
-                    self.ui_mut().listing_view = leaving;
-                }
+                    .find(|s| &*s.id == k)
+                    .is_some_and(|s| s.role == skwir_core::registry::ViewRole::Lens);
                 // Where the folder shown remembers its order, a view a
                 // folder may remember is that folder's (ADR-132); any other
                 // is the pane's own.
@@ -2019,22 +2064,21 @@ impl Shell {
                         .read()
                         .pane(pane)
                         .is_some_and(skwir_core::workspace::Pane::keeps_order);
-                let own_remembered = self.app.remembered_view(self.ui().own_view());
+                let ui = self.ui();
+                let views = Views {
+                    shown: ui.view_id,
+                    own: ui.own_view,
+                    under_lens: ui.own_under_lens,
+                };
+                let chosen =
+                    views.choose(k, lens, folder_view, |view| self.app.remembered_view(view));
                 let ui = self.ui_mut();
-                if folder_view {
-                    // Left from a view of the pane's own (the columns): the
-                    // pane's own is this one too.
-                    if !own_remembered {
-                        ui.own_view = None;
-                    } else if ui.own_view.is_none() {
-                        ui.own_view = Some(ui.view_id);
-                    }
-                    ui.view_id = k;
+                ui.view_id = chosen.shown;
+                ui.own_view = chosen.own;
+                ui.own_under_lens = chosen.under_lens;
+                if folder_view && !lens {
                     ui.place_view = Some(k.into());
                     self.app.remember_view(pane, k);
-                } else {
-                    ui.own_view = None;
-                    ui.view_id = k;
                 }
                 self.remember_session();
                 let ix = self.cursor_index();
@@ -3097,7 +3141,7 @@ impl Shell {
                         cx,
                     );
                 }
-                let id = arg("id").unwrap_or_else(|| view::LIST.into());
+                let id = arg("id").unwrap_or_else(|| view::FIRST.into());
                 self.set_view(&id, cx);
             }
             "columns" => {
@@ -4541,6 +4585,38 @@ fn show_resolved(app: &Arc<App>, cx: &gpui::App) -> u64 {
 
 #[cfg(test)]
 mod tests {
+    /// A lens is shown over the pane's own view (ADR-132): from a folder
+    /// that remembers the list, a pane whose own is the grid goes to Usage
+    /// and back to the list, and its own is still the grid; a view of the
+    /// pane's own (the columns) chosen is the pane's.
+    #[test]
+    fn a_lens_never_takes_the_place_of_the_panes_own_view() {
+        use super::Views;
+        let remembered = |view: &str| view == "list" || view == "grid";
+        // In the folder: its list shown, the pane's grid set aside.
+        let in_folder = Views {
+            shown: "list",
+            own: Some("grid"),
+            under_lens: None,
+        };
+        let lens = in_folder.choose("usage", true, false, remembered);
+        assert_eq!(
+            (lens.shown, lens.own, lens.under_lens),
+            ("usage", None, Some("grid"))
+        );
+        let back = lens.choose("list", false, true, remembered);
+        assert_eq!(back, in_folder, "the grid still the pane's own");
+        // A lens from a lens keeps the own under it.
+        let again = lens.choose("map", true, false, remembered);
+        assert_eq!(again.under_lens, Some("grid"));
+        // From the lens to the columns: the pane's own is the columns.
+        let columns = lens.choose("columns", false, false, remembered);
+        assert_eq!((columns.own, columns.under_lens), (None, None));
+        // From the columns to a folder's view: that view the pane's too.
+        let chosen = columns.choose("grid", false, true, remembered);
+        assert_eq!((chosen.shown, chosen.own), ("grid", None));
+    }
+
     #[test]
     fn a_checksum_is_compared_with_what_is_copied() {
         let sum = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";

@@ -97,7 +97,10 @@ would not change under the pointer in the columns:
    folder never changes the view, as Finder keeps a window in column
    view. Chosen there, a view of the pane's (the columns) is the pane's,
    and one a folder may remember is the folder's and, from the columns,
-   the pane's too. The window, a tab and a pane made from another keep
+   the pane's too. A lens (Usage, the map) is shown over the pane's own
+   and never takes its place (`PaneUi::own_under_lens`, amended
+   2026-11-13): a view chosen from it is chosen as from the list or grid
+   left for it. The window, a tab and a pane made from another keep
    the pane's own (`PaneUi::own_view()`).
 9. **Each column is in its own folder's order**: the one it remembers,
    else the pane's own (`Pane::kept_sorting`, `Kept::order`), so no
