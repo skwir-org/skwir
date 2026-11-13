@@ -70,6 +70,11 @@ struct Shared {
     /// applies them: a worker at a time, changes told meanwhile taken as
     /// one when it is done with the ones before.
     changes: Mutex<(Option<watch::Changes>, bool)>,
+    /// The names the watcher last said another program writes still
+    /// (ADR-135, `keys::WRITING`): what a stat of them made since (a row
+    /// hydrated) is marked with too, and what a rescan, which says nothing
+    /// of it, tells again unmarked.
+    writing: Mutex<std::collections::HashSet<std::ffi::OsString>>,
 }
 
 /// The names of the listed entries, both ways, so a watcher event finds its
@@ -342,6 +347,7 @@ impl PathLocation {
                         watcher: Mutex::new(None),
                         lane,
                         changes: Mutex::new((None, false)),
+                        writing: Mutex::new(std::collections::HashSet::new()),
                     });
                     // Watched before it is listed, so nothing changed
                     // meanwhile is missed. The watcher holds the listing
@@ -603,7 +609,18 @@ impl Shared {
             };
             let mut e = Entry::new(id, name, EntryKind::Unknown);
             match stat_entry_as(&self.folder, &mut e) {
-                Stated::Found => stated.push((id, e)),
+                Stated::Found => {
+                    // Written still as the watcher last said: a stat of it
+                    // says so too, rather than drop its mark until told.
+                    if !e.is_dir() && self.writing.lock().contains(&e.name) {
+                        e.metadata.set(
+                            crate::entry::keys::WRITING,
+                            crate::entry::Value::Bool(true),
+                            crate::entry::Provenance::Filesystem,
+                        );
+                    }
+                    stated.push((id, e));
+                }
                 Stated::Gone => gone.push(id),
                 // There, unread: answered, its row as listed.
                 Stated::Unread => unread.push(id),
@@ -730,7 +747,17 @@ impl Shared {
         }
         if c.rescan {
             let prev = self.names.lock().ids();
+            // A rescan says nothing of what is written still, and a name
+            // re-listed keeps what its row held: those marked are told
+            // again, unmarked, as any change of them is.
+            let marked = std::mem::take(&mut *self.writing.lock());
             self.list(&self.ctx.cancel.child(), Some(prev));
+            if !marked.is_empty() {
+                self.apply_changes(watch::Changes {
+                    names: marked,
+                    ..watch::Changes::default()
+                });
+            }
             return;
         }
         let mut added = Vec::new();
@@ -741,6 +768,16 @@ impl Shared {
         // A companion keeps its file's notes (ADR-028: a Mac's `._x`, a
         // sidecar): when it changes, the file's notes did.
         let writing = c.writing;
+        {
+            let mut marked = self.writing.lock();
+            for name in &c.names {
+                if writing.contains(name) {
+                    marked.insert(name.clone());
+                } else {
+                    marked.remove(name);
+                }
+            }
+        }
         let mut names = c.names;
         let owners: Vec<std::ffi::OsString> = names
             .iter()

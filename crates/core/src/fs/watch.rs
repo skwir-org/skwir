@@ -410,6 +410,9 @@ mod imp {
         fn rescan_all(&mut self, now: Instant) {
             for s in self.by_wd.values_mut().flatten() {
                 s.gathered(now).rescan = true;
+                // Its closes may be among what was lost: nothing is known
+                // to be written still until written again.
+                s.open.clear();
             }
         }
 

@@ -461,7 +461,10 @@ working in an area, also read that area's rules (see
   no close: there a written file is told within the second. What is told
   says which names are still being written (`Changes::writing`: not
   closed since on Linux, written in the last `watch::QUIET` elsewhere,
-  then told again), which the entry carries (`keys::WRITING`).
+  then told again), which the entry carries (`keys::WRITING`), a stat of
+  it meanwhile too (a row hydrated: the folder's provider keeps what was
+  last told); a rescan, which says nothing of it (the kernel's queue
+  overflowed), tells those names again unmarked.
 - **Remote paths (ADR-077).** A path may be on a server that stops
   answering, where `stat` waits for good. Work that reads one runs in its
   remote's lane (`fs::reach::lane`, `Scheduler::spawn_in`,

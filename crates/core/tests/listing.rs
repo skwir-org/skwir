@@ -1722,3 +1722,59 @@ fn a_folder_closed_is_let_go_of_and_said_so() {
         Duration::from_secs(20)
     ));
 }
+
+/// A file another program writes is marked so as it is told (ADR-135,
+/// `keys::WRITING`), a stat of it meanwhile (a row hydrated) marks it too,
+/// and once it is closed it is marked no more.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_file_written_keeps_its_mark_until_it_is_closed() {
+    use skwir_core::entry::{Value, keys};
+    use std::io::Write as _;
+    let tmp = home_tempdir();
+    let dir = tmp.path().join("l'été");
+    std::fs::create_dir(&dir).unwrap();
+    let app = app(tmp.path());
+    let open = app.open_location(&Location::from_path(&dir)).unwrap();
+    let mut listing = skwir_core::Listing::default();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !listing.is_complete() {
+        listing.apply(open.events().recv_deadline(deadline).expect("complete"));
+    }
+    let writing = |listing: &skwir_core::Listing| {
+        listing
+            .iter()
+            .find(|e| e.name == "it's coming.part")
+            .map(|e| e.metadata.value(keys::WRITING) == Some(&Value::Bool(true)))
+    };
+    // Applies what comes until `done` holds of the listing.
+    let until = |listing: &mut skwir_core::Listing, done: &dyn Fn(&skwir_core::Listing) -> bool| {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !done(listing) {
+            listing.apply(open.events().recv_deadline(deadline).expect("told"));
+        }
+    };
+    let mut file = std::fs::File::create(dir.join("it's coming.part")).unwrap();
+    file.write_all(b"the first part").unwrap();
+    until(&mut listing, &|l| writing(l) == Some(true));
+    // Its row hydrated while it is written: still marked.
+    let id = listing
+        .iter()
+        .find(|e| e.name == "it's coming.part")
+        .map(|e| e.id)
+        .unwrap();
+    open.hydrate(&[id], Priority::Visible);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let ev = open.events().recv_deadline(deadline).expect("hydrated");
+        let stated =
+            matches!(&ev, ListingEvent::Updated(batch) if batch.iter().any(|e| e.id == id));
+        listing.apply(ev);
+        if stated {
+            break;
+        }
+    }
+    assert_eq!(writing(&listing), Some(true), "a stat says it is written");
+    drop(file);
+    until(&mut listing, &|l| writing(l) == Some(false));
+}
