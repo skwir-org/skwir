@@ -82,28 +82,62 @@ impl State {
     }
 
     /// An entry's state, as its listing keeps it; `None` for one as the
-    /// last commit has it, or not known.
+    /// last commit has it, or not known (`known` tells them apart): what
+    /// is marked.
     pub fn of(entry: &crate::entry::Entry) -> Option<State> {
-        entry
-            .metadata
-            .value(crate::entry::keys::VCS)
-            .and_then(crate::entry::Value::as_str)
-            .and_then(State::of_word)
+        match Self::known(entry) {
+            Known::Is(state) => Some(state),
+            Known::Committed | Known::Not => None,
+        }
     }
 
-    /// Its place in an order by it: the most pressing first, what has none
-    /// after every state but `Ignored`, which is last.
-    pub fn rank(state: Option<State>) -> u8 {
-        match state {
-            Some(State::Conflict) => 0,
-            Some(State::Changed) => 1,
-            Some(State::Staged) => 2,
-            Some(State::New) => 3,
-            None => 4,
-            Some(State::Ignored) => 5,
+    /// What the entry's listing knows of it (`keys::VCS`).
+    pub fn known(entry: &crate::entry::Entry) -> Known {
+        match entry.metadata.value(crate::entry::keys::VCS) {
+            Some(crate::entry::Value::Bool(false)) => Known::Committed,
+            Some(value) => value
+                .as_str()
+                .and_then(State::of_word)
+                .map_or(Known::Not, Known::Is),
+            None => Known::Not,
+        }
+    }
+
+    /// Its place in an order by it (`known`): the most pressing first,
+    /// then what is as committed, then what is not known, the ignored
+    /// last.
+    pub fn rank(known: Known) -> u8 {
+        match known {
+            Known::Is(State::Conflict) => 0,
+            Known::Is(State::Changed) => 1,
+            Known::Is(State::Staged) => 2,
+            Known::Is(State::New) => 3,
+            Known::Committed => 4,
+            Known::Not => 5,
+            Known::Is(State::Ignored) => 6,
         }
     }
 }
+
+/// What an entry's listing knows of it (`keys::VCS`, `State::known`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Known {
+    /// Its state.
+    Is(State),
+    /// As the last commit has it, a whole answer says
+    /// (`Value::Bool(false)`).
+    Committed,
+    /// Nothing is known: not asked yet, an answer that stopped short did
+    /// not reach it, no repository holds it, or what was said went
+    /// (`UNKNOWN`). Never said unchanged.
+    Not,
+}
+
+/// The word an entry's `keys::VCS` holds once what was said of it went
+/// (its provider gone, its setting off): nothing known, as before it was
+/// asked. A listing keeps a value across an entry's update, so going is a
+/// value too; no state has this word.
+pub const UNKNOWN: &str = "unknown";
 
 /// What a provider says of a folder: the folder itself, new or ignored
 /// whole, or each path below it not as the last commit has it.
@@ -257,11 +291,14 @@ pub trait StatesProvider: Send + Sync {
     /// `above` are the folders above it the pane shows too (a columns
     /// view's): the answer may be from the highest of them in the same
     /// repository (`Answer::root`), so one answer says what all of them
-    /// hold.
+    /// hold. `opened` are the folders below it opened in place (a tree's):
+    /// what a folder said new whole holds that is not new (ignored) is
+    /// said for them too, as for the folder asked.
     fn states(
         &self,
         folder: &Path,
         above: &[PathBuf],
+        opened: &[PathBuf],
         cancel: &CancelToken,
     ) -> anyhow::Result<Option<Answer>>;
     /// Moves when what an answer of `key` (`Answer::key`) said may have
@@ -306,18 +343,20 @@ impl StatesProviders {
     }
 
     /// What the first provider that knows `folder` says of it (and of the
-    /// folders `above` it shown too), and its id.
+    /// folders `above` it shown too, and those `opened` in place below),
+    /// and its id.
     pub fn states(
         &self,
         folder: &Path,
         above: &[PathBuf],
+        opened: &[PathBuf],
         cancel: &CancelToken,
     ) -> anyhow::Result<Option<(&'static str, Answer)>> {
         for provider in self.list.all() {
             if cancel.is_cancelled() {
                 return Ok(None);
             }
-            if let Some(answer) = provider.states(folder, above, cancel)? {
+            if let Some(answer) = provider.states(folder, above, opened, cancel)? {
                 return Ok(Some((provider.id(), answer)));
             }
         }
@@ -335,7 +374,7 @@ impl StatesProviders {
 
 #[cfg(test)]
 mod tests {
-    use super::{Answer, State, States};
+    use super::{Answer, Known, State, States};
 
     /// A file is its own state; a folder the strongest below it, what is
     /// ignored not summed; what is inside a folder new or ignored whole is
@@ -414,18 +453,20 @@ mod tests {
         for state in State::ALL {
             assert_eq!(State::of_word(state.word()), Some(state));
         }
-        let mut ranked: Vec<Option<State>> = State::ALL.into_iter().map(Some).collect();
-        ranked.push(None);
-        ranked.sort_by_key(|state| State::rank(*state));
+        assert_eq!(State::of_word(super::UNKNOWN), None);
+        let mut ranked: Vec<Known> = State::ALL.into_iter().map(Known::Is).collect();
+        ranked.extend([Known::Not, Known::Committed]);
+        ranked.sort_by_key(|known| State::rank(*known));
         assert_eq!(
             ranked,
             [
-                Some(State::Conflict),
-                Some(State::Changed),
-                Some(State::Staged),
-                Some(State::New),
-                None,
-                Some(State::Ignored)
+                Known::Is(State::Conflict),
+                Known::Is(State::Changed),
+                Known::Is(State::Staged),
+                Known::Is(State::New),
+                Known::Committed,
+                Known::Not,
+                Known::Is(State::Ignored)
             ]
         );
     }

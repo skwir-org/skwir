@@ -38,7 +38,7 @@
 //!
 //! ```json
 //! {"ask": "status", "git_dir": "/r/.git", "work_tree": "/r", "path": "crates", "excludes_file": "/h/.config/git/ignore",
-//!  "user": {"core.filemode": "false"}}
+//!  "user": {"core.filemode": "false"}, "open": ["crates/notes"]}
 //! ```
 //!
 //! answers what the files under `path` are to the repository, as
@@ -46,7 +46,8 @@
 //! configuration says, else as the user's settings (`user`, which skwir
 //! reads) say: each path not as `HEAD` has it,
 //! from `path`, at its strongest, a folder new or ignored whole said as one
-//! (`folder` when it is `path` itself):
+//! (`folder` when it is `path` itself, what it holds that is ignored said
+//! apart, as in each folder new whole that a view opened in place, `open`):
 //!
 //! ```json
 //! {"folder": null, "states": [["src/a.rs", "changed"], ["notes/", "new"]], "cut": false, "stopped": false}
@@ -123,6 +124,10 @@ enum Ask {
         /// are compared (`status::Settings`), by their names in lowercase.
         #[serde(default)]
         user: std::collections::BTreeMap<String, String>,
+        /// Folders below `path` a view opened in place, from the work
+        /// tree's top (`status::opened_in_place`).
+        #[serde(default)]
+        open: Vec<String>,
         #[serde(default = "default_states")]
         limit: usize,
         deadline_ms: Option<u64>,
@@ -300,6 +305,7 @@ fn run() -> Result<()> {
             path,
             excludes_file,
             user,
+            open,
             limit,
             deadline_ms,
         } => {
@@ -315,6 +321,7 @@ fn run() -> Result<()> {
                 &repo,
                 &work_tree,
                 &components(&path)?,
+                &open,
                 &settings,
                 limit,
                 &deadline,

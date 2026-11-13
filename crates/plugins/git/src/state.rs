@@ -210,13 +210,15 @@ impl StatesProvider for States {
 
     /// A folder in a repository's checked-out files, read by the helper
     /// from the highest folder shown above it in the same repository (a
-    /// columns view's), so one reading marks them all; a bare repository,
+    /// columns view's), so one reading marks them all, and what the
+    /// folders opened in place below it hold that is ignored; a bare repository,
     /// a folder in none, or the setting off say nothing. What the helper
     /// stopped short of (its limits) is said not whole.
     fn states(
         &self,
         folder: &Path,
         above: &[PathBuf],
+        opened: &[PathBuf],
         cancel: &CancelToken,
     ) -> anyhow::Result<Option<Answer>> {
         if !self.shown.load(Ordering::Acquire) {
@@ -240,8 +242,14 @@ impl StatesProvider for States {
         let Some(relative) = repo.relative(root) else {
             return Ok(None);
         };
+        // The folders opened in place below, as the repository names them.
+        let open: Vec<String> = opened
+            .iter()
+            .filter(|below| below.starts_with(root))
+            .filter_map(|below| repo.relative(below))
+            .collect();
         let key = self.follow(&repo);
-        let status = git::status(&repo, &relative, cancel)?;
+        let status = git::status(&repo, &relative, &open, cancel)?;
         Ok(Some(Answer {
             root: root.to_owned(),
             folder: status.folder,

@@ -859,7 +859,8 @@ pub enum SortKey {
     Duration,
     /// What its repository says of it (`keys::VCS`, ADR-134), the most
     /// pressing first: in conflict, changed, staged, new, then what is as
-    /// the last commit has it, the ignored last (`vcs::State::rank`).
+    /// the last commit has it, then what is not known, the ignored last
+    /// (`vcs::State::rank`).
     Vcs,
 }
 
@@ -2340,12 +2341,7 @@ fn value_of(
         // By its area, then its width.
         SortKey::Dimensions => (dimensions_rank(e), None),
         SortKey::Vcs => (
-            u64::from(crate::vcs::State::rank(
-                e.metadata
-                    .value(keys::VCS)
-                    .and_then(Value::as_str)
-                    .and_then(crate::vcs::State::of_word),
-            )),
+            u64::from(crate::vcs::State::rank(crate::vcs::State::known(e))),
             None,
         ),
         // Its path's words: a folder's files together, its subfolders' after.

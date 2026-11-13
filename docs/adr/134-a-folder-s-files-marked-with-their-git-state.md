@@ -45,9 +45,10 @@ default with a setting). Built on Linux.
      in their configuration, `git::User`, the helper being kept from
      it); a folder tracking nothing said whole, new at its first file not
      ignored, ignored when all it holds is, nothing when empty. Asked
-     itself, such a folder is said new, what it holds that is ignored
-     said apart, as git says each of them (an empty folder in it is said
-     new with it: no state says nothing);
+     itself, or opened in place below the folder asked (a tree's), such a
+     folder is said new, what it holds that is ignored said apart, as git
+     says each of them (an empty folder in it is said new with it: no
+     state says nothing);
    - each path at its strongest (conflict, changed, staged, new,
      ignored); a submodule, a file kept out of the work tree
      (`skip-worktree`) or said unchanged (`assume-unchanged`) as git
@@ -70,16 +71,19 @@ default with a setting). Built on Linux.
    states (`vcs::Answer`), from that folder or from the highest of the
    folders above it the pane shows too (a columns view's) in the same
    repository (`Answer::root`), so one answer marks every column; the
-   pane writes each entry's into its metadata (`keys::VCS`: the state's
-   word; `Bool(false)` where a state it held is no longer said; nothing
-   for an entry nobody said anything of), a folder's the strongest below
-   it, what is ignored not summed (`vcs::States`), in its listing, in the
-   folders it opened in place and in the columns above it.
+   pane writes each entry's into its metadata (`keys::VCS`, read through
+   `vcs::State::known`: the state's word; `Bool(false)` where a whole
+   answer says it is as committed; nothing where nothing was said, not
+   read yet or in no repository, and `vcs::UNKNOWN` once what was said
+   went), a folder's the strongest below it, what is ignored not summed
+   (`vcs::States`), in its listing, in the folders it opened in place and
+   in the columns above it. What is not known is never said unchanged:
+   it groups apart (Not known) and sorts after what is.
    - **Made ready on the worker** (`vcs::States`, with the names said in
      each folder): the pane finds the entries an answer names by their
-     names, and only what differs reaches the listing; the rest of a
-     listing is walked only for a folder new or ignored whole, or to let
-     go of a state no longer said.
+     names, and only what differs reaches the listing: a listing is
+     written whole once, by its first whole answer, then only what
+     changes.
    - **Whole or not** (`Answer::whole`): an answer that stopped at the
      provider's limits says what it found and leaves the rest as it was,
      never said as committed.
@@ -89,11 +93,13 @@ default with a setting). Built on Linux.
      (`StatesProvider::generation`, from memory); when a file whose time
      was known is written in it, in a folder it opened or in a column
      above, at once after a quiet while and then every 5 s at most, not
-     at each write (a log written each second); never for a place, a
-     search or a remote mount. Only the latest asking's answer is taken.
+     at each write (a log written each second), what the pace held back
+     asked once it ends (a waiter wakes the pane, `App::pace_states`;
+     none while nothing waits); never for a place, a search or a remote
+     mount. Only the latest asking's answer is taken.
      What an answer said stays across a file's update until the next.
    - Gone with the provider (its plugin off, its setting off): every
-     entry said nothing of.
+     entry known before is not known any more (`vcs::UNKNOWN`).
 3. **The Git plugin answers** (`state.rs`), for a folder in a
    repository's checked-out files, and follows each repository it was
    asked of, 32 at most, by its git folder, its `logs` and its common
@@ -111,11 +117,11 @@ default with a setting). Built on Linux.
    screen reader hears it with the name ("changed", a folder's "holds
    changes").
 5. **What sorts, shows** (ADR-130, amended 2026-11-12): `SortKey::Vcs`
-   ("Git"), the most pressing first, what is as committed after, the
-   ignored last; a list column (`Detail::Vcs`, off until shown, offered
-   wherever a provider is, so no column comes and goes as a repository
-   answers), a grid caption, and groups (In conflict, Changed, Staged,
-   New, Unchanged, Ignored).
+   ("Git"), the most pressing first, what is as committed after, then
+   what is not known, the ignored last; a list column (`Detail::Vcs`,
+   off until shown, offered wherever a provider is, so no column comes
+   and goes as a repository answers), a grid caption, and groups (In
+   conflict, Changed, Staged, New, Unchanged, Not known, Ignored).
 
 ## Consequences
 

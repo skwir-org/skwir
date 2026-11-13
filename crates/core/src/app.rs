@@ -362,6 +362,9 @@ pub struct App {
     /// them answers otherwise (`roll_keys_over`: the date groups at
     /// midnight): when, and its token.
     keys_rollover: parking_lot::Mutex<Option<(std::time::SystemTime, CancelToken)>>,
+    /// The one waiter waking the panes whose asking of their version
+    /// control the pace held back, once it is due (`pace_states`).
+    states_pace: parking_lot::Mutex<Option<(std::time::SystemTime, CancelToken)>>,
     /// What was read on demand for the panes' orders (ADR-131, 4), each
     /// batch for a pane's listing, taken by the next pump.
     field_answers: Arc<parking_lot::Mutex<Vec<FieldAnswers>>>,
@@ -420,6 +423,7 @@ impl App {
             weak: weak.clone(),
             filter_rollover: parking_lot::Mutex::new(None),
             keys_rollover: parking_lot::Mutex::new(None),
+            states_pace: parking_lot::Mutex::new(None),
             field_answers: Arc::default(),
             state_answers: Arc::default(),
             left_out: parking_lot::Mutex::new(None),
@@ -1906,6 +1910,7 @@ impl App {
         // What the version control says of the folders shown (ADR-134).
         self.take_state_answers(&mut report);
         self.read_wanted_states();
+        self.pace_states();
         // A folder is filled on a worker, an order asked anew made there,
         // and each taken by the pump its wake brings (ADR-120, ADR-121).
         // Never cancelled: a job for a folder left stops or is dropped, and
@@ -1998,6 +2003,43 @@ impl App {
         }
     }
 
+    /// Wake the panes whose asking of their version control the pace held
+    /// back (`Pane::states_due`) once the first is due, so a file written
+    /// again within it is told without anything else coming: one waiter,
+    /// for the earliest, none while nothing waits.
+    fn pace_states(&self) {
+        let when = self
+            .workspace
+            .read()
+            .panes()
+            .iter()
+            .filter_map(crate::workspace::Pane::states_due)
+            .min();
+        self.wait_until(
+            |app| &app.states_pace,
+            when,
+            "skwir-states-pace",
+            App::states_paced,
+        );
+    }
+
+    /// The pace is over for the panes whose asking is due: each is woken,
+    /// its pump asking (`Pane::states_to_read`).
+    fn states_paced(&self) {
+        let now = std::time::SystemTime::now();
+        let due: Vec<PaneId> = self
+            .workspace
+            .read()
+            .panes()
+            .iter()
+            .filter(|pane| pane.states_due().is_some_and(|at| at <= now))
+            .map(|pane| pane.id)
+            .collect();
+        for pane in due {
+            (self.pane_waker(pane))();
+        }
+    }
+
     /// Ask the version control what the panes' folders hold
     /// (`Pane::states_to_read`, ADR-134), a job a folder in its lane, its
     /// answer made ready to take there (`vcs::States`) and taken by the
@@ -2017,6 +2059,7 @@ impl App {
             asking,
             folder,
             above,
+            opened,
             cancel,
         } in asked
         {
@@ -2032,7 +2075,7 @@ impl App {
                 cancel,
                 move || {
                     let cancel = cancel_read;
-                    let said = match vcs.states(&folder, &above, &cancel) {
+                    let said = match vcs.states(&folder, &above, &opened, &cancel) {
                         Ok(said) => said.map(|(id, answer)| (id, crate::vcs::States::new(answer))),
                         Err(error) => {
                             tracing::debug!(folder = %folder.display(), "no state said: {error:#}");

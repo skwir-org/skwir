@@ -800,15 +800,20 @@ pub(crate) type FieldRead = (
 /// Write what `states` says into the entries of `listing`, the folder at
 /// `level` below its root (ADR-134): the entries it names, found by their
 /// names; the rest of a folder new or ignored whole; and, where the answer
-/// is whole, a state held before by an entry it no longer names, which is
-/// now as the last commit has it. What a partial answer did not reach is
-/// left as it was, never said as committed; an entry nobody said anything
-/// of holds no value. Only what differs reaches `set_fields`. Whether any
-/// changed.
+/// is whole, every other entry as the last commit has it
+/// (`Value::Bool(false)`). What a partial answer did not reach is left as
+/// it was, never said as committed: known as it was, or not known. Only
+/// what differs from what an entry holds reaches `set_fields`: a listing
+/// is written whole once, its first answer, then what changes. Whether
+/// any changed.
 fn take_vcs(listing: &mut Listing, states: &crate::vcs::States, level: &str) -> bool {
     use crate::entry::{Value, keys};
-    use crate::vcs::State;
-    let word = |state: State| Value::Text(state.word().into());
+    use crate::vcs::{Known, State};
+    let known = |state: Option<State>| state.map_or(Known::Committed, Known::Is);
+    let value = |known: Known| match known {
+        Known::Is(state) => Value::Text(state.word().into()),
+        Known::Committed | Known::Not => Value::Bool(false),
+    };
     let mut values = Vec::new();
     let mut said = crate::hashing::Set::<EntryId>::default();
     for name in states.named_at(level) {
@@ -818,27 +823,28 @@ fn take_vcs(listing: &mut Listing, states: &crate::vcs::States, level: &str) -> 
             format!("{level}/{name}")
         };
         for e in listing.named(OsStr::new(name.as_str())) {
-            said.insert(e.id);
             let state = states.of(&path, e.is_dir());
-            if State::of(e) != state {
-                values.push((e.id, keys::VCS, state.map_or(Value::Bool(false), word)));
+            if state.is_none() && !states.is_whole() {
+                continue;
+            }
+            said.insert(e.id);
+            if State::known(e) != known(state) {
+                values.push((e.id, keys::VCS, value(known(state))));
             }
         }
     }
-    match states.default_at(level) {
-        Some(state) => values.extend(
+    let rest = match states.default_at(level) {
+        Some(state) => Some(Known::Is(state)),
+        None if states.is_whole() => Some(Known::Committed),
+        None => None,
+    };
+    if let Some(rest) = rest {
+        values.extend(
             listing
                 .iter()
-                .filter(|e| !said.contains(&e.id) && State::of(e) != Some(state))
-                .map(|e| (e.id, keys::VCS, word(state))),
-        ),
-        None if states.is_whole() => values.extend(
-            listing
-                .iter()
-                .filter(|e| !said.contains(&e.id) && State::of(e).is_some())
-                .map(|e| (e.id, keys::VCS, Value::Bool(false))),
-        ),
-        None => {}
+                .filter(|e| !said.contains(&e.id) && State::known(e) != rest)
+                .map(|e| (e.id, keys::VCS, value(rest))),
+        );
     }
     !values.is_empty() && listing.set_fields(values)
 }
@@ -855,6 +861,8 @@ pub struct StatesAsked {
     pub asking: u64,
     pub folder: PathBuf,
     pub above: Vec<PathBuf>,
+    /// The folders it opened in place below (`StatesProvider::states`).
+    pub opened: Vec<PathBuf>,
     pub cancel: CancelToken,
 }
 
@@ -1100,6 +1108,8 @@ pub struct Pane {
     /// entries hold, with its answer's key (`vcs::Answer::key`): what
     /// tells it changed.
     states_asked: Option<(StatesAt, u64, std::time::Instant)>,
+    /// When an asking the pace held back is due (`states_due`).
+    states_due: Option<std::time::SystemTime>,
     states_reading: Option<CancelToken>,
     states_asking: u64,
     states_said: Option<(&'static str, u64)>,
@@ -2040,6 +2050,7 @@ impl Pane {
             folds_drawn: true,
             fields_asked: Vec::new(),
             states_asked: None,
+            states_due: None,
             states_reading: None,
             states_asking: 0,
             states_said: None,
@@ -4771,12 +4782,15 @@ impl Pane {
                 reading.cancel();
             }
             self.states_asked = None;
+            self.states_due = None;
             if self.states_said.is_some() {
                 self.forget_states();
             }
             return None;
         }
         if !self.listing.is_complete() || self.open.is_none() {
+            // Asked once it is whole, its own reason then.
+            self.states_due = None;
             return None;
         }
         let folder = folder?;
@@ -4800,6 +4814,9 @@ impl Pane {
             written = written.wrapping_add(listing.rewritten_version());
         }
         let above: Vec<PathBuf> = above.iter().filter_map(|kept| kept.path.clone()).collect();
+        let opened: Vec<PathBuf> = opened(&self.kept, &self.expanded)
+            .filter_map(|(_, kept)| kept.path.clone())
+            .collect();
         let generation = self
             .states_said
             .map_or(0, |(id, key)| providers.generation(id, key));
@@ -4813,10 +4830,22 @@ impl Pane {
         let now = std::time::Instant::now();
         if let Some((asked, was_written, when)) = &self.states_asked
             && *asked == at
-            && (*was_written == written || now.duration_since(*when) < STATES_WRITTEN_PACE)
         {
-            return None;
+            if *was_written == written {
+                self.states_due = None;
+                return None;
+            }
+            let since = now.duration_since(*when);
+            if since < STATES_WRITTEN_PACE {
+                // Held back by the pace: due by itself once it ends, the
+                // pane woken then (`App::pace_states`), whatever else comes.
+                self.states_due.get_or_insert_with(|| {
+                    std::time::SystemTime::now() + STATES_WRITTEN_PACE.saturating_sub(since)
+                });
+                return None;
+            }
         }
+        self.states_due = None;
         self.states_asked = Some((at, written, now));
         if let Some(reading) = self.states_reading.take() {
             reading.cancel();
@@ -4830,8 +4859,16 @@ impl Pane {
             asking: self.states_asking,
             folder,
             above,
+            opened,
             cancel,
         })
+    }
+
+    /// When an asking of its version control held back by the pace
+    /// (`STATES_WRITTEN_PACE`: files written since the last) is due: the
+    /// pane is woken then (`App::pace_states`). `None` when none waits.
+    pub fn states_due(&self) -> Option<std::time::SystemTime> {
+        self.states_due
     }
 
     /// Take what the version control said (`said`: who, and what, made
@@ -4879,24 +4916,25 @@ impl Pane {
         changed || kept_changed
     }
 
-    /// Let go of what the version control said of the entries: each is
-    /// said nothing of (`Value::Bool(false)`), which a listing keeps as any
-    /// answer. Whether any changed.
+    /// Let go of what the version control said of the entries: each that
+    /// was known becomes not known (`vcs::UNKNOWN`, a value, since a
+    /// listing keeps one across an update); one never said anything of is
+    /// not written. Whether any changed.
     fn forget_states(&mut self) -> bool {
         self.states_said = None;
         let forget = |listing: &mut Listing| {
             let said: Vec<_> = listing
                 .iter()
-                .filter(|e| crate::vcs::State::of(e).is_some())
+                .filter(|e| crate::vcs::State::known(e) != crate::vcs::Known::Not)
                 .map(|e| {
                     (
                         e.id,
                         crate::entry::keys::VCS,
-                        crate::entry::Value::Bool(false),
+                        crate::entry::Value::Text(crate::vcs::UNKNOWN.into()),
                     )
                 })
                 .collect();
-            listing.set_fields(said)
+            !said.is_empty() && listing.set_fields(said)
         };
         let changed = forget(&mut self.listing);
         let mut kept_changed = false;

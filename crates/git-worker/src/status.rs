@@ -199,11 +199,16 @@ impl Found {
 
 /// The status of the files under `path` (the whole work tree for none) of
 /// `repo`, checked out in `work_tree`, compared as `settings` says: `limit`
-/// paths at most.
+/// paths at most. `open` are folders below it a view opened in place
+/// (from the work tree's top): one the index tracks nothing in has what it
+/// holds that is ignored said apart, as the folder asked has
+/// (`opened_in_place`).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn status(
     repo: &gix::Repository,
     work_tree: &Path,
     path: &[&[u8]],
+    open: &[String],
     settings: &Settings,
     limit: usize,
     deadline: &Deadline,
@@ -266,6 +271,15 @@ pub(crate) fn status(
                 &mut found,
                 deadline,
             )?;
+            opened_in_place(
+                &names,
+                &mut excludes,
+                work_tree,
+                path,
+                open,
+                &mut found,
+                deadline,
+            )?;
             None
         } else if ignored {
             Some(State::Ignored)
@@ -273,6 +287,15 @@ pub(crate) fn status(
             // New, but for what it holds that is ignored, said apart: as
             // git says each of them from the folder.
             ignored_in(&mut excludes, work_tree, &prefix, &mut found, deadline)?;
+            opened_in_place(
+                &names,
+                &mut excludes,
+                work_tree,
+                path,
+                open,
+                &mut found,
+                deadline,
+            )?;
             Some(State::New)
         };
         return Ok(answered(found, prefix.as_bstr(), folder));
@@ -324,8 +347,57 @@ pub(crate) fn status(
             &mut found,
             deadline,
         )?;
+        if !folder_ignored {
+            opened_in_place(
+                &names,
+                &mut excludes,
+                work_tree,
+                path,
+                open,
+                &mut found,
+                deadline,
+            )?;
+        }
     }
     Ok(answered(found, prefix.as_bstr(), None))
+}
+
+/// What the folders opened in place below `asked` (`open`, from the work
+/// tree's top) hold that is ignored, where the index tracks nothing in
+/// them: the walk said such a folder new whole (`holds`), and a view
+/// showing what it holds shows each name as git says it from there
+/// (`ignored_in`). One it tracks files in was walked; one ignored, or
+/// below a folder ignored, is ignored whole.
+fn opened_in_place(
+    names: &Names<'_>,
+    excludes: &mut gix::AttributeStack<'_>,
+    work_tree: &Path,
+    asked: &[&[u8]],
+    open: &[String],
+    found: &mut Found,
+    deadline: &Deadline,
+) -> Result<()> {
+    'open: for folder in open {
+        let parts = crate::components(folder)?;
+        if parts.len() <= asked.len() || parts[..asked.len()] != *asked {
+            continue;
+        }
+        let path: BString = parts.join(&b'/').into();
+        if names.holds(path.as_bstr()) || names.tracks(path.as_bstr()) {
+            continue;
+        }
+        for depth in asked.len() + 1..=parts.len() {
+            let up: BString = parts[..depth].join(&b'/').into();
+            if excluded(excludes, up.as_bstr(), true)? {
+                continue 'open;
+            }
+        }
+        if found.late(deadline) {
+            return Ok(());
+        }
+        ignored_in(excludes, work_tree, &path, found, deadline)?;
+    }
+    Ok(())
 }
 
 /// What was found, named from the folder asked, in order; a name not

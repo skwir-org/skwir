@@ -449,29 +449,32 @@ fn by_rating() -> Keyer {
 }
 
 /// By what its repository says of it (ADR-134), the most pressing first:
-/// in conflict, changed, staged, new, then Unchanged (what is as the last
-/// commit has it, and what no repository holds), the ignored last. No
-/// term keeps them: no query reads the state.
+/// in conflict, changed, staged, new, then Unchanged (what its repository
+/// said is as the last commit has it), then Not known (what nothing was
+/// said of: not read yet, not reached, in no repository), the ignored
+/// last. No term keeps them: no query reads the state.
 fn by_vcs() -> Keyer {
-    use skwir_core::vcs::State;
-    let group = |state: Option<State>| {
-        let label = state.map_or("Unchanged", State::title);
-        Arc::new(Group::ranked(u64::from(State::rank(state)), label))
+    use skwir_core::vcs::{Known, State};
+    let group = |known: Known| {
+        let label = match known {
+            Known::Is(state) => state.title(),
+            Known::Committed => "Unchanged",
+            Known::Not => "Not known",
+        };
+        Arc::new(Group::ranked(u64::from(State::rank(known)), label))
     };
-    let unchanged = group(None);
+    let (unchanged, unknown) = (group(Known::Committed), group(Known::Not));
     let said: Vec<(State, Arc<Group>)> = State::ALL
         .into_iter()
-        .map(|state| (state, group(Some(state))))
+        .map(|state| (state, group(Known::Is(state))))
         .collect();
-    Arc::new(move |e: &Of<'_>| {
-        let state = e
-            .metadata
-            .value(keys::VCS)
-            .and_then(Value::as_str)
-            .and_then(State::of_word);
-        state
-            .and_then(|state| said.iter().find(|(known, _)| *known == state))
-            .map_or_else(|| Arc::clone(&unchanged), |(_, group)| Arc::clone(group))
+    Arc::new(move |e: &Of<'_>| match State::known(e) {
+        Known::Is(state) => said
+            .iter()
+            .find(|(known, _)| *known == state)
+            .map_or_else(|| Arc::clone(&unknown), |(_, group)| Arc::clone(group)),
+        Known::Committed => Arc::clone(&unchanged),
+        Known::Not => Arc::clone(&unknown),
     })
 }
 
@@ -989,6 +992,40 @@ mod tests {
         assert!(of("_draft").standing(&of("2024")).is_lt());
         assert!(of("2024").standing(&of("apple")).is_lt());
         assert!(of("apple").standing(&of("zebra")).is_lt());
+    }
+
+    /// What its repository said of a file: its state, Unchanged where it
+    /// said the file is as committed, and Not known where nothing was said
+    /// (not read yet, in no repository): never Unchanged.
+    #[test]
+    fn a_file_nobody_said_anything_of_is_not_known_never_unchanged() {
+        let keys = keys_at(
+            &Weak::new(),
+            SortKey::Name,
+            Some(SortKey::Vcs),
+            &Calendar::utc(),
+            SystemTime::now(),
+        )
+        .unwrap();
+        let group = keys.group.unwrap();
+        let of = |value: Option<Value>| {
+            let mut e = entry(1, "f", EntryKind::File);
+            if let Some(value) = value {
+                e.metadata.set(keys::VCS, value, Provenance::Filesystem);
+            }
+            let g = group(&Of::entry(&e));
+            (g.label.to_string(), g.rank)
+        };
+        let changed = of(Some(Value::Text("changed".into())));
+        let unchanged = of(Some(Value::Bool(false)));
+        let unknown = of(None);
+        assert_eq!(changed.0, "Changed");
+        assert_eq!(unchanged.0, "Unchanged");
+        assert_eq!(unknown.0, "Not known");
+        let gone = of(Some(Value::Text(skwir_core::vcs::UNKNOWN.into())));
+        assert_eq!(gone, unknown, "what was said went");
+        assert!(changed.1 < unchanged.1 && unchanged.1 < unknown.1);
+        assert!(unknown.1 < of(Some(Value::Text("ignored".into()))).1);
     }
 
     #[test]

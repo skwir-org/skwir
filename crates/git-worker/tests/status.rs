@@ -430,3 +430,35 @@ fn a_folder_asked_that_tracks_nothing_says_what_it_holds_is_ignored() {
     assert_eq!(states["old"], "ignored", "a folder all of which they do");
     assert!(!states.contains_key("n.txt"), "new, as the folder is");
 }
+
+/// A folder the index tracks nothing in, opened in place below the folder
+/// asked (a tree's), has what it holds that is ignored said apart, as the
+/// folder asked has: the view shows each name as git says it from there.
+#[test]
+fn a_folder_opened_in_place_says_what_it_holds_is_ignored() {
+    if !has_git() {
+        return;
+    }
+    let repo = Repo::new();
+    repo.write(".gitignore", b"*.log\n");
+    repo.write("kept.txt", b"k\n");
+    repo.commit("first");
+    repo.write("notes/sub/a.log", b"l\n");
+    repo.write("notes/sub/n.txt", b"n\n");
+    let ask = |open: &[&str]| {
+        states(&ask(&json!({
+            "ask": "status",
+            "git_dir": repo.root.join(".git"),
+            "work_tree": repo.root,
+            "path": "",
+            "open": open,
+        })))
+    };
+    let closed = ask(&[]);
+    assert_eq!(closed["notes"], "new");
+    assert!(!closed.contains_key("notes/sub/a.log"), "{closed:?}");
+    let opened = ask(&["notes", "notes/sub", "elsewhere"]);
+    assert_eq!(opened["notes"], "new");
+    assert_eq!(opened["notes/sub/a.log"], "ignored");
+    assert!(!opened.contains_key("notes/sub/n.txt"), "new as its folder");
+}

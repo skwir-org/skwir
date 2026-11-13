@@ -431,12 +431,13 @@ pub mod keys {
     /// read on demand (ADR-131), never at hydration.
     pub const DURATION: &str = "duration";
     /// What the entry is to its repository (ADR-134: `vcs::State::word`),
-    /// `Value::Text`, or `Value::Bool(false)` where a state it held is no
-    /// longer said (it is as the last commit has it); a folder's, the
-    /// strongest below it. None for an entry nobody said anything of. Set
-    /// by the pane from a `vcs::StatesProvider`'s answer (`take_vcs`),
-    /// never at hydration, and kept across the file's updates until said
-    /// again.
+    /// `Value::Text`, or `Value::Bool(false)` where a whole answer says it
+    /// is as the last commit has it; a folder's, the strongest below it.
+    /// None where nothing was said (not asked yet, not reached, in no
+    /// repository), and `vcs::UNKNOWN` once what was said went: read it
+    /// through `vcs::State::known`, which tells these apart. Set by the
+    /// pane from a `vcs::StatesProvider`'s answer (`take_vcs`), never at
+    /// hydration, and kept across the file's updates until said again.
     pub const VCS: &str = "vcs";
     /// The fields an order reads on demand (ADR-131: `SortKey::field`),
     /// which a listing keeps of an entry while its file stays the same: as

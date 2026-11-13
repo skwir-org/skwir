@@ -289,6 +289,7 @@ enum Ask {
         path: String,
         excludes_file: Option<PathBuf>,
         user: std::collections::BTreeMap<String, String>,
+        open: Vec<String>,
         limit: usize,
         deadline_ms: u64,
     },
@@ -364,7 +365,15 @@ pub fn patch(
 /// The helper reads the work tree, the repository's folders and the user's
 /// file of patterns ignored everywhere, and nothing else; what the user's
 /// configuration says of how files are compared it is told (`User`).
-pub fn status(repo: &Repo, path: &str, cancel: &CancelToken) -> anyhow::Result<Status> {
+/// `open` are folders below `path` a view opened in place, named as
+/// `path` is: what one the index tracks nothing in holds that is ignored
+/// is said apart.
+pub fn status(
+    repo: &Repo,
+    path: &str,
+    open: &[String],
+    cancel: &CancelToken,
+) -> anyhow::Result<Status> {
     let work_tree = repo
         .work_tree
         .clone()
@@ -391,6 +400,7 @@ pub fn status(repo: &Repo, path: &str, cancel: &CancelToken) -> anyhow::Result<S
             path: path.to_owned(),
             excludes_file,
             user: settings,
+            open: open.to_vec(),
             limit: STATES,
             deadline_ms: millis(STATUS_DEADLINE),
         },

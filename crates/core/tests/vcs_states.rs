@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use skwir_core::App;
-use skwir_core::vcs::{Answer, State, StatesProvider};
+use skwir_core::vcs::{Answer, Known, State, StatesProvider};
 
 struct Fake {
     answer: Mutex<Answer>,
@@ -40,6 +40,7 @@ impl StatesProvider for Fake {
         &self,
         folder: &Path,
         above: &[PathBuf],
+        _opened: &[PathBuf],
         _cancel: &skwir_core::CancelToken,
     ) -> anyhow::Result<Option<Answer>> {
         self.asked.fetch_add(1, Ordering::AcqRel);
@@ -62,6 +63,15 @@ fn state_of(app: &App, name: &str) -> Option<State> {
     let ws = app.workspace.read();
     let entry = ws.active().listing.find_by_name(OsStr::new(name))?;
     State::of(entry)
+}
+
+/// What the pane's listing knows of entry `name` (`State::known`).
+fn known_of(app: &App, name: &str) -> Known {
+    let ws = app.workspace.read();
+    ws.active()
+        .listing
+        .find_by_name(OsStr::new(name))
+        .map_or(Known::Not, State::known)
 }
 
 /// Pump until `done` holds, ten seconds at most.
@@ -101,7 +111,7 @@ fn a_folder_s_entries_take_what_its_version_control_says() {
         pump_until(&app, |app| state_of(app, "a.txt") == Some(State::Changed)),
         "said once the listing is whole"
     );
-    assert_eq!(state_of(&app, "b.txt"), None, "as committed");
+    assert_eq!(known_of(&app, "b.txt"), Known::Committed, "as committed");
     assert_eq!(
         state_of(&app, "sub dir"),
         Some(State::New),
@@ -155,9 +165,14 @@ fn a_folder_s_entries_take_what_its_version_control_says() {
         "a file written asks again"
     );
     assert_eq!(state_of(&app, "b.txt"), Some(State::Staged));
-    // The provider gone: nothing is said of any entry.
+    // The provider gone: nothing is known of any entry.
     app.vcs.unregister_owner("fake");
-    assert!(pump_until(&app, |app| state_of(app, "b.txt").is_none()));
+    assert!(pump_until(&app, |app| known_of(app, "b.txt") == Known::Not));
+    assert_eq!(
+        known_of(&app, "a.txt"),
+        Known::Not,
+        "nor of one as committed"
+    );
 }
 
 /// An answer that stopped short (the provider's limits) says what it
@@ -174,13 +189,18 @@ fn a_partial_answer_never_says_an_entry_is_as_committed() {
     let app = common::app(&tmp.path().join("state"));
     let fake = Fake::new(Answer {
         states: vec![("a.txt".into(), State::Changed)],
-        whole: true,
+        whole: false,
         key: 1,
         ..Answer::default()
     });
     app.vcs.register("fake", Arc::clone(&fake) as _);
     common::navigate(&app, &dir);
     assert!(pump_until(&app, |app| state_of(app, "a.txt") == Some(State::Changed)));
+    assert_eq!(
+        known_of(&app, "b.txt"),
+        Known::Not,
+        "not reached: not known"
+    );
     *fake.answer.lock().unwrap() = Answer {
         states: vec![("b.txt".into(), State::Staged)],
         whole: false,
@@ -248,4 +268,70 @@ fn the_columns_above_a_folder_are_told_with_it() {
     assert!(pump_until(&app, |app| column(app, "t.txt") == Some(State::Staged)));
     assert_eq!(column(&app, "in side"), None);
     assert_eq!(state_of(&app, "i.txt"), None);
+}
+
+/// A file written again within the pace (asked of a moment ago) is asked
+/// of once the pace ends by itself: the pane is woken then, though nothing
+/// else comes and nobody pumps meanwhile.
+#[test]
+fn a_file_written_within_the_pace_is_asked_of_once_it_ends() {
+    let tmp = common::home_tempdir();
+    let dir = tmp.path().join("paced");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("log.txt"), b"x").unwrap();
+    let app = common::app(&tmp.path().join("state"));
+    let fake = Fake::new(Answer {
+        whole: true,
+        key: 1,
+        ..Answer::default()
+    });
+    app.vcs.register("fake", Arc::clone(&fake) as _);
+    common::navigate(&app, &dir);
+    let pane = common::active(&app);
+    assert!(pump_until(&app, |_| fake.asked.load(Ordering::Acquire) > 0));
+    {
+        let ws = app.workspace.read();
+        let p = ws.active();
+        let ids: Vec<_> = p.listing.iter().map(|e| e.id).collect();
+        p.open
+            .as_ref()
+            .unwrap()
+            .hydrate(&ids, skwir_core::scheduler::Priority::Visible);
+    }
+    let size = |app: &App| {
+        let ws = app.workspace.read();
+        ws.active()
+            .listing
+            .find_by_name(OsStr::new("log.txt"))
+            .and_then(|e| e.metadata.value(skwir_core::entry::keys::SIZE).cloned())
+    };
+    assert!(pump_until(&app, |app| size(app).is_some()), "stat-ed");
+    let asked = fake.asked.load(Ordering::Acquire);
+    std::thread::sleep(Duration::from_millis(20));
+    std::fs::write(dir.join("log.txt"), b"written again").unwrap();
+    let due = |app: &App| app.workspace.read().pane(pane).unwrap().states_due();
+    assert!(
+        pump_until(&app, |app| due(app).is_some()),
+        "held back by the pace"
+    );
+    assert_eq!(fake.asked.load(Ordering::Acquire), asked, "not asked yet");
+    let due = due(&app).unwrap();
+    // Nobody pumps: the pane is woken once the pace ends.
+    let until = Instant::now() + Duration::from_secs(10);
+    let mut woken = false;
+    while Instant::now() < until {
+        std::thread::sleep(Duration::from_millis(20));
+        if app.take_woken().panes.contains(&pane) && std::time::SystemTime::now() >= due {
+            woken = true;
+            break;
+        }
+    }
+    assert!(woken, "woken when the pace ends");
+    // The pump the wake brings asks (on a worker): nothing else is needed.
+    app.pump();
+    let until = Instant::now() + Duration::from_secs(10);
+    while fake.asked.load(Ordering::Acquire) == asked && Instant::now() < until {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(fake.asked.load(Ordering::Acquire), asked + 1, "asked");
 }
