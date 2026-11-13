@@ -45,7 +45,11 @@ is binding, like `AGENTS.md`.
   `PreviewProvider::way`: a file's or a folder's history). Its provider
   is asked only by name (`InspectRequest::provider`); `accepts` says
   whether it looks at the entry by where it is (a repository found
-  above it), never by what the file holds, and is asked on a worker
+  above it), never by what the file holds, so it takes no file by its
+  type: every question of what takes a file (`Previews::accepting`,
+  `shows`, a preview's stages) goes through `PreviewRequest::accepted_by`,
+  which leaves ways out, or a history would claim every picture of a
+  repository and none would be read ahead. It is asked on a worker
   beside the preview (`Previews::ways`, once an entry), never before
   it. Its button stands first of the bar's `Slot::Look`
   (`preview_bar::ways`), on the entry's own bar alone: the panel's, the

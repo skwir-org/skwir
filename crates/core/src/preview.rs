@@ -587,14 +587,17 @@ impl Previews {
             .collect()
     }
 
-    /// Every provider that accepts `request`, first the one that shows it,
-    /// with its owner and priority: which of them competes for a file.
-    /// Reads the file as `accepts` may: call from a worker.
+    /// Every provider that takes `request`'s file by its type, first the
+    /// one that shows it, with its owner and priority: which of them
+    /// competes for a file. Asked as a preview asks (`accepted_by`): a way
+    /// of looking (a history), which looks at any file it finds in its
+    /// place, competes for none. Reads the file as `accepts` may: call
+    /// from a worker.
     pub fn accepting(&self, request: &PreviewRequest) -> Vec<(String, &'static str, i32)> {
-        let providers = self.providers.read().clone();
+        let (providers, revision) = self.providers();
         providers
             .iter()
-            .filter(|p| p.provider.accepts(request))
+            .filter(|p| !p.lifetime.is_cancelled() && request.accepted_by(&*p.provider, revision))
             .map(|p| (p.owner.clone(), p.provider.id(), p.provider.priority()))
             .collect()
     }
@@ -656,6 +659,54 @@ mod tests {
                 info: PreviewInfo::Document { page: 1, pages: 1 },
             })
         }
+    }
+
+    /// A provider that accepts every file: by its type, or as a way of
+    /// looking (`way`).
+    struct Everything(&'static str, bool);
+    impl PreviewProvider for Everything {
+        fn id(&self) -> &'static str {
+            self.0
+        }
+        fn way(&self) -> Option<Way> {
+            self.1.then_some(Way {
+                label: "History",
+                tip: "",
+                icon: "history",
+                folders: true,
+            })
+        }
+        fn accepts(&self, _: &PreviewRequest) -> bool {
+            true
+        }
+    }
+
+    /// A way of looking at a file competes for no file: what takes it by
+    /// its type is asked one way, everywhere (`accepted_by`), so a picture
+    /// in a repository is still read ahead as one.
+    #[test]
+    fn a_way_of_looking_takes_no_file_by_its_type() {
+        let previews = Previews::default();
+        let request = PreviewRequest {
+            entry: EntryRef::new(crate::FileId::new(1, 1), "/repo/a.png"),
+            mime: Some("image/png".into()),
+            page: 1,
+            seconds: None,
+            max_side: 128,
+            text_size: None,
+            fit: None,
+            held: HeldSlot::default(),
+        };
+        previews.register("history", Arc::new(Everything("way", true)));
+        assert!(previews.accepting(&request).is_empty());
+        assert!(!previews.shows(&request));
+        let ways = previews.ways(&request, false, &CancelToken::new());
+        assert_eq!(ways.len(), 1);
+        assert!(previews.offers(&request, "way"));
+        previews.register("type", Arc::new(Everything("by-type", false)));
+        let accepting = previews.accepting(&request);
+        assert_eq!(accepting.len(), 1);
+        assert_eq!(accepting[0].1, "by-type");
     }
 
     #[test]
