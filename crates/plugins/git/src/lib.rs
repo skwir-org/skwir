@@ -216,6 +216,14 @@ fn history(log: &git::Log, path: &str, whole: bool) -> Inspection {
     } else if log.more {
         notice = format!("The newest {} commits", rows.len());
     }
+    if log.names_cut {
+        let more = "Some commits have more branches and tags than are shown";
+        notice = if notice.is_empty() {
+            more.to_owned()
+        } else {
+            format!("{notice}. {more}")
+        };
+    }
     let blocks = if rows.is_empty() {
         vec![Block {
             text: if path.is_empty() {
@@ -340,6 +348,7 @@ mod tests {
             commits: vec![commit("c", &["b"]), commit("b", &["a"]), commit("a", &[])],
             more: true,
             stopped: false,
+            names_cut: false,
         };
         let whole = history(&log, "", false);
         assert_eq!(whole.kind, InspectionKind::History);
@@ -368,11 +377,25 @@ mod tests {
                 commits: Vec::new(),
                 more: false,
                 stopped: false,
+                names_cut: false,
             },
             "docs",
             false,
         );
         assert_eq!(none.blocks[0].text, "No commit changed it");
+        // A commit with more names than said: the notice says so.
+        let named = history(
+            &Log {
+                names_cut: true,
+                ..log
+            },
+            "",
+            false,
+        );
+        assert_eq!(
+            named.notice,
+            "The newest 3 commits. Some commits have more branches and tags than are shown"
+        );
     }
 
     /// A commit from before the file's rename opens under the name the
@@ -386,6 +409,7 @@ mod tests {
             commits: vec![commit("c", &["b"]), renamed],
             more: false,
             stopped: false,
+            names_cut: false,
         };
         let shown = history(&log, "docs/new.txt", false);
         let targets: Vec<&str> = shown

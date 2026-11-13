@@ -13,6 +13,10 @@ use std::collections::{BinaryHeap, HashMap};
 const SUMMARY: usize = 300;
 /// An author's name or address kept at most, in characters.
 const NAME: usize = 200;
+/// The branches and tags said at a commit at most (local branches first,
+/// then remote ones, then tags): a repository that fetches every pull
+/// request's head may hold thousands at one, past what an answer holds.
+const NAMES: usize = 32;
 /// A commit no child has given the file's name in it yet.
 const UNNAMED: u32 = u32::MAX;
 /// Commits the walk reads between two looks at the clock, and at least,
@@ -33,6 +37,9 @@ pub(crate) struct Log {
     commits: Vec<Commit>,
     more: bool,
     stopped: bool,
+    /// A commit had more branches and tags than `NAMES`: past them, they
+    /// are not said.
+    names_cut: bool,
 }
 
 #[derive(Serialize)]
@@ -156,6 +163,7 @@ fn log_within(
             commits: Vec::new(),
             more: false,
             stopped: false,
+            names_cut: false,
         });
     };
     let mut stopped = false;
@@ -229,6 +237,7 @@ fn log_within(
         .collect();
     let mut commits = Vec::new();
     let mut more = false;
+    let mut names_cut = false;
     while let Some((_, Reverse(at))) = ready.pop() {
         if commits.len() >= limit {
             more = true;
@@ -301,6 +310,8 @@ fn log_within(
         let author = commit.author()?;
         let time = author.time()?;
         let message = commit.message()?;
+        let at = refs.get(&node.id).map_or(&[][..], Vec::as_slice);
+        names_cut |= at.len() > NAMES;
         commits.push(Commit {
             id: node.id.to_string(),
             short: gix::prelude::ObjectIdExt::attach(node.id, repo)
@@ -316,7 +327,7 @@ fn log_within(
             time: time.seconds,
             offset: time.offset,
             summary: cut(message.summary().to_str_lossy().trim(), SUMMARY),
-            refs: refs.get(&node.id).cloned().unwrap_or_default(),
+            refs: at[..at.len().min(NAMES)].to_vec(),
             path: (name != 0).then(|| names.names[name as usize].to_str_lossy().into_owned()),
         });
     }
@@ -325,6 +336,7 @@ fn log_within(
         commits,
         more,
         stopped,
+        names_cut,
     })
 }
 

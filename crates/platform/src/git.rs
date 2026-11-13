@@ -220,6 +220,9 @@ pub struct Log {
     pub more: bool,
     /// The helper stopped at its deadline.
     pub stopped: bool,
+    /// A commit had more branches and tags than the helper says of one.
+    #[serde(default)]
+    pub names_cut: bool,
 }
 
 /// What a patch written says of itself.

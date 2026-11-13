@@ -787,3 +787,27 @@ fn a_file_is_followed_along_first_parents_alone() {
     let answer = log(&repo, "new.txt", 500);
     assert_eq!(ids(&answer), [made], "not {side}");
 }
+
+/// A commit's branches and tags are said to 32 at most, local branches
+/// first, and the answer says more were left: a repository fetching every
+/// pull request's head holds thousands at a commit, past what an answer
+/// holds.
+#[test]
+fn a_commit_s_names_are_said_to_a_bound() {
+    if !has_git() {
+        return;
+    }
+    let repo = Repo::new();
+    repo.write("a.txt", b"a\n");
+    repo.commit("Add a");
+    for n in 0..40 {
+        repo.git(&["tag", &format!("v{n:02}")]);
+    }
+    let answer = log(&repo, "", 500);
+    let refs = answer["commits"][0]["refs"].as_array().unwrap();
+    assert_eq!(refs.len(), 32);
+    assert_eq!(refs[0], "main", "the branch first");
+    assert_eq!(answer["names_cut"], true);
+    repo.commit("Another");
+    assert_eq!(log(&repo, "", 500)["commits"][0]["refs"], json!(["main"]));
+}
