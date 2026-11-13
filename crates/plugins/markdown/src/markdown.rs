@@ -226,33 +226,95 @@ fn inline_event(inline: &mut Inline, event: &Event, wiki: Option<&mut Wiki>) -> 
     true
 }
 
-/// `event` with the math Jupyter took out put back (`delimited::take`):
-/// a placeholder in text is the formula Markdown's math would have given,
-/// one in code or HTML is what was written there.
-fn placed<'a>(event: Event<'a>, taken: &[math::delimited::Taken]) -> Vec<Event<'a>> {
-    use math::delimited::{self, Taken};
-    let restored = |text: &str| CowStr::from(delimited::restore(text, taken));
-    match event {
-        Event::Text(text) if text.contains(delimited::MARK) => delimited::split(&text)
-            .into_iter()
-            .map(|part| match part.map_err(|number| taken.get(number)) {
-                Ok(text) => Event::Text(CowStr::from(text.to_owned())),
-                Err(Some(Taken::Formula { tex, display, .. })) if *display => {
-                    Event::DisplayMath(CowStr::from(tex.clone()))
-                }
-                Err(Some(Taken::Formula { tex, .. })) => {
-                    Event::InlineMath(CowStr::from(tex.clone()))
-                }
-                Err(Some(Taken::Written(written))) => Event::Text(CowStr::from(written.clone())),
-                Err(None) => Event::Text(CowStr::from("")),
-            })
-            .collect(),
-        Event::Code(text) if text.contains(delimited::MARK) => vec![Event::Code(restored(&text))],
-        Event::Html(text) if text.contains(delimited::MARK) => vec![Event::Html(restored(&text))],
-        Event::InlineHtml(text) if text.contains(delimited::MARK) => {
-            vec![Event::InlineHtml(restored(&text))]
+/// A cell's events with the math Jupyter took out put back
+/// (`delimited::take`), as JupyterLab puts it back: a placeholder in prose
+/// is the formula Markdown's math would have given; one in code (a span, a
+/// fenced or indented block), HTML or a link's address or title is what was
+/// written there, which MathJax does not typeset.
+struct Placed<'t> {
+    taken: &'t [math::delimited::Taken],
+    /// Inside a code block: its text is code, never a formula.
+    code: bool,
+}
+
+impl<'t> Placed<'t> {
+    fn new(taken: &'t [math::delimited::Taken]) -> Self {
+        Self { taken, code: false }
+    }
+
+    fn restored(&self, text: &str) -> CowStr<'static> {
+        CowStr::from(math::delimited::restore(text, self.taken))
+    }
+
+    /// `text`, its placeholders what was written there, where it holds any.
+    fn written<'a>(&self, text: CowStr<'a>) -> CowStr<'a> {
+        if text.contains(math::delimited::MARK) {
+            self.restored(&text)
+        } else {
+            text
         }
-        other => vec![other],
+    }
+
+    fn event<'a>(&mut self, event: Event<'a>) -> Vec<Event<'a>> {
+        use math::delimited::{self, Taken};
+        let taken = self.taken;
+        match event {
+            Event::Start(Tag::CodeBlock(kind)) => {
+                self.code = true;
+                let kind = match kind {
+                    CodeBlockKind::Fenced(info) => CodeBlockKind::Fenced(self.written(info)),
+                    indented @ CodeBlockKind::Indented => indented,
+                };
+                vec![Event::Start(Tag::CodeBlock(kind))]
+            }
+            Event::End(TagEnd::CodeBlock) => {
+                self.code = false;
+                vec![event]
+            }
+            Event::Text(text) if self.code => vec![Event::Text(self.written(text))],
+            Event::Text(text) if text.contains(delimited::MARK) => delimited::split(&text)
+                .into_iter()
+                .map(|part| match part.map_err(|number| taken.get(number)) {
+                    Ok(text) => Event::Text(CowStr::from(text.to_owned())),
+                    Err(Some(Taken::Formula { tex, display, .. })) if *display => {
+                        Event::DisplayMath(CowStr::from(tex.clone()))
+                    }
+                    Err(Some(Taken::Formula { tex, .. })) => {
+                        Event::InlineMath(CowStr::from(tex.clone()))
+                    }
+                    Err(Some(Taken::Written(written))) => {
+                        Event::Text(CowStr::from(written.clone()))
+                    }
+                    Err(None) => Event::Text(CowStr::from("")),
+                })
+                .collect(),
+            Event::Code(text) => vec![Event::Code(self.written(text))],
+            Event::Html(text) => vec![Event::Html(self.written(text))],
+            Event::InlineHtml(text) => vec![Event::InlineHtml(self.written(text))],
+            Event::Start(Tag::Link {
+                link_type,
+                dest_url,
+                title,
+                id,
+            }) => vec![Event::Start(Tag::Link {
+                link_type,
+                dest_url: self.written(dest_url),
+                title: self.written(title),
+                id,
+            })],
+            Event::Start(Tag::Image {
+                link_type,
+                dest_url,
+                title,
+                id,
+            }) => vec![Event::Start(Tag::Image {
+                link_type,
+                dest_url: self.written(dest_url),
+                title: self.written(title),
+                id,
+            })],
+            other => vec![other],
+        }
     }
 }
 
@@ -558,7 +620,8 @@ fn read(
     let events: Box<dyn Iterator<Item = Event<'_>>> = match taken {
         None => Box::new(Parser::new_ext(source, options | Options::ENABLE_MATH)),
         Some(taken) => {
-            Box::new(Parser::new_ext(source, options).flat_map(move |event| placed(event, taken)))
+            let mut placed = Placed::new(taken);
+            Box::new(Parser::new_ext(source, options).flat_map(move |event| placed.event(event)))
         }
     };
     let mut current = Block::default();
@@ -1050,6 +1113,48 @@ mod tests {
                 ("and after it.", false, false),
             ]
         );
+    }
+
+    /// TeX a notebook's cell writes in code (a fenced block, an indented
+    /// one, a span) or a link's address is what is written there, as
+    /// JupyterLab shows it: never a formula, and the block stays whole.
+    #[test]
+    fn a_notebook_cell_s_code_keeps_the_tex_it_writes() {
+        let fenced =
+            "```latex\n\\begin{align} x &= 1 \\end{align}\nthen \\\\(y\\\\) and $$z$$\n```";
+        let source = format!(
+            "Before.\n\n{fenced}\n\n    \\\\[w\\\\] indented\n\nA span `\\\\(v\\\\)` and [a link](#\\\\(u\\\\)).\n"
+        );
+        let mut notebook = Document::new(Bounds::QUICK);
+        notebook
+            .cell(&source, &CancelToken::new(), |_| None)
+            .unwrap();
+        let blocks = &notebook.blocks;
+        let shown: Vec<(&str, bool)> = blocks
+            .iter()
+            .map(|block| (block.text.as_str(), block.code))
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                ("Before.", false),
+                (
+                    "\\begin{align} x &= 1 \\end{align}\nthen \\\\(y\\\\) and $$z$$",
+                    true
+                ),
+                ("\\\\[w\\\\] indented", true),
+                ("A span \\\\(v\\\\) and a link.", false),
+            ]
+        );
+        assert!(
+            blocks
+                .iter()
+                .flat_map(|block| &block.runs)
+                .all(|run| run.drawing.is_none()),
+            "no formula in code"
+        );
+        let link = blocks[3].runs.iter().find_map(|run| run.link.as_deref());
+        assert_eq!(link, Some("#\\\\(u\\\\)"));
     }
 
     /// GitHub's fenced `math` is a formula set apart in Markdown, as `$$`

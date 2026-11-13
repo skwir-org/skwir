@@ -386,7 +386,10 @@ A name that says nothing is not a binary file.
   `line_height`.
 - A notebook's math is Jupyter's, taken out of each cell before its
   Markdown is read (`math::delimited::take` with `JUPYTER`, by JupyterLab's
-  `removeMath`): Markdown's own `$` rules are not a notebook's. Elsewhere,
+  `removeMath`): Markdown's own `$` rules are not a notebook's. What it
+  took out of code (a span, a fenced or indented block), HTML or a link's
+  address is put back as it was written there (`markdown::Placed`), as
+  JupyterLab shows it, untypeset: a code block holding TeX stays whole. Elsewhere,
   Markdown's are pulldown-cmark's, a fenced `math` block is GitHub's
   formula set apart and `` $`…`$ `` its formula in a sentence (a
   notebook's cells have neither, as JupyterLab has not). What a notebook's
