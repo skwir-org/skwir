@@ -251,10 +251,10 @@ impl GioCopy {
         &self,
         words: &[&str],
         runs: &[(PathBuf, Vec<(PathBuf, u64)>)],
-        ran: &(dyn Fn(u64) + Sync),
+        ran: crate::runs::Ran<'_>,
         control: &Control,
     ) -> anyhow::Result<()> {
-        self.each_at(words, runs, AT_ONCE, (ran, None), control)
+        self.each_at(words, runs, AT_ONCE, (ran, None), None, control)
     }
 
     /// [`GioCopy::each`], `at_once` at a time.
@@ -264,12 +264,23 @@ impl GioCopy {
         runs: &[(PathBuf, Vec<(PathBuf, u64)>)],
         at_once: usize,
         (ran, following): (
-            &(dyn Fn(u64) + Sync),
+            crate::runs::Ran<'_>,
             Option<&crate::following::Following<'_>>,
         ),
+        makes_in: Option<&Path>,
         control: &Control,
     ) -> anyhow::Result<()> {
         let gio = program().ok_or_else(|| anyhow::anyhow!("gio (GLib) is not installed"))?;
+        // What a run into `makes_in` makes whole: its files.
+        let makes = |into: &Path, names: &[(PathBuf, u64)]| -> Vec<OsString> {
+            if makes_in != Some(into) {
+                return Vec::new();
+            }
+            names
+                .iter()
+                .filter_map(|(path, _)| path.file_name().map(std::ffi::OsStr::to_os_string))
+                .collect()
+        };
         let runs = runs
             .iter()
             .map(|(into, names)| {
@@ -278,6 +289,7 @@ impl GioCopy {
                     command: self.gio(gio, words, &paths, into),
                     input: None,
                     bytes: names.iter().map(|(_, bytes)| bytes).sum(),
+                    makes: makes(into, names),
                 }
             })
             .collect();
@@ -342,16 +354,17 @@ impl Transfer for GioCopy {
                         command: self.gio_on(gio, &["remove"], &chunk),
                         input: None,
                         bytes: 0,
+                        makes: Vec::new(),
                     }
                 })
                 .collect()
         };
-        crate::runs::at_once("gio", runs(&files), AT_ONCE, &|_| {}, control)?;
+        crate::runs::at_once("gio", runs(&files), AT_ONCE, &|_, _| {}, control)?;
         // `gio remove` takes an empty folder alone: the deepest first.
         folders.sort_by_key(|(depth, _)| std::cmp::Reverse(*depth));
         for level in folders.chunk_by(|a, b| a.0 == b.0) {
             let paths: Vec<PathBuf> = level.iter().map(|(_, path)| path.clone()).collect();
-            crate::runs::at_once("gio", runs(&paths), AT_ONCE, &|_| {}, control)?;
+            crate::runs::at_once("gio", runs(&paths), AT_ONCE, &|_, _| {}, control)?;
         }
         self.removed.fetch_add(1, Ordering::Relaxed);
         Ok(())
@@ -406,7 +419,16 @@ impl Transfer for GioCopy {
             })
             .collect();
         let total = AtomicU64::new(0);
-        let ran = |bytes: u64| copied(total.fetch_add(bytes, Ordering::Relaxed) + bytes);
+        let ran = |bytes: u64, made: &[OsString]| {
+            copied(total.fetch_add(bytes, Ordering::Relaxed) + bytes);
+            for name in made {
+                (told.made)(name);
+            }
+        };
+        // A file it copies into the folder copied into, or beside it into
+        // `temp`, is whole as its run ends (its time kept): told made (said
+        // only); a folder is once laid out, last.
+        let makes_in = Some(temp.unwrap_or(into));
         // `gio` says nothing of each until it ends: how far each name came
         // is read from what it has open (ADR-135).
         let following = crate::following::Following::new(
@@ -415,13 +437,14 @@ impl Transfer for GioCopy {
                 .flatten()
                 .map(Path::to_path_buf),
             names,
-            told.writing,
+            told,
         );
         if let Err(error) = self.each_at(
             COPY,
             &runs(files.clone()),
             AT_ONCE,
             (&ran, Some(&following)),
+            makes_in,
             control,
         ) {
             if control.is_cancelled() || !error.is::<crate::runs::Failed>() {
@@ -445,7 +468,7 @@ impl Transfer for GioCopy {
                 by_folder.entry(folder).or_default().push((src, bytes));
             }
             let again: Vec<(PathBuf, Vec<(PathBuf, u64)>)> = by_folder.into_iter().collect();
-            self.each_at(COPY, &again, 1, (&ran, Some(&following)), control)?;
+            self.each_at(COPY, &again, 1, (&ran, Some(&following)), makes_in, control)?;
         }
         layout.finish()?;
         if let Some(temp) = temp {
@@ -461,7 +484,7 @@ impl Transfer for GioCopy {
                     .iter()
                     .map(|(made, _)| (made.clone(), into.to_path_buf(), 0))
                     .collect();
-                let outcome = self.each(&["move", "-i"], &runs(moves), &|_| {}, control);
+                let outcome = self.each(&["move", "-i"], &runs(moves), &|_, _| {}, control);
                 // What left the folder of its own, only `gio move` takes:
                 // placed.
                 let left: std::collections::HashSet<std::ffi::OsString> = std::fs::read_dir(temp)?

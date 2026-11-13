@@ -659,7 +659,13 @@ ADR-077 (which revises ADR-021).
   `remote.refresh`, and after connecting or disconnecting. rclone is
   asked its servers again only once its configuration file changed, or
   on `remote.refresh` (`rclone::forget_listed`); a listing that fails
-  keeps those last listed, and is asked again at the next refresh.
+  keeps those last listed, and is asked again at the next refresh. A
+  tool asked its servers is waited for as long as it takes, never cut
+  off by a time: on a machine under load its answer would be lost until
+  the next refresh (rclone's listing, cut at ten seconds, left a server
+  just added unlisted). The next read of the servers cancels it
+  (`State::servers_reading`), so one that never answers is let go of
+  there.
 - What is mounted is kept in the plugin's state, the newest read, and
   every publish shows the state as it then is, one at a time: a publish
   never brings back an older list (a slow refresh's, a liveness

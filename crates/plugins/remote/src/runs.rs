@@ -3,6 +3,7 @@
 //! where a mount makes a folder's names one at a time under the kernel's
 //! lock. Each held while the plan is paused, stopped with it.
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -10,13 +11,19 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use parking_lot::Mutex;
 use skwir_core::op::transfer::Control;
 
-/// One run of a tool: its command, what it reads on its input, and the
-/// bytes it copies, told once it ended well.
+/// One run of a tool: its command, what it reads on its input, the bytes
+/// it copies and the names given it makes whole (a file it copies into
+/// the folder copied into, its time kept), told once it ended well.
 pub(crate) struct Run {
     pub(crate) command: Command,
     pub(crate) input: Option<Vec<u8>>,
     pub(crate) bytes: u64,
+    pub(crate) makes: Vec<OsString>,
 }
+
+/// What is told of each run that ended well: its bytes, and the names it
+/// made whole ([`Run::makes`]).
+pub(crate) type Ran<'a> = &'a (dyn Fn(u64, &[OsString]) + Sync);
 
 /// A run that ended badly: how, and what it said.
 #[derive(Debug)]
@@ -34,8 +41,9 @@ impl std::fmt::Display for Failed {
 
 impl std::error::Error for Failed {}
 
-/// Run each of `runs`, `at_once` at a time, telling `ran` the bytes of
-/// each that ended well; the first that fails stops those not begun.
+/// Run each of `runs`, `at_once` at a time, telling `ran` the bytes and
+/// the names made of each that ended well; the first that fails stops
+/// those not begun.
 ///
 /// # Errors
 /// The first run that failed ([`Failed`]), could not start, or the plan's
@@ -44,7 +52,7 @@ pub(crate) fn at_once(
     tool: &'static str,
     runs: Vec<Run>,
     at_once: usize,
-    ran: &(dyn Fn(u64) + Sync),
+    ran: Ran<'_>,
     control: &Control,
 ) -> anyhow::Result<()> {
     at_once_following(tool, runs, at_once, ran, None, control)
@@ -59,7 +67,7 @@ pub(crate) fn at_once_following(
     tool: &'static str,
     runs: Vec<Run>,
     at_once: usize,
-    ran: &(dyn Fn(u64) + Sync),
+    ran: Ran<'_>,
     following: Option<&crate::following::Following<'_>>,
     control: &Control,
 ) -> anyhow::Result<()> {
@@ -110,7 +118,7 @@ pub(crate) fn at_once_following(
                         }
                     });
                     match ended {
-                        Ok(()) => ran(run.bytes),
+                        Ok(()) => ran(run.bytes, &run.makes),
                         Err(error) => {
                             stop.store(true, Ordering::Relaxed);
                             failed.lock().get_or_insert(error);

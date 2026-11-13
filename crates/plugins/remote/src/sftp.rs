@@ -40,7 +40,7 @@
 //! and the tree below it is not the original's.
 
 use std::collections::{HashMap, HashSet};
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
@@ -127,9 +127,9 @@ impl Sftp {
         &self,
         sftp: &Path,
         mount: &Mount,
-        files: Vec<(Vec<String>, u64)>,
+        files: Vec<Lines>,
         (ran, following): (
-            &(dyn Fn(u64) + Sync),
+            crate::runs::Ran<'_>,
             Option<&crate::following::Following<'_>>,
         ),
         control: &Control,
@@ -146,10 +146,11 @@ impl Sftp {
         };
         let runs = spread(files, sessions)
             .into_iter()
-            .map(|(batch, bytes)| crate::runs::Run {
+            .map(|(batch, bytes, makes)| crate::runs::Run {
                 command: self.session(sftp, mount),
                 input: Some(batch.into_bytes()),
                 bytes,
+                makes,
             })
             .collect();
         crate::runs::at_once_following("sftp", runs, AT_ONCE, ran, following, control)
@@ -237,20 +238,27 @@ fn local(path: &Path) -> Option<String> {
     quoted(path.to_str()?)
 }
 
-/// Each file's lines, with its bytes, spread over `sessions` sessions'
-/// batches, a file's lines together.
-fn spread(files: Vec<(Vec<String>, u64)>, sessions: usize) -> Vec<(String, u64)> {
-    let mut batches = vec![(String::new(), 0u64); sessions.clamp(1, files.len().max(1))];
+/// A file's lines for a session, its bytes, and the name given that it
+/// makes whole once its session ended well (`runs::Run::makes`): a file
+/// put into the folder copied into, its time kept by `put -p`.
+type Lines = (Vec<String>, u64, Option<OsString>);
+
+/// Each file's lines, with its bytes and the name it makes, spread over
+/// `sessions` sessions' batches, a file's lines together.
+fn spread(files: Vec<Lines>, sessions: usize) -> Vec<(String, u64, Vec<OsString>)> {
+    let mut batches =
+        vec![(String::new(), 0u64, Vec::new()); sessions.clamp(1, files.len().max(1))];
     let count = batches.len();
-    for (n, (lines, bytes)) in files.into_iter().enumerate() {
-        let (batch, total) = &mut batches[n % count];
+    for (n, (lines, bytes, makes)) in files.into_iter().enumerate() {
+        let (batch, total, made) = &mut batches[n % count];
         for line in lines {
             batch.push_str(&line);
             batch.push('\n');
         }
         *total += bytes;
+        made.extend(makes);
     }
-    batches.retain(|(batch, _)| !batch.is_empty());
+    batches.retain(|(batch, _, _)| !batch.is_empty());
     batches
 }
 
@@ -277,8 +285,9 @@ impl Sftp {
                 .and_then(quoted)
                 .ok_or_else(|| unsaid(path))
         };
-        let mut copies: Vec<(Vec<String>, u64)> = Vec::new();
-        let mut placing: Vec<(Vec<String>, u64)> = Vec::new();
+        // Given their times after: none is whole as its session ends.
+        let mut copies: Vec<Lines> = Vec::new();
+        let mut placing: Vec<Lines> = Vec::new();
         let mut timed: Vec<(PathBuf, PathBuf)> = Vec::new();
         for (src, dst) in &layout.files {
             let meta = std::fs::symlink_metadata(src)?;
@@ -288,7 +297,11 @@ impl Sftp {
                     .to_str()
                     .and_then(quoted)
                     .ok_or_else(|| unsaid(&target))?;
-                copies.push((vec![format!("-@symlink {target} {}", server(dst)?)], 0));
+                copies.push((
+                    vec![format!("-@symlink {target} {}", server(dst)?)],
+                    0,
+                    None,
+                ));
                 continue;
             }
             let made = match temp {
@@ -298,6 +311,7 @@ impl Sftp {
             copies.push((
                 vec![format!("@cp {} {}", server(src)?, server(&made)?)],
                 meta.len(),
+                None,
             ));
             if temp.is_some() {
                 placing.push((
@@ -306,12 +320,15 @@ impl Sftp {
                         format!("-@rm {}", server(&made)?),
                     ],
                     0,
+                    None,
                 ));
             }
             timed.push((src.clone(), made));
         }
         let total = AtomicU64::new(0);
-        let ran = |bytes: u64| (told.copied)(total.fetch_add(bytes, Ordering::Relaxed) + bytes);
+        let ran = |bytes: u64, _: &[OsString]| {
+            (told.copied)(total.fetch_add(bytes, Ordering::Relaxed) + bytes);
+        };
         self.run(sftp, mount, copies, (&ran, None), control)?;
         // Its time given before it takes its name: one taken meanwhile is
         // another's, never touched. Each folder read once first: sshfs
@@ -323,7 +340,7 @@ impl Sftp {
             let _ = std::fs::read_dir(folder).map(Iterator::count);
         }
         skwir_core::op::transfer::give_times(&timed)?;
-        self.run(sftp, mount, placing, (&|_| {}, None), control)?;
+        self.run(sftp, mount, placing, (&|_, _| {}, None), control)?;
         layout.finish()?;
         self.made.fetch_add(1, Ordering::Relaxed);
         Ok(())
@@ -373,10 +390,10 @@ impl Transfer for Sftp {
                 .and_then(quoted)
                 .ok_or_else(|| anyhow::anyhow!("“{}” cannot be said to sftp", path.display()))
         };
-        let lines = |verb: &str, paths: &[PathBuf]| -> anyhow::Result<Vec<(Vec<String>, u64)>> {
+        let lines = |verb: &str, paths: &[PathBuf]| -> anyhow::Result<Vec<Lines>> {
             paths
                 .iter()
-                .map(|path| Ok((vec![format!("-@{verb} {}", server(path)?)], 0)))
+                .map(|path| Ok((vec![format!("-@{verb} {}", server(path)?)], 0, None)))
                 .collect()
         };
         crate::ssh_mount::remove_beside(folder, names, |beside| {
@@ -388,7 +405,7 @@ impl Transfer for Sftp {
                 sftp,
                 &mount,
                 lines("rm", &leaves)?,
-                (&|_| {}, None),
+                (&|_, _| {}, None),
                 control,
             )?;
             // `rmdir` takes an empty folder alone: the deepest first.
@@ -399,7 +416,7 @@ impl Transfer for Sftp {
                     sftp,
                     &mount,
                     lines("rmdir", &paths)?,
-                    (&|_| {}, None),
+                    (&|_, _| {}, None),
                     control,
                 )?;
             }
@@ -471,7 +488,7 @@ impl Transfer for Sftp {
         }
         // Each file's lines, kept together in one session: what was placed
         // beside is known by its size and time, which `put -p` keeps.
-        let mut files: Vec<(Vec<String>, u64)> = Vec::new();
+        let mut files: Vec<Lines> = Vec::new();
         // Gone on from: what sshfs read of each as it was cut short (its
         // length) stays with it until it is changed through the mount.
         let mut went_on: Vec<(PathBuf, PathBuf)> = Vec::new();
@@ -480,7 +497,7 @@ impl Transfer for Sftp {
             if meta.is_symlink() {
                 let target = std::fs::read_link(src)?;
                 let line = format!("-@symlink {} {}", here(&target)?, server(dst)?);
-                files.push((vec![line], 0));
+                files.push((vec![line], 0, None));
                 continue;
             }
             let Some(temp) = temp else {
@@ -491,9 +508,16 @@ impl Transfer for Sftp {
                     }
                     None => ("put", meta.len()),
                 };
+                // A file of the folder copied into, put whole with its time,
+                // is made as its session ends; one gone on from is given its
+                // time after, a folder's last.
+                let makes = (put == "put" && dst.parent() == Some(into))
+                    .then(|| dst.file_name().map(OsStr::to_os_string))
+                    .flatten();
                 files.push((
                     vec![format!("@{put} -p {} {}", here(src)?, server(dst)?)],
                     left,
+                    makes,
                 ));
                 continue;
             };
@@ -505,13 +529,23 @@ impl Transfer for Sftp {
                     format!("-@rm {made}"),
                 ],
                 meta.len(),
+                // Whole beside, its time kept, as its session ends: told
+                // made (said only); placed is the plan's to find.
+                (dst.parent() == Some(into))
+                    .then(|| dst.file_name().map(OsStr::to_os_string))
+                    .flatten(),
             ));
         }
         let total = AtomicU64::new(0);
-        let ran = |bytes: u64| (told.copied)(total.fetch_add(bytes, Ordering::Relaxed) + bytes);
+        let ran = |bytes: u64, made: &[OsString]| {
+            (told.copied)(total.fetch_add(bytes, Ordering::Relaxed) + bytes);
+            for name in made {
+                (told.made)(name);
+            }
+        };
         // `sftp` in batch says nothing until its session ends: how far each
         // name came is read from the files it reads (ADR-135).
-        let following = crate::following::Following::new([from.to_path_buf()], names, told.writing);
+        let following = crate::following::Following::new([from.to_path_buf()], names, told);
         if let Err(error) = self.run(sftp, &mount, files, (&ran, Some(&following)), control) {
             // ssh's own failure (255) for the user's ssh, which asks
             // nothing: the server is not reached so.
@@ -546,10 +580,26 @@ mod tests {
             r#""it's a \"b\"\\c*?[d]""#
         );
         assert_eq!(quoted("two\nlines"), None);
-        let batches = spread((0..10).map(|n| (vec![format!("put {n}")], 1)).collect(), 4);
+        let batches = spread(
+            (0..10)
+                .map(|n| {
+                    (
+                        vec![format!("put {n}")],
+                        1,
+                        (n % 2 == 0).then(|| OsString::from(n.to_string())),
+                    )
+                })
+                .collect(),
+            4,
+        );
         assert_eq!(batches.len(), 4);
-        assert_eq!(batches.iter().map(|(_, bytes)| bytes).sum::<u64>(), 10);
+        assert_eq!(batches.iter().map(|(_, bytes, _)| bytes).sum::<u64>(), 10);
         assert!(batches[0].0.starts_with("put 0\nput 4\nput 8\n"));
-        assert_eq!(spread(vec![(vec!["put a".to_owned()], 1)], 8).len(), 1);
+        assert_eq!(batches[0].2, ["0", "4", "8"], "the names its session makes");
+        assert!(batches[1].2.is_empty());
+        assert_eq!(
+            spread(vec![(vec!["put a".to_owned()], 1, None)], 8).len(),
+            1
+        );
     }
 }

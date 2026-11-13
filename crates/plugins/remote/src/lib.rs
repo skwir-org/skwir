@@ -167,6 +167,11 @@ struct State {
     /// know (`Remotes::read_again`), so a slower one never wins.
     mounts_generation: u64,
     servers_generation: u64,
+    /// The read of the servers the tools know under way, cancelled by the
+    /// next: a tool is waited for as long as it takes (a machine under
+    /// load), never cut off by a time and its answer lost, and one that
+    /// never answers is let go of when the servers are read again.
+    servers_reading: Option<CancelToken>,
     /// The refreshes asked, whole and of the mounts alone
     /// (`Remotes::refreshes`).
     refreshes: (u64, u64),
@@ -845,16 +850,22 @@ impl Remotes {
         let Some(lifetime) = self.lifetime() else {
             return;
         };
-        let (mounts_at, servers_at) = {
+        let (mounts_at, servers_at, reading) = {
             let mut state = self.state.lock();
             state.mounts_generation += 1;
-            if servers {
+            let reading = if servers {
                 state.servers_generation += 1;
                 state.refreshes.0 += 1;
+                let reading = lifetime.child();
+                if let Some(before) = state.servers_reading.replace(reading.clone()) {
+                    before.cancel();
+                }
+                reading
             } else {
                 state.refreshes.1 += 1;
-            }
-            (state.mounts_generation, state.servers_generation)
+                lifetime.clone()
+            };
+            (state.mounts_generation, state.servers_generation, reading)
         };
         let this = self.clone();
         let weak = app.weak();
@@ -901,7 +912,7 @@ impl Remotes {
                     let mut listed = servers::listed(&app);
                     for connector in this.connectors.iter() {
                         if connector.unavailable().is_none() {
-                            for server in connector.servers(&lifetime) {
+                            for server in connector.servers(&reading) {
                                 if !listed.iter().any(|s| s.address == server.address) {
                                     listed.push(server);
                                 }

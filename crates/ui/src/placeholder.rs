@@ -106,12 +106,14 @@ pub fn empty_place(icon: Option<&'static str>, empty: Option<&EmptyState>) -> Pl
     }
 }
 
-/// `None` while the pane has entries, is still loading, or shows a view
-/// that draws its own states.
+/// `None` while the pane has entries or something arriving to draw (ADR-135:
+/// a folder empty, or of hidden files only, that a copy fills shows what
+/// comes), is still loading, or shows a view that draws its own states.
 pub fn of(shell: &Shell, pane: PaneId) -> Option<Placeholder> {
     let ws = shell.app.workspace.read();
     let state = ws.pane(pane)?;
-    if !shell.ui().list.sorted.is_empty() {
+    let list = &shell.ui().list;
+    if !list.sorted.is_empty() || !list.arriving.is_empty() {
         return None;
     }
     if let Some(error) = state.listing.error() {

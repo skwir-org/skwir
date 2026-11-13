@@ -187,13 +187,24 @@ impl KioCopy {
         runs: &[(PathBuf, Vec<(PathBuf, u64)>)],
         at_once: usize,
         (ran, following): (
-            &(dyn Fn(u64) + Sync),
+            crate::runs::Ran<'_>,
             Option<&crate::following::Following<'_>>,
         ),
+        makes_in: Option<&Path>,
         control: &Control,
     ) -> anyhow::Result<()> {
         let kioclient =
             program().ok_or_else(|| anyhow::anyhow!("kioclient (KDE) is not installed"))?;
+        // What a run into `makes_in` makes whole: its files.
+        let makes = |into: &Path, names: &[(PathBuf, u64)]| -> Vec<OsString> {
+            if makes_in != Some(into) {
+                return Vec::new();
+            }
+            names
+                .iter()
+                .filter_map(|(path, _)| path.file_name().map(std::ffi::OsStr::to_os_string))
+                .collect()
+        };
         let runs = runs
             .iter()
             .map(|(into, names)| {
@@ -208,6 +219,7 @@ impl KioCopy {
                     command: self.kioclient(kioclient, &[word], &addresses),
                     input: None,
                     bytes: names.iter().map(|(_, bytes)| bytes).sum(),
+                    makes: makes(into, names),
                 }
             })
             .collect();
@@ -302,10 +314,11 @@ impl Transfer for KioCopy {
                     command: self.kioclient(kioclient, &["remove"], &addresses),
                     input: None,
                     bytes: 0,
+                    makes: Vec::new(),
                 }
             })
             .collect();
-        let outcome = crate::runs::at_once("kioclient", runs, AT_ONCE, &|_| {}, control);
+        let outcome = crate::runs::at_once("kioclient", runs, AT_ONCE, &|_, _| {}, control);
         self.forget();
         outcome?;
         self.removed.fetch_add(1, Ordering::Relaxed);
@@ -372,7 +385,16 @@ impl Transfer for KioCopy {
             })
             .collect();
         let total = AtomicU64::new(0);
-        let ran = |bytes: u64| copied(total.fetch_add(bytes, Ordering::Relaxed) + bytes);
+        let ran = |bytes: u64, made: &[OsString]| {
+            copied(total.fetch_add(bytes, Ordering::Relaxed) + bytes);
+            for name in made {
+                (told.made)(name);
+            }
+        };
+        // A file it copies into the folder copied into, or beside it into
+        // `temp`, is whole as its run ends (its time kept): told made (said
+        // only); a folder is once laid out, last.
+        let makes_in = Some(temp.unwrap_or(into));
         // `kioclient` says nothing of each until it ends: how far each name
         // came is read from what it and its workers have open (ADR-135).
         let following = crate::following::Following::new(
@@ -381,13 +403,14 @@ impl Transfer for KioCopy {
                 .flatten()
                 .map(Path::to_path_buf),
             names,
-            told.writing,
+            told,
         );
         let outcome = self.each_at(
             "copy",
             &runs(files.clone()),
             AT_ONCE,
             (&ran, Some(&following)),
+            makes_in,
             control,
         );
         // What it wrote beside the mount, kio-fuse reads anew.
@@ -414,7 +437,14 @@ impl Transfer for KioCopy {
                 by_folder.entry(folder).or_default().push((src, bytes));
             }
             let again: Vec<(PathBuf, Vec<(PathBuf, u64)>)> = by_folder.into_iter().collect();
-            let outcome = self.each_at("copy", &again, 1, (&ran, Some(&following)), control);
+            let outcome = self.each_at(
+                "copy",
+                &again,
+                1,
+                (&ran, Some(&following)),
+                makes_in,
+                control,
+            );
             self.forget();
             outcome?;
         }
@@ -432,7 +462,14 @@ impl Transfer for KioCopy {
                     .iter()
                     .map(|(made, _)| (made.clone(), into.to_path_buf(), 0))
                     .collect();
-                let outcome = self.each_at("move", &runs(moves), AT_ONCE, (&|_| {}, None), control);
+                let outcome = self.each_at(
+                    "move",
+                    &runs(moves),
+                    AT_ONCE,
+                    (&|_, _| {}, None),
+                    None,
+                    control,
+                );
                 self.forget();
                 let left: std::collections::HashSet<OsString> = std::fs::read_dir(temp)?
                     .flatten()

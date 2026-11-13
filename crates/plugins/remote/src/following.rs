@@ -9,7 +9,9 @@
 //! path below that folder, or the longest name given that part begins
 //! with (a file written under a name of the tool's own, `a.bin.part`).
 //! What was read ahead of what the server took is never said whole: the
-//! meter keeps an item short of its end until its copy is told made.
+//! meter keeps an item short of its end until its copy is told made. What
+//! all came is told too, as the bytes copied so far (`Told::copied`),
+//! which move the plan's bar and wake the window.
 
 use std::collections::{HashMap, HashSet};
 use std::ffi::{OsStr, OsString};
@@ -28,6 +30,7 @@ pub(crate) struct Following<'a> {
     roots: Vec<PathBuf>,
     names: Vec<OsString>,
     writing: &'a (dyn Fn(&OsStr, u64) + Sync),
+    copied: &'a (dyn Fn(u64) + Sync),
     state: Mutex<State>,
 }
 
@@ -46,16 +49,17 @@ struct State {
 
 impl<'a> Following<'a> {
     /// What follows the copy of `names`, in the local folders `roots`,
-    /// telling `writing` how far each came.
+    /// telling `told` how far each came (`writing`), and all (`copied`).
     pub(crate) fn new(
         roots: impl IntoIterator<Item = PathBuf>,
         names: &[OsString],
-        writing: &'a (dyn Fn(&OsStr, u64) + Sync),
+        told: &'a skwir_core::op::transfer::Told<'a>,
     ) -> Self {
         Following {
             roots: roots.into_iter().collect(),
             names: names.to_vec(),
-            writing,
+            writing: told.writing,
+            copied: told.copied,
             state: Mutex::new(State {
                 done: vec![0; names.len()],
                 said: vec![0; names.len()],
@@ -141,9 +145,13 @@ impl<'a> Following<'a> {
                 told.push((name, so_far));
             }
         }
+        let all = (!told.is_empty()).then(|| state.said.iter().sum::<u64>());
         drop(state);
         for (name, so_far) in told {
             (self.writing)(&self.names[name], so_far);
+        }
+        if let Some(all) = all {
+            (self.copied)(all);
         }
     }
 
@@ -157,9 +165,23 @@ impl<'a> Following<'a> {
 mod tests {
     use super::*;
 
+    /// What a follower tells, read back: each name's bytes, and all.
+    fn told<'a>(
+        writing: &'a (dyn Fn(&OsStr, u64) + Sync),
+        copied: &'a (dyn Fn(u64) + Sync),
+    ) -> skwir_core::op::transfer::Told<'a> {
+        skwir_core::op::transfer::Told {
+            copied,
+            placed: &|_| {},
+            made: &|_| {},
+            writing,
+        }
+    }
+
     /// Each name's bytes so far from what the helpers have open: a file
     /// read as far as it is, one closed whole, under the name given or the
     /// longest a tool's own name begins with; what is elsewhere, nothing.
+    /// All of them told as the bytes copied so far.
     #[test]
     fn how_far_each_name_came_is_read_from_the_files_open() {
         let root = tempfile::tempdir().unwrap();
@@ -172,8 +194,11 @@ mod tests {
             said.lock()
                 .push((name.to_string_lossy().into_owned(), bytes));
         };
+        let all: Mutex<Vec<u64>> = Mutex::default();
+        let copied = |bytes: u64| all.lock().push(bytes);
         let names: Vec<OsString> = ["tree", "a.bin", "a.bin.more"].map(OsString::from).to_vec();
-        let following = Following::new([from.clone()], &names, &writing);
+        let told_by = told(&writing, &copied);
+        let following = Following::new([from.clone()], &names, &told_by);
         let open = |files: &[(&str, u64)]| -> HashMap<PathBuf, (usize, u64)> {
             files
                 .iter()
@@ -184,19 +209,26 @@ mod tests {
                 .collect()
         };
         let t = Instant::now();
-        let told = || {
+        let said_now = || {
             let mut told = std::mem::take(&mut *said.lock());
             told.sort();
             told
         };
         following.took(1, open(&[("tree/x.bin", 40), ("a.bin.part", 10)]), t);
-        assert_eq!(told(), [("a.bin".to_owned(), 10), ("tree".to_owned(), 40)]);
+        assert_eq!(
+            said_now(),
+            [("a.bin".to_owned(), 10), ("tree".to_owned(), 40)]
+        );
         // The tree's file closed: whole, at its size; the other read on.
         following.took(1, open(&[("a.bin.part", 30)]), t);
-        assert_eq!(told(), [("a.bin".to_owned(), 30), ("tree".to_owned(), 100)]);
+        assert_eq!(
+            said_now(),
+            [("a.bin".to_owned(), 30), ("tree".to_owned(), 100)]
+        );
         // Nothing moved: nothing said.
         following.took(1, open(&[("a.bin.part", 30)]), t);
-        assert!(told().is_empty());
+        assert!(said_now().is_empty());
+        assert_eq!(*all.lock(), [50, 130], "all of them, as they came");
         assert_eq!(following.name_of(&root.path().join("elsewhere")), None);
         assert_eq!(
             following.name_of(&from.join("a.bin.more")),
@@ -219,7 +251,8 @@ mod tests {
         let said: Mutex<Vec<u64>> = Mutex::default();
         let writing = |_: &OsStr, bytes: u64| said.lock().push(bytes);
         let names = vec![OsString::from("it's sent.bin")];
-        let following = Following::new([from.clone()], &names, &writing);
+        let told_by = told(&writing, &|_| {});
+        let following = Following::new([from.clone()], &names, &told_by);
         let mut command = std::process::Command::new("sh");
         command.args([
             "-c",

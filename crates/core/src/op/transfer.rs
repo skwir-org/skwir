@@ -274,7 +274,9 @@ pub struct Told<'a> {
     /// How many bytes of one of the names it was given it has copied so
     /// far (a folder's: of all it holds), where it can tell: what the
     /// folder it goes to shows of it as it comes (ADR-135). Said only; one
-    /// it never tells is said copying with the rest of its batch.
+    /// it never tells is said copying with the rest of its batch. It moves
+    /// no bar and wakes no window: a transfer that tells it tells what all
+    /// came in `copied` too.
     pub writing: &'a (dyn Fn(&OsStr, u64) + Sync),
 }
 

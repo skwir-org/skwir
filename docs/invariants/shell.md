@@ -1133,7 +1133,9 @@ of bars, split or not.
 - **Empty is a state.** `placeholder.rs` says why a pane is empty
   (`LocationProvider::empty_state` for non-folders) or failed (the
   system's message as detail) and offers a way out, inside the pane so
-  drops and the menu still work. The banner above the view says an error
+  drops and the menu still work. A pane something arrives in is not
+  empty (ADR-135): a folder empty, or of hidden files alone (the staging
+  folder a copy writes in), draws what comes. The banner above the view says an error
   beside existing entries, or what the pane still waits for
   (`loading::message`), with the ways out of a wait, as the toolbar's
   buttons (`loading::Way`): Cancel for a location still opening (an

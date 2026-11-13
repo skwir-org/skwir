@@ -564,12 +564,9 @@ impl Rclone {
             if let Some(password) = password {
                 command.env("RCLONE_CONFIG_PASS", password);
             }
-            skwir_platform::process::run_to_exit(
-                &mut command,
-                None,
-                cancel,
-                Duration::from_secs(10),
-            )
+            // As long as it takes: the next read of the servers cancels it
+            // (`Connector::servers`).
+            skwir_platform::process::run_to_exit(&mut command, None, cancel, Duration::MAX)
         };
         let finished = match listed(None) {
             Ok(finished) if !finished.status.success() && needs_password(&finished.stderr) => {
@@ -1227,10 +1224,10 @@ mod tests {
         );
     }
 
-    /// A listing that fails (rclone timed out, its configuration could not
-    /// be opened) keeps the servers last listed, F5 or not, until one
-    /// succeeds: asked again each time, never kept as said. A listing that
-    /// says none is none.
+    /// A listing that fails (rclone's read cancelled, its configuration
+    /// could not be opened) keeps the servers last listed, F5 or not, until
+    /// one succeeds: asked again each time, never kept as said. A listing
+    /// that says none is none.
     #[test]
     fn a_listing_that_fails_keeps_the_servers_last_listed() {
         let folder = tempfile::tempdir().unwrap();
@@ -1261,13 +1258,54 @@ mod tests {
             assert!(ask(None).is_empty(), "none listed yet: {key:?}");
             assert_eq!(ask(Some("nas: sftp\nbox: s3")), ["nas", "box"]);
             forget_listed();
-            assert_eq!(ask(None), ["nas", "box"], "timed out: {key:?}");
+            assert_eq!(ask(None), ["nas", "box"], "failed: {key:?}");
             assert_eq!(ask(None), ["nas", "box"], "again: {key:?}");
             assert_eq!(listed.get(), 4, "asked each time: {key:?}");
             forget_listed();
             assert_eq!(ask(Some("")), Vec::<String>::new(), "none: {key:?}");
             assert!(ask(None).is_empty(), "{key:?}");
         }
+    }
+
+    /// rclone's listing is waited for until its read is cancelled (the next
+    /// read of the servers cancels it), never cut off by a time: one that
+    /// answers late is heard, one that never answers ends once cancelled,
+    /// saying nothing. rclone stood in for by a script.
+    #[cfg(unix)]
+    #[test]
+    fn rclone_s_listing_ends_when_its_read_is_cancelled_not_at_a_time() {
+        let folder = tempfile::tempdir().unwrap();
+        let program = folder.path().join("rclone");
+        std::fs::write(
+            &program,
+            "#!/bin/sh\n[ -e \"$0.never\" ] && exec sleep 600\nsleep 0.3\necho \"it's late: sftp\"\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(
+            &program,
+            std::os::unix::fs::PermissionsExt::from_mode(0o755),
+        )
+        .unwrap();
+        let rclone = Rclone::with_config(folder.path().join("rclone.conf"));
+        assert_eq!(
+            rclone.listed(&program, &CancelToken::new()).as_deref(),
+            Some("it's late: sftp\n")
+        );
+        std::fs::write(folder.path().join("rclone.never"), "").unwrap();
+        let cancel = CancelToken::new();
+        let started = std::time::Instant::now();
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                std::thread::sleep(Duration::from_millis(300));
+                cancel.cancel();
+            });
+            assert_eq!(rclone.listed(&program, &cancel), None);
+        });
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "ended by its cancel: {:?}",
+            started.elapsed()
+        );
     }
 
     /// A start runs no rclone for a configuration unchanged since the

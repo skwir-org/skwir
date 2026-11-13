@@ -16556,3 +16556,52 @@ configurations "never listed" as places, at a load average of 25 to 30)
 passing alone in about a second each; then its NFS and AFP, AFC and
 Nearby harnesses and the keyrings (6, 6, 2), run by a copy of the
 recipe's steps, passed.
+
+## 2026-11-13: rclone's servers waited for; an SFTP copy watched
+
+**rclone's servers under load.** `just remote-check` failed three
+`remote_configs` tests at a load of 25 to 30 ("never listed"), passing
+alone in a second each. Reproduced without load by a stand-in `rclone`
+whose `listremotes` answers after 11 s: the forms test failed the same
+way (31 s, "never listed"), and passed at 0 s. `rclone listremotes` was
+cut off at ten seconds, its answer lost, the servers last listed kept,
+and nothing asked again until the next refresh: a server just added
+stayed unlisted. Now a tool asked its servers is waited for as long as
+it takes, until the next read of the servers cancels it
+(`State::servers_reading`, `Connector::servers`). With the stand-in at
+11 s the three tests passed (18.7, 29.0 and 30.0 s); a unit test shows
+a listing that never answers ending once its read is cancelled (it
+cannot show the time cut-off gone without waiting past it).
+
+**An SFTP copy watched in a window** (the debug build on Xvfb; an
+SFTP-only `sshd` of the test's own on 127.0.0.1, `ForceCommand
+internal-sftp`, so Skwir took its `sftp` batch; the client's home given
+by `nss_wrapper`, so the user's `~/.ssh` was never read; a proxy holding
+what was sent to 40 MB/s). A single file of 1.2 GB went by its step
+through the mount, as a file alone does; four files (three of 400 MB,
+one of 12 bytes, names with an apostrophe and an accent) went by three
+`sftp` sessions. Found and fixed, each seen first:
+
+- The empty folder showed "Only hidden files here" (the staging folder)
+  and no arrival: now it draws what comes.
+- The rows stood at 32 % for twelve seconds while the server went from
+  38 to 82 %, and the bar said "0 of 4 items · 12 B of 1.2 GB" with no
+  speed: the follower told each name's bytes alone, which move no bar
+  and wake no window. It tells what all came as `copied` too: then the
+  rows went 20, 60, 96 % as the server's share, the bar 244 MB, 726 MB,
+  1.1 GB at 40 MB/s.
+- The 12-byte file stood at 91 % for the whole copy: its session had
+  ended, but only the batch's end made it whole. Each run now says the
+  names it makes whole (`Run::makes`, sftp, `gio`, `kioclient`), told
+  made as it ends well: it read 100 % within the first second, "1 of 4
+  items".
+
+A folder of three files of 300 MB beside two loose files: its row went
+28, 59, 92, 100 % by its files' sum, the loose ones made as their run
+ended; everything landed. Checked on the tree as left: the tests of
+core, the remote plugin and the UI (1,581) and `remote_configs` (14);
+clippy on core, the remote plugin and the UI; Windows' and macOS' clippy
+on core and the remote plugin (the UI's change, one condition, not
+cross-linted). The disk filled once during the lints (0.2 GB): `just
+prune` freed 21.5 GB and they ran again. Not tried: `gio` or `kioclient`
+copies in a window, macOS, `just remote-check` whole after these.

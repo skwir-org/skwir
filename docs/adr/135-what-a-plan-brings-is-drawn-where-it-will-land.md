@@ -190,3 +190,26 @@ name's bytes as each of its files is copied. Windows tells no other
 process's offsets: its items say "copying" at the batch's share. Linux
 tried; macOS compiled only.
 
+## Amended 2026-11-13: a real SFTP copy watched
+
+Watched in a window (an SFTP-only server on this machine, its sends held
+to 40 MB/s, files of 400 MB pasted into an empty folder of it), three
+faults were found and fixed:
+
+- **A folder empty, or of hidden files alone, drew its empty state**
+  ("Only hidden files here": the staging folder a copy writes in) and
+  nothing of what arrives: a pane something arrives in is not empty
+  (`placeholder::of`).
+- **What a follower read moved nothing but the rows' shares, and those
+  only when something else woke the window**: the plan's bar stood at
+  what was whole, with no speed. `Told::writing` moves no bar and wakes
+  no window; a follower tells what all came in `Told::copied` too, which
+  does both.
+- **A file whose session ended stayed short of whole until the batch
+  ended** (91 % for a file of 12 bytes for half a minute): each run says
+  the names it makes whole (`runs::Run::makes`: a file it copies into
+  the folder copied into, or beside it, its time kept), told made as it
+  ends well (said only; a folder is once laid out, last).
+
+A folder's row fills by its files' sum; an item a later run of its batch
+takes says "copying" at the batch's share until its run tells it.

@@ -218,7 +218,10 @@ pub trait Connector: Send + Sync {
         Vec::new()
     }
     /// The servers its configuration names. Reads files and may start the
-    /// tool: on a worker.
+    /// tool: on a worker. A tool it starts is waited for until `cancel`,
+    /// which the next read of the servers cancels, never cut off by a time
+    /// (on a machine under load, its answer would be lost until asked
+    /// again).
     fn servers(&self, _cancel: &CancelToken) -> Vec<Server> {
         Vec::new()
     }
