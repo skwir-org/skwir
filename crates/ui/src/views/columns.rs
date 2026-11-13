@@ -92,34 +92,51 @@ pub struct ColumnsView {
     /// The last column's rows as last drawn: its entries, and what arrives
     /// among them (ADR-135), never an entry.
     last_rows: crate::views::groups::RowMap,
+    /// What the last column's rows were made for: the pane's rows, held,
+    /// and its count. The same, they are not made again.
+    last_for: Option<(crate::views::groups::RowMap, usize)>,
     /// What arrives in each column beside it, placed among its entries,
-    /// with what it was placed for (its order, what arrives).
+    /// with what it was placed for (its order, what arrives): of the
+    /// columns drawn alone.
     side_arriving: HashMap<Location, SideArriving>,
+    /// What arrives in each column beside it, keyed once for its order
+    /// (ADR-135): placed again by a search as the order changes.
+    side_keys: HashMap<Location, crate::list::ArrivingKeys<SideKeying>>,
 }
 
-/// What arrives in a column beside the pane's (ADR-135): the order and
-/// what arrives it was placed for, its rows, and what arrives.
+/// What the keys of what arrives in a column beside the pane's hold for:
+/// the sort of its order shown, and whether hidden names are shown.
+type SideKeying = (skwir_core::grouping::SortStamp, bool);
+
+/// What arrives in a column beside the pane's (ADR-135): the order (held)
+/// and what arrives (by identity) it was placed for, its rows, and what
+/// arrives, shared with the closure that draws them.
 #[derive(Clone)]
 struct SideArriving {
-    made_for: (usize, Vec<usize>),
+    made_for: (Option<Arc<[EntryId]>>, Vec<usize>),
     rows: crate::views::groups::RowMap,
-    arriving: Vec<skwir_core::op::arriving::Arriving>,
+    arriving: Arc<[skwir_core::op::arriving::Arriving]>,
 }
 
 /// What plans bring into the folder of the column at `location` (ADR-135),
 /// shown once lasted as in the pane's (`work::SHOWN_AFTER`), placed among
-/// `ids`, its order, as an entry would be; `kept` what was placed last.
+/// `ids`, its order, as an entry would be; `kept` what was placed last,
+/// `keys` each item keyed once for the column's order. Placed again only
+/// when its order or what arrives changed, by a search; otherwise how far
+/// each has come is all that is taken. Read from memory: drawn each frame.
 fn side_arriving(
     shell: &Shell,
     location: &Location,
     ids: &Arc<[EntryId]>,
     kept: Option<&SideArriving>,
+    keys: &mut crate::list::ArrivingKeys<SideKeying>,
 ) -> SideArriving {
+    use crate::list::arrival_key;
     use skwir_core::op::arriving::Arriving;
     let none = || SideArriving {
-        made_for: (0, Vec::new()),
+        made_for: (None, Vec::new()),
         rows: crate::views::groups::RowMap::flat(ids.len()),
-        arriving: Vec::new(),
+        arriving: Arc::from([]),
     };
     let Some(path) = location.path() else {
         return none();
@@ -140,49 +157,67 @@ fn side_arriving(
         .into_iter()
         .filter(|a| a.arrival.asked + crate::work::SHOWN_AFTER <= now)
         .filter(|a| listing.find_by_name(&a.arrival.name).is_none())
-        .filter(|a| shows_hidden || !a.arrival.like.is_hidden())
         .collect();
-    let made_for = (
-        Arc::as_ptr(ids).cast::<()>().addr(),
-        ghosts
-            .iter()
-            .map(|a| Arc::as_ptr(&a.arrival).addr())
-            .collect::<Vec<usize>>(),
-    );
+    let made_for: Vec<usize> = ghosts.iter().map(arrival_key).collect();
     if let Some(kept) = kept
-        && kept.made_for == made_for
+        && kept
+            .made_for
+            .0
+            .as_ref()
+            .is_some_and(|o| Arc::ptr_eq(o, ids))
+        && kept.made_for.1 == made_for
     {
         // Where they were: how far each has come.
-        let now: HashMap<usize, &Arriving> = ghosts
-            .iter()
-            .map(|a| (Arc::as_ptr(&a.arrival).addr(), a))
-            .collect();
-        let mut again = kept.clone();
-        for mine in &mut again.arriving {
-            if let Some(new) = now.get(&Arc::as_ptr(&mine.arrival).addr()) {
-                (*new).clone_into(mine);
-            }
+        let now: HashMap<usize, &Arriving> = ghosts.iter().map(|a| (arrival_key(a), a)).collect();
+        let moved = kept.arriving.iter().any(|mine| {
+            now.get(&arrival_key(mine))
+                .is_some_and(|new| new.state != mine.state || new.paused != mine.paused)
+        });
+        if !moved {
+            return kept.clone();
         }
-        return again;
+        let arriving: Arc<[Arriving]> = kept
+            .arriving
+            .iter()
+            .map(|mine| {
+                now.get(&arrival_key(mine))
+                    .map_or_else(|| mine.clone(), |new| (*new).clone())
+            })
+            .collect();
+        return SideArriving {
+            arriving,
+            ..kept.clone()
+        };
     }
-    if ghosts.is_empty() {
-        return SideArriving { made_for, ..none() };
+    let sort = listing.sort_shown(pane.kept_sorting(location));
+    let mine: Vec<&Arriving> = ghosts.iter().collect();
+    keys.update((sort.stamp(), shows_hidden), &mine, |likes| {
+        likes
+            .iter()
+            .map(|like| {
+                (shows_hidden || !like.is_hidden())
+                    .then(|| skwir_core::location::Keyed::new(&sort, like))
+            })
+            .collect()
+    });
+    let them: Vec<&skwir_core::location::Keyed> = keys.shown().collect();
+    let ats = listing.stand(&sort, &them).unwrap_or_default();
+    let by_key: HashMap<usize, &Arriving> = ghosts.iter().map(|a| (arrival_key(a), a)).collect();
+    let mut placed = Vec::with_capacity(ats.len());
+    let mut arriving = Vec::with_capacity(ats.len());
+    for ((key, _), at) in keys.keyed().zip(ats) {
+        if let Some(it) = by_key.get(&key) {
+            placed.push(crate::views::groups::Placed {
+                at,
+                ..Default::default()
+            });
+            arriving.push((*it).clone());
+        }
     }
-    let likes: Vec<&skwir_core::Entry> = ghosts.iter().map(|a| &a.arrival.like).collect();
-    let (at, among) = listing.standing(pane.kept_sorting(location), &likes);
-    let mut order: Vec<usize> = (0..ghosts.len()).collect();
-    order.sort_by_key(|&i| (at[i], among[i]));
-    let placed: Vec<crate::views::groups::Placed> = order
-        .iter()
-        .map(|&i| crate::views::groups::Placed {
-            at: at[i],
-            ..Default::default()
-        })
-        .collect();
     SideArriving {
-        made_for,
+        made_for: (Some(Arc::clone(ids)), made_for),
         rows: crate::views::groups::RowMap::arriving(Arc::from([]), ids.len(), &placed, &[]),
-        arriving: order.into_iter().map(|i| ghosts[i].clone()).collect(),
+        arriving: arriving.into(),
     }
 }
 
@@ -762,10 +797,20 @@ impl PaneView for ColumnsView {
                 .a11y
                 .then(|| gpui::SharedString::from(shell.app.location_title(location)))
         };
+        // The columns beside it drawn this frame: what arrives in those
+        // gone is let go of.
+        let mut drawn_sides: Vec<Location> = Vec::new();
         for (k, ids) in orders.into_iter().enumerate() {
             let location = self.ancestors[k].location.clone();
             let named = title(&location);
-            let arriving = side_arriving(shell, &location, &ids, self.side_arriving.get(&location));
+            let arriving = side_arriving(
+                shell,
+                &location,
+                &ids,
+                self.side_arriving.get(&location),
+                self.side_keys.entry(location.clone()).or_default(),
+            );
+            drawn_sides.push(location.clone());
             self.side_arriving.insert(location, arriving.clone());
             columns = columns.child(side_column(
                 self,
@@ -779,19 +824,31 @@ impl PaneView for ColumnsView {
         }
         let count = shell.ui().list.sorted.len();
         // What arrives in the folder shown, among its rows (ADR-135): where
-        // the pane placed it, with no heading, which no column draws.
-        let placed: Vec<crate::views::groups::Placed> = shell
-            .ui()
-            .list
-            .arriving_placed
-            .iter()
-            .map(|p| crate::views::groups::Placed {
-                at: p.at,
-                ..Default::default()
-            })
-            .collect();
-        let rows = crate::views::groups::RowMap::arriving(Arc::from([]), count, &placed, &[]);
-        self.last_rows = rows.clone();
+        // the pane placed it, with no heading, which no column draws. Made
+        // again only once the pane's rows were.
+        let pane_rows = &shell.ui().list.rows;
+        let rows = match &self.last_for {
+            Some((made, c)) if made.key() == pane_rows.key() && *c == count => {
+                self.last_rows.clone()
+            }
+            _ => {
+                let placed: Vec<crate::views::groups::Placed> = shell
+                    .ui()
+                    .list
+                    .arriving_placed
+                    .iter()
+                    .map(|p| crate::views::groups::Placed {
+                        at: p.at,
+                        ..Default::default()
+                    })
+                    .collect();
+                let rows =
+                    crate::views::groups::RowMap::arriving(Arc::from([]), count, &placed, &[]);
+                self.last_for = Some((pane_rows.clone(), count));
+                self.last_rows = rows.clone();
+                rows
+            }
+        };
         let last = uniform_list(
             "column-last",
             rows.len(),
@@ -867,7 +924,14 @@ impl PaneView for ColumnsView {
         columns = columns.child(match next {
             Some((next, ids)) => {
                 let named = title(&next);
-                let arriving = side_arriving(shell, &next, &ids, self.side_arriving.get(&next));
+                let arriving = side_arriving(
+                    shell,
+                    &next,
+                    &ids,
+                    self.side_arriving.get(&next),
+                    self.side_keys.entry(next.clone()).or_default(),
+                );
+                drawn_sides.push(next.clone());
                 self.side_arriving.insert(next.clone(), arriving.clone());
                 side_column(
                     self,
@@ -885,6 +949,9 @@ impl PaneView for ColumnsView {
                 .flex_none()
                 .into_any_element(),
         });
+        let drawn_sides: std::collections::HashSet<Location> = drawn_sides.into_iter().collect();
+        self.side_arriving.retain(|at, _| drawn_sides.contains(at));
+        self.side_keys.retain(|at, _| drawn_sides.contains(at));
         div()
             .relative()
             .size_full()
