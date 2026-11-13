@@ -1,6 +1,7 @@
 """tools/build/link-ordered with a linker and nm stood in for: what it links
 twice, in which order, and what it leaves when it cannot."""
 import os
+import platform
 import stat
 import subprocess
 import tempfile
@@ -200,3 +201,59 @@ echo linked > {out}
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(platform.system() == "Linux" and platform.machine() == "x86_64",
+                     "only x86-64 Linux lays skwir out")
+class Checking(unittest.TestCase):
+    """`link-ordered --check`, which each package's build asks of the skwir
+    it made: what a start runs, found as a link finds it, laid out in the
+    list's order, or a failure saying so."""
+
+    setUp = Linking.setUp
+    linker = Linking.linker
+
+    def check(self, env=None):
+        binary = self.root / "skwir"
+        binary.write_text("a program\n")
+        environment = dict(os.environ, NM=str(self.root / "nm"),
+                           SKWIR_STARTUP_ORDER=str(self.list), TMPDIR=str(self.root))
+        environment.update(env or {})
+        return subprocess.run([str(WRAPPER), "--check", str(binary)], env=environment,
+                              capture_output=True, text=True, check=False)
+
+    def symbols(self, at):
+        """The program's symbols, the list's three functions at `at`."""
+        names = [("T", "_RNvCsAAA_3app5first", "app::first"),
+                 ("W", "_RINvCsBBB_3lib7genericE", "lib::generic::<u8, alloc::string::String>"),
+                 ("t", "_RNvCsAAA_3app6second", "app::second"),
+                 ("t", "_RNvCsAAA_3app6second.llvm.1", "app::second")]
+        addresses = [0x9000, *at]
+        (self.root / "mangled").write_text("".join(
+            f"{a:016x} {t} {m}\n" for a, (t, m, _) in zip(addresses, names)))
+        (self.root / "demangled").write_text("".join(
+            f"{a:016x} {t} {d}\n" for a, (t, _, d) in zip(addresses, names)))
+
+    def test_a_binary_laid_out_in_the_order_of_the_list_passes(self):
+        self.symbols([0x1000, 0x1040, 0x1080])
+        done = self.check()
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn("3 functions laid out", done.stdout)
+        self.assertEqual([p.name for p in self.root.glob("skwir-order.*")], [])
+
+    def test_a_binary_linked_as_it_came_fails(self):
+        self.symbols([0x3000, 0x2000, 0x5000])
+        done = self.check()
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("not laid out in its order (1 of 3", done.stderr)
+
+    def test_what_cannot_be_read_or_names_nothing_fails(self):
+        self.symbols([0x1000, 0x1040, 0x1080])
+        self.assertIn("cannot read its symbols",
+                      self.check(env={"NM": str(self.root / "no-nm")}).stderr)
+        self.list.write_text("nothing::here\n")
+        done = self.check()
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("names nothing", done.stderr)
+        self.list.unlink()
+        self.assertEqual(self.check().returncode, 1, "no list")

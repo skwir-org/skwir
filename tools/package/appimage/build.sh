@@ -12,6 +12,8 @@ python3 tools/package/appimage/gstreamer.py
 # systems the AppImage runs on may be as old (ADR-022).
 # shellcheck disable=SC2046 # the shared list is one package per line
 cargo build --locked --profile dist --features skwir/bundled-sqlite $(sed 's/^/-p /' tools/package/programs)
+# What ships has what a start runs laid out together (ADR-128).
+tools/build/link-ordered --check "${CARGO_TARGET_DIR:-target}/dist/skwir"
 tools/package/pdfium.sh linux-x64 target/pdfium
 python3 tools/package/fonts.py target/fonts
 for tool in linuxdeploy appimagetool; do

@@ -54,8 +54,13 @@ back with use and the layout stays as it was.
    to stand in nixpkgs (ADR-124).
 3. **A binary out of order is heavier, never broken.** No list, no lld
    (the wrapper asks whether rustc chose it), no symbols, a second link
-   that fails: the first link stands, and the build says why. Silent
-   when it worked, as rustc shows what a linker prints as a warning.
+   that fails: the first link stands, and the wrapper says why, silent
+   when it worked. What it says is a linker's words, which rustc may keep
+   to itself, so what ships is checked: each package's build (the deb,
+   the RPM, the AppImage and its tarball) asks `link-ordered --check` of
+   the skwir it made, which fails where what a start runs is not laid out
+   in the list's order (more than one function in twenty before the one
+   listed before it). A development build is not checked.
 4. **Made by tracing real starts** (`just startup-order`,
    `tools/build/startup_order.py`): Intel PT, as sampling misses what runs
    once, on a Wayland compositor and an X server of its own, with software

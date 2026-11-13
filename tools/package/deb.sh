@@ -32,6 +32,8 @@ esac
 . tools/build/order-link-env.sh
 # shellcheck disable=SC2046 # one `-p name` per program
 cargo build --locked --profile dist $(sed 's/^/-p /' tools/package/programs)
+# What ships has what a start runs laid out together (ADR-128).
+tools/build/link-ordered --check "${CARGO_TARGET_DIR:-target}/dist/skwir"
 tools/package/pdfium.sh "$platform" target/pdfium
 python3 tools/package/fonts.py target/fonts
 revision=1

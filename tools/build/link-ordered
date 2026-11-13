@@ -12,7 +12,14 @@
 #
 # Anything else this linker is given is the real linker's, untouched, and
 # whatever stops the second link leaves the first: a binary out of order
-# is a heavier one, never a broken one.
+# is a heavier one, never a broken one. What it says of that reaches no
+# one unless rustc shows a linker's words, so what ships is checked:
+#
+#     link-ordered --check <binary>
+#
+# fails, saying why, where <binary> does not have the list's functions in
+# its order (each package's build asks it of the skwir it made); elsewhere
+# than on x86-64 Linux, which lays nothing out, it passes.
 #
 # The real linker is $SKWIR_REAL_LINKER (order-link-env.sh sets it).
 set -u
@@ -21,6 +28,95 @@ nm=${NM:-nm}
 cxxfilt=${CXXFILT:-c++filt}
 here=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 list=${SKWIR_STARTUP_ORDER:-$here/startup-order.txt}
+
+# The list's functions found in the symbols of the binary `$1`, in the
+# list's order, a symbol a line, into `$2/order` (its symbols in
+# `$2/mangled`). Where it cannot, it says why (`why`) and fails.
+order_of() {
+    LC_ALL=C "$nm" --defined-only "$1" >"$2/mangled" &&
+        LC_ALL=C "$nm" -C --defined-only "$1" >"$2/demangled" || {
+        why="cannot read its symbols"
+        return 1
+    }
+    # Ubuntu 22.04's nm (binutils 2.38, where the AppImage is made) leaves
+    # a Rust name mangled when LLVM gave it a suffix (`.llvm.<hash>`, as
+    # ThinLTO names a function it shares between its modules;
+    # `.specialized.1`; `.0`): one in twelve of what a start runs. Later
+    # ones read the name without it. So each name is read again without its
+    # suffix (a Rust name holds no dot), by c++filt, for where nm left one
+    # as it was. Without c++filt, those are not found, as before.
+    sed -E 's/^[^ ]+ [^ ]+ //; s/^(_R[^.]*)\..*$/\1/' "$2/mangled" |
+        LC_ALL=C "$cxxfilt" -i >"$2/plain" 2>/dev/null || : >"$2/plain"
+    [ "$(wc -l <"$2/plain")" -eq "$(wc -l <"$2/mangled")" ] || : >"$2/plain"
+
+    # One line of each file, a tab between: "address type mangled",
+    # "address type demangled name, which holds spaces" and that name read
+    # again.
+    paste "$2/mangled" "$2/demangled" "$2/plain" | LC_ALL=C awk -F '\t' -v list="$list" '
+    {
+        split($1, parts, " ")
+        if (parts[2] !~ /^[tTwW]$/) next
+        key = $2
+        sub(/^[^ ]+ [^ ]+ /, "", key)
+        if (key == parts[3] && key ~ /^_R/ && $3 != "") key = $3
+        # Not one assignment testing `key in found`: mawk makes the element
+        # before it asks.
+        if (key in found) found[key] = found[key] "\n" parts[3]
+        else found[key] = parts[3]
+    }
+    END {
+        while ((getline line < list) > 0)
+            if (line in found) {
+                print found[line]
+                delete found[line]
+            }
+    }' >"$2/order"
+
+    [ -s "$2/order" ] || {
+        why="the list names nothing in it"
+        return 1
+    }
+}
+
+# What lld laid out in the list's order rises through the code: of the
+# functions found, each one's address read in the list's order, at most
+# one in twenty may come before the one listed before it (two symbols of
+# one section, a function folded into another). Laid out as it comes,
+# what a start runs goes back and forth between the crates.
+if [ "${1:-}" = --check ]; then
+    binary=${2:?link-ordered --check <binary>}
+    case "$(uname -s)-$(uname -m)" in
+    Linux-x86_64) ;;
+    *) exit 0 ;;
+    esac
+    say() { echo "link-ordered --check: $binary: $*" >&2; }
+    [ -r "$list" ] || {
+        say "no $list"
+        exit 1
+    }
+    tmp=$(mktemp -d "${TMPDIR:-/tmp}/skwir-order.XXXXXX") || exit 1
+    trap 'rm -rf "$tmp"' EXIT
+    why=
+    order_of "$binary" "$tmp" || {
+        say "$why"
+        exit 1
+    }
+    LC_ALL=C awk -v binary="$binary" '
+    # Addresses are compared as text, all as wide in hex.
+    NR == FNR { if (!($3 in at)) at[$3] = "x" $1; next }
+    ($0 in at) {
+        if (n++ > 0 && at[$0] < last) back++
+        last = at[$0]
+    }
+    END {
+        if (back * 20 > n) {
+            printf "link-ordered --check: %s: what a start runs is not laid out in its order (%d of %d functions out of it): linked as it came, by a linker other than lld or a second link that failed\n", binary, back, n > "/dev/stderr"
+            exit 1
+        }
+        printf "%s: %d functions laid out in the order a start runs them\n", binary, n
+    }' "$tmp/mangled" "$tmp/order"
+    exit
+fi
 
 # Whether rustc gave `$1`, on the command line or in a response file.
 given() {
@@ -61,7 +157,8 @@ esac
 
 "$real" "$@" || exit
 
-# What is said is shown as a warning of the build: only what went wrong.
+# Said only where something went wrong, as a linker's words, which rustc
+# may keep to itself (its `linker_messages` lint): `--check` is what tells.
 note() { echo "link-ordered: $*" >&2; }
 
 [ -r "$list" ] || {
@@ -75,46 +172,9 @@ given -fuse-ld=lld "$@" || {
 
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/skwir-order.XXXXXX") || exit 0
 trap 'rm -rf "$tmp"' EXIT
-LC_ALL=C "$nm" --defined-only "$output" >"$tmp/mangled" &&
-    LC_ALL=C "$nm" -C --defined-only "$output" >"$tmp/demangled" || {
-    note "cannot read its symbols: linked as it comes"
-    exit 0
-}
-# Ubuntu 22.04's nm (binutils 2.38, where the AppImage is made) leaves a
-# Rust name mangled when LLVM gave it a suffix (`.llvm.<hash>`, as ThinLTO
-# names a function it shares between its modules; `.specialized.1`; `.0`):
-# one in twelve of what a start runs. Later ones read the name without it.
-# So each name is read again without its suffix (a Rust name holds no dot),
-# by c++filt, for where nm left one as it was. Without c++filt, those are
-# not found, as before.
-sed -E 's/^[^ ]+ [^ ]+ //; s/^(_R[^.]*)\..*$/\1/' "$tmp/mangled" |
-    LC_ALL=C "$cxxfilt" -i >"$tmp/plain" 2>/dev/null || : >"$tmp/plain"
-[ "$(wc -l <"$tmp/plain")" -eq "$(wc -l <"$tmp/mangled")" ] || : >"$tmp/plain"
-
-# One line of each file, a tab between: "address type mangled", "address
-# type demangled name, which holds spaces" and that name read again.
-paste "$tmp/mangled" "$tmp/demangled" "$tmp/plain" | LC_ALL=C awk -F '\t' -v list="$list" '
-{
-    split($1, parts, " ")
-    if (parts[2] !~ /^[tTwW]$/) next
-    key = $2
-    sub(/^[^ ]+ [^ ]+ /, "", key)
-    if (key == parts[3] && key ~ /^_R/ && $3 != "") key = $3
-    # Not one assignment testing `key in found`: mawk makes the element
-    # before it asks.
-    if (key in found) found[key] = found[key] "\n" parts[3]
-    else found[key] = parts[3]
-}
-END {
-    while ((getline line < list) > 0)
-        if (line in found) {
-            print found[line]
-            delete found[line]
-        }
-}' >"$tmp/order"
-
-[ -s "$tmp/order" ] || {
-    note "the list names nothing in it: linked as it comes"
+why=
+order_of "$output" "$tmp" || {
+    note "$why: linked as it comes"
     exit 0
 }
 cp "$output" "$tmp/unordered" || exit 0
