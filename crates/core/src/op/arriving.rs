@@ -36,9 +36,9 @@ pub struct Arrival {
     pub folder: PathBuf,
     /// Its name there, as settled once its plan runs (`photos (copy)`).
     pub name: OsString,
-    /// What it is made from: what a copy or a move takes; none for what a
-    /// step makes (an archive extracted, a folder made, a file put back
-    /// from the trash).
+    /// What it is made from: what a copy or a move takes, a file put back
+    /// from the trash as it is there; none for what a step makes (an
+    /// archive extracted, a folder made).
     pub from: Option<PathBuf>,
     /// What it will be, as far as is known before it lands: what it is
     /// made from, read, under its name there (its kind, its size, its
@@ -214,10 +214,11 @@ struct Brings<'a> {
     to: &'a Path,
 }
 
-/// What `change` brings, if it brings something. What a link or a rename
-/// makes is not brought: it is there at once, as a move within its folder
-/// is.
-fn brought(change: &Change) -> Option<Brings<'_>> {
+/// What `change` brings, if it brings something, made from `made_of`
+/// where the change does not say what (a restore's item in the trash,
+/// `Operation::brings_from`). What a link or a rename makes is not
+/// brought: it is there at once, as a move within its folder is.
+fn brought<'a>(change: &'a Change, made_of: Option<&Path>) -> Option<Brings<'a>> {
     let brings = |from: &Path, copied, to| Brings {
         from: Some(from.to_path_buf()),
         made: None,
@@ -238,7 +239,7 @@ fn brought(change: &Change) -> Option<Brings<'_>> {
             to: path,
         }),
         Change::Restore { path } => Some(Brings {
-            from: None,
+            from: made_of.map(Path::to_path_buf),
             made: None,
             copied: false,
             to: path,
@@ -252,6 +253,7 @@ fn brought(change: &Change) -> Option<Brings<'_>> {
 /// something ([`brought`]).
 fn items_of(plan: &Plan) -> Vec<Item> {
     let changes: Vec<Change> = plan.steps.iter().map(|step| step.describe()).collect();
+    let made_of: Vec<Option<PathBuf>> = plan.steps.iter().map(|step| step.brings_from()).collect();
     let item = |steps, brings: Brings<'_>, placed: &Path| Item {
         steps,
         placed: placed.to_path_buf(),
@@ -267,11 +269,11 @@ fn items_of(plan: &Plan) -> Vec<Item> {
             .into_iter()
             .zip(&items.placed)
             .filter_map(|((steps, said), placed)| {
-                let change = match said {
-                    ItemSaid::Step(at) => changes.get(*at)?,
-                    ItemSaid::Asked(change) => change,
+                let (change, of) = match said {
+                    ItemSaid::Step(at) => (changes.get(*at)?, made_of.get(*at)?.as_deref()),
+                    ItemSaid::Asked(change) => (change, None),
                 };
-                Some(item(steps, brought(change)?, placed))
+                Some(item(steps, brought(change, of)?, placed))
             })
             .collect();
     }
@@ -279,7 +281,7 @@ fn items_of(plan: &Plan) -> Vec<Item> {
         .iter()
         .enumerate()
         .filter_map(|(at, change)| {
-            let brings = brought(change)?;
+            let brings = brought(change, made_of[at].as_deref())?;
             let to = brings.to;
             Some(item(at..at + 1, brings, to))
         })
@@ -706,6 +708,58 @@ mod tests {
             ahead: ahead.iter().copied().collect(),
             batching: HashMap::new(),
         }
+    }
+
+    /// A file put back from the trash.
+    #[derive(Debug, Clone)]
+    struct PutBack;
+
+    impl super::super::Operation for PutBack {
+        fn kind(&self) -> &'static str {
+            "put_back"
+        }
+        fn args(&self) -> serde_json::Value {
+            serde_json::json!({})
+        }
+        fn describe(&self) -> Change {
+            Change::Restore {
+                path: PathBuf::from("/home/me/it's back"),
+            }
+        }
+        fn check(&self, _: &super::super::StepContext) -> super::super::StepStatus {
+            super::super::StepStatus::Pending { reversible: true }
+        }
+        fn apply(
+            &self,
+            _: &super::super::StepContext,
+        ) -> anyhow::Result<Option<Box<dyn super::super::Operation>>> {
+            Ok(None)
+        }
+        fn clone_box(&self) -> Box<dyn super::super::Operation> {
+            Box::new(self.clone())
+        }
+        fn brings_from(&self) -> Option<PathBuf> {
+            Some(PathBuf::from("/home/me/.Trash/files/it's back"))
+        }
+    }
+
+    /// What a restore brings is read from its item in the trash, as a
+    /// copy's from its source: a folder put back is drawn as one.
+    #[test]
+    fn what_a_restore_brings_is_read_from_its_item_in_the_trash() {
+        let plan = Plan::with_steps("restore", vec![Box::new(PutBack)]);
+        let arrivals = arrivals_of(&plan, false, Instant::now(), &HashMap::new());
+        assert_eq!(arrivals.len(), 1);
+        assert_eq!(arrivals[0].name, "it's back");
+        assert_eq!(
+            arrivals[0].from.as_deref(),
+            Some(Path::new("/home/me/.Trash/files/it's back"))
+        );
+        assert!(!arrivals[0].read, "read from it, as a copy's source is");
+        assert_eq!(
+            unread(&arrivals),
+            [PathBuf::from("/home/me/.Trash/files/it's back")]
+        );
     }
 
     /// Taken by a batch, an item copies with it: by its own bytes where

@@ -701,6 +701,13 @@ pub trait Operation: Send + Sync + fmt::Debug {
         let _ = ctx;
         None
     }
+    /// What what it brings into a folder is made from, where its change
+    /// does not say it (`Change::Restore` says where it goes alone): a
+    /// restore's item in the trash, which what arrives there is read from
+    /// as a copy's source is (ADR-135). Reads nothing.
+    fn brings_from(&self) -> Option<PathBuf> {
+        None
+    }
     /// The same step making what it makes under `name`: the name kept
     /// beside one taken, or the one `makes` found, which settling fixes
     /// in the step so that what is checked is what is applied.
@@ -816,6 +823,10 @@ pub trait Effect: Send + Sync + fmt::Debug {
         let _ = ctx;
         None
     }
+    /// `Operation::brings_from`.
+    fn brings_from(&self) -> Option<PathBuf> {
+        None
+    }
     /// `Operation::made_as`.
     fn made_as(&self, name: std::ffi::OsString) -> Option<Box<dyn Operation>> {
         let _ = name;
@@ -874,6 +885,9 @@ impl<T: Kind> Operation for T {
     }
     fn makes(&self, ctx: &StepContext) -> Option<Made> {
         Effect::makes(self, ctx)
+    }
+    fn brings_from(&self) -> Option<PathBuf> {
+        Effect::brings_from(self)
     }
     fn made_as(&self, name: std::ffi::OsString) -> Option<Box<dyn Operation>> {
         Effect::made_as(self, name)

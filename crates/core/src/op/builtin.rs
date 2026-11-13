@@ -3520,6 +3520,14 @@ impl super::Effect for Restore {
             path: self.path.clone(),
         }
     }
+    /// Its item in the trash: the item itself where the trash keeps no
+    /// record (macOS), else the one its record names; none where it names
+    /// no record (what was trashed last from its path).
+    fn brings_from(&self) -> Option<PathBuf> {
+        self.landed_item()
+            .map(Path::to_path_buf)
+            .or_else(|| super::records::item_of(self.item.as_deref()?))
+    }
     fn check(&self, ctx: &StepContext) -> StepStatus {
         if let Some(item) = self.landed_item() {
             return match (exists(&self.path), exists(item)) {
@@ -3984,6 +3992,10 @@ impl super::Effect for RestorePart {
         Change::Restore {
             path: self.path.clone(),
         }
+    }
+    /// It, in the trashed folder.
+    fn brings_from(&self) -> Option<PathBuf> {
+        Some(self.entry.path.clone())
     }
     fn check(&self, ctx: &StepContext) -> StepStatus {
         let src = match self.entry.resolve() {
