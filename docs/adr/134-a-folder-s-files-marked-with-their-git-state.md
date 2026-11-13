@@ -83,7 +83,9 @@ default with a setting). Built on Linux.
      each folder): the pane finds the entries an answer names by their
      names, and only what differs reaches the listing: a listing is
      written whole once, by its first whole answer, then only what
-     changes.
+     changes. An answer that comes while a sort on a worker holds a
+     listing it writes is kept, the latest alone, and taken once the
+     order is back, against what the entries hold then.
    - **Whole or not** (`Answer::whole`): an answer that stopped at the
      provider's limits says what it found and leaves the rest as it was,
      never said as committed.

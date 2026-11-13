@@ -1981,12 +1981,13 @@ impl App {
     /// Take what the version control said of the panes' folders into their
     /// listings, each still the one it was asked for and the latest asked:
     /// the panes changed.
+    ///
+    /// An answer a pane kept while a sort held a listing it writes is taken
+    /// once the order is back (`Pane::take_held_states`).
     fn take_state_answers(&self, report: &mut crate::workspace::PumpReport) {
         let answers = std::mem::take(&mut *self.state_answers.lock());
-        if answers.is_empty() {
-            return;
-        }
         let mut ws = self.workspace.write();
+        let mut changed = Vec::new();
         for StateAnswer {
             pane,
             listing,
@@ -1996,8 +1997,21 @@ impl App {
         {
             if let Some(p) = ws.pane_mut(pane)
                 && p.take_states(listing, asking, said)
-                && !report.panes_changed.contains(&pane)
             {
+                changed.push(pane);
+            }
+        }
+        let ids: Vec<PaneId> = ws.panes().iter().map(|p| p.id).collect();
+        for pane in ids {
+            if ws
+                .pane_mut(pane)
+                .is_some_and(crate::workspace::Pane::take_held_states)
+            {
+                changed.push(pane);
+            }
+        }
+        for pane in changed {
+            if !report.panes_changed.contains(&pane) {
                 report.panes_changed.push(pane);
             }
         }

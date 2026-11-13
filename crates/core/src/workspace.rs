@@ -896,6 +896,11 @@ pub struct Keying {
 /// providers' revision; and the generation of the answer it holds.
 type StatesAt = (u64, u64, u64, u64, u64);
 
+/// An answer of the version control a pane keeps while a sort holds a
+/// listing it writes (`Pane::take_states`): its listing, its asking, and
+/// what it said.
+type StatesHeld = (u64, u64, Option<(&'static str, crate::vcs::States)>);
+
 /// How often files written in a pane's folders ask its version control
 /// again at most: a file written each second (a log, a download) would
 /// read the whole folder's state each second. The first write after a
@@ -1110,6 +1115,10 @@ pub struct Pane {
     states_asked: Option<(StatesAt, u64, std::time::Instant)>,
     /// When an asking the pace held back is due (`states_due`).
     states_due: Option<std::time::SystemTime>,
+    /// An answer taken while a listing it writes was held by a sort, kept
+    /// until the order is back (`take_held_states`): its listing, its
+    /// asking, and what it said.
+    states_held: Option<StatesHeld>,
     states_reading: Option<CancelToken>,
     states_asking: u64,
     states_said: Option<(&'static str, u64)>,
@@ -2051,6 +2060,7 @@ impl Pane {
             fields_asked: Vec::new(),
             states_asked: None,
             states_due: None,
+            states_held: None,
             states_reading: None,
             states_asking: 0,
             states_said: None,
@@ -4864,6 +4874,16 @@ impl Pane {
         })
     }
 
+    /// Take the answer kept while a sort held a listing it writes
+    /// (`take_states`), once none is held: asked at each pump, a sort's end
+    /// waking it. Whether any entry changed.
+    pub(crate) fn take_held_states(&mut self) -> bool {
+        match self.states_held.take() {
+            Some((listing, asking, said)) => self.take_states(listing, asking, said),
+            None => false,
+        }
+    }
+
     /// When an asking of its version control held back by the pace
     /// (`STATES_WRITTEN_PACE`: files written since the last) is due: the
     /// pane is woken then (`App::pace_states`). `None` when none waits.
@@ -4877,6 +4897,13 @@ impl Pane {
     /// shown and this the latest asking, of the folders opened in place
     /// below it and of the columns above it under the answer's root, each
     /// by its path from that root (`take_vcs`). Whether any changed.
+    ///
+    /// While a sort on a worker holds a listing it writes, or what was
+    /// changed in one meanwhile still waits to be applied, the answer is
+    /// kept (the latest one: the next replaces it) and taken once the
+    /// order is back (`take_held_states`): what it writes is weighed
+    /// against what the entries hold then, never against values still
+    /// queued, which a second answer would take for what they replace.
     pub(crate) fn take_states(
         &mut self,
         listing: u64,
@@ -4886,6 +4913,12 @@ impl Pane {
         if self.listing.id() != listing || self.states_asking != asking {
             return false;
         }
+        let settled = |listing: &Listing| !listing.is_sorting() && !listing.has_result();
+        if !settled(&self.listing) || !self.kept.iter().all(|kept| settled(&kept.listing)) {
+            self.states_held = Some((listing, asking, said));
+            return false;
+        }
+        self.states_held = None;
         let Some(folder) = self.location().and_then(Location::path) else {
             return false;
         };

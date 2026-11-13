@@ -335,3 +335,68 @@ fn a_file_written_within_the_pace_is_asked_of_once_it_ends() {
     }
     assert_eq!(fake.asked.load(Ordering::Acquire), asked + 1, "asked");
 }
+
+/// Two answers that come while a sort holds the listing: the latest is
+/// taken once the order is back, against what the entries hold then, so
+/// what the first would have written (queued while the sort ran) never
+/// lands over the second.
+#[test]
+fn an_answer_taken_while_a_sort_holds_the_listing_waits_for_its_order() {
+    let tmp = common::home_tempdir();
+    let dir = tmp.path().join("sorted");
+    std::fs::create_dir_all(&dir).unwrap();
+    for name in ["a.txt", "b.txt"] {
+        std::fs::write(dir.join(name), b"x").unwrap();
+    }
+    let app = common::app(&tmp.path().join("state"));
+    let answer = |states: Vec<(String, State)>| Answer {
+        states,
+        whole: true,
+        key: 1,
+        ..Answer::default()
+    };
+    let fake = Fake::new(answer(vec![("a.txt".into(), State::Changed)]));
+    app.vcs.register("fake", Arc::clone(&fake) as _);
+    common::navigate(&app, &dir);
+    let pane = common::active(&app);
+    assert!(pump_until(&app, |app| state_of(app, "a.txt") == Some(State::Changed)));
+    // A sort on a worker holds the entries (its job keeps them).
+    let job = {
+        let mut ws = app.workspace.write();
+        let p = ws.pane_mut(pane).unwrap();
+        let mut spec = p.sort;
+        spec.key = skwir_core::location::SortKey::Size;
+        p.listing.sort_job(spec)
+    }
+    .expect("a sort on a worker");
+    let answered = |app: &App, n: usize| {
+        let asked = pump_until(app, |_| fake.asked.load(Ordering::Acquire) >= n);
+        // The answer's job pushes it and wakes: a few pumps take it.
+        let until = Instant::now() + Duration::from_millis(200);
+        while Instant::now() < until {
+            app.pump();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        asked
+    };
+    let asked = fake.asked.load(Ordering::Acquire);
+    *fake.answer.lock().unwrap() = answer(vec![("b.txt".into(), State::Staged)]);
+    fake.generation.fetch_add(1, Ordering::AcqRel);
+    assert!(answered(&app, asked + 1));
+    *fake.answer.lock().unwrap() = answer(vec![("a.txt".into(), State::Changed)]);
+    fake.generation.fetch_add(1, Ordering::AcqRel);
+    assert!(answered(&app, asked + 2));
+    assert_eq!(
+        state_of(&app, "b.txt"),
+        None,
+        "nothing written while sorting"
+    );
+    drop(job);
+    assert!(pump_until(&app, |app| {
+        let ws = app.workspace.read();
+        let l = &ws.pane(pane).unwrap().listing;
+        !l.is_sorting() && !l.has_result()
+    }));
+    assert!(pump_until(&app, |app| known_of(app, "b.txt") == Known::Committed));
+    assert_eq!(state_of(&app, "a.txt"), Some(State::Changed), "the latest");
+}
