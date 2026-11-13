@@ -15,6 +15,16 @@ const SUMMARY: usize = 300;
 const NAME: usize = 200;
 /// A commit no child has given the file's name in it yet.
 const UNNAMED: u32 = u32::MAX;
+/// Commits the walk reads between two looks at the clock, and at least,
+/// whatever the clock says: a history past its deadline still shows its
+/// newest.
+const BATCH: usize = 1024;
+/// The share of a log's time its walk may take, the rest left to placing
+/// what it read: where a path is asked, placing looks it up in each
+/// commit's trees and takes as long as the walk; for the whole
+/// repository, placing reads the commits it lists alone.
+const WALK_FOR_A_PATH: f64 = 0.5;
+const WALK_FOR_ALL: f64 = 0.8;
 
 #[derive(Serialize)]
 pub(crate) struct Log {
@@ -101,8 +111,11 @@ impl Followed {
 /// walk newest first (which a shallow clone's boundary ends), then placed
 /// by Kahn's algorithm, a commit becoming ready once all its children are
 /// placed, the newest ready placed first (a binary heap): n log n in the
-/// commits, each read once. Read past the deadline, what was read is placed
-/// and answered.
+/// commits, each read once. The walk takes a share of the time at most
+/// (`WALK_FOR_A_PATH`, `WALK_FOR_ALL`), a first `BATCH` read whatever the
+/// clock says, and what it read is placed in the time left, the clock
+/// looked at for each commit placed: past the deadline, what was placed is
+/// answered.
 ///
 /// A file (not a folder) is followed as `git log --follow` follows it, but
 /// along each line of history apart: each commit knows the file's name in
@@ -115,6 +128,22 @@ pub(crate) fn log(
     repo: &gix::Repository,
     path: &[&[u8]],
     limit: usize,
+    deadline: &Deadline,
+) -> Result<Log> {
+    let reading = deadline.part(if path.is_empty() {
+        WALK_FOR_ALL
+    } else {
+        WALK_FOR_A_PATH
+    });
+    log_within(repo, path, limit, &reading, deadline)
+}
+
+/// `log`, its walk stopped at `reading`, its placing at `deadline`.
+fn log_within(
+    repo: &gix::Repository,
+    path: &[&[u8]],
+    limit: usize,
+    reading: &Deadline,
     deadline: &Deadline,
 ) -> Result<Log> {
     let head = repo.head()?;
@@ -141,7 +170,7 @@ pub(crate) fn log(
         ))
         .all()?;
     for (read, info) in walk.enumerate() {
-        if read % 1024 == 0 && deadline.passed() {
+        if read >= BATCH && read.is_multiple_of(BATCH) && reading.passed() {
             stopped = true;
             break;
         }
@@ -205,7 +234,9 @@ pub(crate) fn log(
             more = true;
             break;
         }
-        if (follow || commits.len() % 64 == 0) && deadline.passed() {
+        // Each commit placed, kept or not: a folder changed by few of many
+        // commits looks its path up in every one.
+        if deadline.passed() {
             stopped = true;
             break;
         }
@@ -334,4 +365,78 @@ fn refs(repo: &gix::Repository) -> Result<HashMap<ObjectId, Vec<String>>> {
             (id, labels.into_iter().map(|(_, label)| label).collect())
         })
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::Deadline;
+    use std::fmt::Write as _;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    /// A repository of `count` commits in a line, a second apart, made by
+    /// `git fast-import`; `None` where git is not installed.
+    fn line_of(count: usize) -> Option<tempfile::TempDir> {
+        let dir = tempfile::tempdir().unwrap();
+        let git = |args: &[&str]| {
+            Command::new("git")
+                .args(args)
+                .current_dir(dir.path())
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env("HOME", dir.path())
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .spawn()
+        };
+        let Ok(mut init) = git(&["init", "-q", "-b", "main"]) else {
+            eprintln!("git is not installed: skipped");
+            return None;
+        };
+        assert!(init.wait().unwrap().success());
+        let mut stream = String::new();
+        for n in 0..count {
+            let message = format!("commit {n}\n");
+            let _ = write!(
+                stream,
+                "commit refs/heads/main\ncommitter A <a@example.org> {} +0000\ndata {}\n{message}\n",
+                1_700_000_000 + n,
+                message.len()
+            );
+        }
+        let mut import = git(&["fast-import", "--quiet"]).unwrap();
+        import
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(stream.as_bytes())
+            .unwrap();
+        assert!(import.wait().unwrap().success());
+        Some(dir)
+    }
+
+    /// A walk stopped at its deadline still has its first batch placed,
+    /// newest first, and says it stopped: never a history of nothing.
+    #[test]
+    fn a_walk_stopped_at_its_deadline_still_places_what_it_read() {
+        let Some(dir) = line_of(super::BATCH + 100) else {
+            return;
+        };
+        let repo = crate::open(&dir.path().join(".git")).unwrap();
+        let gone = Deadline::of(Some(0)).unwrap();
+        let later = Deadline::of(Some(60_000)).unwrap();
+        let log = super::log_within(&repo, &[], 500, &gone, &later).unwrap();
+        assert!(log.stopped, "the walk stopped");
+        assert_eq!(log.commits.len(), 500, "its newest placed");
+        assert_eq!(
+            log.commits[0].summary,
+            format!("commit {}", super::BATCH + 99)
+        );
+        // Placing past the deadline says what it placed: here nothing.
+        let none = super::log_within(&repo, &[], 500, &later, &gone).unwrap();
+        assert!(none.stopped && none.commits.is_empty());
+        // In time, the whole line, the limit reached.
+        let whole = super::log(&repo, &[], 2000, &later).unwrap();
+        assert!(!whole.stopped && !whole.more);
+        assert_eq!(whole.commits.len(), super::BATCH + 100);
+    }
 }

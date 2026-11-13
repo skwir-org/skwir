@@ -130,8 +130,11 @@ fn default_states() -> usize {
     DEFAULT_STATES
 }
 
-/// When a request must be answered by.
-pub(crate) struct Deadline(Instant);
+/// When a request must be answered by, and when it was asked.
+pub(crate) struct Deadline {
+    asked: Instant,
+    by: Instant,
+}
 
 impl Deadline {
     fn of(asked: Option<u64>) -> Result<Self> {
@@ -139,12 +142,26 @@ impl Deadline {
         if ms > DEADLINE {
             return Err(format!("a deadline of {ms} ms is past the {DEADLINE} ms allowed").into());
         }
-        Ok(Self(Instant::now() + Duration::from_millis(ms)))
+        let now = Instant::now();
+        Ok(Self {
+            asked: now,
+            by: now + Duration::from_millis(ms),
+        })
     }
 
     /// Whether it has passed.
     pub(crate) fn passed(&self) -> bool {
-        Instant::now() >= self.0
+        Instant::now() >= self.by
+    }
+
+    /// The moment `share` (0 to 1) of the time given has gone: where a
+    /// first part of the work stops, so what follows it keeps the rest.
+    pub(crate) fn part(&self, share: f64) -> Deadline {
+        let given = self.by.saturating_duration_since(self.asked);
+        Deadline {
+            asked: self.asked,
+            by: self.asked + given.mul_f64(share.clamp(0.0, 1.0)),
+        }
     }
 }
 
