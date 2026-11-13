@@ -52,6 +52,7 @@ skwir-plugin-trash.workspace = true
 skwir-plugin-query.workspace = true
 skwir-plugin-media.workspace = true
 skwir-plugin-hex.workspace = true
+skwir-plugin-git.workspace = true
 skwir-plugin-markdown.workspace = true
 skwir-plugin-archives.workspace = true
 skwir-plugin-books.workspace = true
@@ -155,6 +156,7 @@ assets = [
     ["target/release/skwir-djvu-worker", "usr/lib/skwir/", "755"],
     ["target/release/skwir-archive-worker", "usr/lib/skwir/", "755"],
     ["target/release/skwir-model-worker", "usr/lib/skwir/", "755"],
+    ["target/release/skwir-git-worker", "usr/lib/skwir/", "755"],
     ["target/release/skwir-module-worker", "usr/lib/skwir/", "755"],
     ["target/release/skwir-kmtp-worker", "usr/lib/skwir/", "755"],
     ["target/release/skwir-tree-sitter-worker", "usr/lib/skwir/", "755"],
@@ -263,6 +265,7 @@ assets = [
     { source = "target/release/skwir-djvu-worker", dest = "/usr/libexec/skwir/skwir-djvu-worker", mode = "755" },
     { source = "target/release/skwir-archive-worker", dest = "/usr/libexec/skwir/skwir-archive-worker", mode = "755" },
     { source = "target/release/skwir-model-worker", dest = "/usr/libexec/skwir/skwir-model-worker", mode = "755" },
+    { source = "target/release/skwir-git-worker", dest = "/usr/libexec/skwir/skwir-git-worker", mode = "755" },
     { source = "target/release/skwir-module-worker", dest = "/usr/libexec/skwir/skwir-module-worker", mode = "755" },
     { source = "target/release/skwir-kmtp-worker", dest = "/usr/libexec/skwir/skwir-kmtp-worker", mode = "755" },
     { source = "target/release/skwir-tree-sitter-worker", dest = "/usr/libexec/skwir/skwir-tree-sitter-worker", mode = "755" },

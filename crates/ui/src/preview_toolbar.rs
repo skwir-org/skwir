@@ -262,6 +262,7 @@ pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyEleme
                     Hex::Row
                 }
             }),
+            ways: crate::preview_bar::ways(shell, false, None),
         },
     );
     let (text, muted) = (caption(shell), theme.text_muted);

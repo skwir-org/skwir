@@ -49,6 +49,89 @@ pub enum InspectionKind {
     Map,
     /// A 3D model the asker turns (`Inspection::mesh`).
     Model,
+    /// A history of commits, newest first (ADR-133): each row a commit
+    /// whose `target` (its whole id) opens it, its cells its summary, its
+    /// short id, its author, its date and the names at it (branches,
+    /// tags), joined by `REFS_JOIN`; its `graph`, where the history draws
+    /// one, its part of the graph of merges.
+    History,
+}
+
+/// What joins the names at a commit in a history row's fifth cell, each
+/// written as its kind says (`RefKind::written`).
+pub const REFS_JOIN: &str = "\u{1f}";
+
+/// What a name at a commit is: the branch checked out, another local
+/// branch, a remote-tracking one, a tag.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RefKind {
+    Current,
+    Branch,
+    Remote,
+    Tag,
+}
+
+impl RefKind {
+    const PREFIXES: [(RefKind, &'static str); 4] = [
+        (RefKind::Current, "head:"),
+        (RefKind::Branch, "branch:"),
+        (RefKind::Remote, "remote:"),
+        (RefKind::Tag, "tag:"),
+    ];
+
+    /// `name` written as one of a history row's names.
+    pub fn written(self, name: &str) -> String {
+        let prefix = Self::PREFIXES
+            .iter()
+            .find(|(kind, _)| *kind == self)
+            .map_or("branch:", |(_, prefix)| prefix);
+        format!("{prefix}{name}")
+    }
+
+    /// A name as `written` wrote it: what it is, and the name; a name
+    /// written otherwise is a branch's.
+    pub fn of(written: &str) -> (RefKind, &str) {
+        Self::PREFIXES
+            .iter()
+            .find_map(|(kind, prefix)| Some((*kind, written.strip_prefix(prefix)?)))
+            .unwrap_or((RefKind::Branch, written))
+    }
+}
+
+/// A row's part of a graph drawn down the start of the rows (a history's
+/// commits and their parents, `InspectionKind::History`): lanes side by
+/// side, the row's node in one, each line in a lane's color, which the
+/// asker draws from a few it cycles through.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct GraphRow {
+    /// The lane the row's node is in.
+    pub node: u16,
+    /// The color of the node's lane.
+    pub color: u8,
+    /// The lines through the row.
+    pub lines: Vec<GraphLine>,
+}
+
+/// A line of a graph through one row, from lane `from` to lane `to`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GraphLine {
+    pub from: u16,
+    pub to: u16,
+    pub color: u8,
+    pub part: GraphPart,
+}
+
+/// Where a line of a row's graph runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GraphPart {
+    /// From the row's top to its node (`to` is the node's lane): a child
+    /// above coming down to its parent.
+    Above,
+    /// From the node to the row's bottom (`from` is the node's lane): to a
+    /// parent below.
+    Below,
+    /// From the row's top to its bottom: a line going by.
+    Through,
 }
 #[derive(Clone, Debug, Default)]
 pub struct Inspection {
@@ -671,6 +754,9 @@ pub struct Row {
     /// For a book's contents, the section the row opens (its offset, among
     /// `Inspection::sections`): how the contents tell where the reader is.
     pub section: Option<u64>,
+    /// Its part of the graph drawn down the rows' start, in a history that
+    /// draws one (`InspectionKind::History`).
+    pub graph: Option<Box<GraphRow>>,
 }
 impl Inspection {
     pub fn text(title: impl Into<String>, text: impl Into<String>) -> Self {

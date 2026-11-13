@@ -564,6 +564,13 @@ archives, and the bytes of any file.
   card, its count and its Properties stay the folder's; the bar's × leaves
   the file for the folder's count. Settings › Folders and views › Previews
   turns it off or changes the names looked for, in their order.
+- **History**, in the bar of a folder or a file in a Git repository,
+  lists the commits that changed it; the repository's top folder draws
+  the graph of its merges. A commit opens as its patch below the list,
+  and the arrows walk the commits. Right-click a commit to copy its
+  hash (whole, or short as shown) or its summary. Chosen on a folder, History stays on
+  for every folder in a repository until you turn it off; on a file, it
+  is for that file.
 - A table (CSV, a spreadsheet, a database, JSON Lines) sorts by a
   column when you click its header. Drag the edge at a header's right to
   widen or narrow its column, and double-click it to fit the column to
@@ -585,8 +592,9 @@ archives, and the bytes of any file.
   Down scroll, Left and Right scroll sideways when it is wider than the
   panel, or else turn the page or the chapter.
 - **Contents** (the bar's first button) lists a document's outline, a
-  book's chapters or a file's headings, the part you are in highlighted
-  as you read. Choosing a part goes there and closes them; the pin keeps
+  book's chapters, a file's headings or a history's tags, the part you
+  are in highlighted as you read (in a history, the release the commits
+  at the top went into). Choosing a part goes there and closes them; the pin keeps
   them open beside the text instead, from chapter to chapter and file to
   file, and is remembered.
 - `F` shows a picture, a document, text or a film on the whole screen;

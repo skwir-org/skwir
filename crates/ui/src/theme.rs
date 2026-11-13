@@ -64,7 +64,8 @@
 //!   `stage` behind a picture, a page or a film on the whole screen,
 //!   `find_*` for what a find found in text,
 //!   `drop_target` under a drag, `on_accent` for text and glyphs on an
-//!   `accent` fill, `on_tags` for a glyph on a tag's color (a swatch's
+//!   `accent` fill, `lanes` for a history's graph (the tags' hues),
+//!   `on_tags` for a glyph on a tag's color (a swatch's
 //!   check), `handle` for an edge being dragged, `band` and
 //!   `band_edge` for the rubber band, `term` behind what the query
 //!   understood in the address field (a term's value, the scope's token),
@@ -230,6 +231,10 @@ pub struct Theme {
     /// `skwir_core::metadata::TAG_COLORS` (red, orange, yellow, green, teal,
     /// blue, purple, pink): a tag's dot is one, its chip `tag_fill` of it.
     pub tags: [Hsla; 8],
+    /// The lines of a history's graph of merges, one a lane in turn
+    /// (ADR-133, `inspection::GraphRow`): the tags' hues, marks that read on
+    /// what is read.
+    pub lanes: [Hsla; 8],
     /// A glyph drawn on each of `tags` (the check in a swatch chosen):
     /// white, or the darkest of the look where that reads better, guarded
     /// as a mark is (`Theme::on_tag`).
@@ -987,6 +992,7 @@ impl Theme {
             on_accent,
             block_text: kept.block_text,
             tags: kept.tags,
+            lanes: kept.tags,
             on_tags,
             rating: kept.rating,
             placeholder: border.opacity(0.6),

@@ -984,6 +984,18 @@ Gathered on 2026-10-20 from the notes of this plan and of
 may have covered one: check the source before starting it. Work that
 closes an item removes its line; work that leaves one adds it here.
 
+**History** (ADR-133, 2026-11-13): built on Linux; the helper is in
+every package's list, Windows' and macOS's builds not made or checked
+(`just check-cross`, `package-windows`, `package-macos`). To come, as
+said with the user: History as a place in the pane (full width, a commit
+opened as a folder of what it changed, its tree browsed as an
+archive's); renames followed in a file's history; the files' state
+(changed, new, ignored) in the views. A history is not read again when
+the repository changes while it is shown. A folder's or a file's
+history draws no graph (as `git log -- path`); a shallow clone, a linked
+worktree and a submodule are handled by the helper but were not tried
+in the window.
+
 **Formulas** (ADR-129, 2026-11-10): the helper is in every package, apart
 on Linux; Windows' was tried under Wine, macOS's built and looked over,
 never run. A formula

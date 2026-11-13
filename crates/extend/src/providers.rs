@@ -484,6 +484,7 @@ pub(crate) fn inspection_of(answer: protocol::Inspection) -> inspection::Inspect
                 branch: row.branch,
                 target: row.target,
                 section: None,
+                graph: None,
             })
             .collect(),
         previous: answer.previous,

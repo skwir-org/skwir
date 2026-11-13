@@ -1,0 +1,26 @@
+[package]
+name = "skwir-git-worker"
+description = "skwir helper: a repository's history and a commit's patch, read in a process of its own"
+version.workspace = true
+publish.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+# gitoxide, its objects, references and walks alone (ADR-133): no
+# attributes or filters are built, and its command runner, which its
+# protocol brings, is called only by a network client, not built either:
+# nothing a repository's configuration names can be run.
+gix = { version = "0.90.0", default-features = false, features = ["sha1"] }
+# The line diff gix's own would bring the filters with.
+imara-diff = "0.2.0"
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

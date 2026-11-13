@@ -78,6 +78,9 @@ pub struct Display {
     /// Its first chunk colored here, for its first frame, if that was
     /// quick (`coloring::first_colors`): taken when it arrives.
     pub(crate) first_colors: Option<Box<crate::coloring::FirstColors>>,
+    /// How many lanes a history's graph takes (`history_view::lanes`),
+    /// worked out here on the worker; 0 without a graph.
+    pub(crate) lanes: u16,
 }
 impl Display {
     pub fn new(mut data: Inspection, code: &crate::code_preview::CodeTheme) -> Self {
@@ -85,7 +88,7 @@ impl Display {
         // files a container holds (an archive's members, a message's
         // attachments) here, never by inspecting member paths or doing I/O
         // while drawing rows.
-        let row_icons = if kept_rows(data.kind) {
+        let row_icons = if kept_rows(data.kind) && data.kind != InspectionKind::History {
             data.rows
                 .iter()
                 .map(|row| {
@@ -246,7 +249,13 @@ impl Display {
                 .ok()
                 .map(Arc::new)
         });
+        let lanes = if data.kind == InspectionKind::History {
+            crate::history_view::lanes(&data.rows)
+        } else {
+            0
+        };
         Self {
+            lanes,
             map,
             profile,
             model,
@@ -616,12 +625,18 @@ fn said_row(
             .enumerate()
             .skip(1)
             .filter(|(_, cell)| !cell.is_empty())
-            .map(
-                |(i, cell)| match columns.get(i).filter(|column| !column.is_empty()) {
+            .map(|(i, cell)| {
+                // A history's branches and tags, each with what it is.
+                let cell = if kind == InspectionKind::History && i == 4 {
+                    crate::history_view::said_names(cell)
+                } else {
+                    cell.clone()
+                };
+                match columns.get(i).filter(|column| !column.is_empty()) {
                     Some(column) => format!("{column}: {cell}"),
-                    None => cell.clone(),
-                },
-            )
+                    None => cell,
+                }
+            })
             .collect();
         let d = d
             .aria_label(name)
@@ -638,7 +653,10 @@ fn said_row(
 }
 
 pub(crate) fn kept_rows(kind: InspectionKind) -> bool {
-    matches!(kind, InspectionKind::Archive | InspectionKind::Mail)
+    matches!(
+        kind,
+        InspectionKind::Archive | InspectionKind::Mail | InspectionKind::History
+    )
 }
 
 /// The rows shown, in the order shown: those under a folded row are
@@ -765,12 +783,24 @@ struct Offered {
     folds: bool,
     sized: bool,
     whole: bool,
+    /// Another file is on its way: what this one offered stays on its bar
+    /// while it is shown, and the next section to arrive starts again.
+    renewed: bool,
 }
 
 impl Offered {
+    /// Another file, or another way of looking at it, is asked for: the
+    /// tools stay until its first section comes, which offers its own. Cut
+    /// at the asking, the bar of what is still shown lost them meanwhile,
+    /// and what stood beside them (a member's name) took their room, then
+    /// gave it back.
+    pub(crate) fn renew(&mut self) {
+        self.renewed = true;
+    }
+
     fn add(&mut self, display: &Display) {
         let data = &display.data;
-        if self.kind != Some(data.kind) {
+        if self.renewed || self.kind != Some(data.kind) {
             *self = Offered {
                 kind: Some(data.kind),
                 ..Offered::default()
@@ -1080,6 +1110,18 @@ impl State {
     fn top_block(&self, data: &Inspection) -> usize {
         let top = self.list.logical_scroll_top().item_ix.saturating_sub(1);
         top.min(data.blocks.len().saturating_sub(1))
+    }
+    /// What is at the top of the view, as contents index it: a block, or
+    /// past the blocks a row (`blocks.len()` and its index), for what
+    /// lists its rows in its contents (a history's tags).
+    fn top_index(&self, data: &Inspection) -> usize {
+        let top = self.list.logical_scroll_top().item_ix.saturating_sub(1);
+        match top.checked_sub(data.blocks.len()) {
+            Some(shown) if data.kind == InspectionKind::History => {
+                data.blocks.len() + self.visible.get(shown).copied().unwrap_or(shown)
+            }
+            _ => self.top_block(data),
+        }
     }
     /// The printed page at the top of the view: the last to start at or
     /// before it in this section, else the last of the sections before;
@@ -1467,6 +1509,8 @@ impl State {
         px(match data.kind {
             InspectionKind::Code => crate::code_preview::line_height(self.font_size.get()),
             InspectionKind::Hex | InspectionKind::Archive | InspectionKind::Table => 24.,
+            // Its summary over its author and date.
+            InspectionKind::History => self.font_size.get() * 2.8 + 8.,
             // Prose wraps: call it two and a half lines and the space around
             // them, between a heading and a long paragraph.
             _ => self.font_size.get() * 1.5 * 2.5 + 16.,
@@ -1950,7 +1994,11 @@ impl Shell {
                                 .or_else(|| {
                                     listed(&display.data)
                                         .get(i.saturating_sub(display.data.blocks.len()))
-                                        .map(|r| r.cells.join("\t"))
+                                        .map(|r| match (&r.target, display.data.kind) {
+                                            // A commit is copied as its id, whole.
+                                            (Some(id), InspectionKind::History) => id.clone(),
+                                            _ => r.cells.join("\t"),
+                                        })
                                 })
                         })
                         .unwrap_or_else(|| {
@@ -1978,6 +2026,18 @@ impl Shell {
                     state.selected = None;
                     let data = display.data.clone();
                     state.relayout(&data);
+                    cx.notify();
+                    return;
+                }
+                // A row chosen and brought into view, nothing opened (a
+                // history's tag, from its contents).
+                "row" => {
+                    let index = args["index"].as_u64().map(|i| i as usize);
+                    let state = &mut self.preview.inspection;
+                    state.selected = index;
+                    if let Some(item) = index.and_then(|i| state.item_of(&display.data, i)) {
+                        state.show_item(item);
+                    }
                     cx.notify();
                     return;
                 }
@@ -2122,6 +2182,10 @@ impl Shell {
                 _ => {}
             }
         }
+        if action == "way" {
+            self.inspect_way(args, window, cx);
+            return;
+        }
         if action == "link" {
             // A press that ended a selection is not a click on a link; a
             // label typed is.
@@ -2170,7 +2234,12 @@ impl Shell {
         // A table's rows lead somewhere only in a playlist: a CSV has no targets.
         let container = matches!(
             kind,
-            Some(InspectionKind::Archive | InspectionKind::Mail | InspectionKind::Table)
+            Some(
+                InspectionKind::Archive
+                    | InspectionKind::Mail
+                    | InspectionKind::Table
+                    | InspectionKind::History
+            )
         );
         match action {
             "target" if container => {
@@ -2286,7 +2355,7 @@ impl Shell {
             // one was looked at (a provider, a page, a search) was its own,
             // and so were the tools its sections offered.
             self.preview.inspection.request = InspectRequest::default();
-            self.preview.inspection.offered = Offered::default();
+            self.preview.inspection.offered.renew();
             // A track stepped to by the player says so after this.
             self.preview.autoplay = None;
         }
@@ -2413,6 +2482,57 @@ impl Shell {
     }
 }
 impl Shell {
+    /// `ui.inspect`'s `way`: another way of looking at the entry (its
+    /// history, `provider`), on or off (`on`; the other way from what is
+    /// shown without it). For a folder, for every folder it looks at, kept
+    /// (`folder_way`): the folder is asked again, its README or count
+    /// where it is off. For a file, for that file alone, from the file
+    /// itself: a member gone into goes.
+    fn inspect_way(
+        &mut self,
+        args: &serde_json::Value,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(id) = args["provider"].as_str() else {
+            return;
+        };
+        if self.preview.info.is_dir {
+            let on = args["on"]
+                .as_bool()
+                .unwrap_or(self.preview.folder_way.as_deref() != Some(id));
+            self.preview.folder_way = on.then(|| id.to_owned());
+            self.remember_session();
+            self.cancel_preview(window, cx);
+            cx.notify();
+            return;
+        }
+        let shown = self
+            .preview
+            .parked()
+            .map(|parked| &parked.display)
+            .or(match &self.preview.content {
+                Some(PreviewContent::Inspection(display)) => Some(display),
+                _ => None,
+            })
+            .and_then(|display| display.origin.as_ref())
+            .is_some_and(|origin| origin.1.provider.as_deref() == Some(id));
+        let on = args["on"].as_bool().unwrap_or(!shown);
+        self.preview_ascend(0, window, cx);
+        self.preview.inspection.request = InspectRequest {
+            provider: on.then(|| id.to_owned()),
+            ..InspectRequest::default()
+        };
+        self.preview.inspection.offered.renew();
+        self.preview.autoplay = None;
+        self.cancel_pending_preview();
+        self.preview.media = crate::media::MediaState::default();
+        self.let_reader_go(window, cx);
+        self.preview.phase = PreviewPhase::Queued;
+        self.preview.menu = None;
+        cx.notify();
+    }
+
     /// Scrolling on past the end of a section goes to the next one, and back
     /// past its start to the one before. The wheel must first come to rest on
     /// the edge and then be pushed again: arriving at the end of a chapter
@@ -3038,7 +3158,10 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
                 on: whole,
                 enabled: whole || data.whole_available,
             }),
-            hex: if shown.provider.is_some() {
+            ways: crate::preview_bar::ways(shell, parked, shown.provider.as_deref()),
+            hex: if shown.provider.is_some()
+                && shown.provider.as_deref() == shell.app.previews.bytes_view()
+            {
                 Some(Hex::Shown)
             } else {
                 (data.kind != InspectionKind::Hex && crate::preview_toolbar::hex_available(shell))
@@ -3068,10 +3191,7 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
         let (caption, muted) = (caption.to_owned(), theme.text_muted);
         bar.push(
             Item::widget(Slot::View, 0, move |_, _| {
-                div()
-                    .flex_1()
-                    .w_0()
-                    .min_w(px(64.))
+                crate::preview_bar::spare()
                     .text_small()
                     .truncate()
                     .text_color(muted)
@@ -3246,7 +3366,10 @@ fn has_contents(data: &Inspection) -> bool {
 fn headed(kind: InspectionKind) -> bool {
     matches!(
         kind,
-        InspectionKind::Markdown | InspectionKind::Book | InspectionKind::Mail
+        InspectionKind::Markdown
+            | InspectionKind::Book
+            | InspectionKind::Mail
+            | InspectionKind::History
     )
 }
 
@@ -3270,7 +3393,7 @@ pub fn outline_drawer(
     }
     // A document's own contents; else a code file's definitions.
     let (entries, current) = if let Some(contents) = view.display.contents.as_ref() {
-        let top = view.state.top_block(&view.display.data);
+        let top = view.state.top_index(&view.display.data);
         (Arc::clone(&contents.entries), contents.current(top))
     } else {
         let symbols = view.state.symbols()?;
@@ -3352,16 +3475,61 @@ struct Part {
 impl Contents {
     /// The contents of `data`; `None` when it has none.
     fn of(data: &Inspection, anchors: &Anchors) -> Option<Contents> {
+        // A history's are its tags, found in the pass that lists them.
+        if data.kind == InspectionKind::History {
+            let tags = Contents::tags(data);
+            return (!tags.entries.is_empty()).then_some(tags);
+        }
         if !has_contents(data) {
             return None;
         }
-        Some(
-            if data.kind == InspectionKind::Book && !data.rows.is_empty() {
-                Contents::book(data, anchors)
-            } else {
-                Contents::headings(data)
-            },
-        )
+        Some(match data.kind {
+            InspectionKind::Book if !data.rows.is_empty() => Contents::book(data, anchors),
+            _ => Contents::headings(data),
+        })
+    }
+
+    /// A history's tags, newest first, each with the day of the commit it
+    /// is at: the part shown is the tag at or above the commit at the top,
+    /// the release it went into (`git describe --contains`), as a heading
+    /// is above what it heads; nothing above the newest. One pass over the
+    /// rows, on the worker: a row without names is skipped at once.
+    fn tags(data: &Inspection) -> Contents {
+        let mut entries = Vec::new();
+        let mut headings = Vec::new();
+        for (row, commit) in data.rows.iter().enumerate() {
+            let names: Vec<&str> = crate::history_view::tagged(commit).collect();
+            if names.is_empty() {
+                continue;
+            }
+            let index = data.blocks.len() + row;
+            let day = commit
+                .cells
+                .get(3)
+                .map_or("", |date| date.get(..10).unwrap_or(date));
+            headings.push((index, entries.len()));
+            entries.push(crate::outline::Entry {
+                depth: 0,
+                title: if day.is_empty() {
+                    names.join(", ").into()
+                } else {
+                    format!("{} · {day}", names.join(", ")).into()
+                },
+                command: Some((
+                    "ui.inspect",
+                    serde_json::json!({"action":"row","index":index}),
+                )),
+            });
+        }
+        Contents {
+            entries: entries.into(),
+            parts: vec![Part {
+                entry: None,
+                headings,
+            }],
+            opened: Vec::new(),
+            first: Some(0),
+        }
     }
 
     /// The headings of what is shown.
@@ -3659,6 +3827,8 @@ pub fn content(
         .paged()
         .then(|| state.list.item_count().saturating_sub(1));
     let row_icons = display.row_icons.clone();
+    let history_lanes = display.lanes;
+    let parked_view = view.parked;
     let visible = state.visible.clone();
     let collapsed = state.collapsed.clone();
     // The folds a code view's grammar found, where it has none of its own.
@@ -3908,6 +4078,20 @@ pub fn content(
                     theme,
                 )
                 .id(("inspect-row", ri))
+            } else if data.kind == InspectionKind::History {
+                // A commit's menu, its row pressed with the right button.
+                let (menu, index) = (entity.clone(), data.blocks.len() + ri);
+                crate::history_view::row(r, history_lanes, selected == Some(index), theme)
+                    .id(("inspect-row", ri))
+                    .when(selected != Some(index), |d| d.hover(|d| d.bg(theme.hover)))
+                    .on_mouse_down(gpui::MouseButton::Right, move |event, window, cx| {
+                        cx.stop_propagation();
+                        let _ = menu.update(cx, |s, cx| {
+                            s.with_pane(pane, |s| {
+                                s.open_commit_menu(parked_view, index, event.position, window, cx);
+                            });
+                        });
+                    })
             } else {
                 div()
                     .id(("inspect-row", ri))
@@ -3945,7 +4129,7 @@ pub fn content(
                 .max(r.cells.len());
             for column in 0..count {
                 let cell = r.cells.get(column).map_or("", String::as_str);
-                if data.kind == InspectionKind::Archive {
+                if matches!(data.kind, InspectionKind::Archive | InspectionKind::History) {
                     break;
                 }
                 let numeric = shape
@@ -4031,7 +4215,9 @@ pub fn content(
     // document, named by the file shown.
     let role = match display.data.kind {
         InspectionKind::Archive => gpui::Role::Tree,
-        InspectionKind::Mail | InspectionKind::Table => gpui::Role::ListBox,
+        InspectionKind::Mail | InspectionKind::Table | InspectionKind::History => {
+            gpui::Role::ListBox
+        }
         _ => gpui::Role::Document,
     };
     let mut body = div()
@@ -4092,7 +4278,7 @@ pub fn content(
             theme,
             crate::archive_preview::header(theme),
         ));
-    } else if !display.data.columns.is_empty() {
+    } else if !display.data.columns.is_empty() && display.data.kind != InspectionKind::History {
         let mut header = div().p_2().flex().gap_3().text_small().when(
             display.data.kind == InspectionKind::Hex,
             |d| {
@@ -4605,6 +4791,17 @@ mod tests {
         );
         let state = State::default();
         assert!(!state.offered.contents, "a new file starts again");
+        // Another file asked for: what this one offered stays on its bar
+        // until that one's first section, which offers its own alone.
+        let mut state = State::default();
+        state.arrived(&part(InspectionKind::Markdown, 0, 1, true), false);
+        state.offered.renew();
+        assert!(
+            state.offered.contents && state.offered.whole,
+            "kept meanwhile"
+        );
+        state.arrived(&part(InspectionKind::Markdown, 0, 0, false), false);
+        assert!(!state.offered.whole, "the next file's own");
     }
 
     /// A document, a book or a message without headings has Contents,
@@ -4633,10 +4830,98 @@ mod tests {
             InspectionKind::Markdown,
             InspectionKind::Book,
             InspectionKind::Mail,
+            InspectionKind::History,
         ] {
             assert_eq!(shown(kind), (true, false), "{kind:?}");
         }
         assert_eq!(shown(InspectionKind::Text), (false, false));
+    }
+
+    /// A history's contents are its tags, newest first, each with its
+    /// commit's day, leading to its row; the part shown is the tag at or
+    /// above the commit at the top (the release it went into), none above
+    /// the newest.
+    #[test]
+    fn a_history_s_contents_are_its_tags_where_its_commits_went() {
+        use super::*;
+        use skwir_core::inspection::{REFS_JOIN, RefKind};
+        let commit = |names: &[String]| Row {
+            cells: vec![
+                "Summary".into(),
+                "abc1234".into(),
+                "Ada".into(),
+                "2026-10-06 10:00".into(),
+                names.join(REFS_JOIN),
+            ],
+            target: Some("abc".into()),
+            ..Row::default()
+        };
+        let rows = vec![
+            commit(&[RefKind::Current.written("main")]),
+            commit(&[RefKind::Tag.written("v2"), RefKind::Tag.written("v2.0")]),
+            commit(&[]),
+            commit(&[RefKind::Branch.written("old"), RefKind::Tag.written("v1")]),
+            commit(&[]),
+        ];
+        let data = Inspection {
+            kind: InspectionKind::History,
+            rows,
+            ..Inspection::default()
+        };
+        let contents = Contents::of(&data, &Anchors::of(&data)).unwrap();
+        let titles: Vec<&str> = contents.entries.iter().map(|e| e.title.as_ref()).collect();
+        assert_eq!(titles, ["v2, v2.0 · 2026-10-06", "v1 · 2026-10-06"]);
+        assert_eq!(
+            contents.entries[1]
+                .command
+                .as_ref()
+                .map(|(_, args)| args["index"].clone()),
+            Some(serde_json::json!(3))
+        );
+        let at: Vec<Option<usize>> = (0..5).map(|top| contents.current(top)).collect();
+        assert_eq!(at, [None, Some(0), Some(0), Some(1), Some(1)]);
+        let untagged = Inspection {
+            kind: InspectionKind::History,
+            rows: vec![commit(&[RefKind::Current.written("main")])],
+            ..Inspection::default()
+        };
+        assert!(Contents::of(&untagged, &Anchors::of(&untagged)).is_none());
+    }
+
+    /// The tags of a long history are listed in one pass: 100,000 commits,
+    /// a thousand tagged, measured (`--nocapture` says how long).
+    #[test]
+    fn a_long_history_s_tags_are_listed_in_one_pass() {
+        use super::*;
+        use skwir_core::inspection::RefKind;
+        let rows: Vec<Row> = (0..100_000)
+            .map(|i| Row {
+                cells: vec![
+                    format!("Commit {i}"),
+                    format!("{i:07x}"),
+                    "Ada".into(),
+                    "2026-10-06 10:00".into(),
+                    if i % 100 == 0 {
+                        RefKind::Tag.written(&format!("v{i}"))
+                    } else {
+                        String::new()
+                    },
+                ],
+                target: Some(format!("{i:040x}")),
+                ..Row::default()
+            })
+            .collect();
+        let data = Inspection {
+            kind: InspectionKind::History,
+            rows,
+            ..Inspection::default()
+        };
+        let started = std::time::Instant::now();
+        let contents = Contents::of(&data, &Anchors::of(&data)).unwrap();
+        let took = started.elapsed();
+        eprintln!("100,000 commits, 1,000 tags: listed in {took:?}");
+        assert_eq!(contents.entries.len(), 1000);
+        assert_eq!(contents.current(99_999), Some(999));
     }
 
     /// The part shown: a book's chapter by the section shown and where in

@@ -290,10 +290,31 @@ pub fn unit_popup(plain: &'static str) -> Popup {
     })
 }
 
+/// What takes the room the tools leave, and only that (a member's or a
+/// file's name, a section's caption): its natural width is its least,
+/// 64 px at 100 % (`sized`), so it never decides which tools fit (`AdaptiveRow`
+/// measures each variant at its natural width), and it is cut where it
+/// stands from its first frame, whatever comes beside it later. Its basis
+/// is a length: a percentage of no width (`flex_1`'s 0 %), as a bar is
+/// measured, counts as the whole text, which a long name made too wide
+/// for any variant that held it.
+/// A name's shares of the bar's spare room, to a caption's one: what a
+/// name says is cut first where it is long.
+const NAMED: f32 = 3.;
+
+pub fn spare() -> Div {
+    div()
+        .flex_grow(1.)
+        .flex_shrink(1.)
+        .flex_basis(px(0.))
+        .min_w(sized(64.))
+}
+
 /// The way out of a member, the same whatever the member turned out to be:
 /// an × at the end of its bar. Under its container's view (`members.rs`)
 /// the bar also starts with the member's name, which the card no longer
-/// says, and leaves what is about the entry to the container's More.
+/// says, once something of the member is shown, and leaves what is about
+/// the entry to the container's More.
 pub fn close_tool(bar: &mut Bar, shell: &Shell, theme: &Theme) {
     if !shell.preview.inside() {
         return;
@@ -303,6 +324,12 @@ pub fn close_tool(bar: &mut Bar, shell: &Shell, theme: &Theme) {
         Button::new("preview-close", "close", "Close", "ui.inspect")
             .args(serde_json::json!({"action":"back"})),
     );
+    // Named once something of it is shown: a bar of nothing yet has the
+    // room its tools will take, and a name drawn there long, then cut as
+    // they came, flickered.
+    if shell.preview.content.is_none() {
+        return;
+    }
     let Some((name, size)) = crate::members::title(shell) else {
         return;
     };
@@ -310,9 +337,11 @@ pub fn close_tool(bar: &mut Bar, shell: &Shell, theme: &Theme) {
     let (text, muted) = (theme.text, theme.text_muted);
     bar.push(
         Item::widget(Slot::Title, 0, move |_, _| {
-            div()
-                .flex_1()
-                .min_w(sized(64.))
+            // A name never decides which tools fit, nor gives way as a
+            // caption comes (lines counted): cut at once, at the room it
+            // keeps, three shares of the spare room to a caption's one.
+            spare()
+                .flex_grow(NAMED)
                 .pl_1()
                 .flex()
                 .items_baseline()
@@ -356,6 +385,43 @@ pub struct Looks {
     /// View as hex: lit while the bytes are shown by choice, where a click
     /// shows the file as it would be shown again (`ui.inspect`'s `auto`).
     pub hex: Option<Hex>,
+    /// The other ways of looking at the entry its providers offer (its
+    /// history, `PreviewProvider::way`), first of the group, each lit
+    /// while shown (`ways`).
+    pub ways: Vec<WayLook>,
+}
+
+/// A way of looking a provider offers, as its button shows it.
+pub struct WayLook {
+    pub id: &'static str,
+    pub way: skwir_core::preview::Way,
+    pub on: bool,
+}
+
+/// The ways of looking at the entry, for the bar being built: the
+/// entry's own (the panel's while it shows the entry or the file standing
+/// for a folder; a container's kept above a member when it is the entry),
+/// never a member's. Lit where `shown` (the provider what is shown was
+/// asked of) is theirs.
+pub fn ways(shell: &Shell, parked: bool, shown: Option<&str>) -> Vec<WayLook> {
+    let preview = &shell.preview;
+    let entry = if parked {
+        preview.parked().is_some_and(|parked| parked.depth == 0)
+    } else {
+        preview.parked().is_none() && (!preview.inside() || preview.stands_for().is_some())
+    };
+    if !entry {
+        return Vec::new();
+    }
+    preview
+        .ways
+        .iter()
+        .map(|(id, way)| WayLook {
+            id,
+            way: *way,
+            on: shown == Some(*id),
+        })
+        .collect()
 }
 
 #[derive(Clone, Copy)]
@@ -391,6 +457,20 @@ pub fn look_tools(bar: &mut Bar, looks: Looks) {
             .label(label)
             .active(on)
     };
+    for WayLook { id, way, on } in looks.ways {
+        bar.push(Item::button(
+            Slot::Look,
+            2,
+            tool(
+                id,
+                way.icon,
+                way.tip,
+                serde_json::json!({"action":"way","provider":id,"on":!on}),
+                way.label,
+                on,
+            ),
+        ));
+    }
     if let Some(on) = looks.source {
         bar.push(Item::button(
             Slot::Look,
@@ -478,9 +558,11 @@ pub fn fullscreen_tool(bar: &mut Bar, shell: &Shell, theme: &Theme) {
     let (name, text) = (shell.preview.info.name.clone(), theme.text);
     bar.push(
         Item::widget(Slot::Title, 0, move |_, _| {
-            div()
-                .flex_1()
-                .min_w(sized(64.))
+            // A name never decides which tools fit, nor gives way as a
+            // caption comes (lines counted): cut at once, at the room it
+            // keeps, three shares of the spare room to a caption's one.
+            spare()
+                .flex_grow(NAMED)
                 .pl_1()
                 .flex()
                 .items_center()

@@ -9,6 +9,7 @@ skwir-archive-worker
 skwir-mermaid-worker
 skwir-math-worker
 skwir-model-worker
+skwir-git-worker
 skwir-module-worker
 skwir-kmtp-worker
 skwir-tree-sitter-worker

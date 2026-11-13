@@ -41,6 +41,25 @@ is binding, like `AGENTS.md`.
 - **Whoever accepts a file owns it** (`Previews::dispatch`). An `inspect`
   returning `None` does not pass the file on: the panel says the
   provider has no preview.
+- **A way of looking is offered, never chosen by type** (ADR-133,
+  `PreviewProvider::way`: a file's or a folder's history). Its provider
+  is asked only by name (`InspectRequest::provider`); `accepts` says
+  whether it looks at the entry by where it is (a repository found
+  above it), never by what the file holds, and is asked on a worker
+  beside the preview (`Previews::ways`, once an entry), never before
+  it. Its button stands first of the bar's `Slot::Look`
+  (`preview_bar::ways`), on the entry's own bar alone: the panel's, the
+  file standing for a folder's, a container's kept above a member when
+  it is the entry; never a member's. Chosen on a folder it is kept for
+  folders (`PreviewState::folder_way`, the window's shape), the worker
+  asking whether it looks at each (`Previews::offers`); on a file, for
+  that file. View as hex is lit by the bytes' provider alone
+  (`Previews::bytes_view`), not by any provider named.
+- **A member is written out by the provider that showed its
+  container** (`Previews::extract`, chosen as `inspect` is: the one the
+  view names, else the type's): the worker asks it with the provider
+  of the container's view kept above (`Display::origin`), so a commit
+  is the history's, never its folder's or its file's type's.
 - `accepts` settles a shared name, on a worker: by the bytes' type when
   the MIME database knows both formats (a GIMP brush's `.gbr`), else by
   the file's start (`.nc`: NetCDF or a CNC program; a Gerber `.gbr`).
@@ -870,6 +889,9 @@ is still to come are in `docs/preview-frame.md`.
 - A location that is not a folder (a search, the shelf, Recent) shows
   its name and count in the header and nothing below: no tools, no empty
   Properties.
+- **A folder whose way of looking is chosen shows it** (ADR-133): with
+  History kept for folders, a folder in a repository shows its history
+  in its README's or its count's place, a folder in none what it holds.
 - **A folder is shown by the file that stands for it**
   (`ui.folder_preview_file`, on by default; `preview::StandIns`): its
   README, an album's or a photo folder's cover, the first of
@@ -1216,14 +1238,19 @@ is still to come are in `docs/preview-frame.md`.
      bytes in a wide panel): its place, and what stands before it, stay;
   8. the × that leaves a member (`preview_bar::close_tool`), the same for
      every kind, also for a member that could not be written out, whose
-     failure stands in its place (`PreviewState::inside`).
+     failure stands in its place (`PreviewState::inside`). Under its
+     container's view, the member is named in its bar once something of
+     it is shown: a bar of nothing yet has the room its tools will take,
+     and a name drawn long there, then cut as they came, flickered.
 - **A folder has no bar** (`preview::controls`): Properties counts what
   it holds, and what is done to it is the pane's menu's (Open With…,
   Copy Path). So from the moment it is chosen, not once it is counted:
   a bar saying "Loading…" would go as the count came. The file that
   stands for it (Location and waiting) brings its own bar, with the ×
-  of a member. A file with nothing to show keeps its bar, for View as
-  hex or Full preview.
+  of a member; a way of looking that looks at it (its history) brings
+  one too, once offered, and so does what it shows (the history
+  itself). A file with nothing to show keeps its bar, for View as hex
+  or Full preview.
 - An item states the narrowest of the three variants that still shows
   it (`keep`). Text and a page give way alike: a tool in the same place
   has the same `keep`.
@@ -1246,10 +1273,16 @@ is still to come are in `docs/preview-frame.md`.
   size, Full preview) stays for the others (`inspector::Offered`,
   gathered as each arrives); another file starts again, and so does
   another way of looking at it (its kind: the source, the bytes, 3D),
-  which has tools of its own. A tool a click turns on stays, lit (Source,
+  which has tools of its own: from its first section, never at its
+  asking (`Offered::renew`), so the bar of what is still shown keeps its
+  tools until then. A tool a click turns on stays, lit (Source,
   Full preview). What a section says of itself (a sheet's name, lines as
   they are counted) takes the room the tools leave, cut short, and never
-  decides which of them fit: its natural width is its least.
+  decides which of them fit: its natural width is its least
+  (`preview_bar::spare`, a basis of 0 px: `flex_1`'s 0 %, measured with
+  no width as a variant is, counts as the whole text). So does a
+  member's or a file's name in its bar, three shares of the spare room
+  to the caption's one: neither moves as the other changes.
 - Copy has no button: it is Ctrl+C and the content's right-click menu
   (`Shell::open_preview_menu`), where people look for it. An action too
   rare for a button in any variant (View as hex) is `Item::menu_only`,
@@ -1370,15 +1403,23 @@ is still to come are in `docs/preview-frame.md`.
   ASCII text is matched where it is, case ignored, so a document mostly
   ASCII is not held twice.
 - **Contents** is one drawer (`outline.rs`) for a document's outline, a
-  file's headings and a book's chapters.
+  file's headings, a book's chapters and a history's tags.
   - **Offered by what the file is**, disabled where it has none: every
     document the reader shows (a PDF without an outline, a comic), every
-    Markdown, HTML, notebook, word processor's document, book and message
-    (`inspector::headed`), a code file whose grammar finds definitions
+    Markdown, HTML, notebook, word processor's document, book, message
+    and history (`inspector::headed`), a code file whose grammar finds definitions
     (until they are found, and where there are none). A text file, a
     table, an archive have no Contents; a section of another kind that
     has headings offers it (`inspector::Offered`). A book whose contents
     and section list nothing has none to show, never an empty drawer.
+  - **A history's are its tags** (ADR-133, `Contents::tags`), newest
+    first, each with its commit's day, found in one pass over the rows on
+    the worker (100,000 commits and 1,000 tags in 3.8 ms, optimized). The
+    part shown is the tag at or above the commit at the top of the view
+    (`State::top_index`, counted in rows): the release it went into, as
+    a heading is above what it heads; none above the newest. Choosing one
+    chooses its commit and brings it into view (`ui.inspect`'s `row`),
+    nothing opened. Branches are not listed: their tips stand at the top.
   - **What it lists**: a book's own contents, never the headings of the
     chapter shown above them, which named its chapters twice. The
     headings of the section shown that its rows do not name stand under

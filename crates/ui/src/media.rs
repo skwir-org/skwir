@@ -1198,6 +1198,7 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
         crate::preview_bar::Looks {
             hex: crate::preview_toolbar::hex_available(shell)
                 .then_some(crate::preview_bar::Hex::Row),
+            ways: crate::preview_bar::ways(shell, false, None),
             ..crate::preview_bar::Looks::default()
         },
     );

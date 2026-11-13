@@ -16155,3 +16155,160 @@ peek, Escape closes). `skwir-ui`'s tests, 654 (new:
 its folder is shown is read again only once the folder changes or is
 shown again: the folder's date does not move. Not looked at: a remote
 folder; Windows and macOS (`check-cross` not run).
+
+## 2026-11-13: a file's and a folder's history of commits (ADR-133)
+
+Asked by the user: a Git repository's history and the graph of its
+merges, beside the README a folder shows. As agreed: History a way of
+looking, gix in a helper in the main package.
+
+- **History is a way of looking** a provider offers by role
+  (`PreviewProvider::way`, `preview::Way`; `Previews::ways`, `offers`):
+  never chosen by type, asked on a worker beside the preview once an
+  entry, a button first of the bar's Look group, lit while shown. Chosen
+  on a folder it is kept for folders (`PreviewState::folder_way`, in the
+  window's shape); on a file, for that file. View as hex is now lit by
+  the bytes' provider alone, not by any provider named.
+- **What it shows** (`InspectionKind::History`): the commits that
+  reached `HEAD` in `--date-order`, two lines each (the summary after the
+  branches and tags at it, in Body; the short hash in the code font, the
+  author and the date in Small, muted). The top folder's draws the graph
+  of merges (`inspection::GraphRow`, laid out by `lanes::lay`, drawn per
+  row by `history_view`, a stroke of 1.5 px in the theme's `lanes`, the
+  tags' hues; 12 px a lane, 10 px before the first and 12 after the
+  last, 16 lanes drawn at most). A folder's or a file's lists the
+  commits that changed it, as `git log -- path`, without a graph.
+- **A commit opens as its patch** below the list, kept above as an
+  archive's (`kept_rows`): `<id>.patch`, written by the helper as `git
+  show` prints it, under the folder or file, colored as a diff. A
+  member is now written out by the provider that showed its container
+  (`Previews::extract` chooses as `inspect` does).
+- **A commit's menu** (right-click on its row, which chooses it): Copy
+  hash (whole), Copy short hash, Copy summary; `Ctrl+C` copies the
+  chosen commit's whole hash.
+- **`skwir-git-worker`** (gix 0.90, `sha1` alone; its own tree walk and
+  `imara-diff` for the patch), isolated with the repository's git, common
+  and alternates folders readable (`platform::git`, `Repo::find`, kept a
+  minute by folder); in every package's list (`tools/package/programs`,
+  macOS's, Windows', Nix's helpers, Debian's and RPM's assets, the run
+  recipes); notices made again (`just notices`); `cargo deny` clean.
+- **The `git` plugin** (Previews), requiring the helper.
+
+**Checked:** on Xvfb (debug build), a repository of seven commits with a
+merge and a tag: the folder selected showing its README with History in
+its bar; History on (the graph: the branch leaving and merging back, the
+chips, the short hashes as `git log --abbrev-commit`), kept after a
+restart (`folder_way` in `state.toml`); a commit's patch below, colored;
+a merge's (`Merge:`, against its first parent); History off, the README
+again; the README file's history (its two commits, no graph) and its
+patch alone; a folder outside the repository without the button; the
+commit menu: Copy hash gave the whole id (as `git rev-parse`), Copy
+short hash `c9cb00b`, read with xclip. The helper's 14 tests (byte for
+byte as `git show`, `git rev-list --date-order`, `-- path`,
+`--abbrev-commit`); `skwir-ui`, platform, core and plugin tests (1,923
+run then, 1,157 again after the hash); `plugins_toggle`, `settings`,
+`keymap_titles`, `escape_keys`, `extended_previews`; clippy on the whole
+workspace; the release tools' tests.
+
+**Not done:** `Ctrl+C` on a commit was not tried in the window (a click
+on a commit's row leaves the keyboard where it was, as an archive's
+member does); `just test` whole, `just a11y-check`, `check-cross` and
+the packages not run since; a shallow clone, a linked worktree and a
+submodule not tried in the window.
+
+### 2026-11-13, later: History's rows, names and title
+
+Asked by the user after trying it: more room around the graph, the
+commits' short hashes and a way to copy them, the names at a commit at
+the text's size and told apart, the source named, and a flicker in the
+patch's bar.
+
+- **The graph** has 10 px before its first lane and 12 after its last
+  (4 and 4 before).
+- **The short hash** (the helper's `short`, gix's `Id::shorten`: as
+  `git log --abbrev-commit`) starts the second line, in the code font. A
+  commit's menu (right-click, its row chosen): Copy hash (whole), Copy
+  short hash, Copy summary.
+- **The names** (`inspection::RefKind`, the helper now saying `remote: `
+  before a remote-tracking branch): chips in Body; a branch in its
+  lane's tint and color, the one checked out in semibold; a remote one
+  outlined; a tag with its glyph, in semibold, in the chrome's tint. A
+  screen reader hears what each is (`history_view::said_names`).
+- **The bar's title**: `Git history · main` (the branch checked out);
+  the History button's tooltip names Git (`Way::tip`).
+- **The flicker**: a member opened under a kept container was named in
+  the bar shown while it loaded (few tools, a long name), then cut short
+  or dropped when its own bar's tools came. Its bar now names it once
+  something of it is shown (`preview_bar::close_tool`).
+
+**Checked:** on Xvfb, the chips (`main` semibold in the first lane's
+red, `release-1` beside it, `feature` in its lane's orange, `v0.1` with
+its glyph), the title, frames captured as a patch opened (its bar empty
+but More and × until it came, then its tools; no name drawn and cut);
+Copy hash gave the whole id, Copy short hash the short one (xclip). The
+crates' tests (1,924), the helper's against `git rev-list
+--abbrev-commit` and with a remote-tracking branch; clippy.
+
+### 2026-11-13, later still: the patch bar's name no longer jumps
+
+Asked by the user: a commit's summary in its patch's bar was drawn
+whole, then cut with an ellipsis a moment later. Recorded at 60 frames a
+second on Xvfb (ffmpeg's x11grab, its distinct frames kept), three
+causes, each one of a class:
+
+- **Tools cut at the asking.** Another member asked for reset what the
+  bar offers (`inspector::Offered`) while the one before was still
+  shown: its bar lost its text size tools meanwhile, and the new name
+  took their room, then gave it back. Now marked to start again with
+  the next file's first section (`Offered::renew`), also for a way of
+  looking turned on or off.
+- **A name measured whole.** The bar picks the richest variant whose
+  natural width fits (`AdaptiveRow`), and a member's name was measured at
+  its full length: a long one dropped the name from every variant, a
+  shorter one was laid out long, then cut as the line count came.
+- **`flex_1`'s basis.** A section's caption was meant to take only the
+  spare room (`w_0`, 64 px), but `flex_1` sets a basis of 0 %, which,
+  measured with no width, counts as the whole text. One helper now makes
+  what takes only spare room (`preview_bar::spare`: a 0 px basis, 64 px
+  least): the caption, a member's name and the whole screen's file name,
+  a name three shares to the caption's one.
+
+**Checked:** the same walk recorded before and after (open a commit,
+step to two others and back, at a 550 px panel): before, the long
+commit's name never showed and the others were drawn long then cut;
+after, the name comes with the tools on the first open, holds its room
+through every step (cut in its middle where long), and nothing moves as
+the count goes from 13 to 28 lines. `skwir-ui`'s tests (661, one new
+case of `a_tool_a_part_offered_stays_for_the_others`); clippy.
+
+### 2026-11-13, then: a history's tags as its Contents
+
+Asked by the user (a Tags panel, if not bloat; then whether it would be
+heavy): the drawer documents have, not a new one.
+
+- `inspector::headed` offers Contents for `InspectionKind::History`,
+  disabled where no commit listed is tagged; `Contents::tags` lists the
+  tags newest first, each `v0.2 · 2026-10-07`, in one pass over the rows
+  (a row without names passed at once, `history_view::tagged`), and is
+  the history's contents with no other pass (`has_contents` is not
+  asked for a history).
+- The part shown: the tag at or above the commit at the top of the view
+  (`State::top_index`, which counts a history's rows; documents still
+  count blocks), the release those commits went into, none above the
+  newest. Choosing a tag: `ui.inspect`'s `row`, its commit chosen and
+  brought into view, no patch read.
+
+**Measured:** `a_long_history_s_tags_are_listed_in_one_pass`, 100,000
+commits with 1,000 tags: 3.8 ms with the release profile (`cargo nextest
+run --cargo-profile release`), 23.5 ms in the debug build (28.7 before
+the second pass was dropped); on the worker, with the inspection.
+
+**Checked:** on Xvfb, a repository of nine commits with three tags: the
+Contents button first of the History's bar; its drawer listing v0.2,
+v0.1, v0.0 with their days, nothing highlighted at the top (the newest
+commit unreleased); v0.1 chosen: its commit selected, the drawer closed,
+no patch opened; with a patch open, the list scrolled under the drawer:
+v0.1 highlighted once its commit was above the top. `skwir-ui`'s tests,
+two new (`a_history_s_contents_are_its_tags_where_its_commits_went`, the
+timing) and History in `a_document_without_headings_offers_contents_it_has_not`;
+clippy.

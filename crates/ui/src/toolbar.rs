@@ -98,6 +98,7 @@ pub fn asset(path: &str) -> Option<&'static [u8]> {
         "tag",
         "shelf",
         "recent",
+        "history",
         "eject",
         "home",
         "info",

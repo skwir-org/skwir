@@ -771,6 +771,19 @@ pub struct PreviewState {
     /// went (`Shell::stand_ins_wanted`): asked again when that changes (the
     /// Preview turned on, the names changed).
     stand_in_asked: Option<StandIns>,
+    /// The other ways of looking at the entry shown (`PreviewProvider::way`:
+    /// its history), each a button of the entry's bar: asked of the
+    /// providers on a worker beside its preview, once an entry
+    /// (`ways_for`), never before it.
+    pub(crate) ways: Vec<(&'static str, skwir_core::preview::Way)>,
+    ways_for: Option<PreviewKey>,
+    ways_cancel: Option<CancelToken>,
+    ways_tx: flume::Sender<(PreviewKey, Vec<(&'static str, skwir_core::preview::Way)>)>,
+    ways_rx: flume::Receiver<(PreviewKey, Vec<(&'static str, skwir_core::preview::Way)>)>,
+    /// The way of looking chosen for folders (ADR-133: History): every
+    /// folder it looks at shows it, until it is turned off; part of the
+    /// window's shape.
+    pub folder_way: Option<String>,
     /// The view of the container each member was opened from, kept above
     /// it (`members.rs`): one per member of `nested`, `None` for a
     /// container whose view is not kept (a playlist).
@@ -1008,6 +1021,7 @@ impl Default for PreviewState {
     fn default() -> Self {
         let (tx, rx) = flume::unbounded();
         let (nested_tx, nested_rx) = flume::unbounded();
+        let (ways_tx, ways_rx) = flume::unbounded();
         let (fields_tx, fields_rx) = flume::unbounded();
         let (count_tx, count_rx) = flume::unbounded();
         let (sources_tx, sources_rx) = flume::unbounded();
@@ -1072,6 +1086,12 @@ impl Default for PreviewState {
             descend: None,
             stand_in_left: false,
             stand_in_asked: None,
+            ways: Vec::new(),
+            ways_for: None,
+            ways_cancel: None,
+            ways_tx,
+            ways_rx,
+            folder_way: None,
             nested_tx,
             nested_rx,
             fields: Vec::new(),
@@ -2521,6 +2541,13 @@ impl Shell {
             cx.notify();
         }
         self.sync_count(cx);
+        // The other ways of looking at the entry, as they come.
+        while let Ok((asked, ways)) = self.preview.ways_rx.try_recv() {
+            if self.preview.ways_for.as_ref() == Some(&asked) {
+                self.preview.ways = ways;
+                cx.notify();
+            }
+        }
         while let Ok((generation, member)) = self.preview.nested_rx.try_recv() {
             // The file standing for the folder takes the first place, as
             // found again once the folder changed: another file there is
@@ -3151,6 +3178,50 @@ impl Shell {
             fit: None,
             held,
         };
+        // The other ways of looking at the entry, once an entry, beside its
+        // preview: a repository looked for on a slow server never holds
+        // its README back.
+        if self.preview.ways_for.as_ref() != Some(key) {
+            self.preview.ways_for = Some(key.clone());
+            self.preview.ways.clear();
+            if let Some(cancel) = self.preview.ways_cancel.take() {
+                cancel.cancel();
+            }
+            let cancel = self.app.lifetime().child();
+            self.preview.ways_cancel = Some(cancel.clone());
+            let (previews, asked, folder) = (
+                Arc::clone(&self.app.previews),
+                request.clone(),
+                entry.is_dir(),
+            );
+            let (tx, key, wake) = (self.preview.ways_tx.clone(), key.clone(), self.waker());
+            self.app.scheduler.spawn_in(
+                skwir_core::fs::reach::lane(&asked.entry.path),
+                Priority::Visible,
+                "preview-ways",
+                cancel.clone(),
+                move || {
+                    let ways = previews.ways(&asked, folder, &cancel);
+                    if !cancel.is_cancelled() && !ways.is_empty() && tx.send((key, ways)).is_ok() {
+                        wake();
+                    }
+                },
+            );
+        }
+        // The way of looking chosen for folders, which the worker asks
+        // whether it looks at this one (`folder_way`).
+        let folder_way = self
+            .preview
+            .folder_way
+            .clone()
+            .filter(|_| entry.is_dir() && self.preview.previews());
+        // A member is written out by the provider that showed its container:
+        // a way of looking is chosen by name, never by the file's type.
+        let container_provider = self
+            .preview
+            .parked()
+            .and_then(|parked| parked.display.origin.as_ref())
+            .and_then(|origin| origin.1.provider.clone());
         let mut inspection = self.preview.inspection.request.clone();
         // A window that draws meshes turns a model (ADR-067).
         inspection.meshes = self.draws_meshes;
@@ -3265,10 +3336,29 @@ impl Shell {
                     request.retarget(member.entry.clone(), member.mime.clone());
                     path.clone_from(&member.path);
                 };
+                // A way of looking chosen for folders that looks at this one
+                // (its history) is shown in its README's or count's place.
+                let mut is_dir = is_dir;
+                if own
+                    && let Some(way) = folder_way
+                        .as_deref()
+                        .filter(|way| is_dir && previews.offers(&request, way))
+                {
+                    inspection.provider = Some(way.to_owned());
+                    return match previews.inspect(&request, &inspection, &cancel) {
+                        Ok(Some(data)) => send(
+                            inspected(data, &code, &request, &inspection, None, &request),
+                            true,
+                            None,
+                            None,
+                        ),
+                        Ok(None) => send(PreviewContent::Generic, true, None, None),
+                        Err(error) => fail(error),
+                    };
+                }
                 // A folder is read for what it holds and, in the same pass,
                 // the file to stand for it, previewed from here on as the
                 // file it is; one that holds none is counted.
-                let mut is_dir = is_dir;
                 if let Some(names) = seek.as_ref().filter(|_| is_dir) {
                     let folder = match read_folder(&path, Some(names), &cancel) {
                         Ok(folder) => folder,
@@ -3302,17 +3392,18 @@ impl Shell {
                     is_dir = false;
                 }
                 if let Some(target) = descend {
-                    match extract_member(
-                        &previews,
-                        &request,
-                        &inspection,
-                        &target,
-                        &members,
-                        &cancel,
-                    ) {
+                    // By the provider that showed the container: one chosen
+                    // by name (a history) is not the type's.
+                    let mut view = inspection.clone();
+                    if container_provider.is_some() {
+                        view.provider.clone_from(&container_provider);
+                    }
+                    match extract_member(&previews, &request, &view, &target, &members, &cancel) {
                         Ok(Some(member)) => {
                             source(&member, &mut request, &mut path);
                             let _ = nested_tx.send((generation, member));
+                            // A folder's member (a commit's patch) is a file.
+                            is_dir = false;
                         }
                         // Not a file here: the provider shows the target itself.
                         Ok(None) => inspection.target = Some(target),
@@ -6020,7 +6111,13 @@ pub(crate) fn controls(
     if shell.preview.info.name.is_empty() || shell.preview.key.is_none() {
         return None;
     }
-    if shell.preview.info.is_dir && !shell.preview.inside() {
+    // Unless another way of looking at it is offered (its history), or
+    // shown.
+    if shell.preview.info.is_dir
+        && !shell.preview.inside()
+        && shell.preview.ways.is_empty()
+        && !matches!(shell.preview.content, Some(PreviewContent::Inspection(_)))
+    {
         return None;
     }
     let bar = match &shell.preview.content {

@@ -78,6 +78,9 @@ pub struct Session {
     pub source_types: crate::preview::SourceTypes,
     /// The types whose models open turned in 3D, or by their picture.
     pub turned_types: crate::preview::TurnedTypes,
+    /// The way of looking chosen for folders (ADR-133: their history), by
+    /// its provider's id; none, what they hold.
+    pub folder_way: Option<String>,
     /// The active pane's Quick filters asked for above its files.
     pub quick_filters: bool,
     /// The active pane's timeline shown under its files.
@@ -340,6 +343,7 @@ impl Shell {
             properties_folds: self.preview.properties_folds.clone(),
             source_types: self.preview.source_types.clone(),
             turned_types: self.preview.turned_types.clone(),
+            folder_way: self.preview.folder_way.clone(),
             quick_filters: self.ui().quick_filters_on,
             timeline: self.timeline().open,
             timeline_size: self.timeline().measure == crate::timeline::Measure::Size,

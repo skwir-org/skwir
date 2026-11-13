@@ -45,6 +45,7 @@ pub mod facts;
 pub mod file;
 pub mod filesystem;
 pub mod fonts;
+pub mod git;
 pub mod grammars;
 #[cfg(target_os = "linux")]
 mod gtk_theme;

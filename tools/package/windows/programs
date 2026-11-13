@@ -13,6 +13,7 @@ skwir
 skwir-pdf-worker
 skwir-djvu-worker
 skwir-model-worker
+skwir-git-worker
 skwir-math-worker
 skwir-module-worker
 skwir-archive-worker

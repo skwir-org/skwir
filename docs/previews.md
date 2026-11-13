@@ -533,6 +533,35 @@ The player, in the panel or pinned at its foot:
   (`hex: 00 ff 7a`), forward from the row selected, again from after the
   match.
 
+### History (`git`)
+
+- **History**, in the bar of a folder or a file in a Git repository: the
+  commits that changed it, newest first, each its summary and the
+  branches and tags at it, then its short hash (as git shortens it),
+  its author and its date. A branch wears its lane's color, the one
+  checked out in semibold, a remote-tracking one only outlined; a tag
+  has its glyph, in semibold. The bar says `Git history · main`, with
+  the branch checked out. The repository's top
+  folder draws the graph of its merges down the commits' start; a
+  folder's or a file's lists the commits that changed it, as
+  `git log -- path` does. Renames are not followed yet.
+- **Contents** lists the tags, newest first, each with its day; the one
+  the commits at the top went into is highlighted as you scroll, and
+  choosing one selects its commit. Disabled where there are none.
+- A commit's menu (right-click) copies its hash, whole, its short hash
+  or its summary; `Ctrl+C` copies the chosen commit's whole hash.
+- Chosen for a folder, History is kept for folders: every folder in a
+  repository shows its history, until it is turned off, and a folder in
+  none its README or its count. A file's is for that file.
+- A commit opens as its patch below the list, as `git show` prints it,
+  under the folder or the file whose history it is: colored as a diff,
+  found in, copied. The arrows walk the commits, each patch shown in
+  turn. A merge's is against its first parent.
+- The first 500 commits, Full preview the rest, to 100,000; a patch's
+  first 2 MiB, Full preview 64 MiB.
+- Read by `skwir-git-worker` (gitoxide), isolated: nothing a
+  repository's configuration names is run, nothing is written to it.
+
 ## Limits
 
 Large inputs have explicit bounds and errors rather than unbounded
@@ -580,6 +609,7 @@ external program or network service.
 | SQLite databases | | `libsqlite3`, which Skwir links |
 | Mermaid diagrams | `skwir-mermaid-worker` | Nothing (Rust, built by default; separate because its layout engine is about 16 MB) |
 | Formulas (TeX, MathML's TeX) | `skwir-math-worker` | Nothing (RaTeX and KaTeX's fonts, Rust, built by default; a package of its own on Linux because the typesetter and its fonts are about 5 MB; in Windows' and macOS's packages) |
+| Histories of commits | `skwir-git-worker` | Nothing (gitoxide, Rust, built by default, about 2 MB); not the `git` program |
 | 3D meshes without a stored picture | `skwir-model-worker` | Nothing (Rust, built by default); without it, an installed thumbnailer (f3d) draws them, if any |
 | HEIC, AVIF, JPEG XL, raw photos | | A thumbnailer for them (libheif's `heif-thumbnailer`, for example), else ImageMagick (`magick`, or ImageMagick 6's `convert`) and bubblewrap; with neither they show no picture |
 

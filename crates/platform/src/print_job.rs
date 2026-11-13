@@ -276,6 +276,18 @@ pub fn parts(
                     .collect(),
             });
         }
+        // A history prints as the table of its commits, without its graph
+        // and the names at them.
+        InspectionKind::History => {
+            out.parts.push(Part::Table {
+                columns: inspection.columns.iter().take(4).cloned().collect(),
+                rows: inspection
+                    .rows
+                    .iter()
+                    .map(|row| row.cells.iter().take(4).cloned().collect())
+                    .collect(),
+            });
+        }
         // A table of rows a document holds is a flow like the others (a
         // code view was taken above).
         InspectionKind::Markdown

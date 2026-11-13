@@ -43,6 +43,7 @@ pub mod format;
 mod fullscreen;
 mod held_before;
 mod history;
+mod history_view;
 pub mod icons;
 pub mod input;
 mod inspector;

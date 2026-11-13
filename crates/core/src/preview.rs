@@ -102,14 +102,17 @@ impl PreviewRequest {
 
     /// Whether `provider` accepts this request, asked once per file, type
     /// and registry revision: every stage of a preview shares the answer.
+    /// A way of looking (`PreviewProvider::way`) is never chosen by type:
+    /// only when named (`InspectRequest::provider`).
     fn accepted_by(&self, provider: &dyn PreviewProvider, revision: u64) -> bool {
-        self.held.accepted(
-            &self.entry,
-            self.mime.as_deref(),
-            provider.id(),
-            revision,
-            || provider.accepts(self),
-        )
+        provider.way().is_none()
+            && self.held.accepted(
+                &self.entry,
+                self.mime.as_deref(),
+                provider.id(),
+                revision,
+                || provider.accepts(self),
+            )
     }
 }
 
@@ -172,8 +175,31 @@ pub struct Converted {
     pub closed_links: Option<String>,
 }
 
+/// Another way of looking at what a provider accepts, offered beside the
+/// entry's own preview by a button of its own (ADR-133: a history of
+/// commits): asked by role, never by a plugin's name (`Previews::ways`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Way {
+    /// The button's label.
+    pub label: &'static str,
+    /// What its tooltip says it shows, its source named (a history read
+    /// from Git).
+    pub tip: &'static str,
+    /// The button's icon, by the toolbar's name.
+    pub icon: &'static str,
+    /// Whether it looks at folders too, not only at files.
+    pub folders: bool,
+}
+
 pub trait PreviewProvider: Send + Sync {
     fn id(&self) -> &'static str;
+    /// Another way of looking at what it accepts, offered by a button
+    /// (`Way`): such a provider shows only what it is asked for by name,
+    /// and `accepts` says whether it looks at the entry, on a worker,
+    /// without reading what the file holds (a folder has nothing to read).
+    fn way(&self) -> Option<Way> {
+        None
+    }
     /// Fallback providers sort after format-specific providers, including on re-enable.
     fn priority(&self) -> i32 {
         0
@@ -359,7 +385,8 @@ impl Previews {
             .flatten())
     }
 
-    /// The first provider that accepts the container extracts from it.
+    /// The provider that showed the container extracts from it: the one
+    /// `view.provider` names, or the first that accepts.
     pub fn extract(
         &self,
         request: &PreviewRequest,
@@ -368,12 +395,12 @@ impl Previews {
         into: &std::path::Path,
         cancel: &CancelToken,
     ) -> anyhow::Result<Option<Member>> {
+        // The provider that showed the container: the one its view names
+        // (a way of looking, chosen by name), or the type's.
         Ok(self
-            .dispatch(
-                cancel,
-                |p, revision| request.accepted_by(p, revision),
-                |p, cancel| p.extract(request, view, target, into, cancel),
-            )?
+            .dispatch(cancel, inspector(request, view), |p, cancel| {
+                p.extract(request, view, target, into, cancel)
+            })?
             .flatten())
     }
 
@@ -482,6 +509,49 @@ impl Previews {
     fn providers(&self) -> (Vec<Registered>, u64) {
         let providers = self.providers.read();
         (providers.clone(), self.revision.load(Ordering::Acquire))
+    }
+
+    /// The ways of looking (`PreviewProvider::way`) that look at
+    /// `request`'s entry, a folder's (`folder`) or a file's, in priority
+    /// order: each asked whether it accepts it, which may read the disk
+    /// (where a repository is), so on a worker.
+    pub fn ways(
+        &self,
+        request: &PreviewRequest,
+        folder: bool,
+        cancel: &CancelToken,
+    ) -> Vec<(&'static str, Way)> {
+        let (providers, _) = self.providers();
+        let mut ways = Vec::new();
+        for registered in providers {
+            if cancel.is_cancelled() {
+                break;
+            }
+            if registered.lifetime.is_cancelled() {
+                continue;
+            }
+            let provider = &*registered.provider;
+            if let Some(way) = provider.way()
+                && (way.folders || !folder)
+                && provider.accepts(request)
+            {
+                ways.push((provider.id(), way));
+            }
+        }
+        ways
+    }
+
+    /// Whether the way of looking `id` looks at `request`'s entry: its
+    /// provider accepts it. On a worker, as `ways`.
+    pub fn offers(&self, request: &PreviewRequest, id: &str) -> bool {
+        let (providers, _) = self.providers();
+        providers.iter().any(|registered| {
+            let provider = &*registered.provider;
+            !registered.lifetime.is_cancelled()
+                && provider.id() == id
+                && provider.way().is_some()
+                && provider.accepts(request)
+        })
     }
 
     /// The provider that shows any file as its bytes (View as hex), if one

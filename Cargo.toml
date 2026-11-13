@@ -20,6 +20,7 @@ members = [
     "crates/archive-worker",
     "crates/mermaid-worker",
     "crates/math-worker",
+    "crates/git-worker",
     "crates/model-worker",
     "crates/module-worker",
     "crates/kmtp-worker",
@@ -47,6 +48,7 @@ default-members = [
     "crates/djvu-worker",
     "crates/mermaid-worker",
     "crates/math-worker",
+    "crates/git-worker",
     "crates/model-worker",
     "crates/module-worker",
     "crates/kmtp-worker",
@@ -95,6 +97,7 @@ skwir-plugin-usage = { path = "crates/plugins/usage" }
 skwir-plugin-timeline = { path = "crates/plugins/timeline" }
 skwir-plugin-media = { path = "crates/plugins/media" }
 skwir-plugin-hex = { path = "crates/plugins/hex" }
+skwir-plugin-git = { path = "crates/plugins/git" }
 skwir-plugin-markdown = { path = "crates/plugins/markdown" }
 skwir-plugin-archives = { path = "crates/plugins/archives" }
 skwir-plugin-books = { path = "crates/plugins/books" }

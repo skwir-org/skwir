@@ -1012,6 +1012,7 @@ impl Shell {
         self.preview.properties_folds = session.properties_folds;
         self.preview.source_types = session.source_types;
         self.preview.turned_types = session.turned_types;
+        self.preview.folder_way = session.folder_way;
         self.layout.split = session.split_panes;
         self.activity.folded = session.activity_folded;
         if session.player_height > 0. {

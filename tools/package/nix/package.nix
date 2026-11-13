@@ -151,6 +151,7 @@ let
   helpers = [
     "skwir-djvu-worker"
     "skwir-model-worker"
+    "skwir-git-worker"
     "skwir-module-worker"
     "skwir-tree-sitter-worker"
     "skwir-print-worker"
