@@ -386,8 +386,10 @@ pub struct WrappedLineLayout {
     pub wrap_width: Option<Pixels>,
 
     /// Its narrowest width without cutting a word, and where it wraps
-    /// there (`min_content`): worked out once for the line, kept with it
-    /// in the cache.
+    /// there (`min_content_size`): worked out once for the line, kept with
+    /// it in the cache. A text asks it of its lines unwrapped
+    /// (`elements::text`), one entry a line whatever widths it is laid out
+    /// at.
     pub(crate) min_content: OnceLock<(Pixels, SmallVec<[WrapBoundary; 1]>)>,
 }
 

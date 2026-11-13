@@ -65,6 +65,7 @@ RUNS = [
         # width is text_system::line_layout's).
         "elements::text::tests::a_text_in_a_narrow_row_wraps",
         "elements::text::tests::a_text_laid_out_narrow_first",
+        "elements::text::tests::a_text_s_narrowest_is_kept_with_its_unwrapped_lines",
         # What is laid out on its own (a tooltip, what a drag shows) as wide
         # as its words, not its widest word (0061).
         "window::tests::what_is_laid_out_on_its_own",

@@ -1124,14 +1124,16 @@ requirement under its card, 2026-11-12). CSS takes the longest word.
 - **The probe.** A text that wraps (`WhiteSpace::Normal`, not truncated)
   answers it with its lines' minimum content sizes
   (`WrappedLineLayout::min_content_size`: that width, and the rows it
-  wraps into there), from the lines it was laid out in at any width, else
-  shaped unwrapped. It leaves the text's own layout as it was, so no other
-  probe is answered with it. One that does not wrap (`whitespace_nowrap`,
-  `truncate`) answers as before, its whole line: what must stay on one
-  line says so.
+  wraps into there), its lines unwrapped, from the line layout cache. It
+  leaves the text's own layout as it was, so no other probe is answered
+  with it. One that does not wrap (`whitespace_nowrap`, `truncate`)
+  answers as before, its whole line: what must stay on one line says so.
 - **Once a line.** The width and its wraps are worked out once for a
-  shaped line and kept with it in the line layout cache
-  (`WrappedLineLayout::min_content`), across frames.
+  line and kept with its unwrapped entry in the line layout cache
+  (`WrappedLineLayout::min_content`), across frames. That entry is the
+  same whatever widths the text is laid out at: asked of the lines laid
+  out at a width, as first written, a window being resized worked it out
+  again for every text at each new width, each keeping its own copy.
 - **A narrow layout answers only its width.** A text keeps the layout
   it was last measured at, and Zed's answered a probe with no width
   (max-content) from it whatever width it was made at. A box measured
@@ -1169,6 +1171,8 @@ nothing; a first rule, which laid such texts out twice again, cost 6 to
 `text_system::line_layout::tests::test_min_wrap_width_is_the_widest_word`,
 `elements::text::tests::a_text_in_a_narrow_row_wraps`,
 `elements::text::tests::a_text_laid_out_narrow_first_keeps_its_line`
-(it fails with Zed's rule for a kept layout) and
+(it fails with Zed's rule for a kept layout),
+`elements::text::tests::a_text_s_narrowest_is_kept_with_its_unwrapped_lines`
+and
 `window::tests::what_is_laid_out_on_its_own_keeps_its_words_on_a_line`
 (it fails at `min_size`, for a tooltip and for a drag).

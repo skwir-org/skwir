@@ -650,13 +650,13 @@ struct TextLayoutInner {
 
 /// `text` wrapped at its narrowest without cutting a word, at most
 /// `max_lines` rows: its lines' minimum content sizes
-/// (`WrappedLineLayout::min_content_size`, each worked out once and kept
-/// with its line in the cache). The lines are those the text was laid out
-/// in, at any width, else shaped now; the text's own layout is left as it
-/// was.
+/// (`WrappedLineLayout::min_content_size`). The lines are the text's
+/// unwrapped, from the line layout cache: one entry a line whatever widths
+/// the text is laid out at, so their narrowest is worked out once and kept
+/// there across frames, a window being resized included. The text's own
+/// layout is left as it was.
 /// `None` where it cannot be shaped.
 fn min_content_size(
-    element_state: &TextLayout,
     text: &SharedString,
     font_size: Pixels,
     runs: &[TextRun],
@@ -664,34 +664,24 @@ fn min_content_size(
     max_lines: Option<usize>,
     window: &mut Window,
 ) -> Option<Size<Pixels>> {
-    let of = |lines: &[WrappedLine]| {
-        let mut size: Size<Pixels> = Size::default();
-        let mut rows_left = max_lines;
-        for line in lines {
-            if rows_left == Some(0) {
-                break;
-            }
-            let (line_size, rows) =
-                line.layout
-                    .min_content_size(&line.text, line_height, rows_left);
-            size.height += line_size.height;
-            size.width = size.width.max(line_size.width).ceil();
-            rows_left = rows_left.map(|left| left.saturating_sub(rows));
-        }
-        size
-    };
-    // Wrapped at any width, a line holds the same line unwrapped; cut to
-    // fit (truncated), it holds other text.
-    if let Some(inner) = element_state.0.borrow().as_ref()
-        && inner.truncate_width.is_none()
-    {
-        return Some(of(&inner.lines));
-    }
     let lines = window
         .text_system()
         .shape_text(text.clone(), font_size, runs, None, None)
         .log_err()?;
-    Some(of(&lines))
+    let mut size: Size<Pixels> = Size::default();
+    let mut rows_left = max_lines;
+    for line in &lines {
+        if rows_left == Some(0) {
+            break;
+        }
+        let (line_size, rows) = line
+            .layout
+            .min_content_size(&line.text, line_height, rows_left);
+        size.height += line_size.height;
+        size.width = size.width.max(line_size.width).ceil();
+        rows_left = rows_left.map(|left| left.saturating_sub(rows));
+    }
+    Some(size)
 }
 
 impl TextLayout {
@@ -729,7 +719,6 @@ impl TextLayout {
                     && known_dimensions.width.is_none()
                     && matches!(available_space.width, crate::AvailableSpace::MinContent)
                     && let Some(size) = min_content_size(
-                        &element_state,
                         &text,
                         font_size,
                         &runs,
@@ -1612,5 +1601,48 @@ mod tests {
 
         let title = seen.borrow()[0];
         assert!(title.size.width > px(130.), "its whole line: {title:?}");
+    }
+
+    /// A text's narrowest is asked of its lines unwrapped, from the line
+    /// layout cache, and kept with that entry, the one a text has whatever
+    /// widths it is laid out at: laid out at a width first, as a window
+    /// being resized lays it out at a new one each frame, the entry of that
+    /// width is never asked to work it out.
+    #[crate::test]
+    fn a_text_s_narrowest_is_kept_with_its_unwrapped_lines(cx: &mut crate::TestAppContext) {
+        use crate::px;
+
+        let cx = cx.add_empty_window();
+        cx.update(|window, _| {
+            let font_size = px(16.);
+            let line_height = px(20.);
+            // 0.6 em a character at 16 px: "aaaa " is 48 px, "cc" 19.2.
+            let text: SharedString = "aaaa bbbb\ncc".into();
+            let runs = vec![window.text_style().to_run(text.len())];
+            let laid = window
+                .text_system()
+                .shape_text(text.clone(), font_size, &runs, Some(px(70.)), None)
+                .unwrap();
+            let size = super::min_content_size(&text, font_size, &runs, line_height, None, window)
+                .unwrap();
+            assert_eq!(size.height, line_height * 3., "aaaa, bbbb, cc: {size:?}");
+            assert!(
+                size.width >= px(48.) && size.width <= px(49.),
+                "its widest word: {size:?}"
+            );
+            let unwrapped = window
+                .text_system()
+                .shape_text(text.clone(), font_size, &runs, None, None)
+                .unwrap();
+            assert!(
+                unwrapped
+                    .iter()
+                    .all(|line| line.layout.min_content.get().is_some())
+            );
+            assert!(
+                laid.iter()
+                    .all(|line| line.layout.min_content.get().is_none())
+            );
+        });
     }
 }

@@ -1,22 +1,22 @@
 0061 text-narrows-to-its-widest-word: a text's minimum content width is its widest word, so beside others in a row it wraps rather than running past them (LineLayout::min_wrap_width, WrappedLineLayout::min_content_size); a layout a text keeps answers another width only where it is the same there; a tooltip and what a drag shows are laid out at AvailableSpace::max_size
 
 diff --git a/crates/gpui/src/elements/text.rs b/crates/gpui/src/elements/text.rs
-index 377dc627..a0e460c0 100644
+index 377dc62..e8ac3f9 100644
 --- a/crates/gpui/src/elements/text.rs
 +++ b/crates/gpui/src/elements/text.rs
-@@ -648,6 +648,52 @@ struct TextLayoutInner {
+@@ -648,6 +648,42 @@ struct TextLayoutInner {
      bounds: Option<Bounds<Pixels>>,
  }
  
 +/// `text` wrapped at its narrowest without cutting a word, at most
 +/// `max_lines` rows: its lines' minimum content sizes
-+/// (`WrappedLineLayout::min_content_size`, each worked out once and kept
-+/// with its line in the cache). The lines are those the text was laid out
-+/// in, at any width, else shaped now; the text's own layout is left as it
-+/// was.
++/// (`WrappedLineLayout::min_content_size`). The lines are the text's
++/// unwrapped, from the line layout cache: one entry a line whatever widths
++/// the text is laid out at, so their narrowest is worked out once and kept
++/// there across frames, a window being resized included. The text's own
++/// layout is left as it was.
 +/// `None` where it cannot be shaped.
 +fn min_content_size(
-+    element_state: &TextLayout,
 +    text: &SharedString,
 +    font_size: Pixels,
 +    runs: &[TextRun],
@@ -24,40 +24,30 @@ index 377dc627..a0e460c0 100644
 +    max_lines: Option<usize>,
 +    window: &mut Window,
 +) -> Option<Size<Pixels>> {
-+    let of = |lines: &[WrappedLine]| {
-+        let mut size: Size<Pixels> = Size::default();
-+        let mut rows_left = max_lines;
-+        for line in lines {
-+            if rows_left == Some(0) {
-+                break;
-+            }
-+            let (line_size, rows) =
-+                line.layout
-+                    .min_content_size(&line.text, line_height, rows_left);
-+            size.height += line_size.height;
-+            size.width = size.width.max(line_size.width).ceil();
-+            rows_left = rows_left.map(|left| left.saturating_sub(rows));
-+        }
-+        size
-+    };
-+    // Wrapped at any width, a line holds the same line unwrapped; cut to
-+    // fit (truncated), it holds other text.
-+    if let Some(inner) = element_state.0.borrow().as_ref()
-+        && inner.truncate_width.is_none()
-+    {
-+        return Some(of(&inner.lines));
-+    }
 +    let lines = window
 +        .text_system()
 +        .shape_text(text.clone(), font_size, runs, None, None)
 +        .log_err()?;
-+    Some(of(&lines))
++    let mut size: Size<Pixels> = Size::default();
++    let mut rows_left = max_lines;
++    for line in &lines {
++        if rows_left == Some(0) {
++            break;
++        }
++        let (line_size, rows) = line
++            .layout
++            .min_content_size(&line.text, line_height, rows_left);
++        size.height += line_size.height;
++        size.width = size.width.max(line_size.width).ceil();
++        rows_left = rows_left.map(|left| left.saturating_sub(rows));
++    }
++    Some(size)
 +}
 +
  impl TextLayout {
      fn layout(
          &self,
-@@ -673,6 +719,27 @@ impl TextLayout {
+@@ -673,6 +709,26 @@ impl TextLayout {
              let element_state = self.clone();
  
              move |known_dimensions, available_space, window, cx| {
@@ -71,7 +61,6 @@ index 377dc627..a0e460c0 100644
 +                    && known_dimensions.width.is_none()
 +                    && matches!(available_space.width, crate::AvailableSpace::MinContent)
 +                    && let Some(size) = min_content_size(
-+                        &element_state,
 +                        &text,
 +                        font_size,
 +                        &runs,
@@ -85,7 +74,7 @@ index 377dc627..a0e460c0 100644
                  let wrap_width = if text_style.white_space == WhiteSpace::Normal {
                      known_dimensions.width.or(match available_space.width {
                          crate::AvailableSpace::Definite(x) => Some(x),
-@@ -709,9 +776,19 @@ impl TextLayout {
+@@ -709,9 +765,19 @@ impl TextLayout {
                  // 4. the cached layout was not truncated (a truncated layout answers an
                  //    unconstrained probe with the truncated size, which poisons intrinsic
                  //    sizing with whatever width some earlier measure pass happened to use)
@@ -106,7 +95,7 @@ index 377dc627..a0e460c0 100644
                      && truncate_width.is_none()
                      && text_layout.truncate_width.is_none()
                  {
-@@ -1463,4 +1540,77 @@ mod tests {
+@@ -1463,4 +1529,120 @@ mod tests {
              make_text_unstable_id(true).id
          );
      }
@@ -183,9 +172,52 @@ index 377dc627..a0e460c0 100644
 +        let title = seen.borrow()[0];
 +        assert!(title.size.width > px(130.), "its whole line: {title:?}");
 +    }
++
++    /// A text's narrowest is asked of its lines unwrapped, from the line
++    /// layout cache, and kept with that entry, the one a text has whatever
++    /// widths it is laid out at: laid out at a width first, as a window
++    /// being resized lays it out at a new one each frame, the entry of that
++    /// width is never asked to work it out.
++    #[crate::test]
++    fn a_text_s_narrowest_is_kept_with_its_unwrapped_lines(cx: &mut crate::TestAppContext) {
++        use crate::px;
++
++        let cx = cx.add_empty_window();
++        cx.update(|window, _| {
++            let font_size = px(16.);
++            let line_height = px(20.);
++            // 0.6 em a character at 16 px: "aaaa " is 48 px, "cc" 19.2.
++            let text: SharedString = "aaaa bbbb\ncc".into();
++            let runs = vec![window.text_style().to_run(text.len())];
++            let laid = window
++                .text_system()
++                .shape_text(text.clone(), font_size, &runs, Some(px(70.)), None)
++                .unwrap();
++            let size = super::min_content_size(&text, font_size, &runs, line_height, None, window)
++                .unwrap();
++            assert_eq!(size.height, line_height * 3., "aaaa, bbbb, cc: {size:?}");
++            assert!(
++                size.width >= px(48.) && size.width <= px(49.),
++                "its widest word: {size:?}"
++            );
++            let unwrapped = window
++                .text_system()
++                .shape_text(text.clone(), font_size, &runs, None, None)
++                .unwrap();
++            assert!(
++                unwrapped
++                    .iter()
++                    .all(|line| line.layout.min_content.get().is_some())
++            );
++            assert!(
++                laid.iter()
++                    .all(|line| line.layout.min_content.get().is_none())
++            );
++        });
++    }
  }
 diff --git a/crates/gpui/src/taffy.rs b/crates/gpui/src/taffy.rs
-index 7c12b5cb..5debeccf 100644
+index 7c12b5c..5debecc 100644
 --- a/crates/gpui/src/taffy.rs
 +++ b/crates/gpui/src/taffy.rs
 @@ -716,6 +716,28 @@ impl AvailableSpace {
@@ -218,7 +250,7 @@ index 7c12b5cb..5debeccf 100644
  
  impl From<AvailableSpace> for TaffyAvailableSpace {
 diff --git a/crates/gpui/src/text_system/line.rs b/crates/gpui/src/text_system/line.rs
-index fcbd493a..94a037af 100644
+index fcbd493..94a037a 100644
 --- a/crates/gpui/src/text_system/line.rs
 +++ b/crates/gpui/src/text_system/line.rs
 @@ -1646,6 +1646,7 @@ mod tests {
@@ -230,7 +262,7 @@ index fcbd493a..94a037af 100644
                      text: line.text,
                      decoration_runs: line.decoration_runs.into_vec(),
 diff --git a/crates/gpui/src/text_system/line_layout.rs b/crates/gpui/src/text_system/line_layout.rs
-index 770c3eba..d2274274 100644
+index 770c3eb..0734d44 100644
 --- a/crates/gpui/src/text_system/line_layout.rs
 +++ b/crates/gpui/src/text_system/line_layout.rs
 @@ -9,7 +9,7 @@ use std::{
@@ -317,19 +349,21 @@ index 770c3eba..d2274274 100644
  /// A line of text that has been wrapped to fit a given width
  #[derive(Default, Debug)]
  pub struct WrappedLineLayout {
-@@ -350,6 +384,11 @@ pub struct WrappedLineLayout {
+@@ -350,6 +384,13 @@ pub struct WrappedLineLayout {
  
      /// The width of the line, if it was wrapped
      pub wrap_width: Option<Pixels>,
 +
 +    /// Its narrowest width without cutting a word, and where it wraps
-+    /// there (`min_content`): worked out once for the line, kept with it
-+    /// in the cache.
++    /// there (`min_content_size`): worked out once for the line, kept with
++    /// it in the cache. A text asks it of its lines unwrapped
++    /// (`elements::text`), one entry a line whatever widths it is laid out
++    /// at.
 +    pub(crate) min_content: OnceLock<(Pixels, SmallVec<[WrapBoundary; 1]>)>,
  }
  
  /// A boundary at which a line was wrapped
-@@ -462,6 +501,34 @@ impl WrappedLineLayout {
+@@ -462,6 +503,34 @@ impl WrappedLineLayout {
          }
      }
  
@@ -364,7 +398,7 @@ index 770c3eba..d2274274 100644
      /// The rows the line is wrapped into, a row holding a box taller than
      /// its text grown to hold it (`LineLayout::rows`).
      pub fn rows(&self, line_height: Pixels) -> LineRows {
-@@ -768,6 +835,7 @@ impl LineLayoutCache {
+@@ -768,6 +837,7 @@ impl LineLayoutCache {
                  unwrapped_layout,
                  wrap_boundaries,
                  wrap_width,
@@ -372,7 +406,7 @@ index 770c3eba..d2274274 100644
              });
              let key = Arc::new(CacheKey {
                  text,
-@@ -1183,6 +1251,37 @@ mod tests {
+@@ -1183,6 +1253,37 @@ mod tests {
          let positions = glyph_x_positions(&layout);
          assert_eq!(positions, vec![0.5, 0.5]);
      }
@@ -410,7 +444,7 @@ index 770c3eba..d2274274 100644
  }
  
  #[cfg(test)]
-@@ -1365,6 +1464,7 @@ mod run_position_tests {
+@@ -1365,6 +1466,7 @@ mod run_position_tests {
              unwrapped_layout: Arc::new(layout),
              wrap_boundaries: wraps,
              wrap_width: Some(px(60.)),
@@ -419,7 +453,7 @@ index 770c3eba..d2274274 100644
          assert_eq!(wrapped.size(px(20.)).height, px(70.));
          assert_eq!(
 diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
-index c2b1ffe2..84230e76 100644
+index c2b1ffe..84230e7 100644
 --- a/crates/gpui/src/window.rs
 +++ b/crates/gpui/src/window.rs
 @@ -3856,7 +3856,7 @@ impl Window {
