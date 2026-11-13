@@ -9679,6 +9679,7 @@ dependencies = [
  "getrandom 0.4.3",
  "parking_lot",
  "roxmltree 0.21.2",
+ "rustix",
  "schemars",
  "serde",
  "serde_json",

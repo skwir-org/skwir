@@ -574,7 +574,14 @@ ADR-077 (which revises ADR-021).
   its own); a mount of another bridge is neither recognised nor
   connected through. It is there where its daemon runs or the session
   bus would start it (`org.gtk.vfs.Daemon`): `gio mount` starts it, which
-  mounts the bridge, waited for a moment.
+  mounts the bridge, waited for a moment. A mount made again at once
+  under the name of one just let go of (a server ejected and connected
+  to again) answers an I/O error for what was reached in the one gone,
+  up to about a second and a half, while a stat may still be answered
+  from what the system kept: `Gvfs::connect` hands back its mount once
+  the folder asked answers the bridge itself (`fs::stat::answers`, three
+  seconds at most). A test that mounts through GVfs mounts a share of
+  its own, never one another test mounts and lets go of.
 - The system's own shares, off Linux (`system_shares`, first in the
   order there; `skwir_platform::shares`): Windows' SMB and WebDAV by
   their UNC path (`\\server\share`, `\\server@SSL@port\DavWWWRoot`),

@@ -1552,18 +1552,6 @@ above; each with the design its fixer proposed):
 - A network plugin's sandbox shares the host's abstract sockets: a
   seccomp filter or a user-mode network, an ADR-045 amendment.
 - `platform::filesystem` calls `statfs` directly: no core seam.
-- The NFS/AFP harness (`tools/test/gvfs-nfs-afp.sh`) fails (seen
-  2026-10-26, the same at 162dc59d): once
-  `gvfs_opens_an_nfs_address_below_its_export` has mounted the export
-  through Skwir's GVfs connector and let go of it, `gio mount` of it
-  again leaves GVfs's bridge answering an I/O error, so
-  `gvfs_nfs_and_afp_take_by_gio_what_it_does_better` does not run. With
-  Skwir's test left out the harness passes. Looked into 2026-11-13: the
-  bridge keeps a mount's name a moment after it goes, and the same
-  mount made again at once answers EIO for about a second (listed at
-  the second look). Skwir's connector meets it as well: the test run
-  twice at once fails its second listing, so a server ejected and
-  connected to again within a second opens on an error.
 - Types by extension: the documents plugin's engine and Pandoc's
   format, the XMP field provider; JSON Lines and JSON with comments,
   which the database does not name. JSON Lines table cells print

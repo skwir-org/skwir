@@ -209,6 +209,34 @@ pub fn flags(path: &Path) -> Flags {
     }
 }
 
+/// Whether the filesystem answers for `path` now, asked past what the
+/// system kept of it: on Linux statx's `AT_STATX_FORCE_SYNC`, which asks
+/// a FUSE filesystem itself, never the kernel's copy of its last answer
+/// (a bridge that answers an error behind a stat it answered before);
+/// a plain stat elsewhere. Not through a link. Its error is the
+/// filesystem's. On a worker: it may reach a server.
+///
+/// # Errors
+/// What the filesystem answers.
+pub fn answers(path: &Path) -> std::io::Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        use rustix::fs::{AtFlags, CWD, StatxFlags};
+        rustix::fs::statx(
+            CWD,
+            path,
+            AtFlags::SYMLINK_NOFOLLOW | AtFlags::STATX_FORCE_SYNC,
+            StatxFlags::TYPE,
+        )
+        .map(drop)
+        .map_err(Into::into)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        std::fs::symlink_metadata(path).map(drop)
+    }
+}
+
 /// The identity of the file at `path`, as [`id_of`] says it, its
 /// metadata `meta` read already: through a link when `meta` says it is
 /// no link (the file a link leads to), the link's own otherwise. Unix
@@ -784,5 +812,23 @@ mod tests {
         assert!(entry.is_dir());
         assert_eq!(entry.name, "it's a folder");
         assert_eq!(Some(entry.file()), id_of(&dir));
+    }
+
+    /// A file there answers; a link answers for itself, its target gone;
+    /// a name not there answers that it is not.
+    #[test]
+    fn what_is_there_answers_asked_past_the_cache() {
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join("l'été.txt");
+        std::fs::write(&file, "x").unwrap();
+        super::answers(&file).unwrap();
+        #[cfg(unix)]
+        {
+            let link = root.path().join("to nothing");
+            std::os::unix::fs::symlink(root.path().join("gone"), &link).unwrap();
+            super::answers(&link).unwrap();
+        }
+        let missing = super::answers(&root.path().join("not there")).unwrap_err();
+        assert_eq!(missing.kind(), std::io::ErrorKind::NotFound);
     }
 }

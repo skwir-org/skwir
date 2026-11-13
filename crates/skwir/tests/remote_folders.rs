@@ -2969,10 +2969,12 @@ fn gvfs_nfs_and_afp_take_by_gio_what_it_does_better() {
 /// An NFS address below its export opens through Skwir's GVfs connector:
 /// GVfs, given the address whole, finds the export that holds its path,
 /// mounts it and says the mount is of that export, the folder asked below
-/// it; Eject lets go of it. Against unfs3 in namespaces of its own, by
-/// `tools/test/gvfs-nfs-afp.sh`, which names the export's folder in
-/// `SKWIR_TEST_NFS_EXPORT` before anything is mounted; its runtime folder
-/// and bus are this process's. Skipped elsewhere.
+/// it; Eject lets go of it. Connected to again at once, it opens again,
+/// though the bridge answers an I/O error a moment for a mount made anew
+/// under the name of one just gone. Against unfs3 in namespaces of its
+/// own, by `tools/test/gvfs-nfs-afp.sh`, which names an export of this
+/// test's alone in `SKWIR_TEST_NFS_EXPORT` before anything is mounted; its
+/// runtime folder and bus are this process's. Skipped elsewhere.
 #[test]
 fn gvfs_opens_an_nfs_address_below_its_export() {
     let Some(export) = std::env::var_os("SKWIR_TEST_NFS_EXPORT").map(PathBuf::from) else {
@@ -2995,41 +2997,57 @@ fn gvfs_opens_an_nfs_address_below_its_export() {
     std::fs::write(folder.join("note.txt"), "x").unwrap();
     let address = Address::parse(&format!("nfs://127.0.0.1{}/{below}/", export.display())).unwrap();
     let ask: Arc<dyn Ask> = Arc::new(Answers::default());
-    let connected = gvfs
-        .connect(&address, &ask, &CancelToken::new())
-        .unwrap_or_else(|error| panic!("{error:#}"));
-    let left = Unmounted(connected.point.clone());
-    assert_eq!(
-        connected.address.path.strip_suffix(b"/"),
-        Some(export.as_os_str().as_encoded_bytes()),
-        "the export mounted: {}",
-        connected.address
-    );
-    let inside = connected.address.below(&address).expect("the folder in it");
-    assert_eq!(inside, format!("{below}/").as_bytes());
-    let names: Vec<String> = std::fs::read_dir(
-        connected
-            .point
-            .join(skwir_core::os_path::from_bytes(inside.to_vec())),
-    )
-    .unwrap()
-    .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
-    .collect();
-    assert_eq!(names, ["note.txt"]);
+    // Ejected, then connected to again at once.
+    for time in ["first", "again at once"] {
+        let connected = gvfs
+            .connect(&address, &ask, &CancelToken::new())
+            .unwrap_or_else(|error| panic!("{time}: {error:#}"));
+        let left = Unmounted(connected.point.clone());
+        assert_eq!(
+            connected.address.path.strip_suffix(b"/"),
+            Some(export.as_os_str().as_encoded_bytes()),
+            "{time}: the export mounted: {}",
+            connected.address
+        );
+        let inside = connected.address.below(&address).expect("the folder in it");
+        assert_eq!(inside, format!("{below}/").as_bytes());
+        let names: Vec<String> = std::fs::read_dir(
+            connected
+                .point
+                .join(skwir_core::os_path::from_bytes(inside.to_vec())),
+        )
+        .unwrap_or_else(|error| panic!("{time}: {error}"))
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+        assert_eq!(names, ["note.txt"], "{time}");
 
-    let remote = skwir_core::fs::reach::of(&connected.point).unwrap();
-    let recognised = gvfs.recognises(&remote).expect("GVfs's");
-    assert_eq!(recognised.address.as_ref(), Some(&connected.address));
-    gvfs.disconnect(&remote, &recognised, &CancelToken::new())
-        .expect("disconnect");
-    // Gone from GVfs's bridge.
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while connected.point.exists() {
-        assert!(Instant::now() < deadline, "never let go of");
-        std::thread::sleep(Duration::from_millis(50));
+        let remote = skwir_core::fs::reach::of(&connected.point).unwrap();
+        let recognised = gvfs.recognises(&remote).expect("GVfs's");
+        assert_eq!(recognised.address.as_ref(), Some(&connected.address));
+        gvfs.disconnect(&remote, &recognised, &CancelToken::new())
+            .expect("disconnect");
+        // Gone from GVfs's bridge.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while still_listed(&connected.point) {
+            assert!(Instant::now() < deadline, "{time}: never let go of");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        drop(left);
     }
-    drop(left);
     std::fs::remove_dir_all(export.join(format!("it's below {run}"))).unwrap();
+}
+
+/// Whether the bridge's folder still lists `point`'s name: a mount just let
+/// go of may answer an I/O error a moment, which `exists` takes for gone.
+fn still_listed(point: &Path) -> bool {
+    let (Some(bridge), Some(name)) = (point.parent(), point.file_name()) else {
+        return false;
+    };
+    std::fs::read_dir(bridge)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .any(|entry| entry.file_name() == name)
 }
 
 /// A phone's MTP takes by `gio` every way, a file alone too (2026-10-22,

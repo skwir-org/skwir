@@ -31,6 +31,16 @@ const DAEMON: &str = "org.gtk.vfs.Daemon";
 /// How long a daemon just started may take to mount its bridge.
 const BRIDGE_PATIENCE: Duration = Duration::from_secs(3);
 
+/// How long a mount just made may be waited for while the bridge answers
+/// an I/O error for it: made again at once under the name of one just let
+/// go of (a server ejected and connected to again), it does so for what
+/// was reached in the one gone, the mount's folder included, for up to
+/// about a second and a half, though the bridge lists the mount and a
+/// stat may still be answered from what the system kept (seen with NFS,
+/// 2026-11-13: waiting for the bridge to stop listing the mount gone
+/// does not shorten it).
+const STALE_PATIENCE: Duration = Duration::from_secs(3);
+
 /// How long letting go of a mount GVfs still says busy is asked again: it
 /// closes what its bridge held (a folder just listed through it) only
 /// after the bridge's release returned.
@@ -172,10 +182,19 @@ impl Connector for Gvfs {
             );
         }
         skwir_core::fs::reach::changed();
-        let (point, address) = self
+        let (point, mounted) = self
             .find_mount(&top)
             .ok_or_else(|| anyhow::anyhow!("GVfs mounted {top} but its folder is not there"))?;
-        Ok(Connected { point, address })
+        // The folder asked, which is opened next.
+        let asked = mounted.below(address).map_or_else(
+            || point.clone(),
+            |inside| point.join(skwir_core::os_path::from_bytes(inside.to_vec())),
+        );
+        answering(&asked, cancel)?;
+        Ok(Connected {
+            point,
+            address: mounted,
+        })
     }
 
     fn recognises(&self, remote: &Remote) -> Option<Recognised> {
@@ -271,6 +290,35 @@ impl Connector for Gvfs {
 /// backends are named by the type of their mounts.
 pub(crate) fn backend_of(scheme: Scheme) -> String {
     format!("gvfsd-{}", scheme.name())
+}
+
+/// Wait, at most [`STALE_PATIENCE`], while the bridge answers an I/O error
+/// for `folder`, the folder asked in a mount just made: opened, it would
+/// fail. Asked of the bridge itself (`stat::answers`), which asks the
+/// server once, as the folder's listing does next. Any other answer is
+/// the listing's to say.
+fn answering(folder: &Path, cancel: &CancelToken) -> anyhow::Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        let io = rustix::io::Errno::IO.raw_os_error();
+        let until = Instant::now() + STALE_PATIENCE;
+        while skwir_core::fs::stat::answers(folder)
+            .is_err_and(|error| error.raw_os_error() == Some(io))
+            && Instant::now() < until
+        {
+            if cancel.is_cancelled() {
+                anyhow::bail!("cancelled");
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        Ok(())
+    }
+    // Never reached: GVfs is unavailable here.
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (folder, cancel, STALE_PATIENCE);
+        anyhow::bail!("GVfs runs on Linux only")
+    }
 }
 
 /// Whether a GVfs bridge still holds a mount at `point`.

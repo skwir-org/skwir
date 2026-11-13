@@ -67,7 +67,7 @@ fi
 # Inside: the servers, the bus, GVfs, then the test. FIXTURE, TEST_BINARY,
 # GVFS come from the outer half's environment.
 ip link set lo up
-mkdir -p "$FIXTURE/etc" "$FIXTURE/export" "$FIXTURE/home"
+mkdir -p "$FIXTURE/etc" "$FIXTURE/export" "$FIXTURE/connected" "$FIXTURE/home"
 cp -a --no-preserve=ownership /etc/. "$FIXTURE/etc/" 2>/dev/null || true
 printf '%s\n' \
     'udp tpi_clts v inet udp - -' 'tcp tpi_cots_ord v inet tcp - -' \
@@ -85,7 +85,9 @@ chmod 700 /run/rt
 
 rpcbind -f > "$FIXTURE/rpcbind.log" 2>&1 &
 sleep 0.5
-echo "$FIXTURE/export 127.0.0.1(rw,no_root_squash)" > "$FIXTURE/exports"
+# Each test mounts an export of its own: GVfs's bridge answers an I/O
+# error a moment for a mount made anew under the name of one just gone.
+printf '%s 127.0.0.1(rw,no_root_squash)\n' "$FIXTURE/export" "$FIXTURE/connected" > "$FIXTURE/exports"
 unfsd -d -t -e "$FIXTURE/exports" > "$FIXTURE/unfsd.log" 2>&1 &
 # AFP's guest is nobody, who reaches what is in /run alone.
 cat > /run/afp/afp.conf <<EOF
@@ -125,9 +127,9 @@ read -r address <&3
 export DBUS_SESSION_BUS_ADDRESS="$address"
 mkdir -p /run/xdg/config /run/xdg/cache /run/xdg/data
 export XDG_CONFIG_HOME=/run/xdg/config XDG_CACHE_HOME=/run/xdg/cache XDG_DATA_HOME=/run/xdg/data
-# Before anything is mounted: an address below the export, opened through
+# Before anything is mounted: an address below its export, opened through
 # Skwir's own GVfs connector.
-SKWIR_TEST_NFS_EXPORT="$FIXTURE/export" \
+SKWIR_TEST_NFS_EXPORT="$FIXTURE/connected" \
     "$TEST_BINARY" --exact gvfs_opens_an_nfs_address_below_its_export --nocapture
 gio mount "nfs://127.0.0.1$FIXTURE/export"
 gio mount -a "afp://127.0.0.1/share"

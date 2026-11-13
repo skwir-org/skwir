@@ -16519,3 +16519,40 @@ Not fixed here.
 Not tried: macOS at all; a real sftp or `kioclient` copy followed so
 (`just remote-check` passes over their copies, which do not look at the
 share shown).
+
+## 2026-11-13: a GVfs mount made again at once opens
+
+**Found** by the NFS/AFP harness, failing since 2026-10-26: a mount
+GVfs makes again at once under the name of one just let go of (a server
+ejected and connected to again) answers an I/O error, up to about a
+second and a half, for what was reached in the one gone (a folder
+listed there, then the mount's folder itself), while a plain stat of it
+may still be answered from what the kernel kept. Measured in the
+harness's namespaces: after `gio mount -u`, the bridge stops listing
+the name within 5 to 21 ms, and waiting for that does not shorten it
+(three rounds: 0.6 to 0.85 s of errors after the mount made again).
+gvfsd-fuse checks nothing at `opendir`: the error comes from what is
+asked around it. Skwir's connector met it: the connector test run twice
+at once failed its second listing (EIO).
+
+**Fixed:** `Gvfs::connect` hands back its mount once the folder asked
+answers the bridge itself (`fs::stat::answers`, a new core seam: statx's
+`AT_STATX_FORCE_SYNC` on Linux, a plain stat elsewhere), three seconds
+at most, while it answers EIO; any other answer is the listing's. A
+plain stat was tried first and did not fix it (the mount's folder
+answered from the kernel's copy while a folder below failed). GNU
+`stat --cached=never` (the same statx) never answered while a listing
+failed, over three rounds. The connector test now connects, ejects and
+connects again at once, listing each time; the harness gives it an
+export of its own, so its mounts never share a name with the next
+step's (as the rule on tests that mount asks).
+
+**Checked:** the new test seen failing without the fix ("again at once:
+Input/output error"), then the whole NFS/AFP harness passing three times
+in a row; core's and the remote plugin's tests (918) with a new unit
+test of `answers`; clippy on them for Linux, Windows and macOS (cross).
+`just remote-check`: 189 of 192, the three failing (rclone's
+configurations "never listed" as places, at a load average of 25 to 30)
+passing alone in about a second each; then its NFS and AFP, AFC and
+Nearby harnesses and the keyrings (6, 6, 2), run by a copy of the
+recipe's steps, passed.
