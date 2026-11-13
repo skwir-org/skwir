@@ -1761,7 +1761,7 @@ pub fn declare(app: &App) {
         SettingSpec::records(
             FOLDER_PREVIEW_NAMES_KEY,
             "Names",
-            "The files looked for, the first first: a name, or a pattern where * stands for any characters (cover.* finds cover.jpg and cover.png). Letter case is ignored. A folder is shown by the file of the first name it holds that Skwir can preview; a file it cannot preview is passed over for the next name.",
+            "The files looked for, the first first: a name, or a pattern where * stands for any characters (cover.* finds cover.jpg and cover.png). Letter case is ignored. A folder is shown by the file of the first name it holds that Skwir can preview; a file it cannot preview is passed over for the next one found.",
             "name",
             vec![
                 skwir_core::settings::RecordField::text(

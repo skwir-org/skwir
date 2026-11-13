@@ -92,7 +92,10 @@ ADR-077 (which revises ADR-021).
   Never where no plugin knows the remote. Ask it before
   reading anything. A remote's thumbnails are made in its lane, one
   worker each (`thumbs.rs`); preview-ahead reads a remote's files only
-  where its thumbnails are Always. A preview asked for reads anyway.
+  where its thumbnails are Always. A preview asked for reads anyway. A
+  folder's preview reads the file standing for it (its README, its cover:
+  previews.md) as a thumbnail is made, by the rule and the file's size
+  (`preview::reads_unasked`): it was asked for the folder, not the file.
 - **Listings** are read again when the window comes back
   (`App::refresh_remote`, at most once in `REFRESHED_WITHIN`) and on F5:
   a server does not say what changed on it. What this machine changes

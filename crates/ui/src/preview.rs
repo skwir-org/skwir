@@ -266,6 +266,11 @@ pub struct Nested {
     /// The folder is still what the panel shows: its card, its count and
     /// its Properties are its own.
     stands_for: Option<Holds>,
+    /// The watch of the folder that follows the file standing for it while
+    /// it is shown (`follow_stand_in`): the folder's own version moves only
+    /// for what it holds, never for a file of it written in place. Goes
+    /// with the member.
+    followed: std::sync::Mutex<Option<skwir_core::fs::Settled>>,
 }
 
 /// What a folder holds, counted as it was read: its items, and how many of
@@ -441,26 +446,32 @@ fn name_matches(pattern: &str, name: &str) -> bool {
 /// holds, and the files that may stand for it, if they were looked for.
 struct Folder {
     holds: Holds,
-    /// The files that may stand for it, in the names' order, one for each
-    /// name it holds: its name and its path.
+    /// The files that may stand for it, in the names' order and, of one
+    /// name's, in the order of theirs: its name and its path.
     stand_ins: Vec<(String, PathBuf)>,
 }
 
+/// How many of the files one name finds are kept to be tried, the lowest
+/// names: a pattern's first file that nothing previews (a `cover.dng`)
+/// gives way to the next (`cover.jpg`), and a pattern that finds a whole
+/// folder (`*.jpg`) keeps a few, never the folder.
+const FILES_A_NAME: usize = 4;
+
 /// Read the folder at `path`: count what it holds and, with `names`, find
-/// the files that may stand for it: for each name, the lowest of the files
-/// it finds (`cover.jpg` before `cover.png`), so the same is always found;
-/// a file, or a link to one, never a folder nor a special file. A file is
-/// found by the first name it takes, never again by a later one. One read
-/// of its names, as counting alone makes, and what is kept is one file per
-/// name listed, whatever the folder holds; only a link whose name is
-/// wanted is followed.
+/// the files that may stand for it: for each name, the lowest few of the
+/// files it finds (`FILES_A_NAME`; `cover.jpg` before `cover.png`), so the
+/// same are always found; a file, or a link to one, never a folder nor a
+/// special file. A file is found by the first name it takes, never again by
+/// a later one. One read of its names, as counting alone makes, and what is
+/// kept is a few files per name listed, whatever the folder holds; only a
+/// link whose name is wanted, and would be kept, is followed.
 fn read_folder(
     path: &Path,
     names: Option<&StandIns>,
     cancel: &CancelToken,
 ) -> std::io::Result<Folder> {
     let mut holds = Holds::default();
-    let mut found: Vec<Option<(String, PathBuf)>> = vec![None; names.map_or(0, StandIns::len)];
+    let mut found: Vec<Vec<(String, PathBuf)>> = vec![Vec::new(); names.map_or(0, StandIns::len)];
     let mut lower = String::new();
     for entry in std::fs::read_dir(path)?.flatten() {
         if cancel.is_cancelled() {
@@ -480,10 +491,10 @@ fn read_folder(
         let Some(rank) = names.rank(&lower) else {
             continue;
         };
-        if found[rank]
-            .as_ref()
-            .is_some_and(|(kept, _)| kept.as_str() <= name)
-        {
+        // Where it goes among the name's files kept, lowest first.
+        let kept = &mut found[rank];
+        let at = kept.partition_point(|(other, _)| other.as_str() < name);
+        if at >= FILES_A_NAME {
             continue;
         }
         let file = entry.path();
@@ -493,7 +504,8 @@ fn read_folder(
             None => false,
         };
         if regular {
-            found[rank] = Some((name.to_owned(), file));
+            kept.insert(at, (name.to_owned(), file));
+            kept.truncate(FILES_A_NAME);
         }
     }
     Ok(Folder {
@@ -517,25 +529,33 @@ fn stand_in_member(name: String, path: PathBuf, holds: Holds) -> anyhow::Result<
         path,
         directory: None,
         stands_for: Some(holds),
+        followed: std::sync::Mutex::new(None),
     }))
 }
 
-/// Of the files found to stand for a folder, in the names' order, the
-/// first a preview shows as what it is (`shown_as_itself`), `request`
-/// asking about it from here on. A file Skwir cannot preview (a type
-/// nothing shows, bytes only View as hex shows, a file it cannot read) is
-/// passed over for the next name's: a name listed never leaves the folder
-/// showing nothing. One try a name, what it read kept for the preview
-/// that follows. `None`: the folder is counted.
+/// Of the files found to stand for a folder, in the names' order (of one
+/// name's, in theirs), the first a preview shows as what it is
+/// (`shown_as_itself`), `request` asking about it from here on. A file
+/// Skwir cannot preview (a type nothing shows, bytes only View as hex
+/// shows, a file it cannot read) is passed over for the next found, the
+/// same name's or the next name's: a file listed never leaves the folder
+/// showing nothing. So is one `unasked` keeps unread (`reads_unasked`: a
+/// remote's, as its thumbnails are). One try a file, what it read kept for
+/// the preview that follows. `None`: the folder is counted.
 fn first_shown(
     folder: Folder,
     previews: &skwir_core::preview::Previews,
     request: &mut PreviewRequest,
+    unasked: &dyn Fn(&Path) -> bool,
     cancel: &CancelToken,
 ) -> Option<Arc<Nested>> {
     for (name, file) in folder.stand_ins {
         if cancel.is_cancelled() {
             return None;
+        }
+        // Read unasked: on a remote, as its thumbnails are (`reads_unasked`).
+        if !unasked(&file) {
+            continue;
         }
         // Gone since it was listed: the next.
         let Ok(member) = stand_in_member(name, file, folder.holds) else {
@@ -547,6 +567,56 @@ fn first_shown(
         }
     }
     None
+}
+
+/// Whether the file at `file`, to stand for its folder, may be read without
+/// being asked for: anywhere on this machine; on a remote, as its
+/// thumbnails are (`App::shows_thumbnail`, by the file's size: a README
+/// where a remote's small files show theirs), as what a preview reads
+/// ahead is (docs/invariants/remote.md). Its size is a stat: on the
+/// preview's worker, in the folder's lane.
+fn reads_unasked(app: &skwir_core::App, file: &Path) -> bool {
+    if app.remote(file).is_none() {
+        return true;
+    }
+    let size = std::fs::metadata(file).ok().map(|meta| meta.len());
+    app.shows_thumbnail(file, size)
+}
+
+/// Follow the file `member` that stands for its folder while it is shown:
+/// a watch of the folder (`fs::Settled`: changes, never reads, let settle)
+/// that tells `tx` the file's path once it is written, replaced or gone,
+/// and wakes the window, which reads it again in place
+/// (`Shell::stand_in_changed`). The folder's own version moves only for
+/// what it holds, never for one of its files written in place. Set up
+/// here, on the preview's worker in the folder's lane, never on the
+/// window's thread; dropped with the member, and ends once the preview's
+/// channel is gone. A folder that cannot be watched is not followed.
+fn follow_stand_in(member: &Nested, tx: flume::Sender<PathBuf>, wake: skwir_core::location::Waker) {
+    let Some(folder) = member.path.parent() else {
+        return;
+    };
+    let (path, told) = (member.path.clone(), member.path.clone());
+    let followed = skwir_core::fs::Settled::start(
+        "stand-in",
+        std::time::Duration::from_millis(200),
+        move |changed| changed == path,
+        move || {
+            let sent = tx.send(told.clone()).is_ok();
+            if sent {
+                wake();
+            }
+            sent
+        },
+    );
+    let Some(mut followed) = followed else {
+        return;
+    };
+    if followed.watch(folder)
+        && let Ok(mut slot) = member.followed.lock()
+    {
+        *slot = Some(followed);
+    }
 }
 
 impl Nested {
@@ -935,6 +1005,10 @@ pub struct PreviewState {
     pub(crate) menu_parked: bool,
     nested_tx: flume::Sender<(u64, Arc<Nested>)>,
     nested_rx: flume::Receiver<(u64, Arc<Nested>)>,
+    /// The file standing for the folder shown, written in place, replaced
+    /// or gone, by its path (`follow_stand_in`).
+    stand_in_tx: flume::Sender<PathBuf>,
+    stand_in_rx: flume::Receiver<PathBuf>,
     /// Fields read on demand that Properties shows (a picture's place,
     /// `skwir_core::fields`), for the entry of `properties_at`: read on a
     /// worker, arriving with the generation they were asked at.
@@ -1156,6 +1230,7 @@ impl Default for PreviewState {
     fn default() -> Self {
         let (tx, rx) = flume::unbounded();
         let (nested_tx, nested_rx) = flume::unbounded();
+        let (stand_in_tx, stand_in_rx) = flume::unbounded();
         let (ways_tx, ways_rx) = flume::unbounded();
         let (fields_tx, fields_rx) = flume::unbounded();
         let (count_tx, count_rx) = flume::unbounded();
@@ -1229,6 +1304,8 @@ impl Default for PreviewState {
             folder_way: None,
             nested_tx,
             nested_rx,
+            stand_in_tx,
+            stand_in_rx,
             fields: Vec::new(),
             fields_generation: 0,
             access: Vec::new(),
@@ -1423,6 +1500,31 @@ impl PreviewState {
     /// it was found (`Nested::stands_for`): `None` while none does.
     pub(crate) fn stands_for(&self) -> Option<Holds> {
         self.nested.first()?.stands_for
+    }
+
+    /// The file standing for the folder shown (its README, its cover), if
+    /// one does.
+    fn stand_in(&self) -> Option<&Nested> {
+        self.nested
+            .first()
+            .map(AsRef::as_ref)
+            .filter(|member| member.stands_for.is_some())
+    }
+
+    /// What the preview's More and the commands of what it shows act on,
+    /// and its pane: the file standing for the folder shown, as its bar,
+    /// its × and its trail are that file's, else the entry.
+    pub(crate) fn about(&self) -> Option<(EntryRef, PaneId)> {
+        let key = self.key.as_ref()?;
+        let entry = match self.stand_in() {
+            Some(file) => file.entry.clone(),
+            None => EntryRef {
+                id: key.id.file,
+                path: key.path.clone(),
+                only_name: false,
+            },
+        };
+        Some((entry, key.pane))
     }
 
     /// A request for the file shown `depth` members deep (0 is the entry),
@@ -1948,6 +2050,7 @@ fn extract_member(
         // now, here on the worker.
         directory: (!member.own_file).then_some(directory),
         stands_for: None,
+        followed: std::sync::Mutex::new(None),
     })))
 }
 
@@ -2497,15 +2600,18 @@ impl Shell {
             .version
             .as_ref()
             .is_some_and(|before| before.rewritten(&version));
-        // Not the file standing for a folder, which is no member written
-        // out of it: the folder changed is read again, its file found
-        // again, and the same one read again in place (`preview_request`).
+        // Not the file standing for a folder alone, which is no member
+        // written out of it: the folder changed is read again, its file
+        // found again, and the same one read again in place
+        // (`preview_request`). What was written out of that file, or of any
+        // member, is stale with it.
         let stale = rewritten
-            && self
-                .preview
-                .nested
-                .first()
-                .is_some_and(|member| member.stands_for.is_none());
+            && (self.preview.nested.len() > 1
+                || self
+                    .preview
+                    .nested
+                    .first()
+                    .is_some_and(|member| member.stands_for.is_none()));
         // A folder is another preview when what is to stand for it changes
         // (the Preview turned on or off, the names): asked again.
         let restand = entry.is_dir()
@@ -2761,6 +2867,18 @@ impl Shell {
                 self.preview.descend = None;
             } else {
                 self.discard_nested(vec![member]);
+            }
+        }
+        // The file standing for the folder shown, written in place: read
+        // again, as a file shown that changed is (`follow_stand_in`).
+        while let Ok(changed) = self.preview.stand_in_rx.try_recv() {
+            if self
+                .preview
+                .nested
+                .first()
+                .is_some_and(|shown| shown.stands_for.is_some() && shown.path == changed)
+            {
+                self.stand_in_changed(window, cx);
             }
         }
         while let Ok(result) = self.preview.rx.try_recv() {
@@ -3420,6 +3538,8 @@ impl Shell {
         let nested = self.preview.nested.last().cloned();
         let descend = self.preview.descend.clone();
         let nested_tx = self.preview.nested_tx.clone();
+        let stand_in_tx = self.preview.stand_in_tx.clone();
+        let app = Arc::clone(&self.app);
         let members = members_dir(self.app.cache.root());
         let previews = Arc::clone(&self.app.previews);
         let wake = self.waker();
@@ -3563,9 +3683,13 @@ impl Shell {
                         items: folder.holds.items,
                         folders: folder.holds.folders,
                     };
-                    let Some(member) = first_shown(folder, &previews, &mut request, &cancel) else {
+                    let unasked = |file: &Path| reads_unasked(&app, file);
+                    let Some(member) =
+                        first_shown(folder, &previews, &mut request, &unasked, &cancel)
+                    else {
                         return send(counted, true, None, None);
                     };
+                    follow_stand_in(&member, stand_in_tx, wake.clone());
                     path.clone_from(&member.path);
                     let _ = nested_tx.send((generation, member));
                     (own, is_dir) = (false, false);
@@ -4910,13 +5034,12 @@ impl Shell {
     }
 
     pub fn preview_open_external(&mut self, _cx: &mut Context<Self>) {
-        let Some(key) = &self.preview.key else {
+        let Some((entry, _)) = self.preview.about() else {
             return;
         };
-        let entry = EntryRef::new(key.id.file, &key.path);
         let app = self.app.clone();
         self.app.scheduler.spawn_in(
-            skwir_core::fs::reach::lane(&key.path),
+            skwir_core::fs::reach::lane(&entry.path),
             Priority::Visible,
             "preview-open",
             self.app.lifetime().child(),
@@ -4930,6 +5053,26 @@ impl Shell {
                 }
             },
         );
+    }
+
+    /// The file standing for the folder shown was written in place,
+    /// replaced or went (`follow_stand_in`): the folder is read again and its
+    /// file found again, as when the folder changed (`preview_changed`):
+    /// the same file read again in place, keeping its place. What was gone
+    /// into from it is another preview. A player keeps playing.
+    fn stand_in_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.preview.media.session.is_some() || self.preview.phase == PreviewPhase::Queued {
+            return;
+        }
+        if self.preview.nested.len() > 1 {
+            self.cancel_preview(window, cx);
+        } else {
+            self.reader_reopen(window, cx);
+            self.cancel_pending_preview();
+            self.preview.refresh = true;
+            self.preview.phase = PreviewPhase::Queued;
+        }
+        cx.notify();
     }
 
     /// The user goes back up to `depth`: up to the folder itself (0) from
@@ -5368,14 +5511,9 @@ impl Shell {
         let Some(name) = args.get("command").and_then(serde_json::Value::as_str) else {
             return;
         };
-        let Some(key) = &self.preview.key else {
+        let Some((entry, pane)) = self.preview.about() else {
             self.set_status("Nothing is shown", true, cx);
             return;
-        };
-        let entry = EntryRef {
-            id: key.id.file,
-            path: key.path.clone(),
-            only_name: false,
         };
         let mut given = args
             .get("args")
@@ -5383,7 +5521,7 @@ impl Shell {
             .cloned()
             .unwrap_or_else(|| serde_json::json!({}));
         given["entries"] = serde_json::json!([skwir_core::op::EntryArg::from(entry)]);
-        given["pane"] = serde_json::json!(key.pane);
+        given["pane"] = serde_json::json!(pane);
         if let Some(session) = &self.preview.reader.session {
             given["page"] = serde_json::json!(self.preview.page);
             given["count"] = serde_json::json!(session.info().pages);
@@ -5434,6 +5572,10 @@ impl Shell {
         let Some(key) = self.preview.key.as_ref() else {
             return crate::menu::SelectionTypes::default();
         };
+        // The file standing for the folder, by its name: what More is about.
+        if let Some(file) = self.preview.stand_in() {
+            return shown_types(None, Some(&file.entry));
+        }
         let listed = {
             let ws = self.app.workspace.read();
             ws.pane(key.pane)
@@ -5521,10 +5663,14 @@ impl Shell {
     /// submenu), in their order. Asked as More opens, never while drawing,
     /// a source asked with what the menu gives: the file shown, as its
     /// pane lists it (`entries`), and its pane (`menu::context_items`).
+    /// For a folder shown by its README or its cover, that file
+    /// (`PreviewState::about`), as the bar is: Open With answers for it
+    /// where the pane lists it (the folder the pane is in), Open externally
+    /// and Copy path everywhere.
     pub(crate) fn preview_entry_items(&self) -> Vec<skwir_core::registry::MenuItem> {
         use skwir_core::command::Invocation;
         use skwir_core::registry::MenuItem;
-        let Some(key) = &self.preview.key else {
+        let Some((about, pane)) = self.preview.about() else {
             return Vec::new();
         };
         let own = |order, title: &str, icon: &str, name: &str| {
@@ -5542,11 +5688,7 @@ impl Shell {
             ),
             ..item
         }));
-        let shown = skwir_core::op::EntryArg::from(EntryRef {
-            id: key.id.file,
-            path: key.path.clone(),
-            only_name: false,
-        });
+        let shown = skwir_core::op::EntryArg::from(about);
         let answers = sources
             .into_iter()
             .map(|source| {
@@ -5554,7 +5696,7 @@ impl Shell {
                     .command
                     .clone()
                     .with("entries", serde_json::json!([shown]))
-                    .with("pane", key.pane);
+                    .with("pane", pane);
                 let answer = self.source_answer(&command);
                 (source, answer)
             })
@@ -5563,11 +5705,11 @@ impl Shell {
     }
 
     pub fn preview_copy_path(&mut self, cx: &mut Context<Self>) {
-        let Some(key) = &self.preview.key else {
+        let Some((entry, _)) = self.preview.about() else {
             return;
         };
         // Written lossily, a path that is not text would name another file.
-        let Some(path) = key.path.to_str().map(str::to_owned) else {
+        let Some(path) = entry.path.to_str().map(str::to_owned) else {
             self.set_status("The path is not text the clipboard can hold", true, cx);
             return;
         };
@@ -8615,20 +8757,38 @@ mod tests {
         assert_eq!((folder.holds.items, folder.holds.folders), (4, 1));
         assert_eq!(
             folder.stand_ins,
-            [("cover.jpg".to_owned(), at("cover.jpg"))],
-            "a folder named README is no README"
+            [
+                ("cover.jpg".to_owned(), at("cover.jpg")),
+                ("cover.png".to_owned(), at("cover.png"))
+            ],
+            "a folder named README is no README; a name's files lowest first"
         );
         std::fs::write(at("readme"), b"what this is").unwrap();
         let folder = read_folder(dir.path(), Some(&names), &cancel).unwrap();
         let found: Vec<&str> = folder.stand_ins.iter().map(|(n, _)| n.as_str()).collect();
-        assert_eq!(found, ["readme", "cover.jpg"], "README before covers");
+        assert_eq!(
+            found,
+            ["readme", "cover.jpg", "cover.png"],
+            "README before covers"
+        );
         // A file the first name took is not the next's.
         let names = StandIns::of_names(["cover.*", "*.jpg", "*.txt"]).unwrap();
         let folder = read_folder(dir.path(), Some(&names), &cancel).unwrap();
         let found: Vec<&str> = folder.stand_ins.iter().map(|(n, _)| n.as_str()).collect();
-        assert_eq!(found, ["cover.jpg", "notes.txt"]);
+        assert_eq!(found, ["cover.jpg", "cover.png", "notes.txt"]);
         let counted = read_folder(dir.path(), None, &cancel).unwrap();
         assert_eq!(counted.holds.items, 5);
+        // A name that finds many keeps its lowest few, whatever their order
+        // on the disk: a photo folder is not kept whole.
+        let many = tempfile::tempdir().unwrap();
+        for n in (0..20).rev() {
+            std::fs::write(many.path().join(format!("{n:02}.jpg")), b"jpg").unwrap();
+        }
+        let names = StandIns::of_names(["*.jpg"]).unwrap();
+        let folder = read_folder(many.path(), Some(&names), &cancel).unwrap();
+        let found: Vec<&str> = folder.stand_ins.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(found, ["00.jpg", "01.jpg", "02.jpg", "03.jpg"]);
+        assert_eq!(found.len(), super::FILES_A_NAME);
         assert!(
             counted.stand_ins.is_empty(),
             "counted only when none is wanted"
@@ -8660,12 +8820,49 @@ mod tests {
         }
     }
 
+    /// The file standing for a folder is followed while shown: written in
+    /// place, which leaves the folder's own version as it was, it is told
+    /// by its path; another file of the folder written is not.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_file_standing_for_a_folder_is_followed() {
+        use super::{Holds, follow_stand_in, stand_in_member};
+        let dir = tempfile::tempdir().unwrap();
+        let readme = dir.path().join("README.md");
+        std::fs::write(&readme, b"# Before").unwrap();
+        let member = stand_in_member("README.md".into(), readme.clone(), Holds::default()).unwrap();
+        let (tx, rx) = flume::unbounded();
+        let woken = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let count = std::sync::Arc::clone(&woken);
+        follow_stand_in(
+            &member,
+            tx,
+            std::sync::Arc::new(move || {
+                count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }),
+        );
+        assert!(
+            member.followed.lock().unwrap().is_some(),
+            "the folder is watched"
+        );
+        std::fs::write(dir.path().join("notes.txt"), b"other").unwrap();
+        std::fs::write(&readme, b"# After").unwrap();
+        let told = rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("the file written in place is told");
+        assert_eq!(told, readme);
+        assert!(
+            woken.load(std::sync::atomic::Ordering::SeqCst) > 0,
+            "and the window woken"
+        );
+    }
+
     /// Of the files found, the first a preview shows as what it is stands
     /// for the folder, by a provider or drawn by the panel itself: one only
     /// View as hex shows is passed over, and a folder none of whose files
     /// is shown is counted.
     #[test]
-    fn a_file_without_a_preview_gives_way_to_the_next_name() {
+    fn a_file_without_a_preview_gives_way_to_the_next_found() {
         use super::{StandIns, first_shown, read_folder};
         use skwir_core::preview::{PreviewProvider, PreviewRequest, Previews};
         // Takes its files by their names' ending, as no type names them.
@@ -8709,7 +8906,7 @@ mod tests {
         let standing = |names: &[&str], request: &mut PreviewRequest| {
             let names = StandIns::of_names(names.iter().copied()).unwrap();
             let folder = read_folder(dir.path(), Some(&names), &cancel).unwrap();
-            first_shown(folder, &previews, request, &cancel).map(|member| {
+            first_shown(folder, &previews, request, &|_| true, &cancel).map(|member| {
                 assert!(member.stands_for.is_some());
                 assert_eq!(request.entry.path, member.path, "asked about from here on");
                 member.name.clone()
@@ -8721,6 +8918,15 @@ mod tests {
             Some("folder.png"),
             "bytes alone give way to a picture the panel decodes"
         );
+        // Of one name's files, the first that nothing shows gives way to
+        // the next of that name, not to the next name's.
+        std::fs::write(at("cover.yyy.png"), b"a picture").unwrap();
+        assert_eq!(
+            standing(&names, &mut request).as_deref(),
+            Some("cover.yyy.png"),
+            "cover.xyz, bytes alone, gives way to the cover after it"
+        );
+        std::fs::remove_file(at("cover.yyy.png")).unwrap();
         std::fs::remove_file(at("folder.png")).unwrap();
         std::fs::write(at("ReadMe"), b"What this folder is.").unwrap();
         assert_eq!(

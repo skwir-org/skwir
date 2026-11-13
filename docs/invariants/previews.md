@@ -904,7 +904,7 @@ is still to come are in `docs/preview-frame.md`.
   README, an album's or a photo folder's cover, any file the user names:
   the first of `ui.folder_preview_names` it holds whose file a preview
   shows (letter case ignored, `*` any run of characters; of one name's
-  files, the lowest). Only a file, or a link to one, stands; never a
+  files, the lowest first). Only a file, or a link to one, stands; never a
   folder or a special file of that name.
   - The names are a list Skwir starts filled (`SettingSpec::starting_with`,
     `settings::FOLDER_PREVIEW_NAMES_DEFAULT`), each record a `name`: added,
@@ -917,16 +917,18 @@ is still to come are in `docs/preview-frame.md`.
     the preview's worker: one pass of its names, a stat only for a
     wanted name's link; the folder shown has its listing, but a pattern
     would walk it, which the window's thread never does. The read keeps
-    one file a name, whatever the folder holds, a file found by the
+    the lowest few files a name (`FILES_A_NAME`, 4), whatever the folder
+    holds (`*.jpg` in a photo folder keeps four), a file found by the
     first name it takes only.
   - What a preview shows is asked when the folder is shown, never when a
     name is listed: plugins and helpers come and go. The files kept are
-    tried in the names' order (`first_shown`), the first a provider takes
-    by its type standing (`Previews::shows`: View as hex is no preview);
-    a file no provider takes, or that cannot be read, is passed over for
-    the next name's, and a folder none of whose files is shown is
-    counted. One try a name, its answer kept for the preview that
-    follows.
+    tried in the names' order, a name's in the order of theirs
+    (`first_shown`), the first a provider takes by its type standing
+    (`Previews::shows`: View as hex is no preview); a file no provider
+    takes, or that cannot be read, is passed over for the next found,
+    the same name's (`cover.dng` for `cover.jpg`) or the next name's, and
+    a folder none of whose files is shown is counted. One try a file, its
+    answer kept for the preview that follows.
   - The file is a member of its own (`Nested::stands_for`, as a
     playlist's track): previewed as the file it is, its bar the file's,
     the card's trail "folder › README.md". The card, the count and
@@ -939,11 +941,22 @@ is still to come are in `docs/preview-frame.md`.
     (`stand_in_left`) until another entry is shown; it is never looked
     for again meanwhile. Its bar's More has Files shown for folders…,
     Settings at the names (`preview_bar::close_tool`), whatever the
-    file turned out to be.
+    file turned out to be. What More is about is that file, as its bar
+    is (`PreviewState::about`): Open externally, Copy path, the plugins'
+    items and their `kind:`, Open With where the pane lists it.
   - The folder changed is read again and the file found again: the same
     file is read again in place, keeping its place; another is another
-    preview; none leaves the count. A page turned, a find, the bytes ask
-    nothing of the folder.
+    preview; none leaves the count. So is the file written in place,
+    which leaves the folder's own version as it was: it is followed while
+    shown, by a watch of the folder set up on the preview's worker and
+    gone with it (`follow_stand_in`, `Shell::stand_in_changed`). What was
+    gone into from the file (a member of it) is stale with it, as any
+    member is. A page turned, a find, the bytes ask nothing of the folder.
+  - On a remote, the file is read unasked as the remote's thumbnails are
+    (`reads_unasked`, `App::shows_thumbnail` by the file's size: Small
+    files reads a README, Never none), remote.md: a file the rule keeps
+    unread is passed over as one nothing previews, and a folder none of
+    whose files may be read is counted, as before.
 - **A wait shows only once it has lasted.** The panel has one delayed
   loading signal (`Shell::sync_busy`, `preview_busy`), like the pane's
   (`loading.rs`): a request slower than `BUSY_AFTER` (200 ms) shows
