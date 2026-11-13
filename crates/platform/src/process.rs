@@ -874,11 +874,13 @@ pub struct OpenFile {
 
 /// The files process `pid` and those it started have open, each with its
 /// offset, as the system says: on Linux `/proc`'s `fd` and `fdinfo`, on
-/// macOS `proc_pidinfo` (the process alone); none elsewhere, which says
-/// no other process's offsets. What a helper copying files says of none
-/// of them as it goes (sftp, gio) is followed so: it reads a file it sends
-/// from its start, and writes one it brings from its start.
-pub fn open_files(pid: u32) -> Vec<OpenFile> {
+/// macOS `proc_pidinfo` (the process alone); `None` where the system will
+/// not say (another process's offsets on Windows; on Linux, a hardened
+/// `ptrace_scope` refusing even a child's), none for a process gone. What
+/// a helper copying files says of none of them as it goes (sftp, gio) is
+/// followed so: it reads a file it sends from its start, and writes one it
+/// brings from its start.
+pub fn open_files(pid: u32) -> Option<Vec<OpenFile>> {
     #[cfg(target_os = "linux")]
     {
         let mut pids = vec![pid];
@@ -892,7 +894,11 @@ pub fn open_files(pid: u32) -> Vec<OpenFile> {
                     .filter_map(|child| u32::try_from(child.as_raw_nonzero().get()).ok()),
             );
         }
-        pids.into_iter().flat_map(open_files_of).collect()
+        let mut files = Vec::new();
+        for pid in pids {
+            files.extend(open_files_of(pid)?);
+        }
+        Some(files)
     }
     #[cfg(target_os = "macos")]
     {
@@ -901,19 +907,23 @@ pub fn open_files(pid: u32) -> Vec<OpenFile> {
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         let _ = pid;
-        Vec::new()
+        None
     }
 }
 
 /// `pid`'s open regular files, from `/proc`: each descriptor's link, and
 /// its `pos` in `fdinfo`. A link to no path (a pipe, a socket) or to a
-/// file removed since is left out.
+/// file removed since is left out; `None` where the system refuses them,
+/// none for a process gone.
 #[cfg(target_os = "linux")]
-fn open_files_of(pid: u32) -> Vec<OpenFile> {
-    let Ok(fds) = std::fs::read_dir(format!("/proc/{pid}/fd")) else {
-        return Vec::new();
+fn open_files_of(pid: u32) -> Option<Vec<OpenFile>> {
+    let fds = match std::fs::read_dir(format!("/proc/{pid}/fd")) {
+        Ok(fds) => fds,
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => return None,
+        Err(_) => return Some(Vec::new()),
     };
-    fds.flatten()
+    let files = fds
+        .flatten()
         .filter_map(|fd| {
             let path = std::fs::read_link(fd.path()).ok()?;
             if !path.is_absolute() || path.as_os_str().as_encoded_bytes().ends_with(b" (deleted)") {
@@ -930,7 +940,8 @@ fn open_files_of(pid: u32) -> Vec<OpenFile> {
                 .ok()?;
             Some(OpenFile { path, at })
         })
-        .collect()
+        .collect();
+    Some(files)
 }
 
 /// A process's open files on macOS (`libproc`): its descriptors
@@ -966,16 +977,18 @@ mod mac_open {
     // makes, each as large as it says: no other way to read another
     // process's descriptors on macOS.
     #[allow(unsafe_code)]
-    pub(super) fn open_files_of(pid: u32) -> Vec<OpenFile> {
+    pub(super) fn open_files_of(pid: u32) -> Option<Vec<OpenFile>> {
         let Ok(pid) = libc::c_int::try_from(pid) else {
-            return Vec::new();
+            return Some(Vec::new());
         };
         let unit = std::mem::size_of::<libc::proc_fdinfo>();
         // SAFETY: a null buffer asks for the size needed.
         let needed =
             unsafe { libc::proc_pidinfo(pid, libc::PROC_PIDLISTFDS, 0, std::ptr::null_mut(), 0) };
         let Ok(needed) = usize::try_from(needed) else {
-            return Vec::new();
+            // Refused (`EPERM`), else gone.
+            let refused = std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM);
+            return (!refused).then(Vec::new);
         };
         // Room for descriptors opened since.
         let mut fds: Vec<libc::proc_fdinfo> = Vec::with_capacity(needed / unit + 8);
@@ -985,11 +998,12 @@ mod mac_open {
             libc::proc_pidinfo(pid, libc::PROC_PIDLISTFDS, 0, fds.as_mut_ptr().cast(), room)
         };
         let Ok(got) = usize::try_from(got) else {
-            return Vec::new();
+            return Some(Vec::new());
         };
         // SAFETY: the call wrote `got` bytes of whole entries.
         unsafe { fds.set_len((got / unit).min(fds.capacity())) };
-        fds.iter()
+        let files = fds
+            .iter()
             .filter(|fd| fd.proc_fdtype == libc::PROX_FDTYPE_VNODE as u32)
             .filter_map(|fd| {
                 let mut info = std::mem::MaybeUninit::<VnodeFdinfoWithPath>::zeroed();
@@ -1026,7 +1040,8 @@ mod mac_open {
                 let at = u64::try_from(info.pfi.fi_offset).ok()?;
                 path.is_absolute().then_some(OpenFile { path, at })
             })
-            .collect()
+            .collect();
+        Some(files)
     }
 }
 

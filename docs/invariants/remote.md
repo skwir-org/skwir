@@ -290,7 +290,12 @@ ADR-077 (which revises ADR-021).
   between counted to the name it is in); sftp in batch, `gio` and
   `kioclient` say nothing of each, and are followed by the files they
   have open (`Following`, `process::open_files`, from `runs::at_once_following`:
-  how far into each file, under which name given; none on Windows);
+  how far into each file, under which name given, each found by a map,
+  never a walk of the names; none on Windows); where the system will not
+  say what a helper has open, or one runs a second with no file of what it
+  copies open where it is looked at (KIO's workers, where Linux does not
+  list a process's children), its names are told nothing of after all
+  (`Told::untold`) and copy with the batch;
   rclone's copies within a server tell each name as each file is copied.
   rsync keeps a file it was
   writing when cut short in the staging folder (`--partial-dir`, an

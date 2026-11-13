@@ -23,14 +23,25 @@ use parking_lot::Mutex;
 /// How often a helper's open files are read.
 const EVERY: Duration = Duration::from_millis(250);
 
+/// How long a helper may run with none of the files of what it copies
+/// open where it is looked at, before it is taken to open them where it
+/// cannot be followed (a worker of KIO's this system does not say it
+/// started): then nothing is said of each name, the batch's share of all.
+const UNSEEN_FOR: Duration = Duration::from_secs(1);
+
 /// What follows a copy's helpers (module documentation).
 pub(crate) struct Following<'a> {
     /// The local folders the names given are in: what is read, what is
     /// written.
     roots: Vec<PathBuf>,
     names: Vec<OsString>,
+    /// Where each name is in `names`, by its bytes: a file is told its
+    /// name by a lookup, never a walk of the names (a batch of 100,000).
+    index: HashMap<Vec<u8>, usize>,
     writing: &'a (dyn Fn(&OsStr, u64) + Sync),
     copied: &'a (dyn Fn(u64) + Sync),
+    /// Says the names will be told nothing of after all (`Told::untold`).
+    untold: &'a (dyn Fn() + Sync),
     state: Mutex<State>,
 }
 
@@ -45,6 +56,12 @@ struct State {
     done: Vec<u64>,
     /// What was said of each name last: never less.
     said: Vec<u64>,
+    /// When each process was first read.
+    since: HashMap<u32, Instant>,
+    /// A file of what is copied was seen open: what follows them can.
+    seen: bool,
+    /// What is copied cannot be followed here: said once (`untold`).
+    given_up: bool,
 }
 
 impl<'a> Following<'a> {
@@ -58,8 +75,14 @@ impl<'a> Following<'a> {
         Following {
             roots: roots.into_iter().collect(),
             names: names.to_vec(),
+            index: names
+                .iter()
+                .enumerate()
+                .map(|(at, name)| (name.as_encoded_bytes().to_vec(), at))
+                .collect(),
             writing: told.writing,
             copied: told.copied,
+            untold: told.untold,
             state: Mutex::new(State {
                 done: vec![0; names.len()],
                 said: vec![0; names.len()],
@@ -77,17 +100,12 @@ impl<'a> Following<'a> {
                 .next()
                 .map(|c| c.as_os_str().to_os_string())
         })?;
-        if let Some(at) = self.names.iter().position(|name| *name == first) {
-            return Some(at);
-        }
-        // A file written under a name of the tool's own, its name first.
+        // The name itself, else a file written under a name of the tool's
+        // own, its name first: the longest name it begins with.
         let first = first.as_encoded_bytes();
-        self.names
-            .iter()
-            .enumerate()
-            .filter(|(_, name)| first.starts_with(name.as_encoded_bytes()))
-            .max_by_key(|(_, name)| name.len())
-            .map(|(at, _)| at)
+        (1..=first.len())
+            .rev()
+            .find_map(|end| self.index.get(&first[..end]).copied())
     }
 
     /// Process `pid` of the copy runs: what it has open read, at most every
@@ -96,16 +114,43 @@ impl<'a> Following<'a> {
         let now = Instant::now();
         {
             let state = self.state.lock();
-            if state.read.get(&pid).is_some_and(|at| now - *at < EVERY) {
+            if state.given_up || state.read.get(&pid).is_some_and(|at| now - *at < EVERY) {
                 return;
             }
         }
-        let open: HashMap<PathBuf, (usize, u64)> = skwir_platform::process::open_files(pid)
+        // The system will not say what it has open (a hardened Linux's
+        // `ptrace_scope`): nothing is followed.
+        let Some(files) = skwir_platform::process::open_files(pid) else {
+            self.give_up();
+            return;
+        };
+        let open: HashMap<PathBuf, (usize, u64)> = files
             .into_iter()
             .filter_map(|file| Some((self.name_of(&file.path)?, file)))
             .map(|(name, file)| (file.path, (name, file.at)))
             .collect();
+        let unseen = {
+            let mut state = self.state.lock();
+            state.seen |= !open.is_empty();
+            let since = *state.since.entry(pid).or_insert(now);
+            !state.seen && now.duration_since(since) >= UNSEEN_FOR
+        };
+        if unseen {
+            self.give_up();
+            return;
+        }
         self.took(pid, open, now);
+    }
+
+    /// What is copied cannot be followed here: the names are told nothing
+    /// of after all, said once.
+    fn give_up(&self) {
+        let mut state = self.state.lock();
+        if std::mem::replace(&mut state.given_up, true) {
+            return;
+        }
+        drop(state);
+        (self.untold)();
     }
 
     /// What process `pid` has open now (`open`, by name and offset), read
@@ -175,6 +220,7 @@ mod tests {
             placed: &|_| {},
             made: &|_| {},
             writing,
+            untold: &|| {},
         }
     }
 
@@ -235,6 +281,42 @@ mod tests {
             Some(2),
             "the longest"
         );
+    }
+
+    /// A helper that runs a second with no file of what it copies open
+    /// where it is looked at (a worker this system does not say it
+    /// started) is not followed: its names are told nothing of after all,
+    /// said once (`Told::untold`).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_helper_with_no_file_of_its_names_open_leaves_them_untold() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let root = tempfile::tempdir().unwrap();
+        let untold = AtomicUsize::new(0);
+        let told_by = skwir_core::op::transfer::Told {
+            copied: &|_| {},
+            placed: &|_| {},
+            made: &|_| {},
+            writing: &|_, _| {},
+            untold: &|| {
+                untold.fetch_add(1, Ordering::SeqCst);
+            },
+        };
+        let names = vec![OsString::from("it's elsewhere.bin")];
+        let following = Following::new([root.path().to_path_buf()], &names, &told_by);
+        let mut command = std::process::Command::new("sh");
+        command.args(["-c", "sleep 1.6"]);
+        let finished = skwir_platform::process::run_looking(
+            &mut command,
+            None,
+            &skwir_core::CancelToken::new(),
+            &|| false,
+            &mut |_: &[u8]| {},
+            &|at| following.look(at),
+        )
+        .unwrap();
+        assert!(finished.status.success());
+        assert_eq!(untold.load(Ordering::SeqCst), 1, "said once");
     }
 
     /// A helper that reads a file it sends a thousand bytes at a time,

@@ -2092,6 +2092,14 @@ impl StepContext {
         move |step, done| meter.writing(step, done)
     }
 
+    /// What says, from a batch's threads, that the transfer copying its
+    /// `steps` tells nothing of each after all (`Told::untold`, ADR-135):
+    /// they say copying with the batch.
+    pub(super) fn untold(&self, steps: Vec<usize>) -> impl Fn() + Send + Sync + use<> {
+        let meter = Arc::clone(&self.meter);
+        move || meter.batch_tells(steps.iter().copied(), false)
+    }
+
     /// The batch that took `steps` ended: those it did not make are no
     /// longer said copying.
     pub(super) fn unbatch(&self, steps: &[usize]) {

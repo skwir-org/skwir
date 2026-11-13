@@ -177,13 +177,17 @@ fn placed_of(line: &[u8]) -> Option<(u64, &[u8])> {
 /// line said as it begins it and its files after it, each file said once
 /// whole with its bytes; what it copied in all and has not said whole is
 /// the file it copies now, of the name it is in, else the next one not
-/// made.
+/// made. Each line is told in constant time whatever the names' number:
+/// a name found by a map, the next one not made by a union-find.
 struct Writing {
     order: Vec<OsString>,
+    /// Where each name is in `order`, by its bytes.
+    index: HashMap<Vec<u8>, usize>,
     /// Of each name, the bytes rsync said whole.
-    whole: HashMap<OsString, u64>,
-    /// The names given alone that it said whole.
-    made: HashSet<OsString>,
+    whole: Vec<u64>,
+    /// Of each place of `order` (and one past its end), where to look on
+    /// for a name given alone not made yet: itself while it is not.
+    next: Vec<usize>,
     /// Which of `order` it copies now.
     now: Option<usize>,
     /// The bytes it said whole, in all.
@@ -194,11 +198,17 @@ impl Writing {
     fn new(names: &[OsString]) -> Self {
         let mut order = names.to_vec();
         order.sort_by(|a, b| a.as_encoded_bytes().cmp(b.as_encoded_bytes()));
+        let index = order
+            .iter()
+            .enumerate()
+            .map(|(at, name)| (name.as_encoded_bytes().to_vec(), at))
+            .collect();
         Writing {
             now: (!order.is_empty()).then_some(0),
+            index,
+            whole: vec![0; order.len()],
+            next: (0..=order.len()).collect(),
             order,
-            whole: HashMap::new(),
-            made: HashSet::new(),
             said: 0,
         }
     }
@@ -210,38 +220,46 @@ impl Writing {
             Some(at) => (&path[..at], &path[at + 1..]),
             None => (path, &[][..]),
         };
-        let at = self
-            .order
-            .iter()
-            .position(|name| name.as_encoded_bytes() == top)?;
+        let at = *self.index.get(top)?;
         Some((at, rest.is_empty() && !path.ends_with(b"/")))
+    }
+
+    /// The first place from `from` on whose name is not made: `order`'s
+    /// length past the last.
+    fn not_made_from(&mut self, from: usize) -> usize {
+        let mut at = from;
+        while self.next[at] != at {
+            // Halved as it is walked: each walk shortens the next.
+            self.next[at] = self.next[self.next[at]];
+            at = self.next[at];
+        }
+        at
     }
 
     /// rsync said `path` whole, `bytes` of it: how far its name has come.
     fn placed(&mut self, bytes: u64, path: &[u8]) -> Option<(OsString, u64)> {
         let (at, alone) = self.name_of(path)?;
-        let name = self.order[at].clone();
-        let whole = self.whole.entry(name.clone()).or_default();
-        *whole = whole.saturating_add(bytes);
-        let so_far = *whole;
+        self.whole[at] = self.whole[at].saturating_add(bytes);
+        let so_far = self.whole[at];
         self.said = self.said.saturating_add(bytes);
         if alone {
-            self.made.insert(name.clone());
-            self.now = (at + 1..self.order.len()).find(|n| !self.made.contains(&self.order[*n]));
+            self.next[at] = at + 1;
+            let next = self.not_made_from(at + 1);
+            self.now = (next < self.order.len()).then_some(next);
         } else {
             self.now = Some(at);
         }
-        Some((name, so_far))
+        Some((self.order[at].clone(), so_far))
     }
 
     /// rsync copied `total` bytes in all: how far the name it copies now
     /// has come.
     fn copied(&self, total: u64) -> Option<(OsString, u64)> {
-        let name = self.order.get(self.now?)?;
-        let whole = self.whole.get(name).copied().unwrap_or(0);
+        let now = self.now?;
+        let name = self.order.get(now)?;
         Some((
             name.clone(),
-            whole.saturating_add(total.saturating_sub(self.said)),
+            self.whole[now].saturating_add(total.saturating_sub(self.said)),
         ))
     }
 }
@@ -544,6 +562,37 @@ impl Transfer for Rsync {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What rsync copies next is the first name after the one it made
+    /// that is not made yet, however out of their order it made them; a
+    /// batch of 100,000 names told so, each line in constant time.
+    #[test]
+    fn rsync_s_next_name_is_the_first_not_made_after_the_one_it_made() {
+        let names: Vec<OsString> = ["a", "b", "c", "d"].map(OsString::from).to_vec();
+        let mut writing = Writing::new(&names);
+        let now = |w: &Writing| {
+            w.copied(0)
+                .map(|(name, _)| name.to_string_lossy().into_owned())
+        };
+        writing.placed(1, b"c");
+        assert_eq!(now(&writing).as_deref(), Some("d"));
+        writing.placed(1, b"b");
+        assert_eq!(now(&writing).as_deref(), Some("d"), "c is made already");
+        writing.placed(1, b"a");
+        assert_eq!(now(&writing).as_deref(), Some("d"));
+        writing.placed(1, b"d");
+        assert_eq!(now(&writing), None, "all made");
+        // Many, made in the reverse of their order.
+        let names: Vec<OsString> = (0..100_000)
+            .map(|n| OsString::from(format!("{n:06}")))
+            .collect();
+        let mut writing = Writing::new(&names);
+        for name in names.iter().rev() {
+            writing.placed(1, name.as_encoded_bytes());
+        }
+        assert_eq!(writing.said, 100_000);
+        assert_eq!(now(&writing), None);
+    }
 
     /// What rsync says as it goes, its order the names' (a folder's line
     /// as it begins it, each file once whole, its bytes in all on the

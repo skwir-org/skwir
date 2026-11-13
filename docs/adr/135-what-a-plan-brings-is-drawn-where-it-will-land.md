@@ -196,7 +196,12 @@ copy is told made (`Meter::writing`): what was read ahead of what the
 server took is not whole. rclone's copies within a server tell each
 name's bytes as each of its files is copied. Windows tells no other
 process's offsets: its items say "copying" at the batch's share. Linux
-tried; macOS compiled only.
+tried; macOS compiled only. Where a system will not say what a helper
+has open (a hardened `ptrace_scope`), or a helper runs a second with no
+file of what it copies open where it is looked at (a worker it did not
+start, as Linux lists them), its items are told nothing of after all
+(`Told::untold`): they say "copying" at the batch's share, as on Windows,
+rather than wait.
 
 ## Amended 2026-11-13: a real SFTP copy watched
 

@@ -288,6 +288,11 @@ pub struct Told<'a> {
     /// no bar and wakes no window: a transfer that tells it tells what all
     /// came in `copied` too.
     pub writing: &'a (dyn Fn(&OsStr, u64) + Sync),
+    /// It cannot tell each name after all, though it said it would
+    /// (`Transfer::tells_each`): a helper whose open files this system
+    /// would not let it read. What it has told nothing of says it copies
+    /// with the rest of its batch, not that it waits. Said only.
+    pub untold: &'a (dyn Fn() + Sync),
 }
 
 /// What a transfer heeds as it goes: the plan's cancel and its pause.
@@ -1049,6 +1054,7 @@ fn batch(from: &Path, dest: &Path, taken: &[Taken], ctx: &StepContext) -> Result
             writer(step, done);
         }
     };
+    let untold = ctx.untold(taken.iter().map(|t| t.step).collect());
     // What a move's source is as it is copied: changed after, its step
     // leaves it (`builtin::move_entry`).
     let states: HashMap<&Path, CopiedAs> = taken
@@ -1155,6 +1161,7 @@ fn batch(from: &Path, dest: &Path, taken: &[Taken], ctx: &StepContext) -> Result
                 placed: &|_| {},
                 made: &made,
                 writing: &writing,
+                untold: &untold,
             };
             run(from, (&staged, alone), &into, &aside, &told, ctx)?;
             let made: u64 = staged.iter().map(|t| t.bytes).sum();
@@ -1187,6 +1194,7 @@ fn batch(from: &Path, dest: &Path, taken: &[Taken], ctx: &StepContext) -> Result
                 },
                 made: &made,
                 writing: &writing,
+                untold: &untold,
             };
             let ran = run(from, (&placed, alone), dest, &aside, &told, ctx);
             let said = said.into_inner();
@@ -1336,6 +1344,7 @@ fn batch_in_place(
         placed: &made,
         made: &made,
         writing: &|_, _| {},
+        untold: &|| {},
     };
     let ran = run(from, (&here, is_alone(taken)), dest, &aside, &told, ctx);
     let cancelled = ctx.cancel_token().is_cancelled();
@@ -1673,6 +1682,7 @@ fn run(
         placed: told.placed,
         made: told.made,
         writing: told.writing,
+        untold: told.untold,
     };
     let read = |ran: anyhow::Result<()>| {
         if ran.is_ok() {
@@ -2139,6 +2149,7 @@ mod tests {
         placed: &|_| {},
         made: &|_| {},
         writing: &|_, _| {},
+        untold: &|| {},
     };
 
     /// A folder of the test's on the home's file system, which keeps
@@ -3168,6 +3179,7 @@ mod tests {
             placed: &placed,
             made: &made,
             writing: &|_, _| {},
+            untold: &|| {},
         };
         copy_at_once(&from, &names, &into, &aside, &tells, &control).unwrap();
         let mut said = std::mem::take(&mut *told.lock());
