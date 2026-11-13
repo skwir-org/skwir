@@ -400,25 +400,7 @@ impl Scheduler {
         cancel: CancelToken,
         job: impl FnOnce() + Send + 'static,
     ) {
-        let seq = self.inner.seq.fetch_add(1, AtomicOrdering::Relaxed);
-        let mut q = self.inner.queue.lock();
-        q.heap.push(Task {
-            priority,
-            seq,
-            label,
-            cancel,
-            lane,
-            job: Box::new(job),
-        });
-        let another = q.wants_another(self.inner.workers);
-        let look = !another && q.wants_a_look(self.inner.workers);
-        drop(q);
-        self.inner.cv.notify_one();
-        if another {
-            start_standing_in(&self.inner);
-        } else if look {
-            look_later(&self.inner);
-        }
+        push(&self.inner, lane, priority, label, cancel, job);
     }
 
     /// Number of tasks waiting to run, their lane's turn included.
@@ -579,6 +561,164 @@ pub fn let_go<T: Send + 'static>(value: T) {
     });
     drop(q);
     inner.cv.notify_one();
+}
+
+/// Run `each` for every part of `0..parts`, each once, on the calling
+/// thread and on the idle workers of the pool whose job calls it, and
+/// return once every part ran or was let go: work of a microsecond an item
+/// over hundreds of thousands (a sort's keys, ADR-130) takes the cores the
+/// pool has, never a thread more. Outside a job (a test, a tool, the
+/// window's thread), every part runs here. Once `cancel` fires no part
+/// begins, and those let go are not run: whether every part ran. The
+/// caller waits only for parts already begun: a helper whose turn comes
+/// once all are taken ends at once, and none keeps `each` (what it holds)
+/// after this returns.
+pub fn share(
+    parts: usize,
+    priority: Priority,
+    cancel: &CancelToken,
+    each: impl Fn(usize) + Send + Sync + 'static,
+) -> bool {
+    let pool = RUNNING
+        .try_with(|running| {
+            running
+                .borrow()
+                .as_ref()
+                .and_then(|(pool, ..)| pool.upgrade())
+        })
+        .ok()
+        .flatten();
+    let each: Arc<dyn Fn(usize) + Send + Sync> = Arc::new(each);
+    let shared = Arc::new(Share {
+        parts,
+        next: std::sync::atomic::AtomicUsize::new(0),
+        cancel: cancel.clone(),
+        state: Mutex::new(Shared {
+            each: Some(Arc::clone(&each)),
+            done: 0,
+            ran: 0,
+            holding: 0,
+        }),
+        changed: Condvar::new(),
+    });
+    let helpers = pool.as_ref().map_or(0, |pool| {
+        pool.workers.saturating_sub(1).min(parts.saturating_sub(1))
+    });
+    if let Some(pool) = pool {
+        for _ in 0..helpers {
+            let shared = Arc::clone(&shared);
+            push(
+                &pool,
+                Lane::SHARED,
+                priority,
+                "share",
+                cancel.clone(),
+                move || {
+                    let each = {
+                        let mut state = shared.state.lock();
+                        let Some(each) = state.each.clone() else {
+                            return;
+                        };
+                        state.holding += 1;
+                        each
+                    };
+                    shared.take(&*each);
+                    drop(each);
+                    shared.state.lock().holding -= 1;
+                    shared.changed.notify_all();
+                },
+            );
+        }
+    }
+    shared.take(&*each);
+    let mut state = shared.state.lock();
+    while state.done < parts {
+        shared.changed.wait(&mut state);
+    }
+    state.each = None;
+    while state.holding > 0 {
+        shared.changed.wait(&mut state);
+    }
+    state.ran == parts
+}
+
+/// Parts of work run by [`share`].
+struct Share {
+    parts: usize,
+    /// The next part to take.
+    next: std::sync::atomic::AtomicUsize,
+    cancel: CancelToken,
+    state: Mutex<Shared>,
+    changed: Condvar,
+}
+
+struct Shared {
+    /// What runs a part, until every part was taken and ended.
+    each: Option<Arc<dyn Fn(usize) + Send + Sync>>,
+    /// Parts ended, run or let go; and run.
+    done: usize,
+    ran: usize,
+    /// Helpers holding `each`.
+    holding: usize,
+}
+
+impl Share {
+    /// Take parts and run them until none is left.
+    fn take(&self, each: &dyn Fn(usize)) {
+        /// Counts the part ended however it ends, a panic too: what waits
+        /// for it never waits for good.
+        struct Ended<'a>(&'a Share, bool);
+        impl Drop for Ended<'_> {
+            fn drop(&mut self) {
+                let mut state = self.0.state.lock();
+                state.done += 1;
+                state.ran += usize::from(self.1);
+                drop(state);
+                self.0.changed.notify_all();
+            }
+        }
+        loop {
+            let part = self.next.fetch_add(1, AtomicOrdering::Relaxed);
+            if part >= self.parts {
+                return;
+            }
+            let mut ended = Ended(self, false);
+            if !self.cancel.is_cancelled() {
+                each(part);
+                ended.1 = true;
+            }
+        }
+    }
+}
+
+/// Queue `job` in `inner`'s pool (`Scheduler::spawn_in`).
+fn push(
+    inner: &Arc<Inner>,
+    lane: Lane,
+    priority: Priority,
+    label: &'static str,
+    cancel: CancelToken,
+    job: impl FnOnce() + Send + 'static,
+) {
+    let seq = inner.seq.fetch_add(1, AtomicOrdering::Relaxed);
+    let mut q = inner.queue.lock();
+    q.heap.push(Task {
+        priority,
+        seq,
+        label,
+        cancel,
+        lane,
+        job: Box::new(job),
+    });
+    let another = q.wants_another(inner.workers);
+    let look = !another && q.wants_a_look(inner.workers);
+    drop(q);
+    inner.cv.notify_one();
+    if another {
+        start_standing_in(inner);
+    } else if look {
+        look_later(inner);
+    }
 }
 
 /// Whether skwir has a window, whose thread applies what listings send.
@@ -814,6 +954,68 @@ pub(crate) fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Work shared from a job runs each part once, on the job's thread and
+    /// on the pool's idle workers, never more at once than the pool has;
+    /// outside a job, all of it here; cancelled, no part begins, and what
+    /// it holds is let go of once it returns.
+    #[test]
+    fn shared_work_runs_each_part_once_on_no_more_threads_than_the_pool() {
+        use std::sync::atomic::AtomicUsize;
+        let parts = 64;
+        let run = move |cancel: CancelToken| {
+            let ran: Arc<Vec<AtomicUsize>> =
+                Arc::new((0..parts).map(|_| AtomicUsize::new(0)).collect());
+            let (now, most) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+            let held = Arc::new(());
+            let all = {
+                let (ran, now, most, held) = (
+                    Arc::clone(&ran),
+                    Arc::clone(&now),
+                    Arc::clone(&most),
+                    Arc::clone(&held),
+                );
+                share(parts, Priority::Visible, &cancel, move |part| {
+                    assert!(Arc::strong_count(&held) > 1, "held while it runs");
+                    let at_once = now.fetch_add(1, AtomicOrdering::SeqCst) + 1;
+                    most.fetch_max(at_once, AtomicOrdering::SeqCst);
+                    std::thread::sleep(Duration::from_millis(2));
+                    ran[part].fetch_add(1, AtomicOrdering::SeqCst);
+                    now.fetch_sub(1, AtomicOrdering::SeqCst);
+                })
+            };
+            let counts: Vec<usize> = ran.iter().map(|n| n.load(AtomicOrdering::SeqCst)).collect();
+            (
+                all,
+                counts,
+                most.load(AtomicOrdering::SeqCst),
+                Arc::strong_count(&held),
+            )
+        };
+        // Outside a job: here alone.
+        let (all, counts, most, held) = run(CancelToken::new());
+        assert!(all);
+        assert!(counts.iter().all(|&n| n == 1));
+        assert_eq!(most, 1);
+        assert_eq!(held, 1, "let go of");
+        // In a job of a pool of three.
+        let scheduler = Scheduler::without_stand_ins(3);
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        scheduler.spawn(Priority::Visible, "test", CancelToken::new(), move || {
+            tx.send(run(CancelToken::new())).unwrap();
+        });
+        let (all, counts, most, held) = rx.recv_timeout(Duration::from_secs(20)).unwrap();
+        assert!(all);
+        assert!(counts.iter().all(|&n| n == 1), "{counts:?}");
+        assert!((1..=3).contains(&most), "{most} at once");
+        assert_eq!(held, 1, "let go of by every helper");
+        // Cancelled: no part begins.
+        let cancel = CancelToken::new();
+        cancel.cancel();
+        let (all, counts, ..) = run(cancel);
+        assert!(!all);
+        assert!(counts.iter().all(|&n| n == 0));
+    }
 
     /// What a job calls sees its job cancelled, and stops early: a
     /// command dispatched on a worker has no token of its own.

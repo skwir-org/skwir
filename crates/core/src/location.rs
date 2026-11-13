@@ -1966,9 +1966,10 @@ impl SortJob {
         let sorted = {
             let mut keyed = keys_of(
                 &sort,
-                entries.values().filter(|slot| {
-                    shown_with(sort.spec, slot, companions, |owner| named.contains(owner))
-                }),
+                &entries,
+                0,
+                |slot| shown_with(sort.spec, slot, companions, |owner| named.contains(owner)),
+                &cancel,
             );
             // The sort is the long part: a sort let go of ends here, so
             // the entries are the listing's again at once.
@@ -2057,24 +2058,42 @@ fn shown_with(
     spec.show_hidden || !slot.entry.is_hidden()
 }
 
-/// `slots`' sort keys under `sort`, not sorted yet.
-fn keys_of<'a>(sort: &Sort, slots: impl Iterator<Item = &'a Slot>) -> Vec<SortKeyOf<'a>> {
+/// The entries a listing holds, which a sort on a worker shares
+/// (`Listing::entries`).
+type Entries = Arc<crate::hashing::IndexMap<EntryId, Slot>>;
+
+/// The sort keys under `sort` of `entries` from the `from`th on that
+/// `shown` keeps, not sorted yet. None once `cancel` fired while what the
+/// sorter's keys answer was asked on every core (`answered_of`): the order
+/// is let go of.
+fn keys_of<'a>(
+    sort: &Sort,
+    entries: &'a Entries,
+    from: usize,
+    shown: impl Fn(&Slot) -> bool,
+    cancel: &CancelToken,
+) -> Vec<SortKeyOf<'a>> {
+    let slots = || {
+        entries.as_slice()[from..]
+            .values()
+            .filter(|slot| shown(slot))
+    };
     let costly = sort.keys.as_ref().is_some_and(|keys| keys.costly);
     if !costly || crate::scheduler::on_window_thread() {
-        return slots.map(|slot| Listing::sort_key(sort, slot)).collect();
+        return slots().map(|slot| Listing::sort_key(sort, slot)).collect();
     }
-    let slots: Vec<&Slot> = slots.collect();
-    let Some(answered) = answered_of(sort, &slots) else {
-        return slots
-            .into_iter()
-            .map(|slot| Listing::sort_key(sort, slot))
-            .collect();
-    };
-    slots
-        .into_iter()
-        .zip(answered)
-        .map(|(slot, answered)| Listing::key_answered(sort, slot, answered))
-        .collect()
+    let at: Arc<[usize]> = (from..entries.len())
+        .filter(|&at| shown(&entries[at]))
+        .collect();
+    match answered_of(sort, entries, &at, cancel) {
+        Some(answered) => at
+            .iter()
+            .zip(answered)
+            .map(|(&at, answered)| Listing::key_answered(sort, &entries[at], answered))
+            .collect(),
+        None if cancel.is_cancelled() => Vec::new(),
+        None => slots().map(|slot| Listing::sort_key(sort, slot)).collect(),
+    }
 }
 
 /// What the sorter's keys answered for an entry (`Listing::answered`):
@@ -2085,42 +2104,58 @@ struct Answered {
     value: Option<Arc<Group>>,
 }
 
-/// What the sorter's keys answer for each of `slots`, in their order, on
-/// every core; none where they are too few to be worth a thread. Asked
-/// only of keys that are costly (`Keys::costly`, `keys_of`): what a
-/// plugin reads of an entry's name (its type, in the type database) costs
-/// a microsecond or more, half a second for a folder of 300 000 files on
-/// one core, while what it answers from groups it shares (a date's) costs
-/// nanoseconds, and threads asking that at once only wait on one another
-/// (an order of /nix/store by date took four times as long). Only the
-/// answers are made there, which the keys share with every entry that has
-/// them; each entry's key is made where its order is (`key_answered`), so
-/// what an order keeps is allocated by a thread that lives on, not by one
-/// gone. Never from the window's thread, where keys answer from memory
-/// and leave to a worker what reads (a type's name): threads it waited
-/// for would read there.
-fn answered_of(sort: &Sort, slots: &[&Slot]) -> Option<Vec<Answered>> {
-    /// The fewest entries a thread is started for: a thread costs tens of
-    /// microseconds, what it answers a microsecond an entry.
+/// What the sorter's keys answer for the entries at `at` of `entries`, in
+/// their order, in parts shared with the idle workers of the job's pool
+/// (`scheduler::share`): never a thread more than it has, each part
+/// begun only while `cancel` has not fired. None where they are too few
+/// to be worth sharing, or once cancelled. Asked only of keys that are
+/// costly (`Keys::costly`, `keys_of`): what a plugin reads of an entry's
+/// name (its type, in the type database) costs a microsecond or more,
+/// half a second for a folder of 300 000 files on one core, while what it
+/// answers from groups it shares (a date's) costs nanoseconds, and
+/// threads asking that at once only wait on one another (an order of
+/// /nix/store by date took four times as long). Only the answers are made
+/// there, which the keys share with every entry that has them; each
+/// entry's key is made where its order is (`key_answered`). Never from the
+/// window's thread, where keys answer from memory and leave to a worker
+/// what reads (a type's name).
+fn answered_of(
+    sort: &Sort,
+    entries: &Entries,
+    at: &Arc<[usize]>,
+    cancel: &CancelToken,
+) -> Option<Vec<Answered>> {
+    /// The entries of a part: sharing one costs tens of microseconds,
+    /// what it answers a microsecond an entry.
     const EACH: usize = 4096;
-    let threads = std::thread::available_parallelism()
-        .map_or(1, std::num::NonZeroUsize::get)
-        .min(slots.len() / EACH);
-    if threads < 2 {
+    let parts = at.len().div_ceil(EACH);
+    if parts < 2 {
         return None;
     }
-    let mut answered = vec![Answered::default(); slots.len()];
-    let part = slots.len().div_ceil(threads);
-    std::thread::scope(|scope| {
-        for (out, slots) in answered.chunks_mut(part).zip(slots.chunks(part)) {
-            scope.spawn(move || {
-                for (answer, slot) in out.iter_mut().zip(slots) {
-                    *answer = Listing::answered(sort, slot);
-                }
-            });
-        }
-    });
-    Some(answered)
+    let out: Arc<Vec<parking_lot::Mutex<Vec<Answered>>>> =
+        Arc::new((0..parts).map(|_| parking_lot::Mutex::default()).collect());
+    let ran = {
+        let (sort, entries, at, out) = (
+            sort.clone(),
+            Arc::clone(entries),
+            Arc::clone(at),
+            Arc::clone(&out),
+        );
+        crate::scheduler::share(parts, Priority::Visible, cancel, move |part| {
+            let these = &at[part * EACH..((part + 1) * EACH).min(at.len())];
+            *out[part].lock() = these
+                .iter()
+                .map(|&at| Listing::answered(&sort, &entries[at]))
+                .collect();
+        })
+    };
+    // Every part ended and what ran them let go of them (`share`).
+    let out = Arc::try_unwrap(out).ok()?;
+    ran.then(|| {
+        out.into_iter()
+            .flat_map(parking_lot::Mutex::into_inner)
+            .collect()
+    })
 }
 
 /// Whether what `key` reads of `e` is not read yet, or could not be: it
@@ -2129,9 +2164,13 @@ fn unread(key: SortKey, e: &Entry) -> bool {
     key.waits() && key.applies_to(e) && (!key.has_read(&e.metadata) || e.metadata.is_unread())
 }
 
-/// `slots`' sort keys under `sort`, in order.
-fn keyed_of<'a>(sort: &Sort, slots: impl Iterator<Item = &'a Slot>) -> Vec<SortKeyOf<'a>> {
-    let mut keyed = keys_of(sort, slots);
+/// The sort keys under `sort` of `entries` that `shown` keeps, in order.
+fn keyed_of<'a>(
+    sort: &Sort,
+    entries: &'a Entries,
+    shown: impl Fn(&Slot) -> bool,
+) -> Vec<SortKeyOf<'a>> {
+    let mut keyed = keys_of(sort, entries, 0, shown, &CancelToken::new());
     keyed.sort_unstable_by(|a, b| Listing::compare(sort.spec, a, b));
     keyed
 }
@@ -3707,12 +3746,9 @@ impl Listing {
     /// The shown entries' sort keys, in order.
     fn keyed(&self, sort: &Sort) -> Vec<SortKeyOf<'_>> {
         let companions = self.companions_shown();
-        keyed_of(
-            sort,
-            self.entries
-                .values()
-                .filter(|slot| self.shown(sort.spec, slot, companions)),
-        )
+        keyed_of(sort, &self.entries, |slot| {
+            self.shown(sort.spec, slot, companions)
+        })
     }
 
     #[cfg(test)]
@@ -3825,7 +3861,10 @@ impl Listing {
         }
         again.extend(keys_of(
             &sort,
-            self.entries.as_slice()[cache.seen..].values().filter(shown),
+            &self.entries,
+            cache.seen,
+            |slot| shown(&slot),
+            &CancelToken::new(),
         ));
         again.sort_unstable_by(|a, b| Self::compare(spec, a, b));
         // Compared with, what they point at kept once what is taken out
@@ -5886,11 +5925,30 @@ mod tests {
             keyed.sort_unstable_by(|a, b| Listing::compare(sort.spec, a, b));
             keyed.iter().map(|key| key.id).collect()
         };
-        assert_eq!(*listing.sorted(&sort), *one_by_one);
+        // Sorted in a job, the keys asked of its pool's workers too.
+        let scheduler = Scheduler::without_stand_ins(4);
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        let asked = sort.clone();
+        scheduler.spawn(Priority::Visible, "test", CancelToken::new(), move || {
+            let order = listing.sorted(&asked);
+            tx.send((listing, order)).unwrap();
+        });
+        let (listing, order) = rx.recv_timeout(std::time::Duration::from_secs(30)).unwrap();
+        assert_eq!(*order, *one_by_one);
+        assert_eq!(
+            Arc::strong_count(&listing.entries),
+            1,
+            "let go of by every part"
+        );
         assert_eq!(
             said(&listing.spans_shown(&sort)),
             said(&spans_whole(&listing, &sort))
         );
+        // A sort cancelled asks no more of them.
+        let cancel = CancelToken::new();
+        cancel.cancel();
+        let entries = Arc::clone(&listing.entries);
+        assert!(keys_of(&sort, &entries, 0, |_| true, &cancel).is_empty());
     }
 
     /// An order that reads what its entries lack waits for all of it: the

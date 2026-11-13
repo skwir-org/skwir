@@ -209,9 +209,12 @@ order that reads waits for its reading, amended the same day).
   (`Keys::costly`, set by the query plugin for Kind and Type, whose
   answer is the type read from the name in the type database: about a
   microsecond a name). Only the answers are made there, which entries
-  share (`answered_of`, scoped threads); each entry's key is made by the
-  sort's own thread, so what the order keeps is allocated by a thread
-  that lives on. Keys that answer from groups they share in nanoseconds
+  share (`answered_of`), in parts shared with the idle workers of the
+  sort's pool (`scheduler::share`, amended 2026-11-13: scoped threads, a
+  core's worth for every sort at once and none told the sort was let
+  go of): never a thread more than the pool has, no part begun once the
+  sort is let go of, and the caller waits only for parts begun; each
+  entry's key is made by the sort's own thread. Keys that answer from groups they share in nanoseconds
   (a date's, an extension's) are asked on one: twenty threads asking
   them at once made a sort by date four times as long. On the window's
   thread, never: keys answer there from memory and leave what reads to
