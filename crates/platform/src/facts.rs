@@ -32,7 +32,7 @@ pub fn dimensions(path: &Path) -> Option<(u64, u64)> {
 /// What ffprobe's run says when it fails: a retry may answer.
 pub fn duration(path: &Path, cancel: &CancelToken) -> anyhow::Result<Option<u64>> {
     if let Some(ms) = crate::mp4::duration(path) {
-        return Ok(Some(ms));
+        return Ok(plausible(ms));
     }
     let Ok(ffprobe) = crate::process::required("ffprobe") else {
         return Ok(None);
@@ -55,13 +55,22 @@ pub fn duration(path: &Path, cancel: &CancelToken) -> anyhow::Result<Option<u64>
     Ok(seconds_said(&String::from_utf8_lossy(&out)))
 }
 
+/// The longest length believed, in milliseconds (about 31 years): one
+/// beyond is a damaged header, not a film, whichever reader said it.
+const LONGEST: u64 = 1_000_000_000_000;
+
+/// `ms` where it is a length a file may last: none for nothing, or for
+/// more than [`LONGEST`].
+fn plausible(ms: u64) -> Option<u64> {
+    (1..LONGEST).contains(&ms).then_some(ms)
+}
+
 /// What ffprobe says of a duration, `12.345000` seconds, in milliseconds;
 /// none for `N/A` or nothing.
 fn seconds_said(text: &str) -> Option<u64> {
     let seconds: f64 = text.trim().parse().ok()?;
-    let ms = (seconds * 1000.).round();
-    // A length of days is a damaged header, not a film.
-    (ms.is_finite() && (1. ..1e12).contains(&ms)).then_some(ms as u64)
+    // `as` saturates, and makes a NaN 0: the bound tells what is no length.
+    plausible((seconds * 1000.).round() as u64)
 }
 
 #[cfg(test)]
@@ -87,5 +96,15 @@ mod tests {
         assert_eq!(seconds_said("0.0004"), None, "rounds to nothing");
         assert_eq!(seconds_said("N/A"), None);
         assert_eq!(seconds_said(""), None);
+        assert_eq!(seconds_said("1e10"), None, "three centuries: damaged");
+    }
+
+    /// A movie header that says a length of centuries is damaged, as
+    /// ffprobe's would be: one bound for both readers.
+    #[test]
+    fn a_length_of_centuries_is_none_whoever_says_it() {
+        assert_eq!(plausible(12_345), Some(12_345));
+        assert_eq!(plausible(0), None);
+        assert_eq!(plausible(u64::MAX / 1000), None);
     }
 }
