@@ -83,6 +83,16 @@ pub trait Transfer: Send + Sync {
         false
     }
 
+    /// Whether it tells how far each name it copies from `from` into
+    /// `into` came (`Told::writing`), on this system: where it does, an
+    /// item of its batch it told nothing of yet has not begun and says it
+    /// waits; where not, each says copying at the batch's share (ADR-135).
+    /// Asked as [`Transfer::serves`] is.
+    fn tells_each(&self, from: &Path, into: &Path) -> bool {
+        let _ = (from, into);
+        false
+    }
+
     /// Copy the entries `names` of the folder `from` into the folder
     /// `into`, under the same names: folders whole, links as links, files'
     /// and folders' modes and modification times kept. Without
@@ -1013,6 +1023,16 @@ fn batch(from: &Path, dest: &Path, taken: &[Taken], ctx: &StepContext) -> Result
         ctx.batched(&t.src, Batched::Counted);
         ctx.counted_ahead(t.step, t.bytes);
     }
+    // Whether what copies them tells each name, as the transfer that
+    // would take them first says, from the start: a run its turn has not
+    // come for yet waits so. Each run says again as its transfer takes it.
+    let first = serving_for(from, dest, is_alone(taken), ctx)
+        .into_iter()
+        .next();
+    ctx.batch_tells(
+        taken.iter().map(|t| t.step),
+        first.is_some_and(|t| t.tells_each(from, dest)),
+    );
     // However it ends, what it took and did not make is no longer said
     // copying (ADR-135): its step copies its own.
     let _ends = Unbatch(ctx, taken.iter().map(|t| t.step).collect());
@@ -1603,6 +1623,24 @@ pub(super) fn remove_deferred(ctx: &StepContext) -> anyhow::Result<()> {
     failed.map_or(Ok(()), Err)
 }
 
+/// The plugins' transfers that would copy from `from` into `into`, in the
+/// order tried (`alone`, a file alone: those that take one).
+fn serving_for(from: &Path, into: &Path, alone: bool, ctx: &StepContext) -> Vec<Arc<dyn Transfer>> {
+    // A file alone within one remote goes as a batch does.
+    let within = crate::fs::reach::of(from)
+        .zip(crate::fs::reach::of(into))
+        .is_some_and(|(a, b)| a.point == b.point);
+    // Into a destination that moves nothing between its folders, only a
+    // transfer that writes in place (ADR-083).
+    let in_place = crate::fs::reach::writes_in_place(into);
+    ctx.transfers()
+        .map(|t| t.serving(from, into, alone && !within))
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|t| !in_place || t.writes_in_place(into))
+        .collect()
+}
+
 /// Copy `taken` of `from` into `into` (with `temp`, beside what it
 /// holds) by a plugin's transfer that serves the two folders (`alone`, a
 /// file alone: one that takes it), else by Skwir's own.
@@ -1638,20 +1676,7 @@ fn run(
         }
         ran
     };
-    // A file alone within one remote goes as a batch does.
-    let within = crate::fs::reach::of(from)
-        .zip(crate::fs::reach::of(into))
-        .is_some_and(|(a, b)| a.point == b.point);
-    // Into a destination that moves nothing between its folders, only a
-    // transfer that writes in place (ADR-083).
-    let in_place = crate::fs::reach::writes_in_place(into);
-    let serving: Vec<Arc<dyn Transfer>> = ctx
-        .transfers()
-        .map(|t| t.serving(from, into, alone && !within))
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|t| !in_place || t.writes_in_place(into))
-        .collect();
+    let serving = serving_for(from, into, alone, ctx);
     // A transfer that makes each file anew finds none a run cut short
     // was writing: they go first, once.
     let none = GoesOn::default();
@@ -1669,6 +1694,10 @@ fn run(
             gone = true;
             aside.goes_on = &none;
         }
+        ctx.batch_tells(
+            taken.iter().map(|t| t.step),
+            transfer.tells_each(from, into),
+        );
         match transfer.copy(from, &names, into, &aside, told, &control) {
             // It made nothing: the next.
             Err(error) if error.is::<NotServed>() => {}
@@ -1690,6 +1719,8 @@ fn run(
         by = "skwir",
         "a batch of copies"
     );
+    // Skwir's own tells nothing of each.
+    ctx.batch_tells(taken.iter().map(|t| t.step), false);
     read(copy_at_once(from, &names, into, &aside, told, &control))
         .with_context(|| format!("skwir copying {} entries", names.len()))
 }

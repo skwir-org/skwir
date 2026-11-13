@@ -291,6 +291,11 @@ fn copied_of(line: &[u8]) -> Option<u64> {
 }
 
 impl Transfer for Rsync {
+    /// Each name, from what rsync says of it (`rsync::Writing`).
+    fn tells_each(&self, _from: &Path, _into: &Path) -> bool {
+        true
+    }
+
     fn name(&self) -> &'static str {
         "rsync"
     }

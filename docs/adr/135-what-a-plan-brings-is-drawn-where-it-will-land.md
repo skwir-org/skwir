@@ -211,5 +211,15 @@ faults were found and fixed:
   the folder copied into, or beside it, its time kept), told made as it
   ends well (said only; a folder is once laid out, last).
 
-A folder's row fills by its files' sum; an item a later run of its batch
-takes says "copying" at the batch's share until its run tells it.
+A folder's row fills by its files' sum.
+
+- **An item a batch had not begun said "copying" at the batch's share**
+  (a file waiting for the batch's second run, the folder's files
+  copying): where the transfer tells each name it copies, on this system
+  (`Transfer::tells_each`: rsync, rclone within a server; sftp, `gio`
+  and `kioclient` where the files a process has open are read, KIO's
+  workers on Linux alone), an item it has told nothing of yet waits
+  (`arriving::Batching::tells`), as the transfer that would take the
+  batch first says from its start, and as each run's says as it takes
+  it. Where none tells each (Windows' followers, Skwir's own batch copy),
+  the batch's share stays.

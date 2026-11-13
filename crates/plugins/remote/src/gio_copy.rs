@@ -327,6 +327,15 @@ fn runs(files: Vec<(PathBuf, PathBuf, u64)>) -> Vec<(PathBuf, Vec<(PathBuf, u64)
 }
 
 impl Transfer for GioCopy {
+    /// Each name it copies to or from this machine, by the file `gio`
+    /// reads or writes here (`following`), where the system says what
+    /// another process has open; between two servers it reads none here.
+    fn tells_each(&self, from: &Path, into: &Path) -> bool {
+        skwir_platform::process::OPEN_FILES_READ
+            && (skwir_core::fs::reach::of(from).is_none()
+                || skwir_core::fs::reach::of(into).is_none())
+    }
+
     fn name(&self) -> &'static str {
         "gio"
     }

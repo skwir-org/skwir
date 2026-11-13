@@ -348,6 +348,13 @@ impl Sftp {
 }
 
 impl Transfer for Sftp {
+    /// Each name it sends from this machine, by the file `sftp` reads
+    /// (`following`), where the system says what another process has
+    /// open; within a server, `cp` there reads nothing here.
+    fn tells_each(&self, from: &Path, _into: &Path) -> bool {
+        skwir_platform::process::OPEN_FILES_READ && skwir_core::fs::reach::of(from).is_none()
+    }
+
     fn name(&self) -> &'static str {
         "sftp"
     }

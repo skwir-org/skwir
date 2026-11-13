@@ -16605,3 +16605,26 @@ on core and the remote plugin (the UI's change, one condition, not
 cross-linted). The disk filled once during the lints (0.2 GB): `just
 prune` freed 21.5 GB and they ran again. Not tried: `gio` or `kioclient`
 copies in a window, macOS, `just remote-check` whole after these.
+
+## 2026-11-13: an item a batch has not begun waits (ADR-135 amended)
+
+**Asked:** an item a batch took but had not begun said "copying" at the
+batch's share (seen in the window: two loose files waiting for the
+batch's second run, tinted as the folder's files copied). **Built:**
+`Transfer::tells_each(from, into)` (rsync and rclone within a server
+always; sftp from this machine, `gio` to or from it where
+`process::OPEN_FILES_READ`, Linux and macOS; `kioclient` where
+`OPEN_FILES_OF_STARTED`, Linux; Skwir's own batch copy never); the
+meter keeps it beside each step a batch took (`arriving::Batching`), as
+the first transfer that would serve the batch says from its start and
+each run's as it takes it (`transfer::serving_for`, shared by both); an
+item untold by one that tells waits. **Checked:** `state_of`'s test
+(waiting, then by its own bytes), a meter test (the flag set and
+corrected, bytes short of whole until made); the tests of core, the
+platform, the remote plugin and the UI (2065), clippy on them; the
+window again (the same SFTP server and fixture as the entry above, a
+folder of three files of 300 MB, a file of 300 MB and one of 12 bytes):
+the loose two said "waiting", untinted, while the folder went 28, 65,
+96, 100 %, then 100 % and 81 % a second into their own run (one frame
+said "waiting" as it began: the follower's first look). Not tried:
+Windows (the batch's share stays there by `tells_each`), macOS.

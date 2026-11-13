@@ -205,6 +205,11 @@ impl RcloneCopy {
 }
 
 impl Transfer for RcloneCopy {
+    /// Each name, one after another, as each of its files is copied.
+    fn tells_each(&self, _from: &Path, _into: &Path) -> bool {
+        true
+    }
+
     fn name(&self) -> &'static str {
         "rclone"
     }

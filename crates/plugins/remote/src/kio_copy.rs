@@ -291,6 +291,15 @@ fn runs(files: Vec<(PathBuf, PathBuf, u64)>) -> Vec<(PathBuf, Vec<(PathBuf, u64)
 }
 
 impl Transfer for KioCopy {
+    /// Each name it copies to or from this machine, by the file its
+    /// workers read or write here (`following`), where the system says
+    /// what the processes `kioclient` started have open (Linux).
+    fn tells_each(&self, from: &Path, into: &Path) -> bool {
+        skwir_platform::process::OPEN_FILES_OF_STARTED
+            && (skwir_core::fs::reach::of(from).is_none()
+                || skwir_core::fs::reach::of(into).is_none())
+    }
+
     fn name(&self) -> &'static str {
         "kioclient"
     }

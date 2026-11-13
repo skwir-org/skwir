@@ -155,7 +155,7 @@ pub(super) struct Meter {
     /// where its transfer tells them (`Told::writing`) and in all: what
     /// arrives says it is copying (ADR-135). A step leaves as it ends, or
     /// as the batch ends without making it.
-    batching: Mutex<HashMap<usize, (u64, u64)>>,
+    batching: Mutex<HashMap<usize, super::arriving::Batching>>,
     /// The steps of the plan, once it began ([`Self::begin`]).
     items: AtomicUsize,
     /// What its steps were sized at before it began, when they were.
@@ -329,7 +329,13 @@ impl Meter {
     /// waits for what that step was sized at. A step after the one under
     /// way has them apart from that one's own, which it counts still.
     pub(super) fn counted(&self, step: usize, bytes: u64) {
-        self.batching.lock().insert(step, (0, bytes));
+        self.batching.lock().insert(
+            step,
+            super::arriving::Batching {
+                total: bytes,
+                ..Default::default()
+            },
+        );
         let mut steps = self.steps.lock();
         if step > steps.ended {
             steps.others = steps.others.saturating_add(bytes);
@@ -343,8 +349,8 @@ impl Meter {
 
     /// The step `step`'s copy was finished ahead of its turn, by a batch.
     pub(super) fn finished_ahead(&self, step: usize) {
-        if let Some((done, total)) = self.batching.lock().get_mut(&step) {
-            *done = *total;
+        if let Some(taken) = self.batching.lock().get_mut(&step) {
+            taken.done = taken.total;
         }
         if self.finished_ahead.lock().insert(step) {
             self.moved_now();
@@ -356,8 +362,19 @@ impl Meter {
     pub(super) fn writing(&self, step: usize, done: u64) {
         // Whole only once made (`finished_ahead`): what a tool read ahead
         // of what its server took is not.
-        if let Some((was, total)) = self.batching.lock().get_mut(&step) {
-            *was = done.min(total.saturating_sub(1)).max(*was);
+        if let Some(taken) = self.batching.lock().get_mut(&step) {
+            taken.done = done.min(taken.total.saturating_sub(1)).max(taken.done);
+        }
+    }
+
+    /// The batch copying `steps` is copied by a transfer that tells each
+    /// name it copies, or not (`Transfer::tells_each`): said only.
+    pub(super) fn batch_tells(&self, steps: impl IntoIterator<Item = usize>, tells: bool) {
+        let mut batching = self.batching.lock();
+        for step in steps {
+            if let Some(taken) = batching.get_mut(&step) {
+                taken.tells = tells;
+            }
         }
     }
 
@@ -2073,6 +2090,12 @@ impl StepContext {
         self.meter.unbatch(steps);
     }
 
+    /// The batch that took `steps` is copied by a transfer that tells each
+    /// name it copies, or not (`Transfer::tells_each`, ADR-135).
+    pub(super) fn batch_tells(&self, steps: impl IntoIterator<Item = usize>, tells: bool) {
+        self.meter.batch_tells(steps, tells);
+    }
+
     /// What a batch that failed counted is taken back (ADR-078): `bytes`
     /// done, and the steps `steps` finished, which copy their own again.
     pub(super) fn uncount(&self, bytes: u64, steps: &[usize]) {
@@ -2565,6 +2588,37 @@ mod tests {
         meter.step_ended();
         meter.step_ended();
         assert_eq!(finished(), 3, "their steps ended: counted once");
+    }
+
+    /// The steps a batch took say whether the transfer copying them tells
+    /// each name, as the transfer tried says, and each one's bytes as
+    /// told, short of whole until made (ADR-135).
+    #[test]
+    fn a_batch_s_steps_say_whether_their_transfer_tells_each() {
+        use crate::op::arriving::Batching;
+        let meter = Meter::new(None);
+        meter.begin(3);
+        meter.counted(1, 100);
+        meter.counted(2, 100);
+        let of = |step: usize| meter.steps_read().batching[&step];
+        assert!(!of(1).tells, "untold until a transfer takes it");
+        meter.batch_tells([1, 2], true);
+        meter.writing(1, 100);
+        assert_eq!(
+            of(1),
+            Batching {
+                done: 99,
+                total: 100,
+                tells: true
+            },
+            "short of whole until made"
+        );
+        assert_eq!(of(2).done, 0);
+        // The next transfer tried, Skwir's own, tells nothing of each.
+        meter.batch_tells([2], false);
+        assert!(!of(2).tells);
+        meter.finished_ahead(1);
+        assert_eq!(of(1).done, 100);
     }
 
     /// A batch that failed takes back what it counted: its bytes no longer

@@ -86,7 +86,19 @@ pub(super) struct StepsRead {
     pub ahead: HashSet<usize>,
     /// The steps a batch under way took: their bytes copied so far, where
     /// its transfer tells them, and in all.
-    pub batching: HashMap<usize, (u64, u64)>,
+    pub batching: HashMap<usize, Batching>,
+}
+
+/// A step a batch under way took (ADR-078), as its meter keeps it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct Batching {
+    /// Its bytes copied so far, as its transfer tells them.
+    pub done: u64,
+    /// Its bytes in all.
+    pub total: u64,
+    /// Whether the transfer copying it tells each name it copies
+    /// (`Transfer::tells_each`): then nothing told yet has not begun.
+    pub tells: bool,
 }
 
 /// Where `arrival` stands as its plan's run read it, `None` once it landed
@@ -107,20 +119,24 @@ pub(super) fn state_of(arrival: &Arrival, read: Option<&StepsRead>) -> Option<Ar
     if steps.clone().all(|step| read.ahead.contains(&step)) {
         return Some(Arrives::Moving(1.));
     }
-    // Taken by a batch: by its own bytes where its transfer tells them,
-    // else by the batch's, which the step under way runs.
-    let batched: Vec<(u64, u64)> = steps
+    // Taken by a batch: by its own bytes where its transfer tells them;
+    // nothing told yet by one that tells each, not begun; else by the
+    // batch's, which the step under way runs.
+    let batched: Vec<Batching> = steps
         .clone()
         .filter_map(|step| read.batching.get(&step).copied())
         .collect();
     if !batched.is_empty() {
-        let (done, total) = batched.iter().fold((0u64, 0u64), |(d, t), (done, total)| {
-            (d.saturating_add(*done), t.saturating_add(*total))
+        let (done, total) = batched.iter().fold((0u64, 0u64), |(d, t), b| {
+            (d.saturating_add(b.done), t.saturating_add(b.total))
         });
         if done > 0 && total > 0 {
             return Some(Arrives::Moving(
                 (done as f64 / total as f64).clamp(0., 1.) as f32
             ));
+        }
+        if batched.iter().any(|b| b.tells) {
+            return Some(Arrives::Waiting);
         }
         let batch = if read.step_total > 0 {
             read.step_done.min(read.step_total) as f64 / read.step_total as f64
@@ -538,16 +554,27 @@ mod tests {
     }
 
     /// Taken by a batch, an item copies with it: by its own bytes where
-    /// the transfer tells them, else at the batch's share; once the batch
-    /// let it go unmade, it waits for its turn again.
+    /// the transfer tells them, else at the batch's share; a transfer that
+    /// tells each not having told it yet, it waits; once the batch let it
+    /// go unmade, it waits for its turn again.
     #[test]
     fn an_item_a_batch_took_copies_with_it() {
         let item = arrival(Some(3..4));
         let mut batch = read(1, 40, 100, &[]);
-        batch.batching.insert(3, (0, 50));
+        let taken = |done, tells| Batching {
+            done,
+            total: 50,
+            tells,
+        };
+        batch.batching.insert(3, taken(0, false));
         assert_eq!(state_of(&item, Some(&batch)), Some(Arrives::Copying(0.4)));
-        batch.batching.insert(3, (25, 50));
+        batch.batching.insert(3, taken(25, false));
         assert_eq!(state_of(&item, Some(&batch)), Some(Arrives::Moving(0.5)));
+        // One that tells each: not told yet, not begun (a later session).
+        batch.batching.insert(3, taken(0, true));
+        assert_eq!(state_of(&item, Some(&batch)), Some(Arrives::Waiting));
+        batch.batching.insert(3, taken(10, true));
+        assert_eq!(state_of(&item, Some(&batch)), Some(Arrives::Moving(0.2)));
         batch.batching.clear();
         assert_eq!(state_of(&item, Some(&batch)), Some(Arrives::Waiting));
     }

@@ -1015,9 +1015,9 @@ every view of files, the follow-ups the user kept and the limits found
 done the same day. Left: a grouped board shows no arrival in a group no
 file is in yet; an undo waiting its turn shows nothing; what sftp, GVfs
 and KIO copy is followed by the files their helpers have open on Linux
-and macOS (compiled only), not on Windows; there, and rclone everywhere,
-nothing is said of a file until it is whole ("copying" at the batch's
-share); rsync's order is taken as its names' bytes; macOS and
+and macOS (compiled only; KIO's workers on Linux alone), not on Windows,
+where their items say "copying" at the batch's share; rclone's copies
+within a server tell each file once it is whole; rsync's order is taken as its names' bytes; macOS and
 Windows tell a file being written by its writes, not its close (not
 tried there); an item keeps about 1.35 KB while it comes
 (10,000: 13 MB), a compact form being more work at each placing, not

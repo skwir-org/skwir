@@ -856,6 +856,14 @@ pub fn run_looking(
     watched(command, input, cancel, Limit::None, held, watch, look)
 }
 
+/// Whether [`open_files`] reads another process's open files here (Linux,
+/// macOS); elsewhere it says none.
+pub const OPEN_FILES_READ: bool = cfg!(any(target_os = "linux", target_os = "macos"));
+
+/// Whether [`open_files`] reads those of what a process started too
+/// (Linux); on macOS, the process's alone.
+pub const OPEN_FILES_OF_STARTED: bool = cfg!(target_os = "linux");
+
 /// A regular file a process has open, and how far into it it has read or
 /// written (ADR-135).
 #[derive(Clone, Debug, PartialEq, Eq)]
