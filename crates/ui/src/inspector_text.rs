@@ -180,10 +180,10 @@ fn spot_of(layout: &gpui::TextLayout, range: std::ops::Range<usize>) -> Option<S
 /// The text of `range` as drawn and its highlights (relative to `range`):
 /// emphasis, links, code, scripts, small capitals and the `selection`, which
 /// is in the block's coordinates. A link found in raw text is drawn as one
-/// only while armed (`marks`); a label is set before its link. Shared by the
-/// reader's rows and the note popover, so a note reads as it does in the
-/// text.
-pub fn styled(
+/// only while armed (`marks`); a label is set before its link. Drawn only
+/// through `block_text`, which paints the drawings it makes room for, so a
+/// note reads as it does in the text.
+fn styled(
     block: &Block,
     range: std::ops::Range<usize>,
     selection: std::ops::Range<usize>,
@@ -489,6 +489,44 @@ fn paint_drawing(
     );
 }
 
+/// `range` of `block` as the text a view draws, and what paints its
+/// drawings: the text in its styles (`styled`), each drawing a box its line
+/// makes room for, and told to a screen reader as the block says it
+/// (`Block::said`, while one listens: `MarkdownStyle::listener`); then, for the
+/// element holding the text to take as its child after it, what paints each
+/// drawing in the box the text's layout put it in. Every text laid out from
+/// a block's runs is made here, so no box is ever laid out without its
+/// drawing.
+pub fn block_text(
+    block: &Block,
+    range: std::ops::Range<usize>,
+    selection: std::ops::Range<usize>,
+    style: &MarkdownStyle,
+    marks: Marks<'_>,
+) -> (StyledText, Option<AnyElement>) {
+    let drawings = drawings_in(block, range.clone(), selection.clone(), style);
+    let (shown, highlights) = styled(block, range.clone(), selection, style, marks);
+    let mut text = StyledText::new(shown).with_highlights(highlights);
+    // What a screen reader is told where it is not what is shown: a
+    // formula's TeX, words shown only or said only.
+    if style.listener == crate::markdown::Listener::ScreenReader
+        && let std::borrow::Cow::Owned(said) = block.said(range)
+    {
+        text = text.with_said(said);
+    }
+    let painted = (!drawings.is_empty()).then(|| {
+        let drawn = text.layout().clone();
+        gpui::canvas(
+            |_, _, _| {},
+            move |_, (), window, cx| paint_drawings(&drawn, &drawings, window, cx),
+        )
+        .absolute()
+        .size_full()
+        .into_any_element()
+    });
+    (text, painted)
+}
+
 /// One stretch of a block's text as its own element: the whole block, or a
 /// single table cell. Runs, links and the selection are clipped to `range`,
 /// and pointer offsets are reported back in the block's own coordinates, so
@@ -540,15 +578,7 @@ pub fn part(
         labels,
         found: &found,
     };
-    let (shown, highlights) = styled(block, range.clone(), selection.clone(), style, marks);
-    let drawings = drawings_in(block, range.clone(), selection.clone(), style);
-    let mut text = StyledText::new(shown).with_highlights(highlights);
-    // What a screen reader is told where it is not what is shown: a
-    // formula's TeX, words shown only or said only.
-    if let std::borrow::Cow::Owned(said) = block.said(range.clone()) {
-        text = text.with_said(said);
-    }
-    let drawn = text.layout().clone();
+    let (text, drawings) = block_text(block, range.clone(), selection.clone(), style, marks);
     let down = text.layout().clone();
     let placed = text.layout().clone();
     let told = text.layout().clone();
@@ -636,17 +666,7 @@ pub fn part(
         .id(gpui::ElementId::from((id, "select")))
         .cursor_text()
         .child(text)
-        // Painted after the text: each drawing in the box its line holds.
-        .when(!drawings.is_empty(), |d| {
-            d.child(
-                gpui::canvas(
-                    |_, _, _| {},
-                    move |_, (), window, cx| paint_drawings(&drawn, &drawings, window, cx),
-                )
-                .absolute()
-                .size_full(),
-            )
-        })
+        .children(drawings)
         // Prepainted after the text: where its lines are is known, for a
         // page read a screen at a time to end between two.
         .when_some(style.lines.clone(), |d, lines| {

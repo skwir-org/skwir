@@ -381,7 +381,10 @@ A name that says nothing is not a binary file.
 - The view draws a drawing where the text's layout put its box
   (`TextLayout::inline_boxes`, gpui patch 0060), as a mask in the ink its
   letters would have (the text's, a link's, the selection's, a ground's),
-  at the text's size: never a picture of fixed pixels or colors.
+  at the text's size: never a picture of fixed pixels or colors. Every
+  text laid out from a block's runs (a row, a cell, a note opened under
+  its reference) is made by `inspector_text::block_text`, which paints
+  the drawings it makes room for: no box is laid out undrawn.
 - **A formula taller than its text grows its own row**, not every line
   of its text (gpui's `LineRows`): a text's rows are not one line height
   apart. What is set under a row or between two (a found match's spot, a

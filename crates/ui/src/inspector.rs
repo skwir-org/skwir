@@ -3861,6 +3861,7 @@ pub fn content(
     // What is read is written in the reading font (ADR-073): its blocks,
     // and a note opened under its reference.
     list_style.font = reads(display.data.kind).then(|| theme.reading_font.clone());
+    list_style.listener = crate::markdown::Listener::of(shell.a11y);
     let note = (!view.parked)
         .then(|| crate::note_popover::popover(shell, &list_style, theme, cx))
         .flatten();

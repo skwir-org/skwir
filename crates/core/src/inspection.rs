@@ -568,88 +568,91 @@ impl Block {
     /// (`copied`), without what is shown only (`Run::unsaid`), with what is
     /// said only (`Block::unseen`) where it stands.
     pub fn said(&self, range: std::ops::Range<usize>) -> std::borrow::Cow<'_, str> {
-        let at_end = range.end == self.text.len();
-        let unseen: Vec<&(usize, String)> = self
-            .unseen
-            .iter()
-            .filter(|(at, _)| range.contains(at) || (at_end && *at == range.end))
-            .collect();
-        let unsaid = self
-            .runs
-            .iter()
-            .any(|run| run.unsaid && run.range.start < range.end && range.start < run.range.end);
-        if unseen.is_empty() && !unsaid {
-            return self.copied(range);
-        }
-        // Cut where a run or a word said only begins or ends; runs are in
-        // their text's order.
-        let mut cuts: Vec<usize> = self
-            .runs
-            .iter()
-            .flat_map(|run| [run.range.start, run.range.end])
-            .chain(unseen.iter().map(|(at, _)| *at))
-            .filter(|at| range.contains(at))
-            .chain([range.start, range.end])
-            .collect();
-        cuts.sort_unstable();
-        cuts.dedup();
-        let mut unseen = unseen.into_iter().peekable();
-        let mut said = String::new();
-        for cut in cuts.windows(2) {
-            let (from, to) = (cut[0], cut[1]);
-            while let Some((_, words)) = unseen.next_if(|(at, _)| *at <= from) {
-                said.push_str(words);
-            }
-            let run = self
-                .runs
-                .get(self.runs.partition_point(|run| run.range.end <= from))
-                .filter(|run| run.range.start <= from);
-            if !run.is_some_and(|run| run.unsaid) {
-                said.push_str(&self.copied(from..to));
-            }
-        }
-        for (_, words) in unseen {
-            said.push_str(words);
-        }
-        std::borrow::Cow::Owned(said)
+        self.read(range, true)
     }
 
     /// The text of `range` as it is copied: each drawing as what it says
     /// (`Drawing::text`), the rest as it is shown.
     pub fn copied(&self, range: std::ops::Range<usize>) -> std::borrow::Cow<'_, str> {
+        self.read(range, false)
+    }
+
+    /// `range` as copied, or as `said`: one pass through what reads
+    /// otherwise than it shows (its drawings; said, what is shown only and
+    /// the words said only), in its text's order. Borrowed where nothing
+    /// does.
+    fn read(&self, range: std::ops::Range<usize>, said: bool) -> std::borrow::Cow<'_, str> {
         let Some(text) = self.text.get(range.clone()) else {
             return std::borrow::Cow::Borrowed("");
         };
-        let mut drawn: Vec<(std::ops::Range<usize>, &Drawing)> = self
+        let mut changed: Vec<(std::ops::Range<usize>, Reads<'_>)> = self
             .runs
             .iter()
             .filter_map(|run| {
+                let reads = match run.drawing.as_deref() {
+                    _ if said && run.unsaid => Reads::Not,
+                    Some(drawing) => Reads::Drawn(drawing),
+                    None => return None,
+                };
                 let at = run.range.start.max(range.start)..run.range.end.min(range.end);
-                Some((at, run.drawing.as_deref()?)).filter(|(at, _)| !at.is_empty())
+                (!at.is_empty() && self.text.get(at.clone()).is_some()).then_some((at, reads))
             })
             .collect();
-        if drawn.is_empty() {
+        let at_end = range.end == self.text.len();
+        let mut words: Vec<&(usize, String)> = if said {
+            self.unseen
+                .iter()
+                .filter(|(at, _)| range.contains(at) || (at_end && *at == range.end))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        if changed.is_empty() && words.is_empty() {
             return std::borrow::Cow::Borrowed(text);
         }
-        drawn.sort_by_key(|(at, _)| at.start);
-        let mut said = String::with_capacity(text.len());
+        changed.sort_by_key(|(at, _)| at.start);
+        words.sort_by_key(|(at, _)| *at);
+        let mut words = words.into_iter().peekable();
+        let mut out = String::with_capacity(text.len());
         let mut from = range.start;
-        for (at, drawing) in drawn {
-            let Some(drawn) = self.text.get(at.clone()).filter(|_| at.start >= from) else {
+        for (at, reads) in changed {
+            // Past one it overlaps: what that one read is read.
+            let start = at.start.max(from);
+            if start >= at.end {
                 continue;
-            };
-            said.push_str(&self.text[from..at.start]);
-            for letter in drawn.chars() {
-                if letter == Self::DRAWN {
-                    said.push_str(&drawing.text);
-                } else {
-                    said.push(letter);
-                }
             }
+            self.put(&mut out, from..start, Reads::Shown, &mut words);
+            self.put(&mut out, start..at.end, reads, &mut words);
             from = at.end;
         }
-        said.push_str(&self.text[from..range.end]);
-        std::borrow::Cow::Owned(said)
+        self.put(&mut out, from..range.end, Reads::Shown, &mut words);
+        for (_, said) in words {
+            out.push_str(said);
+        }
+        std::borrow::Cow::Owned(out)
+    }
+
+    /// Text `span` read as `reads` says, onto `out`, with the words said
+    /// only that stand in it, each before the place it stands at.
+    fn put<'w>(
+        &self,
+        out: &mut String,
+        span: std::ops::Range<usize>,
+        reads: Reads<'_>,
+        words: &mut std::iter::Peekable<impl Iterator<Item = &'w (usize, String)>>,
+    ) {
+        let mut from = span.start;
+        while let Some((at, said)) = words.next_if(|(at, _)| *at < span.end) {
+            // Said at a character, where its place is within one.
+            let mut cut = (*at).clamp(from, span.end);
+            while !self.text.is_char_boundary(cut) {
+                cut += 1;
+            }
+            reads.put(out, &self.text[from..cut]);
+            out.push_str(said);
+            from = cut;
+        }
+        reads.put(out, &self.text[from..span.end]);
     }
 
     /// Show `picture`, described by `alt` (an image's `alt`, a drawing's
@@ -666,6 +669,34 @@ impl Block {
         self.picture = picture;
     }
 }
+/// How a stretch of a block's text reads (`Block::read`): as shown, as the
+/// words of its drawing (`Drawing::text`), or not at all (what is shown
+/// only, said).
+#[derive(Clone, Copy)]
+enum Reads<'d> {
+    Shown,
+    Drawn(&'d Drawing),
+    Not,
+}
+
+impl Reads<'_> {
+    fn put(self, out: &mut String, text: &str) {
+        match self {
+            Reads::Shown => out.push_str(text),
+            Reads::Drawn(drawing) => {
+                for letter in text.chars() {
+                    if letter == Block::DRAWN {
+                        out.push_str(&drawing.text);
+                    } else {
+                        out.push(letter);
+                    }
+                }
+            }
+            Reads::Not => {}
+        }
+    }
+}
+
 /// A picture a block shows.
 #[derive(Clone, Debug)]
 pub enum Picture {
@@ -953,6 +984,49 @@ mod tests {
             plain.said(0..5),
             std::borrow::Cow::Borrowed("Plain")
         ));
+    }
+
+    /// A drawing reads as its words, copied and said, beside what is shown
+    /// only and the words said only, each where it stands, in one pass
+    /// whatever the order the runs were given in.
+    #[test]
+    fn drawings_read_as_their_words_beside_what_is_shown_or_said_only() {
+        let drawing = |text: &str| {
+            std::sync::Arc::new(Drawing {
+                svg: std::sync::Arc::from([]),
+                id: 0,
+                width: 1.,
+                ascent: 1.,
+                descent: 0.,
+                margin: 0.,
+                text: text.into(),
+                tag: None,
+            })
+        };
+        let mut block = Block::default();
+        block.text.push_str("Let ");
+        block.push_drawing(drawing("$x$"), &Run::default());
+        let shown = block.text.len();
+        block.text.push_str(" ★ be ");
+        let star = shown + 1..shown + 1 + "★".len();
+        let before = block.text.len();
+        block.push_drawing(drawing("$y$"), &Run::default());
+        block.text.push('.');
+        block.runs.push(Run {
+            range: star.clone(),
+            unsaid: true,
+            ..Run::default()
+        });
+        block.unseen = vec![(star.end, "a star".into()), (before, ", ".into())];
+        let whole = 0..block.text.len();
+        assert_eq!(block.copied(whole.clone()), "Let $x$ ★ be $y$.");
+        assert_eq!(block.said(whole), "Let $x$ a star be , $y$.");
+        assert_eq!(block.copied(4..shown), "$x$", "a part is its own");
+        assert_eq!(block.said(0..4), "Let ");
+        // A place said only that is not at a character is said at the
+        // next one, never splitting it.
+        block.unseen = vec![(star.start + 1, "a star".into())];
+        assert_eq!(block.said(0..block.text.len()), "Let $x$ a star be $y$.");
     }
     #[test]
     fn split_preserves_unicode_and_ranges() {

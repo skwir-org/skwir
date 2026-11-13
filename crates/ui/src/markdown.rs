@@ -101,6 +101,28 @@ pub struct MarkdownStyle {
         std::sync::Arc<crate::inspector_rows::Tables>,
         std::rc::Rc<std::cell::RefCell<std::collections::HashMap<usize, gpui::ScrollHandle>>>,
     )>,
+    /// Who listens (`Shell::a11y`): only for a screen reader is what a
+    /// block says, where it is not what it shows, built (`Block::said`).
+    pub listener: Listener,
+}
+
+/// Who listens to what the blocks say (`MarkdownStyle::listener`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Listener {
+    #[default]
+    Nobody,
+    ScreenReader,
+}
+
+impl Listener {
+    /// A screen reader, where one listens (`Shell::a11y`).
+    pub fn of(a11y: bool) -> Self {
+        if a11y {
+            Self::ScreenReader
+        } else {
+            Self::Nobody
+        }
+    }
 }
 
 /// The widest a reading column may be, in ems of its text, for a
@@ -175,6 +197,7 @@ impl MarkdownStyle {
             code_look: None,
             lines: None,
             tables: None,
+            listener: Listener::Nobody,
         }
     }
 
@@ -188,6 +211,7 @@ impl MarkdownStyle {
             sought: self.sought.clone(),
             lines: self.lines.clone(),
             tables: self.tables.clone(),
+            listener: self.listener,
             // Its blocks lie on the same page.
             page: self.page,
             ..Self::new(theme, self.body_size, self.reading, None)

@@ -99,7 +99,9 @@ like `AGENTS.md`.
 - A label's words are its value (`aria_value`), as gpui's text gives
   them; a name set on a label is not said.
 - **What a block says is not always what it shows** (`Block::said`,
-  given as `StyledText::with_said`): a drawing says its words (a formula
+  given as `StyledText::with_said` by `inspector_text::block_text`, and
+  built only while a screen reader listens: `MarkdownStyle::listener`):
+  a drawing says its words (a formula
   its TeX, never the character it is drawn over); what a page tells
   screen readers to skip (`aria-hidden`) is shown and not said
   (`Run::unsaid`); what it hides from view for them (the "visually

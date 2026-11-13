@@ -16,7 +16,7 @@ use crate::{
     inspector_text, latest::Latest, markdown::MarkdownStyle, preview::PreviewContent, shell::Shell,
     theme::Theme, toolbar,
 };
-use gpui::{AnyElement, Context, Pixels, Point, StyledText, Window, div, prelude::*, px};
+use gpui::{AnyElement, Context, Pixels, Point, Window, div, prelude::*, px};
 use skwir_core::{
     inspection::{Block, InspectRequest, InspectionKind},
     scheduler::Priority,
@@ -281,7 +281,8 @@ pub(crate) fn popover(
         .text_size(px(size))
         .line_height(px(size * style.line_height));
     for (index, block) in open.blocks.iter().enumerate() {
-        let (shown, highlights) = inspector_text::styled(
+        // Its formulas drawn in their lines, as in the text.
+        let (shown, drawings) = inspector_text::block_text(
             block,
             0..block.text.len(),
             0..0,
@@ -302,25 +303,25 @@ pub(crate) fn popover(
                     style.list_indent * block.list_depth.saturating_sub(1) as f32
                 ))
                 .child(
-                    gpui::InteractiveText::new(
-                        ("note-block", index),
-                        StyledText::new(shown).with_highlights(highlights),
-                    )
-                    .on_click(ranges, move |i, window, cx| {
-                        let target = links[i].1.clone();
-                        let _ = entity.update(cx, |shell, cx| {
-                            shell.with_pane(pane, |shell| {
-                                shell.preview.inspection.notes.close(window, cx);
-                                shell.run(
-                                    "ui.inspect",
-                                    serde_json::json!({"action":"link","target":target}),
-                                    window,
-                                    cx,
-                                );
+                    gpui::InteractiveText::new(("note-block", index), shown).on_click(
+                        ranges,
+                        move |i, window, cx| {
+                            let target = links[i].1.clone();
+                            let _ = entity.update(cx, |shell, cx| {
+                                shell.with_pane(pane, |shell| {
+                                    shell.preview.inspection.notes.close(window, cx);
+                                    shell.run(
+                                        "ui.inspect",
+                                        serde_json::json!({"action":"link","target":target}),
+                                        window,
+                                        cx,
+                                    );
+                                });
                             });
-                        });
-                    }),
-                ),
+                        },
+                    ),
+                )
+                .children(drawings),
         );
     }
     let panel = toolbar::popup_panel(&open.popup, "ui.note", theme, cx)
