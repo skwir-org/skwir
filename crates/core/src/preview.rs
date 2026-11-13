@@ -554,6 +554,21 @@ impl Previews {
         })
     }
 
+    /// Whether a provider shows `request`'s file as what it is: one that
+    /// takes it by its type, as a preview chooses, other than the view of
+    /// any file's bytes (View as hex). Asked once per file and type, as
+    /// every stage of its preview is (`PreviewRequest::accepted_by`), so
+    /// the preview that follows asks nothing again. Reads the file as
+    /// `accepts` may: on a worker.
+    pub fn shows(&self, request: &PreviewRequest) -> bool {
+        let (providers, revision) = self.providers();
+        providers.iter().any(|registered| {
+            !registered.lifetime.is_cancelled()
+                && !registered.provider.shows_bytes()
+                && request.accepted_by(&*registered.provider, revision)
+        })
+    }
+
     /// The provider that shows any file as its bytes (View as hex), if one
     /// is registered (`PreviewProvider::shows_bytes`).
     pub fn bytes_view(&self) -> Option<&'static str> {

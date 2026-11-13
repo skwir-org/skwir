@@ -794,7 +794,7 @@ impl Shell {
             ),
             captions: [false; crate::views::grid::CAPTIONS.len()],
             reading_measure: crate::markdown::measure("comfortable"),
-            folder_stand_ins: crate::preview::StandIns::parse(
+            folder_stand_ins: crate::preview::StandIns::of_names(
                 crate::settings::FOLDER_PREVIEW_NAMES_DEFAULT,
             ),
             reading_width_before: None,
@@ -3651,15 +3651,15 @@ impl Shell {
             self.folder_stand_ins = self
                 .switch(crate::settings::FOLDER_PREVIEW_FILE_KEY, true)
                 .then(|| {
-                    crate::preview::StandIns::parse(
-                        &crate::settings::preference(
-                            self,
-                            crate::settings::FOLDER_PREVIEW_NAMES_KEY,
+                    crate::settings::preference(self, crate::settings::FOLDER_PREVIEW_NAMES_KEY)
+                        .map_or_else(
+                            || {
+                                crate::preview::StandIns::of_names(
+                                    crate::settings::FOLDER_PREVIEW_NAMES_DEFAULT,
+                                )
+                            },
+                            |records| crate::preview::StandIns::of_records(&records),
                         )
-                        .unwrap_or_else(|| {
-                            crate::settings::FOLDER_PREVIEW_NAMES_DEFAULT.to_owned()
-                        }),
-                    )
                 })
                 .flatten();
             self.read_player_prefs();

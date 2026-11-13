@@ -898,14 +898,32 @@ is still to come are in `docs/preview-frame.md`.
   in its README's or its count's place, a folder in none what it holds.
 - **A folder is shown by the file that stands for it**
   (`ui.folder_preview_file`, on by default; `preview::StandIns`): its
-  README, an album's or a photo folder's cover, the first of
-  `ui.folder_preview_names` it holds (letter case ignored, `*` any run of
-  characters; of one pattern's files, the lowest name). Only a file, or
-  a link to one, stands; never a folder or a special file of that name.
+  README, an album's or a photo folder's cover, any file the user names:
+  the first of `ui.folder_preview_names` it holds whose file a preview
+  shows (letter case ignored, `*` any run of characters; of one name's
+  files, the lowest). Only a file, or a link to one, stands; never a
+  folder or a special file of that name.
+  - The names are a list Skwir starts filled (`SettingSpec::starting_with`,
+    `settings::FOLDER_PREVIEW_NAMES_DEFAULT`), each record a `name`: added,
+    removed and moved in the dialog, given back by Revert. Refused: a
+    path, a pattern of `*` alone (every file), a name twice, letter case
+    ignored (`StandIns::check`). Names and files are lowered letter by
+    letter alike (`preview::lowered`); a name without `*` is found through
+    a map, so a long list costs a folder's read only its patterns.
   - It is found in the read that counts the folder (`read_folder`), on
     the preview's worker: one pass of its names, a stat only for a
     wanted name's link; the folder shown has its listing, but a pattern
-    would walk it, which the window's thread never does.
+    would walk it, which the window's thread never does. The read keeps
+    one file a name, whatever the folder holds, a file found by the
+    first name it takes only.
+  - What a preview shows is asked when the folder is shown, never when a
+    name is listed: plugins and helpers come and go. The files kept are
+    tried in the names' order (`first_shown`), the first a provider takes
+    by its type standing (`Previews::shows`: View as hex is no preview);
+    a file no provider takes, or that cannot be read, is passed over for
+    the next name's, and a folder none of whose files is shown is
+    counted. One try a name, its answer kept for the preview that
+    follows.
   - The file is a member of its own (`Nested::stands_for`, as a
     playlist's track): previewed as the file it is, its bar the file's,
     the card's trail "folder › README.md". The card, the count and
@@ -916,7 +934,9 @@ is still to come are in `docs/preview-frame.md`.
     changing (Preview, the names) asks the folder again.
   - The bar's × and the trail leave it for the folder's count
     (`stand_in_left`) until another entry is shown; it is never looked
-    for again meanwhile.
+    for again meanwhile. Its bar's More has Files shown for folders…,
+    Settings at the names (`preview_bar::close_tool`), whatever the
+    file turned out to be.
   - The folder changed is read again and the file found again: the same
     file is read again in place, keeping its place; another is another
     preview; none leaves the count. A page turned, a find, the bytes ask

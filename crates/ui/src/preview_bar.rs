@@ -314,7 +314,8 @@ pub fn spare() -> Div {
 /// an × at the end of its bar. Under its container's view (`members.rs`)
 /// the bar also starts with the member's name, which the card no longer
 /// says, once something of the member is shown, and leaves what is about
-/// the entry to the container's More.
+/// the entry to the container's More. The file shown for its folder (its
+/// README) has in its More where the names it was found by are chosen.
 pub fn close_tool(bar: &mut Bar, shell: &Shell, theme: &Theme) {
     if !shell.preview.inside() {
         return;
@@ -324,6 +325,19 @@ pub fn close_tool(bar: &mut Bar, shell: &Shell, theme: &Theme) {
         Button::new("preview-close", "close", "Close", "ui.inspect")
             .args(serde_json::json!({"action":"back"})),
     );
+    // The file shown for its folder, whatever it turns out to be, says
+    // where the names it was found by are chosen.
+    if shell.preview.stands_for().is_some() {
+        bar.push(Item::menu_only(
+            Button::new(
+                "preview-stand-ins",
+                "settings",
+                "Files shown for folders…",
+                "ui.settings",
+            )
+            .args(serde_json::json!({ "key": crate::settings::FOLDER_PREVIEW_NAMES_KEY })),
+        ));
+    }
     // Named once something of it is shown: a bar of nothing yet has the
     // room its tools will take, and a name drawn there long, then cut as
     // they came, flickered.

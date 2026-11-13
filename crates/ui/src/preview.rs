@@ -277,55 +277,156 @@ pub(crate) struct Holds {
 }
 
 /// The names of the files that stand for a folder in its preview
-/// (`ui.folder_preview_names`): a README, an album's or a photo folder's
-/// cover. In the order they are looked for, the first a folder holds being
-/// shown; written in lower case, letter case ignored, `*` standing for any
-/// run of characters (`cover.*`).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct StandIns(Arc<[String]>);
+/// (`ui.folder_preview_names`, a list of records each a `name`): a README,
+/// an album's or a photo folder's cover, or any name the user lists. In
+/// the order they are looked for, letter case ignored, `*` standing for any
+/// run of characters (`cover.*`). A name without one is found through a
+/// map, so a long list costs a folder's read only its patterns.
+#[derive(Clone, Debug)]
+pub(crate) struct StandIns(Arc<Wanted>);
 
-impl StandIns {
-    /// The names a setting's text lists, separated by commas; `None` when
-    /// it lists none.
-    pub(crate) fn parse(text: &str) -> Option<Self> {
-        let names: Vec<String> = text
-            .split(',')
-            .map(str::trim)
-            .filter(|name| !name.is_empty())
-            .map(str::to_lowercase)
-            .collect();
-        (!names.is_empty()).then(|| Self(names.into()))
-    }
+#[derive(Debug)]
+struct Wanted {
+    /// The names as listed, lowered (`lowered`): what two lists are told
+    /// apart by.
+    names: Vec<String>,
+    /// The names without a `*`, to their place in the list, the first
+    /// place of one listed twice.
+    exact: std::collections::HashMap<String, usize>,
+    /// The names with one, with their places, in the list's order.
+    patterns: Vec<(usize, String)>,
+}
 
-    /// Where `name` stands among the names, the first being 0: `None` when
-    /// it is none of them.
-    fn rank(&self, name: &str) -> Option<usize> {
-        self.0.iter().position(|wanted| name_matches(wanted, name))
+impl PartialEq for StandIns {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.names == other.0.names
     }
 }
 
-/// Whether `name` is the name `pattern` gives, letter case ignored, its
-/// `*` standing for any run of characters (none included). The pattern is
-/// in lower case. Greedy, stepping back only to the last `*`: at worst the
-/// pattern's length times the name's, for a few short patterns.
-fn name_matches(pattern: &str, name: &str) -> bool {
-    fn same(p: char, n: char) -> bool {
-        p == n || n.to_lowercase().eq(std::iter::once(p))
+impl Eq for StandIns {}
+
+impl StandIns {
+    /// The names given, in their order, an empty one passed over; `None`
+    /// when none is left.
+    pub(crate) fn of_names<'a>(names: impl IntoIterator<Item = &'a str>) -> Option<Self> {
+        let names: Vec<String> = names
+            .into_iter()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(lowered)
+            .collect();
+        if names.is_empty() {
+            return None;
+        }
+        let mut exact = std::collections::HashMap::with_capacity(names.len());
+        let mut patterns = Vec::new();
+        for (at, name) in names.iter().enumerate() {
+            if name.contains('*') {
+                patterns.push((at, name.clone()));
+            } else {
+                exact.entry(name.clone()).or_insert(at);
+            }
+        }
+        Some(Self(Arc::new(Wanted {
+            names,
+            exact,
+            patterns,
+        })))
     }
-    let pattern: Vec<char> = pattern.chars().collect();
-    let name: Vec<char> = name.chars().collect();
+
+    /// The names a setting's records hold, as the dialog's text says them
+    /// (JSON, `SettingSpec::format_value`): each record's `name`.
+    pub(crate) fn of_records(text: &str) -> Option<Self> {
+        let records: Vec<serde_json::Value> = serde_json::from_str(text).unwrap_or_default();
+        Self::of_names(
+            records
+                .iter()
+                .filter_map(|record| record.get("name")?.as_str()),
+        )
+    }
+
+    /// How many names are listed: the places `rank` gives are below it.
+    fn len(&self) -> usize {
+        self.0.names.len()
+    }
+
+    /// The first place among the names that `name`, lowered (`lowered`),
+    /// takes, the first being 0: `None` when it is none of them. Only the
+    /// patterns before the name it is, if any, are tried.
+    fn rank(&self, name: &str) -> Option<usize> {
+        let exact = self.0.exact.get(name).copied();
+        let before = exact.unwrap_or(usize::MAX);
+        self.0
+            .patterns
+            .iter()
+            .take_while(|(at, _)| *at < before)
+            .find(|(_, pattern)| name_matches(pattern, name))
+            .map(|(at, _)| *at)
+            .or(exact)
+    }
+
+    /// What is wrong with the records a setting holds, as their names:
+    /// none empty (the field is required), none a path, none a pattern of
+    /// `*` alone, which would stand any file for every folder, and none
+    /// listed twice, letter case ignored.
+    ///
+    /// # Errors
+    /// The first wrong name, in the words the dialog uses.
+    pub(crate) fn check(value: &toml::Value) -> anyhow::Result<()> {
+        let mut seen = std::collections::HashSet::new();
+        for record in value.as_array().into_iter().flatten() {
+            let Some(name) = record.get("name").and_then(toml::Value::as_str) else {
+                continue;
+            };
+            let name = name.trim();
+            anyhow::ensure!(
+                !name.chars().any(std::path::is_separator),
+                "“{name}” is a path: list a file's name"
+            );
+            anyhow::ensure!(
+                name.chars().any(|c| c != '*'),
+                "“{name}” would find every file: give some of its name"
+            );
+            anyhow::ensure!(seen.insert(lowered(name)), "“{name}” is listed twice");
+        }
+        Ok(())
+    }
+}
+
+/// `name` in lower case, letter by letter: what a listed name and a file's
+/// are compared in, so both are lowered alike (`İ` and `ΑΣ` included).
+fn lowered(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    lowered_into(name, &mut out);
+    out
+}
+
+/// `lowered`, into a buffer kept for every name of a folder's read.
+fn lowered_into(name: &str, out: &mut String) {
+    out.clear();
+    out.extend(name.chars().flat_map(char::to_lowercase));
+}
+
+/// Whether `name` is the name `pattern` gives, its `*` standing for any run
+/// of characters (none included); both lowered (`lowered`). Compared byte
+/// by byte, which UTF-8 allows: a byte after a `*` starts a character, so
+/// none of a character's continuation bytes is ever taken for it. Greedy,
+/// stepping back only to the last `*`: at worst the pattern's length times
+/// the name's, for the few patterns a list holds.
+fn name_matches(pattern: &str, name: &str) -> bool {
+    let (pattern, name) = (pattern.as_bytes(), name.as_bytes());
     let (mut p, mut n) = (0, 0);
     // The last `*` seen, and where in the name it was tried from.
     let mut star: Option<(usize, usize)> = None;
     while n < name.len() {
-        if p < pattern.len() && pattern[p] == '*' {
+        if p < pattern.len() && pattern[p] == b'*' {
             star = Some((p, n));
             p += 1;
-        } else if p < pattern.len() && same(pattern[p], name[n]) {
+        } else if p < pattern.len() && pattern[p] == name[n] {
             p += 1;
             n += 1;
         } else if let Some((at, from)) = star {
-            // The `*` takes one more character.
+            // The `*` takes one more byte.
             p = at + 1;
             n = from + 1;
             star = Some((at, from + 1));
@@ -333,30 +434,34 @@ fn name_matches(pattern: &str, name: &str) -> bool {
             return false;
         }
     }
-    pattern[p..].iter().all(|c| *c == '*')
+    pattern[p..].iter().all(|c| *c == b'*')
 }
 
 /// A folder as its preview reads it, in one pass of its names: what it
-/// holds, and the file that stands for it, if one was looked for.
+/// holds, and the files that may stand for it, if they were looked for.
 struct Folder {
     holds: Holds,
-    /// The file standing for it: its name and its path.
-    stand_in: Option<(String, PathBuf)>,
+    /// The files that may stand for it, in the names' order, one for each
+    /// name it holds: its name and its path.
+    stand_ins: Vec<(String, PathBuf)>,
 }
 
 /// Read the folder at `path`: count what it holds and, with `names`, find
-/// the file that stands for it, the first of them it holds: a file, or a
-/// link to one, never a folder nor a special file. Of the names one
-/// pattern gives (`cover.jpg` and `cover.png`), the lowest, so the same is
-/// always found. One read of its names, as counting alone makes; only a
-/// link whose name is wanted is followed.
+/// the files that may stand for it: for each name, the lowest of the files
+/// it finds (`cover.jpg` before `cover.png`), so the same is always found;
+/// a file, or a link to one, never a folder nor a special file. A file is
+/// found by the first name it takes, never again by a later one. One read
+/// of its names, as counting alone makes, and what is kept is one file per
+/// name listed, whatever the folder holds; only a link whose name is
+/// wanted is followed.
 fn read_folder(
     path: &Path,
     names: Option<&StandIns>,
     cancel: &CancelToken,
 ) -> std::io::Result<Folder> {
     let mut holds = Holds::default();
-    let mut best: Option<(usize, String, PathBuf)> = None;
+    let mut found: Vec<Option<(String, PathBuf)>> = vec![None; names.map_or(0, StandIns::len)];
+    let mut lower = String::new();
     for entry in std::fs::read_dir(path)?.flatten() {
         if cancel.is_cancelled() {
             break;
@@ -371,12 +476,13 @@ fn read_folder(
         let Some(name) = name.to_str() else {
             continue;
         };
-        let Some(rank) = names.rank(name) else {
+        lowered_into(name, &mut lower);
+        let Some(rank) = names.rank(&lower) else {
             continue;
         };
-        if best
+        if found[rank]
             .as_ref()
-            .is_some_and(|(at, kept, _)| (*at, kept.as_str()) <= (rank, name))
+            .is_some_and(|(kept, _)| kept.as_str() <= name)
         {
             continue;
         }
@@ -387,12 +493,12 @@ fn read_folder(
             None => false,
         };
         if regular {
-            best = Some((rank, name.to_owned(), file));
+            found[rank] = Some((name.to_owned(), file));
         }
     }
     Ok(Folder {
         holds,
-        stand_in: best.map(|(_, name, file)| (name, file)),
+        stand_ins: found.into_iter().flatten().collect(),
     })
 }
 
@@ -412,6 +518,35 @@ fn stand_in_member(name: String, path: PathBuf, holds: Holds) -> anyhow::Result<
         directory: None,
         stands_for: Some(holds),
     }))
+}
+
+/// Of the files found to stand for a folder, in the names' order, the
+/// first a preview shows as what it is (`shown_as_itself`), `request`
+/// asking about it from here on. A file Skwir cannot preview (a type
+/// nothing shows, bytes only View as hex shows, a file it cannot read) is
+/// passed over for the next name's: a name listed never leaves the folder
+/// showing nothing. One try a name, what it read kept for the preview
+/// that follows. `None`: the folder is counted.
+fn first_shown(
+    folder: Folder,
+    previews: &skwir_core::preview::Previews,
+    request: &mut PreviewRequest,
+    cancel: &CancelToken,
+) -> Option<Arc<Nested>> {
+    for (name, file) in folder.stand_ins {
+        if cancel.is_cancelled() {
+            return None;
+        }
+        // Gone since it was listed: the next.
+        let Ok(member) = stand_in_member(name, file, folder.holds) else {
+            continue;
+        };
+        request.retarget(member.entry.clone(), member.mime.clone());
+        if shown_as_itself(previews, request) {
+            return Some(member);
+        }
+    }
+    None
 }
 
 impl Nested {
@@ -1839,31 +1974,77 @@ fn compute(
         Ok(held) => held,
         Err(e) => return PreviewContent::Error(e.to_string()),
     };
-    let top = mime.and_then(|m| m.split('/').next()).unwrap_or("");
-    if mime.is_some_and(skwir_platform::thumb_providers::is_drawing) {
-        return decode_drawing(&held, picture_side, bounds, cancel)
-            .unwrap_or_else(|e| failure_content(&e));
-    }
-    if top == "image" {
-        return decode_image(&held, picture_side, bounds, Turn::Shown, cancel)
-            .unwrap_or_else(|e| failure_content(&e));
-    }
-    if top == "video" || mime == Some("application/pdf") {
-        return PreviewContent::Generic;
-    }
-    // Whatever the name declared, the bytes decide, by the same rule that
-    // names an unknown file's bytes (`mime::by_content`): a `.txt` holding
-    // NULs is not text, and a PEM key named like a Keynote file is, as is
-    // one written in a legacy code page or UTF-16, which `plain` decodes.
-    if skwir_platform::inspection::is_text(held.head()) {
+    match drawn_here(mime, held.head()) {
+        Drawn::Drawing => decode_drawing(&held, picture_side, bounds, cancel)
+            .unwrap_or_else(|e| failure_content(&e)),
+        Drawn::Picture => decode_image(&held, picture_side, bounds, Turn::Shown, cancel)
+            .unwrap_or_else(|e| failure_content(&e)),
         // Every text file is read the way structured code is: a gutter,
         // selection, find and copy. There is no second, poorer text view.
-        return match skwir_platform::inspection::plain(&held, mime, cancel) {
+        Drawn::Text => match skwir_platform::inspection::plain(&held, mime, cancel) {
             Ok(data) => PreviewContent::Inspection(crate::inspector::Display::new(data, code)),
             Err(error) => failure_content(&error),
-        };
+        },
+        Drawn::Nothing => PreviewContent::Generic,
     }
-    PreviewContent::Generic
+}
+
+/// What the panel draws itself of a file no provider showed (`compute`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Drawn {
+    /// A drawing, read and drawn by Skwir (`thumb_providers::is_drawing`).
+    Drawing,
+    /// A picture, decoded if Skwir reads its bytes.
+    Picture,
+    /// A text, by its bytes.
+    Text,
+    /// Nothing of its own: its card (a film or a PDF no provider took).
+    Nothing,
+}
+
+/// What the panel draws of a file of type `mime` whose first bytes are
+/// `head`, no provider having shown it: the one decision `compute` and
+/// `shown_as_itself` share. Whatever the name declared, the bytes decide
+/// what is text, by the same rule that names an unknown file's bytes
+/// (`mime::by_content`): a `.txt` holding NULs is not text, and a PEM key
+/// named like a Keynote file is, as is one written in a legacy code page
+/// or UTF-16, which `inspection::plain` decodes.
+fn drawn_here(mime: Option<&str>, head: &[u8]) -> Drawn {
+    let top = mime.and_then(|m| m.split('/').next()).unwrap_or("");
+    if mime.is_some_and(skwir_platform::thumb_providers::is_drawing) {
+        Drawn::Drawing
+    } else if top == "image" {
+        Drawn::Picture
+    } else if top == "video" || mime == Some("application/pdf") {
+        Drawn::Nothing
+    } else if skwir_platform::inspection::is_text(head) {
+        Drawn::Text
+    } else {
+        Drawn::Nothing
+    }
+}
+
+/// Whether the panel shows `request`'s file as what it is, as its preview
+/// would: a provider takes it by its type (`Previews::shows`), or the panel
+/// draws it (`drawn_here`): a drawing, a text, a picture of a type Skwir
+/// decodes (one of another type may decode, but is not counted on). View
+/// as hex, a film or a document no provider takes, a file that cannot be
+/// read are not. What is read (the file's first bytes, each provider's
+/// answer) is kept in the request for the preview that follows. On a
+/// worker.
+fn shown_as_itself(previews: &skwir_core::preview::Previews, request: &PreviewRequest) -> bool {
+    if previews.shows(request) {
+        return true;
+    }
+    let Ok(held) = request.held() else {
+        return false;
+    };
+    let mime = request.mime.as_deref();
+    match drawn_here(mime, held.head()) {
+        Drawn::Drawing | Drawn::Text => true,
+        Drawn::Picture => mime.is_some_and(skwir_platform::thumb_providers::decodes),
+        Drawn::Nothing => false,
+    }
 }
 
 impl Shell {
@@ -3363,8 +3544,9 @@ impl Shell {
                     };
                 }
                 // A folder is read for what it holds and, in the same pass,
-                // the file to stand for it, previewed from here on as the
-                // file it is; one that holds none is counted.
+                // the files that may stand for it: the first a preview shows,
+                // in the names' order, is previewed from here on as the file
+                // it is; one that holds none is counted.
                 if let Some(names) = seek.as_ref().filter(|_| is_dir) {
                     let folder = match read_folder(&path, Some(names), &cancel) {
                         Ok(folder) => folder,
@@ -3381,14 +3563,10 @@ impl Shell {
                         items: folder.holds.items,
                         folders: folder.holds.folders,
                     };
-                    let Some((name, file)) = folder.stand_in else {
+                    let Some(member) = first_shown(folder, &previews, &mut request, &cancel) else {
                         return send(counted, true, None, None);
                     };
-                    // Gone since it was listed: the folder is counted.
-                    let Ok(member) = stand_in_member(name, file, folder.holds) else {
-                        return send(counted, true, None, None);
-                    };
-                    source(&member, &mut request, &mut path);
+                    path.clone_from(&member.path);
                     let _ = nested_tx.send((generation, member));
                     (own, is_dir) = (false, false);
                 } else if let Some(member) = &nested {
@@ -8344,35 +8522,84 @@ mod tests {
     /// ignored, `*` taking any run of characters, none included.
     #[test]
     fn a_folder_s_file_is_found_by_its_names_in_their_order() {
-        use super::{StandIns, name_matches};
-        assert!(name_matches("readme.md", "README.md"));
-        assert!(name_matches("readme.md", "ReadMe.MD"));
-        assert!(!name_matches("readme.md", "README.md.bak"));
-        assert!(!name_matches("readme", "README.md"), "a name, not a prefix");
-        assert!(name_matches("cover.*", "Cover.jpg"));
-        assert!(name_matches("cover.*", "cover."), "a run of none");
-        assert!(!name_matches("cover.*", "covers.jpg"));
-        assert!(name_matches("*.nfo", "Album (2001).nfo"));
-        assert!(
-            name_matches("a*b*c", "aXbYbZc"),
-            "steps back to the last star"
-        );
-        assert!(!name_matches("a*b*c", "aXbYbZ"));
-        assert!(name_matches("léame", "LÉAME"), "letter case beyond ASCII");
-        assert!(name_matches("*", ""));
-        let names = StandIns::parse(" README.md , ,cover.*,").unwrap();
+        use super::{StandIns, lowered, name_matches};
+        let matches = |pattern: &str, name: &str| name_matches(&lowered(pattern), &lowered(name));
+        assert!(matches("readme.md", "README.md"));
+        assert!(matches("README.md", "ReadMe.MD"));
+        assert!(!matches("readme.md", "README.md.bak"));
+        assert!(!matches("readme", "README.md"), "a name, not a prefix");
+        assert!(matches("cover.*", "Cover.jpg"));
+        assert!(matches("cover.*", "cover."), "a run of none");
+        assert!(!matches("cover.*", "covers.jpg"));
+        assert!(matches("*.nfo", "Album (2001).nfo"));
+        assert!(matches("a*b*c", "aXbYbZc"), "steps back to the last star");
+        assert!(!matches("a*b*c", "aXbYbZ"));
+        assert!(matches("léame", "LÉAME"), "letter case beyond ASCII");
+        // Lowered letter by letter, both alike: a final capital sigma, which
+        // a whole string lowers to ς, is the same σ in each.
+        assert!(matches("ΑΣ.md", "ΑΣ.md"));
+        assert!(matches("İNDEX.html", "İndex.HTML"));
+        assert!(matches("*", ""));
+        // A star takes whole characters: what follows it starts one.
+        assert!(matches("*é", "aéé"));
+        assert!(!matches("*é.md", "ae.md"));
+        let names = StandIns::of_names([" README.md ", "", "cover.*", "*.md"]).unwrap();
+        assert_eq!(names.len(), 3);
         assert_eq!(names.rank("readme.md"), Some(0));
-        assert_eq!(names.rank("COVER.PNG"), Some(1));
-        assert_eq!(names.rank("notes.md"), None);
+        assert_eq!(names.rank("cover.png"), Some(1));
+        assert_eq!(names.rank("notes.md"), Some(2));
+        assert_eq!(names.rank("notes.txt"), None);
+        // A pattern before the name it is comes first; one after, not.
+        let names = StandIns::of_names(["*.md", "README.md"]).unwrap();
+        assert_eq!(names.rank("readme.md"), Some(0));
         assert!(
-            StandIns::parse(" , ").is_none(),
+            StandIns::of_names([" ", ""]).is_none(),
             "no names: nothing looked for"
+        );
+        // The setting's records, as the dialog's text says them.
+        let names = StandIns::of_records(
+            r#"[{"id":"1","name":"index.html"},{"id":"2"},{"id":"x","name":"README"}]"#,
+        )
+        .unwrap();
+        assert_eq!(names.rank("index.html"), Some(0));
+        assert_eq!(names.rank("readme"), Some(1));
+        assert_eq!(
+            names,
+            StandIns::of_names(["INDEX.html", "readme"]).unwrap(),
+            "lists told apart by their names, lowered"
         );
     }
 
-    /// The folder is read once for its count and its file: the first name
-    /// it holds, of one pattern's the lowest, a file or a link to one,
-    /// never a folder named so.
+    /// What the dialog refuses of the names: a path, a pattern of stars
+    /// alone, a name listed twice whatever its letter case.
+    #[test]
+    fn a_name_listed_is_a_file_s_once() {
+        use super::StandIns;
+        let check = |names: &[&str]| {
+            let records: Vec<toml::Value> = names
+                .iter()
+                .map(|name| {
+                    toml::Value::Table(toml::Table::from_iter([(
+                        "name".to_owned(),
+                        toml::Value::String((*name).to_owned()),
+                    )]))
+                })
+                .collect();
+            StandIns::check(&toml::Value::Array(records)).map_err(|error| error.to_string())
+        };
+        check(&["README.md", "index.html", "cover.*", "It's *.md"]).unwrap();
+        assert!(check(&["docs/README.md"]).unwrap_err().contains("path"));
+        assert!(check(&["**"]).unwrap_err().contains("every file"));
+        assert!(
+            check(&["README.md", "readme.MD"])
+                .unwrap_err()
+                .contains("twice")
+        );
+    }
+
+    /// The folder is read once for its count and its files: for each name
+    /// it holds, the lowest of the files it finds, a file or a link to one,
+    /// never a folder named so; a file found by the first name it takes.
     #[test]
     fn a_folder_is_read_once_for_its_count_and_its_file() {
         use super::{StandIns, read_folder};
@@ -8383,23 +8610,32 @@ mod tests {
         std::fs::write(at("cover.png"), b"png").unwrap();
         std::fs::write(at("cover.jpg"), b"jpg").unwrap();
         std::fs::write(at("notes.txt"), b"notes").unwrap();
-        let names = StandIns::parse(crate::settings::FOLDER_PREVIEW_NAMES_DEFAULT).unwrap();
+        let names = StandIns::of_names(crate::settings::FOLDER_PREVIEW_NAMES_DEFAULT).unwrap();
         let folder = read_folder(dir.path(), Some(&names), &cancel).unwrap();
         assert_eq!((folder.holds.items, folder.holds.folders), (4, 1));
-        let (name, path) = folder.stand_in.unwrap();
-        assert_eq!(name, "cover.jpg", "a folder named README is no README");
-        assert_eq!(path, at("cover.jpg"));
+        assert_eq!(
+            folder.stand_ins,
+            [("cover.jpg".to_owned(), at("cover.jpg"))],
+            "a folder named README is no README"
+        );
         std::fs::write(at("readme"), b"what this is").unwrap();
         let folder = read_folder(dir.path(), Some(&names), &cancel).unwrap();
-        assert_eq!(folder.stand_in.unwrap().0, "readme", "README before covers");
+        let found: Vec<&str> = folder.stand_ins.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(found, ["readme", "cover.jpg"], "README before covers");
+        // A file the first name took is not the next's.
+        let names = StandIns::of_names(["cover.*", "*.jpg", "*.txt"]).unwrap();
+        let folder = read_folder(dir.path(), Some(&names), &cancel).unwrap();
+        let found: Vec<&str> = folder.stand_ins.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(found, ["cover.jpg", "notes.txt"]);
         let counted = read_folder(dir.path(), None, &cancel).unwrap();
         assert_eq!(counted.holds.items, 5);
         assert!(
-            counted.stand_in.is_none(),
+            counted.stand_ins.is_empty(),
             "counted only when none is wanted"
         );
         #[cfg(unix)]
         {
+            let names = StandIns::of_names(crate::settings::FOLDER_PREVIEW_NAMES_DEFAULT).unwrap();
             let other = tempfile::tempdir().unwrap();
             std::fs::write(other.path().join("target.md"), b"# Linked").unwrap();
             std::os::unix::fs::symlink(
@@ -8413,17 +8649,99 @@ mod tests {
             )
             .unwrap();
             let folder = read_folder(other.path(), Some(&names), &cancel).unwrap();
-            assert_eq!(
-                folder.stand_in.unwrap().0,
-                "README.md",
-                "a link to a file stands"
-            );
+            let found: Vec<&str> = folder.stand_ins.iter().map(|(n, _)| n.as_str()).collect();
+            assert_eq!(found, ["README.md"], "a link to a file stands");
             std::fs::remove_file(other.path().join("README.md")).unwrap();
             let folder = read_folder(other.path(), Some(&names), &cancel).unwrap();
             assert!(
-                folder.stand_in.is_none(),
+                folder.stand_ins.is_empty(),
                 "a link that leads nowhere does not"
             );
         }
+    }
+
+    /// Of the files found, the first a preview shows as what it is stands
+    /// for the folder, by a provider or drawn by the panel itself: one only
+    /// View as hex shows is passed over, and a folder none of whose files
+    /// is shown is counted.
+    #[test]
+    fn a_file_without_a_preview_gives_way_to_the_next_name() {
+        use super::{StandIns, first_shown, read_folder};
+        use skwir_core::preview::{PreviewProvider, PreviewRequest, Previews};
+        // Takes its files by their names' ending, as no type names them.
+        struct Things;
+        impl PreviewProvider for Things {
+            fn id(&self) -> &'static str {
+                "things"
+            }
+            fn accepts(&self, request: &PreviewRequest) -> bool {
+                request
+                    .entry
+                    .path
+                    .extension()
+                    .is_some_and(|ext| ext == "thing")
+            }
+        }
+        struct Bytes;
+        impl PreviewProvider for Bytes {
+            fn id(&self) -> &'static str {
+                "bytes"
+            }
+            fn priority(&self) -> i32 {
+                -100
+            }
+            fn shows_bytes(&self) -> bool {
+                true
+            }
+            fn accepts(&self, _: &PreviewRequest) -> bool {
+                true
+            }
+        }
+        let previews = Previews::default();
+        previews.register("test", std::sync::Arc::new(Bytes));
+        let cancel = skwir_core::CancelToken::new();
+        let dir = tempfile::tempdir().unwrap();
+        let at = |name: &str| dir.path().join(name);
+        let binary = [0_u8, 1, 2, 0xff, 0, 7];
+        std::fs::write(at("cover.xyz"), binary).unwrap();
+        std::fs::write(at("folder.png"), b"a picture").unwrap();
+        let mut request = PreviewRequest::holding(dir.path(), Vec::new(), None);
+        let standing = |names: &[&str], request: &mut PreviewRequest| {
+            let names = StandIns::of_names(names.iter().copied()).unwrap();
+            let folder = read_folder(dir.path(), Some(&names), &cancel).unwrap();
+            first_shown(folder, &previews, request, &cancel).map(|member| {
+                assert!(member.stands_for.is_some());
+                assert_eq!(request.entry.path, member.path, "asked about from here on");
+                member.name.clone()
+            })
+        };
+        let names = ["cover.*", "folder.*", "readme"];
+        assert_eq!(
+            standing(&names, &mut request).as_deref(),
+            Some("folder.png"),
+            "bytes alone give way to a picture the panel decodes"
+        );
+        std::fs::remove_file(at("folder.png")).unwrap();
+        std::fs::write(at("ReadMe"), b"What this folder is.").unwrap();
+        assert_eq!(
+            standing(&names, &mut request).as_deref(),
+            Some("ReadMe"),
+            "a text, by its bytes"
+        );
+        std::fs::remove_file(at("ReadMe")).unwrap();
+        assert_eq!(
+            standing(&names, &mut request),
+            None,
+            "only bytes: the folder is counted"
+        );
+        std::fs::write(at("scene.thing"), binary).unwrap();
+        let names = ["*.thing", "cover.*"];
+        assert_eq!(standing(&names, &mut request), None);
+        previews.register("test", std::sync::Arc::new(Things));
+        assert_eq!(
+            standing(&names, &mut request).as_deref(),
+            Some("scene.thing"),
+            "what a provider takes, asked once it is there"
+        );
     }
 }

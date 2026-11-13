@@ -164,12 +164,21 @@ pub const READ_AHEAD_KEY: &str = "reading.read_ahead";
 /// README or its cover (`preview::StandIns`).
 pub const FOLDER_PREVIEW_FILE_KEY: &str = "ui.folder_preview_file";
 /// The names of the files that stand for a folder, in the order they are
-/// looked for.
+/// looked for: a list of records, each a `name` (`preview::StandIns`).
 pub const FOLDER_PREVIEW_NAMES_KEY: &str = "ui.folder_preview_names";
-/// `FOLDER_PREVIEW_NAMES_KEY`'s default: READMEs as forges show them, then
-/// the covers music players and the desktops' file managers read.
-pub const FOLDER_PREVIEW_NAMES_DEFAULT: &str =
-    "README.md, README.org, README.rst, README.txt, README, cover.*, folder.*, .folder.*";
+/// `FOLDER_PREVIEW_NAMES_KEY`'s records to start with: READMEs as forges
+/// show them, then the covers music players and the desktops' file
+/// managers read.
+pub const FOLDER_PREVIEW_NAMES_DEFAULT: [&str; 8] = [
+    "README.md",
+    "README.org",
+    "README.rst",
+    "README.txt",
+    "README",
+    "cover.*",
+    "folder.*",
+    ".folder.*",
+];
 /// The paces a slideshow goes at: the setting's choices and its bar's.
 pub const SLIDESHOW_PACES: [(&str, &str); 4] = [
     ("3", "3 seconds"),
@@ -1735,12 +1744,25 @@ pub fn declare(app: &App) {
         .section("Previews"),
     );
     app.settings.declare(
-        SettingSpec::text(
+        SettingSpec::records(
             FOLDER_PREVIEW_NAMES_KEY,
             "Names",
-            "The names looked for, the first first, separated by commas. Letter case is ignored, and * stands for any characters: cover.* finds cover.jpg and cover.png.",
-            FOLDER_PREVIEW_NAMES_DEFAULT,
+            "The files looked for, the first first: a name, or a pattern where * stands for any characters (cover.* finds cover.jpg and cover.png). Letter case is ignored. A folder is shown by the file of the first name it holds that Skwir can preview; a file it cannot preview is passed over for the next name.",
+            "name",
+            vec![
+                skwir_core::settings::RecordField::text(
+                    "name",
+                    "Name",
+                    "A file's name, or a pattern where * stands for any characters",
+                    "index.html",
+                )
+                .required(),
+            ],
         )
+        .starting_with(FOLDER_PREVIEW_NAMES_DEFAULT.map(|name| {
+            toml::Table::from_iter([("name".to_owned(), toml::Value::String(name.to_owned()))])
+        }))
+        .validate_with(|value, _| crate::preview::StandIns::check(value))
         .page(page::VIEWS)
         .section("Previews")
         .under(FOLDER_PREVIEW_FILE_KEY),
@@ -2297,6 +2319,10 @@ pub(crate) struct Row {
     /// Present for kinds edited as text.
     pub input: Option<Entity<TextInput>>,
     pub anchor: PopoverAnchor,
+    /// Whether a list Skwir starts filled is changed, for the text it was
+    /// asked of: a list is parsed once for each text it has, never each
+    /// frame.
+    records_changed: std::cell::RefCell<Option<(String, bool)>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -2305,10 +2331,29 @@ impl Row {
         SettingSpec::format_value(&self.spec.default)
     }
 
-    /// A preference changed from its default. A list of records is data
-    /// the user built: no Revert, and Reset all leaves it alone.
+    /// A preference changed from its default. A list of records built
+    /// from nothing is data the user built: no Revert, and Reset all leaves
+    /// it alone; one Skwir starts filled is changed by its records, never
+    /// by their ids (`SettingSpec::records_changed`).
     pub fn modified(&self) -> bool {
-        self.spec.kind != SettingKind::Records && self.value != self.default_text()
+        if self.spec.kind != SettingKind::Records {
+            return self.value != self.default_text();
+        }
+        if self.spec.default.as_array().is_none_or(Vec::is_empty) {
+            return false;
+        }
+        let mut asked = self.records_changed.borrow_mut();
+        if let Some((text, changed)) = asked.as_ref()
+            && *text == self.value
+        {
+            return *changed;
+        }
+        let changed = self.spec.records_changed(
+            &serde_json::from_str::<toml::Value>(&self.value)
+                .unwrap_or_else(|_| toml::Value::Array(Vec::new())),
+        );
+        *asked = Some((self.value.clone(), changed));
+        changed
     }
 
     pub fn page(&self) -> Page {
@@ -2979,6 +3024,7 @@ impl SettingsView {
             value,
             input,
             anchor: PopoverAnchor::default(),
+            records_changed: std::cell::RefCell::default(),
             _subscriptions: subscriptions,
         }
     }

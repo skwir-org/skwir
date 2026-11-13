@@ -89,6 +89,9 @@ pub enum SettingKind {
     Data,
     /// A list of records the user adds, edits and removes (tile servers):
     /// each a table of `constraints.fields` plus an `id`, edited as JSON.
+    /// Empty by default, it is data the user built; one Skwir starts
+    /// filled (`SettingSpec::starting_with`) is a preference, which Revert
+    /// and Reset all give back.
     Records,
 }
 
@@ -537,6 +540,48 @@ impl SettingSpec {
         spec.constraints.fields = fields;
         spec.constraints.record_name = record_name.into();
         spec
+    }
+
+    /// The records the list starts with, Skwir's, in their order: each
+    /// given an id of its own, its place in the list (`1`, `2`…), which no
+    /// record added since takes (`settings_records::new_id`). A list
+    /// changed from them is a preference changed: Revert and Reset all
+    /// give them back.
+    #[must_use]
+    pub fn starting_with(mut self, records: impl IntoIterator<Item = toml::Table>) -> Self {
+        self.default = toml::Value::Array(
+            records
+                .into_iter()
+                .enumerate()
+                .map(|(at, mut record)| {
+                    record.insert("id".into(), toml::Value::String((at + 1).to_string()));
+                    toml::Value::Table(record)
+                })
+                .collect(),
+        );
+        self
+    }
+
+    /// Whether `value` is other than the records the list starts with,
+    /// their ids aside: a list built from nothing never is (it is data),
+    /// and one whose records were removed and typed again as they were
+    /// is not.
+    pub fn records_changed(&self, value: &toml::Value) -> bool {
+        fn without_ids(value: &toml::Value) -> Vec<toml::Table> {
+            value
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(toml::Value::as_table)
+                .map(|record| {
+                    let mut record = record.clone();
+                    record.remove("id");
+                    record
+                })
+                .collect()
+        }
+        let start = without_ids(&self.default);
+        !start.is_empty() && without_ids(value) != start
     }
 
     /// A button on each record, running `command` with the record's id.

@@ -24,7 +24,11 @@ the reasoning.
   `path`, `command`; `records` for a list the user
   builds in the dialog (tile servers: a record needs an id in the dialog,
   which edits it by it; a file's may leave it out, as what reads records
-  does), or one its owner keeps elsewhere (`records_kept_by`, a
+  does), or one Skwir starts filled (`starting_with`: its records' ids
+  their places, `1`, `2`…; a preference, which Revert and Reset all give
+  back, changed by its records, never by their ids,
+  `SettingSpec::records_changed`; one built from nothing is the user's
+  data, which they leave alone), or one its owner keeps elsewhere (`records_kept_by`, a
   `RecordSource`: its commands list, add, edit and remove; a record may
   say what else its line does, `actions`, each a `label`, a `command` and
   its `args`, that another program changes it, `fixed`, which takes
@@ -293,7 +297,8 @@ The key is the owner's; the page is the subject's (ADR-072).
   says so (None found for a list its owner fills, None yet for one the
   user does). One longer than `settings_records::FOLD` has a filter over
   its words, which says how many it found, and shows its first rows until
-  unfolded. A record's own choice steps by Left and Right, as a setting's
+  unfolded, or until a record is added to it: what was just added is
+  shown where it went. A record's own choice steps by Left and Right, as a setting's
   does, its popup under its right edge, inside the dialog. A list is
   parsed once for each text it has (`SettingsView::parsed_records`),
   never per frame or per record; a list its owner keeps elsewhere is

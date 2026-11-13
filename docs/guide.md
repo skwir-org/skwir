@@ -590,7 +590,11 @@ archives, and the bytes of any file.
   folder selected, or the one you are in while nothing is selected. Its
   card, its count and its Properties stay the folder's; the bar's × leaves
   the file for the folder's count. Settings › Folders and views › Previews
-  turns it off or changes the names looked for, in their order.
+  turns it off or changes the names looked for: add any name or pattern
+  (`index.html`, `*.nfo`), remove one, drag one to move it in the order.
+  A file Skwir cannot preview is passed over for the next name. The More
+  menu of the file shown has Files shown for folders…, which opens that
+  list.
 - **History**, in the bar of a folder or a file in a Git repository,
   lists the commits that changed it; the repository's top folder draws
   the graph of its merges. A commit opens as its patch below the list,

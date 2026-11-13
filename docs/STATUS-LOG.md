@@ -16662,3 +16662,50 @@ has the player's bar, which never had zoom tools: Fit is how it is
 drawn. Not tried: Windows' and macOS' clippy of the UI (no system's
 code changed), `just a11y-check` (the whole screen's film now carries
 the panel's Video role).
+
+## 2026-11-13: the files shown for a folder are a list of names
+
+**Asked:** could the names a folder's preview looks for (its README, its
+cover) be a list to add to, remove from and reorder, so that any file
+with a preview (an `index.html`) stands for its folder? The names were
+already any names, typed in one field, separated by commas; what was
+missing was a list to edit, and a file found that nothing previews took
+the count's place showing nothing. Decided with the user: the list
+editor Settings has (the tile servers'), a file without a preview
+passed over for the next name, exact names through a map, and a way to
+the list from the file shown; `index.html` stays out of the defaults (a
+template in source trees, and READMEs come first there).
+**Built:** `ui.folder_preview_names` is a records setting, each record a
+`name`, started filled (`SettingSpec::starting_with`, ids `1`…`8`): a
+list Skwir fills is a preference, which Revert and Reset all give back,
+changed by its names, never by their ids
+(`SettingSpec::records_changed`, asked once per text by
+`Row::modified`); one built from nothing stays the user's data. The
+dialog refuses a path, a pattern of `*` alone and a name listed twice,
+letter case ignored (`StandIns::check`). A record just added unfolds a
+list it made long enough to fold, every list's, so what was added shows.
+`StandIns` finds a name without `*` through a map and tries only the
+patterns before it; names and files are lowered letter by letter alike
+(a capital final sigma matched itself not before), compared byte by
+byte. `read_folder` keeps one file per name, whatever the folder holds,
+a file found by the first name it takes; `first_shown` tries them in
+the names' order, the first the panel shows as itself standing
+(`shown_as_itself`: a provider takes it, `Previews::shows`, View as hex
+aside; or the panel draws it, the decision `compute` makes, now one
+function, `drawn_here`: a drawing, a text by its bytes, a picture of a
+type Skwir decodes). The file shown has Files shown for folders… in its
+More (`close_tool`, so every bar), Settings at the list. No migration:
+the setting came after 0.4.0.
+**Checked:** tests for the list started filled (core), the matcher, the
+refusals, the read and the passing over (a binary `cover.xyz` giving way
+to a `folder.png` the panel decodes, a text by its bytes, a type only a
+provider takes once it is registered); the core and UI tests (1446),
+the binary's settings, CLI, keymap and plugin toggle tests, clippy. In a
+window (Xvfb, lavapipe): `pressing` (a binary `cover.xyz`, a
+`folder.png`) showed the picture, which the first build, asking only
+the registry, had not (pictures and texts are the panel's own, not a
+provider's); `site` showed its `index.html` in reading mode once added;
+`readme.MD` was refused as listed twice; `*.nfo` added left the ten
+names unfolded; `index.html` dragged first made `both` show it over its
+README; Revert gave the eight back and `both` its README. Not tried:
+Windows' and macOS' clippy (no system's code changed).

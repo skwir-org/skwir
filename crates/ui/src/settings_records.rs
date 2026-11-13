@@ -2,7 +2,8 @@
 //! servers, remotes, the languages and their grammars. The list is drawn
 //! inset in its setting's card, a list under the setting rather than more
 //! settings, saying so when it is empty; a long one (`FOLD`) has a filter
-//! and shows its first rows until unfolded. Each record is a row with its
+//! and shows its first rows until unfolded, or until a record is added,
+//! which shows where it went. Each record is a row with its
 //! actions (the owner's own, such as Test; Edit; Remove; a choice of its
 //! own); one at a time is edited in place, a draft kept apart from the
 //! rows, which are rebuilt whenever a setting changes. A record kept
@@ -489,6 +490,11 @@ impl SettingsView {
             }
             cx.notify();
             return;
+        }
+        // A record just added is shown where it went, at the end of a list
+        // it may have made long enough to fold.
+        if self.drafts.get(key).is_some_and(|draft| draft.new) {
+            self.records_unfolded.insert(key.to_owned());
         }
         if secrets.is_empty() && forgotten.is_empty() {
             self.drafts.remove(key);

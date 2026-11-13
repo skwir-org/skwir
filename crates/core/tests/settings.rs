@@ -807,6 +807,56 @@ fn records_are_checked_field_by_field_and_never_hold_a_secret() {
 }
 
 #[test]
+fn a_list_skwir_starts_filled_is_changed_by_its_names_never_by_its_ids() {
+    use skwir_core::settings::{RecordField, SettingSpec};
+    let named = |name: &str| toml::Table::from_iter([("name".to_owned(), name.into())]);
+    let spec = SettingSpec::records(
+        "sample.names",
+        "Names",
+        "",
+        "name",
+        vec![RecordField::text("name", "Name", "", "").required()],
+    )
+    .starting_with([named("README.md"), named("cover.*")]);
+    // Its records have ids, which the dialog edits them by, and are what
+    // the dialog's text says.
+    let start = spec.default.clone();
+    let ids: Vec<&str> = start
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|record| record["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["1", "2"]);
+    assert_eq!(
+        spec.parse(&SettingSpec::format_value(&start)).unwrap(),
+        start
+    );
+    assert!(!spec.records_changed(&start));
+    // The same names under other ids, as removed and typed again: as it
+    // started.
+    let again = spec
+        .parse(r#"[{"id":"x","name":"README.md"},{"id":"y","name":"cover.*"}]"#)
+        .unwrap();
+    assert!(!spec.records_changed(&again));
+    // Moved, removed or added to: changed.
+    for changed in [
+        r#"[{"id":"2","name":"cover.*"},{"id":"1","name":"README.md"}]"#,
+        r#"[{"id":"1","name":"README.md"}]"#,
+        r#"[{"id":"1","name":"README.md"},{"id":"2","name":"cover.*"},{"id":"z","name":"index.html"}]"#,
+        "[]",
+    ] {
+        assert!(
+            spec.records_changed(&spec.parse(changed).unwrap()),
+            "{changed}"
+        );
+    }
+    // A list built from nothing is never changed: it is the user's data.
+    let built = SettingSpec::records("sample.servers", "Servers", "", "server", Vec::new());
+    assert!(!built.records_changed(&built.parse(r#"[{"id":"a"}]"#).unwrap()));
+}
+
+#[test]
 fn an_owner_check_runs_after_the_kind() {
     use skwir_core::settings::SettingSpec;
     let spec = SettingSpec::text("sample.url", "Address", "", "").validate_with(|value, _| {
