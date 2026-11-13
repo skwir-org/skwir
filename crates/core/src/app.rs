@@ -1965,8 +1965,7 @@ impl App {
         } in answers
         {
             if let Some(p) = ws.pane_mut(pane)
-                && p.listing.id() == listing
-                && p.listing.set_fields(values)
+                && p.take_fields(listing, values)
                 && !report.panes_changed.contains(&pane)
             {
                 report.panes_changed.push(pane);
@@ -2062,7 +2061,8 @@ impl App {
             let mut ws = self.workspace.write();
             let ids: Vec<PaneId> = ws.panes().iter().map(|p| p.id).collect();
             ids.into_iter()
-                .filter_map(|id| ws.pane_mut(id)?.fields_to_read(revision))
+                .filter_map(|id| ws.pane_mut(id).map(|p| p.fields_to_read(revision)))
+                .flatten()
                 .collect()
         };
         for asked in asked {
@@ -2070,8 +2070,14 @@ impl App {
                 pane,
                 listing,
                 cancel,
-                entries,
+                mut entries,
             } = asked;
+            // What no provider answers is not asked: unknown, it is asked
+            // again once one comes (the revision moves).
+            entries.retain_mut(|(.., lacks)| {
+                lacks.retain(|key| self.fields.knows(key));
+                !lacks.is_empty()
+            });
             let wake = self.pane_waker(pane);
             // Each remote's in its lane, so a server that stopped answering
             // holds its own files alone; a job a batch, so the pool reads
@@ -2099,15 +2105,26 @@ impl App {
                                 if cancel.is_cancelled() {
                                     return;
                                 }
-                                let read = fields.get_all(keys, path, *known, &cancel);
-                                values.extend(keys.iter().zip(read).map(|(key, value)| {
-                                    (*id, *key, value.unwrap_or(crate::entry::Value::Bool(false)))
+                                // An answer is the entry's, a value or none
+                                // the file says (`Bool(false)`); none given
+                                // (no provider, a read that failed) leaves
+                                // it unknown, asked again once the
+                                // providers change.
+                                let read = fields.answer_all(keys, path, *known, &cancel);
+                                values.extend(keys.iter().zip(read).filter_map(|(key, said)| {
+                                    let said = said?;
+                                    Some((
+                                        *id,
+                                        *key,
+                                        *known,
+                                        said.unwrap_or(crate::entry::Value::Bool(false)),
+                                    ))
                                 }));
                             }
                             // Cancelled while it read: what it read may be a
                             // half answer. What was read whole is kept by
                             // `fields`, for the ask that replaced this one.
-                            if cancel.is_cancelled() {
+                            if cancel.is_cancelled() || values.is_empty() {
                                 return;
                             }
                             answers.lock().push(FieldAnswers {
@@ -3461,12 +3478,13 @@ pub struct GroupArgs {
     pub pane: Option<PaneId>,
 }
 
-/// What was read on demand for a pane's listing (`App::read_wanted_fields`):
-/// each entry's field, as the file said it.
+/// What was read on demand for a listing of a pane's order
+/// (`App::read_wanted_fields`): each entry's field, the identity of the
+/// file read, and what it said.
 struct FieldAnswers {
     pane: PaneId,
     listing: u64,
-    values: Vec<(EntryId, &'static str, crate::entry::Value)>,
+    values: Vec<crate::workspace::FieldRead>,
 }
 
 /// What the version control said of a pane's folder

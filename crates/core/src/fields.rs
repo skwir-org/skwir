@@ -231,32 +231,60 @@ impl Fields {
         known: Option<Identity>,
         cancel: &CancelToken,
     ) -> Vec<Option<Value>> {
+        self.answer_all(keys, path, known, cancel)
+            .into_iter()
+            .map(Option::flatten)
+            .collect()
+    }
+
+    /// [`Fields::get_all`], telling an answer from none: `Some` where it
+    /// was answered, with what the file says (`None` where it says
+    /// nothing, as of a file no provider of the key takes, or one that is
+    /// not read, a pipe or a link that leads nowhere); `None` where no
+    /// answer was given: no provider answers the key at all, the file
+    /// could not be stat-ed or read, or the read was cancelled. What keeps
+    /// answers (a listing, ADR-131) keeps the first, and asks again for
+    /// the second once the providers change.
+    pub fn answer_all(
+        &self,
+        keys: &[&str],
+        path: &Path,
+        known: Option<Identity>,
+        cancel: &CancelToken,
+    ) -> Vec<Option<Option<Value>>> {
         let mut answers = vec![None; keys.len()];
         // A link is asked as what it leads to, which is what is read.
         let (content, identity) = if let Some(identity) = known {
             (std::borrow::Cow::Borrowed(path), identity)
         } else {
-            let (Some(content), Some(identity)) =
-                (crate::fs::content_path(path), identity_of(path))
-            else {
+            let Some(content) = crate::fs::content_path(path) else {
+                // Nothing to read there: it says nothing.
+                return vec![Some(None); keys.len()];
+            };
+            let Some(identity) = identity_of(path) else {
                 return answers;
             };
             (content, identity)
         };
         let Some(name) = content.file_name() else {
-            return answers;
+            return vec![Some(None); keys.len()];
         };
         // Each key remembered, kept, or to read, with the others its
         // provider answers.
         let mut asked: Vec<(ProviderStamp, Arc<dyn FieldProvider>, Vec<usize>)> = Vec::new();
         for (i, key) in keys.iter().enumerate() {
             let Some((generation, provider)) = self.provider(key, name) else {
+                // A provider of the key takes no file of that name: it
+                // has none. No provider of it at all: no answer.
+                if self.knows(key) {
+                    answers[i] = Some(None);
+                }
                 continue;
             };
             let stamp = (generation, provider.id(), provider.version());
             let memory_key = (stamp, (*key).into(), identity);
             if let Some(value) = self.remembered.lock().get(&memory_key) {
-                answers[i].clone_from(value);
+                answers[i] = Some(value.clone());
                 continue;
             }
             let kept = self
@@ -266,7 +294,7 @@ impl Fields {
                 .and_then(|bytes| serde_json::from_slice::<Option<Value>>(&bytes).ok());
             if let Some(value) = kept {
                 self.remember(memory_key, value.clone());
-                answers[i] = value;
+                answers[i] = Some(value);
                 continue;
             }
             match asked
@@ -308,7 +336,7 @@ impl Fields {
                     }
                 }
                 self.remember((stamp, key.into(), identity), value.clone());
-                answers[i] = value;
+                answers[i] = Some(value);
             }
         }
         answers
@@ -571,6 +599,58 @@ mod tests {
             );
             assert_eq!(reads.load(Ordering::SeqCst), 2);
         }
+    }
+
+    /// An answer is told from none: what the file says, a value or
+    /// nothing, of a file a provider takes; nothing of a file no provider
+    /// of the key takes; no answer where no provider answers the key, or
+    /// the read failed.
+    #[test]
+    fn an_answer_is_told_from_none_given() {
+        let tmp = tempfile::tempdir().unwrap();
+        let note = tmp.path().join("note.txt");
+        std::fs::write(&note, "fixture").unwrap();
+        let fields = Fields::default();
+        let cancel = CancelToken::new();
+        assert_eq!(
+            fields.answer_all(&["test.answer"], &note, None, &cancel),
+            [None],
+            "no provider: no answer"
+        );
+        let provider = |name, fail| {
+            Arc::new(Answer {
+                id: "test",
+                version: 1,
+                value: 7,
+                reads: Arc::default(),
+                name,
+                fail,
+                wait: None,
+            })
+        };
+        fields.register("test", provider(Some("other.txt"), false));
+        assert_eq!(
+            fields.answer_all(&["test.answer"], &note, None, &cancel),
+            [Some(None)],
+            "a file it does not take has none"
+        );
+        fields.unregister_owner("test");
+        fields.register("test", provider(None, true));
+        assert_eq!(
+            fields.answer_all(&["test.answer"], &note, None, &cancel),
+            [None],
+            "a read that failed: no answer"
+        );
+        fields.unregister_owner("test");
+        fields.register("test", provider(None, false));
+        assert_eq!(
+            fields.answer_all(&["test.answer"], &note, None, &cancel),
+            [Some(Some(Value::UInt(7)))]
+        );
+        assert_eq!(
+            fields.get_all(&["test.answer"], &note, None, &cancel),
+            [Some(Value::UInt(7))]
+        );
     }
 
     #[test]

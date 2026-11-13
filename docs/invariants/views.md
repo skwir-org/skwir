@@ -467,12 +467,18 @@ around the views is in [shell.md](shell.md).
 - **A criterion read on demand** (ADR-131, 4: `SortKey::field`, Taken,
   Dimensions, Duration) is a field (`App::fields`), never read for
   every listing: sorted or grouped by one, the pump asks it of the
-  entries the pane holds that may have it (`Pane::fields_to_read`: once
-  the listing is whole, again when its names change, a file changed or
-  the providers did, never per row), read on a worker in their lane, in
-  batches, and the answers, a value or none, are the listing's
-  (`Listing::set_fields`, `fields_version`), placed as they come; what
-  is not read yet waits after the rest
+  entries the pane's order holds that may have it, its own listing's and
+  those of the folders it opened in place (`Pane::fields_to_read`: each
+  listing once whole, then what came or changed since
+  (`Listing::updated_since`), every entry again only when the fields, a
+  file (`fields_version`) or the providers changed; never per row), read
+  on a worker in their lane, in batches, and the answers, a value or the
+  none the file says, are the listing's (`Pane::take_fields`,
+  `Listing::set_fields`), placed as they come, each only while its file
+  is the one read (its identity). An answer not given (no provider, a
+  read that failed: `Fields::answer_all`) leaves the field unknown, asked
+  again once the providers change: never a none kept for good. What is
+  not read yet waits after the rest
   (`SortKey::waits`). The listing keeps what was read while the entry's
   size and modification time are the same (`keys::READ_ON_DEMAND`), so a
   hydration does not drop it. No view reads a file to sort it.

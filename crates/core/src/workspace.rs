@@ -737,8 +737,9 @@ fn fold_key(group: Option<&crate::grouping::Group>) -> FoldKey {
 }
 
 /// What a pane asks to read of its entries on demand (ADR-131, 4): for
-/// its listing, each entry with where it is, its identity when the
-/// listing knows it, and the fields it lacks.
+/// one listing of its order (its own, a folder's it opened in place),
+/// each entry with where it is, its identity when the listing knows it,
+/// and the fields it lacks.
 pub struct FieldsAsked {
     pub pane: PaneId,
     pub listing: u64,
@@ -751,9 +752,29 @@ pub struct FieldsAsked {
     )>,
 }
 
-/// What a pane last asked to read on demand: its listing, the listing's
-/// names and fields versions, the providers' revision and the fields.
-type FieldsAt = (u64, u64, u64, u64, Vec<&'static str>);
+/// What a pane asked to read on demand of one listing of its order
+/// (`Pane::fields_to_read`): the fields, the providers' revision and the
+/// listing's fields version it rests on, the listing's version then (what
+/// came or changed since is asked next), and the token of its reading.
+#[derive(Clone)]
+struct FieldsAt {
+    listing: u64,
+    fields: Vec<&'static str>,
+    revision: u64,
+    fields_version: u64,
+    version: u64,
+    cancel: CancelToken,
+}
+
+/// What was read on demand of one entry (`Pane::take_fields`): the field,
+/// the identity of the file read, and what it says (`Value::Bool(false)`
+/// where nothing).
+pub(crate) type FieldRead = (
+    EntryId,
+    &'static str,
+    Option<crate::fields::Identity>,
+    crate::entry::Value,
+);
 
 /// What a pane asks its folder's version control (ADR-134,
 /// `Pane::states_to_read`): the folder its listing shows, to say of its
@@ -973,10 +994,10 @@ pub struct Pane {
     /// them last.
     folds: Folds,
     fold_cache: parking_lot::Mutex<Option<FoldCache>>,
-    /// What was last asked to read on demand (`fields_to_read`), and the
-    /// token of its reading, cancelled when it is asked anew or no longer.
-    fields_asked: Option<FieldsAt>,
-    fields_reading: Option<CancelToken>,
+    /// What was asked to read on demand of each listing of its order
+    /// (`fields_to_read`), with the token of its reading, cancelled when it
+    /// rests on something else or the listing leaves the order.
+    fields_asked: Vec<FieldsAt>,
     /// What was last asked of the version control (`states_to_read`), the
     /// token of its reading, and who said what its entries hold, with its
     /// answer's key (`vcs::Answer::key`): what tells it changed.
@@ -1917,8 +1938,7 @@ impl Pane {
             groups_cache: parking_lot::Mutex::new(None),
             folds: Folds::default(),
             fold_cache: parking_lot::Mutex::new(None),
-            fields_asked: None,
-            fields_reading: None,
+            fields_asked: Vec::new(),
             states_asked: None,
             states_reading: None,
             states_said: None,
@@ -4442,46 +4462,56 @@ impl Pane {
         true
     }
 
-    /// What its sort, and its view (`show_fields`), read on demand and its
-    /// listing's entries lack (ADR-131, 4): asked once the listing is whole, again when its names change, a
-    /// file changed (`Listing::fields_version`) or the providers did
-    /// (`revision`); none otherwise. A folder is never asked, nor a place.
-    /// What was asked before and is still read is given up: a new ask
-    /// names what it lacks again, and what it read is kept (`App::fields`),
-    /// so nothing is read twice.
-    pub(crate) fn fields_to_read(&mut self, revision: u64) -> Option<FieldsAsked> {
+    /// What its sort, and its view (`show_fields`), read on demand and the
+    /// entries of its order lack (ADR-131, 4), by listing: its own and
+    /// those of the folders it opened in place, each once whole. Every
+    /// entry is asked the first time, and again when the fields, the
+    /// providers (`revision`) or a file (`Listing::fields_version`)
+    /// changed, the reading before given up; else only what came or
+    /// changed since (`Listing::updated_since`), the reading before going
+    /// on: a folder whose names change does not walk all its entries
+    /// again. A folder is never asked, nor a place. What was read is kept
+    /// (`App::fields`) and the listing's; an answer not given (no
+    /// provider, a read that failed) leaves the field unknown, asked again
+    /// once the providers change.
+    pub(crate) fn fields_to_read(&mut self, revision: u64) -> Vec<FieldsAsked> {
         let mut fields = self.sort.fields();
         for field in &self.fields_shown {
             if !fields.contains(field) {
                 fields.push(field);
             }
         }
-        if fields.is_empty() {
-            if let Some(reading) = self.fields_reading.take() {
-                reading.cancel();
+        let before = std::mem::take(&mut self.fields_asked);
+        if fields.is_empty() || self.open.is_none() {
+            for at in before {
+                at.cancel.cancel();
             }
-            self.fields_asked = None;
-            return None;
+            return Vec::new();
         }
-        if !self.listing.is_complete() || self.open.is_none() {
-            return None;
-        }
-        let at = (
-            self.listing.id(),
-            self.listing.names_version(),
-            self.listing.fields_version(),
-            revision,
-            fields.clone(),
-        );
-        if self.fields_asked.as_ref() == Some(&at) {
-            return None;
-        }
-        self.fields_asked = Some(at);
-        let entries: Vec<_> = self
-            .listing
-            .iter()
-            .filter(|e| !e.is_dir() && !e.is_place())
-            .filter_map(|e| {
+        let own = std::iter::once((&self.listing, self.open.as_ref()));
+        let in_place =
+            opened(&self.kept, &self.expanded).map(|(_, k)| (&k.listing, k.open.as_ref()));
+        let (mut now, mut asked, mut carried) = (Vec::new(), Vec::new(), Vec::new());
+        for (listing, open) in own.chain(in_place) {
+            let id = listing.id();
+            let was = before.iter().find(|at| at.listing == id);
+            let Some(open) = open.filter(|_| listing.is_complete()) else {
+                // Asked once whole; what was asked of it goes on.
+                if let Some(was) = was {
+                    now.push(was.clone());
+                    carried.push(id);
+                }
+                continue;
+            };
+            let same = was.filter(|at| {
+                at.fields == fields
+                    && at.revision == revision
+                    && at.fields_version == listing.fields_version()
+            });
+            let lacking = |e: &Entry| {
+                if e.is_dir() || e.is_place() {
+                    return None;
+                }
                 let lacks: Vec<&'static str> = fields
                     .iter()
                     .copied()
@@ -4492,26 +4522,86 @@ impl Pane {
                 }
                 Some((
                     e.id,
-                    self.path_of(e.id)?,
+                    open.path_of(e.id)?,
                     crate::fields::identity_of_entry(e),
                     lacks,
                 ))
+            };
+            let entries: Vec<_> = match same.map(|at| listing.updated_since(at.version)) {
+                Some(Some(since)) => {
+                    let mut seen = crate::hashing::Set::<EntryId>::default();
+                    since
+                        .filter(|id| seen.insert(*id))
+                        .filter_map(|id| listing.get(id))
+                        .filter_map(lacking)
+                        .collect()
+                }
+                // Asked anew, or what changed since is no longer told:
+                // every entry.
+                _ => listing.iter().filter_map(lacking).collect(),
+            };
+            let cancel = match same {
+                Some(at) => {
+                    carried.push(id);
+                    at.cancel.clone()
+                }
+                None => self.location_lifetime.child(),
+            };
+            if !entries.is_empty() {
+                asked.push(FieldsAsked {
+                    pane: self.id,
+                    listing: id,
+                    cancel: cancel.clone(),
+                    entries,
+                });
+            }
+            now.push(FieldsAt {
+                listing: id,
+                fields: fields.clone(),
+                revision,
+                fields_version: listing.fields_version(),
+                version: listing.version(),
+                cancel,
+            });
+        }
+        // Asked anew, or of a listing no longer in the order: given up.
+        for at in before {
+            if !carried.contains(&at.listing) {
+                at.cancel.cancel();
+            }
+        }
+        self.fields_asked = now;
+        asked
+    }
+
+    /// Take what was read on demand (`App::read_wanted_fields`) into the
+    /// listing it was read for, its own or a folder's it opened in place,
+    /// while it holds it: each value of an entry whose file is still the
+    /// one read (its identity, `fields::identity_of_entry`). An answer
+    /// read before the file changed is not taken: the change asks it
+    /// again (`fields_to_read`). Whether what the pane shows changed.
+    pub(crate) fn take_fields(&mut self, listing: u64, values: Vec<FieldRead>) -> bool {
+        let (target, opened) = if self.listing.id() == listing {
+            (&mut self.listing, false)
+        } else if let Some(kept) = self.kept.iter_mut().find(|k| k.listing.id() == listing) {
+            (&mut kept.listing, true)
+        } else {
+            return false;
+        };
+        let values: Vec<_> = values
+            .into_iter()
+            .filter(|(id, _, read, _)| {
+                target
+                    .get(*id)
+                    .is_some_and(|e| crate::fields::identity_of_entry(e) == *read)
             })
+            .map(|(id, key, _, value)| (id, key, value))
             .collect();
-        if let Some(reading) = self.fields_reading.take() {
-            reading.cancel();
+        let changed = target.set_fields(values);
+        if changed && opened {
+            self.tree_version += 1;
         }
-        if entries.is_empty() {
-            return None;
-        }
-        let cancel = self.location_lifetime.child();
-        self.fields_reading = Some(cancel.clone());
-        Some(FieldsAsked {
-            pane: self.id,
-            listing: self.listing.id(),
-            cancel,
-            entries,
-        })
+        changed
     }
 
     /// What its folder's version control is to say of its entries (ADR-134):
@@ -6406,13 +6496,16 @@ mod tests {
         (p, tx)
     }
 
-    /// Sorted by what is read on demand, a pane asks its files once a
-    /// change, never its folders; asked anew (a file arrived), the reading
-    /// before is given up, and so it is once the sort reads nothing. What
-    /// its view shows is asked alike (`show_fields`).
+    /// Sorted by what is read on demand, a pane asks its files once its
+    /// listing is whole, never its folders, and those of a folder it
+    /// opened in place alike; what comes since is asked alone, the reading
+    /// going on; asked anew (other fields), the reading before is given
+    /// up, and so it is once the sort reads nothing. What its view shows
+    /// is asked alike (`show_fields`). An answer for a file that changed
+    /// since it was read is not taken.
     #[test]
-    fn fields_asked_anew_give_up_the_reading_before() {
-        use crate::entry::{EntryKind, keys};
+    fn fields_are_asked_of_what_came_since_and_anew_when_they_change() {
+        use crate::entry::{EntryKind, Value, keys};
         use crate::location::{ListingEvent, SortKey};
         let entry = |i: u64, kind| {
             let id = EntryId {
@@ -6437,6 +6530,7 @@ mod tests {
         paths.insert(late.id, PathBuf::from("/r/e9"));
         let (_tx, events) = crossbeam_channel::unbounded();
         let mut p = Pane::new(PaneId(1));
+        let folder = entries[0].id;
         p.listing.apply(ListingEvent::Added(entries));
         p.listing.apply(ListingEvent::Complete);
         p.open = Some(Arc::new(Searched {
@@ -6445,32 +6539,88 @@ mod tests {
             paths,
         }));
         assert!(
-            p.fields_to_read(0).is_none(),
+            p.fields_to_read(0).is_empty(),
             "sorted by name: nothing to read"
         );
         p.sort.key = SortKey::Duration;
-        let first = p.fields_to_read(0).expect("its files asked");
-        assert_eq!(first.entries.len(), 3, "the files, not the folder");
-        assert!(p.fields_to_read(0).is_none(), "asked once a change");
+        let first = p.fields_to_read(0);
+        assert_eq!(first.len(), 1);
+        assert_eq!(first[0].entries.len(), 3, "the files, not the folder");
+        assert!(p.fields_to_read(0).is_empty(), "asked once a change");
         p.listing.apply(ListingEvent::Added(vec![late]));
-        let second = p.fields_to_read(0).expect("asked again once a file came");
-        assert_eq!(second.entries.len(), 4);
-        assert!(first.cancel.is_cancelled(), "the reading before given up");
-        assert!(!second.cancel.is_cancelled());
+        let second = p.fields_to_read(0);
+        assert_eq!(second.len(), 1);
+        assert_eq!(second[0].entries.len(), 1, "what came, alone");
+        assert!(!first[0].cancel.is_cancelled(), "the reading goes on");
+
+        // A folder opened in place: its files are asked too, and what is
+        // read of them is its listing's.
+        let inner = entry(20, EntryKind::File);
+        let inner_id = inner.id;
+        let (_itx, inner_events) = crossbeam_channel::unbounded();
+        let mut inner_paths = crate::hashing::Map::default();
+        inner_paths.insert(inner_id, PathBuf::from("/r/e0/e20"));
+        let mut listing = Listing::default();
+        listing.apply(ListingEvent::Added(vec![inner]));
+        listing.apply(ListingEvent::Complete);
+        let at = Location::from_path(Path::new("/r/e0"));
+        p.kept.push(Kept::new(
+            Arc::new(Searched {
+                location: at.clone(),
+                events: inner_events,
+                paths: inner_paths,
+            }),
+            listing,
+            None,
+        ));
+        assert!(p.expand(at, folder));
+        let opened = p.fields_to_read(0);
+        assert_eq!(opened.len(), 1, "the pane's own asked already");
+        assert_ne!(opened[0].listing, p.listing.id());
+        assert_eq!(opened[0].entries.len(), 1);
+        let tree = p.tree_version;
+        assert!(p.take_fields(
+            opened[0].listing,
+            vec![(inner_id, keys::DURATION, None, Value::UInt(1_000))]
+        ));
+        assert_ne!(p.tree_version, tree, "what the pane shows changed");
+
+        // What was read: one file as it was asked, another changed since
+        // (another identity): that one is not taken.
+        let (e1, e2) = (first[0].entries[0].0, first[0].entries[1].0);
+        assert!(p.take_fields(
+            p.listing.id(),
+            vec![
+                (e1, keys::DURATION, None, Value::UInt(5)),
+                (e2, keys::DURATION, Some((e2.file, 9, 9)), Value::UInt(6)),
+            ]
+        ));
+        let duration = |p: &Pane, id| {
+            p.listing
+                .get(id)
+                .unwrap()
+                .metadata
+                .value(keys::DURATION)
+                .cloned()
+        };
+        assert_eq!(duration(&p, e1), Some(Value::UInt(5)));
+        assert_eq!(duration(&p, e2), None, "read of another file");
+
         p.sort.key = SortKey::Name;
-        assert!(p.fields_to_read(0).is_none());
+        assert!(p.fields_to_read(0).is_empty());
         assert!(
-            second.cancel.is_cancelled(),
+            first[0].cancel.is_cancelled(),
             "a sort reading nothing gives it up"
         );
         // A view showing what is read on demand (a column of when each
         // picture was taken) has it read as a sort by it would.
         assert!(p.show_fields(&[keys::TAKEN]));
         assert!(!p.show_fields(&[keys::TAKEN]), "said again: no change");
-        let shown = p.fields_to_read(0).expect("what the view shows asked");
-        assert_eq!(shown.entries.len(), 4);
+        let shown = p.fields_to_read(0);
+        assert_eq!(shown.len(), 2, "its own listing and the folder opened");
+        assert_eq!(shown[0].entries.len(), 4);
         assert!(
-            shown
+            shown[0]
                 .entries
                 .iter()
                 .all(|(.., lacks)| lacks == &[keys::TAKEN])
@@ -6478,16 +6628,17 @@ mod tests {
         // Sorted by it as well, it is the same reading: not asked again.
         p.sort.key = SortKey::Taken;
         assert!(
-            p.fields_to_read(0).is_none(),
+            p.fields_to_read(0).is_empty(),
             "the same field, already asked"
         );
         p.sort.key = SortKey::Name;
         assert!(p.show_fields(&[]));
         assert!(
-            p.fields_to_read(0).is_none(),
+            p.fields_to_read(0).is_empty(),
             "shown no longer, nothing read"
         );
-        assert!(shown.cancel.is_cancelled(), "its reading given up");
+        assert!(shown[0].cancel.is_cancelled(), "its reading given up");
+        assert!(shown[1].cancel.is_cancelled());
     }
 
     /// A folder of folders is looked over a slice at a time, the window

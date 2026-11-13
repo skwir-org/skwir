@@ -57,7 +57,11 @@ Built on 2026-11-11 and run on Linux. Amends ADR-130, decisions 9 and
    (`App::fields`, kept by the file's identity in memory and the cache),
    and what comes is the entry's, a value or none
    (`Listing::set_fields`); what is not read yet sorts after the rest, as
-   a size before its stat, and is placed as it comes. What was read stays
+   a size before its stat, and is placed as it comes. The entries of the
+   folders opened in place are asked alike, as they are in the pane's
+   order; an answer not given (no provider, a read that failed) leaves
+   the field unknown, asked again once the providers change (amended
+   2026-11-13: a none was kept for good). What was read stays
    the entry's while its size and its modification time do
    (`keys::READ_ON_DEMAND`). Taken groups as Modified does, by the
    camera's clock, which has no zone (the user's days, read as if in

@@ -352,6 +352,59 @@ fn pictures_sort_and_group_by_their_size_read_on_demand() {
     assert_eq!(labels, ["1 to 4 MP", "Under 1 MP", "No dimensions"]);
 }
 
+/// Sorted by dimensions while no provider reads them, a file says none
+/// for good no more: it is unknown, after the rest, and read once one
+/// comes (the query plugin turned on).
+#[test]
+fn what_no_provider_read_is_read_once_one_comes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+    let root = tmp.path().join("plates");
+    std::fs::create_dir(&root).unwrap();
+    for (name, w, h) in [("b.png", 40, 30), ("a.png", 1200, 1000)] {
+        image::RgbImage::new(w, h).save(root.join(name)).unwrap();
+    }
+    let pane = app.workspace.read().active_id();
+    app.navigate(pane, &Location::from_path(&root)).unwrap();
+    assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+    run(&app, "sort", &serde_json::json!({ "key": "dimensions" }));
+    for _ in 0..20 {
+        app.pump();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let dimensions = |p: &Pane| -> Vec<Option<skwir_core::entry::Value>> {
+        p.order()
+            .iter()
+            .map(|id| {
+                p.entry(*id)
+                    .unwrap()
+                    .metadata
+                    .value(skwir_core::entry::keys::DIMENSIONS)
+                    .cloned()
+            })
+            .collect()
+    };
+    assert_eq!(
+        dimensions(app.workspace.read().pane(pane).unwrap()),
+        [None, None],
+        "no provider: unknown, not none"
+    );
+    app.plugins
+        .add(Arc::new(skwir_plugin_query::QueryPlugin::default()), &app);
+    let names = |p: &Pane| -> Vec<String> {
+        p.order()
+            .iter()
+            .map(|id| p.entry(*id).unwrap().name_str().into_owned())
+            .collect()
+    };
+    assert!(
+        pump_until(&app, pane, |p| !p.listing.is_sorting()
+            && names(p) == ["a.png", "b.png"]
+            && dimensions(p).iter().all(Option::is_some)),
+        "read once a provider came, largest first"
+    );
+}
+
 /// A search remembers no order (ADR-132): its terms are what it is. The
 /// folder it searched does, and the search shows the pane's own.
 #[test]
