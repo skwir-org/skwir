@@ -5514,6 +5514,13 @@ impl Workspace {
         self.orders.follow(changes)
     }
 
+    /// Take in what a look at the trash found (`Orders::forget_emptied`):
+    /// whether what the places remember changed. A folder forgotten is
+    /// shown by no pane: it is nowhere.
+    pub(crate) fn forget_emptied(&mut self, found: &crate::orders::Emptied) -> bool {
+        self.orders.forget_emptied(found)
+    }
+
     /// A new pane in the tab shown: the other side of a split.
     pub fn add_pane(&mut self) -> PaneId {
         let tab = self.active_tab().id;

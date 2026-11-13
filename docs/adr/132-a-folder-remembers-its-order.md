@@ -58,7 +58,16 @@ ADR-130 left "for an ADR of its own" (decision 11). Amended the same day
    folder (an undo's and a redo's too) takes along what it and the
    folders below it remember (`Orders::follow`, from the executor's
    observer), two names swapped exchange theirs, a folder deleted for
-   good forgets them, a folder trashed keeps them for its restore. A
+   good forgets them, a folder trashed keeps them for its restore, said
+   trashed (`Remembered::trashed`, written with them), which the restore
+   undoes. Once the trash no longer holds it (emptied, its item deleted
+   for good) and no folder is back there, they go: a look at the trash
+   on a worker at the start and after a plan that deleted something
+   (`orders::emptied`, Linux; elsewhere they stay until the folder is
+   deleted for good). A folder not trashed is never forgotten for being
+   absent: a drive unplugged, a server not mounted are not gone
+   (amended 2026-11-13: records of folders trashed and emptied stayed for
+   good, and a new folder there took their order). A
    folder shown that moves, whatever moved it, takes them along too
    (`PumpReport::orders_moved`). The folders at or below one are found in
    the time of what is there (a path-ordered index), never by a walk of

@@ -74,6 +74,11 @@ impl Order {
 pub struct Remembered {
     pub order: Order,
     pub view: Option<Arc<str>>,
+    /// Skwir put the folder in the trash (or one holding it): what it
+    /// remembers waits for the restore that brings it back, and goes once
+    /// no item of the trash came from there and no folder is there
+    /// (`forget_emptied`).
+    pub trashed: bool,
 }
 
 /// One record as the data file keeps it.
@@ -88,6 +93,8 @@ struct Record {
     group_ascending: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     view: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    trashed: bool,
 }
 
 /// The orders places remember, as the data file holds them: found by
@@ -132,7 +139,14 @@ impl Orders {
                         group_ascending: read.group_ascending,
                     };
                     let view = read.view.filter(|view| !view.is_empty()).map(Arc::from);
-                    orders.put(read.at, Remembered { order, view });
+                    orders.put(
+                        read.at,
+                        Remembered {
+                            order,
+                            view,
+                            trashed: read.trashed,
+                        },
+                    );
                 }
                 Err(error) => {
                     tracing::warn!(
@@ -165,6 +179,7 @@ impl Orders {
                     group: order.group,
                     group_ascending: order.group_ascending,
                     view: kept.view.as_deref().map(str::to_owned),
+                    trashed: kept.trashed,
                 })
                 .map_err(|error| tracing::warn!(%at, %error, "a place's order is not written"))
                 .ok()
@@ -207,7 +222,14 @@ impl Orders {
                 true
             }
             (Some(order), None) => {
-                self.put(at.clone(), Remembered { order, view: None });
+                self.put(
+                    at.clone(),
+                    Remembered {
+                        order,
+                        view: None,
+                        trashed: false,
+                    },
+                );
                 true
             }
             (None, _) => self.take(at).is_some(),
@@ -229,8 +251,10 @@ impl Orders {
     /// Follow what a plan changed, an undo's or a redo's too: a folder
     /// renamed or moved takes along what it and the folders it holds
     /// remember, two names swapped exchange theirs, and what is deleted
-    /// for good forgets them. A folder trashed keeps them, for the restore
-    /// that brings it back where it was. Whether any changed.
+    /// for good forgets them. A folder trashed keeps them, said trashed,
+    /// for the restore that brings it back where it was, which says them
+    /// shown again; once the trash no longer holds it, they go
+    /// (`forget_emptied`). Whether any changed.
     pub fn follow(&mut self, changes: &[Change]) -> bool {
         if self.paths.is_empty() {
             return false;
@@ -243,8 +267,54 @@ impl Orders {
                 Change::Delete { path } | Change::Remove { path } => {
                     !self.taken_below(path).is_empty()
                 }
+                Change::Trash { path } => self.said_trashed(path, true),
+                Change::Restore { path } => self.said_trashed(path, false),
                 _ => false,
             };
+        }
+        any
+    }
+
+    /// Say what `folder` and the folders below it remember trashed, or
+    /// not: whether any changed.
+    fn said_trashed(&mut self, folder: &Path, trashed: bool) -> bool {
+        let mut any = false;
+        for at in self.below(folder) {
+            if let Some(kept) = self.by_place.get_mut(&at)
+                && kept.trashed != trashed
+            {
+                kept.trashed = trashed;
+                any = true;
+            }
+        }
+        any
+    }
+
+    /// The folders remembered as trashed (`Remembered::trashed`).
+    pub fn trashed(&self) -> Vec<PathBuf> {
+        self.paths
+            .iter()
+            .filter(|(_, at)| self.by_place.get(*at).is_some_and(|kept| kept.trashed))
+            .map(|(path, _)| path.clone())
+            .collect()
+    }
+
+    /// Take in what a look at the trash found (`emptied`, on a worker): of
+    /// the folders remembered trashed, those back where they were are no
+    /// longer trashed, and those that are nowhere, neither there nor in
+    /// the trash, forget what they remember. Whether any changed.
+    pub fn forget_emptied(&mut self, found: &Emptied) -> bool {
+        let mut any = false;
+        for path in &found.back {
+            any |= self.said_trashed(path, false);
+        }
+        for path in &found.gone {
+            if let Some(at) = self.paths.get(path).cloned()
+                && self.by_place.get(&at).is_some_and(|kept| kept.trashed)
+            {
+                self.take(&at);
+                any = true;
+            }
         }
         any
     }
@@ -281,19 +351,24 @@ impl Orders {
         any
     }
 
+    /// The places of `folder` and of the folders below it that remember:
+    /// in the time of what is there, found from it.
+    fn below(&self, folder: &Path) -> Vec<Location> {
+        self.paths
+            .range::<Path, _>((Bound::Included(folder), Bound::Unbounded))
+            .take_while(|(path, _)| path.starts_with(folder))
+            .map(|(_, at)| at.clone())
+            .collect()
+    }
+
     /// Take out what `folder` and the folders below it remember, each
     /// with its path: in the time of what is there, found from it.
     fn taken_below(&mut self, folder: &Path) -> Vec<(PathBuf, Remembered)> {
-        let below: Vec<PathBuf> = self
-            .paths
-            .range::<Path, _>((Bound::Included(folder), Bound::Unbounded))
-            .take_while(|(path, _)| path.starts_with(folder))
-            .map(|(path, _)| path.clone())
-            .collect();
-        below
+        self.below(folder)
             .into_iter()
-            .filter_map(|path| {
-                let at = self.paths.remove(&path)?;
+            .filter_map(|at| {
+                let path = at.path()?;
+                self.paths.remove(&path)?;
                 let kept = self.by_place.shift_remove(&at)?;
                 Some((path, kept))
             })
@@ -326,6 +401,7 @@ pub(crate) fn register(app: &App) {
         toml::Value::Array(Vec::new()),
     ));
     apply(app);
+    look_at_trash(app);
     let weak = app.weak();
     app.executor.observe(
         "core",
@@ -335,8 +411,88 @@ pub(crate) fn register(app: &App) {
             if followed {
                 save(&app);
             }
+            // Something deleted for good, the trash emptied among others:
+            // what the folders trashed remember may be for none now.
+            if changes
+                .iter()
+                .any(|c| matches!(c, Change::Delete { .. } | Change::Remove { .. }))
+            {
+                look_at_trash(&app);
+            }
         }),
     );
+}
+
+/// What a look at the trash found of the folders remembered trashed
+/// (`emptied`).
+#[derive(Debug, Default)]
+pub struct Emptied {
+    /// Back where they were, and no item of the trash from there.
+    pub back: Vec<PathBuf>,
+    /// Neither there nor in the trash.
+    pub gone: Vec<PathBuf>,
+}
+
+/// Look, on a worker, at whether the trash still holds the folders
+/// remembered trashed (`Remembered::trashed`), and forget those it no
+/// longer holds and that are not back (`Orders::forget_emptied`). Asked at
+/// the start (the trash may have been emptied since) and once a plan
+/// deleted something for good.
+fn look_at_trash(app: &App) {
+    let trashed = app.workspace.read().orders().trashed();
+    if trashed.is_empty() {
+        return;
+    }
+    let weak = app.weak();
+    app.scheduler.spawn(
+        Priority::Background,
+        "orders.trash",
+        app.lifetime().child(),
+        move || {
+            let found = emptied(trashed);
+            if found.back.is_empty() && found.gone.is_empty() {
+                return;
+            }
+            let Some(app) = weak.upgrade() else { return };
+            if app.workspace.write().forget_emptied(&found) {
+                save(&app);
+            }
+        },
+    );
+}
+
+/// Of `trashed`, the folders back where they were and those gone, neither
+/// there nor in the trash: on this machine's own volumes, whose trashes
+/// are read (`op::trash_items_here`); a folder of a remote's, whose trash
+/// is not, is never said gone. Reads every record of the trash: on a
+/// worker.
+#[cfg(target_os = "linux")]
+pub fn emptied(trashed: Vec<PathBuf>) -> Emptied {
+    let from: std::collections::HashSet<PathBuf> = crate::op::trash_items_here()
+        .iter()
+        .map(trash::TrashItem::original_path)
+        .collect();
+    let mut found = Emptied::default();
+    for path in trashed {
+        if crate::fs::reach::of(&path).is_some()
+            || path.ancestors().any(|above| from.contains(above))
+        {
+            continue;
+        }
+        match std::fs::symlink_metadata(&path) {
+            Ok(meta) if meta.is_dir() => found.back.push(path),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => found.gone.push(path),
+            _ => {}
+        }
+    }
+    found
+}
+
+/// Elsewhere the trash is not read here: a folder remembered trashed
+/// keeps what it remembers until it is deleted for good.
+#[cfg(not(target_os = "linux"))]
+pub fn emptied(_trashed: Vec<PathBuf>) -> Emptied {
+    Emptied::default()
 }
 
 /// Take in what the data file says places remember: at the start, and
@@ -480,6 +636,66 @@ mod tests {
         assert_eq!(read.view_of(&at("/files/b")), None);
     }
 
+    /// A folder trashed keeps what it and the folders it holds remember,
+    /// said trashed, written so, until a restore brings it back or the
+    /// trash no longer holds it: then forgotten, but never a folder that
+    /// was not trashed, nor one back where it was.
+    #[test]
+    fn a_folder_trashed_forgets_once_the_trash_no_longer_holds_it() {
+        let mut orders = Orders::default();
+        for path in ["/files/a", "/files/a/b", "/files/c", "/files/d"] {
+            orders.set(&at(path), Some(by_date()));
+        }
+        assert!(orders.follow(&[
+            Change::Trash {
+                path: "/files/a".into()
+            },
+            Change::Trash {
+                path: "/files/d".into()
+            },
+        ]));
+        assert_eq!(
+            orders.trashed(),
+            [
+                PathBuf::from("/files/a"),
+                PathBuf::from("/files/a/b"),
+                PathBuf::from("/files/d")
+            ]
+        );
+        let read = Orders::read(orders.to_value());
+        assert_eq!(read.trashed(), orders.trashed(), "written trashed");
+        assert!(orders.follow(&[Change::Restore {
+            path: "/files/d".into()
+        }]));
+        assert_eq!(orders.trashed().len(), 2, "restored: shown again");
+        // The trash emptied: the trashed folder is nowhere; one that was
+        // never trashed is not forgotten for being gone.
+        let found = Emptied {
+            back: Vec::new(),
+            gone: vec!["/files/a".into(), "/files/a/b".into(), "/files/c".into()],
+        };
+        assert!(orders.forget_emptied(&found));
+        assert_eq!(orders.of(&at("/files/a")), None);
+        assert_eq!(orders.of(&at("/files/a/b")), None);
+        assert_eq!(orders.of(&at("/files/c")), Some(by_date()));
+        assert_eq!(orders.of(&at("/files/d")), Some(by_date()));
+        assert!(!orders.forget_emptied(&found), "once");
+    }
+
+    /// The trash looked at: a folder remembered trashed that is back is
+    /// no longer trashed, one neither there nor in the trash is gone.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_look_at_the_trash_tells_back_from_gone() {
+        let dir = tempfile::tempdir().unwrap();
+        let back = dir.path().join("back");
+        std::fs::create_dir(&back).unwrap();
+        let gone = dir.path().join("gone");
+        let found = emptied(vec![back.clone(), gone.clone()]);
+        assert_eq!(found.back, [back]);
+        assert_eq!(found.gone, [gone]);
+    }
+
     #[test]
     fn a_setting_that_holds_no_list_is_never_written_over() {
         let orders = Orders::read(Some(toml::Value::String("by date".into())));
@@ -545,9 +761,12 @@ mod tests {
         }]));
         assert_eq!(orders.of(&at("/files/b")), Some(by_date()));
         assert_eq!(orders.of(&at("/files/a/c")), Some(by_name));
-        assert!(!orders.follow(&[Change::Trash {
-            path: "/files/b".into()
-        }]));
+        assert!(
+            orders.follow(&[Change::Trash {
+                path: "/files/b".into()
+            }]),
+            "said trashed"
+        );
         assert_eq!(
             orders.of(&at("/files/b")),
             Some(by_date()),
