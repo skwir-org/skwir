@@ -113,7 +113,9 @@ pub fn of(shell: &Shell, pane: PaneId) -> Option<Placeholder> {
     let ws = shell.app.workspace.read();
     let state = ws.pane(pane)?;
     let list = &shell.ui().list;
-    if !list.sorted.is_empty() || !list.arriving.is_empty() {
+    // Its groups' headings are drawn even when every group is folded
+    // (ADR-131, 2): they are the way back to the files, never "empty".
+    if !list.sorted.is_empty() || !list.arriving.is_empty() || list.rows.grouped() {
         return None;
     }
     if let Some(error) = state.listing.error() {

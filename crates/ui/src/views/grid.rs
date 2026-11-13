@@ -37,7 +37,7 @@ use skwir_core::EntryId;
 use skwir_core::thumbs::ThumbSize;
 
 use crate::elements::uniform_grid::{
-    GridGroups, TileHeights, UniformGridScrollHandle, uniform_grid,
+    GridGroups, HeadingAt, TileHeights, UniformGridScrollHandle, uniform_grid,
 };
 use crate::elements::zoom_wheel::{self, Zoomed};
 use crate::icons;
@@ -260,6 +260,11 @@ pub struct GridView {
     arriving_wrapped: HashMap<u64, u8>,
     /// The rows last drawn: what a position asked for is a tile of.
     drawn: crate::views::groups::RowMap,
+    /// The order those rows were of, and the pane's folds then
+    /// (`Pane::folds_version`): a fold keeps the view on what was at its
+    /// top (`GridView::keep_top`).
+    drawn_order: std::sync::Arc<[EntryId]>,
+    folds_at: Option<u64>,
 }
 
 /// Whether the lines counted for `last` (an order and a zoom) are not
@@ -352,6 +357,94 @@ impl GridView {
                 Tile::Entry(position) => return Some(position),
                 Tile::Arriving(_) => {}
             }
+        }
+    }
+
+    /// How many rows a vertical key goes, up below zero: one, a page or
+    /// half of one as the last prepaint shows them.
+    fn steps(&self, nav: Nav) -> Option<isize> {
+        let rows = self.scroll.rows_visible();
+        let (page, half) = (rows.saturating_sub(1).max(1), (rows / 2).max(1));
+        Some(match nav {
+            Nav::Up => -1,
+            Nav::Down => 1,
+            Nav::PageUp => -(page as isize),
+            Nav::PageDown => page as isize,
+            Nav::HalfPageUp => -(half as isize),
+            Nav::HalfPageDown => half as isize,
+            Nav::Left | Nav::Right | Nav::Home | Nav::End => return None,
+        })
+    }
+
+    /// The entry `steps` rows up or down from the one at `from`, each the
+    /// tile drawn over or under (`tile_step`), as far as the rows go.
+    fn walk(&self, from: usize, steps: usize, up: bool) -> usize {
+        let slots = self.scroll.slots();
+        let mut at = from;
+        for _ in 0..steps {
+            match self.tile_step(&slots, at, up) {
+                Some(next) => at = next,
+                None => break,
+            }
+        }
+        at
+    }
+
+    /// Put the keys on the heading of the pane's group `n` (ADR-131, 1),
+    /// brought into view as the list brings its row.
+    fn stop_on(&self, shell: &mut Shell, n: usize, cx: &mut Context<Shell>) {
+        shell.stop_on_heading(n, cx);
+        if let Some(drawn) = shell.ui().list.rows.drawn_of(n) {
+            self.scroll.scroll_to_heading(drawn);
+        }
+    }
+
+    /// A fold (or an unfold), from a heading, its menu or the palette,
+    /// keeps the view on what was at its top (ADR-131, 2): the tile there,
+    /// where it is now, or, one folded away, its group's heading at the
+    /// top; never the tile that took its number.
+    fn keep_top(&mut self, shell: &Shell, rows: &crate::views::groups::RowMap) {
+        let folds = shell
+            .app
+            .workspace
+            .read()
+            .pane(shell.pane)
+            .map(skwir_core::workspace::Pane::folds_version);
+        if folds == self.folds_at {
+            return;
+        }
+        // A scroll asked meanwhile (a heading the keys went to) wins.
+        let was = std::mem::replace(&mut self.folds_at, folds);
+        if was.is_none() || self.scroll.asked() {
+            return;
+        }
+        let list = &shell.ui().list;
+        let (tile, within) = self.scroll.anchor();
+        let Some(Tile::Entry(at)) = self.drawn.at_tile(tile) else {
+            return;
+        };
+        let Some(&id) = self.drawn_order.get(at) else {
+            return;
+        };
+        if let Some(now) = list.index_of(id) {
+            self.scroll.scroll_to_anchor((rows.tile_of(now), within));
+            return;
+        }
+        // Folded away: its group's heading at the top.
+        let group = self
+            .drawn
+            .group_of(at)
+            .and_then(|n| self.drawn.spans().get(n))
+            .map(|span| span.group.clone());
+        let drawn = group.and_then(|group| {
+            let n = rows
+                .spans()
+                .iter()
+                .position(|span| skwir_core::grouping::same(span.group.as_ref(), group.as_ref()))?;
+            rows.drawn_of(n)
+        });
+        if let Some(drawn) = drawn {
+            self.scroll.scroll_heading_to_top(drawn);
         }
     }
 
@@ -973,25 +1066,28 @@ fn grid_groups(
     GridGroups {
         rows,
         height,
-        heading: Rc::new(move |drawn, pinned, left, _, _| {
+        heading: Rc::new(move |drawn, at, left, _, _| {
             // A group no file is in yet (ADR-135): its own heading, dimmed,
-            // nothing to fold, never pinned as one of the pane's.
+            // nothing to fold, pinned on the files' ground as the others.
             let n = match spans.drawn().get(drawn) {
                 Some(groups::Drawn::Group(n)) => *n,
                 Some(groups::Drawn::Fresh(k)) => {
                     let Some(fresh) = spans.fresh().get(*k) else {
                         return div().into_any_element();
                     };
-                    return groups::fresh_heading(
-                        fresh,
-                        drawn == 0,
-                        height,
-                        Some(left + FRAME),
-                        scale,
-                        &theme,
-                    )
-                    .id(("fresh-heading", *k))
-                    .into_any_element();
+                    let left = Some(left + FRAME);
+                    return match at {
+                        HeadingAt::Pinned { .. } => {
+                            groups::pinned_fresh(fresh, height, left, scale, &theme, ground)
+                                .id(("pinned-fresh", *k))
+                                .into_any_element()
+                        }
+                        HeadingAt::Place => {
+                            groups::fresh_heading(fresh, drawn == 0, height, left, scale, &theme)
+                                .id(("fresh-heading", *k))
+                                .into_any_element()
+                        }
+                    };
                 }
                 None => return div().into_any_element(),
             };
@@ -1007,19 +1103,34 @@ fn grid_groups(
                 scale,
                 &theme,
             ));
-            if pinned {
+            // The pinned heading is where the keyboard's menu hangs, drawn
+            // over its line; the one heard where its line is not drawn.
+            if let HeadingAt::Pinned { alone } = at {
                 let heading = groups::pinned(span, height, left, scale, &theme, ground, chevron)
-                    .id(("pinned-heading", n));
-                act(groups::ring(heading, on, &theme)).into_any_element()
-            } else {
-                let heading = groups::heading(span, n == 0, height, left, scale, &theme, chevron)
-                    .id(("heading", n))
+                    .id(("pinned-heading", n))
                     .children(
                         anchor
                             .as_ref()
                             .filter(|_| on)
                             .map(crate::elements::popover::PopoverAnchor::marker),
                     );
+                groups::expose(
+                    act(groups::ring(heading, on, &theme)),
+                    span,
+                    on,
+                    a11y && alone,
+                )
+                .into_any_element()
+            } else {
+                let heading =
+                    groups::heading(span, drawn == 0, height, left, scale, &theme, chevron)
+                        .id(("heading", n))
+                        .children(
+                            anchor
+                                .as_ref()
+                                .filter(|_| on)
+                                .map(crate::elements::popover::PopoverAnchor::marker),
+                        );
                 groups::expose(act(groups::ring(heading, on, &theme)), span, on, a11y)
                     .into_any_element()
             }
@@ -1056,7 +1167,9 @@ impl PaneView for GridView {
         // The groups, each starting a row of its own under its heading, and
         // what arrives among the tiles (ADR-135).
         let rows = shell.ui().list.rows.clone();
+        self.keep_top(shell, &rows);
         self.drawn = rows.clone();
+        self.drawn_order = std::sync::Arc::clone(&shell.ui().list.sorted);
         let count = rows.tiles();
         let entries = shell.ui().list.sorted.len();
         let first_of = {
@@ -1212,41 +1325,35 @@ impl PaneView for GridView {
     fn nav_delta(&self, nav: Nav, shell: &Shell) -> Option<isize> {
         // Geometry from the last prepaint, never from a measured width.
         let cols = self.scroll.cols() as isize;
-        let rows = self.scroll.rows_visible();
-        let (page, half) = (rows.saturating_sub(1).max(1), (rows / 2).max(1));
         let steps = match nav {
             Nav::Left => return Some(-1),
             Nav::Right => return Some(1),
             Nav::Home | Nav::End => return None,
-            Nav::Up => -1,
-            Nav::Down => 1,
-            Nav::PageUp => -(page as isize),
-            Nav::PageDown => page as isize,
-            Nav::HalfPageUp => -(half as isize),
-            Nav::HalfPageDown => half as isize,
+            _ => self.steps(nav)?,
         };
         let count = shell.ui().list.sorted.len();
         let Some(cursor) = shell.cursor_index().filter(|ix| *ix < count) else {
             return Some(steps * cols);
         };
-        let slots = self.scroll.slots();
-        let mut at = cursor;
-        for _ in 0..steps.unsigned_abs() {
-            let next = self.tile_step(&slots, at, steps < 0);
-            match next {
-                Some(next) => at = next,
-                // Past the first row or the last: to the order's end.
-                None if at == cursor => at = if steps < 0 { 0 } else { count - 1 },
-                None => break,
+        let at = match self.walk(cursor, steps.unsigned_abs(), steps < 0) {
+            // Past the first row or the last: to the order's end.
+            at if at == cursor => {
+                if steps < 0 {
+                    0
+                } else {
+                    count - 1
+                }
             }
-        }
+            at => at,
+        };
         Some(at as isize - cursor as isize)
     }
 
     /// Grouped, the plain arrows stop on headings (ADR-131, 1): Up from a
     /// group's first row, Down from its last, and from a heading to its
     /// group's first tile or the group before's last; on one, Left folds it
-    /// and Right opens it.
+    /// and Right opens it, and a page goes from it as many rows. A heading
+    /// the keys stop on is brought into view, folded or not.
     fn nav(
         &mut self,
         nav: Nav,
@@ -1260,6 +1367,7 @@ impl PaneView for GridView {
             return false;
         }
         let spans = rows.spans();
+        let count = shell.ui().list.sorted.len();
         let tile = |shell: &mut Shell, ix: usize, window: &mut Window, cx: &mut Context<Shell>| {
             shell.cursor_to(ix as isize, crate::list::Step::Select, window, cx);
             true
@@ -1270,8 +1378,7 @@ impl PaneView for GridView {
                     return tile(shell, spans[n].start, window, cx);
                 }
                 if n + 1 < spans.len() {
-                    shell.stop_on_heading(n + 1, cx);
-                    self.scroll.scroll_to_item(rows.tile_of(spans[n + 1].start));
+                    self.stop_on(shell, n + 1, cx);
                 }
                 true
             }
@@ -1280,7 +1387,7 @@ impl PaneView for GridView {
                     return true;
                 };
                 if rows.folded(before) {
-                    shell.stop_on_heading(before, cx);
+                    self.stop_on(shell, before, cx);
                     true
                 } else {
                     tile(
@@ -1299,8 +1406,33 @@ impl PaneView for GridView {
                 shell.fold_from_heading(n, "unfold", window, cx);
                 true
             }
+            // A page from a heading: from the tile under it down, from the
+            // one before it up, as the list goes a page of rows from it.
+            (Nav::PageUp | Nav::PageDown | Nav::HalfPageUp | Nav::HalfPageDown, Some(n)) => {
+                let Some(steps) = self.steps(nav) else {
+                    return false;
+                };
+                let up = steps < 0;
+                let from = if up {
+                    spans[n].start.checked_sub(1)
+                } else {
+                    Some(spans[n].start).filter(|start| *start < count)
+                };
+                if let Some(from) = from {
+                    let to = self.walk(from, steps.unsigned_abs() - 1, up);
+                    tile(shell, to, window, cx);
+                }
+                true
+            }
             (Nav::Up | Nav::Down, None) => {
                 let Some(ix) = shell.cursor_index() else {
+                    // Every group folded: no tile to be on, the keys go to
+                    // the first heading or the last.
+                    if count == 0 {
+                        let n = if nav == Nav::Down { 0 } else { spans.len() - 1 };
+                        self.stop_on(shell, n, cx);
+                        return true;
+                    }
                     return false;
                 };
                 let Some(group) = rows.group_of(ix) else {
@@ -1312,20 +1444,12 @@ impl PaneView for GridView {
                 if next.and_then(|next| rows.group_of(next)) == Some(group) {
                     return false;
                 }
-                let to = if nav == Nav::Up {
-                    Some(group)
+                let to = if nav == Nav::Up { group } else { group + 1 };
+                if to < spans.len() {
+                    self.stop_on(shell, to, cx);
+                    true
                 } else {
-                    Some(group + 1)
-                };
-                match to.filter(|to| *to < spans.len()) {
-                    Some(to) => {
-                        shell.stop_on_heading(to, cx);
-                        if spans[to].len > 0 {
-                            self.scroll.scroll_to_item(rows.tile_of(spans[to].start));
-                        }
-                        true
-                    }
-                    None => false,
+                    false
                 }
             }
             _ => false,
@@ -1333,6 +1457,7 @@ impl PaneView for GridView {
     }
 
     fn reset(&mut self) {
+        self.folds_at = None;
         self.scroll.scroll_to_item_strict(0);
     }
 }

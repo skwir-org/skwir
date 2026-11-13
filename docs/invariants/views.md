@@ -504,7 +504,11 @@ around the views is in [shell.md](shell.md).
   the one at the top is
   pinned (`groups::Pinned`, a decoration of the list, computed after it
   scrolled), pushed up by the next, and a row brought into view from
-  above stops below it. The tree groups its top level: a folder opened
+  above stops below it; a group no file is in yet's is pinned as theirs
+  are (`RowMap::drawn_at`, `groups::pinned_fresh`). Where its own row is
+  not drawn, the pinned heading is the one a screen reader hears, and
+  the keyboard's menu hangs from it while the keys are on it. The tree
+  groups its top level: a folder opened
   in place keeps its entries under it, in its group, whose heading
   counts its own (`Span::count`). Columns, Usage and the map draw no
   headings; the board, grouped, makes each group a column (above).
@@ -571,7 +575,17 @@ around the views is in [shell.md](shell.md).
   (`FoldKey`), kept while it is grouped by the same criterion in either
   direction, forgotten when it is grouped by another; a fold bumps the
   pane's order (`folds_version`), and every map from rows to positions
-  (`RowMap`, the grid's lines) holds a heading with no entries.
+  (`RowMap`, the grid's lines) holds a heading with no entries. Every
+  group folded, the view draws their headings alone, the way back to the
+  files: never an empty folder's placeholder (`placeholder::of` asks
+  `RowMap::grouped`), and Up and Down, with no entry to be on, stop on the
+  first heading or the last. A page that lands below the last entry (a
+  folded group's heading, what arrives after every entry) goes to the last
+  (`RowMap::entry_near`). A fold or an unfold, wherever it is asked (a
+  heading, its menu, the palette), keeps the view on what was at its top:
+  the same entry where it is now, or, one folded away, its group's heading
+  at the top (`RowMap::kept_row`, `GridView::keep_top`), never what slid
+  under the same pixels or took the same tile's number.
 - **A heading acts** (ADR-130, 12, `groups::acting`): lit where the
   pointer is; a press selects what it counts (`ui.select_group`, its own
   entries in the tree; with Ctrl, beside what is selected), from the first
@@ -592,10 +606,14 @@ around the views is in [shell.md](shell.md).
   words begin where the first column's pictures do. Up and Down go to
   the tile drawn over or under (`Slots::above`, `below`): its column in
   the next row, or the last of a shorter row, stopping on a heading
-  between as the list does. What a
+  between as the list does, and a heading the keys stop on, folded or
+  not, is brought into view (`UniformGridScrollHandle::scroll_to_heading`,
+  `Slots::offset_for_heading`; the list's `Asked::Row`); a page from a
+  heading goes from the tile under it, or the one before it. What a
   reflow keeps (`Slots::anchor`) is the tile under the pinned heading,
   so a grid at its top stays there when it is grouped. The rubber band
-  hit-tests the same lines, and begins on no heading.
+  hit-tests the same lines, and begins on no heading, the pinned one
+  included (`Geometry::Cells::pinned`).
 - **What changed is placed, never merged rank by rank**
   (`Listing::place`): a hydrated batch in a big folder is a thousand
   entries among a hundred thousand, a hundred times while it is read.

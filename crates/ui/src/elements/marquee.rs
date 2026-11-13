@@ -34,11 +34,13 @@ pub enum Geometry {
     Rows { height: f32, rows: RowMap },
     /// A grid's tiles, placed from `origin` (the grid's border and
     /// padding), each an entry or what arrives (`rows`). The gutters
-    /// between them are empty: a band can begin there.
+    /// between them are empty: a band can begin there, but not under the
+    /// heading pinned at the top, between `pinned`'s two heights.
     Cells {
         slots: Slots,
         origin: (f32, f32),
         rows: RowMap,
+        pinned: Option<(f32, f32)>,
     },
 }
 
@@ -59,6 +61,7 @@ impl Geometry {
                 slots,
                 origin,
                 rows,
+                ..
             } => match rows.at_tile(slots.tile_at(x - origin.0, y - origin.1)?)? {
                 Tile::Entry(index) => index,
                 Tile::Arriving(_) => return None,
@@ -74,7 +77,14 @@ impl Geometry {
             Geometry::Rows { height, rows } if x >= 0. && y >= 0. => {
                 rows.at((y / *height) as usize).is_some()
             }
-            Geometry::Cells { slots, origin, .. } if slots.heading_at(y - origin.1).is_some() => {
+            Geometry::Cells {
+                slots,
+                origin,
+                pinned,
+                ..
+            } if slots.heading_at(y - origin.1).is_some()
+                || pinned.is_some_and(|(top, bottom)| (top..bottom).contains(&(y - origin.1))) =>
+            {
                 true
             }
             // What arrives answers its own press: no band begins on it.
@@ -82,6 +92,7 @@ impl Geometry {
                 slots,
                 origin,
                 rows,
+                ..
             } if slots
                 .tile_at(x - origin.0, y - origin.1)
                 .and_then(|tile| rows.at_tile(tile))
@@ -111,6 +122,7 @@ impl Geometry {
                 slots,
                 origin,
                 rows,
+                ..
             } => slots
                 .covered(
                     (x0 - origin.0, x1 - origin.0),
@@ -194,11 +206,20 @@ impl Source {
                 height: *height,
                 rows: rows.clone(),
             },
-            Source::Grid(grid, rows) => Geometry::Cells {
-                slots: grid.slots(),
-                origin: grid.origin(),
-                rows: rows.clone(),
-            },
+            Source::Grid(grid, rows) => {
+                let slots = grid.slots();
+                // The heading pinned at the top, in this frame's place.
+                let offset = f32::from(grid.0.borrow().base_handle.offset().y);
+                let pinned = slots
+                    .pinned_at(offset)
+                    .map(|(_, top)| (top, top + slots.heading_height()));
+                Geometry::Cells {
+                    origin: grid.origin(),
+                    rows: rows.clone(),
+                    pinned,
+                    slots,
+                }
+            }
         }
     }
 }
@@ -415,6 +436,26 @@ mod tests {
         assert!(!rows.hits(10., 125., 4), "below the last row");
     }
 
+    /// A press on the heading pinned at the top of a grid, over a gutter of
+    /// the row scrolled under it, begins no band: the heading is pressed.
+    #[test]
+    fn no_band_begins_under_a_grids_pinned_heading() {
+        let slots = Slots::new(Columns::fit(464., 100., 16., 40.), 16., 10, |_| 120.);
+        let cells = |pinned| Geometry::Cells {
+            slots: slots.clone(),
+            origin: (4., 0.),
+            rows: RowMap::flat(10),
+            pinned,
+        };
+        // The gutter between the first two tiles, 150 px down.
+        assert!(!cells(None).hits(124., 150., 10), "a band begins there");
+        assert!(
+            cells(Some((140., 170.))).hits(124., 150., 10),
+            "pinned there"
+        );
+        assert!(!cells(Some((140., 170.))).hits(124., 175., 10), "under it");
+    }
+
     #[test]
     fn tiles_are_hit_inside_their_gutters_and_the_band_selects_a_block() {
         // Four 100 by 120 tiles a row, each 8 px from the edge of its slot.
@@ -422,6 +463,7 @@ mod tests {
             slots: Slots::new(Columns::fit(464., 100., 16., 40.), 16., 10, |_| 120.),
             origin: (4., 0.),
             rows: RowMap::flat(10),
+            pinned: None,
         };
         assert_eq!(cells.item_at(130., 150., 10), Some(5));
         assert_eq!(cells.item_at(124., 150., 10), None, "in the gutter");

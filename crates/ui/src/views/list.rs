@@ -493,6 +493,11 @@ pub struct ListView {
     /// The rows as last drawn, the groups' headings among the entries:
     /// where the view is scrolled is told by them.
     drawn: RowMap,
+    /// The order those rows were of, and the pane's folds then
+    /// (`Pane::folds_version`): a fold keeps the view on what was at its
+    /// top (`RowMap::kept_row`).
+    drawn_order: std::sync::Arc<[skwir_core::EntryId]>,
+    folds_at: Option<u64>,
     /// A scroll asked for by an entry's position, made a row's when the
     /// view draws, with the rows as they are then: the order and its
     /// headings can change between the asking and the drawing.
@@ -519,6 +524,8 @@ impl Default for ListView {
             height: ROW_HEIGHT,
             tree: false,
             drawn: RowMap::default(),
+            drawn_order: std::sync::Arc::from([]),
+            folds_at: None,
             asked: None,
         }
     }
@@ -967,7 +974,7 @@ fn grouped_row_elements(
                 );
                 let stopped = shell.heading_stop() == Some(n);
                 let heading =
-                    groups::heading(span, n == 0, height, None, scale, theme, Some(chevron))
+                    groups::heading(span, at == 0, height, None, scale, theme, Some(chevron))
                         .id(("heading", n))
                         .children(shell.menu_marker(shell.pane, stopped));
                 let heading = groups::ring(heading, stopped, theme);
@@ -1458,8 +1465,38 @@ impl PaneView for ListView {
             // keep the cursor in view (`Shell::zoom_step`).
             self.place_anchor((row, within * height / before));
         }
+        // A fold (or an unfold), from a heading, its menu or the palette,
+        // keeps the view on what was at its top: the same entry, or, one
+        // folded away, its group's heading, never the rows that slid
+        // under the same pixels (ADR-131, 2).
+        let folds = shell
+            .app
+            .workspace
+            .read()
+            .pane(pane)
+            .map(skwir_core::workspace::Pane::folds_version);
+        if folds != self.folds_at {
+            if self.folds_at.is_some() && self.asked.is_none() {
+                let offset = f32::from(self.scroll.0.borrow().base_handle.offset().y);
+                let (row, within) = row_anchor(offset, self.height);
+                let list = &shell.ui().list;
+                if let Some(kept) =
+                    rows.kept_row(&self.drawn, &self.drawn_order, row, |id| list.index_of(id))
+                {
+                    // A heading kept is put at the top, where it is drawn.
+                    let within = if matches!(rows.at(kept), Some(Row::Heading(_))) {
+                        0.
+                    } else {
+                        within
+                    };
+                    self.place_anchor((kept, within));
+                }
+            }
+            self.folds_at = folds;
+        }
         self.scroll_as_asked(&rows);
         self.drawn = rows.clone();
+        self.drawn_order = std::sync::Arc::clone(&shell.ui().list.sorted);
         let drawn = rows.clone();
         let list = uniform_list(
             "rows",
@@ -1491,6 +1528,8 @@ impl PaneView for ListView {
                 theme: theme.clone(),
                 ground: theme.files_ground(shell.lowered()),
                 stopped: shell.heading_stop(),
+                anchor: shell.host_row_anchor(crate::menu::MenuHost::Pane(pane)),
+                a11y: shell.a11y,
                 pane,
                 shell: cx.weak_entity(),
             })
@@ -1558,7 +1597,7 @@ impl PaneView for ListView {
             return Some(delta);
         };
         let row = (rows.row_of(cursor) as isize + delta).clamp(0, rows.len() as isize - 1);
-        let to = rows.entry_from(row as usize).unwrap_or(cursor);
+        let to = rows.entry_near(row as usize).unwrap_or(cursor);
         Some(to as isize - cursor as isize)
     }
 
@@ -1625,6 +1664,7 @@ impl PaneView for ListView {
 
     fn reset(&mut self) {
         self.asked = None;
+        self.folds_at = None;
         self.scroll.scroll_to_item_strict(0, ScrollStrategy::Top);
     }
 }
@@ -1644,9 +1684,24 @@ impl ListView {
             return None;
         }
         let stop = shell.heading_stop();
-        let row = match stop {
-            Some(n) => rows.heading_row(n),
-            None => rows.row_of(shell.cursor_index()?),
+        let row = match (stop, shell.cursor_index()) {
+            (Some(n), _) => rows.heading_row(n),
+            (None, Some(cursor)) => rows.row_of(cursor),
+            // Every group folded: no entry to be on, the keys go to the
+            // first heading or the last.
+            (None, None)
+                if shell.ui().list.sorted.is_empty() && matches!(nav, Nav::Up | Nav::Down) =>
+            {
+                let n = if nav == Nav::Down {
+                    0
+                } else {
+                    rows.spans().len() - 1
+                };
+                shell.stop_on_heading(n, cx);
+                self.asked = Some(Asked::Row(rows.heading_row(n)));
+                return Some(true);
+            }
+            (None, None) => return None,
         };
         match (nav, stop) {
             (Nav::Up | Nav::Down, _) => {
@@ -1690,10 +1745,10 @@ impl ListView {
             (Nav::PageUp | Nav::PageDown | Nav::HalfPageUp | Nav::HalfPageDown, Some(_)) => {
                 let delta = rows_nav(nav, shell)?;
                 let to = (row as isize + delta).clamp(0, rows.len() as isize - 1) as usize;
-                let ix = rows
-                    .entry_from(to)
-                    .or_else(|| rows.entry_from(rows.len().saturating_sub(1)))?;
-                shell.cursor_to(ix as isize, Step::Select, window, cx);
+                // No entry at all (every group folded): the keys stay.
+                if let Some(ix) = rows.entry_near(to) {
+                    shell.cursor_to(ix as isize, Step::Select, window, cx);
+                }
                 Some(true)
             }
             // Home and End go to the order's ends, from wherever the keys are.

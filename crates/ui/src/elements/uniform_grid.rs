@@ -302,6 +302,12 @@ pub mod math {
             )
         }
 
+        /// A heading's height where groups are drawn: the one pinned at the
+        /// top covers that much of the view.
+        pub fn heading_height(&self) -> f32 {
+            self.heading
+        }
+
         /// Where a tile's picture begins, from the content's left: where a
         /// heading's words begin, in line with the first column.
         pub fn left(&self) -> f32 {
@@ -469,6 +475,35 @@ pub mod math {
             -(self.tops[row] + within.clamp(-above, room) - self.heading).max(0.)
         }
 
+        /// Offset that shows the heading of group `group` (drawn), moving the
+        /// least: one above the view, or under the one pinned there, at the
+        /// top, where it is drawn in place; one below, at the bottom; one in
+        /// view where it is. With `at_top`, at the top wherever it is.
+        pub fn offset_for_heading(
+            &self,
+            group: usize,
+            at_top: bool,
+            viewport_h: f32,
+            content_h: f32,
+            current: f32,
+        ) -> f32 {
+            let Some(&line) = self.headings.get(group) else {
+                return current;
+            };
+            let (top, bottom) = (self.tops[line], self.tops[line + 1]);
+            let scroll_top = -current;
+            let max_scroll = (content_h - viewport_h).max(0.0);
+            let target =
+                if at_top || (top < scroll_top + self.heading && (top - scroll_top).abs() > 0.5) {
+                    top
+                } else if bottom > scroll_top + viewport_h {
+                    bottom - viewport_h
+                } else {
+                    return current;
+                };
+            -target.clamp(0.0, max_scroll)
+        }
+
         /// Offset that shows item `ix`'s row where `place` says, or the
         /// current offset when the row is already fully visible and
         /// `place` is not `Top`. Clamped to the content. Under a pinned
@@ -518,13 +553,22 @@ pub struct TileHeights {
 
 /// What the grid draws of its order's groups (ADR-130): each group starts
 /// a row of its own, under a heading `height` tall as wide as the grid.
-/// `heading` makes one: given its group, whether it is the one pinned at
-/// the top, and where the tiles' pictures begin from the left.
+/// `heading` makes one: given its group, where it is drawn, and where the
+/// tiles' pictures begin from the left.
 #[derive(Clone)]
 pub struct GridGroups {
     pub rows: crate::views::groups::RowMap,
     pub height: f32,
-    pub heading: Rc<dyn Fn(usize, bool, f32, &mut Window, &mut App) -> AnyElement>,
+    pub heading: Rc<dyn Fn(usize, HeadingAt, f32, &mut Window, &mut App) -> AnyElement>,
+}
+
+/// Where a heading of the grid is drawn: in its place among the lines, or
+/// pinned at the top, its line there drawn too (scrolled partly under it)
+/// or not (above the view), when the pinned one is the heading heard.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HeadingAt {
+    Place,
+    Pinned { alone: bool },
 }
 
 /// Create a grid of `item_count` tiles `tile_width` wide. `f` renders the
@@ -605,6 +649,9 @@ enum Deferred {
     Item { ix: usize, place: math::Place },
     /// Put an item's row at the top, `within` pixels scrolled into it.
     Anchor { ix: usize, within: f32 },
+    /// Bring the heading of a group drawn (`Slots::offset_for_heading`)
+    /// into view, or to the top.
+    Heading { group: usize, at_top: bool },
 }
 
 #[derive(Debug, Default)]
@@ -651,6 +698,25 @@ impl UniformGridScrollHandle {
         });
     }
 
+    /// Bring the heading of group `group`, in the order the groups are
+    /// drawn (`RowMap::drawn_of`), into view with the minimum scroll: where
+    /// the keys stop on one (ADR-131, 1).
+    pub fn scroll_to_heading(&self, group: usize) {
+        self.0.borrow_mut().deferred = Some(Deferred::Heading {
+            group,
+            at_top: false,
+        });
+    }
+
+    /// Put the heading of group `group` (drawn) at the top: where a fold
+    /// keeps the view when what was there was folded away.
+    pub fn scroll_heading_to_top(&self, group: usize) {
+        self.0.borrow_mut().deferred = Some(Deferred::Heading {
+            group,
+            at_top: true,
+        });
+    }
+
     /// Put item `ix`'s row in the middle, unless it is wholly in view.
     pub fn scroll_to_item_middle(&self, ix: usize) {
         self.0.borrow_mut().deferred = Some(Deferred::Item {
@@ -675,6 +741,11 @@ impl UniformGridScrollHandle {
     /// been resized, the zoom changed, entries added before it).
     pub fn scroll_to_anchor(&self, (ix, within): (usize, f32)) {
         self.0.borrow_mut().deferred = Some(Deferred::Anchor { ix, within });
+    }
+
+    /// Whether a scroll is asked and not yet carried out.
+    pub fn asked(&self) -> bool {
+        self.0.borrow().deferred.is_some()
     }
 
     /// Column count of the last prepaint (1 before the first).
@@ -883,6 +954,9 @@ impl Element for UniformGrid {
                     Some(Deferred::Anchor { ix, within }) => {
                         y = slots.offset_for_anchor((ix.min(item_count.saturating_sub(1)), within));
                     }
+                    Some(Deferred::Heading { group, at_top }) => {
+                        y = slots.offset_for_heading(group, at_top, viewport_h, content_h, y);
+                    }
                     None => {}
                 }
                 let max_scroll = (content_h - viewport_h).max(0.0);
@@ -907,7 +981,9 @@ impl Element for UniformGrid {
                         ),
                     };
                 }
-                if item_count == 0 || visible.is_empty() {
+                // Lines without a tile are headings: a grid whose groups are
+                // all folded draws them still, the way back to its files.
+                if visible.is_empty() {
                     return hitbox;
                 }
                 let items_range = slots.items_in(visible.clone());
@@ -943,11 +1019,14 @@ impl Element for UniformGrid {
                             + point(scroll_offset.x, px(top) + scroll_offset.y + padding.top)
                     };
                     let left = slots.left();
-                    let pinned = slots.pinned_at(y).map(|(group, top)| (group, true, top));
-                    for (group, pin, top) in slots
-                        .headings_in(visible)
-                        .into_iter()
-                        .map(|(_, top, group)| (group, false, top))
+                    let in_place = slots.headings_in(visible);
+                    let pinned = slots.pinned_at(y).map(|(group, top)| {
+                        let alone = !in_place.iter().any(|(_, _, g)| *g == group);
+                        (group, HeadingAt::Pinned { alone }, top)
+                    });
+                    for (group, pin, top) in in_place
+                        .iter()
+                        .map(|&(_, top, group)| (group, HeadingAt::Place, top))
                         .chain(pinned)
                     {
                         let mut item = (groups.heading)(group, pin, left, window, cx);
@@ -1198,6 +1277,48 @@ mod tests {
         assert_eq!(slots.items_in(2..4), 0..0, "two headings");
         // The next heading pushes the folded one up.
         assert_eq!(slots.pinned_at(-200.), Some((1, 178.)));
+    }
+
+    /// Every group folded: no tile, and every heading a line drawn, the
+    /// way back to the files.
+    #[test]
+    fn every_group_folded_is_its_headings() {
+        let slots = Slots::grouped(
+            Columns::fit(600., 100., 12., 40.),
+            8.,
+            &[0, 0, 0],
+            30.,
+            |_| 140.,
+        );
+        assert_eq!((slots.rows(), slots.height()), (3, 90.));
+        let visible = slots.visible_rows(0., 200.);
+        assert_eq!(visible, 0..3);
+        assert_eq!(slots.items_in(visible.clone()), 0..0);
+        assert_eq!(
+            slots.headings_in(visible),
+            vec![(0, 0., 0), (1, 30., 1), (2, 60., 2)]
+        );
+    }
+
+    /// A heading the keys stop on is brought into view moving the least:
+    /// from below, to the bottom; from above or under the pinned one, to
+    /// the top, where it is drawn in place; in view, nothing moves.
+    #[test]
+    fn a_heading_is_brought_into_view() {
+        let slots = grouped();
+        let at = |group, current| slots.offset_for_heading(group, false, 200., 504., current);
+        assert!((at(1, 0.) - -8.).abs() < 1e-3, "from below");
+        assert!((at(1, -300.) - -178.).abs() < 1e-3, "from above");
+        assert!((at(1, -160.) - -178.).abs() < 1e-3, "under the pinned one");
+        assert!((at(1, -178.) - -178.).abs() < 1e-3, "at the top already");
+        assert!((at(1, -100.) - -100.).abs() < 1e-3, "in view");
+        assert!((at(0, -50.) - 0.).abs() < 1e-3);
+        assert!((at(7, -50.) - -50.).abs() < 1e-3, "no such group");
+        let top = |group, current| slots.offset_for_heading(group, true, 200., 504., current);
+        assert!(
+            (top(1, -100.) - -178.).abs() < 1e-3,
+            "in view, put at the top"
+        );
     }
 
     /// Up and Down go to the tile drawn over or under, past a heading, or

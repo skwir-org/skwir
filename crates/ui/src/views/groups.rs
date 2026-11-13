@@ -83,6 +83,9 @@ pub struct RowMap {
     extras: Arc<[(usize, Row)]>,
     /// The row of each group's heading.
     headings: Arc<[usize]>,
+    /// The row of each heading drawn, in the order drawn (`drawn`): the
+    /// pane's groups' and those of groups no file is in yet.
+    heads: Arc<[usize]>,
     /// The tiles of a grid that are no entry, in order: each tile, and
     /// which of what arrives it is.
     tiles: Arc<[(usize, usize)]>,
@@ -92,6 +95,8 @@ pub struct RowMap {
     /// The groups no file is in yet, and every group in the order drawn.
     fresh: Arc<[Fresh]>,
     drawn: Arc<[Drawn]>,
+    /// Where each of the pane's groups is among `drawn`.
+    drawn_at: Arc<[usize]>,
 }
 
 impl RowMap {
@@ -132,6 +137,7 @@ impl RowMap {
         };
         fresh_order.sort_by_key(|&k| (fresh[k].before.min(spans.len()), k));
         let mut drawn: Vec<Drawn> = Vec::with_capacity(spans.len() + fresh_order.len());
+        let mut drawn_at = Vec::with_capacity(spans.len());
         let mut f = 0;
         for n in 0..spans.len() {
             while let Some(&k) = fresh_order.get(f)
@@ -140,6 +146,7 @@ impl RowMap {
                 drawn.push(Drawn::Fresh(k));
                 f += 1;
             }
+            drawn_at.push(drawn.len());
             drawn.push(Drawn::Group(n));
         }
         drawn.extend(fresh_order[f..].iter().map(|&k| Drawn::Fresh(k)));
@@ -178,6 +185,7 @@ impl RowMap {
         });
         let mut extras = Vec::with_capacity(drawn.len() + order.len());
         let mut headings = Vec::with_capacity(spans.len());
+        let mut heads = Vec::with_capacity(drawn.len());
         let mut tiles = Vec::with_capacity(order.len());
         let mut lens = Vec::with_capacity(drawn.len());
         // The rows, and the tiles, before the next that is no entry.
@@ -200,6 +208,7 @@ impl RowMap {
             if let Drawn::Group(_) = group {
                 headings.push(from + rows_before);
             }
+            heads.push(from + rows_before);
             extras.push((from + rows_before, heading));
             rows_before += 1;
             let mut len = to - from;
@@ -237,6 +246,7 @@ impl RowMap {
             entries,
             extras: extras.into(),
             headings: headings.into(),
+            heads: heads.into(),
             tiles: tiles.into(),
             lens: lens.into(),
             fresh: if grouped {
@@ -245,7 +255,14 @@ impl RowMap {
                 Arc::from([])
             },
             drawn: drawn.into(),
+            drawn_at: drawn_at.into(),
         }
+    }
+
+    /// Where the pane's group `n` is among the groups drawn (`drawn`): the
+    /// grid's line of headings it heads.
+    pub fn drawn_of(&self, n: usize) -> Option<usize> {
+        self.drawn_at.get(n).copied()
     }
 
     /// The groups no file is in yet, whose headings only what arrives
@@ -309,17 +326,52 @@ impl RowMap {
         self.headings[n]
     }
 
-    /// The group whose heading or rows `row` is, the last whose heading is
-    /// not below it.
-    pub fn group_at(&self, row: usize) -> Option<usize> {
+    /// The group drawn (`drawn`) whose heading or rows `row` is, the last
+    /// whose heading is not below it: one of the pane's or one no file is
+    /// in yet.
+    pub fn drawn_at(&self, row: usize) -> Option<usize> {
         if self.spans.is_empty() || row >= self.len() {
             return None;
         }
         Some(
-            self.headings
+            self.heads
                 .partition_point(|heading| *heading <= row)
                 .saturating_sub(1),
         )
+    }
+
+    /// The row of the heading of the `d`th group drawn.
+    pub fn drawn_row(&self, d: usize) -> Option<usize> {
+        self.heads.get(d).copied()
+    }
+
+    /// The row in these rows that shows what row `row` of `old` (its order
+    /// `old_order`) showed, after a fold (ADR-131, 2): the same heading,
+    /// the same entry (where it is now, `position_of`), or, an entry folded
+    /// away, its group's heading. None for what arrives, or what is gone.
+    pub fn kept_row(
+        &self,
+        old: &RowMap,
+        old_order: &[skwir_core::EntryId],
+        row: usize,
+        position_of: impl Fn(skwir_core::EntryId) -> Option<usize>,
+    ) -> Option<usize> {
+        let heading_of = |n: usize| {
+            let group = old.spans.get(n)?.group.as_ref();
+            let m = self
+                .spans
+                .iter()
+                .position(|span| skwir_core::grouping::same(span.group.as_ref(), group))?;
+            self.headings.get(m).copied()
+        };
+        match old.at(row)? {
+            Row::Heading(n) => heading_of(n),
+            Row::Entry(p) => match position_of(*old_order.get(p)?) {
+                Some(q) => Some(self.row_of(q)),
+                None => heading_of(old.group_of(p)?),
+            },
+            Row::Fresh(_) | Row::Arriving(_) => None,
+        }
     }
 
     /// Where `row` is among the rows that are no entry: `Ok` the one it
@@ -382,6 +434,14 @@ impl RowMap {
             Ok(k) => Some(self.entries_above(k)).filter(|at| *at < self.entries),
             Err(above) => Some(row - above),
         }
+    }
+
+    /// Where a page landing on `row` goes: the first entry at it or below
+    /// it, else, below the last entry (a folded group's heading, what
+    /// arrives after every entry), the last; none with no entry at all.
+    pub fn entry_near(&self, row: usize) -> Option<usize> {
+        self.entry_from(row.min(self.len().saturating_sub(1)))
+            .or_else(|| self.entries.checked_sub(1))
     }
 
     /// Whether group `n` is folded: its span holds none of the entries.
@@ -746,13 +806,34 @@ pub fn pinned(
     ground: gpui::Hsla,
     chevron: Option<AnyElement>,
 ) -> Div {
+    let heading = heading(span, true, height, left, scale, theme, chevron);
+    pinned_frame(heading, height, theme, ground)
+}
+
+/// The heading of a group no file is in yet (`fresh_heading`) pinned at
+/// the top of a view, as `pinned` pins one of the pane's.
+pub fn pinned_fresh(
+    fresh: &Fresh,
+    height: f32,
+    left: Option<f32>,
+    scale: Scale,
+    theme: &Theme,
+    ground: gpui::Hsla,
+) -> Div {
+    let heading = fresh_heading(fresh, true, height, left, scale, theme);
+    pinned_frame(heading, height, theme, ground)
+}
+
+/// A heading `height` tall on the files' `ground`, a line under it, over
+/// what scrolls beneath, which it hides from the pointer.
+fn pinned_frame(heading: Div, height: f32, theme: &Theme, ground: gpui::Hsla) -> Div {
     div()
         .relative()
         .w_full()
         .h(px(height))
         .bg(ground)
         .occlude()
-        .child(heading(span, true, height, left, scale, theme, chevron))
+        .child(heading)
         .child(
             div()
                 .absolute()
@@ -775,6 +856,12 @@ pub struct Pinned {
     pub ground: gpui::Hsla,
     /// The group whose heading the keys are on: ringed.
     pub stopped: Option<usize>,
+    /// Where the keyboard's menu hangs (`Shell::host_row_anchor`): from
+    /// the heading the keys are on, pinned.
+    pub anchor: Option<crate::elements::popover::PopoverAnchor>,
+    /// Whether a screen reader listens: the pinned heading is heard where
+    /// its row is not drawn, the one the keys are on said so.
+    pub a11y: bool,
     /// Whose heading it is, for what it does (`acting`).
     pub pane: skwir_core::workspace::PaneId,
     pub shell: gpui::WeakEntity<crate::shell::Shell>,
@@ -792,16 +879,19 @@ impl UniformListDecoration for Pinned {
         _cx: &mut App,
     ) -> AnyElement {
         let top = visible_range.start;
-        let Some(n) = self.rows.group_at(top) else {
+        // The group drawn at the top: one of the pane's, or one no file is
+        // in yet, which is pinned and pushed up as theirs are.
+        let Some(d) = self.rows.drawn_at(top) else {
             return div().into_any_element();
         };
         let into = -scroll_offset.y - item_height * top as f32;
         // A heading wholly in its place is drawn there already.
-        if top == self.rows.heading_row(n) && into < px(0.5) {
+        let own_row = self.rows.drawn_row(d);
+        if own_row == Some(top) && into < px(0.5) {
             return div().into_any_element();
         }
         // The next heading, arriving, pushes this one up.
-        let push = if self.rows.spans().len() > n + 1 && self.rows.heading_row(n + 1) == top + 1 {
+        let push = if self.rows.drawn_row(d + 1) == Some(top + 1) {
             into.min(item_height)
         } else {
             Pixels::ZERO
@@ -810,6 +900,29 @@ impl UniformListDecoration for Pinned {
         // Laid out as a root, an element's own offset is not kept: the
         // heading hangs in a frame the size of the list, where the view's
         // top is.
+        let hang = |heading: gpui::Stateful<Div>| {
+            div()
+                .size_full()
+                .child(heading.absolute().top(-scroll_offset.y - push).left_0())
+                .into_any_element()
+        };
+        let n = match self.rows.drawn().get(d) {
+            Some(Drawn::Group(n)) => *n,
+            Some(Drawn::Fresh(k)) => {
+                let Some(fresh) = self.rows.fresh().get(*k) else {
+                    return div().into_any_element();
+                };
+                let heading =
+                    pinned_fresh(fresh, height, None, self.scale, &self.theme, self.ground)
+                        .id(("pinned-fresh", *k));
+                return hang(heading);
+            }
+            None => return div().into_any_element(),
+        };
+        // Its own row not drawn (scrolled above), it is the heading heard,
+        // and the keyboard's menu hangs from it.
+        let alone = own_row != Some(top);
+        let stopped = self.stopped == Some(n);
         let chevron = chevron(
             n,
             self.rows.folded(n),
@@ -827,17 +940,17 @@ impl UniformListDecoration for Pinned {
             self.ground,
             Some(chevron),
         )
-        .id(("pinned-heading", n));
-        let heading = ring(heading, self.stopped == Some(n), &self.theme);
-        div()
-            .size_full()
-            .child(
-                acting(heading, n, self.pane, self.shell.clone(), &self.theme)
-                    .absolute()
-                    .top(-scroll_offset.y - push)
-                    .left_0(),
-            )
-            .into_any_element()
+        .id(("pinned-heading", n))
+        .children(
+            self.anchor
+                .as_ref()
+                .filter(|_| stopped)
+                .map(crate::elements::popover::PopoverAnchor::marker),
+        );
+        let heading = ring(heading, stopped, &self.theme);
+        let heading = acting(heading, n, self.pane, self.shell.clone(), &self.theme);
+        let span = &self.rows.spans()[n];
+        hang(expose(heading, span, stopped, self.a11y && alone))
     }
 }
 
@@ -883,7 +996,7 @@ mod tests {
         for position in 0..6 {
             assert_eq!(rows.at(rows.row_of(position)), Some(Row::Entry(position)));
         }
-        assert_eq!(rows.group_at(4), Some(1));
+        assert_eq!(rows.drawn_at(4), Some(1));
         assert_eq!(rows.group_of(4), Some(2));
     }
 
@@ -895,7 +1008,7 @@ mod tests {
         assert_eq!(rows.at(2), Some(Row::Entry(2)));
         assert_eq!(rows.row_of(3), 3);
         assert_eq!(rows.entries_in(1..3), 1..3);
-        assert_eq!(rows.group_at(1), None);
+        assert_eq!(rows.drawn_at(1), None);
         // Groups read apart from the order, which they do not cover:
         // nothing grouped.
         assert!(!RowMap::new(Arc::from([span(0, 2)]), 3).grouped());
@@ -924,10 +1037,21 @@ mod tests {
         assert_eq!(rows.entry_from(3), Some(2), "the next shown");
         assert_eq!(rows.entries_in(3..5), 2..2);
         assert!(rows.folded(1) && !rows.folded(0));
-        // Folded last: nothing below it.
-        let last = RowMap::new(Arc::from([span(0, 2), folded]), 2);
+        // Folded last: nothing below it; a page landing there goes to the
+        // last entry.
+        let last = RowMap::new(Arc::from([span(0, 2), folded.clone()]), 2);
         assert_eq!(last.entry_from(3), None);
+        assert_eq!(last.entry_near(3), Some(1));
+        assert_eq!(last.entry_near(9), Some(1), "past the rows");
+        assert_eq!(last.entry_near(0), Some(0));
         assert_eq!(last.anchor(3. * 20., 20.).map(|a| a.0), Some(1));
+        // Every group folded: their headings still, the order empty.
+        let shut = Span { start: 0, ..folded };
+        let all = RowMap::new(Arc::from([shut.clone(), shut]), 0);
+        assert!(all.grouped(), "drawn, not an empty folder");
+        assert_eq!(all.len(), 2);
+        assert_eq!(all.at(1), Some(Row::Heading(1)));
+        assert_eq!(all.entry_near(1), None);
         // A span of nothing that counts nothing is no group.
         assert!(!RowMap::new(Arc::from([span(0, 2), span(2, 0)]), 2).grouped());
     }
@@ -975,6 +1099,7 @@ mod tests {
         }
         assert_eq!(rows.entry_from(1), Some(1), "the entry it goes before");
         assert_eq!(rows.entry_from(6), None, "none after the last");
+        assert_eq!(rows.entry_near(6), Some(3), "a page there: the last");
         assert_eq!(rows.entries_in(0..3), 0..1);
         assert_eq!(rows.entries_in(2..6), 1..4);
         assert_eq!(rows.tiles(), 7);
@@ -1006,7 +1131,7 @@ mod tests {
         assert_eq!(rows.heading_row(2), 7);
         assert_eq!(rows.row_of(2), 5);
         assert_eq!(rows.row_of(5), 10);
-        assert_eq!(rows.group_at(6), Some(1));
+        assert_eq!(rows.drawn_at(6), Some(1));
         assert_eq!(rows.entry_from(6), Some(3));
         assert_eq!(rows.entries_in(4..8), 2..3);
         assert_eq!(rows.tile_lens(), [3, 2, 4]);
@@ -1062,6 +1187,10 @@ mod tests {
             rows.drawn(),
             [Drawn::Group(0), Drawn::Fresh(0), Drawn::Group(1)]
         );
+        assert_eq!(
+            (rows.drawn_of(0), rows.drawn_of(1), rows.drawn_of(2)),
+            (Some(0), Some(2), None)
+        );
         assert_eq!(rows.tile_lens(), [2, 1, 1]);
         assert_eq!(rows.at_tile(2), Some(Tile::Arriving(0)));
         assert_eq!(rows.fresh()[0].group.label.as_ref(), "Documents");
@@ -1086,6 +1215,50 @@ mod tests {
         assert_eq!(rows.at(2), Some(Row::Arriving(1)));
         assert_eq!(rows.at(4), Some(Row::Heading(1)));
         assert_eq!(rows.tile_lens(), [3, 0]);
+    }
+
+    /// A fold keeps the view on what was at its top: an entry where it is
+    /// now, a heading where it is now, an entry folded away its group's
+    /// heading. A, B and C of 2, 1 and 3, then B folded: rows 0 A, 1 e0,
+    /// 2 e1, 3 B, 4 C, 5 e3, 6 e4, 7 e5.
+    #[test]
+    fn a_fold_keeps_what_was_at_the_top() {
+        use skwir_core::{EntryId, FileId, grouping::Group};
+        let id = |ino| EntryId {
+            file: FileId::new(1, ino),
+            at: ino,
+        };
+        let named = |start, len, count, rank, label| Span {
+            start,
+            len,
+            count,
+            group: Some(Arc::new(Group::new(rank, label))),
+        };
+        let old = RowMap::new(
+            Arc::from([
+                named(0, 2, 2, 1, "A"),
+                named(2, 1, 1, 2, "B"),
+                named(3, 3, 3, 3, "C"),
+            ]),
+            6,
+        );
+        let old_order: Vec<EntryId> = (0..6).map(id).collect();
+        let new = RowMap::new(
+            Arc::from([
+                named(0, 2, 2, 1, "A"),
+                named(2, 0, 1, 2, "B"),
+                named(2, 3, 3, 3, "C"),
+            ]),
+            5,
+        );
+        let new_order: Vec<EntryId> = [0, 1, 3, 4, 5].into_iter().map(id).collect();
+        let position_of = |want: EntryId| new_order.iter().position(|id| *id == want);
+        let kept = |row| new.kept_row(&old, &old_order, row, position_of);
+        assert_eq!(kept(4), Some(3), "e2 folded away: B's heading");
+        assert_eq!(kept(6), Some(5), "e3 where it is now");
+        assert_eq!(kept(5), Some(4), "C's heading");
+        assert_eq!(kept(1), Some(1));
+        assert_eq!(kept(9), None, "past the rows");
     }
 
     #[test]
