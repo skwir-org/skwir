@@ -110,8 +110,10 @@ fn a_copy_waiting_stands_where_it_will_land_and_goes_once_landed() {
     );
     app.executor.execute(plan, CancelToken::new());
     // Both, as their sources are, waiting for the step before them.
+    // What each is made from is read on a worker, as the run goes on.
+    let read = |a: &[Arriving]| a.iter().all(|a| a.arrival.like.metadata.is_hydrated());
     let arriving = until(&app, &dest, |a| {
-        a.len() == 2 && a.iter().all(|a| a.state == Arrives::Waiting)
+        a.len() == 2 && a.iter().all(|a| a.state == Arrives::Waiting) && read(a)
     });
     let names: Vec<&OsStr> = arriving
         .iter()
@@ -145,7 +147,10 @@ fn a_copy_waiting_stands_where_it_will_land_and_goes_once_landed() {
     assert_eq!(said[1]["kind"], "folder");
 
     // Where the pane would show them: folders first, by name.
-    let likes: Vec<Entry> = arriving.iter().map(|a| a.arrival.like.clone()).collect();
+    let likes: Vec<Entry> = arriving
+        .iter()
+        .map(|a| Entry::clone(&a.arrival.like))
+        .collect();
     let stands = |app: &skwir_core::App| {
         let ws = app.workspace.read();
         let pane = ws.active();
@@ -231,7 +236,10 @@ fn what_arrives_is_read_with_its_notes_and_dated_as_its_file_will_be() {
         ],
     );
     app.executor.execute(plan, CancelToken::new());
-    let arriving = until(&app, &dest, |a| a.len() == 2);
+    // Read on a worker, as the run goes on: once read, with their notes.
+    let arriving = until(&app, &dest, |a| {
+        a.len() == 2 && a.iter().all(|a| a.arrival.like.metadata.is_filled())
+    });
     assert_eq!(arriving.len(), 2);
     let (copied, moved) = (&arriving[0].arrival.like, &arriving[1].arrival.like);
     for like in [copied, moved] {

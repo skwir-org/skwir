@@ -1602,6 +1602,34 @@ impl Drop for Ended<'_> {
     }
 }
 
+/// The lane of what `plan`'s first step reads: where what its items are
+/// made from is read (ADR-077).
+fn lane_of(plan: &Plan) -> crate::scheduler::Lane {
+    plan.steps
+        .first()
+        .and_then(|step| step.describe().subject().map(crate::fs::reach::lane))
+        .unwrap_or(crate::scheduler::Lane::SHARED)
+}
+
+/// `sources`, each read by `read` (ADR-135), until `reads` is cancelled
+/// (its plan's run ended): `None` then. What cannot be read is left out.
+fn read_sources(
+    sources: &[PathBuf],
+    read: &Reader,
+    reads: &CancelToken,
+) -> Option<HashMap<PathBuf, crate::entry::Entry>> {
+    let mut got = HashMap::with_capacity(sources.len());
+    for from in sources {
+        if reads.is_cancelled() {
+            return None;
+        }
+        if let Some(entry) = read(from) {
+            got.insert(from.clone(), entry);
+        }
+    }
+    Some(got)
+}
+
 /// Lets go of what an undo's or a redo's run brought into folders
 /// (ADR-135) however it leaves, the window woken: a plan's is let go of
 /// with its job (`Ended`), which names no undo.
@@ -2958,6 +2986,12 @@ impl Executor {
         reply: Option<Sender<Option<ExecResult>>>,
         chain: Option<(Arc<Chain>, bool)>,
     ) {
+        // What it brings is noted before it may start (ADR-135): a run
+        // started by another thread's dispatch as soon as it is queued
+        // finds what it was asked as, and its end lets it go.
+        if let Work::Execute { plan, .. } = &work {
+            self.arriving.asked(plan.id, &cancel);
+        }
         let mut lane = self.lane.lock();
         if lane.closed {
             cancel.cancel();
@@ -2998,35 +3032,52 @@ impl Executor {
             chain,
         });
         drop(lane);
-        if let Some((plan, cancel)) = brings {
-            self.read_arrivals(plan, &cancel);
+        if let Some((plan, _)) = brings {
+            self.read_arrivals(plan);
         }
     }
 
-    /// What `plan`, just asked, brings into folders (ADR-135): noted now,
-    /// read on a worker, in the lane of what its first step reads, each
-    /// item's source stat-ed once; told to whoever shows those folders when
-    /// read, unless its run has read its own by then.
-    fn read_arrivals(&self, plan: Arc<Plan>, cancel: &CancelToken) {
-        let asked = self.arriving.asked(plan.id, cancel);
+    /// What `plan`, just asked (and noted, `enqueue_in`), brings into
+    /// folders (ADR-135): read on a worker, in the lane of what its first
+    /// step reads, each item's source read once, then told to whoever
+    /// shows those folders; where its run began meanwhile, what it read is
+    /// told to the run's items.
+    fn read_arrivals(&self, plan: Arc<Plan>) {
         let Some(this) = self.me.upgrade() else {
             return;
         };
+        let Some((asked, _)) = self.arriving.known(plan.id) else {
+            return;
+        };
         let read = self.reader();
-        let lane = plan
-            .steps
-            .first()
-            .and_then(|step| step.describe().subject().map(crate::fs::reach::lane))
-            .unwrap_or(crate::scheduler::Lane::SHARED);
+        let lane = lane_of(&plan);
+        let Some((_, reads)) = self.arriving.claim(plan.id, Vec::new()) else {
+            return;
+        };
         self.scheduler.spawn_in(
             lane,
             Priority::Visible,
             "op.arriving",
-            cancel.clone(),
+            reads.clone(),
             move || {
-                let arrivals =
-                    super::arriving::arrivals_of(&plan, false, asked, &HashMap::new(), &*read);
-                if !arrivals.is_empty() && this.arriving.fill(plan.id, arrivals, false) {
+                let arrivals = super::arriving::arrivals_of(&plan, false, asked, &HashMap::new());
+                if arrivals.is_empty() {
+                    return;
+                }
+                let Some((sources, _)) = this
+                    .arriving
+                    .claim(plan.id, super::arriving::unread(&arrivals))
+                else {
+                    return;
+                };
+                let Some(got) = read_sources(&sources, &read, &reads) else {
+                    return;
+                };
+                let at = super::arriving::asked_at(asked);
+                let arrivals = super::arriving::with_read(arrivals, &got, at);
+                // Its run began meanwhile: what was read is its items'.
+                if this.arriving.fill(plan.id, arrivals, false) || this.arriving.read(plan.id, &got)
+                {
                     this.wake();
                 }
             },
@@ -3035,16 +3086,42 @@ impl Executor {
 
     /// What `plan` brings as it runs, its steps unfolded and its names
     /// settled (ADR-135): each item by its own steps, what was read as it
-    /// was asked kept, what was not read now, on the plan's thread.
+    /// was asked kept, shared; what was not, its name alone until read on
+    /// a worker, never here: the plan's thread goes on to its steps.
     fn arrivals_run(&self, plan: &Plan) {
         let Some((asked, known)) = self.arriving.known(plan.id) else {
             return;
         };
-        let read = self.reader();
-        let arrivals = super::arriving::arrivals_of(plan, true, asked, &known, &*read);
+        let arrivals = super::arriving::arrivals_of(plan, true, asked, &known);
+        let unread = super::arriving::unread(&arrivals);
+        let at = super::arriving::asked_at(asked);
+        let arrivals = super::arriving::with_read(arrivals, &HashMap::new(), at);
         if self.arriving.fill(plan.id, arrivals, true) {
             self.wake();
         }
+        let Some((sources, reads)) = self.arriving.claim(plan.id, unread) else {
+            return;
+        };
+        if sources.is_empty() {
+            return;
+        }
+        let Some(this) = self.me.upgrade() else {
+            return;
+        };
+        let (read, id) = (self.reader(), plan.id);
+        self.scheduler.spawn_in(
+            lane_of(plan),
+            Priority::Visible,
+            "op.arriving",
+            reads.clone(),
+            move || {
+                if let Some(got) = read_sources(&sources, &read, &reads)
+                    && this.arriving.read(id, &got)
+                {
+                    this.wake();
+                }
+            },
+        );
     }
 
     /// The folders `plan`, waiting or running, brings something into
@@ -5291,6 +5368,117 @@ mod tests {
         assert_eq!(arriving[0].state, Arrives::Starting);
         second.opened();
         assert!(brought(&[]).is_empty(), "every run ended");
+    }
+
+    /// A copy that waits for a gate, as one under way.
+    #[derive(Debug, Clone)]
+    struct Copying {
+        from: PathBuf,
+        to: PathBuf,
+        open: Arc<(parking_lot::Mutex<bool>, parking_lot::Condvar)>,
+        log: Arc<parking_lot::Mutex<Vec<String>>>,
+    }
+
+    impl Operation for Copying {
+        fn kind(&self) -> &'static str {
+            "copying"
+        }
+        fn args(&self) -> serde_json::Value {
+            serde_json::json!({})
+        }
+        fn describe(&self) -> Change {
+            Change::Copy {
+                from: self.from.clone(),
+                to: self.to.clone(),
+            }
+        }
+        fn check(&self, _: &StepContext) -> StepStatus {
+            StepStatus::Pending { reversible: true }
+        }
+        fn apply(&self, _: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
+            self.log.lock().push(format!("began {}", self.to.display()));
+            let mut open = self.open.0.lock();
+            while !*open {
+                self.open.1.wait(&mut open);
+            }
+            Ok(None)
+        }
+        fn clone_box(&self) -> Box<dyn Operation> {
+            Box::new(self.clone())
+        }
+    }
+
+    /// What a plan's item is made from is read on a worker, once, never
+    /// on the plan's thread (ADR-135): a run begins its steps while the
+    /// reading waits, its item its name alone until read, then as read.
+    #[test]
+    fn a_run_begins_while_what_it_brings_is_read_elsewhere() {
+        use crate::entry::{Entry, EntryId, EntryKind, FileId, Provenance, Value, keys};
+        let executor = Executor::new(Scheduler::new(2));
+        let log = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let reading = Arc::new((parking_lot::Mutex::new(false), parking_lot::Condvar::new()));
+        let reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let reader: Reader = {
+            let (reading, reads) = (Arc::clone(&reading), Arc::clone(&reads));
+            Arc::new(move |path: &Path| {
+                reads.fetch_add(1, Ordering::SeqCst);
+                let mut open = reading.0.lock();
+                while !*open {
+                    reading.1.wait(&mut open);
+                }
+                let mut e = Entry::new(
+                    EntryId::at_path(FileId::new(1, 7), path),
+                    path.file_name()?,
+                    EntryKind::File,
+                );
+                e.metadata
+                    .set(keys::SIZE, Value::UInt(3000), Provenance::Filesystem);
+                Some(e)
+            })
+        };
+        executor.set_reader(Some(reader));
+        let gate = Arc::new((parking_lot::Mutex::new(false), parking_lot::Condvar::new()));
+        let copy = Copying {
+            from: PathBuf::from("/stick/from/it's big"),
+            to: PathBuf::from("/stick/dest/it's big"),
+            open: Arc::clone(&gate),
+            log: Arc::clone(&log),
+        };
+        executor.execute(
+            Plan::with_steps("copy", vec![Box::new(copy)]),
+            CancelToken::new(),
+        );
+        assert!(
+            logged(&log, "began /stick/dest/it's big"),
+            "begun while its source is read"
+        );
+        let dest = Path::new("/stick/dest");
+        let size = |executor: &Executor| {
+            executor
+                .arriving_in(dest)
+                .first()
+                .map(|a| a.arrival.like.metadata.value(keys::SIZE).cloned())
+        };
+        assert_eq!(size(&executor), Some(None), "its name alone until read");
+        *reading.0.lock() = true;
+        reading.1.notify_all();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while size(&executor) != Some(Some(Value::UInt(3000))) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(
+            size(&executor),
+            Some(Some(Value::UInt(3000))),
+            "then as read"
+        );
+        assert_eq!(reads.load(Ordering::SeqCst), 1, "read once");
+        *gate.0.lock() = true;
+        gate.1.notify_all();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !executor.arriving_in(dest).is_empty() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(executor.arriving_in(dest).is_empty(), "its run ended");
     }
 
     /// What an undo brings back into a folder arrives as a plan's does

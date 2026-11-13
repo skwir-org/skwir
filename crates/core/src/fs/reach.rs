@@ -199,6 +199,47 @@ pub fn of(path: &Path) -> Option<Arc<Remote>> {
     table().of(path)
 }
 
+/// The volume holding `path`, by the path's text: a remote's mount point,
+/// else the point of the deepest mount above it in the table in memory
+/// (Linux, macOS), else its drive or share (Windows, which lists no
+/// table); `None` where none is known. Never reads the disk nor a server:
+/// what tells a move to another volume before it runs (ADR-135), as no
+/// stat of a folder that may not answer can.
+pub fn volume_of(path: &Path) -> Option<PathBuf> {
+    if let Some(remote) = of(path) {
+        return Some(remote.point.clone());
+    }
+    #[cfg(windows)]
+    {
+        use std::path::{Component, Prefix};
+        let Some(Component::Prefix(prefix)) = path.components().next() else {
+            return None;
+        };
+        match prefix.kind() {
+            Prefix::Disk(letter) | Prefix::VerbatimDisk(letter) => Some(PathBuf::from(format!(
+                "{}:\\",
+                char::from(letter.to_ascii_uppercase())
+            ))),
+            Prefix::UNC(server, share) | Prefix::VerbatimUNC(server, share) => {
+                let mut point = std::ffi::OsString::from(r"\\");
+                point.push(server.to_ascii_lowercase());
+                point.push(r"\");
+                point.push(share.to_ascii_lowercase());
+                Some(point.into())
+            }
+            _ => None,
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        table()
+            .points
+            .iter()
+            .find(|point| path.starts_with(point))
+            .cloned()
+    }
+}
+
 /// The folders a test says remotes are mounted at, and their types
 /// ([`pretend_remote`]).
 #[cfg(test)]
@@ -613,20 +654,28 @@ fn table() -> Arc<Table> {
 
 static TABLE: Mutex<Option<(Instant, Arc<Table>)>> = Mutex::new(None);
 
-/// The network mounts, deepest point first, and the devices whose inode
-/// numbers are made up, each with its mount's number ([`mount_of`]).
+/// The network mounts, deepest point first, the devices whose inode
+/// numbers are made up, each with its mount's number ([`mount_of`]), and
+/// every mount's point, deepest first ([`volume_of`]), where the system
+/// lists them (not Windows).
 #[derive(Default)]
 struct Table {
     remotes: Vec<Arc<Remote>>,
     made_up: Vec<(u64, u64)>,
+    points: Vec<PathBuf>,
 }
 
 impl Table {
     fn read() -> Table {
-        let (remotes, made_up) = imp::read();
+        let (remotes, made_up, mut points) = imp::read();
         let mut remotes: Vec<Arc<Remote>> = remotes.into_iter().map(Arc::new).collect();
         remotes.sort_by_key(|r| std::cmp::Reverse(r.point.as_os_str().len()));
-        Table { remotes, made_up }
+        points.sort_by_key(|point| std::cmp::Reverse(point.as_os_str().len()));
+        Table {
+            remotes,
+            made_up,
+            points,
+        }
     }
 
     fn of(&self, path: &Path) -> Option<Arc<Remote>> {
@@ -782,12 +831,13 @@ mod imp {
     use super::Remote;
     use crate::fs::volume::Mounted;
 
-    pub(super) fn read() -> (Vec<Remote>, Vec<(u64, u64)>) {
+    pub(super) fn read() -> (Vec<Remote>, Vec<(u64, u64)>, Vec<std::path::PathBuf>) {
         let Ok(text) = std::fs::read("/proc/self/mountinfo") else {
-            return (Vec::new(), Vec::new());
+            return (Vec::new(), Vec::new(), Vec::new());
         };
         let mounts = crate::fs::volume::mountinfo(&text);
-        (remotes(&mounts), made_up(&mounts, unique))
+        let points = mounts.iter().map(|m| m.point.clone()).collect();
+        (remotes(&mounts), made_up(&mounts, unique), points)
     }
 
     /// The network mounts of `mounts`.
@@ -856,15 +906,17 @@ mod imp {
 
     use super::Remote;
 
-    /// macOS's mounts that are not local (`MNT_LOCAL` unset); no device
-    /// is told whose numbers are made up.
-    pub(super) fn read() -> (Vec<Remote>, Vec<(u64, u64)>) {
-        (remotes(), Vec::new())
+    /// macOS's mounts that are not local (`MNT_LOCAL` unset), and every
+    /// mount's point; no device is told whose numbers are made up.
+    pub(super) fn read() -> (Vec<Remote>, Vec<(u64, u64)>, Vec<std::path::PathBuf>) {
+        let (remotes, points) = mounts();
+        (remotes, Vec::new(), points)
     }
 
-    /// macOS's mounts that are not local (`MNT_LOCAL` unset), read by
-    /// `getfsstat` without waiting on any (`MNT_NOWAIT`).
-    fn remotes() -> Vec<Remote> {
+    /// macOS's mounts that are not local (`MNT_LOCAL` unset), and every
+    /// mount's point, read by `getfsstat` without waiting on any
+    /// (`MNT_NOWAIT`).
+    fn mounts() -> (Vec<Remote>, Vec<std::path::PathBuf>) {
         fn name(chars: &[libc::c_char]) -> Vec<u8> {
             chars
                 .iter()
@@ -876,25 +928,25 @@ mod imp {
         #[allow(unsafe_code)]
         let count = unsafe { libc::getfsstat(std::ptr::null_mut(), 0, libc::MNT_NOWAIT) };
         let Ok(count) = usize::try_from(count) else {
-            return Vec::new();
+            return (Vec::new(), Vec::new());
         };
         let mut table: Vec<libc::statfs> = Vec::with_capacity(count + 8);
         let Ok(bytes) = libc::c_int::try_from(table.capacity() * size_of::<libc::statfs>()) else {
-            return Vec::new();
+            return (Vec::new(), Vec::new());
         };
         // SAFETY: the buffer has room for `bytes` bytes; the call writes
         // whole records within them and says how many.
         #[allow(unsafe_code)]
         let filled = unsafe { libc::getfsstat(table.as_mut_ptr(), bytes, libc::MNT_NOWAIT) };
         let Ok(filled) = usize::try_from(filled) else {
-            return Vec::new();
+            return (Vec::new(), Vec::new());
         };
         // SAFETY: the call initialized the first `filled` records.
         #[allow(unsafe_code)]
         unsafe {
             table.set_len(filled.min(table.capacity()));
         }
-        table
+        let remotes = table
             .iter()
             .filter(|fs| fs.f_flags & (libc::MNT_LOCAL as u32) == 0)
             .map(|fs| Remote {
@@ -903,7 +955,12 @@ mod imp {
                 source: std::ffi::OsStr::from_bytes(&name(&fs.f_mntfromname)).into(),
                 device: None,
             })
-            .collect()
+            .collect();
+        let points = table
+            .iter()
+            .map(|fs| std::ffi::OsStr::from_bytes(&name(&fs.f_mntonname)).into())
+            .collect();
+        (remotes, points)
     }
 }
 
@@ -916,7 +973,7 @@ mod imp {
     /// Windows lists no table: a path is told by its own form
     /// ([`share_of`]), and a program's mounts in a folder it said by their
     /// being mount points there ([`super::mounts_in`]).
-    pub(super) fn read() -> (Vec<Remote>, Vec<(u64, u64)>) {
+    pub(super) fn read() -> (Vec<Remote>, Vec<(u64, u64)>, Vec<std::path::PathBuf>) {
         use std::os::windows::fs::MetadataExt;
         /// `FILE_ATTRIBUTE_REPARSE_POINT`: what a folder a file system is
         /// mounted on is.
@@ -941,7 +998,7 @@ mod imp {
                 }
             }
         }
-        (remotes, Vec::new())
+        (remotes, Vec::new(), Vec::new())
     }
 
     /// The share holding `path`: a UNC path's (`\\server\share`), or a
@@ -991,13 +1048,34 @@ mod imp {
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 mod imp {
-    pub(super) fn read() -> (Vec<super::Remote>, Vec<(u64, u64)>) {
-        (Vec::new(), Vec::new())
+    pub(super) fn read() -> (Vec<super::Remote>, Vec<(u64, u64)>, Vec<std::path::PathBuf>) {
+        (Vec::new(), Vec::new(), Vec::new())
     }
 }
 
 #[cfg(test)]
 mod tests {
+    /// A path's volume is the deepest mount above it, told by its text
+    /// alone from the table in memory: nothing is read of the path.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_path_s_volume_is_the_deepest_mount_above_it() {
+        use std::path::Path;
+        assert_eq!(
+            super::volume_of(Path::new("/proc/self/status")).as_deref(),
+            Some(Path::new("/proc"))
+        );
+        assert_eq!(
+            super::volume_of(Path::new("/")).as_deref(),
+            Some(Path::new("/"))
+        );
+        // Not there: told by its text all the same.
+        assert_eq!(
+            super::volume_of(Path::new("/proc/not there, it's made up")).as_deref(),
+            Some(Path::new("/proc"))
+        );
+    }
+
     use super::*;
 
     /// A FUSE remote that refused extended attributes is not asked again
@@ -1169,6 +1247,7 @@ mod tests {
                 .map(Arc::new)
                 .collect(),
             made_up: Vec::new(),
+            points: Vec::new(),
         };
         assert_eq!(table.remotes.len(), 2);
         let sftp = table
@@ -1198,6 +1277,7 @@ mod tests {
                 .map(Arc::new)
                 .collect(),
             made_up: Vec::new(),
+            points: Vec::new(),
         };
         let root = Path::new("/run/user/1000/kio-fuse-AbCdEf");
         let share = table.of(&root.join("smb/nas/photos/2024")).unwrap();

@@ -6,10 +6,14 @@
 //! go of when its run ends.
 //!
 //! Nothing here reads the destination: what an item will be is what it is
-//! made from (a copy's or a move's source), stat-ed once on a worker as the
-//! plan is asked; what a step makes (an archive extracted) is what it says.
-//! How far each is is read from its plan's meter as it is asked, never
-//! kept: no event of its own, no wake of its own beyond the plan's.
+//! made from (a copy's or a move's source), read once on a worker as the
+//! plan is asked, or as it runs what was not read by then (never on the
+//! plan's thread, which runs at once), told as it is read; whether it is
+//! made anew (a move to another volume) is the mount table's to say, in
+//! memory (`fs::reach::volume_of`). What a step makes (an archive
+//! extracted) is what it says. How far each is is read from its plan's
+//! meter as it is asked, never kept: no event of its own, no wake of its
+//! own beyond the plan's and its reading's.
 
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
@@ -25,7 +29,7 @@ use crate::cancel::CancelToken;
 use crate::entry::{Entry, EntryId, EntryKind, Provenance, Value, keys};
 
 /// One item a plan brings into a folder.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Arrival {
     pub plan: PlanId,
     /// Where it lands.
@@ -37,10 +41,18 @@ pub struct Arrival {
     /// from the trash).
     pub from: Option<PathBuf>,
     /// What it will be, as far as is known before it lands: what it is
-    /// made from, stat-ed, under its name there (its kind, its size, its
-    /// times, which a copy keeps); what a step makes, by what it says.
-    /// What a view sorts it by and draws it as.
-    pub like: Entry,
+    /// made from, read, under its name there (its kind, its size, its
+    /// times, which a copy keeps); what a step makes, by what it says;
+    /// until what it is made from is read, a file of its name alone. What
+    /// a view sorts it by and draws it as. Shared with what its plan was
+    /// asked as, where it lands as asked: one of each kept, never a copy.
+    pub like: Arc<Entry>,
+    /// Whether `like` says what it is made from (read, or a step's), not
+    /// its name alone.
+    read: bool,
+    /// Made anew where it lands, dated as made when asked once read: a
+    /// copy; a move to another volume.
+    anew: bool,
     /// Its steps among those of its plan as it runs; `None` while the plan
     /// waits, or checks itself before its steps.
     steps: Option<Range<usize>>,
@@ -316,19 +328,9 @@ fn moved_to(entry: Entry, placed: &Path, name: &OsString, made_at: Option<System
     like
 }
 
-/// What `placed` will be, made from `from` (read by `read`), or made new:
-/// a folder or a file, dated now. What cannot be read is a file, nothing
-/// else known of it.
-fn like_of(
-    item: &Item,
-    name: &OsString,
-    made_at: impl Fn(&Entry) -> Option<SystemTime>,
-    read: &mut impl FnMut(&Path) -> Option<Entry>,
-) -> Entry {
-    if let Some(from) = item.from.as_deref().and_then(&mut *read) {
-        let at = made_at(&from);
-        return moved_to(from, &item.placed, name, at);
-    }
+/// What `item` will be before what it is made from is read: what a step
+/// makes, a folder or a file, dated now; else a file of its name alone.
+fn made_like(item: &Item, name: &OsString) -> Entry {
     let kind = match item.made {
         Some(Made::Folder) => EntryKind::Directory,
         Some(Made::File) | None => EntryKind::File,
@@ -343,52 +345,111 @@ fn like_of(
     like
 }
 
+/// The time a plan asked `asked` ago was asked at, by the clock.
+pub(super) fn asked_at(asked: Instant) -> SystemTime {
+    SystemTime::now()
+        .checked_sub(asked.elapsed())
+        .unwrap_or_else(SystemTime::now)
+}
+
 /// The arrivals of `plan`, asked at `asked`: their steps among its own when
-/// `runs` (the plan as it runs), else none yet. What each is made from is
-/// taken from `known` where it was read before, else `read`. A copy, and a
-/// move to another volume (what it is made from on another device than
-/// its folder, each folder stat-ed once), are dated as made when asked.
+/// `runs` (the plan as it runs), else none yet. Nothing is read: what each
+/// is made from is taken from `known` (what its plan was asked as, read),
+/// sharing its entry where it lands as asked, else it is its name alone
+/// until read ([`Index::read`]). A copy, and a move to another volume (as
+/// the mount table in memory says the volumes of what it is made from and
+/// of its folder), are made anew.
 pub(super) fn arrivals_of(
     plan: &Plan,
     runs: bool,
     asked: Instant,
-    known: &HashMap<PathBuf, Entry>,
-    mut read: impl FnMut(&Path) -> Option<Entry>,
-) -> Vec<Arc<Arrival>> {
-    let asked_at = SystemTime::now()
-        .checked_sub(asked.elapsed())
-        .unwrap_or_else(SystemTime::now);
-    let mut devices: HashMap<PathBuf, Option<u64>> = HashMap::new();
+    known: &HashMap<PathBuf, Arc<Arrival>>,
+) -> Vec<Arrival> {
+    let at = asked_at(asked);
+    let mut volumes: HashMap<PathBuf, Option<PathBuf>> = HashMap::new();
     items_of(plan)
         .into_iter()
         .filter_map(|item| {
             let folder = item.placed.parent()?.to_path_buf();
             let name = item.placed.file_name()?.to_os_string();
-            let device = devices
-                .entry(folder.clone())
-                .or_insert_with(|| crate::fs::stat::id_of(&folder).map(|id| id.dev));
-            let device = *device;
-            let made_at = |from: &Entry| {
-                let anew = item.copied || device.is_some_and(|dev| dev != from.id.file.dev);
-                anew.then_some(asked_at)
-            };
-            let like = match item.from.as_deref().and_then(|from| known.get(from)) {
-                Some(known) => {
-                    let at = made_at(known);
-                    moved_to(known.clone(), &item.placed, &name, at)
+            let anew = item.copied
+                || item.from.as_deref().is_some_and(|from| {
+                    let into = volumes
+                        .entry(folder.clone())
+                        .or_insert_with(|| crate::fs::reach::volume_of(&folder))
+                        .clone();
+                    crate::fs::reach::volume_of(from) != into
+                });
+            let was = item
+                .from
+                .as_deref()
+                .and_then(|from| known.get(from))
+                .filter(|was| was.read);
+            let (like, read) = match was {
+                Some(was) if was.folder == folder && was.name == name && was.anew == anew => {
+                    (Arc::clone(&was.like), true)
                 }
-                None => like_of(&item, &name, made_at, &mut read),
+                Some(was) => (
+                    Arc::new(moved_to(
+                        Entry::clone(&was.like),
+                        &item.placed,
+                        &name,
+                        anew.then_some(at),
+                    )),
+                    true,
+                ),
+                None => (Arc::new(made_like(&item, &name)), item.from.is_none()),
             };
-            Some(Arc::new(Arrival {
+            Some(Arrival {
                 plan: plan.id,
                 folder,
                 name,
                 from: item.from,
                 like,
+                read,
+                anew,
                 steps: runs.then_some(item.steps),
                 asked,
-            }))
+            })
         })
+        .collect()
+}
+
+/// `arrivals`, each not read whose source `read` holds made from it, as it
+/// will be where it lands, those made anew dated as made at `at`.
+pub(super) fn with_read(
+    arrivals: impl IntoIterator<Item = Arrival>,
+    read: &HashMap<PathBuf, Entry>,
+    at: SystemTime,
+) -> Vec<Arc<Arrival>> {
+    arrivals
+        .into_iter()
+        .map(|mut arrival| {
+            if !arrival.read
+                && let Some(entry) = arrival.from.as_deref().and_then(|from| read.get(from))
+            {
+                let placed = arrival.folder.join(&arrival.name);
+                arrival.like = Arc::new(moved_to(
+                    entry.clone(),
+                    &placed,
+                    &arrival.name,
+                    arrival.anew.then_some(at),
+                ));
+                arrival.read = true;
+            }
+            Arc::new(arrival)
+        })
+        .collect()
+}
+
+/// The sources of `arrivals` not read yet, each once.
+pub(super) fn unread(arrivals: &[Arrival]) -> Vec<PathBuf> {
+    let mut seen = HashSet::new();
+    arrivals
+        .iter()
+        .filter(|a| !a.read)
+        .filter_map(|a| a.from.clone())
+        .filter(|from| seen.insert(from.clone()))
         .collect()
 }
 
@@ -413,6 +474,11 @@ struct Inner {
 struct Record {
     cancel: CancelToken,
     asked: Instant,
+    /// Ends its sources' reading, once its run ended however it ended.
+    reads: CancelToken,
+    /// The sources a reading took, so that none is read twice: the asked
+    /// plan's, then what its run brings that they were not.
+    claimed: HashSet<PathBuf>,
     runs: bool,
     /// Its arrivals by folder, in its order.
     by_folder: HashMap<PathBuf, Arc<[Arc<Arrival>]>>,
@@ -437,6 +503,8 @@ impl Index {
         let record = inner.plans.entry(plan).or_insert_with(|| Record {
             cancel: cancel.clone(),
             asked: Instant::now(),
+            reads: cancel.child(),
+            claimed: HashSet::new(),
             runs: false,
             by_folder: HashMap::new(),
             folders: Arc::from([]),
@@ -444,16 +512,55 @@ impl Index {
         record.asked
     }
 
-    /// When `plan` was asked, while it is kept; and what its arrivals
-    /// were read as, by what each is made from.
-    pub(super) fn known(&self, plan: PlanId) -> Option<(Instant, HashMap<PathBuf, Entry>)> {
+    /// When `plan` was asked, while it is kept; and its arrivals read, by
+    /// what each is made from (shared, never copied).
+    pub(super) fn known(&self, plan: PlanId) -> Option<(Instant, HashMap<PathBuf, Arc<Arrival>>)> {
         let inner = self.inner.lock();
         let record = inner.plans.get(&plan)?;
         let known = record
             .arrivals()
-            .filter_map(|a| Some((a.from.clone()?, a.like.clone())))
+            .filter(|a| a.read)
+            .filter_map(|a| Some((a.from.clone()?, Arc::clone(a))))
             .collect();
         Some((record.asked, known))
+    }
+
+    /// Of `sources`, those no reading of `plan`'s took yet, now taken, and
+    /// what ends their reading; `None` once `plan` is not kept.
+    pub(super) fn claim(
+        &self,
+        plan: PlanId,
+        sources: Vec<PathBuf>,
+    ) -> Option<(Vec<PathBuf>, CancelToken)> {
+        let mut inner = self.inner.lock();
+        let record = inner.plans.get_mut(&plan)?;
+        let sources = sources
+            .into_iter()
+            .filter(|from| record.claimed.insert(from.clone()))
+            .collect();
+        Some((sources, record.reads.clone()))
+    }
+
+    /// What `plan`'s sources were read as (`read`): each of its arrivals
+    /// not read yet made from its own, as it will be where it lands.
+    /// Whether any was.
+    pub(super) fn read(&self, plan: PlanId, read: &HashMap<PathBuf, Entry>) -> bool {
+        let mut inner = self.inner.lock();
+        let Some(record) = inner.plans.get_mut(&plan) else {
+            return false;
+        };
+        let at = asked_at(record.asked);
+        let mut any = false;
+        for those in record.by_folder.values_mut() {
+            let takes = |a: &Arc<Arrival>| {
+                !a.read && a.from.as_ref().is_some_and(|from| read.contains_key(from))
+            };
+            if those.iter().any(takes) {
+                *those = with_read(those.iter().map(|a| Arrival::clone(a)), read, at).into();
+                any = true;
+            }
+        }
+        any
     }
 
     /// `plan` brings `arrivals`, those of its run where `runs`: kept only
@@ -499,6 +606,7 @@ impl Index {
         let Some(record) = plans.remove(&plan) else {
             return false;
         };
+        record.reads.cancel();
         unlist(folders, plan, &record.folders);
         !record.folders.is_empty()
     }
@@ -554,7 +662,9 @@ mod tests {
             folder: PathBuf::from("/dest"),
             name: "a".into(),
             from: None,
-            like: Entry::new(EntryId::UNKNOWN, "a", EntryKind::File),
+            like: Arc::new(Entry::new(EntryId::UNKNOWN, "a", EntryKind::File)),
+            read: true,
+            anew: false,
             steps,
             asked: Instant::now(),
         }

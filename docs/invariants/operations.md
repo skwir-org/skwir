@@ -198,14 +198,18 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   stops. A card gone, the next plan on that server starts at once.
 - **What a plan brings into a folder** (ADR-135, `op::arriving`) is
   the executor's to say (`Executor::arriving_in`), never read from the
-  destination nor its staging folder: noted as the plan is asked
-  (`enqueue_in`), its items read on a worker in the lane of what its
-  first step reads (each source stat-ed once, `arrivals_of`); from its
-  run's start, read again from the plan as it runs (`arrivals_run`: its
-  steps unfolded and its names settled, what was stat-ed kept), so each
-  item's steps are the meter's (`Meter::steps_read`); let go of as its
-  run ends (`Ended`), the window woken, and said of no more once its
-  token is cancelled. A plan's id names its arrivals, as its meter and
+  destination nor its staging folder: noted before its job is queued
+  (`enqueue_in`), so a run that starts at once finds it; its items' sources
+  read on a worker in the lane of what its first step reads, each once
+  (`Index::claim`), the reading ended with its run; from its run's start,
+  its items taken from the plan as it runs (`arrivals_run`: its steps
+  unfolded and its names settled), what was read kept and shared (one
+  entry for each), the rest its name alone until read on a worker, never
+  on the plan's thread (`Index::read`), so each item's steps are the
+  meter's (`Meter::steps_read`); let go of as its run ends (`Ended`), the
+  window woken, and said of no more once its token is cancelled. Whether
+  an item is made anew (a move to another volume) is the mount table's in
+  memory (`fs::reach::volume_of`), never a stat of the destination. A plan's id names its arrivals, as its meter and
   its events do. Only what brings something (`arriving::brought`: a
   copy, a move to another folder, what a step makes, a restore): a
   rename and a link are there at once. What each is made from is read as

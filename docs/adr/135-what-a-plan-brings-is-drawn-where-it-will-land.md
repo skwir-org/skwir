@@ -35,11 +35,14 @@ press opening the action's card in Activity). Built on Linux.
    - **Kept** from the plan asked until its run ends. Its items as
      asked first, read on a worker in the lane of what its first step
      reads; from its run's start, the plan as it runs, its steps
-     unfolded and its names settled.
+     unfolded and its names settled, what was read shared and what was
+     not read then on a worker, never on the plan's thread (an item its
+     name alone meanwhile).
    - **What each will be** (`Arrival::like`): what it is made from,
-     stat-ed once, under its name there, with its kind, size and times
-     (a copy keeps them); what a step makes, by what the step says,
-     dated now.
+     read once, under its name there, with its kind, size and times
+     (a copy keeps them; a move to another volume, as the mount table in
+     memory says the volumes, is made anew); what a step makes, by what
+     the step says, dated now.
    - **How far each has come**, read from its plan's meter when asked:
      waiting, starting, a share, paused. The share is the bytes of its
      step, or its steps ended where it has several; whole once a batch

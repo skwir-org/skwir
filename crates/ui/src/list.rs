@@ -285,7 +285,7 @@ impl<K: PartialEq> ArrivingKeys<K> {
         if new.is_empty() {
             return;
         }
-        let likes: Vec<&skwir_core::Entry> = new.iter().map(|a| &a.arrival.like).collect();
+        let likes: Vec<&skwir_core::Entry> = new.iter().map(|a| &*a.arrival.like).collect();
         let mut added = Vec::new();
         for (arriving, keyed) in new.iter().zip(key(&likes)) {
             let key = arrival_key(arriving);
