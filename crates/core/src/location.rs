@@ -1252,13 +1252,15 @@ impl SortCache {
     }
 
     /// Whether `old` becoming `new`, as `delta` says, moves an entry in
-    /// this order: what it is sorted by changed, or what it is grouped by.
+    /// this order: what it is sorted by changed, or what it is grouped by,
+    /// or either was read where it was not (`unread`: a file whose tags
+    /// were read and are none, placed after the rest while unread, goes
+    /// among those that have none).
     fn moves(&self, delta: &Delta, old: &Entry, new: &Entry) -> bool {
         let spec = &self.sort.spec;
-        spec.key.moved_by(delta, old, new)
-            || spec
-                .group_key()
-                .is_some_and(|key| key.moved_by(delta, old, new))
+        std::iter::once(spec.key)
+            .chain(spec.group_key())
+            .any(|key| key.moved_by(delta, old, new) || unread(key, old) != unread(key, new))
     }
 
     /// Whether it holds `sort`'s order, made with the keys as they answer.
@@ -6021,6 +6023,82 @@ mod tests {
         job.run();
         listing.take_sorted();
         assert!(listing.order_before(&sort).is_none());
+    }
+
+    /// An entry placed before what its order reads was read (a search's
+    /// hit, stat-ed by the walk, its tags not read) goes among the others
+    /// once read, though what was read is none: its tags none, its rating
+    /// none, the lowest, in the order and in the groups.
+    #[test]
+    fn an_entry_read_as_having_none_moves_among_those_that_have_none() {
+        use crate::entry::{Provenance, Value, keys};
+        use crate::grouping::GroupBy;
+        let read = |ino, name: &str, tags: &[&str]| {
+            let mut e = sized_entry(ino, name, EntryKind::File, 1);
+            if !tags.is_empty() {
+                e.metadata.set(
+                    keys::TAGS,
+                    Value::List(tags.iter().map(|t| Value::Text(Arc::from(*t))).collect()),
+                    Provenance::User,
+                );
+            }
+            e.metadata.mark_filled();
+            e
+        };
+        let unread = |ino, name: &str| sized_entry(ino, name, EntryKind::File, 1);
+        for group in [GroupBy::None, GroupBy::SameAsSort] {
+            let mut listing = Listing::default();
+            listing.apply(ListingEvent::Added(vec![
+                read(1, "a", &["x"]),
+                read(2, "b", &[]),
+                unread(3, "c"),
+                unread(4, "d"),
+            ]));
+            listing.apply(ListingEvent::Complete);
+            let spec = SortSpec {
+                key: SortKey::Tags,
+                group,
+                ..SortSpec::default()
+            };
+            let sort = Sort {
+                spec,
+                keys: (group != GroupBy::None).then(|| tags_keys(SortKey::Tags)),
+                folders: None,
+            };
+            let inos = |listing: &Listing| -> Vec<u64> {
+                listing.sorted(&sort).iter().map(|id| id.file.ino).collect()
+            };
+            assert_eq!(inos(&listing), [2, 1, 3, 4], "what is not read last");
+            // Its tags read: none.
+            listing.apply(ListingEvent::Updated(vec![read(3, "c", &[])]));
+            assert_eq!(inos(&listing), [2, 3, 1, 4], "{group:?}");
+            assert_eq!(
+                *listing.sorted(&sort),
+                *listing.compute_sorted(&sort),
+                "as a full sort puts it"
+            );
+            if group != GroupBy::None {
+                assert_eq!(
+                    said(&listing.spans_shown(&sort)),
+                    said(&spans_whole(&listing, &sort))
+                );
+            }
+        }
+    }
+
+    /// Keys that group by a file's tags as the query plugin does: none,
+    /// then each set of tags.
+    fn tags_keys(sort: SortKey) -> crate::grouping::Keys {
+        use crate::grouping::Group;
+        let none = Arc::new(Group::ranked(0, "No tags"));
+        let mut k = crate::grouping::Keys::new(sort, Some(SortKey::Tags));
+        k.group = Some(Arc::new(move |e: &crate::grouping::Of<'_>| {
+            match tags_of(e) {
+                Some(tags) => Arc::new(Group::new(1, &tags)),
+                None => Arc::clone(&none),
+            }
+        }));
+        k
     }
 
     /// An extension and a set of tags sort as words, case folded, none the
