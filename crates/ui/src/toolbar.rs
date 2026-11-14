@@ -133,6 +133,10 @@ const TIP_MAX: f32 = 480.;
 /// so it says its font itself (the theme's, ADR-073).
 struct Tip {
     text: SharedString,
+    /// A label cut short, said whole before `text` while cut
+    /// (`elements::clip`): asked as the tooltip draws, never as its button
+    /// renders, where its text has no layout yet.
+    clip: Option<crate::elements::clip::Clip>,
 }
 impl Render for Tip {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -157,12 +161,30 @@ impl Render for Tip {
             .max_w(px(most))
             .px_2()
             .py_1()
-            .child(self.text.clone())
+            .child(
+                self.clip
+                    .as_ref()
+                    .and_then(|clip| clip.says(Some(&self.text)))
+                    .unwrap_or_else(|| self.text.clone()),
+            )
     }
 }
 pub(crate) fn tooltip(text: SharedString, cx: &mut App) -> AnyView {
-    cx.new(|_| Tip { text }).into()
+    cx.new(|_| Tip { text, clip: None }).into()
 }
+
+/// The tooltip a toolbar button shows, by the window and the button: gpui
+/// builds a tooltip's view once, as it appears, and draws that view while
+/// it shows, so a button whose words name a state that moves meanwhile
+/// (a speaker's level the wheel turns, Play become Pause by its key, a
+/// setting's value set by keys) would say what it was. The button drawn
+/// again gives its view what it says now (`Button::render`).
+struct ShownTip {
+    window: skwir_core::workspace::WindowId,
+    button: SharedString,
+    tip: gpui::WeakEntity<Tip>,
+}
+impl gpui::Global for ShownTip {}
 
 #[derive(Clone)]
 #[allow(
@@ -459,6 +481,24 @@ impl Button {
             .map_or((None, None), |(label, clip)| (Some(label), Some(clip)));
         let id = self.id.clone();
         let clicked = id.clone();
+        // Its tooltip shown, it says what the button says now
+        // (`ShownTip`).
+        let (in_window, tipped) = (shell.window_id, id.clone());
+        if let Some(shown) = cx.try_global::<ShownTip>()
+            && shown.window == in_window
+            && shown.button == id
+            && let Some(tip) = shown.tip.upgrade()
+        {
+            // Its title alone: the label's clip stays the one laid out as
+            // the tooltip appeared, as a variant of a row drawn here may
+            // never be laid out (`AdaptiveRow` measures until one fits).
+            tip.update(cx, |tip, cx| {
+                if tip.text != title {
+                    tip.text = title.clone();
+                    cx.notify();
+                }
+            });
+        }
         // A tag's colors: the fill and the edge, then under the pointer.
         let tint = self.tint.map(|tint| {
             let color = usize::from(tint.color);
@@ -587,11 +627,16 @@ impl Button {
             })
             .when(!enabled, |d| d.opacity(0.35))
             .tooltip(move |_, cx| {
-                let tip = clip
-                    .as_ref()
-                    .and_then(|clip| clip.says(Some(&title)))
-                    .unwrap_or_else(|| title.clone());
-                tooltip(tip, cx)
+                let tip = cx.new(|_| Tip {
+                    text: title.clone(),
+                    clip: clip.clone(),
+                });
+                cx.set_global(ShownTip {
+                    window: in_window,
+                    button: tipped.clone(),
+                    tip: tip.downgrade(),
+                });
+                tip.into()
             })
             // A menu row without an icon keeps its slot, so labels line up,
             // and says it is on with a check there.

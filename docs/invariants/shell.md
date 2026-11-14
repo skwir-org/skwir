@@ -12,6 +12,12 @@ Views are in [views.md](views.md); what locations decide, in
 - Reuse the command-backed buttons and bundled symbolic SVGs of
   `toolbar.rs`. Tooltips, focus styles and keyboard activation belong to
   the shared button. Keep a focused button's handle when it is disabled.
+- **A button's tooltip says what the button says now.** gpui builds a
+  tooltip's view once, from the frame the pointer arrived in, and draws
+  that view while it shows: a title naming a state that moved meanwhile
+  (a speaker's level the wheel turned before it showed, a value set by
+  keys) said the old one. The button drawn again gives the tooltip it
+  shows its words now (`toolbar::ShownTip`, by window and button id).
 - Responsive rows pick a variant by intrinsic measurement in prepaint
   (`elements/adaptive.rs`, `AdaptiveRow`); no pixel breakpoints.
 - Text cut to fit (`truncate`, `text_ellipsis_middle`, a clamp) is drawn
