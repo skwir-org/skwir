@@ -62,35 +62,99 @@ pub fn mutated_text(sample: impl Into<String>) -> impl Strategy<Value = String> 
 /// rclone's WebDAV server, and an sshd answering its client). So the port
 /// is claimed by a lock on a file named after it, which every test asks
 /// for, held until this process ends, its servers with it: a server
-/// stopped and started again on its port finds it still free.
+/// stopped and started again on its port finds it still free. The files
+/// of ports no process claims any more are removed as a process first asks
+/// (`prune_ports`).
 ///
 /// # Panics
-/// Where no port can be bound, or its file not made.
+/// Where no port can be bound, its file not made, or not locked (a home
+/// folder whose file system locks no file): never a test waiting for good.
 pub fn free_port() -> u16 {
     static CLAIMED: std::sync::Mutex<Vec<std::fs::File>> = std::sync::Mutex::new(Vec::new());
-    let folder = std::env::home_dir()
-        .expect("a home folder")
-        .join(".cache/skwir-tests/ports");
+    static PRUNED: std::sync::Once = std::sync::Once::new();
+    let folder = ports_folder();
     std::fs::create_dir_all(&folder).expect("the ports' folder");
+    PRUNED.call_once(|| prune_ports(&folder));
     loop {
         let port = std::net::TcpListener::bind("127.0.0.1:0")
             .and_then(|listener| listener.local_addr())
             .expect("a free port")
             .port();
-        let file = std::fs::File::create(folder.join(port.to_string())).expect("a port's file");
-        if file.try_lock().is_ok() {
-            CLAIMED
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .push(file);
-            return port;
+        let path = folder.join(port.to_string());
+        let file = std::fs::File::create(&path).expect("a port's file");
+        match file.try_lock() {
+            // Claimed, unless another process removed the file as no one's
+            // between its making and its lock: then another port.
+            Ok(()) if still_named(&file, &path) => {
+                CLAIMED
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .push(file);
+                return port;
+            }
+            Ok(()) | Err(std::fs::TryLockError::WouldBlock) => {}
+            Err(std::fs::TryLockError::Error(error)) => {
+                panic!("the file of port {port} cannot be locked ({error})")
+            }
         }
     }
 }
 
+/// Where the ports' files are: beside the tests' other folders, never in
+/// one a test makes of its own.
+fn ports_folder() -> std::path::PathBuf {
+    std::env::home_dir()
+        .expect("a home folder")
+        .join(".cache/skwir-tests/ports")
+}
+
+/// Whether `path` still names `file`, opened there: removed meanwhile (as
+/// a process's that ended, by [`prune_ports`]), a lock on it claims
+/// nothing.
+fn still_named(file: &std::fs::File, path: &std::path::Path) -> bool {
+    #[cfg(unix)]
+    {
+        file.metadata()
+            .ok()
+            .and_then(|meta| crate::fs::stat::identity(path, &meta))
+            .is_some_and(|held| crate::fs::stat::id_of(path) == Some(held))
+    }
+    // Never removed there (`prune_ports`).
+    #[cfg(not(unix))]
+    {
+        let _ = (file, path);
+        true
+    }
+}
+
+/// Removes the files of `folder` no process holds locked any more, the
+/// claims of tests that ended, each while locked here, so no test claims
+/// it meanwhile, and only while it is still the file locked. Unix alone:
+/// on Windows a file open in another process may be removed as it is
+/// claimed, which no lock tells.
+fn prune_ports(folder: &std::path::Path) {
+    #[cfg(unix)]
+    {
+        let Ok(entries) = std::fs::read_dir(folder) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Ok(file) = std::fs::File::open(&path)
+                && file.try_lock().is_ok()
+                && still_named(&file, &path)
+            {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = folder;
+}
+
 #[cfg(test)]
 mod tests {
-    use super::free_port;
+    use super::{free_port, ports_folder, prune_ports, still_named};
 
     /// A port given is not given again while its process runs, even when
     /// the system offers it once more.
@@ -99,14 +163,31 @@ mod tests {
         let ports: std::collections::HashSet<u16> = (0..64).map(|_| free_port()).collect();
         assert_eq!(ports.len(), 64);
         for port in &ports {
-            let file = std::fs::File::open(
-                std::env::home_dir()
-                    .unwrap()
-                    .join(".cache/skwir-tests/ports")
-                    .join(port.to_string()),
-            )
-            .unwrap();
+            let file = std::fs::File::open(ports_folder().join(port.to_string())).unwrap();
             assert!(file.try_lock().is_err(), "{port} is claimed");
         }
+    }
+
+    /// The file of a port no process claims is removed; one claimed stays;
+    /// a lock on a file removed meanwhile is no claim.
+    #[cfg(unix)]
+    #[test]
+    fn the_ports_no_one_claims_are_let_go() {
+        let claimed = free_port();
+        let folder = ports_folder();
+        let left = folder.join(format!("left by {}", std::process::id()));
+        std::fs::write(&left, "").unwrap();
+        prune_ports(&folder);
+        assert!(!left.exists(), "a port no one claims is let go");
+        assert!(
+            folder.join(claimed.to_string()).exists(),
+            "a claimed one stays"
+        );
+        let gone = folder.join(format!("gone for {}", std::process::id()));
+        let file = std::fs::File::create(&gone).unwrap();
+        file.try_lock().unwrap();
+        assert!(still_named(&file, &gone));
+        std::fs::remove_file(&gone).unwrap();
+        assert!(!still_named(&file, &gone), "removed as it was locked");
     }
 }

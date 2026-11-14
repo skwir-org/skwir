@@ -803,6 +803,9 @@ ADR-077 (which revises ADR-021).
   claims it for the test's process: the system's choice of a free port
   let go may be its choice for the next test asking too, whose server
   then cannot take it, and its client finds another test's server there.
+  Its claim is a lock on a file named after the port: a file system that
+  locks nothing stops the test (never a test waiting for good), and the
+  files no process holds any more are removed as a process first asks.
 - A test lets go of what it mounted before its server stops, once it is
   mounted (an address opened as added connects a moment later), and only
   its own server's (`let_go_of_mounts`, by its port: the tests' runtime
