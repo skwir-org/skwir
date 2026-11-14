@@ -31,6 +31,7 @@ use skwir_core::scheduler::{Lane, Priority};
 use skwir_core::settings::SettingSpec;
 
 use crate::controls::{self, ButtonStyle};
+use crate::elements::clip::clipped;
 use crate::elements::popover::PopoverAnchor;
 use crate::input::{InputEvent, TextInput};
 use crate::latest::Latest;
@@ -822,27 +823,36 @@ impl SettingsView {
                             Row::Heading(heading) => this
                                 .exclusion_heading(heading, focused, &theme, cx)
                                 .into_any_element(),
-                            Row::Group(name) => div()
-                                .h(sized(ROW))
-                                .flex()
-                                .items_end()
-                                .pb_2()
-                                .px_1()
-                                .text_small()
-                                .text_color(theme.text_muted)
-                                .child(name.clone())
-                                .into_any_element(),
+                            // Rows of one line, as tall as every row: what
+                            // they say is cut at its end, whole when pointed at.
+                            Row::Group(name) => clipped(
+                                div()
+                                    .id(("exclusions-group", n))
+                                    .h(sized(ROW))
+                                    .flex()
+                                    .items_end()
+                                    .pb_2()
+                                    .px_1()
+                                    .truncate()
+                                    .text_small()
+                                    .text_color(theme.text_muted),
+                                name.clone(),
+                            )
+                            .into_any_element(),
                             Row::Entry(line) => this
                                 .exclusion_line(line, focused, &theme, cx)
                                 .into_any_element(),
-                            Row::Empty(_, why) => div()
-                                .h(sized(ROW))
-                                .flex()
-                                .items_center()
-                                .px_4()
-                                .text_body()
-                                .text_color(theme.text_muted)
-                                .child(match why {
+                            Row::Empty(_, why) => clipped(
+                                div()
+                                    .id(("exclusions-empty", n))
+                                    .h(sized(ROW))
+                                    .flex()
+                                    .items_center()
+                                    .px_4()
+                                    .truncate()
+                                    .text_body()
+                                    .text_color(theme.text_muted),
+                                match why {
                                     model::Narrowed::Here => {
                                         "Nothing it names is on this computer".to_owned()
                                     }
@@ -853,8 +863,9 @@ impl SettingsView {
                                         "Nothing in it yet: Add… puts {} here, or Move to from a row's menu",
                                         an(model::ENTRY)
                                     ),
-                                })
-                                .into_any_element(),
+                                },
+                            )
+                            .into_any_element(),
                         };
                         Some(div().w_full().px_6().child(element).into_any_element())
                     })

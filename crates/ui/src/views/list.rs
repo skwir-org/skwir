@@ -1335,7 +1335,12 @@ fn header_cell(
         Some(key) if spec.key == key => " ▼",
         _ => "",
     };
-    let el = div().id(id).child(format!("{label}{indicator}"));
+    // Cut at its end in a column narrower than its name, said whole when
+    // pointed at: the header is one line.
+    let el = crate::elements::clip::clipped(
+        div().id(id).min_w_0().truncate(),
+        format!("{label}{indicator}"),
+    );
     match key {
         Some(key) => el
             .cursor_pointer()
@@ -1384,6 +1389,8 @@ fn header(shell: &Shell, theme: &Theme, tree: bool, cx: &mut Context<Shell>) -> 
     }
     div()
         .h(scale.px(24.))
+        // One line, all it holds (a row of fixed height).
+        .whitespace_nowrap()
         .w_full()
         .flex()
         .flex_row()

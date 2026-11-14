@@ -12,6 +12,7 @@ use crate::sizes::sized;
 use gpui::{AnyElement, Context, div, prelude::*};
 use skwir_core::location::AsOf;
 
+use crate::elements::clip::clipped;
 use crate::format;
 use crate::shell::Shell;
 use crate::theme::Chosen;
@@ -263,11 +264,19 @@ pub(crate) fn render(
         .gap_4()
         .px_2()
         .text_body()
+        // One line, all it holds: a text narrows to its widest word where
+        // the row is short and would wrap in a bar one line tall, cut above
+        // and below. What may give way is cut at its end, said whole when
+        // pointed at.
+        .whitespace_nowrap()
         // A card's foot (`Theme::cards`): a band as its row is, no line.
         .when(theme.lines(), |d| d.border_t_1().border_color(theme.border))
         .bg(theme.bar_ground(shell.lowered()))
         .text_color(theme.text_muted)
-        .child(items);
+        .child(clipped(
+            div().id("footer-items").min_w_0().truncate(),
+            items,
+        ));
     if let Some((text, tip)) = as_of {
         let tip: gpui::SharedString = tip.into();
         bar = bar.child(
@@ -320,7 +329,14 @@ pub(crate) fn render(
             said.push_str(", ");
             said.push_str(&text);
         }
-        bar = bar.child(div().text_color(theme.text).child(text));
+        bar = bar.child(clipped(
+            div()
+                .id("footer-selected")
+                .min_w_0()
+                .truncate()
+                .text_color(theme.text),
+            text,
+        ));
     }
     // A sweep is a mode: the keys act differently while it lasts.
     if let Some(unset) = sweep {
@@ -397,33 +413,41 @@ pub(crate) fn render(
         .into_iter()
         .flatten()
         .collect();
-        bar = bar.child(div().text_color(theme.accent_text).child(words.join(" · ")));
+        bar = bar.child(clipped(
+            div()
+                .id("footer-reviews")
+                .min_w_0()
+                .truncate()
+                .text_color(theme.accent_text),
+            words.join(" · "),
+        ));
     }
     // What a plugin counts (the shelf's items) announces itself only
     // when it counts something, in its words; a click opens what it counts.
     for tally in &shell.tallies {
         let open = tally.open.clone();
-        bar = bar.child(
-            div()
-                // Known by what it counts: one that comes or goes moves
-                // the others.
-                .id(crate::elements::known_by("tally", &tally.label))
-                .role(gpui::Role::Button)
-                .when(shell.a11y, |d| {
-                    d.aria_label(format!("{}: {}", tally.label, tally.count))
-                })
-                .px_2()
-                .rounded_md()
-                .when(open.is_some(), gpui::Styled::cursor_pointer)
-                .chosen(&theme)
-                .hover(|s| s.bg(theme.hover))
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    if let Some(open) = &open {
-                        this.run(&open.name, open.args.clone(), window, cx);
-                    }
-                }))
-                .child(format!("{}: {}", tally.label, tally.count)),
-        );
+        let tallied = div()
+            // Known by what it counts: one that comes or goes moves the
+            // others.
+            .id(crate::elements::known_by("tally", &tally.label))
+            .role(gpui::Role::Button)
+            .when(shell.a11y, |d| {
+                d.aria_label(format!("{}: {}", tally.label, tally.count))
+            })
+            .px_2()
+            .rounded_md()
+            .when(open.is_some(), gpui::Styled::cursor_pointer)
+            .chosen(&theme)
+            .hover(|s| s.bg(theme.hover))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                if let Some(open) = &open {
+                    this.run(&open.name, open.args.clone(), window, cx);
+                }
+            }));
+        bar = bar.child(clipped(
+            tallied.min_w_0().truncate(),
+            format!("{}: {}", tally.label, tally.count),
+        ));
     }
     // What runs, docked: its strip, and Activity opened above it (ADR-114).
     if let Some(strip) = crate::activity::strip(shell, under, &theme, cx) {

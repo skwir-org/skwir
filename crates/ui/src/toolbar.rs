@@ -1378,6 +1378,8 @@ pub fn menu_parts(
                 .items_center()
                 .justify_between()
                 .h(sized(26.))
+                // One line, all it holds (a row of fixed height).
+                .whitespace_nowrap()
                 .pl_2()
                 .pt_1()
                 .text_small()
@@ -1412,6 +1414,8 @@ pub fn menu_parts(
                 .items_center()
                 .gap_2()
                 .h(sized(MENU_ROW + 4.))
+                // One line, all it holds (a row of fixed height).
+                .whitespace_nowrap()
                 .px_2()
                 .child(div().size(px(16.)).flex_none())
                 .child(

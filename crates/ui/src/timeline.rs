@@ -978,6 +978,8 @@ fn controls(
     let windowed = t.histogram.as_ref().is_some_and(Histogram::windowed);
     let mut controls = div()
         .h(sized(26.))
+        // One line, all it holds (a row of fixed height).
+        .whitespace_nowrap()
         .px_2()
         .flex()
         .items_center()

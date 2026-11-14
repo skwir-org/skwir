@@ -655,6 +655,8 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         .id(("quick-filters", pane.0 as usize))
         .flex_none()
         .h(sized(30.))
+        // One line, all it holds: it scrolls along instead.
+        .whitespace_nowrap()
         .px_2()
         .flex()
         .items_center()

@@ -1898,6 +1898,8 @@ fn row_element(
         })
         .relative()
         .h(sized(crate::toolbar::MENU_ROW))
+        // One line, all it holds (a row of fixed height).
+        .whitespace_nowrap()
         .flex_none()
         .px_2()
         .flex()
@@ -2175,6 +2177,8 @@ fn choice_element(
         .when(shell.a11y, |d| d.aria_label(choice.name.clone()))
         .relative()
         .h(sized(crate::toolbar::MENU_ROW + 4.))
+        // One line, all it holds (a row of fixed height).
+        .whitespace_nowrap()
         .flex_none()
         .px_2()
         .flex()

@@ -81,8 +81,11 @@ working in an area, also read that area's rules (see
   dropped. A text narrows to its widest word where its row is short, and
   wraps (vendored gpui 0061, as CSS has it): what must stay on one line
   (a control's label, a name cut with an ellipsis) says so,
-  `whitespace_nowrap` or `truncate`. What is laid out on its own at its
-  natural size (a popup, a measure in prepaint) is given
+  `whitespace_nowrap` or `truncate`; a bar or a row of fixed height (a
+  footer, a menu's row, a list's header) says it once for all it holds,
+  `whitespace_nowrap` being inherited, and what may give way there is
+  cut, said whole when pointed at (`elements::clip`). What is laid out
+  on its own at its natural size (a popup, a measure in prepaint) is given
   `AvailableSpace::max_size`: at `min_size`, its texts narrow to their
   widest word. Texts beside the controls that act on them, in a row that
   can grow narrow, are an `elements::beside`: the controls go under the

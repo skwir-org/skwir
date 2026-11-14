@@ -596,6 +596,8 @@ impl SettingsView {
         div()
             .id("keys-inside")
             .h(sized(ROW))
+            // One line, all it holds (a row of fixed height).
+            .whitespace_nowrap()
             .px_2()
             .flex()
             .items_center()
@@ -610,7 +612,10 @@ impl SettingsView {
                 theme.text_muted,
                 14.,
             ))
-            .child(format!("Keys inside dialogs and menus ({count})"))
+            .child(crate::elements::clip::clipped(
+                div().id("keys-inside-title").min_w_0().truncate(),
+                format!("Keys inside dialogs and menus ({count})"),
+            ))
             .on_click(cx.listener(|this, _, _, cx| {
                 this.keys.inside = !this.keys.inside;
                 cx.notify();
