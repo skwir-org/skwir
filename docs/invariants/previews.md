@@ -37,9 +37,12 @@ is binding, like `AGENTS.md`.
   Skwir's process, what keeps it closes it in place (`Held::reader`,
   `MBTiles`' connection), the guard going after the file. A held reader
   has no request of its own to end a wait (a map's tiles share one), so
-  a read of it while the plan runs fails at once (`kept_open::taken_by`)
-  rather than wait: a wait no request could end held workers for the
-  plan's length. Tested from
+  a read of it while the plan runs fails at once with `kept_open::Taken`
+  rather than wait (a wait no request could end held workers for the
+  plan's length); an `MBTiles` map's tile does the same. The map keeps
+  such a tile as asked again once a plan has ended
+  (`Taken::is_over`, `map_tiles::Entry::Taken`): never a failure kept
+  for `RETRY`, nor a word that the file's tiles cannot be read. Tested from
   `PreviewRequest::holding` (bytes at a path that leads nowhere) and
   `Held::of_bytes_on_remote`; on a mount, by the GETs its server counts
   (`a_preview_of_a_file_on_a_mount_fetches_it_once`).

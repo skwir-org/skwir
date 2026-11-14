@@ -25,7 +25,8 @@ const METADATA_VALUE: i64 = 1024 * 1024;
 
 pub(crate) struct MbTiles {
     /// The database, open while the map is shown: closed when a plan takes
-    /// the file (ADR-136), opened again by the next tile once the plan has
+    /// the file (ADR-136), a tile asked meanwhile failing with
+    /// `kept_open::Taken`, opened again by the next tile once the plan has
     /// ended. SQLite opens without the sharing that lets Windows remove or
     /// move a file open.
     connection: Arc<Mutex<Option<Open>>>,
@@ -205,13 +206,14 @@ impl Archive for MbTiles {
         }
         // Rows are counted from the south.
         let row = (1u64 << z) - 1 - u64::from(y);
-        // Taken by a plan meanwhile: opened again once it has ended, not
-        // holding what it closes.
-        if self.connection.lock().is_none() {
-            kept_open::wait_while_taken(&self.path, cancel, kept_open::TAKEN_AT_MOST);
-        }
         let mut slot = self.connection.lock();
         if slot.is_none() {
+            // Taken by a plan still running: not opened again under it,
+            // nor waited for (each tile would hold a worker for the plan's
+            // length); the map asks again once it has ended.
+            if let Some(taken) = kept_open::taken(&self.path) {
+                return Err(taken.into());
+            }
             *slot = Some(kept(&self.path, &self.connection, connect(&self.path)?));
         }
         let connection = &mut slot.as_mut().expect("opened above").connection;
@@ -337,7 +339,11 @@ pub(crate) mod tests {
         );
         assert_eq!(taking.count(), 1);
         assert!(archive.connection.lock().is_none(), "closed for the plan");
+        let failed = archive.tile(1, 0, 0, &CancelToken::new()).unwrap_err();
+        let taken = kept_open::Taken::in_error(&failed).expect("taken, not damaged");
+        assert!(!taken.is_over());
         drop(taking);
+        assert!(taken.is_over(), "asked again once the plan has ended");
         let tile = archive.tile(1, 0, 0, &CancelToken::new()).unwrap();
         assert_eq!(tile.as_deref(), Some(&b"north-west"[..]));
         assert!(archive.connection.lock().is_some(), "open again");

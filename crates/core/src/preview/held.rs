@@ -494,11 +494,8 @@ impl Read for Reader {
                 // Taken by a plan still running: not opened again under
                 // it. Once it has ended the file is gone, moved (which
                 // `reopen` says) or left.
-                if crate::fs::kept_open::taken_by(&self.held.path).is_some() {
-                    return Err(io::Error::other(format!(
-                        "{} is being moved or removed",
-                        self.held.path.display()
-                    )));
+                if let Some(taken) = crate::fs::kept_open::taken(&self.held.path) {
+                    return Err(io::Error::other(taken));
                 }
                 let file = self.held.reopen()?;
                 let shared = Arc::downgrade(&self.file);
@@ -1074,12 +1071,15 @@ mod tests {
         );
         assert_eq!(taking.count(), 1, "closed for the plan");
         let started = std::time::Instant::now();
-        assert!(reader.read_exact(&mut buf).is_err());
+        let failed = anyhow::Error::from(reader.read_exact(&mut buf).unwrap_err());
+        let taken = crate::fs::kept_open::Taken::in_error(&failed).expect("taken, not damaged");
+        assert!(!taken.is_over());
         assert!(
             started.elapsed() < std::time::Duration::from_secs(1),
             "no wait"
         );
         drop(taking);
+        assert!(taken.is_over(), "worth asking again");
         reader.seek(SeekFrom::Start(HEAD as u64 + 1)).unwrap();
         reader.read_exact(&mut buf).unwrap();
         assert_eq!(buf, bytes[HEAD + 1..HEAD + 5]);

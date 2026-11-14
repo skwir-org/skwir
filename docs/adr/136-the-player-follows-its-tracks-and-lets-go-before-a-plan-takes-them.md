@@ -104,8 +104,12 @@ and the other holders of a file shown let go too (8).
    next request once the plan that took it has ended
    (`kept_open::wait_while_taken`, `Taking`, held by the plan to its
    end), finding it gone, moved or left; a held reader, which no request
-   of its own could stop waiting (a map's tiles share one), fails a read
-   while the plan runs instead (`kept_open::taken_by`). Not the terminal: its shell
+   of its own could stop waiting (a map's tiles share one), and a map's
+   `MBTiles` connection, whose tiles would each hold a worker for the
+   plan's length, fail a read while the plan runs instead
+   (`kept_open::Taken`): the map keeps such a tile as asked again once a
+   plan has ended (`kept_open::ended`), never as a failure, nor says the
+   file's tiles cannot be read. Not the terminal: its shell
    stands in the folder shown, and only ending the user's shell would
    take it out.
 

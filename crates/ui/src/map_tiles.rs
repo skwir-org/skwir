@@ -43,6 +43,9 @@ enum Entry {
     },
     /// Asked again once `RETRY` has passed, or for another source.
     Failed(std::time::Instant),
+    /// Its file taken by a plan still running (ADR-136): asked again once
+    /// a plan has ended, never said a failure.
+    Taken(skwir_core::fs::kept_open::Taken),
     /// A tile the file does not have (`NoTile`): blank, never asked again.
     Empty,
 }
@@ -50,6 +53,7 @@ enum Entry {
 /// Why a tile did not come.
 enum Lack {
     NoTile,
+    Taken(skwir_core::fs::kept_open::Taken),
     Failed(String),
 }
 
@@ -237,8 +241,9 @@ impl TileStore {
                 return None;
             }
             Some(Entry::Failed(when)) if when.elapsed() < RETRY => return None,
+            Some(Entry::Taken(taken)) if !taken.is_over() => return None,
             Some(Entry::Empty) => return None,
-            Some(Entry::Failed(_)) | None => {}
+            Some(Entry::Failed(_) | Entry::Taken(_)) | None => {}
         }
         // A file's source lives as long as its preview holds it; the
         // background's ends with its registration.
@@ -261,6 +266,10 @@ impl TileStore {
                     .map_err(|error| {
                         if error.is::<NoTile>() {
                             Lack::NoTile
+                        } else if let Some(taken) =
+                            skwir_core::fs::kept_open::Taken::in_error(&error)
+                        {
+                            Lack::Taken(taken)
                         } else {
                             Lack::Failed(format!("{error:#}"))
                         }
@@ -342,7 +351,9 @@ impl TileStore {
                     cancel.cancel();
                     gone.push(*key);
                 }
-                Entry::Ready { .. } | Entry::Failed(_) if stale => gone.push(*key),
+                Entry::Ready { .. } | Entry::Failed(_) | Entry::Taken(_) if stale => {
+                    gone.push(*key);
+                }
                 _ => {}
             }
         }
@@ -409,6 +420,9 @@ impl TileStore {
                 }
                 Err(Lack::NoTile) => {
                     self.entries.insert(key, Entry::Empty);
+                }
+                Err(Lack::Taken(taken)) => {
+                    self.entries.insert(key, Entry::Taken(taken));
                 }
                 Err(Lack::Failed(error)) => {
                     self.entries

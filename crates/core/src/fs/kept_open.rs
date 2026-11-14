@@ -48,6 +48,10 @@ static CLOSED: Condvar = Condvar::new();
 /// them, its [`Taking`] forgets them as the plan ends).
 static TAKING: Mutex<Vec<(PlanId, PathBuf)>> = Mutex::new(Vec::new());
 static TAKEN: Condvar = Condvar::new();
+/// Counts the plans that ended having let go of something (`Taking`
+/// dropped): what failed while one ran (`Taken`) is asked again once it
+/// moved.
+static ENDED: AtomicU64 = AtomicU64::new(0);
 /// How often a wait for a plan looks at its own cancellation.
 const LOOK: Duration = Duration::from_millis(50);
 
@@ -127,7 +131,11 @@ impl Drop for Taking {
         if self.count == 0 {
             return;
         }
-        TAKING.lock().retain(|(plan, _)| *plan != self.plan);
+        let mut taking = TAKING.lock();
+        taking.retain(|(plan, _)| *plan != self.plan);
+        // Under the lock: what `taken` found taken counted before this.
+        ENDED.fetch_add(1, Ordering::Release);
+        drop(taking);
         TAKEN.notify_all();
     }
 }
@@ -191,6 +199,62 @@ pub fn taken_by(path: &Path) -> Option<PlanId> {
         .iter()
         .find(|(_, taken)| taken == path)
         .map(|(plan, _)| *plan)
+}
+
+/// A file not opened again while a plan still running takes it (it let go
+/// of it for one): what a read that cannot wait fails with (a held reader,
+/// a map's tiles), never a damage of the file, and worth asking again
+/// once [`ended`] has moved past `ended`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Taken {
+    /// [`ended`] when it was found taken.
+    pub ended: u64,
+}
+
+impl std::fmt::Display for Taken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("it is being moved or removed")
+    }
+}
+
+impl std::error::Error for Taken {}
+
+impl Taken {
+    /// The `Taken` an error is, or holds (as an I/O error's own, or as the
+    /// cause of one).
+    pub fn in_error(error: &anyhow::Error) -> Option<Taken> {
+        error.chain().find_map(|cause| {
+            cause.downcast_ref::<Taken>().copied().or_else(|| {
+                cause
+                    .downcast_ref::<std::io::Error>()
+                    .and_then(std::io::Error::get_ref)
+                    .and_then(|inner| inner.downcast_ref::<Taken>())
+                    .copied()
+            })
+        })
+    }
+
+    /// Whether a plan has ended since it was found taken.
+    pub fn is_over(self) -> bool {
+        ended() != self.ended
+    }
+}
+
+/// `path` taken by a plan still running, as a [`Taken`]: what would open it
+/// meanwhile fails with it.
+pub fn taken(path: &Path) -> Option<Taken> {
+    let taking = TAKING.lock();
+    taking
+        .iter()
+        .any(|(_, taken)| taken == path)
+        .then(|| Taken {
+            ended: ENDED.load(Ordering::Acquire),
+        })
+}
+
+/// How many plans that let go of something have ended.
+pub fn ended() -> u64 {
+    ENDED.load(Ordering::Acquire)
 }
 
 /// How long a holder waits for a plan that took its file before it opens
