@@ -188,6 +188,33 @@ impl History {
     }
 }
 
+/// The most characters a field holds of what is typed, pasted or composed
+/// in it, as Qt's line edit holds by default. Its line is shaped whole on
+/// the window's thread at each change: 20,000 copied files pasted in the
+/// address (600 KB of paths) held the window half a minute.
+pub const MOST_CHARS: usize = 32_767;
+
+/// What of `text`, put in place of `range` in `content`, the field takes:
+/// whole graphemes while the field stays within [`MOST_CHARS`].
+fn fitted<'a>(content: &str, range: &Range<usize>, text: &'a str) -> &'a str {
+    let kept = content[..range.start].chars().count() + content[range.end..].chars().count();
+    let room = MOST_CHARS.saturating_sub(kept);
+    if text.len() <= room {
+        // As many bytes as there is room for characters.
+        return text;
+    }
+    let mut chars = 0;
+    let mut end = 0;
+    for (at, grapheme) in text.grapheme_indices(true) {
+        chars += grapheme.chars().count();
+        if chars > room {
+            break;
+        }
+        end = at + grapheme.len();
+    }
+    &text[..end]
+}
+
 /// Where `text` replacing `range` lands, if it is one character typed at
 /// the cursor; a space ends a run, so words come back one at a time.
 fn typed_at(range: &Range<usize>, text: &str) -> Option<Range<usize>> {
@@ -830,6 +857,7 @@ impl EntityInputHandler for TextInput {
             .map(|r| self.range_from_utf16(r))
             .or(self.marked_range.clone())
             .unwrap_or(self.selected_range.clone());
+        let new_text = fitted(&self.content, &range, new_text);
         // A composition being committed was recorded when it began.
         if self.marked_range.is_none() && !self.masked {
             let before = (self.content.clone(), self.selected_range.clone());
@@ -858,6 +886,10 @@ impl EntityInputHandler for TextInput {
             .map(|r| self.range_from_utf16(r))
             .or(self.marked_range.clone())
             .unwrap_or(self.selected_range.clone());
+        let whole = new_text;
+        let new_text = fitted(&self.content, &range, new_text);
+        // A selection given within a composition cut short is past its end.
+        let new_selected_range_utf16 = new_selected_range_utf16.filter(|_| new_text == whole);
         // A composition is one step, from the text before it began.
         if self.marked_range.is_none() && !self.masked {
             let before = (self.content.clone(), self.selected_range.clone());
@@ -1443,9 +1475,30 @@ fn styled_runs(run: &TextRun, text: &str, styles: &[(Range<usize>, Paint)]) -> V
 #[cfg(test)]
 mod tests {
     use super::{
-        History, autoscroll_x, scrolled, selected_runs, snapped, typed_at, unit_at, units,
-        utf16_to_utf8,
+        History, MOST_CHARS, autoscroll_x, fitted, scrolled, selected_runs, snapped, typed_at,
+        unit_at, units, utf16_to_utf8,
     };
+
+    /// A field takes what fits of a paste, whole characters, and all of
+    /// what fits; text replaced makes room.
+    #[test]
+    fn a_field_takes_what_fits_of_a_long_paste_in_whole_graphemes() {
+        // 20,000 paths pasted in an empty field: cut at the bound.
+        let paths = "/tmp/many/f00000.txt ".repeat(20_000);
+        let taken = fitted("", &(0..0), &paths);
+        assert_eq!(taken.chars().count(), MOST_CHARS);
+        assert!(paths.starts_with(taken));
+        // Room left beside what stays; what is replaced counts for none.
+        let content = "a".repeat(MOST_CHARS - 2);
+        assert_eq!(fitted(&content, &(0..0), "bcd"), "bc");
+        assert_eq!(fitted(&content, &(0..4), "bcdefg"), "bcdefg");
+        // A grapheme of two characters never cut in two: é as e and its accent.
+        let content = "a".repeat(MOST_CHARS - 1);
+        assert_eq!(fitted(&content, &(0..0), "e\u{301}x"), "");
+        assert_eq!(fitted(&content[1..], &(0..0), "e\u{301}x"), "e\u{301}");
+        // What fits is taken as it is.
+        assert_eq!(fitted("dunes", &(5..5), " kind:image"), " kind:image");
+    }
 
     /// What is selected is written in the selection's text color, on the
     /// selection alone, cut out of the runs it falls in; the rest is as it
