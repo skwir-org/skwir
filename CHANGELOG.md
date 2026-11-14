@@ -24,6 +24,9 @@
   Mute; Up and Down step it, as the wheel over the speaker does, which
   shows the popup while it turns. The speaker's waves say how loud. More
   no longer lists five volume steps, nor the time where the bar shows it.
+- **A paused film comes back fitted**: a small film paused in the dock,
+  shown again in the panel, was drawn at its own size until it played;
+  it fills the panel as before.
 - **A model's stored picture fits the panel**: the picture a slicer stores
   in a 3MF, shown before the model is turned in 3D, was as wide as the
   panel, and a tall one ran past its foot. It is shown as pictures are,

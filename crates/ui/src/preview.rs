@@ -3386,39 +3386,32 @@ impl Shell {
             return false;
         };
         let session = Arc::clone(&pinned.session);
-        let picture = match (&pinned.frame, &pinned.cover) {
-            (Some((image, width, height)), _) if pinned.video => {
-                Some((Arc::clone(image), *width, *height))
-            }
-            (_, Some(cover)) if !pinned.video => {
-                let size = cover.size(0);
-                Some((
-                    Arc::clone(cover),
-                    u32::try_from(size.width.0).unwrap_or(0),
-                    u32::try_from(size.height.0).unwrap_or(0),
-                ))
-            }
-            _ => None,
-        };
+        // A film's frame, a film (`media::film_frame`); a track's cover as
+        // the player keeps it, a picture.
+        let picture =
+            match (&pinned.frame, &pinned.cover) {
+                (Some((image, width, height)), _) if pinned.video => Some(
+                    crate::media::film_frame(Arc::clone(image), *width, *height, &pinned.state),
+                ),
+                (_, Some(cover)) if !pinned.video => {
+                    let size = cover.size(0);
+                    Some(PreviewContent::Image {
+                        image: Arc::clone(cover),
+                        width: u32::try_from(size.width.0).unwrap_or(0),
+                        height: u32::try_from(size.height.0).unwrap_or(0),
+                        detail: None,
+                        document: None,
+                        facts: Vec::new(),
+                        pixels: Pixels::Own,
+                        ink: None,
+                    })
+                }
+                _ => None,
+            };
         self.preview.media.state = pinned.state.clone();
         self.preview.media.show_live();
-        if let Some((image, width, height)) = picture {
-            self.replace_preview_content(
-                Some(PreviewContent::Image {
-                    image,
-                    width,
-                    height,
-                    detail: None,
-                    document: None,
-                    facts: Vec::new(),
-                    pixels: Pixels::Own,
-                    // A film's frame, or a track's cover as the player
-                    // keeps it.
-                    ink: None,
-                }),
-                window,
-                cx,
-            );
+        if let Some(picture) = picture {
+            self.replace_preview_content(Some(picture), window, cx);
         }
         self.show_media(session, play, window, cx);
         true

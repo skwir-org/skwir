@@ -512,25 +512,8 @@ impl Shell {
             {
                 self.preview.media.recycled.keep(Arc::clone(shown));
             }
-            let state = &self.preview.media.state;
-            self.replace_preview_content(
-                Some(PreviewContent::Image {
-                    image,
-                    width,
-                    height,
-                    detail: Some(skwir_core::preview::PreviewInfo::Video {
-                        seconds: state.position,
-                        duration: state.duration,
-                        size: None,
-                    }),
-                    document: None,
-                    facts: Vec::new(),
-                    pixels: crate::preview::Pixels::Own,
-                    ink: None,
-                }),
-                window,
-                cx,
-            );
+            let frame = film_frame(image, width, height, &self.preview.media.state);
+            self.replace_preview_content(Some(frame), window, cx);
         }
         if let Some(notice) = update.notice {
             // The session continues; its next state update corrects the UI.
@@ -909,6 +892,33 @@ pub(crate) fn played_as(
 
 /// A frame of a film as a picture for GPUI: the worker sends BGRA, which is
 /// what GPUI wants, so the buffer moves in without a copy.
+/// A film's frame as the panel shows it: a film (`PreviewInfo::Video`),
+/// so Fit makes it as large as the panel, a small one enlarged
+/// (`preview::ShownAs::Film`), whoever drew it: the panel's player, or the
+/// pinned one the panel shows again (`Shell::show_pinned`). Shown as a
+/// picture, a small film paused there stayed at its own size.
+pub(crate) fn film_frame(
+    image: Arc<RenderImage>,
+    width: u32,
+    height: u32,
+    state: &Playback,
+) -> PreviewContent {
+    PreviewContent::Image {
+        image,
+        width,
+        height,
+        detail: Some(skwir_core::preview::PreviewInfo::Video {
+            seconds: state.position,
+            duration: state.duration,
+            size: None,
+        }),
+        document: None,
+        facts: Vec::new(),
+        pixels: crate::preview::Pixels::Own,
+        ink: None,
+    }
+}
+
 pub(crate) fn frame_image(frame: Frame) -> Option<(Arc<RenderImage>, u32, u32)> {
     let (width, height) = (frame.width, frame.height);
     let buffer = image::RgbaImage::from_raw(width, height, frame.bgra)?;
@@ -1841,6 +1851,23 @@ pub fn audio_content(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A film's frame is a film wherever it comes from (the panel's player,
+    /// the pinned one shown again): Fit enlarges a small one.
+    #[test]
+    fn a_film_s_frame_is_laid_out_as_a_film() {
+        let image = crate::thumbs::to_render_image(&skwir_core::thumbs::Image {
+            width: 2,
+            height: 2,
+            rgba: vec![255; 16].into(),
+        })
+        .expect("a picture");
+        let frame = film_frame(image, 2, 2, &Playback::default());
+        assert_eq!(
+            crate::preview::ShownAs::of(&frame),
+            Some(crate::preview::ShownAs::Film)
+        );
+    }
 
     /// The speaker has as many waves as it is loud, none at nothing, and
     /// is crossed out when muted, whatever its level.
