@@ -191,6 +191,10 @@ happens](docs/HELP-WANTED.md). Skwir itself is for Linux, as in 0.4.0.
   retried once the server answered, it could keep a few kilobytes of zeroes
   the mount gave as its server went. It now goes on from before the last
   32 MiB it was reading, checked against the server.
+- **A film's picture comes back after its subtitles are turned off**: now
+  and then, turning a film's subtitles off or choosing another of its audio
+  tracks left its picture still for good, as GStreamer had already chosen
+  the tracks itself. The tracks are now asked for before it chooses.
 
 ## 0.4.0 (2026-11-10)
 

@@ -12,7 +12,7 @@ use std::{
     fs::OpenOptions,
     io::{Seek, SeekFrom, Write},
     sync::{
-        Arc, Mutex, PoisonError,
+        Arc, Mutex, PoisonError, TryLockError,
         atomic::{AtomicBool, Ordering},
         mpsc,
     },
@@ -42,8 +42,11 @@ struct Player {
     state: Playback,
     generation: u64,
     streams: Vec<gst::Stream>,
+    /// The streams asked of the current preroll and not yet said selected.
     selection: Option<Vec<gst::glib::GString>>,
-    selected: bool,
+    /// The tracks the next preroll's collection is answered with, by the
+    /// bus's sync handler (`Wanted`).
+    wanted: Arc<Mutex<Wanted>>,
     restore: Option<f64>,
     seeking: bool,
     /// The loop's inbox, for the fences a track change sends.
@@ -156,10 +159,31 @@ impl Player {
         // The sync handler runs on the posting thread and hands the message
         // itself to the loop: wake and payload are one object, so the loop can
         // never drain an empty queue and sleep while a message is pending.
+        // A preroll's stream collection is answered here, before the
+        // message is let go (`Wanted`).
         let bus = pipeline.bus().context("pipeline bus")?;
         let bus_events = events.clone();
+        let wanted = Arc::new(Mutex::new(Wanted {
+            audio: -1,
+            subtitle: -1,
+            answered: false,
+        }));
+        let bus_wanted = Arc::clone(&wanted);
+        // Weak: the pipeline holds its bus, which holds this handler.
+        let bus_pipeline = pipeline.downgrade();
         bus.set_sync_handler(move |_, message| {
             let _ = bus_events.tx.send(Event::Bus(message.clone()));
+            if let gst::MessageView::StreamCollection(collection) = message.view()
+                && let Some(pipeline) = bus_pipeline.upgrade()
+            {
+                answer(
+                    &pipeline,
+                    &collection.stream_collection(),
+                    &bus_wanted,
+                    &bus_events,
+                    !audio_only,
+                );
+            }
             gst::BusSyncReply::Drop
         });
         let sample_events = events.clone();
@@ -190,7 +214,7 @@ impl Player {
             generation: 0,
             streams: Vec::new(),
             selection: None,
-            selected: false,
+            wanted,
             restore: None,
             seeking: false,
             events: Arc::clone(events),
@@ -342,12 +366,21 @@ impl Player {
         // Re-preroll from READY with the desired streams, then restore position.
         // The UI retains its last image throughout; no stale preroll is published.
         let position = self.restore.unwrap_or(self.state.position);
+        // Held while the pipeline returns to READY (`answer`), let go
+        // before the new preroll starts, whose collection is answered.
+        let wanted = Arc::clone(&self.wanted);
+        let mut wanted = wanted.lock().unwrap_or_else(PoisonError::into_inner);
         self.pipeline.set_state(gst::State::Ready)?;
         self.fence();
         self.state.audio = audio;
         self.state.subtitle = subtitle;
         self.state.seekable = false;
-        self.selected = false;
+        *wanted = Wanted {
+            audio,
+            subtitle,
+            answered: false,
+        };
+        drop(wanted);
         self.selection = None;
         self.restore = Some(position);
         self.pipeline.set_state(gst::State::Paused)?;
@@ -365,36 +398,94 @@ impl Player {
         self.fences += 1;
         let _ = self.events.tx.send(Event::Fence);
     }
-    fn select_tracks(&mut self, audio: i32, subtitle: i32) -> anyhow::Result<()> {
-        let mut selected = Vec::new();
-        for (kind, index) in [
-            (gst::StreamType::VIDEO, if self.audio_only { -1 } else { 0 }),
-            (gst::StreamType::AUDIO, audio),
-            (gst::StreamType::TEXT, subtitle),
-        ] {
-            if let Ok(index) = usize::try_from(index)
-                && let Some(id) = self
-                    .streams
-                    .iter()
-                    .filter(|s| s.stream_type().contains(kind))
-                    .nth(index)
-                    .and_then(gst::Stream::stream_id)
-            {
-                selected.push(id);
-            }
-        }
-        // Keep playbin's audio/video/text flags intact; selection chooses streams.
-        self.selection = Some(selected.clone());
-        let ids: Vec<_> = selected.iter().map(gst::glib::GString::as_str).collect();
-        anyhow::ensure!(
-            self.pipeline
-                .send_event(gst::event::SelectStreams::new(ids)),
-            "track selection failed"
-        );
-        self.state.audio = audio;
-        self.state.subtitle = subtitle;
-        Ok(())
+}
+
+/// The tracks a preroll's stream collection is answered with, shared by the
+/// loop (which sets them as a track change returns to READY) and the bus's
+/// sync handler (which answers with them).
+///
+/// decodebin3 posts its collection with its input lock let go, so that a
+/// handler on the posting thread may ask for streams before it goes on;
+/// asked for nothing by then, it takes one stream of each kind, subtitles
+/// included. The loop's answer, from its own thread, came after that now
+/// and then, and the subtitle it then took away, or the audio track it
+/// changed, was output replaced in a paused pipeline: the preroll waited
+/// for good, the video never came back (`tools/media/check.py` stopped so
+/// in about one run in five on a VP9 clip on Linux, two in three under
+/// Wine; 0.4.0's helper too).
+///
+/// A track change holds it while the pipeline returns to READY: the
+/// collection the abandoned preroll posts meanwhile, answered, would wait
+/// on that change, which waits for the posting thread (two changes in a
+/// row while playing did this), so it is left unanswered, and fenced off
+/// (`Player::fence`). An answer under way holds it until it is sent, and
+/// the change waits for it.
+struct Wanted {
+    /// The audio track, -1 for the first.
+    audio: i32,
+    /// The subtitle track, -1 for none.
+    subtitle: i32,
+    /// Whether this preroll's collection was answered: only its first is,
+    /// as the loop chose before (a gapless next file's is decodebin3's).
+    answered: bool,
+}
+
+/// Answers a preroll's first stream collection on the thread posting it
+/// (`Wanted`): what is asked goes to the loop first, so it is there before
+/// the streams said selected can be.
+fn answer(
+    pipeline: &gst::Element,
+    collection: &gst::StreamCollection,
+    wanted: &Mutex<Wanted>,
+    events: &Events,
+    video: bool,
+) {
+    // Taken by a track change returning to READY: this preroll is let go.
+    let mut wanted = match wanted.try_lock() {
+        Ok(wanted) => wanted,
+        Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+        Err(TryLockError::WouldBlock) => return,
+    };
+    if wanted.answered {
+        return;
     }
+    wanted.answered = true;
+    let streams: Vec<gst::Stream> = collection.iter().take(128).collect();
+    let ids = chosen(&streams, video, wanted.audio.max(0), wanted.subtitle);
+    let _ = events.tx.send(Event::Selecting(Some(ids.clone())));
+    // Keep playbin's audio/video/text flags intact; selection chooses streams.
+    let asked: Vec<_> = ids.iter().map(gst::glib::GString::as_str).collect();
+    if !pipeline.send_event(gst::event::SelectStreams::new(asked)) {
+        let _ = events.tx.send(Event::Selecting(None));
+    }
+    // Held until sent: a track change waits for it.
+    drop(wanted);
+}
+
+/// The streams of `streams` a selection names: the video (none for audio
+/// alone), the `audio`th audio track and the `subtitle`th subtitle track,
+/// each counted among its kind; an index of -1, or past the last, names
+/// none.
+fn chosen(
+    streams: &[gst::Stream],
+    video: bool,
+    audio: i32,
+    subtitle: i32,
+) -> Vec<gst::glib::GString> {
+    [
+        (gst::StreamType::VIDEO, if video { 0 } else { -1 }),
+        (gst::StreamType::AUDIO, audio),
+        (gst::StreamType::TEXT, subtitle),
+    ]
+    .into_iter()
+    .filter_map(|(kind, index)| {
+        streams
+            .iter()
+            .filter(|s| s.stream_type().contains(kind))
+            .nth(usize::try_from(index).ok()?)
+            .and_then(gst::Stream::stream_id)
+    })
+    .collect()
 }
 
 enum Event {
@@ -404,6 +495,9 @@ enum Event {
     Request(Request),
     /// A bus message, delivered with the wake that announces it.
     Bus(gst::Message),
+    /// The streams the bus's sync handler asked of the preroll (`answer`),
+    /// or `None`: the pipeline refused what it asked.
+    Selecting(Option<Vec<gst::glib::GString>>),
     Wake,
     Closed,
 }
@@ -577,9 +671,12 @@ fn run() -> anyhow::Result<()> {
             Ok(Event::Fence) => player.fences -= 1,
             // Posted before the latest return to READY: about a preroll that
             // no longer exists.
-            Ok(Event::Bus(_)) if player.fences > 0 => {}
+            Ok(Event::Bus(_) | Event::Selecting(_)) if player.fences > 0 => {}
             Ok(Event::Bus(message)) => {
                 handle_message(&mut player, &message, &mut ready, &mut dirty)?;
+            }
+            Ok(Event::Selecting(asked)) => {
+                player.selection = Some(asked.context("track selection failed")?);
             }
             Ok(Event::Wake) => events.wake_pending.store(false, Ordering::Release),
             Err(mpsc::RecvTimeoutError::Timeout) => {}
@@ -849,12 +946,9 @@ fn handle_message(
             }
             player.state.audio_tracks = player.tracks(gst::StreamType::AUDIO);
             player.state.subtitle_tracks = player.tracks(gst::StreamType::TEXT);
+            // The first, as the bus's sync handler asked (`Wanted`).
             if player.state.audio == -1 && !player.state.audio_tracks.is_empty() {
                 player.state.audio = 0;
-            }
-            if !player.selected {
-                player.selected = true;
-                player.select_tracks(player.state.audio, player.state.subtitle)?;
             }
             *dirty = true;
         }
@@ -989,7 +1083,33 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::sends_frame;
+    use super::{chosen, gst, sends_frame};
+
+    /// A selection names the video, the audio track and the subtitle
+    /// asked, each counted among its kind; none of a kind for -1 or an
+    /// index past its last.
+    #[test]
+    fn a_selection_names_each_kind_by_its_index() {
+        gst::init().unwrap();
+        let stream =
+            |id: &str, kind| gst::Stream::new(Some(id), None, kind, gst::StreamFlags::empty());
+        let streams = [
+            stream("video", gst::StreamType::VIDEO),
+            stream("english", gst::StreamType::AUDIO),
+            stream("words", gst::StreamType::TEXT),
+            stream("french", gst::StreamType::AUDIO),
+        ];
+        let ids = |video, audio, subtitle| -> Vec<String> {
+            chosen(&streams, video, audio, subtitle)
+                .iter()
+                .map(ToString::to_string)
+                .collect()
+        };
+        assert_eq!(ids(true, 1, -1), ["video", "french"]);
+        assert_eq!(ids(true, 0, 0), ["video", "english", "words"]);
+        assert_eq!(ids(false, 0, -1), ["english"], "audio alone");
+        assert_eq!(ids(true, 2, 1), ["video"], "past the last of each");
+    }
 
     /// No frame while the window is not shown; shown, one while the slot
     /// is free and the pipeline settled.

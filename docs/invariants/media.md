@@ -148,6 +148,15 @@ binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
   messages from the abandoned preroll. Otherwise a second change before the
   first prerolled selects streams decodebin3 no longer knows, and the video
   stops for good. `tools/media/check.py` switches twice while playing.
+- A preroll's stream collection is answered on the thread that posts it,
+  in the bus's sync handler (`answer`, from `Wanted`): decodebin3 lets go
+  of its lock while it posts so that such a handler can ask, and asked for
+  nothing by then it takes one stream of each kind, subtitles included.
+  An answer from the loop's thread comes after that now and then, and
+  takes a stream away from a paused pipeline: the preroll waits for good.
+  A track change holds `Wanted` while it returns to READY, and the handler
+  only tries it: answering the abandoned preroll would wait on that change,
+  which waits for the posting thread.
 - Do not race dynamic subtitle output replacement with paused flushing
   seeks. Keep playbin flags intact; test subtitle pixels, not metadata only.
 - The manager bounds glibc arenas in the child to limit frame-buffer
