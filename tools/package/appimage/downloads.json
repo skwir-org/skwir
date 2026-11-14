@@ -75,6 +75,10 @@
     "url": "https://gstreamer.freedesktop.org/src/orc/orc-0.4.44.tar.xz",
     "sha256": "4aeb97aea2b58224029dc2b23d7d064cfa990cb4fb8c4da440bcbe9c95bc5d2d"
   },
+  "libva-2.24.1.tar.bz2": {
+    "url": "https://github.com/intel/libva/releases/download/2.24.1/libva-2.24.1.tar.bz2",
+    "sha256": "eec6050b52876f229bd35e9df17cd31a06785e18e6f7990c445b584628483d67"
+  },
   "meson-1.9.1-py3-none-any.whl": {
     "url": "https://files.pythonhosted.org/packages/9c/07/b48592d325cb86682829f05216e4efb2dc881762b8f1bafb48b57442307a/meson-1.9.1-py3-none-any.whl",
     "sha256": "f824ab770c041a202f532f69e114c971918ed2daff7ea56583d80642564598d0"

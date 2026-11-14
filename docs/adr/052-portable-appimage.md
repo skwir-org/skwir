@@ -6,7 +6,7 @@ Decision 7, the same tree as a tarball, added 2026-10-13 (the user
 requested it).
 Decision 2's GStreamer amended 2026-11-14 (the user's choice of the set):
 all of it built at one version, not Ubuntu's 1.20 plugins beside it, and
-PulseAudio's client library built too.
+PulseAudio's client library and libva built too.
 
 ## Context
 
@@ -55,9 +55,12 @@ filesystem, as `tools/package/try.sh` already does.
    stops the build. Base keeps the features Ubuntu's base package has. Not
    carried any more: GStreamer's network sources, tracker and chiptune
    music, MIDI, MXF, DV, RealMedia, and the GPL plugins whose formats FFmpeg
-   decodes. libva stays the bundle's (Jammy's 2.14), as FFmpeg's
-   libraries link it: a host's newer VA drivers may refuse it, and its
-   films are then decoded by NVDEC or in software. Ship the exact source
+   decodes. libva is built too (2.24.1, the newest; its X11 and DRM
+   parts, which FFmpeg's libraries link): Jammy's 2.14 opened no driver
+   built for a later libva, nor any outside Debian's folder, and a newer
+   one loads drivers old and new; it looks where Debian, Fedora, Arch and
+   NixOS keep them (`-Ddriverdir`, a list). The host's would break
+   FFmpeg's libraries where libva-x11 is missing. Ship the exact source
    archives, including their licence notices, beside the native library
    notices.
 3. **Library paths stay inside the package.** Each ELF's RUNPATH is relative
@@ -149,3 +152,9 @@ Ubuntu 22.04 runtime root, the film played through the bundle's
 Through `appimage-run` and the session's PipeWire, its helper played on
 in 30 rounds of 30 in twelve runs over six clips, where 0.5.0's stopped
 by the third (`docs/STATUS-LOG.md`, "The AppImage's films play on").
+
+libva 2.24.1, the same day: through `appimage-run`, with NVDEC's and
+FFmpeg's H.264 decoders ranked out for the test, the new image's helper
+opened the Intel GPU's driver (`/run/opengl-driver/lib/dri/iHD_drv_video.so`,
+`__vaDriverInit_1_24`) and decoded with `vah264dec`; 0.5.0's libva did not
+open it (`va_openDriver() returns -1`).

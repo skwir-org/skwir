@@ -10,6 +10,10 @@
   player's sound back the volume and mute it last had, and its mixer can
   move them; the control said its own value over them, 100 % over a film
   at 0 %. It now shows the sound's own.
+- **Video decoding on Intel and AMD graphics in the AppImage**: it carried
+  Ubuntu 22.04's libva, which opens neither a VA-API driver built for a
+  later libva, as current ones are, nor one outside Debian's folder; it
+  now carries libva 2.24, which looks where each distribution keeps them.
 - **The AppImage's GStreamer is of one version**, 1.28.8 throughout, built
   for it: the plugins the player uses, as Windows and macOS have them,
   with Linux's own video decoders (VA-API, NVIDIA's). It no longer carries
