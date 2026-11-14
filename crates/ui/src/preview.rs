@@ -8845,6 +8845,13 @@ mod tests {
             .recv_timeout(std::time::Duration::from_secs(10))
             .expect("the file written in place is told");
         assert_eq!(told, readme);
+        // The window is woken once what it is told is sent, just after.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while woken.load(std::sync::atomic::Ordering::SeqCst) == 0
+            && std::time::Instant::now() < deadline
+        {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
         assert!(
             woken.load(std::sync::atomic::Ordering::SeqCst) > 0,
             "and the window woken"
