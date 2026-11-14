@@ -194,10 +194,14 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   after Cancel holds the server's connection from the next plan.
 - **What this process keeps open, a plan lets go of first** (ADR-136,
   `fs::kept_open`). Before its first step, a plan closes what is kept
-  open at or below what its steps remove (trash, delete, remove), and on
-  Windows also what they move, rename, swap or put another file in the
-  place of: there a file open for reading cannot be, as GStreamer opens
-  it; through an sshfs mount one removed while open stays on the server.
+  open at or below what its steps remove (trash, delete, remove) or move
+  to another volume (copied, then removed; the volumes told by the mount
+  table in memory, `fs::reach::volume_of`, never a stat), and on Windows
+  also what they move, rename, swap or put another file in the place of
+  (below a folder copied there, only the files its own has a counterpart
+  of: a merge leaves the others): there a file open for reading cannot
+  be, as GStreamer opens it; through an sshfs mount one removed while
+  open stays on the server (`TakenAway`).
   It waits for each to be closed (`LET_GO_WITHIN`, 2 s), and is looked
   at only while something is kept open. What keeps a file open
   registers it (`keep_open`) with how to close it, on the plan's thread

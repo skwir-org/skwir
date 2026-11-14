@@ -4726,8 +4726,8 @@ const LET_GO_WITHIN: Duration = Duration::from_secs(2);
 
 /// Let go of the files this process keeps open that `steps` take away
 /// (ADR-136), telling their holders `plan`: taken until the plan drops
-/// what this returns. Read only while one is kept: most plans run while
-/// nothing plays.
+/// what this returns. Looked at only while something is kept open: what
+/// plays, a document, an archive or a map shown, a picture being read.
 fn let_go_of_kept(
     steps: &[Box<dyn Operation>],
     plan: PlanId,
@@ -4736,35 +4736,110 @@ fn let_go_of_kept(
         return None;
     }
     let changes: Vec<Change> = steps.iter().map(|step| step.describe()).collect();
-    let taken: HashSet<&Path> = changes.iter().flat_map(takes_away).collect();
+    let taken = TakenAway::of(&changes);
     if taken.is_empty() {
         return None;
     }
     Some(crate::fs::kept_open::let_go_of(
         plan,
-        |path| path.ancestors().any(|above| taken.contains(above)),
+        |path| taken.takes(path),
         LET_GO_WITHIN,
     ))
 }
 
-/// What a change takes from under whoever keeps it open: what it removes,
-/// and on Windows what it moves or puts another file in the place of too,
-/// which the system refuses for a file open without the sharing that
-/// allows it: the C runtime's `open`, through which the media helper's
-/// reader opens its file.
-/// Elsewhere a file moved, or replaced, stays open where it went.
-fn takes_away(change: &Change) -> Vec<&Path> {
-    match change {
-        Change::Trash { path } | Change::Delete { path } | Change::Remove { path } => {
-            vec![path.as_path()]
+/// What changes take from under whoever keeps a file open: what they
+/// remove, and what a move to another volume removes once copied (a file
+/// removed while open stays on an sshfs server, hidden, and its folder
+/// cannot be removed meanwhile); on Windows also what they move, rename,
+/// swap or put another file in the place of, which the system refuses
+/// for a file open without the sharing that allows it: the C runtime's
+/// `open`, through which the media helper's reader opens its file.
+/// Elsewhere a file moved on its volume, or replaced, stays open where it
+/// went.
+#[derive(Default)]
+struct TakenAway<'a> {
+    /// Taken with all below them.
+    trees: HashSet<&'a Path>,
+    /// Where another file is put (on Windows), and where it comes from: a
+    /// folder copied there takes only what it replaces below it, the files
+    /// its own tree has a counterpart of (a merge leaves the others).
+    placed: std::collections::HashMap<&'a Path, Option<&'a Path>>,
+}
+
+impl<'a> TakenAway<'a> {
+    fn of(changes: &'a [Change]) -> Self {
+        let mut taken = TakenAway::default();
+        // Which volume a folder is on, from the mount table in memory, once
+        // a folder: never asked of the disk, which may not answer.
+        #[cfg(not(windows))]
+        let mut volumes: std::collections::HashMap<&Path, Option<PathBuf>> =
+            std::collections::HashMap::new();
+        #[cfg(not(windows))]
+        let mut across = |from: &'a Path, to: &'a Path| {
+            let [here, there] = [from, to].map(|path| {
+                let folder = path.parent().unwrap_or(path);
+                volumes
+                    .entry(folder)
+                    .or_insert_with(|| crate::fs::reach::volume_of(folder))
+                    .clone()
+            });
+            here.is_some() && there.is_some() && here != there
+        };
+        for change in changes {
+            match change {
+                Change::Trash { path } | Change::Delete { path } | Change::Remove { path } => {
+                    taken.trees.insert(path);
+                }
+                #[cfg(windows)]
+                Change::Move { from, to } => {
+                    taken.trees.extend([from.as_path(), to.as_path()]);
+                }
+                // Copied, then removed where it was.
+                #[cfg(not(windows))]
+                Change::Move { from, to } if across(from, to) => {
+                    taken.trees.insert(from);
+                }
+                #[cfg(windows)]
+                Change::Rename { from, to } => {
+                    taken.trees.extend([from.as_path(), to.as_path()]);
+                }
+                #[cfg(windows)]
+                Change::Swap { a, b } => {
+                    taken.trees.extend([a.as_path(), b.as_path()]);
+                }
+                #[cfg(windows)]
+                Change::Copy { from, to } => {
+                    taken.placed.insert(to, Some(from));
+                }
+                #[cfg(windows)]
+                Change::Link { to, .. } => {
+                    taken.placed.entry(to).or_insert(None);
+                }
+                _ => {}
+            }
         }
-        #[cfg(windows)]
-        Change::Rename { from, to } | Change::Move { from, to } => vec![from.as_path(), to],
-        #[cfg(windows)]
-        Change::Swap { a, b } => vec![a.as_path(), b],
-        #[cfg(windows)]
-        Change::Copy { to, .. } | Change::Link { to, .. } => vec![to.as_path()],
-        _ => Vec::new(),
+        taken
+    }
+
+    fn is_empty(&self) -> bool {
+        self.trees.is_empty() && self.placed.is_empty()
+    }
+
+    /// Whether `kept`, a file kept open, is taken: at or below a tree
+    /// taken, or where another is put. Below a folder copied there, only
+    /// where its own has a counterpart (one look at the source, for a file
+    /// kept open there, on the plan's thread).
+    fn takes(&self, kept: &Path) -> bool {
+        kept.ancestors().any(|above| {
+            self.trees.contains(above)
+                || self.placed.get(above).is_some_and(|from| {
+                    above == kept
+                        || from.is_some_and(|from| {
+                            kept.strip_prefix(above)
+                                .is_ok_and(|below| from.join(below).symlink_metadata().is_ok())
+                        })
+                })
+        })
     }
 }
 
@@ -7149,6 +7224,59 @@ mod tests {
         let again = executor.execute_blocking(&plan, &CancelToken::new());
         assert_eq!((again.applied, again.skipped), (0, 200), "already done");
         assert_eq!(READ.load(Ordering::Relaxed) - before, 1, "one listing");
+    }
+
+    /// What a plan takes from under what is kept open: a tree removed,
+    /// all below it; a move to another volume, told by the mount table in
+    /// memory, what it moves (copied, then removed), never a move on one
+    /// volume elsewhere than on Windows. Where another file is put (on
+    /// Windows), a folder copied there takes only the files its own has a
+    /// counterpart of.
+    #[test]
+    fn what_a_plan_takes_from_under_what_is_kept_open() {
+        let p = |path: &str| PathBuf::from(path);
+        let changes = vec![
+            Change::Delete {
+                path: p("/made up/an album"),
+            },
+            Change::Move {
+                from: p("/made up/one's/song.ogg"),
+                to: p("/made up/another/song.ogg"),
+            },
+        ];
+        let taken = TakenAway::of(&changes);
+        assert!(taken.takes(Path::new("/made up/an album/it's a song.ogg")));
+        assert!(!taken.takes(Path::new("/made up/an album's/song.ogg")));
+        assert_eq!(
+            taken.takes(Path::new("/made up/one's/song.ogg")),
+            cfg!(windows),
+            "a move on one volume leaves it open where it went"
+        );
+        #[cfg(target_os = "linux")]
+        {
+            let across = vec![Change::Move {
+                from: p("/proc/made up/song.ogg"),
+                to: p("/made up/song.ogg"),
+            }];
+            assert!(TakenAway::of(&across).takes(Path::new("/proc/made up/song.ogg")));
+        }
+
+        let base = dirs::home_dir().unwrap().join(".cache/skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let tmp = tempfile::tempdir_in(base).unwrap();
+        let (from, to) = (tmp.path().join("new album"), tmp.path().join("album"));
+        std::fs::create_dir_all(from.join("disc 1")).unwrap();
+        std::fs::write(from.join("disc 1/it's a song.ogg"), b"").unwrap();
+        let mut placed = TakenAway::default();
+        placed.placed.insert(&to, Some(&from));
+        let link = to.join("a link.ogg");
+        placed.placed.insert(&link, None);
+        assert!(placed.takes(&to.join("disc 1/it's a song.ogg")), "replaced");
+        assert!(
+            !placed.takes(&to.join("disc 1/another.ogg")),
+            "left by a merge"
+        );
+        assert!(placed.takes(&link) && !placed.takes(&to.join("a link.ogg/x")));
     }
 
     /// What this process keeps open that a plan removes is let go of

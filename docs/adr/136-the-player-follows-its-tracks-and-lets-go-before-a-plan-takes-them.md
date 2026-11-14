@@ -44,8 +44,11 @@ and the other holders of a file shown let go too (8).
    (`fs::wait_let_go`), it is the process's.
 2. **A plan lets go of them before its first step**
    (`Executor::apply_plan`, `let_go_of_kept`): those at or below what
-   its steps remove (trash, delete, remove), and on Windows also what
-   they move, rename, swap or put another file in the place of. It
+   its steps remove (trash, delete, remove) or move to another volume
+   (copied, then removed: told by the mount table in memory, never a
+   stat), and on Windows also what they move, rename, swap or put
+   another file in the place of (below a folder copied there, only what
+   it replaces). It
    waits for each to be closed, two seconds at most; a holder slower
    than that is left to it, its step failing as it would. Looked at only
    while something is kept open.
