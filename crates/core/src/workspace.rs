@@ -3709,10 +3709,19 @@ impl Pane {
         self.renames.note(&renamed);
         self.leading.rekey(&renamed);
         let mut moved = false;
-        for o in &mut self.expanded {
-            if let Some((_, after)) = renamed.iter().find(|(before, _)| *before == o.at) {
-                o.at = *after;
-                moved = true;
+        if !self.expanded.is_empty() {
+            // Looked up by entry, never walked for each folder opened in
+            // place: a rename of a whole folder is ordinary. The first
+            // rename of an entry, as a walk found it.
+            let mut after: HashMap<EntryId, EntryId> = HashMap::with_capacity(renamed.len());
+            for (before, to) in &renamed {
+                after.entry(*before).or_insert(*to);
+            }
+            for o in &mut self.expanded {
+                if let Some(to) = after.get(&o.at) {
+                    o.at = *to;
+                    moved = true;
+                }
             }
         }
         if moved {
