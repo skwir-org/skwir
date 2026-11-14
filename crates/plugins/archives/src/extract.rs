@@ -238,13 +238,20 @@ impl op::Effect for Extract {
         if !ctx.exists(&target) {
             return StepStatus::Pending { reversible: true };
         }
-        // Applied already, or another file under the name: as the whole
-        // listing says, as a merge would find it.
-        if whole_listing(&src, ctx)
-            .as_deref()
-            .and_then(tree_of)
-            .is_some_and(|tree| tree.held_at(&target, ctx.cancel_token()))
-        {
+        // Applied already, or another file under the name: as the listing
+        // says, read whole only where a folder there may hold the folder
+        // it makes, as a merge would find it (`made_tree`); a file there
+        // is told by the quick listing, which says a file it makes whole.
+        let held = |listing: &archive::Listing| {
+            tree_of(listing).is_some_and(|tree| tree.held_at(&target, ctx.cancel_token()))
+        };
+        let folder_there = std::fs::symlink_metadata(&target).is_ok_and(|meta| meta.is_dir());
+        let already = if folder_there {
+            whole_listing(&src, ctx).as_deref().is_some_and(held)
+        } else {
+            listing().is_some_and(held)
+        };
+        if already {
             StepStatus::AlreadyDone
         } else if src.starts_with(&target) {
             // Never replaced: it would take the archive with it.
