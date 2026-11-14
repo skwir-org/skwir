@@ -72,6 +72,8 @@ pub fn asset(path: &str) -> Option<&'static [u8]> {
         "play",
         "pause",
         "volume",
+        "volume-low",
+        "volume-none",
         "muted",
         "fullscreen",
         "revert",
@@ -264,6 +266,11 @@ impl Button {
             stop: true,
         }
     }
+    /// Its id: one for every variant of a bar, so what wraps it can be too.
+    pub fn id(&self) -> SharedString {
+        self.id.clone()
+    }
+
     pub fn title(&self) -> SharedString {
         self.title.clone()
     }

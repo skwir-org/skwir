@@ -216,8 +216,13 @@ binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
   which leaves the popup open. A click on the speaker opens it, the
   slider given the keyboard (the `volume` place: Up and Down step it,
   `ui.volume_step`); the wheel over the speaker or the slider steps it
-  (`VOLUME_STEP`, a mouse's notch or a touchpad's 60 px, `WheelTurn`); M
-  mutes from anywhere in the player. Where the bar or the dock leaves the
+  (`VOLUME_STEP`, a mouse's notch or a touchpad's 60 px, `WheelTurn`),
+  and over a speaker whose popup is closed opens it to show the level,
+  passing: it closes once the pointer has been off the speaker and the
+  popup `VOLUME_LINGER`, unless a press in it or its keys used it
+  (`Volume::passing`). M mutes from anywhere in the player. The speaker
+  says how loud (`speaker_icon`): crossed out when muted, else no wave at
+  nothing, one below half, two from half. Where the bar or the dock leaves the
   speaker out, More's Volume row opens it, above More. More lists no
   volume steps, and says the time only where the bar left the duration
   out (`preview_bar::Item::in_more`).

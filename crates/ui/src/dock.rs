@@ -456,9 +456,13 @@ fn transport(
                     .active(open == Some(VOLUME));
             d.child(
                 div()
+                    .id("dock-volume-over")
                     .flex_none()
                     .on_scroll(cx.listener(|this, event, window, cx| {
                         this.volume_wheel(crate::media::VolumeOf::Dock, event, window, cx);
+                    }))
+                    .on_hover(cx.listener(|this, over: &bool, window, cx| {
+                        this.volume_over(false, *over, window, cx);
                     }))
                     .child(speaker.render(shell, cx)),
             )
@@ -500,7 +504,7 @@ fn step(id: &'static str, delta: i64, shell: &Shell) -> Button {
 fn mute(id: &'static str, state: &skwir_core::media::Playback) -> Button {
     crate::player::request(
         id,
-        if state.muted { "muted" } else { "volume" },
+        crate::media::speaker_icon(state),
         if state.muted { "Unmute" } else { "Mute" },
         "mute",
     )
@@ -535,6 +539,9 @@ fn menu(
         let panel = toolbar::popup_panel(popup, "ui.toolbar_menu", theme, cx)
             .w_auto()
             .items_center()
+            .on_hover(cx.listener(|this, over: &bool, window, cx| {
+                this.volume_over(true, *over, window, cx);
+            }))
             .child(crate::media::volume_control(
                 "dock-volume-slider",
                 crate::media::VolumeOf::Dock,

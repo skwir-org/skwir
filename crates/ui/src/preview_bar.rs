@@ -90,6 +90,8 @@ pub type Widget = Rc<dyn Fn(&Shell, &mut Context<Shell>) -> AnyElement>;
 
 /// What the wheel over an item does (`Item::wheel`).
 pub type Wheel = Rc<dyn Fn(&mut Shell, &gpui::ScrollEvent, &mut gpui::Window, &mut Context<Shell>)>;
+/// What the pointer onto (true) or off (false) an item does (`Item::hovered`).
+pub type Hovered = Rc<dyn Fn(&mut Shell, bool, &mut gpui::Window, &mut Context<Shell>)>;
 
 // A bar's few tools, made for one frame and drawn at once: boxing each
 // button would allocate more than the widgets' room costs.
@@ -112,6 +114,8 @@ pub struct Item {
     more: Option<Widget>,
     /// What the wheel over it does.
     wheel: Option<Wheel>,
+    /// What the pointer onto or off it does.
+    hovered: Option<Hovered>,
 }
 
 impl Item {
@@ -124,6 +128,7 @@ impl Item {
             fills: false,
             more: None,
             wheel: None,
+            hovered: None,
         }
     }
 
@@ -140,6 +145,7 @@ impl Item {
             fills: false,
             more: None,
             wheel: None,
+            hovered: None,
         }
     }
 
@@ -153,6 +159,7 @@ impl Item {
             fills: false,
             more: None,
             wheel: None,
+            hovered: None,
         }
         .never()
     }
@@ -186,6 +193,12 @@ impl Item {
     /// What the wheel over it does (the speaker's volume).
     pub fn wheel(mut self, wheel: Wheel) -> Self {
         self.wheel = Some(wheel);
+        self
+    }
+
+    /// What the pointer onto or off it does (the speaker's passing popup).
+    pub fn hovered(mut self, hovered: Hovered) -> Self {
+        self.hovered = Some(hovered);
         self
     }
 }
@@ -781,20 +794,31 @@ fn row(
             Tool::Button(button) => {
                 let here = item.opens.is_some() && item.opens == active;
                 anchored |= here;
+                let id = button.id();
                 let button = button
                     .clone()
                     .anchor_if(anchor, here)
                     .render(shell, cx)
                     .into_any_element();
-                match item.wheel.clone() {
-                    Some(wheel) => div()
+                if item.wheel.is_none() && item.hovered.is_none() {
+                    button
+                } else {
+                    let (wheel, hovered) = (item.wheel.clone(), item.hovered.clone());
+                    div()
+                        .id(gpui::SharedString::from(format!("{id}-over")))
                         .flex_none()
-                        .on_scroll(cx.listener(move |this, event, window, cx| {
-                            wheel(this, event, window, cx);
-                        }))
+                        .when_some(wheel, |d, wheel| {
+                            d.on_scroll(cx.listener(move |this, event, window, cx| {
+                                wheel(this, event, window, cx);
+                            }))
+                        })
+                        .when_some(hovered, |d, hovered| {
+                            d.on_hover(cx.listener(move |this, over: &bool, window, cx| {
+                                hovered(this, *over, window, cx);
+                            }))
+                        })
                         .child(button)
-                        .into_any_element(),
-                    None => button,
+                        .into_any_element()
                 }
             }
             Tool::Widget(widget) => widget(shell, cx),
