@@ -1176,6 +1176,19 @@ struct Renames {
     followed: u64,
 }
 
+impl Renames {
+    /// `renamed` followed: counted, and only the latest kept, so a rename
+    /// of a whole folder leaves no room for all of it held for the pane's
+    /// life.
+    fn note(&mut self, renamed: &[(EntryId, EntryId)]) {
+        self.followed += renamed.len() as u64;
+        let newest = &renamed[renamed.len().saturating_sub(RENAMES_KEPT)..];
+        let over = (self.kept.len() + newest.len()).saturating_sub(RENAMES_KEPT);
+        self.kept.drain(..over);
+        self.kept.extend(newest.iter().copied());
+    }
+}
+
 /// The renames a pane keeps for what follows them from beside it: one
 /// reader that looks less often than a folder renames this many loses the
 /// oldest.
@@ -3693,10 +3706,7 @@ impl Pane {
         if let Some(restore) = &mut self.restore {
             restore.rekey(&renamed);
         }
-        self.renames.followed += renamed.len() as u64;
-        self.renames.kept.extend(renamed.iter().copied());
-        let over = self.renames.kept.len().saturating_sub(RENAMES_KEPT);
-        self.renames.kept.drain(..over);
+        self.renames.note(&renamed);
         self.leading.rekey(&renamed);
         let mut moved = false;
         for o in &mut self.expanded {
@@ -6225,6 +6235,30 @@ pub struct Redirect {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A rename of a whole folder is counted, and only the latest
+    /// `RENAMES_KEPT` kept, without room for all of it held after.
+    #[test]
+    fn a_pane_keeps_the_latest_renames_and_no_room_for_more() {
+        let entry =
+            |n: u64| EntryId::at_path(crate::FileId { dev: 1, ino: n }, Path::new("/made up"));
+        let renamed: Vec<(EntryId, EntryId)> =
+            (0..100_000).map(|n| (entry(n), entry(n + 1))).collect();
+        let mut pane = Renames::default();
+        pane.note(&renamed[..10]);
+        pane.note(&renamed[10..]);
+        assert_eq!(pane.followed, 100_000);
+        assert_eq!(pane.kept.len(), RENAMES_KEPT);
+        assert!(
+            pane.kept.capacity() < 4 * RENAMES_KEPT,
+            "no room kept for all"
+        );
+        assert_eq!(pane.kept.front(), renamed.get(100_000 - RENAMES_KEPT));
+        assert_eq!(pane.kept.back(), renamed.last());
+        pane.note(&renamed[..1]);
+        assert_eq!(pane.kept.len(), RENAMES_KEPT);
+        assert_eq!(pane.kept.back(), renamed.first());
+    }
 
     #[test]
     fn closing_a_pane_before_the_active_one_keeps_it_active() {
