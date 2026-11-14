@@ -147,9 +147,11 @@ impl Player {
         // loop left for it.
         let next: Arc<Mutex<Option<std::path::PathBuf>>> = Arc::default();
         let handed: Arc<Mutex<Option<std::path::PathBuf>>> = Arc::default();
+        let wanted = Arc::new(Mutex::new(Wanted::opened()));
         {
             let (next, handed) = (next.clone(), handed.clone());
             let told = Arc::clone(events);
+            let wanted = Arc::clone(&wanted);
             pipeline.connect("about-to-finish", false, move |values| {
                 let path = next.lock().unwrap_or_else(PoisonError::into_inner).take()?;
                 // A file gone since it was queued (another program removed
@@ -163,6 +165,8 @@ impl Player {
                     values[0].get::<gst::Element>(),
                     gst::glib::filename_to_uri(&path, None),
                 ) {
+                    // Before its collection can be posted (`hand_over`).
+                    hand_over(&wanted);
                     pipeline.set_property("uri", uri.as_str());
                     *handed.lock().unwrap_or_else(PoisonError::into_inner) = Some(path.clone());
                     // Open from now on: the manager keeps it so, for a plan
@@ -179,11 +183,6 @@ impl Player {
         // message is let go (`Wanted`).
         let bus = pipeline.bus().context("pipeline bus")?;
         let bus_events = events.clone();
-        let wanted = Arc::new(Mutex::new(Wanted {
-            audio: -1,
-            subtitle: -1,
-            answered: false,
-        }));
         let bus_wanted = Arc::clone(&wanted);
         // Weak: the pipeline holds its bus, which holds this handler.
         let bus_pipeline = pipeline.downgrade();
@@ -419,6 +418,7 @@ impl Player {
             audio,
             subtitle,
             answered: false,
+            handed: false,
         };
         drop(wanted);
         self.selection = None;
@@ -460,14 +460,70 @@ impl Player {
 /// row while playing did this), so it is left unanswered, and fenced off
 /// (`Player::fence`). An answer under way holds it until it is sent, and
 /// the change waits for it.
+///
+/// Each input's first collection is answered: the file opened, a track
+/// change's preroll, and a next file playbin goes on with (`hand_over`):
+/// its first audio track, and its first subtitle where the file before
+/// showed one, as the state says once it starts (`StreamStart`). Left to
+/// decodebin3, it took the next file's subtitles while the state said
+/// none. Answered with none while the file before showed one, the switch
+/// stopped for good (`GStreamer` 1.28.7), as a film gone on with while
+/// subtitles are off does, answered or not (docs/invariants/media.md).
 struct Wanted {
     /// The audio track, -1 for the first.
     audio: i32,
     /// The subtitle track, -1 for none.
     subtitle: i32,
-    /// Whether this preroll's collection was answered: only its first is,
-    /// as the loop chose before (a gapless next file's is decodebin3's).
+    /// Whether the input's collection was answered: only its first is.
     answered: bool,
+    /// Whether the input is the next file handed to playbin: its answer
+    /// holds back no frame, as the file playing goes on to its end, and
+    /// tells the loop nothing.
+    handed: bool,
+}
+
+impl Wanted {
+    /// What a file opened is answered with: its first audio track and no
+    /// subtitle.
+    fn opened() -> Self {
+        Self {
+            audio: -1,
+            subtitle: -1,
+            answered: false,
+            handed: false,
+        }
+    }
+
+    /// What the next file handed to playbin is answered with: its first
+    /// audio track, and its first subtitle if this one's are shown.
+    fn next(&self) -> Self {
+        Self {
+            audio: -1,
+            subtitle: next_subtitle(self.subtitle >= 0),
+            answered: false,
+            handed: true,
+        }
+    }
+}
+
+/// The subtitle a next file plays, counted among its own: its first where
+/// the file before showed one (`Wanted`), else none.
+fn next_subtitle(shown: bool) -> i32 {
+    if shown { 0 } else { -1 }
+}
+
+/// The next file handed to playbin (`about-to-finish`, on a streaming
+/// thread) is a new input: its first collection is answered
+/// (`Wanted::next`). Only tried, as `answer` does: a track change holding
+/// it returns the pipeline to READY, which waits for this thread, and its
+/// new preroll is answered for the tracks it asked.
+fn hand_over(wanted: &Mutex<Wanted>) {
+    let mut wanted = match wanted.try_lock() {
+        Ok(wanted) => wanted,
+        Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+        Err(TryLockError::WouldBlock) => return,
+    };
+    *wanted = wanted.next();
 }
 
 /// Answers a preroll's first stream collection on the thread posting it
@@ -492,14 +548,31 @@ fn answer(
     wanted.answered = true;
     let streams: Vec<gst::Stream> = collection.iter().take(128).collect();
     let ids = chosen(&streams, video, wanted.audio.max(0), wanted.subtitle);
-    let _ = events.tx.send(Event::Selecting(Some(ids.clone())));
+    // A next file's: the file playing goes on drawing its frames, and one
+    // refused is left to decodebin3, which plays it still.
+    let told = !wanted.handed;
+    if told {
+        let _ = events.tx.send(Event::Selecting(Some(ids.clone())));
+    }
     // Keep playbin's audio/video/text flags intact; selection chooses streams.
     let asked: Vec<_> = ids.iter().map(gst::glib::GString::as_str).collect();
-    if !pipeline.send_event(gst::event::SelectStreams::new(asked)) {
+    if !pipeline.send_event(gst::event::SelectStreams::new(asked)) && told {
         let _ = events.tx.send(Event::Selecting(None));
     }
     // Held until sent: a track change waits for it.
     drop(wanted);
+}
+
+/// The tracks a next file plays, said in its state (`Wanted::next`): its
+/// first audio track, if it has one, and its first subtitle, if it has
+/// one, where the file before showed one.
+fn next_tracks(state: &mut Playback) {
+    state.audio = if state.audio_tracks.is_empty() { -1 } else { 0 };
+    state.subtitle = if state.subtitle_tracks.is_empty() {
+        -1
+    } else {
+        next_subtitle(state.subtitle >= 0)
+    };
 }
 
 /// The streams of `streams` a selection names: the video (none for audio
@@ -846,6 +919,8 @@ fn handle_message(
                 player.state.artist.clear();
                 player.state.album.clear();
                 player.state.details.clear();
+                // Its tracks, as they were asked of it (`hand_over`).
+                next_tracks(&mut player.state);
                 reply(&Reply::Advanced { path })?;
                 *dirty = true;
             }
@@ -994,7 +1069,18 @@ fn handle_message(
             }
             player.state.audio_tracks = player.tracks(gst::StreamType::AUDIO);
             player.state.subtitle_tracks = player.tracks(gst::StreamType::TEXT);
-            // The first, as the bus's sync handler asked (`Wanted`).
+            // The first, as the bus's sync handler asked (`Wanted`); none
+            // past the last (a next file's tracks told after it started).
+            if usize::try_from(player.state.audio)
+                .is_ok_and(|audio| audio >= player.state.audio_tracks.len())
+            {
+                player.state.audio = -1;
+            }
+            if usize::try_from(player.state.subtitle)
+                .is_ok_and(|subtitle| subtitle >= player.state.subtitle_tracks.len())
+            {
+                player.state.subtitle = -1;
+            }
             if player.state.audio == -1 && !player.state.audio_tracks.is_empty() {
                 player.state.audio = 0;
             }
@@ -1149,7 +1235,93 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{chosen, gst, sends_frame};
+    use super::{
+        Event, Events, Playback, Wanted, answer, chosen, gst, hand_over, next_tracks, sends_frame,
+    };
+    use std::sync::{Mutex, mpsc};
+
+    /// A next file handed to playbin is answered again: its first audio
+    /// track, not the one chosen for the file before, and its first
+    /// subtitle where the file before showed one, none where it showed
+    /// none. Only tried: held by a track change, it is left as that change
+    /// set it.
+    #[test]
+    fn a_next_file_is_answered_with_its_first_tracks_subtitles_kept_shown_or_not() {
+        for (shown, subtitle) in [(0, 0), (1, 0), (-1, -1)] {
+            let wanted = Mutex::new(Wanted {
+                audio: 1,
+                subtitle: shown,
+                answered: true,
+                handed: false,
+            });
+            hand_over(&wanted);
+            let handed = wanted.lock().unwrap();
+            assert!(!handed.answered && handed.handed);
+            assert_eq!((handed.audio, handed.subtitle), (-1, subtitle));
+        }
+        let changing = Mutex::new(Wanted::opened());
+        let held = changing.lock().unwrap();
+        hand_over(&changing);
+        assert!(!held.handed, "held by a track change, left as it set it");
+    }
+
+    /// The next file's answer tells the loop nothing, so the file playing
+    /// goes on showing its frames to its end; a file opened's or a track
+    /// change's is told, frames held until its streams are selected.
+    #[test]
+    fn a_next_files_answer_holds_back_no_frame() {
+        gst::init().unwrap();
+        let pipeline: gst::Element = gst::prelude::Cast::upcast(gst::Pipeline::new());
+        let stream =
+            |id: &str, kind| gst::Stream::new(Some(id), None, kind, gst::StreamFlags::empty());
+        let collection = gst::StreamCollection::builder(None)
+            .stream(stream("video", gst::StreamType::VIDEO))
+            .stream(stream("english", gst::StreamType::AUDIO))
+            .stream(stream("words", gst::StreamType::TEXT))
+            .build();
+        let (tx, rx) = mpsc::channel();
+        let events = Events {
+            tx,
+            wake_pending: false.into(),
+        };
+        let next = Mutex::new(Wanted::opened().next());
+        answer(&pipeline, &collection, &next, &events, true);
+        assert!(next.lock().unwrap().answered);
+        assert!(
+            rx.try_recv().is_err(),
+            "a next file's answer is told nothing"
+        );
+        let opened = Mutex::new(Wanted::opened());
+        answer(&pipeline, &collection, &opened, &events, true);
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(Event::Selecting(Some(ids))) if ids == ["video", "english"]
+        ));
+    }
+
+    /// A next file's state says the tracks asked of it: its first audio
+    /// track, none where it has none, and its first subtitle where the one
+    /// before showed one and it has one.
+    #[test]
+    fn a_next_file_says_the_tracks_asked_of_it() {
+        let mut state = Playback {
+            audio: 1,
+            subtitle: 0,
+            audio_tracks: vec!["1: eng".into(), "2: fra".into()],
+            subtitle_tracks: vec!["1: eng".into()],
+            ..Playback::default()
+        };
+        next_tracks(&mut state);
+        assert_eq!((state.audio, state.subtitle), (0, 0));
+        state.subtitle = -1;
+        next_tracks(&mut state);
+        assert_eq!(state.subtitle, -1, "none shown before, none now");
+        state.subtitle = 0;
+        state.subtitle_tracks.clear();
+        state.audio_tracks.clear();
+        next_tracks(&mut state);
+        assert_eq!((state.audio, state.subtitle), (-1, -1));
+    }
 
     /// The `AppImage`'s and the tarball's helper finds the plugins and the
     /// scanner beside it; a helper with none beside it (a distribution's

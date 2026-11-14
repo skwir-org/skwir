@@ -171,7 +171,12 @@ binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
   takes a stream away from a paused pipeline: the preroll waits for good.
   A track change holds `Wanted` while it returns to READY, and the handler
   only tries it: answering the abandoned preroll would wait on that change,
-  which waits for the posting thread.
+  which waits for the posting thread. Each input's first collection is
+  answered, a next file's too (`hand_over`, in `about-to-finish`, only
+  tried): its first audio track, and its first subtitle where the file
+  before showed one, as its state then says; its answer holds back no
+  frame of the file still playing. Left to decodebin3, the next file's
+  subtitles were taken while the state said none.
 - Do not race dynamic subtitle output replacement with paused flushing
   seeks. Keep playbin flags intact; test subtitle pixels, not metadata only.
 - The manager bounds glibc arenas in the child to limit frame-buffer
@@ -409,7 +414,11 @@ binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
   position and tags). The pin queues the next track as soon as one starts
   and only follows the switch (`Pinned::advance`). A session that cannot
   refuses `play_next`, and the pin opens the next track at the end, with a
-  gap. Verified: one worker carried three tracks.
+  gap. Verified: one worker carried three tracks. A film gone on with
+  gaplessly, one with a subtitle track, stops for good once it starts
+  while subtitles are off, and now and then while they are on (GStreamer
+  1.28.7, the next file answered or left to decodebin3 alike; not yet
+  understood); music goes on.
 
 ## The dock
 
