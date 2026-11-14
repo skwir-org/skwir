@@ -1024,6 +1024,22 @@ follow-ups the fixing found (GV-13, GV-14, GT-15..18, AR-16 and the notes
 beside the findings); TL-9 is no bug. Checks in `docs/STATUS-LOG.md`
 (2026-11-13).
 
+## Review fixes (2026-11-14)
+
+A review of what came after the last one (bf9f7943..320b43df, 25 commits:
+the player following its tracks and every holder letting go before a plan
+(ADR-136), the volume popup and the wheel over the speaker, the menus'
+parts, an extraction merged into its folder, the questions' pictures, the
+AppImage's PulseAudio, libva and GStreamer, the release's fixes) made 42
+findings, none high: KO 12, VO 10, EX 11, MI 8 and RC, the port Windows'
+rclone remote control was given, chosen before rclone started. The user
+asked for them fixed: the four reviewers fixed their own, at once in one
+tree, 34 commits (2482d57a..1bfaa732, not pushed), with five follow-ups
+the fixing found (the folders opened in place rekeyed by a map, a map's
+tiles asked again after a plan, the speaker's tooltip, rclone's port read
+from its own line alone, a film after a film standing still for good).
+Checks in `docs/STATUS-LOG.md` (2026-11-14).
+
 ## What is left
 
 Gathered on 2026-10-20 from the notes of this plan and of
@@ -1240,6 +1256,39 @@ by the user's choice: AV1 in software is aom's, slower than dav1d (bad's
 dav1d is gst-plugins-rs's now: a Rust plugin, cargo-c and a newer dav1d
 than Jammy's); base keeps Ubuntu's features beside ADR-076's set (CD
 audio, visualizations, Xv, which the player does not use).
+
+**From the review since 0.5.0** (2026-11-14):
+- Not seen in a window: the pin's two words told in either order, another
+  program's rename of a hard link beside the pin, a volume dragged over a
+  film playing, the panel's player taken up again after a plan, a map's
+  tile asked again once a plan ended (which counts on a frame drawn after
+  it), the dock's volume popup; a picture shown alone with a screen
+  reader. Seen on Xvfb: the wheel's popup and More, typing through a
+  wheel turn, Home, End and Tab in the slider, unmuting by a step, the
+  speaker's tooltip.
+- A film is never gone on with gaplessly (GStreamer 1.28.7's uridecodebin3
+  deadlocks freeing the old source going from a film with subtitles into
+  one without; `docs/invariants/media.md`): to be tried again on a later
+  GStreamer, and perhaps reported upstream. A film's end opening the next
+  was run through the helper alone, not in a window.
+- The media helper's `Reply::Handing` (a gapless next file) is untried at
+  a real track's end in a window; the Windows parts of ADR-136 (a rename, a copy's
+  counterparts) and the WinFsp mount's port are compiled only.
+- A step is described twice per plan while something is kept open
+  (linear). Tooltips other than a toolbar button's keep the words they
+  were built with.
+- A merged extraction places its items by path: placing them through the
+  folder held open (no-follow) would close the gap between the check of
+  the way and the rename. No test drives an archive's undo cut short on a
+  volume that keeps no trash.
+- A one-line field still shapes its whole line at each key, up to 32,767
+  characters: shaping only the run around the caret and the scroll would
+  make a long line cost nothing.
+- The AppImage was not built with the round's changes (its libraries'
+  `/etc` and `/var`, the prefix check, base without network sources, the
+  helper finding its GStreamer itself): the next build rebuilds its
+  GStreamer and runs the check. It mounts at a new path each run, so its
+  first film a run still scans the plugins once.
 
 **From the review since 0.4.0** (2026-11-13):
 - Not seen in a window: the atlas giving back a page's formulas (MT-4); a

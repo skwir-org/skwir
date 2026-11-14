@@ -17344,3 +17344,118 @@ of a file shown.
   log. The holders' letting go was not tried in a window: on Linux a
   removal never waited for them; Windows, where it did, is compiled
   only.
+
+## 2026-11-14: Review fixes since 0.5.0
+
+The user asked for a review of what came after the last one
+(bf9f7943..320b43df, 25 commits), and for what it found fixed. Four
+reviewers, one area each, read the code (no builds) and made 42 findings,
+none high: the player following its tracks and the holders letting go
+(KO, 12), the volume popup, the wheel and the menus' parts (VO, 10), an
+extraction merged into its folder and the questions' pictures (EX, 11),
+the media helper's preroll, the ranged resume, the test ports, a field's
+bound and the AppImage (MI, 8), and one the MI reviewer met outside its
+area (RC). `just prune` gave only 16 → 18.5 GB; with the user's leave
+`target/debug/incremental` and `target/cross` were deleted (62 GB free).
+Each reviewer then fixed its own, four at once in one tree, each owning
+its files, builds one at a time in capped scopes; each step handed over as
+a patch of its own hunks and committed as it came (2482d57a..1bfaa732, 34
+commits; a7bc687a among them is another session's). The commits between
+were not built one by one. Fixing found five more, fixed: the folders
+opened in place rekeyed by a scan of the renames, a map's tile failed
+during a plan kept as failed for 30 s, the speaker's tooltip keeping the
+level it was built with, rclone's port read from any line naming it, a
+film after a film standing still for good.
+
+- **The player and the holders** (KO, `8f1dd3ca`, `ee0d20e0`, `b9fccfaf`,
+  `456572a6`, `66d2670d`, `156b929c`, `1a377ec7`, `c6a88399`, `96740aa4`,
+  `77a4d9b8`): a plan's end and the session's word that it took the track
+  are followed in either order (`after_taken`), so a deleted track is gone
+  on past once; each window follows the plans' ends from its making. The
+  file queued is kept open only once the helper hands it over
+  (`Reply::Handing`): before, a plan taking it un-queues it and the track
+  plays on. A control makes stale only what it changes of what the helper
+  reports (a volume dragged keeps the frames and the time). What a plan
+  takes from under what is kept open is one rule (`TakenAway`): a move to
+  another volume, told by the mount table in memory, takes its source; on
+  Windows a folder copied there only the files it replaces. A held reader
+  fails at once while a plan has its file (`kept_open::Taken`), and a
+  map's tile so failed is asked again once a plan has ended, never said a
+  failure. Another program's renames are matched by the entry the pin's
+  name was listed as; plans under way asked once, then as one starts or
+  ends; the shuffle's walk finds its place once. A pane keeps room for the
+  latest 1,024 renames only, and rekeys its folders opened in place by a
+  map of them. The panel's own player is taken up again after a plan, as
+  the pin is.
+- **The volume and the wheel** (VO, `1762ee12`, `ec64fb4d`, `2bbafbe2`,
+  `1ff3795d`, `88760a42`, `72d2e40c`, `9cde7c36`): every wheel that counts
+  steps reads its event through `reader_scroll::Wheeled`: a notch a step,
+  lines in parts a step once they make a notch's three, a touchpad's
+  pixels one at 60 (the volume, the tab strip, Ctrl's zoom, the sections'
+  and pages' turns). A popup the wheel opened is its own (`toolbar::Passing`:
+  its close on its way closes it alone) and takes the keyboard only once
+  used; a press its slider saw before is forgotten as a popup opens. A
+  picture shown alone in the panel is held as a picture file is (its role,
+  name, focus and keys: `preview::shown_picture`). The dock's volume closes
+  with the dock (`dock::owns`). The slider takes Left, Right, Home and End
+  and is a tab stop. Every move of a volume goes through `set_volume`, from
+  the level shown, and unmutes. A toolbar button's tooltip says what the
+  button says now (`toolbar::ShownTip`).
+- **Extractions merged** (EX, `2482d57a`, `5770491f`, `c1c038a2`,
+  `1192bbf5`, `c0f0860e`, `758920a7`, `c2e48cb1`): a name kept beside avoids
+  every name the archive brings into its folder, two items under one name
+  are refused, and a name found taken as it places fails the step and takes
+  back what it placed. A plan read from data that names `steps` is refused
+  (`Plan::to_data` writes each); no command returned one. The check refuses
+  a folder an item goes in that is a link or cannot be written
+  (`StepContext::may_write_in`), and what was placed is taken back opened
+  as it was placed. A step that fails partway gives the undo of what it did
+  (`op::Partly`), journaled as an applied step's. The archive is listed
+  whole only where a folder there may be merged into; another name of a
+  file is found the same where its folder was placed apart; links compared
+  as bytes; what an archive holds read in linear time. The names-taken
+  question says its rows for all once; a deletion's row is stat-ed once.
+- **The rest** (MI, `a0392993`, `57f7bf2a`, `ad93dd11`, `ac87cbf6`,
+  `c0b5ff72`, `3960ccab`, `15b8949b`, `64c1a1ca`, `1bfaa732`; `92a58b34`): the AppImage's PulseAudio and libva
+  read the host's `/etc` and `/var`, its check refusing a path of the
+  build's prefix in a staged library; base built without network sources;
+  Gentoo's VA folder. The media helper finds a GStreamer beside it in every
+  package and keeps its registry in skwir's cache (the AppImage's wrapper
+  removed). A next file handed over gaplessly is asked its first audio
+  track, a subtitle only where one was shown, and its state says them. A
+  field at its bound changes nothing for an edit that takes nothing, and a
+  completion or a command's text is held to it. On Windows rclone chooses
+  its remote control's port and Skwir asks only where rclone's own NOTICE
+  line says it serves. `testing::free_port` stops where a port's file
+  cannot be locked, and removes the files no test holds (its helpers
+  imported only where their Unix test runs, which the Windows check
+  refused).
+- **A film after a film** (found proving the next file's tracks, sampled
+  with gdb, the helper's loop never blocked): gone on with gaplessly into
+  a film with a subtitle stream while subtitles were off, playbin3 had
+  asked playsink for a subtitle output before the helper's choice, and the
+  stream synchronizer held the picture and the sound for a subtitle that
+  never started; the next file is now asked its first subtitle and has it
+  taken away by a track change once started. From a film with subtitles
+  into one without, uridecodebin3 (1.28.7) deadlocks freeing the old
+  source (one streaming thread holding its play items' lock waits for a
+  pad's stream lock, that pad's thread waits for the first lock; no
+  Skwir frame on either). By the integrator's call the helper hands
+  nothing over while a film plays: it ends, and the next opens then with
+  a short gap; music goes on gaplessly. Runs through the helper (12 s
+  clips, a seek to a second before the end): every film pairing 3/3
+  ended and nothing was handed over; two `.ogg` 3/3 gapless.
+- **Checked**: each step by its fixer (rustfmt, clippy of the crates it
+  changed, their tests; Windows clippy where it touched Windows code; the
+  remote plugin's rc tests under Wine with rclone's Windows release, 15
+  passed); window checks on Xvfb of the wheel's popup, typing through a
+  wheel turn, the slider's keys and Tab, unmuting, the tooltip. After
+  the last but the films' two steps: `just lint` green, `just test`
+  3,588 passed (32 skipped), `just check-windows` green (after
+  `92a58b34`), `just check-macos` green but the media helper's part,
+  which failed on the films' step in progress and passed on the final
+  tree (`tools/cross/clippy-media.sh`, macOS and Windows),
+  `just a11y-check` passed (79 checks; none reads a picture shown alone).
+  The media helper on the final tree: clippy (Linux, Windows, macOS),
+  its 9 tests; `tools/media/check.py` h264-aac by its fixer. Not run: `just
+  release-check`, `bench-check`, an AppImage build.

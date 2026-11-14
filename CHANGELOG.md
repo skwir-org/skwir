@@ -57,6 +57,33 @@
   each item's icon**, as the views do: its type's from the icon theme, a
   link marked as one (in red where it leads nowhere). They showed a grey
   folder or link glyph, and nothing for a file.
+- **The wheel takes a step a notch**, on a touchpad under X11, through
+  Windows' wheel messages and with a high-resolution wheel: the tab strip,
+  Ctrl+wheel's zoom and the structured previews' section and page turns
+  took a step for every part of a notch, a short slide going to the end.
+- **The player's volume keys and the desktop's media controls lose no step**
+  pressed quickly, and a volume moved unmutes the player, as the desktops'
+  own volume controls do.
+- **A film played after another starts**: the player stood for good at the
+  end of the first when the next had subtitles and they were off, or when
+  the first had subtitles and the next none (GStreamer 1.28 waiting on
+  itself). A film now plays to its end and the next opens then, with a
+  short gap; music still goes on without one. A file gone on with
+  gaplessly plays its first audio track, and subtitles only where they
+  were shown; it kept the tracks of the file before.
+- **Films start at once in the AppImage and the tarball after another
+  GStreamer program ran**: their player shared that program's plugin
+  registry, and each scanned its plugins again after the other.
+- **A field full to its 32,767 characters** no longer fills Undo with keys
+  that changed nothing; a completion, or the text an agent or a script
+  gives the address or a search, is held to that bound as a paste is.
+- **On Windows, Skwir asks rclone's remote control only where rclone says
+  it serves**: the port was chosen before rclone started, and a program
+  taking it meanwhile would have been given the configuration's passwords.
+- **The question about names taken stays quick with thousands of them**: it
+  read every name taken again for each row it drew.
+- **A large folder renamed beside folders opened in place** no longer costs
+  their count times its size on the window's thread.
 
 ## 0.5.0 (2026-11-14)
 
