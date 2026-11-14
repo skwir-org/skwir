@@ -142,10 +142,8 @@ def main():
             continue
         relative = os.path.relpath(lib, path.parent)
         subprocess.run(["patchelf", "--set-rpath", f"$ORIGIN:$ORIGIN/{relative}", str(path)], check=True)
-    # The wrapper configures GStreamer for this child alone. Both the
-    # real binary and the plugins stay under the helper's runtime prefix.
-    (helpers / "skwir-media-worker").rename(helpers / "skwir-media-worker.bin")
-    copy(TOOLS / "appimage/media-worker", helpers / "skwir-media-worker")
+    # The media helper finds the plugins and the scanner beside it, and
+    # configures GStreamer for itself alone (its `carried_gstreamer`).
 
 
 if __name__ == "__main__":

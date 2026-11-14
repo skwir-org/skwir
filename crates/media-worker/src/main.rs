@@ -1034,21 +1034,24 @@ fn handle_message(
     }
     Ok(())
 }
-/// The `GStreamer` carried beside this helper, where Windows' and macOS's
-/// packages put it (ADR-076), is the one it plays with, apart from any the
-/// user installed: its plugins alone (none from `GST_PLUGIN_PATH`), its
-/// own plugin scanner, and its registry in skwir's cache rather than the
-/// one an installed `GStreamer` keeps. On Windows the helper sits among
-/// its libraries (`gstreamer\bin`), which its scanner, a program of its
-/// own, finds on `PATH`; on macOS it is in the bundle's `MacOS`,
-/// `GStreamer` a framework in its `Frameworks`. Linux's packages use the
-/// system's, and the `AppImage`'s wrapper names its own
-/// (tools/package/appimage/media-worker).
+/// The `GStreamer` carried beside this helper, where every package that
+/// carries one puts it, is the one it plays with, apart from any the user
+/// installed: its plugins alone (none from `GST_PLUGIN_PATH`), its own
+/// plugin scanner, and its registry in skwir's cache rather than the one an
+/// installed `GStreamer` keeps, which each would write again for its own
+/// plugins at every turn. On Windows (ADR-076) the helper sits among its
+/// libraries (`gstreamer\bin`), which its scanner, a program of its own,
+/// finds on `PATH`; on macOS it is in the bundle's `MacOS`, `GStreamer` a
+/// framework in its `Frameworks`; in the `AppImage` and the Linux tarball
+/// (ADR-052) the plugins and the scanner are beside it. Linux's other
+/// packages use the system's, and find none beside it.
+///
+/// Set here, for this helper and the scanner it starts alone: what skwir
+/// starts (a converter, the terminal) never sees the carried plugins.
 ///
 /// Setting an environment variable is unsafe in edition 2024 because other
 /// threads may be reading the environment; this runs first thing in `main`,
 /// before any thread exists, which is the one situation where it is sound.
-#[cfg(any(windows, target_os = "macos"))]
 #[allow(unsafe_code)]
 fn carried_gstreamer() {
     let Some(here) = std::env::current_exe()
@@ -1057,30 +1060,13 @@ fn carried_gstreamer() {
     else {
         return;
     };
-    #[cfg(windows)]
-    let (root, scanner) = (
-        here.parent().map(std::path::Path::to_owned),
-        "gst-plugin-scanner.exe",
-    );
-    #[cfg(target_os = "macos")]
-    let (root, scanner) = (
-        here.parent()
-            .map(|contents| contents.join("Frameworks/GStreamer.framework/Versions/1.0")),
-        "gst-plugin-scanner",
-    );
-    let Some(root) = root.filter(|root| root.join("lib/gstreamer-1.0").is_dir()) else {
+    let Some((plugins, scanner)) = carried_beside(&here) else {
         return;
     };
     let mut vars: Vec<(&str, std::ffi::OsString)> = vec![
-        (
-            "GST_PLUGIN_SYSTEM_PATH_1_0",
-            root.join("lib/gstreamer-1.0").into(),
-        ),
+        ("GST_PLUGIN_SYSTEM_PATH_1_0", plugins.into()),
         ("GST_PLUGIN_PATH_1_0", std::ffi::OsString::new()),
-        (
-            "GST_PLUGIN_SCANNER_1_0",
-            root.join("libexec/gstreamer-1.0").join(scanner).into(),
-        ),
+        ("GST_PLUGIN_SCANNER_1_0", scanner.into()),
     ];
     if let Some(cache) = skwir_core::folders::cache().map(|cache| cache.join("gstreamer")) {
         let _ = std::fs::create_dir_all(&cache);
@@ -1105,6 +1091,34 @@ fn carried_gstreamer() {
     }
 }
 
+/// The plugin folder and the scanner of the `GStreamer` a package carries
+/// beside the helper in `here`, where it has one.
+fn carried_beside(here: &std::path::Path) -> Option<(std::path::PathBuf, std::path::PathBuf)> {
+    #[cfg(windows)]
+    let (plugins, scanner) = {
+        let root = here.parent()?;
+        (
+            root.join("lib/gstreamer-1.0"),
+            root.join("libexec/gstreamer-1.0/gst-plugin-scanner.exe"),
+        )
+    };
+    #[cfg(target_os = "macos")]
+    let (plugins, scanner) = {
+        let root = here
+            .parent()?
+            .join("Frameworks/GStreamer.framework/Versions/1.0");
+        (
+            root.join("lib/gstreamer-1.0"),
+            root.join("libexec/gstreamer-1.0/gst-plugin-scanner"),
+        )
+    };
+    // The AppImage's and the tarball's `usr/lib/skwir`
+    // (tools/package/appimage/stage.py).
+    #[cfg(not(any(windows, target_os = "macos")))]
+    let (plugins, scanner) = (here.join("gstreamer-1.0"), here.join("gst-plugin-scanner"));
+    plugins.is_dir().then_some((plugins, scanner))
+}
+
 fn main() {
     // `--build`, skwir asking which build of it this helper is, when a
     // call of it failed (`platform::process::explain`).
@@ -1115,7 +1129,6 @@ fn main() {
         println!("{}", env!("SKWIR_BUILD"));
         return;
     }
-    #[cfg(any(windows, target_os = "macos"))]
     carried_gstreamer();
     // `--probe`, skwir's settings asking whether this helper works here
     // (`platform::process::probe`): GStreamer and its playback plugins.
@@ -1137,6 +1150,24 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{chosen, gst, sends_frame};
+
+    /// The `AppImage`'s and the tarball's helper finds the plugins and the
+    /// scanner beside it; a helper with none beside it (a distribution's
+    /// package, a build here) is left the system's.
+    #[cfg(not(any(windows, target_os = "macos")))]
+    #[test]
+    fn a_gstreamer_beside_the_helper_is_the_one_it_plays_with() {
+        let here = tempfile::tempdir().unwrap();
+        assert_eq!(super::carried_beside(here.path()), None);
+        std::fs::create_dir(here.path().join("gstreamer-1.0")).unwrap();
+        assert_eq!(
+            super::carried_beside(here.path()),
+            Some((
+                here.path().join("gstreamer-1.0"),
+                here.path().join("gst-plugin-scanner")
+            ))
+        );
+    }
 
     /// A selection names the video, the audio track and the subtitle
     /// asked, each counted among its kind; none of a kind for -1 or an

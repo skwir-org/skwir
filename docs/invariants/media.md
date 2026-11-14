@@ -9,9 +9,11 @@ binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
 
 - GStreamer loads only in `skwir-media-worker`. The media provider owns the
   runtime setting; the session interface stays independent of GPUI.
-- Linux's packages use the system's GStreamer. Windows' and macOS's carry
-  GStreamer's own build, cut down (ADR-076, `tools/package/gstreamer.py`),
-  and the worker, finding it beside itself, plays with it alone
+- Linux's packages use the system's GStreamer, all but the AppImage and
+  the tarball, which carry one built for them (ADR-052). Windows' and macOS's
+  carry GStreamer's own build, cut down (ADR-076,
+  `tools/package/gstreamer.py`). The worker, finding one beside itself,
+  plays with it alone
   (`carried_gstreamer`): its plugins, its scanner, its registry in
   skwir's cache, never the plugins or registry of a GStreamer the user
   installed. A plugin the worker needs is added to the recipe's set,

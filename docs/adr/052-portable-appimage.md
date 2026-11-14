@@ -75,9 +75,14 @@ filesystem, as `tools/package/try.sh` already does.
 3. **Library paths stay inside the package.** Each ELF's RUNPATH is relative
    to its executable or library; it does not impose an inherited RPATH on
    host graphics drivers. AppRun exports no loader or search paths
-   to the editor, terminal or converters. Only the media worker's wrapper
-   selects the bundled GStreamer plugins and scanner. No decoder tuning
-   or hardware selection is added.
+   to the editor, terminal or converters. Only the media helper selects
+   the bundled GStreamer plugins and scanner, finding them beside it, for
+   itself and its scanner, and keeps their registry in Skwir's cache
+   (`carried_gstreamer`, as Windows' and macOS's packages have it): the
+   one a GStreamer installed on the host keeps, shared, was written again
+   for one set of plugins or the other each time the other ran.
+   **Amended 2026-11-14:** a wrapper script set the plugins and scanner
+   before. No decoder tuning or hardware selection is added.
 4. **Isolation includes the private runtime, read-only.** A sandbox for
    a bundled helper binds the package's `usr` after its private `/tmp`.
    Derive it from Skwir's executable and package marker, never from an
