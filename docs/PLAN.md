@@ -405,9 +405,9 @@ programs do, the desktop's notifications); the user chose each point
 as the player's is: how far, how long, Pause and Cancel for one action,
 in as many words as the footer has room for. A click or Ctrl+Shift+J
 opens Activity above it: each action's card, what waits, and Earlier,
-this session's answers with Undo or Retry. Pinned, Activity stands
-above the footer while something runs, taking room rather than
-covering the files; since 2026-11-07 (the user's choice from a canvas
+this session's answers with Undo or Retry. Pinned, Activity stood
+above the footer while something ran, taking room rather than
+covering the files (until 2026-11-13); from 2026-11-07 (the user's choice from a canvas
 of mock-ups) it unfolds there by default once an action asked in the
 window lasted 1.5 s (`ui.activity_unfold_ms`), its chevron folding it
 into the strip. Since 2026-11-13 (the user asked) Activity is one
@@ -1009,6 +1009,21 @@ items copying, rsync telling each; what another program writes marked
 "writing"; the full tint stopping short; a transfer's title naming its
 folder, the path on its card's tooltip.
 
+## Review fixes (2026-11-13)
+
+A review of what came after the last one (efa0f559..676e97a3, 77 commits:
+grouping and remembered orders, a folder's Git history and marks, what a
+copy brings drawn where it lands, formulas and notebooks, the preview's
+bar, a folder's README, Play, Activity as one panel, text that narrows to
+its widest word) made 84 findings, two high: a sort made on a worker was
+voided and its entries copied on the window's thread by every answer read
+on demand, and every item a paste brings was placed again at each change
+of its listing. The user asked for all of them fixed, high to low: seven
+fixers at once, 60 commits (79eebb34..4a55988d, not pushed), plus 12
+follow-ups the fixing found (GV-13, GV-14, GT-15..18, AR-16 and the notes
+beside the findings); TL-9 is no bug. Checks in `docs/STATUS-LOG.md`
+(2026-11-13).
+
 ## What is left
 
 Gathered on 2026-10-20 from the notes of this plan and of
@@ -1203,6 +1218,39 @@ leave (ADR-077).
   window, a hung server for the Save and Print fields, the login shell
   under a real terminal with bash or zsh. Frame times of the card's
   outline are unmeasured (0058, 0059, LK-1).
+
+**From the review since 0.4.0** (2026-11-13):
+- Not seen in a window: a formula in a note's popover, the atlas giving
+  back a page's formulas (MT-2, MT-4); the Git marks of the columns above
+  and of a tree (GT-6, GT-17); a grouped Board's twelfth column and a new
+  group's pinned heading (GV-2, GV-8); Activity's deferred focus (PV-8).
+  Seen on Xvfb: the footer in a narrow split, Activity under Settings, a
+  paste's waiting items, the Exclusions toolbar at 470 px, folds in the
+  list and the columns.
+- `link-ordered --check` has not run on a real dist build; the Nix
+  package and the AUR builds do not ask it (TL-4).
+- The first Git answer for a folder writes every entry it covers, one
+  update of 100,000 entries for a folder that large (GT-16). A folder in
+  no repository groups as Not known.
+- The trash look behind remembered orders reads Linux's trashes alone;
+  the orders of folders deleted outside Skwir are kept (GC-10). An order
+  made anew when `order_version` moves (a case-only rename) still sorts
+  on the window's thread (ADR-121, decision 5).
+- A re-sort or regroup keeps the view's offset; only a fold keeps what
+  was at its top (GV-6).
+- Windows: `core.ignoreCase` and `core.symlinks`, a stat against Git for
+  Windows' index, states said in the index's case on a volume that
+  ignores it; macOS's `volume_of`, `open_files` and the runtime folder's
+  fallback, compiled only. An empty folder inside an untracked one is
+  still New.
+- A watch's queue overflowing is not tested (AR-8); the cross-plugin
+  remote tests did not run in the round, only in the final `just test`.
+- MathJax's `processEscapes` applies only where `$` is a delimiter;
+  `data:` pictures in a notebook's HTML outputs are not shown; a MathML
+  formula across several text nodes is not paired.
+- Not measured: TL-8's resize cost, GC-6's and GC-12's savings, the
+  arriving cases on an idle machine (`arriving_stands_us` budgeted at
+  25 ms for 6–7 ms under a load of 9 to 11).
 
 **From the review of 2026-11-03** (the History and the queue's
 progress, fixed the same night):

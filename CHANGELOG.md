@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **Settings finds what you type word by word**, whatever its case or
+  accents ("editeur" finds "éditeur"), in its search and in every page's
+  filter alike, and finds a plugin by where it comes from too.
+- **A player opening a track or a playlist on a server that stopped
+  answering no longer holds up other folders' work**: it waits in that
+  server's lane alone.
+- **Without a session runtime folder** (no `XDG_RUNTIME_DIR`), Skwir keeps
+  its sockets and mount points in a folder of your own in the temporary
+  folder, made private as the runtime folder is, instead of going without.
 - **A long text no longer moves sideways after it shows**: its line numbers
   have room for every line from the first frame, where 0.4.0 widened them a
   moment later for a file of 100,000 lines or more. Its scrollbar is about

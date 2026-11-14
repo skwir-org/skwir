@@ -16765,3 +16765,111 @@ the first build, a cancel's answer was not yet drawn 1.5 s after its
 card had gone, the strip silent meanwhile; not seen again in a capture
 every 0.35 s. Not tried: Windows' and
 macOS' clippy (no system's code changed).
+
+## 2026-11-13: Review fixes since 0.4.0
+
+The user asked for a review of what came after the last one
+(efa0f559..676e97a3, 77 commits), then for every finding fixed, high to
+low, `target/` pruned first. Seven reviewers, one area each, left 84
+findings: 2 high, 28 medium, 3 low-medium, 51 low. Each area then had a
+fixer, seven at once in one tree, each owning its files; builds one at a
+time in capped scopes without incremental builds (`target/debug/incremental`
+and three old release bundles deleted with the user's leave, 20 → 80 GB
+free). Each step was handed over as a patch of its own hunks and committed
+as it came (79eebb34..4a55988d, 60 commits); the commits between were not
+built one by one. Fixing found 12 more (GV-13, GV-14, GT-15..18, AR-16, the
+notes beside the findings), all fixed; TL-9 is no bug (a clamped text keeps
+every line).
+
+- **Grouping core** (12: `b025bfde`, `e25330f7`, `8d277eff`, `50f0ce38`,
+  `b467aec8`, `edd208ec`, `121b7dca`, `d5957da2`, `680718be`): a listing
+  changed directly while a sort holds its entries keeps the change
+  (`Listing::direct`) for the drain that takes the order, so nothing copies
+  the entries or voids the order (GC-1, high). An entry moves once what its
+  order reads is read. Fields read on demand are asked of every listing of
+  the pane's order, only what came or changed since, and only answers are
+  kept (`Fields::answer_all`), taken while the file is the one read.
+  `scheduler::share` runs a sort's costly keys on the pool's idle workers,
+  cancellable. Owners named once users load; the folder left let go after
+  `workspace::HOLD`; trashed folders' orders forgotten once the trash no
+  longer holds them (Linux); one bound on lengths; name groups from the
+  slot's collation key.
+- **Grouping views** (14: `100f9d34`, `928aebac`, `40c6c66a`, `845a2596`,
+  `3bdffeb0`, `0f4f257b`): folded groups keep their headings drawn,
+  reachable and in view; a fold keeps what was at the view's top
+  (`RowMap::kept_row`); the pinned heading is the group drawn there. A
+  grouped Board keeps to `MAX_COLUMNS`, the last holding the groups left.
+  "Show only these" asks `query.filter` (facet `also`): the shell writes no
+  query text. A lens is shown over the pane's own view. Folds take files
+  out only where the view draws headings (`PaneView::draws_headings`), and
+  the footer counts what is folded.
+- **What arrives** (16 and AR-16: `a24cbb4d`, `5f6d33d4`, `bc056d6d`,
+  `6de0a63d`, `b01ce7f0`, `535dcf26`, `059310a2`, `df756be1`, `f828b4ef`,
+  `49f1e095`, `940f41ba`, `2f534360`, `4a0ba48c`, `86b664f3`): each item is
+  keyed once and placed again by a galloping search only when the order,
+  its groups or what arrives change (AR-1, high; a new bench case
+  `arriving_placed_again_us`: 100,000 items among 100,000 entries in
+  17.8 ms, 45 ms before; `arriving_stands_us` 11.2 → 7.0 ms, budget 35 →
+  25 ms). A plan's sources are read once on a worker, never on its thread;
+  another volume told by the mount table (`fs::reach::volume_of`). A
+  plan noted before its job is queued. Names found by maps. Every runtime
+  folder made through `folders::private`, the per-user fallback in
+  `folders::runtime`. A landed item drawn until listed; the pane's window
+  alone woken.
+- **Git** (14 and GT-15..18: `79eebb34`, `01eb7a96`, `d17f8a70`, `29cce3d8`,
+  `50536794`, `1760c52d`, `c5c5bd7e`, `ad5e2a78`, `7940779d`, `e9d43882`,
+  `8d7657a9`, `6564505a`): a history walk takes a share of its deadline and
+  places what it read; the helper reads the repository's own config
+  (fileMode, showUntrackedFiles, ignoreCase…). `Previews::accepting` asks
+  `accepted_by`, so pictures in a repository are read ahead again. One
+  answer from the highest folder shown marks every column, says whether it
+  is whole, is made ready on the worker, and is taken only while no sort
+  holds the listing; what nothing said of is Not known. Renames followed
+  along first parents, tree diffs bounded.
+- **Formulas and text** (11 and the Contents title: `369ffada`, `4847e496`,
+  `2fbc8f1c`, `71919722`, `f0b3dcdf`, `128093d2`, `c15789e7`, `8d381762`,
+  `4a55988d`): TeX in a notebook's code kept as written; every text with
+  drawings laid out and painted by one helper (`block_text`), what is said
+  built only while a screen reader listens; gpui 0062 (`Window::drop_svg`)
+  lets a page's formulas leave the atlas with it; MathML read as its
+  alttext or words; the helper's batch measured as it reads it; one timer
+  thread for every bounded wait for colors.
+- **Preview, Play, Activity** (11: `4bcd0219`, `ec4aab2d`, `ece6c88c`):
+  Activity is not drawn under what covers the window, the answer drawn in
+  one place; Play reads in the remote's lane and types by the bytes; a
+  folder's README tries each file of a name, is followed while shown, and
+  is read on a remote as thumbnails are; More acts on the file shown.
+- **Text layout, settings, tools** (8: `71fff3df`, `5a85e374`, `fb521538`,
+  `01f87560`, `4340705c`, `e9b96ead`, `ac8eb595`): `link-ordered --check`
+  run by the deb, RPM and AppImage builds; gpui 0061 asks a text's
+  narrowest of its unwrapped lines once; a bar of one line says nowrap for
+  all it holds (the footer, menu rows, popups, the timeline, Quick
+  filters, the list's header); the narrow page menu goes into the page; a
+  chosen pane gone takes its command with it; one matcher for Settings
+  (`collate::Words`).
+- **The integrator's calls:** GC-1 one way in through the queue; GV-4 no
+  query text in the shell; PV-1 Activity hidden under overlays; PV-9 More
+  acts on the file shown; TL-4 the order made checkable; GT-5 unreached
+  entries unknown. The fixers': GV-2 a cap whose last column holds the
+  rest (gpui has no horizontal uniform list); GC-10 forgets only folders
+  Skwir trashed; a README on a remote read only as its thumbnails rule
+  allows.
+
+**Checked** on the combined tree, in capped scopes: `just lint`, `just
+test` (3542 passed, 32 skipped), `just release-tools-check`, `just
+check-cross`, `just gpui-check` (142 of the patches' tests and the rest),
+`just a11y-check` on the debug build (82 checks, the page menu's Enter
+among them). The two arriving bench cases were checked by their fixer
+(`skwir-bench check --only`, release, under a load of 11). On an Xvfb
+of its own, private XDG folders: the footer of a narrow split cut on one
+line, Activity hidden under Settings while a copy ran, 30,000 files pasted
+into an empty folder drawn waiting after about 3 s then landed, the
+Exclusions toolbar wrapping at 470 px, the page menu; idle, the window's
+thread at about 1 % of a core with no frame drawn (X11's polling). The
+fixers ran their crates' tests; GV tried folds in the list and the columns
+on Xvfb.
+
+**Not checked:** `just release-check` (the user's standing preference), so
+the native workers, `smoke`, `idle-pss` and Wine's tests did not run.
+`link-ordered --check` on a real dist build. macOS and Windows beyond
+clippy. The rest is in `docs/PLAN.md`'s "From the review since 0.4.0".
