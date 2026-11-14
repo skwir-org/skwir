@@ -27,6 +27,13 @@ jobs:
           name: skwir-appimage
           path: target/package/appimage/*
           if-no-files-found: error
+      # The film the bundle's check plays (made with the AppImage, never
+      # among the release's files), for the runs on other distributions.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: skwir-appimage-check-film
+          path: target/appimage/candidate/check-film.mkv
+          if-no-files-found: error
 
   appimage-portability:
     needs: appimage
@@ -48,6 +55,10 @@ jobs:
         with:
           name: skwir-appimage
           path: appimage
+      - uses: actions/download-artifact@v8
+        with:
+          name: skwir-appimage-check-film
+          path: film
       - name: Desktop runtime only
         run: |
           if command -v apt-get; then
@@ -58,13 +69,14 @@ jobs:
             dnf install -y python3 binutils tar gzip bubblewrap xorg-x11-server-Xvfb \
               mesa-vulkan-drivers vulkan-loader libwayland-client libxkbcommon \
               libX11 libxcb libXcursor libXi libXrandr fontconfig dejavu-sans-fonts \
-              alsa-lib mesa-libgbm libglvnd-egl shared-mime-info
+              alsa-lib mesa-libgbm libglvnd-egl shared-mime-info \
+              pulseaudio pulseaudio-utils
           fi
       - name: Check the same artifacts
         run: |
           cd appimage && sha256sum -c ./*.sha256 && chmod +x ./*.AppImage && cd ..
-          python3 tools/package/appimage/check.py appimage/*.AppImage
-          python3 tools/package/appimage/check.py appimage/*.tar.gz
+          python3 tools/package/appimage/check.py appimage/*.AppImage --film film/check-film.mkv
+          python3 tools/package/appimage/check.py appimage/*.tar.gz --film film/check-film.mkv
 
   linux:
     strategy:

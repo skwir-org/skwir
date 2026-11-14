@@ -17079,3 +17079,44 @@ played on.
   3D models under Images as the type database's generic icons say
   (ADR-037), and a KiCad board's header says Plain text where KiCad's
   types are not installed.
+
+## 2026-11-14: The volume shown, libva in the AppImage, the film in CI
+
+- **No sound, after the AppImage's fix:** the user heard nothing in films,
+  in the AppImage and the debug build. The headless runs of the day had
+  muted the helper and set its volume to 0 with the real audio sink on the
+  session's PipeWire, which is the stream's own volume: WirePlumber kept
+  `channelVolumes [0, 0]` for `skwir-media-worker` and
+  `skwir-media-worker.bin` and gave it to every stream after. Put back by
+  starting each helper paused on a clip (its stream there, silent) and
+  setting the stream to 100 % with `pactl`; real-sink tests since run
+  against a PulseAudio of their own.
+- **It showed a bug:** the control said its own value, 100 %, over a
+  stream at 0 %: the worker set the volume and mute and never read them
+  back. `Player::follow_sound` takes the pipeline's into the state on
+  `notify::volume` and `notify::mute` (pulsesink emits them only while it
+  renders) and at each preroll's `AsyncDone` (reading the property asks
+  the server), past a rounding of 0.005; `media::position` is
+  `amplitude`'s inverse. On a PulseAudio of the test's own, the debug
+  helper and the AppImage's: a mixer at 50 % read 0.5 after a seek while
+  paused; a mute and 30 % while playing read at once; the control at 0.8
+  put the server at 80 %; with `module-stream-restore`, a new helper said
+  the 40 % left by the last at its first frame.
+- **libva 2.24.1 in the AppImage** (the user's choice): built in the root
+  before GStreamer, its DRM and X11 parts, its drivers looked for in
+  Debian's, Fedora's, Arch's and NixOS's folders. Its tarball's
+  signature checked against Intel's release key (fetched from the
+  keyservers, not certified) and its SHA-256 pinned. With NVDEC's and
+  FFmpeg's H.264 decoders ranked out for the test and the session's
+  `LIBVA_DRIVER_NAME=nvidia` unset: 0.5.0's libva opened no driver on the
+  Intel GPU (`va_openDriver() returns -1`), the new one opened
+  `iHD_drv_video.so` (`__vaDriverInit_1_24`) and decoded with `vah264dec`.
+  With that variable set, neither got a VA-API decoder.
+- **The film in CI:** the appimage job uploads the check's film as an
+  artifact of its own (never among the release's files); the Ubuntu
+  24.04 and Fedora 44 runs pass it to the check, PulseAudio added to
+  Fedora's packages. `actionlint` passes; not run on GitHub yet.
+- **Checked:** `just package-appimage` with all of it (283 ELFs; the film
+  through the bundle's pulsesink, AppImage and tarball); the helper's
+  tests and the core's media tests; through `appimage-run` and a private
+  PulseAudio, the AppImage's helper 30 of 30 rounds over six clips.

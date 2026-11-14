@@ -1221,14 +1221,12 @@ leave (ADR-077).
 
 **The AppImage's player** (2026-11-14, after 0.5.0): its films stopped on
 one frame, the bundle's PulseAudio client (Jammy's 15.99) at fault; it
-now carries PulseAudio 17's client and GStreamer 1.28.8 throughout, ADR-076's
-set (ADR-052 amended, `docs/STATUS-LOG.md`). Left: its libva is still
-Jammy's 2.14, which a host's newer VA drivers may refuse (films then
-decoded by NVDEC or in software; the host's would break FFmpeg's
-libraries where libva-x11 is missing); AV1 in software is aom's, slower
-than dav1d (bad's dav1d is gst-plugins-rs's now); base keeps Ubuntu's
-features beside ADR-076's set; CI's runs on Ubuntu 24.04 and Fedora 44
-do not play the film (it is made with the AppImage, not uploaded with it).
+now carries PulseAudio 17's client, libva 2.24 and GStreamer 1.28.8
+throughout, ADR-076's set (ADR-052 amended, `docs/STATUS-LOG.md`). Left,
+by the user's choice: AV1 in software is aom's, slower than dav1d (bad's
+dav1d is gst-plugins-rs's now: a Rust plugin, cargo-c and a newer dav1d
+than Jammy's); base keeps Ubuntu's features beside ADR-076's set (CD
+audio, visualizations, Xv, which the player does not use).
 
 **From the review since 0.4.0** (2026-11-13):
 - Not seen in a window: the atlas giving back a page's formulas (MT-4); a
