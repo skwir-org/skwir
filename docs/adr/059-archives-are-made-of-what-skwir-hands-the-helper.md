@@ -195,8 +195,10 @@ user's choice: merge as a copy does, asked.
   - What is there the same is left as it is, unasked: a folder holding
     the same items and nothing else, a file of its size and time (to two
     seconds, a FAT drive's), a link saying the same, a hard link to its
-    first name. One walk tells them all (`MadeTree::sames`): each item is
-    read once, nothing under a folder that is not there.
+    first name, or a file as its first is made (a merge places a folder
+    whole apart from a first name left there, so extracted again, it is
+    found the same). One walk tells them all (`MadeTree::sames`): each
+    item is read once, nothing under a folder that is not there.
   - What is not there is placed whole.
   - A folder there that differs is merged in turn (its row under its
     folder's in the dialog); a file there that differs takes a file's

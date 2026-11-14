@@ -788,11 +788,12 @@ fn left_by(listing: &archive::Listing) -> Option<std::collections::BTreeMap<Path
         } else {
             continue;
         };
+        // The folders above it not met yet: above one met, all are.
         for above in path.ancestors().skip(1) {
-            if above.as_os_str().is_empty() {
+            if above.as_os_str().is_empty() || left.contains_key(above) {
                 break;
             }
-            left.entry(above.to_path_buf()).or_insert(MadeItem::Folder);
+            left.insert(above.to_path_buf(), MadeItem::Folder);
         }
         left.insert(path, what);
     }

@@ -46,13 +46,20 @@ impl MadeTree {
     /// they are not said.
     pub fn new(items: BTreeMap<PathBuf, MadeItem>) -> Self {
         let mut tree = MadeTree { items };
-        let above: Vec<PathBuf> = tree
-            .items
-            .keys()
-            .flat_map(|path| path.ancestors().skip(1).map(Path::to_path_buf))
-            .collect();
+        // Each folder not said, once: above one said or met already, the
+        // rest are too.
+        let mut met: HashSet<&Path> = HashSet::new();
+        let mut above = Vec::new();
+        for path in tree.items.keys() {
+            for folder in path.ancestors().skip(1) {
+                if tree.items.contains_key(folder) || !met.insert(folder) {
+                    break;
+                }
+                above.push(folder.to_path_buf());
+            }
+        }
         for path in above {
-            tree.items.entry(path).or_insert(MadeItem::Folder);
+            tree.items.insert(path, MadeItem::Folder);
         }
         tree
     }
@@ -71,8 +78,8 @@ impl MadeTree {
     }
 
     /// What is made at `path`, by paths below it: `None` where nothing is.
-    /// Another name of a file outside it is a file of nothing said, as it
-    /// cannot be told the same there.
+    /// Another name of a file outside it is a file as that file is made
+    /// ([`Self::file_named`]): placed there apart from it, it is one.
     pub fn below(&self, path: &Path) -> Option<MadeTree> {
         self.items.get(path)?;
         // Below a path, its items stand together: paths are ordered by
@@ -83,19 +90,36 @@ impl MadeTree {
             .map_while(|(at, item)| Some((at.strip_prefix(path).ok()?, item)))
             .map(|(at, item)| {
                 let item = match item {
-                    MadeItem::Hard(first) => first.strip_prefix(path).map_or(
-                        MadeItem::File {
+                    MadeItem::Hard(first) => match first.strip_prefix(path) {
+                        Ok(first) => MadeItem::Hard(first.to_path_buf()),
+                        Err(_) => self.file_named(first).unwrap_or(MadeItem::File {
                             size: None,
                             modified: None,
-                        },
-                        |first| MadeItem::Hard(first.to_path_buf()),
-                    ),
+                        }),
+                    },
                     other => other.clone(),
                 };
                 (at.to_path_buf(), item)
             })
             .collect();
         Some(MadeTree { items })
+    }
+
+    /// The file another name (`MadeItem::Hard`) names as its first, as it
+    /// is made: a file of its size and time; `None` where none is said
+    /// under that name.
+    fn file_named(&self, first: &Path) -> Option<MadeItem> {
+        let mut at = first;
+        // An archive's other names lead to a member before them: a few
+        // steps at most, and never round.
+        for _ in 0..8 {
+            match self.items.get(at)? {
+                file @ MadeItem::File { .. } => return Some(file.clone()),
+                MadeItem::Hard(next) => at = next,
+                _ => return None,
+            }
+        }
+        None
     }
 
     /// The items of each folder, in their names' order.
@@ -112,7 +136,8 @@ impl MadeTree {
     /// The items `target` holds the same of, all the way down, by their
     /// paths: a folder there holding the same items and nothing else, each
     /// file of its size and time (to two seconds), each link saying the
-    /// same, each other name of a file to its first. One walk, a link
+    /// same, each other name of a file to its first, or a file as its first
+    /// is made (placed apart from a first left there). One walk, a link
     /// never followed: each item is read once, a folder's names once, and
     /// what is under a folder that is not there is never read. Cancelled,
     /// none are.
@@ -159,7 +184,7 @@ impl MadeTree {
                     }
                 }
                 item => {
-                    if is_same(item, &there, &|first| at(first)) {
+                    if self.is_same(item, &there, &|first| at(first)) {
                         same.insert(path);
                     }
                 }
@@ -174,35 +199,44 @@ impl MadeTree {
     }
 }
 
-/// Whether what is at `there` is `item`, a file, a link or another name
-/// (`at` says where a first name is).
-fn is_same(item: &MadeItem, there: &Path, at: &dyn Fn(&Path) -> PathBuf) -> bool {
-    let Ok(meta) = std::fs::symlink_metadata(there) else {
-        return false;
-    };
-    match item {
-        MadeItem::Folder => meta.is_dir(),
-        MadeItem::File { size, modified } => {
-            let near = |a: SystemTime, b: SystemTime| {
-                a.duration_since(b)
-                    .or_else(|_| b.duration_since(a))
-                    .is_ok_and(|apart| apart < TIME_KEPT)
-            };
-            meta.is_file()
-                && *size == Some(meta.len())
-                && modified
-                    .zip(meta.modified().ok())
-                    .is_some_and(|(a, b)| near(a, b))
-        }
-        MadeItem::Link(says) => {
-            meta.is_symlink()
-                && std::fs::read_link(there)
-                    .is_ok_and(|read| read.as_os_str().to_string_lossy() == says.as_str())
-        }
-        MadeItem::Hard(first) => {
-            meta.is_file()
-                && crate::fs::stat::id_of(there)
-                    .is_some_and(|id| crate::fs::stat::id_of(&at(first)) == Some(id))
+impl MadeTree {
+    /// Whether what is at `there` is `item`, a file, a link or another name
+    /// (`at` says where a first name is).
+    fn is_same(&self, item: &MadeItem, there: &Path, at: &dyn Fn(&Path) -> PathBuf) -> bool {
+        let Ok(meta) = std::fs::symlink_metadata(there) else {
+            return false;
+        };
+        match item {
+            MadeItem::Folder => meta.is_dir(),
+            MadeItem::File { size, modified } => {
+                let near = |a: SystemTime, b: SystemTime| {
+                    a.duration_since(b)
+                        .or_else(|_| b.duration_since(a))
+                        .is_ok_and(|apart| apart < TIME_KEPT)
+                };
+                meta.is_file()
+                    && *size == Some(meta.len())
+                    && modified
+                        .zip(meta.modified().ok())
+                        .is_some_and(|(a, b)| near(a, b))
+            }
+            // Said as text: a link saying what no text spells is never
+            // told the same, but asked about.
+            MadeItem::Link(says) => {
+                meta.is_symlink()
+                    && std::fs::read_link(there).is_ok_and(|read| read.to_str() == Some(says))
+            }
+            MadeItem::Hard(first) => {
+                let linked = meta.is_file()
+                    && crate::fs::stat::id_of(there)
+                        .is_some_and(|id| crate::fs::stat::id_of(&at(first)) == Some(id));
+                // Placed apart from its first name, left there the same (a
+                // merge): a file as that one is made.
+                linked
+                    || self
+                        .file_named(first)
+                        .is_some_and(|file| self.is_same(&file, there, at))
+            }
         }
     }
 }
@@ -303,6 +337,37 @@ mod tests {
         let cancelled = CancelToken::new();
         cancelled.cancel();
         assert!(tree.sames(&root, &cancelled).is_empty());
+    }
+
+    /// Another name of a file, its first left there the same and itself
+    /// placed apart (a merge places a folder whole, its first name not):
+    /// told the same, below its folder and in the whole tree.
+    #[test]
+    fn another_name_placed_apart_from_its_first_is_the_same() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("it's made");
+        std::fs::create_dir_all(root.join("a")).unwrap();
+        std::fs::create_dir_all(root.join("b")).unwrap();
+        let made = written(&root.join("a/one.txt"), "one");
+        // Not linked: a file of its own, of its first's size and time.
+        written(&root.join("b/two.txt"), "one");
+        std::fs::File::open(root.join("b/two.txt"))
+            .unwrap()
+            .set_modified(made)
+            .unwrap();
+        let tree = MadeTree::new(BTreeMap::from([
+            (PathBuf::new(), MadeItem::Folder),
+            ("a/one.txt".into(), file(3, made)),
+            ("b/two.txt".into(), MadeItem::Hard("a/one.txt".into())),
+        ]));
+        let b = tree.below(Path::new("b")).unwrap();
+        assert_eq!(b.get(Path::new("two.txt")), Some(&file(3, made)));
+        let cancel = CancelToken::new();
+        assert!(b.held_at(&root.join("b"), &cancel));
+        assert!(tree.held_at(&root, &cancel));
+        // Another size: not the same.
+        std::fs::write(root.join("b/two.txt"), "changed").unwrap();
+        assert!(!tree.held_at(&root, &cancel));
     }
 
     #[test]
