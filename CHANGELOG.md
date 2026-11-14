@@ -43,6 +43,10 @@
   in a 3MF, shown before the model is turned in 3D, was as wide as the
   panel, and a tall one ran past its foot. It is shown as pictures are,
   whole in the panel.
+- **The questions before a permanent deletion and about names taken show
+  each item's icon**, as the views do: its type's from the icon theme, a
+  link marked as one (in red where it leads nowhere). They showed a grey
+  folder or link glyph, and nothing for a file.
 
 ## 0.5.0 (2026-11-14)
 

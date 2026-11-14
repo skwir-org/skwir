@@ -17186,3 +17186,43 @@ merge as a copy does (ADR-054), asked. ADR-059 amended.
   extracted whole into the staging folder however little is placed (the
   helper has no member filter: reading is the archive's length anyway,
   writing could be what is placed).
+
+## 2026-11-14: Dialogs that list items show their pictures
+
+The user asked whether the question before a permanent deletion could
+show each file's small icon before its name (no thumbnail). Both it and
+the question about names taken drew a grey glyph for a folder or a link
+and nothing for a file. Built for both, as the views draw an entry
+(docs/invariants/views.md, "One look per entry").
+
+- **`icons::Pictured`**: what `entry_picture` draws, kept without the
+  entry (the icon wanted, folder or not, the link mark, hidden though
+  the name does not say so). `Pictured::of` reads it from an entry
+  (`Want::of_entry`, so a link is pictured as what it leads to, marked);
+  `Pictured::named` from a name alone, for what a step makes;
+  `Pictured::linked` marks what comes where a plan makes a link to it.
+  `Pictured::picture` looks its icon up in the window's `IconCache`, at
+  16 px (a list's smallest icons).
+- **The deletion's question**: its worker, which already read what each
+  row is, stats each row into an entry (`fs::Statter`, the folder held
+  open between rows: an emptied trash's items are in one) and hands its
+  picture over with the rest. A row not there has none.
+- **The names taken**: once a question arrives (`add_clash_questions`,
+  also when another window hands it on), a worker in the lane of what it
+  reads (ADR-077) pictures what each clash brings, handing over every
+  50 ms; an extraction's by its name and whether it is a folder. A
+  `Stops` guard cancels it when the question goes.
+- **Checked:** the UI's tests for the two dialogs and icons (27), two new
+  checks among them (the rows' pictures after the worker, what each
+  clash brings: a file, a link, a link made, an extraction's file and
+  folder, a source gone, a cancelled read); clippy on the UI crate.
+- **In the window** (debug build, Xvfb :87, a bus and XDG folders of its
+  own): nine items selected, Shift+Delete. The rows showed the folders',
+  the archive's, the picture's, the text's, the PDF's and the song's
+  icons; `to the report` the PDF's with the link mark, `broken link` the
+  unknown file's with a red one. Escape, nothing deleted. Eight copied
+  into a folder holding three of their names: the folder, its `README`,
+  the picture and the text pictured; Escape. An archive extracted again
+  over its folder, one photo changed: `photos` a folder, `photo2.jpg` a
+  picture's icon.
+

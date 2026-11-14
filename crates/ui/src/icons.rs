@@ -1408,6 +1408,80 @@ pub fn entry_picture(
     marked(picture, size, marks, theme)
 }
 
+/// An entry's picture kept without the entry: what a dialog lists by path
+/// (the question before a deletion, the names a plan found taken) is read
+/// on a worker, and each item drawn as the views draw it (`entry_picture`,
+/// docs/invariants/views.md), its icon looked up as theirs are.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Pictured {
+    want: Want,
+    is_dir: bool,
+    link: Link,
+    hidden: bool,
+}
+
+impl Pictured {
+    /// `e` as the views picture it, its file at `path` (read where the
+    /// system draws a file's own icon: an application, a shortcut).
+    pub fn of(e: &Entry, path: &Path) -> Self {
+        Pictured {
+            want: Want::of_entry(e, || Some(path.to_path_buf())),
+            is_dir: e.is_dir(),
+            link: Link::of(e),
+            hidden: e.hidden_unsaid(),
+        }
+    }
+
+    /// What is not there yet (what a step makes: an archive's member),
+    /// known by its name alone.
+    pub fn named(name: &std::ffi::OsStr, folder: bool) -> Self {
+        Pictured {
+            want: if folder {
+                Want::Folder
+            } else {
+                Want::for_name(name)
+            },
+            is_dir: folder,
+            link: Link::None,
+            hidden: false,
+        }
+    }
+
+    /// Marked as a link leading somewhere: what comes where a plan makes a
+    /// link to it.
+    #[must_use]
+    pub fn linked(self) -> Self {
+        Pictured {
+            link: Link::Leads,
+            ..self
+        }
+    }
+
+    /// Drawn `size` px, its icon looked up in `icons` (asked for on a
+    /// worker when not known yet: `IconCache::request` after drawing).
+    pub fn picture(
+        &self,
+        icons: &mut IconCache,
+        size: u16,
+        theme: &crate::theme::Theme,
+    ) -> AnyElement {
+        let icon = icons.lookup(self.want.clone(), size);
+        let marks = Marks {
+            mark: Mark::Link(self.link),
+            hidden: self.hidden,
+            ..Marks::default()
+        };
+        entry_picture(
+            icon.as_ref(),
+            self.is_dir,
+            f32::from(size),
+            marks,
+            false,
+            theme,
+        )
+    }
+}
+
 /// A named icon at `size` px: in its own colors, or in `ink` (`element`).
 pub fn themed(pic: &Pic, size: f32, ink: Ink) -> AnyElement {
     element(pic, size, ink)

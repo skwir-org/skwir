@@ -4,12 +4,17 @@
 //! item or for all of a kind, answered before anything is done. It waits
 //! in the review queue (`review.rs`) and is answered as a review is: Enter
 //! goes on, Escape cancels; the arrows walk its rows and change their
-//! choice.
+//! choice. Each row is pictured by what comes, as the views draw it, read
+//! on a worker once the question arrives (`read_pictures`).
 
 use crate::sizes::TextSizes;
 use crate::sizes::sized;
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::ops::Range;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use gpui::{
     AnyElement, Context, Div, ScrollStrategy, SharedString, UniformListScrollHandle, div,
@@ -17,8 +22,10 @@ use gpui::{
 };
 use skwir_core::app::ClashQuestion;
 use skwir_core::op::clash::{Act, Answer, Choice, Clash, FileChoice, FolderChoice, Policy, Side};
+use skwir_core::{App, CancelToken};
 
 use crate::controls::{self, ButtonStyle};
+use crate::icons::Pictured;
 use crate::keymap;
 use crate::modal::{self, ListMove, Rows};
 use crate::review::{Review, ReviewFocus};
@@ -42,6 +49,13 @@ const FILES: [Choice; 4] = [
 const FILE: [Choice; 3] = [Choice::KeepBoth, Choice::Replace, Choice::Skip];
 const FOLDERS: [Choice; 3] = [Choice::Merge, Choice::KeepBoth, Choice::Skip];
 
+/// A row's picture, in pixels: a list's smallest icons.
+const PICTURE: u16 = 16;
+
+/// How often the worker reading the rows' pictures hands over what it
+/// read: a question of thousands shows its first rows' at once.
+const HAND_OVER: Duration = Duration::from_millis(50);
+
 /// The dialog's state: the question, the choices for all, those made one
 /// by one, and the row the keyboard is on.
 pub struct Clashes {
@@ -54,6 +68,21 @@ pub struct Clashes {
     /// onto a folder), then the clashes shown.
     cursor: usize,
     scroll: UniformListScrollHandle,
+    /// What each clash brings, pictured as the views picture it, by its
+    /// index: none until read (`read_pictures`), or where nothing is.
+    pictures: Vec<Option<Pictured>>,
+    /// Stops that reading once the question is answered, or handed on
+    /// to another window (which reads it again).
+    reading: Stops,
+}
+
+/// Cancels its token when it goes.
+struct Stops(CancelToken);
+
+impl Drop for Stops {
+    fn drop(&mut self) {
+        self.0.cancel();
+    }
 }
 
 fn label(choice: Choice) -> &'static str {
@@ -94,12 +123,14 @@ fn newer(clash: &Clash) -> bool {
 impl Clashes {
     pub fn new(question: ClashQuestion) -> Self {
         Clashes {
+            pictures: vec![None; question.clashes.len()],
             question,
             files: FileChoice::default(),
             folders: FolderChoice::default(),
             each: HashMap::new(),
             cursor: 0,
             scroll: UniformListScrollHandle::new(),
+            reading: Stops(CancelToken::new()),
         }
     }
 
@@ -304,6 +335,121 @@ impl Shell {
     }
 }
 
+/// What a clash's picture is read from: what comes.
+enum Wanted {
+    /// A file there to copy or move, or to make a link to (`linked`).
+    At { path: PathBuf, linked: bool },
+    /// What a step makes, not there yet: known by its name.
+    Made { name: OsString, folder: bool },
+}
+
+impl Wanted {
+    fn of(clash: &Clash) -> Self {
+        match clash.act {
+            Act::Make { .. } => Wanted::Made {
+                name: clash
+                    .there
+                    .path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_os_string(),
+                folder: clash.source.folder,
+            },
+            act => Wanted::At {
+                path: clash.source.path.clone(),
+                linked: act == Act::Link,
+            },
+        }
+    }
+
+    /// Its picture, read with `statter`: none where nothing is there.
+    fn picture(&self, statter: &mut skwir_core::fs::Statter) -> Option<Pictured> {
+        match self {
+            Wanted::At { path, linked } => {
+                let picture = Pictured::of(&statter.stat(path)?, path);
+                Some(if *linked { picture.linked() } else { picture })
+            }
+            Wanted::Made { name, folder } => Some(Pictured::named(name, *folder)),
+        }
+    }
+}
+
+/// Read each of `wanted`'s pictures, handing over what was read every
+/// `HAND_OVER`, until `cancel` stops it.
+fn picture_each(
+    wanted: &[Wanted],
+    cancel: &CancelToken,
+    mut send: impl FnMut(Vec<(usize, Pictured)>),
+) {
+    let mut statter = skwir_core::fs::Statter::default();
+    let mut read = Vec::new();
+    let mut last = Instant::now();
+    for (at, wanted) in wanted.iter().enumerate() {
+        if cancel.is_cancelled() {
+            return;
+        }
+        read.extend(wanted.picture(&mut statter).map(|picture| (at, picture)));
+        if last.elapsed() >= HAND_OVER {
+            send(std::mem::take(&mut read));
+            last = Instant::now();
+        }
+    }
+    send(read);
+}
+
+/// Read on a worker what each of `clashes` brings, pictured as the views
+/// picture it, in the lane of what it reads (ADR-077): the rows take
+/// their pictures as they come, until the question is answered.
+pub(crate) fn read_pictures(app: &Arc<App>, clashes: &mut Clashes, cx: &mut Context<Shell>) {
+    let wanted: Vec<Wanted> = clashes.question.clashes.iter().map(Wanted::of).collect();
+    if wanted.is_empty() {
+        return;
+    }
+    let cancel = app.lifetime().child();
+    clashes.reading = Stops(cancel.clone());
+    let id = clashes.question.id;
+    let lane = crate::shell::lane_of(wanted.iter().filter_map(|wanted| match wanted {
+        Wanted::At { path, .. } => Some(path),
+        Wanted::Made { .. } => None,
+    }));
+    let (tx, rx) = flume::unbounded();
+    let token = cancel.clone();
+    app.scheduler.spawn_in(
+        lane,
+        skwir_core::scheduler::Priority::Visible,
+        "clash pictures",
+        cancel,
+        move || {
+            picture_each(&wanted, &token, |read| {
+                let _ = tx.send(read);
+            });
+        },
+    );
+    cx.spawn(async move |this, cx| {
+        while let Ok(read) = rx.recv_async().await {
+            let asking = this.update(cx, |shell, cx| {
+                let Some(clashes) = shell.reviews.iter_mut().find_map(|review| match review {
+                    Review::Clashes(clashes) if clashes.question.id == id => Some(clashes),
+                    _ => None,
+                }) else {
+                    return false;
+                };
+                for (at, picture) in read {
+                    if let Some(slot) = clashes.pictures.get_mut(at) {
+                        *slot = Some(picture);
+                    }
+                }
+                cx.notify();
+                true
+            });
+            if !matches!(asking, Ok(true)) {
+                break;
+            }
+        }
+    })
+    .detach();
+}
+
 #[derive(Clone, Copy)]
 enum Row {
     Files,
@@ -359,12 +505,14 @@ fn choices(
     )
 }
 
-/// The clashes' rows in `range`, the only ones drawn: each its name
-/// (under the folder merged it is in), both sides, and its choices.
-fn clash_rows(shell: &Shell, range: Range<usize>, cx: &mut Context<Shell>) -> Vec<AnyElement> {
+/// The clashes' rows in `range`, the only ones drawn: each its picture
+/// and name (under the folder merged it is in), both sides, and its
+/// choices; the pictures' icons asked for once the rows are built.
+fn clash_rows(shell: &mut Shell, range: Range<usize>, cx: &mut Context<Shell>) -> Vec<AnyElement> {
     let Some(Review::Clashes(clashes)) = shell.reviews.front() else {
         return Vec::new();
     };
+    let icons = &mut shell.icons;
     let theme = cx.global::<Theme>().clone();
     let now = jiff::Zoned::now();
     let shown = clashes.shown();
@@ -427,9 +575,13 @@ fn clash_rows(shell: &Shell, range: Range<usize>, cx: &mut Context<Shell>) -> Ve
                                 .min_w_0()
                                 .text_body()
                                 .line_height(sized(20.))
-                                .when(clash.source.folder, |d| {
-                                    d.child(controls::glyph("folder", theme.text_muted, 14.))
-                                })
+                                .child(
+                                    div().size(px(f32::from(PICTURE))).flex_none().children(
+                                        clashes.pictures[i]
+                                            .as_ref()
+                                            .map(|picture| picture.picture(icons, PICTURE, &theme)),
+                                    ),
+                                )
                                 .child(div().min_w_0().truncate().child(name)),
                         )
                         .child(
@@ -452,6 +604,8 @@ fn clash_rows(shell: &Shell, range: Range<usize>, cx: &mut Context<Shell>) -> Ve
                 .into_any_element(),
         );
     }
+    let app = Arc::clone(&shell.app);
+    shell.icons.request(&app);
     rows
 }
 
@@ -625,6 +779,68 @@ mod tests {
                 clash("/example/dest/d/b.txt", false, Some(1), false),
             ],
         })
+    }
+
+    /// Each row is pictured by what comes, as the views picture it: a link
+    /// as what it leads to, marked; a link made to a file, so too; what an
+    /// extraction makes by its name; what is gone, not at all.
+    #[cfg(unix)]
+    #[test]
+    fn each_row_is_pictured_by_what_comes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let photo = tmp.path().join("it's a photo.jpg");
+        std::fs::write(&photo, b"p").unwrap();
+        let link = tmp.path().join("to the photo");
+        std::os::unix::fs::symlink(&photo, &link).unwrap();
+        let archive = tmp.path().join("photos  2026.zip");
+        let gone = tmp.path().join("gone.txt");
+        let make = Act::Make {
+            verb: "Extract",
+            done: "extracted",
+            merges: true,
+        };
+        let comes = |act: Act, source: &std::path::Path, name: &str, folder: bool| Clash {
+            step: 0,
+            inside: None,
+            act,
+            source: Side {
+                path: source.to_path_buf(),
+                folder,
+                size: None,
+                modified: None,
+            },
+            there: side(&format!("/example/dest/{name}"), folder, 1),
+        };
+        let clashes = [
+            comes(Act::Copy, &photo, "it's a photo.jpg", false),
+            comes(Act::Move, &link, "to the photo", false),
+            comes(Act::Link, &photo, "it's a photo.jpg", false),
+            comes(make, &archive, "day one.txt", false),
+            comes(make, &archive, "album", true),
+            comes(Act::Copy, &gone, "gone.txt", false),
+        ];
+        let wanted: Vec<Wanted> = clashes.iter().map(Wanted::of).collect();
+        let mut read = Vec::new();
+        picture_each(&wanted, &CancelToken::new(), |some| read.extend(some));
+        let file = Pictured::of(&skwir_core::fs::stat_path(&photo).unwrap(), &photo);
+        assert_eq!(
+            read,
+            [
+                (0, file.clone()),
+                (1, file.clone().linked()),
+                (2, file.linked()),
+                (
+                    3,
+                    Pictured::named(std::ffi::OsStr::new("day one.txt"), false)
+                ),
+                (4, Pictured::named(std::ffi::OsStr::new("album"), true)),
+            ]
+        );
+        let cancelled = CancelToken::new();
+        cancelled.cancel();
+        let mut none = Vec::new();
+        picture_each(&wanted, &cancelled, |some| none.extend(some));
+        assert!(none.is_empty());
     }
 
     #[test]

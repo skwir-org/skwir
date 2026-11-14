@@ -19,6 +19,13 @@ around the views is in [shell.md](shell.md).
   (their metadata asked for what is drawn of the kept listing,
   `Shell::request_hydrate_kept`) and an option's name and place in its
   column's list box.
+- A dialog that lists items by path (the question before a permanent
+  deletion, the names a plan found taken) draws each with the views'
+  picture too: an `icons::Pictured`, read from the item's entry on a
+  worker (`Pictured::of`; what a step makes and is not there yet, by its
+  name, `Pictured::named`), its icon looked up in the window's
+  `IconCache` and asked for once the rows are built. Never a glyph of
+  its own for a folder or a link.
 - **One way to say each kind of thing about an entry**, in every view:
   - *What the file is* is a mark on its picture (`icons::marked`,
     `icons::Marks`), whatever the view: a link (leading nowhere, in the

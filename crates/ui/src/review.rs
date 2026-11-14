@@ -188,13 +188,14 @@ impl Shell {
         cx.notify();
     }
 
-    /// Queue the names plans found taken, after what waits already.
+    /// Queue the names plans found taken, after what waits already, what
+    /// each brings pictured as it is read.
     pub fn add_clash_questions(&mut self, questions: Vec<ClashQuestion>, cx: &mut Context<Self>) {
-        self.reviews.extend(
-            questions
-                .into_iter()
-                .map(|q| Review::Clashes(Box::new(crate::clashes::Clashes::new(q)))),
-        );
+        for question in questions {
+            let mut clashes = crate::clashes::Clashes::new(question);
+            crate::clashes::read_pictures(&self.app, &mut clashes, cx);
+            self.reviews.push_back(Review::Clashes(Box::new(clashes)));
+        }
         cx.notify();
     }
 

@@ -1,11 +1,13 @@
 //! What a permanent deletion takes, listed in the question asked before it
 //! (`Shell::apply_user_plan`): each item by the name and in the folder the
 //! user knows it by (an item of a trash as it was named, where it came
-//! from), what it is, what it weighs or holds, and the companion files
-//! that go with it; under them, where they are and what they hold in all.
+//! from), its picture as the views draw it, what it is, what it weighs or
+//! holds, and the companion files that go with it; under them, where they
+//! are and what they hold in all.
 //!
 //! The rows are the plan's, made from its paths when it asks; a worker
-//! reads the rest (what each is, a trash's records, the companions), then
+//! reads the rest (what each is and its picture, a trash's records, the
+//! companions), then
 //! counts what each holds (`fs::count::count_each`), handing over what it
 //! has every `count::REPORT_EVERY`. Only the rows on screen are drawn: an
 //! emptied trash lists thousands. Closing the question stops the worker.
@@ -29,6 +31,7 @@ use crate::controls;
 use crate::elements::adaptive::AdaptiveRow;
 use crate::elements::clip::clipped;
 use crate::format;
+use crate::icons::Pictured;
 use crate::modal::{ListMove, Rows};
 use crate::prompts::Confirmed;
 use crate::shell::Shell;
@@ -42,6 +45,9 @@ const ROWS: Rows = Rows {
 
 /// The width of the folder each row is in, where they are not all in one.
 const FOLDER: f32 = 200.;
+
+/// A row's picture, in pixels: a list's smallest icons.
+const PICTURE: u16 = 16;
 
 /// What a row is, once read.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,6 +64,8 @@ enum Kind {
 /// What the worker reads of a row before it counts.
 struct Facts {
     kind: Kind,
+    /// Its picture, as the views draw it: none where it is not there.
+    picture: Option<Pictured>,
     /// Where a trash says its item was put there from.
     from: Option<PathBuf>,
     /// The companion files deleted with it.
@@ -87,6 +95,7 @@ struct Row {
     /// What a step that deletes nothing says it does: shown as it is.
     other: bool,
     kind: Option<Kind>,
+    picture: Option<Pictured>,
     /// The companion files deleted with it.
     companions: Vec<PathBuf>,
     /// What a folder holds, its companions with it, counted so far.
@@ -174,6 +183,7 @@ impl Deleting {
                         trashed: false,
                         other: true,
                         kind: None,
+                        picture: None,
                         companions: Vec::new(),
                         count: None,
                     });
@@ -196,6 +206,7 @@ impl Deleting {
                 trashed,
                 other: false,
                 kind: None,
+                picture: None,
                 companions: Vec::new(),
                 count: None,
             });
@@ -287,6 +298,7 @@ impl Deleting {
                             .map(|dir| written(dir, self.home.as_deref(), &self.remotes));
                     }
                     row.kind = Some(facts.kind);
+                    row.picture = facts.picture;
                     row.companions = facts.companions;
                 }
             }
@@ -424,6 +436,8 @@ fn read(
     send: impl Fn(Found),
 ) {
     let calendar = Calendar::system();
+    // An emptied trash's items are all in one folder, opened once.
+    let mut statter = skwir_core::fs::Statter::default();
     let mut facts = Vec::new();
     let mut last = Instant::now();
     // What is counted: each path, then its companions; for each root the
@@ -442,6 +456,10 @@ fn read(
             Ok(meta) => Kind::File(meta.len()),
             Err(_) => Kind::Gone,
         };
+        let picture = (kind != Kind::Gone)
+            .then(|| statter.stat(path))
+            .flatten()
+            .map(|e| Pictured::of(&e, path));
         let found = if kind == Kind::Gone {
             Vec::new()
         } else {
@@ -462,6 +480,7 @@ fn read(
             *row,
             Facts {
                 kind,
+                picture,
                 from: skwir_platform::trash::item(path, &calendar).map(|t| t.original),
                 companions: found,
             },
@@ -591,10 +610,6 @@ impl Shell {
         .detach();
     }
 
-    fn deleting(&self) -> Option<&Deleting> {
-        self.confirm.as_ref()?.listed.as_ref()
-    }
-
     fn deleting_mut(&mut self) -> Option<&mut Deleting> {
         self.confirm.as_mut()?.listed.as_mut()
     }
@@ -657,21 +672,22 @@ pub fn render(
         .into_any_element()
 }
 
-/// The rows in `range`, the only ones drawn.
-fn rows(shell: &Shell, range: Range<usize>, cx: &mut Context<Shell>) -> Vec<AnyElement> {
-    let Some(listed) = shell.deleting() else {
+/// The rows in `range`, the only ones drawn, each with its picture (its
+/// icon asked for once they are built).
+fn rows(shell: &mut Shell, range: Range<usize>, cx: &mut Context<Shell>) -> Vec<AnyElement> {
+    let Some(listed) = shell.confirm.as_ref().and_then(|c| c.listed.as_ref()) else {
         return Vec::new();
     };
+    let icons = &mut shell.icons;
     let theme = cx.global::<Theme>();
-    range
+    let built = range
         .filter_map(|at| {
             let row = listed.rows.get(at)?;
             let weight = listed.weight(row);
-            let glyph = match row.kind {
-                Some(Kind::Folder) => Some("folder"),
-                Some(Kind::Link) => Some("link"),
-                _ => None,
-            };
+            let picture = row
+                .picture
+                .as_ref()
+                .map(|picture| picture.picture(icons, PICTURE, theme));
             let folder = row.folder.clone().filter(|_| listed.folders);
             let said = shell.a11y.then(|| {
                 let with = (!row.companions.is_empty()).then(|| {
@@ -709,9 +725,9 @@ fn rows(shell: &Shell, range: Range<usize>, cx: &mut Context<Shell>) -> Vec<AnyE
                     })
                     .child(
                         div()
-                            .w(px(14.))
+                            .size(px(f32::from(PICTURE)))
                             .flex_none()
-                            .children(glyph.map(|g| controls::glyph(g, theme.text_muted, 14.))),
+                            .children(picture),
                     )
                     .child(name(at, &row.name, listed.deleted_with(row), theme))
                     .children(folder.map(|folder| {
@@ -741,7 +757,10 @@ fn rows(shell: &Shell, range: Range<usize>, cx: &mut Context<Shell>) -> Vec<AnyE
                     .into_any_element(),
             )
         })
-        .collect()
+        .collect();
+    let app = Arc::clone(&shell.app);
+    shell.icons.request(&app);
+    built
 }
 
 /// A row's name and, when companion files go with it, a mark after it
@@ -826,6 +845,7 @@ mod tests {
     }
 
     use super::{Deleting, Kind, read, written};
+    use crate::icons::Pictured;
 
     /// `x.xmp` beside `x`.
     struct Sidecar;
@@ -952,7 +972,7 @@ mod tests {
         let gone = tmp.path().join("gone");
         // Inside the folder listed first: counted there.
         let inner = tmp.path().join("old  project/src");
-        let all = plan(vec![folder, photo, empty, gone, inner]);
+        let all = plan(vec![folder, photo.clone(), empty, gone, inner]);
         let (mut listed, paths) = Deleting::of(&all, Vec::new(), &[], CancelToken::new());
         // Not all in one folder: each row says its own.
         assert!(listed.folders);
@@ -978,6 +998,11 @@ mod tests {
                 Some(Kind::Folder),
             ]
         );
+        // Each pictured as the views picture it; what is not there, not.
+        let pictured: Vec<_> = listed.rows.iter().map(|r| r.picture.is_some()).collect();
+        assert_eq!(pictured, [true, true, true, false, true]);
+        let entry = skwir_core::fs::stat_path(&photo).unwrap();
+        assert_eq!(listed.rows[1].picture, Some(Pictured::of(&entry, &photo)));
         let weights: Vec<_> = listed.rows.iter().map(|r| listed.weight(r)).collect();
         assert_eq!(
             weights,
