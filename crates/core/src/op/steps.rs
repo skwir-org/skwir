@@ -9,7 +9,7 @@
 
 use std::path::PathBuf;
 
-use super::{Change, OpData, Operation, StepContext, StepStatus, footprint};
+use super::{Change, OpData, Operation, Partly, StepContext, StepStatus, footprint};
 
 /// The kind they would be said under, which no plan read from data names.
 pub const KIND: &str = "steps";
@@ -115,13 +115,24 @@ impl Operation for Steps {
             match applied {
                 Ok(inverse) => back.extend(inverse),
                 Err(error) => {
-                    // What applied before it is taken back, the last first.
-                    for undo in back.iter().rev() {
+                    // What applied is taken back, the last first: what the
+                    // step cut short did ([`Partly`]), then those before
+                    // it. What cannot be is the undo of what they did.
+                    let (partly, error) = match error.downcast::<Partly>() {
+                        Ok(Partly { inverse, error }) => (Some(inverse), error),
+                        Err(error) => (None, error),
+                    };
+                    let mut stays = Vec::new();
+                    for undo in partly.into_iter().chain(back.into_iter().rev()) {
                         if let Err(e) = undo.apply(ctx) {
                             tracing::warn!("a step could not be taken back: {e:#}");
+                            stays.push(undo);
                         }
                     }
-                    return Err(error);
+                    return Err(match Steps::of(stays) {
+                        Some(inverse) => Partly { inverse, error }.into(),
+                        None => error,
+                    });
                 }
             }
         }
@@ -222,5 +233,122 @@ mod tests {
         let blocked = Steps::of(vec![made(&a), made(&b)]).unwrap();
         assert!(blocked.apply(&ctx).is_err());
         assert!(!a.exists(), "taken back");
+    }
+
+    /// Makes its folder and the next one, failing on the second: what it
+    /// did is taken back by the undo it gives with its error ([`Partly`]).
+    #[derive(Clone, Debug)]
+    struct HalfWay(std::path::PathBuf, std::path::PathBuf);
+
+    impl Operation for HalfWay {
+        fn kind(&self) -> &'static str {
+            "half_way"
+        }
+        fn args(&self) -> serde_json::Value {
+            serde_json::Value::Null
+        }
+        fn describe(&self) -> Change {
+            Change::Create {
+                path: self.0.clone(),
+                directory: true,
+                words: None,
+            }
+        }
+        fn check(&self, _: &StepContext) -> StepStatus {
+            StepStatus::Pending { reversible: true }
+        }
+        fn apply(&self, _: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
+            std::fs::create_dir(&self.0)?;
+            let error = match std::fs::create_dir(&self.1) {
+                Ok(()) => return Ok(None),
+                Err(e) => anyhow::Error::from(e),
+            };
+            let inverse = Box::new(Rmdir {
+                path: self.0.clone(),
+            });
+            Err(Partly { inverse, error }.into())
+        }
+        fn clone_box(&self) -> Box<dyn Operation> {
+            Box::new(self.clone())
+        }
+    }
+
+    /// A step cut short gives the undo of what it did: the executor
+    /// journals it, Undo takes it back; and several steps as one, one of
+    /// which cannot be taken back, give that one's undo.
+    #[test]
+    fn what_a_step_cut_short_did_is_undone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (a, b) = (tmp.path().join("it's a"), tmp.path().join("b"));
+        std::fs::write(&b, "a file, where a folder would be").unwrap();
+        let executor = crate::op::Executor::new(crate::scheduler::Scheduler::new(1));
+        let cancel = crate::CancelToken::new();
+        let plan =
+            crate::op::Plan::with_steps("half way", vec![Box::new(HalfWay(a.clone(), b.clone()))]);
+        let ran = executor.execute_blocking(&plan, &cancel);
+        assert!(ran.error.is_some());
+        assert!(a.is_dir(), "done partway");
+        let undone = executor.undo_blocking(&cancel).expect("journaled");
+        assert!(undone.error.is_none(), "{:?}", undone.error);
+        assert!(!a.exists(), "taken back by Undo");
+
+        // Several as one, the second cut short: all of it taken back, what
+        // the second did too.
+        let c = tmp.path().join("c");
+        let ctx = StepContext::detached();
+        let made_c: Box<dyn Operation> = Box::new(Mkdir { path: c.clone() });
+        let both = Steps::of(vec![
+            made_c.clone(),
+            Box::new(HalfWay(a.clone(), b.clone())),
+        ])
+        .unwrap();
+        let error = both.apply(&ctx).unwrap_err();
+        assert!(!error.is::<Partly>(), "nothing stays: {error:#}");
+        assert!(!a.exists() && !c.exists(), "taken back");
+
+        // One whose undo cannot be done (its folder holds a file): that
+        // undo stays, given with the error.
+        let full = tmp.path().join("full");
+        let sticks = Steps::of(vec![
+            Box::new(Mkdir { path: full.clone() }) as Box<dyn Operation>,
+            Box::new(Filled(full.join("it's mine.txt"))),
+            Box::new(Mkdir { path: b.clone() }),
+        ])
+        .unwrap();
+        let error = sticks.apply(&ctx).unwrap_err();
+        let partly = error.downcast::<Partly>().expect("cut short");
+        assert!(full.is_dir(), "it stays, its file in it");
+        assert_eq!(each(partly.inverse).len(), 1);
+    }
+
+    /// Writes a file, and gives no undo: the folder it is in cannot be
+    /// removed with it there.
+    #[derive(Clone, Debug)]
+    struct Filled(std::path::PathBuf);
+
+    impl Operation for Filled {
+        fn kind(&self) -> &'static str {
+            "filled"
+        }
+        fn args(&self) -> serde_json::Value {
+            serde_json::Value::Null
+        }
+        fn describe(&self) -> Change {
+            Change::Create {
+                path: self.0.clone(),
+                directory: false,
+                words: None,
+            }
+        }
+        fn check(&self, _: &StepContext) -> StepStatus {
+            StepStatus::Pending { reversible: true }
+        }
+        fn apply(&self, _: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
+            std::fs::write(&self.0, "mine")?;
+            Ok(None)
+        }
+        fn clone_box(&self) -> Box<dyn Operation> {
+            Box::new(self.clone())
+        }
     }
 }

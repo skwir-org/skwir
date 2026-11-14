@@ -427,15 +427,21 @@ impl op::Effect for Extract {
         if let Err(e) = staging.remove() {
             tracing::warn!("a staging folder stays: {e}");
         }
-        if result.is_err() {
+        if let Err(error) = result {
+            // Failed partway, what it placed and could not take back is
+            // its undo's to take back.
+            if !placed.is_empty()
+                && let Ok(Some(inverse)) = self.merged_undo(&target, &placed)
+            {
+                return Err(op::Partly { inverse, error }.into());
+            }
             match unanswered.get() {
                 _ if ctx.cancel_token().is_cancelled() => return Err(Cancelled.into()),
                 Some(Unanswered::Declined) => return Err(Cancelled.into()),
                 Some(Unanswered::NoOne) => return Err(unasked(&archive_name)),
-                None => {}
+                None => return Err(error),
             }
         }
-        result?;
         ctx.advance(size.saturating_sub(done));
         if self.merge.is_some() {
             return self.merged_undo(&target, &placed);
@@ -652,7 +658,8 @@ impl<'a> Within<'a> {
 /// a link on its way (`Within`), come since the check, is never placed
 /// over or through: the step fails, and those placed before are taken
 /// back where they were made (`Staging::take_back`, a read-only folder
-/// opened for it), which goes with the staging folder.
+/// opened for it), which goes with the staging folder; any that cannot be
+/// stays in `placed`, for the step's undo.
 fn place_merged(
     staging: &op::Staging,
     root: &Path,
@@ -688,13 +695,18 @@ fn place_merged(
                 })
         };
         if let Some(error) = failed {
-            for back in placed.iter().rev() {
+            // What cannot be taken back stays placed, and in `placed`:
+            // the step's undo takes it back (`op::Partly`).
+            let mut stays = Vec::new();
+            for back in placed.drain(..).rev() {
                 let (at, made) = (target.join(&back.to), root.join(&back.from));
                 if let Err(e) = staging.take_back(&at, &made) {
                     tracing::warn!("“{}” stays where it was placed: {e}", back.to.display());
+                    stays.push(back);
                 }
             }
-            placed.clear();
+            stays.reverse();
+            *placed = stays;
             return Err(error);
         }
         placed.push(item.clone());

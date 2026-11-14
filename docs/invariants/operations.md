@@ -111,6 +111,15 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   step whose check found it so, and the plan goes on. Never an error for
   it: an error stops the plan, and a batch would stop at its first such
   file. Its why is said as the step's words are.
+- A step that fails partway undoes what it did itself, or, where it
+  cannot (a folder an archive made read-only, its items removed one by
+  one before one could not be), returns `op::Partly`: its error and the
+  inverse of what it did and could not take back. The executor journals
+  that inverse as an applied step's and fails the plan with the error,
+  so Undo takes back what the step did as it does what the steps before
+  it did; never an error alone that leaves work done with no Undo.
+  Several steps as one (`op::Steps`) take back what applied, a cut-short
+  step's own work first, and give a `Partly` of what stays.
 - **What a step says beside what it did** (what it left out, how to
   fold what it made, why it made nothing) it says through its context
   (`StepContext::say`): the plan's end carries it, each note once

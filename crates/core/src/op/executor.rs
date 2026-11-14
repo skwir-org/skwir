@@ -4555,10 +4555,22 @@ impl Executor {
                         skipped += 1;
                         ctx.say(e.to_string());
                     }
-                    Err(e) => {
-                        tracing::warn!(plan = %plan.title, "a step failed: {e:#}");
-                        err = Some(super::said(&e));
-                    }
+                    Err(e) => match e.downcast::<super::Partly>() {
+                        // It failed partway: what it did is journaled as an
+                        // applied step's, its undo the one it gave.
+                        Ok(super::Partly { inverse, error }) => {
+                            tracing::warn!(plan = %plan.title, "a step failed partway: {error:#}");
+                            applied += 1;
+                            holds = true;
+                            step_came = Came::Applied;
+                            journal_inverse(&mut inverses, inverse);
+                            err = Some(super::said(&error));
+                        }
+                        Err(e) => {
+                            tracing::warn!(plan = %plan.title, "a step failed: {e:#}");
+                            err = Some(super::said(&e));
+                        }
+                    },
                 },
             }
             if step_came == Came::Applied {

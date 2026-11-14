@@ -33,6 +33,19 @@ pub struct Cancelled;
 #[error("{0}")]
 pub struct Unneeded(pub String);
 
+/// The error a step returns when it failed partway, having done what
+/// `inverse` takes back and nothing more (an archive's items removed
+/// before one could not be, an item a failed merge could not take back):
+/// the executor journals `inverse` as a step applied, then fails the plan
+/// with `error`, so that Undo takes back what the step did, as it does
+/// what the steps before it did.
+#[derive(Debug, thiserror::Error)]
+#[error("{error:#}")]
+pub struct Partly {
+    pub inverse: Box<dyn super::Operation>,
+    pub error: anyhow::Error,
+}
+
 /// What a step's work done on another thread reports through and heeds (a
 /// helper program's, followed from a worker): the bytes it got through,
 /// as [`StepContext::advance`] counts them, and the plan's pause.

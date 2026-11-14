@@ -74,6 +74,16 @@ impl Unmake {
         }
     }
 
+    /// Its Redo: the step that made what it takes back, again. Merged, it
+    /// places again only what is not there the same (`check_merged`): Redo
+    /// of an undo cut short puts back what that undo took.
+    fn again(&self) -> Box<dyn Operation> {
+        match &self.again {
+            Again::Extract(extract) => Box::new(extract.clone()),
+            Again::Compress(compress) => Box::new(compress.clone()),
+        }
+    }
+
     /// Each item it takes back, as made.
     fn each(&self) -> impl Iterator<Item = (&EntryRef, Option<&str>)> {
         std::iter::once((&self.entry, self.made_as.as_deref())).chain(
@@ -145,15 +155,26 @@ impl op::Effect for Unmake {
         if let Some(why) = self.stays(&found, ctx) {
             anyhow::bail!("{why}");
         }
+        let mut removed = false;
         for ((entry, _), path) in self.each().zip(&found) {
             if let Some(path) = path {
-                op::remove_made(path, &entry.path, &[], ctx)?;
+                if let Err(error) = op::remove_made(path, &entry.path, &[], ctx) {
+                    // Some removed already: Redo puts them back, the step
+                    // that made them told what is still there the same.
+                    return Err(if removed {
+                        op::Partly {
+                            inverse: self.again(),
+                            error,
+                        }
+                        .into()
+                    } else {
+                        error
+                    });
+                }
+                removed = true;
             }
         }
-        Ok(Some(match &self.again {
-            Again::Extract(extract) => Box::new(extract.clone()),
-            Again::Compress(compress) => Box::new(compress.clone()),
-        }))
+        Ok(Some(self.again()))
     }
 }
 

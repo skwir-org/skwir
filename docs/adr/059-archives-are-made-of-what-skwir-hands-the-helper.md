@@ -229,12 +229,15 @@ user's choice: merge as a copy does, asked.
   the way, is never placed over or through: like one that cannot be
   placed, it fails the step, and those placed before are taken back into
   the staging folder, opened for it as for their placing
-  (`Staging::take_back`).
+  (`Staging::take_back`); any that cannot be is the step's undo's to take
+  back (`op::Partly`).
 - **Undone item by item.** Its undo is each item it placed, to the trash
   (`op::Steps`, several steps as one, which the executor journals as each,
   `each_step`): never the folder, never what the user kept. Where the
   volume keeps no trash, one `archive_unmake` takes them back together
-  while each is as made, and Redo extracts them again together.
+  while each is as made, and Redo extracts them again together; cut short
+  after removing some, its Redo is still given (`op::Partly`) and places
+  again what it removed, what is still there the same left.
 - Checked again, each item placed and still the same is done; all of
   them, the step is done ("already extracted into photos").
 - An agent's `on_conflict` follows: `folders` says what becomes of the
