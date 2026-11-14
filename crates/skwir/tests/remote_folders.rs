@@ -1336,10 +1336,11 @@ fn an_upload_cut_short_by_its_server_goes_on_from_where_it_stopped() {
             .find(|e| e.file_name() != "lock")
             .map(|e| e.path())
     };
+    // Past what is read at once (32 MiB), which it does not go on from.
     let deadline = Instant::now() + Duration::from_secs(60);
     while staged()
         .and_then(|p| std::fs::metadata(p).ok())
-        .is_none_or(|m| m.len() < 24 << 20)
+        .is_none_or(|m| m.len() < 64 << 20)
     {
         assert!(Instant::now() < deadline, "the download never began");
         std::thread::sleep(Duration::from_millis(2));
@@ -1350,6 +1351,7 @@ fn an_upload_cut_short_by_its_server_goes_on_from_where_it_stopped() {
     });
     assert!(app.executor.can_retry(plan.id), "it failed, to be retried");
     let partial = staged().expect("what came is kept");
+    let kept_down = std::fs::metadata(&partial).unwrap().len();
     {
         use std::os::unix::fs::FileExt;
         std::fs::OpenOptions::new()
@@ -1371,7 +1373,18 @@ fn an_upload_cut_short_by_its_server_goes_on_from_where_it_stopped() {
     );
     assert_eq!(came.len(), there.len());
     assert_eq!(came[0], b'Y', "gone on from what had come");
-    assert!(came[1..] == there[1..], "the rest as it is there");
+    let differs = |at: usize| came[at] != there[at];
+    let first = (1..came.len()).find(|&at| differs(at));
+    let last = (1..came.len()).rev().find(|&at| differs(at));
+    assert!(
+        first.is_none(),
+        "the rest as it is there: bytes {first:?} to {last:?} of {} differ, \
+         {} of them zero in the copy; {kept_down} bytes were kept",
+        came.len(),
+        first.zip(last).map_or(0, |(f, l)| {
+            came[f..=l].iter().fold(0, |n, b| n + usize::from(*b == 0))
+        }),
+    );
     assert_eq!(std::fs::read_dir(&down).unwrap().count(), 1);
 
     app.dispatch(&Invocation::with_args(

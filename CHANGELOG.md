@@ -186,6 +186,11 @@ happens](docs/HELP-WANTED.md). Skwir itself is for Linux, as in 0.4.0.
   have room for every line from the first frame, where 0.4.0 widened them a
   moment later for a file of 100,000 lines or more. Its scrollbar is about
   the right size from the first frame too.
+- **A large download cut short by its server goes on from what is sure**:
+  read from an SFTP, GVfs or rclone mount several parts at once, then
+  retried once the server answered, it could keep a few kilobytes of zeroes
+  the mount gave as its server went. It now goes on from before the last
+  32 MiB it was reading, checked against the server.
 
 ## 0.4.0 (2026-11-10)
 

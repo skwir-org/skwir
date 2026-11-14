@@ -2173,8 +2173,17 @@ fn copy_file(
             _ => {}
         }
     }
+    // Read in ranges at once, its last ranges may hold a mount's zeroes.
+    #[cfg(unix)]
+    let in_flight = if super::ranges::wanted(&m) {
+        super::ranges::IN_FLIGHT
+    } else {
+        0
+    };
+    #[cfg(not(unix))]
+    let in_flight = 0;
     let from = match &resumed {
-        Some(df) => goes_on_from(&sf, df, m.len())?,
+        Some(df) => goes_on_from(&sf, df, m.len(), in_flight)?,
         None => 0,
     };
     let df = match resumed {
@@ -2265,16 +2274,23 @@ pub(super) fn finish(df: std::fs::File, src: &Path) -> anyhow::Result<()> {
 /// its last part (of [`CHECKED_TAIL`]) that reads as the source's there,
 /// trying [`TAIL_TRIES`] back from its end (a mount cut short may leave
 /// the last bytes it was asked for zeroed), none otherwise (not this
-/// source's start, or a server that wrote it out of order). A copy cut
-/// short is read back where the system says what it wrote (Unix);
-/// elsewhere it starts again.
+/// source's start, or a server that wrote it out of order). Its last
+/// `in_flight` bytes are not gone on from: what was read at once as it was
+/// cut (`ranges::IN_FLIGHT`), whose zeroes may lie under whole ranges. A
+/// copy cut short is read back where the system says what it wrote
+/// (Unix); elsewhere it starts again.
 pub(super) fn goes_on_from(
     sf: &std::fs::File,
     df: &std::fs::File,
     len: u64,
+    in_flight: u64,
 ) -> std::io::Result<u64> {
     let have = df.metadata()?.len();
     if have == 0 || have > len {
+        return Ok(0);
+    }
+    let have = have.saturating_sub(in_flight);
+    if have == 0 {
         return Ok(0);
     }
     #[cfg(unix)]
@@ -4907,6 +4923,45 @@ pub fn register_builtin(reg: &OpRegistry) {
 
 #[cfg(test)]
 mod tests {
+    /// A copy cut short goes on from before what was read at once as it
+    /// was cut: a mount's zeroes there, under a whole range after them
+    /// whose end reads as the source's, are never kept (sshfs, run under
+    /// load: 32 KiB zeroed at the end of the seventh range of eight).
+    #[cfg(unix)]
+    #[test]
+    fn a_copy_cut_short_goes_on_from_before_what_was_read_at_once() {
+        use std::os::unix::fs::FileExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let source: Vec<u8> = (0..48u32 << 20)
+            .map(|i| u8::try_from(i % 251).unwrap())
+            .collect();
+        let (src, dst) = (tmp.path().join("it's big.bin"), tmp.path().join("partial"));
+        std::fs::write(&src, &source).unwrap();
+        // 40 MiB came, 32 KiB of them zeroes just before 36 MiB.
+        let mut came = source[..40 << 20].to_vec();
+        came[(36 << 20) - (32 << 10)..36 << 20].fill(0);
+        std::fs::write(&dst, &came).unwrap();
+        let sf = std::fs::File::open(&src).unwrap();
+        let df = std::fs::File::open(&dst).unwrap();
+        let len = source.len() as u64;
+        // Its end reads as the source's: gone on from its end, the zeroes
+        // kept, were nothing read at once.
+        assert_eq!(goes_on_from(&sf, &df, len, 0).unwrap(), 40 << 20);
+        // Read at once, its last 32 MiB are set aside: gone on from 8 MiB.
+        let from = goes_on_from(&sf, &df, len, super::super::ranges::IN_FLIGHT).unwrap();
+        assert_eq!(from, 8 << 20);
+        let mut kept = vec![0; usize::try_from(from).unwrap()];
+        df.read_exact_at(&mut kept, 0).unwrap();
+        assert!(
+            kept == source[..kept.len()],
+            "what it goes on from is the source's"
+        );
+        // Kept no further than what was read at once: started again.
+        std::fs::write(&dst, &came[..32 << 20]).unwrap();
+        let df = std::fs::File::open(&dst).unwrap();
+        assert_eq!(goes_on_from(&sf, &df, len, 32 << 20).unwrap(), 0);
+    }
+
     /// A copy asks for about a quarter second's worth at once: more on a
     /// fast disk, up to the kernel's fast path; less from a slow server,
     /// never under a few round trips' worth (ADR-113).

@@ -1477,7 +1477,8 @@ fn start_of(src: &Path, dst: &Path, len: u64) -> std::io::Result<u64> {
         .read(true)
         .write(true)
         .open(dst)?;
-    let held = super::builtin::goes_on_from(&sf, &df, len)?;
+    // Written by a tool in order, read by none at once here.
+    let held = super::builtin::goes_on_from(&sf, &df, len, 0)?;
     if held > 0 {
         df.set_len(held)?;
     }

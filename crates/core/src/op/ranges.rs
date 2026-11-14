@@ -32,6 +32,13 @@ const RANGE: u64 = 4 << 20;
 /// How many ranges are read at once, and held at most: about 32 MiB, for
 /// the copy's while.
 const AT_ONCE: u64 = 8;
+/// What of a copy cut short may have been read as its server stopped: the
+/// ranges read at once, which a mount may have answered with pages it
+/// filled with zeroes as the server went, under ranges read whole before
+/// (sshfs, 2026-11-14: 32 KiB of zeroes at the end of the seventh range of
+/// eight kept, the eighth whole). A copy goes on from before them
+/// (`builtin::goes_on_from`).
+pub(super) const IN_FLIGHT: u64 = AT_ONCE * RANGE;
 /// How long the writer waits for the range it writes next before it looks
 /// whether the copy was cancelled.
 const LOOK: std::time::Duration = std::time::Duration::from_millis(100);
