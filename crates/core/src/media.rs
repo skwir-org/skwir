@@ -256,6 +256,11 @@ pub enum Reply {
         generation: u64,
         message: String,
     },
+    /// The queued file was handed over, its stream about to follow the
+    /// one playing: open from now on, beside it (ADR-136).
+    Handing {
+        path: std::path::PathBuf,
+    },
     /// The queued file has taken over; the state that follows is its.
     Advanced {
         path: std::path::PathBuf,

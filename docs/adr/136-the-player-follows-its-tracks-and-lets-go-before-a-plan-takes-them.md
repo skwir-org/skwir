@@ -34,9 +34,14 @@ and the other holders of a file shown let go too (8).
 1. **What this process keeps open says so** (`fs::kept_open`): a
    holder registers the file with how to let go of it, and drops its
    guard once the file is closed. The media session's manager keeps the
-   file it plays and the one queued after it, and drops them once its
-   worker is reaped. Like the folders listings hold (`fs::wait_let_go`),
-   it is the process's.
+   file it plays, and the one queued after it once its worker has opened
+   it (`Reply::Handing`, as the first nears its end), and drops them once
+   its worker is reaped. The file queued and not opened yet is let go of
+   by being un-queued (`Request::Next` with none): the track plays on,
+   and the pin tells the queue again once the plan has ended; one handed
+   over as a plan takes it ends the session for that plan
+   (`kept_open::taken_by`). Like the folders listings hold
+   (`fs::wait_let_go`), it is the process's.
 2. **A plan lets go of them before its first step**
    (`Executor::apply_plan`, `let_go_of_kept`): those at or below what
    its steps remove (trash, delete, remove), and on Windows also what

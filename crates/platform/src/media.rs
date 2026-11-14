@@ -305,13 +305,25 @@ pub struct Tuning {
 }
 
 /// The files a session's worker keeps open (`fs::kept_open`): the one it
-/// plays, and the one queued after it, which it opens as the first nears
-/// its end. A plan that takes either ends the session, told which plan.
+/// plays, and the one it was handed to go on with once it opened it
+/// (`Reply::Handing`, as the first nears its end). A plan that takes
+/// either ends the session, told which plan. The file queued and not
+/// handed over is not open: a plan that takes it has it un-queued
+/// (`Request::Next` with none), the track playing on, and the pin tells
+/// the queue again once the plan has ended.
 struct Kept {
     playing: KeptOpen,
+    /// Queued, not opened yet: let go of by being un-queued.
     queued: Option<KeptOpen>,
+    /// Handed over, open beside the one playing until it takes over.
+    handing: Option<KeptOpen>,
     let_go: CancelToken,
     taken: Arc<Mutex<Option<PlanId>>>,
+    /// What a plan let go of the queued file for, to the manager.
+    unqueue: (
+        crossbeam_channel::Sender<PlanId>,
+        crossbeam_channel::Receiver<PlanId>,
+    ),
 }
 
 impl Kept {
@@ -326,20 +338,41 @@ impl Kept {
         Kept {
             playing,
             queued: None,
+            handing: None,
             let_go,
             taken,
+            unqueue: crossbeam_channel::unbounded(),
         }
     }
 
-    /// The file to go on with, or none.
+    /// The file to go on with, or none: a plan that takes it has it
+    /// un-queued, not the session ended.
     fn queue(&mut self, path: Option<&PathBuf>) {
-        self.queued = path.and_then(|path| self.playing.also(path.clone()));
+        self.queued = path.map(|path| {
+            let told = self.unqueue.0.clone();
+            keep_open(path.clone(), move |plan| {
+                let _ = told.send(plan);
+            })
+        });
     }
 
-    /// The worker went on to the file queued.
+    /// The worker opened the file it was handed to go on with: open from
+    /// now on, as the one playing is. A plan taking it already (it was
+    /// handed over as the plan began) has it: the session ends for it.
+    fn handing(&mut self, path: &std::path::Path) -> Option<PlanId> {
+        self.queued = None;
+        if let Some(plan) = skwir_core::fs::kept_open::taken_by(path) {
+            self.taken.lock().get_or_insert(plan);
+            return Some(plan);
+        }
+        self.handing = self.playing.also(path.to_path_buf());
+        None
+    }
+
+    /// The worker went on to the file handed over.
     fn advanced(&mut self, path: &std::path::Path) {
         self.playing.now_at(path.to_path_buf());
-        self.queued = None;
+        self.handing = None;
     }
 
     /// The plan that took the file, if one did.
@@ -404,6 +437,7 @@ fn manage(
     let mut worker = LineChannel::<Reply>::spawn(&mut command, MAX_MESSAGE, "skwir-media-worker")?;
     let cancelled = lifetime.subscribe();
     let let_go = kept.let_go.subscribe();
+    let unqueue = kept.unqueue.1.clone();
     // Fires once; after the greeting it is simply never selected again.
     let deadline = crossbeam_channel::at(Instant::now() + STARTUP_TIMEOUT);
     let mut ready = false;
@@ -431,6 +465,17 @@ fn manage(
             },
             recv(cancelled.receiver()) -> _ => break,
             recv(let_go.receiver()) -> _ => break,
+            // A plan takes the file queued: the worker forgets it before
+            // the plan goes on, the track playing on (ADR-136).
+            // Told first, then let go of: one handed over meanwhile is
+            // said so (`Reply::Handing`), and ends the session for it.
+            recv(unqueue) -> _ => {
+                if kept.queued.is_some() {
+                    worker.send(&Request::Next { path: None })?;
+                    kept.queued = None;
+                }
+                continue;
+            }
             recv(deadline) -> _ => {
                 anyhow::ensure!(ready, "video worker timed out");
                 continue;
@@ -454,6 +499,11 @@ fn manage(
                 message,
             } => shared.notice(generation, message),
             Reply::Error(error) => anyhow::bail!("{error}"),
+            Reply::Handing { path } => {
+                if kept.handing(&path).is_some() {
+                    break;
+                }
+            }
             Reply::Advanced { path } => {
                 kept.advanced(&path);
                 shared.advanced(path);
@@ -584,14 +634,23 @@ mod tests {
             }
         }
     }
-    /// A plan that takes the file played, or the one queued after it, ends
-    /// the session (ADR-136): the worker is gone before the plan goes on,
-    /// and the session says which plan took it, not that it failed.
+    /// A plan that takes the file played, or the one queued after it once
+    /// the worker has opened it, ends the session (ADR-136): the worker is
+    /// gone before the plan goes on, and the session says which plan took
+    /// it, not that it failed.
     #[test]
     fn a_plan_taking_the_file_played_ends_the_session_first() {
-        for queued in [false, true] {
-            let (root, source, worker) =
-                fixture("printf '%s\\n' '\"Ready\"'\nwhile IFS= read -r line; do :; done\n");
+        for handed in [false, true] {
+            let (root, source, worker) = fixture(
+                "printf '%s\\n' '\"Ready\"'\nIFS= read -r line\ncat \"$1.handing\"\nwhile IFS= read -r line; do :; done\n",
+            );
+            let next = root.path().join("the next one's.ogg");
+            let handing = if handed {
+                serde_json::to_string(&Reply::Handing { path: next.clone() }).unwrap() + "\n"
+            } else {
+                String::new()
+            };
+            std::fs::write(format!("{}.handing", source.display()), handing).unwrap();
             let session = WorkerSession::open_with_worker(
                 worker,
                 source.clone(),
@@ -601,24 +660,18 @@ mod tests {
             .unwrap()
             .unwrap();
             let pid = std::fs::read_to_string(format!("{}.pid", source.display())).unwrap();
-            let next = root.path().join("the next one's.ogg");
-            let taken = if queued {
-                session.play_next(Some(next.clone())).unwrap();
-                next
-            } else {
-                source.clone()
-            };
+            session.play_next(Some(next.clone())).unwrap();
+            let taken = if handed { next } else { source.clone() };
             let plan = PlanId(41);
-            let mut n = 0;
             until(|| {
-                // The queued file is kept once the manager has passed it on.
-                n = skwir_core::fs::kept_open::let_go_of(
+                // The file handed over is kept once the manager has heard so.
+                skwir_core::fs::kept_open::let_go_of(
                     plan,
                     |path| path == taken,
                     Duration::from_secs(3),
                 )
-                .count();
-                n == 1
+                .count()
+                    == 1
             });
             assert!(
                 !std::path::Path::new(&format!("/proc/{pid}")).exists(),
@@ -632,6 +685,47 @@ mod tests {
             assert_eq!((update.taken, update.error), (Some(plan), None));
             assert!(session.control(Control::Play(true)).is_err());
         }
+    }
+
+    /// The file queued and not handed over yet is not open: a plan that
+    /// takes it has the worker forget it, and the track plays on.
+    #[test]
+    fn a_plan_taking_the_file_queued_has_it_unqueued() {
+        let (root, source, worker) = fixture(
+            "printf '%s\\n' '\"Ready\"'\nwhile IFS= read -r line; do printf '%s\\n' \"$line\" >> \"$1.lines\"; done\n",
+        );
+        let session = WorkerSession::open_with_worker(
+            worker,
+            source.clone(),
+            &CancelToken::new(),
+            Arc::new(|| {}),
+        )
+        .unwrap()
+        .unwrap();
+        let pid = std::fs::read_to_string(format!("{}.pid", source.display())).unwrap();
+        let next = root.path().join("the next one's.ogg");
+        session.play_next(Some(next.clone())).unwrap();
+        until(|| {
+            skwir_core::fs::kept_open::let_go_of(
+                PlanId(42),
+                |path| path == next,
+                Duration::from_secs(3),
+            )
+            .count()
+                == 1
+        });
+        let lines = format!("{}.lines", source.display());
+        let unqueued = serde_json::to_string(&Request::Next { path: None }).unwrap();
+        until(|| {
+            std::fs::read_to_string(&lines)
+                .is_ok_and(|told| told.lines().any(|line| line == unqueued))
+        });
+        assert!(
+            std::path::Path::new(&format!("/proc/{pid}")).exists(),
+            "the track plays on"
+        );
+        assert_eq!(session.take_update().taken, None);
+        session.control(Control::Play(true)).unwrap();
     }
     #[test]
     fn missing_runtime_falls_back_but_document_errors_do_not() {

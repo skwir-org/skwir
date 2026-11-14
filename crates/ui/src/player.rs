@@ -883,6 +883,11 @@ impl Shell {
     ) -> Option<Fate> {
         let mode = self.prefs.player.continue_with;
         let pinned = self.player.pinned.as_mut()?;
+        // A plan that took the track queued had it un-queued (the file
+        // not opened yet): told again, by where it is now, once it ended.
+        if plan.is_some() {
+            pinned.queued = None;
+        }
         let fate = if went.is_empty() {
             Fate::Same
         } else {

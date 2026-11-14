@@ -149,6 +149,7 @@ impl Player {
         let handed: Arc<Mutex<Option<std::path::PathBuf>>> = Arc::default();
         {
             let (next, handed) = (next.clone(), handed.clone());
+            let told = Arc::clone(events);
             pipeline.connect("about-to-finish", false, move |values| {
                 let path = next.lock().unwrap_or_else(PoisonError::into_inner).take()?;
                 // A file gone since it was queued (another program removed
@@ -163,7 +164,10 @@ impl Player {
                     gst::glib::filename_to_uri(&path, None),
                 ) {
                     pipeline.set_property("uri", uri.as_str());
-                    *handed.lock().unwrap_or_else(PoisonError::into_inner) = Some(path);
+                    *handed.lock().unwrap_or_else(PoisonError::into_inner) = Some(path.clone());
+                    // Open from now on: the manager keeps it so, for a plan
+                    // that would take it (ADR-136).
+                    let _ = told.tx.send(Event::Handing(path));
                 }
                 None
             });
@@ -534,6 +538,8 @@ enum Event {
     /// The streams the bus's sync handler asked of the preroll (`answer`),
     /// or `None`: the pipeline refused what it asked.
     Selecting(Option<Vec<gst::glib::GString>>),
+    /// The file to go on with was handed to playbin (`about-to-finish`).
+    Handing(std::path::PathBuf),
     Wake,
     /// The stream's volume or mute moved where the sound server holds them
     /// (given back for the application as the stream starts, moved in its
@@ -687,6 +693,7 @@ fn run() -> anyhow::Result<()> {
             Ok(Event::Request(Request::Next { path })) => {
                 *player.next.lock().unwrap_or_else(PoisonError::into_inner) = path;
             }
+            Ok(Event::Handing(path)) => reply(&Reply::Handing { path })?,
             Ok(Event::Request(Request::Control {
                 generation,
                 command,

@@ -344,8 +344,9 @@ binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
   as its preview, stopped. Undo brings the file back, never the player.
 - **A plan takes the file played** before it removes it (on Windows,
   moves or replaces it too): the session's manager keeps the file played
-  and the one queued (`fs::kept_open`), and when a plan lets go of them
-  kills its worker, drops them once reaped, and says so
+  and the one queued once its worker opened it (`fs::kept_open`,
+  `Reply::Handing`), and when a plan lets go of them kills its worker,
+  drops them once reaped, and says so
   (`Update::taken`), never as an error. The pin then waits where it stood
   (`Taken`) for that plan's end (`Shell::pin_taken`): gone, it ends
   as above; left or moved, it is opened again there, at its position,
@@ -354,7 +355,10 @@ binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
   what it did to the pin (`PlayerState::finished`, `after_taken`), so a
   word that comes after an end that took the track away takes nothing
   up (the pin went on past it already). A track that then fails to open
-  leaves no pin of a dead session (`Pinned::ended`).
+  leaves no pin of a dead session (`Pinned::ended`). The track queued and
+  not opened yet is not taken this way: a plan that takes it has the
+  worker forget it (`Request::Next` with none), the track playing on,
+  and the pin tells its queue again after every plan's end.
 - **What another program does** is followed only where a pane shows
   the pin's folder (`Shell::follow_outside`), looked at once a pane's
   names change: a rename the pane followed (`Pane::renames_since`) of the

@@ -183,6 +183,16 @@ pub fn wait_while_taken(path: &Path, cancel: &CancelToken, at_most: Duration) ->
     true
 }
 
+/// The plan still running that took `path` (it let go of it for one), if
+/// one did: what would open it meanwhile lets the plan have it.
+pub fn taken_by(path: &Path) -> Option<PlanId> {
+    TAKING
+        .lock()
+        .iter()
+        .find(|(_, taken)| taken == path)
+        .map(|(plan, _)| *plan)
+}
+
 /// How long a holder waits for a plan that took its file before it opens
 /// it again all the same, then finding it gone or moved.
 pub const TAKEN_AT_MOST: Duration = Duration::from_secs(60);
@@ -303,6 +313,8 @@ mod tests {
         assert_eq!(taking.count(), 1);
         let never = CancelToken::new();
         assert!(!wait_while_taken(&song, &never, Duration::from_millis(30)));
+        assert_eq!(taken_by(&song), Some(PlanId(11)));
+        assert_eq!(taken_by(&root.join("other")), None);
         assert!(wait_while_taken(
             &root.join("other"),
             &never,
