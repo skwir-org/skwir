@@ -1730,9 +1730,11 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   (`sync_tabs`) before each request, on the active pane as the workspace
   has it, and the user's gate (`admit`) follows them when their revision
   moved (`Shell::follow_tabs`), keeping a pane a caller chose
-  (`with_pane`) while the tab shown holds it. Before, `ui.split` asked
-  right after `tab.close` split a pane that was gone, and the new pane
-  showed nothing.
+  (`with_pane`) while the window holds it; a chosen pane gone takes its
+  command with it, never run on the active pane instead (a prompt's
+  answer for a pane a script closed). Before, `ui.split` asked right
+  after `tab.close` split a pane that was gone, and the new pane showed
+  nothing.
 - **The active window is the one used last** (ADR-122): the core keeps
   the windows in the order they were used (`Workspace::used`), so closing
   the active one goes to the one used before it. That change is the

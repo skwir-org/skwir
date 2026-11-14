@@ -382,6 +382,10 @@ pub struct Shell {
     pub(crate) hidden: HashMap<PaneId, PaneUi>,
     /// Workspace revision the panes above follow.
     pub(crate) tabs_revision: u64,
+    /// The pane a caller chose for what it runs (`with_pane`), while it
+    /// runs: what is asked of it is never carried out on another pane, if
+    /// it is gone meanwhile (`follow_tabs`).
+    pub(crate) chosen_pane: Option<PaneId>,
     pub(crate) shown_tab: Option<skwir_core::workspace::TabId>,
     /// How many tabs the workspace has, as of `tabs_revision`: read while
     /// drawing, under a workspace guard the caller may already hold.
@@ -794,6 +798,7 @@ impl Shell {
             panes: Vec::new(),
             hidden: HashMap::new(),
             tabs_revision: u64::MAX,
+            chosen_pane: None,
             shown_tab: None,
             tab_count: 1,
             tab_splits: HashMap::new(),
@@ -1327,9 +1332,11 @@ impl Shell {
     /// layout time, after `render_pane` restored the active pane).
     pub fn with_pane<R>(&mut self, pane: PaneId, f: impl FnOnce(&mut Self) -> R) -> R {
         let saved = self.pane;
+        let chose = self.chosen_pane.replace(pane);
         self.pane = pane;
         let r = f(self);
         self.pane = saved;
+        self.chosen_pane = chose;
         r
     }
 
@@ -2363,7 +2370,10 @@ impl Shell {
     /// track that ended in one behind another): they leave the active
     /// window as it is.
     fn admit(&mut self, name: &str, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        self.follow_tabs(window, cx);
+        if !self.follow_tabs(window, cx) {
+            tracing::debug!(name, "not run: the pane it was asked of is gone");
+            return false;
+        }
         if !self.admit_here(name, window, cx) {
             return false;
         }
@@ -2378,17 +2388,25 @@ impl Shell {
     /// they moved since the last sync: a command just before it (Ctrl+W,
     /// a script's `tab.close`) may have closed the pane this window last
     /// followed, or shown another tab, and a split, a view or a sort asked
-    /// of a pane gone acts on nothing. The pane a caller chose
-    /// (`with_pane`) stays chosen while the tab shown holds it.
-    fn follow_tabs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// of a pane gone acts on nothing. The pane it was on stays while the
+    /// tab shown holds it; else the command acts on the tab's active pane.
+    /// One a caller chose (`with_pane`) stays while this window holds it,
+    /// in another tab too, and gone, it takes the command with it: false,
+    /// and nothing runs. What was asked of a pane is never carried out on
+    /// another (AGENTS.md, "Pane ownership").
+    fn follow_tabs(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if self.app.workspace.read().revision() == self.tabs_revision {
-            return;
+            return true;
         }
-        let chosen = self.pane;
+        let pane = self.pane;
+        let chosen = self.chosen_pane == Some(pane);
         self.sync_tabs(window, cx);
-        if self.panes.iter().any(|ui| ui.id == chosen) {
-            self.pane = chosen;
+        if self.panes.iter().any(|ui| ui.id == pane) || (chosen && self.hidden.contains_key(&pane))
+        {
+            self.pane = pane;
+            return true;
         }
+        !chosen
     }
 
     /// Whether `name` runs now in this window. When the dialog open takes
