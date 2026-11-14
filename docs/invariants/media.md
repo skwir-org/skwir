@@ -330,7 +330,8 @@ binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
 - The pin walks a queue of paths (same-kind folder files in pane order, or a
   playlist's tracks), resolved and opened on a worker.
 - **The pin follows its tracks** (ADR-136). Each window observes the
-  plans that end (`Shell::observe_plans`): on the executor's thread, the
+  plans that end from the moment it is made (`Shell::observe_plans`, a
+  cheap look while nothing is pinned): on the executor's thread, the
   pin's track and queue (`Watched`, the queue shared as `Arc<[PathBuf]>`,
   never copied per wake) are followed through the plan's changes
   (`op::Follow`) and what moved or went is sent (`Followed`); the window
@@ -346,11 +347,14 @@ binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
   and the one queued (`fs::kept_open`), and when a plan lets go of them
   kills its worker, drops them once reaped, and says so
   (`Update::taken`), never as an error. The pin then waits where it stood
-  (`Taken`) for that plan's end (`Shell::pin_taken`, which also finds a
-  plan whose end was told first, `PlayerState::finished`): gone, it ends
+  (`Taken`) for that plan's end (`Shell::pin_taken`): gone, it ends
   as above; left or moved, it is opened again there, at its position,
-  playing or paused as it was (`Opened::resume`). A track that then fails
-  to open leaves no pin of a dead session (`Pinned::ended`).
+  playing or paused as it was (`Opened::resume`). The session's word and
+  the plan's end arrive in either order: each end followed is kept with
+  what it did to the pin (`PlayerState::finished`, `after_taken`), so a
+  word that comes after an end that took the track away takes nothing
+  up (the pin went on past it already). A track that then fails to open
+  leaves no pin of a dead session (`Pinned::ended`).
 - **What another program does** is followed only where a pane shows
   the pin's folder (`Shell::follow_outside`), looked at once a pane's
   names change: a rename the pane followed (`Pane::renames_since`) of the

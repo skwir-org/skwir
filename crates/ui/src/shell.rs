@@ -953,6 +953,8 @@ impl Shell {
             .app
             .thumbnails
             .wake_asker_with(shell.thumb_asker(), Some(shell.waker()));
+        // The plans' ends, followed for its player from the start (ADR-136).
+        shell.observe_plans();
         shell
     }
 

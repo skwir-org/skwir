@@ -206,6 +206,39 @@ struct Taken {
     playing: bool,
 }
 
+impl Taken {
+    /// Taken by `plan` where `state` stood.
+    fn of(plan: PlanId, state: &Playback) -> Self {
+        Taken {
+            plan,
+            at: state.position,
+            playing: state.playing(),
+        }
+    }
+}
+
+/// What a pin whose session `plan` took does, by what that plan's end did
+/// to it where the end was followed first (`PlayerState::finished`): the
+/// session's word and the plan's end arrive in either order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AfterTaken {
+    /// Its end not followed yet: it waits where it stood.
+    Waits,
+    /// Its end left the track, or moved it: taken up again there now.
+    TakenUp,
+    /// Its end took the track away: the pin went on past it already, and
+    /// the session that ended is the one it left.
+    WentOn,
+}
+
+fn after_taken(finished: &VecDeque<(PlanId, Option<Fate>)>, plan: PlanId) -> AfterTaken {
+    match finished.iter().find(|(finished, _)| *finished == plan) {
+        None => AfterTaken::Waits,
+        Some((_, Some(Fate::Next(_) | Fate::Gone))) => AfterTaken::WentOn,
+        Some(_) => AfterTaken::TakenUp,
+    }
+}
+
 /// What became of the track played, through a plan or another program's
 /// change (`Pinned::follow`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -558,9 +591,11 @@ pub struct PlayerState {
     follow_rx: flume::Receiver<Followed>,
     /// The observer's owner, once registered: withdrawn with the window.
     observing: Option<String>,
-    /// The plans lately finished, for a session that says a plan took its
-    /// file only after the plan's end was told (`Shell::pin_taken`).
-    finished: VecDeque<PlanId>,
+    /// The plans lately finished and what each did to the pin (`None`:
+    /// there was none), for a session that says a plan took its file only
+    /// after the plan's end was followed (`Shell::pin_taken`): the two are
+    /// told apart, in either order.
+    finished: VecDeque<(PlanId, Option<Fate>)>,
     /// What another program did, as the panes showing the pin's folder
     /// tell it (`Shell::follow_outside`): the renames each pane followed
     /// that were read, and the file the pin's name was last listed as.
@@ -795,7 +830,8 @@ impl Shell {
         };
         if pinned.path == gone {
             let went = HashMap::from([(gone, None)]);
-            return self.pin_follows(&went, None, window, cx);
+            self.pin_follows(&went, None, window, cx);
+            return;
         }
         let instead = pinned.pass(&gone, delta, mode);
         let ended = pinned.ended;
@@ -817,16 +853,18 @@ impl Shell {
         let Some(pinned) = &mut self.player.pinned else {
             return;
         };
+        // Where it stood, read before it reads as paused.
+        let taken = Taken::of(plan, &pinned.state);
         pinned.ended = true;
-        pinned.taken = Some(Taken {
-            plan,
-            at: pinned.state.position,
-            playing: pinned.state.playing(),
-        });
         pinned.state.status = skwir_core::media::PlaybackStatus::Paused;
         cx.notify();
-        if self.player.finished.contains(&plan) {
-            self.pin_follows(&HashMap::new(), Some(plan), window, cx);
+        match after_taken(&self.player.finished, plan) {
+            AfterTaken::WentOn => {}
+            AfterTaken::TakenUp => {
+                pinned.taken = Some(taken);
+                self.pin_follows(&HashMap::new(), Some(plan), window, cx);
+            }
+            AfterTaken::Waits => pinned.taken = Some(taken),
         }
     }
 
@@ -842,11 +880,9 @@ impl Shell {
         plan: Option<PlanId>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Option<Fate> {
         let mode = self.prefs.player.continue_with;
-        let Some(pinned) = &mut self.player.pinned else {
-            return;
-        };
+        let pinned = self.player.pinned.as_mut()?;
         let fate = if went.is_empty() {
             Fate::Same
         } else {
@@ -897,6 +933,7 @@ impl Shell {
         }
         let _ = window;
         cx.notify();
+        Some(fate)
     }
 
     /// Follow what the pin plays and walks through each plan that ends
@@ -904,8 +941,10 @@ impl Shell {
     /// observer of the executor's, on its thread, follows them through the
     /// plan's changes there and sends what it moved or took away. Told of
     /// every plan while a pin is, so one that took the pin's file and
-    /// changed nothing takes it up again. Registered with the first pin.
-    fn observe_plans(&mut self) {
+    /// changed nothing takes it up again. Registered as the window is made
+    /// (`Shell::new`), so no plan that ends before its first pin's first
+    /// sync goes unheard; a cheap look while nothing is pinned.
+    pub(crate) fn observe_plans(&mut self) {
         if self.player.observing.is_some() {
             return;
         }
@@ -939,12 +978,12 @@ impl Shell {
     /// sent it, followed in the order they ended.
     fn take_followed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         while let Ok(Followed { plan, went }) = self.player.follow_rx.try_recv() {
-            self.player.finished.push_back(plan);
+            let went: HashMap<PathBuf, Option<PathBuf>> = went.into_iter().collect();
+            let fate = self.pin_follows(&went, Some(plan), window, cx);
+            self.player.finished.push_back((plan, fate));
             if self.player.finished.len() > FINISHED_KEPT {
                 self.player.finished.pop_front();
             }
-            let went: HashMap<PathBuf, Option<PathBuf>> = went.into_iter().collect();
-            self.pin_follows(&went, Some(plan), window, cx);
         }
     }
 
@@ -965,11 +1004,6 @@ impl Shell {
                 path: pinned.path.clone(),
                 queue: Arc::clone(&pinned.queue),
             });
-        }
-        let pinned = watched.is_some();
-        drop(watched);
-        if pinned {
-            self.observe_plans();
         }
     }
 
@@ -1061,7 +1095,8 @@ impl Shell {
             .retain(|pane, _| seen_panes.contains(pane));
         if let Some(to) = moved_to {
             let went = HashMap::from([(path, Some(to))]);
-            return self.pin_follows(&went, None, window, cx);
+            self.pin_follows(&went, None, window, cx);
+            return;
         }
         if !missing {
             return;
@@ -2418,8 +2453,9 @@ pub(crate) fn request(
 
 #[cfg(test)]
 mod tests {
-    use super::{Continue, Fate, PinPlace, Pinned, shuffled, step};
-    use std::collections::HashMap;
+    use super::{AfterTaken, Continue, Fate, PinPlace, Pinned, after_taken, shuffled, step};
+    use skwir_core::op::PlanId;
+    use std::collections::{HashMap, VecDeque};
     use std::path::PathBuf;
 
     struct Silent;
@@ -2493,6 +2529,27 @@ mod tests {
         let fate = same.follow(&went(&[("b.ogg", Some("c.ogg"))]), Continue::Stop);
         assert_eq!((fate, same.path.clone()), (Fate::Same, track("a.ogg")));
         assert_eq!(names(&same), ["a.ogg", "c.ogg"]);
+    }
+
+    /// A plan that took the track's file ends the session and the plan,
+    /// told in either order (ADR-136): its end followed first, a track it
+    /// took away has the pin go on past it, and the session's word that
+    /// follows takes up nothing (the deleted track, or the one the pin went
+    /// on to, from where the deleted one stood); a track it left or moved is
+    /// taken up again; its end not followed yet, the pin waits for it.
+    #[test]
+    fn a_plan_s_end_and_its_taking_are_told_in_either_order() {
+        let mut deleted = pin(&["a.ogg", "b.ogg", "c.ogg"], 1, &[]);
+        let fate = deleted.follow(&went(&[("b.ogg", None)]), Continue::Next);
+        let finished = VecDeque::from([(PlanId(1), Some(fate)), (PlanId(2), Some(Fate::Same))]);
+        assert_eq!(after_taken(&finished, PlanId(1)), AfterTaken::WentOn);
+        assert_eq!(after_taken(&finished, PlanId(2)), AfterTaken::TakenUp);
+        let closed = VecDeque::from([(PlanId(3), Some(Fate::Gone)), (PlanId(4), None)]);
+        assert_eq!(after_taken(&closed, PlanId(3)), AfterTaken::WentOn);
+        assert_eq!(after_taken(&closed, PlanId(4)), AfterTaken::TakenUp);
+        let moved = VecDeque::from([(PlanId(5), Some(Fate::Moved))]);
+        assert_eq!(after_taken(&moved, PlanId(5)), AfterTaken::TakenUp);
+        assert_eq!(after_taken(&moved, PlanId(6)), AfterTaken::Waits);
     }
 
     /// The track played, taken away, ends as if it had played to its end:
