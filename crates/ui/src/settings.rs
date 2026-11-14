@@ -2527,15 +2527,13 @@ impl Narrowed {
 
     /// `narrow`, highlighting the choice of value `was` while kept.
     fn narrow_keeping(&mut self, query: &str, was: Option<&str>) {
-        let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
+        // Found as the dialog finds everything (`collate::Words`).
+        let words = skwir_core::collate::Words::new(query);
         self.kept = self
             .choices
             .iter()
             .enumerate()
-            .filter(|(_, (_, label))| {
-                let label = label.to_lowercase();
-                words.iter().all(|word| label.contains(word.as_str()))
-            })
+            .filter(|(_, (_, label))| words.found_in(&[label]))
             .map(|(at, _)| at)
             .collect();
         self.highlighted = was

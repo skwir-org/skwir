@@ -699,8 +699,10 @@ impl SettingsView {
         let filter = long.then(|| self.record_filter(key, cx));
         let query = filter
             .as_ref()
-            .map(|input| input.read(cx).text().trim().to_lowercase())
+            .map(|input| input.read(cx).text().trim().to_owned())
             .unwrap_or_default();
+        // Found as the dialog finds everything (`collate::Words`).
+        let words = skwir_core::collate::Words::new(&query);
         let text_fields: Vec<String> = spec
             .constraints
             .fields
@@ -709,10 +711,13 @@ impl SettingsView {
             .map(|f| f.key.clone())
             .collect();
         let matches = |record: &Record| {
-            query.is_empty()
-                || text_fields
+            words.is_empty() || {
+                let texts: Vec<String> = text_fields
                     .iter()
-                    .any(|field| text_of(record, field).to_lowercase().contains(&query))
+                    .map(|field| text_of(record, field))
+                    .collect();
+                words.found_in(&texts.iter().map(String::as_str).collect::<Vec<_>>())
+            }
         };
         let mut shown: Vec<(usize, Option<&Record>)> = all
             .iter()

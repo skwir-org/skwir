@@ -1835,16 +1835,17 @@ pub fn display_keys(keys: &str) -> String {
 /// `shift-delete`), one of its `bindings` (GPUI notation) holding every
 /// key named, the other words in its `words`: `ctrl t` finds Ctrl+T and
 /// Ctrl+Shift+T, `rename f2` Rename… on F2. A letter is a key there, never
-/// a word. `query` is matched ignoring case.
+/// a word. `query` is matched ignoring case, its words as the settings
+/// find everything (`collate::Words`: Latin accents folded too).
 pub fn finds(query: &str, words: &[&str], bindings: &[&str]) -> bool {
     let query = query.trim().to_lowercase();
     if query.is_empty() {
         return true;
     }
-    let said = words.join(" ").to_lowercase();
-    if query.split_whitespace().all(|word| said.contains(word)) {
+    if skwir_core::collate::Words::new(&query).found_in(words) {
         return true;
     }
+    let said = skwir_core::collate::folded(&words.join(" "));
     let mut tokens: Vec<String> = Vec::new();
     for part in query
         .split(|c: char| c.is_whitespace() || c == '+' || c == '-')

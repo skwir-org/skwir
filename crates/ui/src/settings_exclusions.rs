@@ -306,15 +306,6 @@ impl Line {
     }
 }
 
-/// Whether every word of `words` (lowercase) is in one of `texts`.
-fn holds_all(words: &[String], texts: &[&str]) -> bool {
-    words.iter().all(|word| {
-        texts
-            .iter()
-            .any(|text| text.to_lowercase().contains(word.as_str()))
-    })
-}
-
 /// Whether a category differs from skwir's: switched, or the user's.
 pub(crate) fn category_changed(catalog: &Catalog, id: &str) -> bool {
     catalog
@@ -359,11 +350,9 @@ fn place(entry: &Entry, shown_as: &str) -> Place {
 /// its sub-heading. Linear in the catalog, and a sort of what each
 /// category unfolded shows.
 pub(crate) fn rows(catalog: &Catalog, ask: &Ask<'_>) -> Vec<Row> {
-    let words: Vec<String> = ask
-        .filter
-        .split_whitespace()
-        .map(str::to_lowercase)
-        .collect();
+    // Found as the settings' search and every page's filter find, case and
+    // Latin accents folded (`collate::Words`).
+    let words = collate::Words::new(ask.filter);
     let filtering = !words.is_empty();
     let mut by_category: HashMap<&str, Vec<usize>> = HashMap::new();
     for (at, entry) in catalog.entries.iter().enumerate() {
@@ -379,7 +368,7 @@ pub(crate) fn rows(catalog: &Catalog, ask: &Ask<'_>) -> Vec<Row> {
             .get(category.id.as_str())
             .map_or(&[][..], Vec::as_slice);
         // The name typed finds the whole category.
-        let named = filtering && holds_all(&words, &[&category.name]);
+        let named = filtering && words.found_in(&[&category.name]);
         // Folded, its entries are counted, not made into rows.
         let folded = !filtering && !ask.changed_only && !ask.unfolded.contains(&category.id);
         let mut counted = 0;
@@ -422,7 +411,7 @@ pub(crate) fn rows(catalog: &Catalog, ask: &Ask<'_>) -> Vec<Row> {
                 {
                     texts.push(sibling);
                 }
-                if !holds_all(&words, &texts) {
+                if !words.found_in(&texts) {
                     found_narrowed = true;
                     continue;
                 }

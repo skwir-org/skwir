@@ -352,6 +352,11 @@ The key is the owner's; the page is the subject's (ADR-072).
   picks the Exclusions page's list (`agents` brings Secrets up). Report
   a problem whose remedy is a setting with `App::notify_about_setting`
   (or `Shell::set_status_about`): its toast links to it.
+- **The dialog finds everything alike** (`collate::Words`): every word
+  typed in one of a thing's texts, case and Latin accents folded as names
+  are ordered ("ecole" finds "École"). The search, each page's filter, a
+  long dropdown's field and a long list of records' ask it; the Keyboard
+  page's keys are matched as keys (`keymap::finds`).
 - **A page that lists many has its own filter** above the list: the
   Keyboard page's (an action's words or its keys), the Exclusions
   page's and the Plugins page's (every word typed in what a row says, a

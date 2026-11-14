@@ -336,48 +336,34 @@ fn categories_by_name() -> Vec<Category> {
     categories
 }
 
-/// Whether the Plugins page's filter keeps `plugin`: every word typed
-/// (`words`, lowercase) is in its name, what it does, its id, where it
-/// comes from or its category's name, which keeps its every plugin.
-fn plugin_found(plugin: &PluginInfo, words: &[&str]) -> bool {
-    if words.is_empty() {
-        return true;
-    }
-    let texts = [
-        plugin.title.to_lowercase(),
-        plugin.description.to_lowercase(),
-        plugin.id.to_lowercase(),
-        plugin.origin.as_deref().unwrap_or_default().to_lowercase(),
-        plugin.category.title().to_lowercase(),
+/// Whether words typed (the dialog's search, the Plugins page's filter)
+/// find `plugin`: each in its name, what it does, its id, where it comes
+/// from or its category's name, which finds its every plugin. The dialog
+/// finds everything alike (`collate::Words`: case and Latin accents
+/// folded, every word in one of the texts).
+fn plugin_found(plugin: &PluginInfo, words: &collate::Words) -> bool {
+    words.found_in(&[
+        &plugin.title,
+        &plugin.description,
+        plugin.id,
+        plugin.origin.as_deref().unwrap_or_default(),
+        plugin.category.title(),
+    ])
+}
+
+/// A setting found by its words, its page's title or its plugin's, its
+/// key or section, or one of its choices' labels.
+fn spec_matches(words: &collate::Words, spec: &SettingSpec, titles: [&str; 2]) -> bool {
+    let mut texts: Vec<&str> = vec![
+        &spec.title,
+        &spec.description,
+        &spec.key,
+        &spec.section,
+        titles[0],
+        titles[1],
     ];
-    words
-        .iter()
-        .all(|word| texts.iter().any(|text| text.contains(word)))
-}
-
-fn matches(query: &str, haystack: &[&str]) -> bool {
-    haystack
-        .iter()
-        .any(|text| text.to_lowercase().contains(query))
-}
-
-/// A setting found by its words, its page's title or its plugin's.
-fn spec_matches(query: &str, spec: &SettingSpec, titles: [&str; 2]) -> bool {
-    matches(
-        query,
-        &[
-            &spec.title,
-            &spec.description,
-            &spec.key,
-            &spec.section,
-            titles[0],
-            titles[1],
-        ],
-    ) || spec
-        .constraints
-        .choice_labels
-        .iter()
-        .any(|label| label.to_lowercase().contains(query))
+    texts.extend(spec.constraints.choice_labels.iter().map(String::as_str));
+    words.found_in(&texts)
 }
 
 impl SettingsView {
@@ -1910,8 +1896,7 @@ impl SettingsView {
     /// (`plugin_found`).
     fn page_plugins(&mut self, items: &mut Vec<AnyElement>, theme: &Theme, cx: &mut Context<Self>) {
         let typed = self.plugins_filter.read(cx).text().trim().to_owned();
-        let lowered = typed.to_lowercase();
-        let words: Vec<&str> = lowered.split_whitespace().collect();
+        let words = collate::Words::new(&typed);
         let mut shown = 0;
         for category in categories_by_name() {
             let mut plugins: Vec<PluginInfo> = self
@@ -2109,6 +2094,7 @@ impl SettingsView {
         window: &Window,
         cx: &mut Context<Self>,
     ) {
+        let words = collate::Words::new(query);
         // Every setting, folded or not, under its page and section.
         let rows: Vec<Snapshot> = self
             .rows
@@ -2118,7 +2104,7 @@ impl SettingsView {
                     self.page_title(&row.page()),
                     self.plugin_title(row.spec.owner()),
                 ];
-                spec_matches(query, &row.spec, [&titles[0], &titles[1]])
+                spec_matches(&words, &row.spec, [&titles[0], &titles[1]])
             })
             .map(|row| Snapshot::of(row, self))
             .collect();
@@ -2127,7 +2113,7 @@ impl SettingsView {
         let mut plugins: Vec<PluginInfo> = self
             .plugins
             .iter()
-            .filter(|plugin| matches(query, &[&plugin.title, &plugin.description, plugin.id]))
+            .filter(|plugin| plugin_found(plugin, &words))
             .cloned()
             .collect();
         by_name(&mut plugins);
@@ -2470,18 +2456,15 @@ mod tests {
         let plugin = PluginInfo {
             id: "pdf-reader",
             title: "PDF reader".into(),
-            description: "Reads documents page by page".into(),
+            description: "Reads documents page by page, as an éditeur would".into(),
             category: Category::ALL[0],
             enabled: true,
             enabled_by_default: true,
             capabilities: skwir_core::permissions::Capabilities::NONE,
             origin: Some("Somewhere Else".into()),
         };
-        let found = |typed: &str| {
-            let lowered = typed.to_lowercase();
-            let words: Vec<&str> = lowered.split_whitespace().collect();
-            super::plugin_found(&plugin, &words)
-        };
+        let found =
+            |typed: &str| super::plugin_found(&plugin, &skwir_core::collate::Words::new(typed));
         assert!(found(""));
         assert!(found("pdf"));
         assert!(found("READS page"), "words from its name and what it does");
@@ -2493,6 +2476,32 @@ mod tests {
         );
         assert!(!found("pdf audio"), "every word");
         assert!(!found("player"));
+        assert!(
+            found("EDITEUR"),
+            "case and accents folded, as names are ordered"
+        );
+    }
+
+    /// The dialog's search finds a setting as a page's filter finds what
+    /// it lists: every word in one of its texts (its title, what it says,
+    /// its key, its page's title, a choice's label), folded alike.
+    #[test]
+    fn the_search_finds_a_setting_by_each_word() {
+        use skwir_core::collate::Words;
+        use skwir_core::settings::SettingSpec;
+        let spec = SettingSpec::choice(
+            "ui.cards",
+            "Draw the panes as cards",
+            "Each pane on a ground of its own.",
+            "light",
+            &[("light", "Légère"), ("none", "None")],
+        );
+        let found =
+            |typed: &str| super::spec_matches(&Words::new(typed), &spec, ["Appearance", ""]);
+        assert!(found("cards appearance"), "its title and its page's");
+        assert!(found("ground PANES"));
+        assert!(found("legere"), "a choice's label, accents folded");
+        assert!(!found("cards sidebar"), "every word");
     }
 
     /// The dialog lists its pages while the page keeps its least width

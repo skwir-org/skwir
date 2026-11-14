@@ -156,9 +156,75 @@ impl Prefix {
     }
 }
 
+/// `text` folded as [`sort_key`] folds names (case, the accents of Latin
+/// letters), numbers as they are written: what a text is compared as
+/// where words are typed to find it ([`Words`]).
+pub fn folded(text: &str) -> String {
+    let mut folded = String::with_capacity(text.len());
+    for c in text.chars() {
+        // Each part is whole characters: a letter's base, or its lowercase.
+        fold(c, &mut |part| {
+            folded.push_str(&String::from_utf8_lossy(part));
+        });
+    }
+    folded
+}
+
+/// Words typed to find something among texts (the settings' search and
+/// each of its pages' filters): each found in one of a thing's texts,
+/// folded as names are ([`folded`]), so "ecole" finds "École", which the
+/// order puts beside "ecole". Folded once.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Words(Vec<String>);
+
+impl Words {
+    pub fn new(typed: &str) -> Self {
+        Words(
+            folded(typed)
+                .split_whitespace()
+                .map(str::to_owned)
+                .collect(),
+        )
+    }
+
+    /// Nothing typed: everything is found.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Whether every word is in one of `texts`.
+    pub fn found_in(&self, texts: &[&str]) -> bool {
+        if self.0.is_empty() {
+            return true;
+        }
+        let texts: Vec<String> = texts.iter().map(|text| folded(text)).collect();
+        self.0
+            .iter()
+            .all(|word| texts.iter().any(|text| text.contains(word.as_str())))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Words are found as names are ordered: case and Latin accents folded,
+    /// written with their letter or apart, each word in any of the texts.
+    #[test]
+    fn words_are_found_folded_each_in_a_text() {
+        let words = Words::new("ECOLE  café");
+        assert!(words.found_in(&["l'École des arts", "un cafe\u{301}"]));
+        assert!(words.found_in(&["Café et école"]), "in one text, any order");
+        assert!(!words.found_in(&["école"]), "every word");
+        assert!(Words::new("  ").found_in(&[]), "nothing typed finds all");
+        assert!(Words::new("strasse").found_in(&["Straße"]));
+        assert!(Words::new("Ĳs").found_in(&["ijsselmeer"]));
+        assert!(
+            Words::new("ДОМ").found_in(&["мой дом"]),
+            "case beyond Latin"
+        );
+        assert_eq!(folded("Æsir 10"), "aesir 10");
+    }
 
     fn sorted(names: &[&str]) -> Vec<String> {
         let mut v: Vec<&str> = names.to_vec();
