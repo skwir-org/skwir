@@ -120,16 +120,35 @@ pub fn socket_serving(socket: &std::path::Path) -> Vec<OsString> {
 }
 
 /// The port the last of `lines`, what rclone said (its log, its standard
-/// error), says its remote control serves on: `… NOTICE: Serving remote
-/// control on http://127.0.0.1:5572/`. Said by the rclone that took it,
-/// it is that rclone's: no other program listens there while it does.
+/// error), says its remote control serves on, in rclone's own line for it
+/// alone: `2026/11/14 20:00:00 NOTICE: Serving remote control on
+/// http://127.0.0.1:5572/`, nothing before its level but the date and
+/// time, nothing after the port. Said by the rclone that took it, it is
+/// that rclone's: no other program listens there while it does. No other
+/// line names it, whatever it quotes (a path, a server's answer).
 pub fn served_port(lines: impl Iterator<Item = String>) -> Option<u16> {
-    lines
-        .filter_map(|line| {
-            let (_, after) = line.split_once("Serving remote control on http://127.0.0.1:")?;
-            after.split('/').next()?.parse().ok()
-        })
-        .last()
+    lines.filter_map(|line| port_said(&line)).last()
+}
+
+/// The port `line` says rclone's remote control serves on, if it is the
+/// line rclone says it in ([`served_port`]).
+fn port_said(line: &str) -> Option<u16> {
+    let (stamp, message) = line.split_once("NOTICE: ")?;
+    // Its date and time (and microseconds, where asked): digits alone.
+    if !stamp
+        .chars()
+        .all(|c| c.is_ascii_digit() || matches!(c, '/' | ':' | '.' | ' '))
+    {
+        return None;
+    }
+    let port = message
+        .trim_end()
+        .strip_prefix("Serving remote control on http://127.0.0.1:")?
+        .strip_suffix('/')?;
+    if port.is_empty() || !port.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    port.parse().ok()
 }
 
 impl At {
@@ -440,6 +459,29 @@ mod tests {
             Some(41000)
         );
         assert_eq!(served_port(std::iter::empty()), None);
+        // Microseconds asked of its log: still its line, the last one said.
+        let again =
+            "2026/11/14 20:00:02.123456 NOTICE: Serving remote control on http://127.0.0.1:41002/";
+        assert_eq!(
+            served_port([said[0], again].iter().map(ToString::to_string)),
+            Some(41002)
+        );
+        // Another line quoting it names no port: a file's name, an error,
+        // a NOTICE of something else, the port followed by more.
+        for quoted in [
+            "2026/11/14 20:00:03 ERROR : Serving remote control on http://127.0.0.1:41003/: refused",
+            "2026/11/14 20:00:03 INFO  : x NOTICE: Serving remote control on http://127.0.0.1:41004/",
+            "2026/11/14 20:00:03 NOTICE: it's here/Serving remote control on http://127.0.0.1:41005/",
+            "2026/11/14 20:00:03 NOTICE: Serving remote control on http://127.0.0.1:41006/x",
+            "2026/11/14 20:00:03 NOTICE: Serving remote control on http://127.0.0.1:/",
+            "Serving remote control on http://127.0.0.1:41007/",
+        ] {
+            assert_eq!(
+                served_port([said[0], quoted].iter().map(ToString::to_string)),
+                Some(41000),
+                "{quoted}"
+            );
+        }
     }
 
     #[test]
