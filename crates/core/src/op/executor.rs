@@ -4474,7 +4474,10 @@ impl Executor {
         // plays) is closed first (ADR-136), and the plan tells its
         // observers, even of nothing changed, so the holder takes it up
         // again or goes on without it.
-        let let_go = let_go_of_kept(&plan.steps, origin);
+        let taking = let_go_of_kept(&plan.steps, origin);
+        let let_go = taking
+            .as_ref()
+            .map_or(0, crate::fs::kept_open::Taking::count);
         // Its speed is measured from here, its sizing and checks done.
         meter.begin(total);
         for (i, step) in plan.steps.iter().enumerate() {
@@ -4709,6 +4712,9 @@ impl Executor {
                 observer(origin, &held);
             }
         }
+        // What it took may be opened again by what kept it: it is gone,
+        // moved or left by now.
+        drop(taking);
         result
     }
 }
@@ -4719,22 +4725,26 @@ impl Executor {
 const LET_GO_WITHIN: Duration = Duration::from_secs(2);
 
 /// Let go of the files this process keeps open that `steps` take away
-/// (ADR-136), telling their holders `plan`; how many. Read only while one
-/// is kept: most plans run while nothing plays.
-fn let_go_of_kept(steps: &[Box<dyn Operation>], plan: PlanId) -> usize {
+/// (ADR-136), telling their holders `plan`: taken until the plan drops
+/// what this returns. Read only while one is kept: most plans run while
+/// nothing plays.
+fn let_go_of_kept(
+    steps: &[Box<dyn Operation>],
+    plan: PlanId,
+) -> Option<crate::fs::kept_open::Taking> {
     if !crate::fs::kept_open::any() {
-        return 0;
+        return None;
     }
     let changes: Vec<Change> = steps.iter().map(|step| step.describe()).collect();
     let taken: HashSet<&Path> = changes.iter().flat_map(takes_away).collect();
     if taken.is_empty() {
-        return 0;
+        return None;
     }
-    crate::fs::kept_open::let_go_of(
+    Some(crate::fs::kept_open::let_go_of(
         plan,
         |path| path.ancestors().any(|above| taken.contains(above)),
         LET_GO_WITHIN,
-    )
+    ))
 }
 
 /// What a change takes from under whoever keeps it open: what it removes,

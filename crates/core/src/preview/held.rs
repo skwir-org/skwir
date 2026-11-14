@@ -434,12 +434,14 @@ impl Held {
     /// A reader of it from its start, `Read` and `Seek`, for a library
     /// that takes one (a zip, a picture's decoder): from memory where held;
     /// else it opens the file once for its own life, which ends with the
-    /// step that asked for it.
+    /// step that asked for it, or a preview that keeps it (a map's tiles).
+    /// A plan that takes the file closes it meanwhile (ADR-136), and the
+    /// next read opens it again once the plan has ended.
     pub fn reader(self: &Arc<Held>) -> Reader {
         Reader {
             held: Arc::clone(self),
             at: 0,
-            file: None,
+            file: Arc::default(),
         }
     }
 }
@@ -463,8 +465,16 @@ pub struct Reader {
     held: Arc<Held>,
     at: u64,
     /// The file, opened once for the reads memory does not answer on a
-    /// disk, and where it was left.
-    file: Option<(File, u64)>,
+    /// disk: shared with a plan that takes it, which closes it.
+    file: Arc<Mutex<Option<OpenFile>>>,
+}
+
+/// The file a reader keeps open, where it was left, and its saying so
+/// (`fs::kept_open`), which goes after the file is closed.
+struct OpenFile {
+    file: File,
+    left: u64,
+    _kept: crate::fs::kept_open::KeptOpen,
 }
 
 impl Read for Reader {
@@ -474,15 +484,39 @@ impl Read for Reader {
         } else if self.held.remote {
             self.held.through_blocks(self.at, buf)?
         } else {
-            let (mut file, left) = match self.file.take() {
-                Some(open) => open,
-                None => (self.held.reopen()?, 0),
-            };
-            if left != self.at {
-                file.seek(SeekFrom::Start(self.at))?;
+            // A plan that took it is let end first, not holding what it
+            // closes: the file is then gone, moved (which `reopen` says) or
+            // left.
+            if self.file.lock().is_none() {
+                crate::fs::kept_open::wait_while_taken(
+                    &self.held.path,
+                    &CancelToken::new(),
+                    crate::fs::kept_open::TAKEN_AT_MOST,
+                );
             }
-            let n = file.read(buf)?;
-            self.file = Some((file, self.at + n as u64));
+            let mut slot = self.file.lock();
+            let mut open = if let Some(open) = slot.take() {
+                open
+            } else {
+                let file = self.held.reopen()?;
+                let shared = Arc::downgrade(&self.file);
+                let kept = crate::fs::kept_open::keep_open(self.held.path.clone(), move |_| {
+                    if let Some(shared) = shared.upgrade() {
+                        shared.lock().take();
+                    }
+                });
+                OpenFile {
+                    file,
+                    left: 0,
+                    _kept: kept,
+                }
+            };
+            if open.left != self.at {
+                open.file.seek(SeekFrom::Start(self.at))?;
+            }
+            let n = open.file.read(buf)?;
+            open.left = self.at + n as u64;
+            *slot = Some(open);
             n
         };
         self.at += n as u64;

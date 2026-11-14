@@ -151,6 +151,13 @@ impl Player {
             let (next, handed) = (next.clone(), handed.clone());
             pipeline.connect("about-to-finish", false, move |values| {
                 let path = next.lock().unwrap_or_else(PoisonError::into_inner).take()?;
+                // A file gone since it was queued (another program removed
+                // it) is not handed over, which would end the session in an
+                // error: the track ends, and the player, opening the next,
+                // finds it gone and goes on past it (ADR-136).
+                if std::fs::metadata(&path).is_err() {
+                    return None;
+                }
                 if let (Ok(pipeline), Ok(uri)) = (
                     values[0].get::<gst::Element>(),
                     gst::glib::filename_to_uri(&path, None),

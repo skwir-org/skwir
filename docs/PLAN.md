@@ -1037,11 +1037,11 @@ with Stop and with Play next, two deleted at once, another program's
 `mv` and `rm`, the panel's player through a rename). Left: not tried
 on a remote's mount (what Skwir does there is the same plan followed;
 sshfs's `.fuse_hidden` is from its documentation, not seen); Windows
-compiled only, its moves let go of and taken up again untried; no other
-holder of an open file registers yet (a reader's worker, the terminal's
-folder); a queued track another program removed where no pane shows its
-folder stops the player with what its opening said rather than skipping
-it; the pin does not follow its folder moved by another program.
+compiled only, its moves let go of and taken up again untried, and so
+the document engines', the archive helper's and `MBTiles`' letting go
+(tested on Linux); the terminal's shell still keeps the folder it stands
+in on Windows (only ending it would let go); the pin does not follow its
+folder moved by another program.
 
 **Where a copy lands** (ADR-135, amended 2026-11-13): built on Linux in
 every view of files, the follow-ups the user kept and the limits found

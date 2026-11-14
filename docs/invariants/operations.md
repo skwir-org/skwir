@@ -204,7 +204,9 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   and without waiting for the window, and drops its guard once the file
   is closed, not when asked. A plan that let go of one tells its
   observers even when it changed nothing (`observe_plans`, by the id
-  they always get), so the holder takes it up again.
+  they always get), so the holder takes it up again. What it let go of
+  stays taken until it has told them (`Taking`, dropped last): a holder
+  opens it again only then (`wait_while_taken`).
 - A plan is told finished (`ExecEvent::Finished`) once it let go of
   what it held: its staging folders removed (its context dropped, a
   round trip a name on a server) before, while its card still says it

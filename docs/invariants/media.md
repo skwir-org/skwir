@@ -358,7 +358,11 @@ binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
   (`Executor::under_way_in`, asked before the plans' ends are read: a
   plan is under way until its observers were told) takes it away. A name
   not listed yet says nothing: a plan's end is often followed before the
-  folder lists where the file went. Elsewhere the track plays on.
+  folder lists where the file went. Elsewhere the track plays on, and a
+  queued track found gone is passed: the helper does not hand over a
+  file no longer there (`about-to-finish`), and the pin, opening a track
+  that is not there (`Opened::gone`), drops it and goes on past it the
+  way it last went (`Pinned::pass`, `PlayerState::stepping`).
 - **The panel plays on through a rename** of the file it plays (not a
   playlist's member): the same file renamed is the same preview, its key
   moved to the new name (`preview.rs`, `renamed_playing`), never a new

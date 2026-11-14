@@ -358,6 +358,17 @@ impl Pinned {
             _ => Fate::Same,
         }
     }
+
+    /// `gone`, a track the pin was going to and not the one it plays, is
+    /// not there: it leaves the queue, and the track to go to instead is
+    /// the one `delta` steps on from where it stood (along the shuffle's
+    /// order while shuffling), as the queue is now.
+    fn pass(&mut self, gone: &Path, delta: i64, mode: Continue) -> Option<usize> {
+        let at = self.queue.iter().position(|track| track == gone)?;
+        let instead = step(self.queue.len(), &self.order, at, delta, mode);
+        self.follow(&HashMap::from([(gone.to_path_buf(), None)]), mode);
+        instead.map(|index| if index > at { index - 1 } else { index })
+    }
 }
 
 /// A track opened for the pin, back from its worker.
@@ -375,6 +386,9 @@ pub struct Opened {
     start: Option<(Vec<PathBuf>, usize)>,
     /// Taken up again where a plan took it (`Taken`).
     resume: Option<Taken>,
+    /// It could not be opened, and is not there: removed since it was
+    /// queued, where nothing told the pin (`Shell::pass_gone`).
+    gone: bool,
 }
 
 /// What the preview registry plays `path` with, at `max_side`: the file it
@@ -552,6 +566,10 @@ pub struct PlayerState {
     /// that were read, and the file the pin's name was last listed as.
     renames_seen: HashMap<skwir_core::workspace::PaneId, u64>,
     listed_as: Option<(PathBuf, skwir_core::FileId)>,
+    /// The way the pin last went, to go on past a track it went to that is
+    /// gone (`Shell::pass_gone`): 1 for Next and a track's end, -1 for
+    /// Previous.
+    stepping: i64,
     /// The pin's path and the panes' names as last looked at, and whether
     /// its name went with a plan still under way there.
     outside_at: Option<(PathBuf, u64)>,
@@ -654,6 +672,7 @@ impl Default for PlayerState {
             finished: VecDeque::new(),
             renames_seen: HashMap::new(),
             listed_as: None,
+            stepping: 1,
             outside_at: None,
             outside_waits: false,
         }
@@ -762,6 +781,35 @@ impl Shell {
         }
     }
 
+    /// A track the pin went to is not there: another program removed it
+    /// where no pane showed its folder, and nothing told the pin. It leaves
+    /// the queue, and the pin goes on past it the way it went, as past a
+    /// track taken away (ADR-136). With none past it, the pin stays where
+    /// it is, as at the end of its queue; one whose session a plan ended
+    /// closes.
+    fn pass_gone(&mut self, gone: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        let mode = self.prefs.player.continue_with;
+        let delta = self.player.stepping;
+        let Some(pinned) = &mut self.player.pinned else {
+            return;
+        };
+        if pinned.path == gone {
+            let went = HashMap::from([(gone, None)]);
+            return self.pin_follows(&went, None, window, cx);
+        }
+        let instead = pinned.pass(&gone, delta, mode);
+        let ended = pinned.ended;
+        match instead {
+            Some(index) => {
+                self.player.generation += 1;
+                self.pinned_open(index);
+            }
+            None if ended => self.unpin_dead(),
+            None => {}
+        }
+        cx.notify();
+    }
+
     /// The pin's session let go of its file for `plan` (ADR-136) and
     /// ended: the pin waits where it stood for the plan's end, which says
     /// where the file went, or has said it already.
@@ -826,6 +874,7 @@ impl Shell {
                 }
                 // As a step does: what was opening is late.
                 self.player.generation += 1;
+                self.player.stepping = 1;
                 self.pinned_open(index);
             }
             Fate::Moved | Fate::Same => {
@@ -1466,6 +1515,9 @@ impl Shell {
                     lifetime.cancel();
                     return;
                 }
+                let gone = session.is_err()
+                    && std::fs::symlink_metadata(&path)
+                        .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound);
                 let _ = tx.send(Opened {
                     generation,
                     path,
@@ -1474,6 +1526,7 @@ impl Shell {
                     video,
                     start: None,
                     resume,
+                    gone,
                 });
                 wake();
             },
@@ -1541,6 +1594,7 @@ impl Shell {
                     video,
                     start: Some((queue, index)),
                     resume: None,
+                    gone: false,
                 });
                 wake();
             },
@@ -1730,6 +1784,7 @@ impl Shell {
         if let Some(index) = pinned.step_target(delta, self.prefs.player.continue_with) {
             // A newer step supersedes one still opening.
             self.player.generation += 1;
+            self.player.stepping = delta;
             self.pinned_open(index);
         }
     }
@@ -1814,6 +1869,7 @@ impl Shell {
                 cx.notify();
             }
         }
+        let mut gone = Vec::new();
         while let Ok(opened) = self.player.rx.try_recv() {
             if opened.generation != self.player.generation {
                 opened.lifetime.cancel();
@@ -1905,6 +1961,10 @@ impl Shell {
                     self.let_go_of_ended_pin();
                     self.set_status("This track cannot be played here", true, cx);
                 }
+                Err(_) if opened.gone => {
+                    opened.lifetime.cancel();
+                    gone.push(opened.path);
+                }
                 Err(error) => {
                     opened.lifetime.cancel();
                     self.let_go_of_ended_pin();
@@ -1912,6 +1972,9 @@ impl Shell {
                 }
             }
             cx.notify();
+        }
+        for track in gone {
+            self.pass_gone(track, window, cx);
         }
         self.take_followed(window, cx);
 
@@ -2459,6 +2522,31 @@ mod tests {
         assert_eq!(shuffle.follow(&taken, Continue::Shuffle), Fate::Next(0));
         assert_eq!(names(&shuffle), ["a.ogg", "c.ogg"]);
         assert_eq!(shuffle.order, [0, 1]);
+    }
+
+    /// A track the pin went to and found gone leaves the queue, and the
+    /// pin goes on past it the way it went: Next past it, Previous before
+    /// it, along the shuffle's order while shuffling; none past the end.
+    #[test]
+    fn a_track_found_gone_is_passed_the_way_the_pin_went() {
+        let mut next = pin(&["a.ogg", "b.ogg", "c.ogg", "d.ogg"], 1, &[]);
+        assert_eq!(next.pass(&track("c.ogg"), 1, Continue::Next), Some(2));
+        assert_eq!(names(&next), ["a.ogg", "b.ogg", "d.ogg"]);
+        assert_eq!((next.index, next.path.clone()), (1, track("b.ogg")));
+
+        let mut back = pin(&["a.ogg", "b.ogg", "c.ogg", "d.ogg"], 2, &[]);
+        assert_eq!(back.pass(&track("b.ogg"), -1, Continue::Stop), Some(0));
+        assert_eq!(back.index, 1, "c, where it is now");
+
+        let mut last = pin(&["a.ogg", "b.ogg", "c.ogg"], 1, &[]);
+        assert_eq!(last.pass(&track("c.ogg"), 1, Continue::Next), None);
+        assert_eq!(names(&last), ["a.ogg", "b.ogg"]);
+
+        // Shuffled c, a, d, b: a gone, d follows c.
+        let mut shuffle = pin(&["a.ogg", "b.ogg", "c.ogg", "d.ogg"], 2, &[2, 0, 3, 1]);
+        assert_eq!(shuffle.pass(&track("a.ogg"), 1, Continue::Shuffle), Some(2));
+        assert_eq!(names(&shuffle), ["b.ogg", "c.ogg", "d.ogg"]);
+        assert_eq!(shuffle.order, [1, 2, 0]);
     }
 
     /// What the pin plays is a film by the type its bytes say where the

@@ -26,7 +26,16 @@ is binding, like `AGENTS.md`.
   into the preview's folder). A provider's `accepts` is asked once per
   file, type and registry revision (`HeldSlot`), whatever the stage.
   Never a memory map, never a descriptor kept between reads, but by a
-  helper reading what is shown, for as long as it is (ADR-105). Tested from
+  helper reading what is shown, for as long as it is (ADR-105).
+- **What keeps a file shown open lets go of it for a plan** (ADR-136):
+  it says so (`fs::kept_open`), closes it when a plan takes it, and
+  opens it again for the next request only once that plan has ended
+  (`wait_while_taken`), never holding what the plan closes while it
+  waits. A helper's manager does it through `WhileOpen` (the document
+  engines, the archive helper): registered from the helper's start to
+  its end, every request linked to it, the helper ended when asked. In
+  Skwir's process, what keeps it closes it in place (`Held::reader`,
+  `MBTiles`' connection), the guard going after the file. Tested from
   `PreviewRequest::holding` (bytes at a path that leads nowhere) and
   `Held::of_bytes_on_remote`; on a mount, by the GETs its server counts
   (`a_preview_of_a_file_on_a_mount_fetches_it_once`).

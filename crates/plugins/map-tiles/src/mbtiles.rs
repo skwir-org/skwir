@@ -5,13 +5,14 @@
 //! as the tables preview reads a database: read-only and immutable, so
 //! nothing is written beside it, its schema not trusted to run functions,
 //! and a request's cancellation interrupting SQLite between steps.
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Context;
 use parking_lot::Mutex;
 use rusqlite::{Connection, OpenFlags, OptionalExtension, types::ValueRef};
 use skwir_core::CancelToken;
+use skwir_core::fs::kept_open::{self, KeptOpen};
 use skwir_core::geo::Bounds;
 use skwir_core::preview::Held;
 
@@ -23,7 +24,12 @@ const METADATA_ROWS: usize = 256;
 const METADATA_VALUE: i64 = 1024 * 1024;
 
 pub(crate) struct MbTiles {
-    connection: Mutex<Connection>,
+    /// The database, open while the map is shown: closed when a plan takes
+    /// the file (ADR-136), opened again by the next tile once the plan has
+    /// ended. SQLite opens without the sharing that lets Windows remove or
+    /// move a file open.
+    connection: Arc<Mutex<Option<Open>>>,
+    path: PathBuf,
     about: About,
     /// What a preview holds of the file, kept while SQLite reads it: a
     /// remote's file is read from the copy what is held keeps
@@ -32,19 +38,47 @@ pub(crate) struct MbTiles {
     _held: Option<Arc<Held>>,
 }
 
+/// The database open, and its saying so (`fs::kept_open`), which goes
+/// after it is closed.
+struct Open {
+    connection: Connection,
+    _kept: KeptOpen,
+}
+
+/// Open the database at `path`, read-only and immutable, its schema not
+/// trusted.
+fn connect(path: &Path) -> anyhow::Result<Connection> {
+    let uri = format!("{}?immutable=1", skwir_platform::uri::sqlite_uri(path));
+    let connection = Connection::open_with_flags(
+        uri,
+        OpenFlags::SQLITE_OPEN_READ_ONLY
+            | OpenFlags::SQLITE_OPEN_URI
+            | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    connection.pragma_update(None, "trusted_schema", false)?;
+    Ok(connection)
+}
+
+/// `connection`, kept open in `shared` until a plan takes `path`.
+fn kept(path: &Path, shared: &Arc<Mutex<Option<Open>>>, connection: Connection) -> Open {
+    let shared = Arc::downgrade(shared);
+    let kept = kept_open::keep_open(path.to_owned(), move |_| {
+        if let Some(shared) = shared.upgrade() {
+            shared.lock().take();
+        }
+    });
+    Open {
+        connection,
+        _kept: kept,
+    }
+}
+
 /// Steps between two looks at the cancellation.
 const STEPS: i32 = 1000;
 
 impl MbTiles {
     pub(crate) fn open(path: &Path, cancel: &CancelToken) -> anyhow::Result<MbTiles> {
-        let uri = format!("{}?immutable=1", skwir_platform::uri::sqlite_uri(path));
-        let mut connection = Connection::open_with_flags(
-            uri,
-            OpenFlags::SQLITE_OPEN_READ_ONLY
-                | OpenFlags::SQLITE_OPEN_URI
-                | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-        )?;
-        connection.pragma_update(None, "trusted_schema", false)?;
+        let mut connection = connect(path)?;
         let token = cancel.clone();
         connection.progress_handler(STEPS, Some(move || token.is_cancelled()))?;
         let meta = metadata(&connection)?;
@@ -74,8 +108,11 @@ impl MbTiles {
         };
         about.min_zoom = min.min(max);
         about.max_zoom = max;
+        let shared = Arc::new(Mutex::new(None));
+        *shared.lock() = Some(kept(path, &shared, connection));
         Ok(MbTiles {
-            connection: Mutex::new(connection),
+            connection: shared,
+            path: path.to_owned(),
             about,
             _held: None,
         })
@@ -168,7 +205,16 @@ impl Archive for MbTiles {
         }
         // Rows are counted from the south.
         let row = (1u64 << z) - 1 - u64::from(y);
-        let mut connection = self.connection.lock();
+        // Taken by a plan meanwhile: opened again once it has ended, not
+        // holding what it closes.
+        if self.connection.lock().is_none() {
+            kept_open::wait_while_taken(&self.path, cancel, kept_open::TAKEN_AT_MOST);
+        }
+        let mut slot = self.connection.lock();
+        if slot.is_none() {
+            *slot = Some(kept(&self.path, &self.connection, connect(&self.path)?));
+        }
+        let connection = &mut slot.as_mut().expect("opened above").connection;
         let token = cancel.clone();
         connection.progress_handler(STEPS, Some(move || token.is_cancelled()))?;
         let found = connection
@@ -189,7 +235,7 @@ impl Archive for MbTiles {
                 },
             )
             .optional()?;
-        drop(connection);
+        drop(slot);
         let Some(bytes) = found.unwrap_or(Ok(None)).map_err(anyhow::Error::msg)? else {
             return Ok(None);
         };
@@ -271,6 +317,30 @@ pub(crate) mod tests {
         assert_eq!((about.min_zoom, about.max_zoom), (1, 1));
         let bounds = about.bounds.unwrap();
         assert_eq!((bounds.west, bounds.south), (5., 44.));
+    }
+
+    /// A plan that takes the file closes the database (ADR-136): SQLite
+    /// keeps it from being removed on Windows. The next tile, once the
+    /// plan has ended, opens it again.
+    #[test]
+    fn a_plan_taking_the_file_closes_it_and_the_next_tile_opens_it_again() {
+        use skwir_core::fs::kept_open::let_go_of;
+        use skwir_core::op::PlanId;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("it's a map.mbtiles");
+        write(&path, &[(1, 0, 0, b"north-west")], &[("format", "png")]);
+        let archive = MbTiles::open(&path, &CancelToken::new()).unwrap();
+        let taking = let_go_of(
+            PlanId(u64::MAX - 7),
+            |at| at == path,
+            std::time::Duration::from_secs(5),
+        );
+        assert_eq!(taking.count(), 1);
+        assert!(archive.connection.lock().is_none(), "closed for the plan");
+        drop(taking);
+        let tile = archive.tile(1, 0, 0, &CancelToken::new()).unwrap();
+        assert_eq!(tile.as_deref(), Some(&b"north-west"[..]));
+        assert!(archive.connection.lock().is_some(), "open again");
     }
 
     #[test]

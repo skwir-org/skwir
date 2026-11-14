@@ -5,6 +5,7 @@ use crate::sandbox::{self, Otherwise};
 use anyhow::Context;
 use serde::Deserialize;
 use skwir_core::CancelToken;
+use skwir_core::fs::kept_open::WhileOpen;
 use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::Arc;
@@ -386,6 +387,7 @@ impl Session {
                     executable,
                     isolate,
                     path: key.0.clone(),
+                    open: WhileOpen::new(key.0.clone()),
                     key,
                     scratch: scratch.path().to_owned(),
                     lifetime,
@@ -498,17 +500,32 @@ struct Manager {
     scratch: std::path::PathBuf,
     lifetime: CancelToken,
     helper: Option<crate::process::Helper<Reply>>,
+    /// The archive as its helper keeps it open: a plan that takes it ends
+    /// the helper, and the next request waits for the plan to end
+    /// (ADR-136).
+    open: WhileOpen,
 }
 
 impl Manager {
     fn run(mut self, asked: &crossbeam_channel::Receiver<Job>) {
         let cancelled = self.lifetime.subscribe();
         loop {
+            // No helper, no archive open: a plan does not wait for one.
+            if self.helper.is_none() {
+                self.open.closed();
+            }
+            let taken = self.open.asked();
             crossbeam_channel::select! {
                 recv(asked) -> job => {
                     let Ok(job) = job else { break };
                     let answer = self.handle(&job);
                     let _ = job.reply.send(answer);
+                }
+                // A plan takes the archive: the helper ends (killed and
+                // reaped), and so its file is closed.
+                recv(taken) -> _ => {
+                    self.helper = None;
+                    self.open.closed();
                 }
                 recv(cancelled.receiver()) -> _ => break,
             }
@@ -607,8 +624,12 @@ impl Manager {
             }
         };
         if self.helper.is_none() {
+            // Opened again once a plan that took it has ended.
+            self.open.opening(cancel);
             self.helper = Some(self.start(cancel).map_err(broken)?);
         }
+        // A plan that takes the archive cancels the request in flight.
+        let cancel = self.open.linked(cancel);
         let helper = self.helper.as_mut().expect("started above");
         let id = helper.send(request).map_err(Failure::Broken)?;
         let cancelled = cancel.subscribe();

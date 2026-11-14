@@ -20,6 +20,7 @@ use skwir_core::document::{
     DocumentInfo, DocumentPage, DocumentSession, MAX_PAGE_SIZE, MAX_REPLY, MAX_SIDE, PIXELS_FILE,
     SearchHit, WorkerReply, WorkerRequest,
 };
+use skwir_core::fs::kept_open::WhileOpen;
 
 use crate::line_channel::LineChannel;
 use crate::process::Failure;
@@ -444,6 +445,10 @@ impl WorkerSession {
         std::thread::Builder::new()
             .name("skwir-pdf-session".into())
             .spawn(move || {
+                // The document its helper reads, kept open while it runs
+                // and let go of when a plan takes it (ADR-136).
+                let mut open = WhileOpen::new(pdf.clone());
+                open.opening(&lifetime);
                 let launch = Launch {
                     executable,
                     pdf,
@@ -482,6 +487,7 @@ impl WorkerSession {
                                 version,
                                 lifetime,
                                 worker: Some(worker),
+                                open,
                             }
                             .run(&rx);
                         }
@@ -611,12 +617,20 @@ struct Manager {
     version: FileVersion,
     lifetime: CancelToken,
     worker: Option<Worker>,
+    /// The document as its worker keeps it open: a plan that takes it
+    /// ends the worker, and the next request waits for the plan to end.
+    open: WhileOpen,
 }
 
 impl Manager {
     fn run(mut self, jobs: &Receiver<Job>) {
         let cancelled = self.lifetime.subscribe();
         loop {
+            // No worker, no document open: a plan does not wait for one.
+            if self.worker.is_none() {
+                self.open.closed();
+            }
+            let asked = self.open.asked();
             // Replies to requests given up on arrive while idle too: take
             // them as they come, so the worker is never stuck writing one.
             let idle = self
@@ -633,6 +647,12 @@ impl Manager {
                     if let Some(worker) = &mut self.worker && worker.accept(reply).is_err() {
                         self.worker = None;
                     }
+                }
+                // A plan takes the document: the worker ends (killed and
+                // reaped), and so its file is closed.
+                recv(asked) -> _ => {
+                    self.worker = None;
+                    self.open.closed();
                 }
                 recv(cancelled.receiver()) -> _ => break,
             }
@@ -745,6 +765,8 @@ impl Manager {
             }
         }
         if self.worker.is_none() {
+            // Opened again once a plan that took it has ended.
+            self.open.opening(cancel);
             let (worker, greeting) = start(&self.launch, cancel).map_err(|error| {
                 if cancel.is_cancelled() {
                     Failure::Cancelled
@@ -759,6 +781,9 @@ impl Manager {
             }
             self.worker = Some(worker);
         }
+        // A plan that takes the document cancels the request in flight.
+        let cancel = self.open.linked(cancel);
+        let cancelled = cancel.subscribe();
         let worker = self.worker.as_mut().expect("started above");
         let id = worker.send(request).map_err(Failure::Broken)?;
         // Writing a document of thousands of pages takes longer than a page.
@@ -1037,6 +1062,54 @@ mod tests {
             "a file beside the document stays out of reach"
         );
         drop(session);
+    }
+
+    /// A plan that takes the document (ADR-136) cancels the request in
+    /// flight and ends the worker before it goes on: Windows refuses to
+    /// remove a file an engine keeps open. The next request waits for the
+    /// plan to end, then opens it again in a new worker.
+    #[test]
+    fn a_plan_taking_the_document_ends_its_worker_first() {
+        use skwir_core::fs::kept_open::let_go_of;
+        use skwir_core::op::PlanId;
+        let fixture = Fixture::new();
+        let first = fixture.pid();
+        let session = Arc::clone(fixture.session.as_ref().unwrap());
+        let asking = Arc::clone(&session);
+        let hung = std::thread::spawn(move || asking.search("hang", &CancelToken::new()));
+        wait_until(|| fixture.scratch.join("requested").exists());
+        let started = Instant::now();
+        let source = fixture.source.clone();
+        let taking = let_go_of(
+            PlanId(u64::MAX - 3),
+            |path| path == source,
+            Duration::from_secs(5),
+        );
+        assert_eq!(taking.count(), 1);
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "closed, not waited out"
+        );
+        assert!(
+            !Path::new(&format!("/proc/{first}")).exists(),
+            "reaped before the plan goes on"
+        );
+        assert!(
+            hung.join().unwrap().is_err(),
+            "the request in flight cancelled"
+        );
+        let asking = Arc::clone(&session);
+        let (done, answered) = crossbeam_channel::bounded(1);
+        std::thread::spawn(move || {
+            let _ = done.send(asking.search("after", &CancelToken::new()).is_ok());
+        });
+        assert!(
+            answered.recv_timeout(Duration::from_millis(200)).is_err(),
+            "waits for the plan to end"
+        );
+        drop(taking);
+        assert_eq!(answered.recv_timeout(Duration::from_secs(5)), Ok(true));
+        assert_ne!(fixture.pid(), first, "a new worker");
     }
 
     #[test]

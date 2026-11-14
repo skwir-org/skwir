@@ -616,7 +616,8 @@ mod tests {
                     plan,
                     |path| path == taken,
                     Duration::from_secs(3),
-                );
+                )
+                .count();
                 n == 1
             });
             assert!(

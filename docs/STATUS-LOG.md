@@ -17288,3 +17288,59 @@ well. Chosen as recommended: a deletion ends the track as its end does
   showing the track, F2: played on (15 s, then 25 s), one helper
   running. Shift+Delete of the playing track and the one after it: the
   player closed. No warning in the log. A remote's mount was not tried.
+
+## 2026-11-14: The two gaps ADR-136 left, closed
+
+The user asked to close them, if possible: a queued track another
+program removed where no pane shows its folder, and the other holders
+of a file shown.
+
+- **A queued track found gone is passed.** The media helper hands
+  over, in `about-to-finish`, no file that is no longer there: handed a
+  missing one, playbin failed and the session ended in an error, which
+  closed the player. The track then ends, and the pin opens the next as
+  it does after a track's end; the open job says a track that is not
+  there (`Opened::gone`, a `NotFound` read after the open failed), and
+  the pin drops it and goes on past it the way it last went
+  (`Pinned::pass`, `PlayerState::stepping`: Next and a track's end
+  forward, Previous back, along the shuffle's order while shuffling).
+  With none past it, the pin stays at its end, as at the end of its
+  queue.
+- **The other holders**, surveyed: the document engines (PDFium,
+  Poppler, MuPDF, DjVuLibre: each a helper process keeping its file
+  open; djvu-rs reads it whole), the archive helper (archives, comics),
+  an MBTiles map's SQLite connection and a PMTiles map's reader of what
+  the preview holds (in Skwir's process), the terminal's shell standing
+  in the folder shown. Hex, text, tables, EPUB, models, Git and
+  thumbnails read and close.
+- **Core**: what a plan let go of stays taken until it has told its
+  observers (`kept_open::Taking`, dropped last in `apply_plan`); a
+  holder waits for that before opening it again (`wait_while_taken`,
+  its cancellation looked at every 50 ms, a minute at most); a helper's
+  manager keeps its file through `WhileOpen` (registered from the
+  helper's start to its end, each request linked to it, told when a
+  plan takes the file).
+- **The holders**: the document session's and the archive session's
+  managers end their helper when asked, the request in flight cancelled,
+  and start one for the next request once the plan has ended (a file
+  gone or changed is then said as before); `MBTiles` keeps its
+  connection where a plan closes it, the next tile opening it again;
+  `Held::reader` likewise for the file it keeps. Neither waits holding
+  what the plan closes. The terminal is left: only ending the user's
+  shell would take it out of the folder.
+- **Checked**: tests for what a plan took being opened again only once
+  it ended (and a wait its cancellation ends), a helper's manager told
+  and its request cancelled, the document session (the request in
+  flight cancelled, the worker reaped before the plan goes on, the next
+  request waiting for the plan's end and served by a new worker),
+  `MBTiles` (closed for the plan, the next tile opening it again), a
+  track found gone passed (Next, Previous, along a shuffle, none past
+  the end). Core, platform, map tiles and the UI: 2022 passed. Clippy
+  on them and the media helper for Linux, on the four for Windows.
+- **In the window** (debug build, Xvfb :87, a PulseAudio of its own):
+  four 6-second tracks, Play next on, the first played, the pane taken
+  to another folder, the second removed with `rm`: the first played to
+  its end, the third followed at once, nothing said, no warning in the
+  log. The holders' letting go was not tried in a window: on Linux a
+  removal never waited for them; Windows, where it did, is compiled
+  only.

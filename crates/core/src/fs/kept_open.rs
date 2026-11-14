@@ -11,6 +11,11 @@
 //! a plan's first step, lets go of those its steps take
 //! ([`let_go_of`]), waiting for them to be closed.
 //!
+//! A holder that would open the file again (a reader asked for a page)
+//! waits until the plan that took it has ended ([`wait_while_taken`]):
+//! by then the file is gone, moved or left. A helper's manager keeps it
+//! through [`WhileOpen`].
+//!
 //! As [`super::wait_let_go`] does for the folders listings hold, this is
 //! the process's: a file open is open whoever asks to remove it.
 use std::path::{Path, PathBuf};
@@ -20,6 +25,7 @@ use std::time::{Duration, Instant};
 
 use parking_lot::{Condvar, Mutex};
 
+use crate::cancel::{CancelSignal, CancelToken};
 use crate::op::PlanId;
 
 /// What a holder does when a plan takes its file: close it, told which
@@ -38,6 +44,12 @@ static KEPT: Mutex<Vec<Kept>> = Mutex::new(Vec::new());
 static COUNT: AtomicUsize = AtomicUsize::new(0);
 static NEXT: AtomicU64 = AtomicU64::new(1);
 static CLOSED: Condvar = Condvar::new();
+/// The files let go of for each plan still running (`let_go_of` notes
+/// them, its [`Taking`] forgets them as the plan ends).
+static TAKING: Mutex<Vec<(PlanId, PathBuf)>> = Mutex::new(Vec::new());
+static TAKEN: Condvar = Condvar::new();
+/// How often a wait for a plan looks at its own cancellation.
+const LOOK: Duration = Duration::from_millis(50);
 
 /// A file kept open, until this is dropped: drop it once the file is
 /// closed, not when asked to close it, so a plan waits for the close.
@@ -95,18 +107,48 @@ pub fn any() -> bool {
     COUNT.load(Ordering::Acquire) > 0
 }
 
+/// The files a running plan let go of (`let_go_of`): taken until this is
+/// dropped as the plan ends, what kept them waiting meanwhile.
+#[must_use = "what was let go of counts as taken only while this lives"]
+pub struct Taking {
+    plan: PlanId,
+    count: usize,
+}
+
+impl Taking {
+    /// How many files were let go of.
+    pub fn count(&self) -> usize {
+        self.count
+    }
+}
+
+impl Drop for Taking {
+    fn drop(&mut self) {
+        if self.count == 0 {
+            return;
+        }
+        TAKING.lock().retain(|(plan, _)| *plan != self.plan);
+        TAKEN.notify_all();
+    }
+}
+
 /// Let go of every file kept open that `takes` names, telling each holder
-/// `plan`, and wait until each is closed, `at_most` in all; how many were
-/// let go of. A holder slower than that is left to it: the step then fails
-/// as it would have.
-pub fn let_go_of(plan: PlanId, takes: impl Fn(&Path) -> bool, at_most: Duration) -> usize {
+/// `plan`, and wait until each is closed, `at_most` in all. A holder slower
+/// than that is left to it: the step then fails as it would have. Taken
+/// until the plan drops what this returns.
+pub fn let_go_of(plan: PlanId, takes: impl Fn(&Path) -> bool, at_most: Duration) -> Taking {
     let deadline = Instant::now() + at_most;
-    let closing: Vec<(u64, LetGo)> = KEPT
-        .lock()
-        .iter()
-        .filter(|kept| takes(&kept.path))
-        .map(|kept| (kept.id, Arc::clone(&kept.let_go)))
-        .collect();
+    let closing: Vec<(u64, LetGo)> = {
+        let kept = KEPT.lock();
+        let closing: Vec<&Kept> = kept.iter().filter(|kept| takes(&kept.path)).collect();
+        TAKING
+            .lock()
+            .extend(closing.iter().map(|kept| (plan, kept.path.clone())));
+        closing
+            .into_iter()
+            .map(|kept| (kept.id, Arc::clone(&kept.let_go)))
+            .collect()
+    };
     // Told outside the lock: closing may take its own locks, and a holder
     // may keep another file meanwhile.
     for (_, let_go) in &closing {
@@ -119,7 +161,90 @@ pub fn let_go_of(plan: PlanId, takes: impl Fn(&Path) -> bool, at_most: Duration)
             break;
         }
     }
-    closing.len()
+    Taking {
+        plan,
+        count: closing.len(),
+    }
+}
+
+/// Wait while a plan still running takes `path` (it let go of it for
+/// one), for as long as `cancel` lets, `at_most` in all: what kept it
+/// opens it again only once the plan has ended. Whether it is free.
+pub fn wait_while_taken(path: &Path, cancel: &CancelToken, at_most: Duration) -> bool {
+    let deadline = Instant::now() + at_most;
+    let mut taking = TAKING.lock();
+    while taking.iter().any(|(_, taken)| taken == path) {
+        let now = Instant::now();
+        if cancel.is_cancelled() || now >= deadline {
+            return false;
+        }
+        let _ = TAKEN.wait_until(&mut taking, deadline.min(now + LOOK));
+    }
+    true
+}
+
+/// How long a holder waits for a plan that took its file before it opens
+/// it again all the same, then finding it gone or moved.
+pub const TAKEN_AT_MOST: Duration = Duration::from_secs(60);
+
+/// What a helper's manager keeps of the file its helper has open (a
+/// reader's engine, an archive's helper): kept open from the helper's
+/// start ([`WhileOpen::opening`]) to its end ([`WhileOpen::closed`]). A
+/// plan that takes the file cancels the request in flight (each is
+/// [`WhileOpen::linked`]) and says so ([`WhileOpen::asked`]): the manager
+/// ends its helper, and starts one for the next request once the plan
+/// has ended.
+pub struct WhileOpen {
+    path: PathBuf,
+    open: Option<(CancelToken, CancelSignal, KeptOpen)>,
+}
+
+impl WhileOpen {
+    /// For a helper that opens `path`.
+    pub fn new(path: PathBuf) -> Self {
+        WhileOpen { path, open: None }
+    }
+
+    /// A helper is about to open the file: once no plan takes it (or
+    /// `cancel` ends the wait), it counts as kept open.
+    pub fn opening(&mut self, cancel: &CancelToken) {
+        self.open = None;
+        wait_while_taken(&self.path, cancel, TAKEN_AT_MOST);
+        let asked = CancelToken::new();
+        let signal = asked.subscribe();
+        let told = asked.clone();
+        let kept = keep_open(self.path.clone(), move |_| told.cancel());
+        self.open = Some((asked, signal, kept));
+    }
+
+    /// `cancel`, cancelled too when a plan takes the file.
+    pub fn linked(&self, cancel: &CancelToken) -> CancelToken {
+        match &self.open {
+            Some((asked, ..)) => cancel.linked(asked),
+            None => cancel.clone(),
+        }
+    }
+
+    /// Ready once a plan takes the file, for a manager's `select!`.
+    pub fn asked(&self) -> crossbeam_channel::Receiver<()> {
+        self.open
+            .as_ref()
+            .map_or_else(crossbeam_channel::never, |(_, signal, _)| {
+                signal.receiver().clone()
+            })
+    }
+
+    /// Whether a plan takes the file.
+    pub fn is_asked(&self) -> bool {
+        self.open
+            .as_ref()
+            .is_some_and(|(asked, ..)| asked.is_cancelled())
+    }
+
+    /// The helper has ended, its file closed: a plan waiting for it goes on.
+    pub fn closed(&mut self) {
+        self.open = None;
+    }
 }
 
 #[cfg(test)]
@@ -154,11 +279,82 @@ mod tests {
             PlanId(7),
             |path| path.starts_with(root.join("song.ogg")),
             Duration::from_secs(5),
-        );
+        )
+        .count();
         assert_eq!(n, 1);
         assert_eq!(heard.try_recv().unwrap(), PlanId(7));
         assert!(guard.lock().is_none(), "returned once it was closed");
         assert!(started.elapsed() >= Duration::from_millis(50));
+    }
+
+    /// What a plan let go of is taken until the plan ends: what kept it
+    /// waits for that before opening it again, a wait its cancellation
+    /// ends.
+    #[test]
+    fn what_a_plan_took_is_opened_again_only_once_it_ended() {
+        let root = under("taken");
+        let song = root.join("it's a song.flac");
+        let kept = Arc::new(Mutex::new(None));
+        let closes = Arc::clone(&kept);
+        *kept.lock() = Some(keep_open(song.clone(), move |_| {
+            closes.lock().take();
+        }));
+        let taking = let_go_of(PlanId(11), |path| path == song, Duration::from_secs(5));
+        assert_eq!(taking.count(), 1);
+        let never = CancelToken::new();
+        assert!(!wait_while_taken(&song, &never, Duration::from_millis(30)));
+        assert!(wait_while_taken(
+            &root.join("other"),
+            &never,
+            Duration::ZERO
+        ));
+        let cancelled = CancelToken::new();
+        cancelled.cancel();
+        assert!(!wait_while_taken(&song, &cancelled, Duration::from_secs(5)));
+        let (done, ended) = std::sync::mpsc::channel();
+        let waiting = song.clone();
+        std::thread::spawn(move || {
+            let free = wait_while_taken(&waiting, &CancelToken::new(), Duration::from_secs(5));
+            done.send(free).unwrap();
+        });
+        std::thread::sleep(Duration::from_millis(20));
+        drop(taking);
+        assert_eq!(ended.recv_timeout(Duration::from_secs(5)), Ok(true));
+    }
+
+    /// A helper's manager: its request in flight is cancelled and it is told
+    /// when a plan takes the file; ended, the plan waits no more.
+    #[test]
+    fn a_helper_s_manager_is_told_and_its_request_cancelled() {
+        let root = under("helper");
+        let book = root.join("a book's pages.pdf");
+        let mut open = WhileOpen::new(book.clone());
+        let request = open.linked(&CancelToken::new());
+        assert!(!request.is_cancelled() && !open.is_asked());
+        open.opening(&CancelToken::new());
+        let request = open.linked(&CancelToken::new());
+        let asked = open.asked();
+        let started = Instant::now();
+        // Not closed: the plan waits as long as it is told to, no longer.
+        let taking = let_go_of(PlanId(12), |path| path == book, Duration::from_millis(40));
+        assert_eq!(taking.count(), 1);
+        assert!(started.elapsed() >= Duration::from_millis(40));
+        assert!(request.is_cancelled() && open.is_asked());
+        assert!(asked.try_recv().is_ok());
+        open.closed();
+        drop(taking);
+        let started = Instant::now();
+        assert_eq!(
+            let_go_of(PlanId(13), |path| path == book, Duration::from_secs(5)).count(),
+            0
+        );
+        assert!(started.elapsed() < Duration::from_secs(1));
+        // Opened again: kept open again.
+        open.opening(&CancelToken::new());
+        assert!(!open.is_asked());
+        let taking = let_go_of(PlanId(14), |path| path == book, Duration::ZERO);
+        assert_eq!(taking.count(), 1);
+        assert!(open.is_asked());
     }
 
     #[test]
@@ -170,7 +366,8 @@ mod tests {
             PlanId(1),
             |path| path.starts_with(&root),
             Duration::from_millis(30),
-        );
+        )
+        .count();
         assert_eq!(n, 1);
         assert!(started.elapsed() < Duration::from_secs(2));
     }
@@ -185,9 +382,9 @@ mod tests {
         kept.now_at(root.join("two.flac"));
         let also = kept.also(root.join("three.flac")).unwrap();
         let takes_one = |path: &Path| path == root.join("one.flac");
-        assert_eq!(let_go_of(PlanId(2), takes_one, Duration::ZERO), 0);
+        assert_eq!(let_go_of(PlanId(2), takes_one, Duration::ZERO).count(), 0);
         let takes_three = |path: &Path| path == root.join("three.flac");
-        assert_eq!(let_go_of(PlanId(3), takes_three, Duration::ZERO), 1);
+        assert_eq!(let_go_of(PlanId(3), takes_three, Duration::ZERO).count(), 1);
         assert_eq!(
             heard.try_recv().unwrap(),
             PlanId(3),
@@ -195,7 +392,7 @@ mod tests {
         );
         drop((kept, also));
         assert_eq!(
-            let_go_of(PlanId(4), |path| path.starts_with(&root), Duration::ZERO),
+            let_go_of(PlanId(4), |path| path.starts_with(&root), Duration::ZERO).count(),
             0
         );
     }

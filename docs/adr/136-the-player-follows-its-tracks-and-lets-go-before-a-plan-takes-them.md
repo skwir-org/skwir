@@ -4,7 +4,9 @@ Status: accepted, 2026-11-14, on the user's answer (asked what the player
 should do when the file it plays is deleted or moved, here and on a
 remote; they chose the recommendation below, the next track following
 one deleted where Continue says one does). Built on Linux; the Windows
-part compiled, not tried there.
+part compiled, not tried there. Amended the same day, the user asking
+to close the two gaps left: a queued track found gone is passed (7),
+and the other holders of a file shown let go too (8).
 
 ## Context
 
@@ -72,8 +74,23 @@ part compiled, not tried there.
    the folder with no plan of Skwir's under way there
    (`Executor::under_way_in`, asked before the plans' ends are read)
    takes it away. Elsewhere no watch says (a folder not shown, a
-   server's own changes): the track plays on, and a queued track gone
-   stops the player with what its opening said.
+   server's own changes): the track plays on, and a queued track found
+   gone is passed: the media helper does not hand over a file no longer
+   there (the track ends), and the pin, opening a track that is not
+   there, drops it from the queue and goes on past it the way it went
+   (`Pinned::pass`, `Shell::pass_gone`), as past a track taken away.
+8. **Every holder of a file shown lets go of it** (amended): the
+   document engines (PDFium, Poppler, `MuPDF`, `DjVuLibre`) and the
+   archive helper (archives, comics), through their manager
+   (`fs::kept_open::WhileOpen`: the request in flight cancelled, the
+   helper ended); an `MBTiles` map's SQLite connection and a reader of
+   what a preview holds (`Held::reader`, a PMTiles map's), in Skwir's
+   process, closing what they keep. Each opens the file again for the
+   next request once the plan that took it has ended
+   (`kept_open::wait_while_taken`, `Taking`, held by the plan to its
+   end), finding it gone, moved or left. Not the terminal: its shell
+   stands in the folder shown, and only ending the user's shell would
+   take it out.
 
 ## Consequences
 
@@ -82,7 +99,7 @@ part compiled, not tried there.
   only when its folder is read again (ADR-077).
 - The music stops at the start of a plan that removes the file playing,
   even where that step is not its first.
-- Other holders of open files (a reader's worker, the terminal's
-  folder) do not register yet; they can, through the same seam.
+- The terminal's shell keeps the folder it stands in from being removed
+  or moved on Windows; nothing lets go of it.
 - A pane's rename record keeps the latest 1024; a reader that looks
   less often loses the oldest, and a rename lost reads as the file gone.
