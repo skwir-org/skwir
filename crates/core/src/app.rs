@@ -3822,6 +3822,21 @@ pub struct TargetsArgs {
 }
 
 /// `set_access`: who may use the entries.
+/// What `set_access.describe` says the words of.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct AccessSaidArgs {
+    /// The mode, as chmod takes it (`644`, `u+x`, `go-w`, `a=rX`).
+    pub mode: String,
+    /// The mode the items share now, when they share one: the words say
+    /// what it comes to; else what each clause does to each item.
+    #[serde(default)]
+    pub current: Option<u32>,
+    /// Every item is a folder: its bits read as listing, changing and
+    /// opening it.
+    #[serde(default)]
+    pub folders: bool,
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct AccessArgs {
     /// The mode, as chmod takes it: `644`, `u+x`, `go-w`, `a=rX` (`X`:
@@ -4881,6 +4896,19 @@ mod builtin {
             },
         )
         .plans();
+
+        c.register::<AccessSaidArgs, _>(
+            "core",
+            Topic::Files,
+            "set_access.describe",
+            "Say what a mode does",
+            "Say in words what `mode` (as chmod takes it) makes of items whose mode is `current` (all sharing it; else what each clause does to each), `folders` when they all are; an error for what is no mode, as `set_access` refuses it",
+            |a, _| {
+                let says = op::access::said(&a.mode, a.current, a.folders)?;
+                Ok(Outcome::Value(serde_json::json!({ "says": says })))
+            },
+        )
+        .data();
 
         c.register::<TargetsArgs, _>(
             "core",

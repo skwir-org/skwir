@@ -202,6 +202,27 @@ mod args {
         pointer: bool,
     }
 
+    /// A field's reference (ADR-137): `field` names the field whose [?]
+    /// was pressed, else the one being typed in; `close` closes it
+    /// (`pointer`: by a press outside it).
+    #[derive(Deserialize, JsonSchema)]
+    pub(super) struct FieldReference {
+        #[serde(default)]
+        field: Option<String>,
+        #[serde(default)]
+        close: bool,
+        #[serde(default)]
+        pointer: bool,
+    }
+
+    /// An item of the field's reference open, by its group's place and
+    /// its own.
+    #[derive(Deserialize, JsonSchema)]
+    pub(super) struct ReferencePut {
+        group: usize,
+        item: usize,
+    }
+
     /// The preview's More's submenu beside its row: `open` one by its
     /// name, the keyboard on its first row; `back` to its row; `step` the
     /// keyboard along its rows, or to the last (`end`: true) or first.
@@ -545,12 +566,31 @@ mod args {
         /// A line under the field: what the answer may be.
         #[serde(default)]
         note: Option<String>,
+        /// What the field takes (ADR-137), opened from a [?] at its end
+        /// or F1: its groups of items, each as written, what it means, what
+        /// it gives, and what choosing it writes.
+        #[serde(default)]
+        reference: Option<skwir_core::reference::Reference>,
+        /// What says, as it is typed, what the text comes to: run on a
+        /// worker with the text as its `field`; its `says` is shown under
+        /// the field, its error there too, holding the answer back.
+        #[serde(default)]
+        describe: Option<AskDescribe>,
         /// What runs with the answer.
         command: String,
         #[serde(default)]
         args: Option<serde_json::Value>,
         /// The argument of `command` the answer is.
         field: String,
+    }
+
+    /// What `ui.ask`'s `describe` runs: `command`, with `args` and the
+    /// text typed as the asked field.
+    #[derive(Deserialize, JsonSchema)]
+    pub(super) struct AskDescribe {
+        command: String,
+        #[serde(default)]
+        args: Option<serde_json::Value>,
     }
 
     /// Which group `ui.select_group` selects, and how.
@@ -598,16 +638,18 @@ mod args {
 }
 
 use args::{
-    Adjust, Amount, Ask, Bucket, Close, Continue, CopyText, Count, Cursor, Delta, Dir, Find, Fold,
-    FolderItem, Folders, History, Key, Layout, ListMoveArgs, Object, On, Pace, Page, PageLink,
-    Pages, Pan, Pick, Player, Pointer, Popup, PreviewScroll, Scrub, SelectGroup, Settings, Split,
-    Submenu, Submit, TagsPrompt, TerminalPaste, Text, TextSize, TimelineCursor, TimelineDate,
-    Toggle, Toward, Url, UsageMode, View, ViewButton,
+    Adjust, Amount, Ask, Bucket, Close, Continue, CopyText, Count, Cursor, Delta, Dir,
+    FieldReference, Find, Fold, FolderItem, Folders, History, Key, Layout, ListMoveArgs, Object,
+    On, Pace, Page, PageLink, Pages, Pan, Pick, Player, Pointer, Popup, PreviewScroll,
+    ReferencePut, Scrub, SelectGroup, Settings, Split, Submenu, Submit, TagsPrompt, TerminalPaste,
+    Text, TextSize, TimelineCursor, TimelineDate, Toggle, Toward, Url, UsageMode, View, ViewButton,
 };
 
 /// The window's commands an agent may run (ADR-044): they change only
 /// what the window shows, or open a prompt the user answers.
 const SHOWS: &[&str] = &[
+    "ui.field_reference",
+    "ui.field_reference_put",
     "ui.cursor",
     "ui.cursor_pick",
     "ui.cursor_toggle",
@@ -2094,6 +2136,20 @@ pub fn declare_all(app: &App) {
         "ui.toolbar_menu",
         "Toolbar menu",
         "Open or close More, the View menu, the choice of view buttons, the Map view's backgrounds or the pinned player's More (kind: more, view_options, view_buttons, map_backgrounds, player)",
+    );
+    declare::<FieldReference>(
+        app,
+        Topic::Window,
+        "ui.field_reference",
+        "What the field takes",
+        "Show what the field being typed in takes, or the one `field` names in the dialog open: its placeholders, terms or signs, each with what it means and gives here, chosen to write it where the caret is (ADR-137); the address field says it in its card. Close it with `close`",
+    );
+    declare::<ReferencePut>(
+        app,
+        Topic::Window,
+        "ui.field_reference_put",
+        "Write from the field's reference",
+        "Write the `item`th item of the `group`th group of the field's reference open where the field's caret is, or fill the fields its recipe names",
     );
     // Answered by the focused button and the open popup themselves.
     none(

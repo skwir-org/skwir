@@ -48,7 +48,8 @@ pub enum Typed {
     Place,
     /// `@` and what follows: where to search.
     Scope,
-    /// `?` alone: what the field takes.
+    /// `?` alone, or F1 (ADR-137): what the field takes, whole; a row
+    /// writes its part where the caret is (in place of the `?`).
     Help,
 }
 
@@ -219,6 +220,10 @@ pub struct Suggestion {
     /// The row says the text is wrong (`run` is then `None`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub error: bool,
+    /// The heading it stands under within its section (a reference's
+    /// group, ADR-137: "Values"); its section's title when `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heading: Option<String>,
     /// Its place within its section: lower first.
     #[serde(default)]
     pub rank: i32,
@@ -247,6 +252,7 @@ impl Suggestion {
             forget: None,
             keys: None,
             error: false,
+            heading: None,
             rank: 0,
             source: String::new(),
         }
@@ -273,6 +279,13 @@ impl Suggestion {
     #[must_use]
     pub fn rank(mut self, rank: i32) -> Self {
         self.rank = rank;
+        self
+    }
+
+    /// Under `heading` within its section.
+    #[must_use]
+    pub fn heading(mut self, heading: impl Into<String>) -> Self {
+        self.heading = Some(heading.into());
         self
     }
 }

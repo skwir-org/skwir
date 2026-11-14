@@ -1250,6 +1250,14 @@ pub fn access_rows(
         access = access.in_gist();
     }
     if editable {
+        // What a mode is written as, and what the one typed comes to for
+        // them, said as it is typed (ADR-137).
+        let mut describe = serde_json::json!({
+            "folders": subjects.iter().all(|s| s.folder),
+        });
+        if let Some(mode) = mode {
+            describe["current"] = (mode & 0o7777).into();
+        }
         let mut ask = serde_json::json!({
             "title": format!("Access of {}", targets.named(count)),
             "accept": "Change",
@@ -1257,6 +1265,8 @@ pub fn access_rows(
             "command": "set_access",
             "field": "mode",
             "args": targets.args(&serde_json::json!({})),
+            "reference": skwir_core::op::access::reference(),
+            "describe": { "command": "set_access.describe", "args": describe },
         });
         if let Some(mode) = mode {
             ask["text"] = format!("{mode:o}").into();
@@ -3073,6 +3083,33 @@ mod tests {
         assert_eq!(groups[0]["command"]["args"]["group"], 10);
         // The mode as chmod writes it, ready to edit.
         assert_eq!(rows[6].actions[0].1.args["text"], "644");
+        // The question passes the window's check of `ui.ask`, says what a
+        // mode is written as, and what it asks to say what is typed comes
+        // to is answered (ADR-137).
+        let ask = &rows[6].actions[0].1;
+        let tmp = tempfile::tempdir().unwrap();
+        let app = skwir_core::App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        crate::commands::declare_all(&app);
+        app.commands.check(ask).unwrap();
+        assert_eq!(ask.args["reference"]["title"], "Access");
+        let describe = &ask.args["describe"];
+        let mut args = describe["args"].clone();
+        args["mode"] = "u+x".into();
+        let Ok(skwir_core::command::Outcome::Value(said)) = app.dispatch(&Invocation::with_args(
+            describe["command"].as_str().unwrap(),
+            &args,
+        )) else {
+            panic!("no words for u+x")
+        };
+        if !cfg!(windows) {
+            assert!(
+                said["says"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("rwxr--r-- (744)"),
+                "{said}"
+            );
+        }
         assert!(
             rows.iter()
                 .filter(|r| !r.actions.is_empty())

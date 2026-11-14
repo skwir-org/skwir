@@ -17459,3 +17459,67 @@ film after a film standing still for good.
   The media helper on the final tree: clippy (Linux, Windows, macOS),
   its 9 tests; `tools/media/check.py` h264-aac by its fixer. Not run: `just
   release-check`, `bench-check`, an AppImage build.
+
+## 2026-11-14: A field says what it takes
+
+The user asked for help beside the bulk rename's fields (its template's
+placeholders, common regular expressions), as a [?] after the field
+opening a popup, and where else one is needed; they chose the four
+steps recommended (ADR-137).
+
+- **Found on the way**: the template's placeholder named `{stem}`, which
+  the plugin refuses, and never `{full}` or `{parent}`; the dialog
+  opened on `{name}`, the name without its extension, so Enter at once
+  took every extension away (a probe test: `photo.jpg` became `photo`);
+  `rename_bulk`'s schema described none of its fields; `?` in the
+  address listed ten terms and nothing of how they go together.
+- **Core**: `skwir_core::reference` (a field's reference as data; the
+  regex crate's signs once, `regex_pattern`); `set_access.describe`
+  (`op::access::said`, from the parser and `apply` that change the file;
+  the read-only attribute's words on Windows), `op::access::reference`,
+  `mode_text` (moved from the platform's `users::mode`, which calls it);
+  `Suggestion::heading`.
+- **The bulk rename**: `rename_bulk.reference` (template, regex,
+  replacement); each placeholder with what it gives the first item as
+  the rename stands, through `render` itself; recipes (each a pattern and
+  its replacement, with what it makes of the first name); the preview's
+  `matched` and `put` ranges (`Marks`, `Captures::expand` as
+  `replace_all` does); `{.ext}`; the schema's descriptions. The dialog
+  asks the three references with each preview, opens on `{full}`, and
+  tints the marks (`clip::clipped_marked`).
+- **The search**: `query.reference` (every key with what it means,
+  `KeyInfo::means`; together, values, names, contents, a pattern's
+  signs, options), answered to `Typed::Help`: `?` alone, or F1 and the
+  card's [?] keeping the text (`Omni::reference`); a row writes its part
+  at the caret, a term apart from the words beside it.
+- **The window**: `reference.rs` (the popup over a dialog, from the
+  field's [?] or F1: `ui.field_reference`, `ui.field_reference_put`,
+  the `reference` key token), `Button::said`, `MenuPart::Note`,
+  `TextInput::put`, `PopoverAnchor::popup_right_over`, a `help` icon;
+  Tab and the arrows in a popup over a dialog walk its rows
+  (`walk_dialog` asked only outside one). `ui.ask` takes `reference`
+  and `describe` (its line under the field, an error holding the answer
+  back); Properties' Access passes both.
+- **gpui's end truncation** trims ASCII punctuation before its ellipsis:
+  a regex cut there collapsed to `\s…`. What is written is cut in its
+  middle.
+- **Checked**: tests for the signs being patterns the crate reads, the
+  template's reference held to `render` (what each gives, the regex run
+  first), each recipe doing what it says, the marks, `{.ext}`, a part
+  written where the caret is, the search's reference read by its parser
+  with every key said, a mode's words, the Access question passing
+  `ui.ask`'s check, the card's headings. Core, platform, UI, query and
+  rename: 2151 passed; the binary's 232 passed; clippy on them (Linux),
+  `just check-windows` and `just check-macos` green (the latter leaves
+  the gpui crates out). In a window (debug build, Xvfb :87): F1
+  and the [?] on each of the three fields, Escape closing the reference
+  alone, Down walking it, `{n:03}` then `{.ext}` written at the caret, a
+  recipe filling the regex and the replacement, the marks on both
+  names; Access: the words for `644` and `u+x,go-r`, a typo refused (red,
+  Change inert, Enter held back, the file untouched), F1 and `755`
+  chosen, applied, undone; the address: F1 over typed words, `kind:`
+  written apart, Escape back with the text kept, `?` alone. Two faults
+  found there and fixed: the preview's `limit` passed to the reference
+  (refused: no reference opened) and `ui.ask`'s schema lacking the new
+  arguments (refused: Access's question did not open; a test now checks
+  it).

@@ -218,6 +218,16 @@ Views are in [views.md](views.md); what locations decide, in
   active (`Shell::drawn_focus`), or to the Settings dialog while it is
   open, never to the pane behind it. Never refocus by hand after closing
   something.
+- **A field's reference** (ADR-137, `reference.rs`): a dialog's field
+  that says what it takes has a [?] at its end and `reference` in its
+  key context (F1, `ui.field_reference`); the reference hangs from the
+  [?] over the dialog, drawn among the window's overlays, never inside
+  the dialog, so the dialog's own keys (its Tab) never reach it. A popup
+  over a dialog walks its own rows (`ui.toolbar_next` asks
+  `walk_dialog` only outside a popup). A row writes its part where the
+  field's caret is (`TextInput::put`, an edit), or fills the fields its
+  recipe names; the field has the keyboard again. The dialog closing
+  closes its reference.
 - **One popup at a time,** all through `Shell::toggle_popup` (Activity
   is none: it stays open beside them, under them, and its giving the
   keyboard closes the one open). A press
@@ -619,11 +629,20 @@ of bars, split or not.
   kept from one opening to the next (`PaneUi::card_rows`), so it knows
   that width; the first opening in a window, or the first after the
   field's width changed, takes one frame more (`views.md`, Scrolling).
-- **`?` alone** lists what the field takes: the shell's grammar (a path,
-  a place's address from the schemes providers open, `@`, words, `>`)
-  and the query plugin's terms with examples; Enter or Tab writes how the
-  row starts (`~/`, a scheme, `@`, `>`, a term's key such as `kind:`),
-  never the example.
+- **`?` alone, or F1** (ADR-137), lists what the field takes
+  (`Typed::Help`): with `?` alone the shell's grammar first (a path, a
+  place's address from the schemes providers open, `@`, words, `>`);
+  then the query plugin's whole reference (`query.reference`): its terms,
+  how they go together, values, names, contents and a pattern's signs,
+  each group under its heading (`Suggestion::heading`, which `pieces`
+  titles as a section). Enter or Tab writes the row's part where the
+  caret is, apart from the words beside it (a pattern's sign as it is),
+  in place of a lone `?`; the shell's own rows write how they start
+  (`~/`, a scheme, `@`, `>`), never the example. F1 and the [?] at the
+  end of the card's first line keep the text and the keyboard in the
+  field (`Omni::reference`): leaving it would end what is typed. A key or
+  Escape goes back to what the text goes on with; F1 again shows the
+  keys.
 - **Before anything is typed**, the dropdown shows what the sources offer
   then, nothing highlighted: Enter does what the text says (the location
   shown again, a search's words again). A row the arrows reach runs as
@@ -1456,6 +1475,14 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   choice may name the answer's button while chosen (Print…, Save). A
   row has the keyboard as one: Up and Down, or Space, change its choice,
   Enter answers the form as from a field.
+- **A question says what is typed comes to** (ADR-137): `ui.ask`'s
+  `describe` (`{ command, args? }`) runs on a worker with the text as
+  its field at each change, an older answer dropped; its `says` is a
+  line under the field, its error that line in the error's color and the
+  field's frame too, holding the answer back (Enter refused, the answer's
+  button drawn inert) while the text is the one it was said of. Its
+  `reference` gives the field a [?] and F1, as a dialog's (above, Popups
+  and focus).
 - **A question names what it is about when asked.** `ui.ask` fills the
   asked command's `pane`, `entries` (the selection) and `in` (the folder
   shown) that the asker left out, as they are when it opens: Rename

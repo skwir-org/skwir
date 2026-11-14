@@ -421,6 +421,30 @@ impl TextInput {
         cx.notify();
     }
 
+    /// Put `text` where the caret is, over what is selected, as an edit
+    /// Ctrl+Z takes back, the caret after it: what a field's reference
+    /// writes (ADR-137). Held to [`MOST_CHARS`], as what is typed is.
+    pub fn put(&mut self, text: &str, cx: &mut Context<Self>) {
+        let range = self.snap(self.selected_range.start)..self.snap(self.selected_range.end);
+        let text = fitted(&self.content, &range, text);
+        if changes_nothing(&range, text, false) {
+            return;
+        }
+        if !self.masked {
+            let before = (self.content.clone(), self.selected_range.clone());
+            self.history.record(before, None);
+        }
+        self.content =
+            (self.content[..range.start].to_owned() + text + &self.content[range.end..]).into();
+        kept_before(&mut self.styles, range.start);
+        let end = range.start + text.len();
+        self.selected_range = end..end;
+        self.selection_reversed = false;
+        self.marked_range = None;
+        cx.emit(InputEvent::Changed);
+        cx.notify();
+    }
+
     /// What the text may go on with (a completion): drawn muted after it
     /// while the cursor is at its end with nothing selected, taken by
     /// Right or End there (`HintTaken`). The hint is not the text: what

@@ -1,16 +1,26 @@
 //! Bulk rename dialog: template, regex, replacement, case, start; live
-//! preview from `rename_bulk.preview`; Enter or Rename applies
-//! `rename_bulk`.
+//! preview from `rename_bulk.preview`, where the regex matched in each old
+//! name and what it put in the new one tinted; Enter or Rename applies
+//! `rename_bulk`. The template, the regex and the replacement each say
+//! what they take (ADR-137): the plugin's `rename_bulk.reference`, asked
+//! with each preview, opened from the [?] at the field's end or F1 in it
+//! (`reference.rs`). It opens on `{full}`, which leaves every name as it
+//! is.
+
+use std::ops::Range;
+use std::rc::Rc;
 
 use crate::sizes::TextSizes;
 use crate::sizes::sized;
 use gpui::{AnyElement, Context, Entity, Subscription, Window, div, prelude::*};
 use skwir_core::EntryId;
 use skwir_core::command::{Invocation, Outcome};
+use skwir_core::reference::Reference;
 use skwir_core::workspace::PaneId;
 
 use crate::controls::{self, ButtonStyle};
-use crate::elements::clip::clipped;
+use crate::elements::clip::clipped_marked;
+use crate::elements::popover::PopoverAnchor;
 use crate::input::{InputEvent, TextInput};
 use crate::keymap;
 use crate::modal::{self, FocusReturn};
@@ -18,15 +28,42 @@ use crate::shell::Shell;
 use crate::theme::Theme;
 
 pub const CASES: [&str; 5] = ["none", "lower", "upper", "title", "sentence"];
-const FIELDS: [(&str, &str); 4] = [
+/// Each field: the key the plugin knows it by, its label, and what it
+/// shows while empty.
+const FIELDS: [(&str, &str, &str); 4] = [
+    ("template", "Template", "{name}-{n:02}{.ext}"),
+    ("regex", "Regex", "Optional: a pattern over the whole name"),
     (
-        "Template",
-        "{name}-{n:02}.{ext}  ({name} {stem} {ext} {n} {date} …)",
+        "replacement",
+        "Replacement",
+        "Optional: what each match becomes, $1 for its first group",
     ),
-    ("Regex", "optional pattern over the name"),
-    ("Replacement", "optional; $1 for groups"),
-    ("Start", "1"),
+    ("start", "Start", "1"),
 ];
+
+/// How many of `FIELDS`, from the first, say what they take.
+const SAID: usize = 3;
+
+/// A rename the preview shows: the old name and where the regex matched
+/// in it, the new one and what the regex put there (byte ranges).
+pub struct Renamed {
+    from: String,
+    to: String,
+    matched: Vec<Range<usize>>,
+    put: Vec<Range<usize>>,
+}
+
+/// Byte ranges as the plugin says them (`[[start, end], …]`).
+fn ranges(said: Option<&serde_json::Value>) -> Vec<Range<usize>> {
+    said.and_then(serde_json::Value::as_array)
+        .map_or(&[][..], Vec::as_slice)
+        .iter()
+        .filter_map(|range| {
+            let [start, end] = serde_json::from_value::<[usize; 2]>(range.clone()).ok()?;
+            (start <= end).then_some(start..end)
+        })
+        .collect()
+}
 
 /// The renames the preview shows at most.
 const SHOWN: usize = 40;
@@ -41,7 +78,12 @@ pub struct BulkState {
     pub focused: usize,
     /// The first names the preview shows (`SHOWN`), and how many renames
     /// there are in all.
-    pub preview: Vec<(String, String)>,
+    pub preview: Vec<Renamed>,
+    /// What the template, the regex and the replacement take, as the
+    /// plugin said it with the latest preview, and the [?] each hangs
+    /// from.
+    references: [Option<Rc<Reference>>; SAID],
+    anchors: [PopoverAnchor; SAID],
     renamed: usize,
     pub error: Option<String>,
     /// Advances with each change; only the latest preview is shown, and
@@ -137,11 +179,16 @@ impl Shell {
         };
         let mut inputs = Vec::new();
         let mut subs = Vec::new();
-        for (i, (_, placeholder)) in FIELDS.iter().enumerate() {
-            let input = cx.new(|cx| TextInput::new(*placeholder, cx));
+        for (i, (_, label, placeholder)) in FIELDS.iter().enumerate() {
+            let input = cx.new(|cx| {
+                let mut input = TextInput::new(*placeholder, cx);
+                input.set_label(*label);
+                input
+            });
             if i == 0 {
+                // The whole name: renaming nothing until it is typed over.
                 input.update(cx, |t, cx| {
-                    t.set_text("{name}", cx);
+                    t.set_text("{full}", cx);
                     t.select_all_now(cx);
                 });
             }
@@ -166,6 +213,8 @@ impl Shell {
             case: 0,
             focused: 0,
             preview: Vec::new(),
+            references: Default::default(),
+            anchors: Default::default(),
             renamed: 0,
             error: None,
             asked: 0,
@@ -183,6 +232,10 @@ impl Shell {
     }
 
     pub fn close_bulk(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Its fields' reference goes with it.
+        if self.field_reference.is_some() {
+            self.close_popup(window, cx);
+        }
         if let Some(bulk) = self.bulk.take() {
             if let Some(pending) = &bulk.pending {
                 pending.cancel();
@@ -224,7 +277,10 @@ impl Shell {
         if !self.bulk_still_selected() {
             return self.bulk_selection_changed(cx);
         }
-        let mut spec = self.bulk_spec(cx);
+        // The rename as it stands: what the references are asked with,
+        // and the preview, which says the first `SHOWN` alone.
+        let said = self.bulk_spec(cx);
+        let mut spec = said.clone();
         spec["limit"] = SHOWN.into();
         let cancel = self.app.lifetime().child();
         let Some(b) = &mut self.bulk else { return };
@@ -240,30 +296,50 @@ impl Shell {
             self.pane_lane(pane),
             "rename-bulk-preview",
             cancel,
-            move || match app.dispatch(&Invocation::with_args("rename_bulk.preview", &spec)) {
-                Ok(Outcome::Value(v)) => {
-                    let shown = v["renames"]
-                        .as_array()
-                        .map_or(&[][..], Vec::as_slice)
-                        .iter()
-                        .filter_map(|x| {
-                            Some((
-                                x.get("from")?.as_str()?.to_owned(),
-                                x.get("to")?.as_str()?.to_owned(),
-                            ))
-                        })
-                        .collect();
-                    let count = v["count"]
-                        .as_u64()
-                        .and_then(|n| usize::try_from(n).ok())
-                        .unwrap_or_default();
-                    (shown, count, None)
-                }
-                Ok(_) => (Vec::new(), 0, None),
-                Err(e) => (Vec::new(), 0, Some(format!("{e:#}"))),
+            move || {
+                // What each field takes, given the first item as the rename
+                // stands; one the plugin could not say keeps the last.
+                let references: [Option<Reference>; SAID] = std::array::from_fn(|i| {
+                    let mut asked = said.clone();
+                    asked["field"] = FIELDS[i].0.into();
+                    match app.dispatch(&Invocation::with_args("rename_bulk.reference", &asked)) {
+                        Ok(Outcome::Value(v)) => serde_json::from_value(v).ok(),
+                        Ok(_) => None,
+                        Err(e) => {
+                            tracing::warn!("rename_bulk.reference ({}): {e:#}", FIELDS[i].0);
+                            None
+                        }
+                    }
+                });
+                let (shown, count, error) =
+                    match app.dispatch(&Invocation::with_args("rename_bulk.preview", &spec)) {
+                        Ok(Outcome::Value(v)) => {
+                            let shown = v["renames"]
+                                .as_array()
+                                .map_or(&[][..], Vec::as_slice)
+                                .iter()
+                                .filter_map(|x| {
+                                    Some(Renamed {
+                                        from: x.get("from")?.as_str()?.to_owned(),
+                                        to: x.get("to")?.as_str()?.to_owned(),
+                                        matched: ranges(x.get("matched")),
+                                        put: ranges(x.get("put")),
+                                    })
+                                })
+                                .collect();
+                            let count = v["count"]
+                                .as_u64()
+                                .and_then(|n| usize::try_from(n).ok())
+                                .unwrap_or_default();
+                            (shown, count, None)
+                        }
+                        Ok(_) => (Vec::new(), 0, None),
+                        Err(e) => (Vec::new(), 0, Some(format!("{e:#}"))),
+                    };
+                (shown, count, error, references)
             },
             move |this, result, _, cx| {
-                let (preview, renamed, error) = result;
+                let (preview, renamed, error, references) = result;
                 let Some(b) = this.bulk.as_mut().filter(|b| b.asked == asked) else {
                     return;
                 };
@@ -272,6 +348,11 @@ impl Shell {
                 b.renamed = renamed;
                 b.error = error;
                 b.current = true;
+                for (kept, said) in b.references.iter_mut().zip(references) {
+                    if let Some(said) = said {
+                        *kept = Some(Rc::new(said));
+                    }
+                }
                 cx.notify();
             },
             window,
@@ -290,6 +371,35 @@ impl Shell {
         }
         self.close_bulk(window, cx);
         self.run("rename_bulk", spec, window, cx);
+    }
+
+    /// The reference of the field `field` names (its key, its [?]
+    /// pressed), or of the one being typed in: the dialog's fields that
+    /// say what they take, that one first, to write in (ADR-137). None
+    /// before the plugin said it.
+    pub(crate) fn bulk_reference(
+        &self,
+        field: Option<&str>,
+        window: &Window,
+        cx: &gpui::App,
+    ) -> Option<crate::reference::Open> {
+        let b = self.bulk.as_ref()?;
+        let at = match field {
+            Some(key) => FIELDS[..SAID]
+                .iter()
+                .position(|(named, ..)| *named == key)?,
+            None => (0..SAID).find(|&i| b.inputs[i].read(cx).is_focused(window))?,
+        };
+        let reference = b.references[at].clone()?;
+        let fields = std::iter::once(at)
+            .chain((0..SAID).filter(|&i| i != at))
+            .map(|i| (FIELDS[i].0.into(), b.inputs[i].clone()))
+            .collect();
+        Some(crate::reference::Open {
+            fields,
+            reference,
+            anchor: b.anchors[at].clone(),
+        })
     }
 
     /// What it was opened for is no longer selected: said where the
@@ -312,9 +422,11 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
     let b = shell.bulk.as_ref()?;
     let theme = cx.global::<Theme>().clone();
     let mut form = div().flex().flex_col().gap_2();
-    for (i, (label, _)) in FIELDS.iter().enumerate() {
+    for (i, (key, label, _)) in FIELDS.iter().enumerate() {
         // Where the keyboard is, whether Tab or a click put it there.
         let focused = b.inputs[i].read(cx).is_focused(window);
+        // F1 in a field that says what it takes opens that (ADR-137).
+        let said = i < SAID;
         form = form.child(
             div()
                 .flex()
@@ -329,6 +441,7 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
                 )
                 .child(
                     div()
+                        .when(said, |d| d.key_context("reference"))
                         .flex_1()
                         .h(sized(28.))
                         .px_2()
@@ -339,7 +452,19 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
                         .border_color(if focused { theme.accent } else { theme.border })
                         .bg(theme.bg)
                         .child(b.inputs[i].clone()),
-                ),
+                )
+                .child(if said {
+                    crate::reference::button(
+                        format!("bulk-reference-{key}"),
+                        key,
+                        &b.anchors[i],
+                        shell,
+                        cx,
+                    )
+                } else {
+                    // The [?]'s room, so the fields end together.
+                    crate::reference::room()
+                }),
         );
     }
     form = form.child(
@@ -383,12 +508,23 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
         .overflow_y_scroll()
         .text_body()
         .font_family(theme.code_font.clone());
-    for (i, (from, to)) in b.preview.iter().enumerate() {
+    // What the regex matched, and what it put there, on a value's tint.
+    let mark = gpui::HighlightStyle {
+        background_color: Some(theme.term),
+        ..gpui::HighlightStyle::default()
+    };
+    for (i, renamed) in b.preview.iter().enumerate() {
+        let Renamed {
+            from,
+            to,
+            matched,
+            put,
+        } = renamed;
         list = list.child(
             div()
                 .flex()
                 .gap_2()
-                .child(clipped(
+                .child(clipped_marked(
                     div()
                         .id(crate::elements::known_by("rename-from", (i, from)))
                         .flex_1()
@@ -396,9 +532,11 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
                         .truncate()
                         .text_color(theme.text_muted),
                     from.clone(),
+                    matched,
+                    mark,
                 ))
                 .child(div().flex_none().child("→"))
-                .child(clipped(
+                .child(clipped_marked(
                     // Known by what it says: the pattern typed on, a name
                     // pointed at does not keep the one before's tooltip.
                     div()
@@ -407,6 +545,8 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
                         .min_w_0()
                         .truncate(),
                     to.clone(),
+                    put,
+                    mark,
                 )),
         );
     }
@@ -445,7 +585,12 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
         .child(list)
         .children(more)
         .child(modal::footer(
-            "Tab switches fields · Enter renames (undoable) · Escape cancels",
+            match shell.keys_for("ui.field_reference", &serde_json::Value::Null) {
+                Some(keys) => format!(
+                    "Tab switches fields · {keys} says what one takes · Enter renames (undoable) · Escape cancels"
+                ),
+                None => "Tab switches fields · Enter renames (undoable) · Escape cancels".to_owned(),
+            },
             [
                 modal::pressed(
                     controls::button(

@@ -143,7 +143,10 @@ work where the keyboard is, by topic.
   path's names (`Tab` completes, the first is what `Enter` does), places
   you go to, tags, other tabs, where the pane was, saved and recent
   searches, commands with their keys. `>` hands the rest to the palette;
-  `?` alone lists what the address takes.
+  `?` alone, or `F1` (or the `?` at the end of the list's first line)
+  while you type, lists what the address takes: every search term with
+  examples, how terms go together (`OR`, `NOT`, `-`, quotes), values,
+  wildcards and a regex's signs; `Enter` writes one where the cursor is.
 - **Finding: this folder, or its subfolders too.** `Ctrl+Shift+F` looks
   in the folder shown alone, `Ctrl+F` in it and its subfolders; while
   you type, each key switches to its side and keeps the words, as the
@@ -360,8 +363,15 @@ configuration names is run, and nothing is written to it.
   Undo takes all of it back.
 - **Rename** with `F2`. With several files selected, `F2` (or `Ctrl+F2`)
   renames them together from a template, a regex and case rules, with a
-  preview of every new name (`Tab` moves between fields, `Ctrl+K`
-  changes case).
+  preview of every new name, what the regex matched and what it put
+  there tinted (`Tab` moves between fields, `Ctrl+K` changes case). It
+  starts from `{full}`, the names as they are. The `?` after the
+  template, the regex and the replacement, or `F1` in one, says what it
+  takes: the placeholders with what each gives the first file (`{name}`,
+  `{.ext}`, `{n:03}`, `{date:%Y%m%d}`…), recipes for what names often
+  need (spaces to underscores, what is in brackets taken away, two parts
+  swapped), a pattern's signs and a replacement's (`${1}` before a
+  letter). Choose one and it is written where the cursor is.
 - **Edit as text.** `Ctrl+E` opens the folder's names in your editor
   (`$VISUAL` or `$EDITOR`). What you rename, move or delete there comes
   back as a plan.
@@ -754,7 +764,8 @@ click on a row copies what it says (its Path, its Folder).
   folders are among them), and the owner, group and access they share.
 - **Who may use it**, in words: what its owner, its group and others
   can do, who can run it, and the mode as `chmod` writes it. Change…
-  beside each changes it; on a folder, Also everything inside (`Alt+A`)
+  beside each changes it, the mode's saying as you type what it comes to
+  (`?` or `F1` there: how a mode is written); on a folder, Also everything inside (`Alt+A`)
   reaches what it holds, giving folders inside what they need to be
   opened and leaving files as runnable as they were. Allow running makes
   a script or an AppImage a program. The group goes to one of yours; the

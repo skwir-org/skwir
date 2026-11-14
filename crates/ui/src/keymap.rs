@@ -245,6 +245,9 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     ("escape", "ui.preview_find_close", Some("preview_find")),
     ("secondary-,", "ui.settings", None),
     ("f1", "ui.shortcuts", None),
+    // In a field that says what it takes: that, its keys one F1 further
+    // (ADR-137).
+    ("f1", "ui.field_reference", Some("reference")),
     // GNOME's key for the shortcuts window. GPUI leaves out the Shift a
     // symbol took, so Ctrl+Shift+/ (or wherever `?` is) arrives as `ctrl-?`.
     ("secondary-?", "ui.shortcuts", None),
@@ -1583,6 +1586,7 @@ pub(crate) fn condition(flag: &str) -> String {
         "filtered" => "filtered by name",
         "completes" => "while what is typed can be completed",
         "labelling" => "while links are labelled",
+        "reference" => "in a field that says what it takes",
         other => other,
     }
     .to_owned()

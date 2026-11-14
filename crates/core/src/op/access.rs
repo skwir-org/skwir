@@ -290,6 +290,272 @@ impl Clause {
     }
 }
 
+// ------------------------------------------------------------------ said
+
+/// What `text` makes of the items asked about, in words, as the field is
+/// typed (Properties' Access, through `ui.ask`'s `describe`): the bits it
+/// comes to and who may do what, for items whose mode is `current` (all
+/// of them share it), else what each clause does to each. `folders`:
+/// every item is a folder, whose bits read as listing, changing and
+/// opening it.
+///
+/// # Errors
+/// What is not a mode, as [`Mode::parse`] says it.
+pub fn said(text: &str, current: Option<u32>, folders: bool) -> anyhow::Result<String> {
+    let mode = Mode::parse(text)?;
+    if cfg!(windows) {
+        return Ok(said_on_windows(&mode, current, folders));
+    }
+    Ok(match (&mode, current) {
+        (Mode::Octal { .. }, _) | (Mode::Symbolic(_), Some(_)) => {
+            let bits = mode.apply(current.unwrap_or(0), folders) & 0o7777;
+            format!("{}: {}", mode_text(bits), who_may(bits, folders))
+        }
+        (Mode::Symbolic(clauses), None) => clauses
+            .iter()
+            .map(|clause| clause.said(folders))
+            .collect::<Vec<_>>()
+            .join("; "),
+    })
+}
+
+/// `rwxr-xr-x (755)` for the permission bits of a mode, as `ls` writes
+/// them: a set-ID bit is `s` over the run bit (`S` without it), the
+/// sticky bit `t` (`T`).
+pub fn mode_text(mode: u32) -> String {
+    let bits = mode & 0o7777;
+    let mut text = String::with_capacity(9);
+    for (shift, special, mark) in [(6, SETUID, 's'), (3, SETGID, 's'), (0, STICKY, 't')] {
+        let triplet = (bits >> shift) & 0o7;
+        text.push(if triplet & 4 != 0 { 'r' } else { '-' });
+        text.push(if triplet & 2 != 0 { 'w' } else { '-' });
+        text.push(match (triplet & 1 != 0, bits & special != 0) {
+            (true, false) => 'x',
+            (false, false) => '-',
+            (true, true) => mark,
+            (false, true) => mark.to_ascii_uppercase(),
+        });
+    }
+    format!("{text} ({bits:o})")
+}
+
+/// Windows keeps the owner's write bit alone, as the read-only attribute.
+fn said_on_windows(mode: &Mode, current: Option<u32>, folders: bool) -> String {
+    let writes = |bits: u32| bits & 0o200 != 0;
+    match (mode, current) {
+        (Mode::Octal { bits, .. }, _) => read_only(!writes(*bits)),
+        (_, Some(current)) => read_only(!writes(mode.apply(current, folders))),
+        (Mode::Symbolic(_), None) => {
+            let (kept, unwritten) = (mode.apply(0o200, folders), mode.apply(0, folders));
+            match (writes(kept), writes(unwritten)) {
+                (true, true) => read_only(false),
+                (false, false) => read_only(true),
+                _ => "Each stays as it is: only the owner's w is kept here".to_owned(),
+            }
+        }
+    }
+}
+
+fn read_only(read_only: bool) -> String {
+    if read_only {
+        "Read-only".to_owned()
+    } else {
+        "Not read-only".to_owned()
+    }
+}
+
+/// Who may do what with `bits`: classes that may do the same said
+/// together, then what the special bits do.
+fn who_may(bits: u32, folders: bool) -> String {
+    let rwx = |shift: u32| (bits >> shift) & 0o7;
+    let (owner, group, others) = (rwx(6), rwx(3), rwx(0));
+    let may = |perms: u32| match verbs(perms, folders) {
+        verbs if verbs.is_empty() => "may not use it".to_owned(),
+        verbs => format!("may {verbs}"),
+    };
+    let mut said = if owner == group && group == others {
+        format!("everyone {}", may(owner))
+    } else if group == others {
+        format!(
+            "the owner {}, the group and others {}",
+            may(owner),
+            may(group)
+        )
+    } else if owner == group {
+        format!(
+            "the owner and the group {}, others {}",
+            may(owner),
+            may(others)
+        )
+    } else {
+        format!(
+            "the owner {}, the group {}, others {}",
+            may(owner),
+            may(group),
+            may(others)
+        )
+    };
+    if bits & SETUID != 0 && !folders {
+        said.push_str("; it runs as its owner");
+    }
+    if bits & SETGID != 0 {
+        said.push_str(if folders {
+            "; what is made in it takes its group"
+        } else {
+            "; it runs as its group"
+        });
+    }
+    if bits & STICKY != 0 && folders {
+        said.push_str("; only their owners may remove what it holds");
+    }
+    said
+}
+
+/// `perms` (a class's three bits) as what one may do: "read and write".
+fn verbs(perms: u32, folders: bool) -> String {
+    let words = if folders {
+        ["list it", "change what it holds", "open it"]
+    } else {
+        ["read", "write", "run it"]
+    };
+    let done: Vec<&str> = [4, 2, 1]
+        .iter()
+        .zip(words)
+        .filter(|(bit, _)| perms & *bit != 0)
+        .map(|(_, word)| word)
+        .collect();
+    and(&done)
+}
+
+/// `words` joined as a sentence lists them: "a, b and c".
+fn and(words: &[&str]) -> String {
+    match words {
+        [] => String::new(),
+        [one] => (*one).to_owned(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
+}
+
+impl Clause {
+    /// What it does to each item, whatever its mode.
+    fn said(&self, folders: bool) -> String {
+        let who = match self.who {
+            0 => "everyone (but what the umask leaves out)",
+            USER => "the owner",
+            GROUP => "the group",
+            OTHERS => "others",
+            w if w == USER | GROUP => "the owner and the group",
+            w if w == USER | OTHERS => "the owner and others",
+            w if w == GROUP | OTHERS => "the group and others",
+            _ => "everyone",
+        };
+        let actions: Vec<String> = self
+            .actions
+            .iter()
+            .map(|(op, perms)| {
+                let what = match perms {
+                    Perms::Copy(class) => format!(
+                        "what {} may",
+                        match *class {
+                            USER => "the owner",
+                            GROUP => "the group",
+                            _ => "others",
+                        }
+                    ),
+                    Perms::Letters(letters) => letters_said(letters, folders),
+                };
+                match (op, what.is_empty()) {
+                    ('=', true) => "may not use it".to_owned(),
+                    (_, true) => "keeps what it may".to_owned(),
+                    ('+', false) => format!("may also {what}"),
+                    ('-', false) => format!("may no longer {what}"),
+                    (_, false) => format!("may only {what}"),
+                }
+            })
+            .collect();
+        format!(
+            "{who} {}",
+            and(&actions.iter().map(String::as_str).collect::<Vec<_>>())
+        )
+    }
+}
+
+/// What `letters` let one do.
+fn letters_said(letters: &str, folders: bool) -> String {
+    let mut words = Vec::new();
+    for letter in letters.chars() {
+        let word = match (letter, folders) {
+            ('r', false) => "read",
+            ('r', true) => "list it",
+            ('w', false) => "write",
+            ('w', true) => "change what it holds",
+            ('x', false) => "run it",
+            ('x' | 'X', true) => "open it",
+            ('X', false) => "run it where someone may already",
+            ('s', _) => "run as its owner or group (set-ID)",
+            ('t', _) => "keep others from removing what it holds (sticky)",
+            _ => continue,
+        };
+        if !words.contains(&word) {
+            words.push(word);
+        }
+    }
+    and(&words)
+}
+
+/// What a mode is written as, for Properties' Access to show beside its
+/// field: digits, then the symbolic clauses.
+pub fn reference() -> crate::reference::Reference {
+    use crate::reference::{Group, Item, Reference};
+    Reference::new("Access")
+        .group(
+            Group::new("Digits: owner, group, others")
+                .item(Item::new(
+                    "644",
+                    "The owner reads and writes; the group and others read",
+                ))
+                .item(Item::new(
+                    "755",
+                    "Everyone reads and runs; the owner writes too",
+                ))
+                .item(Item::new("600", "The owner alone reads and writes"))
+                .item(Item::new("700", "The owner alone reads, writes and runs"))
+                .note("Each digit adds 4 to read, 2 to write and 1 to run (to open a folder)."),
+        )
+        .group(
+            Group::new("Who")
+                .item(Item::new("u", "The owner"))
+                .item(Item::new("g", "The group"))
+                .item(Item::new("o", "Others"))
+                .item(Item::new("a", "Everyone")),
+        )
+        .group(
+            Group::new("Then")
+                .item(Item::new("+", "May also"))
+                .item(Item::new("-", "May no longer"))
+                .item(Item::new("=", "May only")),
+        )
+        .group(
+            Group::new("What")
+                .item(Item::new("r", "Read (list, for a folder)"))
+                .item(Item::new("w", "Write (change what a folder holds)"))
+                .item(Item::new("x", "Run (open, for a folder)"))
+                .item(Item::new(
+                    "X",
+                    "Open folders, and run what someone may run already",
+                ))
+                .item(Item::new(
+                    "s",
+                    "Run as its owner or group; a folder's group passes on",
+                ))
+                .item(Item::new(
+                    "t",
+                    "Only their owners remove what a folder holds",
+                ))
+                .note("Clauses go one after another, by commas: u+x,go-w."),
+        )
+}
+
 // ------------------------------------------------------------------ words
 
 /// Why the user cannot change the access of a file owned by `uid` (with
@@ -1069,6 +1335,57 @@ mod tests {
         for wrong in ["", "8", "999999", "u+q", "z+x", "u", "u+x,", "+uX", "77777"] {
             assert!(Mode::parse(wrong).is_err(), "{wrong:?} is no mode");
         }
+    }
+
+    /// The words under Properties' Access field: what the mode comes to
+    /// for items sharing one, what each clause does to each else; what is
+    /// no mode is refused as `set_access` refuses it.
+    #[cfg(not(windows))]
+    #[test]
+    fn a_mode_is_said_as_it_is_typed() {
+        assert_eq!(
+            said("644", None, false).unwrap(),
+            "rw-r--r-- (644): the owner may read and write, the group and others may read"
+        );
+        assert_eq!(
+            said("u+x", Some(0o100_644), false).unwrap(),
+            "rwxr--r-- (744): the owner may read, write and run it, the group and others may read"
+        );
+        assert_eq!(
+            said("750", None, true).unwrap(),
+            "rwxr-x--- (750): the owner may list it, change what it holds and open it, \
+             the group may list it and open it, others may not use it"
+        );
+        assert_eq!(said("a=r", None, false).unwrap(), "everyone may only read");
+        assert_eq!(
+            said("u+x,go-w", None, false).unwrap(),
+            "the owner may also run it; the group and others may no longer write"
+        );
+        assert_eq!(said("o=", None, false).unwrap(), "others may not use it");
+        assert_eq!(
+            said("1777", None, true).unwrap(),
+            "rwxrwxrwt (1777): everyone may list it, change what it holds and open it; \
+             only their owners may remove what it holds"
+        );
+        assert_eq!(
+            said("777", None, false).unwrap().split(':').next(),
+            Some("rwxrwxrwx (777)")
+        );
+        assert!(said("u+q", None, false).is_err());
+        assert!(said("", Some(0o644), false).is_err());
+    }
+
+    /// Each mode the reference offers whole is one `set_access` takes.
+    #[test]
+    fn the_reference_s_digits_are_modes() {
+        let reference = reference();
+        let digits = &reference.groups[0];
+        assert!(!digits.items.is_empty());
+        for item in &digits.items {
+            assert!(Mode::parse(&item.written).is_ok(), "{}", item.written);
+        }
+        assert_eq!(mode_text(0o2775), "rwxrwsr-x (2775)");
+        assert_eq!(mode_text(0o100_644), "rw-r--r-- (644)");
     }
 
     /// A clause naming no class leaves out what the umask does, as chmod

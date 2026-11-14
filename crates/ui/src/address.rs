@@ -1639,6 +1639,10 @@ fn pane_row(
     if shell.omnibox_completes(cx) {
         context.add("completes");
     }
+    // F1 says what the field takes, in its card (ADR-137).
+    if shell.ui().omni.is_some() {
+        context.add("reference");
+    }
     let mut field = div()
         .id(("address-field", pane.0 as usize))
         .flex_1()

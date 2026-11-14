@@ -18,6 +18,7 @@ pub mod lang;
 pub mod lens;
 pub mod plocate;
 pub mod provider;
+pub mod reference;
 pub mod saved;
 pub mod similar;
 pub mod within;
@@ -1049,6 +1050,16 @@ impl Plugin for QueryPlugin {
         )
         .data();
         // What the address field asks while it is typed in (`assist`).
+        app.commands
+            .register::<NoArgs, _>(
+                ID,
+                Topic::Find,
+                "query.reference",
+                "Say what a search takes",
+                "What a search's text takes (ADR-137): its terms and options with what each means and examples, how terms go together, values, names' wildcards and what `content:` reads, regex signs included; each item as written, what it says and what choosing it writes",
+                |_, _| Ok(Outcome::Value(serde_json::to_value(reference::reference())?)),
+            )
+            .data();
         app.commands
             .register::<assist::TokensArgs, _>(
                 ID, Topic::Find,

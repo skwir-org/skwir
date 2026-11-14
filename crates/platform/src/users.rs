@@ -52,23 +52,9 @@ pub fn group(gid: u64) -> Option<String> {
 }
 
 /// `rwxr-xr-x (755)` for the permission bits of a mode, as `ls` writes
-/// them: a set-ID bit is `s` over the run bit (`S` without it), the
-/// sticky bit `t` (`T`).
+/// them (`skwir_core::op::access::mode_text`).
 pub fn mode(mode: u64) -> String {
-    let bits = mode & 0o7777;
-    let mut text = String::with_capacity(9);
-    for (shift, special, mark) in [(6, 0o4000, 's'), (3, 0o2000, 's'), (0, 0o1000, 't')] {
-        let triplet = (bits >> shift) & 0o7;
-        text.push(if triplet & 4 != 0 { 'r' } else { '-' });
-        text.push(if triplet & 2 != 0 { 'w' } else { '-' });
-        text.push(match (triplet & 1 != 0, bits & special != 0) {
-            (true, false) => 'x',
-            (false, false) => '-',
-            (true, true) => mark,
-            (false, true) => mark.to_ascii_uppercase(),
-        });
-    }
-    format!("{text} ({bits:o})")
+    skwir_core::op::access::mode_text(u32::try_from(mode & 0o7777).unwrap_or_default())
 }
 
 /// The user skwir runs as (its effective id), whose files it may change

@@ -505,6 +505,9 @@ pub struct Shell {
     pub confirm: Option<ConfirmState>,
     pub menu: Option<MenuState>,
     pub toolbar_menu: Option<crate::toolbar::Popup>,
+    /// The field's reference open (`reference::POPUP`, ADR-137): what it
+    /// writes in and says.
+    pub(crate) field_reference: Option<crate::reference::Open>,
     /// A pane row's menu of places: the history, or a folder's folders.
     pub nav_menu: Option<crate::nav_menu::NavMenu>,
     /// Counts the folder menus asked for: an answer for an older one is
@@ -863,6 +866,7 @@ impl Shell {
             confirm: None,
             menu: None,
             toolbar_menu: None,
+            field_reference: None,
             nav_menu: None,
             nav_asked: 0,
             presses: 0,
@@ -2814,9 +2818,11 @@ impl Shell {
             // The focused button and the open popup answer these; one
             // that reaches here found neither.
             "toolbar_activate" | "toolbar_close" => {}
-            // A dialog keeps the keyboard: Tab walks its own controls.
+            // A dialog keeps the keyboard: Tab walks its own controls; a
+            // popup over it (a field's reference) walks its rows.
             "toolbar_next" | "toolbar_prev"
-                if self.walk_dialog(name == "toolbar_next", window, cx) => {}
+                if !in_toolbar_popup(window)
+                    && self.walk_dialog(name == "toolbar_next", window, cx) => {}
             "toolbar_next" | "toolbar_prev" | "toolbar_first" | "toolbar_last"
                 if self.popup_sub_walk(name, window, cx) => {}
             "toolbar_next" => {
@@ -2836,6 +2842,8 @@ impl Shell {
                 self.reveal_focused_row(window, cx);
             }
             "toolbar_menu" => self.toggle_toolbar_menu(args, window, cx),
+            "field_reference" => self.toggle_field_reference(args, window, cx),
+            "field_reference_put" => self.field_reference_put(args, window, cx),
             "activity" => match args.get("plan").and_then(serde_json::Value::as_u64) {
                 Some(plan) => self.show_activity_of(skwir_core::op::PlanId(plan), window, cx),
                 None => self.toggle_activity(args, window, cx),
@@ -4391,6 +4399,7 @@ impl Render for Shell {
             crate::choose::render(self, cx),
             crate::tags::render(self, cx),
             renamebulk::render(self, window, cx),
+            crate::reference::render(self, cx),
             palette::render(self, cx),
             preview::render_peek(self, cx),
             review::render(self, cx),
@@ -4614,6 +4623,15 @@ fn show_resolved(app: &Arc<App>, cx: &gpui::App) -> u64 {
         colors: crate::desktop_style::revision(),
     };
     crate::settings::show_resolved(app, shown)
+}
+
+/// Whether the keyboard is in a toolbar popup (its rows'), whose own keys
+/// walk it.
+fn in_toolbar_popup(window: &Window) -> bool {
+    window
+        .context_stack()
+        .iter()
+        .any(|context| context.contains("ToolbarPopup"))
 }
 
 #[cfg(test)]

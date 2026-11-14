@@ -172,6 +172,11 @@ pub struct Omni {
     pub token: bool,
     /// The list of scopes is open (the token clicked, Down on it, Alt+Down).
     scopes: bool,
+    /// F1 or the card's [?]: the card says what the field takes, whole,
+    /// as `?` alone does (`Typed::Help`), the text kept, each row writing
+    /// its part where the caret is (ADR-137). Until the text changes, or
+    /// Escape.
+    reference: bool,
     /// The text changed since the field took the keyboard.
     edited: bool,
     /// The row Enter runs; `None` before anything is typed, until the
@@ -374,6 +379,14 @@ impl Row {
         }
     }
 
+    /// The heading it stands under within its section, if any.
+    fn heading(&self) -> Option<&str> {
+        match self {
+            Row::Source(s) => s.heading.as_deref(),
+            _ => None,
+        }
+    }
+
     fn section(&self) -> Section {
         match self {
             Row::Source(s) => s.section,
@@ -404,7 +417,7 @@ impl Row {
 #[derive(Debug, PartialEq)]
 struct Piece {
     rows: Range<usize>,
-    title: Option<&'static str>,
+    title: Option<gpui::SharedString>,
     strip: bool,
 }
 
@@ -412,15 +425,23 @@ struct Piece {
 fn pieces(rows: &[Row]) -> Vec<Piece> {
     let mut pieces: Vec<Piece> = Vec::new();
     let mut section = None;
+    let mut heading = None;
     for (i, row) in rows.iter().enumerate() {
         let sec = row.section();
-        let first = section != Some(sec);
+        // A heading within a section (a reference's group) is titled as
+        // a section is.
+        let under = row.heading();
+        let first = section != Some(sec) || heading != under;
         section = Some(sec);
+        heading = under;
         match pieces.last_mut() {
             Some(last) if !first && sec.is_strip() => last.rows.end = i + 1,
             _ => pieces.push(Piece {
                 rows: i..i + 1,
-                title: sec.title().filter(|_| first),
+                title: under
+                    .map(|h| gpui::SharedString::from(h.to_owned()))
+                    .or_else(|| sec.title().map(gpui::SharedString::from))
+                    .filter(|_| first),
                 strip: sec.is_strip(),
             }),
         }
@@ -624,9 +645,34 @@ impl Shell {
         complete::is_path(text) || scheme_of(text).is_some_and(|s| self.app.provider(s).is_some())
     }
 
-    /// What the text is, as the sources are told.
+    /// What the text is, as the sources are told: what the field takes
+    /// while F1 asked it (`Omni::reference`).
     pub(crate) fn typed_of(&self, text: &str, edited: bool) -> Typed {
+        if self.ui().omni.as_ref().is_some_and(|o| o.reference) {
+            return Typed::Help;
+        }
         typed_for(&self.app, text, edited)
+    }
+
+    /// F1 in the field, or the [?] on the card's first line: the card says
+    /// what the field takes, whole, the text kept, the keyboard staying in
+    /// the field (ADR-137); F1 again shows the keys here.
+    pub(crate) fn omnibox_reference(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(omni) = self.ui_mut().omni.as_mut() else {
+            return;
+        };
+        if omni.reference {
+            return self.toggle_shortcuts(window, cx);
+        }
+        omni.reference = true;
+        omni.scopes = false;
+        omni.token = false;
+        omni.highlighted = None;
+        omni.chosen = false;
+        omni.held = None;
+        self.ask_suggestions(window, cx);
+        self.refresh_rows(cx);
+        cx.notify();
     }
 
     /// Give the active pane's field the keyboard, as `how` says, with
@@ -1235,6 +1281,11 @@ impl Shell {
     }
 
     fn omnibox_changed_keep_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // What a row of the reference wrote, or a key: the rows go on with
+        // the text again.
+        if let Some(omni) = self.ui_mut().omni.as_mut() {
+            omni.reference = false;
+        }
         let text = self.omni_text(cx);
         if let Some(rest) = text.strip_prefix('>') {
             let rest = rest.trim_start().to_owned();
@@ -2371,10 +2422,16 @@ impl Shell {
     /// field shows where it is again, all of it.
     pub fn omnibox_cancel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(omni) = self.ui_mut().omni.as_mut()
-            && (omni.scopes || omni.token)
+            && (omni.scopes || omni.token || omni.reference)
         {
+            let asks = omni.reference;
             omni.scopes = false;
             omni.token = false;
+            omni.reference = false;
+            omni.highlighted = None;
+            if asks {
+                self.ask_suggestions(window, cx);
+            }
             self.refresh_rows(cx);
             return;
         }
@@ -2525,8 +2582,14 @@ impl Shell {
                 rows.extend(sources);
                 (rows, None)
             }
+            // What the field takes: its own forms with `?` alone, the
+            // sources' after them (the search's whole reference).
             Typed::Help => {
-                let mut rows = self.help_rows();
+                let mut rows = if text.trim() == "?" {
+                    self.help_rows()
+                } else {
+                    Vec::new()
+                };
                 rows.extend(sources);
                 (rows, None)
             }
@@ -3071,7 +3134,7 @@ fn footer(shell: &Shell, typed: Typed, listing_scopes: bool) -> String {
         ]),
         Typed::Scope => "Enter searches there.".to_owned(),
         Typed::Help => said(vec![
-            plain("Enter writes how it starts"),
+            plain("Enter writes it"),
             key("ui.omnibox_complete", serde_json::json!({}), "too"),
             plain("Escape goes back"),
         ]),
@@ -3264,8 +3327,54 @@ fn depth_line(shell: &Shell, typed: Typed, cx: &mut Context<Shell>) -> Option<An
                     .text_color(theme.text_muted)
                     .child(say)
             }))
+            .child(reference_button(shell, &theme, cx))
             .into_any_element(),
     )
+}
+
+/// The [?] at the end of the card's first line: what the field takes,
+/// as F1 says it (ADR-137). The field keeps the keyboard: it acts on the
+/// press, as the depth switch does.
+fn reference_button(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
+    let pane = shell.pane;
+    let keys = shell.keys_for("ui.field_reference", &serde_json::Value::Null);
+    let title: gpui::SharedString = match keys {
+        Some(keys) => format!("What a search takes · {keys}").into(),
+        None => "What a search takes".into(),
+    };
+    let hover = theme.hover;
+    let muted = theme.text_muted;
+    div()
+        .id("omnibox-reference")
+        .size(sized(24.))
+        .flex_none()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded_md()
+        .cursor_pointer()
+        .hover(move |s| s.bg(hover))
+        .when(shell.a11y, |d| {
+            d.role(gpui::Role::Button).aria_label(title.clone())
+        })
+        .tooltip(move |_, cx| crate::toolbar::tooltip(title.clone(), cx))
+        .on_mouse_down(
+            gpui::MouseButton::Left,
+            cx.listener(move |this, _, window, cx| {
+                cx.stop_propagation();
+                window.prevent_default();
+                this.activate_pane(pane, cx);
+                this.omnibox_reference(window, cx);
+            }),
+        )
+        .child(
+            gpui::svg()
+                .path("toolbar/help.svg")
+                .size(px(15.))
+                .flex_none()
+                .text_color(muted),
+        )
+        .into_any_element()
 }
 
 /// Piece `ix` of the rows of the pane being rendered (`pieces`), for
@@ -3285,7 +3394,7 @@ fn draw_piece(shell: &Shell, ix: usize, text: &str, cx: &mut Context<Shell>) -> 
     let pane = shell.pane;
     let a11y = shell.a11y;
     let field = gpui::Focusable::focus_handle(shell.ui().address.read(cx), cx);
-    let title = piece.title.map(|title| {
+    let title = piece.title.clone().map(|title| {
         div()
             .px_2()
             .pt_2()
@@ -3669,7 +3778,11 @@ mod tests {
             row(Section::SearchIn, "Home"),
             row(Section::SearchIn, "Disk"),
         ];
-        let piece = |rows, title, strip| Piece { rows, title, strip };
+        let piece = |rows, title: Option<&str>, strip| Piece {
+            rows,
+            title: title.map(|t| gpui::SharedString::from(t.to_owned())),
+            strip,
+        };
         assert_eq!(
             pieces(&rows),
             vec![
@@ -3678,6 +3791,26 @@ mod tests {
                 piece(2..3, None, false),
                 piece(3..4, Some("Go to"), false),
                 piece(4..6, Some("Search in"), true),
+            ]
+        );
+        // A reference's groups (ADR-137): one section, each group titled
+        // by its heading at its first row.
+        let under = |heading: &str, title: &str| {
+            Row::Source(Box::new(
+                Suggestion::new(Section::Syntax, title).heading(heading),
+            ))
+        };
+        let rows = vec![
+            under("Terms", "kind:"),
+            under("Terms", "size:"),
+            under("Values", "size>10M"),
+        ];
+        assert_eq!(
+            pieces(&rows),
+            vec![
+                piece(0..1, Some("Terms"), false),
+                piece(1..2, None, false),
+                piece(2..3, Some("Values"), false),
             ]
         );
     }

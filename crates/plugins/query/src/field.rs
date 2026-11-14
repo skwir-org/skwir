@@ -60,7 +60,10 @@ impl SuggestSource for Field {
                 rows: vec![at_words(app, ask)],
                 spans: Vec::new(),
             },
-            Typed::Help => terms(),
+            Typed::Help => Answer {
+                rows: crate::reference::rows(ask),
+                spans: Vec::new(),
+            },
             _ => typed(app, ask, &self.tags),
         }
     }
@@ -361,32 +364,6 @@ fn typed(app: &App, ask: &Ask, offers: &assist::TagOffers) -> Answer {
         }
     }
     Answer { rows, spans }
-}
-
-/// How many terms `?` lists.
-const TERMS_SHOWN: usize = 10;
-
-/// `?` alone: the terms of a search, each with examples, the most asked
-/// first; Enter or Tab writes the key.
-fn terms() -> Answer {
-    let rows = assist::terms()
-        .into_iter()
-        .take(TERMS_SHOWN)
-        .enumerate()
-        .map(|(rank, (written, icon, example))| {
-            let mut row = Suggestion::new(Section::Syntax, written.clone())
-                .detail(example)
-                .icon(icon)
-                .rank(i32::try_from(rank).unwrap_or(0));
-            row.typed = true;
-            row.completion = Some(written);
-            row
-        })
-        .collect();
-    Answer {
-        rows,
-        spans: Vec::new(),
-    }
 }
 
 /// `@…` typed: below the scopes the shell lists, the words searched as

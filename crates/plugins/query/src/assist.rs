@@ -30,6 +30,8 @@ use crate::lang;
 /// option (where and how a search looks) rather than a test.
 struct KeyInfo {
     name: &'static str,
+    /// What it tests or sets, in words (the reference's, ADR-137).
+    means: &'static str,
     icon: &'static str,
     example: &'static str,
     option: bool,
@@ -38,52 +40,129 @@ struct KeyInfo {
 /// Every key the parser knows, in the order they are offered: what is
 /// asked most first.
 static KEYS: [KeyInfo; 21] = [
-    key("kind", "grid", "image, video, document…", false),
+    key(
+        "kind",
+        "Of a kind",
+        "grid",
+        "image, video, document…",
+        false,
+    ),
     key(
         "modified",
+        "Modified",
         "calendar",
         "today, last-week, 2026-05, <7d",
         false,
     ),
-    key("size", "sliders", ">100M, <1M, 1M..100M", false),
-    key("tag", "tag", "a tag, or * for any; #tag too", false),
-    key("content", "contents", "\"words\" or /regex/", false),
+    key(
+        "size",
+        "Of a size",
+        "sliders",
+        ">100M, <1M, 1M..100M",
+        false,
+    ),
+    key(
+        "tag",
+        "With a tag",
+        "tag",
+        "a tag, or * for any; #tag too",
+        false,
+    ),
+    key(
+        "content",
+        "Holding text",
+        "contents",
+        "\"words\" or /regex/",
+        false,
+    ),
     key(
         "taken",
+        "Taken, pictures and videos",
         "calendar",
         "2023, last-year, by the camera's clock",
         false,
     ),
-    key("name", "search", "*.pdf, report-??", false),
-    key("ext", "search", "pdf,jpg", false),
-    key("type", "search", "file, dir, symlink", false),
-    key("created", "calendar", "this-month, >1y", false),
-    key("accessed", "calendar", "yesterday, <3d", false),
-    key("rating", "star", ">=3, 2..4", false),
-    key("comment", "comment", "words in a file's comment", false),
-    key("mime", "search", "image/*, application/pdf", false),
-    key("near", "map", "45.0,6.0~5km", false),
-    key("inside", "map", "south,west,north,east", false),
-    key("in", "folder", "a folder, \"~/My Files\"", true),
-    key("depth", "layers", "how deep: 2", true),
-    key("hidden", "eye", "true, false", true),
+    key("name", "Named", "search", "*.pdf, report-??", false),
+    key("ext", "With an extension", "search", "pdf,jpg", false),
+    key(
+        "type",
+        "Files, folders or links",
+        "search",
+        "file, dir, symlink",
+        false,
+    ),
+    key("created", "Made", "calendar", "this-month, >1y", false),
+    key(
+        "accessed",
+        "Last opened",
+        "calendar",
+        "yesterday, <3d",
+        false,
+    ),
+    key("rating", "Rated", "star", ">=3, 2..4", false),
+    key(
+        "comment",
+        "With a comment holding",
+        "comment",
+        "words in a file's comment",
+        false,
+    ),
+    key(
+        "mime",
+        "Of a type",
+        "search",
+        "image/*, application/pdf",
+        false,
+    ),
+    key("near", "Made near a point", "map", "45.0,6.0~5km", false),
+    key(
+        "inside",
+        "Made inside a box",
+        "map",
+        "south,west,north,east",
+        false,
+    ),
+    key(
+        "in",
+        "Where to look",
+        "folder",
+        "a folder, \"~/My Files\"",
+        true,
+    ),
+    key("depth", "How deep to look", "layers", "how deep: 2", true),
+    key(
+        "hidden",
+        "Hidden files too, or never",
+        "eye",
+        "true, false",
+        true,
+    ),
     key(
         "excluded",
+        "Excluded folders too",
         "folder",
         "what your exclusions leave out too: true, false",
         true,
     ),
-    key("case", "code", "sensitive, insensitive", true),
+    key(
+        "case",
+        "Capitals told apart, or not",
+        "code",
+        "sensitive, insensitive",
+        true,
+    ),
 ];
 
 const fn key(
     name: &'static str,
+    means: &'static str,
     icon: &'static str,
     example: &'static str,
     option: bool,
 ) -> KeyInfo {
     KeyInfo {
         name,
+        means,
         icon,
         example,
         option,
@@ -98,6 +177,14 @@ pub fn terms() -> Vec<(String, &'static str, &'static str)> {
         .filter(|k| !k.option)
         .map(|k| (format!("{}:", k.name), k.icon, k.example))
         .collect()
+}
+
+/// Every key, as the reference says it: written before its value
+/// (`kind:`), what it means, examples of its values, and whether it is an
+/// option rather than a test.
+pub fn keys_said() -> impl Iterator<Item = (String, &'static str, &'static str, bool)> {
+    KEYS.iter()
+        .map(|k| (format!("{}:", k.name), k.means, k.example, k.option))
 }
 
 fn key_info(name: &str) -> Option<&'static KeyInfo> {

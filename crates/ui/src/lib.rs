@@ -83,6 +83,7 @@ mod properties;
 pub mod quick_filters;
 pub mod reader;
 mod reader_scroll;
+mod reference;
 pub mod renamebulk;
 pub mod review;
 pub mod search_bar;

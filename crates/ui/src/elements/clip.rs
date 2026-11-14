@@ -8,7 +8,12 @@
 //! (`optional_tooltip`, vendored patch 0011), and a tooltip of an element the
 //! text lies in shows as before. An element with a tooltip of its own passes
 //! it as `also`: the whole text comes first, then that, on its own line.
-use gpui::{AnyView, App, Div, SharedString, Stateful, StyledText, TextLayout, Window, prelude::*};
+use std::ops::Range;
+
+use gpui::{
+    AnyView, App, Div, HighlightStyle, SharedString, Stateful, StyledText, TextLayout, Window,
+    prelude::*,
+};
 
 /// What tells whether a text was cut, and what it said whole.
 #[derive(Clone)]
@@ -58,6 +63,38 @@ impl Clip {
 /// tooltip while cut.
 pub fn clipped(el: Stateful<Div>, text: impl Into<SharedString>) -> Stateful<Div> {
     clipped_with(el, text, None)
+}
+
+/// `clipped`, with `marks` (byte ranges into `text`, in order, apart)
+/// drawn in `style`: what a pattern matched in a name. A mark that does
+/// not fall on the text's characters, or holds none, is left out.
+pub fn clipped_marked(
+    el: Stateful<Div>,
+    text: impl Into<SharedString>,
+    marks: &[Range<usize>],
+    style: HighlightStyle,
+) -> Stateful<Div> {
+    let whole: SharedString = text.into();
+    let mut after = 0;
+    let highlights: Vec<(Range<usize>, HighlightStyle)> = marks
+        .iter()
+        .filter(|mark| {
+            let kept = !mark.is_empty()
+                && mark.start >= after
+                && mark.end <= whole.len()
+                && whole.is_char_boundary(mark.start)
+                && whole.is_char_boundary(mark.end);
+            if kept {
+                after = mark.end;
+            }
+            kept
+        })
+        .map(|mark| (mark.clone(), style))
+        .collect();
+    let styled = StyledText::new(whole.clone()).with_highlights(highlights);
+    let layout = styled.layout().clone();
+    el.optional_tooltip(Clip { whole, layout }.tooltip(None))
+        .child(styled)
 }
 
 /// `clipped` inside an element with a tooltip of its own, `also`: pointed

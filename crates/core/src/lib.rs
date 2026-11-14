@@ -61,6 +61,7 @@ pub mod playing;
 pub mod plugin;
 pub mod preview;
 pub mod print;
+pub mod reference;
 pub mod registry;
 pub mod remotes;
 pub mod scheduler;

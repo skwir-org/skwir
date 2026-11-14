@@ -1047,6 +1047,15 @@ Gathered on 2026-10-20 from the notes of this plan and of
 may have covered one: check the source before starting it. Work that
 closes an item removes its line; work that leaves one adds it here.
 
+**A field says what it takes** (ADR-137, 2026-11-14): built on Linux
+and tried in a window there (the bulk rename's three references by F1
+and by their [?], writing at the caret, a recipe filling two fields,
+the preview's marks; Access's words, a mode refused, its reference, a
+change applied and undone; the address's F1, Escape and `?`). Left:
+Settings › Exclusions' patterns and Run Command… have none yet (a
+question passes `reference` and `note`, a dialog its own fields);
+Access's words on Windows (the read-only attribute) not tried there.
+
 **The player follows its tracks** (ADR-136, 2026-11-14): built on
 Linux, tried in a window there (a rename, a move, Undo, a deletion
 with Stop and with Play next, two deleted at once, another program's

@@ -41,6 +41,20 @@ impl PopoverAnchor {
         )
     }
 
+    /// `popup_right`, drawn at `priority` among deferred draws and as tall
+    /// as the window leaves: a field's reference over its dialog
+    /// (ADR-137), hanging from the [?] at the field's end.
+    pub fn popup_right_over(&self, priority: usize, panel: impl IntoElement) -> AnyElement {
+        let mut panel = Some(panel.into_any_element());
+        hang(
+            std::slice::from_ref(self),
+            priority,
+            gpui::Anchor::TopRight,
+            Room::Window,
+            move || panel.take(),
+        )
+    }
+
     /// `panel` around what the anchor is over: `pad` before, above and
     /// after it, at least `least` wide but never wider than the window,
     /// moved left to stay in it but never short of the anchor's right edge,
@@ -252,6 +266,11 @@ impl PopoverAnchor {
         )
         .with_priority(priority)
         .into_any_element()
+    }
+
+    /// Whether `other` is this anchor (a clone of it).
+    pub fn same(&self, other: &PopoverAnchor) -> bool {
+        Rc::ptr_eq(&self.0, &other.0)
     }
 
     /// Where the anchor was drawn this frame, if it was.

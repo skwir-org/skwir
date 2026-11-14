@@ -4,16 +4,20 @@
 //! confirmation of what Undo cannot take back, or of quitting while a plan
 //! runs.
 
+use std::rc::Rc;
+
 use crate::sizes::TextSizes;
 use crate::sizes::sized;
 use gpui::{AnyElement, Context, Entity, FocusHandle, Subscription, Window, div, prelude::*};
 use skwir_core::Plan;
-use skwir_core::command::{CommandSpec, Invocation};
+use skwir_core::command::{CommandSpec, Invocation, Outcome};
 use skwir_core::op::{EntryArg, EntryRef};
 use skwir_core::os_path::PathArg;
+use skwir_core::reference::Reference;
 use skwir_core::workspace::PaneId;
 
 use crate::controls::{self, ButtonStyle};
+use crate::elements::popover::PopoverAnchor;
 use crate::input::{InputEvent, TextInput};
 use crate::keymap;
 use crate::modal::{self, FocusReturn};
@@ -80,6 +84,10 @@ struct Prompted {
     remember: bool,
     /// What keeping it means, said under Remember while it is on.
     keeping: Option<String>,
+    /// What the field takes (ADR-137).
+    reference: Option<Reference>,
+    /// What says what the text comes to as it is typed.
+    describe: Option<Invocation>,
 }
 
 /// The prompt's Remember switch (a server's password, ADR-082; a volume's
@@ -99,6 +107,18 @@ pub struct PromptState {
     ask: Option<Ask>,
     /// A line under the field, muted: what the answer may be.
     note: Option<String>,
+    /// What the field takes (ADR-137): `ui.ask`'s `reference`, opened
+    /// from the [?] at its end or F1 in it, and the [?] it hangs from.
+    reference: Option<Rc<Reference>>,
+    anchor: PopoverAnchor,
+    /// What says what the text comes to as it is typed: `ui.ask`'s
+    /// `describe`, run with the text as its field, on a worker.
+    describe: Option<Invocation>,
+    /// Its latest answer, for which text: what it comes to, or why it is
+    /// no answer, which holds the answer back.
+    described: Option<(String, Result<String, String>)>,
+    /// Counts what was asked of it: an older answer is dropped.
+    describe_asked: u64,
     /// Remember in the keyring, where offered.
     pub remember: Option<Remember>,
     /// The answer's button: its verb and its focus, beside Cancel's.
@@ -257,6 +277,7 @@ impl Shell {
                 note: None,
                 remember: question.remember,
                 keeping: question.keeping,
+                ..Prompted::default()
             },
             window,
             cx,
@@ -264,11 +285,17 @@ impl Shell {
     }
 
     /// `ui.ask { title, text?, placeholder?, select?, accept?, note?,
-    /// command, args?, field }`: ask for a line of text and run `command`
-    /// with it as `args[field]`. `select` is the part of `text` selected at
-    /// first (`[start, end]` in bytes: a name's stem), all of it when
-    /// absent; `accept` is the verb on the button that answers (Rename), OK
-    /// when absent; `note` a line under the field (what the answer may be).
+    /// reference?, describe?, command, args?, field }`: ask for a line of
+    /// text and run `command` with it as `args[field]`. `select` is the
+    /// part of `text` selected at first (`[start, end]` in bytes: a name's
+    /// stem), all of it when absent; `accept` is the verb on the button
+    /// that answers (Rename), OK when absent; `note` a line under the field
+    /// (what the answer may be); `reference` what the field takes
+    /// (`skwir_core::reference::Reference`, ADR-137), opened from a [?] at
+    /// its end or F1; `describe` (`{ command, args? }`) what says, as it is
+    /// typed, what the text comes to: run on a worker with the text as its
+    /// `field`, its `says` shown under the field, its error shown there and
+    /// holding the answer back.
     /// The one question of a line of text, the shell's own (Rename, New
     /// folder) as a plugin's.
     pub fn open_ask(
@@ -326,6 +353,19 @@ impl Shell {
                 note: text("note").map(str::to_owned),
                 remember: false,
                 keeping: None,
+                reference: args
+                    .get("reference")
+                    .and_then(|said| serde_json::from_value(said.clone()).ok()),
+                describe: args.get("describe").and_then(|describe| {
+                    Some(Invocation {
+                        name: describe.get("command")?.as_str()?.to_owned().into(),
+                        args: describe
+                            .get("args")
+                            .cloned()
+                            .filter(serde_json::Value::is_object)
+                            .unwrap_or_else(|| serde_json::json!({})),
+                    })
+                }),
             },
             window,
             cx,
@@ -355,6 +395,8 @@ impl Shell {
             note,
             remember,
             keeping,
+            reference,
+            describe,
         } = prompted;
         let accept = accept.unwrap_or_else(|| kind.accept().to_owned());
         let back = FocusReturn::capture(window, cx);
@@ -376,6 +418,7 @@ impl Shell {
                 InputEvent::Submit => this.prompt_answer(window, cx),
                 InputEvent::Cancel => this.prompt_cancel(window, cx),
                 InputEvent::Changed => {
+                    this.prompt_describe(window, cx);
                     if let Some(PromptKind::Find { origin, backward }) =
                         this.prompt.as_ref().map(|p| p.kind)
                     {
@@ -394,6 +437,11 @@ impl Shell {
             input,
             ask,
             note,
+            reference: reference.filter(|said| !said.is_empty()).map(Rc::new),
+            anchor: PopoverAnchor::default(),
+            describe,
+            described: None,
+            describe_asked: 0,
             remember: remember.then(|| Remember {
                 on: false,
                 focus: cx.focus_handle(),
@@ -405,11 +453,89 @@ impl Shell {
             back,
             _sub: sub,
         });
+        self.prompt_describe(window, cx);
         cx.notify();
+    }
+
+    /// Ask what the text comes to (`ui.ask`'s `describe`), on a worker:
+    /// the answer said under the field once it comes, for that text.
+    fn prompt_describe(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(prompt) = self.prompt.as_mut() else {
+            return;
+        };
+        let (Some(describe), Some(ask)) = (prompt.describe.clone(), prompt.ask.as_ref()) else {
+            return;
+        };
+        let text = prompt.input.read(cx).text().trim().to_owned();
+        prompt.describe_asked += 1;
+        let asked = prompt.describe_asked;
+        let mut args = describe.args;
+        args[ask.field.as_str()] = serde_json::json!(text);
+        let invocation = Invocation {
+            name: describe.name,
+            args,
+        };
+        let app = std::sync::Arc::clone(&self.app);
+        self.off_thread_until(
+            self.pane_lane(self.pane),
+            "prompt-describe",
+            self.app.lifetime().child(),
+            move || match app.dispatch(&invocation) {
+                Ok(Outcome::Value(v)) => Ok(v
+                    .get("says")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned()),
+                Ok(_) => Ok(String::new()),
+                Err(e) => Err(format!("{e:#}")),
+            },
+            move |this, said, _, cx| {
+                if let Some(prompt) = this.prompt.as_mut().filter(|p| p.describe_asked == asked) {
+                    prompt.described = Some((text, said));
+                    cx.notify();
+                }
+            },
+            window,
+            cx,
+        );
+    }
+
+    /// Whether what is typed was said to be no answer: it is held back.
+    fn prompt_held_back(&self, cx: &gpui::App) -> bool {
+        self.prompt.as_ref().is_some_and(|p| {
+            let text = p.input.read(cx).text().trim();
+            matches!(&p.described, Some((said, Err(_))) if said == text)
+        })
+    }
+
+    /// The question's reference (ADR-137), when its field has the
+    /// keyboard or `field` names it (its [?] pressed): its field to write
+    /// in.
+    pub(crate) fn prompt_reference(
+        &self,
+        field: Option<&str>,
+        window: &Window,
+        cx: &gpui::App,
+    ) -> Option<crate::reference::Open> {
+        let p = self.prompt.as_ref()?;
+        let reference = p.reference.clone()?;
+        let key = p.ask.as_ref()?.field.clone();
+        let asked = match field {
+            Some(field) => field == key,
+            None => p.input.read(cx).is_focused(window),
+        };
+        asked.then(|| crate::reference::Open {
+            fields: vec![(key.into(), p.input.clone())],
+            reference,
+            anchor: p.anchor.clone(),
+        })
     }
 
     /// Answer the prompt with its text: Enter, or its button.
     fn prompt_answer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.prompt_held_back(cx) {
+            return;
+        }
         let Some(prompt) = self.prompt.as_mut() else {
             return;
         };
@@ -457,6 +583,10 @@ impl Shell {
     /// Close the prompt and give the keyboard back to what had it. What a
     /// step asked and was not answered is answered none.
     pub fn close_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Its field's reference goes with it.
+        if self.field_reference.is_some() {
+            self.close_popup(window, cx);
+        }
         if let Some(prompt) = self.prompt.take() {
             self.give_up_secret(prompt.kind);
             prompt.back.restore(window, &self.ui().focus, cx);
@@ -556,6 +686,16 @@ impl Shell {
 pub fn render_prompt(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let p = shell.prompt.as_ref()?;
     let theme = cx.global::<Theme>().clone();
+    // What the text typed comes to, for that text; what is no answer is
+    // said in the error's color, its frame too.
+    let text = p.input.read(cx).text().trim().to_owned();
+    let described = p.described.as_ref().filter(|(said, _)| *said == text);
+    let refused = matches!(described, Some((_, Err(_))));
+    let field_key = p.ask.as_ref().map(|ask| ask.field.clone());
+    let reference =
+        p.reference.as_ref().zip(field_key).map(|(_, key)| {
+            crate::reference::button("prompt-reference", &key, &p.anchor, shell, cx)
+        });
     let panel = modal::panel("prompt", 560., &theme)
         .when(shell.a11y, |d| d.aria_label(p.title.clone()))
         .p_3()
@@ -563,16 +703,36 @@ pub fn render_prompt(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElemen
         .child(div().text_title().child(p.title.clone()))
         .child(
             div()
-                .h(sized(30.))
-                .px_2()
                 .flex()
                 .items_center()
-                .rounded_md()
-                .border_1()
-                .border_color(theme.accent)
-                .bg(theme.bg)
-                .child(p.input.clone()),
+                .gap_2()
+                .child(
+                    div()
+                        // F1 in a field that says what it takes opens that
+                        // (ADR-137).
+                        .when(reference.is_some(), |d| d.key_context("reference"))
+                        .flex_1()
+                        .h(sized(30.))
+                        .px_2()
+                        .flex()
+                        .items_center()
+                        .rounded_md()
+                        .border_1()
+                        .border_color(if refused { theme.error } else { theme.accent })
+                        .bg(theme.bg)
+                        .child(p.input.clone()),
+                )
+                .children(reference),
         )
+        .children(described.map(|(_, said)| {
+            match said {
+                Ok(says) => div()
+                    .text_body()
+                    .text_color(theme.text_muted)
+                    .child(says.clone()),
+                Err(why) => div().text_body().text_color(theme.error).child(why.clone()),
+            }
+        }))
         .children(
             p.note
                 .clone()
@@ -648,7 +808,8 @@ pub fn render_prompt(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElemen
                         ButtonStyle::Plain,
                         &p.accept_focus,
                         &theme,
-                    ),
+                    )
+                    .when(refused, |d| d.opacity(0.5)),
                     Shell::prompt_answer,
                     cx,
                 ),
