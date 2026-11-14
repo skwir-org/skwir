@@ -290,24 +290,101 @@ pub(crate) fn parse(
 /// A token of `cancel`'s that is cancelled `COLORS_WITHIN` from now, and
 /// what keeps that from happening once dropped: the bound on a wait for
 /// the helper, which unlike coloring cannot look at a clock between rows.
-pub(crate) fn soon(cancel: &CancelToken) -> (CancelToken, flume::Sender<()>) {
+/// One thread cancels every such token at its time (`Limits`), not one a
+/// wait.
+pub(crate) fn soon(cancel: &CancelToken) -> (CancelToken, Soon) {
+    limited(cancel, COLORS_WITHIN)
+}
+
+/// A token of `cancel`'s cancelled `within` from now (`soon`).
+fn limited(cancel: &CancelToken, within: Duration) -> (CancelToken, Soon) {
     let limit = cancel.child();
-    let (done, wait) = flume::bounded::<()>(1);
-    let ending = limit.clone();
-    let started = std::thread::Builder::new()
-        .name("skwir-colors-limit".into())
-        .spawn(move || {
-            if matches!(
-                wait.recv_timeout(COLORS_WITHIN),
-                Err(flume::RecvTimeoutError::Timeout)
-            ) {
-                ending.cancel();
-            }
-        });
-    if started.is_err() {
+    let kept = Arc::new(());
+    let asked = Limits::get().is_some_and(|limits| {
+        limits
+            .send((
+                Instant::now() + within,
+                limit.clone(),
+                Arc::downgrade(&kept),
+            ))
+            .is_ok()
+    });
+    // Without the thread nothing could bound the wait: none is waited for.
+    if !asked {
         limit.cancel();
     }
-    (limit, done)
+    (limit, Soon { _kept: kept })
+}
+
+/// What keeps a token of `soon` from being cancelled at its time, until it
+/// is dropped: the wait it bounds is over.
+pub(crate) struct Soon {
+    _kept: Arc<()>,
+}
+
+/// The tokens to cancel at their time (`soon`), and the thread that does:
+/// started with the first, asleep until the next time is due, and while
+/// none is waiting. A token whose wait ended before its time (its `Soon`
+/// dropped) is passed over.
+struct Limits;
+
+type Limit = (Instant, CancelToken, std::sync::Weak<()>);
+
+impl Limits {
+    /// Where to send a token to cancel at its time; `None` where the thread
+    /// could not be started.
+    fn get() -> Option<&'static flume::Sender<Limit>> {
+        static LIMITS: std::sync::OnceLock<Option<flume::Sender<Limit>>> =
+            std::sync::OnceLock::new();
+        LIMITS
+            .get_or_init(|| {
+                let (send, asked) = flume::unbounded::<Limit>();
+                std::thread::Builder::new()
+                    .name("skwir-colors-limits".into())
+                    .spawn(move || Self::run(&asked))
+                    .ok()
+                    .map(|_| send)
+            })
+            .as_ref()
+    }
+
+    fn run(asked: &flume::Receiver<Limit>) {
+        use std::cmp::Reverse;
+        // By time, then by arrival: a heap of the times, the tokens by
+        // their arrival beside it.
+        let mut due: std::collections::BinaryHeap<Reverse<(Instant, u64)>> =
+            std::collections::BinaryHeap::new();
+        let mut waiting: HashMap<u64, (CancelToken, std::sync::Weak<()>)> = HashMap::new();
+        let mut next = 0u64;
+        loop {
+            let arrived = match due.peek() {
+                Some(Reverse((at, _))) => asked.recv_deadline(*at),
+                None => asked
+                    .recv()
+                    .map_err(|_| flume::RecvTimeoutError::Disconnected),
+            };
+            match arrived {
+                Ok((at, token, kept)) => {
+                    due.push(Reverse((at, next)));
+                    waiting.insert(next, (token, kept));
+                    next += 1;
+                }
+                Err(flume::RecvTimeoutError::Timeout) => {}
+                Err(flume::RecvTimeoutError::Disconnected) => return,
+            }
+            let now = Instant::now();
+            while let Some(Reverse((at, key))) = due.peek().copied()
+                && at <= now
+            {
+                due.pop();
+                if let Some((token, kept)) = waiting.remove(&key)
+                    && kept.strong_count() > 0
+                {
+                    token.cancel();
+                }
+            }
+        }
+    }
 }
 
 /// Whether a parse of `bytes` could make it in `COLORS_WITHIN`: starting
@@ -334,9 +411,11 @@ pub(crate) fn parse_soon(
 }
 
 /// The first chunk of a code view, colored on the worker making it, if
-/// that took no longer than `COLORS_WITHIN`.
+/// that took no longer than `COLORS_WITHIN`: or only its parse, where
+/// coloring the chunk from it did not make it, which the view then colors
+/// from the parse rather than parse the text again.
 pub(crate) struct FirstColors {
-    rows: Vec<Block>,
+    rows: Option<Vec<Block>>,
     /// Where bat's colors stopped; none where a tree-sitter grammar's.
     stop: Option<Resume>,
     parsed: Option<Arc<Parsed>>,
@@ -360,9 +439,9 @@ pub(crate) fn first_colors(data: &Inspection, with: &Colorer) -> Option<FirstCol
         let text = joined(data);
         let parsed = parse_soon(grammar, text, &with.palette, data.folds.is_empty(), &limit)?;
         let at = |n: usize| (u32::try_from(n).unwrap_or(u32::MAX), 0);
-        tree_rows(&mut rows, at, &parsed.tree, &limit).ok()?;
+        let colored = tree_rows(&mut rows, at, &parsed.tree, &limit).is_ok();
         return Some(FirstColors {
-            rows,
+            rows: colored.then_some(rows),
             stop: None,
             parsed: Some(Arc::new(parsed)),
         });
@@ -371,7 +450,7 @@ pub(crate) fn first_colors(data: &Inspection, with: &Colorer) -> Option<FirstCol
     let colors = (with.language.as_deref(), &*with.palette);
     let stop = color_rows(&mut rows, |_| true, colors, None, Some(until), &cancel).ok()??;
     Some(FirstColors {
-        rows,
+        rows: Some(rows),
         stop: Some(stop),
         parsed: None,
     })
@@ -535,7 +614,9 @@ impl CodeColors {
     /// its parse came with it, for what waits for one.
     pub(crate) fn begin_with(&mut self, first: FirstColors) -> bool {
         let FirstColors { rows, stop, parsed } = first;
-        Rc::make_mut(&mut self.chunks).insert(0, Rc::new(Colored { rows, exact: true }));
+        if let Some(rows) = rows {
+            Rc::make_mut(&mut self.chunks).insert(0, Rc::new(Colored { rows, exact: true }));
+        }
         if let Some(stop) = stop {
             self.started(1, stop);
         }
@@ -1125,6 +1206,26 @@ pub(crate) mod tests {
 
     /// A code view's first chunk comes colored from the worker making it,
     /// where the view goes on from: it is not colored again.
+    /// A wait bounded by `soon` is given up on at its time, by the one
+    /// thread every such wait shares; one over before it is not.
+    #[test]
+    fn a_bounded_wait_is_cancelled_at_its_time_unless_it_ended() {
+        let cancel = CancelToken::new();
+        let (late, _waiting) = limited(&cancel, Duration::from_millis(30));
+        let (ended, done) = limited(&cancel, Duration::from_millis(30));
+        let (later, _later) = limited(&cancel, Duration::from_secs(600));
+        drop(done);
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while !late.is_cancelled() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(late.is_cancelled(), "cancelled at its time");
+        std::thread::sleep(Duration::from_millis(60));
+        assert!(!ended.is_cancelled(), "its wait was over first");
+        assert!(!later.is_cancelled(), "not before its time");
+        assert!(!cancel.is_cancelled(), "only the limit, not what it bounds");
+    }
+
     #[test]
     fn a_code_view_begins_with_its_first_chunk_colored() {
         use skwir_core::inspection::InspectionKind;
