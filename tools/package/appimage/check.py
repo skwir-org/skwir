@@ -143,6 +143,137 @@ def check_media(app, work):
         assert "CRITICAL" not in output, "media runtime or plugin scanner reported a critical error"
 
 
+class Player:
+    """The bundle's media helper on `film`, its frames taken from the slot
+    in `work` and acknowledged, as the window does (crates/core's
+    `media` protocol)."""
+
+    def __init__(self, app, film, work, env):
+        (work / "video.bgra").touch()
+        self.diagnostics = tempfile.TemporaryFile()
+        self.process = subprocess.Popen([str(app / "usr/lib/skwir/skwir-media-worker"), str(film), str(work)],
+                                        stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                        stderr=self.diagnostics, env=env)
+        self.selector = selectors.DefaultSelector()
+        self.selector.register(self.process.stdout, selectors.EVENT_READ)
+        self.buffered = b""
+        self.generation = 0
+        self.state = {}
+        self.frames = 0
+        self.frame_generation = None
+
+    def control(self, command):
+        self.generation += 1
+        self.send({"Control": {"generation": self.generation, "command": command}})
+
+    def send(self, message):
+        self.process.stdin.write(json.dumps(message).encode() + b"\n")
+        self.process.stdin.flush()
+
+    def until(self, condition, what, timeout=20):
+        deadline = time.monotonic() + timeout
+        while not condition():
+            left = deadline - time.monotonic()
+            assert left > 0 and self.selector.select(timeout=left), f"the media helper never {what}"
+            chunk = os.read(self.process.stdout.fileno(), 65536)
+            assert chunk, f"the media helper exited before it {what}"
+            self.buffered += chunk
+            while b"\n" in self.buffered:
+                line, self.buffered = self.buffered.split(b"\n", 1)
+                reply = json.loads(line)
+                assert not isinstance(reply, dict) or not {"Error", "Unavailable", "Rejected"} & reply.keys(), reply
+                if isinstance(reply, dict) and "State" in reply:
+                    if reply["State"]["generation"] == self.generation:
+                        self.state = reply["State"]["playback"]
+                if isinstance(reply, dict) and "Frame" in reply:
+                    self.frames += 1
+                    self.frame_generation = reply["Frame"]["generation"]
+                    self.send("Consumed")
+
+    def close(self):
+        self.process.stdin.close()
+        try:
+            self.process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            self.process.kill()
+            self.process.wait()
+        self.diagnostics.seek(0)
+        output = self.diagnostics.read().decode(errors="replace")
+        self.diagnostics.close()
+        if output:
+            print(output, file=sys.stderr)
+        assert "CRITICAL" not in output, "media runtime or plugin scanner reported a critical error"
+
+
+def check_film(app, work, film):
+    """A film played through the bundle's own pulsesink and PulseAudio
+    client, the clock of every film the window plays, against a PulseAudio
+    of the check's own (a null sink, nothing heard): paused, then sought or
+    played and paused at once, and played again, eight times, its frames
+    and its position going on each time. With Jammy's client library
+    (15.99) the picture stopped for good, at the seventh here, against
+    every server tried (ADR-052 amended)."""
+    # Its socket's path plain and short: PulseAudio's module arguments are
+    # split at spaces, and `work`'s name has a space and an apostrophe.
+    runtime = pathlib.Path(tempfile.mkdtemp(prefix="skwir-pulse-"))
+    socket = runtime / "native"
+    log = tempfile.TemporaryFile()
+    server = subprocess.Popen(
+        ["pulseaudio", "-n", "--daemonize=no", "--exit-idle-time=-1", "--disable-shm=yes",
+         "--log-target=stderr", "-L", "module-null-sink",
+         "-L", f"module-native-protocol-unix socket={socket} auth-anonymous=1"],
+        env=dict(os.environ, HOME=str(runtime), XDG_RUNTIME_DIR=str(runtime)),
+        stdout=subprocess.DEVNULL, stderr=log)
+    player = None
+    try:
+        deadline = time.monotonic() + 20
+        while not socket.exists():
+            assert server.poll() is None and time.monotonic() < deadline, "PulseAudio did not start"
+            time.sleep(0.1)
+        slot = work / "film"
+        slot.mkdir()
+        env = dict(os.environ, G_DEBUG="fatal-criticals", PULSE_SERVER=f"unix:{socket}")
+        player = Player(app, film, slot, env)
+        player.until(lambda: player.frames and player.state.get("duration"), "showed the film's first frame")
+        player.control({"Mute": True})
+        player.until(lambda: player.state.get("muted"), "muted")
+        # Eight times what the window does, paused: a seek (a frame shown
+        # again, a scrub), or play and pause at once (peek closed as it
+        # opened); then play. 1.20's stopped at the third round or so.
+        for round in range(8):
+            player.control({"Play": True})
+            before, position = player.frames, player.state.get("position", 0)
+            player.until(lambda: player.frames > before + 5 and player.state.get("position", 0) > position + 0.1,
+                         f"played on, round {round + 1}", timeout=10)
+            if round == 0:
+                sinks = run(["pactl", "list", "short", "sink-inputs"], capture_output=True, text=True,
+                            env=dict(os.environ, PULSE_SERVER=f"unix:{socket}")).stdout
+                assert sinks.strip(), "the film's sound did not go to PulseAudio"
+            player.control({"Play": False})
+            player.until(lambda: player.state.get("status") == "Paused", "paused")
+            if round % 2:
+                player.control({"Play": True})
+                player.control({"Play": False})
+                player.until(lambda: player.state.get("status") == "Paused", "paused again")
+            else:
+                player.control({"Seek": 1.0 + round})
+                sought = player.generation
+                player.until(lambda: player.frame_generation == sought, "showed the frame sought while paused")
+        print("ok: the bundle's pulsesink plays a film on after pauses, seeks while paused and"
+              " plays and pauses at once", flush=True)
+    finally:
+        if player:
+            player.close()
+        server.terminate()
+        server.wait(timeout=10)
+        shutil.rmtree(runtime, ignore_errors=True)
+        log.seek(0)
+        said = log.read().decode(errors="replace")
+        log.close()
+        if said and sys.exc_info()[0]:
+            print(said, file=sys.stderr)
+
+
 def fuse_here():
     """Whether this system lets a user mount FUSE, as the helpers
     tools/package/fuse lists need: its device, and the program that mounts
@@ -251,7 +382,12 @@ def check_window(app, work, launcher):
 
 
 def main():
-    artifact = pathlib.Path(sys.argv[1]).resolve()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("artifact", type=pathlib.Path)
+    # Made where the AppImage is built (build.sh); elsewhere, not checked.
+    parser.add_argument("--film", type=pathlib.Path)
+    args = parser.parse_args()
+    artifact = args.artifact.resolve()
     base = pathlib.Path.home() / ".cache/skwir-tests"
     base.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="package check's ", dir=base) as directory:
@@ -270,6 +406,10 @@ def main():
             run(["python3", ROOT / "tools/pdf/check.py", "--engine", engine,
                  "--worker", app / "usr/lib/skwir" / worker])
         check_media(app, work)
+        if args.film:
+            check_film(app, work, args.film.resolve())
+        else:
+            print("not checked: a film through the bundle's pulsesink (no --film)", flush=True)
         check_window(app, work, launcher)
         print(f"{artifact.name}: passed", flush=True)
 

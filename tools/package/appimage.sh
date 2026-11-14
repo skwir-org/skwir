@@ -76,8 +76,8 @@ enter "$test_root" sh tools/package/appimage/install-deps.sh $(cat "$tree/tools/
 version="$(sed -n 's/^version = "\(.*\)"$/\1/p' "$tree/Cargo.toml" | head -1)"
 image="skwir-$version-x86_64.AppImage"
 tarball="skwir-$version-linux-x86_64.tar.gz"
-enter "$test_root" python3 tools/package/appimage/check.py "/out/$image"
-enter "$test_root" python3 tools/package/appimage/check.py "/out/$tarball"
+enter "$test_root" python3 tools/package/appimage/check.py "/out/$image" --film /out/check-film.mkv
+enter "$test_root" python3 tools/package/appimage/check.py "/out/$tarball" --film /out/check-film.mkv
 # Only verified candidates replace the previous distributables.
 install -m755 "$out/$image" "$dist/$image.part"
 install -m644 "$out/$tarball" "$dist/$tarball.part"

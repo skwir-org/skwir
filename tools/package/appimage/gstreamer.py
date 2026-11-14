@@ -1,9 +1,19 @@
 #!/usr/bin/env python3
 """Build the pinned playback runtime against the glibc compatibility baseline.
 
-Jammy's GStreamer 1.20 races playbin3's stream selection. A current core
-and base plugins keep the existing player protocol and the old libc ABI.
-Other distribution plugins use GStreamer's stable 1.x plugin ABI.
+Jammy's GStreamer 1.20 races playbin3's stream selection, so the AppImage
+carries GStreamer built here, every part of it at one version: the core,
+base, good, bad, ugly and gst-libav, against Jammy's libraries (its FFmpeg
+4.4 among them), none of Ubuntu's 1.20 plugins beside them (ADR-052
+amended). PulseAudio's client library is built here too: Jammy's 15.99
+stopped a film for good after a pause and a seek while paused or a play
+and pause at once, against every server, its own included; 17.0's plays
+on against them all, Jammy's too. Good, bad and
+ugly bring ADR-076's set alone, what the media helper plays with, as
+Windows' and macOS's packages have it, with Linux's own decoders (VA-API,
+NVDEC) and audio output (PulseAudio; ALSA is base's): every other feature
+is off, and those named are required, so a missing library stops the
+build rather than leaving a plugin out.
 """
 
 import hashlib
@@ -18,13 +28,28 @@ import zipfile
 PREFIX = pathlib.Path("/opt/skwir-gstreamer")
 BUILD = pathlib.Path("/build/gstreamer")
 LOCK = pathlib.Path("tools/package/appimage/downloads.json")
+# Built in this order, each against those before it: PulseAudio's client
+# library before good, whose pulsesink links it.
+PARTS = ("orc", "gstreamer", "gst-plugins-base", "pulseaudio", "gst-plugins-good",
+         "gst-plugins-bad", "gst-plugins-ugly", "gst-libav")
+# ADR-076's set from good, bad and ugly (tools/package/gstreamer.py's
+# COMMON), with Linux's decoders and audio output; bad's AV1 decoder is
+# aom's, its dav1d being gst-plugins-rs's since 1.26, and gst-libav takes
+# no decoder of FFmpeg's that wraps another library.
+FEATURES = {
+    "gst-plugins-good": ("autodetect", "replaygain", "audiofx", "spectrum", "matroska", "isomp4",
+                         "avi", "flv", "wavparse", "audioparsers", "id3demux", "apetag", "flac",
+                         "vpx", "pulse"),
+    "gst-plugins-bad": ("aiff", "mpegtsdemux", "mpegdemux", "videoparsers", "aom", "assrender",
+                        "dvdspu", "dvbsuboverlay", "va", "nvcodec"),
+    "gst-plugins-ugly": ("asfdemux", "dvdsub"),
+}
 
 
 def main():
     inputs = json.loads(LOCK.read_text())
     names = [next(n for n in inputs if n.startswith(component + "-") and n.endswith(suffix))
-             for component, suffix in (("orc", ".tar.xz"), ("gstreamer", ".tar.xz"),
-                                       ("gst-plugins-base", ".tar.xz"), ("meson", ".whl"))]
+             for component, suffix in (*((part, ".tar.xz") for part in PARTS), ("meson", ".whl"))]
     glib = subprocess.check_output(["pkg-config", "--modversion", "glib-2.0"])
     key = hashlib.sha256(pathlib.Path(__file__).read_bytes() + glib
                          + LOCK.with_name("build-deps").read_bytes()
@@ -48,21 +73,43 @@ def main():
         source = BUILD / name.removesuffix(".tar.xz")
         subprocess.run(["tar", "--no-same-owner", "-xJf", str(pathlib.Path("/inputs") / name), "-C", str(BUILD)], check=True)
         build = source.with_name(source.name + "-build")
-        options = ["--prefix=" + str(PREFIX), "--libdir=lib", "--buildtype=release", "--wrap-mode=nofallback",
-                   "-Dtests=disabled", "-Dexamples=disabled"]
-        if name.startswith("orc-"):
+        part = next(p for p in PARTS if name.startswith(p + "-"))
+        options = ["--prefix=" + str(PREFIX), "--libdir=lib", "--buildtype=release", "--wrap-mode=nofallback"]
+        # Each part's own options (meson stops at one it does not have).
+        if part == "pulseaudio":
+            # The client library alone, which nothing else of it serves:
+            # no daemon to spawn, no X11, D-Bus or systemd.
+            options += ["-Ddaemon=false", "-Dclient=true", "-Ddoxygen=false", "-Dman=false",
+                        "-Dtests=false", "-Dauto_features=disabled",
+                        "-Dbashcompletiondir=no", "-Dzshcompletiondir=no"]
+            subprocess.run(command + ["setup", str(build), str(source)] + options, env=env, check=True)
+            subprocess.run(command + ["compile", "-C", str(build), "-j", os.environ.get("CARGO_BUILD_JOBS", "4")], env=env, check=True)
+            subprocess.run(command + ["install", "-C", str(build), "--no-rebuild"], env=env, check=True)
+            subprocess.run(["ldconfig"], check=True)
+            continue
+        options += ["-Dtests=disabled"]
+        if part not in ("gst-plugins-ugly", "gst-libav"):
+            options += ["-Dexamples=disabled"]
+        if part == "orc":
             options += ["-Dbenchmarks=disabled", "-Dhotdoc=disabled", "-Dorc-test=disabled"]
         else:
-            options += ["-Dintrospection=disabled", "-Ddoc=disabled", "-Dnls=disabled"]
-        if name.startswith("gstreamer-"):
+            options += ["-Ddoc=disabled"]
+        if part not in ("orc", "gst-libav"):
+            options += ["-Dnls=disabled"]
+        if part in ("gstreamer", "gst-plugins-base", "gst-plugins-bad"):
+            options += ["-Dintrospection=disabled"]
+        if part == "gstreamer":
             options += ["-Dbenchmarks=disabled"]
-        elif name.startswith("gst-plugins-base-"):
+        elif part == "gst-plugins-base":
             # Replace the distribution's entire base plugin package,
             # including codecs whose development headers are optional
             # upstream. Renamed plugins must never coexist with 1.20.
             options += ["-D" + feature + "=enabled" for feature in
                         ("alsa", "cdparanoia", "libvisual", "ogg", "opus", "pango",
                          "theora", "vorbis", "xvideo", "orc")]
+        elif part in FEATURES:
+            options += ["-Dauto_features=disabled", "-Dorc=enabled"]
+            options += ["-D" + feature + "=enabled" for feature in FEATURES[part]]
         subprocess.run(command + ["setup", str(build), str(source)] + options, env=env, check=True)
         subprocess.run(command + ["compile", "-C", str(build), "-j", os.environ.get("CARGO_BUILD_JOBS", "4")], env=env, check=True)
         subprocess.run(command + ["install", "-C", str(build), "--no-rebuild"], env=env, check=True)

@@ -4,6 +4,9 @@ Status: accepted, 2026-10-11 (the user requested the implementation).
 Amends ADR-040's Linux formats and Phase 5's packaging deviation.
 Decision 7, the same tree as a tarball, added 2026-10-13 (the user
 requested it).
+Decision 2's GStreamer amended 2026-11-14 (the user's choice of the set):
+all of it built at one version, not Ubuntu's 1.20 plugins beside it, and
+PulseAudio's client library built too.
 
 ## Context
 
@@ -30,13 +33,33 @@ filesystem, as `tools/package/try.sh` already does.
    of optional codecs. Dynamically loaded libraries are explicit inputs.
    Keep the host's glibc and display/audio driver interfaces (including
    ALSA). Every ELF is checked against the glibc 2.35 ceiling.
-   Build pinned GStreamer 1.28.8 core and base plugins, with Orc 0.4.44,
-   from unmodified sources against this baseline: Ubuntu's 1.20 playback
-   engine fails the current worker's stream selection. Other distribution plugins
-   use the stable GStreamer 1.x ABI. Replace the old core/base plugins by
-   source-package ownership, including plugins renamed upstream. Ship the
-   exact source archives, including their licence notices, beside the
-   native library notices.
+   Build pinned GStreamer 1.28.8, with Orc 0.4.44, from unmodified sources
+   against this baseline: Ubuntu's 1.20 playback engine fails the current
+   worker's stream selection. **Amended 2026-11-14:** every part of it at
+   that version, the core, base, good, bad, ugly and gst-libav (against
+   Jammy's FFmpeg 4.4), and only the plugins built here: none of Ubuntu's,
+   whose stable plugin ABI kept them loading under the 1.28 core, not
+   tested with it (1.20's nvvp9dec drew the keyframe for a seek while
+   paused there). And PulseAudio's client library, 17.0, built from its
+   sources with no daemon: Jammy's 15.99 stopped a film for good after a
+   pause and a seek while paused, or a play and pause at once, then play
+   (0.4.0 and 0.5.0, the picture still), against every server tried
+   (PipeWire, PulseAudio 17, Jammy's own 15.99); 17.0 plays on against
+   them all. The host's would leave Jammy's hosts with 15.99. Good, bad and
+   ugly bring ADR-076's set, what the media helper plays with, as Windows'
+   and macOS's packages have it, with Linux's decoders (VA-API, NVDEC) and
+   audio output (PulseAudio; ALSA is base's); AV1 is aom's, bad's dav1d
+   having moved to gst-plugins-rs and gst-libav taking no FFmpeg decoder
+   that wraps another library. Every other feature is off and those named
+   are required (`tools/package/appimage/gstreamer.py`): a missing library
+   stops the build. Base keeps the features Ubuntu's base package has. Not
+   carried any more: GStreamer's network sources, tracker and chiptune
+   music, MIDI, MXF, DV, RealMedia, and the GPL plugins whose formats FFmpeg
+   decodes. libva stays the bundle's (Jammy's 2.14), as FFmpeg's
+   libraries link it: a host's newer VA drivers may refuse it, and its
+   films are then decoded by NVDEC or in software. Ship the exact source
+   archives, including their licence notices, beside the native library
+   notices.
 3. **Library paths stay inside the package.** Each ELF's RUNPATH is relative
    to its executable or library; it does not impose an inherited RPATH on
    host graphics drivers. AppRun exports no loader or search paths
@@ -117,3 +140,12 @@ undo, and unchanged host terminal paths. The README's commands, run as
 written in a home whose name has a space, installed it, ran it through
 its link on `PATH`, and wrote a desktop entry `desktop-file-validate`
 accepts.
+
+The amendment, 2026-11-14: `just package-appimage` built PulseAudio 17.0's
+client and GStreamer 1.28.8's six parts in the root and made a 195.2 MB
+image (193.8 for 0.5.0's), 65 plugins (259); it passed every check in the
+Ubuntu 22.04 runtime root, the film played through the bundle's
+`pulsesink` among them, which 0.5.0's image failed at its seventh round.
+Through `appimage-run` and the session's PipeWire, its helper played on
+in 30 rounds of 30 in twelve runs over six clips, where 0.5.0's stopped
+by the third (`docs/STATUS-LOG.md`, "The AppImage's films play on").

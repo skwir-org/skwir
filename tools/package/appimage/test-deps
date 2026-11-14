@@ -18,3 +18,5 @@ libgbm1
 libegl1
 fonts-dejavu-core
 shared-mime-info
+pulseaudio
+pulseaudio-utils

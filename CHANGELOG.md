@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **Films play on in the AppImage and the Linux tarball**: after a pause and
+  a seek (or peek), a film could stop on one frame for good, as in 0.4.0.
+  The PulseAudio client library they carried, Ubuntu 22.04's, did this
+  with every sound server; they now carry PulseAudio 17's.
+- **The AppImage's GStreamer is of one version**, 1.28.8 throughout, built
+  for it: the plugins the player uses, as Windows and macOS have them,
+  with Linux's own video decoders (VA-API, NVIDIA's). It no longer carries
+  Ubuntu's 1.20 plugins beside it, nor GStreamer's network sources,
+  tracker and chiptune music, MIDI, MXF, DV or RealMedia.
 - **A model's stored picture fits the panel**: the picture a slicer stores
   in a 3MF, shown before the model is turned in 3D, was as wide as the
   panel, and a tall one ran past its foot. It is shown as pictures are,

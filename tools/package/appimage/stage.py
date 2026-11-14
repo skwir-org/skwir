@@ -100,27 +100,19 @@ def main():
     (licences / "ubuntu-packages.tsv").write_text(packages)
 
     multiarch = pathlib.Path("/usr/lib/x86_64-linux-gnu")
-    plugins = multiarch / "gstreamer-1.0"
-    # Source-package ownership, not filenames: upstream may merge or
-    # rename plugins (1.28's videoconvertscale replaces two 1.20 plugins).
-    # Keeping the old ones registers duplicate types in the scanner.
-    replaced = set()
-    for row in packages.splitlines():
-        package, _, source, _ = row.split("\t")
-        if source in {"gstreamer1.0", "gst-plugins-base1.0"}:
-            replaced.update(subprocess.check_output(["dpkg-query", "-L", package], text=True).splitlines())
-    for plugin in plugins.glob("*.so"):
-        if str(plugin) not in replaced:
-            copy(plugin, helpers / "gstreamer-1.0" / plugin.name)
+    # The plugins built here alone (gstreamer.py), never the distribution's:
+    # one version throughout, and no old plugin beside one upstream renamed
+    # (1.28's videoconvertscale replaced two of 1.20's).
     runtime = pathlib.Path("/opt/skwir-gstreamer")
     shutil.copytree(runtime / "lib/gstreamer-1.0", helpers / "gstreamer-1.0", symlinks=False, dirs_exist_ok=True)
     copy(runtime / "libexec/gstreamer-1.0/gst-plugin-scanner", helpers / "gst-plugin-scanner")
     inputs = json.loads((TOOLS / "appimage/downloads.json").read_text())
     for name in inputs:
-        if name.startswith(("gstreamer-", "gst-plugins-base-", "orc-")) and name.endswith(".tar.xz"):
+        if name.startswith(("gstreamer-", "gst-plugins-", "gst-libav-", "orc-", "pulseaudio-")) and name.endswith(".tar.xz"):
             # Exact unmodified sources, including their copyright and
             # licence notices, travel with the native components built here.
-            copy(pathlib.Path("/inputs") / name, licences / "gstreamer" / name)
+            part = "pulseaudio" if name.startswith("pulseaudio-") else "gstreamer"
+            copy(pathlib.Path("/inputs") / name, licences / part / name)
     deploy = "/opt/linuxdeploy/squashfs-root/AppRun"
     linked = libraries() | {(multiarch / name).resolve() for name in ("libvulkan.so.1", "libfontconfig.so.1")}
     # Explicit --library inputs still obey linuxdeploy's exclusion list.

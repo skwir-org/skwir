@@ -17007,9 +17007,75 @@ races in tests (8847392f, 4251fd1a, 3aa2b517, d0e6c612) and two bugs
   a film stopped on one frame after a few plays and pauses and a peek;
   the debug build played on. Reproduced headless, the AppImage's media
   helper run through `appimage-run` as the AppImage is, with the real
-  audio sink, muted: its 1.20 `pulsesink` (Ubuntu's, under the bundle's
-  1.28.8 core) stops after a pause, a seek while paused and play, within
-  1 to 3 rounds in five formats; 40 of 40 rounds with it ranked out
-  (1.28.8's `alsasink`); 0.4.0's AppImage stops too. Released as is by
-  the user's choice, the release page saying so; to fix in 0.5.1
-  (PLAN.md, "What is left").
+  audio sink, muted: playing through `pulsesink`, it stops after a pause,
+  a seek while paused and play, within 1 to 3 rounds in five formats; 40
+  of 40 rounds with `pulsesink` ranked out (1.28.8's `alsasink`); 0.4.0's
+  AppImage stops too. Released as is by the user's choice, the release
+  page saying so; to fix in 0.5.1. Taken first for Ubuntu's 1.20
+  `pulsesink` under the 1.28.8 core; the cause was the bundle's
+  PulseAudio client library, Ubuntu's 15.99 (the entry of the same day
+  below, "The AppImage's films play on").
+
+## 2026-11-14: The AppImage's films play on
+
+After 0.5.0 was published, the user tried its AppImage: a film stopped on
+one frame after a few plays and pauses and a peek, where the debug build
+played on.
+
+- **Reproduced headless:** the AppImage's media helper started through
+  `appimage-run`, as NixOS starts the AppImage, and driven as the window
+  drives it (play, pause, frames off and on, a seek while paused, a play
+  and a pause 10 ms apart), with the real audio sink, muted, through the
+  session's PipeWire: playing stopped advancing within 1 to 3 rounds of
+  30 in all five formats tried (H.264 and HEVC in MP4, VP9 in WebM, AV1
+  and H.264 in Matroska), 0.4.0's AppImage too; with the fake audio sink
+  and with `alsasink`, 30 of 30; the debug build, 30 of 30 in each.
+- **Taken first for GStreamer's:** the AppImage carried a 1.28.8 core and
+  base under Ubuntu 22.04's 1.20 plugins, its `pulsesink` among them. Built
+  all at 1.28.8 (the user's choice of set below), the AppImage froze the
+  same, by round 3.
+- **The cause, the PulseAudio client library the bundle carried**, Ubuntu
+  22.04's 15.99: the published helper, 1.20 plugins and all, played 20
+  of 20 rounds twice given the system's libpulse 17; with 15.99 it froze
+  against PipeWire, against PulseAudio 17 (a server of the check's own,
+  a null sink) and against Jammy's own 15.99 server, run from the test
+  root; libpulse 17 played against all three. The host's library would
+  leave a Jammy host with 15.99, so the AppImage builds PulseAudio 17.0's
+  client library from its sources (no daemon, no X11, D-Bus or systemd),
+  before good, whose `pulsesink` links it.
+- **GStreamer at one version** (the user's choice: ADR-076's set and
+  Linux's own, not Ubuntu's 222 plugins and their 148 build dependencies,
+  WebKit, OpenCV and Qt 5 among them): good, bad, ugly and gst-libav
+  1.28.8 built beside the core and base, every feature off but the set's,
+  which are required; the bundle stages only the plugins built here (65,
+  from 259). gst-libav 1.28 builds on Jammy's FFmpeg 4.4; AV1 is bad's
+  aom, its dav1d having moved to gst-plugins-rs and gst-libav taking no
+  FFmpeg decoder wrapping another library. libva stays the bundle's:
+  FFmpeg's libraries link libva-x11, which a host may lack.
+- **The bundle's check plays a film** (`check.py`'s `check_film`, the film
+  made by the GStreamer built in the root): through the bundle's own
+  `pulsesink` and client against a PulseAudio null sink the check starts,
+  eight rounds of a pause, then a seek while paused or a play and pause at
+  once, then play, its frames and position going on each time. On the
+  published 0.5.0 AppImage it stopped at round 7; the new one passed
+  (AppImage and tarball, with every other check). A first try with one
+  round passed on the published one too, and PulseAudio's module
+  arguments split the check's folder name at its space (the socket is in
+  `/tmp` now).
+- **Checked:** `just package-appimage` (195.2 MB, 193.8 published; the
+  tarball 210.2 MB); the new helper through `appimage-run` and PipeWire,
+  30 of 30 rounds in twelve runs over six clips; `tools/media/check.py` on
+  VP9, 3 of 3 (1.20's `nvvp9dec` drew the keyframe for a seek while paused
+  in 3 of 3 before); `just release-tools-check`. CI's runs on Ubuntu 24.04
+  and Fedora 44 do not play the film (not uploaded with the artifacts).
+- **A model's stored picture fits the panel** (the other agent's report,
+  the user's choice among three): a 3MF's stored picture, shown before
+  the model is turned in 3D, was the first row of a reading list, as wide
+  as the panel; an inspection that is a picture alone is now laid out as a
+  picture (`inspector::lone_picture`, `preview::picture`, Fit). Seen in
+  the new AppImage on Xvfb: a 400 × 1200 picture drawn 213 × 640, whole
+  under the toolbar, where it was 320 wide and cut at 640 of 960. The
+  report's other two were left by the user's choice: Group by Kind files
+  3D models under Images as the type database's generic icons say
+  (ADR-037), and a KiCad board's header says Plain text where KiCad's
+  types are not installed.

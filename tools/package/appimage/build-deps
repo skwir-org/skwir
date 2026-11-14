@@ -7,10 +7,6 @@ appstream
 libvulkan1
 libwayland-client0
 gstreamer1.0-plugins-base
-gstreamer1.0-plugins-good
-gstreamer1.0-plugins-bad
-gstreamer1.0-plugins-ugly
-gstreamer1.0-libav
 bubblewrap
 xvfb
 xauth
@@ -30,3 +26,16 @@ libtheora-dev
 libvorbis-dev
 libxv-dev
 liborc-0.4-dev
+zlib1g-dev
+libflac-dev
+libvpx-dev
+libaom-dev
+libass-dev
+libva-dev
+libdrm-dev
+libavcodec-dev
+libavformat-dev
+libavfilter-dev
+libavutil-dev
+libsndfile1-dev
+m4

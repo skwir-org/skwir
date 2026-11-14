@@ -51,6 +51,26 @@
     "url": "https://gstreamer.freedesktop.org/src/gst-plugins-base/gst-plugins-base-1.28.8.tar.xz",
     "sha256": "ade70e3381fcbb024f1f20aa9ede9b5654aeed39d5bd70b1a98f53015e501117"
   },
+  "pulseaudio-17.0.tar.xz": {
+    "url": "https://www.freedesktop.org/software/pulseaudio/releases/pulseaudio-17.0.tar.xz",
+    "sha256": "053794d6671a3e397d849e478a80b82a63cb9d8ca296bd35b73317bb5ceb87b5"
+  },
+  "gst-plugins-good-1.28.8.tar.xz": {
+    "url": "https://gstreamer.freedesktop.org/src/gst-plugins-good/gst-plugins-good-1.28.8.tar.xz",
+    "sha256": "a7670ed900d3d03be744d25c1873b239896e9a82ce6d17f8febc6fffbaee9521"
+  },
+  "gst-plugins-bad-1.28.8.tar.xz": {
+    "url": "https://gstreamer.freedesktop.org/src/gst-plugins-bad/gst-plugins-bad-1.28.8.tar.xz",
+    "sha256": "670d888bde8242579b0d8e91f60cf337aa7be20ca7c315ebfbdd6e5a9218d104"
+  },
+  "gst-plugins-ugly-1.28.8.tar.xz": {
+    "url": "https://gstreamer.freedesktop.org/src/gst-plugins-ugly/gst-plugins-ugly-1.28.8.tar.xz",
+    "sha256": "51ae53002e3bbe9ed0f2215020c5a248bf0ed41b9d9a2a4e102b8583fedab61c"
+  },
+  "gst-libav-1.28.8.tar.xz": {
+    "url": "https://gstreamer.freedesktop.org/src/gst-libav/gst-libav-1.28.8.tar.xz",
+    "sha256": "98ad3d7f8932c495e268708903f1c3388d5f26a0db34727a9f861ee23b724177"
+  },
   "orc-0.4.44.tar.xz": {
     "url": "https://gstreamer.freedesktop.org/src/orc/orc-0.4.44.tar.xz",
     "sha256": "4aeb97aea2b58224029dc2b23d7d064cfa990cb4fb8c4da440bcbe9c95bc5d2d"

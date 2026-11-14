@@ -7,6 +7,12 @@ source_date="$1"
 export CARGO_TARGET_DIR=/build/target
 export CARGO_INCREMENTAL=0
 python3 tools/package/appimage/gstreamer.py
+# A film for the bundle's check (check.py's check_film), made by the
+# GStreamer built here: twelve seconds of VP8 and Vorbis in Matroska.
+/opt/skwir-gstreamer/bin/gst-launch-1.0 -q \
+    videotestsrc num-buffers=360 ! video/x-raw,width=320,height=240,framerate=30/1 ! vp8enc deadline=1 ! queue ! mux. \
+    audiotestsrc num-buffers=360 samplesperbuffer=1600 ! audio/x-raw,rate=48000,channels=2 ! audioconvert ! vorbisenc ! queue ! mux. \
+    matroskamux name=mux ! filesink location=/out/check-film.mkv
 . tools/build/order-link-env.sh
 # SQLite built in: Ubuntu 22.04's is older than rusqlite needs, and the
 # systems the AppImage runs on may be as old (ADR-022).
