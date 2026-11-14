@@ -46,6 +46,9 @@ use crate::theme::Theme;
 /// The height of every row of the list, a heading's and a sub-heading's
 /// too: the same for all, so only the rows in view are drawn.
 const ROW: f32 = 46.;
+/// The filter's least width at 100 %, beside the checks: narrower, they
+/// go to a line of their own.
+const FILTER_LEAST: f32 = 160.;
 /// Rows a page key moves by.
 const PAGE: usize = 8;
 /// What a modal of the page lists before it scrolls.
@@ -660,78 +663,114 @@ impl SettingsView {
             .flex()
             .flex_col()
             .gap_2()
+            // Each row in groups that go to a line of their own, against
+            // the right edge, where the dialog is too narrow for them side
+            // by side: nothing runs off the card.
             .child(
                 div()
                     .flex()
+                    .flex_wrap()
                     .items_center()
                     .gap_2()
                     .child(
                         div()
-                            .text_body()
-                            .whitespace_nowrap()
-                            .text_color(theme.text_muted)
-                            .child(model::EXCLUDED_FROM),
-                    )
-                    .child(segmented)
-                    .child(div().flex_1())
-                    .child(
-                        controls::button(
-                            "exclusions-add",
-                            "Add…",
-                            Some("plus"),
-                            ButtonStyle::Plain,
-                            &add,
-                            theme,
-                        )
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.open_entry_dialog(None, None, window, cx);
-                        })),
+                            .flex()
+                            .flex_none()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_body()
+                                    .whitespace_nowrap()
+                                    .text_color(theme.text_muted)
+                                    .child(model::EXCLUDED_FROM),
+                            )
+                            .child(segmented),
                     )
                     .child(
-                        controls::button(
-                            "exclusions-new-category",
-                            "New category…",
-                            Some("folder-plus"),
-                            ButtonStyle::Plain,
-                            &new_category,
-                            theme,
-                        )
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.open_category_dialog(None, window, cx);
-                        })),
+                        div()
+                            .flex()
+                            .flex_none()
+                            .ml_auto()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                controls::button(
+                                    "exclusions-add",
+                                    "Add…",
+                                    Some("plus"),
+                                    ButtonStyle::Plain,
+                                    &add,
+                                    theme,
+                                )
+                                .on_click(cx.listener(
+                                    |this, _, window, cx| {
+                                        this.open_entry_dialog(None, None, window, cx);
+                                    },
+                                )),
+                            )
+                            .child(
+                                controls::button(
+                                    "exclusions-new-category",
+                                    "New category…",
+                                    Some("folder-plus"),
+                                    ButtonStyle::Plain,
+                                    &new_category,
+                                    theme,
+                                )
+                                .on_click(cx.listener(
+                                    |this, _, window, cx| {
+                                        this.open_category_dialog(None, window, cx);
+                                    },
+                                )),
+                            ),
                     ),
             )
             .child(
                 div()
                     .flex()
+                    .flex_wrap()
                     .items_center()
                     .gap_2()
-                    .child(filter)
+                    .child(filter.min_w(sized(FILTER_LEAST)))
                     .child(
-                        controls::check(
-                            "exclusions-here",
-                            "Only on this computer",
-                            self.exclusions.only_here,
-                            &here,
-                            theme,
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.exclusions.only_here = !this.exclusions.only_here;
-                            cx.notify();
-                        })),
-                    )
-                    .child(
-                        controls::check(
-                            "exclusions-changed",
-                            "Changed",
-                            self.exclusions.changed_only,
-                            &changed_focus,
-                            theme,
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.exclusions.changed_only = !this.exclusions.changed_only;
-                            cx.notify();
-                        })),
+                        div()
+                            .flex()
+                            .flex_none()
+                            .ml_auto()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                controls::check(
+                                    "exclusions-here",
+                                    "Only on this computer",
+                                    self.exclusions.only_here,
+                                    &here,
+                                    theme,
+                                )
+                                .on_click(cx.listener(
+                                    |this, _, _, cx| {
+                                        this.exclusions.only_here = !this.exclusions.only_here;
+                                        cx.notify();
+                                    },
+                                )),
+                            )
+                            .child(
+                                controls::check(
+                                    "exclusions-changed",
+                                    "Changed",
+                                    self.exclusions.changed_only,
+                                    &changed_focus,
+                                    theme,
+                                )
+                                .on_click(cx.listener(
+                                    |this, _, _, cx| {
+                                        this.exclusions.changed_only =
+                                            !this.exclusions.changed_only;
+                                        cx.notify();
+                                    },
+                                )),
+                            ),
                     ),
             );
         if let Some(error) = self
