@@ -132,6 +132,13 @@ pub fn amplitude(position: f64) -> f64 {
     position.clamp(0., 1.).powi(3)
 }
 
+/// Where a volume control stands for `amplitude`, as the sound server
+/// gives it back (a stream's volume as the desktop restored it, or as its
+/// mixer moved it): the inverse of [`amplitude`], past full counted full.
+pub fn position(amplitude: f64) -> f64 {
+    amplitude.clamp(0., 1.).cbrt()
+}
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum Control {
     Play(bool),
@@ -318,5 +325,16 @@ mod tests {
         assert!((amplitude(0.5) - 0.125).abs() < 1e-12);
         assert!((amplitude(1.) - 1.).abs() < 1e-12);
         assert!(amplitude(-3.) == 0. && (amplitude(7.) - 1.).abs() < 1e-12);
+    }
+
+    /// The control stands where the amplitude the server gives back puts
+    /// it: the inverse of `amplitude`, an amplitude past full at full.
+    #[test]
+    fn a_volume_given_back_puts_the_control_where_it_was() {
+        for position_set in [0., 0.25, 0.5, 0.8, 1.] {
+            assert!((position(amplitude(position_set)) - position_set).abs() < 1e-12);
+        }
+        assert!((position(4.) - 1.).abs() < 1e-12, "past full");
+        assert!(position(-1.).abs() < 1e-12, "below silence");
     }
 }

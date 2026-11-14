@@ -28,6 +28,11 @@ fn reply(message: &Reply) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// How far a volume read back may stand from the one set and still be it:
+/// the server holds a stream's volume in steps of its own, and a control
+/// set to 0.5 comes back as 0.4999…
+const SOUND_ROUNDING: f64 = 0.005;
+
 // Independent switches of one player, not a state machine in disguise.
 #[allow(clippy::struct_excessive_bools)]
 struct Player {
@@ -186,6 +191,15 @@ impl Player {
             }
             gst::BusSyncReply::Drop
         });
+        // The volume control is the stream's own: the sound server gives a
+        // stream back the volume and mute its application had, and its
+        // mixer may move them. What the control shows is what is heard.
+        for property in ["volume", "mute"] {
+            let sound_events = Arc::clone(events);
+            pipeline.connect_notify(Some(property), move |_, _| {
+                let _ = sound_events.tx.send(Event::Sound);
+            });
+        }
         let sample_events = events.clone();
         let preroll_events = events.clone();
         sink.set_callbacks(
@@ -333,6 +347,21 @@ impl Player {
         }
         let mut seeking = gst::query::Seeking::new(gst::Format::Time);
         self.state.seekable = self.pipeline.query(&mut seeking) && seeking.result().0;
+    }
+
+    /// The volume and mute the pipeline has, as the sound server holds
+    /// them, taken into the state where they moved by more than rounding;
+    /// whether they did.
+    fn follow_sound(&mut self) -> bool {
+        let volume = skwir_core::media::position(self.pipeline.property::<f64>("volume"));
+        let muted = self.pipeline.property::<bool>("mute");
+        let moved =
+            (volume - self.state.volume).abs() > SOUND_ROUNDING || muted != self.state.muted;
+        if moved {
+            self.state.volume = volume;
+            self.state.muted = muted;
+        }
+        moved
     }
 
     fn tracks(&self, kind: gst::StreamType) -> Vec<String> {
@@ -499,6 +528,10 @@ enum Event {
     /// or `None`: the pipeline refused what it asked.
     Selecting(Option<Vec<gst::glib::GString>>),
     Wake,
+    /// The stream's volume or mute moved where the sound server holds them
+    /// (given back for the application as the stream starts, moved in its
+    /// mixer): read back by the loop (`Player::follow_sound`).
+    Sound,
     Closed,
 }
 
@@ -679,6 +712,7 @@ fn run() -> anyhow::Result<()> {
                 player.selection = Some(asked.context("track selection failed")?);
             }
             Ok(Event::Wake) => events.wake_pending.store(false, Ordering::Release),
+            Ok(Event::Sound) => dirty |= player.follow_sound(),
             Err(mpsc::RecvTimeoutError::Timeout) => {}
         }
         if ready {
@@ -975,6 +1009,11 @@ fn handle_message(
                 reply(&Reply::Ready)?;
                 *ready = true;
             }
+            // The stream there, its volume is the one the server gave it
+            // (restored for the application, or moved meanwhile): pulsesink
+            // says a change only while it renders, and a volume restored as
+            // the stream began not at all. Read, it asks the server.
+            player.follow_sound();
             *dirty = true;
         }
         _ => {}

@@ -6,6 +6,10 @@
   a seek (or peek), a film could stop on one frame for good, as in 0.4.0.
   The PulseAudio client library they carried, Ubuntu 22.04's, did this
   with every sound server; they now carry PulseAudio 17's.
+- **The volume control shows what a film is heard at**: the desktop gives a
+  player's sound back the volume and mute it last had, and its mixer can
+  move them; the control said its own value over them, 100 % over a film
+  at 0 %. It now shows the sound's own.
 - **The AppImage's GStreamer is of one version**, 1.28.8 throughout, built
   for it: the plugins the player uses, as Windows and macOS have them,
   with Linux's own video decoders (VA-API, NVIDIA's). It no longer carries

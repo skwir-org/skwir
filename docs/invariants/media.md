@@ -36,6 +36,15 @@ binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
   so wake and payload are one object. Install bus and sink handlers before
   the first state change; never drop or block on that channel from a
   streaming thread.
+- The volume control is the stream's own (playbin's volume is the audio
+  sink's): the worker reports what the sound server holds, the volume and
+  mute it gives the application's next stream back, or its mixer moved
+  (`Player::follow_sound`): on `notify::volume` and `notify::mute`, which
+  pulsesink emits only while it renders, and at every preroll's
+  `AsyncDone`, where reading the property asks the server. The control
+  then never says 100 % over a stream at 0 %. Tests with the real audio
+  sink use a sound server of their own: one on the session's leaves the
+  application's stream at what the test set.
 - GStreamer owns audio/video timing: decoder events wake the worker, new
   output wakes the UI. Never add a UI frame timer for playback.
 
