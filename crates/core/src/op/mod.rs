@@ -980,16 +980,16 @@ impl OpRegistry {
         self.kinds.write().retain(|_, (o, _)| &**o != owner);
     }
 
+    /// The step `data` says. Never several as one ([`Steps`]): a plan
+    /// lists each step it takes, which its review shows and its run
+    /// foresees and journals one by one (`Plan::to_data` writes a
+    /// [`Steps`] so).
     pub fn build(&self, data: &OpData) -> anyhow::Result<Box<dyn Operation>> {
-        // Several steps as one, each built as its kind says.
-        if data.kind == steps::KIND {
-            let each: Vec<OpData> = serde_json::from_value(data.args.clone())?;
-            let built = each
-                .iter()
-                .map(|step| self.build(step))
-                .collect::<anyhow::Result<Vec<_>>>()?;
-            return Steps::of(built).ok_or_else(|| anyhow::anyhow!("`steps` lists no step"));
-        }
+        anyhow::ensure!(
+            data.kind != steps::KIND,
+            "a plan lists each of its steps: `{}` is none",
+            steps::KIND
+        );
         let d = self
             .kinds
             .read()
@@ -1332,14 +1332,19 @@ impl Plan {
             .all(|(_, status)| !matches!(status, StepStatus::Conflict { .. }))
     }
 
+    /// The plan as data, each step it takes listed on its own: several as
+    /// one ([`Steps`]) as each of them, which `from_data` builds back.
     pub fn to_data(&self) -> PlanData {
+        let mut each = Vec::with_capacity(self.steps.len());
+        for step in &self.steps {
+            steps::each_ref(step.as_ref(), &mut each);
+        }
         PlanData {
             title: self.title.clone(),
             note: self.note.clone(),
             on_conflict: self.on_conflict,
-            steps: self
-                .steps
-                .iter()
+            steps: each
+                .into_iter()
                 .map(|s| OpData {
                     kind: s.kind().into(),
                     args: s.args(),

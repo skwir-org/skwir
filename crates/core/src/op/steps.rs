@@ -1,20 +1,21 @@
 //! Several steps as one ([`Steps`]): what a step that placed several
 //! things gives back as its undo (an archive merged into a folder: each
-//! item it placed, put in the trash). The executor journals each as a step
-//! of its own ([`each`]), so Undo checks and takes back each with its own
-//! inverse, as it does a copy's merge.
+//! item it placed, put in the trash). Never a step of a plan: the executor
+//! journals each as a step of its own ([`each`]), so Undo checks and takes
+//! back each with its own inverse, as it does a copy's merge; a plan
+//! written as data lists each ([`each_ref`], `Plan::to_data`), and no plan
+//! read from data names them (`OpRegistry::build` refuses [`KIND`]): a
+//! review lists every change, a dry run foresees each.
 
 use std::path::PathBuf;
 
 use super::{Change, OpData, Operation, StepContext, StepStatus, footprint};
 
-/// The kind a plan says them under: built by the registry itself, of the
-/// steps it lists (`OpRegistry::build`).
+/// The kind they would be said under, which no plan read from data names.
 pub const KIND: &str = "steps";
 
-/// Steps applied in order, as one. Applied as one (a plan from elsewhere
-/// naming them), what applied is taken back when one after fails, and
-/// their undo is theirs, in the order back.
+/// Steps applied in order, as one. Applied as one, what applied is taken
+/// back when one after fails, and their undo is theirs, in the order back.
 #[derive(Clone, Debug)]
 pub struct Steps(Vec<Box<dyn Operation>>);
 
@@ -30,6 +31,19 @@ impl Steps {
 
     pub fn steps(&self) -> &[Box<dyn Operation>] {
         &self.0
+    }
+}
+
+/// [`each`] of a step borrowed: the steps `step` is, in order, put after
+/// what `out` holds.
+pub fn each_ref<'a>(step: &'a dyn Operation, out: &mut Vec<&'a dyn Operation>) {
+    match step.as_any().and_then(|any| any.downcast_ref::<Steps>()) {
+        Some(steps) => {
+            for step in &steps.0 {
+                each_ref(step.as_ref(), out);
+            }
+        }
+        None => out.push(step),
     }
 }
 
@@ -170,18 +184,27 @@ mod tests {
         let both = Steps::of(vec![made(&a), made(&b)]).unwrap();
         assert_eq!(each(both.clone()).len(), 2);
 
-        // Rebuilt from what it says, by the registry.
+        // Written as data, each is a step of the plan, built back so; none
+        // is read as several.
         let registry = OpRegistry::default();
         registry.register::<Mkdir>("test");
         registry.register::<Rmdir>("test");
-        let rebuilt = registry
-            .build(&OpData {
-                kind: both.kind().into(),
-                args: both.args(),
-            })
-            .unwrap();
-        assert_eq!(rebuilt.args(), both.args());
+        let plan = crate::op::Plan::with_steps("both", vec![made(&a), both.clone()]);
+        let data = plan.to_data();
+        let kinds: Vec<_> = data.steps.iter().map(|s| s.kind.as_str()).collect();
+        assert_eq!(kinds, ["mkdir", "mkdir", "mkdir"]);
+        let back = crate::op::Plan::from_data(&data, &registry).unwrap();
+        assert_eq!(back.steps.len(), 3);
+        assert!(
+            registry
+                .build(&OpData {
+                    kind: both.kind().into(),
+                    args: both.args(),
+                })
+                .is_err()
+        );
 
+        let rebuilt = both;
         let ctx = StepContext::detached();
         assert!(matches!(rebuilt.check(&ctx), StepStatus::Pending { .. }));
         let undo = rebuilt.apply(&ctx).unwrap().unwrap();

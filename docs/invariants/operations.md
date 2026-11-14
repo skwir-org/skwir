@@ -629,7 +629,10 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   `op::Placing`, names only, never two to one name; one found taken by
   anything but the same item fails the step), and its undo is each
   item it placed (`op::Steps`, journaled as each step: never the folder
-  there, never what was in it). A plan
+  there, never what was in it). Several steps as one are never a step of
+  a plan: `Plan::to_data` lists each, and a plan read from data that
+  names `steps` is refused, so a review lists every change and a dry run
+  foresees each. A plan
   with such a step is settled even with no copy in it
   (`clash::takes_names`). What is there is never trashed when it is, or
   holds, what the step reads (`Made::inputs`): the step's check refuses
