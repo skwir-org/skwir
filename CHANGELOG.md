@@ -27,6 +27,9 @@
 - **A paused film comes back fitted**: a small film paused in the dock,
   shown again in the panel, was drawn at its own size until it played;
   it fills the panel as before.
+- **The player's speed is one row**, as the menus' other settings are: its
+  name, then its values, Left and Right walking them. Its headings and
+  the slideshow's and the timeline's choices are drawn as every menu's.
 - **A model's stored picture fits the panel**: the picture a slicer stores
   in a 3MF, shown before the model is turned in 3D, was as wide as the
   panel, and a tall one ran past its foot. It is shown as pictures are,

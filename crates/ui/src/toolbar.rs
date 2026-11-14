@@ -1371,14 +1371,27 @@ pub enum MenuPart {
 
 /// `panel` holding `parts`, as a context menu holds its rows.
 pub fn menu_parts(
-    mut panel: Stateful<Div>,
+    panel: Stateful<Div>,
     parts: Vec<MenuPart>,
     shell: &Shell,
     theme: &Theme,
     cx: &mut Context<Shell>,
 ) -> Stateful<Div> {
+    panel.children(menu_part_elements(parts, shell, theme, cx))
+}
+
+/// `parts` drawn as a menu draws them, for a panel built of other groups
+/// too (a preview's More, `preview_bar`): every menu and popup is built of
+/// these parts, never of headings or rows of buttons of its own.
+pub fn menu_part_elements(
+    parts: Vec<MenuPart>,
+    shell: &Shell,
+    theme: &Theme,
+    cx: &mut Context<Shell>,
+) -> Vec<gpui::AnyElement> {
+    let mut elements = Vec::with_capacity(parts.len());
     for part in parts {
-        panel = panel.child(match part {
+        elements.push(match part {
             MenuPart::Title(title, button) => div()
                 .flex()
                 .flex_none()
@@ -1467,7 +1480,7 @@ pub fn menu_parts(
                 .into_any_element(),
         });
     }
-    panel
+    elements
 }
 
 /// The flag a value's key context carries (`Button::segment`,

@@ -372,27 +372,25 @@ pub(crate) fn picture_tools(bar: &mut Bar, shell: &Shell) {
 fn pace_popup(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let popup = shell.preview.menu.as_ref()?;
     let chosen = crate::settings::slideshow_seconds(shell).to_string();
-    let mut rows = div().flex().flex_col().gap_1().child(
-        div()
-            .px_2()
-            .text_small()
-            .text_color(theme.text_muted)
-            .child("Each picture for"),
-    );
+    let mut parts = vec![toolbar::MenuPart::Title("Each picture for".into(), None)];
     for (value, label) in crate::settings::SLIDESHOW_PACES {
         let seconds: u64 = value.parse().unwrap_or(5);
-        rows = rows.child(
+        parts.push(toolbar::MenuPart::Row(
             Button::new(format!("pace-{value}"), "", label, "ui.slideshow_pace")
                 .args(serde_json::json!({ "seconds": seconds }))
                 .label(label)
                 .active(chosen == value)
-                .menu()
-                .render(shell, cx),
-        );
+                .menu(),
+        ));
     }
     Some(
-        toolbar::menu_panel(popup, "ui.preview_menu", theme, cx)
-            .child(rows)
-            .into_any_element(),
+        toolbar::menu_parts(
+            toolbar::menu_panel(popup, "ui.preview_menu", theme, cx),
+            parts,
+            shell,
+            theme,
+            cx,
+        )
+        .into_any_element(),
     )
 }

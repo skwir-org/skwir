@@ -1094,24 +1094,27 @@ fn dates_popup(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<
         .toolbar_menu
         .as_ref()
         .filter(|menu| menu.kind == DATES_MENU)?;
-    let mut rows = div().flex().flex_col().gap_1();
-    for (i, (word, label)) in DATES.iter().enumerate() {
-        let chosen = i == shell.timeline().date;
-        rows = rows.child(
-            Button::new(
-                format!("tl-date-{word}"),
-                if chosen { "check" } else { "" },
-                *label,
-                "ui.timeline_date",
+    // Checked rows, the one chosen checked as a menu checks it.
+    let parts = DATES
+        .iter()
+        .enumerate()
+        .map(|(i, (word, label))| {
+            toolbar::MenuPart::Row(
+                Button::new(format!("tl-date-{word}"), "", *label, "ui.timeline_date")
+                    .args(serde_json::json!({ "date": word }))
+                    .label(*label)
+                    .active(i == shell.timeline().date)
+                    .menu(),
             )
-            .args(serde_json::json!({ "date": word }))
-            .label(*label)
-            .active(chosen)
-            .menu()
-            .render(shell, cx),
-        );
-    }
-    let panel = toolbar::menu_panel(popup, "ui.toolbar_menu", theme, cx).child(rows);
+        })
+        .collect();
+    let panel = toolbar::menu_parts(
+        toolbar::menu_panel(popup, "ui.toolbar_menu", theme, cx),
+        parts,
+        shell,
+        theme,
+        cx,
+    );
     // The strip is at the foot of the window: no room below it.
     Some(shell.timeline().dates.popup_above_for(
         &crate::elements::adaptive::Chosen::default(),

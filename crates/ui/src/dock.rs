@@ -584,18 +584,21 @@ fn menu(
             if !kept.fullscreen && pinned.video {
                 left.push(fullscreen("dock-menu-fullscreen"));
             }
+            let mut parts = Vec::new();
             if !left.is_empty() {
                 for button in left {
+                    // Its name before what it says of its state, as the
+                    // panel's More calls a button it left out.
                     let title = button.title();
-                    panel = panel.child(button.label(title).menu().render(shell, cx));
+                    let label = title.split(" · ").next().unwrap_or(&title).to_owned();
+                    parts.push(toolbar::MenuPart::Row(button.label(label).menu()));
                 }
-                panel = panel.child(crate::preview_bar::separator(theme));
+                parts.push(toolbar::MenuPart::Line);
             }
-            panel
-                .children(crate::media::continue_rows(shell, theme, cx))
-                .child(crate::preview_bar::separator(theme))
-                .children(crate::media::playback_rows(state, &send, shell, theme, cx))
-                .into_any_element()
+            parts.extend(crate::media::continue_parts(shell));
+            parts.push(toolbar::MenuPart::Line);
+            parts.extend(crate::media::playback_parts(state, &send));
+            toolbar::menu_parts(panel, parts, shell, theme, cx).into_any_element()
         })
         .collect();
     Some(anchor.popup_above_for(chosen, panels))

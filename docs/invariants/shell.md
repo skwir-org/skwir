@@ -249,6 +249,13 @@ Views are in [views.md](views.md); what locations decide, in
   row under the pointer or the keyboard highlighted, and what is on said
   by a check, never by the highlight. Its rows are `Button::menu`; a
   context menu's rows (`menu::render`) keep the same metrics.
+- **A menu is built of `toolbar::MenuPart`s** (`toolbar::menu_parts`,
+  or `menu_part_elements` for a panel of other groups too, a preview's
+  More): a group's name is a `Title`, a setting a `Choice`, a value that
+  needs its words a checked `Row`; never a heading, a row of buttons or
+  a check icon a popup draws itself. The player's, the slideshow's and
+  the timeline's had drifted so (their speed two lines of plain buttons,
+  their headings their own, a check icon set beside `active`).
 - **A switch only heads a group.** What turns a whole group of a popup
   on or off is its heading (`MenuPart::Heading`, `Button::switch`): the
   group's name, a switch at its end, the whole heading pressed, a stop

@@ -1570,30 +1570,24 @@ pub const CONTINUE_POPUP: &str = "continue";
 fn continue_popup(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let popup = shell.preview.menu.as_ref()?;
     Some(
-        crate::toolbar::menu_panel(popup, "ui.preview_menu", theme, cx)
-            .children(continue_rows(shell, theme, cx))
-            .into_any_element(),
+        crate::toolbar::menu_parts(
+            crate::toolbar::menu_panel(popup, "ui.preview_menu", theme, cx),
+            continue_parts(shell),
+            shell,
+            theme,
+            cx,
+        )
+        .into_any_element(),
     )
 }
 
-/// What follows a track that ends, one row a choice: the panel's popup and
-/// the dock's More.
-pub(crate) fn continue_rows(
-    shell: &Shell,
-    theme: &Theme,
-    cx: &mut Context<Shell>,
-) -> Vec<AnyElement> {
-    use crate::player::Continue;
-    let mut rows = vec![
-        div()
-            .px_2()
-            .text_small()
-            .text_color(theme.text_muted)
-            .child("When a track ends")
-            .into_any_element(),
-    ];
+/// What follows a track that ends, one checked row a choice under its
+/// title: the panel's popup and the dock's More.
+pub(crate) fn continue_parts(shell: &Shell) -> Vec<crate::toolbar::MenuPart> {
+    use crate::{player::Continue, toolbar::MenuPart};
+    let mut parts = vec![MenuPart::Title("When a track ends".into(), None)];
     for mode in Continue::ALL {
-        rows.push(
+        parts.push(MenuPart::Row(
             Button::new(
                 format!("continue-{}", mode.key()),
                 "",
@@ -1603,12 +1597,10 @@ pub(crate) fn continue_rows(
             .args(serde_json::json!({ "mode": mode.key() }))
             .label(mode.label())
             .active(shell.prefs.player.continue_with == mode)
-            .menu()
-            .render(shell, cx)
-            .into_any_element(),
-        );
+            .menu(),
+        ));
     }
-    rows
+    parts
 }
 
 /// How a row of a player's menu reaches its player: the row's id, its
@@ -1620,16 +1612,17 @@ pub(crate) type Send<'a> = &'a dyn Fn(String, String, &str, serde_json::Value) -
 /// What playback has no button for: whether it goes on while you browse,
 /// whether it starts on selection, volume, speed and the tracks.
 fn settings(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Vec<AnyElement> {
+    use crate::toolbar::MenuPart;
     let state = &shell.preview.media.state;
-    let mut toggle = |id: &'static str, icon: &'static str, title: &'static str, command, on| {
-        Button::new(id, icon, title, command)
-            .label(title)
-            .active(on)
-            .menu()
-            .render(shell, cx)
-            .into_any_element()
+    let toggle = |id: &'static str, icon: &'static str, title: &'static str, command, on| {
+        MenuPart::Row(
+            Button::new(id, icon, title, command)
+                .label(title)
+                .active(on)
+                .menu(),
+        )
     };
-    let mut rows = vec![
+    let mut parts = vec![
         toggle(
             "media-keep-playing",
             "pin",
@@ -1644,44 +1637,33 @@ fn settings(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Vec<AnyEle
             "ui.media_autoplay",
             shell.prefs.player.autoplay,
         ),
-        crate::preview_bar::separator(theme).into_any_element(),
+        MenuPart::Line,
     ];
     let send =
         |id: String, title: String, action: &str, value| control(id, "", title, action, value);
-    rows.extend(playback_rows(state, &send, shell, theme, cx));
-    rows
+    parts.extend(playback_parts(state, &send));
+    crate::toolbar::menu_part_elements(parts, shell, theme, cx)
 }
 
-/// The speed and a film's tracks, as rows of a player's menu reaching it
-/// through `send`: the panel's More and the dock's. The volume is the
-/// speaker's popup (`volume_control`).
-pub(crate) fn playback_rows(
-    state: &Playback,
-    send: Send,
-    shell: &Shell,
-    theme: &Theme,
-    cx: &mut Context<Shell>,
-) -> Vec<AnyElement> {
-    let heading = |title: &'static str| {
-        div()
-            .text_small()
-            .text_color(theme.text_muted)
-            .child(title)
-            .into_any_element()
-    };
-    let mut rows = vec![heading("Playback speed")];
-    let mut row = div().flex().gap_1();
-    for value in [0.5, 1., 1.25, 1.5, 2.] {
-        let label = format!("{value}×");
-        row = row.child(
+/// The speed and a film's tracks, as parts of a player's menu reaching it
+/// through `send`: the panel's More and the dock's. The speed is a setting
+/// on one row, its values segments; the tracks need their words, checked
+/// rows under their title (ADR-099). The volume is the speaker's popup
+/// (`volume_control`).
+pub(crate) fn playback_parts(state: &Playback, send: Send) -> Vec<crate::toolbar::MenuPart> {
+    use crate::toolbar::MenuPart;
+    let speeds = [0.5, 1., 1.25, 1.5, 2.]
+        .into_iter()
+        .map(|value| {
+            let label = format!("{value}×");
             send(format!("rate-{label}"), label.clone(), "rate", value.into())
                 .label(label)
                 .active((state.rate - value).abs() < 0.01)
                 .enabled(state.seekable)
-                .render(shell, cx),
-        );
-    }
-    rows.push(row.into_any_element());
+                .segment()
+        })
+        .collect();
+    let mut parts = vec![MenuPart::Choice("Playback speed".into(), speeds)];
     // A choice of tracks: one sound track is none, one subtitle track is
     // still a choice with Off.
     for (title, action, tracks, selected, least) in [
@@ -1697,29 +1679,25 @@ pub(crate) fn playback_rows(
         if tracks.len() < least {
             continue;
         }
-        rows.push(heading(title));
+        parts.push(MenuPart::Title(title.into(), None));
         if action == "subtitle" {
-            rows.push(
+            parts.push(MenuPart::Row(
                 send("subtitles-off".into(), "Off".into(), action, (-1).into())
                     .label("Off")
                     .active(selected == -1)
-                    .menu()
-                    .render(shell, cx)
-                    .into_any_element(),
-            );
+                    .menu(),
+            ));
         }
         for (i, label) in tracks.iter().enumerate() {
-            rows.push(
+            parts.push(MenuPart::Row(
                 send(format!("{action}-{i}"), label.clone(), action, i.into())
                     .label(label.clone())
                     .active(i as i32 == selected)
-                    .menu()
-                    .render(shell, cx)
-                    .into_any_element(),
-            );
+                    .menu(),
+            ));
         }
     }
-    rows
+    parts
 }
 
 /// The colour a cover is drawn with, worked out once per cover through
