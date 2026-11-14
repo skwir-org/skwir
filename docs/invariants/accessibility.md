@@ -184,7 +184,7 @@ like `AGENTS.md`.
 | the History | the footer's Undo and its chevron buttons (the chevron says whether it is open); a group: a list of what Undo can take back, built in view only (the count on the list, each row its place), each row's buttons, one said and not offered disabled, and a link to the action that holds it | "Undo history"; each row its title, how it stands and why its Undo waits; a link "Go to ‹action›" |
 | preview panel | landmark (complementary) | "Preview", described by the file and its facts |
 | Peek, the whole screen | modal dialog | the file; its facts and keys |
-| a picture, a film | image (its size), video | the file |
+| a picture, a film, a structured preview that is a picture alone (a model's stored picture, a circuit board: `preview::shown_picture`) | image (its size), video | the file |
 | a document in the reader | document of the page's text, a run a line | the file; the page shown |
 | a map (a track, places) | figure; its places a list, the one PageDown reached said as it is reached | "Map: ‹file›"; what it holds and its keys; each place its name and where it is |
 | the Map view | figure; its status a line; its files' places as a map's | "Map"; what is placed |

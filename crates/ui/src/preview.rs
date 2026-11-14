@@ -6855,79 +6855,62 @@ pub(crate) fn content(
             };
             // A picture with its size, a film; a document's pages are its
             // reader's (`reader::said`).
-            let (role, size) = match (document.is_some(), shell.shows_player()) {
-                (true, _) => (None, None),
-                (false, true) => (Some(gpui::Role::Video), None),
-                (false, false) => (Some(gpui::Role::Image), Some((*width, *height))),
+            let role = match (document.is_some(), shell.shows_player()) {
+                (true, _) => None,
+                (false, true) => Some((gpui::Role::Video, None)),
+                (false, false) => Some((gpui::Role::Image, Some((*width, *height)))),
             };
-            div()
-                .id("preview-picture")
-                .when_some(role, |d, role| {
-                    d.role(role).when_some(said(shell), |d, (name, _)| {
-                        d.aria_label(name).when_some(size, |d, (width, height)| {
-                            d.aria_description(format!("{width} × {height} pixels"))
-                        })
+            shown_picture(
+                shell,
+                "preview-picture",
+                role,
+                p.image_focus
+                    .as_ref()
+                    .filter(|_| document.is_none() && interactive)
+                    .map(|focus| (focus, keymap::IMAGE)),
+            )
+            .when(document.is_some() && interactive, |d| {
+                d.key_context(keymap::READER)
+            })
+            // A double click on a picture goes to the whole screen and
+            // back, as one on a film does (which answers it itself).
+            .when(
+                document.is_none() && interactive && !shell.shows_player(),
+                |d| {
+                    d.on_click(cx.listener(|this, event: &gpui::ClickEvent, window, cx| {
+                        if event.click_count() == 2 {
+                            this.preview_fullscreen(window, cx);
+                        }
+                    }))
+                },
+            )
+            .child(crate::outline::around(
+                div()
+                    .relative()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_h_0()
+                    .child(picture)
+                    // Ctrl and the wheel zoom a picture or a page, as the
+                    // zoom keys do; a film has neither.
+                    .when(interactive && !shell.shows_player(), |d| {
+                        d.child(crate::elements::zoom_wheel::overlay(
+                            crate::elements::zoom_wheel::Zoomed::Preview,
+                            cx,
+                        ))
                     })
-                })
-                .flex_1()
-                .min_h_0()
-                .flex()
-                .flex_col()
-                .when(document.is_some() && interactive, |d| {
-                    d.key_context(keymap::READER)
-                })
-                .when_some(
-                    p.image_focus
-                        .as_ref()
-                        .filter(|_| document.is_none() && interactive),
-                    |d, focus| {
-                        let clicked = focus.clone();
-                        d.track_focus(focus)
-                            .key_context(keymap::IMAGE)
-                            .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-                                window.focus(&clicked, cx);
-                            })
-                    },
-                )
-                // A double click on a picture goes to the whole screen and
-                // back, as one on a film does (which answers it itself).
-                .when(
-                    document.is_none() && interactive && !shell.shows_player(),
-                    |d| {
-                        d.on_click(cx.listener(|this, event: &gpui::ClickEvent, window, cx| {
-                            if event.click_count() == 2 {
-                                this.preview_fullscreen(window, cx);
-                            }
-                        }))
-                    },
-                )
-                .child(crate::outline::around(
-                    div()
-                        .relative()
-                        .flex()
-                        .flex_col()
-                        .flex_1()
-                        .min_h_0()
-                        .child(picture)
-                        // Ctrl and the wheel zoom a picture or a page, as the
-                        // zoom keys do; a film has neither.
-                        .when(interactive && !shell.shows_player(), |d| {
-                            d.child(crate::elements::zoom_wheel::overlay(
-                                crate::elements::zoom_wheel::Zoomed::Preview,
-                                cx,
-                            ))
-                        })
-                        .into_any_element(),
-                    if document.is_some() && interactive {
-                        crate::reader::outline_drawer(shell, theme, cx)
-                    } else {
-                        None
-                    },
-                    letterbox,
-                    shell,
-                    theme,
-                ))
-                .into_any_element()
+                    .into_any_element(),
+                if document.is_some() && interactive {
+                    crate::reader::outline_drawer(shell, theme, cx)
+                } else {
+                    None
+                },
+                letterbox,
+                shell,
+                theme,
+            ))
+            .into_any_element()
         }
         Some(PreviewContent::Error(error)) => failure(error, theme.error),
         // Not a fault: the bar's Full preview reads it.
@@ -7427,6 +7410,43 @@ pub(crate) fn arrow(handle: &gpui::ScrollHandle, dx: i32, dy: i32) -> bool {
         handle.set_offset(offset);
     }
     moved.is_some()
+}
+
+/// What holds a picture shown in the panel, to assistive technology and
+/// the keyboard: `role` (an image with its size in pixels, a film) named
+/// by the file shown (`said`), and `keys`, the focus it holds and the key
+/// context its keys are bound in, which a press on it gives the keyboard.
+/// A picture file's (`ImagePreview`) and a structured preview that is a
+/// picture alone (`inspector::lone_picture`, the inspection's own focus and
+/// keys) are both this: never a picture drawn bare where a file is shown.
+pub(crate) fn shown_picture(
+    shell: &Shell,
+    id: &'static str,
+    role: Option<(gpui::Role, Option<(u32, u32)>)>,
+    keys: Option<(&FocusHandle, &'static str)>,
+) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .when_some(role, |d, (role, size)| {
+            d.role(role).when_some(said(shell), |d, (name, _)| {
+                d.aria_label(name).when_some(size, |d, (width, height)| {
+                    d.aria_description(format!("{width} × {height} pixels"))
+                })
+            })
+        })
+        .flex_1()
+        .min_h_0()
+        .flex()
+        .flex_col()
+        .when_some(keys, |d, (focus, context)| {
+            let clicked = focus.clone();
+            d.track_focus(focus).key_context(context).on_mouse_down(
+                MouseButton::Left,
+                move |_, window, cx| {
+                    window.focus(&clicked, cx);
+                },
+            )
+        })
 }
 
 /// A picture or a film as every preview shows one, as `lay` says: whole in

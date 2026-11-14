@@ -3823,13 +3823,37 @@ fn reads(kind: InspectionKind) -> bool {
 /// A picture an inspection is alone (`Display::lone_picture`), looked at
 /// as pictures are: whole in the panel and never past its own size
 /// (`preview::ShownAs::Picture`). A list's first row, it was as wide as the
-/// panel, and a tall one ran on past the panel's foot.
-fn lone_picture(shell: &Shell, picture: &crate::backdrop::Picture, theme: &Theme) -> AnyElement {
+/// panel, and a tall one ran on past the panel's foot. It is a picture
+/// shown in the panel as a picture file is (`preview::shown_picture`):
+/// an image named by the file, its size said, holding the inspection's
+/// focus and keys (`state`), which the shell gives and asks of it.
+fn lone_picture(
+    shell: &Shell,
+    picture: &crate::backdrop::Picture,
+    state: &State,
+    theme: &Theme,
+) -> AnyElement {
     let size = picture.image.size(0);
-    crate::preview::picture(
+    let (width, height) = (size.width.0, size.height.0);
+    crate::preview::shown_picture(
+        shell,
+        "inspect-picture-shown",
+        Some((
+            gpui::Role::Image,
+            Some((
+                u32::try_from(width).unwrap_or(0),
+                u32::try_from(height).unwrap_or(0),
+            )),
+        )),
+        state
+            .focus
+            .as_ref()
+            .map(|focus| (focus, crate::keymap::INSPECTOR)),
+    )
+    .child(crate::preview::picture(
         &picture.image,
         crate::preview::Lay {
-            own: (size.width.0 as f32, size.height.0 as f32),
+            own: (width as f32, height as f32),
             zoom: None,
             fit_width: false,
             shown_as: crate::preview::ShownAs::Picture,
@@ -3838,7 +3862,8 @@ fn lone_picture(shell: &Shell, picture: &crate::backdrop::Picture, theme: &Theme
         "inspect-picture",
         None,
         crate::backdrop::behind(picture.ink, theme.bg, theme),
-    )
+    ))
+    .into_any_element()
 }
 
 pub fn content(
@@ -3855,7 +3880,7 @@ pub fn content(
         return crate::model_preview::content(shell, display, theme);
     }
     if let Some(picture) = display.lone_picture() {
-        return lone_picture(shell, picture, theme);
+        return lone_picture(shell, picture, state, theme);
     }
     let data = display.data.clone();
     let font_size = state.font_size(&data, &theme.sizes);

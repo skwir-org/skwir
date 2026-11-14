@@ -1578,10 +1578,13 @@ is still to come are in `docs/preview-frame.md`.
   The GPU enlarges what is there: a poster is never asked past the
   film's own pixels, and frames come at the film's size, whatever the
   box. A structured preview that is a picture alone, nothing to read
-  beside it (a model's stored picture, its facts in Properties), is
-  looked at too: laid out as a picture (`inspector::lone_picture`),
-  never as a reading list's first row, as wide as the panel, which a
-  tall one ran past.
+  beside it (a model's stored picture, a circuit board drawn, their
+  facts in Properties), is looked at too: laid out as a picture
+  (`inspector::lone_picture`), never as a reading list's first row, as
+  wide as the panel, which a tall one ran past. It is held as a picture
+  file is (`preview::shown_picture`): an image named by the file, its
+  size said, holding the inspection's focus and keys, so what the shell
+  gives the inspection reaches it.
 - A picture is laid out at its own size (100%: its size before it was
   shrunk for display), never at its pixels', which only fill its box.
   After layout it compares the device pixels it covers with those it
