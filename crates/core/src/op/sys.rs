@@ -661,6 +661,23 @@ pub(super) fn opened_to_owner(current: &Permissions) -> Permissions {
     }
 }
 
+/// Whether this process may make names in the folder `dir`, as the system
+/// answers for its user (owner, group, ACLs, a read-only mount). Elsewhere
+/// than Unix, a folder's read-only mark keeps nothing out: yes, and what
+/// its access list refuses fails as the item is placed.
+pub(super) fn may_write_in(dir: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use rustix::fs::{Access, access};
+        access(dir, Access::WRITE_OK | Access::EXEC_OK).is_ok()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = dir;
+        true
+    }
+}
+
 /// Whether `current` lets its owner write and walk what is inside.
 pub(super) fn open_to_owner(current: &Permissions) -> bool {
     #[cfg(unix)]

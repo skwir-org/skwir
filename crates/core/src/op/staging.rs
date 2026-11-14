@@ -127,32 +127,43 @@ impl Staging {
     /// member, merged into a folder there). Taking a name out of a folder
     /// needs that folder open to its owner, and moving a folder to another
     /// needs the folder itself open (Unix: its `..` is written): what an
-    /// archive made read-only is opened for the move, the folder it leaves
-    /// staying so (this folder goes whole), the one it moves getting its
-    /// own permissions back once placed.
+    /// archive made read-only is opened for the move (`opened`), the folder
+    /// it leaves staying so (this folder goes whole), the one it moves
+    /// getting its own permissions back once placed. Placed, it is `Ok`
+    /// whatever becomes of those permissions (a warning says they could not
+    /// be given back), so that what placed it notes it placed.
     ///
     /// # Errors
     /// When `target` is taken, or the move fails.
     pub fn place_within(&self, made: &Path, target: &Path) -> io::Result<()> {
         debug_assert!(made.starts_with(self.path()), "made in the staging folder");
-        let open = |path: &Path| -> io::Result<Option<std::fs::Permissions>> {
-            let meta = std::fs::symlink_metadata(path)?;
-            if !meta.is_dir() || sys::open_to_owner(&meta.permissions()) {
-                return Ok(None);
-            }
-            std::fs::set_permissions(path, sys::opened_to_owner(&meta.permissions()))?;
-            Ok(Some(meta.permissions()))
-        };
         if let Some(parent) = made.parent().filter(|parent| *parent != self.path()) {
-            open(parent)?;
+            opened(parent)?;
         }
-        let own = open(made)?;
-        let placed = sys::rename_noreplace(made, target);
-        if let Some(own) = own {
-            let back = if placed.is_ok() { target } else { made };
-            std::fs::set_permissions(back, own)?;
+        moved_opened(made, target)
+    }
+
+    /// Take `placed`, put out of this folder by [`Self::place_within`]
+    /// (a merge placing the next item failed), back to `made` where it was
+    /// made: opened for the move as it was placed, left so (this folder
+    /// goes whole). On failure, given its permissions back where it stays.
+    ///
+    /// # Errors
+    /// When `made` is taken, or the move fails.
+    pub fn take_back(&self, placed: &Path, made: &Path) -> io::Result<()> {
+        debug_assert!(
+            made.starts_with(self.path()),
+            "taken back into the staging folder"
+        );
+        let own = opened(placed)?;
+        let back = sys::rename_noreplace(placed, made);
+        if back.is_err()
+            && let Some(own) = own
+            && let Err(e) = std::fs::set_permissions(placed, own)
+        {
+            tracing::warn!("{} stays opened: {e}", placed.display());
         }
-        placed
+        back
     }
 
     /// Prepare this empty directory itself and publish it beside its
@@ -288,6 +299,33 @@ pub(super) fn remove_tree(path: &Path) -> io::Result<()> {
     } else {
         std::fs::remove_file(path)
     }
+}
+
+/// `path` opened to its owner where it is a folder that is not (an
+/// archive's read-only one), so that it can move between folders and what
+/// it holds can be taken out: what it was, to give back.
+fn opened(path: &Path) -> io::Result<Option<std::fs::Permissions>> {
+    let meta = std::fs::symlink_metadata(path)?;
+    if !meta.is_dir() || sys::open_to_owner(&meta.permissions()) {
+        return Ok(None);
+    }
+    std::fs::set_permissions(path, sys::opened_to_owner(&meta.permissions()))?;
+    Ok(Some(meta.permissions()))
+}
+
+/// `from` moved to `to`, never over what is there, opened for the move
+/// ([`opened`]) and given its permissions back where it ends up: placed,
+/// `Ok` all the same where they cannot be (said in a warning).
+fn moved_opened(from: &Path, to: &Path) -> io::Result<()> {
+    let own = opened(from)?;
+    let moved = sys::rename_noreplace(from, to);
+    if let Some(own) = own {
+        let now = if moved.is_ok() { to } else { from };
+        if let Err(e) = std::fs::set_permissions(now, own) {
+            tracing::warn!("{} stays opened: {e}", now.display());
+        }
+    }
+    moved
 }
 
 /// Remove the staging folders in `dir` that copies which ended mid-way
@@ -513,6 +551,35 @@ mod tests {
         let path = running.path().to_path_buf();
         running.remove().unwrap();
         assert!(!path.exists());
+    }
+
+    /// A read-only folder an archive made, placed out of the staging
+    /// folder with its own permissions, is taken back into it all the same
+    /// (a merge that failed after it), and goes with it.
+    #[test]
+    fn a_read_only_folder_placed_is_taken_back() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = scratch();
+        let staging = Staging::new(tmp.path(), None).unwrap();
+        let made = staging.path().join("archive/sealed");
+        std::fs::create_dir_all(&made).unwrap();
+        std::fs::write(made.join("inside.txt"), b"inside").unwrap();
+        std::fs::set_permissions(&made, std::fs::Permissions::from_mode(0o555)).unwrap();
+        std::fs::set_permissions(
+            made.parent().unwrap(),
+            std::fs::Permissions::from_mode(0o555),
+        )
+        .unwrap();
+
+        let placed = tmp.path().join("it's sealed");
+        staging.place_within(&made, &placed).unwrap();
+        let bits = std::fs::metadata(&placed).unwrap().permissions().mode() & 0o777;
+        assert_eq!(bits, 0o555, "its own permissions back");
+        staging.take_back(&placed, &made).unwrap();
+        assert!(!placed.exists());
+        assert!(made.join("inside.txt").is_file());
+        staging.remove().unwrap();
+        assert_eq!(std::fs::read_dir(tmp.path()).unwrap().count(), 0);
     }
 
     #[test]

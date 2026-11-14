@@ -2237,6 +2237,13 @@ impl StepContext {
         }
     }
 
+    /// Whether a step may make names in the folder `dir`: one an earlier
+    /// step of this dry run makes, or one the system lets this process
+    /// write in (its user's rights, a read-only mount). Asks the disk.
+    pub fn may_write_in(&self, dir: &Path) -> bool {
+        self.foreseen.borrow().folders.contains(dir) || super::sys::may_write_in(dir)
+    }
+
     /// Whether `path` is a folder, or one an earlier step of this dry run
     /// makes, and no earlier step takes it away.
     pub fn is_folder(&self, path: &Path) -> bool {

@@ -808,6 +808,104 @@ fn a_merge_placing_two_items_under_one_name_is_refused() {
     assert!(tree(&made).is_empty(), "{:?}", tree(&made));
 }
 
+/// A file changed since in a folder the archive made read-only, kept
+/// beside as Enter answers: the folder cannot be written in, which the
+/// check says before anything is extracted, nothing changed.
+#[cfg(unix)]
+#[test]
+fn a_merge_into_a_folder_that_cannot_be_written_is_refused_beforehand() {
+    use std::os::unix::fs::PermissionsExt;
+    if !with_archive_worker() {
+        return;
+    }
+    let tmp = scratch();
+    let app = app(tmp.path());
+    app.set_window_shown();
+    let dest = tmp.path().join("it's here");
+    std::fs::create_dir(&dest).unwrap();
+    let archive = tmp.path().join("sealed.zip");
+    write_zip(
+        &archive,
+        &[
+            ("locked/!", b""),
+            ("locked/inside.txt", b"as made"),
+            ("top.txt", b"top"),
+        ],
+    );
+    let result = app
+        .executor
+        .execute_blocking(&extract(&app, &archive, &dest), app.lifetime());
+    assert!(result.error.is_none(), "{:?}", result.error);
+    let made = dest.join("sealed");
+    let locked = made.join("locked");
+    assert!(std::fs::metadata(&locked).unwrap().permissions().readonly());
+    // A file in a read-only folder can be written all the same.
+    std::fs::write(locked.join("inside.txt"), "mine, since").unwrap();
+    std::fs::remove_file(made.join("top.txt")).unwrap();
+    let before = tree(&made);
+
+    let ended = whole(&app, extract(&app, &archive, &dest), |app| {
+        let question = clashes_asked(app);
+        assert!(app.answer_clashes(question.id, Some(skwir_core::op::clash::Answer::default())));
+    });
+    let ExecEvent::Finished {
+        error: Some(error), ..
+    } = &ended
+    else {
+        panic!("refused: {ended:?}");
+    };
+    assert!(error.contains("cannot be written in"), "{error}");
+    assert_eq!(tree(&made), before, "nothing placed, top.txt included");
+    assert!(staged_in(&made).is_empty() && staged_in(&dest).is_empty());
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+/// A link in the folder merged into, named by a plan from elsewhere as a
+/// folder an item goes in, is never gone through: refused, nothing
+/// written where it leads.
+#[cfg(unix)]
+#[test]
+fn a_merge_never_places_through_a_link() {
+    if !with_archive_worker() {
+        return;
+    }
+    let tmp = scratch();
+    let app = app(tmp.path());
+    let dest = tmp.path().join("into");
+    std::fs::create_dir(&dest).unwrap();
+    let elsewhere = tmp.path().join("elsewhere");
+    std::fs::create_dir(&elsewhere).unwrap();
+    let archive = tmp.path().join("photos.zip");
+    write_zip(&archive, &[("album/a.jpg", b"one"), ("b.jpg", b"two")]);
+    let result = app
+        .executor
+        .execute_blocking(&extract(&app, &archive, &dest), app.lifetime());
+    assert!(result.error.is_none(), "{:?}", result.error);
+    let made = dest.join("photos");
+    std::fs::remove_file(made.join("b.jpg")).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, made.join("it's out")).unwrap();
+
+    let mut data = extract(&app, &archive, &dest).to_data();
+    let args = &mut data.steps[0].args;
+    args["name"] = json!("photos");
+    args["merge"] = json!([
+        { "from": "b.jpg", "to": "b.jpg" },
+        { "from": "album/a.jpg", "to": "it's out/a.jpg" },
+    ]);
+    let plan = Plan::from_data(&data, &app.ops).unwrap();
+    let diff = plan.diff(&app.companions);
+    assert!(
+        matches!(&diff.steps[..], [(_, StepStatus::Conflict { reason })]
+            if reason.contains("is a link")),
+        "{:?}",
+        diff.steps
+    );
+    let refused = app.executor.execute_blocking(&plan, app.lifetime());
+    assert!(refused.error.is_some());
+    assert_eq!(std::fs::read_dir(&elsewhere).unwrap().count(), 0);
+    assert!(!made.join("b.jpg").exists(), "nothing placed");
+}
+
 /// An archive of one read-only folder is extracted as that folder: opened
 /// to be moved out of the staging folder, its permissions given back.
 #[cfg(unix)]

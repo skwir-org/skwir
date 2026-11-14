@@ -217,10 +217,17 @@ user's choice: merge as a copy does, asked.
   from its start), and only what was chosen is placed
   (`Staging::place_within`: a folder the archive made read-only is opened
   for the move, its permissions given back). Its room is checked against
-  all it extracts, which the staging folder holds. A name found taken as
-  it places, by anything but the same item, is never placed over: like
-  one that cannot be placed, it fails the step, and those placed before
-  are taken back into the staging folder.
+  all it extracts, which the staging folder holds, and so is each folder
+  an item goes in, before anything is extracted: a folder there all the
+  way from the one merged into, never a link (what a plan from elsewhere
+  names, or a folder made a link since), one this process may write in
+  (a folder the archive made read-only, a file in it changed since and
+  kept beside, refuses the step). As it places, the way is looked at
+  again; a name found taken by anything but the same item, or a link on
+  the way, is never placed over or through: like one that cannot be
+  placed, it fails the step, and those placed before are taken back into
+  the staging folder, opened for it as for their placing
+  (`Staging::take_back`).
 - **Undone item by item.** Its undo is each item it placed, to the trash
   (`op::Steps`, several steps as one, which the executor journals as each,
   `each_step`): never the folder, never what the user kept. Where the

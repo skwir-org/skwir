@@ -509,13 +509,14 @@ fn whole_listing(src: &Path, ctx: &StepContext) -> Option<std::sync::Arc<archive
     .filter(|whole| whole.complete)
 }
 
-/// The merged extraction's check: the folder there is still one; each item
-/// it places is in the archive, goes in a folder that is there, and finds
-/// its name free (as the plan's earlier steps leave it: one may put what
-/// is there in the trash), or there the same already. All of them there,
-/// it is done.
+/// The merged extraction's check: the folder there is still one, never a
+/// link; each item it places is in the archive, goes in a folder there
+/// that is one, reached through no link (`Within`), and finds its name
+/// free (as the plan's earlier steps leave it: one may put what is there
+/// in the trash) in a folder this process may write in, or there the same
+/// already. All of them there, it is done.
 fn check_merged(src: &Path, target: &Path, placing: &[Placing], ctx: &StepContext) -> StepStatus {
-    if !ctx.is_folder(target) {
+    if !ctx.is_folder(target) || is_link(target) {
         return conflict(format!(
             "“{}” is not a folder to extract into",
             display_name(target)
@@ -534,6 +535,7 @@ fn check_merged(src: &Path, target: &Path, placing: &[Placing], ctx: &StepContex
     let mut done = true;
     // Never two items to one name: the second would find it taken.
     let mut going = std::collections::HashSet::with_capacity(placing.len());
+    let mut within = Within::new(target);
     for placing in placing {
         if !going.insert(placing.to.as_path()) {
             return conflict(format!(
@@ -549,16 +551,20 @@ fn check_merged(src: &Path, target: &Path, placing: &[Placing], ctx: &StepContex
             ));
         };
         let to = target.join(&placing.to);
+        let folder = match within.reach(&to) {
+            Ok(folder) => folder,
+            Err(why) => return conflict(why),
+        };
         if ctx.exists(&to) {
             if item.held_at(&to, ctx.cancel_token()) {
                 continue;
             }
             return conflict(format!("“{}” is already there", display_name(&to)));
         }
-        if !to.parent().is_some_and(|folder| ctx.is_folder(folder)) {
+        if !within.writable(folder, ctx) {
             return conflict(format!(
-                "the folder “{}” goes in is not there",
-                display_name(&to)
+                "“{}” cannot be written in: nothing is extracted into it",
+                display_name(folder)
             ));
         }
         done = false;
@@ -570,13 +576,76 @@ fn check_merged(src: &Path, target: &Path, placing: &[Placing], ctx: &StepContex
     }
 }
 
+/// Whether `path` is a link (a Windows junction too), never followed.
+fn is_link(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink())
+}
+
+/// The folders below a merged extraction's folder that its items go in,
+/// each read once: a folder, never a link, every part of the way from the
+/// folder merged into (a plan from elsewhere naming one, or a folder made
+/// a link since the question, would lead out of it); and, where asked,
+/// one this process may write in.
+struct Within<'a> {
+    target: &'a Path,
+    folders: std::collections::HashSet<PathBuf>,
+    writable: std::collections::HashMap<PathBuf, bool>,
+}
+
+impl<'a> Within<'a> {
+    fn new(target: &'a Path) -> Self {
+        Within {
+            target,
+            folders: std::collections::HashSet::new(),
+            writable: std::collections::HashMap::new(),
+        }
+    }
+
+    /// The folder `to` goes in, each part of the way from the folder
+    /// merged into a folder, none a link; else why not.
+    fn reach<'p>(&mut self, to: &'p Path) -> Result<&'p Path, String> {
+        let not_there = || format!("the folder “{}” goes in is not there", display_name(to));
+        let folder = to.parent().ok_or_else(not_there)?;
+        let below = folder.strip_prefix(self.target).map_err(|_| not_there())?;
+        let mut at = self.target.to_path_buf();
+        for part in below.components() {
+            at.push(part);
+            if self.folders.contains(&at) {
+                continue;
+            }
+            match std::fs::symlink_metadata(&at) {
+                Ok(meta) if meta.is_dir() => {
+                    self.folders.insert(at.clone());
+                }
+                Ok(meta) if meta.file_type().is_symlink() => {
+                    return Err(format!(
+                        "“{}” is a link: nothing is extracted through it",
+                        display_name(&at)
+                    ));
+                }
+                _ => return Err(not_there()),
+            }
+        }
+        Ok(folder)
+    }
+
+    /// Whether this process may make names in `folder`, asked once.
+    fn writable(&mut self, folder: &Path, ctx: &StepContext) -> bool {
+        *self
+            .writable
+            .entry(folder.to_path_buf())
+            .or_insert_with(|| ctx.may_write_in(folder))
+    }
+}
+
 /// Each item `placing` says, from `root` (what the archive was extracted
 /// as, in `staging`) into `target`, the folder there merged into, noted in
 /// `placed`; one there already the same (`tree` says what each item is,
-/// as the check found it) left as it is. Anything else under its name,
-/// come since the check, is never placed over: the step fails, and those
-/// placed before are taken back where they were made, which goes with the
-/// staging folder.
+/// as the check found it) left as it is. Anything else under its name, or
+/// a link on its way (`Within`), come since the check, is never placed
+/// over or through: the step fails, and those placed before are taken
+/// back where they were made (`Staging::take_back`, a read-only folder
+/// opened for it), which goes with the staging folder.
 fn place_merged(
     staging: &op::Staging,
     root: &Path,
@@ -586,9 +655,12 @@ fn place_merged(
     ctx: &StepContext,
     placed: &mut Vec<Placing>,
 ) -> anyhow::Result<()> {
+    let mut within = Within::new(target);
     for item in placing {
         let to = target.join(&item.to);
-        let failed = if std::fs::symlink_metadata(&to).is_ok() {
+        let failed = if let Err(why) = within.reach(&to) {
+            Some(anyhow::anyhow!(why))
+        } else if std::fs::symlink_metadata(&to).is_ok() {
             let same = tree
                 .below(&item.from)
                 .is_some_and(|made| made.held_at(&to, ctx.cancel_token()));
@@ -610,7 +682,8 @@ fn place_merged(
         };
         if let Some(error) = failed {
             for back in placed.iter().rev() {
-                if let Err(e) = std::fs::rename(target.join(&back.to), root.join(&back.from)) {
+                let (at, made) = (target.join(&back.to), root.join(&back.from));
+                if let Err(e) = staging.take_back(&at, &made) {
                     tracing::warn!("“{}” stays where it was placed: {e}", back.to.display());
                 }
             }
