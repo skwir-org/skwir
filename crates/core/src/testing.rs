@@ -154,7 +154,7 @@ fn prune_ports(folder: &std::path::Path) {
 
 #[cfg(test)]
 mod tests {
-    use super::{free_port, ports_folder, prune_ports, still_named};
+    use super::{free_port, ports_folder};
 
     /// A port given is not given again while its process runs, even when
     /// the system offers it once more.
@@ -173,6 +173,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn the_ports_no_one_claims_are_let_go() {
+        use super::{prune_ports, still_named};
         let claimed = free_port();
         let folder = ports_folder();
         let left = folder.join(format!("left by {}", std::process::id()));
