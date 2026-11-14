@@ -2235,15 +2235,14 @@ impl Shell {
     /// visible item); only the keys follow the cursor.
     pub fn zoom_wheel(
         &mut self,
-        delta: f32,
-        lines: bool,
+        wheeled: crate::reader_scroll::Wheeled,
         zoomed: crate::elements::zoom_wheel::Zoomed,
         pointer: gpui::Point<gpui::Pixels>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         use crate::elements::zoom_wheel::Zoomed;
-        let larger = match self.zoom_wheel.turn(delta, lines, false) {
+        let larger = match self.zoom_wheel.turn(wheeled, false) {
             0 => return,
             turn => turn < 0,
         };

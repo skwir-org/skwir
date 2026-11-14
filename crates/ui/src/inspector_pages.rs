@@ -25,7 +25,7 @@ use std::time::{Duration, Instant};
 
 use gpui::{Bounds, Context, ListOffset, ListState, Pixels, ScrollEvent, point, prelude::*, px};
 
-use crate::reader_scroll::WheelTurn;
+use crate::reader_scroll::{WheelTurn, Wheeled};
 use crate::shell::Shell;
 
 /// A text drawn this frame, in the window's coordinates: where it starts
@@ -146,9 +146,11 @@ pub struct Flip {
 }
 
 impl Flip {
-    /// The page `delta` turns to (1 on, -1 back, 0 none) at `now`; `lines`
-    /// for a wheel's notches, `pending` while a section is on its way.
-    pub fn turn(&mut self, delta: f32, lines: bool, pending: bool, now: Instant) -> i32 {
+    /// The page `wheeled` turns to (1 on, -1 back, 0 none) at `now`,
+    /// `pending` while a section is on its way. What is no wheel's notches
+    /// (a touchpad's pixels, lines in parts) is a swipe.
+    pub fn turn(&mut self, wheeled: Wheeled, pending: bool, now: Instant) -> i32 {
+        let lines = wheeled.notches();
         if !lines && let Some(moved) = self.swiped {
             self.swiped = Some(now);
             if now.duration_since(moved) < SWIPE_PAUSE {
@@ -156,7 +158,7 @@ impl Flip {
             }
             self.swiped = None;
         }
-        let turn = self.turn.turn(delta, lines, pending);
+        let turn = self.turn.turn(wheeled, pending);
         if turn != 0 && !lines {
             self.swiped = Some(now);
         }
@@ -565,10 +567,10 @@ pub fn overlay(
                     return;
                 }
                 cx.stop_propagation();
-                let lines = matches!(event.delta, gpui::ScrollDelta::Lines(_));
+                let wheeled = Wheeled::vertical(event);
                 shell
                     .update(cx, |shell, cx| {
-                        shell.inspect_flip(f32::from(delta.y), lines, window, cx);
+                        shell.inspect_flip(wheeled, window, cx);
                     })
                     .ok();
             });
@@ -767,22 +769,22 @@ mod tests {
         let start = Instant::now();
         let at = |ms| start + Duration::from_millis(ms);
         // Notches turn one each, however close.
-        assert_eq!(flip.turn(-3., true, false, at(0)), 1);
-        assert_eq!(flip.turn(-3., true, false, at(10)), 1);
-        assert_eq!(flip.turn(3., true, false, at(20)), -1);
+        assert_eq!(flip.turn(Wheeled::Notches(-3.), false, at(0)), 1);
+        assert_eq!(flip.turn(Wheeled::Notches(-3.), false, at(10)), 1);
+        assert_eq!(flip.turn(Wheeled::Notches(3.), false, at(20)), -1);
         // A swipe turns once it moved enough, then not while it goes on.
         let mut ms = 1000;
         let mut turned = 0;
         for _ in 0..40 {
-            turned += flip.turn(-25., false, false, at(ms));
+            turned += flip.turn(Wheeled::Pixels(-25.), false, at(ms));
             ms += 10;
         }
         assert_eq!(turned, 1, "one page a swipe");
         // After a pause, the next swipe turns again.
-        assert_eq!(flip.turn(-40., false, false, at(ms + 300)), 0);
-        assert_eq!(flip.turn(-40., false, false, at(ms + 310)), 1);
+        assert_eq!(flip.turn(Wheeled::Pixels(-40.), false, at(ms + 300)), 0);
+        assert_eq!(flip.turn(Wheeled::Pixels(-40.), false, at(ms + 310)), 1);
         // Nothing turns while a section is on its way.
-        assert_eq!(flip.turn(-3., true, true, at(ms + 1000)), 0);
+        assert_eq!(flip.turn(Wheeled::Notches(-3.), true, at(ms + 1000)), 0);
     }
 
     fn offset(item_ix: usize, offset: f32) -> ListOffset {

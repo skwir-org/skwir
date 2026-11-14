@@ -216,7 +216,8 @@ binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
   which leaves the popup open. A click on the speaker opens it, the
   slider given the keyboard (the `volume` place: Up and Down step it,
   `ui.volume_step`); the wheel over the speaker or the slider steps it
-  (`VOLUME_STEP`, a mouse's notch or a touchpad's 60 px, `WheelTurn`),
+  (`VOLUME_STEP`: a wheel's notch, a high-resolution wheel's parts once
+  they make one, a touchpad's 60 px, `reader_scroll::Wheeled`),
   and over a speaker whose popup is closed opens it to show the level,
   passing: it closes once the pointer has been off the speaker and the
   popup `VOLUME_LINGER`, unless a press in it or its keys used it

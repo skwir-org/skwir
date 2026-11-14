@@ -638,15 +638,9 @@ fn row(
         // The wheel over the tabs goes through them, a notch a tab, as in
         // KDE and GTK's notebooks.
         .on_scroll(cx.listener(|this, event: &gpui::ScrollEvent, window, cx| {
-            let delta = event.delta.pixel_delta(window.line_height());
             // A sideways swipe counts as much as a turn of the wheel.
-            let along = if delta.y.abs() >= delta.x.abs() {
-                delta.y
-            } else {
-                delta.x
-            };
-            let lines = matches!(event.delta, gpui::ScrollDelta::Lines(_));
-            match this.tab_wheel.turn(f32::from(along), lines, false) {
+            let along = crate::reader_scroll::Wheeled::along(event);
+            match this.tab_wheel.turn(along, false) {
                 0 => {}
                 // Down (or right) is the next tab.
                 turn => this.run(

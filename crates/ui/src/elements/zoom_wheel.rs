@@ -37,18 +37,10 @@ pub fn overlay(zoomed: Zoomed, cx: &mut Context<Shell>) -> impl IntoElement {
                 {
                     return;
                 }
-                let delta = event.delta.pixel_delta(window.line_height()).y;
-                let lines = matches!(event.delta, gpui::ScrollDelta::Lines(_));
+                let wheeled = crate::reader_scroll::Wheeled::vertical(event);
                 shell
                     .update(cx, |shell, cx| {
-                        shell.zoom_wheel(
-                            f32::from(delta),
-                            lines,
-                            zoomed,
-                            event.position,
-                            window,
-                            cx,
-                        );
+                        shell.zoom_wheel(wheeled, zoomed, event.position, window, cx);
                     })
                     .ok();
                 cx.stop_propagation();

@@ -146,8 +146,11 @@ Measurements: `docs/pdf-comparison.md`, ADR-061 for `DjVu`.
   lines) and through Windows' wheel messages, and for a high-resolution
   wheel's steps between notches, each a part of a line; a notch is
   `SCROLL_LINES` whole on Wayland, X11 and Windows. Lines in parts go as
-  gpui counts them, and never turn a page without the pixels a touchpad
-  gathers (`WheelTurn`). gpui marks no source beyond that (its
+  gpui counts them, and add up to a step only once they make a notch's
+  lines, as a touchpad's pixels do at 60 (`Wheeled`, `WheelTurn`): no
+  step is more than a notch's worth. Every wheel that counts steps (pages,
+  Ctrl's zoom, the tab strip, a player's volume) reads its event through
+  `Wheeled`, never by whether gpui said lines. gpui marks no source beyond that (its
   `ScrollSource` tells a touchscreen alone): a touchpad's step that comes
   as whole lines is taken as a notch.
 - **The wheel turns a page a notch** a page at a time, past the page's

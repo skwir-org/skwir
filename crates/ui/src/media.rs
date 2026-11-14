@@ -1025,7 +1025,8 @@ pub struct Volume {
     /// Pressed and not yet let go: the moves are followed over the window.
     pub held: bool,
     /// The wheel's turn under way, over a speaker or the slider: a mouse's
-    /// notch is a step, a touchpad's slide goes a step at 60 px.
+    /// notch is a step, a touchpad's slide goes a step at 60 px
+    /// (`reader_scroll::Wheeled`).
     pub turn: crate::reader_scroll::WheelTurn,
     /// Opened by the wheel over the speaker and not used since: it closes
     /// once the pointer has been off the speaker and the popup for
@@ -1270,9 +1271,10 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let lines = matches!(event.delta, gpui::ScrollDelta::Lines(_));
-        let delta = f32::from(event.delta.pixel_delta(window.line_height()).y);
-        let turn = self.player.volume.turn.turn(delta, lines, false);
+        // A step a notch, a touchpad's slide a step at 60 px: never more
+        // than one for a notch, however the system says it (`Wheeled`).
+        let wheeled = crate::reader_scroll::Wheeled::vertical(event);
+        let turn = self.player.volume.turn.turn(wheeled, false);
         if turn != 0 {
             if !self.volume_open(of) {
                 match of {

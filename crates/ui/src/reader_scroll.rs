@@ -292,34 +292,108 @@ impl DocumentScroll {
     }
 }
 
-/// A trackpad gesture must accumulate intent before it turns a page. Mouse
-/// detents bypass the pixel threshold. The invariant that prevents racing
-/// turns is that no turn starts while a page request is pending: a gesture
-/// arriving then is refused and its accumulated intent discarded, so the
-/// next gesture starts fresh once the page has arrived. The grid's
-/// Ctrl+wheel zoom counts steps the same way, with nothing ever pending.
+/// One event of the wheel as a counter of steps reads it (`WheelTurn`),
+/// along one axis, in what the device said: a wheel's notches (whole
+/// lines, [`notches`]), lines in parts (a high-resolution wheel's steps
+/// between its notches; a touchpad's on X11, all of `XInput`'s smooth
+/// scrolling, and through Windows' wheel messages), or a touchpad's
+/// pixels. Negative is down (or right), as gpui says it. Every wheel that
+/// counts steps reads its event through this, never by whether gpui said
+/// lines: lines in parts are no notch, and counted as one each a short
+/// slide of a touchpad went to the end.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Wheeled {
+    Notches(f32),
+    Lines(f32),
+    Pixels(f32),
+}
+
+impl Wheeled {
+    /// `event` up and down.
+    pub fn vertical(event: &ScrollEvent) -> Self {
+        Self::of(event, |_, y| y)
+    }
+
+    /// `event` along the axis it moved most: a sideways swipe counts as
+    /// much as a turn of the wheel (the tab strip's).
+    pub fn along(event: &ScrollEvent) -> Self {
+        Self::of(event, |x, y| if y.abs() >= x.abs() { y } else { x })
+    }
+
+    fn of(event: &ScrollEvent, axis: impl Fn(f32, f32) -> f32) -> Self {
+        match event.delta {
+            gpui::ScrollDelta::Lines(lines) if notches(&event.delta) => {
+                Self::Notches(axis(lines.x, lines.y))
+            }
+            gpui::ScrollDelta::Lines(lines) => Self::Lines(axis(lines.x, lines.y)),
+            gpui::ScrollDelta::Pixels(pixels) => {
+                Self::Pixels(axis(f32::from(pixels.x), f32::from(pixels.y)))
+            }
+        }
+    }
+
+    /// Whether it is a wheel's notches.
+    pub fn notches(self) -> bool {
+        matches!(self, Self::Notches(_))
+    }
+}
+
+/// How many lines a wheel's notch says: gpui's `SCROLL_LINES` on Wayland
+/// and X11, Windows' own number by default. Lines in parts make a step
+/// once they add up to one, so a high-resolution wheel's notch is one
+/// step as a plain wheel's is.
+const NOTCH_LINES: f32 = 3.;
+/// How far a touchpad's pixels go for a step: it has to mean it.
+const STEP_PIXELS: f32 = 60.;
+
+/// Steps counted from the wheel (`Wheeled`): a notch is a step at once,
+/// lines in parts a step once they make a notch, a touchpad's pixels one
+/// at `STEP_PIXELS`, so no step is ever more than a notch's worth. A
+/// touchpad gesture must accumulate intent before it turns a page. The
+/// invariant that prevents racing turns is that no turn starts while a
+/// page request is pending: a gesture arriving then is refused and its
+/// accumulated intent discarded, so the next gesture starts fresh once the
+/// page has arrived. The grid's Ctrl+wheel zoom, the tab strip and a
+/// player's volume count steps the same way, with nothing ever pending.
 #[derive(Default)]
 pub struct WheelTurn {
+    /// What the gesture has added up toward its next step, in its unit.
     accumulated: f32,
+    /// Whether that is lines (else pixels): a change of unit starts over.
+    in_lines: bool,
 }
 impl WheelTurn {
-    pub fn turn(&mut self, delta: f32, lines: bool, pending: bool) -> i32 {
-        if !delta.is_finite() || delta == 0. {
+    /// The step `wheeled` makes, 1 down (or right), -1 up, else 0.
+    pub fn turn(&mut self, wheeled: Wheeled, pending: bool) -> i32 {
+        let (amount, in_lines, step) = match wheeled {
+            Wheeled::Notches(lines) => (lines, true, 0.),
+            Wheeled::Lines(lines) => (lines, true, NOTCH_LINES),
+            Wheeled::Pixels(pixels) => (pixels, false, STEP_PIXELS),
+        };
+        if !amount.is_finite() || amount == 0. {
             return 0;
         }
-        if pending || self.accumulated.signum() != delta.signum() {
+        if pending || self.in_lines != in_lines || self.accumulated.signum() != amount.signum() {
             self.accumulated = 0.;
         }
+        self.in_lines = in_lines;
         if pending {
             return 0;
         }
-        self.accumulated += delta;
-        if lines || self.accumulated.abs() >= 60. {
+        self.accumulated += amount;
+        // Parts that add up to a step in floating point may fall a hair
+        // short of it (eight eighths of a notch).
+        if self.accumulated.abs() >= step - 1e-3 {
             self.accumulated = 0.;
-            if delta < 0. { 1 } else { -1 }
+            if amount < 0. { 1 } else { -1 }
         } else {
             0
         }
+    }
+
+    /// What the gesture added up, forgotten (the wheel went elsewhere).
+    pub fn reset(&mut self) {
+        self.accumulated = 0.;
     }
 }
 
@@ -632,7 +706,7 @@ impl Shell {
             || event.modifiers.platform
             || event.modifiers.shift
         {
-            scroll.wheel.accumulated = 0.;
+            scroll.wheel.reset();
             scroll.single.set_offset(point(
                 (offset.x + delta.x).clamp(-maximum.x, px(0.)),
                 (offset.y + delta.y).clamp(-maximum.y, px(0.)),
@@ -641,7 +715,7 @@ impl Shell {
             cx.stop_propagation();
             return;
         }
-        let turn = scroll.wheel.turn(f32::from(delta.y), wheel, pending);
+        let turn = scroll.wheel.turn(Wheeled::vertical(event), pending);
         // Keep edge gestures out of the surrounding file list even at page 1/N.
         cx.stop_propagation();
         if turn != 0 {
@@ -1559,34 +1633,78 @@ mod tests {
 
     #[test]
     fn trackpad_accumulates_intent_before_turning() {
+        use Wheeled::{Notches, Pixels};
         let mut wheel = WheelTurn::default();
-        assert_eq!(wheel.turn(-20., false, false), 0);
-        assert_eq!(wheel.turn(-40., false, false), 1);
+        assert_eq!(wheel.turn(Pixels(-20.), false), 0);
+        assert_eq!(wheel.turn(Pixels(-40.), false), 1);
         // A turn consumes the accumulated intent.
-        assert_eq!(wheel.turn(-20., false, false), 0);
+        assert_eq!(wheel.turn(Pixels(-20.), false), 0);
         // Reversing direction starts over.
-        assert_eq!(wheel.turn(50., false, false), 0);
-        assert_eq!(wheel.turn(-30., false, false), 0);
-        assert_eq!(wheel.turn(-30., false, false), 1);
+        assert_eq!(wheel.turn(Pixels(50.), false), 0);
+        assert_eq!(wheel.turn(Pixels(-30.), false), 0);
+        assert_eq!(wheel.turn(Pixels(-30.), false), 1);
         // Mouse detents turn at once.
-        assert_eq!(wheel.turn(1., true, false), -1);
-        assert_eq!(wheel.turn(f32::NAN, false, false), 0);
-        assert_eq!(wheel.turn(0., false, false), 0);
+        assert_eq!(wheel.turn(Notches(3.), false), -1);
+        assert_eq!(wheel.turn(Pixels(f32::NAN), false), 0);
+        assert_eq!(wheel.turn(Pixels(0.), false), 0);
+    }
+
+    /// No step is more than a notch's worth, whatever says it: a
+    /// high-resolution wheel's eighths make one step a notch, and the
+    /// lines in parts a touchpad gives on X11 add up as pixels do rather
+    /// than each making a step.
+    #[test]
+    fn lines_in_parts_make_a_step_a_notch() {
+        let event = |y: f32| ScrollEvent {
+            delta: gpui::ScrollDelta::Lines(point(0., y)),
+            ..ScrollEvent::default()
+        };
+        let mut wheel = WheelTurn::default();
+        // A high-resolution wheel's notch, in eighths (Wayland's value120).
+        for notch in 0..20 {
+            let steps: i32 = (0..8)
+                .map(|_| wheel.turn(Wheeled::vertical(&event(-3. / 8.)), false))
+                .sum();
+            assert_eq!(steps, 1, "notch {notch}");
+        }
+        // A touchpad's slide on X11: a tenth of a line at a time.
+        let mut wheel = WheelTurn::default();
+        let steps: i32 = (0..10)
+            .map(|_| wheel.turn(Wheeled::vertical(&event(-0.1)), false))
+            .sum();
+        assert_eq!(steps, 0, "a line's slide is no step");
+        let steps: i32 = (0..20)
+            .map(|_| wheel.turn(Wheeled::vertical(&event(-0.1)), false))
+            .sum();
+        assert_eq!(steps, 1, "three lines' slide is one");
+        // A plain wheel's notch, whole lines, and two at once: one step.
+        assert_eq!(wheel.turn(Wheeled::vertical(&event(-3.)), false), 1);
+        assert_eq!(wheel.turn(Wheeled::vertical(&event(-6.)), false), 1);
+        assert!(Wheeled::vertical(&event(-3.)).notches());
+        assert!(!Wheeled::vertical(&event(-0.4)).notches());
+        // Sideways counts where it moved most.
+        let sideways = ScrollEvent {
+            delta: gpui::ScrollDelta::Pixels(point(px(-50.), px(10.))),
+            ..ScrollEvent::default()
+        };
+        assert_eq!(Wheeled::along(&sideways), Wheeled::Pixels(-50.));
+        assert_eq!(Wheeled::vertical(&sideways), Wheeled::Pixels(10.));
     }
 
     #[test]
     fn page_turns_wait_for_the_pending_request() {
+        use Wheeled::{Notches, Pixels};
         let mut wheel = WheelTurn::default();
-        assert_eq!(wheel.turn(-80., false, true), 0);
-        assert_eq!(wheel.turn(-1., true, true), 0);
+        assert_eq!(wheel.turn(Pixels(-80.), true), 0);
+        assert_eq!(wheel.turn(Notches(-3.), true), 0);
         // Refused intent does not carry over into the next gesture.
-        assert_eq!(wheel.turn(-40., false, false), 0);
-        assert_eq!(wheel.turn(-40., false, false), 1);
-        assert_eq!(wheel.turn(-1., true, false), 1);
+        assert_eq!(wheel.turn(Pixels(-40.), false), 0);
+        assert_eq!(wheel.turn(Pixels(-40.), false), 1);
+        assert_eq!(wheel.turn(Notches(-3.), false), 1);
         // Intent accumulated before the request began is discarded too.
-        assert_eq!(wheel.turn(-40., false, false), 0);
-        assert_eq!(wheel.turn(-40., false, true), 0);
-        assert_eq!(wheel.turn(-40., false, false), 0);
+        assert_eq!(wheel.turn(Pixels(-40.), false), 0);
+        assert_eq!(wheel.turn(Pixels(-40.), true), 0);
+        assert_eq!(wheel.turn(Pixels(-40.), false), 0);
     }
 
     #[test]

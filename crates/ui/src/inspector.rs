@@ -2625,8 +2625,8 @@ impl Shell {
         if !pushing {
             return;
         }
-        let lines = matches!(event.delta, gpui::ScrollDelta::Lines(_));
-        if state.turn.turn(delta, lines, pending) != 0
+        let wheeled = crate::reader_scroll::Wheeled::vertical(event);
+        if state.turn.turn(wheeled, pending) != 0
             && let Some(offset) = target
         {
             state.at_edge = 0;
@@ -2699,15 +2699,13 @@ impl Shell {
     /// trackpad's swipe.
     pub(crate) fn inspect_flip(
         &mut self,
-        delta: f32,
-        lines: bool,
+        wheeled: crate::reader_scroll::Wheeled,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let pending = self.preview.phase != PreviewPhase::Idle;
         let turn = self.preview.inspection.pages.borrow_mut().flip.turn(
-            delta,
-            lines,
+            wheeled,
             pending,
             std::time::Instant::now(),
         );
