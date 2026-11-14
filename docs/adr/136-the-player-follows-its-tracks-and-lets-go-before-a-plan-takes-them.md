@@ -96,7 +96,9 @@ and the other holders of a file shown let go too (8).
    process, closing what they keep. Each opens the file again for the
    next request once the plan that took it has ended
    (`kept_open::wait_while_taken`, `Taking`, held by the plan to its
-   end), finding it gone, moved or left. Not the terminal: its shell
+   end), finding it gone, moved or left; a held reader, which no request
+   of its own could stop waiting (a map's tiles share one), fails a read
+   while the plan runs instead (`kept_open::taken_by`). Not the terminal: its shell
    stands in the folder shown, and only ending the user's shell would
    take it out.
 

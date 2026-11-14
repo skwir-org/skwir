@@ -35,7 +35,11 @@ is binding, like `AGENTS.md`.
   engines, the archive helper): registered from the helper's start to
   its end, every request linked to it, the helper ended when asked. In
   Skwir's process, what keeps it closes it in place (`Held::reader`,
-  `MBTiles`' connection), the guard going after the file. Tested from
+  `MBTiles`' connection), the guard going after the file. A held reader
+  has no request of its own to end a wait (a map's tiles share one), so
+  a read of it while the plan runs fails at once (`kept_open::taken_by`)
+  rather than wait: a wait no request could end held workers for the
+  plan's length. Tested from
   `PreviewRequest::holding` (bytes at a path that leads nowhere) and
   `Held::of_bytes_on_remote`; on a mount, by the GETs its server counts
   (`a_preview_of_a_file_on_a_mount_fetches_it_once`).

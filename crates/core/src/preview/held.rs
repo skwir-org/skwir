@@ -435,8 +435,11 @@ impl Held {
     /// that takes one (a zip, a picture's decoder): from memory where held;
     /// else it opens the file once for its own life, which ends with the
     /// step that asked for it, or a preview that keeps it (a map's tiles).
-    /// A plan that takes the file closes it meanwhile (ADR-136), and the
-    /// next read opens it again once the plan has ended.
+    /// A plan that takes the file closes it meanwhile (ADR-136): a read
+    /// while the plan runs fails at once, and the next read once it has
+    /// ended opens it again. A reader has no request to wait for (a map's
+    /// tiles share one, each with its own), so it waits for nothing: a
+    /// wait no request could end kept workers for as long as the plan.
     pub fn reader(self: &Arc<Held>) -> Reader {
         Reader {
             held: Arc::clone(self),
@@ -484,20 +487,19 @@ impl Read for Reader {
         } else if self.held.remote {
             self.held.through_blocks(self.at, buf)?
         } else {
-            // A plan that took it is let end first, not holding what it
-            // closes: the file is then gone, moved (which `reopen` says) or
-            // left.
-            if self.file.lock().is_none() {
-                crate::fs::kept_open::wait_while_taken(
-                    &self.held.path,
-                    &CancelToken::new(),
-                    crate::fs::kept_open::TAKEN_AT_MOST,
-                );
-            }
             let mut slot = self.file.lock();
             let mut open = if let Some(open) = slot.take() {
                 open
             } else {
+                // Taken by a plan still running: not opened again under
+                // it. Once it has ended the file is gone, moved (which
+                // `reopen` says) or left.
+                if crate::fs::kept_open::taken_by(&self.held.path).is_some() {
+                    return Err(io::Error::other(format!(
+                        "{} is being moved or removed",
+                        self.held.path.display()
+                    )));
+                }
                 let file = self.held.reopen()?;
                 let shared = Arc::downgrade(&self.file);
                 let kept = crate::fs::kept_open::keep_open(self.held.path.clone(), move |_| {
@@ -1050,6 +1052,37 @@ mod tests {
         reader.read_exact(&mut buf).unwrap();
         assert_eq!(buf, bytes[HEAD + 8..HEAD + 13]);
         assert!(reader.seek(SeekFrom::Current(-step * 4)).is_err());
+    }
+
+    /// A plan that takes the file a reader keeps open closes it (ADR-136):
+    /// a read while the plan runs fails at once, never waiting, and the
+    /// next once it has ended opens the file again.
+    #[test]
+    fn a_reader_s_file_taken_by_a_plan_fails_at_once_then_opens_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let bytes: Vec<u8> = (0..HEAD * 2).map(|n| (n % 7) as u8).collect();
+        let path = file(dir.path(), "it's a map.pmtiles", &bytes);
+        let held = Arc::new(Held::open(&path, WHOLE).unwrap());
+        let mut reader = held.reader();
+        let mut buf = [0u8; 4];
+        reader.seek(SeekFrom::Start(HEAD as u64)).unwrap();
+        reader.read_exact(&mut buf).unwrap();
+        let taking = crate::fs::kept_open::let_go_of(
+            crate::op::PlanId(u64::MAX - 11),
+            |at| at == path,
+            std::time::Duration::from_secs(5),
+        );
+        assert_eq!(taking.count(), 1, "closed for the plan");
+        let started = std::time::Instant::now();
+        assert!(reader.read_exact(&mut buf).is_err());
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(1),
+            "no wait"
+        );
+        drop(taking);
+        reader.seek(SeekFrom::Start(HEAD as u64 + 1)).unwrap();
+        reader.read_exact(&mut buf).unwrap();
+        assert_eq!(buf, bytes[HEAD + 1..HEAD + 5]);
     }
 
     // A remote is pretended on Linux alone.
