@@ -52,17 +52,26 @@ filesystem, as `tools/package/try.sh` already does.
    having moved to gst-plugins-rs and gst-libav taking no FFmpeg decoder
    that wraps another library. Every other feature is off and those named
    are required (`tools/package/appimage/gstreamer.py`): a missing library
-   stops the build. Base keeps the features Ubuntu's base package has. Not
-   carried any more: GStreamer's network sources, tracker and chiptune
+   stops the build. Base keeps the features Ubuntu's base package has but
+   its network sources (TCP's, and GIO's, which reads any scheme GIO
+   knows): the helper plays `file://` alone, read by the core's `filesrc`.
+   Not carried any more: GStreamer's network sources, tracker and chiptune
    music, MIDI, MXF, DV, RealMedia, and the GPL plugins whose formats FFmpeg
    decodes. libva is built too (2.24.1, the newest; its X11 and DRM
    parts, which FFmpeg's libraries link): Jammy's 2.14 opened no driver
    built for a later libva, nor any outside Debian's folder, and a newer
-   one loads drivers old and new; it looks where Debian, Fedora, Arch and
-   NixOS keep them (`-Ddriverdir`, a list). The host's would break
-   FFmpeg's libraries where libva-x11 is missing. Ship the exact source
-   archives, including their licence notices, beside the native library
-   notices.
+   one loads drivers old and new; it looks where Debian, Fedora, Arch,
+   Gentoo and NixOS keep them (`-Ddriverdir`, a list; `LIBVA_DRIVERS_PATH`
+   elsewhere). The host's would break FFmpeg's libraries where libva-x11
+   is missing. What a library built beside GStreamer looks for where it
+   runs is the host's (`/etc/pulse/client.conf`, `/etc/libva.conf`, the
+   system-wide sound server's socket under `/var/run/pulse`), never the
+   build's prefix, which exists only where it is built:
+   `tools/package/appimage/check.py` fails on a path of that prefix in a
+   staged library, but what the media helper's environment points
+   elsewhere (its plugins and scanner) and what playback never reads.
+   Ship the exact source archives, including their licence notices,
+   beside the native library notices.
 3. **Library paths stay inside the package.** Each ELF's RUNPATH is relative
    to its executable or library; it does not impose an inherited RPATH on
    host graphics drivers. AppRun exports no loader or search paths

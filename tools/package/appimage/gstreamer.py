@@ -15,7 +15,7 @@ ugly bring ADR-076's set alone, what the media helper plays with, as
 Windows' and macOS's packages have it, with Linux's own decoders (VA-API,
 NVDEC) and audio output (PulseAudio; ALSA is base's): every other feature
 is off, and those named are required, so a missing library stops the
-build rather than leaving a plugin out.
+build rather than leaving a plugin out. Base builds no network source.
 """
 
 import hashlib
@@ -36,21 +36,29 @@ LOCK = pathlib.Path("tools/package/appimage/downloads.json")
 PARTS = ("orc", "libva", "gstreamer", "gst-plugins-base", "pulseaudio", "gst-plugins-good",
          "gst-plugins-bad", "gst-plugins-ugly", "gst-libav")
 # Where a host keeps its VA-API drivers: Debian's and Ubuntu's, Fedora's,
-# Arch's, NixOS's. libva tries each, in order.
+# Arch's, Gentoo's, NixOS's. libva tries each, in order.
 VA_DRIVERS = ("/usr/lib/x86_64-linux-gnu/dri", "/usr/lib64/dri", "/usr/lib/dri",
-              "/run/opengl-driver/lib/dri")
+              "/usr/lib64/va/drivers", "/run/opengl-driver/lib/dri")
+# What a library built beside GStreamer looks for on the machine it runs
+# on is the host's, never under PREFIX, which exists only here: the
+# system's settings (/etc/pulse/client.conf, /etc/libva.conf), the
+# system-wide sound server's socket (/var/run/pulse), the sound server
+# a client starts, its messages' translations. check.py fails on a path
+# of PREFIX left in a staged library.
+HOST = ("-Dsysconfdir=/etc", "-Dlocalstatedir=/var")
 # The parts that are not GStreamer's, and their own options.
 BESIDE = {
     # DRM and X11, which FFmpeg's libraries link; no GLX or Wayland. Newer
     # than any driver, it loads old and new alike, where Jammy's 2.14
     # refused drivers built for a later one.
-    "libva": ("-Ddriverdir=" + ":".join(VA_DRIVERS), "-Dwith_x11=yes", "-Dwith_glx=no",
-              "-Dwith_wayland=no", "-Denable_docs=false"),
+    "libva": HOST + ("-Ddriverdir=" + ":".join(VA_DRIVERS), "-Dwith_x11=yes", "-Dwith_glx=no",
+                     "-Dwith_wayland=no", "-Denable_docs=false"),
     # The client library alone, which nothing else of it serves: no daemon
     # to spawn, no X11, D-Bus or systemd.
-    "pulseaudio": ("-Ddaemon=false", "-Dclient=true", "-Ddoxygen=false", "-Dman=false",
-                   "-Dtests=false", "-Dauto_features=disabled",
-                   "-Dbashcompletiondir=no", "-Dzshcompletiondir=no"),
+    "pulseaudio": HOST + ("-Dbindir=/usr/bin", "-Dlocaledir=/usr/share/locale",
+                          "-Ddaemon=false", "-Dclient=true", "-Ddoxygen=false", "-Dman=false",
+                          "-Dtests=false", "-Dauto_features=disabled",
+                          "-Dbashcompletiondir=no", "-Dzshcompletiondir=no"),
 }
 # ADR-076's set from good, bad and ugly (tools/package/gstreamer.py's
 # COMMON), with Linux's decoders and audio output; bad's AV1 decoder is
@@ -120,6 +128,10 @@ def main():
             options += ["-D" + feature + "=enabled" for feature in
                         ("alsa", "cdparanoia", "libvisual", "ogg", "opus", "pango",
                          "theora", "vorbis", "xvideo", "orc")]
+            # No network source (ADR-052, ADR-020): TCP's, and GIO's, which
+            # reads any scheme GIO knows. The helper plays file:// alone,
+            # which the core's filesrc reads, and types by its bytes.
+            options += ["-D" + feature + "=disabled" for feature in ("tcp", "gio", "gio-typefinder")]
         elif part in FEATURES:
             options += ["-Dauto_features=disabled", "-Dorc=enabled"]
             options += ["-D" + feature + "=enabled" for feature in FEATURES[part]]

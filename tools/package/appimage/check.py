@@ -15,6 +15,7 @@ import pathlib
 import re
 import selectors
 import shutil
+import struct
 import subprocess
 import sys
 import tarfile
@@ -23,6 +24,7 @@ import time
 import wave
 import zipfile
 
+from gstreamer import PREFIX
 from stage import HOST_ABI
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
@@ -65,7 +67,56 @@ def check_elf(app):
         assert not needs or max(needs) <= (2, 35), (path, max(needs))
         libraries = run(["ldd", path], capture_output=True, text=True).stdout
         assert "not found" not in libraries, (path, libraries)
-    print(f"ok: {count} ELFs resolve their libraries; glibc <= 2.35, relative runtime paths", flush=True)
+        baked = built_here(path)
+        assert not baked, (path, sorted(baked), "a path of the build's prefix, looked for on the user's machine")
+    print(f"ok: {count} ELFs resolve their libraries; glibc <= 2.35, relative runtime paths, "
+          f"no path of {PREFIX} looked for", flush=True)
+
+
+# What of the build's prefix (gstreamer.py's PREFIX, which exists only
+# where the AppImage is built) a staged ELF may still name, by library:
+# what the media helper's environment points elsewhere, or what playback
+# never reads. Any other path of it is one a library would look for on
+# the user's machine in vain (the system's settings, a server's socket:
+# libpulse's and libva's did).
+NAMED_IN = {
+    # Where it finds its plugins and its scanner when not told: the media
+    # helper tells it (GST_PLUGIN_SYSTEM_PATH_1_0, GST_PLUGIN_SCANNER_1_0).
+    # Under share, presets, which playback never reads.
+    "libgstreamer-1.0.so.*": {"/lib", "/lib/gstreamer-1.0", "/libexec/gstreamer-1.0/gst-plugin-scanner",
+                              "/share"},
+    # The helper of a PTP network clock, which playback never makes.
+    "libgstnet-1.0.so.*": {"/libexec/gstreamer-1.0/gst-ptp-helper"},
+    # Run only when a program asks for missing plugins to be installed;
+    # under share, encoding targets, which playback never reads.
+    "libgstpbutils-1.0.so.*": {"/libexec/gst-install-plugins-helper", "/share"},
+}
+
+
+def built_here(path):
+    """The paths of PREFIX `path` names and may not: in any section but
+    the dynamic string table, where patchelf leaves the RUNPATH it
+    replaced (the RUNPATH itself is checked above), and other than an
+    assertion's message naming a header (PREFIX/include)."""
+    data = path.read_bytes()
+    named = re.compile(re.escape(str(PREFIX).encode()) + rb"[\x21-\x7e]*")
+    allowed = set().union(*(paths for pattern, paths in NAMED_IN.items() if fnmatch.fnmatch(path.name, pattern)))
+    # ELF64, little-endian (x86-64): the section headers and their names.
+    offset, = struct.unpack_from("<Q", data, 0x28)
+    size, count, names = struct.unpack_from("<HHH", data, 0x3A)
+    headers = [struct.unpack_from("<IIQQQQ", data, offset + i * size) for i in range(count)]
+    strings = headers[names][4] if headers else 0
+    found = set()
+    for name, kind, _, _, start, length in headers:
+        section = data[strings + name:data.index(b"\0", strings + name)]
+        # NOBITS holds nothing in the file.
+        if kind == 8 or section == b".dynstr":
+            continue
+        for match in named.finditer(data, start, start + length):
+            rest = match.group().decode()[len(str(PREFIX)):]
+            if not rest.startswith("/include/") and rest not in allowed:
+                found.add(match.group().decode())
+    return found
 
 
 def unpack(artifact, work):
