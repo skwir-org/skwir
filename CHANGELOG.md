@@ -33,7 +33,9 @@
   now merged into as a copy's is: what was removed comes back, what is
   there the same stays, a file changed since is asked about, and Undo
   takes back only what it placed. An archive holding one read-only folder
-  is extracted again, which it could not be.
+  is extracted again, which it could not be. The question about names
+  taken no longer shows a row of choices for all files when no file is
+  asked about, as when only folders are.
 - **The player's speed is one row**, as the menus' other settings are: its
   name, then its values, Left and Right walking them. Its headings and
   the slideshow's and the timeline's choices are drawn as every menu's.

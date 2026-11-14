@@ -28,7 +28,9 @@ Status: accepted, 2026-10-12. Links ask too (decision 9), the same day.
    Skip. For a folder onto a folder: Merge, Keep both, Skip. A file onto
    a folder or a folder onto a file: a file's choices. Each choice is
    made for one item or for all of a kind. Enter keeps both, and merges
-   folders: nothing goes to the Trash unless chosen.
+   folders: nothing goes to the Trash unless chosen. (2026-11-14: a kind
+   the dialog asks nothing of has no row for all: only folders asked
+   about, no files' row, which would choose nothing.)
 3. **Replace puts what was there in the Trash**, its companions with it;
    Undo brings it back. Replace if newer replaces when the item copied or
    moved changed later than the one there, else skips it.

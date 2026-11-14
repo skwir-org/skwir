@@ -17172,6 +17172,15 @@ merge as a copy does (ADR-054), asked. ADR-059 amended.
   said "Extracted “Synthetic photos.zip” into Synthetic photos". Ctrl+Z
   put the three items placed, and nothing else, in the window's Trash;
   Ctrl+Y brought them back from it.
+- **The dialog's rows for all** (the user's question: what does Keep
+  both for files do when a folder is merged and nothing in it differs?
+  Nothing): `Clashes::head_rows` lists a kind's row only where the
+  question has a clash of that kind, decided over the whole question,
+  never over the rows shown, so a row just answered stays put. On Xvfb,
+  `photos.zip` of three files extracted, `photo1.jpg` removed, Extract
+  Here again: the dialog showed "Folders, for all" and `photos`, both on
+  Merge, and no files' row; Enter put `photo1.jpg` back, `photo2.jpg` the
+  same inode.
 - **Left:** a folder in the dialog says no time for what comes (the
   listing's folders are not dated in `MadeItem::Folder`); the archive is
   extracted whole into the staging folder however little is placed (the

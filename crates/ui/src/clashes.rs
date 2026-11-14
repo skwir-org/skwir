@@ -103,13 +103,26 @@ impl Clashes {
         }
     }
 
-    fn any_folders(&self) -> bool {
-        self.question.clashes.iter().any(Clash::folders)
+    /// The rows above the list, the choices for all, of each kind the
+    /// question lists: a file's for every clash but a folder's onto a
+    /// folder, a folder's for those. A kind none of its clashes is of has
+    /// no row, which would choose nothing (a folder merged, all in it
+    /// there already or missing). Said of the whole question, never of
+    /// the rows shown: a row the user just answered stays where it is.
+    fn head_rows(&self) -> Vec<Row> {
+        let clashes = &self.question.clashes;
+        let mut rows = Vec::with_capacity(2);
+        if clashes.iter().any(|clash| !clash.folders()) {
+            rows.push(Row::Files);
+        }
+        if clashes.iter().any(Clash::folders) {
+            rows.push(Row::Folders);
+        }
+        rows
     }
 
-    /// The rows above the list: the choices for all.
     fn heads(&self) -> usize {
-        1 + usize::from(self.any_folders())
+        self.head_rows().len()
     }
 
     /// What the choices for all are called. The first is every clash's
@@ -194,17 +207,18 @@ impl Clashes {
                 .cast_unsigned()]
         };
         let heads = self.heads();
-        match self.cursor {
-            0 => {
+        match self.head_rows().get(self.cursor) {
+            Some(Row::Files) => {
                 let next = along(&FILES, self.files.into());
                 self.files = file_choice(next).unwrap_or_default();
             }
-            1 if heads == 2 => {
+            Some(Row::Folders) => {
                 let next = along(&FOLDERS, self.folders.into());
                 self.folders = folder_choice(next).unwrap_or_default();
             }
-            row => {
-                let Some(&i) = self.shown().get(row - heads) else {
+            _ => {
+                let shown = self.cursor.checked_sub(heads);
+                let Some(i) = shown.and_then(|row| self.shown().get(row).copied()) else {
                     return;
                 };
                 let options: &[Choice] = if self.question.clashes[i].folders() {
@@ -492,23 +506,12 @@ pub fn render(
             ))
     };
     let (first, second) = clashes.head_names();
-    let mut heads = div().flex().flex_col().gap(sized(2.)).child(head(
-        0,
-        first,
-        Row::Files,
-        &FILES,
-        clashes.files.into(),
-        cx,
-    ));
-    if clashes.heads() == 2 {
-        heads = heads.child(head(
-            1,
-            second,
-            Row::Folders,
-            &FOLDERS,
-            clashes.folders.into(),
-            cx,
-        ));
+    let mut heads = div().flex().flex_col().gap(sized(2.));
+    for (at, kind) in clashes.head_rows().into_iter().enumerate() {
+        heads = heads.child(match kind {
+            Row::Folders => head(at, second, kind, &FOLDERS, clashes.folders.into(), cx),
+            _ => head(at, first, kind, &FILES, clashes.files.into(), cx),
+        });
     }
     let list = ROWS.list(
         "clashes",
@@ -721,6 +724,29 @@ mod tests {
         assert_eq!(into.shown(), vec![0, 1]);
         into.each.insert(0, Choice::KeepBoth);
         assert_eq!(into.shown(), vec![0], "kept beside, nothing in it asked");
+        // The row for all of a kind stays, its clash listed but hidden.
+        assert_eq!(into.heads(), 2);
+    }
+
+    /// A folder merged, nothing in it asked about (all there already, or
+    /// missing): no row of files' choices, which would choose nothing.
+    #[test]
+    fn a_kind_no_clash_is_of_has_no_row_for_all() {
+        let mut d = Clashes::new(ClashQuestion {
+            id: 1,
+            title: "copy to /example/dest".into(),
+            clashes: vec![clash("/example/dest/photos", true, None, false)],
+        });
+        assert_eq!(d.heads(), 1);
+        assert_eq!(d.head_names().1, "Folders, for all");
+        assert_eq!(d.rows(), 2);
+        // The first row is the folders' choice for all.
+        d.step_choice(1);
+        assert_eq!(d.answer().policy.folders, FolderChoice::KeepBoth);
+        assert_eq!(d.answer().policy.files, FileChoice::KeepBoth);
+        d.move_cursor(ListMove::Last);
+        d.step_choice(1);
+        assert_eq!(d.outcome(0), Choice::Skip);
     }
 
     /// Every name taken is a row the keys reach, however many: the list
