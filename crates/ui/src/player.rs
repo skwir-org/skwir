@@ -2156,12 +2156,10 @@ impl Shell {
 
     /// ↑ and ↓ over the player: the volume, a step at a time, of whatever
     /// the transport keys steer (the pinned track, else the panel's audio).
-    pub fn player_volume_by(&mut self, delta: f64, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((_, state)) = self.playing() else {
-            return;
-        };
-        let volume = (state.volume + delta).clamp(0., 1.);
-        self.player_request(PlayerRequest::Volume(volume), window, cx);
+    pub fn player_volume_by(&mut self, delta: f64, cx: &mut Context<Self>) {
+        if let Some(of) = self.steered_volume() {
+            self.step_volume(of, delta, cx);
+        }
     }
 
     /// The dock's seek bar being dragged: the knob follows the pointer and
@@ -2210,7 +2208,14 @@ impl Shell {
                 Some(Control::Seek((position + seconds).max(0.)))
             }
             PlayerRequest::SeekTo(seconds) if seekable => Some(Control::Seek(seconds)),
-            PlayerRequest::Volume(volume) => Some(Control::Volume(volume)),
+            // As every volume moves (`Shell::set_volume`): shown at once, and
+            // heard, unmuted.
+            PlayerRequest::Volume(volume) => {
+                if let Some(of) = self.steered_volume() {
+                    self.set_volume(of, volume, cx);
+                }
+                return;
+            }
             PlayerRequest::Mute => Some(Control::Mute(!state.muted)),
             // Rate changes are seeks; a stream that cannot seek keeps 1×.
             PlayerRequest::Rate(rate) if seekable => Some(Control::Rate(rate)),

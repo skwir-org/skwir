@@ -3303,7 +3303,7 @@ impl Shell {
             }
             "player_volume" => {
                 let delta = args.get("delta").and_then(serde_json::Value::as_f64);
-                self.player_volume_by(delta.unwrap_or(0.), window, cx);
+                self.player_volume_by(delta.unwrap_or(0.), cx);
             }
             "volume_step" => {
                 let delta = args.get("delta").and_then(serde_json::Value::as_f64);

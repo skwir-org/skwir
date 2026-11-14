@@ -692,10 +692,19 @@ impl Shell {
         let command = match args.get("action").and_then(serde_json::Value::as_str) {
             Some("play") => Some(Control::Play(!state.playing())),
             Some("mute") => Some(Control::Mute(!state.muted)),
-            Some("volume") => value.map(Control::Volume),
-            // ↑ and ↓ over the player: a step either way, within 0..=1.
+            // A level, or ↑ and ↓ over the player: a step either way, as
+            // every volume moves (`set_volume`).
+            Some("volume") => {
+                if let Some(volume) = value {
+                    self.set_volume(VolumeOf::Panel, volume, cx);
+                }
+                None
+            }
             Some("volume_by") => {
-                value.map(|delta| Control::Volume((state.volume + delta).clamp(0., 1.)))
+                if let Some(delta) = value {
+                    self.step_volume(VolumeOf::Panel, delta, cx);
+                }
+                None
             }
             // Rate changes are seeks; a non-seekable stream keeps 1x.
             Some("rate") => value.filter(|_| state.seekable).map(Control::Rate),
@@ -906,8 +915,6 @@ pub(crate) fn played_as(
     }
 }
 
-/// A frame of a film as a picture for GPUI: the worker sends BGRA, which is
-/// what GPUI wants, so the buffer moves in without a copy.
 /// A film's frame as the panel shows it: a film (`PreviewInfo::Video`),
 /// so Fit makes it as large as the panel, a small one enlarged
 /// (`preview::ShownAs::Film`), whoever drew it: the panel's player, or the
@@ -935,6 +942,8 @@ pub(crate) fn film_frame(
     }
 }
 
+/// A frame of a film as a picture for GPUI: the worker sends BGRA, which is
+/// what GPUI wants, so the buffer moves in without a copy.
 pub(crate) fn frame_image(frame: Frame) -> Option<(Arc<RenderImage>, u32, u32)> {
     let (width, height) = (frame.width, frame.height);
     let buffer = image::RgbaImage::from_raw(width, height, frame.bgra)?;
@@ -1101,7 +1110,7 @@ pub(crate) fn volume_control(
     } else {
         percent(state.volume)
     };
-    let slid = cx.listener(move |this, slid: &Slid, window, cx| {
+    let slid = cx.listener(move |this, slid: &Slid, _, cx| {
         // A move or a release it never saw the press of is not its own:
         // the slider tells every release outside it (a press on Mute).
         let held = this.player.volume.held;
@@ -1111,7 +1120,7 @@ pub(crate) fn volume_control(
             Slide::Release => this.player.volume.held = false,
             Slide::Drag => {}
         }
-        this.set_volume(of, f64::from(slid.at), window, cx);
+        this.set_volume(of, f64::from(slid.at), cx);
     });
     let wheel = cx.listener(move |this, event: &gpui::ScrollEvent, window, cx| {
         this.volume_wheel(of, event, window, cx);
@@ -1223,42 +1232,51 @@ fn volume_popup(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option
 
 impl Shell {
     /// The volume of `of`'s player set to `volume` (0 to 1, where the
-    /// control stands): shown at once, its player told.
-    pub(crate) fn set_volume(
-        &mut self,
-        of: VolumeOf,
-        volume: f64,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    /// control stands): shown at once, its player told. A volume moved is
+    /// heard: it unmutes, as the desktops' own volume controls do (GNOME's,
+    /// KDE's, Windows').
+    pub(crate) fn set_volume(&mut self, of: VolumeOf, volume: f64, cx: &mut Context<Self>) {
         let volume = volume.clamp(0., 1.);
         match of {
             VolumeOf::Panel => {
-                self.preview.media.state.volume = volume;
+                // Nothing playing there: no level to keep for nothing.
+                if self.preview.media.session.is_none() {
+                    return;
+                }
+                let state = &mut self.preview.media.state;
+                let muted = std::mem::replace(&mut state.muted, false);
+                state.volume = volume;
+                if muted {
+                    self.media_send(Control::Mute(false), cx);
+                }
                 self.media_send(Control::Volume(volume), cx);
             }
             VolumeOf::Dock => {
-                if let Some(pinned) = &mut self.player.pinned {
-                    pinned.state.volume = volume;
+                let Some(pinned) = &mut self.player.pinned else {
+                    return;
+                };
+                let muted = std::mem::replace(&mut pinned.state.muted, false);
+                pinned.state.volume = volume;
+                let session = Arc::clone(&pinned.session);
+                let sent = if muted {
+                    session.control(Control::Mute(false))
+                } else {
+                    Ok(())
                 }
-                self.player_request(
-                    skwir_core::playing::PlayerRequest::Volume(volume),
-                    window,
-                    cx,
-                );
+                .and_then(|()| session.control(Control::Volume(volume)));
+                if let Err(error) = sent {
+                    self.set_status(error.to_string(), true, cx);
+                }
             }
         }
         cx.notify();
     }
 
-    /// `of`'s volume moved by `delta`.
-    fn step_volume(
-        &mut self,
-        of: VolumeOf,
-        delta: f64,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    /// `of`'s volume moved by `delta`: every step of a volume, its
+    /// slider's keys, the wheel, the player's Up and Down and the desktop's
+    /// (`Shell::player_volume_by`), goes from what is shown, which a step
+    /// changes at once, so a key held steps every time.
+    pub(crate) fn step_volume(&mut self, of: VolumeOf, delta: f64, cx: &mut Context<Self>) {
         let now = match of {
             VolumeOf::Panel => self.preview.media.state.volume,
             VolumeOf::Dock => match &self.player.pinned {
@@ -1266,7 +1284,21 @@ impl Shell {
                 None => return,
             },
         };
-        self.set_volume(of, now + delta, window, cx);
+        self.set_volume(of, now + delta, cx);
+    }
+
+    /// Whose volume the player's keys and the desktop's requests steer:
+    /// the pin's (the panel's while the panel shows it), else the panel's
+    /// music, as `Shell::playing` says.
+    pub(crate) fn steered_volume(&self) -> Option<VolumeOf> {
+        if self.player.pinned.is_some() {
+            return Some(if self.preview_is_pinned() {
+                VolumeOf::Panel
+            } else {
+                VolumeOf::Dock
+            });
+        }
+        (self.preview.media.session.is_some() && self.media_is_audio()).then_some(VolumeOf::Panel)
     }
 
     /// `ui.volume_step`: Up and Down on a volume's slider: the volume of the
@@ -1281,7 +1313,7 @@ impl Shell {
         if let Some(popup) = self.volume_popup_mut(of) {
             popup.take_keyboard(window, cx);
         }
-        self.step_volume(of, delta, window, cx);
+        self.step_volume(of, delta, cx);
     }
 
     /// The wheel over a speaker or a volume's slider: up is louder. Over a
@@ -1302,7 +1334,7 @@ impl Shell {
             if !self.volume_open(of) {
                 self.open_volume_passing(of, window, cx);
             }
-            self.step_volume(of, -f64::from(turn) * VOLUME_STEP, window, cx);
+            self.step_volume(of, -f64::from(turn) * VOLUME_STEP, cx);
         }
         cx.stop_propagation();
     }

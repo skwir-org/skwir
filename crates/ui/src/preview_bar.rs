@@ -725,13 +725,7 @@ pub(crate) fn sub_rows(shell: &Shell, name: &str) -> Vec<toolbar::FlyRow> {
 
 /// A button as a row of the menu: its title without the shortcut hint.
 fn menu_row(button: Button, shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
-    let title = button.title();
-    let label = title.split(" · ").next().unwrap_or(&title).to_owned();
-    button
-        .label(label)
-        .menu()
-        .render(shell, cx)
-        .into_any_element()
+    button.menu_named().render(shell, cx).into_any_element()
 }
 
 /// The rows of More for what variant `mode` shows no button for: those

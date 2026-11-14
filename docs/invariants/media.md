@@ -233,7 +233,12 @@ binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
   back when it closes, as a click's popup does. Passing is the popup's
   own, its close on its way too: whatever closes the popup ends both, and
   that close closes that popup alone, never one opened since. M mutes from
-  anywhere in the player. The speaker
+  anywhere in the player. Every move of a volume goes through
+  `Shell::set_volume` (a step through `step_volume`, from the level
+  shown, which it changes at once): the slider, its keys, the wheel, the
+  player's Up and Down, the desktop's media controls. A volume moved is
+  heard: it unmutes, as GNOME's, KDE's and Windows' own volume controls
+  do. The speaker
   says how loud (`speaker_icon`): crossed out when muted, else no wave at
   nothing, one below half, two from half. Where the bar or the dock leaves the
   speaker out, More's Volume row opens it, above More. More lists no

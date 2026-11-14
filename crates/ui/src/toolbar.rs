@@ -286,6 +286,14 @@ impl Button {
         self.shape = Shape::MenuRow;
         self
     }
+    /// Its row in a menu of what a bar left out (a preview's More, the
+    /// dock's), called by its name: its title before what it says of its
+    /// state ("Volume", not "Volume · 80%").
+    pub fn menu_named(self) -> Self {
+        let title = self.title();
+        let name = title.split(" · ").next().unwrap_or(&title).to_owned();
+        self.label(name).menu()
+    }
     /// One value of a setting on a popup's row (`MenuPart::Choice`); the
     /// popup stays open once it is chosen, for another.
     pub fn segment(mut self) -> Self {

@@ -586,11 +586,7 @@ fn menu(
             let mut parts = Vec::new();
             if !left.is_empty() {
                 for button in left {
-                    // Its name before what it says of its state, as the
-                    // panel's More calls a button it left out.
-                    let title = button.title();
-                    let label = title.split(" · ").next().unwrap_or(&title).to_owned();
-                    parts.push(toolbar::MenuPart::Row(button.label(label).menu()));
+                    parts.push(toolbar::MenuPart::Row(button.menu_named()));
                 }
                 parts.push(toolbar::MenuPart::Line);
             }
