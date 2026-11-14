@@ -5,6 +5,7 @@ pub mod dir;
 pub mod file;
 pub mod hidden;
 mod hydrate;
+pub mod kept_open;
 mod path_provider;
 pub mod reach;
 pub mod stat;

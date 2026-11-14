@@ -1031,6 +1031,18 @@ Gathered on 2026-10-20 from the notes of this plan and of
 may have covered one: check the source before starting it. Work that
 closes an item removes its line; work that leaves one adds it here.
 
+**The player follows its tracks** (ADR-136, 2026-11-14): built on
+Linux, tried in a window there (a rename, a move, Undo, a deletion
+with Stop and with Play next, two deleted at once, another program's
+`mv` and `rm`, the panel's player through a rename). Left: not tried
+on a remote's mount (what Skwir does there is the same plan followed;
+sshfs's `.fuse_hidden` is from its documentation, not seen); Windows
+compiled only, its moves let go of and taken up again untried; no other
+holder of an open file registers yet (a reader's worker, the terminal's
+folder); a queued track another program removed where no pane shows its
+folder stops the player with what its opening said rather than skipping
+it; the pin does not follow its folder moved by another program.
+
 **Where a copy lands** (ADR-135, amended 2026-11-13): built on Linux in
 every view of files, the follow-ups the user kept and the limits found
 done the same day. Left: a grouped board shows no arrival in a group no

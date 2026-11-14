@@ -519,6 +519,16 @@ impl Shell {
             // The session continues; its next state update corrects the UI.
             self.set_status(notice, false, cx);
         }
+        if let Some(plan) = update.taken {
+            // A plan took the file (ADR-136): the session let go of it and
+            // ended, quietly, as a pause does. Pinned, the pin waits where
+            // it stood for the plan's end, which says where the file went.
+            self.exit_fullscreen(window, cx);
+            if self.preview_is_pinned() {
+                self.pin_taken(plan, window, cx);
+            }
+            self.end_panel_session(window, cx);
+        }
         if let Some(error) = update.error {
             // The manager has ended the session. Withdraw the controls and
             // keep the last picture; every later control would only fail.
@@ -528,23 +538,7 @@ impl Shell {
             if self.preview_is_pinned() {
                 self.unpin_dead();
             }
-            self.preview.media.session = None;
-            self.preview.media.state.status = skwir_core::media::PlaybackStatus::Paused;
-            // The player's key context follows its focus handle; return keys
-            // to the peek overlay or the pane instead of a dead player.
-            if let Some(focus) = self.preview.media.focus.take()
-                && focus.contains_focused(window, cx)
-            {
-                match self
-                    .preview
-                    .peek_focus
-                    .as_ref()
-                    .filter(|_| self.preview.peek)
-                {
-                    Some(peek) => window.focus(peek, cx),
-                    None => window.focus(&self.ui().focus, cx),
-                }
-            }
+            self.end_panel_session(window, cx);
             if !self.preview.media.poster_awaited() {
                 self.film_without_frame(window, cx);
             }
@@ -554,6 +548,28 @@ impl Shell {
             return self.media_step(1, window, cx);
         }
         self.arm_fullscreen_hide(window, cx);
+    }
+
+    /// The panel's session ended under it: its controls withdrawn, its
+    /// last picture kept, every later control would only fail.
+    fn end_panel_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.preview.media.session = None;
+        self.preview.media.state.status = skwir_core::media::PlaybackStatus::Paused;
+        // The player's key context follows its focus handle; return keys
+        // to the peek overlay or the pane instead of a dead player.
+        if let Some(focus) = self.preview.media.focus.take()
+            && focus.contains_focused(window, cx)
+        {
+            match self
+                .preview
+                .peek_focus
+                .as_ref()
+                .filter(|_| self.preview.peek)
+            {
+                Some(peek) => window.focus(peek, cx),
+                None => window.focus(&self.ui().focus, cx),
+            }
+        }
     }
 
     /// The one way a control reaches the panel's session: whatever asked

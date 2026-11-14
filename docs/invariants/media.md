@@ -328,6 +328,41 @@ binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
   pin, which keeps a film's last frame for the dock.
 - The pin walks a queue of paths (same-kind folder files in pane order, or a
   playlist's tracks), resolved and opened on a worker.
+- **The pin follows its tracks** (ADR-136). Each window observes the
+  plans that end (`Shell::observe_plans`): on the executor's thread, the
+  pin's track and queue (`Watched`, the queue shared as `Arc<[PathBuf]>`,
+  never copied per wake) are followed through the plan's changes
+  (`op::Follow`) and what moved or went is sent (`Followed`); the window
+  follows it (`Pinned::follow`, `Shell::pin_follows`). Moved or renamed,
+  the track plays on where it went, the queue and the mark with it, the
+  next track told again by its path. Taken away, tracks leave the queue,
+  a shuffle keeping its order of those left, and the track played ends as
+  at its end: the next of those left plays where Continue says one does,
+  else the player closes; the panel showing that very session keeps it
+  as its preview, stopped. Undo brings the file back, never the player.
+- **A plan takes the file played** before it removes it (on Windows,
+  moves or replaces it too): the session's manager keeps the file played
+  and the one queued (`fs::kept_open`), and when a plan lets go of them
+  kills its worker, drops them once reaped, and says so
+  (`Update::taken`), never as an error. The pin then waits where it stood
+  (`Taken`) for that plan's end (`Shell::pin_taken`, which also finds a
+  plan whose end was told first, `PlayerState::finished`): gone, it ends
+  as above; left or moved, it is opened again there, at its position,
+  playing or paused as it was (`Opened::resume`). A track that then fails
+  to open leaves no pin of a dead session (`Pinned::ended`).
+- **What another program does** is followed only where a pane shows
+  the pin's folder (`Shell::follow_outside`), looked at once a pane's
+  names change: a rename the pane followed (`Pane::renames_since`) of the
+  file the pin's name was last listed as moves the pin; a name listed,
+  then gone, with no plan of Skwir's under way in the folder
+  (`Executor::under_way_in`, asked before the plans' ends are read: a
+  plan is under way until its observers were told) takes it away. A name
+  not listed yet says nothing: a plan's end is often followed before the
+  folder lists where the file went. Elsewhere the track plays on.
+- **The panel plays on through a rename** of the file it plays (not a
+  playlist's member): the same file renamed is the same preview, its key
+  moved to the new name (`preview.rs`, `renamed_playing`), never a new
+  preview that would stop it or open a second player.
 - Gapless: `MediaSession::play_next` names the next file; the worker hands it
   to playbin3 in `about-to-finish` on the streaming thread, using only what
   the loop left for it, and reports `Advanced` when it starts (clearing

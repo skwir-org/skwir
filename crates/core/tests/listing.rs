@@ -96,6 +96,7 @@ fn watcher_reports_create_rename_and_delete() {
 
     let two = listed(&app, pane, "two");
     select(&app, &["two"]);
+    let (seen, _) = app.workspace.read().pane(pane).unwrap().renames_since(0);
     std::fs::rename(dir.join("two"), dir.join("deux")).unwrap();
     wait(&app, pane, |l| {
         l.find_by_name("deux".as_ref()).is_some() && l.find_by_name("two".as_ref()).is_none()
@@ -103,6 +104,13 @@ fn watcher_reports_create_rename_and_delete() {
     let deux = listed(&app, pane, "deux");
     assert_eq!(deux.file(), two.file(), "the file survives a rename");
     assert_eq!(selected(&app, pane), [deux.id], "and its row its selection");
+    // What keeps the entry beside the pane follows it too.
+    let ws = app.workspace.read();
+    let (now, renames) = ws.pane(pane).unwrap().renames_since(seen);
+    assert_eq!(renames.collect::<Vec<_>>(), [(two.id, deux.id)]);
+    assert_eq!(now, seen + 1);
+    assert_eq!(ws.pane(pane).unwrap().renames_since(now).1.count(), 0);
+    drop(ws);
 
     std::fs::remove_file(dir.join("deux")).unwrap();
     wait(&app, pane, |l| l.len() == 1);

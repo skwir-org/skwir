@@ -17226,3 +17226,65 @@ and nothing for a file. Built for both, as the views draw an entry
   over its folder, one photo changed: `photos` a folder, `photo2.jpg` a
   picture's icon.
 
+
+## 2026-11-14: The player follows its tracks, and lets go before a plan takes them
+
+ADR-136, on the user's answer: deleting the file playing should close
+the player, moving it should move the player with it, on a remote as
+well. Chosen as recommended: a deletion ends the track as its end does
+(Play next or Shuffle: the next; Stop: the player closes).
+
+- **What was wrong**: the pin knew its tracks by path alone. A rename
+  or a move left the dock, the mark, Reveal, the queue and the desktop's
+  controls on the old path; a deletion played on to the end (the
+  helper's file open), the queue failing on what went; a rename of the
+  file the panel played stopped it, or showed a second player.
+- **Why closing comes first**: GStreamer's `filesrc` opens with GLib's
+  `g_open`, on Windows the C runtime's `_wopen`, without
+  `FILE_SHARE_DELETE` (read in GLib 2.88.3's `gstdio.c` and GStreamer
+  1.28.7's `gstfilesrc.c`): there the file playing cannot be removed,
+  moved or replaced. sshfs keeps a file removed through its mount while
+  open as `.fuse_hidden…` (libfuse's default without `hard_remove`).
+- **Core**: `fs::kept_open` (what this process keeps open, with how to
+  close it; the guard dropped once closed); `Executor::apply_plan`
+  lets go of what its steps take (`let_go_of_kept`, `takes_away`)
+  before its first step, two seconds at most, and tells its observers
+  even of nothing changed; `media::Update::taken`; a pane's renames kept
+  for what follows them beside it (`Pane::renames_since`, the latest
+  1024).
+- **Platform**: the media session's manager keeps the file it plays and
+  the one queued, ends its worker when a plan takes either, drops them
+  once the worker is reaped, and says which plan took it.
+- **UI**: an observer per window follows the pin's track and queue
+  through each plan's changes on the executor's thread (`op::Follow`),
+  the queue shared as `Arc<[PathBuf]>`; `Pinned::follow` (moved: plays
+  on; gone: the next of those left, or the player closes; a shuffle's
+  order kept); a track taken and left, or moved, opened again where it
+  stood, playing or paused (`Taken`, `Opened::resume`); another
+  program's renames and removals where a pane shows the folder
+  (`follow_outside`); the panel's key moved to a renamed file it plays.
+- **Found in the window, fixed**: a rename closed the player. The
+  plan's end moved the pin to the new name before the folder listed it,
+  and the name not listed read as removed. Only a name listed, then
+  gone, now reads so.
+- **Checked**: tests in core (what is kept open: let go of, waited
+  for no longer than asked, gone on to another file; a plan lets go
+  before a deletion, the file still there when told, not before a
+  rename off Windows, and tells its observers when cancelled after;
+  a pane's renames read since a point), in the platform (a plan taking
+  the file played, or the one queued, ends the session first: the
+  worker reaped before the plan goes on, `taken` said, no error) and in
+  the UI (the pin follows its tracks; a track taken away ends as at its
+  end, along a shuffle). Core and platform 1299 passed, the UI 688;
+  clippy on the three for Linux and Windows.
+- **In the window** (debug build, Xvfb :87, a PulseAudio of its own
+  with a null sink, a bus and XDG folders of its own, `player.now` read
+  over the control socket): five synthetic tracks, the second played.
+  F2 rename: plays on (2.2 s, then 7.1 s), the strip and the mark under
+  the new name. Cut and pasted into another folder: plays on there,
+  marked there. Undo: back, playing. Delete with Stop: the player
+  closed, nothing said. Undo, Play next on, Delete: the third played.
+  `mv` from a shell: followed; `rm`: the fourth played. The panel
+  showing the track, F2: played on (15 s, then 25 s), one helper
+  running. Shift+Delete of the playing track and the one after it: the
+  player closed. No warning in the log. A remote's mount was not tried.

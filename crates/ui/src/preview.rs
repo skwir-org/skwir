@@ -2622,6 +2622,32 @@ impl Shell {
             && self.preview.key.as_ref() == Some(&key)
             && self.preview.phase != PreviewPhase::Queued
             && self.preview.stand_in_asked != self.stand_ins_wanted();
+        // The file the panel plays, renamed (by a plan or by another
+        // program): the same file, which plays on under its new name, the
+        // preview kept (ADR-136). A track gone into from a playlist is the
+        // playlist's.
+        let renamed_playing = self.preview.media.session.is_some()
+            && self.preview.nested.is_empty()
+            && self.preview.key.as_ref().is_some_and(|before| {
+                *before != key
+                    && before.pane == key.pane
+                    && before.id.file == key.id.file
+                    && before.content.as_ref().map(|c| c.id) == key.content.as_ref().map(|c| c.id)
+            });
+        if renamed_playing {
+            if let Some(autoplay) = &mut self.preview.autoplay
+                && self
+                    .preview
+                    .key
+                    .as_ref()
+                    .is_some_and(|before| before.id == autoplay.id)
+            {
+                autoplay.id = key.id;
+            }
+            self.preview.key = Some(key.clone());
+            self.preview.info.name = entry.name_str().into_owned();
+            cx.notify();
+        }
         if self.preview.key.as_ref() != Some(&key) || stale || restand {
             if self
                 .preview

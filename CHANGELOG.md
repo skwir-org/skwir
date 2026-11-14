@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **The player follows the file it plays.** Renamed or moved, by Skwir
+  or by another program in a folder a window shows, the track plays on
+  under its new name, its mark and the desktop's controls with it.
+  Deleted, it ends as if it had played to its end: with Play next or
+  Shuffle the next track plays, otherwise the player closes. Before a
+  deletion the player closes the file, so the deletion is never refused
+  or left half done for a file in use (Windows, some network folders).
+  The preview's player plays on through a rename too.
 - **Films play on in the AppImage and the Linux tarball**: after a pause and
   a seek (or peek), a film could stop on one frame for good, as in 0.4.0.
   The PulseAudio client library they carried, Ubuntu 22.04's, did this

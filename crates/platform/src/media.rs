@@ -10,8 +10,10 @@ use anyhow::Context;
 use parking_lot::Mutex;
 use skwir_core::{
     CancelToken,
+    fs::kept_open::{KeptOpen, keep_open},
     location::Waker,
     media::{Control, Frame, MAX_MESSAGE, MediaSession, PIXELS_FILE, Reply, Request, Update},
+    op::PlanId,
 };
 use std::{
     fs::OpenOptions,
@@ -216,16 +218,25 @@ impl WorkerSession {
             .name("skwir-video-session".into())
             .spawn(move || {
                 let helper = executable.clone();
+                // The file played is kept open until the worker is gone,
+                // and let go of when a plan takes it (ADR-136).
+                let mut kept = Kept::new(path.clone());
                 let result = manage(
                     executable,
                     path,
                     tuning,
                     &manager_lifetime,
+                    &mut kept,
                     &manager_shared,
                     &rx,
                     &startup,
                 );
-                if let Err(error) = result {
+                // The worker reaped: the plan waiting for its file goes on.
+                let taken = kept.taken();
+                drop(kept);
+                if let Some(plan) = taken {
+                    manager_shared.publish(|u| u.taken = Some(plan));
+                } else if let Err(error) = result {
                     let error = crate::process::explain(&helper, &manager_lifetime, error);
                     let message = format!("{error:#}");
                     let _ = startup.try_send(Err(anyhow::anyhow!("{message}")));
@@ -293,11 +304,59 @@ pub struct Tuning {
     pub replay_gain: ReplayGain,
 }
 
+/// The files a session's worker keeps open (`fs::kept_open`): the one it
+/// plays, and the one queued after it, which it opens as the first nears
+/// its end. A plan that takes either ends the session, told which plan.
+struct Kept {
+    playing: KeptOpen,
+    queued: Option<KeptOpen>,
+    let_go: CancelToken,
+    taken: Arc<Mutex<Option<PlanId>>>,
+}
+
+impl Kept {
+    fn new(path: PathBuf) -> Self {
+        let let_go = CancelToken::new();
+        let taken = Arc::new(Mutex::new(None));
+        let (ends, by) = (let_go.clone(), Arc::clone(&taken));
+        let playing = keep_open(path, move |plan| {
+            by.lock().get_or_insert(plan);
+            ends.cancel();
+        });
+        Kept {
+            playing,
+            queued: None,
+            let_go,
+            taken,
+        }
+    }
+
+    /// The file to go on with, or none.
+    fn queue(&mut self, path: Option<&PathBuf>) {
+        self.queued = path.and_then(|path| self.playing.also(path.clone()));
+    }
+
+    /// The worker went on to the file queued.
+    fn advanced(&mut self, path: &std::path::Path) {
+        self.playing.now_at(path.to_path_buf());
+        self.queued = None;
+    }
+
+    /// The plan that took the file, if one did.
+    fn taken(&self) -> Option<PlanId> {
+        *self.taken.lock()
+    }
+}
+
+// Each is what the manager works with; a struct of them would be
+// unpacked at its one call.
+#[allow(clippy::too_many_arguments)]
 fn manage(
     executable: PathBuf,
     path: PathBuf,
     tuning: Tuning,
     lifetime: &CancelToken,
+    kept: &mut Kept,
     shared: &Shared,
     commands: &crossbeam_channel::Receiver<Request>,
     startup: &crossbeam_channel::Sender<anyhow::Result<bool>>,
@@ -344,16 +403,20 @@ fn manage(
     command.env("MALLOC_ARENA_MAX", "2");
     let mut worker = LineChannel::<Reply>::spawn(&mut command, MAX_MESSAGE, "skwir-media-worker")?;
     let cancelled = lifetime.subscribe();
+    let let_go = kept.let_go.subscribe();
     // Fires once; after the greeting it is simply never selected again.
     let deadline = crossbeam_channel::at(Instant::now() + STARTUP_TIMEOUT);
     let mut ready = false;
     // Buffers the UI has not taken come back here, so a UI slower than the
     // decoder recycles one allocation instead of allocating per frame.
     let mut spare: Vec<u8> = Vec::new();
-    while !lifetime.is_cancelled() {
+    while !lifetime.is_cancelled() && !kept.let_go.is_cancelled() {
         let reply = crossbeam_channel::select! {
             recv(commands) -> request => {
                 let Ok(request) = request else { break; };
+                if let Request::Next { path } = &request {
+                    kept.queue(path.as_ref());
+                }
                 worker.send(&request)?;
                 continue;
             }
@@ -367,6 +430,7 @@ fn manage(
                 result?
             },
             recv(cancelled.receiver()) -> _ => break,
+            recv(let_go.receiver()) -> _ => break,
             recv(deadline) -> _ => {
                 anyhow::ensure!(ready, "video worker timed out");
                 continue;
@@ -390,7 +454,10 @@ fn manage(
                 message,
             } => shared.notice(generation, message),
             Reply::Error(error) => anyhow::bail!("{error}"),
-            Reply::Advanced { path } => shared.advanced(path),
+            Reply::Advanced { path } => {
+                kept.advanced(&path);
+                shared.advanced(path);
+            }
             Reply::State {
                 generation,
                 playback,
@@ -515,6 +582,54 @@ mod tests {
             if let Some(session) = session {
                 assert!(session.control(Control::Play(true)).is_err());
             }
+        }
+    }
+    /// A plan that takes the file played, or the one queued after it, ends
+    /// the session (ADR-136): the worker is gone before the plan goes on,
+    /// and the session says which plan took it, not that it failed.
+    #[test]
+    fn a_plan_taking_the_file_played_ends_the_session_first() {
+        for queued in [false, true] {
+            let (root, source, worker) =
+                fixture("printf '%s\\n' '\"Ready\"'\nwhile IFS= read -r line; do :; done\n");
+            let session = WorkerSession::open_with_worker(
+                worker,
+                source.clone(),
+                &CancelToken::new(),
+                Arc::new(|| {}),
+            )
+            .unwrap()
+            .unwrap();
+            let pid = std::fs::read_to_string(format!("{}.pid", source.display())).unwrap();
+            let next = root.path().join("the next one's.ogg");
+            let taken = if queued {
+                session.play_next(Some(next.clone())).unwrap();
+                next
+            } else {
+                source.clone()
+            };
+            let plan = PlanId(41);
+            let mut n = 0;
+            until(|| {
+                // The queued file is kept once the manager has passed it on.
+                n = skwir_core::fs::kept_open::let_go_of(
+                    plan,
+                    |path| path == taken,
+                    Duration::from_secs(3),
+                );
+                n == 1
+            });
+            assert!(
+                !std::path::Path::new(&format!("/proc/{pid}")).exists(),
+                "reaped before the plan goes on"
+            );
+            let mut update = Update::default();
+            until(|| {
+                update = session.take_update();
+                !update.is_empty()
+            });
+            assert_eq!((update.taken, update.error), (Some(plan), None));
+            assert!(session.control(Control::Play(true)).is_err());
         }
     }
     #[test]

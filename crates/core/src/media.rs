@@ -190,6 +190,10 @@ pub struct Update {
     pub notice: Option<String>,
     /// Fatal: the session has ended and its controls must be withdrawn.
     pub error: Option<String>,
+    /// The session let go of its file for a plan that takes it away
+    /// (`fs::kept_open`, ADR-136), and has ended: the plan's end, told to
+    /// its observers by this id, says where the file went.
+    pub taken: Option<crate::op::PlanId>,
 }
 impl Update {
     pub fn is_empty(&self) -> bool {
@@ -198,6 +202,7 @@ impl Update {
             && self.advanced.is_none()
             && self.notice.is_none()
             && self.error.is_none()
+            && self.taken.is_none()
     }
 }
 pub trait MediaSession: Send + Sync {

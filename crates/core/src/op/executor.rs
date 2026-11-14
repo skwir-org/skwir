@@ -4470,6 +4470,11 @@ impl Executor {
         let mut came = Vec::with_capacity(plan.steps.len());
         let mut first_applied = None;
         let mut acted_on = ActedOn::default();
+        // What this process keeps open that the steps take away (what
+        // plays) is closed first (ADR-136), and the plan tells its
+        // observers, even of nothing changed, so the holder takes it up
+        // again or goes on without it.
+        let let_go = let_go_of_kept(&plan.steps, origin);
         // Its speed is measured from here, its sizing and checks done.
         meter.begin(total);
         for (i, step) in plan.steps.iter().enumerate() {
@@ -4699,12 +4704,57 @@ impl Executor {
             ran: meter.ran(),
             tally,
         });
-        if !held.is_empty() {
+        if !held.is_empty() || let_go > 0 {
             for observer in self.observers.all() {
                 observer(origin, &held);
             }
         }
         result
+    }
+}
+
+/// How long a plan waits for what this process keeps open to be closed
+/// before it takes it (`fs::kept_open`): a player's helper ends within
+/// milliseconds; one slower is left to it, its step failing as it would.
+const LET_GO_WITHIN: Duration = Duration::from_secs(2);
+
+/// Let go of the files this process keeps open that `steps` take away
+/// (ADR-136), telling their holders `plan`; how many. Read only while one
+/// is kept: most plans run while nothing plays.
+fn let_go_of_kept(steps: &[Box<dyn Operation>], plan: PlanId) -> usize {
+    if !crate::fs::kept_open::any() {
+        return 0;
+    }
+    let changes: Vec<Change> = steps.iter().map(|step| step.describe()).collect();
+    let taken: HashSet<&Path> = changes.iter().flat_map(takes_away).collect();
+    if taken.is_empty() {
+        return 0;
+    }
+    crate::fs::kept_open::let_go_of(
+        plan,
+        |path| path.ancestors().any(|above| taken.contains(above)),
+        LET_GO_WITHIN,
+    )
+}
+
+/// What a change takes from under whoever keeps it open: what it removes,
+/// and on Windows what it moves or puts another file in the place of too,
+/// which the system refuses for a file open without the sharing that
+/// allows it: the C runtime's `open`, through which the media helper's
+/// reader opens its file.
+/// Elsewhere a file moved, or replaced, stays open where it went.
+fn takes_away(change: &Change) -> Vec<&Path> {
+    match change {
+        Change::Trash { path } | Change::Delete { path } | Change::Remove { path } => {
+            vec![path.as_path()]
+        }
+        #[cfg(windows)]
+        Change::Rename { from, to } | Change::Move { from, to } => vec![from.as_path(), to],
+        #[cfg(windows)]
+        Change::Swap { a, b } => vec![a.as_path(), b],
+        #[cfg(windows)]
+        Change::Copy { to, .. } | Change::Link { to, .. } => vec![to.as_path()],
+        _ => Vec::new(),
     }
 }
 
@@ -7089,6 +7139,90 @@ mod tests {
         let again = executor.execute_blocking(&plan, &CancelToken::new());
         assert_eq!((again.applied, again.skipped), (0, 200), "already done");
         assert_eq!(READ.load(Ordering::Relaxed) - before, 1, "one listing");
+    }
+
+    /// What this process keeps open that a plan removes is let go of
+    /// before the step runs, the plan waiting for it to be closed, and the
+    /// plan tells its observers even where it changed nothing, so the
+    /// holder takes it up again. Elsewhere than on Windows a rename leaves
+    /// it open (ADR-136).
+    #[test]
+    fn what_is_kept_open_is_let_go_of_before_a_plan_removes_it() {
+        use crate::fs::kept_open::keep_open;
+        let base = dirs::home_dir().unwrap().join(".cache/skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let tmp = tempfile::tempdir_in(base).unwrap();
+        let song = tmp.path().join("it's a song.ogg");
+        std::fs::write(&song, b"").unwrap();
+        let (told, heard) = std::sync::mpsc::channel();
+        let kept = Arc::new(parking_lot::Mutex::new(None));
+        let closes = Arc::clone(&kept);
+        let at = song.clone();
+        *kept.lock() = Some(keep_open(song.clone(), move |plan| {
+            told.send((plan, at.exists())).unwrap();
+            closes.lock().take();
+        }));
+        let observed = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let sink = Arc::clone(&observed);
+        let executor = Executor::new(Scheduler::new(2));
+        executor.observe_plans(
+            "test",
+            Arc::new(move |plan, changes| sink.lock().push((plan, changes.len()))),
+        );
+
+        #[cfg(not(windows))]
+        {
+            let rename = Plan::with_steps(
+                "Rename",
+                vec![Box::new(super::super::Rename {
+                    entry: super::super::EntryRef::from_path(&song).unwrap(),
+                    new_name: "it's the song.ogg".into(),
+                }) as Box<dyn Operation>],
+            );
+            let done = executor.execute_blocking(&rename, &CancelToken::new());
+            assert_eq!((done.applied, done.error), (1, None));
+            assert!(heard.try_recv().is_err(), "a rename leaves it open");
+            assert!(kept.lock().is_some());
+            std::fs::rename(tmp.path().join("it's the song.ogg"), &song).unwrap();
+            observed.lock().clear();
+        }
+
+        let delete = Plan::with_steps(
+            "Delete",
+            vec![Box::new(super::super::Delete {
+                entry: super::super::EntryRef::from_path(&song).unwrap(),
+            }) as Box<dyn Operation>],
+        );
+        let done = executor.execute_blocking(&delete, &CancelToken::new());
+        assert_eq!((done.applied, done.error), (1, None));
+        assert_eq!(
+            heard.try_recv().unwrap(),
+            (delete.id, true),
+            "before the step"
+        );
+        assert!(kept.lock().is_none() && !song.exists());
+        assert_eq!(*observed.lock(), [(delete.id, 1)]);
+        observed.lock().clear();
+
+        // Kept open again, and the plan cancelled once it let go: it
+        // changed nothing, and tells so all the same, by its id.
+        std::fs::write(&song, b"").unwrap();
+        let cancel = CancelToken::new();
+        let (closes, cancels) = (Arc::clone(&kept), cancel.clone());
+        *kept.lock() = Some(keep_open(song.clone(), move |_| {
+            cancels.cancel();
+            closes.lock().take();
+        }));
+        let again = Plan::with_steps(
+            "Delete",
+            vec![Box::new(super::super::Delete {
+                entry: super::super::EntryRef::from_path(&song).unwrap(),
+            }) as Box<dyn Operation>],
+        );
+        let done = executor.execute_blocking(&again, &cancel);
+        assert_eq!((done.applied, done.cancelled), (0, true));
+        assert!(song.exists());
+        assert_eq!(*observed.lock(), [(again.id, 0)]);
     }
 
     /// A run counts what it found done already apart from what it did, by

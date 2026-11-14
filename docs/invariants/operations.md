@@ -192,6 +192,19 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   copy within that, never at the end of the file it is in: on a slow
   server, a large file's end may be minutes away, and what a copy reads
   after Cancel holds the server's connection from the next plan.
+- **What this process keeps open, a plan lets go of first** (ADR-136,
+  `fs::kept_open`). Before its first step, a plan closes what is kept
+  open at or below what its steps remove (trash, delete, remove), and on
+  Windows also what they move, rename, swap or put another file in the
+  place of: there a file open for reading cannot be, as GStreamer opens
+  it; through an sshfs mount one removed while open stays on the server.
+  It waits for each to be closed (`LET_GO_WITHIN`, 2 s), and is looked
+  at only while something is kept open. What keeps a file open
+  registers it (`keep_open`) with how to close it, on the plan's thread
+  and without waiting for the window, and drops its guard once the file
+  is closed, not when asked. A plan that let go of one tells its
+  observers even when it changed nothing (`observe_plans`, by the id
+  they always get), so the holder takes it up again.
 - A plan is told finished (`ExecEvent::Finished`) once it let go of
   what it held: its staging folders removed (its context dropped, a
   round trip a name on a server) before, while its card still says it

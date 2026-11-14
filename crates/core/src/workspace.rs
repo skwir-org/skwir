@@ -1,6 +1,6 @@
 //! Panes, selection, and focus: the state every view and command reads.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -1162,7 +1162,24 @@ pub struct Pane {
     filter_replaced_at: Option<std::time::Instant>,
     /// A search laid out as a tree.
     found: FoundTree,
+    /// The renames the pane followed (`follow_renamed`), each id before
+    /// and after: what keeps one of its entries elsewhere (the window's
+    /// player) reads those since it last looked (`renames_since`).
+    renames: Renames,
 }
+
+/// The renames a pane followed, the latest [`RENAMES_KEPT`], and how many it
+/// ever followed, which numbers them.
+#[derive(Debug, Default)]
+struct Renames {
+    kept: VecDeque<(EntryId, EntryId)>,
+    followed: u64,
+}
+
+/// The renames a pane keeps for what follows them from beside it: one
+/// reader that looks less often than a folder renames this many loses the
+/// oldest.
+const RENAMES_KEPT: usize = 1024;
 
 /// A search laid out as the tree of its folders (`found_tree`), while a
 /// view shows it so.
@@ -2076,6 +2093,7 @@ impl Pane {
             leading: Leading::default(),
             filter_replaced_at: None,
             found: FoundTree::default(),
+            renames: Renames::default(),
         }
     }
 
@@ -3675,6 +3693,10 @@ impl Pane {
         if let Some(restore) = &mut self.restore {
             restore.rekey(&renamed);
         }
+        self.renames.followed += renamed.len() as u64;
+        self.renames.kept.extend(renamed.iter().copied());
+        let over = self.renames.kept.len().saturating_sub(RENAMES_KEPT);
+        self.renames.kept.drain(..over);
         self.leading.rekey(&renamed);
         let mut moved = false;
         for o in &mut self.expanded {
@@ -4309,6 +4331,17 @@ impl Pane {
             .flat_map(|l| l.named_file(name, file))
             .find(|e| self.path_of(e.id).as_deref() == Some(path))
             .or_else(|| self.lent_at(file, path))
+    }
+
+    /// The renames the pane followed after the first `seen` it ever
+    /// followed (each id before and after, in order), and how many it has
+    /// followed now, to ask from next time. Those older than the latest
+    /// [`RENAMES_KEPT`] are gone.
+    pub fn renames_since(&self, seen: u64) -> (u64, impl Iterator<Item = (EntryId, EntryId)> + '_) {
+        let Renames { kept, followed } = &self.renames;
+        let first_kept = followed - kept.len() as u64;
+        let skip = usize::try_from(seen.saturating_sub(first_kept)).unwrap_or(usize::MAX);
+        (*followed, kept.iter().copied().skip(skip))
     }
 
     /// The listing (`Listing::id`) that holds entry `id`: the shown one's,

@@ -16,16 +16,22 @@
 //! desktop's media keys through a plugin, a script, an agent) is taken here
 //! when the shell wakes. Nothing calls into the UI from another thread.
 use crate::sizes::sized;
+use std::collections::{HashMap, VecDeque};
 use std::hash::{Hash, Hasher};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use gpui::{AnyElement, Context, RenderImage, Window, div, prelude::*};
 use skwir_core::media::{Control, MediaSession, Playback};
 use skwir_core::playing::{NowPlaying, PlayerRequest};
 use skwir_core::preview::PreviewRequest;
-use skwir_core::{CancelToken, op::EntryRef, scheduler::Priority};
+use skwir_core::{
+    CancelToken,
+    op::{EntryRef, PlanId},
+    scheduler::Priority,
+};
 
 use crate::shell::Shell;
 use crate::theme::Theme;
@@ -162,7 +168,8 @@ pub struct Pinned {
     pub state: Playback,
     pub path: PathBuf,
     /// The tracks Next and Previous walk: the folder's, or the playlist's.
-    pub queue: Vec<PathBuf>,
+    /// Shared with what follows them through plans (`Watched`).
+    pub queue: Arc<[PathBuf]>,
     pub index: usize,
     /// The order a shuffle walks `queue` in, as indices; empty unless
     /// shuffling (`Continue::Shuffle`).
@@ -181,6 +188,37 @@ pub struct Pinned {
     /// The track's file icon, in the place of a cover it has none of: the
     /// icon of the track it was looked up for, so it follows the track.
     pub icon: Option<(PathBuf, Option<crate::icons::Pic>)>,
+    /// A plan took the track's file (ADR-136), and its session ended:
+    /// where it stood, until the plan's end says where the file went.
+    taken: Option<Taken>,
+    /// The session ended under it, a plan having taken its file: a track
+    /// that then fails to open leaves no pin of a dead session.
+    ended: bool,
+}
+
+/// Where the track a plan took stood, to take it up again there once the
+/// plan has left it, or moved it (on Windows, what moves an open file
+/// closes it first).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Taken {
+    plan: PlanId,
+    at: f64,
+    playing: bool,
+}
+
+/// What became of the track played, through a plan or another program's
+/// change (`Pinned::follow`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Fate {
+    /// Where it was.
+    Same,
+    /// Moved or renamed: the pin's path is where it went.
+    Moved,
+    /// Taken away, and the track at this index of the queue follows it, as
+    /// it would have had it played to its end.
+    Next(usize),
+    /// Taken away, and nothing follows it.
+    Gone,
 }
 
 impl Drop for Pinned {
@@ -249,6 +287,77 @@ impl Pinned {
             self.queued = None;
         }
     }
+
+    /// Follow where `went` says its tracks went (each path moved, or taken
+    /// away: `None`): the queue goes with them and without those taken
+    /// away, a shuffle keeping its order of those left, and the track to go
+    /// on with is told again, by where it is now. The track played, taken
+    /// away, ends as if it had played to its end: what `mode` says follows
+    /// it is the next of those left.
+    fn follow(&mut self, went: &HashMap<PathBuf, Option<PathBuf>>, mode: Continue) -> Fate {
+        let gone = |path: &Path| matches!(went.get(path), Some(None));
+        let playing_gone = gone(&self.path);
+        let next = if playing_gone && mode != Continue::Stop {
+            let mut at = self.index;
+            let mut found = None;
+            for _ in 0..self.queue.len() {
+                let Some(step) = step(self.queue.len(), &self.order, at, 1, mode) else {
+                    break;
+                };
+                if !gone(&self.queue[step]) {
+                    found = Some(step);
+                    break;
+                }
+                at = step;
+            }
+            found
+        } else {
+            None
+        };
+        // Where each track of the queue stands in the new one, if anywhere.
+        let mut kept_at = Vec::with_capacity(self.queue.len());
+        let mut queue = Vec::with_capacity(self.queue.len());
+        for track in self.queue.iter() {
+            match went.get(track) {
+                Some(None) => kept_at.push(None),
+                Some(Some(to)) => {
+                    kept_at.push(Some(queue.len()));
+                    queue.push(to.clone());
+                }
+                None => {
+                    kept_at.push(Some(queue.len()));
+                    queue.push(track.clone());
+                }
+            }
+        }
+        let new_index = |old: usize| kept_at.get(old).copied().flatten();
+        self.order = self
+            .order
+            .iter()
+            .filter_map(|&old| new_index(old))
+            .collect();
+        let index = new_index(self.index);
+        let next = next.and_then(new_index);
+        self.queue = queue.into();
+        self.queued = None;
+        if playing_gone {
+            return match next {
+                Some(next) => {
+                    self.index = next;
+                    Fate::Next(next)
+                }
+                None => Fate::Gone,
+            };
+        }
+        self.index = index.unwrap_or(self.index.min(self.queue.len().saturating_sub(1)));
+        match went.get(&self.path) {
+            Some(Some(to)) if *to != self.path => {
+                self.path.clone_from(to);
+                Fate::Moved
+            }
+            _ => Fate::Same,
+        }
+    }
 }
 
 /// A track opened for the pin, back from its worker.
@@ -264,6 +373,8 @@ pub struct Opened {
     /// Started from the files (`Shell::start_pin`): the queue it was
     /// resolved to and where the track stands in it, a pin of its own.
     start: Option<(Vec<PathBuf>, usize)>,
+    /// Taken up again where a plan took it (`Taken`).
+    resume: Option<Taken>,
 }
 
 /// What the preview registry plays `path` with, at `max_side`: the file it
@@ -426,7 +537,47 @@ pub struct PlayerState {
     /// `NowPlaying`, read at each sync, so every window marks the one that
     /// plays, whichever window plays it.
     marked: Option<Marked>,
+    /// What the pin plays and walks, for the plans' observer to follow
+    /// (`Shell::observe_plans`), and what it found of each finished plan.
+    watched: Arc<parking_lot::Mutex<Option<Watched>>>,
+    follow_tx: flume::Sender<Followed>,
+    follow_rx: flume::Receiver<Followed>,
+    /// The observer's owner, once registered: withdrawn with the window.
+    observing: Option<String>,
+    /// The plans lately finished, for a session that says a plan took its
+    /// file only after the plan's end was told (`Shell::pin_taken`).
+    finished: VecDeque<PlanId>,
+    /// What another program did, as the panes showing the pin's folder
+    /// tell it (`Shell::follow_outside`): the renames each pane followed
+    /// that were read, and the file the pin's name was last listed as.
+    renames_seen: HashMap<skwir_core::workspace::PaneId, u64>,
+    listed_as: Option<(PathBuf, skwir_core::FileId)>,
+    /// The pin's path and the panes' names as last looked at, and whether
+    /// its name went with a plan still under way there.
+    outside_at: Option<(PathBuf, u64)>,
+    outside_waits: bool,
 }
+
+/// What the pin plays and the queue it walks, as the plans' observer
+/// follows them, on the executor's thread.
+#[derive(Clone)]
+struct Watched {
+    path: PathBuf,
+    queue: Arc<[PathBuf]>,
+}
+
+/// What a finished plan did to the pin's tracks: each it moved, and
+/// where to, or took away (`None`).
+struct Followed {
+    plan: PlanId,
+    went: Vec<(PathBuf, Option<PathBuf>)>,
+}
+
+/// The plans lately finished that a window remembers (`PlayerState::finished`).
+const FINISHED_KEPT: usize = 16;
+
+/// Numbers each window's observer of plans, its owner's name.
+static OBSERVERS: AtomicU64 = AtomicU64::new(1);
 
 /// What plays, as the views find it among their entries: by name first,
 /// then by path, so a row that is not it costs a comparison of names.
@@ -472,6 +623,7 @@ impl Default for PlayerState {
         let (tx, rx) = flume::unbounded();
         let (queue_tx, queue_rx) = flume::unbounded();
         let (cover_tx, cover_rx) = flume::unbounded();
+        let (follow_tx, follow_rx) = flume::unbounded();
         PlayerState {
             cover: None,
             cover_tx,
@@ -495,6 +647,15 @@ impl Default for PlayerState {
             opening: None,
             covering: None,
             marked: None,
+            watched: Arc::default(),
+            follow_tx,
+            follow_rx,
+            observing: None,
+            finished: VecDeque::new(),
+            renames_seen: HashMap::new(),
+            listed_as: None,
+            outside_at: None,
+            outside_waits: false,
         }
     }
 }
@@ -588,6 +749,292 @@ impl Shell {
         }
     }
 
+    /// A track opened for a pin whose session a plan ended could not be
+    /// played: no pin is left with a dead session.
+    fn let_go_of_ended_pin(&mut self) {
+        if self
+            .player
+            .pinned
+            .as_ref()
+            .is_some_and(|pinned| pinned.ended)
+        {
+            self.unpin_dead();
+        }
+    }
+
+    /// The pin's session let go of its file for `plan` (ADR-136) and
+    /// ended: the pin waits where it stood for the plan's end, which says
+    /// where the file went, or has said it already.
+    pub(crate) fn pin_taken(&mut self, plan: PlanId, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(pinned) = &mut self.player.pinned else {
+            return;
+        };
+        pinned.ended = true;
+        pinned.taken = Some(Taken {
+            plan,
+            at: pinned.state.position,
+            playing: pinned.state.playing(),
+        });
+        pinned.state.status = skwir_core::media::PlaybackStatus::Paused;
+        cx.notify();
+        if self.player.finished.contains(&plan) {
+            self.pin_follows(&HashMap::new(), Some(plan), window, cx);
+        }
+    }
+
+    /// The pin follows where its tracks went (`went`, from `plan`'s end, or
+    /// from another program's change as a pane told it): the track moved
+    /// plays on where it went; taken away, it ends as if it had played to
+    /// its end, what Continue says following it, else the player closes.
+    /// A track the plan took and left, or moved, is taken up again where
+    /// it stood.
+    fn pin_follows(
+        &mut self,
+        went: &HashMap<PathBuf, Option<PathBuf>>,
+        plan: Option<PlanId>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let mode = self.prefs.player.continue_with;
+        let Some(pinned) = &mut self.player.pinned else {
+            return;
+        };
+        let fate = if went.is_empty() {
+            Fate::Same
+        } else {
+            pinned.follow(went, mode)
+        };
+        let resume = pinned.taken.filter(|taken| Some(taken.plan) == plan);
+        let path = pinned.path.clone();
+        match fate {
+            Fate::Gone => {
+                // The panel showing this very session keeps it as its own
+                // preview, stopped: its entry is gone, and so does it.
+                if self.preview_is_pinned() {
+                    if let Some(session) = &self.preview.media.session {
+                        let _ = session.control(Control::Play(false));
+                    }
+                    self.unpin_preview();
+                } else {
+                    self.unpin_dead();
+                }
+                self.player.listed_as = None;
+            }
+            Fate::Next(index) => {
+                if let Some(pinned) = &mut self.player.pinned {
+                    pinned.taken = None;
+                }
+                // As a step does: what was opening is late.
+                self.player.generation += 1;
+                self.pinned_open(index);
+            }
+            Fate::Moved | Fate::Same => {
+                if let Some(resume) = resume {
+                    if let Some(pinned) = &mut self.player.pinned {
+                        pinned.taken = None;
+                    }
+                    self.player.generation += 1;
+                    self.open_for_pin(path.clone(), Some(resume));
+                }
+                if fate == Fate::Moved {
+                    // What the desktop shows of it follows it too.
+                    if let Some((track, _)) = &mut self.player.cover
+                        && let Some(Some(to)) = went.get(track.as_path())
+                    {
+                        track.clone_from(to);
+                    }
+                }
+            }
+        }
+        let _ = window;
+        cx.notify();
+    }
+
+    /// Follow what the pin plays and walks through each plan that ends
+    /// (ADR-136), whatever asked it (the files, an agent, an undo): an
+    /// observer of the executor's, on its thread, follows them through the
+    /// plan's changes there and sends what it moved or took away. Told of
+    /// every plan while a pin is, so one that took the pin's file and
+    /// changed nothing takes it up again. Registered with the first pin.
+    fn observe_plans(&mut self) {
+        if self.player.observing.is_some() {
+            return;
+        }
+        let owner = format!("ui.player.{}", OBSERVERS.fetch_add(1, Ordering::Relaxed));
+        let watched = Arc::clone(&self.player.watched);
+        let tx = self.player.follow_tx.clone();
+        let wake = self.waker();
+        self.app.executor.observe_plans(
+            &owner,
+            Arc::new(move |plan, changes| {
+                let Some(Watched { path, queue }) = watched.lock().clone() else {
+                    return;
+                };
+                let follow = skwir_core::op::Follow::new(changes);
+                let went = std::iter::once(&path)
+                    .chain(queue.iter())
+                    .filter_map(|track| {
+                        let through = follow.through(track);
+                        (through.moved || through.at.is_none()).then(|| (track.clone(), through.at))
+                    })
+                    .collect();
+                if tx.send(Followed { plan, went }).is_ok() {
+                    wake();
+                }
+            }),
+        );
+        self.player.observing = Some(owner);
+    }
+
+    /// What the plans that ended did to the pin's tracks, as the observer
+    /// sent it, followed in the order they ended.
+    fn take_followed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        while let Ok(Followed { plan, went }) = self.player.follow_rx.try_recv() {
+            self.player.finished.push_back(plan);
+            if self.player.finished.len() > FINISHED_KEPT {
+                self.player.finished.pop_front();
+            }
+            let went: HashMap<PathBuf, Option<PathBuf>> = went.into_iter().collect();
+            self.pin_follows(&went, Some(plan), window, cx);
+        }
+    }
+
+    /// What the plans' observer follows: the pin's track and queue, handed
+    /// over when they change (the queue is shared, not copied).
+    fn watch_pin(&mut self) {
+        let wanted = self.player.pinned.as_ref();
+        let mut watched = self.player.watched.lock();
+        let same = match (&*watched, wanted) {
+            (Some(watched), Some(pinned)) => {
+                watched.path == pinned.path && Arc::ptr_eq(&watched.queue, &pinned.queue)
+            }
+            (None, None) => true,
+            _ => false,
+        };
+        if !same {
+            *watched = wanted.map(|pinned| Watched {
+                path: pinned.path.clone(),
+                queue: Arc::clone(&pinned.queue),
+            });
+        }
+        let pinned = watched.is_some();
+        drop(watched);
+        if pinned {
+            self.observe_plans();
+        }
+    }
+
+    /// What another program did to the pin's track, as a pane showing its
+    /// folder tells it: renamed there, the pin follows it; gone from it,
+    /// with no plan of Skwir's under way there (whose end says where it
+    /// went), it was taken away, and ends as a track taken away does.
+    /// Elsewhere no watch says: the track plays on (ADR-136).
+    fn follow_outside(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(pinned) = self.player.pinned.as_ref().filter(|pinned| !pinned.ended) else {
+            self.player.renames_seen.clear();
+            return;
+        };
+        let path = pinned.path.clone();
+        let (Some(folder), Some(name)) = (path.parent(), path.file_name()) else {
+            return;
+        };
+        let app = Arc::clone(&self.app);
+        let ws = app.workspace.read();
+        // Looked at again only once a pane's names changed, or the pin
+        // went elsewhere, or while it waits for a plan to end.
+        let stamp = ws.panes().iter().fold(0u64, |stamp, pane| {
+            stamp.rotate_left(7)
+                ^ pane.listing.id()
+                ^ pane.listing.names_version()
+                ^ u64::from(pane.listing.is_complete())
+        });
+        if !self.player.outside_waits
+            && self
+                .player
+                .outside_at
+                .as_ref()
+                .is_some_and(|(at, seen)| *at == path && *seen == stamp)
+        {
+            return;
+        }
+        self.player.outside_at = Some((path.clone(), stamp));
+        self.player.outside_waits = false;
+        // The file its name was last listed as. A name not listed yet (a
+        // plan's end followed before the folder lists where it went) says
+        // nothing: only a name listed, then gone, was taken away.
+        let listed = self
+            .player
+            .listed_as
+            .as_ref()
+            .filter(|(at, _)| *at == path)
+            .map(|(_, file)| *file);
+        let mut moved_to = None;
+        let mut missing = false;
+        let mut seen_panes = Vec::new();
+        for pane in ws.panes() {
+            if pane
+                .location()
+                .and_then(skwir_core::Location::path)
+                .as_deref()
+                != Some(folder)
+                || pane.listing.is_held()
+                || !pane.listing.is_complete()
+            {
+                continue;
+            }
+            seen_panes.push(pane.id);
+            // Renames before the pane was first looked at are not the pin's.
+            let since = self
+                .player
+                .renames_seen
+                .get(&pane.id)
+                .copied()
+                .unwrap_or(u64::MAX);
+            let (now, renames) = pane.renames_since(since);
+            if let Some(file) = listed {
+                for (before, after) in renames {
+                    if before.file == file
+                        && let Some(to) = pane.path_of(after)
+                    {
+                        moved_to = Some(to);
+                    }
+                }
+            }
+            self.player.renames_seen.insert(pane.id, now);
+            match pane.listing.named(name).next() {
+                Some(entry) => self.player.listed_as = Some((path.clone(), entry.file())),
+                None => missing |= listed.is_some(),
+            }
+        }
+        drop(ws);
+        self.player
+            .renames_seen
+            .retain(|pane, _| seen_panes.contains(pane));
+        if let Some(to) = moved_to {
+            let went = HashMap::from([(path, Some(to))]);
+            return self.pin_follows(&went, None, window, cx);
+        }
+        if !missing {
+            return;
+        }
+        // A plan of Skwir's moving or removing it says so as it ends: asked
+        // before what ended is read, so none is missed between the two.
+        let under_way = !self.app.executor.under_way_in(folder).is_empty();
+        self.take_followed(window, cx);
+        let still = self
+            .player
+            .pinned
+            .as_ref()
+            .is_some_and(|pinned| pinned.path == path && !pinned.ended);
+        if still && under_way {
+            // Looked at again with each sync until the plan has ended.
+            self.player.outside_waits = true;
+        } else if still {
+            let went = HashMap::from([(path, None)]);
+            self.pin_follows(&went, None, window, cx);
+        }
+    }
+
     /// Whether the panel shows the pinned session itself.
     pub fn preview_is_pinned(&self) -> bool {
         match (&self.player.pinned, &self.preview.media.session) {
@@ -634,12 +1081,17 @@ impl Shell {
         }
     }
 
-    /// The window leaves: the desktop's controls let go of what it played.
+    /// The window leaves: the desktop's controls let go of what it played,
+    /// and the plans' ends are no longer followed for it.
     pub(crate) fn let_go_of_player(&mut self) {
         if self.player.published {
             self.player.published = false;
             self.app.player.publish(None);
         }
+        if let Some(owner) = self.player.observing.take() {
+            self.app.executor.remove_observers(&owner);
+        }
+        *self.player.watched.lock() = None;
     }
 
     /// Another window started playing (`finishing::claim_player`): what
@@ -712,7 +1164,7 @@ impl Shell {
             lifetime: self.preview.media.release_lifetime(),
             state: self.preview.media.state.clone(),
             path,
-            queue,
+            queue: queue.into(),
             index,
             order: Vec::new(),
             video,
@@ -724,6 +1176,8 @@ impl Shell {
             recycled: crate::media::Recycled::default(),
             scrub: None,
             icon: None,
+            taken: None,
+            ended: false,
         };
         // A step in the same folder keeps the shuffle it is walking.
         match self.player.pinned.as_ref() {
@@ -979,6 +1433,12 @@ impl Shell {
         else {
             return;
         };
+        self.open_for_pin(path, None);
+    }
+
+    /// Open `path` for the pin, on a worker: taken up at `resume` where a
+    /// plan took it, otherwise played from its start.
+    fn open_for_pin(&mut self, path: PathBuf, resume: Option<Taken>) {
         let generation = self.player.generation;
         let (previews, tx, wake) = (
             Arc::clone(&self.app.previews),
@@ -1013,6 +1473,7 @@ impl Shell {
                     session,
                     video,
                     start: None,
+                    resume,
                 });
                 wake();
             },
@@ -1079,6 +1540,7 @@ impl Shell {
                     session,
                     video,
                     start: Some((queue, index)),
+                    resume: None,
                 });
                 wake();
             },
@@ -1126,7 +1588,7 @@ impl Shell {
                 ..Playback::default()
             },
             path,
-            queue,
+            queue: queue.into(),
             index,
             order: Vec::new(),
             video,
@@ -1135,6 +1597,8 @@ impl Shell {
             recycled: crate::media::Recycled::default(),
             scrub: None,
             icon: None,
+            taken: None,
+            ended: false,
         };
         pin.reorder(self.prefs.player.continue_with);
         self.set_pin(Some(pin));
@@ -1345,7 +1809,7 @@ impl Shell {
                 && pinned.path == current
                 && let Some(index) = paths.iter().position(|path| *path == current)
             {
-                (pinned.queue, pinned.index) = (paths, index);
+                (pinned.queue, pinned.index) = (paths.into(), index);
                 pinned.reorder(self.prefs.player.continue_with);
                 cx.notify();
             }
@@ -1390,11 +1854,23 @@ impl Shell {
                     if !self.preview.window_shown {
                         let _ = session.control(Control::Frames(false));
                     }
-                    let _ = session.control(Control::Play(true));
+                    // Taken up where a plan took it, as it was: playing
+                    // or paused.
+                    match opened.resume {
+                        Some(taken) => {
+                            let _ = session.control(Control::Seek(taken.at));
+                            let _ = session.control(Control::Play(taken.playing));
+                        }
+                        None => {
+                            let _ = session.control(Control::Play(true));
+                        }
+                    }
                     let old = std::mem::replace(&mut pinned.lifetime, opened.lifetime);
                     old.cancel();
                     pinned.session = session;
                     pinned.queued = None;
+                    pinned.taken = None;
+                    pinned.ended = false;
                     if let Some(index) = pinned.queue.iter().position(|t| *t == opened.path) {
                         pinned.index = index;
                     }
@@ -1414,18 +1890,30 @@ impl Shell {
                     if became_film {
                         self.dock_for(true);
                     }
+                    // The panel shows the track with no session, its own
+                    // taken by a plan: it asks again, and shows the pin's.
+                    if self.preview.media.session.is_none()
+                        && self.preview.playing_path().as_ref()
+                            == self.player.pinned.as_ref().map(|pinned| &pinned.path)
+                    {
+                        self.cancel_preview(window, cx);
+                        self.preview.phase = crate::preview::PreviewPhase::Queued;
+                    }
                 }
                 Ok(None) => {
                     opened.lifetime.cancel();
+                    self.let_go_of_ended_pin();
                     self.set_status("This track cannot be played here", true, cx);
                 }
                 Err(error) => {
                     opened.lifetime.cancel();
+                    self.let_go_of_ended_pin();
                     self.set_status(format!("{error:#}"), true, cx);
                 }
             }
             cx.notify();
         }
+        self.take_followed(window, cx);
 
         // The pin went on to the file the preview shows with a player of
         // its own (a start from the files, a step of the dock): the preview
@@ -1447,6 +1935,7 @@ impl Shell {
         let mode = self.prefs.player.continue_with;
         let mut finished = false;
         let mut failed = None;
+        let mut taken = None;
         let mut follow = None;
         if let Some(pinned) = &mut self.player.pinned {
             pinned.keep_order(mode);
@@ -1493,7 +1982,11 @@ impl Shell {
                     cx.notify();
                 }
                 failed = update.error;
+                taken = update.taken;
             }
+        }
+        if let Some(plan) = taken {
+            self.pin_taken(plan, window, cx);
         }
         // The icon follows the track, whichever way the track changed.
         if let Some(pinned) = &mut self.player.pinned
@@ -1552,6 +2045,8 @@ impl Shell {
             self.close_popup(window, cx);
             cx.notify();
         }
+        self.follow_outside(window, cx);
+        self.watch_pin();
         self.publish_now_playing(cx);
         self.mark_playing(cx);
     }
@@ -1860,7 +2355,111 @@ pub(crate) fn request(
 
 #[cfg(test)]
 mod tests {
-    use super::{Continue, PinPlace, shuffled, step};
+    use super::{Continue, Fate, PinPlace, Pinned, shuffled, step};
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+
+    struct Silent;
+
+    impl skwir_core::media::MediaSession for Silent {
+        fn control(&self, _: skwir_core::media::Control) -> anyhow::Result<()> {
+            Ok(())
+        }
+        fn take_update(&self) -> skwir_core::media::Update {
+            skwir_core::media::Update::default()
+        }
+    }
+
+    fn track(name: &str) -> PathBuf {
+        PathBuf::from("/music/it's an album").join(name)
+    }
+
+    /// A pin playing the `index`th of `names`, shuffled along `order`.
+    fn pin(names: &[&str], index: usize, order: &[usize]) -> Pinned {
+        let queue: Vec<PathBuf> = names.iter().map(|name| track(name)).collect();
+        Pinned {
+            session: std::sync::Arc::new(Silent),
+            queued: Some(index + 1),
+            lifetime: skwir_core::CancelToken::new(),
+            state: skwir_core::media::Playback::default(),
+            path: queue[index].clone(),
+            queue: queue.into(),
+            index,
+            order: order.to_vec(),
+            video: false,
+            cover: None,
+            frame: None,
+            recycled: crate::media::Recycled::default(),
+            scrub: None,
+            icon: None,
+            taken: None,
+            ended: false,
+        }
+    }
+
+    fn went(moves: &[(&str, Option<&str>)]) -> HashMap<PathBuf, Option<PathBuf>> {
+        moves
+            .iter()
+            .map(|(from, to)| (track(from), to.map(track)))
+            .collect()
+    }
+
+    fn names(pin: &Pinned) -> Vec<String> {
+        pin.queue
+            .iter()
+            .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+            .collect()
+    }
+
+    /// The pin follows its tracks through what a plan did: the one played,
+    /// moved, plays on where it went; what was taken away leaves the queue;
+    /// the track to go on with is told again by where it is now.
+    #[test]
+    fn the_pin_follows_its_tracks_where_they_went() {
+        let mut moved = pin(&["a.ogg", "b.ogg", "c.ogg"], 1, &[]);
+        let fate = moved.follow(
+            &went(&[("b.ogg", Some("b é.ogg")), ("c.ogg", None)]),
+            Continue::Next,
+        );
+        assert_eq!(fate, Fate::Moved);
+        assert_eq!((moved.path.clone(), moved.index), (track("b é.ogg"), 1));
+        assert_eq!(names(&moved), ["a.ogg", "b é.ogg"]);
+        assert_eq!(moved.queued, None, "told again");
+
+        let mut same = pin(&["a.ogg", "b.ogg"], 0, &[]);
+        let fate = same.follow(&went(&[("b.ogg", Some("c.ogg"))]), Continue::Stop);
+        assert_eq!((fate, same.path.clone()), (Fate::Same, track("a.ogg")));
+        assert_eq!(names(&same), ["a.ogg", "c.ogg"]);
+    }
+
+    /// The track played, taken away, ends as if it had played to its end:
+    /// the next of those left follows it where Continue says one does,
+    /// along the shuffle's order while shuffling; else nothing does.
+    #[test]
+    fn a_track_taken_away_ends_as_if_it_had_played_to_its_end() {
+        let taken = went(&[("b.ogg", None), ("c.ogg", None)]);
+        let mut next = pin(&["a.ogg", "b.ogg", "c.ogg", "d.ogg"], 1, &[]);
+        assert_eq!(next.follow(&taken, Continue::Next), Fate::Next(1));
+        assert_eq!(names(&next), ["a.ogg", "d.ogg"]);
+        assert_eq!(next.index, 1);
+
+        let mut stop = pin(&["a.ogg", "b.ogg", "c.ogg", "d.ogg"], 1, &[]);
+        assert_eq!(stop.follow(&taken, Continue::Stop), Fate::Gone);
+
+        let mut last = pin(&["a.ogg", "b.ogg", "c.ogg"], 1, &[]);
+        assert_eq!(
+            last.follow(&taken, Continue::Next),
+            Fate::Gone,
+            "none after"
+        );
+
+        // Shuffled b, d, a, c: b and d gone, a follows, the order kept.
+        let mut shuffle = pin(&["a.ogg", "b.ogg", "c.ogg", "d.ogg"], 1, &[1, 3, 0, 2]);
+        let taken = went(&[("b.ogg", None), ("d.ogg", None)]);
+        assert_eq!(shuffle.follow(&taken, Continue::Shuffle), Fate::Next(0));
+        assert_eq!(names(&shuffle), ["a.ogg", "c.ogg"]);
+        assert_eq!(shuffle.order, [0, 1]);
+    }
 
     /// What the pin plays is a film by the type its bytes say where the
     /// name does not settle it: an `.ogg` holding Theora is a film, one
