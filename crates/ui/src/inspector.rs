@@ -3449,9 +3449,12 @@ pub fn outline_drawer(
 
 /// The entry leading to the heading at `index` among the blocks shown.
 fn heading_entry(data: &Inspection, index: usize, depth: usize) -> crate::outline::Entry {
+    let heading = &data.blocks[index];
     crate::outline::Entry {
         depth,
-        title: data.blocks[index].text.clone().into(),
+        // As it is copied: a formula in it as its TeX, never the character
+        // it is drawn over.
+        title: heading.copied(0..heading.text.len()).into_owned().into(),
         command: Some((
             "ui.inspect",
             serde_json::json!({"action":"block","index":index}),
@@ -4839,6 +4842,37 @@ mod tests {
         );
         state.arrived(&part(InspectionKind::Markdown, 0, 0, false), false);
         assert!(!state.offered.whole, "the next file's own");
+    }
+
+    /// A heading holding a formula is listed with its TeX, as it is copied,
+    /// never the character the formula is drawn over.
+    #[test]
+    fn a_heading_s_formula_is_listed_as_its_tex() {
+        use super::*;
+        let mut heading = Block {
+            heading: 2,
+            text: "The case ".into(),
+            ..Block::default()
+        };
+        let drawing = std::sync::Arc::new(skwir_core::inspection::Drawing {
+            svg: std::sync::Arc::from([]),
+            id: 0,
+            width: 1.,
+            ascent: 1.,
+            descent: 0.,
+            margin: 0.,
+            text: "$\\alpha$".into(),
+            tag: None,
+        });
+        heading.push_drawing(drawing, &skwir_core::inspection::Run::default());
+        let data = Inspection {
+            kind: InspectionKind::Markdown,
+            blocks: vec![heading],
+            ..Inspection::default()
+        };
+        let contents = Contents::of(&data, &Anchors::of(&data)).unwrap();
+        let titles: Vec<&str> = contents.entries.iter().map(|e| e.title.as_ref()).collect();
+        assert_eq!(titles, ["The case $\\alpha$"]);
     }
 
     /// A document, a book or a message without headings has Contents,
