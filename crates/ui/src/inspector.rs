@@ -105,6 +105,15 @@ pub struct Display {
     pub(crate) lanes: u16,
 }
 impl Display {
+    /// The picture it is alone, nothing else to read (a model's stored
+    /// picture, `models`; what the file says goes to Properties).
+    pub(crate) fn lone_picture(&self) -> Option<&crate::backdrop::Picture> {
+        let data = &self.data;
+        (data.kind == InspectionKind::Text && data.blocks.is_empty() && data.rows.is_empty())
+            .then(|| self.images.first()?.as_ref())
+            .flatten()
+    }
+
     pub fn new(mut data: Inspection, code: &crate::code_preview::CodeTheme) -> Self {
         // Display conversion runs on a worker. Resolve themed icons for the
         // files a container holds (an archive's members, a message's
@@ -3813,6 +3822,27 @@ fn reads(kind: InspectionKind) -> bool {
     )
 }
 
+/// A picture an inspection is alone (`Display::lone_picture`), looked at
+/// as pictures are: whole in the panel and never past its own size
+/// (`preview::ShownAs::Picture`). A list's first row, it was as wide as the
+/// panel, and a tall one ran on past the panel's foot.
+fn lone_picture(shell: &Shell, picture: &crate::backdrop::Picture, theme: &Theme) -> AnyElement {
+    let size = picture.image.size(0);
+    crate::preview::picture(
+        &picture.image,
+        crate::preview::Lay {
+            own: (size.width.0 as f32, size.height.0 as f32),
+            zoom: None,
+            fit_width: false,
+            shown_as: crate::preview::ShownAs::Picture,
+        },
+        &shell.preview.picture_scroll,
+        "inspect-picture",
+        None,
+        crate::backdrop::behind(picture.ink, theme.bg, theme),
+    )
+}
+
 pub fn content(
     shell: &Shell,
     view: View<'_>,
@@ -3825,6 +3855,9 @@ pub fn content(
     }
     if display.data.kind == InspectionKind::Model {
         return crate::model_preview::content(shell, display, theme);
+    }
+    if let Some(picture) = display.lone_picture() {
+        return lone_picture(shell, picture, theme);
     }
     let data = display.data.clone();
     let font_size = state.font_size(&data, &theme.sizes);
@@ -5519,6 +5552,45 @@ mod tests {
                 .runs
                 .iter()
                 .any(|run| run.color.is_some())
+        );
+    }
+
+    /// A picture with nothing to read beside it (a model's stored one) is
+    /// looked at as a picture; one among what is read is a page's.
+    #[test]
+    fn a_picture_alone_is_looked_at_as_a_picture() {
+        use super::*;
+        let tall = || skwir_core::thumbs::Image {
+            width: 2,
+            height: 6,
+            rgba: vec![255; 2 * 6 * 4].into(),
+        };
+        let code = crate::code_preview::CodeTheme::own(false);
+        let alone = Display::new(
+            Inspection {
+                title: "3MF".into(),
+                image: Some(tall()),
+                details: vec![skwir_core::inspection::Detail::new("Plates", "2")],
+                ..Inspection::default()
+            },
+            &code,
+        );
+        let picture = alone.lone_picture().expect("a picture alone");
+        assert_eq!(picture.image.size(0).height.0, 6);
+        let read = Display::new(
+            Inspection {
+                image: Some(tall()),
+                blocks: vec![Block {
+                    text: "A specimen".into(),
+                    ..Block::default()
+                }],
+                ..Inspection::default()
+            },
+            &code,
+        );
+        assert!(
+            read.lone_picture().is_none(),
+            "a page's picture, read with it"
         );
     }
 

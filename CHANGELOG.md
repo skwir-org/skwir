@@ -1,5 +1,12 @@
 # Changes
 
+## Unreleased
+
+- **A model's stored picture fits the panel**: the picture a slicer stores
+  in a 3MF, shown before the model is turned in 3D, was as wide as the
+  panel, and a tall one ran past its foot. It is shown as pictures are,
+  whole in the panel.
+
 ## 0.5.0 (2026-11-14)
 
 Skwir 0.5.0 groups a folder's files under headings, marks them with their Git
