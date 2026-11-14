@@ -16873,3 +16873,143 @@ on Xvfb.
 the native workers, `smoke`, `idle-pss` and Wine's tests did not run.
 `link-ordered --check` on a real dist build. macOS and Windows beyond
 clippy. The rest is in `docs/PLAN.md`'s "From the review since 0.4.0".
+
+## Release 0.5.0 (2026-11-14)
+
+Prepared overnight on the user's request; pushed and published by the
+user on GitHub (11:53 UTC), the known issue below on its page. The
+annotated tag `v0.5.0` on d0e6c612, after the Release commit 0c16e80b:
+the review since 0.4.0 was fixed before (79eebb34..4a55988d, bf9f7943);
+the window pass below found one fix (b0ea49d6), the release's runs four
+races in tests (8847392f, 4251fd1a, 3aa2b517, d0e6c612) and two bugs
+0.4.0 has (00f6d4e5, e603f2b0).
+
+- **A window pass on what the review's fixes left unseen** (Xvfb :79,
+  the debug build, a load of about 28 from the Nix check beside it): a
+  formula in an HTML footnote's popover (MT-2); the Git marks of the
+  columns above a folder and of the tree, `docs` staged, `src` and the
+  folders below it changed, a new file's plus, the ignored `build`
+  unmarked, and a `git add` made outside shown within 3 s (GT-6, GT-17);
+  a Board grouped by 15 extensions in 11 columns and "4 more groups",
+  8 files (GV-2); Activity opening by itself for a copy of 20,000 files,
+  given the keyboard by Ctrl+Shift+J, folding at its end with the
+  keyboard back on the files, seen at 0.7 s steps (PV-8).
+- **Found there:** with 20,000 files copied, Ctrl+V in the address pasted
+  their paths, 600 KB on one line, and the window's thread spent 15 to
+  30 s shaping it (perf on the debug build: cosmic-text and harfrust).
+  A one-line field now holds 32,767 characters of what is typed or
+  pasted (b0ea49d6): the same paste took 2.1 s of the debug build's
+  window thread, a key typed after it about 1.6 s under that load.
+  Recorded in PLAN.md, not fixed:
+  Markdown's footnotes are not read; a transfer's title does not separate
+  thousands; a key typed in the address over 20,000 files cost 0.4–0.5 s
+  of the debug build's window thread under that load, Select All and Copy
+  about 1 s each.
+- **The Nix package** (`package-nix-check` on bf9f7943): minimal 278.3 MiB
+  (272.1 at 0.4.0), default 1.1 GiB, full evaluated (the package still named 0.4.0:
+  checked before the version change).
+- **startup-order** after the last fix (4251fd1a): 11,578 functions in
+  16.5 MiB of code (808547fe; 12,026 in 16.8 MiB before it, befe310f).
+- **The AppImage alone first** (03:17–03:49): built and tried in its
+  roots; `link-ordered --check` ran for the first time on a package's
+  build, 22,916 functions laid out in the order a start runs them in
+  Ubuntu 22.04's root (TL-4).
+- **Two runs stopped at `test-all` on races in tests**, each reproduced,
+  fixed and run again under load:
+  - run 1 (03:50–04:15): `what_waits_is_listed_by_its_plans` asserted
+    nothing waits once the light plan ended, while the heavy one could
+    still wait for a worker (3 of 400 runs failed, 24 at a time; fixed in
+    8847392f, 1,200 of 1,200 passed);
+  - run 2 (04:25–04:35): `plugins_toggle` found the remote plugin's
+    places missing after it was turned on again: since df756be1 (AR-11)
+    it published them only from the thread that reads the servers, which
+    the snapshot's wait for the workers does not cover (18 of 96 failed;
+    4251fd1a publishes what it knows as it is turned on, 192 of 192
+    passed).
+  - run 3 (05:13–05:27): `the_file_standing_for_a_folder_is_followed`
+    read the window's wake as soon as the path came, which the follower
+    sends first (3 of 200; 3aa2b517, 400 of 400).
+- **Then every test, not stopping at the first failure** (`cargo nextest
+  run --workspace --no-fail-fast`, 3,570): one failed, and it was no race
+  in a test. `an_upload_cut_short_by_its_server_goes_on_from_where_it_
+  stopped`'s download, gone on from, held 32 KiB of zeroes just before
+  28 MiB of the 32 MiB kept: of the eight 4 MiB ranges read at once from
+  sshfs, the mount answered the seventh's end with zeroed pages as sshd
+  stopped, the eighth came whole, and the check of the last mebibyte
+  before going on passed. 0.4.0 has it (ADR-080's going on, 2026-10-22).
+  00f6d4e5 goes on from before the last 32 MiB of a copy read in ranges;
+  reproduced at once beside forty busy loops before, 30 of 30 passed so
+  after, with a unit test of the case and a CHANGELOG line.
+- **The disk:** 69 GB free at 03:50, 8.5 GB at 04:58: the version change
+  gives every workspace crate new units beside the old, which the prune's
+  records (made before it) still named. The three records made again at
+  0.5.0 (`prune.py record test|clippy|build`), the prune freed 41 GB; at
+  06:35, before run 4, again 15 GB (stale incremental sessions and the
+  workspace-wide test units, built again by the run).
+- **Run 4 (06:40–07:45)** passed `release-check`, the AppImage, Debian's
+  and Ubuntu's packages, and stopped at Fedora's: dnf refused the root's
+  cached `updates` metadata ("Unable to validate zchunk checksums"),
+  removed from the root's cache, after which it read the mirror anew.
+  Each packager left was then tried alone first: Fedora's and Arch's
+  packages and macOS's bundle passed; Windows' build stopped on an
+  unpacked `windows-0.61.3` in Cargo's registry without its `Cargo.toml`
+  ("failed to find windows v0.61.3 in path source"), removed and unpacked
+  again (the 37 crates unpacked that day checked whole).
+- **Found by Windows' package check:** under Wine the media helper's
+  picture stopped for good after subtitles were turned off (the check's
+  step at `tools/media/check.py`:192), 4 runs in 6; 0.4.0's helper, the
+  same GStreamer beside it, 1 in 6. Linux's debug helper too: 2 runs of
+  10 and 3 of 11 on the VP9 clip (each run about ten track changes),
+  always a change leaving no subtitle chosen. The helper's main thread
+  polled at 250 ms with every streaming thread asleep: a selection asked
+  and never said done. decodebin3 posts its stream collection with its
+  lock let go for a handler on the posting thread to ask, and takes one
+  stream of each kind otherwise; the helper answered from its loop, now
+  and then after that, then took the subtitle away from a paused
+  pipeline. Answered in the bus's sync handler (e603f2b0), a first try
+  deadlocked at two changes in a row while playing (the return to READY
+  waits for the posting thread, which waited on it); the change now holds
+  the selection's lock while it returns to READY and the handler only
+  tries it. After: 40 of 40 on the VP9 clip, 20 of 20 on H.264, on Linux;
+  Windows' package built again and its check passed 4 times of 4, both
+  clips each.
+- **Run 5 (10:18–10:25)** stopped at `test-all` on
+  `a_webdav_share_below_its_server_s_root_opens_where_it_is`: rclone's
+  WebDAV server found its port taken ("bind: address already in use"),
+  and the test's wait for its server, anything answering, found another
+  test's sshd there. Each remote test chose its port by binding port 0
+  and letting it go; the system gave it to another test's process too.
+  `skwir_core::testing::free_port` claims it now, by a lock on a file
+  named after it held for the process's life (d0e6c612; the five copies
+  of the helper use it). The core's test of it, the plugin's rclone tests
+  and the binary's four remote files (67 tests) passed.
+- **release-build, run 6** (10:33–12:00, the tag on d0e6c612): green.
+  `release-check` (fmt, clippy for the three systems, deny, notices,
+  3,573 tests passed of 3,573 run, 32 skipped, smoke, a11y, Poppler,
+  MuPDF, DjVuLibre and djvu-rs, every bench budget, the release tools),
+  then the AppImage and tarball, Debian's, Ubuntu's, Fedora's and Arch's
+  packages built and tried in their roots, Windows' zip and installer
+  passed under Wine (both clips played, subtitles off and on), macOS's
+  bundle looked over (not run: that needs a Mac). Every package's skwir
+  has about 22,040 functions laid out in the order a start runs them
+  (22,042 in the AppImage).
+- **release-verify:** the bundle verified (its identity, asset set and
+  checksums); the release page's part above All changes is 2,324 bytes.
+- **Personal data:** none in what origin/main lacks (b0ea49d6..d0e6c612:
+  the added lines and the messages scanned for the user's names,
+  addresses, home paths, keys); the function list holds names alone.
+- **Idle memory and the first frame** (headless sway on the Intel GPU,
+  0.4.0's tarball against 0.5.0's, alternated, three rounds of three
+  starts each): own share 69.1 MiB at 0.4.0 (68.9–72.4), 70.1 at 0.5.0
+  (70.0–70.3), its binary 33.8 and 34.2 MiB; the first frame 57.5 ms and
+  56.3 ms (medians of nine); idle CPU 0.0 % both.
+- **After the build, the AppImage tried** (by the user, on the session):
+  a film stopped on one frame after a few plays and pauses and a peek;
+  the debug build played on. Reproduced headless, the AppImage's media
+  helper run through `appimage-run` as the AppImage is, with the real
+  audio sink, muted: its 1.20 `pulsesink` (Ubuntu's, under the bundle's
+  1.28.8 core) stops after a pause, a seek while paused and play, within
+  1 to 3 rounds in five formats; 40 of 40 rounds with it ranked out
+  (1.28.8's `alsasink`); 0.4.0's AppImage stops too. Released as is by
+  the user's choice, the release page saying so; to fix in 0.5.1
+  (PLAN.md, "What is left").

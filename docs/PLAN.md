@@ -1219,6 +1219,23 @@ leave (ADR-077).
   under a real terminal with bash or zsh. Frame times of the card's
   outline are unmeasured (0058, 0059, LK-1).
 
+**The AppImage's GStreamer is of two versions** (found 2026-11-14 after
+0.5.0's build; in 0.4.0's AppImage too): its core and base plugins are
+1.28.8, built from source (`tools/package/appimage/gstreamer.py`), the
+rest Ubuntu 22.04's 1.20. 1.20's `pulsesink`, the clock of every film,
+stops after a pause, a seek while paused and play: the picture stays on
+one frame (headless, the media helper through `appimage-run`, the real
+audio sink muted: within 1 to 3 rounds in H.264/HEVC MP4, VP9 WebM,
+AV1 and H.264 MKV; 40 of 40 with `pulsesink` ranked out, `alsasink`
+1.28.8 instead; the debug build, 1.28.7 throughout, 30 of 30 in each).
+1.20's `nvvp9dec` also draws the keyframe for a seek while paused, not
+the frame asked. For 0.5.1: build gst-plugins-good at the core's
+version and replace Ubuntu's whole package (`stage.py`'s `replaced`),
+then bad, ugly and gst-libav (does 1.28's build on Jammy's FFmpeg
+4.4?). The bundle's own check plays a WAV through the fake audio sink
+and never saw it: play a film through the bundle's `pulsesink` against
+a server of the check's own, paused, sought and played again.
+
 **From the review since 0.4.0** (2026-11-13):
 - Not seen in a window: the atlas giving back a page's formulas (MT-4); a
   new group's pinned heading (GV-8). Seen on Xvfb: the footer in a narrow
