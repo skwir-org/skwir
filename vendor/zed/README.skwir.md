@@ -94,6 +94,7 @@ carry: the script takes it from the Inter release Skwir's packages pin
 | `0059-unreached-mask-corners` | A primitive that reaches no rounded corner of its mask is kept by its rectangles alone, so its fragments skip the corners' distance | — |
 | `0060-inline-boxes` | A line holds boxes its caller draws (`RunPosition::Inline`): each character of an inline run is one, as wide as it says, never shaped or painted; `TextLayout::inline_boxes` says where each was drawn; a box taller than its text grows the row it is set in, and that row alone (`LineRows`); `StyledText::with_said` gives what such a text says to assistive technology | — |
 | `0061-text-narrows-to-its-widest-word` | A text's minimum content width is its widest word (CSS's), so beside others in a row it narrows and wraps rather than running past them; Zed's was its whole line, which no row could shrink. A layout a text keeps answers another width only where it is the same there. A tooltip and what a drag shows are laid out as wide as their words (`AvailableSpace::max_size`) | — |
+| `0062-drop-svg` | An SVG given as bytes (`paint_svg`'s `data`) is kept in the atlas at each size it was drawn at until its caller lets it go (`Window::drop_svg`, `App::drop_svg` for every window, as `drop_image`): a page's formulas leave with the page | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
 

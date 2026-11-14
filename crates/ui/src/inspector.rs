@@ -15,11 +15,33 @@ use std::{
     rc::Rc,
     sync::Arc,
 };
+/// What each drawing of `blocks` (a formula, its number) is kept under in
+/// the atlas once drawn, each once.
+fn drawings_of(blocks: &[skwir_core::inspection::Block]) -> Arc<Vec<gpui::SharedString>> {
+    let mut seen = HashSet::new();
+    blocks
+        .iter()
+        .flat_map(|block| &block.runs)
+        .filter_map(|run| run.drawing.as_deref())
+        .flat_map(|drawing| {
+            std::iter::once(drawing).chain(drawing.tag.as_deref().map(|tag| &tag.drawing))
+        })
+        .filter(|drawing| seen.insert(drawing.id))
+        .map(crate::inspector_text::drawing_path)
+        .collect::<Vec<_>>()
+        .into()
+}
+
 pub struct Display {
     pub data: Arc<Inspection>,
     /// The inspection's own picture, then one per block, with their ink.
     /// Shared with every frame's list closure, never copied per frame.
     pub images: Arc<[Option<crate::backdrop::Picture>]>,
+    /// What its drawings (formulas) are kept under in the atlas once drawn
+    /// (`inspector_text::drawing_path`), found on the worker: let go of
+    /// with its pictures (`let_go`). A thin `Arc`: a `PreviewContent`
+    /// stays small beside its other variants.
+    drawings: Arc<Vec<gpui::SharedString>>,
     pub(crate) row_icons: Arc<Vec<Option<crate::icons::Pic>>>,
     /// Case-folded search text per block, then per row, prepared on the
     /// worker so Find never lowercases a document on the UI thread: none
@@ -261,6 +283,7 @@ impl Display {
             model,
             table,
             tables: Arc::new(crate::inspector_rows::Tables::of(&data.blocks)),
+            drawings: drawings_of(&data.blocks),
             data: Arc::new(data),
             images,
             row_icons: Arc::new(row_icons),
@@ -278,6 +301,17 @@ impl Display {
             first_colors,
         }
     }
+    /// Let go of what the page put in the atlas, in every window: its
+    /// pictures and its drawings. Its pixels do not go with its `Arc`s.
+    pub(crate) fn let_go(&self, window: &mut gpui::Window, cx: &mut gpui::App) {
+        for picture in self.images.iter().flatten() {
+            cx.drop_image(Arc::clone(&picture.image), Some(&mut *window));
+        }
+        for path in self.drawings.iter() {
+            cx.drop_svg(path, Some(&mut *window));
+        }
+    }
+
     /// Whether the tree-sitter grammar that colors its code says where
     /// its definitions are: its contents are offered from the start, and
     /// come once it is parsed (`State::symbols`). Asked as it arrives,

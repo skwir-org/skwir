@@ -3312,6 +3312,20 @@ impl App {
         }
     }
 
+    /// Removes an SVG given as bytes (`Window::paint_svg`'s `data`) from the
+    /// sprite atlas of every window, at every size it was drawn at.
+    ///
+    /// As with `drop_image`, the current window, being updated, is out of
+    /// `App.windows`: pass it as `current_window`.
+    pub fn drop_svg(&mut self, path: &SharedString, current_window: Option<&mut Window>) {
+        for window in self.windows.values_mut().flatten() {
+            window.drop_svg(path);
+        }
+        if let Some(window) = current_window {
+            window.drop_svg(path);
+        }
+    }
+
     /// Sets the renderer for the inspector.
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub fn set_inspector_renderer(&mut self, f: crate::InspectorRenderer) {

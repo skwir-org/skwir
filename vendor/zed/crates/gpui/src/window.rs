@@ -1225,6 +1225,10 @@ pub struct Window {
     is_resizable: bool,
     is_minimizable: bool,
     sprite_atlas: Arc<dyn PlatformAtlas>,
+    /// The sizes each SVG given as bytes (`paint_svg`'s `data`) was
+    /// rasterized at in the atlas: the caller's own, which it lets go of
+    /// with `drop_svg`. An asset's stays.
+    svgs_drawn: FxHashMap<SharedString, SmallVec<[Size<DevicePixels>; 2]>>,
     text_system: Rc<WindowTextSystem>,
     text_rendering_mode: Rc<Cell<TextRenderingMode>>,
     rem_size: Pixels,
@@ -2197,6 +2201,7 @@ impl Window {
             is_resizable,
             is_minimizable,
             sprite_atlas,
+            svgs_drawn: FxHashMap::default(),
             text_system,
             text_rendering_mode: cx.text_rendering_mode.clone(),
             rem_size: px(16.),
@@ -5205,6 +5210,7 @@ impl Window {
             }),
         };
 
+        let mut rasterized = false;
         let Some(tile) =
             self.sprite_atlas
                 .get_or_insert_with(params.clone().into(), &mut || {
@@ -5212,11 +5218,20 @@ impl Window {
                     else {
                         return Ok(None);
                     };
+                    rasterized = true;
                     Ok(Some((size, Cow::Owned(bytes))))
                 })?
         else {
             return Ok(());
         };
+        // An SVG given as bytes is the caller's: the sizes it is kept at,
+        // for `drop_svg` to let them go.
+        if rasterized && data.is_some() {
+            let sizes = self.svgs_drawn.entry(params.path.clone()).or_default();
+            if !sizes.contains(&params.size) {
+                sizes.push(params.size);
+            }
+        }
         let content_mask = self.snapped_content_mask();
         let svg_bounds = Bounds {
             origin: bounds.center()
@@ -5441,6 +5456,36 @@ impl Window {
         }
 
         Ok(())
+    }
+
+    /// Removes from the sprite atlas, at every size it was drawn at, the SVG
+    /// given as bytes to `paint_svg` under `path`: what the caller no longer
+    /// shows. A no-op where it was never drawn.
+    pub fn drop_svg(&mut self, path: &SharedString) {
+        for size in self.svgs_drawn.remove(path).into_iter().flatten() {
+            let params = RenderSvgParams {
+                path: path.clone(),
+                size,
+            };
+            self.sprite_atlas.remove(&params.into());
+        }
+    }
+
+    /// Whether the SVG given as bytes under `path` is in the sprite atlas,
+    /// at any size.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn has_svg_atlas_entry(&self, path: &SharedString) -> bool {
+        self.svgs_drawn.get(path).is_some_and(|sizes| {
+            sizes.iter().any(|&size| {
+                self.sprite_atlas.contains(
+                    &RenderSvgParams {
+                        path: path.clone(),
+                        size,
+                    }
+                    .into(),
+                )
+            })
+        })
     }
 
     /// Returns whether every frame of an image is present in the sprite atlas.
@@ -8182,6 +8227,48 @@ fn with_element_arena_erased(callback: &mut dyn FnMut(&mut Arena)) -> Result<(),
 
 #[cfg(test)]
 mod tests {
+    /// An SVG given as bytes stays in the atlas, at the size it was drawn
+    /// at, until its caller drops it; an SVG it never drew is no matter.
+    #[crate::test]
+    fn an_svg_given_as_bytes_is_dropped_from_the_atlas(cx: &mut crate::TestAppContext) {
+        use crate::{AvailableSpace, SharedString, TransformationMatrix, canvas, point, px, size};
+
+        let cx = cx.add_empty_window();
+        let path = SharedString::from("drawing-1");
+        let drawn = path.clone();
+        let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10"/></svg>"#;
+        cx.draw(
+            point(px(0.), px(0.)),
+            AvailableSpace::max_size(),
+            move |_, _| {
+                canvas(
+                    |_, _, _| {},
+                    move |_, (), window, cx| {
+                        let bounds =
+                            crate::Bounds::new(point(px(0.), px(0.)), size(px(10.), px(10.)));
+                        window
+                            .paint_svg(
+                                bounds,
+                                drawn.clone(),
+                                Some(svg),
+                                TransformationMatrix::unit(),
+                                crate::black(),
+                                cx,
+                            )
+                            .unwrap();
+                    },
+                )
+            },
+        );
+        cx.update(|window, cx| {
+            assert!(window.has_svg_atlas_entry(&path), "drawn, it is kept");
+            cx.drop_svg(&SharedString::from("never-drawn"), Some(&mut *window));
+            assert!(window.has_svg_atlas_entry(&path));
+            window.drop_svg(&path);
+            assert!(!window.has_svg_atlas_entry(&path), "dropped, it is gone");
+        });
+    }
+
     use std::{
         cell::{Cell, RefCell},
         path::PathBuf,

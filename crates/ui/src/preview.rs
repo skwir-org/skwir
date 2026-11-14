@@ -4498,11 +4498,7 @@ impl Shell {
             {
                 cx.drop_image(image, Some(window));
             }
-            Some(PreviewContent::Inspection(display)) => {
-                for picture in display.images.iter().flatten() {
-                    cx.drop_image(Arc::clone(&picture.image), Some(window));
-                }
-            }
+            Some(PreviewContent::Inspection(display)) => display.let_go(window, cx),
             _ => {}
         }
         // A note belongs to the text it was opened from, as the link the
@@ -6350,9 +6346,7 @@ fn discard_parked(parked: crate::members::Parked, window: &mut Window, cx: &mut 
     let crate::members::Parked {
         display, mut state, ..
     } = parked;
-    for picture in display.images.iter().flatten() {
-        cx.drop_image(Arc::clone(&picture.image), Some(window));
-    }
+    display.let_go(window, cx);
     state.notes.close(window, cx);
     for image in state.pictures.clear() {
         cx.drop_image(image, Some(window));

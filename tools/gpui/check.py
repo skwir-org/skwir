@@ -61,6 +61,8 @@ RUNS = [
         # Where a line's boxes are drawn (0060; their shaping is
         # text_system::line_layout's).
         "text_system::line::tests::inline_boxes",
+        # An SVG given as bytes leaves the atlas when dropped (0062).
+        "window::tests::an_svg_given_as_bytes",
         # A text in a row too narrow wraps at its widest word (0061; that
         # width is text_system::line_layout's).
         "elements::text::tests::a_text_in_a_narrow_row_wraps",

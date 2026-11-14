@@ -384,7 +384,10 @@ A name that says nothing is not a binary file.
   at the text's size: never a picture of fixed pixels or colors. Every
   text laid out from a block's runs (a row, a cell, a note opened under
   its reference) is made by `inspector_text::block_text`, which paints
-  the drawings it makes room for: no box is laid out undrawn.
+  the drawings it makes room for: no box is laid out undrawn. What a
+  page's drawings put in the atlas, at each size they were drawn at, goes
+  with its pictures when the page goes (`Display::let_go`, gpui 0062's
+  `drop_svg`), in every window.
 - **A formula taller than its text grows its own row**, not every line
   of its text (gpui's `LineRows`): a text's rows are not one line height
   apart. What is set under a row or between two (a found match's spot, a

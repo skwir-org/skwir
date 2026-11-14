@@ -464,6 +464,12 @@ fn paint_drawings(
     }
 }
 
+/// What a drawing's SVG is kept under in the atlas, at each size it is
+/// drawn at, until its page goes (`Display::let_go`).
+pub(crate) fn drawing_path(drawing: &Drawing) -> SharedString {
+    SharedString::from(format!("skwir-drawing-{:x}", drawing.id))
+}
+
 /// Paint `drawing`'s SVG over the box `bounds`, reaching past it by its
 /// margin, in `ink`.
 fn paint_drawing(
@@ -481,7 +487,7 @@ fn paint_drawing(
     };
     let _ = window.paint_svg(
         bounds,
-        SharedString::from(format!("skwir-drawing-{:x}", drawing.id)),
+        drawing_path(drawing),
         Some(&drawing.svg),
         gpui::TransformationMatrix::unit(),
         ink,
