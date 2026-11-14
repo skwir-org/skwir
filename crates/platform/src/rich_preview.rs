@@ -761,7 +761,7 @@ impl Walk {
                     written,
                 }) => match self.formulas.ask(tex, *display, written.clone()) {
                     Some(drawing) => self.formula(context, drawing, *display),
-                    None => self.text(context, written),
+                    None => self.undrawn(context, tex, written, *display),
                 },
                 Err(Taken::Written(written)) => self.text(context, written),
             }
@@ -795,6 +795,31 @@ impl Walk {
         }
         self.current.align = Align::Center;
         self.current.push_drawing(drawing, &run);
+        self.finish();
+    }
+
+    /// A formula not drawn here (without the helper, past the page's
+    /// bound): what it was written as, as code, as `Pending::typeset` shows
+    /// one the helper refuses; one set apart, the code block of its TeX.
+    fn undrawn(&mut self, context: &Context, tex: &str, written: &str, display: bool) {
+        if context.silent {
+            return;
+        }
+        self.begin(context);
+        if !display || self.row.is_some() {
+            let code = Context {
+                code: true,
+                ..context.clone()
+            };
+            return self.text(&code, written);
+        }
+        if self.filled() {
+            self.finish();
+            self.begin(context);
+        }
+        self.current.code = true;
+        self.current.language = Some("latex".into());
+        self.current.text.push_str(tex.trim());
         self.finish();
     }
 
@@ -850,14 +875,14 @@ impl Walk {
                 self.formula(context, drawing, display);
                 return true;
             }
-            // Not drawn: as the page says it reads, else the TeX it
-            // carries; else its markup is read, as it reads.
-            let carried = match &tex {
-                Some(MathTex::Carried(tex)) => Some(tex.as_str()),
-                _ => None,
-            };
-            if let Some(reads) = alt.or(carried) {
-                self.text(context, reads);
+            // Not drawn: as the page says it reads; else the TeX it
+            // carries, as code; else its markup is read, as it reads.
+            if let Some(alt) = alt {
+                self.text(context, alt);
+                return true;
+            }
+            if let Some(MathTex::Carried(tex)) = &tex {
+                self.undrawn(context, tex, &written(tex, display), display);
                 return true;
             }
         }
@@ -2020,8 +2045,8 @@ mod tests {
         assert_eq!(
             texts(&read(PAIRS, Markup::Html)),
             [
-                "Energy E = mc^2 here.",
-                "Then y too.",
+                "Energy $E = mc^2$ here.",
+                "Then $y$ too.",
                 "Area {\\displaystyle \\pi r^{2}}.",
                 "Only x.",
             ]
@@ -2085,6 +2110,15 @@ mod tests {
 
     #[test]
     fn without_its_helper_mathml_reads_as_it_says() {
+        /// The text of `block`'s code runs.
+        fn code(block: &Block) -> Vec<&str> {
+            block
+                .runs
+                .iter()
+                .filter(|run| run.code)
+                .map(|run| &block.text[run.range.clone()])
+                .collect()
+        }
         use_math_worker(std::path::Path::new("/nonexistent/skwir-math-worker"));
         let blocks = read(MATHML, Markup::Html);
         assert!(
@@ -2098,6 +2132,26 @@ mod tests {
             text.contains("E = mc^2"),
             "its TeX where it has no alttext: {text}"
         );
+        // What is not drawn shows as it was written, as code; set apart,
+        // as the code block of its TeX.
+        let source = r#"<script>MathJax = {tex: {inlineMath: [['$','$']]}};</script>
+            <p>Let $x$ be</p><p>$$y = 1$$</p>
+            <p><math><semantics><mi>z</mi><annotation encoding="application/x-tex">z</annotation></semantics></math> and <math alttext="w"><mi>w</mi></math></p>"#;
+        let blocks = read(source, Markup::Html);
+        let shown: Vec<(&str, bool, Option<&str>)> = blocks
+            .iter()
+            .map(|block| (block.text.as_str(), block.code, block.language.as_deref()))
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                ("Let $x$ be", false, None),
+                ("y = 1", true, Some("latex")),
+                ("$z$ and w", false, None),
+            ]
+        );
+        assert_eq!(code(&blocks[0]), ["$x$"]);
+        assert_eq!(code(&blocks[2]), ["$z$"], "an alttext is words, not code");
         // MathML that carries no TeX reads as its words, never as the TeX
         // the reader would typeset it from.
         let square = read(

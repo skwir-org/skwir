@@ -10,7 +10,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use skwir_core::{
     CancelToken,
-    inspection::{Block, Drawing, Tag},
+    inspection::{Block, BlockKind, Drawing, Tag},
 };
 
 use crate::inspection::limits;
@@ -318,14 +318,32 @@ impl Pending {
             // From the last, so the ranges before each stay where they are.
             for (index, k) in undrawn.into_iter().rev() {
                 let (written, formula, shown) = &self.asked[k];
-                if *shown == Undrawn::Code && formula.display && block.runs.len() == 1 {
-                    // A formula on a line of its own is the code it is.
+                if *shown == Undrawn::Code
+                    && formula.display
+                    && block.runs.len() == 1
+                    && matches!(block.kind, BlockKind::Text)
+                {
+                    // A formula on a line of its own is the code it is,
+                    // where it stood: the names a link reaches it by, its
+                    // item's marker, how it follows the block before. A
+                    // row of a table stays a row, the formula its TeX in it.
+                    let text = formula.tex.clone();
+                    let mut unseen = std::mem::take(&mut block.unseen);
+                    for (at, _) in &mut unseen {
+                        *at = if *at == 0 { 0 } else { text.len() };
+                    }
                     *block = Block {
                         code: true,
                         language: Some("latex".into()),
-                        text: formula.tex.clone(),
                         quote: block.quote,
                         list_depth: block.list_depth,
+                        anchors: std::mem::take(&mut block.anchors),
+                        marker: block.marker.take(),
+                        flow: block.flow,
+                        note: block.note,
+                        indent: block.indent,
+                        unseen,
+                        text,
                         ..Block::default()
                     };
                 } else {
@@ -379,25 +397,49 @@ mod tests {
         };
         let mut written = Block::default();
         written.text.push_str("Let ");
-        let drawing = pending.ask("x", false, "$x$".into()).unwrap();
+        let drawing = pending.ask("x+1", false, "$x+1$".into()).unwrap();
         written.push_drawing(drawing, &Run::default());
         let mut reading = Block::default();
         let drawing = pending
             .ask_reading("{x}^{2}", true, "x squared".into())
             .unwrap();
         reading.push_drawing(drawing, &Run::default());
-        let mut apart = Block::default();
+        // Words said only after it stay after it.
+        written.unseen.push((written.text.len(), "said".into()));
+        let mut apart = Block {
+            anchors: vec!["roots".into()],
+            marker: Some("1.".into()),
+            list_depth: 1,
+            ..Block::default()
+        };
         let drawing = pending.ask("y", true, "$$y$$".into()).unwrap();
         apart.push_drawing(drawing, &Run::default());
-        let mut blocks = [written, reading, apart];
+        let mut row = Block {
+            kind: BlockKind::TableRow {
+                cells: std::iter::once(0..Block::DRAWN.len_utf8()).collect(),
+                header: false,
+            },
+            ..Block::default()
+        };
+        let drawing = pending.ask("z", true, "$$z$$".into()).unwrap();
+        row.push_drawing(drawing, &Run::default());
+        let mut blocks = [written, reading, apart, row];
         pending.typeset(&mut blocks, &CancelToken::new());
-        let [written, reading, apart] = &blocks;
-        assert_eq!(written.text, "Let $x$");
+        let [written, reading, apart, row] = &blocks;
+        assert_eq!(written.text, "Let $x+1$");
         assert!(written.runs[0].code && written.runs[0].drawing.is_none());
+        assert_eq!(written.unseen, [(written.text.len(), "said".to_owned())]);
+        assert_eq!(written.said(0..written.text.len()), "Let $x+1$said");
         assert_eq!(reading.text, "x squared");
         assert!(!reading.code && !reading.runs[0].code, "words, not code");
         assert!(apart.code);
         assert_eq!(apart.language.as_deref(), Some("latex"));
         assert_eq!(apart.text, "y");
+        assert_eq!(apart.anchors, ["roots"], "a link still lands on it");
+        assert_eq!(apart.marker.as_deref(), Some("1."));
+        assert_eq!(row.text, "$$z$$", "a row stays a row");
+        assert!(
+            matches!(&row.kind, BlockKind::TableRow { cells, .. } if cells.len() == 1 && cells[0] == (0..5))
+        );
     }
 }

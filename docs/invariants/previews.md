@@ -376,8 +376,12 @@ A name that says nothing is not a binary file.
   the text's, and whatever reads a block's words for someone (a copy, a
   screen reader) reads `Block::said`, where it is its TeX. One that is
   not drawn (the helper missing, past `math::FORMULAS`, TeX the helper
-  refuses) is what it was written as, as code (`Block::undraw`); one on a
-  line of its own, the code block of its TeX.
+  refuses) is what it was written as, as code (`Block::undraw`), in every
+  reader alike (Markdown's, a notebook's, HTML's: `Walk::undrawn`); one on
+  a line of its own, the code block of its TeX, where the formula stood
+  (the names a link reaches it by, its item's marker kept; in a table's
+  row, its TeX in the row). What follows it in its block moves along, the
+  words said only included.
 - The view draws a drawing where the text's layout put its box
   (`TextLayout::inline_boxes`, gpui patch 0060), as a mask in the ink its
   letters would have (the text's, a link's, the selection's, a ground's),
