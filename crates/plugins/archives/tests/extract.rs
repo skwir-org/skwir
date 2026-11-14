@@ -704,6 +704,110 @@ fn what_was_removed_comes_back_when_extracted_into_its_folder_again() {
     assert_eq!(tree(&made), merged);
 }
 
+/// A file changed since, kept beside where the archive itself holds the
+/// name it would be kept as (`a (2).jpg` beside `a.jpg`), removed since:
+/// kept under the next name free, both the archive's files back.
+#[test]
+fn a_file_kept_beside_never_takes_a_name_the_archive_brings() {
+    if !with_archive_worker() {
+        return;
+    }
+    let tmp = scratch();
+    let app = app(tmp.path());
+    app.set_window_shown();
+    let dest = tmp.path().join("it's here");
+    std::fs::create_dir(&dest).unwrap();
+    let archive = tmp.path().join("photos.zip");
+    write_zip(
+        &archive,
+        &[
+            ("a.jpg", b"the first"),
+            ("a (2).jpg", b"the second"),
+            ("b.txt", b"left"),
+        ],
+    );
+    let result = app
+        .executor
+        .execute_blocking(&extract(&app, &archive, &dest), app.lifetime());
+    assert!(result.error.is_none(), "{:?}", result.error);
+    let made = dest.join("photos");
+    std::fs::remove_file(made.join("a (2).jpg")).unwrap();
+    std::fs::write(made.join("a.jpg"), "mine, since").unwrap();
+
+    let ended = whole(&app, extract(&app, &archive, &dest), |app| {
+        let question = clashes_asked(app);
+        let asked: Vec<_> = question
+            .clashes
+            .iter()
+            .map(|c| {
+                c.there
+                    .path
+                    .strip_prefix(&made)
+                    .unwrap_or(&c.there.path)
+                    .to_owned()
+            })
+            .collect();
+        assert_eq!(asked, [PathBuf::new(), PathBuf::from("a.jpg")]);
+        // As Enter answers: the folder merged, the file kept beside.
+        assert!(app.answer_clashes(question.id, Some(skwir_core::op::clash::Answer::default())));
+    });
+    assert!(
+        matches!(ended, ExecEvent::Finished { error: None, .. }),
+        "{ended:?}"
+    );
+    let text = |name: &str| Some(String::from(name));
+    assert_eq!(
+        tree(&made),
+        [
+            ("a (2).jpg".into(), text("the second")),
+            ("a (3).jpg".into(), text("the first")),
+            ("a.jpg".into(), text("mine, since")),
+            ("b.txt".into(), text("left")),
+        ]
+    );
+}
+
+/// What a plan from elsewhere says an extraction merged places, two items
+/// to one name, is refused before anything is extracted.
+#[test]
+fn a_merge_placing_two_items_under_one_name_is_refused() {
+    if !with_archive_worker() {
+        return;
+    }
+    let tmp = scratch();
+    let app = app(tmp.path());
+    let dest = tmp.path().join("into");
+    std::fs::create_dir(&dest).unwrap();
+    let archive = tmp.path().join("photos.zip");
+    write_zip(&archive, &[("a.jpg", b"one"), ("b.jpg", b"two")]);
+    let result = app
+        .executor
+        .execute_blocking(&extract(&app, &archive, &dest), app.lifetime());
+    assert!(result.error.is_none(), "{:?}", result.error);
+    let made = dest.join("photos");
+    std::fs::remove_file(made.join("a.jpg")).unwrap();
+    std::fs::remove_file(made.join("b.jpg")).unwrap();
+
+    let mut data = extract(&app, &archive, &dest).to_data();
+    let args = &mut data.steps[0].args;
+    args["name"] = json!("photos");
+    args["merge"] = json!([
+        { "from": "a.jpg", "to": "it's one.jpg" },
+        { "from": "b.jpg", "to": "it's one.jpg" },
+    ]);
+    let plan = Plan::from_data(&data, &app.ops).unwrap();
+    let diff = plan.diff(&app.companions);
+    assert!(
+        matches!(&diff.steps[..], [(_, StepStatus::Conflict { reason })]
+            if reason.contains("two items")),
+        "{:?}",
+        diff.steps
+    );
+    let refused = app.executor.execute_blocking(&plan, app.lifetime());
+    assert!(refused.error.is_some());
+    assert!(tree(&made).is_empty(), "{:?}", tree(&made));
+}
+
 /// An archive of one read-only folder is extracted as that folder: opened
 /// to be moved out of the staging folder, its permissions given back.
 #[cfg(unix)]

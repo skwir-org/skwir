@@ -623,8 +623,11 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   item by item (`Operation::made_tree`, an `op::MadeTree`; else a file's
   choices): what is there the same left (`MadeTree::sames`, one walk),
   what is not placed whole, a folder that differs merged in turn, a file
-  that differs asked. The step then carries where each item goes
-  (`Operation::merged`, `op::Placing`, names only), and its undo is each
+  that differs asked, kept beside under a name free of every name the
+  step brings into that folder and of where each other item goes. The
+  step then carries where each item goes (`Operation::merged`,
+  `op::Placing`, names only, never two to one name; one found taken by
+  anything but the same item fails the step), and its undo is each
   item it placed (`op::Steps`, journaled as each step: never the folder
   there, never what was in it). A plan
   with such a step is settled even with no copy in it

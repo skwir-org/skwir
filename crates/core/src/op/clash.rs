@@ -661,7 +661,9 @@ impl Walk<'_> {
     /// otherwise. What is replaced goes first (never what the step reads,
     /// or what holds it: the step's check says its name is taken); then
     /// the step, placing what it places ([`Placing`]), kept beside under
-    /// the first name free (`photo (2).jpg`, as what a step makes is).
+    /// the first name free (`photo (2).jpg`, as what a step makes is):
+    /// free of what is there, of what any other item goes to, and of every
+    /// name the step brings into that folder, placed or not.
     fn merge_made(
         &mut self,
         step: usize,
@@ -681,9 +683,10 @@ impl Walk<'_> {
             items.reverse();
             items
         };
-        let mut placing = Vec::new();
+        let mut placing: Vec<Placing> = Vec::new();
         let mut aside = Vec::new();
-        // The names given to items kept beside, which the next are not.
+        // Where each item placed goes, below the folder: what a name kept
+        // beside is not.
         let mut taken: HashSet<PathBuf> = HashSet::new();
         // Depth first, in their names' order: a folder's clashes right
         // after it, as the dialog lists them.
@@ -699,6 +702,7 @@ impl Walk<'_> {
             }
             let there = target.join(path);
             if !self.ctx.exists(&there) {
+                taken.insert(path.to_path_buf());
                 placing.push(Placing::same(path));
                 continue;
             }
@@ -738,19 +742,24 @@ impl Walk<'_> {
                     if !holds_input && let Some(entry) = EntryRef::from_path(&there) {
                         aside.push(put_aside(entry));
                     }
+                    taken.insert(path.to_path_buf());
                     placing.push(Placing::same(path));
                 }
                 Choice::Merge if folders => walk.push((at, items(path))),
                 Choice::Merge | Choice::KeepBoth => {
-                    let dir = there.parent().unwrap_or(target);
+                    // Never a name the archive brings there (`a (2).jpg`
+                    // beside `a.jpg`): placed now or later, or skipped.
                     let name = kept_name(path.file_name().unwrap_or_default(), "", folder, |n| {
-                        let at = dir.join(n);
-                        taken.contains(&at) || self.ctx.exists(&at)
+                        let beside = path.with_file_name(n);
+                        taken.contains(&beside)
+                            || tree.get(&beside).is_some()
+                            || self.ctx.exists(&target.join(&beside))
                     });
-                    taken.insert(dir.join(&name));
+                    let to = path.with_file_name(name);
+                    taken.insert(to.clone());
                     placing.push(Placing {
                         from: path.to_path_buf(),
-                        to: path.with_file_name(name),
+                        to,
                     });
                 }
             }

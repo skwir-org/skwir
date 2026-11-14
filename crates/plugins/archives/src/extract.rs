@@ -331,6 +331,18 @@ impl op::Effect for Extract {
     fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
         let src = self.entry.resolve()?;
         let target = self.dest_dir.join(self.name_in(&src, ctx));
+        // Merged, what each item is, as its check read it: what a name
+        // found taken is told the same as.
+        let merging = match &self.merge {
+            Some(placing) => Some((
+                placing,
+                whole_listing(&src, ctx)
+                    .as_deref()
+                    .and_then(tree_of)
+                    .with_context(|| format!("“{}” cannot be listed whole", display_name(&src)))?,
+            )),
+            None => None,
+        };
         let size = std::fs::metadata(&src)?.len();
         ctx.add_total(size);
         let staging = ctx.stage(&self.dest_dir)?;
@@ -389,8 +401,10 @@ impl op::Effect for Extract {
                 // Its one member, under the step's name, which may be one
                 // kept beside; else a folder of all it holds.
                 let root = only_member(&made).unwrap_or_else(|| made.clone());
-                match &self.merge {
-                    Some(placing) => place_merged(&staging, &root, &target, placing, &mut placed),
+                match &merging {
+                    Some((placing, tree)) => {
+                        place_merged(&staging, &root, &target, placing, tree, ctx, &mut placed)
+                    }
                     None => staging.place_within(&root, &target).with_context(|| {
                         format!(
                             "“{}” could not be placed in “{}”",
@@ -518,7 +532,15 @@ fn check_merged(src: &Path, target: &Path, placing: &[Placing], ctx: &StepContex
         return conflict(format!("“{}” cannot be listed whole", display_name(src)));
     };
     let mut done = true;
+    // Never two items to one name: the second would find it taken.
+    let mut going = std::collections::HashSet::with_capacity(placing.len());
     for placing in placing {
+        if !going.insert(placing.to.as_path()) {
+            return conflict(format!(
+                "two items would be extracted as “{}”",
+                placing.to.display()
+            ));
+        }
         let Some(item) = tree.below(&placing.from) else {
             return conflict(format!(
                 "“{}” is not in “{}” any more",
@@ -550,33 +572,50 @@ fn check_merged(src: &Path, target: &Path, placing: &[Placing], ctx: &StepContex
 
 /// Each item `placing` says, from `root` (what the archive was extracted
 /// as, in `staging`) into `target`, the folder there merged into, noted in
-/// `placed`; one there already (the same, as the check found) left as it
-/// is. One that cannot be placed takes those placed before back where
-/// they were made, which goes with the staging folder.
+/// `placed`; one there already the same (`tree` says what each item is,
+/// as the check found it) left as it is. Anything else under its name,
+/// come since the check, is never placed over: the step fails, and those
+/// placed before are taken back where they were made, which goes with the
+/// staging folder.
 fn place_merged(
     staging: &op::Staging,
     root: &Path,
     target: &Path,
     placing: &[Placing],
+    tree: &MadeTree,
+    ctx: &StepContext,
     placed: &mut Vec<Placing>,
 ) -> anyhow::Result<()> {
     for item in placing {
         let to = target.join(&item.to);
-        if std::fs::symlink_metadata(&to).is_ok() {
-            continue;
-        }
-        if let Err(error) = staging.place_within(&root.join(&item.from), &to) {
+        let failed = if std::fs::symlink_metadata(&to).is_ok() {
+            let same = tree
+                .below(&item.from)
+                .is_some_and(|made| made.held_at(&to, ctx.cancel_token()));
+            if same {
+                continue;
+            }
+            Some(anyhow::anyhow!("“{}” is already there", display_name(&to)))
+        } else {
+            staging
+                .place_within(&root.join(&item.from), &to)
+                .err()
+                .map(|error| {
+                    anyhow::Error::from(error).context(format!(
+                        "“{}” could not be placed in “{}”",
+                        display_name(&to),
+                        display_name(target)
+                    ))
+                })
+        };
+        if let Some(error) = failed {
             for back in placed.iter().rev() {
                 if let Err(e) = std::fs::rename(target.join(&back.to), root.join(&back.from)) {
                     tracing::warn!("“{}” stays where it was placed: {e}", back.to.display());
                 }
             }
             placed.clear();
-            return Err(anyhow::Error::from(error).context(format!(
-                "“{}” could not be placed in “{}”",
-                display_name(&to),
-                display_name(target)
-            )));
+            return Err(error);
         }
         placed.push(item.clone());
     }

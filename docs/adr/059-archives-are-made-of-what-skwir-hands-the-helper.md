@@ -201,20 +201,26 @@ user's choice: merge as a copy does, asked.
   - A folder there that differs is merged in turn (its row under its
     folder's in the dialog); a file there that differs takes a file's
     choices: kept beside (`photo (2).jpg`, no word, as what a step makes
-    is), replaced through the trash, replaced if newer (the member's time
+    is, under a name free of what is there, of what another item goes
+    to, and of every name the archive brings into that folder: never
+    `a (2).jpg` beside `a.jpg` where the archive holds an `a (2).jpg`),
+    replaced through the trash, replaced if newer (the member's time
     against the file's), or skipped. What is, or holds, what the step
     reads is never replaced: the step's check refuses its name.
   - The answers are the plan: the Trash steps for what is replaced, then
     the extraction, which carries where each item it places goes
     (`Extract::merge`, `op::Placing`, each path only names: what a plan
-    from elsewhere says that would leave the folder is refused).
+    from elsewhere says that would leave the folder, or that puts two
+    items under one name, is refused).
 - **Extracted once, placed item by item.** The archive is extracted
   whole into its staging folder, as before (a `.tar.gz` can only be read
   from its start), and only what was chosen is placed
   (`Staging::place_within`: a folder the archive made read-only is opened
   for the move, its permissions given back). Its room is checked against
-  all it extracts, which the staging folder holds. One that cannot be
-  placed takes those placed before back into the staging folder.
+  all it extracts, which the staging folder holds. A name found taken as
+  it places, by anything but the same item, is never placed over: like
+  one that cannot be placed, it fails the step, and those placed before
+  are taken back into the staging folder.
 - **Undone item by item.** Its undo is each item it placed, to the trash
   (`op::Steps`, several steps as one, which the executor journals as each,
   `each_step`): never the folder, never what the user kept. Where the
