@@ -379,10 +379,14 @@ binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
 - **What another program does** is followed only where a pane shows
   the pin's folder (`Shell::follow_outside`), looked at once a pane's
   names change: a rename the pane followed (`Pane::renames_since`) of the
-  file the pin's name was last listed as moves the pin; a name listed,
-  then gone, with no plan of Skwir's under way in the folder
-  (`Executor::under_way_in`, asked before the plans' ends are read: a
-  plan is under way until its observers were told) takes it away. A name
+  entry the pin's name was last listed as moves the pin (the name, never
+  another name of its file: a hard link renamed beside it leaves the
+  pin, `renamed_to`); a name listed, then gone, with no plan of Skwir's
+  under way in the folder (`Executor::under_way_in`, asked before the
+  plans' ends are read: a plan is under way until its observers were
+  told) takes it away. Under way, it is asked once, and again only once
+  a plan has started or ended (`Executor::history_version`), never at
+  each sync. A name
   not listed yet says nothing: a plan's end is often followed before the
   folder lists where the file went. Elsewhere the track plays on, and a
   queued track found gone is passed: the helper does not hand over a

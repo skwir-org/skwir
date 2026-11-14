@@ -239,6 +239,20 @@ fn after_taken(finished: &VecDeque<(PlanId, Option<Fate>)>, plan: PlanId) -> Aft
     }
 }
 
+/// What `entry`, the name the pin's file was listed as, was last renamed
+/// to among `renames` (each entry before and after): the name, never
+/// another name of its file (a hard link renamed beside it), which a
+/// reference follows only where it knew the file had one name.
+fn renamed_to(
+    entry: skwir_core::EntryId,
+    renames: impl Iterator<Item = (skwir_core::EntryId, skwir_core::EntryId)>,
+) -> Option<skwir_core::EntryId> {
+    renames
+        .filter(|(before, _)| *before == entry)
+        .map(|(_, after)| after)
+        .last()
+}
+
 /// What became of the track played, through a plan or another program's
 /// change (`Pinned::follow`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -330,22 +344,21 @@ impl Pinned {
     fn follow(&mut self, went: &HashMap<PathBuf, Option<PathBuf>>, mode: Continue) -> Fate {
         let gone = |path: &Path| matches!(went.get(path), Some(None));
         let playing_gone = gone(&self.path);
-        let next = if playing_gone && mode != Continue::Stop {
-            let mut at = self.index;
-            let mut found = None;
-            for _ in 0..self.queue.len() {
-                let Some(step) = step(self.queue.len(), &self.order, at, 1, mode) else {
-                    break;
-                };
-                if !gone(&self.queue[step]) {
-                    found = Some(step);
-                    break;
-                }
-                at = step;
-            }
-            found
-        } else {
+        // The first of those left after it in the order played: the
+        // shuffle's, walked from where the track stands in it (found once),
+        // else the queue's.
+        let next = if !playing_gone || mode == Continue::Stop {
             None
+        } else if mode == Continue::Shuffle && self.order.len() == self.queue.len() {
+            let at = self.order.iter().position(|track| *track == self.index);
+            at.and_then(|at| {
+                self.order[at + 1..]
+                    .iter()
+                    .copied()
+                    .find(|&track| !gone(&self.queue[track]))
+            })
+        } else {
+            (self.index + 1..self.queue.len()).find(|&track| !gone(&self.queue[track]))
         };
         // Where each track of the queue stands in the new one, if anywhere.
         let mut kept_at = Vec::with_capacity(self.queue.len());
@@ -598,17 +611,21 @@ pub struct PlayerState {
     finished: VecDeque<(PlanId, Option<Fate>)>,
     /// What another program did, as the panes showing the pin's folder
     /// tell it (`Shell::follow_outside`): the renames each pane followed
-    /// that were read, and the file the pin's name was last listed as.
+    /// that were read, and the entry the pin's name was last listed as:
+    /// the name, not its file, which another name of it (a hard link)
+    /// shares.
     renames_seen: HashMap<skwir_core::workspace::PaneId, u64>,
-    listed_as: Option<(PathBuf, skwir_core::FileId)>,
+    listed_as: Option<(PathBuf, skwir_core::EntryId)>,
     /// The way the pin last went, to go on past a track it went to that is
     /// gone (`Shell::pass_gone`): 1 for Next and a track's end, -1 for
     /// Previous.
     stepping: i64,
-    /// The pin's path and the panes' names as last looked at, and whether
-    /// its name went with a plan still under way there.
+    /// The pin's path and the panes' names as last looked at, and, while
+    /// its name went with a plan still under way there, the plans' version
+    /// then (`Executor::history_version`): looked at again only once a
+    /// plan has started or ended since, never at each sync.
     outside_at: Option<(PathBuf, u64)>,
-    outside_waits: bool,
+    outside_waits: Option<u64>,
 }
 
 /// What the pin plays and the queue it walks, as the plans' observer
@@ -709,7 +726,7 @@ impl Default for PlayerState {
             listed_as: None,
             stepping: 1,
             outside_at: None,
-            outside_waits: false,
+            outside_waits: None,
         }
     }
 }
@@ -1026,28 +1043,36 @@ impl Shell {
         let (Some(folder), Some(name)) = (path.parent(), path.file_name()) else {
             return;
         };
+        // Its name went with a plan under way: looked at again once a plan
+        // has started or ended since (the one under way, its end followed
+        // first), whatever the panes' names do meanwhile.
+        if let Some(since) = self.player.outside_waits {
+            if self.app.executor.history_version() == since {
+                return;
+            }
+            self.player.outside_waits = None;
+            self.player.outside_at = None;
+        }
         let app = Arc::clone(&self.app);
         let ws = app.workspace.read();
         // Looked at again only once a pane's names changed, or the pin
-        // went elsewhere, or while it waits for a plan to end.
+        // went elsewhere.
         let stamp = ws.panes().iter().fold(0u64, |stamp, pane| {
             stamp.rotate_left(7)
                 ^ pane.listing.id()
                 ^ pane.listing.names_version()
                 ^ u64::from(pane.listing.is_complete())
         });
-        if !self.player.outside_waits
-            && self
-                .player
-                .outside_at
-                .as_ref()
-                .is_some_and(|(at, seen)| *at == path && *seen == stamp)
+        if self
+            .player
+            .outside_at
+            .as_ref()
+            .is_some_and(|(at, seen)| *at == path && *seen == stamp)
         {
             return;
         }
         self.player.outside_at = Some((path.clone(), stamp));
-        self.player.outside_waits = false;
-        // The file its name was last listed as. A name not listed yet (a
+        // The entry its name was last listed as. A name not listed yet (a
         // plan's end followed before the folder lists where it went) says
         // nothing: only a name listed, then gone, was taken away.
         let listed = self
@@ -1055,7 +1080,7 @@ impl Shell {
             .listed_as
             .as_ref()
             .filter(|(at, _)| *at == path)
-            .map(|(_, file)| *file);
+            .map(|(_, entry)| *entry);
         let mut moved_to = None;
         let mut missing = false;
         let mut seen_panes = Vec::new();
@@ -1079,18 +1104,15 @@ impl Shell {
                 .copied()
                 .unwrap_or(u64::MAX);
             let (now, renames) = pane.renames_since(since);
-            if let Some(file) = listed {
-                for (before, after) in renames {
-                    if before.file == file
-                        && let Some(to) = pane.path_of(after)
-                    {
-                        moved_to = Some(to);
-                    }
-                }
+            if let Some(to) = listed
+                .and_then(|entry| renamed_to(entry, renames))
+                .and_then(|after| pane.path_of(after))
+            {
+                moved_to = Some(to);
             }
             self.player.renames_seen.insert(pane.id, now);
             match pane.listing.named(name).next() {
-                Some(entry) => self.player.listed_as = Some((path.clone(), entry.file())),
+                Some(entry) => self.player.listed_as = Some((path.clone(), entry.id)),
                 None => missing |= listed.is_some(),
             }
         }
@@ -1107,7 +1129,10 @@ impl Shell {
             return;
         }
         // A plan of Skwir's moving or removing it says so as it ends: asked
-        // before what ended is read, so none is missed between the two.
+        // before what ended is read, so none is missed between the two, and
+        // the plans' version before both, so one that ends meanwhile has
+        // it looked at again.
+        let version = self.app.executor.history_version();
         let under_way = !self.app.executor.under_way_in(folder).is_empty();
         self.take_followed(window, cx);
         let still = self
@@ -1116,8 +1141,7 @@ impl Shell {
             .as_ref()
             .is_some_and(|pinned| pinned.path == path && !pinned.ended);
         if still && under_way {
-            // Looked at again with each sync until the plan has ended.
-            self.player.outside_waits = true;
+            self.player.outside_waits = Some(version);
         } else if still {
             let went = HashMap::from([(path, None)]);
             self.pin_follows(&went, None, window, cx);
@@ -2463,7 +2487,9 @@ pub(crate) fn request(
 
 #[cfg(test)]
 mod tests {
-    use super::{AfterTaken, Continue, Fate, PinPlace, Pinned, after_taken, shuffled, step};
+    use super::{
+        AfterTaken, Continue, Fate, PinPlace, Pinned, after_taken, renamed_to, shuffled, step,
+    };
     use skwir_core::op::PlanId;
     use std::collections::{HashMap, VecDeque};
     use std::path::PathBuf;
@@ -2539,6 +2565,23 @@ mod tests {
         let fate = same.follow(&went(&[("b.ogg", Some("c.ogg"))]), Continue::Stop);
         assert_eq!((fate, same.path.clone()), (Fate::Same, track("a.ogg")));
         assert_eq!(names(&same), ["a.ogg", "c.ogg"]);
+    }
+
+    /// Another program's rename moves the pin when it renames the name the
+    /// pin was listed as, never another name of its file (a hard link).
+    #[test]
+    fn a_rename_of_another_name_of_the_file_leaves_the_pin() {
+        use skwir_core::{EntryId, FileId};
+        let file = FileId { dev: 1, ino: 7 };
+        let folder = FileId { dev: 1, ino: 2 };
+        let name = |name: &str| EntryId::in_folder(file, folder, name.as_ref());
+        let (playing, link) = (name("it's a song.ogg"), name("a link's name.ogg"));
+        let moved = name("it's the song.ogg");
+        assert_eq!(playing.file, link.file, "one file, two names");
+        let renames = [(link, name("another.ogg"))];
+        assert_eq!(renamed_to(playing, renames.into_iter()), None);
+        let renames = [(link, name("another.ogg")), (playing, moved)];
+        assert_eq!(renamed_to(playing, renames.into_iter()), Some(moved));
     }
 
     /// A plan that took the track's file ends the session and the plan,

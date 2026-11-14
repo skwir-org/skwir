@@ -77,11 +77,12 @@ and the other holders of a file shown let go too (8).
    the same preview, its key moved to the new name.
 7. **What another program does** is followed where a pane of the
    window shows the pin's folder: a pane keeps the renames it followed
-   (`Pane::renames_since`), and a rename of the pin's file, known by the
-   file its name was last listed as, moves the pin; its name gone from
-   the folder with no plan of Skwir's under way there
-   (`Executor::under_way_in`, asked before the plans' ends are read)
-   takes it away. Elsewhere no watch says (a folder not shown, a
+   (`Pane::renames_since`), and a rename of the pin's name, known by the
+   entry it was last listed as (never another name of its file), moves
+   the pin; its name gone from the folder with no plan of Skwir's under
+   way there (`Executor::under_way_in`, asked before the plans' ends are
+   read, then again only once a plan has started or ended) takes it
+   away. Elsewhere no watch says (a folder not shown, a
    server's own changes): the track plays on, and a queued track found
    gone is passed: the media helper does not hand over a file no longer
    there (the track ends), and the pin, opening a track that is not
