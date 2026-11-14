@@ -1021,7 +1021,9 @@ pub enum VolumeOf {
 #[derive(Default)]
 pub struct Volume {
     /// Its keyboard, given as its popup opens, in the `volume` place: Up and
-    /// Down step it (`ui.volume_step`), Escape closes the popup.
+    /// Down (Right and Left) step it (`ui.volume_step`), Home and End take
+    /// it to its ends, Escape closes the popup; a stop of the popup's tab
+    /// order, before Mute.
     pub focus: Option<gpui::FocusHandle>,
     /// Pressed and not yet let go: the moves are followed over the window.
     /// A popup opening forgets it: a press its slider saw is no new one's.
@@ -1442,9 +1444,11 @@ impl Shell {
     pub(crate) fn focus_volume(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let volume = &mut self.player.volume;
         volume.held = false;
+        // A stop of the popup's tab order, before Mute: Tab goes between
+        // them, as between a popup's rows.
         let focus = volume
             .focus
-            .get_or_insert_with(|| cx.focus_handle())
+            .get_or_insert_with(|| cx.focus_handle().tab_stop(true).tab_index(0))
             .clone();
         window.focus(&focus, cx);
     }

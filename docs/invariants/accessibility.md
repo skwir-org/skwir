@@ -193,6 +193,7 @@ like `AGENTS.md`.
 | text, Markdown, structured previews | document of its lines | the file |
 | an archive's members, a message's parts, a table's rows | tree, list box; the row the arrows reach said as focused | the file; each row its first cell, the others after their columns' names ("Size: 6 B") |
 | the media player | group; its seek bar a slider of seconds | "Player: ‹file›"; "Position", "0:02 of 0:03" |
+| a player's volume (the speaker's popup, the panel's and the dock's: `media::volume_panel`) | menu holding a slider of percent, upright, in the tab order before Mute (a menu item, selected while muted); the speaker a button saying the level | "Volume"; the slider "Volume", its value "80%" or "Muted"; the speaker "Volume · 80%" |
 | terminal | terminal: its screen as text, the cursor as the caret | "Terminal"; the program's title |
 | footer | status line, never announced | what it shows: the count, the selection |
 | a name being typed (type-ahead) | status line, never announced: the entry reached is said as the cursor moves | what names must begin with; "No match" after it |

@@ -220,8 +220,9 @@ binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
   (`media::volume_control`): its level, an upright slider
   (`controls::upright_slider`, nothing at its foot) and Mute at its foot,
   which leaves the popup open. A click on the speaker opens it, the
-  slider given the keyboard (the `volume` place: Up and Down step it,
-  `ui.volume_step`); the wheel over the speaker or the slider steps it
+  slider given the keyboard (the `volume` place: Up and Down, Right and
+  Left step it, Home and End take it to its ends, `ui.volume_step`; Tab
+  goes between it and Mute); the wheel over the speaker or the slider steps it
   (`VOLUME_STEP`: a wheel's notch, a high-resolution wheel's parts once
   they make one, a touchpad's 60 px, `reader_scroll::Wheeled`),
   and over a speaker whose popup is closed opens it to show the level,

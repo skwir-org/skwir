@@ -113,7 +113,8 @@ pub const TEXT: &str = "PreviewText";
 /// What the preview plays.
 pub const MEDIA: &str = "MediaPlayer";
 /// A player's volume, its slider in the speaker's popup
-/// (`media::volume_control`): Up and Down step it.
+/// (`media::volume_control`): Up and Down, Right and Left step it, Home
+/// and End take it to its ends.
 pub const VOLUME: &str = "VolumeSlider";
 /// The preview on the whole screen (`fullscreen.rs`).
 pub const FULLSCREEN: &str = "Fullscreen";
@@ -780,11 +781,32 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
         Some("media"),
     ),
     // A volume's slider, in a speaker's popup: the panel's or the dock's.
+    // Up and Right louder, as every slider's keys go; Home and End its
+    // ends.
     ("up", "ui.volume_step", r#"{"delta":0.05}"#, Some("volume")),
     (
         "down",
         "ui.volume_step",
         r#"{"delta":-0.05}"#,
+        Some("volume"),
+    ),
+    (
+        "right",
+        "ui.volume_step",
+        r#"{"delta":0.05}"#,
+        Some("volume"),
+    ),
+    (
+        "left",
+        "ui.volume_step",
+        r#"{"delta":-0.05}"#,
+        Some("volume"),
+    ),
+    ("end", "ui.volume_step", r#"{"delta":1.0}"#, Some("volume")),
+    (
+        "home",
+        "ui.volume_step",
+        r#"{"delta":-1.0}"#,
         Some("volume"),
     ),
     // The dock steers the pinned player through the same requests the

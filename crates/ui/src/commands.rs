@@ -1016,6 +1016,8 @@ const KEY_FORMS: &[(&str, &str, &str)] = &[
     ),
     ("ui.volume_step", r#"{"delta":0.05}"#, "Volume: up"),
     ("ui.volume_step", r#"{"delta":-0.05}"#, "Volume: down"),
+    ("ui.volume_step", r#"{"delta":1.0}"#, "Volume: highest"),
+    ("ui.volume_step", r#"{"delta":-1.0}"#, "Volume: lowest"),
     // The arrows over what a preview shows.
     ("ui.preview_scroll", r#"{"to":"up"}"#, "Preview: scroll up"),
     (
