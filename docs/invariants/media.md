@@ -419,15 +419,23 @@ binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
   position and tags). The pin queues the next track as soon as one starts
   and only follows the switch (`Pinned::advance`). A session that cannot
   refuses `play_next`, and the pin opens the next track at the end, with a
-  gap. Verified: one worker carried three tracks. A film gone on with
-  gaplessly after one with a subtitle stream, into one with none, may
-  never start: uridecodebin3 frees the old source from a streaming thread
-  holding its play items' lock, while another thread of that source waits
-  for the lock (`switch_and_activate_input_locked` against
-  `uri_src_probe`, GStreamer 1.28.7, sampled with gdb; the helper's loop
-  goes on reporting the old file's end). Music goes on, and the other
-  film switches tried: from a plain film to either, from one with
-  subtitles to another, shown or not, across codecs and containers.
+  gap. Verified: one worker carried three tracks.
+- A film never goes on gaplessly: while the file playing has a picture's
+  stream (and the helper plays more than its sound), `about-to-finish`
+  hands nothing over (`plays_film`), the film plays to its end, and the
+  player opens the next file then, with a gap, as any session that
+  cannot do otherwise. Gone on with from a film with a subtitle stream
+  into one with none, the next film never started: uridecodebin3 frees
+  the old source from a streaming thread that holds its play items' lock
+  (`switch_and_activate_input_locked`, in `free_source_item`, waiting on a
+  pad's stream lock as it deactivates it) while that pad's own streaming
+  thread waits for the lock (`uri_src_probe`): GStreamer 1.28.7, sampled
+  with gdb, the helper's loop reporting the old file's end for good. A
+  short gap is better than a player standing still, and gapless matters
+  for music, which goes on (what the next file holds is not known before
+  it is read, so a file that is no film goes on to whatever comes). To be
+  tried again on a later GStreamer: `tools/media/check.py`'s clips and a
+  copy of a film without its subtitle stream show it.
 
 ## The dock
 

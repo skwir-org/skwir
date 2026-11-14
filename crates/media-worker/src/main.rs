@@ -148,11 +148,20 @@ impl Player {
         let next: Arc<Mutex<Option<std::path::PathBuf>>> = Arc::default();
         let handed: Arc<Mutex<Option<std::path::PathBuf>>> = Arc::default();
         let wanted = Arc::new(Mutex::new(Wanted::opened()));
+        // Whether the file playing is a film, as its collection said
+        // (`plays_film`): one never goes on gaplessly.
+        let film = Arc::new(AtomicBool::new(false));
         {
             let (next, handed) = (next.clone(), handed.clone());
             let told = Arc::clone(events);
             let wanted = Arc::clone(&wanted);
+            let film = Arc::clone(&film);
             pipeline.connect("about-to-finish", false, move |values| {
+                // A film plays to its end, and the player opens the next
+                // file then, with a gap (`plays_film`).
+                if film.load(Ordering::Acquire) {
+                    return None;
+                }
                 let path = next.lock().unwrap_or_else(PoisonError::into_inner).take()?;
                 // A file gone since it was queued (another program removed
                 // it) is not handed over, which would end the session in an
@@ -191,6 +200,12 @@ impl Player {
             if let gst::MessageView::StreamCollection(collection) = message.view()
                 && let Some(pipeline) = bus_pipeline.upgrade()
             {
+                // The latest input's: the file playing, as playbin asks
+                // for the next (it is that file's last collection then).
+                film.store(
+                    plays_film(&collection.stream_collection(), !audio_only),
+                    Ordering::Release,
+                );
                 answer(
                     &pipeline,
                     &collection.stream_collection(),
@@ -559,6 +574,24 @@ fn answer(
     }
     // Held until sent: a track change waits for it.
     drop(wanted);
+}
+
+/// Whether a file of `collection` is a film, played as one (`video`, the
+/// helper not playing sound alone): a stream of it is a picture's. A film
+/// never goes on gaplessly to the next file: uridecodebin3, freeing the
+/// old source as it switched from a film with a subtitle stream to one
+/// with none, held a lock one of its threads waited for while it waited
+/// for that thread (`GStreamer` 1.28.7), and the player stood still for
+/// good. Refused, the film plays to its end and the player opens the next
+/// then, with a gap; music, where gapless matters, goes on (what the next
+/// file holds is not known before it is read). To be tried again on a
+/// later `GStreamer` (docs/invariants/media.md).
+fn plays_film(collection: &gst::StreamCollection, video: bool) -> bool {
+    video
+        && collection
+            .iter()
+            .take(128)
+            .any(|stream| stream.stream_type().contains(gst::StreamType::VIDEO))
 }
 
 /// The tracks a next file plays, said in its state (`Wanted::next`): its
@@ -1245,7 +1278,8 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        Event, Events, Playback, Wanted, answer, chosen, gst, hand_over, next_tracks, sends_frame,
+        Event, Events, Playback, Wanted, answer, chosen, gst, hand_over, next_tracks, plays_film,
+        sends_frame,
     };
     use std::sync::{Mutex, mpsc};
 
@@ -1306,6 +1340,27 @@ mod tests {
             rx.try_recv(),
             Ok(Event::Selecting(Some(ids))) if ids == ["video", "english"]
         ));
+    }
+
+    /// A film is a file with a picture's stream, played as one: it never
+    /// goes on gaplessly; a file of sound alone, or any file the helper
+    /// plays the sound of alone, does.
+    #[test]
+    fn a_film_is_told_by_a_picture_stream_played_as_one() {
+        gst::init().unwrap();
+        let stream =
+            |id: &str, kind| gst::Stream::new(Some(id), None, kind, gst::StreamFlags::empty());
+        let film = gst::StreamCollection::builder(None)
+            .stream(stream("picture", gst::StreamType::VIDEO))
+            .stream(stream("sound", gst::StreamType::AUDIO))
+            .stream(stream("words", gst::StreamType::TEXT))
+            .build();
+        let tune = gst::StreamCollection::builder(None)
+            .stream(stream("sound", gst::StreamType::AUDIO))
+            .build();
+        assert!(plays_film(&film, true));
+        assert!(!plays_film(&film, false), "its sound alone played");
+        assert!(!plays_film(&tune, true));
     }
 
     /// A next file's state says the tracks asked of it: its first audio
