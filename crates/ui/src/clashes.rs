@@ -74,6 +74,9 @@ pub struct Clashes {
     /// Stops that reading once the question is answered, or handed on
     /// to another window (which reads it again).
     reading: Stops,
+    /// The rows above the list ([`Clashes::head_rows`]), said of the whole
+    /// question once: every row drawn and every key asks.
+    heads: Vec<Row>,
 }
 
 /// Cancels its token when it goes.
@@ -122,7 +125,16 @@ fn newer(clash: &Clash) -> bool {
 
 impl Clashes {
     pub fn new(question: ClashQuestion) -> Self {
+        let clashes = &question.clashes;
+        let mut heads = Vec::with_capacity(2);
+        if clashes.iter().any(|clash| !clash.folders()) {
+            heads.push(Row::Files);
+        }
+        if clashes.iter().any(Clash::folders) {
+            heads.push(Row::Folders);
+        }
         Clashes {
+            heads,
             pictures: vec![None; question.clashes.len()],
             question,
             files: FileChoice::default(),
@@ -140,20 +152,12 @@ impl Clashes {
     /// no row, which would choose nothing (a folder merged, all in it
     /// there already or missing). Said of the whole question, never of
     /// the rows shown: a row the user just answered stays where it is.
-    fn head_rows(&self) -> Vec<Row> {
-        let clashes = &self.question.clashes;
-        let mut rows = Vec::with_capacity(2);
-        if clashes.iter().any(|clash| !clash.folders()) {
-            rows.push(Row::Files);
-        }
-        if clashes.iter().any(Clash::folders) {
-            rows.push(Row::Folders);
-        }
-        rows
+    fn head_rows(&self) -> &[Row] {
+        &self.heads
     }
 
     fn heads(&self) -> usize {
-        self.head_rows().len()
+        self.heads.len()
     }
 
     /// What the choices for all are called. The first is every clash's
@@ -238,7 +242,7 @@ impl Clashes {
                 .cast_unsigned()]
         };
         let heads = self.heads();
-        match self.head_rows().get(self.cursor) {
+        match self.head_rows().get(self.cursor).copied() {
             Some(Row::Files) => {
                 let next = along(&FILES, self.files.into());
                 self.files = file_choice(next).unwrap_or_default();
@@ -661,7 +665,7 @@ pub fn render(
     };
     let (first, second) = clashes.head_names();
     let mut heads = div().flex().flex_col().gap(sized(2.));
-    for (at, kind) in clashes.head_rows().into_iter().enumerate() {
+    for (at, &kind) in clashes.head_rows().iter().enumerate() {
         heads = heads.child(match kind {
             Row::Folders => head(at, second, kind, &FOLDERS, clashes.folders.into(), cx),
             _ => head(at, first, kind, &FILES, clashes.files.into(), cx),

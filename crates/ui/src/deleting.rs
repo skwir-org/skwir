@@ -22,9 +22,10 @@ use std::time::Instant;
 use gpui::{
     AnyElement, Context, SharedString, UniformListScrollHandle, Window, div, prelude::*, px,
 };
+use skwir_core::entry::keys;
 use skwir_core::fs::count::{self, Count};
 use skwir_core::op::{Change, PlanId};
-use skwir_core::{CancelToken, Plan};
+use skwir_core::{CancelToken, EntryKind, Plan};
 use skwir_platform::calendar::Calendar;
 
 use crate::controls;
@@ -450,16 +451,28 @@ fn read(
         if cancel.is_cancelled() {
             return;
         }
-        let kind = match std::fs::symlink_metadata(path) {
-            Ok(meta) if meta.file_type().is_symlink() => Kind::Link,
-            Ok(meta) if meta.is_dir() => Kind::Folder,
-            Ok(meta) => Kind::File(meta.len()),
-            Err(_) => Kind::Gone,
+        // What it is and its picture, from one stat; where its folder
+        // cannot be opened, what it is as a stat of the path says.
+        let entry = statter.stat(path);
+        let kind = match &entry {
+            Some(e) => match e.kind {
+                EntryKind::Symlink => Kind::Link,
+                EntryKind::Directory => Kind::Folder,
+                _ => Kind::File(
+                    e.metadata
+                        .value(keys::SIZE)
+                        .and_then(skwir_core::Value::as_u64)
+                        .unwrap_or(0),
+                ),
+            },
+            None => match std::fs::symlink_metadata(path) {
+                Ok(meta) if meta.file_type().is_symlink() => Kind::Link,
+                Ok(meta) if meta.is_dir() => Kind::Folder,
+                Ok(meta) => Kind::File(meta.len()),
+                Err(_) => Kind::Gone,
+            },
         };
-        let picture = (kind != Kind::Gone)
-            .then(|| statter.stat(path))
-            .flatten()
-            .map(|e| Pictured::of(&e, path));
+        let picture = entry.as_ref().map(|e| Pictured::of(e, path));
         let found = if kind == Kind::Gone {
             Vec::new()
         } else {
