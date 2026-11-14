@@ -189,10 +189,21 @@ impl History {
 }
 
 /// The most characters a field holds of what is typed, pasted or composed
-/// in it, as Qt's line edit holds by default. Its line is shaped whole on
-/// the window's thread at each change: 20,000 copied files pasted in the
-/// address (600 KB of paths) held the window half a minute.
+/// in it, as Qt's line edit holds by default, of a completion taken
+/// (`TextInput::replace_all`), and of a text a command gives it
+/// ([`held`]). Its line is shaped whole on the window's thread at each
+/// change: 20,000 copied files pasted in the address (600 KB of paths)
+/// held the window half a minute.
 pub const MOST_CHARS: usize = 32_767;
+
+/// What of `text`, a field's whole text given by a command (`ui.search`'s
+/// `text`), the field takes, as it would were it pasted in it empty: whole
+/// graphemes, [`MOST_CHARS`] at most.
+pub fn held(mut text: String) -> String {
+    let end = fitted("", &(0..0), &text).len();
+    text.truncate(end);
+    text
+}
 
 /// What of `text`, put in place of `range` in `content`, the field takes:
 /// whole graphemes while the field stays within [`MOST_CHARS`].
@@ -213,6 +224,14 @@ fn fitted<'a>(content: &str, range: &Range<usize>, text: &'a str) -> &'a str {
         end = at + grapheme.len();
     }
     &text[..end]
+}
+
+/// Whether putting `text` in place of `range` leaves a field as it is (a
+/// key typed or a paste in a field full to [`MOST_CHARS`], Delete at the
+/// end): no step to take back, nothing to tell, no line to lay out again.
+/// Not while `composing`, which the edit ends.
+fn changes_nothing(range: &Range<usize>, text: &str, composing: bool) -> bool {
+    text.is_empty() && range.is_empty() && !composing
 }
 
 /// Where `text` replacing `range` lands, if it is one character typed at
@@ -384,8 +403,10 @@ impl TextInput {
     }
 
     /// Replace the whole text as an edit, the cursor at its end: Ctrl+Z
-    /// takes it back (a completion taken).
+    /// takes it back (a completion taken). Held to [`MOST_CHARS`], as
+    /// what is typed is.
     pub fn replace_all(&mut self, text: &str, cx: &mut Context<Self>) {
+        let text = fitted("", &(0..0), text);
         if !self.masked {
             let before = (self.content.clone(), self.selected_range.clone());
             self.history.record(before, None);
@@ -858,6 +879,9 @@ impl EntityInputHandler for TextInput {
             .or(self.marked_range.clone())
             .unwrap_or(self.selected_range.clone());
         let new_text = fitted(&self.content, &range, new_text);
+        if changes_nothing(&range, new_text, self.marked_range.is_some()) {
+            return;
+        }
         // A composition being committed was recorded when it began.
         if self.marked_range.is_none() && !self.masked {
             let before = (self.content.clone(), self.selected_range.clone());
@@ -888,6 +912,9 @@ impl EntityInputHandler for TextInput {
             .unwrap_or(self.selected_range.clone());
         let whole = new_text;
         let new_text = fitted(&self.content, &range, new_text);
+        if changes_nothing(&range, new_text, self.marked_range.is_some()) {
+            return;
+        }
         // A selection given within a composition cut short is past its end.
         let new_selected_range_utf16 = new_selected_range_utf16.filter(|_| new_text == whole);
         // A composition is one step, from the text before it began.
@@ -1475,8 +1502,8 @@ fn styled_runs(run: &TextRun, text: &str, styles: &[(Range<usize>, Paint)]) -> V
 #[cfg(test)]
 mod tests {
     use super::{
-        History, MOST_CHARS, autoscroll_x, fitted, scrolled, selected_runs, snapped, typed_at,
-        unit_at, units, utf16_to_utf8,
+        History, MOST_CHARS, autoscroll_x, changes_nothing, fitted, held, scrolled, selected_runs,
+        snapped, typed_at, unit_at, units, utf16_to_utf8,
     };
 
     /// A field takes what fits of a paste, whole characters, and all of
@@ -1498,6 +1525,39 @@ mod tests {
         assert_eq!(fitted(&content[1..], &(0..0), "e\u{301}x"), "e\u{301}");
         // What fits is taken as it is.
         assert_eq!(fitted("dunes", &(5..5), " kind:image"), " kind:image");
+    }
+
+    /// A key typed or a paste in a full field changes nothing, and is no
+    /// step to take back (`replace_text_in_range` returns at once): held,
+    /// typing on never pushes the steps before out of the history. What is
+    /// selected is still replaced.
+    #[test]
+    fn an_edit_a_full_field_takes_nothing_of_changes_nothing() {
+        let full = "a".repeat(MOST_CHARS);
+        let end = full.len();
+        let typed = fitted(&full, &(end..end), "x");
+        assert!(changes_nothing(&(end..end), typed, false));
+        let pasted = fitted(&full, &(0..0), "it's here");
+        assert!(changes_nothing(&(0..0), pasted, false));
+        // Selected, it is replaced by what fits, here nothing.
+        assert!(!changes_nothing(
+            &(0..1),
+            fitted(&full, &(0..1), "e\u{301}"),
+            false
+        ));
+        // A composition this ends is a change.
+        assert!(!changes_nothing(&(end..end), "", true));
+    }
+
+    /// A text a command gives a field, or a completion, is held as a paste
+    /// in it empty would be: whole graphemes, the bound at most.
+    #[test]
+    fn a_text_given_whole_is_held_to_the_bound() {
+        let given = "é".repeat(MOST_CHARS + 10);
+        let taken = held(given.clone());
+        assert_eq!(taken.chars().count(), MOST_CHARS);
+        assert!(given.starts_with(&taken));
+        assert_eq!(held("kind:image".to_owned()), "kind:image");
     }
 
     /// What is selected is written in the selection's text color, on the

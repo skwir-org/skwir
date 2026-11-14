@@ -914,8 +914,9 @@ impl Shell {
             },
         );
         input.update(cx, |i, cx| {
+            // A command's (`ui.tags_prompt`'s), held as a paste would be.
             if let Some(text) = text {
-                i.set_text(text, cx);
+                i.set_text(crate::input::held(text), cx);
             }
             i.focus(window, cx);
         });

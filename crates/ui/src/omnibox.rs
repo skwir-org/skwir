@@ -635,7 +635,8 @@ impl Shell {
     /// (Ctrl+Shift+F), the folder it looks in shows, filtered by its words.
     /// With the field already typed in, Ctrl+F makes the folder or place
     /// highlighted the scope, else words look below the folder; Ctrl+Shift+F
-    /// brings them back to the folder alone.
+    /// brings them back to the folder alone. `text`, a command's (an agent's,
+    /// a script's), is held as a paste would be (`input::held`).
     pub fn omnibox_begin(
         &mut self,
         how: Begin,
@@ -643,6 +644,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let text = text.map(crate::input::held);
         if matches!(how, Begin::Search | Begin::Filter)
             && text.is_none()
             && self.ui().omni.is_some()

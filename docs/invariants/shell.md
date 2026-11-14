@@ -1420,7 +1420,14 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   ends. It holds at most `input::MOST_CHARS` (32,767, as Qt's line edit)
   of what is typed, pasted or composed in it, whole graphemes, the rest of
   a paste left out: its line is shaped whole on the window's thread at
-  each change. Text the program sets (`set_text`) is the program's own.
+  each change. So is a completion taken (`replace_all`) and the text a
+  command gives a field (`input::held`: `ui.search`'s and `ui.filter`'s,
+  `ui.tags_prompt`'s), as an agent or a script may give any. What the
+  program sets of its own (`set_text`: a location shown, a form's or a
+  setting's value, a name to rename) is kept whole: cut, it would be
+  given back cut. An edit that leaves the field as it is (a key in a
+  full field, Delete at the end) is no step to take back and tells
+  nothing.
 
 - **A click answers what a key answers.** A dialog that waits for an
   answer ends with `modal::footer`: what its keys do, muted, then Cancel
