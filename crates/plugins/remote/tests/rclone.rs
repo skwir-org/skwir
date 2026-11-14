@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use skwir_core::cancel::CancelToken;
+use skwir_core::testing::free_port;
 use skwir_plugin_remote::address::Address;
 use skwir_plugin_remote::connector::{Ask, Connector};
 use skwir_plugin_remote::rclone::Rclone;
@@ -60,14 +61,6 @@ impl Drop for Served {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
-}
-
-fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
 }
 
 /// What lets go of a FUSE mount here: the system's setuid wrapper where

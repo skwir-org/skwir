@@ -23,6 +23,7 @@ use std::time::{Duration, Instant};
 
 use skwir_core::cancel::CancelToken;
 use skwir_core::fs::reach;
+use skwir_core::testing::free_port;
 use skwir_plugin_remote::address::Address;
 use skwir_plugin_remote::connector::{self, Connector};
 use skwir_plugin_remote::login::{self, AtLogin, Manager};
@@ -39,14 +40,6 @@ fn fixture(name: &str) -> PathBuf {
     let _ = std::fs::remove_dir_all(&base);
     std::fs::create_dir_all(&base).unwrap();
     base
-}
-
-fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
 }
 
 fn find(program: &str) -> Option<PathBuf> {

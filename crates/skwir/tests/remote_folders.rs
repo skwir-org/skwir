@@ -20,6 +20,7 @@ use skwir_core::app::{App, AppConfig};
 use skwir_core::cancel::CancelToken;
 use skwir_core::command::{Invocation, Outcome};
 use skwir_core::location::Location;
+use skwir_core::testing::free_port;
 use skwir_plugin_remote::address::Address;
 use skwir_plugin_remote::connector::{Ask, Connector, Password};
 use skwir_plugin_remote::kio::Kio;
@@ -38,14 +39,6 @@ fn fixture(name: &str) -> PathBuf {
     let _ = std::fs::remove_dir_all(&base);
     std::fs::create_dir_all(&base).unwrap();
     base
-}
-
-fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
 }
 
 /// `rclone serve <kind>` of `root` on a port of its own, stopped when

@@ -794,6 +794,10 @@ ADR-077 (which revises ADR-021).
   its user `tester` is the user and `nobody` its guest (`nss_wrapper`),
   on a port of its own; a share asking `tester`'s password, one a guest
   opens (KIO's password dialog no test answers).
+- A test server's port comes from `skwir_core::testing::free_port`, which
+  claims it for the test's process: the system's choice of a free port
+  let go may be its choice for the next test asking too, whose server
+  then cannot take it, and its client finds another test's server there.
 - A test lets go of what it mounted before its server stops, once it is
   mounted (an address opened as added connects a moment later), and only
   its own server's (`let_go_of_mounts`, by its port: the tests' runtime

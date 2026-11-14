@@ -33,6 +33,8 @@ rustix.workspace = true
 
 [dev-dependencies]
 dirs.workspace = true
+# Its tests' servers take their ports from `testing::free_port`.
+skwir-core = { workspace = true, features = ["testing"] }
 tempfile.workspace = true
 
 [lints]

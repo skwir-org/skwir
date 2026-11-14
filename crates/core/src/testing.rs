@@ -51,3 +51,62 @@ pub fn mutated(sample: impl Into<Vec<u8>>) -> impl Strategy<Value = Vec<u8>> {
 pub fn mutated_text(sample: impl Into<String>) -> impl Strategy<Value = String> {
     mutated(sample.into().into_bytes()).prop_map(|b| String::from_utf8_lossy(&b).into_owned())
 }
+
+/// A TCP port of 127.0.0.1 for a server a test starts, which no other test
+/// of this machine is given while this one runs.
+///
+/// Tests run at once, each in a process of its own. The system's choice of
+/// a free port (bound, then let go for the server to take) may be its
+/// choice for the next process asking too: a server then could not take
+/// its port, and what answered there was another test's (2026-11-14:
+/// rclone's WebDAV server, and an sshd answering its client). So the port
+/// is claimed by a lock on a file named after it, which every test asks
+/// for, held until this process ends, its servers with it: a server
+/// stopped and started again on its port finds it still free.
+///
+/// # Panics
+/// Where no port can be bound, or its file not made.
+pub fn free_port() -> u16 {
+    static CLAIMED: std::sync::Mutex<Vec<std::fs::File>> = std::sync::Mutex::new(Vec::new());
+    let folder = std::env::home_dir()
+        .expect("a home folder")
+        .join(".cache/skwir-tests/ports");
+    std::fs::create_dir_all(&folder).expect("the ports' folder");
+    loop {
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .and_then(|listener| listener.local_addr())
+            .expect("a free port")
+            .port();
+        let file = std::fs::File::create(folder.join(port.to_string())).expect("a port's file");
+        if file.try_lock().is_ok() {
+            CLAIMED
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(file);
+            return port;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::free_port;
+
+    /// A port given is not given again while its process runs, even when
+    /// the system offers it once more.
+    #[test]
+    fn a_port_given_is_not_given_again() {
+        let ports: std::collections::HashSet<u16> = (0..64).map(|_| free_port()).collect();
+        assert_eq!(ports.len(), 64);
+        for port in &ports {
+            let file = std::fs::File::open(
+                std::env::home_dir()
+                    .unwrap()
+                    .join(".cache/skwir-tests/ports")
+                    .join(port.to_string()),
+            )
+            .unwrap();
+            assert!(file.try_lock().is_err(), "{port} is claimed");
+        }
+    }
+}
