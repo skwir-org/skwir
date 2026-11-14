@@ -1,7 +1,178 @@
 # Changes
 
-## Unreleased
+## 0.5.0 (2026-11-14)
 
+Skwir 0.5.0 groups a folder's files under headings, marks them with their Git
+state and shows their history, and shows what a copy brings where it will land.
+A folder can keep its own order and view and show its README, formulas are
+typeset, and Activity is one floating panel.
+
+[Installation instructions](README.md#installing)
+
+- **Groups** (View › Group by): by kind, type, date, size, rating, tags,
+  owner, folder, or a picture's date taken, its dimensions or a film's length,
+  each under a heading that selects, folds and filters; the Board gives each
+  group its column.
+- **Git**: every view marks what a file is to its repository (changed, staged,
+  new, in conflict), a folder what it holds below; History lists a file's or a
+  folder's commits, its renames followed, each opening as its patch.
+- **What a copy brings shows where it will land**, dimmed and tinted to how
+  far it came, in every view; a file another program is writing says so.
+- **A folder remembers its order and view** when asked (View › Remember for
+  this folder).
+- **Folders first is a setting** (#10): off, folders sort with the files.
+- **Every sort is a column**: Created, Accessed, Taken, Dimensions, Duration,
+  Owner and Kind, in the list and under the grid's names.
+- **Formulas typeset** in notebooks, Markdown, web pages and books, by an
+  optional helper; a notebook's tables and HTML results show as Jupyter shows
+  them.
+- **A folder's preview shows its README or its cover.**
+- **Play from the files' menu**: music to the pinned player, a film in the
+  quick preview; what plays is marked in every view.
+- **Narrow windows**: Settings lists its pages in a menu, and texts wrap rather
+  than cut a word.
+
+**Changed from 0.4.0**: Activity is one floating panel that opens by itself
+for a long action (Ctrl+Shift+J), its tray and pin gone; Sort by and Group by
+are one row each in the View menu, their direction in the submenu; Source, 3D,
+Full preview and View as hex stand at the preview bar's end, beside More; a
+first start shows the grid; Git marks and a folder's README are on by default.
+
+**Windows and macOS builds to try** come with this release too. They are made
+on Linux and have never run on either system: please [try them and tell us what
+happens](docs/HELP-WANTED.md). Skwir itself is for Linux, as in 0.4.0.
+
+### All changes
+
+- **Groups** (ADR-130, ADR-131): View › Group by puts a pane's files under
+  headings by any criterion the sort takes (Name, Kind, Type, Extension,
+  Size, Modified, Created, Accessed, Deleted, Rating, Tags, Owner, Folder,
+  Taken, Dimensions, Duration, Git), dates by your calendar (Today, Yesterday,
+  … then a year each), or by the sort itself, each with a direction of its
+  own. A heading counts its group and stays pinned at the top while you
+  scroll, in the list, the tree and the grid. A click on it selects its
+  group; its menu selects it, shows only its files, folds it or the others;
+  the keys stop on it, Enter selects, Left and Right fold and unfold. The
+  Board gives each group its column, a dozen at most, the last holding the
+  groups left. A screen reader hears each heading. Each pane comes back
+  sorted and grouped as it was left.
+- **Sorting a large folder by what it reads stays smooth**: an order that
+  needs every file's dates, sizes or types is made once they are read, on a
+  worker and every core, the order before shown meanwhile, and the footer
+  says "Reading… N of M". Grouping /nix/store's 336,000 files by Kind took
+  0.3 s where it took 1.3 s, and the type of a long name is read twice as
+  fast.
+- **Sort by and Group by are one row each** in the View menu, saying how they
+  are ("Modified, newest"), their direction first in the submenu. Folders
+  first stands with them, then what is listed, apart from what is drawn
+  with the files.
+- **Every sort is a column** (ADR-130): Created, Accessed, Taken, Dimensions,
+  Duration, Owner and Kind can be shown in the list and under the grid's
+  names (View › Under names), each where it applies. Taken, Dimensions and
+  Duration are read from the files on demand: a picture's header, a film's
+  movie header, else `ffprobe`. The Type column's header sorts.
+- **Folders first is a setting** (#10, Settings › Folders and views ›
+  Sorting, and View › Folders first): off, folders sort with the files, so
+  the newest item comes first by date. A folder has no size of its own:
+  by size it sorts below every file.
+- **A folder remembers its order and view** when asked (ADR-132, View ›
+  Remember for this folder): every pane that shows it shows it so, sorted,
+  grouped and in the list or the grid, the pane's own coming back elsewhere.
+  It follows the folder through Skwir's renames and moves. Each column of
+  the Columns view is in its own folder's order.
+- **Git state** (ADR-134, Settings › Folders and views › Git, on by default):
+  every view marks a file in a repository on its picture's corner, each state
+  its own shape: a sign for a conflict, a dot for a change, a check for what
+  is staged, a plus for what is new; a folder holds the strongest state below
+  it, what is ignored is unmarked. It is read as `git status` says it, by
+  Skwir's own helper, which runs and writes nothing, and changes made
+  elsewhere (a commit, `git add`, a checkout) show on their own. A Git column,
+  a caption and groups (In conflict, Changed, Staged, New, Unchanged,
+  Ignored) sort and show it; a screen reader hears it with the name.
+- **History** (ADR-133): a file's or a folder's commits, in the preview's
+  History, the branches and tags at each, the top folder's drawn as a graph
+  of its merges. A file's follows its renames, as `git log --follow`. A
+  commit opens as its patch below the list, colored as a diff; its menu
+  copies its hash or its summary.
+- **What a copy brings shows where it will land** (ADR-135): a copy, a move to
+  another drive, an extraction, a restore, an undo or a redo shows what it
+  brings in the folder shown before it lands, where it will be in the pane's
+  order and groups, dimmed, tinted to how far it came, with "42 %",
+  "waiting" or "paused". Pointed at, it says where it comes from and how long
+  is left; pressed, it opens its card in Activity. It shows in every view,
+  and a group no file is in yet gets a dimmed heading of its own. Copies by
+  rsync, rclone, `sftp`, `gio` and `kioclient` are followed file by file
+  where the system tells it.
+- **A file another program is writing says so** with a "writing" pill, until
+  it is closed (or quiet for 2 s on macOS and Windows).
+- **A folder's preview shows its README or its cover** (Settings › Folders and
+  views › Previews, on by default): the first of a list of names it holds
+  (`README.md`, `README`, `cover.*`, `folder.*` and others), which you can
+  edit; a file nothing previews is passed over for the next.
+- **Play from the files' menu**: any number of tracks go to the pinned player
+  in the pane's order, a film opens in the quick preview and plays there.
+  What plays wears a badge on its picture in every view, a click on it
+  pausing or playing on; a screen reader hears "playing" or "paused".
+- **Formulas are typeset** (ADR-129) in notebooks, Markdown (`$`, `$$`,
+  GitHub's math blocks), web pages that load MathJax or KaTeX, MathML in books
+  and pages, and footnotes, by `skwir-math-worker` (KaTeX's TeX and fonts,
+  through RaTeX), optional as the Mermaid helper is: Linux's packages ship it
+  as `skwir-math`, Nix's under `withMath`, Windows' and macOS's carry it.
+  Without it a formula stays the TeX it was written in. Equations are
+  numbered by their `\tag` alone, as Jupyter has it; a tall formula grows
+  its own line only; copied or read aloud, a formula is its TeX.
+- **Notebooks show as Jupyter shows them**: each cell read on its own, a
+  pandas table as a table, HTML results and pictures pasted into a cell, a
+  result's formulas typeset as JupyterLab sets them.
+- **Tables size their columns by their content** and a wide one scrolls
+  sideways, rather than every column taking an equal share and its words
+  broken anywhere. Quotations, lists and paragraphs are spaced as a page has
+  them.
+- **Contents is in every document's bar** (Markdown, HTML, notebooks, word
+  processors' documents, books, messages), disabled where there is nothing to
+  list.
+- **The preview's bar keeps its tools in place**: Source, 3D, Full preview
+  and View as hex stand at its end, beside More, each lit while on, so a
+  tool clicked stays under the pointer, and the bar changes once a click,
+  as its answer comes. More has Open With and its submenu, as the file menu
+  has; View as hex is last there.
+- **A film fills its view**: Fit enlarges a small film as players do, where a
+  picture keeps its pixels; a film has no Fit width.
+- **Activity is one floating panel** (ADR-114 amended) above the footer's
+  strip: it opens by itself for an action that lasts, stays open while you
+  work elsewhere, and goes once the work has nothing more to show. Its
+  chevron folds it until the next long action (Settings › General › Actions
+  › Open Activity by itself turns that off); Ctrl+Shift+J gives it the
+  keyboard, Escape gives the keyboard back. Earlier is folded at its foot
+  with its count. The tray and its pin are gone.
+- **Narrow windows** (ADR-010 amended): where its pages no longer fit beside
+  it, Settings lists them in a menu at its title, its search under it, and
+  a setting's control goes under its words rather than cut them. Everywhere,
+  a text beside an icon or a button wraps at its widest word rather than run
+  past its card (vendored gpui 0061); tooltips, drags, the palette and menus
+  keep their lines whole.
+- **Pickers scroll** under a scrollbar, by the wheel too: the palette,
+  Choose, the tag editor and a form's choices. A palette row stays one line.
+- **The Plugins page has a filter** and lists plugins by name; the Exclusions
+  page lists its categories, groups and rows by name (ADR-125 amended).
+- **Entering a folder no longer flashes empty**: the folder left stays drawn,
+  its pictures too, until the one gone to is whole, 150 ms at most. A folder
+  sorted or grouped by dates or sizes appears in its groups at once.
+- **A first start shows the grid**, as most file managers do; a window still
+  comes back in the view it was left in.
+- **A file hidden in a way its name does not say** (Windows' attribute, a
+  Mac's flag, a hidden folder a tag's place found it in) wears a crossed eye
+  on its picture, never a fade, which says cut. A screen reader hears "cut"
+  and "hidden".
+- **One line, one item, one folder** are counted in the singular.
+- **A remounted GVfs server opens at once**, once its folder answers, rather
+  than failing for a second or so after it was ejected and connected to
+  again; rclone's servers are waited for however long rclone takes to list
+  them.
+- **A one-line field takes 32,767 characters at most** (the address, the
+  palette, a rename, a prompt, as Qt's fields hold): the paths of 20,000
+  copied files pasted into the address held the window while their 600 KB
+  were laid out.
 - **Settings finds what you type word by word**, whatever its case or
   accents ("editeur" finds "éditeur"), in its search and in every page's
   filter alike, and finds a plugin by where it comes from too.

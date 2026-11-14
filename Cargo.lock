@@ -8858,7 +8858,7 @@ dependencies = [
 
 [[package]]
 name = "skwir"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "dirs 7.0.0",
@@ -8930,7 +8930,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-alloc"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "libmimalloc-sys",
  "mimalloc",
@@ -8938,7 +8938,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-archive-worker"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "serde_json",
@@ -8946,7 +8946,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-bench"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -8973,7 +8973,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-core"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "blake3",
@@ -9006,7 +9006,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-djvu-worker"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "djvu-rs",
@@ -9017,7 +9017,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-djvulibre-worker"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "skwir-core",
@@ -9025,7 +9025,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-extend"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "blake3",
@@ -9044,7 +9044,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-git-worker"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "gix",
  "imara-diff",
@@ -9055,7 +9055,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-kmtp-worker"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "dirs 7.0.0",
  "fuser",
@@ -9071,7 +9071,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-math-worker"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "ratex-layout",
  "ratex-parser",
@@ -9084,7 +9084,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-media-worker"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "gstreamer",
@@ -9096,14 +9096,14 @@ dependencies = [
 
 [[package]]
 name = "skwir-mermaid-worker"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "merman",
 ]
 
 [[package]]
 name = "skwir-model-worker"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "base64 0.23.1",
  "flate2",
@@ -9126,7 +9126,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-module-worker"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "blake3",
@@ -9139,7 +9139,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-mupdf-worker"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "mupdf",
@@ -9149,21 +9149,21 @@ dependencies = [
 
 [[package]]
 name = "skwir-outside-hex-view"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "skwir-plugin-api",
 ]
 
 [[package]]
 name = "skwir-outside-netpbm"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "skwir-plugin-api",
 ]
 
 [[package]]
 name = "skwir-outside-template"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "serde_json",
  "skwir-plugin-api",
@@ -9171,7 +9171,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-pdf-worker"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "pdfium-render",
@@ -9183,7 +9183,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-platform"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "async-io",
@@ -9248,7 +9248,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-plugin-api"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -9258,7 +9258,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-plugin-archives"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "dirs 7.0.0",
@@ -9275,7 +9275,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-plugin-books"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -9293,7 +9293,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-plugin-checksums"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "blake3",
@@ -9311,7 +9311,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-plugin-circuits"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "skwir-core",
@@ -9321,7 +9321,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-plugin-comics"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "skwir-core",
@@ -9331,7 +9331,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-plugin-control"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "crossbeam-channel",
@@ -9349,7 +9349,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-plugin-djvu"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "skwir-core",
@@ -9358,7 +9358,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-plugin-documents"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "parking_lot",
@@ -9372,7 +9372,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-plugin-edit-as-buffer"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "parking_lot",
@@ -9385,7 +9385,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-plugin-email"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "mail-parser",
@@ -9396,7 +9396,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-plugin-fonts"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "flate2",
@@ -9411,7 +9411,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-plugin-geo"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "jiff",
@@ -9431,7 +9431,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-plugin-git"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "jiff",
@@ -9442,7 +9442,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-plugin-hex"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "memchr",
@@ -9453,7 +9453,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-plugin-jump"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "crossbeam-channel",
@@ -9474,7 +9474,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-plugin-map-tiles"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -9504,7 +9504,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-plugin-markdown"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -9518,7 +9518,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-plugin-media"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "skwir-core",
  "skwir-platform",
@@ -9528,7 +9528,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-plugin-models"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -9545,7 +9545,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-plugin-mpris"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "parking_lot",
@@ -9558,7 +9558,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-plugin-name-tags"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "dirs 7.0.0",
@@ -9573,7 +9573,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-plugin-open-with"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "parking_lot",
@@ -9587,7 +9587,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-plugin-ops-basic"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "parking_lot",
@@ -9600,7 +9600,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-plugin-places"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "crossbeam-channel",
@@ -9617,7 +9617,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-plugin-playlists"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "percent-encoding",
@@ -9629,7 +9629,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-plugin-print"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "crossbeam-channel",
@@ -9646,7 +9646,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-plugin-query"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "crossbeam-channel",
@@ -9670,7 +9670,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-plugin-remote"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "crossbeam-channel",
@@ -9693,7 +9693,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-plugin-rename-bulk"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "jiff",
@@ -9708,7 +9708,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-plugin-shelf"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "crossbeam-channel",
@@ -9722,7 +9722,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-plugin-shell"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "schemars",
@@ -9736,7 +9736,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-plugin-shrink"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "schemars",
@@ -9750,7 +9750,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-plugin-structured-data"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "serde_json",
@@ -9763,7 +9763,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-plugin-tables"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "calamine",
@@ -9780,7 +9780,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-plugin-tags"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "crossbeam-channel",
@@ -9801,7 +9801,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-plugin-tagspaces"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "dirs 7.0.0",
  "parking_lot",
@@ -9814,7 +9814,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-plugin-terminal"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "alacritty_terminal",
  "anyhow",
@@ -9829,7 +9829,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-plugin-thumbnails"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "image",
@@ -9842,7 +9842,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-plugin-timeline"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "parking_lot",
@@ -9857,7 +9857,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-plugin-trash"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "crossbeam-channel",
@@ -9872,7 +9872,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-plugin-usage"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "crossbeam-channel",
@@ -9888,7 +9888,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-plugin-vim"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "parking_lot",
  "serde_json",
@@ -9899,7 +9899,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-plugin-xmp"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "dirs 7.0.0",
@@ -9916,7 +9916,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-poppler-worker"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "cairo-rs",
@@ -9927,7 +9927,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-print-worker"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "flate2",
@@ -9949,7 +9949,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-shrink"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "fax 0.3.0",
@@ -9966,7 +9966,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-tree-sitter-worker"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "cc",
@@ -9983,7 +9983,7 @@ dependencies = [
 
 [[package]]
 name = "skwir-ui"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "crossbeam-channel",

@@ -15,7 +15,7 @@
 
 pkgbase=skwir
 pkgname=(skwir skwir-mermaid skwir-math skwir-mupdf)
-pkgver=0.4.0
+pkgver=0.5.0
 pkgrel=1
 pkgdesc='An augmented file manager, for humans and agents'
 arch=('x86_64' 'aarch64')

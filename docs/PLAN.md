@@ -31,12 +31,12 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
 6. **Agent-ready:** commands are data, plans before apply, stable
    identity (ADR-049), metadata with provenance.
 
-## Current status (2026-11-10)
+## Current status (2026-11-14)
 
 - **Where:** named Skwir (skwir.org, application id `org.skwir.skwir`),
-  version 0.4.0, released 2026-11-10 on GitHub and the AUR's three
-  bases; 0.3.1 was released 2026-11-05, 0.3.0 2026-11-03, 0.2.0
-  2026-10-20, 0.1.0
+  version 0.5.0, released 2026-11-14 on GitHub and the AUR's three
+  bases; 0.4.0 was released 2026-11-10, 0.3.1 2026-11-05, 0.3.0
+  2026-11-03, 0.2.0 2026-10-20, 0.1.0
   [released](#release-01-linux) 2026-10-13. Phases 0 to 4, 5a and 6 pass their gates. Maps and Notes
   everywhere are built, their gates not closed, as is much that no phase
   planned ([Built beyond the plan](#built-beyond-the-plan)).
@@ -1220,13 +1220,21 @@ leave (ADR-077).
   outline are unmeasured (0058, 0059, LK-1).
 
 **From the review since 0.4.0** (2026-11-13):
-- Not seen in a window: a formula in a note's popover, the atlas giving
-  back a page's formulas (MT-2, MT-4); the Git marks of the columns above
-  and of a tree (GT-6, GT-17); a grouped Board's twelfth column and a new
-  group's pinned heading (GV-2, GV-8); Activity's deferred focus (PV-8).
-  Seen on Xvfb: the footer in a narrow split, Activity under Settings, a
-  paste's waiting items, the Exclusions toolbar at 470 px, folds in the
-  list and the columns.
+- Not seen in a window: the atlas giving back a page's formulas (MT-4); a
+  new group's pinned heading (GV-8). Seen on Xvfb: the footer in a narrow
+  split, Activity under Settings, a paste's waiting items, the Exclusions
+  toolbar at 470 px, folds in the list and the columns; before 0.5.0
+  (2026-11-14), a formula in an HTML footnote's popover (MT-2), the Git
+  marks of the columns above and of the tree, a `git add` made elsewhere
+  shown within 3 s (GT-6, GT-17), a Board grouped by 15 extensions in 11
+  columns and "4 more groups" (GV-2), Activity folding at a copy's end with
+  the keyboard back on the files, at 0.7 s steps (PV-8).
+- Found in that pass: Markdown's footnotes (`[^1]`) are not read, shown as
+  typed; a transfer's title counts without separating thousands ("Copy
+  20000 items to dest"); in the debug build under a load of 28, a key typed
+  in the address over a folder of 20,000 files cost the window's thread
+  0.4–0.5 s, Select All and Copy of them about 1 s each (the release build
+  not measured).
 - `link-ordered --check` has not run on a real dist build; the Nix
   package and the AUR builds do not ask it (TL-4).
 - The first Git answer for a folder writes every entry it covers, one
