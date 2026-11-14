@@ -97,3 +97,20 @@ fn what_is_not_a_batch_is_refused_with_a_reason() {
     let long = typeset(&" ".repeat(2 * 1024 * 1024));
     assert!(!long.status.success());
 }
+
+/// What skwir writes from MathML's markup is TeX the typesetter draws:
+/// text mode's escapes, a root's index braced, a fence left open.
+#[test]
+fn the_tex_written_from_mathml_is_drawn() {
+    let batch = serde_json::json!({"formulas": [
+        {"tex": r"\text{a\textbackslash b \textasciicircum c \textasciitilde d \{e\} \#\$\%\&\_}"},
+        {"tex": r"\sqrt[{]}]{x}"},
+        {"tex": r"\left\{ a\&b\right."},
+    ]});
+    let output = typeset(&batch.to_string());
+    assert!(output.status.success());
+    let answer: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    for typeset in answer["formulas"].as_array().unwrap() {
+        assert!(typeset["svg"].is_string(), "{typeset}");
+    }
+}

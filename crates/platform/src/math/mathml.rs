@@ -68,12 +68,36 @@ fn escaped(text: &str, out: &mut String) {
     }
 }
 
+/// Text written into `\text{…}`: TeX's own characters escaped as text
+/// mode has them, the rest as it is.
+fn text_escaped(text: &str, out: &mut String) {
+    for letter in text.chars() {
+        match letter {
+            '{' | '}' | '#' | '$' | '%' | '&' | '_' => {
+                out.push('\\');
+                out.push(letter);
+            }
+            '\\' => command(out, "\\textbackslash"),
+            '^' => command(out, "\\textasciicircum"),
+            '~' => command(out, "\\textasciitilde"),
+            '\u{2061}'..='\u{2064}' => {}
+            _ => out.push(letter),
+        }
+    }
+}
+
 /// A fence an `mo` is, for `\left` and `\right`.
 fn fence(node: NodeRef<'_, Node>) -> Option<&'static str> {
     if name(node) != "mo" {
         return None;
     }
-    Some(match text(node).as_str() {
+    delimiter(&text(node))
+}
+
+/// The delimiter `\left` or `\right` takes for a fence written `text`,
+/// if TeX has one.
+fn delimiter(text: &str) -> Option<&'static str> {
+    Some(match text {
         "(" => "(",
         ")" => ")",
         "[" => "[",
@@ -225,7 +249,7 @@ fn element(node: NodeRef<'_, Node>, out: &mut String, depth: usize) -> Option<()
             if quoted {
                 out.push('"');
             }
-            escaped(&text(node), out);
+            text_escaped(&text(node), out);
             if quoted {
                 out.push('"');
             }
@@ -266,8 +290,9 @@ fn element(node: NodeRef<'_, Node>, out: &mut String, depth: usize) -> Option<()
             out.push('}');
         }
         "mroot" => {
+            // Braced, so a `]` of the index does not end it.
             out.push_str("\\sqrt[");
-            element(*args.get(1)?, out, depth + 1)?;
+            group(args.get(1).copied(), out, depth)?;
             out.push(']');
             group(args.first().copied(), out, depth)?;
         }
@@ -334,22 +359,22 @@ fn element(node: NodeRef<'_, Node>, out: &mut String, depth: usize) -> Option<()
                 .chars()
                 .filter(|c| !c.is_whitespace())
                 .collect();
-            let side = |fence: &str| match fence {
-                "" => ".".to_owned(),
-                "{" => "\\{".to_owned(),
-                "}" => "\\}".to_owned(),
-                other => other.to_owned(),
+            // A fence TeX has, or none (`.`); one it has not makes the
+            // formula unknown.
+            let side = |fence: &str| match fence.trim() {
+                "" => Some("."),
+                fence => delimiter(fence),
             };
-            command(out, &format!("\\left{}", side(open)));
+            command(out, &format!("\\left{}", side(open)?));
             for (index, item) in args.iter().enumerate() {
                 if index > 0
                     && let Some(separator) = separators.get(index - 1).or(separators.last())
                 {
-                    out.push(*separator);
+                    escaped(&separator.to_string(), out);
                 }
                 element(*item, out, depth + 1)?;
             }
-            command(out, &format!("\\right{}", side(close)));
+            command(out, &format!("\\right{}", side(close)?));
         }
         "menclose" => {
             let notation = attr(node, "notation").unwrap_or("longdiv");
@@ -429,6 +454,20 @@ mod tests {
                 "<math><mfenced><mi>a</mi><mi>b</mi></mfenced></math>",
                 "\\left( a,b\\right)",
             ),
+            // What the markup holds is escaped, as text mode or math mode
+            // has it, never read as TeX.
+            (
+                "<math><mtext>a\\b ^c ~d {e}</mtext></math>",
+                "\\text{a\\textbackslash b \\textasciicircum c \\textasciitilde d \\{e\\}}",
+            ),
+            (
+                "<math><mroot><mi>x</mi><mrow><mo>]</mo></mrow></mroot></math>",
+                "\\sqrt[{]}]{x}",
+            ),
+            (
+                "<math><mfenced open=\"{\" close=\"\" separators=\"&amp;\"><mi>a</mi><mi>b</mi></mfenced></math>",
+                "\\left\\{ a\\&b\\right.",
+            ),
         ];
         for (markup, expected) in cases {
             assert_eq!(tex_of(markup).as_deref(), Some(expected), "{markup}");
@@ -438,6 +477,11 @@ mod tests {
     #[test]
     fn an_element_unknown_leaves_the_formula_as_it_reads() {
         assert_eq!(tex_of("<math><mi>x</mi><mglyph/></math>"), None);
+        // A fence TeX has not, written by the page, is not TeX to read.
+        assert_eq!(
+            tex_of("<math><mfenced open=\"\\input{x}\"><mi>a</mi></mfenced></math>"),
+            None
+        );
         assert_eq!(tex_of("<math></math>"), None);
         // Its annotation is not its markup.
         assert_eq!(
