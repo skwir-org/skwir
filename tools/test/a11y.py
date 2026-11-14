@@ -642,6 +642,10 @@ def run(w):
           hears(w, "list item 'Appearance' selected focused"))
     w.keys("Escape")
     check("Escape: the list closed, the combo box again", hears(w, "combo box 'Page' focused"))
+    w.keys("Return")
+    check("Enter: into the page, past the search field under the header",
+          until(lambda: (w.focused().get_name() or "") not in ("Page", "Search settings")
+                and within(w.focused())[:1] != ["Pages"]))
     w.keys("Escape")
     w.resize(*was)
     check("Escape: back to the entry", hears(w, f"list item {first!r} 1 of 4 selected focused"))

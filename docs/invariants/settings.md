@@ -222,9 +222,11 @@ The key is the owner's; the page is the subject's (ADR-072).
   from the window's width, known before layout). Narrower, the page's
   title in the header is a button that drops the pages down
   (`page_menu`, one `page_entries` for both), with the list's keys and
-  focus (`nav`: Up and Down step the pages, the list staying down, Enter
-  and Right go into the page, Space opens, Escape closes), and the search
-  field stands under the header, after the button in the stops' order.
+  focus (`nav`: Up and Down step the pages, the list staying down and
+  the page brought into it, Enter and Right go into the page, past the
+  search field, Space opens, Escape closes), and the search field stands
+  under the header, after the button in the stops' order. The menu is
+  the narrow dialog's alone: a window widened while it is open closes it.
   The pages dropped down are a dropdown's list, not a menu: the window's
   context menu stays the only menu the dialog has.
 - **Automatic says what it gives**, as a popup's setting row does

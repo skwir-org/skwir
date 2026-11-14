@@ -2607,6 +2607,11 @@ pub struct SettingsView {
     /// Where the page menu hangs: under the page's title, in a dialog too
     /// narrow to list its pages (`settings_view::lists_pages`).
     pub(crate) pages_anchor: PopoverAnchor,
+    /// The page menu's list, which scrolls in the height it is given, and
+    /// whether the page shown is to be brought into it as it is next
+    /// drawn: the menu opened, or the keys moved to another page.
+    pub(crate) pages_scroll: gpui::ScrollHandle,
+    pub(crate) reveal_page: std::cell::Cell<bool>,
     /// The dropdown open, when it is a long one.
     pub(crate) narrowed: Option<Narrowed>,
     /// A slider's knob held by the pointer: the value under it, worn
@@ -2799,6 +2804,8 @@ impl SettingsView {
             reset_armed: false,
             dropdown: None,
             pages_anchor: PopoverAnchor::default(),
+            pages_scroll: gpui::ScrollHandle::new(),
+            reveal_page: std::cell::Cell::new(false),
             narrowed: None,
             sliding: None,
             highlight: None,
@@ -3757,12 +3764,37 @@ impl SettingsView {
         let next = current
             .saturating_add_signed(delta)
             .min(pages.len().saturating_sub(1));
-        // The page menu open stays open, the page it is on moving.
+        // The page menu open stays open, the page it is on moving, and
+        // brought into its list.
         let menu = self.dropdown.as_deref() == Some(crate::settings_view::PAGES_MENU);
         self.go(pages[next].clone(), cx);
         if menu {
             self.dropdown = Some(crate::settings_view::PAGES_MENU.to_owned());
+            self.reveal_page.set(true);
         }
+    }
+
+    /// From the pages (their list, or the page menu where the dialog is too
+    /// narrow for it) into the page shown: its first stop, past the search
+    /// field wherever it stands (above the list, or under the header after
+    /// the menu). A page with nothing to take the keyboard leaves it there.
+    fn enter_page(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_lists();
+        let search = self.search.focus_handle(cx);
+        let first = self
+            .stops
+            .iter()
+            .rposition(|stop| stop.focus == self.nav || stop.focus == search)
+            .map_or(0, |at| at + 1);
+        let Some(stop) = self.stops.get(first) else {
+            cx.notify();
+            return;
+        };
+        if let Some(item) = stop.item {
+            self.scroll.scroll_to_item(item);
+        }
+        window.focus(&stop.focus, cx);
+        cx.notify();
     }
 
     /// Open the long dropdown of `key`, its field taking the keyboard and
@@ -3951,11 +3983,7 @@ impl SettingsView {
                 });
             }
             "settings_page" => self.step_page(isize::try_from(delta).unwrap_or(1), cx),
-            "settings_enter" => {
-                // From the category list into the page: the stop after it.
-                window.focus(&self.nav, cx);
-                self.step_focus(1, window, cx);
-            }
+            "settings_enter" => self.enter_page(window, cx),
             "settings_adjust" => self.adjust(crate::modal::ListMove::of(args), window, cx),
             "settings_move" => self.move_focused_record(delta, window, cx),
             "settings_exclusion_item" => self.exclusion_item(args, window, cx),

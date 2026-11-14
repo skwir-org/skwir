@@ -481,6 +481,12 @@ impl SettingsView {
                 );
             }
             let selected = !searching && page == self.page;
+            // In the menu, the page shown brought into its list once asked
+            // (`SettingsView::reveal_page`): its child's place is the
+            // number of entries before it.
+            if menu && selected && self.reveal_page.take() {
+                self.pages_scroll.scroll_to_item(entries.len());
+            }
             let modified = if page == Page::Changed {
                 self.changed_count()
             } else {
@@ -597,6 +603,7 @@ impl SettingsView {
             .on_click(cx.listener(move |this, _, window, cx| {
                 window.focus(&this.nav, cx);
                 this.dropdown = (!open).then(|| PAGES_MENU.to_owned());
+                this.reveal_page.set(!open);
                 cx.notify();
             }));
         if open {
@@ -608,6 +615,7 @@ impl SettingsView {
                 .min_w(sized(PAGES_WIDTH))
                 .min_h_0()
                 .overflow_y_scroll()
+                .track_scroll(&self.pages_scroll)
                 .p_1()
                 .flex()
                 .flex_col()
@@ -2154,6 +2162,12 @@ impl Render for SettingsView {
         // page menu in the header, the search field under it: the stops
         // follow them as they are drawn.
         let lists = lists_pages(window);
+        // The page menu is the narrow dialog's alone: left open as the
+        // window widens, nothing would show it, and Escape would close it
+        // rather than the dialog.
+        if lists && self.dropdown.as_deref() == Some(PAGES_MENU) {
+            self.dropdown = None;
+        }
         let search_focus = self.search.focus_handle(cx);
         let nav = self.nav.clone();
         if lists {
