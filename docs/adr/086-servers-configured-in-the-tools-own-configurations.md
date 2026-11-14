@@ -99,7 +99,10 @@ secret.
 13. **On Windows and macOS.** rclone's remote control is a socket of the
     runtime folder on Unix and, on Windows, a port of the loopback behind
     a login made for it, given to rclone in its environment alone (Wine,
-    standing in for Windows here, has no Unix socket). rclone mounts
+    standing in for Windows here, has no Unix socket). **Amended
+    2026-11-14:** the port is rclone's choice, read back from what it says
+    as it serves: one Skwir chose and let go of could be another program's
+    by then, given the login and the configuration's secrets. rclone mounts
     through WinFsp in a folder of Skwir's local application data, never
     a drive letter, and on macOS without a FUSE through `nfsmount`.
 

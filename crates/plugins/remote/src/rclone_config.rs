@@ -302,16 +302,24 @@ impl Session {
         cancel: &CancelToken,
     ) -> anyhow::Result<Session> {
         #[cfg(unix)]
-        let at = {
+        let (answering, serving, login) = {
             sweep_left(cancel);
             let socket = session_socket()?;
             let _ = std::fs::remove_file(&socket);
-            crate::rc::At::Socket(socket)
+            let serving = crate::rc::socket_serving(&socket);
+            (
+                Answering::At(crate::rc::At::Socket(socket)),
+                serving,
+                Vec::<(&str, String)>::new(),
+            )
         };
         #[cfg(not(unix))]
-        let at = crate::rc::At::loopback()?;
+        let (answering, serving, login) = {
+            let login = crate::rc::Login::made()?;
+            let (serving, env) = login.serving();
+            (Answering::Said(login), serving, env)
+        };
         let mut command = crate::rclone::command(rclone, with.config());
-        let (serving, login) = at.serving();
         command
             .args(["rcd", "--log-level", "NOTICE"])
             .args(serving)
@@ -357,48 +365,80 @@ impl Session {
                     }
                 })?;
         }
-        let mut session = Session {
+        let at = match wait_serving(&mut child, &answering, &said, cancel) {
+            Ok(at) => at,
+            // As a session dropped is let go of.
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                #[cfg(unix)]
+                if let Answering::At(crate::rc::At::Socket(socket)) = &answering {
+                    let _ = std::fs::remove_file(socket);
+                }
+                return Err(error);
+            }
+        };
+        Ok(Session {
             child,
             at,
             said,
             _askpass: askpass,
+        })
+    }
+}
+
+/// Where a session's rclone is to answer: known before it starts (a socket
+/// of the runtime folder, the user's alone), or the port of the loopback
+/// it chose and says (`rc::served_port`), behind its login: one chosen
+/// beforehand may be another program's by then, which would be told the
+/// configuration.
+enum Answering {
+    #[cfg(unix)]
+    At(crate::rc::At),
+    #[cfg(not(unix))]
+    Said(crate::rc::Login),
+}
+
+/// Where `child`, rclone serving a session, answers, once it does: what
+/// it said so far (`said`) names its port on the loopback.
+fn wait_serving(
+    child: &mut Child,
+    answering: &Answering,
+    said: &Mutex<String>,
+    cancel: &CancelToken,
+) -> anyhow::Result<crate::rc::At> {
+    let deadline = Instant::now() + STARTING;
+    loop {
+        let at = match answering {
+            #[cfg(unix)]
+            Answering::At(at) => Some(at.clone()),
+            #[cfg(not(unix))]
+            Answering::Said(login) => {
+                crate::rc::served_port(said.lock().lines().map(str::to_owned))
+                    .map(|port| login.at(port))
+            }
         };
-        session.wait_serving(cancel)?;
-        Ok(session)
-    }
-
-    fn wait_serving(&mut self, cancel: &CancelToken) -> anyhow::Result<()> {
-        let deadline = Instant::now() + STARTING;
-        loop {
-            if self.at.answers() {
-                // Its own: on Windows' loopback another program may take
-                // the port first (rclone then ends, unable to serve), and
-                // must be told nothing of the configuration. A socket of
-                // the runtime folder is the user's alone.
-                if matches!(self.at, crate::rc::At::Loopback { .. }) {
-                    let pid = self.call("core/pid", &json!({}), cancel)?;
-                    anyhow::ensure!(
-                        pid["pid"].as_u64() == Some(u64::from(self.child.id())),
-                        "another program answers where rclone was to serve its configuration"
-                    );
-                }
-                return Ok(());
-            }
-            // Ended: what it said is why.
-            if self.child.try_wait().is_ok_and(|ended| ended.is_some()) {
-                // What it said last is read whole first.
-                std::thread::sleep(Duration::from_millis(50));
-                anyhow::bail!("{}", crate::rclone::words(&self.said.lock()));
-            }
-            anyhow::ensure!(!cancel.is_cancelled(), "cancelled");
-            anyhow::ensure!(
-                Instant::now() < deadline,
-                "rclone did not start serving its configuration"
-            );
-            std::thread::sleep(Duration::from_millis(30));
+        if let Some(at) = at
+            && at.answers()
+        {
+            return Ok(at);
         }
+        // Ended: what it said is why.
+        if child.try_wait().is_ok_and(|ended| ended.is_some()) {
+            // What it said last is read whole first.
+            std::thread::sleep(Duration::from_millis(50));
+            anyhow::bail!("{}", crate::rclone::words(&said.lock()));
+        }
+        anyhow::ensure!(!cancel.is_cancelled(), "cancelled");
+        anyhow::ensure!(
+            Instant::now() < deadline,
+            "rclone did not start serving its configuration"
+        );
+        std::thread::sleep(Duration::from_millis(30));
     }
+}
 
+impl Session {
     /// What rclone said on its standard error so far.
     pub fn said(&self) -> String {
         self.said.lock().clone()
@@ -812,8 +852,9 @@ mod tests {
         }
     }
 
-    /// On the loopback, rclone's remote control takes the login made for
-    /// it alone: another is refused.
+    /// On the loopback, rclone's remote control serves on a port of its
+    /// own choosing, which it says, and takes the login made for it alone:
+    /// another is refused.
     #[test]
     fn a_remote_control_on_the_loopback_refuses_another_login() {
         let Some(rclone) = rclone() else {
@@ -821,18 +862,35 @@ mod tests {
             return;
         };
         let folder = tempfile::tempdir().unwrap();
-        let at = crate::rc::At::loopback().unwrap();
-        let (serving, login) = at.serving();
-        let _serving = Serving(
+        let made = crate::rc::Login::made().unwrap();
+        let (serving, login) = made.serving();
+        let mut serving = Serving(
             crate::rclone::command(&rclone, Some(&folder.path().join("rclone.conf")))
-                .arg("rcd")
+                .args(["rcd", "--log-level", "NOTICE"])
                 .args(serving)
                 .envs(login)
                 .stdout(Stdio::null())
-                .stderr(Stdio::null())
+                .stderr(Stdio::piped())
                 .spawn()
                 .unwrap(),
         );
+        // It says its port as `Session::start` reads it; what follows is
+        // read on, so rclone never writes to a pipe let go of.
+        let stderr = serving.0.stderr.take().unwrap();
+        let (port_tx, port_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            for line in
+                std::io::BufRead::lines(std::io::BufReader::new(stderr)).map_while(Result::ok)
+            {
+                if let Some(port) = crate::rc::served_port(std::iter::once(line)) {
+                    let _ = port_tx.send(port);
+                }
+            }
+        });
+        let port = port_rx
+            .recv_timeout(Duration::from_secs(60))
+            .expect("rclone says where it serves");
+        let at = made.at(port);
         let deadline = Instant::now() + Duration::from_secs(60);
         while !at.answers() {
             assert!(Instant::now() < deadline, "rclone never served");

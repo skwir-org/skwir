@@ -697,16 +697,15 @@ impl Rclone {
         }
         // WinFsp makes the folder itself: one left empty goes first.
         let _ = std::fs::remove_dir(&point);
-        let at = crate::rc::At::loopback()?;
-        crate::winfsp::keep_login(&point, &at)?;
+        let login = crate::rc::Login::made()?;
         let log = crate::winfsp::log_file(&point)
             .ok_or_else(|| anyhow::anyhow!("no folder for its log"))?;
         let _ = std::fs::remove_file(&log);
         let mut command = command(rclone, self.config());
         command
-            .args(crate::winfsp::mount_arguments(remote, &point, &at, &log))
+            .args(crate::winfsp::mount_arguments(remote, &point, &login, &log))
             .args(crate::options::rclone_arguments(options))
-            .envs(at.serving().1)
+            .envs(login.serving().1)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -732,9 +731,30 @@ impl Rclone {
             let _ = ended_tx.send(status);
         })?;
         let deadline = std::time::Instant::now() + PATIENCE;
+        // Its remote control, once its log says the port it took: asked
+        // nowhere else, and kept for Skwir to let go of it later.
+        let mut at = None;
         loop {
+            if at.is_none()
+                && let Some(port) = crate::winfsp::served_in(&log)
+            {
+                let served = login.at(port);
+                if let Err(error) = crate::winfsp::keep_login(&point, &served) {
+                    let _ = crate::rc::call(
+                        &served,
+                        "core/quit",
+                        &serde_json::json!({}),
+                        &CancelToken::new(),
+                    );
+                    crate::winfsp::forget(&point);
+                    return Err(error);
+                }
+                at = Some(served);
+            }
             skwir_core::fs::reach::changed();
-            if skwir_core::fs::reach::of(&point).is_some_and(|r| r.point == point) && at.answers() {
+            if skwir_core::fs::reach::of(&point).is_some_and(|r| r.point == point)
+                && at.as_ref().is_some_and(crate::rc::At::answers)
+            {
                 return Ok(Connected {
                     point,
                     address: top.clone(),
@@ -750,12 +770,21 @@ impl Rclone {
                 ));
             }
             if attempt.is_cancelled() || std::time::Instant::now() > deadline {
-                let _ = crate::rc::call(
-                    &at,
-                    "core/quit",
-                    &serde_json::json!({}),
-                    &CancelToken::new(),
-                );
+                // Not serving yet, it is given a moment to say where, to be
+                // told to quit there: nothing else ends it.
+                let until = std::time::Instant::now() + Duration::from_secs(2);
+                while at.is_none() && std::time::Instant::now() < until {
+                    at = crate::winfsp::served_in(&log).map(|port| login.at(port));
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                if let Some(at) = &at {
+                    let _ = crate::rc::call(
+                        at,
+                        "core/quit",
+                        &serde_json::json!({}),
+                        &CancelToken::new(),
+                    );
+                }
                 crate::winfsp::forget(&point);
                 return Err(mounter::ended(
                     &attempt,

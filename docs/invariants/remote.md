@@ -460,7 +460,12 @@ ADR-077 (which revises ADR-021).
   given to rclone in its environment alone, never on its command line or
   in a log (`At`'s `Debug` says the port alone); a logon task's rclone,
   given no environment, reads the login's SHA-1 from an htpasswd file
-  kept with it (`rc::Login::htpasswd`). On Windows rclone mounts
+  kept with it (`rc::Login::htpasswd`). The port is rclone's own choice
+  (`--rc-addr 127.0.0.1:0`), asked only where its own log or standard
+  error says it serves (`rc::served_port`, at its NOTICE level): a port
+  chosen beforehand and let go of may be another program's by then, which
+  would be given the login and every call, a configuration's passwords
+  and tokens among them. On Windows rclone mounts
   through WinFsp in a folder of Skwir's (`winfsp`), its login kept beside
   it while it lives, and lets go when asked to quit.
 - Key login (`keys`, `keys_form`, ADR-086): the keys offered are the

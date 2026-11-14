@@ -5,7 +5,10 @@
 //! user and a password made for it and given to rclone in its environment
 //! alone: a socket is no transport Wine has (`WSAEAFNOSUPPORT`, tried with
 //! rclone's own Windows release), and a loopback port is reached by any
-//! user of the machine.
+//! user of the machine. rclone chooses the port as it starts and says it
+//! ([`served_port`]); Skwir asks only there: a port chosen beforehand and
+//! let go of may be another program's by then, which would be given the
+//! login and every call (a configuration's passwords and tokens).
 
 use std::ffi::OsString;
 use std::io::{Read, Write};
@@ -92,41 +95,44 @@ impl Login {
     }
 }
 
-impl At {
-    /// A port of the loopback free now, and a login made for it.
-    ///
-    /// # Errors
-    /// When no port can be had, or the system gives no randomness.
-    pub fn loopback() -> std::io::Result<At> {
-        let port = std::net::TcpListener::bind(("127.0.0.1", 0))?
-            .local_addr()?
-            .port();
-        Ok(Login::made()?.at(port))
-    }
-
-    /// What rclone serving here is given: its arguments, and what goes in
-    /// its environment (the login, never on its command line).
+impl Login {
+    /// What rclone serving on the loopback behind it is given: a port of
+    /// its own choosing, which it says as it serves ([`served_port`], at
+    /// its NOTICE level), and the login in its environment, never on its
+    /// command line.
     pub fn serving(&self) -> (Vec<OsString>, Vec<(&'static str, String)>) {
-        match self {
-            #[cfg(unix)]
-            At::Socket(socket) => {
-                let mut at = OsString::from("unix://");
-                at.push(socket);
-                (
-                    vec!["--rc-no-auth".into(), "--rc-addr".into(), at],
-                    Vec::new(),
-                )
-            }
-            At::Loopback { port, user, pass } => (
-                vec!["--rc-addr".into(), format!("127.0.0.1:{port}").into()],
-                vec![
-                    ("RCLONE_RC_USER", user.clone()),
-                    ("RCLONE_RC_PASS", pass.clone()),
-                ],
-            ),
-        }
+        (
+            vec!["--rc-addr".into(), "127.0.0.1:0".into()],
+            vec![
+                ("RCLONE_RC_USER", self.user.clone()),
+                ("RCLONE_RC_PASS", self.pass.clone()),
+            ],
+        )
     }
+}
 
+/// What rclone serving on `socket`, the user's alone, is given.
+#[cfg(unix)]
+pub fn socket_serving(socket: &std::path::Path) -> Vec<OsString> {
+    let mut at = OsString::from("unix://");
+    at.push(socket);
+    vec!["--rc-no-auth".into(), "--rc-addr".into(), at]
+}
+
+/// The port the last of `lines`, what rclone said (its log, its standard
+/// error), says its remote control serves on: `… NOTICE: Serving remote
+/// control on http://127.0.0.1:5572/`. Said by the rclone that took it,
+/// it is that rclone's: no other program listens there while it does.
+pub fn served_port(lines: impl Iterator<Item = String>) -> Option<u16> {
+    lines
+        .filter_map(|line| {
+            let (_, after) = line.split_once("Serving remote control on http://127.0.0.1:")?;
+            after.split('/').next()?.parse().ok()
+        })
+        .last()
+}
+
+impl At {
     /// Whether something answers there now.
     pub fn answers(&self) -> bool {
         match self {
@@ -406,24 +412,34 @@ mod tests {
     }
 
     /// A loopback's login is made for it, given to rclone in its
-    /// environment, never on its line, and never said by `Debug`.
+    /// environment, never on its line, and never said by `Debug`; the port
+    /// is rclone's choice, asked where it says it serves.
     #[test]
     fn a_loopback_s_login_stays_off_the_command_line() {
-        let at = At::loopback().unwrap();
-        let (args, env) = at.serving();
-        #[allow(irrefutable_let_patterns)] // a socket too, on Unix
-        let At::Loopback { port, pass, .. } = &at else {
-            panic!("a loopback");
-        };
-        assert_eq!(pass.len(), 48);
+        let login = Login::made().unwrap();
+        let (args, env) = login.serving();
+        assert_eq!(login.pass.len(), 48);
         assert!(
             args.iter()
-                .all(|a| !a.to_string_lossy().contains(pass.as_str()))
+                .all(|a| !a.to_string_lossy().contains(login.pass.as_str()))
         );
-        assert_eq!(args[1], OsString::from(format!("127.0.0.1:{port}")));
-        assert!(env.iter().any(|(k, v)| *k == "RCLONE_RC_PASS" && v == pass));
-        assert!(!format!("{at:?}").contains(pass.as_str()));
-        assert_ne!(At::loopback().unwrap(), at, "a login each");
+        assert_eq!(args, [OsString::from("--rc-addr"), "127.0.0.1:0".into()]);
+        assert!(
+            env.iter()
+                .any(|(k, v)| *k == "RCLONE_RC_PASS" && *v == login.pass)
+        );
+        assert!(!format!("{:?}", login.at(5572)).contains(login.pass.as_str()));
+        assert!(!format!("{login:?}").contains(login.pass.as_str()));
+        assert_ne!(Login::made().unwrap(), login, "a login each");
+        let said = [
+            "2026/11/14 20:00:00 NOTICE: Serving remote control on http://127.0.0.1:41000/",
+            "2026/11/14 20:00:01 ERROR : not a port: http://127.0.0.1:41001/",
+        ];
+        assert_eq!(
+            served_port(said.iter().map(ToString::to_string)),
+            Some(41000)
+        );
+        assert_eq!(served_port(std::iter::empty()), None);
     }
 
     #[test]

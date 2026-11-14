@@ -5,7 +5,9 @@
 //! waits until its folder is there, and leaves it running; its remote
 //! control answers on the loopback behind a login made for it, kept beside
 //! the folder (`.rc`, in the user's own local data) for as long as the
-//! mount lives, so Skwir lets go of it by asking it to quit. Windows lists
+//! mount lives, so Skwir lets go of it by asking it to quit. Its port is
+//! rclone's choice, read back from its log as it serves (`rc::served_port`):
+//! one chosen beforehand may be another program's by then. Windows lists
 //! no mount table: the core is told which folder holds Skwir's mounts
 //! (`fs::reach::mounts_in`).
 //!
@@ -53,15 +55,25 @@ fn foreground(remote: &str, point: &Path) -> Vec<OsString> {
 }
 
 /// The arguments of `rclone mount` for `remote` at `point`, in the
-/// foreground (Windows has no `--daemon`), its remote control at `at`,
-/// what it says written to `log`.
-pub fn mount_arguments(remote: &str, point: &Path, at: &At, log: &Path) -> Vec<OsString> {
+/// foreground (Windows has no `--daemon`), its remote control behind
+/// `login` on a port it chooses and says in `log` ([`served_in`]), with
+/// what else it says.
+pub fn mount_arguments(remote: &str, point: &Path, login: &Login, log: &Path) -> Vec<OsString> {
     let mut args = foreground(remote, point);
-    args.push("--rc".into());
-    args.extend(at.serving().0);
+    // The port is said at rclone's NOTICE level, which a mount's
+    // `--log-level ERROR` leaves out of its log: the later one wins.
+    args.extend(["--log-level", "NOTICE", "--rc"].map(OsString::from));
+    args.extend(login.serving().0);
     args.push("--log-file".into());
     args.push(log.into());
     args
+}
+
+/// The port the log `log` of an rclone mount says its remote control
+/// serves on, the last said: its own choice.
+pub fn served_in(log: &Path) -> Option<u16> {
+    let file = std::fs::File::open(log).ok()?;
+    crate::rc::served_port(std::io::BufReader::new(file).lines().map_while(Result::ok))
 }
 
 /// The arguments of the logon task's `rclone mount` for `remote` at
@@ -258,22 +270,8 @@ fn at_login_rc(point: &Path) -> Option<At> {
     let port = at_login_file(point, "log")
         .into_iter()
         .chain(rotated_logs(point))
-        .find_map(|log| {
-            let file = std::fs::File::open(log).ok()?;
-            served_port(std::io::BufReader::new(file).lines().map_while(Result::ok))
-        })?;
+        .find_map(|log| served_in(&log))?;
     Some(login.at(port))
-}
-
-/// The port the last of `lines`, rclone's log, says its remote control
-/// serves on: `… NOTICE: Serving remote control on http://127.0.0.1:5572/`.
-fn served_port(lines: impl Iterator<Item = String>) -> Option<u16> {
-    lines
-        .filter_map(|line| {
-            let (_, after) = line.split_once("Serving remote control on http://127.0.0.1:")?;
-            after.split('/').next()?.parse().ok()
-        })
-        .last()
 }
 
 #[cfg(test)]
@@ -282,22 +280,21 @@ mod tests {
 
     #[test]
     fn rclone_mounts_in_the_foreground_its_control_on_the_loopback() {
-        let at = At::loopback().unwrap();
+        let login = Login::made().unwrap();
         let point = Path::new("/local/skwir/remote/rclone rclone%3A%2F%2Fphotos%2F");
-        let args: Vec<String> = mount_arguments("photos:", point, &at, Path::new("/l.log"))
+        let args: Vec<String> = mount_arguments("photos:", point, &login, Path::new("/l.log"))
             .iter()
             .map(|a| a.to_string_lossy().into_owned())
             .collect();
         assert_eq!(args[..3], ["mount", "photos:", point.to_str().unwrap()]);
         assert!(!args.iter().any(|a| a.starts_with("--daemon")), "{args:?}");
         let rc = args.iter().position(|a| a == "--rc-addr").unwrap();
-        assert!(args[rc + 1].starts_with("127.0.0.1:"));
-        #[allow(irrefutable_let_patterns)] // a socket too, on Unix
-        let At::Loopback { pass, .. } = &at else {
-            panic!()
-        };
+        assert_eq!(args[rc + 1], "127.0.0.1:0", "the port rclone's choice");
+        // Its port said in its log: NOTICE, the last level given.
+        let level = args.iter().rposition(|a| a == "--log-level").unwrap();
+        assert_eq!(args[level + 1], "NOTICE");
         assert!(
-            !args.iter().any(|a| a.contains(pass.as_str())),
+            !args.iter().any(|a| a.contains(login.pass.as_str())),
             "the login off its line"
         );
         assert_eq!(
@@ -388,7 +385,7 @@ mod tests {
         assert_eq!(controls_of(&point), [login.at(43000)]);
 
         // Skwir's own mount's first; its forgetting leaves the task's.
-        let own = At::loopback().unwrap();
+        let own = Login::made().unwrap().at(41001);
         keep_login(&point, &own).unwrap();
         assert_eq!(controls_of(&point), [own, login.at(43000)]);
         forget(&point);
@@ -479,7 +476,12 @@ mod tests {
     fn a_mount_s_login_is_read_back_as_kept() {
         let folder = tempfile::tempdir().unwrap();
         let point = folder.path().join("rclone rclone%3A%2F%2Fphotos%2F");
-        let at = At::loopback().unwrap();
+        // A port nothing listens on.
+        let port = std::net::TcpListener::bind(("127.0.0.1", 0))
+            .and_then(|listener| listener.local_addr())
+            .unwrap()
+            .port();
+        let at = Login::made().unwrap().at(port);
         keep_login(&point, &at).unwrap();
         assert_eq!(controls_of(&point), [at]);
         // Nothing answers there: no remote control to ask.

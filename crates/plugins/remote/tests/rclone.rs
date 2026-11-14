@@ -181,16 +181,18 @@ fn an_address_rclone_opens_is_a_folder_and_a_copy_is_on_the_server_once_done() {
 }
 
 /// `served`'s folder mounted at `base/mounted` with rclone's `full` cache,
-/// its remote control on the loopback behind a login of its own, as
-/// Windows' mounts serve theirs: what is written kept until sent now, never
-/// sent by itself while the test looks (`--vfs-write-back`).
+/// its remote control on the loopback behind a login of its own, on the
+/// port it chooses and says, as Windows' mounts serve theirs: what is
+/// written kept until sent now, never sent by itself while the test looks
+/// (`--vfs-write-back`).
 #[cfg(target_os = "linux")]
 fn mounted_full(base: &Path, served: &Served) -> (skwir_plugin_remote::rc::At, Mounted) {
-    use skwir_plugin_remote::rc::At;
+    use skwir_plugin_remote::rc::{Login, served_port};
     let point = base.join("mounted");
     std::fs::create_dir_all(&point).unwrap();
-    let at = At::loopback().unwrap();
-    let (serving, login) = at.serving();
+    let made = Login::made().unwrap();
+    let (serving, login) = made.serving();
+    let log = base.join("mount.log");
     let child = Command::new("rclone")
         .arg("mount")
         .arg(format!(":webdav,url='http://127.0.0.1:{}/':", served.port))
@@ -200,6 +202,8 @@ fn mounted_full(base: &Path, served: &Served) -> (skwir_plugin_remote::rc::At, M
         .args(["--vfs-write-back", "10m"])
         .arg("--config")
         .arg(base.join("rclone.conf"))
+        .args(["--log-level", "NOTICE", "--log-file"])
+        .arg(&log)
         .arg("--rc")
         .args(serving)
         .envs(login)
@@ -212,10 +216,17 @@ fn mounted_full(base: &Path, served: &Served) -> (skwir_plugin_remote::rc::At, M
         point: point.clone(),
     };
     let deadline = Instant::now() + Duration::from_secs(60);
-    while !(at.answers() && mounted_at(&point)) {
+    let at = loop {
+        let said = std::fs::read_to_string(&log).unwrap_or_default();
+        if let Some(port) = served_port(said.lines().map(str::to_owned)) {
+            let at = made.at(port);
+            if at.answers() && mounted_at(&point) {
+                break at;
+            }
+        }
         assert!(Instant::now() < deadline, "never mounted");
         std::thread::sleep(Duration::from_millis(50));
-    }
+    };
     (at, mount)
 }
 
