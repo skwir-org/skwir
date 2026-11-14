@@ -6018,7 +6018,10 @@ mod tests {
         assert!(plans.contains(&(heavy_id, true)), "{plans:?}");
         assert!(plans.contains(&(light_id, false)), "{plans:?}");
         first.opened();
+        // Each is told started before its step begins: the light one may
+        // end while the heavy one waits for a worker, listed still.
         assert!(logged(&log, "ended /disk/a/c"));
+        assert!(logged(&log, "ended /disk/a/it’s b"));
         assert!(executor.waiting_plans().is_empty());
     }
 
