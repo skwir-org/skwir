@@ -74,7 +74,13 @@ and the other holders of a file shown let go too (8).
      was.
 6. **The panel's player plays on through a rename** of the file it
    plays: the same file (`EntryId::file`, the same content) renamed is
-   the same preview, its key moved to the new name.
+   the same preview, its key moved to the new name. Its own player (not
+   the pin's) whose file a plan took is taken up again as the pin is
+   (`PanelTaken`): the plan left the file, the panel asks for it again;
+   moved it (on Windows, where a rename takes the file), the panel follows
+   it to its new name; either way its next player starts where it stood,
+   playing or paused as it was (`Shell::panel_resume`). Taken away, the
+   panel shows what follows.
 7. **What another program does** is followed where a pane of the
    window shows the pin's folder: a pane keeps the renames it followed
    (`Pane::renames_since`), and a rename of the pin's name, known by the

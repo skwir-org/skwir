@@ -521,11 +521,14 @@ impl Shell {
         }
         if let Some(plan) = update.taken {
             // A plan took the file (ADR-136): the session let go of it and
-            // ended, quietly, as a pause does. Pinned, the pin waits where
-            // it stood for the plan's end, which says where the file went.
+            // ended, quietly, as a pause does. The pin, or the panel's own
+            // player, waits where it stood for the plan's end, which says
+            // where the file went.
             self.exit_fullscreen(window, cx);
             if self.preview_is_pinned() {
                 self.pin_taken(plan, window, cx);
+            } else {
+                self.panel_taken(plan, window, cx);
             }
             self.end_panel_session(window, cx);
         }

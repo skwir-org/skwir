@@ -3391,7 +3391,8 @@ impl Shell {
             window.focus(&focus, cx);
         }
         self.preview.media.focus = Some(focus);
-        if play {
+        // Taken up where a plan took it (ADR-136), playing or paused.
+        if self.panel_resume(play, cx) {
             self.media_send(skwir_core::media::Control::Play(true), cx);
         }
     }

@@ -396,7 +396,13 @@ binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
 - **The panel plays on through a rename** of the file it plays (not a
   playlist's member): the same file renamed is the same preview, its key
   moved to the new name (`preview.rs`, `renamed_playing`), never a new
-  preview that would stop it or open a second player.
+  preview that would stop it or open a second player. Where a plan takes
+  the file (a delete, on Windows a rename), its session ends; the window's
+  plans' observer follows the panel's file too (`Watched::panel`), and the
+  player is taken up again where it stood once the plan has ended
+  (`PanelTaken`, `Shell::panel_resume` from `show_media`): left, the
+  panel asks for the file again; moved, it follows it to its new name;
+  gone, it shows what follows.
 - Gapless: `MediaSession::play_next` names the next file; the worker hands it
   to playbin3 in `about-to-finish` on the streaming thread, using only what
   the loop left for it, and reports `Advanced` when it starts (clearing
