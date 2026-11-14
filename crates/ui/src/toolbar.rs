@@ -17,7 +17,6 @@ pub fn asset(path: &str) -> Option<&'static [u8]> {
         }};
     }
     assets!(
-        "help",
         "star",
         "down",
         "eye-off",
@@ -219,9 +218,6 @@ pub struct Button {
     /// Whether the keyboard stops on it; not a value its row's stop
     /// answers for (`no_stop`).
     stop: bool,
-    /// A reference's row (ADR-137, `said`): what is written, drawn in the
-    /// code font before its label, and what it gives, after it.
-    said: Option<Box<(SharedString, Option<SharedString>)>>,
 }
 
 /// A tag's colors on a button (a narrowing by that tag), in place of
@@ -290,7 +286,6 @@ impl Button {
             beside: None,
             value: None,
             stop: true,
-            said: None,
         }
     }
     /// Its id: one for every variant of a bar, so what wraps it can be too.
@@ -363,15 +358,6 @@ impl Button {
     /// screen reader.
     pub fn value(mut self, value: impl Into<SharedString>) -> Self {
         self.value = Some(value.into());
-        self
-    }
-    /// A reference's row (ADR-137): `written` as it is typed, in the code
-    /// font before its label (what it means), and what it `gives` here
-    /// at its end; a menu's row, keeping its popup open as it writes.
-    pub fn said(mut self, written: impl Into<SharedString>, gives: Option<SharedString>) -> Self {
-        self.shape = Shape::MenuRow;
-        self.keeps_open = true;
-        self.said = Some(Box::new((written.into(), gives)));
         self
     }
     /// A value of a setting whose row is the one keyboard stop (a
@@ -467,15 +453,9 @@ impl Button {
         let said = shell.a11y.then(|| {
             let described = self.label.is_some().then(|| self.title.clone());
             let named = self.label.clone().unwrap_or_else(|| self.title.clone());
-            let named: SharedString = match (&self.value, &self.said) {
-                (Some(value), _) => format!("{named}: {value}").into(),
-                // A reference's row: what is written, then what it means
-                // and what it gives, as it is drawn.
-                (None, Some(said)) => match &said.1 {
-                    Some(gives) => format!("{}, {named}, gives {gives}", said.0).into(),
-                    None => format!("{}, {named}", said.0).into(),
-                },
-                (None, None) => named,
+            let named: SharedString = match &self.value {
+                Some(value) => format!("{named}: {value}").into(),
+                None => named,
             };
             (named, described, keys.clone())
         });
@@ -483,14 +463,10 @@ impl Button {
         // A setting's row keeps its name whole and cuts what it is set to
         // when the two do not fit, which its tooltip then says whole.
         let has_value = self.value.is_some();
-        let title: SharedString = match (&self.value, keys, &self.said) {
-            (_, _, Some(said)) => match &said.1 {
-                Some(gives) => format!("{}  {} → {gives}", said.0, self.title).into(),
-                None => format!("{}  {}", said.0, self.title).into(),
-            },
-            (Some(value), _, None) => format!("{}: {value}", self.title).into(),
-            (None, Some(keys), None) => format!("{} · {keys}", self.title).into(),
-            (None, None, None) => self.title,
+        let title: SharedString = match (&self.value, keys) {
+            (Some(value), _) => format!("{}: {value}", self.title).into(),
+            (None, Some(keys)) => format!("{} · {keys}", self.title).into(),
+            (None, None) => self.title,
         };
         let (active, dropdown, open) = (
             self.active,
@@ -498,10 +474,6 @@ impl Button {
             self.anchor.is_some(),
         );
         let beside = self.beside;
-        let (written, gives) = match self.said.map(|said| *said) {
-            Some((written, gives)) => (Some(written), gives),
-            None => (None, None),
-        };
         // A label cut short says itself in the tooltip, before the title.
         let (label, clip) = self
             .label
@@ -690,20 +662,6 @@ impl Button {
                         .flex_none()
                 })
             })
-            // A reference's row: what is written, then what it means, then
-            // what it gives, each cut where the row is short.
-            // One column for what is written, so what each means lines up;
-            // cut in its middle, as an end cut takes the signs before it
-            // away (gpui trims punctuation there), and a pattern is signs.
-            .children(written.map(|written| {
-                div()
-                    .flex_none()
-                    .w(gpui::relative(0.3))
-                    .overflow_hidden()
-                    .text_ellipsis_middle()
-                    .font_family(theme.code_font.clone())
-                    .child(written)
-            }))
             // A label too long for a menu keeps both ends, as names do.
             .children(label.map(|label| {
                 div()
@@ -715,17 +673,6 @@ impl Button {
                             .text_ellipsis_middle()
                     })
                     .child(label)
-            }))
-            .children(gives.map(|gives| {
-                div()
-                    .flex_none()
-                    .max_w(gpui::relative(0.3))
-                    .pl_4()
-                    .truncate()
-                    .text_small()
-                    .font_family(theme.code_font.clone())
-                    .text_color(theme.text_muted)
-                    .child(gives)
             }))
             // A menu row says its keys, as a context menu's does.
             .children(menu_keys.map(|keys| {
@@ -919,7 +866,6 @@ impl Shell {
     ) -> Option<String> {
         self.nav_asked += 1;
         let mut was = None;
-        self.field_reference = None;
         if let Some(popup) = self.toolbar_menu.take() {
             was = Some(popup.kind.to_owned());
             popup.restore(window, cx);
@@ -1525,9 +1471,6 @@ pub enum MenuPart {
     /// label, saying what it is set to (`submenu_row`): its rows beside it
     /// (`Shell::submenu_rows`).
     Sub(SharedString, SharedString, Option<SharedString>),
-    /// What holds for the rows above it, read after them: muted, in the
-    /// small size, wrapping (a reference's notes, ADR-137). No stop.
-    Note(SharedString),
 }
 
 /// `panel` holding `parts`, as a context menu holds its rows.
@@ -1569,14 +1512,6 @@ pub fn menu_part_elements(
                 .children(button.map(|button| button.render(shell, cx).h(sized(22.))))
                 .into_any_element(),
             MenuPart::Heading(button) => button.render(shell, cx).mt_1().into_any_element(),
-            MenuPart::Note(note) => div()
-                .flex_none()
-                .px_2()
-                .pb_1()
-                .text_small()
-                .text_color(theme.text_muted)
-                .child(note)
-                .into_any_element(),
             MenuPart::Line => div()
                 .flex_none()
                 .my_1()

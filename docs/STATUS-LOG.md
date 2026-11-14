@@ -17561,3 +17561,62 @@ and for the next step recommended with it (ADR-137 amended).
   `?` pressed (the reference, the `?` lit, the caret kept) and pressed
   again (closed); `\` in the regex listing its signs; the address's `?`
   on and off with the words kept; Access's `?` in its field.
+
+## 2026-11-15: What a field takes in a list under it, a plain `?`, Exclusions and Run Command…
+
+The user found the reference's panel darker than F1's and the search's
+list, its `?` hard to read, the address's not at the box's end, and asked
+for Settings › Exclusions and Run Command… (ADR-137 amended).
+
+- **The list under the field**: the reference was a popup over the
+  dialog, a menu on the chrome's ground; it is now the list under the
+  field, as the address's card (the window's ground, framed): F1 or the
+  `?` shows everything, each group under its title with its notes, a part
+  begun shows what goes on with it. One list, one set of keys, the
+  keyboard in the field throughout; the row lit kept in view
+  (`ScrollHandle::scroll_to_item` by the list's children). The popup's
+  pieces went: `Shell::field_reference`, `ui.field_reference_put`,
+  `Button::said`, `MenuPart::Note`, `PopoverAnchor::popup_right_over`.
+- **A plain `?`** in the window's font, semibold, muted, on the term's
+  ground while the list shows everything (the symbol in a circle went,
+  and its icon).
+- **One component** (`reference::FieldHelp`, `with_help`, the `Helps`
+  trait): a field's frame answers its keys' commands itself, so the
+  shell's dialogs and Settings hold the same thing; the shell keeps only
+  the address's F1.
+- **The address's `?`** stands at the end of the frame seen: the card's
+  while it shows (the card may be wider than the field, `CARD_LEAST`),
+  drawn in the card's top line, the field keeping its room; the field's
+  otherwise.
+- **Settings › Exclusions**: core's `exclusions::reference` for the name
+  or path (names, paths from `~`, `/` or a variable, globs, `regex:` and
+  its signs), the name beside it and the file held; a test reads every
+  example with the rules' own parsers.
+- **Run Command…**: the shell plugin's `reference` (examples, how the
+  paths are given) and `shell.run.describe` (the line with the first four
+  paths by name, quoted as the shell plugin quotes them, how many more,
+  and the folder; an empty command refused). `ui.ask` asks its
+  `describe` about what the question is about: the pane, the entries and
+  the folder its command was given.
+- **Checked**: tests for Exclusions' examples and Run Command…'s line.
+  In a window (debug build, Xvfb :87): F1 in Template (the list, the `?`
+  lit), Down twice and Enter writing `{.ext}` over the selection, the
+  regex's `?` giving it the keyboard and its list, a recipe pressed
+  filling the regex and the replacement; the address's `?` at the card's
+  end, pressed on; Access's F1; Run Command… (its line for `du -sh` on
+  one file, its F1); Settings › Exclusions › Add…: F1 in the name or
+  path, Down three times and Enter writing `~/VMs`, the dialog's own line
+  reading it. Nothing added, run or changed.
+- **The address's `?` flickered** (the user's report): the card closed
+  for a moment as it was pressed, the sources asked again on workers,
+  every row but the search's taken away until it answered. The switch is
+  now answered in the same frame (`answer_reference_switch`: what the
+  field takes asked of its sources on the window's thread, what showed
+  before kept for the way back). Recorded at 60 frames a second on Xvfb,
+  the `?` pressed on and off: none of the 240 frames shows the card
+  closed (the files' green under it, 91 % of the area once closed, 0 to
+  0.4 % throughout).
+- **The disk filled** during the checks (0.2 GB free); `just prune`
+  freed 39 GB and they ran again: clippy clean, 2390 tests passed,
+  `just check-windows` green; after the flicker's fix, the UI's and the
+  binary's 926 tests.

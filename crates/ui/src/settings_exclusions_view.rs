@@ -217,6 +217,34 @@ enum Dialog {
 }
 
 /// Add a folder, or edit one of the user's.
+/// The entry dialog's fields that say what they take (ADR-137), by the
+/// keys `exclusions::reference` knows them by.
+const HELPED: [&str; 3] = ["pattern", "beside", "holding"];
+
+/// The entry dialog's fields' help (ADR-137).
+impl crate::reference::Helps for SettingsView {
+    fn help_of(
+        &mut self,
+        key: &str,
+    ) -> Option<(&mut crate::reference::FieldHelp, Entity<TextInput>)> {
+        let Some(Dialog::Entry(dialog)) = &mut self.exclusions.dialog else {
+            return None;
+        };
+        let dialog = &mut **dialog;
+        let at = dialog.helps.iter().position(|help| help.key == key)?;
+        let input = [&dialog.pattern, &dialog.beside, &dialog.holding][at].clone();
+        Some((&mut dialog.helps[at], input))
+    }
+
+    fn field_of(&self, key: &str) -> Option<Entity<TextInput>> {
+        let Some(Dialog::Entry(dialog)) = &self.exclusions.dialog else {
+            return None;
+        };
+        let at = HELPED.iter().position(|named| *named == key)?;
+        Some([&dialog.pattern, &dialog.beside, &dialog.holding][at].clone())
+    }
+}
+
 struct EntryDialog {
     /// The entry edited; `None` adds one.
     editing: Option<String>,
@@ -232,6 +260,8 @@ struct EntryDialog {
     problem: Option<(Field, String)>,
     /// What it means, said live.
     means: Option<String>,
+    /// What the name or path, the name beside it and the file held take.
+    helps: [crate::reference::FieldHelp; 3],
     /// The entry already naming these folders: Show it instead.
     already: Option<String>,
     /// The folder typed and whether it is on this computer, once a worker
@@ -1719,17 +1749,38 @@ impl SettingsView {
         let holding = self.field(".nosearch, CACHEDIR.TAG", "Holding", &draft.holding, cx);
         let what = self.field("Virtual machines", "What it is", &draft.what, cx);
         let mut subscriptions = Vec::new();
-        for input in [&folder, &beside, &holding, &what] {
+        // What a field lists (ADR-137) takes Enter the arrows chose a row
+        // for, and Escape first.
+        for (input, key) in [
+            (&folder, Some(HELPED[0])),
+            (&beside, Some(HELPED[1])),
+            (&holding, Some(HELPED[2])),
+            (&what, None),
+        ] {
             subscriptions.push(cx.subscribe_in(
                 input,
                 window,
-                |this, _, event: &InputEvent, window, cx| match event {
-                    InputEvent::Changed => {
-                        this.judge_entry_dialog(cx);
-                        cx.notify();
+                move |this, _, event: &InputEvent, window, cx| {
+                    match event {
+                        InputEvent::Changed => {
+                            this.judge_entry_dialog(cx);
+                            cx.notify();
+                        }
+                        InputEvent::Submit => {
+                            if !key.is_some_and(|key| {
+                                crate::reference::on_submit(this, key, window, cx)
+                            }) {
+                                this.accept_entry_dialog(window, cx);
+                            }
+                        }
+                        InputEvent::Cancel => {
+                            if !key.is_some_and(|key| {
+                                crate::reference::on_cancel(this, key, window, cx)
+                            }) {
+                                this.close_exclusion_dialog(window, cx);
+                            }
+                        }
                     }
-                    InputEvent::Submit => this.accept_entry_dialog(window, cx),
-                    InputEvent::Cancel => this.close_exclusion_dialog(window, cx),
                 },
             ));
         }
@@ -1748,6 +1799,12 @@ impl SettingsView {
             beside,
             holding,
             what,
+            helps: HELPED.map(|key| {
+                crate::reference::FieldHelp::new(
+                    key,
+                    skwir_core::exclusions::reference(key).map(Rc::new),
+                )
+            }),
             category: draft.category,
             category_open: false,
             category_anchor: PopoverAnchor::default(),
@@ -2159,6 +2216,7 @@ impl SettingsView {
             dialog.holding.clone(),
             dialog.what.clone(),
         );
+        let helps = dialog.helps.clone();
         let problem = dialog.problem.clone();
         let means = dialog.means.clone();
         let already = dialog.already.clone();
@@ -2192,7 +2250,19 @@ impl SettingsView {
         let text_field = |input: &Entity<TextInput>, field: Field| {
             let focused = input.read(cx).is_focused(window);
             let invalid = problem.as_ref().is_some_and(|(at, _)| *at == field);
-            controls::field(input, None, focused, invalid, None, theme)
+            let frame = controls::field(input, None, focused, invalid, None, theme);
+            // A field that says what it takes (ADR-137): its `?`, F1 and
+            // the list under it.
+            let help = match field {
+                Field::Pattern => Some(&helps[0]),
+                Field::Beside => Some(&helps[1]),
+                Field::Holding => Some(&helps[2]),
+                Field::What => None,
+            };
+            match help {
+                Some(help) => crate::reference::with_help(frame, help, input, None, window, cx),
+                None => frame,
+            }
         };
         // What it names: a name or a path, a name beside a file, or the
         // folders holding a file. One list, so a kind more is one row more.

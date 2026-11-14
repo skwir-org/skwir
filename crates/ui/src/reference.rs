@@ -1,115 +1,221 @@
-//! What a dialog's field takes, said where it is typed (ADR-137): its
-//! reference, opened from the `?` inside the field at its end or F1 in it,
-//! hanging over the dialog from the field; and, as it is typed, what goes
-//! on with a part begun there, listed under the field.
+//! What a field takes, said where it is typed (ADR-137): one component,
+//! `FieldHelp`, for every field that says it, whichever view holds the
+//! field (the shell's dialogs, Settings).
 //!
 //! - The owner of the field's language says it as data
 //!   (`skwir_core::reference::Reference`): the bulk rename's plugin by
 //!   its command (`rename_bulk.reference`, asked with each preview, so
 //!   what each placeholder gives is the first item's as the dialog
-//!   stands), a question by `ui.ask`'s `reference`. The window draws it
-//!   as a menu (`toolbar::MenuPart`): each group under its title, each
-//!   item a row (`Button::said`): as written, what it means, what it
-//!   gives here; the group's notes under it.
-//! - The `?` is one element for every field (`inner`), the address's
-//!   too: inside the field's frame at its end, as a form's list button is
-//!   (`inner_chevron`), lit while what it opens is open. It acts on the
-//!   press and leaves the keyboard in the field (the caret where a row
-//!   will write, the address's typing going on); no Tab stop, F1 its key.
-//! - A row chosen (a click, Enter, Space) writes its part where the
-//!   field's caret is, over what is selected there (`TextInput::put`),
-//!   or fills the fields a recipe names (`replace_all`), each an edit
-//!   Ctrl+Z takes back; the reference closes and the field has the
-//!   keyboard again.
-//! - It is a popup as any (`Shell::toggle_popup`): one at a time, its own
-//!   keys (the arrows, Home, End, Escape, which closes it alone, not the
-//!   dialog), closed by a press outside. Drawn among the window's
-//!   overlays, never inside its dialog, so the dialog's keys (its Tab)
-//!   stay the dialog's; F1 there shows the keys of the place, as
-//!   anywhere.
-//! - **What goes on with what is typed** (`Reference::offered`): a part
-//!   begun by one of the reference's `starts` (`{` in a template) lists,
-//!   under the field, the items going on with it. The keyboard stays in
-//!   the field (`offers` in its key context): Up and Down move the
-//!   highlight, Tab takes it (the first, unmoved), Enter takes it only
-//!   once the arrows chose it, else answers the dialog; Escape puts the
-//!   list away until the text or the caret moves. A press on a row takes
-//!   it. The item takes the place of the part typed, as an edit.
+//!   stands), a question by `ui.ask`'s `reference` (Access, Run Command),
+//!   core for an exclusion's fields.
+//! - **A `?` inside the field's frame at its end** (`question`), as a
+//!   form's list button (`inner_chevron`) and the address's own buttons
+//!   are; the address's too. A plain `?`, as `?` alone asks the address
+//!   what it takes; on the term's ground while the field's whole list
+//!   shows. It acts on the press and gives the keyboard to its field, so
+//!   the caret stays where a row will write; no Tab stop.
+//! - **One list under the field, as the address's card**: everything the
+//!   field takes, under its groups' titles with their notes, once the `?`
+//!   is pressed or F1 (`ui.field_reference`); else, as it is typed, the
+//!   items going on with a part begun by one of the reference's `starts`
+//!   (`Reference::offered`). The keyboard stays in the field, `offers` in
+//!   its key context while the list shows: Up and Down move the
+//!   highlight (`ui.field_complete`), Tab takes the row lit, Enter only one
+//!   the arrows chose (the field's Enter else answers its dialog), Escape
+//!   puts the list away for that text and caret before it closes
+//!   anything. A press on a row takes it. A row taken writes its part
+//!   where the caret is (`TextInput::put`), in place of the part typed, or
+//!   fills the fields its recipe names (`replace_all`): an edit Ctrl+Z
+//!   takes back. F1 again shows the keys of the place.
+//! - The field's frame answers these commands itself (`with_help`): they
+//!   come from the field, so the view holding it (`Helps`) is the one
+//!   asked, the shell's or another's.
 //! - The address field says its own in its card (`Typed::Help`, F1 or
 //!   its `?`): taking the keyboard from the field would end what is typed.
 
+use std::ops::Range;
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, Context, Entity, EntityId, Focusable as _, SharedString, Window, div, prelude::*,
-    px,
+    AnyElement, App, Context, Div, Entity, Focusable as _, KeyContext, ScrollHandle, SharedString,
+    Window, div, prelude::*, px,
 };
-use skwir_core::reference::{Offered, Reference};
+use skwir_core::reference::Reference;
 
 use crate::elements::popover::PopoverAnchor;
 use crate::input::TextInput;
-use crate::shell::Shell;
+use crate::keymap::RunCommand;
 use crate::sizes::{TextSizes, sized};
 use crate::theme::{Chosen, Theme};
-use crate::toolbar::{self, Button, MenuPart};
+use crate::toolbar;
 
-/// The popup's kind, as `Shell::toggle_popup` names it.
-pub(crate) const POPUP: &str = "reference";
-
-/// Drawn over the dialogs (theirs are 3 and 4).
+/// The list is drawn over the dialogs (theirs are 3 and 4).
 const PRIORITY: usize = 6;
 
-/// A field's reference, open or on offer: what it writes in, and what it
-/// says.
-pub(crate) struct Open {
-    /// The fields it may write in, by the key a recipe names them by; the
-    /// first is the one it is for.
-    pub fields: Vec<(SharedString, Entity<TextInput>)>,
-    pub reference: Rc<Reference>,
-    /// The field's frame: the reference hangs from its end, what goes on
-    /// with the text under it.
-    pub anchor: PopoverAnchor,
-}
+/// How tall the list is at most, at 100 %: it scrolls beyond.
+const LIST_MOST: f32 = 340.;
 
-/// The highlight among what a field offers, and what Escape put away:
-/// each for a field, its text and its caret as they were, and so gone as
-/// either moves.
-#[derive(Default)]
-pub(crate) struct Offers {
-    moved: Option<(Typed, usize)>,
+/// What a field says it takes, and its list's state: each for the field's
+/// text and caret as they were, and so gone as either moves. A clone is
+/// the same help (what a view draws from while it holds the original).
+#[derive(Clone)]
+pub(crate) struct FieldHelp {
+    /// The key the view holding the field knows it by, a recipe too.
+    pub key: SharedString,
+    /// What it takes, once its owner said it.
+    pub reference: Option<Rc<Reference>>,
+    /// The field's frame, which the list hangs under.
+    anchor: PopoverAnchor,
+    scroll: ScrollHandle,
+    /// Everything it takes shown (F1, its `?`).
+    asked: Option<Typed>,
+    /// The list put away (Escape, its `?` again).
     away: Option<Typed>,
+    /// The row the arrows lit.
+    moved: Option<(Typed, usize)>,
 }
 
-/// A field, its text and its caret.
-type Typed = (EntityId, String, usize);
+/// A field's text and caret.
+type Typed = (String, usize);
 
-/// What the field offers now, and the row lit: moved there by the arrows
-/// (`chosen`), else the first.
-struct Shown {
-    open: Open,
-    offered: Offered,
+/// What the list shows now.
+struct Listed {
+    /// Its rows: items by their group's place and their own.
+    rows: Vec<(usize, usize)>,
+    /// The part typed a row takes the place of; `None`: everything shown,
+    /// a row written at the caret.
+    part: Option<Range<usize>>,
+    /// The row lit: moved there by the arrows (`chosen`), else the first.
     lit: usize,
     chosen: bool,
 }
 
-/// A field's `?`, inside its frame at its end: what it takes, opened by a
-/// press as F1 opens it; `field` is the key its dialog knows it by. The
-/// press leaves the keyboard in the field; lit while `open`.
-pub(crate) fn inner(
+impl Listed {
+    fn whole(&self) -> bool {
+        self.part.is_none()
+    }
+}
+
+/// A child of the list: a group's title, a row, a note.
+enum Child {
+    Title(usize),
+    Row(usize),
+    Note(usize, usize),
+}
+
+/// The view that holds fields that say what they take: what their frames'
+/// commands and keys reach.
+pub(crate) trait Helps: Sized + 'static {
+    /// The help of the field known by `key`, and the field.
+    fn help_of(&mut self, key: &str) -> Option<(&mut FieldHelp, Entity<TextInput>)>;
+    /// The field a recipe names by `key`.
+    fn field_of(&self, key: &str) -> Option<Entity<TextInput>>;
+}
+
+fn typed(input: &Entity<TextInput>, cx: &App) -> Typed {
+    let input = input.read(cx);
+    (input.text().to_owned(), input.caret())
+}
+
+impl FieldHelp {
+    pub fn new(key: impl Into<SharedString>, reference: Option<Rc<Reference>>) -> Self {
+        FieldHelp {
+            key: key.into(),
+            reference,
+            anchor: PopoverAnchor::default(),
+            scroll: ScrollHandle::new(),
+            asked: None,
+            away: None,
+            moved: None,
+        }
+    }
+
+    /// What the list shows for `input`, while it has the keyboard.
+    fn listed(&self, input: &Entity<TextInput>, focused: bool, cx: &App) -> Option<Listed> {
+        if !focused {
+            return None;
+        }
+        let reference = self.reference.as_ref()?;
+        let now = typed(input, cx);
+        if self.away.as_ref() == Some(&now) {
+            return None;
+        }
+        let (rows, part) = if self.asked.as_ref() == Some(&now) {
+            let rows: Vec<(usize, usize)> = reference.items().map(|(g, i, _)| (g, i)).collect();
+            (rows, None)
+        } else {
+            let offered = reference.offered(&now.0, now.1)?;
+            (offered.items, Some(offered.range))
+        };
+        if rows.is_empty() {
+            return None;
+        }
+        let (lit, chosen) = match &self.moved {
+            Some((at, lit)) if *at == now => (*lit % rows.len(), true),
+            _ => (0, false),
+        };
+        Some(Listed {
+            rows,
+            part,
+            lit,
+            chosen,
+        })
+    }
+
+    /// Whether everything it takes shows for `input`.
+    fn whole_shown(&self, input: &Entity<TextInput>, focused: bool, cx: &App) -> bool {
+        self.listed(input, focused, cx).is_some_and(|l| l.whole())
+    }
+
+    /// The list's children, in the order drawn.
+    fn children(&self, listed: &Listed) -> Vec<Child> {
+        let Some(reference) = self.reference.as_ref() else {
+            return Vec::new();
+        };
+        if !listed.whole() {
+            return (0..listed.rows.len()).map(Child::Row).collect();
+        }
+        let mut children = Vec::new();
+        let mut row = 0;
+        for (g, group) in reference.groups.iter().enumerate() {
+            children.push(Child::Title(g));
+            for _ in &group.items {
+                children.push(Child::Row(row));
+                row += 1;
+            }
+            children.extend((0..group.notes.len()).map(|n| Child::Note(g, n)));
+        }
+        children
+    }
+
+    /// Bring the row lit into view.
+    fn reveal(&self, listed: &Listed) {
+        if let Some(at) = self
+            .children(listed)
+            .iter()
+            .position(|child| matches!(child, Child::Row(row) if *row == listed.lit))
+        {
+            self.scroll.scroll_to_item(at);
+        }
+    }
+}
+
+/// The `?` inside a field's frame at its end: what it takes, as F1 says
+/// it. `open` while that shows; `tip` says it, with its keys, to a screen
+/// reader too while one listens (`a11y`). The press is `pressed`'s, the
+/// keyboard never going to the `?` itself.
+pub(crate) fn question<V: 'static>(
     id: impl Into<SharedString>,
-    field: &str,
     open: bool,
-    shell: &Shell,
-    cx: &mut Context<Shell>,
+    tip: SharedString,
+    pressed: impl Fn(&mut V, &mut Window, &mut Context<V>) + 'static,
+    a11y: bool,
+    cx: &Context<V>,
 ) -> AnyElement {
     let theme = cx.global::<Theme>().clone();
-    let title: SharedString = match shell.keys_for("ui.field_reference", &serde_json::Value::Null) {
-        Some(keys) => format!("What it takes · {keys}").into(),
-        None => "What it takes".into(),
-    };
-    let tip = title.clone();
-    let field = field.to_owned();
     let hover = theme.hover;
+    let (muted, text) = (theme.text_muted, theme.text);
+    let shown = tip.clone();
     div()
         .id(id.into())
         .flex_none()
@@ -122,425 +228,377 @@ pub(crate) fn inner(
         .justify_center()
         .rounded_md()
         .cursor_pointer()
-        .when(open, |d| d.bg(theme.term))
-        .when(!open, move |d| d.hover(move |s| s.bg(hover)))
-        .when(shell.a11y, |d| {
+        .font_family(theme.font.clone())
+        .text_body()
+        .font_weight(gpui::FontWeight::SEMIBOLD)
+        .when(open, |d| d.bg(theme.term).text_color(theme.accent_text))
+        .when(!open, move |d| {
+            d.text_color(muted)
+                .hover(move |s| s.bg(hover).text_color(text))
+        })
+        .when(a11y, |d| {
             d.role(gpui::Role::Button)
-                .aria_label(title)
+                .aria_label(tip)
                 .aria_expanded(open)
         })
-        .tooltip(move |_, cx| toolbar::tooltip(tip.clone(), cx))
-        // The field keeps the keyboard: it acts on the press.
+        .tooltip(move |_, cx| toolbar::tooltip(shown.clone(), cx))
         .on_mouse_down(
             gpui::MouseButton::Left,
             cx.listener(move |this, _, window, cx| {
                 cx.stop_propagation();
                 window.prevent_default();
-                this.run(
-                    "ui.field_reference",
-                    serde_json::json!({ "field": field }),
-                    window,
-                    cx,
-                );
+                pressed(this, window, cx);
             }),
         )
-        .child(crate::controls::glyph(
-            "help",
-            if open {
-                theme.accent_text
-            } else {
-                theme.text_muted
-            },
-            15.,
-        ))
+        .child("?")
         .into_any_element()
 }
 
-impl Shell {
-    /// Whether the reference open is the one of the field framed by
-    /// `anchor`.
-    pub(crate) fn reference_open_from(&self, anchor: &PopoverAnchor) -> bool {
-        self.toolbar_menu
-            .as_ref()
-            .is_some_and(|popup| popup.kind == POPUP)
-            && self
-                .field_reference
-                .as_ref()
-                .is_some_and(|open| open.anchor.same(anchor))
-    }
-
-    /// The reference of the field being typed in, a question's or a
-    /// dialog's.
-    fn focused_reference(&self, window: &Window, cx: &gpui::App) -> Option<Open> {
-        self.prompt_reference(None, window, cx)
-            .or_else(|| self.bulk_reference(None, window, cx))
-    }
-
-    /// What the field being typed in offers now: nothing while a popup is
-    /// open, or once Escape put it away for this text and caret.
-    fn offers_now(&self, window: &Window, cx: &gpui::App) -> Option<Shown> {
-        if self.toolbar_menu.is_some() {
-            return None;
-        }
-        let open = self.focused_reference(window, cx)?;
-        let typed = typed(&open, cx)?;
-        if self.offers.away.as_ref() == Some(&typed) {
-            return None;
-        }
-        let offered = open.reference.offered(&typed.1, typed.2)?;
-        let (lit, chosen) = match &self.offers.moved {
-            Some((at, lit)) if *at == typed => (*lit % offered.items.len(), true),
-            _ => (0, false),
-        };
-        Some(Shown {
-            open,
-            offered,
-            lit,
-            chosen,
-        })
-    }
-
-    /// Whether `input` offers what goes on with its text now: its key
-    /// context then holds `offers`.
-    pub(crate) fn offers_for(
-        &self,
-        input: &Entity<TextInput>,
-        window: &Window,
-        cx: &gpui::App,
-    ) -> bool {
-        self.offers_now(window, cx)
-            .and_then(|shown| shown.open.fields.first().map(|(_, f)| f.entity_id()))
-            == Some(input.entity_id())
-    }
-
-    /// `ui.field_complete { step?, group?, item? }`: among what the field
-    /// offers, move the highlight by `step`, or take the item named, or
-    /// the one lit.
-    pub(crate) fn field_complete(
-        &mut self,
-        args: &serde_json::Value,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(shown) = self.offers_now(window, cx) else {
-            return;
-        };
-        let Some(typed) = typed(&shown.open, cx) else {
-            return;
-        };
-        if let Some(step) = args.get("step").and_then(serde_json::Value::as_i64) {
-            // From the row lit, the first until the arrows moved it: it is
-            // drawn so.
-            let count = i64::try_from(shown.offered.items.len()).unwrap_or(1);
-            let from = i64::try_from(shown.lit).unwrap_or(0);
-            let lit = usize::try_from((from + step).rem_euclid(count)).unwrap_or(0);
-            self.offers.moved = Some((typed, lit));
-            cx.notify();
-            return;
-        }
-        let place = |key: &str| {
-            args.get(key)
-                .and_then(serde_json::Value::as_u64)
-                .and_then(|n| usize::try_from(n).ok())
-        };
-        let item = match (place("group"), place("item")) {
-            (Some(group), Some(item)) => (group, item),
-            _ => shown.offered.items[shown.lit],
-        };
-        self.take_offer(&shown, item, window, cx);
-    }
-
-    /// The field's Enter: the item the arrows chose is taken, true; else
-    /// it answers its dialog.
-    pub(crate) fn offer_on_submit(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        match self.offers_now(window, cx) {
-            Some(shown) if shown.chosen => {
-                let item = shown.offered.items[shown.lit];
-                self.take_offer(&shown, item, window, cx);
-                true
-            }
-            _ => false,
-        }
-    }
-
-    /// The field's Escape: what it offers is put away, true; else it
-    /// closes its dialog.
-    pub(crate) fn offers_away(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        let Some(shown) = self.offers_now(window, cx) else {
-            return false;
-        };
-        self.offers.away = typed(&shown.open, cx);
-        cx.notify();
-        true
-    }
-
-    /// Put `item` in the place of the part typed, as an edit.
-    fn take_offer(
-        &mut self,
-        shown: &Shown,
-        (group, at): (usize, usize),
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(part) = shown
-            .open
-            .reference
-            .item(group, at)
-            .and_then(|item| item.inserts.clone())
-        else {
-            return;
-        };
-        let Some((_, field)) = shown.open.fields.first() else {
-            return;
-        };
-        let focus = field.read(cx).focus_handle(cx);
-        window.focus(&focus, cx);
-        let range = shown.offered.range.clone();
-        field.update(cx, |input, cx| {
-            input.select_range(range, cx);
-            input.put(&part, cx);
-        });
-        self.offers.moved = None;
-        cx.notify();
-    }
-
-    /// `ui.field_reference { field?, close?, pointer? }`: open the
-    /// reference of the field being typed in (or of `field`, its `?`
-    /// pressed), or close the one open. The address field says its own in
-    /// its card: F1 there, then its keys; its `?` turns it on and off.
-    /// Nothing opens where no field with one has the keyboard.
-    pub(crate) fn toggle_field_reference(
-        &mut self,
-        args: &serde_json::Value,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let close = args.get("close").and_then(serde_json::Value::as_bool) == Some(true);
-        let field = args.get("field").and_then(serde_json::Value::as_str);
-        if !close && self.ui().address.read(cx).is_focused(window) {
-            if field.is_some() {
-                self.omnibox_reference_toggle(window, cx);
-            } else {
-                self.omnibox_reference(window, cx);
-            }
-            return;
-        }
-        let offer = if close {
-            None
-        } else {
-            self.prompt_reference(field, window, cx)
-                .or_else(|| self.bulk_reference(field, window, cx))
-        };
-        if !close && offer.is_none() {
-            return;
-        }
-        if self.toggle_popup(POPUP, args, window, cx)
-            && let Some(offer) = offer
-        {
-            self.toolbar_menu = Some(toolbar::Popup::new(POPUP, window, cx));
-            self.field_reference = Some(offer);
-        }
-        cx.notify();
-    }
-
-    /// `ui.field_reference_put { group, item }`: write that item of the
-    /// reference open in its field, where the caret is, or fill the
-    /// fields its recipe names; the field has the keyboard again.
-    pub(crate) fn field_reference_put(
-        &mut self,
-        args: &serde_json::Value,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let place = |key: &str| {
-            args.get(key)
-                .and_then(serde_json::Value::as_u64)
-                .and_then(|n| usize::try_from(n).ok())
-        };
-        let (Some(group), Some(item)) = (place("group"), place("item")) else {
-            return;
-        };
-        if self
-            .toolbar_menu
-            .as_ref()
-            .is_none_or(|popup| popup.kind != POPUP)
-        {
-            return;
-        }
-        let Some(open) = self.field_reference.take() else {
-            return;
-        };
-        self.close_popup(window, cx);
-        let Some(item) = open.reference.item(group, item).cloned() else {
-            return;
-        };
-        let Some((_, field)) = open.fields.first() else {
-            return;
-        };
-        let focus = field.read(cx).focus_handle(cx);
-        window.focus(&focus, cx);
-        if let Some(text) = &item.inserts {
-            field.update(cx, |input, cx| input.put(text, cx));
-        }
-        for (key, text) in &item.fills {
-            if let Some((_, input)) = open.fields.iter().find(|(named, _)| named == key) {
-                input.update(cx, |input, cx| input.replace_all(text, cx));
-            }
-        }
-        cx.notify();
+/// What a field takes, as its `?` and F1 say it: with its keys.
+pub(crate) fn tip(keys: Option<String>) -> SharedString {
+    match keys {
+        Some(keys) => format!("What it takes · {keys}").into(),
+        None => "What it takes".into(),
     }
 }
 
-/// The reference open, hanging from its field's [?] over the dialog.
-pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
-    let popup = shell
-        .toolbar_menu
-        .as_ref()
-        .filter(|popup| popup.kind == POPUP)?;
-    let open = shell.field_reference.as_ref()?;
-    let theme = cx.global::<Theme>().clone();
-    let reference = &open.reference;
-    let mut parts = Vec::new();
-    for (g, group) in reference.groups.iter().enumerate() {
-        parts.push(MenuPart::Title(group.title.clone().into(), None));
-        for (i, item) in group.items.iter().enumerate() {
-            let writes = item.inserts.is_some() || !item.fills.is_empty();
-            parts.push(MenuPart::Row(
-                Button::new(
-                    format!("reference {g} {}", item.written),
-                    "",
-                    item.says.clone(),
-                    "ui.field_reference_put",
-                )
-                .args(serde_json::json!({ "group": g, "item": i }))
-                .label(item.says.clone())
-                .said(item.written.clone(), item.gives.clone().map(Into::into))
-                .enabled(writes),
-            ));
-        }
-        for note in &group.notes {
-            parts.push(MenuPart::Note(note.clone().into()));
-        }
-    }
-    parts.push(MenuPart::Line);
-    let keys = shell
-        .keys_for("ui.shortcuts", &serde_json::Value::Null)
-        .map_or_else(String::new, |keys| format!(" · {keys}: the keys here"));
-    parts.push(MenuPart::Note(
-        format!("Chosen, it is written where the caret is{keys}").into(),
-    ));
-    // As wide as it says, never as wide as its longest row: its columns
-    // line up.
-    let panel = toolbar::menu_panel(popup, "ui.field_reference", &theme, cx)
-        .w(sized(640.))
-        .min_w(gpui::px(0.))
-        .max_w(sized(640.))
-        .when(shell.a11y, |d| d.aria_label(reference.title.clone()));
-    let panel = toolbar::menu_parts(panel, parts, shell, &theme, cx);
-    Some(open.anchor.popup_right_over(PRIORITY, panel))
-}
-
-/// The field's text and caret, as what it offers was worked out for.
-fn typed(open: &Open, cx: &gpui::App) -> Option<Typed> {
-    let (_, field) = open.fields.first()?;
-    let input = field.read(cx);
-    Some((field.entity_id(), input.text().to_owned(), input.caret()))
-}
-
-/// What the field being typed in offers, under it: each item as written,
-/// what it means and what it gives, the one lit drawn chosen. The field
-/// keeps the keyboard; a press on a row takes it.
-pub fn render_offers(
-    shell: &Shell,
+/// `frame`, the frame of the field `input` that `help` says, with what
+/// makes it say it: `reference` in its key context (and `offers` while
+/// the list shows), its `?` after what it holds, the list under it, and
+/// the answers to the commands its keys run. `keys` are F1's, for the
+/// `?`'s tooltip.
+pub(crate) fn with_help<V: Helps>(
+    frame: Div,
+    help: &FieldHelp,
+    input: &Entity<TextInput>,
+    keys: Option<String>,
     window: &Window,
-    cx: &mut Context<Shell>,
-) -> Option<AnyElement> {
-    let shown = shell.offers_now(window, cx)?;
+    cx: &Context<V>,
+) -> Div {
+    let focused = input.read(cx).is_focused(window);
+    let listed = help.listed(input, focused, cx);
+    let mut context = KeyContext::default();
+    context.add("reference");
+    if listed.is_some() {
+        context.add("offers");
+    }
+    let whole = listed.as_ref().is_some_and(Listed::whole);
+    let key = help.key.clone();
+    let list = listed.map(|listed| list(help, &listed, cx));
+    let answers = key.clone();
+    let presses = key.clone();
+    frame
+        .key_context(context)
+        .relative()
+        .on_action(
+            cx.listener(move |this: &mut V, action: &RunCommand, window, cx| {
+                match action.name.as_str() {
+                    "ui.field_reference" => ask(this, &answers, true, window, cx),
+                    "ui.field_complete" => complete(this, &answers, &action.args, window, cx),
+                    _ => cx.propagate(),
+                }
+            }),
+        )
+        .child(question(
+            format!("help-{key}"),
+            whole,
+            tip(keys),
+            move |this: &mut V, window, cx| ask(this, &presses, false, window, cx),
+            window.is_a11y_active(),
+            cx,
+        ))
+        .child(help.anchor.marker())
+        .children(list)
+}
+
+/// F1 in the field (`keys`), or its `?`: everything it takes, or, shown,
+/// put away (the `?`) or the keys of the place (F1).
+fn ask<V: Helps>(this: &mut V, key: &str, keys: bool, window: &mut Window, cx: &mut Context<V>) {
+    let Some((help, input)) = this.help_of(key) else {
+        return;
+    };
+    let focus = input.read(cx).focus_handle(cx);
+    let focused = focus.is_focused(window);
+    let now = typed(&input, cx);
+    if help.whole_shown(&input, focused, cx) {
+        if keys {
+            window.dispatch_action(
+                Box::new(RunCommand {
+                    name: "ui.shortcuts".into(),
+                    args: serde_json::json!({}),
+                }),
+                cx,
+            );
+        } else {
+            help.asked = None;
+            help.away = Some(now);
+        }
+    } else {
+        help.asked = Some(now);
+        help.away = None;
+        help.moved = None;
+        help.scroll.scroll_to_item(0);
+        window.focus(&focus, cx);
+    }
+    cx.notify();
+}
+
+/// `ui.field_complete { step?, group?, item? }`: move the highlight by
+/// `step`, or take the item named, or the row lit.
+fn complete<V: Helps>(
+    this: &mut V,
+    key: &str,
+    args: &serde_json::Value,
+    window: &mut Window,
+    cx: &mut Context<V>,
+) {
+    if let Some(step) = args.get("step").and_then(serde_json::Value::as_i64) {
+        let Some((help, input)) = this.help_of(key) else {
+            return;
+        };
+        let focused = input.read(cx).is_focused(window);
+        let Some(listed) = help.listed(&input, focused, cx) else {
+            return;
+        };
+        let count = i64::try_from(listed.rows.len()).unwrap_or(1);
+        let from = i64::try_from(listed.lit).unwrap_or(0);
+        let lit = usize::try_from((from + step).rem_euclid(count)).unwrap_or(0);
+        help.moved = Some((typed(&input, cx), lit));
+        help.reveal(&Listed {
+            lit,
+            chosen: true,
+            ..listed
+        });
+        cx.notify();
+        return;
+    }
+    let place = |name: &str| {
+        args.get(name)
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|n| usize::try_from(n).ok())
+    };
+    take(this, key, place("group").zip(place("item")), window, cx);
+}
+
+/// The field's Enter: the row the arrows chose is taken, true; else it
+/// answers its dialog.
+pub(crate) fn on_submit<V: Helps>(
+    this: &mut V,
+    key: &str,
+    window: &mut Window,
+    cx: &mut Context<V>,
+) -> bool {
+    let chosen = this.help_of(key).is_some_and(|(help, input)| {
+        let focused = input.read(cx).is_focused(window);
+        help.listed(&input, focused, cx).is_some_and(|l| l.chosen)
+    });
+    if chosen {
+        take(this, key, None, window, cx);
+    }
+    chosen
+}
+
+/// The field's Escape: the list is put away, true; else it closes its
+/// dialog.
+pub(crate) fn on_cancel<V: Helps>(
+    this: &mut V,
+    key: &str,
+    window: &mut Window,
+    cx: &mut Context<V>,
+) -> bool {
+    let Some((help, input)) = this.help_of(key) else {
+        return false;
+    };
+    let focused = input.read(cx).is_focused(window);
+    if help.listed(&input, focused, cx).is_none() {
+        return false;
+    }
+    help.asked = None;
+    help.away = Some(typed(&input, cx));
+    cx.notify();
+    true
+}
+
+/// Take `item` (else the row lit): its part where the caret is, in place
+/// of the part typed, or the fields its recipe names filled.
+fn take<V: Helps>(
+    this: &mut V,
+    key: &str,
+    item: Option<(usize, usize)>,
+    window: &mut Window,
+    cx: &mut Context<V>,
+) {
+    let Some((help, input)) = this.help_of(key) else {
+        return;
+    };
+    let focused = input.read(cx).is_focused(window);
+    let Some(listed) = help.listed(&input, focused, cx) else {
+        return;
+    };
+    let Some(reference) = help.reference.clone() else {
+        return;
+    };
+    let (group, at) = item.unwrap_or(listed.rows[listed.lit]);
+    let Some(item) = reference.item(group, at).cloned() else {
+        return;
+    };
+    help.asked = None;
+    help.moved = None;
+    let focus = input.read(cx).focus_handle(cx);
+    window.focus(&focus, cx);
+    if let Some(part) = &item.inserts {
+        input.update(cx, |input, cx| {
+            if let Some(range) = listed.part.clone() {
+                input.select_range(range, cx);
+            }
+            input.put(part, cx);
+        });
+    }
+    for (named, text) in &item.fills {
+        if let Some(field) = this.field_of(named) {
+            field.update(cx, |field, cx| field.replace_all(text, cx));
+        }
+    }
+    cx.notify();
+}
+
+/// The list under the field: each row as written, what it means, what it
+/// gives; everything under its groups' titles with their notes, or what
+/// goes on with the part typed. The field keeps the keyboard; a press on
+/// a row takes it.
+fn list<V: Helps>(help: &FieldHelp, listed: &Listed, cx: &Context<V>) -> AnyElement {
     let theme = cx.global::<Theme>().clone();
-    let reference = &shown.open.reference;
-    let mut list = div()
-        .id("field-offers")
-        .w(sized(520.))
-        .p_1()
+    let reference = help.reference.clone().unwrap_or_default();
+    let mut rows = div()
+        .id(crate::elements::known_by("field-help-rows", &help.key))
+        .flex()
+        .flex_col()
+        .min_h_0()
+        .max_h(sized(LIST_MOST))
+        .overflow_y_scroll()
+        .track_scroll(&help.scroll)
+        .p_1();
+    for child in help.children(listed) {
+        let element = match child {
+            Child::Title(g) => div()
+                .flex_none()
+                .px_2()
+                .pt_2()
+                .pb_1()
+                .text_small()
+                .text_color(theme.text_muted)
+                .child(reference.groups[g].title.clone())
+                .into_any_element(),
+            Child::Note(g, n) => div()
+                .flex_none()
+                .px_2()
+                .pb_1()
+                .text_small()
+                .text_color(theme.text_muted)
+                .whitespace_normal()
+                .child(reference.groups[g].notes[n].clone())
+                .into_any_element(),
+            Child::Row(row) => {
+                let (group, at) = listed.rows[row];
+                let Some(item) = reference.item(group, at) else {
+                    continue;
+                };
+                let lit = row == listed.lit;
+                let hover = theme.hover;
+                let key = help.key.clone();
+                div()
+                    .id(crate::elements::known_by(
+                        "field-help-row",
+                        (&help.key, group, &item.written),
+                    ))
+                    .flex_none()
+                    .h(sized(toolbar::MENU_ROW))
+                    .px_2()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .rounded_md()
+                    .cursor_pointer()
+                    .when(lit, |d| d.chosen(&theme))
+                    .when(!lit, move |d| d.hover(move |s| s.bg(hover)))
+                    .on_mouse_down(
+                        gpui::MouseButton::Left,
+                        cx.listener(move |this, _, window, cx| {
+                            cx.stop_propagation();
+                            window.prevent_default();
+                            take(this, &key, Some((group, at)), window, cx);
+                        }),
+                    )
+                    .child(
+                        // One column for what is written; cut in its
+                        // middle, as an end cut takes the signs before it
+                        // away (gpui trims punctuation there).
+                        div()
+                            .flex_none()
+                            .w(gpui::relative(0.3))
+                            .overflow_hidden()
+                            .text_ellipsis_middle()
+                            .font_family(theme.code_font.clone())
+                            .child(item.written.clone()),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_color(theme.text_muted)
+                            .child(item.says.clone()),
+                    )
+                    .children(item.gives.clone().map(|gives| {
+                        div()
+                            .flex_none()
+                            .max_w(gpui::relative(0.3))
+                            .pl_2()
+                            .truncate()
+                            .text_small()
+                            .font_family(theme.code_font.clone())
+                            .text_color(theme.text_muted)
+                            .child(gives)
+                    }))
+                    .into_any_element()
+            }
+        };
+        rows = rows.child(element);
+    }
+    // As the address's card: on the window's ground, framed, over what is
+    // under it; a press here is the list's, never the dialog's behind it.
+    let panel = div()
+        .w(sized(560.))
         .flex()
         .flex_col()
         .rounded_lg()
         .border_1()
         .border_color(theme.border)
-        .bg(theme.surface)
+        .bg(theme.bg)
+        .text_color(theme.text)
         .shadow_md()
         .occlude()
         .text_body()
         .whitespace_nowrap()
-        // A press here is the list's, never the dialog's behind it.
         .on_mouse_down(gpui::MouseButton::Left, |_, window, cx| {
             cx.stop_propagation();
             window.prevent_default();
-        });
-    for (row, &(group, at)) in shown.offered.items.iter().enumerate() {
-        let Some(item) = reference.item(group, at) else {
-            continue;
-        };
-        let highlighted = row == shown.lit;
-        let hover = theme.hover;
-        list = list.child(
+        })
+        .child(
             div()
-                .id(crate::elements::known_by("field-offer", &item.written))
-                .h(sized(toolbar::MENU_ROW))
-                .px_2()
+                .relative()
                 .flex()
-                .items_center()
-                .gap_2()
-                .rounded_md()
-                .cursor_pointer()
-                .when(highlighted, |d| d.chosen(&theme))
-                .when(!highlighted, move |d| d.hover(move |s| s.bg(hover)))
-                .on_mouse_down(
-                    gpui::MouseButton::Left,
-                    cx.listener(move |this, _, window, cx| {
-                        cx.stop_propagation();
-                        window.prevent_default();
-                        this.run(
-                            "ui.field_complete",
-                            serde_json::json!({ "group": group, "item": at }),
-                            window,
-                            cx,
-                        );
-                    }),
-                )
-                .child(
-                    div()
-                        .flex_none()
-                        .w(gpui::relative(0.3))
-                        .overflow_hidden()
-                        .text_ellipsis_middle()
-                        .font_family(theme.code_font.clone())
-                        .child(item.written.clone()),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .truncate()
-                        .text_color(theme.text_muted)
-                        .child(item.says.clone()),
-                )
-                .children(item.gives.clone().map(|gives| {
-                    div()
-                        .flex_none()
-                        .max_w(gpui::relative(0.3))
-                        .pl_2()
-                        .truncate()
-                        .text_small()
-                        .font_family(theme.code_font.clone())
-                        .text_color(theme.text_muted)
-                        .child(gives)
-                })),
+                .flex_col()
+                .min_h_0()
+                .child(rows)
+                .child(crate::elements::scrollbar::vertical(
+                    crate::elements::known_by("field-help-scrollbar", &help.key),
+                    crate::elements::scrollbar::Scrolls::Offset(help.scroll.clone()),
+                )),
         );
-    }
-    Some(PopoverAnchor::popup_first(
-        std::slice::from_ref(&shown.open.anchor),
+    PopoverAnchor::popup_first(
+        std::slice::from_ref(&help.anchor),
         PRIORITY,
-        list.into_any_element(),
-    ))
+        panel.into_any_element(),
+    )
 }

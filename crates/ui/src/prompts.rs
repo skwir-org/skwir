@@ -17,10 +17,10 @@ use skwir_core::reference::Reference;
 use skwir_core::workspace::PaneId;
 
 use crate::controls::{self, ButtonStyle};
-use crate::elements::popover::PopoverAnchor;
 use crate::input::{InputEvent, TextInput};
 use crate::keymap;
 use crate::modal::{self, FocusReturn};
+use crate::reference::FieldHelp;
 use crate::shell::Shell;
 use crate::theme::Theme;
 
@@ -107,11 +107,9 @@ pub struct PromptState {
     ask: Option<Ask>,
     /// A line under the field, muted: what the answer may be.
     note: Option<String>,
-    /// What the field takes (ADR-137): `ui.ask`'s `reference`, opened
-    /// from the `?` inside the field or F1 in it, and the field's frame it
-    /// hangs from.
-    reference: Option<Rc<Reference>>,
-    anchor: PopoverAnchor,
+    /// What the field takes (ADR-137): `ui.ask`'s `reference`, its `?`,
+    /// F1 and the list under it (`reference.rs`).
+    help: Option<FieldHelp>,
     /// What says what the text comes to as it is typed: `ui.ask`'s
     /// `describe`, run with the text as its field, on a worker.
     describe: Option<Invocation>,
@@ -181,6 +179,20 @@ fn asked_about(
 }
 
 impl PromptState {
+    /// The help of its field when it is the one `key` names, and the field.
+    pub(crate) fn help_of(&mut self, key: &str) -> Option<(&mut FieldHelp, Entity<TextInput>)> {
+        let input = self.input.clone();
+        self.help
+            .as_mut()
+            .filter(|help| help.key == key)
+            .map(|help| (help, input))
+    }
+
+    /// Whether its field is the one `key` names.
+    pub(crate) fn helps(&self, key: &str) -> bool {
+        self.help.as_ref().is_some_and(|help| help.key == key)
+    }
+
     /// What Tab walks: the field, Remember where offered, Cancel, the
     /// answer (`Shell::walk_dialog`).
     pub(crate) fn walk(&self, cx: &gpui::App) -> Vec<FocusHandle> {
@@ -292,11 +304,12 @@ impl Shell {
     /// stem), all of it when absent; `accept` is the verb on the button
     /// that answers (Rename), OK when absent; `note` a line under the field
     /// (what the answer may be); `reference` what the field takes
-    /// (`skwir_core::reference::Reference`, ADR-137), opened from a [?] at
-    /// its end or F1; `describe` (`{ command, args? }`) what says, as it is
+    /// (`skwir_core::reference::Reference`, ADR-137), from a `?` inside it
+    /// or F1; `describe` (`{ command, args? }`) what says, as it is
     /// typed, what the text comes to: run on a worker with the text as its
-    /// `field`, its `says` shown under the field, its error shown there and
-    /// holding the answer back.
+    /// `field`, about what the question is about (the `pane`, `entries` and
+    /// `in` its command was given), its `says` shown under the field, its
+    /// error shown there and holding the answer back.
     /// The one question of a line of text, the shell's own (Rename, New
     /// folder) as a plugin's.
     pub fn open_ask(
@@ -337,6 +350,43 @@ impl Shell {
                 || app.pane_dir(pane).ok(),
             );
         }
+        // What says what is typed comes to asks about what the question is
+        // about too: the selection's paths for Run Command's line.
+        let describe = args.get("describe").and_then(|describe| {
+            let mut said = Invocation {
+                name: describe.get("command")?.as_str()?.to_owned().into(),
+                args: describe
+                    .get("args")
+                    .cloned()
+                    .filter(serde_json::Value::is_object)
+                    .unwrap_or_else(|| serde_json::json!({})),
+            };
+            if let Some(spec) = self.app.commands.get(&said.name) {
+                let pane = command
+                    .args
+                    .get("pane")
+                    .and_then(|pane| serde_json::from_value::<PaneId>(pane.clone()).ok())
+                    .unwrap_or(self.pane);
+                // The same entries and folder as the question's command.
+                for named in ["pane", "entries", "in"] {
+                    if let Some(value) = command.args.get(named)
+                        && spec.takes(named)
+                        && said.args.get(named).is_none()
+                    {
+                        said.args[named] = value.clone();
+                    }
+                }
+                let app = &self.app;
+                asked_about(
+                    &spec,
+                    &mut said.args,
+                    pane,
+                    || app.selected_refs(pane),
+                    || app.pane_dir(pane).ok(),
+                );
+            }
+            Some(said)
+        });
         let ask = Ask {
             command,
             field: field.to_owned(),
@@ -357,16 +407,7 @@ impl Shell {
                 reference: args
                     .get("reference")
                     .and_then(|said| serde_json::from_value(said.clone()).ok()),
-                describe: args.get("describe").and_then(|describe| {
-                    Some(Invocation {
-                        name: describe.get("command")?.as_str()?.to_owned().into(),
-                        args: describe
-                            .get("args")
-                            .cloned()
-                            .filter(serde_json::Value::is_object)
-                            .unwrap_or_else(|| serde_json::json!({})),
-                    })
-                }),
+                describe,
             },
             window,
             cx,
@@ -412,19 +453,30 @@ impl Shell {
                 None => i.select_all_now(cx),
             }
         });
+        // What the field lists takes Enter the arrows chose a row for, and
+        // Escape first (ADR-137).
+        let help = reference
+            .filter(|said| !said.is_empty())
+            .zip(ask.as_ref())
+            .map(|(said, ask)| FieldHelp::new(ask.field.clone(), Some(Rc::new(said))));
+        let key = help.as_ref().map(|help| help.key.clone());
         let sub = cx.subscribe_in(
             &input,
             window,
-            |this, input, ev: &InputEvent, window, cx| match ev {
-                // What the field offers takes Enter the arrows chose it for,
-                // and Escape first (ADR-137).
+            move |this, input, ev: &InputEvent, window, cx| match ev {
                 InputEvent::Submit => {
-                    if !this.offer_on_submit(window, cx) {
+                    if !key
+                        .as_ref()
+                        .is_some_and(|key| crate::reference::on_submit(this, key, window, cx))
+                    {
                         this.prompt_answer(window, cx);
                     }
                 }
                 InputEvent::Cancel => {
-                    if !this.offers_away(window, cx) {
+                    if !key
+                        .as_ref()
+                        .is_some_and(|key| crate::reference::on_cancel(this, key, window, cx))
+                    {
                         this.prompt_cancel(window, cx);
                     }
                 }
@@ -448,8 +500,7 @@ impl Shell {
             input,
             ask,
             note,
-            reference: reference.filter(|said| !said.is_empty()).map(Rc::new),
-            anchor: PopoverAnchor::default(),
+            help,
             describe,
             described: None,
             describe_asked: 0,
@@ -519,29 +570,6 @@ impl Shell {
         })
     }
 
-    /// The question's reference (ADR-137), when its field has the
-    /// keyboard or `field` names it (its [?] pressed): its field to write
-    /// in.
-    pub(crate) fn prompt_reference(
-        &self,
-        field: Option<&str>,
-        window: &Window,
-        cx: &gpui::App,
-    ) -> Option<crate::reference::Open> {
-        let p = self.prompt.as_ref()?;
-        let reference = p.reference.clone()?;
-        let key = p.ask.as_ref()?.field.clone();
-        let asked = match field {
-            Some(field) => field == key,
-            None => p.input.read(cx).is_focused(window),
-        };
-        asked.then(|| crate::reference::Open {
-            fields: vec![(key.into(), p.input.clone())],
-            reference,
-            anchor: p.anchor.clone(),
-        })
-    }
-
     /// Answer the prompt with its text: Enter, or its button.
     fn prompt_answer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.prompt_held_back(cx) {
@@ -594,10 +622,6 @@ impl Shell {
     /// Close the prompt and give the keyboard back to what had it. What a
     /// step asked and was not answered is answered none.
     pub fn close_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        // Its field's reference goes with it.
-        if self.field_reference.is_some() {
-            self.close_popup(window, cx);
-        }
         if let Some(prompt) = self.prompt.take() {
             self.give_up_secret(prompt.kind);
             prompt.back.restore(window, &self.ui().focus, cx);
@@ -706,45 +730,36 @@ pub fn render_prompt(
     let text = p.input.read(cx).text().trim().to_owned();
     let described = p.described.as_ref().filter(|(said, _)| *said == text);
     let refused = matches!(described, Some((_, Err(_))));
-    // A field that says what it takes (ADR-137): its `?` inside it, F1
-    // and what goes on with a part begun, its keys the field's while it
-    // shows (`offers`).
-    let field_key = p.ask.as_ref().map(|ask| ask.field.clone());
-    let open = shell.reference_open_from(&p.anchor);
-    let reference = p
-        .reference
-        .as_ref()
-        .zip(field_key)
-        .map(|(_, key)| crate::reference::inner("prompt-reference", &key, open, shell, cx));
-    let mut context = gpui::KeyContext::default();
-    if reference.is_some() {
-        context.add("reference");
-        if shell.offers_for(&p.input, window, cx) {
-            context.add("offers");
-        }
-    }
+    let frame = div()
+        .h(sized(30.))
+        .px_2()
+        .flex()
+        .items_center()
+        .gap_1()
+        .rounded_md()
+        .border_1()
+        .border_color(if refused { theme.error } else { theme.accent })
+        .bg(theme.bg)
+        .child(div().flex_1().min_w_0().child(p.input.clone()));
+    // A field that says what it takes (ADR-137): its `?`, F1, and the list
+    // under it.
+    let frame = match &p.help {
+        Some(help) => crate::reference::with_help(
+            frame,
+            help,
+            &p.input,
+            shell.keys_for("ui.field_reference", &serde_json::Value::Null),
+            window,
+            cx,
+        ),
+        None => frame,
+    };
     let panel = modal::panel("prompt", 560., &theme)
         .when(shell.a11y, |d| d.aria_label(p.title.clone()))
         .p_3()
         .gap_2()
         .child(div().text_title().child(p.title.clone()))
-        .child(
-            div()
-                .key_context(context)
-                .relative()
-                .h(sized(30.))
-                .px_2()
-                .flex()
-                .items_center()
-                .gap_1()
-                .rounded_md()
-                .border_1()
-                .border_color(if refused { theme.error } else { theme.accent })
-                .bg(theme.bg)
-                .child(div().flex_1().min_w_0().child(p.input.clone()))
-                .children(reference)
-                .child(p.anchor.marker()),
-        )
+        .child(frame)
         .children(described.map(|(_, said)| {
             match said {
                 Ok(says) => div()

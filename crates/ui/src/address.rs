@@ -1607,19 +1607,14 @@ fn pane_row(
         // the card, where it is typed.
         Address::Text => {
             // What the field takes (ADR-137), at its end as in any field
-            // that says it: in the card, the typing going on.
-            let asked = shell
-                .ui()
-                .omni
-                .as_ref()
-                .is_some_and(crate::omnibox::Omni::reference_shown);
-            let help = crate::reference::inner(
-                format!("address-reference-{}", pane.0),
-                "address",
-                asked,
-                shell,
-                cx,
-            );
+            // that says it, the typing going on: at the card's while the card
+            // stands around the field (`omnibox::dropdown`), its room kept
+            // here so the text never runs under it.
+            let help = if shell.omnibox_card() {
+                crate::omnibox::question_room()
+            } else {
+                crate::omnibox::question(shell, cx)
+            };
             let typed = div()
                 .flex_grow_1()
                 .flex_shrink(1.)
@@ -1638,7 +1633,7 @@ fn pane_row(
                         .line_height(sized(ADDRESS_LINE))
                         .child(shell.ui().address.clone()),
                 )
-                .child(div().pr(px(6.)).child(help));
+                .child(div().pr(px(crate::omnibox::QUESTION_INSET)).child(help));
             if shell.omnibox_card() {
                 gpui::deferred(typed)
                     .with_priority(crate::omnibox::CARD_PRIORITY + 1)

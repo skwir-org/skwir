@@ -505,12 +505,6 @@ pub struct Shell {
     pub confirm: Option<ConfirmState>,
     pub menu: Option<MenuState>,
     pub toolbar_menu: Option<crate::toolbar::Popup>,
-    /// The field's reference open (`reference::POPUP`, ADR-137): what it
-    /// writes in and says.
-    pub(crate) field_reference: Option<crate::reference::Open>,
-    /// What the field being typed in offers: the row lit, what Escape put
-    /// away (ADR-137).
-    pub(crate) offers: crate::reference::Offers,
     /// A pane row's menu of places: the history, or a folder's folders.
     pub nav_menu: Option<crate::nav_menu::NavMenu>,
     /// Counts the folder menus asked for: an answer for an older one is
@@ -869,8 +863,6 @@ impl Shell {
             confirm: None,
             menu: None,
             toolbar_menu: None,
-            field_reference: None,
-            offers: crate::reference::Offers::default(),
             nav_menu: None,
             nav_asked: 0,
             presses: 0,
@@ -2819,11 +2811,23 @@ impl Shell {
             }
             "focus_pane" => window.focus(&self.ui().focus, cx),
             "settings" => self.open_settings(args, window, cx),
-            // The focused button and the open popup answer these; one
-            // that reaches here found neither.
-            "toolbar_activate" | "toolbar_close" => {}
+            // A dialog's field answers what its keys run itself
+            // (`reference::with_help`); the address says what it takes in
+            // its card: F1 there, then its keys; its `?` turns it on and
+            // off (ADR-137).
+            "field_reference" if self.ui().address.read(cx).is_focused(window) => {
+                if args.get("field").is_some() {
+                    self.omnibox_reference_toggle(window, cx);
+                } else {
+                    self.omnibox_reference(window, cx);
+                }
+            }
+            // The focused button and the open popup answer these, and a
+            // dialog's field that says what it takes its own; one that
+            // reaches here found none.
+            "toolbar_activate" | "toolbar_close" | "field_reference" | "field_complete" => {}
             // A dialog keeps the keyboard: Tab walks its own controls; a
-            // popup over it (a field's reference) walks its rows.
+            // popup over it walks its rows.
             "toolbar_next" | "toolbar_prev"
                 if !in_toolbar_popup(window)
                     && self.walk_dialog(name == "toolbar_next", window, cx) => {}
@@ -2846,9 +2850,6 @@ impl Shell {
                 self.reveal_focused_row(window, cx);
             }
             "toolbar_menu" => self.toggle_toolbar_menu(args, window, cx),
-            "field_reference" => self.toggle_field_reference(args, window, cx),
-            "field_reference_put" => self.field_reference_put(args, window, cx),
-            "field_complete" => self.field_complete(args, window, cx),
             "activity" => match args.get("plan").and_then(serde_json::Value::as_u64) {
                 Some(plan) => self.show_activity_of(skwir_core::op::PlanId(plan), window, cx),
                 None => self.toggle_activity(args, window, cx),
@@ -4404,8 +4405,6 @@ impl Render for Shell {
             crate::choose::render(self, cx),
             crate::tags::render(self, cx),
             renamebulk::render(self, window, cx),
-            crate::reference::render(self, cx),
-            crate::reference::render_offers(self, window, cx),
             palette::render(self, cx),
             preview::render_peek(self, cx),
             review::render(self, cx),

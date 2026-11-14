@@ -202,17 +202,13 @@ mod args {
         pointer: bool,
     }
 
-    /// A field's reference (ADR-137): `field` names the field whose [?]
-    /// was pressed, else the one being typed in; `close` closes it
-    /// (`pointer`: by a press outside it).
+    /// What the field being typed in takes, under it (ADR-137).
     #[derive(Deserialize, JsonSchema)]
     pub(super) struct FieldReference {
+        /// The address field's `?` pressed: its card's reference on or
+        /// off.
         #[serde(default)]
         field: Option<String>,
-        #[serde(default)]
-        close: bool,
-        #[serde(default)]
-        pointer: bool,
     }
 
     /// What the field being typed in offers (ADR-137): `step` moves the
@@ -226,14 +222,6 @@ mod args {
         group: Option<usize>,
         #[serde(default)]
         item: Option<usize>,
-    }
-
-    /// An item of the field's reference open, by its group's place and
-    /// its own.
-    #[derive(Deserialize, JsonSchema)]
-    pub(super) struct ReferencePut {
-        group: usize,
-        item: usize,
     }
 
     /// The preview's More's submenu beside its row: `open` one by its
@@ -654,16 +642,14 @@ use args::{
     Adjust, Amount, Ask, Bucket, Close, Continue, CopyText, Count, Cursor, Delta, Dir,
     FieldComplete, FieldReference, Find, Fold, FolderItem, Folders, History, Key, Layout,
     ListMoveArgs, Object, On, Pace, Page, PageLink, Pages, Pan, Pick, Player, Pointer, Popup,
-    PreviewScroll, ReferencePut, Scrub, SelectGroup, Settings, Split, Submenu, Submit, TagsPrompt,
-    TerminalPaste, Text, TextSize, TimelineCursor, TimelineDate, Toggle, Toward, Url, UsageMode,
-    View, ViewButton,
+    PreviewScroll, Scrub, SelectGroup, Settings, Split, Submenu, Submit, TagsPrompt, TerminalPaste,
+    Text, TextSize, TimelineCursor, TimelineDate, Toggle, Toward, Url, UsageMode, View, ViewButton,
 };
 
 /// The window's commands an agent may run (ADR-044): they change only
 /// what the window shows, or open a prompt the user answers.
 const SHOWS: &[&str] = &[
     "ui.field_reference",
-    "ui.field_reference_put",
     "ui.field_complete",
     "ui.cursor",
     "ui.cursor_pick",
@@ -2171,7 +2157,7 @@ pub fn declare_all(app: &App) {
         Topic::Window,
         "ui.field_reference",
         "What the field takes",
-        "Show what the field being typed in takes, or the one `field` names in the dialog open: its placeholders, terms or signs, each with what it means and gives here, chosen to write it where the caret is (ADR-137); the address field says it in its card. Close it with `close`",
+        "Show under the field being typed in what it takes: its placeholders, terms or signs, each with what it means and gives here, a row taken written where the caret is (ADR-137); shown, F1 shows the keys of the place. The address field says it in its card; `field` (its `?`) turns that on and off",
     );
     declare::<FieldComplete>(
         app,
@@ -2179,13 +2165,6 @@ pub fn declare_all(app: &App) {
         "ui.field_complete",
         "Take what the field offers",
         "Among what the field being typed in offers as it goes on (a placeholder begun, a sign), move the highlight by `step`, take the item `group` and `item` name, or the one lit: it takes the place of the part typed (ADR-137)",
-    );
-    declare::<ReferencePut>(
-        app,
-        Topic::Window,
-        "ui.field_reference_put",
-        "Write from the field's reference",
-        "Write the `item`th item of the `group`th group of the field's reference open where the field's caret is, or fill the fields its recipe names",
     );
     // Answered by the focused button and the open popup themselves.
     none(

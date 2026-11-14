@@ -1121,3 +1121,35 @@ any = { pattern = "scratch" }"#,
     let beside_files = table(r#"x = { pattern = "out", names = "files", beside = "a.toml" }"#);
     assert!(check_entries(&beside_files, Beside::File).is_err());
 }
+
+/// What the window says each field takes is what the rules read: every
+/// example of a name or a path reads as a pattern, of a name beside it as
+/// one, of a file held as a name (ADR-137).
+#[test]
+fn the_fields_reference_is_what_the_rules_read() {
+    let pattern = reference("pattern").unwrap();
+    let mut read = 0;
+    for (g, _, item) in pattern.items() {
+        // The signs alone, and the regex's, are parts of one.
+        if pattern.groups[g].title.starts_with("Signs") || pattern.groups[g].title == "Pattern" {
+            continue;
+        }
+        let text = item.inserts.as_deref().unwrap();
+        assert!(
+            Pattern::of(text).is_ok(),
+            "{text}: {:?}",
+            Pattern::of(text).err()
+        );
+        read += 1;
+    }
+    assert!(read >= 9);
+    assert_eq!(Written::of("~/Projects/**/target"), Written::PathGlob);
+    assert_eq!(Written::of("cmake-build-*"), Written::NameGlob);
+    for (_, _, item) in reference("beside").unwrap().items() {
+        assert!(NameMatch::of(&item.written).is_ok(), "{}", item.written);
+    }
+    for (_, _, item) in reference("holding").unwrap().items() {
+        assert!(!item.written.contains(['/', '*']), "{}", item.written);
+    }
+    assert!(reference("what").is_none());
+}

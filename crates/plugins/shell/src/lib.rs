@@ -1,6 +1,11 @@
 //! skwir plugin: shell. Hands the selection to a shell: copy the paths as a
 //! quoted string, or run a command in a terminal with the selection as its
 //! arguments (`"$@"` in a POSIX shell, `$argv` in fish).
+//!
+//! Run Command… says what its field takes and what runs as it is typed
+//! (ADR-137): examples, how the paths are given (`reference`), and the
+//! line with the paths after it and the folder it runs in
+//! (`shell.run.describe`), a command left empty held back.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -139,15 +144,15 @@ struct HereArgs {
     pane: Option<PaneId>,
 }
 
-/// Run `command` in a terminal: on `on`'s entries (`App::targets`), in
-/// the folder holding them, or with none in the folder the pane shows.
-fn run(
+/// Where a command runs and the paths it is given: `on`'s entries
+/// (`App::targets`), in the folder holding them, or none in the folder the
+/// pane shows.
+fn where_and_what(
     app: &App,
-    command: &str,
     pane: Option<PaneId>,
     on: Option<Vec<skwir_core::op::EntryArg>>,
-) -> anyhow::Result<Outcome> {
-    let (dir, paths) = match on {
+) -> anyhow::Result<(PathBuf, Vec<PathBuf>)> {
+    Ok(match on {
         Some(entries) => {
             let named = !entries.is_empty();
             let paths: Vec<PathBuf> = app
@@ -166,7 +171,77 @@ fn run(
             (dir, paths)
         }
         None => (app.pane_dir(app.pane_or_active(pane))?, Vec::new()),
-    };
+    })
+}
+
+/// How many paths the line said as the command is typed shows.
+const SAID: usize = 4;
+
+/// What runs, said as the command is typed (`shell.run.describe`): the
+/// line, the first `SAID` paths after it as a shell would quote them (by
+/// their name where they are in the folder it runs in), how many more, and
+/// that folder. An empty command is refused, as no answer.
+fn said(
+    app: &App,
+    command: &str,
+    pane: Option<PaneId>,
+    on: Option<Vec<skwir_core::op::EntryArg>>,
+) -> anyhow::Result<String> {
+    let command = command.trim();
+    anyhow::ensure!(
+        !command.is_empty(),
+        "Write the command to run: the selected paths come after it"
+    );
+    let (dir, paths) = where_and_what(app, pane, on)?;
+    let shown: Vec<PathBuf> = paths
+        .iter()
+        .take(SAID)
+        .map(|path| match path.strip_prefix(&dir) {
+            Ok(name) if !name.as_os_str().is_empty() => name.to_path_buf(),
+            _ => path.clone(),
+        })
+        .collect();
+    let mut line = command.to_owned();
+    if !shown.is_empty() {
+        line.push(' ');
+        line.push_str(&quote_paths(&shown));
+    }
+    if paths.len() > SAID {
+        let _ = write!(line, " … and {} more", paths.len() - SAID);
+    }
+    Ok(format!(
+        "Runs {line}  in {}",
+        skwir_core::os_path::from_home(&dir)
+    ))
+}
+
+/// What Run Command…'s field takes (ADR-137).
+pub fn reference() -> skwir_core::reference::Reference {
+    use skwir_core::reference::{Group, Item, Reference};
+    Reference::new("Command").group(
+        Group::new("For example")
+            .item(Item::new("du -sh", "How much each takes"))
+            .item(Item::new("file", "What each is"))
+            .item(Item::new("wc -l", "How many lines each has"))
+            .item(Item::new("sha256sum", "Their checksums"))
+            .item(Item::new("ls -ld", "Their details"))
+            .note(
+                "The selected paths come after it, each one argument (\"$@\" in sh, bash or \
+                 zsh, $argv in fish). It runs in a terminal, in the folder holding them, with \
+                 the shell Settings › Terminal names, the terminal staying open after.",
+            ),
+    )
+}
+
+/// Run `command` in a terminal: on `on`'s entries (`App::targets`), in
+/// the folder holding them, or with none in the folder the pane shows.
+fn run(
+    app: &App,
+    command: &str,
+    pane: Option<PaneId>,
+    on: Option<Vec<skwir_core::op::EntryArg>>,
+) -> anyhow::Result<Outcome> {
+    let (dir, paths) = where_and_what(app, pane, on)?;
     let program = app
         .settings
         .get::<String>(PROGRAM_KEY)
@@ -259,6 +334,20 @@ impl Plugin for ShellPlugin {
             "Run a shell command in a terminal with the selected paths, or the entries', as its arguments",
             |a, app| run(app, &a.command, a.pane, Some(a.entries)),
         );
+        app.commands
+            .register::<RunArgs, _>(
+                ID,
+                Topic::Terminal,
+                "shell.run.describe",
+                "Say what a command runs",
+                "Say what `shell.run` would run with `command` on the selected paths, or the entries': the line, the first paths after it, and the folder; an error for an empty command",
+                |a, app| {
+                    Ok(Outcome::Value(serde_json::json!({
+                        "says": said(app, &a.command, a.pane, Some(a.entries))?
+                    })))
+                },
+            )
+            .data();
         app.commands.register::<HereArgs, _>(
             ID,
             Topic::Terminal,
@@ -291,6 +380,9 @@ impl Plugin for ShellPlugin {
                             "placeholder": "Command; the selected paths are its arguments",
                             "command": "shell.run",
                             "field": "command",
+                            "reference": reference(),
+                            // Asked about what the question is (ADR-137).
+                            "describe": { "command": "shell.run.describe" },
                         }),
                     ),
                     when: Some(when.into()),
@@ -394,6 +486,46 @@ mod tests {
         let raw = PathBuf::from(std::ffi::OsStr::from_bytes(b"/x/caf\xe9"));
         let argv = run_argv("/bin/sh", "true", std::slice::from_ref(&raw));
         assert_eq!(argv.last().unwrap(), raw.as_os_str());
+    }
+
+    /// Run Command…'s line, as the command is typed: the paths after it
+    /// by name, quoted, the first few and how many more, and the folder;
+    /// an empty command is no answer (ADR-137).
+    #[cfg(unix)]
+    #[test]
+    fn what_runs_is_said_as_the_command_is_typed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("d");
+        std::fs::create_dir(&dir).unwrap();
+        for name in ["a b.txt", "c.txt", "d.txt", "e.txt", "f.txt", "g.txt"] {
+            std::fs::write(dir.join(name), b"").unwrap();
+        }
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        app.plugins.add(Arc::new(ShellPlugin), &app);
+        let pane = app.workspace.read().active_id();
+        app.navigate(pane, &Location::from_path(&dir)).unwrap();
+        assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+        app.dispatch(&Invocation::new("select_all")).unwrap();
+        let said = |command: &str| {
+            app.dispatch(&Invocation::with_args(
+                "shell.run.describe",
+                &serde_json::json!({ "command": command }),
+            ))
+        };
+        let Ok(Outcome::Value(v)) = said(" du -sh ") else {
+            panic!("no line")
+        };
+        let says = v["says"].as_str().unwrap();
+        assert!(
+            says.starts_with("Runs du -sh 'a b.txt' c.txt d.txt e.txt … and 2 more  in "),
+            "{says}"
+        );
+        assert!(
+            says.ends_with(&skwir_core::os_path::from_home(&dir)),
+            "{says}"
+        );
+        assert!(said("  ").is_err());
+        assert!(!reference().is_empty());
     }
 
     #[cfg(unix)]

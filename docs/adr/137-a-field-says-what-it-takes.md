@@ -9,7 +9,11 @@ on Linux; compiled for Windows, and for macOS but the window (which
 `check-macos` leaves out). Amended the same day, the user asking for the
 `?` inside the field, one look everywhere, and for what was recommended
 beside it: a field offers, as it is typed, what goes on with a part
-begun (6).
+begun (6). Amended again on 2026-11-15, the user finding the reference's
+panel darker than F1's and the search's list, its `?` hard to read, the
+address's not at the box's end, and asking for Settings › Exclusions and
+Run Command…: the reference is the list under the field, the `?` a plain
+one, and every view's field holds the same component (2, 7).
 
 ## Context
 
@@ -43,23 +47,22 @@ begun (6).
    (`fills`). The signs of a regular expression, which two plugins read
    with one crate, are said once there (`regex_pattern`).
 2. **A field that says what it takes has a `?` inside its frame at its
-   end** (amended; first a [?] after the field), as a form's list button
+   end** (first a [?] after the field), as a form's list button
    (`inner_chevron`) and the address's own buttons are: what is about
-   the field's content lives in it. One element for every field, the
-   address's too (`reference::inner`), muted, lit while what it opens is
-   open; it acts on the press and leaves the keyboard in the field (the
-   caret stays where a row will write; the address goes on being typed
-   in), no Tab stop. It, or F1 in the field (`reference` in its key
-   context, `ui.field_reference`), opens the reference, hanging from the
-   field over the dialog (`reference.rs`): a popup as any, drawn
-   among the window's overlays so the dialog's keys stay its own; its
-   rows built of the menu's parts (`Button::said`: what is written in one
-   column, cut in its middle, what it means, what it gives;
-   `MenuPart::Note`). A row chosen writes its part where the caret is
-   (`TextInput::put`) or fills the fields its recipe names, an edit
-   Ctrl+Z takes back, and the field has the keyboard again. Escape closes
-   the reference alone; the arrows walk its rows, not the dialog's
-   fields. F1 there shows the keys of the place.
+   the field's content lives in it. A plain `?` in the window's font,
+   muted (amended: first a symbol in a circle, too small to read), on the
+   term's ground while what it opens shows: the sign `?` alone asks the
+   address too. It acts on the press and leaves the keyboard in the field,
+   no Tab stop. It, or F1 in the field (`reference` in its key context,
+   `ui.field_reference`), shows everything the field takes **in the list
+   under the field** (amended: first a popup over the dialog, a menu on
+   the chrome's ground), as the address's card shows it: on the window's
+   ground, each group under its title with its notes, each row as
+   written, what it means, what it gives; the keyboard staying in the
+   field, its keys those of 6. A row taken writes its part where the
+   caret is (`TextInput::put`) or fills the fields its recipe names, an
+   edit Ctrl+Z takes back; the `?` again puts the list away, F1 again
+   shows the keys of the place.
 3. **The bulk rename** asks its plugin with each preview
    (`rename_bulk.reference`, field by field): the template's placeholders
    each with what it gives the first item as the rename stands (after the
@@ -84,7 +87,9 @@ begun (6).
 5. **A question says what is typed comes to** (`ui.ask`'s `describe`): a
    command run on a worker with the text as its field, its `says` under
    the field, its error there in the error's color, holding the answer
-   back. With `reference`, a question's field has its [?] and F1. Access
+   back, about what the question is about (the `pane`, `entries` and
+   `in` its command was given). With `reference`, a question's field
+   has its `?` and F1. Access
    passes both: core says a mode's words (`set_access.describe`,
    `op::access::said`, from the parser and `apply` that change the file)
    and how one is written (`op::access::reference`).
@@ -100,6 +105,18 @@ begun (6).
    or the caret moves; a press on a row takes it. The item takes the
    place of the part typed, as an edit. Access says no `starts`: a mode
    is too short to offer anything.
+7. **One component for every view's field** (amended,
+   `reference::FieldHelp`): what a field takes, its list's state and its
+   frame's `?`, keys and list (`with_help`), the frame answering the
+   commands its keys run itself, so the view holding the field (`Helps`:
+   the shell's dialogs, Settings) is the one asked. **Settings ›
+   Exclusions**' name or path, name beside and file held say theirs from
+   core (`exclusions::reference`, each example read as the rules read
+   it), beside the line saying what the entry means. **Run Command…**
+   says its examples and how the paths are given (the shell plugin's
+   `reference`), and, as the command is typed, the line that runs with
+   the selected paths after it and the folder it runs in
+   (`shell.run.describe`); an empty command is held back.
 
 ## Consequences
 
@@ -110,6 +127,5 @@ begun (6).
   no dialog draws one of its own.
 - What the reference gives is worked out at each preview (three commands
   beside it, each reading the first selected item alone).
-- Left: Settings › Exclusions' patterns and Run Command… have no
-  reference yet; Access's words on Windows (the read-only attribute)
-  compiled, not tried there.
+- Left: Access's words on Windows (the read-only attribute) compiled,
+  not tried there; Run Command… on Windows (no terminal yet).

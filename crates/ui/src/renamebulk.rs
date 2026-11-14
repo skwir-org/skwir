@@ -17,11 +17,12 @@ use gpui::{AnyElement, Context, Entity, Subscription, Window, div, prelude::*};
 use skwir_core::EntryId;
 use skwir_core::command::{Invocation, Outcome};
 use skwir_core::reference::Reference;
+
+use crate::reference::FieldHelp;
 use skwir_core::workspace::PaneId;
 
 use crate::controls::{self, ButtonStyle};
 use crate::elements::clip::clipped_marked;
-use crate::elements::popover::PopoverAnchor;
 use crate::input::{InputEvent, TextInput};
 use crate::keymap;
 use crate::modal::{self, FocusReturn};
@@ -81,10 +82,8 @@ pub struct BulkState {
     /// there are in all.
     pub preview: Vec<Renamed>,
     /// What the template, the regex and the replacement take, as the
-    /// plugin said it with the latest preview, and each field's frame,
-    /// which the reference and what goes on with the text hang from.
-    references: [Option<Rc<Reference>>; SAID],
-    anchors: [PopoverAnchor; SAID],
+    /// plugin said it with the latest preview (`reference.rs`).
+    helps: [FieldHelp; SAID],
     renamed: usize,
     pub error: Option<String>,
     /// Advances with each change; only the latest preview is shown, and
@@ -118,6 +117,28 @@ impl BulkState {
             .map(|input| input.read(cx).focus_handle(cx))
             .chain([self.cancel_focus.clone(), self.apply_focus.clone()])
             .collect()
+    }
+}
+
+/// The fields of the shell's dialogs that say what they take (ADR-137):
+/// a question's, else the bulk rename's.
+impl crate::reference::Helps for Shell {
+    fn help_of(&mut self, key: &str) -> Option<(&mut FieldHelp, Entity<TextInput>)> {
+        if self.prompt.as_ref().is_some_and(|p| p.helps(key)) {
+            return self.prompt.as_mut().and_then(|p| p.help_of(key));
+        }
+        let b = self.bulk.as_mut()?;
+        let at = b.helps.iter().position(|help| help.key == key)?;
+        Some((&mut b.helps[at], b.inputs[at].clone()))
+    }
+
+    fn field_of(&self, key: &str) -> Option<Entity<TextInput>> {
+        if let Some(p) = self.prompt.as_ref().filter(|p| p.helps(key)) {
+            return Some(p.input.clone());
+        }
+        let b = self.bulk.as_ref()?;
+        let at = FIELDS.iter().position(|(named, ..)| *named == key)?;
+        b.inputs.get(at).cloned()
     }
 }
 
@@ -180,10 +201,10 @@ impl Shell {
         };
         let mut inputs = Vec::new();
         let mut subs = Vec::new();
-        for (i, (_, label, placeholder)) in FIELDS.iter().enumerate() {
+        for (i, &(key, label, placeholder)) in FIELDS.iter().enumerate() {
             let input = cx.new(|cx| {
-                let mut input = TextInput::new(*placeholder, cx);
-                input.set_label(*label);
+                let mut input = TextInput::new(placeholder, cx);
+                input.set_label(label);
                 input
             });
             if i == 0 {
@@ -193,27 +214,25 @@ impl Shell {
                     t.select_all_now(cx);
                 });
             }
-            subs.push(
-                cx.subscribe_in(
-                    &input,
-                    window,
-                    |this, _, ev: &InputEvent, window, cx| match ev {
-                        // What the field offers takes Enter the arrows chose
-                        // it for, and Escape first (ADR-137).
-                        InputEvent::Submit => {
-                            if !this.offer_on_submit(window, cx) {
-                                this.bulk_apply(window, cx);
-                            }
+            subs.push(cx.subscribe_in(
+                &input,
+                window,
+                move |this, _, ev: &InputEvent, window, cx| match ev {
+                    // What the field lists takes Enter the arrows chose
+                    // a row for, and Escape first (ADR-137).
+                    InputEvent::Submit => {
+                        if !crate::reference::on_submit(this, key, window, cx) {
+                            this.bulk_apply(window, cx);
                         }
-                        InputEvent::Cancel => {
-                            if !this.offers_away(window, cx) {
-                                this.close_bulk(window, cx);
-                            }
+                    }
+                    InputEvent::Cancel => {
+                        if !crate::reference::on_cancel(this, key, window, cx) {
+                            this.close_bulk(window, cx);
                         }
-                        InputEvent::Changed => this.bulk_refresh(window, cx),
-                    },
-                ),
-            );
+                    }
+                    InputEvent::Changed => this.bulk_refresh(window, cx),
+                },
+            ));
             inputs.push(input);
         }
         inputs[0].update(cx, |i, cx| i.focus(window, cx));
@@ -224,8 +243,7 @@ impl Shell {
             case: 0,
             focused: 0,
             preview: Vec::new(),
-            references: Default::default(),
-            anchors: Default::default(),
+            helps: std::array::from_fn(|i| FieldHelp::new(FIELDS[i].0, None)),
             renamed: 0,
             error: None,
             asked: 0,
@@ -243,10 +261,6 @@ impl Shell {
     }
 
     pub fn close_bulk(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        // Its fields' reference goes with it.
-        if self.field_reference.is_some() {
-            self.close_popup(window, cx);
-        }
         if let Some(bulk) = self.bulk.take() {
             if let Some(pending) = &bulk.pending {
                 pending.cancel();
@@ -359,9 +373,9 @@ impl Shell {
                 b.renamed = renamed;
                 b.error = error;
                 b.current = true;
-                for (kept, said) in b.references.iter_mut().zip(references) {
+                for (help, said) in b.helps.iter_mut().zip(references) {
                     if let Some(said) = said {
-                        *kept = Some(Rc::new(said));
+                        help.reference = Some(Rc::new(said));
                     }
                 }
                 cx.notify();
@@ -384,35 +398,6 @@ impl Shell {
         self.run("rename_bulk", spec, window, cx);
     }
 
-    /// The reference of the field `field` names (its key, its [?]
-    /// pressed), or of the one being typed in: the dialog's fields that
-    /// say what they take, that one first, to write in (ADR-137). None
-    /// before the plugin said it.
-    pub(crate) fn bulk_reference(
-        &self,
-        field: Option<&str>,
-        window: &Window,
-        cx: &gpui::App,
-    ) -> Option<crate::reference::Open> {
-        let b = self.bulk.as_ref()?;
-        let at = match field {
-            Some(key) => FIELDS[..SAID]
-                .iter()
-                .position(|(named, ..)| *named == key)?,
-            None => (0..SAID).find(|&i| b.inputs[i].read(cx).is_focused(window))?,
-        };
-        let reference = b.references[at].clone()?;
-        let fields = std::iter::once(at)
-            .chain((0..SAID).filter(|&i| i != at))
-            .map(|i| (FIELDS[i].0.into(), b.inputs[i].clone()))
-            .collect();
-        Some(crate::reference::Open {
-            fields,
-            reference,
-            anchor: b.anchors[at].clone(),
-        })
-    }
-
     /// What it was opened for is no longer selected: said where the
     /// renames were, and nothing applies.
     fn bulk_selection_changed(&mut self, cx: &mut Context<Self>) {
@@ -433,21 +418,34 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
     let b = shell.bulk.as_ref()?;
     let theme = cx.global::<Theme>().clone();
     let mut form = div().flex().flex_col().gap_2();
-    for (i, (key, label, _)) in FIELDS.iter().enumerate() {
+    for (i, (_, label, _)) in FIELDS.iter().enumerate() {
         // Where the keyboard is, whether Tab or a click put it there.
         let focused = b.inputs[i].read(cx).is_focused(window);
-        // A field that says what it takes (ADR-137): F1 in it and its `?`
-        // open that, and what goes on with a part begun shows under it,
-        // its keys the field's while it shows (`offers`).
-        let said = i < SAID;
-        let mut context = gpui::KeyContext::default();
-        if said {
-            context.add("reference");
-            if shell.offers_for(&b.inputs[i], window, cx) {
-                context.add("offers");
-            }
-        }
-        let open = said && shell.reference_open_from(&b.anchors[i]);
+        let frame = div()
+            .flex_1()
+            .h(sized(28.))
+            .px_2()
+            .flex()
+            .items_center()
+            .gap_1()
+            .rounded_md()
+            .border_1()
+            .border_color(if focused { theme.accent } else { theme.border })
+            .bg(theme.bg)
+            .child(div().flex_1().min_w_0().child(b.inputs[i].clone()));
+        // A field that says what it takes (ADR-137): its `?`, F1, and the
+        // list under it.
+        let frame = match b.helps.get(i) {
+            Some(help) => crate::reference::with_help(
+                frame,
+                help,
+                &b.inputs[i],
+                shell.keys_for("ui.field_reference", &serde_json::Value::Null),
+                window,
+                cx,
+            ),
+            None => frame,
+        };
         form = form.child(
             div()
                 .flex()
@@ -460,32 +458,7 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
                         .text_color(theme.text_muted)
                         .child(*label),
                 )
-                .child(
-                    div()
-                        .key_context(context)
-                        .relative()
-                        .flex_1()
-                        .h(sized(28.))
-                        .px_2()
-                        .flex()
-                        .items_center()
-                        .gap_1()
-                        .rounded_md()
-                        .border_1()
-                        .border_color(if focused { theme.accent } else { theme.border })
-                        .bg(theme.bg)
-                        .child(div().flex_1().min_w_0().child(b.inputs[i].clone()))
-                        .when(said, |d| {
-                            d.child(crate::reference::inner(
-                                format!("bulk-reference-{key}"),
-                                key,
-                                open,
-                                shell,
-                                cx,
-                            ))
-                            .child(b.anchors[i].marker())
-                        }),
-                ),
+                .child(frame),
         );
     }
     form = form.child(

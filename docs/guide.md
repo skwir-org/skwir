@@ -369,12 +369,16 @@ configuration names is run, and nothing is written to it.
   template, `\` in the regex or `$` in the replacement, the field lists
   what can go on from there: `↑` `↓` choose, `Tab` takes one, `Escape`
   puts the list away. The `?` inside the template, the regex and the
-  replacement, or `F1` in one, says what it takes: the placeholders with
-  what each gives the first file (`{name}`, `{.ext}`, `{n:03}`,
-  `{date:%Y%m%d}`…), recipes for what names often need (spaces to
-  underscores, what is in brackets taken away, two parts swapped), a
+  replacement, or `F1` in one, lists under it what it takes: the
+  placeholders with what each gives the first file (`{name}`, `{.ext}`,
+  `{n:03}`, `{date:%Y%m%d}`…), recipes for what names often need (spaces
+  to underscores, what is in brackets taken away, two parts swapped), a
   pattern's signs and a replacement's (`${1}` before a letter). Choose
   one and it is written where the cursor is.
+- **Run a command** on the selection: Open With › Run Command…. What you
+  type runs in a terminal, in the folder holding the files, with their
+  paths after it, each one argument; the line under the field shows what
+  will run as you type, and `?` or `F1` lists examples.
 - **Edit as text.** `Ctrl+E` opens the folder's names in your editor
   (`$VISUAL` or `$EDITOR`). What you rename, move or delete there comes
   back as a plan.
@@ -544,8 +548,8 @@ it, **+ Filter** adds one, and the text can be typed as is:
   Trash): Settings › Exclusions lists them, by kind, each with what it
   holds, and lets you add your own files and folders (a name, a path, a
   pattern such as `*.log` or `cmake-build-*`, a name only where a tool's
-  file is beside it, as `target` beside `Cargo.toml`) or turn skwir's
-  off. The footer says how many it walked past; the where pill's
+  file is beside it, as `target` beside `Cargo.toml`; `?` or `F1` in a
+  field lists how each is written) or turn skwir's off. The footer says how many it walked past; the where pill's
   Excluded files and folders, or `excluded:true`, searches them too, and
   so does a search of an excluded folder itself.
 

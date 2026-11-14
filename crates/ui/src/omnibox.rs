@@ -219,17 +219,41 @@ pub struct Omni {
     waiting: Vec<String>,
     /// Each source's last answer, and the text and scope it answered.
     answers: Vec<(String, (String, Option<Location>), Answer)>,
+    /// The answers the card showed before it said what the field takes,
+    /// for the same text: shown again as it goes back, never asked anew,
+    /// so the card never empties between the two (ADR-137).
+    kept: Option<Vec<(String, (String, Option<Location>), Answer)>>,
     /// A key pressed while the names the text completes with were read
     /// (`completing`): done once they come. Another text, or the arrows,
     /// forget it.
     held: Option<Held>,
 }
 
-impl Omni {
-    /// Whether the card says what the field takes (F1, its `?`).
-    pub(crate) fn reference_shown(&self) -> bool {
-        self.reference
-    }
+/// How far the field's `?` stands from the end of the frame around it:
+/// the field's, or the card's while it stands around the field.
+pub(crate) const QUESTION_INSET: f32 = 6.;
+
+/// The field's `?` (ADR-137): what it takes in the card, or the card back
+/// to what the text goes on with; the field keeps the keyboard.
+pub(crate) fn question(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
+    let open = shell.ui().omni.as_ref().is_some_and(|o| o.reference);
+    crate::reference::question(
+        format!("address-reference-{}", shell.pane.0),
+        open,
+        crate::reference::tip(shell.keys_for("ui.field_reference", &serde_json::Value::Null)),
+        |this: &mut Shell, window, cx| this.omnibox_reference_toggle(window, cx),
+        shell.a11y,
+        cx,
+    )
+}
+
+/// As much room as the field's `?` takes, where the card draws it.
+pub(crate) fn question_room() -> AnyElement {
+    div()
+        .flex_none()
+        .size(sized(crate::controls::HEIGHT - 8.))
+        .mr(px(-4.))
+        .into_any_element()
 }
 
 /// The list of a field's rows: only those in view are built. A clone is
@@ -687,15 +711,52 @@ impl Shell {
         let Some(omni) = self.ui_mut().omni.as_mut() else {
             return;
         };
+        if omni.reference == on {
+            return;
+        }
         omni.reference = on;
         omni.scopes = false;
         omni.token = false;
         omni.highlighted = None;
         omni.chosen = false;
         omni.held = None;
-        self.ask_suggestions(window, cx);
+        self.answer_reference_switch(on, window, cx);
         self.refresh_rows(cx);
         cx.notify();
+    }
+
+    /// The card's rows as it says what the field takes (`on`), or goes back
+    /// to what the text goes on with, in the same frame, so it never
+    /// empties between the two: what the field takes is answered here (the
+    /// sources that say it read nothing), and what showed before is kept
+    /// for the way back, the text unchanged; asked anew only when nothing
+    /// was kept.
+    fn answer_reference_switch(&mut self, on: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let ask = self.ask_now(cx);
+        let Some(omni) = self.ui_mut().omni.as_mut() else {
+            return;
+        };
+        // What was asked before answers the other way: no longer wanted.
+        if let Some((_, before)) = omni.asked.take() {
+            before.cancel();
+        }
+        if on {
+            // Kept whole only: a source still to answer would be missing
+            // on the way back.
+            let answers = std::mem::take(&mut omni.answers);
+            omni.kept = omni.waiting.is_empty().then_some(answers);
+            omni.asked = Some((ask.clone(), CancelToken::new()));
+            self.answer_here(&ask);
+        } else if let Some(kept) = omni.kept.take().filter(|kept| {
+            kept.iter()
+                .all(|(_, asked, _)| asked.0 == ask.text && asked.1 == ask.scope)
+        }) {
+            omni.answers = kept;
+            omni.waiting.clear();
+            omni.asked = Some((ask, CancelToken::new()));
+        } else {
+            self.ask_suggestions(window, cx);
+        }
     }
 
     /// Give the active pane's field the keyboard, as `how` says, with
@@ -1305,9 +1366,10 @@ impl Shell {
 
     fn omnibox_changed_keep_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // What a row of the reference wrote, or a key: the rows go on with
-        // the text again.
+        // the text again, asked anew for it.
         if let Some(omni) = self.ui_mut().omni.as_mut() {
             omni.reference = false;
+            omni.kept = None;
         }
         let text = self.omni_text(cx);
         if let Some(rest) = text.strip_prefix('>') {
@@ -2453,7 +2515,7 @@ impl Shell {
             omni.reference = false;
             omni.highlighted = None;
             if asks {
-                self.ask_suggestions(window, cx);
+                self.answer_reference_switch(false, window, cx);
             }
             self.refresh_rows(cx);
             return;
@@ -3671,10 +3733,18 @@ pub fn dropdown(
         .text_color(theme.text)
         .shadow_md()
         .occlude()
+        // The field's line: its `?` at the card's end (ADR-137), the field
+        // drawn above the rest of it.
         .child(
             div()
                 .flex_none()
-                .h(sized(CARD_PAD + crate::address::FIELD_HEIGHT - 1.)),
+                .h(sized(CARD_PAD + crate::address::FIELD_HEIGHT - 1.))
+                .pt(sized(CARD_PAD))
+                .pr(px(QUESTION_INSET))
+                .flex()
+                .items_center()
+                .justify_end()
+                .child(question(shell, cx)),
         )
         .child(rows);
     let scale = theme.sizes.scale(crate::sizes::Part::Interface);

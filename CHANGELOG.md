@@ -16,7 +16,10 @@
   or the `?` inside it lists everything a search takes without losing
   what is typed. Properties' Access says, as you type, what a mode comes
   to, refuses one `chmod` would not take before Change, and has its `?`
-  too.
+  too, as do Settings › Exclusions' fields; Run Command… shows, as you
+  type, the very line that will run, with the selected paths after it.
+  What a field takes shows in a list under it, as the address's does,
+  the keyboard staying in the field.
 - **The player follows the file it plays.** Renamed or moved, by Skwir
   or by another program in a folder a window shows, the track plays on
   under its new name, its mark and the desktop's controls with it.

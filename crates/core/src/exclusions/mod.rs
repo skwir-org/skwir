@@ -1399,6 +1399,72 @@ enum Pattern {
     Unset,
 }
 
+/// What a field of an exclusion takes (ADR-137), as the window says it
+/// beside the field: `pattern` (a name, a path, a glob, `regex:`),
+/// `beside` (a name beside it), `holding` (a file a folder holds). `None`
+/// for any other field. Every example is read as [`Pattern::of`] and
+/// [`NameMatch::of`] read what is typed.
+pub fn reference(field: &str) -> Option<crate::reference::Reference> {
+    use crate::reference::{Group, Item, Reference};
+    Some(match field {
+        "pattern" => Reference::new("Name or path")
+            .group(
+                Group::new("By name, anywhere")
+                    .item(Item::new("node_modules", "Any so named"))
+                    .item(Item::new("*.egg-info", "Any named like it"))
+                    .item(Item::new("cmake-build-*", "Any whose name starts so")),
+            )
+            .group(
+                Group::new("By path")
+                    .item(Item::new("~/VMs", "One, from your home"))
+                    .item(Item::new("/srv/cache", "One, from the root"))
+                    .item(Item::new("$CARGO_HOME/registry", "From a variable"))
+                    .item(Item::new(
+                        "${XDG_CACHE_HOME:-~/.cache}/thumbnails",
+                        "From a variable, or what stands for it unset",
+                    ))
+                    .item(Item::new(
+                        "~/.var/app/*/cache",
+                        "Those whose path is like it",
+                    ))
+                    .item(Item::new("~/Projects/**/target", "At any depth below"))
+                    .note("A path starts at ~, a variable or /; anything else is a name."),
+            )
+            .group(
+                Group::new("Signs of a name or a path")
+                    .item(Item::new("*", "Any characters, within one name"))
+                    .item(Item::new("**", "Any folders, in a path"))
+                    .item(Item::new("?", "One character"))
+                    .item(Item::new("[ab]", "One of these"))
+                    .item(Item::new("{a,b}", "Either")),
+            )
+            .group(Group::new("Over the whole path").item(Item::new(
+                r"regex:^~/Archive/\d{4}$",
+                "A regular expression, ~ for home",
+            )))
+            .group(
+                crate::reference::regex_pattern()
+                    .note("After regex:, over the path written with ~ for your home."),
+            ),
+        "beside" => Reference::new("Only beside").group(
+            Group::new("A name beside it")
+                .item(Item::new(
+                    "Cargo.toml",
+                    "Only where a file or folder so named is beside it",
+                ))
+                .item(Item::new("*.csproj", "Only beside one named like it"))
+                .note("A name or a name's pattern, never a path."),
+        ),
+        "holding" => Reference::new("Holding").group(
+            Group::new("A file it holds")
+                .item(Item::new(".nosearch", "Any folder holding a file so named"))
+                .item(Item::new("CACHEDIR.TAG", "A cache's own mark (signed)"))
+                .note("A file's name: the folder holding it is excluded, wherever it is."),
+        ),
+        _ => return None,
+    })
+}
+
 /// The prefix that says the rest is a regular expression.
 const REGEX: &str = "regex:";
 
