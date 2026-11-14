@@ -508,6 +508,9 @@ pub struct Shell {
     /// The field's reference open (`reference::POPUP`, ADR-137): what it
     /// writes in and says.
     pub(crate) field_reference: Option<crate::reference::Open>,
+    /// What the field being typed in offers: the row lit, what Escape put
+    /// away (ADR-137).
+    pub(crate) offers: crate::reference::Offers,
     /// A pane row's menu of places: the history, or a folder's folders.
     pub nav_menu: Option<crate::nav_menu::NavMenu>,
     /// Counts the folder menus asked for: an answer for an older one is
@@ -867,6 +870,7 @@ impl Shell {
             menu: None,
             toolbar_menu: None,
             field_reference: None,
+            offers: crate::reference::Offers::default(),
             nav_menu: None,
             nav_asked: 0,
             presses: 0,
@@ -2844,6 +2848,7 @@ impl Shell {
             "toolbar_menu" => self.toggle_toolbar_menu(args, window, cx),
             "field_reference" => self.toggle_field_reference(args, window, cx),
             "field_reference_put" => self.field_reference_put(args, window, cx),
+            "field_complete" => self.field_complete(args, window, cx),
             "activity" => match args.get("plan").and_then(serde_json::Value::as_u64) {
                 Some(plan) => self.show_activity_of(skwir_core::op::PlanId(plan), window, cx),
                 None => self.toggle_activity(args, window, cx),
@@ -4393,13 +4398,14 @@ impl Render for Shell {
         let overlays = [
             address::more_popup(self, cx),
             menu::render(self, cx),
-            prompts::render_prompt(self, cx),
+            prompts::render_prompt(self, window, cx),
             crate::form::render(self, window, cx),
             prompts::render_confirm(self, cx),
             crate::choose::render(self, cx),
             crate::tags::render(self, cx),
             renamebulk::render(self, window, cx),
             crate::reference::render(self, cx),
+            crate::reference::render_offers(self, window, cx),
             palette::render(self, cx),
             preview::render_peek(self, cx),
             review::render(self, cx),

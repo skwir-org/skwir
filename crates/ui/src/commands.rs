@@ -215,6 +215,19 @@ mod args {
         pointer: bool,
     }
 
+    /// What the field being typed in offers (ADR-137): `step` moves the
+    /// highlight; `group` and `item` name the item to take; neither takes
+    /// the one lit.
+    #[derive(Deserialize, JsonSchema)]
+    pub(super) struct FieldComplete {
+        #[serde(default)]
+        step: Option<i64>,
+        #[serde(default)]
+        group: Option<usize>,
+        #[serde(default)]
+        item: Option<usize>,
+    }
+
     /// An item of the field's reference open, by its group's place and
     /// its own.
     #[derive(Deserialize, JsonSchema)]
@@ -639,10 +652,11 @@ mod args {
 
 use args::{
     Adjust, Amount, Ask, Bucket, Close, Continue, CopyText, Count, Cursor, Delta, Dir,
-    FieldReference, Find, Fold, FolderItem, Folders, History, Key, Layout, ListMoveArgs, Object,
-    On, Pace, Page, PageLink, Pages, Pan, Pick, Player, Pointer, Popup, PreviewScroll,
-    ReferencePut, Scrub, SelectGroup, Settings, Split, Submenu, Submit, TagsPrompt, TerminalPaste,
-    Text, TextSize, TimelineCursor, TimelineDate, Toggle, Toward, Url, UsageMode, View, ViewButton,
+    FieldComplete, FieldReference, Find, Fold, FolderItem, Folders, History, Key, Layout,
+    ListMoveArgs, Object, On, Pace, Page, PageLink, Pages, Pan, Pick, Player, Pointer, Popup,
+    PreviewScroll, ReferencePut, Scrub, SelectGroup, Settings, Split, Submenu, Submit, TagsPrompt,
+    TerminalPaste, Text, TextSize, TimelineCursor, TimelineDate, Toggle, Toward, Url, UsageMode,
+    View, ViewButton,
 };
 
 /// The window's commands an agent may run (ADR-044): they change only
@@ -650,6 +664,7 @@ use args::{
 const SHOWS: &[&str] = &[
     "ui.field_reference",
     "ui.field_reference_put",
+    "ui.field_complete",
     "ui.cursor",
     "ui.cursor_pick",
     "ui.cursor_toggle",
@@ -875,6 +890,17 @@ const KEY_FORMS: &[(&str, &str, &str)] = &[
         "A page down the list",
     ),
     ("ui.review_choose", r#"{"delta":-1}"#, "Previous choice"),
+    // What a field offers as it is typed (ADR-137).
+    (
+        "ui.field_complete",
+        r#"{"step":1}"#,
+        "Next of what the field offers",
+    ),
+    (
+        "ui.field_complete",
+        r#"{"step":-1}"#,
+        "Previous of what the field offers",
+    ),
     // A preview's More, its submenu beside a row (Open With).
     ("ui.toolbar_submenu", r#"{"here":true}"#, "Open the submenu"),
     ("ui.toolbar_submenu", r#"{"step":1}"#, "Next in the submenu"),
@@ -1377,6 +1403,9 @@ fn repeats_of(name: &str) -> Option<Repeats> {
         | "ui.model_pan"
         | "ui.timeline_cursor"
         | "ui.timeline_pan" => always,
+        // What a field offers: held, the arrows walk it; taking one is
+        // once a press.
+        "ui.field_complete" => |args| args.get("step").is_some(),
         // Pick, then the next: held, it picks a run of files.
         "ui.cursor_pick" => {
             |args| args.get("advance").and_then(serde_json::Value::as_bool) != Some(false)
@@ -2143,6 +2172,13 @@ pub fn declare_all(app: &App) {
         "ui.field_reference",
         "What the field takes",
         "Show what the field being typed in takes, or the one `field` names in the dialog open: its placeholders, terms or signs, each with what it means and gives here, chosen to write it where the caret is (ADR-137); the address field says it in its card. Close it with `close`",
+    );
+    declare::<FieldComplete>(
+        app,
+        Topic::Window,
+        "ui.field_complete",
+        "Take what the field offers",
+        "Among what the field being typed in offers as it goes on (a placeholder begun, a sign), move the highlight by `step`, take the item `group` and `item` name, or the one lit: it takes the place of the part typed (ADR-137)",
     );
     declare::<ReferencePut>(
         app,

@@ -218,16 +218,29 @@ Views are in [views.md](views.md); what locations decide, in
   active (`Shell::drawn_focus`), or to the Settings dialog while it is
   open, never to the pane behind it. Never refocus by hand after closing
   something.
-- **A field's reference** (ADR-137, `reference.rs`): a dialog's field
-  that says what it takes has a [?] at its end and `reference` in its
-  key context (F1, `ui.field_reference`); the reference hangs from the
-  [?] over the dialog, drawn among the window's overlays, never inside
-  the dialog, so the dialog's own keys (its Tab) never reach it. A popup
+- **A field's reference** (ADR-137, `reference.rs`): a field that says
+  what it takes has a `?` inside its frame at its end
+  (`reference::inner`, one element for every field, the address's too:
+  what is about a field's content lives in it), and `reference` in its
+  key context (F1, `ui.field_reference`). The `?` acts on the press and
+  leaves the keyboard in the field; it is no Tab stop. The reference
+  hangs from the field's frame over the dialog, drawn among the window's
+  overlays, never inside the dialog, so the dialog's own keys (its Tab)
+  never reach it. A popup
   over a dialog walks its own rows (`ui.toolbar_next` asks
   `walk_dialog` only outside a popup). A row writes its part where the
   field's caret is (`TextInput::put`, an edit), or fills the fields its
   recipe names; the field has the keyboard again. The dialog closing
   closes its reference.
+- **What a field offers as it is typed** (ADR-137): a part begun by one
+  of its reference's `starts` lists, under the field, the items going on
+  with it (`Reference::offered`; the window knows no language), drawn
+  among the overlays. The keyboard stays in the field, `offers` in its
+  key context while the list shows: Up and Down move the highlight from
+  the first row, Tab takes the row lit, Enter only one the arrows chose
+  (the field's Enter else answers its dialog), Escape puts the list away
+  for that text and caret before it closes anything. A row pressed is
+  taken without the keyboard leaving the field.
 - **One popup at a time,** all through `Shell::toggle_popup` (Activity
   is none: it stays open beside them, under them, and its giving the
   keyboard closes the one open). A press
@@ -638,11 +651,11 @@ of bars, split or not.
   titles as a section). Enter or Tab writes the row's part where the
   caret is, apart from the words beside it (a pattern's sign as it is),
   in place of a lone `?`; the shell's own rows write how they start
-  (`~/`, a scheme, `@`, `>`), never the example. F1 and the [?] at the
-  end of the card's first line keep the text and the keyboard in the
-  field (`Omni::reference`): leaving it would end what is typed. A key or
-  Escape goes back to what the text goes on with; F1 again shows the
-  keys.
+  (`~/`, a scheme, `@`, `>`), never the example. F1 and the `?` inside
+  the field while it is typed in keep the text and the keyboard in the
+  field (`Omni::reference`): leaving it would end what is typed. A key,
+  Escape or the `?` again goes back to what the text goes on with; F1
+  again shows the keys.
 - **Before anything is typed**, the dropdown shows what the sources offer
   then, nothing highlighted: Enter does what the text says (the location
   shown again, a search's words again). A row the arrows reach runs as

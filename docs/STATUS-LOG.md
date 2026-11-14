@@ -17523,3 +17523,41 @@ steps recommended (ADR-137).
   (refused: no reference opened) and `ui.ask`'s schema lacking the new
   arguments (refused: Access's question did not open; a test now checks
   it).
+
+## 2026-11-14: The `?` inside the field, and what a field offers as it is typed
+
+The user asked for the `?` inside the field, one look in every field,
+and for the next step recommended with it (ADR-137 amended).
+
+- **One `?` for every field** (`reference::inner`): inside the frame at
+  its end, as a form's list button (`inner_chevron`) and the address's
+  magnifier and bookmark are; muted, on the term's ground while what it
+  opens is open. It acts on the press (`prevent_default`), so the field
+  keeps the keyboard and its caret; no Tab stop. The rename dialog's
+  three fields, a question's (Access), and the address while it is typed
+  in, where it takes the place of the one on the card's first line and
+  turns the card's reference on and off (`omnibox_reference_toggle`).
+  The reference hangs from the field's frame (`PopoverAnchor::marker` in
+  it). The outer column and the room kept for the Start field went.
+- **Offered as it is typed**: `Reference::starts` and
+  `Reference::offered` in core (the part typed since the last sign that
+  begins one, the items going on with it); the rename plugin's fields
+  begin parts with `{`, `\` and `(?`, `$`. The window lists them under
+  the field (`reference::render_offers`), `offers` in the field's key
+  context while it shows: Up and Down (`ui.field_complete` with `step`,
+  held, they repeat), Tab, Enter once the arrows chose, Escape putting
+  the list away for that text and caret (the field's Enter and Escape
+  go to the dialog else), a press on a row.
+- **Checked**: tests for what is offered (the part, the items, none
+  when whole or without a sign, the caret's place) and for the rename
+  fields' signs. Core, platform, UI, query, rename and the binary's
+  tests: 2384 passed (one failed first: the arrows' two forms of
+  `ui.field_complete` read alike in the keys' lists, named since in
+  `KEY_FORMS`); clippy on them; `just check-windows` green. In a window (debug build,
+  Xvfb :87): the `?` inside the three fields, the Start field ending with
+  them; `{name}-{n` listing `{name}`, `{n}`, `{n:02}`, `{n:03}` with what
+  each gives, Down three times and Enter writing `{n:03}`, `{.` and Tab
+  writing `{.ext}`; `{` and Escape (the list away, the dialog open); the
+  `?` pressed (the reference, the `?` lit, the caret kept) and pressed
+  again (closed); `\` in the regex listing its signs; the address's `?`
+  on and off with the words kept; Access's `?` in its field.

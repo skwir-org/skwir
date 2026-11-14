@@ -108,7 +108,8 @@ pub struct PromptState {
     /// A line under the field, muted: what the answer may be.
     note: Option<String>,
     /// What the field takes (ADR-137): `ui.ask`'s `reference`, opened
-    /// from the [?] at its end or F1 in it, and the [?] it hangs from.
+    /// from the `?` inside the field or F1 in it, and the field's frame it
+    /// hangs from.
     reference: Option<Rc<Reference>>,
     anchor: PopoverAnchor,
     /// What says what the text comes to as it is typed: `ui.ask`'s
@@ -415,8 +416,18 @@ impl Shell {
             &input,
             window,
             |this, input, ev: &InputEvent, window, cx| match ev {
-                InputEvent::Submit => this.prompt_answer(window, cx),
-                InputEvent::Cancel => this.prompt_cancel(window, cx),
+                // What the field offers takes Enter the arrows chose it for,
+                // and Escape first (ADR-137).
+                InputEvent::Submit => {
+                    if !this.offer_on_submit(window, cx) {
+                        this.prompt_answer(window, cx);
+                    }
+                }
+                InputEvent::Cancel => {
+                    if !this.offers_away(window, cx) {
+                        this.prompt_cancel(window, cx);
+                    }
+                }
                 InputEvent::Changed => {
                     this.prompt_describe(window, cx);
                     if let Some(PromptKind::Find { origin, backward }) =
@@ -683,7 +694,11 @@ impl Shell {
     }
 }
 
-pub fn render_prompt(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
+pub fn render_prompt(
+    shell: &Shell,
+    window: &Window,
+    cx: &mut Context<Shell>,
+) -> Option<AnyElement> {
     let p = shell.prompt.as_ref()?;
     let theme = cx.global::<Theme>().clone();
     // What the text typed comes to, for that text; what is no answer is
@@ -691,11 +706,23 @@ pub fn render_prompt(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElemen
     let text = p.input.read(cx).text().trim().to_owned();
     let described = p.described.as_ref().filter(|(said, _)| *said == text);
     let refused = matches!(described, Some((_, Err(_))));
+    // A field that says what it takes (ADR-137): its `?` inside it, F1
+    // and what goes on with a part begun, its keys the field's while it
+    // shows (`offers`).
     let field_key = p.ask.as_ref().map(|ask| ask.field.clone());
-    let reference =
-        p.reference.as_ref().zip(field_key).map(|(_, key)| {
-            crate::reference::button("prompt-reference", &key, &p.anchor, shell, cx)
-        });
+    let open = shell.reference_open_from(&p.anchor);
+    let reference = p
+        .reference
+        .as_ref()
+        .zip(field_key)
+        .map(|(_, key)| crate::reference::inner("prompt-reference", &key, open, shell, cx));
+    let mut context = gpui::KeyContext::default();
+    if reference.is_some() {
+        context.add("reference");
+        if shell.offers_for(&p.input, window, cx) {
+            context.add("offers");
+        }
+    }
     let panel = modal::panel("prompt", 560., &theme)
         .when(shell.a11y, |d| d.aria_label(p.title.clone()))
         .p_3()
@@ -703,26 +730,20 @@ pub fn render_prompt(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElemen
         .child(div().text_title().child(p.title.clone()))
         .child(
             div()
+                .key_context(context)
+                .relative()
+                .h(sized(30.))
+                .px_2()
                 .flex()
                 .items_center()
-                .gap_2()
-                .child(
-                    div()
-                        // F1 in a field that says what it takes opens that
-                        // (ADR-137).
-                        .when(reference.is_some(), |d| d.key_context("reference"))
-                        .flex_1()
-                        .h(sized(30.))
-                        .px_2()
-                        .flex()
-                        .items_center()
-                        .rounded_md()
-                        .border_1()
-                        .border_color(if refused { theme.error } else { theme.accent })
-                        .bg(theme.bg)
-                        .child(p.input.clone()),
-                )
-                .children(reference),
+                .gap_1()
+                .rounded_md()
+                .border_1()
+                .border_color(if refused { theme.error } else { theme.accent })
+                .bg(theme.bg)
+                .child(div().flex_1().min_w_0().child(p.input.clone()))
+                .children(reference)
+                .child(p.anchor.marker()),
         )
         .children(described.map(|(_, said)| {
             match said {

@@ -1049,9 +1049,10 @@ closes an item removes its line; work that leaves one adds it here.
 
 **A field says what it takes** (ADR-137, 2026-11-14): built on Linux
 and tried in a window there (the bulk rename's three references by F1
-and by their [?], writing at the caret, a recipe filling two fields,
-the preview's marks; Access's words, a mode refused, its reference, a
-change applied and undone; the address's F1, Escape and `?`). Left:
+and by their `?`, writing at the caret, a recipe filling two fields,
+the preview's marks, what each field offers as it is typed; Access's
+words, a mode refused, its reference, a change applied and undone; the
+address's F1, its `?`, Escape and `?` alone). Left:
 Settings › Exclusions' patterns and Run Command… have none yet (a
 question passes `reference` and `note`, a dialog its own fields);
 Access's words on Windows (the read-only attribute) not tried there.

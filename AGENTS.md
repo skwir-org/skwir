@@ -514,7 +514,8 @@ working in an area, also read that area's rules (see
   `sweep`, `place`, `refs`, `drops`, `creates`, `restores`, `split` (the
   panes split), `filtered` (a folder filtered by name), `completes`,
   `labelling` (a preview's links labelled for keys), `reference` (a
-  field that says what it takes, ADR-137), and a place by its
+  field that says what it takes, ADR-137), `offers` (while it offers what
+  goes on with its text), and a place by its
   token (`pane`, `address`, `palette`, `sidebar`,
   `preview`, `menu`…, each listed once in `keymap::PLACES` with its key
   context and what F1 calls it). `a|b` holds when either does, `!a` when it does not.

@@ -3,9 +3,10 @@
 //! name and what it put in the new one tinted; Enter or Rename applies
 //! `rename_bulk`. The template, the regex and the replacement each say
 //! what they take (ADR-137): the plugin's `rename_bulk.reference`, asked
-//! with each preview, opened from the [?] at the field's end or F1 in it
-//! (`reference.rs`). It opens on `{full}`, which leaves every name as it
-//! is.
+//! with each preview, opened from the `?` inside the field at its end or
+//! F1 in it, and what goes on with a part begun offered under the field
+//! as it is typed (`reference.rs`). It opens on `{full}`, which leaves
+//! every name as it is.
 
 use std::ops::Range;
 use std::rc::Rc;
@@ -80,8 +81,8 @@ pub struct BulkState {
     /// there are in all.
     pub preview: Vec<Renamed>,
     /// What the template, the regex and the replacement take, as the
-    /// plugin said it with the latest preview, and the [?] each hangs
-    /// from.
+    /// plugin said it with the latest preview, and each field's frame,
+    /// which the reference and what goes on with the text hang from.
     references: [Option<Rc<Reference>>; SAID],
     anchors: [PopoverAnchor; SAID],
     renamed: usize,
@@ -197,8 +198,18 @@ impl Shell {
                     &input,
                     window,
                     |this, _, ev: &InputEvent, window, cx| match ev {
-                        InputEvent::Submit => this.bulk_apply(window, cx),
-                        InputEvent::Cancel => this.close_bulk(window, cx),
+                        // What the field offers takes Enter the arrows chose
+                        // it for, and Escape first (ADR-137).
+                        InputEvent::Submit => {
+                            if !this.offer_on_submit(window, cx) {
+                                this.bulk_apply(window, cx);
+                            }
+                        }
+                        InputEvent::Cancel => {
+                            if !this.offers_away(window, cx) {
+                                this.close_bulk(window, cx);
+                            }
+                        }
                         InputEvent::Changed => this.bulk_refresh(window, cx),
                     },
                 ),
@@ -425,8 +436,18 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
     for (i, (key, label, _)) in FIELDS.iter().enumerate() {
         // Where the keyboard is, whether Tab or a click put it there.
         let focused = b.inputs[i].read(cx).is_focused(window);
-        // F1 in a field that says what it takes opens that (ADR-137).
+        // A field that says what it takes (ADR-137): F1 in it and its `?`
+        // open that, and what goes on with a part begun shows under it,
+        // its keys the field's while it shows (`offers`).
         let said = i < SAID;
+        let mut context = gpui::KeyContext::default();
+        if said {
+            context.add("reference");
+            if shell.offers_for(&b.inputs[i], window, cx) {
+                context.add("offers");
+            }
+        }
+        let open = said && shell.reference_open_from(&b.anchors[i]);
         form = form.child(
             div()
                 .flex()
@@ -441,30 +462,30 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
                 )
                 .child(
                     div()
-                        .when(said, |d| d.key_context("reference"))
+                        .key_context(context)
+                        .relative()
                         .flex_1()
                         .h(sized(28.))
                         .px_2()
                         .flex()
                         .items_center()
+                        .gap_1()
                         .rounded_md()
                         .border_1()
                         .border_color(if focused { theme.accent } else { theme.border })
                         .bg(theme.bg)
-                        .child(b.inputs[i].clone()),
-                )
-                .child(if said {
-                    crate::reference::button(
-                        format!("bulk-reference-{key}"),
-                        key,
-                        &b.anchors[i],
-                        shell,
-                        cx,
-                    )
-                } else {
-                    // The [?]'s room, so the fields end together.
-                    crate::reference::room()
-                }),
+                        .child(div().flex_1().min_w_0().child(b.inputs[i].clone()))
+                        .when(said, |d| {
+                            d.child(crate::reference::inner(
+                                format!("bulk-reference-{key}"),
+                                key,
+                                open,
+                                shell,
+                                cx,
+                            ))
+                            .child(b.anchors[i].marker())
+                        }),
+                ),
         );
     }
     form = form.child(

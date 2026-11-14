@@ -225,6 +225,13 @@ pub struct Omni {
     held: Option<Held>,
 }
 
+impl Omni {
+    /// Whether the card says what the field takes (F1, its `?`).
+    pub(crate) fn reference_shown(&self) -> bool {
+        self.reference
+    }
+}
+
 /// The list of a field's rows: only those in view are built. A clone is
 /// the same list.
 #[derive(Clone)]
@@ -654,9 +661,9 @@ impl Shell {
         typed_for(&self.app, text, edited)
     }
 
-    /// F1 in the field, or the [?] on the card's first line: the card says
-    /// what the field takes, whole, the text kept, the keyboard staying in
-    /// the field (ADR-137); F1 again shows the keys here.
+    /// F1 in the field: the card says what the field takes, whole, the
+    /// text kept, the keyboard staying in the field (ADR-137); F1 again
+    /// shows the keys here.
     pub(crate) fn omnibox_reference(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(omni) = self.ui_mut().omni.as_mut() else {
             return;
@@ -664,7 +671,23 @@ impl Shell {
         if omni.reference {
             return self.toggle_shortcuts(window, cx);
         }
-        omni.reference = true;
+        self.omnibox_reference_on(true, window, cx);
+    }
+
+    /// The `?` inside the field: what it takes in the card, or the card
+    /// back to what the text goes on with.
+    pub(crate) fn omnibox_reference_toggle(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let on = self.ui().omni.as_ref().is_some_and(|o| !o.reference);
+        self.omnibox_reference_on(on, window, cx);
+    }
+
+    /// Whether the card says what the field takes (`on`), or what the text
+    /// goes on with.
+    fn omnibox_reference_on(&mut self, on: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(omni) = self.ui_mut().omni.as_mut() else {
+            return;
+        };
+        omni.reference = on;
         omni.scopes = false;
         omni.token = false;
         omni.highlighted = None;
@@ -3327,54 +3350,8 @@ fn depth_line(shell: &Shell, typed: Typed, cx: &mut Context<Shell>) -> Option<An
                     .text_color(theme.text_muted)
                     .child(say)
             }))
-            .child(reference_button(shell, &theme, cx))
             .into_any_element(),
     )
-}
-
-/// The [?] at the end of the card's first line: what the field takes,
-/// as F1 says it (ADR-137). The field keeps the keyboard: it acts on the
-/// press, as the depth switch does.
-fn reference_button(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
-    let pane = shell.pane;
-    let keys = shell.keys_for("ui.field_reference", &serde_json::Value::Null);
-    let title: gpui::SharedString = match keys {
-        Some(keys) => format!("What a search takes · {keys}").into(),
-        None => "What a search takes".into(),
-    };
-    let hover = theme.hover;
-    let muted = theme.text_muted;
-    div()
-        .id("omnibox-reference")
-        .size(sized(24.))
-        .flex_none()
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded_md()
-        .cursor_pointer()
-        .hover(move |s| s.bg(hover))
-        .when(shell.a11y, |d| {
-            d.role(gpui::Role::Button).aria_label(title.clone())
-        })
-        .tooltip(move |_, cx| crate::toolbar::tooltip(title.clone(), cx))
-        .on_mouse_down(
-            gpui::MouseButton::Left,
-            cx.listener(move |this, _, window, cx| {
-                cx.stop_propagation();
-                window.prevent_default();
-                this.activate_pane(pane, cx);
-                this.omnibox_reference(window, cx);
-            }),
-        )
-        .child(
-            gpui::svg()
-                .path("toolbar/help.svg")
-                .size(px(15.))
-                .flex_none()
-                .text_color(muted),
-        )
-        .into_any_element()
 }
 
 /// Piece `ix` of the rows of the pane being rendered (`pieces`), for

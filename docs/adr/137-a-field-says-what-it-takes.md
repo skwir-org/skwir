@@ -6,7 +6,10 @@ expressions, as a [?] after the field opening a popup, and where else
 one is needed; they chose the four steps recommended below: the
 reference itself, the bulk rename's, the search's and Access's). Built
 on Linux; compiled for Windows, and for macOS but the window (which
-`check-macos` leaves out).
+`check-macos` leaves out). Amended the same day, the user asking for the
+`?` inside the field, one look everywhere, and for what was recommended
+beside it: a field offers, as it is typed, what goes on with a part
+begun (6).
 
 ## Context
 
@@ -39,9 +42,16 @@ on Linux; compiled for Windows, and for macOS but the window (which
    caret is (`inserts`), or written whole in the fields a recipe names
    (`fills`). The signs of a regular expression, which two plugins read
    with one crate, are said once there (`regex_pattern`).
-2. **A dialog's field has a [?] at its end, and F1 in it** (`reference`
-   in its key context, `ui.field_reference`) opens its reference, hanging
-   from the [?] over the dialog (`reference.rs`): a popup as any, drawn
+2. **A field that says what it takes has a `?` inside its frame at its
+   end** (amended; first a [?] after the field), as a form's list button
+   (`inner_chevron`) and the address's own buttons are: what is about
+   the field's content lives in it. One element for every field, the
+   address's too (`reference::inner`), muted, lit while what it opens is
+   open; it acts on the press and leaves the keyboard in the field (the
+   caret stays where a row will write; the address goes on being typed
+   in), no Tab stop. It, or F1 in the field (`reference` in its key
+   context, `ui.field_reference`), opens the reference, hanging from the
+   field over the dialog (`reference.rs`): a popup as any, drawn
    among the window's overlays so the dialog's keys stay its own; its
    rows built of the menu's parts (`Button::said`: what is written in one
    column, cut in its middle, what it means, what it gives;
@@ -62,14 +72,15 @@ on Linux; compiled for Windows, and for macOS but the window (which
    left it as it made it (`Marks`). `{.ext}` is the extension with its
    dot, nothing without one. The dialog opens on `{full}`.
 4. **The address field says it in its card**: taking the keyboard from
-   the field would end what is typed. F1, or the [?] at the end of the
-   card's first line, asks the sources as `?` alone does (`Typed::Help`),
+   the field would end what is typed. F1, or the `?` inside the field
+   while it is typed in (amended; first at the end of the card's first
+   line), asks the sources as `?` alone does (`Typed::Help`),
    the text kept; the query plugin answers its whole reference
    (`query.reference`), under its groups' headings (`Suggestion::heading`),
    each row writing its part where the caret is (a term apart from the
    words beside it, a sign of a pattern as it is, in place of a lone
-   `?`). A key, or Escape, goes back to what the text goes on with; F1
-   again shows the keys.
+   `?`). A key, or Escape, goes back to what the text goes on with, as
+   the `?` pressed again does; F1 again shows the keys.
 5. **A question says what is typed comes to** (`ui.ask`'s `describe`): a
    command run on a worker with the text as its field, its `says` under
    the field, its error there in the error's color, holding the answer
@@ -77,6 +88,18 @@ on Linux; compiled for Windows, and for macOS but the window (which
    passes both: core says a mode's words (`set_access.describe`,
    `op::access::said`, from the parser and `apply` that change the file)
    and how one is written (`op::access::reference`).
+6. **A field offers, as it is typed, what goes on with a part begun**
+   (amended): a reference names what begins a part (`starts`: `{` in the
+   template, `\` and `(?` in a pattern, `$` in a replacement), and the
+   items whose part goes on with what is typed since the last of them
+   are listed under the field (`Reference::offered`, the window knowing
+   no language). The keyboard stays in the field (`offers` in its key
+   context, `ui.field_complete`): Up and Down move the highlight from
+   the first row, Tab takes the row lit, Enter only one the arrows chose
+   (else it answers the dialog), Escape puts the list away until the text
+   or the caret moves; a press on a row takes it. The item takes the
+   place of the part typed, as an edit. Access says no `starts`: a mode
+   is too short to offer anything.
 
 ## Consequences
 

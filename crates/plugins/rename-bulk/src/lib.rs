@@ -628,15 +628,18 @@ struct ReferenceArgs {
 /// What `field` takes (ADR-137): its placeholders or signs, each with
 /// what it gives `first` (the first item renamed) under `spec` as it
 /// stands, and the recipes that fill the regex and its replacement.
+/// Each field offers, as it is typed, what goes on with a part begun by
+/// these: a placeholder, a sign, a group's.
 pub fn reference(field: Field, first: Option<&Item>, spec: &RenameSpec) -> Reference {
     match field {
-        Field::Template => template_reference(first, spec),
-        Field::Regex => Reference::new("Regex").group(recipes(first)).group(
-            skwir_core::reference::regex_pattern().note(
+        Field::Template => template_reference(first, spec).starts(&["{"]),
+        Field::Regex => Reference::new("Regex")
+            .group(recipes(first))
+            .group(skwir_core::reference::regex_pattern().note(
                 "^ and $ are the start and the end of the name. It runs on the whole name, \
                  extension included, every match replaced; the template comes after it.",
-            ),
-        ),
+            ))
+            .starts(&["\\", "(?"]),
         Field::Replacement => Reference::new("Replacement")
             .group(
                 Group::new("What a match becomes")
@@ -648,7 +651,8 @@ pub fn reference(field: Field, first: Option<&Item>, spec: &RenameSpec) -> Refer
                     .note("$1_x reads as a group named 1_x, which holds nothing: write ${1}_x.")
                     .note("Left empty, what the pattern matched is taken away."),
             )
-            .group(recipes(first)),
+            .group(recipes(first))
+            .starts(&["$"]),
     }
 }
 
@@ -1054,6 +1058,20 @@ mod tests {
                 .as_deref(),
             Some("0042")
         );
+        // Typed on, a placeholder begun is offered what goes on with it.
+        let offered = said.offered("{name}-{n", 9).unwrap();
+        assert_eq!(offered.range, 7..9);
+        let offered: Vec<&str> = offered
+            .items
+            .iter()
+            .filter_map(|&(g, i)| said.item(g, i)?.inserts.as_deref())
+            .collect();
+        assert_eq!(offered, ["{name}", "{n}", "{n:02}", "{n:03}"]);
+        let regex = reference(Field::Regex, None, &RenameSpec::default());
+        assert!(regex.offered(r"\d+\", 4).is_some_and(|o| o.range == (3..4)));
+        assert!(regex.offered("(?", 2).is_some());
+        let replacement = reference(Field::Replacement, None, &RenameSpec::default());
+        assert_eq!(replacement.offered("$", 1).map(|o| o.items.len()), Some(5));
         // Without an item, nothing is given, and all is still said.
         let said = reference(Field::Template, None, &RenameSpec::default());
         assert!(said.items().all(|(_, _, item)| item.gives.is_none()));

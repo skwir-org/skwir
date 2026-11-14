@@ -2,20 +2,21 @@
 
 ## Unreleased
 
-- **Fields say what they take.** In Rename Several, the `?` after the
+- **Fields say what they take.** In Rename Several, the `?` inside the
   template, the regex and the replacement, or `F1` in one, lists what it
   takes: each placeholder with what it gives the first file, date
   formats, recipes for common renames (spaces to underscores, what is in
   brackets taken away, two parts swapped) and a pattern's and a
-  replacement's signs; one chosen is written where the cursor is. The
-  preview tints what the regex matched and what it put there. The
-  dialog starts from the names as they are (it started from them without
-  their extensions), and `{.ext}` writes an extension with its dot,
-  nothing for a file that has none. In the address, `F1` or the `?` at
-  the end of the list's first line lists everything a search takes
-  without losing what is typed. Properties' Access says, as you type,
-  what a mode comes to, refuses one `chmod` would not take before
-  Change, and has its `?` too.
+  replacement's signs; one chosen is written where the cursor is. As you
+  type `{`, `\` or `$` there, the field lists what can go on from there,
+  `Tab` taking one. The preview tints what the regex matched and what it
+  put there. The dialog starts from the names as they are (it started
+  from them without their extensions), and `{.ext}` writes an extension
+  with its dot, nothing for a file that has none. In the address, `F1`
+  or the `?` inside it lists everything a search takes without losing
+  what is typed. Properties' Access says, as you type, what a mode comes
+  to, refuses one `chmod` would not take before Change, and has its `?`
+  too.
 - **The player follows the file it plays.** Renamed or moved, by Skwir
   or by another program in a folder a window shows, the track plays on
   under its new name, its mark and the desktop's controls with it.

@@ -10,6 +10,11 @@
 //! agents to the same data, so what the window shows and what an agent
 //! reads are one text.
 //!
+//! A field also offers, as it is typed, the items that go on with the part
+//! typed since the last of the signs that begin one (`starts`: `{` in a
+//! template): [`Reference::offered`], which the window lists under the
+//! field.
+//!
 //! The syntax of regular expressions, which two plugins read with the same
 //! crate (`regex`: a bulk rename's pattern, a search's `content:/…/`), is
 //! said once here ([`regex_pattern`]).
@@ -24,6 +29,20 @@ pub struct Reference {
     /// What it is about, as its heading says it: "Template".
     pub title: String,
     pub groups: Vec<Group>,
+    /// What begins a part the field offers to go on with as it is typed
+    /// (`{` in a template, `\` in a pattern); none, nothing is offered.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub starts: Vec<String>,
+}
+
+/// What a field offers as it is typed ([`Reference::offered`]): the part
+/// typed (byte offsets into the text), which an item chosen takes the
+/// place of, and the items that go on with it, by their group's place and
+/// their own.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Offered {
+    pub range: std::ops::Range<usize>,
+    pub items: Vec<(usize, usize)>,
 }
 
 /// Items about one thing ("Parts of the name", "Repeats"), and what holds
@@ -64,7 +83,48 @@ impl Reference {
         Reference {
             title: title.into(),
             groups: Vec::new(),
+            starts: Vec::new(),
         }
+    }
+
+    /// Offer, as the field is typed, what goes on with a part begun by one
+    /// of `starts`.
+    #[must_use]
+    pub fn starts(mut self, starts: &[&str]) -> Self {
+        self.starts = starts.iter().map(|s| (*s).to_owned()).collect();
+        self
+    }
+
+    /// What `text` offers with its caret at `caret`: the part typed since
+    /// the last sign that begins one, and the items whose `inserts` go on
+    /// with it (longer than it, starting with it). `None` where nothing
+    /// does: no such sign before the caret, or the part already whole.
+    pub fn offered(&self, text: &str, caret: usize) -> Option<Offered> {
+        let caret = (0..=caret.min(text.len()))
+            .rev()
+            .find(|at| text.is_char_boundary(*at))
+            .unwrap_or(0);
+        let before = &text[..caret];
+        let start = self
+            .starts
+            .iter()
+            .filter(|start| !start.is_empty())
+            .filter_map(|start| before.rfind(start.as_str()))
+            .max()?;
+        let typed = &before[start..];
+        let items: Vec<(usize, usize)> = self
+            .items()
+            .filter(|(_, _, item)| {
+                item.inserts
+                    .as_deref()
+                    .is_some_and(|part| part.len() > typed.len() && part.starts_with(typed))
+            })
+            .map(|(group, at, _)| (group, at))
+            .collect();
+        (!items.is_empty()).then_some(Offered {
+            range: start..caret,
+            items,
+        })
     }
 
     #[must_use]
@@ -234,6 +294,36 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// What is offered as the field is typed: the items going on with the
+    /// part begun by the last sign before the caret, never one already
+    /// whole, nothing without such a sign.
+    #[test]
+    fn a_part_begun_is_offered_what_goes_on_with_it() {
+        let reference = Reference::new("Template")
+            .group(
+                Group::new("Parts")
+                    .item(Item::new("{name}", "The name"))
+                    .item(Item::new("{n}", "The counter"))
+                    .item(Item::new("{n:03}", "Three digits"))
+                    .item(Item::new("recipe", "Fills").fills("regex", "x")),
+            )
+            .starts(&["{"]);
+        let at = |text: &str, caret: usize| reference.offered(text, caret);
+        let offered = at("a-{n", 4).unwrap();
+        assert_eq!(offered.range, 2..4);
+        assert_eq!(offered.items, [(0, 0), (0, 1), (0, 2)]);
+        assert_eq!(at("{name}-{", 8).unwrap().items.len(), 3);
+        assert_eq!(at("{n:0", 4).unwrap().items, [(0, 2)]);
+        assert_eq!(at("{name}", 6), None, "whole already");
+        assert_eq!(at("{name}-x", 8), None, "nothing goes on with it");
+        assert_eq!(at("name", 4), None, "no sign before the caret");
+        // Where the caret is, not the text's end.
+        assert_eq!(at("{n} {name}", 2).unwrap().range, 0..2);
+        // A caret inside a character is taken back to its start.
+        assert_eq!(at("{é", 2).map(|o| o.range), Some(0..1));
+        assert_eq!(Reference::new("None").offered("{n", 2), None);
     }
 
     #[test]

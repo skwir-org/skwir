@@ -1606,6 +1606,20 @@ fn pane_row(
         // Over the field's card (`omnibox::dropdown`), the text draws above
         // the card, where it is typed.
         Address::Text => {
+            // What the field takes (ADR-137), at its end as in any field
+            // that says it: in the card, the typing going on.
+            let asked = shell
+                .ui()
+                .omni
+                .as_ref()
+                .is_some_and(crate::omnibox::Omni::reference_shown);
+            let help = crate::reference::inner(
+                format!("address-reference-{}", pane.0),
+                "address",
+                asked,
+                shell,
+                cx,
+            );
             let typed = div()
                 .flex_grow_1()
                 .flex_shrink(1.)
@@ -1623,7 +1637,8 @@ fn pane_row(
                         .px_2()
                         .line_height(sized(ADDRESS_LINE))
                         .child(shell.ui().address.clone()),
-                );
+                )
+                .child(div().pr(px(6.)).child(help));
             if shell.omnibox_card() {
                 gpui::deferred(typed)
                     .with_priority(crate::omnibox::CARD_PRIORITY + 1)
