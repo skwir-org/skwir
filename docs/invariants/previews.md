@@ -408,7 +408,10 @@ A name that says nothing is not a binary file.
   included), which its caller gives the HTML reader (`rich_preview::Math`),
   whose formulas then join the caller's batch. HTML's is MathML's TeX annotation, else
   its markup written as TeX (`math::mathml`, a formula of an element it
-  does not know left as it reads), else its `alttext`; and a page that
+  does not know left as it reads), else its `alttext`. TeX written from
+  its markup only typesets: such a formula is copied, said and shown where
+  it is not drawn as its `alttext`, else its words (`Pending::ask_reading`),
+  never as that TeX. And a page that
   loads MathJax or KaTeX's auto-render has its text read by their rules
   (`delimited::mathjax`, `$` only where its configuration lists it, `\$`
   a dollar there), never its `pre` or `code`, nor what it marks

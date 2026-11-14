@@ -127,6 +127,10 @@ escaped; groups, fences (`\left`, `\right`), scripts, fractions, roots,
 accents, limits (a large operator unbraced, so TeX places them), tables,
 enclosures. An element it does not know leaves the formula as it read:
 never half a formula. A TeX annotation, where there is one, comes first.
+The TeX written from the markup only typesets: the formula reads (copied,
+said, shown where it is not drawn) as the page's `alttext`, else as its
+words, as a screen reader is meant to hear it, never as TeX the page did
+not write.
 
 ### 2026-11-11: a formula grows its own row; GitHub's `math` blocks
 

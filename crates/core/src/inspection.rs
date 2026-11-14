@@ -530,10 +530,11 @@ impl Block {
         });
     }
 
-    /// Write `text` in place of the drawing run `run` holds, as code: a
-    /// formula that cannot be drawn shows the TeX it is written in. What
-    /// follows it in the text (runs, a row's cells) moves along.
-    pub fn undraw(&mut self, run: usize, text: &str) {
+    /// Write `text` in place of the drawing run `run` holds, as code where
+    /// `code` says: a formula that cannot be drawn shows the TeX it is
+    /// written in, or what it reads as where the page wrote no TeX of it.
+    /// What follows it in the text (runs, a row's cells) moves along.
+    pub fn undraw(&mut self, run: usize, text: &str, code: bool) {
         let Some(at) = self.runs.get(run).map(|run| run.range.clone()) else {
             return;
         };
@@ -552,7 +553,7 @@ impl Block {
             if index == run {
                 each.range = at.start..at.start + text.len();
                 each.drawing = None;
-                each.code = true;
+                each.code = code;
             } else {
                 each.range = moved(each.range.start)..moved(each.range.end);
             }

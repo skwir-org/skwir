@@ -182,8 +182,20 @@ fn typeset_by(
 pub struct Pending {
     /// Whether the helper is installed, asked once a page.
     helper: Option<bool>,
-    /// Each drawing to come, and the formula it is.
-    asked: Vec<(Arc<Drawing>, Formula)>,
+    /// Each drawing to come, the formula it is, and how it shows where it
+    /// is not drawn: what it reads as, as code (the TeX a page wrote), or
+    /// as text (`ask_reading`).
+    asked: Vec<(Arc<Drawing>, Formula, Undrawn)>,
+}
+
+/// How a formula shows where it is not drawn (`Pending::typeset`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Undrawn {
+    /// What it was written as, as code; on a line of its own, the code
+    /// block of its TeX.
+    Code,
+    /// What it reads as, as text: the page wrote no TeX of it.
+    Text,
 }
 
 impl Pending {
@@ -193,9 +205,27 @@ impl Pending {
     }
 
     /// The drawing to come for `tex`, which reads as `written` (what it is
-    /// copied as, and shown as where it is not drawn), or `None` where it
-    /// stays as written.
+    /// copied as, and shown as code where it is not drawn), or `None` where
+    /// it stays as written.
     pub fn ask(&mut self, tex: &str, display: bool, written: String) -> Option<Arc<Drawing>> {
+        self.asked_as(tex, display, written, Undrawn::Code)
+    }
+
+    /// The drawing to come for `tex`, a formula the page wrote otherwise
+    /// (MathML's markup, written as TeX to typeset it): it reads as `reads`
+    /// (what it is copied as and said as, and shown as text where it is not
+    /// drawn), never as that TeX. `None` where it stays as the page has it.
+    pub fn ask_reading(&mut self, tex: &str, display: bool, reads: String) -> Option<Arc<Drawing>> {
+        self.asked_as(tex, display, reads, Undrawn::Text)
+    }
+
+    fn asked_as(
+        &mut self,
+        tex: &str,
+        display: bool,
+        written: String,
+        undrawn: Undrawn,
+    ) -> Option<Arc<Drawing>> {
         let tex = tex.trim();
         if tex.is_empty() || tex.len() > FORMULA || self.asked.len() >= FORMULAS || !self.typesets()
         {
@@ -217,6 +247,7 @@ impl Pending {
                 tex: tex.to_owned(),
                 display,
             },
+            undrawn,
         ));
         Some(drawing)
     }
@@ -233,7 +264,7 @@ impl Pending {
             .asked
             .iter()
             .enumerate()
-            .map(|(k, (drawing, _))| (Arc::as_ptr(drawing), k))
+            .map(|(k, (drawing, ..))| (Arc::as_ptr(drawing), k))
             .collect();
         let found = |run: &skwir_core::inspection::Run| {
             run.drawing
@@ -272,8 +303,8 @@ impl Pending {
             }
             // From the last, so the ranges before each stay where they are.
             for (index, k) in undrawn.into_iter().rev() {
-                let (written, formula) = &self.asked[k];
-                if formula.display && block.runs.len() == 1 {
+                let (written, formula, shown) = &self.asked[k];
+                if *shown == Undrawn::Code && formula.display && block.runs.len() == 1 {
                     // A formula on a line of its own is the code it is.
                     *block = Block {
                         code: true,
@@ -284,9 +315,55 @@ impl Pending {
                         ..Block::default()
                     };
                 } else {
-                    block.undraw(index, &written.text);
+                    block.undraw(index, &written.text, *shown == Undrawn::Code);
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use skwir_core::inspection::Run;
+
+    /// A formula that is not drawn shows as it was written, as code, and
+    /// one on a line of its own as the code block of its TeX; one the page
+    /// wrote no TeX of (MathML's markup) as what it reads as, as text.
+    #[test]
+    fn a_formula_not_drawn_shows_as_written_or_as_it_reads() {
+        // SAFETY: no other thread of this test process reads the
+        // environment; nextest runs each test in a process of its own.
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::set_var(WORKER.variable, "/nonexistent/skwir-math-worker");
+        }
+        // As though the helper were there, and then could not be run.
+        let mut pending = Pending {
+            helper: Some(true),
+            ..Pending::default()
+        };
+        let mut written = Block::default();
+        written.text.push_str("Let ");
+        let drawing = pending.ask("x", false, "$x$".into()).unwrap();
+        written.push_drawing(drawing, &Run::default());
+        let mut reading = Block::default();
+        let drawing = pending
+            .ask_reading("{x}^{2}", true, "x squared".into())
+            .unwrap();
+        reading.push_drawing(drawing, &Run::default());
+        let mut apart = Block::default();
+        let drawing = pending.ask("y", true, "$$y$$".into()).unwrap();
+        apart.push_drawing(drawing, &Run::default());
+        let mut blocks = [written, reading, apart];
+        pending.typeset(&mut blocks, &CancelToken::new());
+        let [written, reading, apart] = &blocks;
+        assert_eq!(written.text, "Let $x$");
+        assert!(written.runs[0].code && written.runs[0].drawing.is_none());
+        assert_eq!(reading.text, "x squared");
+        assert!(!reading.code && !reading.runs[0].code, "words, not code");
+        assert!(apart.code);
+        assert_eq!(apart.language.as_deref(), Some("latex"));
+        assert_eq!(apart.text, "y");
     }
 }

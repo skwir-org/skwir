@@ -162,6 +162,11 @@ pub fn html_with(
     let doc = document(source, markup);
     let mut sheets = stylesheets(&doc, &mut resources);
     check(cancel)?;
+    let Pairs {
+        shown,
+        drawn,
+        maths,
+    } = pairs(&doc);
     let mut walk = Walk {
         tex: typesetter(&doc).or(math.tex),
         formulas: math
@@ -169,9 +174,9 @@ pub fn html_with(
             .as_deref_mut()
             .map(std::mem::take)
             .unwrap_or_default(),
+        maths,
         ..Walk::default()
     };
-    let pairs = pairs(&doc);
     let mut stack: Vec<Context> = vec![Context::default()];
     // A subtree that is not read: hidden, too deep, or a picture. Hidden,
     // the places it names stay where it stood (a printed page's mark a
@@ -208,7 +213,7 @@ pub fn html_with(
                                         "table" | "thead" | "tbody" | "tfoot" | "tr" | "colgroup"
                                     )
                                 }) => {}
-                    Node::Text(_) if pairs.drawn.contains(&node.id()) => {}
+                    Node::Text(_) if drawn.contains(&node.id()) => {}
                     Node::Text(text) => walk.read(&parent, text),
                     Node::Element(e) => {
                         let element = ElementRef::wrap(node).expect("an element");
@@ -216,8 +221,8 @@ pub fn html_with(
                         // A drawing of a formula that stands beside it
                         // goes; the formula shows, whatever the page hid.
                         let hidden = (style.display == Display::None
-                            && !pairs.shown.contains(&node.id()))
-                            || pairs.drawn.contains(&node.id());
+                            && !shown.contains(&node.id()))
+                            || drawn.contains(&node.id());
                         if hidden {
                             walk.anchor(&parent, e, node.id());
                             skip = Some((node.id(), true));
@@ -226,8 +231,7 @@ pub fn html_with(
                         // Words hidden from view and there for a screen
                         // reader are said where they stand, not shown (a
                         // formula's copy beside its drawing is shown).
-                        if style.unseen && !parent.style.unseen && !pairs.shown.contains(&node.id())
-                        {
+                        if style.unseen && !parent.style.unseen && !shown.contains(&node.id()) {
                             if !parent.unsaid && e.attr("aria-hidden") != Some("true") {
                                 walk.unseen(&parent, &words_of(node));
                             }
@@ -522,6 +526,9 @@ struct Walk {
     /// How the page's own typesetter finds formulas in its text, if it
     /// loads one (`typesetter`).
     tex: Option<crate::math::delimited::Rules>,
+    /// The TeX of each MathML element that has one, found once for the
+    /// page (`pairs`), taken as it is read.
+    maths: HashMap<NodeId, MathTex>,
     blocks: Vec<Block>,
     /// Footnotes, moved to the end of the page.
     notes: Vec<Block>,
@@ -817,20 +824,40 @@ impl Walk {
             return true;
         }
         if e.name() == "math" {
-            // MathML that carries its TeX (pandoc's, LaTeXML's, KaTeX's)
-            // is typeset from it, in its line or on one of its own;
-            // otherwise it reads as what the page says it reads as.
+            // MathML is typeset from the TeX it carries (pandoc's,
+            // LaTeXML's, KaTeX's), else from its markup written as TeX, in
+            // its line or on one of its own. It reads as the TeX it
+            // carries; else as what the page says it reads as (its
+            // `alttext`), else as its words: never as TeX the reader wrote
+            // from its markup, which only typesets.
             let display = e.attr("display") == Some("block");
-            let tex = tex_of(node);
+            let alt = e
+                .attr("alttext")
+                .map(str::trim)
+                .filter(|alt| !alt.is_empty());
+            let tex = self.maths.remove(&node.id());
             if !context.silent
                 && let Some(tex) = &tex
-                && let Some(drawing) = self.formulas.ask(tex, display, written(tex, display))
+                && let Some(drawing) = match tex {
+                    MathTex::Carried(tex) => self.formulas.ask(tex, display, written(tex, display)),
+                    MathTex::Converted(tex) => {
+                        let reads =
+                            alt.map_or_else(|| words_of(node).trim().to_owned(), str::to_owned);
+                        self.formulas.ask_reading(tex, display, reads)
+                    }
+                }
             {
                 self.formula(context, drawing, display);
                 return true;
             }
-            if let Some(alt) = e.attr("alttext").map(str::to_owned).or(tex) {
-                self.text(context, &alt);
+            // Not drawn: as the page says it reads, else the TeX it
+            // carries; else its markup is read, as it reads.
+            let carried = match &tex {
+                Some(MathTex::Carried(tex)) => Some(tex.as_str()),
+                _ => None,
+            };
+            if let Some(reads) = alt.or(carried) {
+                self.text(context, reads);
                 return true;
             }
         }
@@ -1055,6 +1082,9 @@ struct Pairs {
     /// The drawings beside them, left out, and the white space between,
     /// which would stand where a drawing went.
     drawn: HashSet<NodeId>,
+    /// The TeX of each MathML element that has one (`tex_of`), found here
+    /// once for the walk to take.
+    maths: HashMap<NodeId, MathTex>,
 }
 
 fn pairs(doc: &Html) -> Pairs {
@@ -1069,9 +1099,10 @@ fn pairs(doc: &Html) -> Pairs {
             .value()
             .as_element()
             .is_some_and(|e| e.name() == "math");
-        if !is_math || tex_of(math).is_none() {
+        let Some(tex) = is_math.then(|| tex_of(math)).flatten() else {
             continue;
-        }
+        };
+        pairs.maths.insert(math.id(), tex);
         let branches =
             std::iter::once(math).chain(math.parent().filter(|p| p.value().is_element()));
         for branch in branches {
@@ -1118,8 +1149,19 @@ fn beside(node: NodeRef<'_, Node>, next: bool) -> Option<(NodeRef<'_, Node>, Vec
 /// The TeX of a MathML element: the one it carries beside its markup
 /// (`<annotation encoding="application/x-tex">`), else its markup written
 /// as TeX (`math::mathml`), if every element of it is known.
-fn tex_of(math: NodeRef<'_, Node>) -> Option<String> {
-    annotated(math).or_else(|| crate::math::mathml::tex(math))
+fn tex_of(math: NodeRef<'_, Node>) -> Option<MathTex> {
+    annotated(math)
+        .map(MathTex::Carried)
+        .or_else(|| crate::math::mathml::tex(math).map(MathTex::Converted))
+}
+
+/// The TeX a MathML element is typeset from (`tex_of`).
+enum MathTex {
+    /// The page's own: what the formula reads as.
+    Carried(String),
+    /// Its markup written as TeX by the reader, which only typesets: the
+    /// formula reads as the page says (its `alttext`) or as its words.
+    Converted(String),
 }
 
 /// The TeX a MathML element carries beside its markup, if it does.
@@ -1806,9 +1848,9 @@ mod tests {
                 "Mass is $m$, and",
                 "$$E = mc^2$$",
                 "follows.",
-                "Plain $x$ MathML."
+                "Plain x MathML."
             ],
-            "MathML without its TeX is typeset from its markup"
+            "MathML without its TeX is typeset from its markup, and says its words"
         );
         assert_eq!(blocks[1].align, Align::Center);
         assert!(blocks[..2].iter().all(|block| {
@@ -2017,7 +2059,7 @@ mod tests {
         };
         use_math_worker(&worker);
         let source = r#"<p>Roots: <math display="block"><mi>x</mi><mo>=</mo><mfrac><mrow><mo>−</mo><mi>b</mi><mo>±</mo><msqrt><msup><mi>b</mi><mn>2</mn></msup><mo>−</mo><mn>4</mn><mi>a</mi><mi>c</mi></msqrt></mrow><mrow><mn>2</mn><mi>a</mi></mrow></mfrac></math></p>
-            <p>and <math><mrow><mo>(</mo><mtable><mtr><mtd><mn>1</mn></mtd><mtd><mn>2</mn></mtd></mtr><mtr><mtd><mn>3</mn></mtd><mtd><mn>4</mn></mtd></mtr></mtable><mo>)</mo></mrow></math>.</p>"#;
+            <p>and <math alttext="a two by two matrix"><mrow><mo>(</mo><mtable><mtr><mtd><mn>1</mn></mtd><mtd><mn>2</mn></mtd></mtr><mtr><mtd><mn>3</mn></mtd><mtd><mn>4</mn></mtd></mtr></mtable><mo>)</mo></mrow></math>.</p>"#;
         let blocks = read(source, Markup::Html);
         let drawn: Vec<_> = blocks
             .iter()
@@ -2027,6 +2069,18 @@ mod tests {
         assert_eq!(drawn.len(), 2, "{:?}", texts(&blocks));
         assert!(drawn.iter().all(|drawing| !drawing.svg.is_empty()));
         assert!(drawn[0].descent > 0.5, "the fraction's denominator below");
+        // It reads as its words, or as the page says it reads: never as the
+        // TeX written from its markup to typeset it.
+        assert_eq!(drawn[0].text, "x=−b±b2−4ac2a");
+        assert_eq!(drawn[1].text, "a two by two matrix");
+        let said: Vec<String> = blocks
+            .iter()
+            .map(|block| block.said(0..block.text.len()).into_owned())
+            .collect();
+        assert!(
+            said.iter().any(|said| said == "and a two by two matrix."),
+            "{said:?}"
+        );
     }
 
     #[test]
@@ -2044,6 +2098,13 @@ mod tests {
             text.contains("E = mc^2"),
             "its TeX where it has no alttext: {text}"
         );
+        // MathML that carries no TeX reads as its words, never as the TeX
+        // the reader would typeset it from.
+        let square = read(
+            "<p>Square <math><msup><mi>x</mi><mn>2</mn></msup></math>.</p>",
+            Markup::Html,
+        );
+        assert_eq!(texts(&square), ["Square x2."]);
     }
 
     /// A table as pandas writes one: a head row of headers, body rows led
