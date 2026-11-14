@@ -560,3 +560,178 @@ fn an_archive_extracted_again_is_found_extracted() {
         "“it's photos.zip” was already extracted to it's here"
     );
 }
+
+/// `plan` applied as the user's one action is (its names taken settled,
+/// asked about), as `answer` answers what it asks meanwhile; how it ended.
+fn whole(app: &App, plan: Plan, answer: impl FnOnce(&App)) -> ExecEvent {
+    let id = plan.id;
+    let events = app.executor.events();
+    app.apply_whole(plan);
+    answer(app);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        let event = events.recv_deadline(deadline).expect("the plan finishes");
+        if matches!(&event, ExecEvent::Finished { plan, .. } if *plan == id) {
+            return event;
+        }
+    }
+}
+
+fn clashes_asked(app: &App) -> skwir_core::app::ClashQuestion {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        if let Some(q) = app.take_clash_questions().pop() {
+            return q;
+        }
+        assert!(std::time::Instant::now() < deadline, "never asked");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+/// Extracted again into its folder, some of its files removed since, one
+/// changed and one added: merged into it as a copy's folder is (ADR-059
+/// amended), what was removed comes back, what is there the same is left
+/// as it is, the file changed is asked about and kept beside, and the
+/// user's own stays. Undone, only what it placed goes; redone, it is back.
+#[test]
+fn what_was_removed_comes_back_when_extracted_into_its_folder_again() {
+    if !with_archive_worker() {
+        return;
+    }
+    let tmp = scratch();
+    let app = app(tmp.path());
+    app.set_window_shown();
+    let dest = tmp.path().join("it's here");
+    std::fs::create_dir(&dest).unwrap();
+    let archive = tmp.path().join("Synthetic photos.zip");
+    write_zip(
+        &archive,
+        &[
+            ("top.txt", b"at the top"),
+            ("album/", b""),
+            ("album/2026/day one.txt", b"first"),
+            ("album/2026/day two.txt", b"second"),
+            ("locked/!", b""),
+            ("locked/inside.txt", b"inside"),
+            ("notes/changed.txt", b"as made"),
+        ],
+    );
+    let result = app
+        .executor
+        .execute_blocking(&extract(&app, &archive, &dest), app.lifetime());
+    assert!(result.error.is_none(), "{:?}", result.error);
+    let made = dest.join("Synthetic photos");
+    let extracted = tree(&made);
+
+    std::fs::remove_file(made.join("top.txt")).unwrap();
+    std::fs::remove_file(made.join("album/2026/day two.txt")).unwrap();
+    // The folder the archive made read-only, opened to remove from it.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let locked = made.join("locked");
+        assert!(std::fs::metadata(&locked).unwrap().permissions().readonly());
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    std::fs::remove_file(made.join("locked/inside.txt")).unwrap();
+    std::fs::write(made.join("notes/changed.txt"), "mine, since").unwrap();
+    std::fs::write(made.join("mine.txt"), "mine").unwrap();
+    let before = tree(&made);
+    let kept = skwir_core::fs::stat::id_of(&made.join("album/2026/day one.txt"));
+
+    let ended = whole(&app, extract(&app, &archive, &dest), |app| {
+        let question = clashes_asked(app);
+        // The folder, each folder in it that differs, and the file changed
+        // since, each under the folder it is in: what is there the same,
+        // or missing, is never asked about.
+        let asked: Vec<_> = question
+            .clashes
+            .iter()
+            .map(|c| {
+                (
+                    c.there.path.strip_prefix(&dest).unwrap().to_owned(),
+                    c.inside,
+                    c.folders(),
+                )
+            })
+            .collect();
+        let at = |p: &str| PathBuf::from("Synthetic photos").join(p);
+        assert_eq!(
+            asked,
+            [
+                (PathBuf::from("Synthetic photos"), None, true),
+                (at("album"), Some(0), true),
+                (at("album/2026"), Some(1), true),
+                (at("locked"), Some(0), true),
+                (at("notes"), Some(0), true),
+                (at("notes/changed.txt"), Some(4), false),
+            ]
+        );
+        // As Enter answers: folders merged, both files kept.
+        assert!(app.answer_clashes(question.id, Some(skwir_core::op::clash::Answer::default())));
+    });
+    assert!(
+        matches!(ended, ExecEvent::Finished { error: None, .. }),
+        "{ended:?}"
+    );
+    let mut merged = extracted.clone();
+    merged.push(("mine.txt".into(), Some("mine".into())));
+    merged.push(("notes/changed (2).txt".into(), Some("as made".into())));
+    for (name, text) in &mut merged {
+        if name == "notes/changed.txt" {
+            *text = Some("mine, since".into());
+        }
+    }
+    merged.sort();
+    assert_eq!(tree(&made), merged);
+    assert_eq!(
+        skwir_core::fs::stat::id_of(&made.join("album/2026/day one.txt")),
+        kept,
+        "what was there the same is left as it is"
+    );
+    assert!(staged_in(&dest).is_empty(), "{:?}", staged_in(&dest));
+
+    // Undone to the trash, each item placed on its own; redone from it.
+    // Wine's shell trashes nothing: that needs Windows.
+    if skwir_core::system::under_wine("trashing through the shell") {
+        return;
+    }
+    let undone = app.executor.undo_blocking(app.lifetime()).unwrap();
+    assert!(undone.error.is_none(), "{:?}", undone.error);
+    assert_eq!(tree(&made), before);
+    let redone = app.executor.redo_blocking(app.lifetime()).unwrap();
+    assert!(redone.error.is_none(), "{:?}", redone.error);
+    assert_eq!(tree(&made), merged);
+}
+
+/// An archive of one read-only folder is extracted as that folder: opened
+/// to be moved out of the staging folder, its permissions given back.
+#[cfg(unix)]
+#[test]
+fn an_archive_of_one_read_only_folder_is_placed_as_it_is() {
+    use std::os::unix::fs::PermissionsExt;
+    if !with_archive_worker() {
+        return;
+    }
+    let tmp = scratch();
+    let app = app(tmp.path());
+    let dest = tmp.path().join("into");
+    std::fs::create_dir(&dest).unwrap();
+    let archive = tmp.path().join("v1.zip");
+    write_zip(
+        &archive,
+        &[("sealed/!", b""), ("sealed/inside.txt", b"inside")],
+    );
+    let result = app
+        .executor
+        .execute_blocking(&extract(&app, &archive, &dest), app.lifetime());
+    assert!(result.error.is_none(), "{:?}", result.error);
+    let sealed = dest.join("sealed");
+    assert_eq!(
+        std::fs::read_to_string(sealed.join("inside.txt")).unwrap(),
+        "inside"
+    );
+    let mode = std::fs::metadata(&sealed).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o555, "{mode:o}");
+    std::fs::set_permissions(&sealed, std::fs::Permissions::from_mode(0o755)).unwrap();
+}

@@ -17120,3 +17120,60 @@ played on.
   through the bundle's pulsesink, AppImage and tarball); the helper's
   tests and the core's media tests; through `appimage-run` and a private
   PulseAudio, the AppImage's helper 30 of 30 rounds over six clips.
+
+## 2026-11-14: An extraction merges into its folder
+
+The user: an archive extracted, a few files removed from its folder, then
+extracted again, was asked about with a file's choices and no way to
+write into the folder. What others do: Windows' Extract All, 7-Zip, File
+Roller and `unzip` write into the folder there and ask about the files
+there; macOS's Archive Utility and GNOME Files make `photos 2`; Ark
+writes in without asking (KDE bug 504869 reports it). The user's choice:
+merge as a copy does (ADR-054), asked. ADR-059 amended.
+
+- **Core:** `op::MadeTree` (what a step makes, item by item) and
+  `MadeTree::sames`, which tells every item the same as what is there in
+  one walk (a folder by its items and its names counted no further than
+  one past them; a file by size and time to two seconds; links; hard
+  links), never reading under a folder that is not there.
+  `Operation::made_tree` and `merged`; `clash::Walk::merge_made` settles
+  a folder made onto a folder there as `merge` settles a copy's, depth
+  first so a folder's clashes follow it; `Act::Make` says whether it
+  `merges`, and `Clash::folders` gives it a folder's choices. `op::Steps`
+  is several steps as one, built by the registry from `steps`, and the
+  executor journals each of them (`journal_inverse`).
+  `Staging::place_within` opens a read-only folder for a move between
+  folders.
+- **The archives plugin:** `Extract::merge` (`op::Placing`, names only,
+  refused otherwise); its tree from the whole listing; one extraction,
+  only what was chosen placed, those placed taken back into staging when
+  one cannot be; its undo `op::Steps` of a Trash each, or one
+  `archive_unmake` of them all (`Unmake::with`) where no trash is kept.
+  The plugin's own comparison (`holds_extracted`, `Left`) became core's.
+- **A bug found on the way:** an archive holding one read-only folder
+  alone could not be extracted, the move of that folder out of the
+  staging folder refused (EACCES, checked with `rename` on this machine).
+- **Checked:** core's tests (812 with the dialog's), the archive plugin's
+  48 with the helper required (`SKWIR_REQUIRE_WORKERS=1`), among them the
+  case asked (three files removed, one changed, one added: what was
+  removed back, the file there the same left by inode, the changed one
+  kept beside as `changed (2).txt`, the user's own kept; Undo and Redo
+  each item), a folder holding the archive (its own name never replaced,
+  refused before anything is done), and the read-only folder; clippy on
+  core, the plugin and the UI; `plugins_toggle`.
+- **In the window** (debug build, Xvfb, a bus and XDG folders of its
+  own): an archive extracted from the palette, two files removed, one
+  changed and one added from a shell, Extract Here again. The dialog
+  said "1 name already in “it's work”", Folders for all on Merge, a
+  Merge row for the folder and for each folder in it that differed, and
+  the changed file alone with a file's choices. Enter: the two files
+  back, the file there the same by inode, `changed (2).txt` beside the
+  changed one, the added one kept, no staging folder left; the toast
+  said "Extracted “Synthetic photos.zip” into Synthetic photos". Ctrl+Z
+  put the three items placed, and nothing else, in the window's Trash;
+  Ctrl+Y brought them back from it.
+- **Left:** a folder in the dialog says no time for what comes (the
+  listing's folders are not dated in `MadeItem::Folder`); the archive is
+  extracted whole into the staging folder however little is placed (the
+  helper has no member filter: reading is the archive's length anyway,
+  writing could be what is placed).

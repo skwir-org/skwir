@@ -4,8 +4,10 @@
 //! of a plan like a copy: made in a staging folder and put in place whole
 //! (`StepContext::stage`), Cancel and Pause answered while the helper
 //! works, undone to the trash. A name taken is asked about as a copy's
-//! is, with a file's choices (ADR-059); an encrypted member asks the user
-//! its password.
+//! is (ADR-059): a folder there under the folder's name is merged into,
+//! as a copy's folder is, the archive's listing saying what it holds
+//! (amended 2026-11-14), else a file's choices; an encrypted member asks
+//! the user its password.
 
 use std::ffi::{OsStr, OsString};
 use std::path::{Component, Path, PathBuf};
@@ -14,8 +16,8 @@ use anyhow::Context;
 use skwir_core::App;
 use skwir_core::command::{Invocation, Outcome, Topic};
 use skwir_core::op::{
-    self, Cancelled, Change, EntryRef, Made, Operation, Plan, StepContext, StepStatus, Unanswered,
-    Words,
+    self, Cancelled, Change, EntryRef, Made, MadeItem, MadeTree, Operation, Placing, Plan,
+    StepContext, StepStatus, Unanswered, Words,
 };
 use skwir_core::os_path::PathArg;
 use skwir_core::registry::MenuItem;
@@ -54,6 +56,12 @@ pub struct Extract {
     )]
     #[schemars(with = "Option<PathArg>")]
     pub name: Option<OsString>,
+    /// Merged into the folder there under its name: what it places there,
+    /// each item of what it makes where settling the names found it goes
+    /// (`op::Placing`), what is there the same left as it is. Not said, it
+    /// makes its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merge: Option<Vec<Placing>>,
 }
 
 impl Extract {
@@ -63,6 +71,7 @@ impl Extract {
             entry,
             dest_dir,
             name: None,
+            merge: None,
         }
     }
 
@@ -173,14 +182,25 @@ impl op::Effect for Extract {
         // As the listing last read says, if one was (`makes` reads it):
         // only the archive's metadata is read here.
         let (name, folder) = self.named(archive::listed(&self.entry.path).as_deref());
-        Change::Create {
-            path: self.dest_dir.join(name),
-            directory: folder,
-            words: Some(Words {
+        let words = if self.merge.is_some() {
+            // Into the folder there, as merged.
+            let into = name.to_string_lossy();
+            Words {
+                will: format!("extract “{archive}” into {into}"),
+                did: format!("extracted “{archive}” into {into}"),
+                already: format!("“{archive}” was already extracted into {into}"),
+            }
+        } else {
+            Words {
                 will: format!("extract “{archive}” to {into}"),
                 did: format!("extracted “{archive}” to {into}"),
                 already: format!("“{archive}” was already extracted to {into}"),
-            }),
+            }
+        };
+        Change::Create {
+            path: self.dest_dir.join(name),
+            directory: folder || self.merge.is_some(),
+            words: Some(words),
         }
     }
 
@@ -210,13 +230,21 @@ impl op::Effect for Extract {
             return conflict(invalid.to_string());
         }
         let target = self.dest_dir.join(name);
+        if let Some(placing) = &self.merge {
+            return check_merged(&src, &target, placing, ctx);
+        }
         // As the plan's earlier steps leave it: one may put what is there
         // in the trash (Replace).
         if !ctx.exists(&target) {
             return StepStatus::Pending { reversible: true };
         }
-        // Applied already, or another file under the name.
-        if listing().is_some_and(|listing| holds_extracted(listing, &target, ctx)) {
+        // Applied already, or another file under the name: as the whole
+        // listing says, as a merge would find it.
+        if whole_listing(&src, ctx)
+            .as_deref()
+            .and_then(tree_of)
+            .is_some_and(|tree| tree.held_at(&target, ctx.cancel_token()))
+        {
             StepStatus::AlreadyDone
         } else if src.starts_with(&target) {
             // Never replaced: it would take the archive with it.
@@ -235,6 +263,10 @@ impl op::Effect for Extract {
     /// whose name kept beside another keeps its extension last
     /// (`report.pdf.zip` gives `report (2).pdf`), of the size listed.
     fn makes(&self, ctx: &StepContext) -> Option<Made> {
+        // Merged, its name is the folder's there: it makes none.
+        if self.merge.is_some() {
+            return None;
+        }
         let listing = self
             .entry
             .resolve()
@@ -277,6 +309,25 @@ impl op::Effect for Extract {
         }))
     }
 
+    /// What it makes, member by member, as the archive's whole listing
+    /// says: none where it is cut short (more members than
+    /// `Bounds::WHOLE` lists), or a member would leave the folder.
+    fn made_tree(&self, ctx: &StepContext) -> Option<MadeTree> {
+        if self.merge.is_some() {
+            return None;
+        }
+        let src = self.entry.resolve().ok()?;
+        let listing = whole_listing(&src, ctx)?;
+        tree_of(&listing)
+    }
+
+    fn merged(&self, placing: Vec<Placing>) -> Option<Box<dyn Operation>> {
+        Some(Box::new(Extract {
+            merge: Some(placing),
+            ..self.clone()
+        }))
+    }
+
     fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
         let src = self.entry.resolve()?;
         let target = self.dest_dir.join(self.name_in(&src, ctx));
@@ -288,6 +339,8 @@ impl op::Effect for Extract {
         let mut done = 0;
         let archive_name = display_name(&self.entry.path);
         let unanswered = std::cell::Cell::new(None);
+        // What a merge placed, which its undo takes back.
+        let mut placed = Vec::new();
         let result = std::fs::create_dir(&made)
             .map_err(anyhow::Error::from)
             .and_then(|()| {
@@ -335,14 +388,17 @@ impl op::Effect for Extract {
             .and_then(|()| {
                 // Its one member, under the step's name, which may be one
                 // kept beside; else a folder of all it holds.
-                let placed = only_member(&made).unwrap_or_else(|| made.clone());
-                staging.place(&placed, &target).with_context(|| {
-                    format!(
-                        "“{}” could not be placed in “{}”",
-                        display_name(&target),
-                        display_name(&self.dest_dir)
-                    )
-                })
+                let root = only_member(&made).unwrap_or_else(|| made.clone());
+                match &self.merge {
+                    Some(placing) => place_merged(&staging, &root, &target, placing, &mut placed),
+                    None => staging.place_within(&root, &target).with_context(|| {
+                        format!(
+                            "“{}” could not be placed in “{}”",
+                            display_name(&target),
+                            display_name(&self.dest_dir)
+                        )
+                    }),
+                }
             });
         // Whatever happened, the staging folder goes now, with what it
         // holds: an archive's folders may be read-only, which only
@@ -360,6 +416,9 @@ impl op::Effect for Extract {
         }
         result?;
         ctx.advance(size.saturating_sub(done));
+        if self.merge.is_some() {
+            return self.merged_undo(&target, &placed);
+        }
         let made = EntryRef::from_path(&target)
             .with_context(|| format!("“{}” went missing as it was made", display_name(&target)))?;
         // Where its volume keeps no trash, Undo removes it while it is as
@@ -377,6 +436,151 @@ impl op::Effect for Extract {
         // Undone to the trash, as a copy is: it may have been changed since.
         Ok(Some(Box::new(op::Trash { entry: made })))
     }
+}
+
+impl Extract {
+    /// The undo of a merge that placed `placed` in `target`: each taken
+    /// back on its own, to the trash as a copy is; where the volume keeps
+    /// no trash, together, while each is as made, Redo placing them again
+    /// from one extraction.
+    fn merged_undo(
+        &self,
+        target: &Path,
+        placed: &[Placing],
+    ) -> anyhow::Result<Option<Box<dyn Operation>>> {
+        let made: Vec<EntryRef> = placed
+            .iter()
+            .filter_map(|placing| EntryRef::from_path(target.join(&placing.to)))
+            .collect();
+        if made.is_empty() {
+            // Placed already, as its check found: nothing done.
+            return Err(op::Unneeded(format!(
+                "“{}” was already extracted into {}",
+                display_name(&self.entry.path),
+                display_name(target)
+            ))
+            .into());
+        }
+        if op::keeps_no_trash(target) {
+            let again = Extract {
+                merge: Some(placed.to_vec()),
+                ..self.clone()
+            };
+            return Ok(Some(Box::new(crate::unmake::Unmake::of_each(
+                made,
+                crate::unmake::Again::Extract(again),
+            ))));
+        }
+        Ok(op::Steps::of(
+            made.into_iter()
+                .map(|entry| Box::new(op::Trash { entry }) as Box<dyn Operation>)
+                .collect(),
+        ))
+    }
+}
+
+/// The archive's listing, all of it where the quick bounds cut it short:
+/// what a merge settles against, member by member.
+fn whole_listing(src: &Path, ctx: &StepContext) -> Option<std::sync::Arc<archive::Listing>> {
+    let quick = archive::list(src, ctx.cancel_token()).ok()?;
+    if quick.complete {
+        return Some(quick);
+    }
+    archive::list_within(
+        src,
+        skwir_platform::inspection::limits::Bounds::WHOLE,
+        ctx.cancel_token(),
+    )
+    .ok()
+    .filter(|whole| whole.complete)
+}
+
+/// The merged extraction's check: the folder there is still one; each item
+/// it places is in the archive, goes in a folder that is there, and finds
+/// its name free (as the plan's earlier steps leave it: one may put what
+/// is there in the trash), or there the same already. All of them there,
+/// it is done.
+fn check_merged(src: &Path, target: &Path, placing: &[Placing], ctx: &StepContext) -> StepStatus {
+    if !ctx.is_folder(target) {
+        return conflict(format!(
+            "“{}” is not a folder to extract into",
+            display_name(target)
+        ));
+    }
+    // A plan from elsewhere says its own: never a name out of the folder.
+    if !placing.iter().all(Placing::stays_below) {
+        return conflict(format!(
+            "what is extracted into “{}” would leave it",
+            display_name(target)
+        ));
+    }
+    let Some(tree) = whole_listing(src, ctx).as_deref().and_then(tree_of) else {
+        return conflict(format!("“{}” cannot be listed whole", display_name(src)));
+    };
+    let mut done = true;
+    for placing in placing {
+        let Some(item) = tree.below(&placing.from) else {
+            return conflict(format!(
+                "“{}” is not in “{}” any more",
+                placing.from.display(),
+                display_name(src)
+            ));
+        };
+        let to = target.join(&placing.to);
+        if ctx.exists(&to) {
+            if item.held_at(&to, ctx.cancel_token()) {
+                continue;
+            }
+            return conflict(format!("“{}” is already there", display_name(&to)));
+        }
+        if !to.parent().is_some_and(|folder| ctx.is_folder(folder)) {
+            return conflict(format!(
+                "the folder “{}” goes in is not there",
+                display_name(&to)
+            ));
+        }
+        done = false;
+    }
+    if done {
+        StepStatus::AlreadyDone
+    } else {
+        StepStatus::Pending { reversible: true }
+    }
+}
+
+/// Each item `placing` says, from `root` (what the archive was extracted
+/// as, in `staging`) into `target`, the folder there merged into, noted in
+/// `placed`; one there already (the same, as the check found) left as it
+/// is. One that cannot be placed takes those placed before back where
+/// they were made, which goes with the staging folder.
+fn place_merged(
+    staging: &op::Staging,
+    root: &Path,
+    target: &Path,
+    placing: &[Placing],
+    placed: &mut Vec<Placing>,
+) -> anyhow::Result<()> {
+    for item in placing {
+        let to = target.join(&item.to);
+        if std::fs::symlink_metadata(&to).is_ok() {
+            continue;
+        }
+        if let Err(error) = staging.place_within(&root.join(&item.from), &to) {
+            for back in placed.iter().rev() {
+                if let Err(e) = std::fs::rename(target.join(&back.to), root.join(&back.from)) {
+                    tracing::warn!("“{}” stays where it was placed: {e}", back.to.display());
+                }
+            }
+            placed.clear();
+            return Err(anyhow::Error::from(error).context(format!(
+                "“{}” could not be placed in “{}”",
+                display_name(&to),
+                display_name(target)
+            )));
+        }
+        placed.push(item.clone());
+    }
+    Ok(())
 }
 
 /// The one member `made` holds, when it holds one that is not hidden:
@@ -413,9 +617,9 @@ fn one_member(listing: &archive::Listing) -> Option<One> {
         .iter()
         .filter(|(path, _)| path.components().count() == 1);
     let (path, what) = top.next()?;
-    let folder = *what == Left::Folder;
+    let folder = *what == MadeItem::Folder;
     let size = match what {
-        Left::File { size, .. } => *size,
+        MadeItem::File { size, .. } => *size,
         _ => None,
     };
     (top.next().is_none() && !hidden(path.as_os_str()) && (folder || listing.complete)).then(|| {
@@ -427,27 +631,12 @@ fn one_member(listing: &archive::Listing) -> Option<One> {
     })
 }
 
-/// What extracting an archive leaves at a path, by its listing.
-#[derive(Debug, PartialEq)]
-enum Left {
-    Folder,
-    /// A file of this size (`None`: not said) and time.
-    File {
-        size: Option<u64>,
-        modified: Option<std::time::SystemTime>,
-    },
-    /// A link saying this.
-    Link(String),
-    /// Another name of the file at this path.
-    Hard(PathBuf),
-}
-
 /// What extracting the listed archive leaves, by path in the folder it is
 /// extracted into: each member where the extraction puts it, the folders
 /// above it, a later member of a name over an earlier one; pipes, devices
 /// and sockets left out, as they are. `None` when a member would leave the
 /// folder (`..`, absolute): the extraction refuses the whole archive.
-fn left_by(listing: &archive::Listing) -> Option<std::collections::BTreeMap<PathBuf, Left>> {
+fn left_by(listing: &archive::Listing) -> Option<std::collections::BTreeMap<PathBuf, MadeItem>> {
     // Its names, `.` left out (`./a/`, `.`).
     let relative = |name: &str| -> Option<PathBuf> {
         let mut path = PathBuf::new();
@@ -467,13 +656,13 @@ fn left_by(listing: &archive::Listing) -> Option<std::collections::BTreeMap<Path
             continue;
         }
         let what = if let Some(first) = &member.hardlink {
-            Left::Hard(relative(first)?)
+            MadeItem::Hard(relative(first)?)
         } else if member.directory {
-            Left::Folder
+            MadeItem::Folder
         } else if let Some(link) = &member.link {
-            Left::Link(link.clone())
+            MadeItem::Link(link.clone())
         } else if member.regular {
-            Left::File {
+            MadeItem::File {
                 size: u64::try_from(member.size).ok(),
                 modified: member.modified(),
             }
@@ -484,114 +673,44 @@ fn left_by(listing: &archive::Listing) -> Option<std::collections::BTreeMap<Path
             if above.as_os_str().is_empty() {
                 break;
             }
-            left.entry(above.to_path_buf()).or_insert(Left::Folder);
+            left.entry(above.to_path_buf()).or_insert(MadeItem::Folder);
         }
         left.insert(path, what);
     }
     Some(left)
 }
 
-/// How far a file's time on the disk may be from the archive's: a FAT
-/// drive keeps two-second times.
-const TIME_KEPT: std::time::Duration = std::time::Duration::from_secs(2);
-
-/// Whether `target` holds what extracting the listed archive made, and
-/// nothing else, as a copy is told done (`same_tree`): the folders and
-/// their names alike, each file of its size and time (what the extraction
-/// gave it), each link saying the same, each hard link to its first name;
-/// of the archive's one member (`one_member`) where it holds one. A
-/// listing cut short (`archive::list`'s bounds), or a file of no size or
-/// time said, says no: then nobody can tell.
-fn holds_extracted(listing: &archive::Listing, target: &Path, ctx: &StepContext) -> bool {
+/// What extracting the listed archive makes, as the folder or file it is
+/// extracted as: its one member's (`one_member`) where it holds one, its
+/// paths below that member; else the folder holding them all. `None` for a
+/// listing cut short (`archive::list`'s bounds), an empty one, or one the
+/// extraction refuses whole: nobody can tell what it makes. A file of no
+/// size or time said (a file only compressed) is never told the same as
+/// what is there (`op::MadeTree`).
+fn tree_of(listing: &archive::Listing) -> Option<MadeTree> {
     if !listing.complete || listing.members.is_empty() {
-        return false;
+        return None;
     }
-    let Some(mut left) = left_by(listing) else {
-        return false;
+    let mut left = left_by(listing)?;
+    let Some(one) = one_member(listing) else {
+        left.insert(PathBuf::new(), MadeItem::Folder);
+        return Some(MadeTree::new(left));
     };
-    // Its one member is the target. Else the target is the folder holding
-    // them all.
-    let mut expected: std::collections::BTreeMap<PathBuf, Left> = if let Some(one) =
-        one_member(listing)
-    {
-        let own = Path::new(&one.name);
-        std::mem::take(&mut left)
-            .into_iter()
-            .filter_map(|(path, what)| {
-                let path = path.strip_prefix(own).ok()?.to_path_buf();
-                let what = match what {
-                    Left::Hard(first) => Left::Hard(first.strip_prefix(own).ok()?.to_path_buf()),
-                    other => other,
-                };
-                Some((path, what))
-            })
-            .collect()
-    } else {
-        let mut all = std::mem::take(&mut left);
-        all.insert(PathBuf::new(), Left::Folder);
-        all
-    };
-    // The target itself for the empty path: never `target/`, which follows
-    // a link.
-    let at = |relative: &Path| {
-        if relative.as_os_str().is_empty() {
-            target.to_path_buf()
-        } else {
-            target.join(relative)
-        }
-    };
-    // What is there, a link never followed; no more than what is expected
-    // and one, so a folder of other things is not read whole.
-    let mut there: Vec<(PathBuf, std::fs::Metadata)> = Vec::new();
-    let mut walk = vec![PathBuf::new()];
-    while let Some(relative) = walk.pop() {
-        if there.len() > expected.len() || ctx.cancel_token().is_cancelled() {
-            return false;
-        }
-        let path = at(&relative);
-        let Ok(meta) = std::fs::symlink_metadata(&path) else {
-            return false;
-        };
-        if meta.is_dir() {
-            let Ok(read) = std::fs::read_dir(&path) else {
-                return false;
+    let own = Path::new(&one.name);
+    let items = left
+        .into_iter()
+        .filter_map(|(path, what)| {
+            let path = path.strip_prefix(own).ok()?.to_path_buf();
+            let what = match what {
+                MadeItem::Hard(first) => {
+                    MadeItem::Hard(first.strip_prefix(own).ok()?.to_path_buf())
+                }
+                other => other,
             };
-            walk.extend(read.flatten().map(|entry| relative.join(entry.file_name())));
-        }
-        there.push((relative, meta));
-    }
-    there.len() == expected.len()
-        && there.iter().all(|(relative, meta)| {
-            let Some(what) = expected.remove(relative) else {
-                return false;
-            };
-            let path = at(relative);
-            match what {
-                Left::Folder => meta.is_dir(),
-                Left::File { size, modified } => {
-                    let near = |a: std::time::SystemTime, b: std::time::SystemTime| {
-                        a.duration_since(b)
-                            .or_else(|_| b.duration_since(a))
-                            .is_ok_and(|apart| apart < TIME_KEPT)
-                    };
-                    meta.is_file()
-                        && size == Some(meta.len())
-                        && modified
-                            .zip(meta.modified().ok())
-                            .is_some_and(|(a, b)| near(a, b))
-                }
-                Left::Link(says) => {
-                    meta.is_symlink()
-                        && std::fs::read_link(&path)
-                            .is_ok_and(|read| read.as_os_str().to_string_lossy() == says)
-                }
-                Left::Hard(first) => {
-                    meta.is_file()
-                        && skwir_core::fs::stat::id_of(&path)
-                            .is_some_and(|id| skwir_core::fs::stat::id_of(&at(&first)) == Some(id))
-                }
-            }
+            Some((path, what))
         })
+        .collect();
+    Some(MadeTree::new(items))
 }
 
 /// `archive.extract`: what the menus run.

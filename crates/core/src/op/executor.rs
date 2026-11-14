@@ -4527,7 +4527,7 @@ impl Executor {
                         applied += 1;
                         holds = true;
                         step_came = Came::Applied;
-                        inverses.push(inv);
+                        journal_inverse(&mut inverses, inv);
                     }
                     Ok(None) => {
                         applied += 1;
@@ -4603,7 +4603,7 @@ impl Executor {
                     applied += 1;
                     held.push(step.describe());
                     match inverse {
-                        Some(inverse) => inverses.push(inverse),
+                        Some(inverse) => journal_inverse(&mut inverses, inverse),
                         None => complete = false,
                     }
                 }
@@ -4731,6 +4731,14 @@ fn first_conflict(
         StepStatus::Conflict { reason } => Some(reason),
         _ => None,
     })
+}
+
+/// `inverse` among a run's inverses, which are taken back the last first:
+/// one that is several steps (`op::Steps`, what an archive merged into a
+/// folder placed) as each of them, in its order, so that Undo checks and
+/// takes back each with its own inverse, as it does a merge's copies.
+fn journal_inverse(inverses: &mut Vec<Box<dyn Operation>>, inverse: Box<dyn Operation>) {
+    inverses.extend(super::each_step(inverse).into_iter().rev());
 }
 
 /// A context for a dry run of `steps` before a plan the user asked for as

@@ -114,8 +114,8 @@ impl Clashes {
 
     /// What the choices for all are called. The first is every clash's
     /// but a folder's onto a folder, named by what comes: a folder onto a
-    /// file, or one a step makes (never merged), takes a file's choices
-    /// and is a folder all the same. The second, a folder's onto a
+    /// file, or one a step makes that cannot say what it holds (never
+    /// merged), takes a file's choices and is a folder all the same. The second, a folder's onto a
     /// folder, says so where the first names folders too.
     fn head_names(&self) -> (&'static str, &'static str) {
         let (mut files, mut folders) = (false, false);
@@ -242,7 +242,7 @@ impl Clashes {
         match self.question.clashes.first().map(|c| c.act) {
             Some(Act::Move) => ("Move", "moved"),
             Some(Act::Link) => ("Link", "linked"),
-            Some(Act::Make { verb, done }) => (verb, done),
+            Some(Act::Make { verb, done, .. }) => (verb, done),
             Some(Act::Copy) | None => ("Copy", "copied"),
         }
     }
@@ -666,11 +666,13 @@ mod tests {
             dialog().head_names(),
             ("Files, for all", "Folders, for all")
         );
-        // A folder an extraction makes takes a file's choices.
+        // A folder an extraction makes that cannot say what it holds takes
+        // a file's choices.
         let made = |there: &str, folder: bool| Clash {
             act: Act::Make {
                 verb: "Extract",
                 done: "extracted",
+                merges: false,
             },
             ..clash(there, folder, None, true)
         };
@@ -699,6 +701,26 @@ mod tests {
             beside.head_names(),
             ("Folders, for all", "Folders onto folders, for all")
         );
+        // One that says what it holds is merged, as a copy's folder is:
+        // its own clashes under it.
+        let merged = |there: &str, folder: bool, inside| Clash {
+            act: Act::Make {
+                verb: "Extract",
+                done: "extracted",
+                merges: true,
+            },
+            ..clash(there, folder, inside, true)
+        };
+        let mut into = question(vec![
+            merged("/example/dest/photos", true, None),
+            merged("/example/dest/photos/it's a.jpg", false, Some(0)),
+        ]);
+        assert_eq!(into.heads(), 2);
+        assert_eq!(into.words(), ("Extract", "extracted"));
+        assert_eq!(into.outcome(0), Choice::Merge);
+        assert_eq!(into.shown(), vec![0, 1]);
+        into.each.insert(0, Choice::KeepBoth);
+        assert_eq!(into.shown(), vec![0], "kept beside, nothing in it asked");
     }
 
     /// Every name taken is a row the keys reach, however many: the list

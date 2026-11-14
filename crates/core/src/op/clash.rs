@@ -3,12 +3,13 @@
 //! ADR-059): found by the dry run before anything is done, answered once,
 //! and the answers made the plan ([`settle`]): a copy, a move, a link or
 //! what is made under a new name, a Trash step before what replaces, the
-//! steps of a merge, an `Rmdir` for each folder a move-merge emptied. What
+//! steps of a merge, an `Rmdir` for each folder a move-merge emptied, a
+//! step that makes a folder merged into the one there (`merge_made`). What
 //! is never asked is settled the same way: a copy or a link into its own
 //! folder, two items of one name, an item already there whole, a link
 //! already made, what is made there already.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -16,8 +17,8 @@ use std::time::SystemTime;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    Change, Copy, Delete, EntryRef, Link, Made, Move, Operation, Rmdir, StepContext, StepStatus,
-    Trash, Uncopy, builtin,
+    Change, Copy, Delete, EntryRef, Link, Made, MadeItem, MadeTree, Move, Operation, Placing,
+    Rmdir, StepContext, StepStatus, Trash, Uncopy, builtin,
 };
 
 /// What is replaced at `there` goes: to the trash, or for good where its
@@ -182,10 +183,13 @@ pub enum Act {
     Link,
     /// Makes something new there ([`Made`]): the verb on the question's
     /// button and what nothing is until it is answered ("Extract",
-    /// "extracted").
+    /// "extracted"), and whether a folder it makes is merged into a folder
+    /// there, as the step says what it makes item by item
+    /// (`Operation::made_tree`).
     Make {
         verb: &'static str,
         done: &'static str,
+        merges: bool,
     },
 }
 
@@ -211,10 +215,15 @@ impl Clash {
 
     /// A folder onto a folder: merged, both kept, or skipped. Any other
     /// takes a file's choices, and so do a link to a folder (a link is
-    /// what it is, never merged) and what a step makes (new, never merged
-    /// into what is there).
+    /// what it is, never merged) and a folder a step makes that cannot say
+    /// what it holds (an archive whose listing is cut short).
     pub fn folders(&self) -> bool {
-        matches!(self.act, Act::Copy | Act::Move) && self.source.folder && self.there.folder
+        let merges = match self.act {
+            Act::Copy | Act::Move => true,
+            Act::Make { merges, .. } => merges,
+            Act::Link => false,
+        };
+        merges && self.source.folder && self.there.folder
     }
 
     /// What it says where no one is asked: the dry run's words.
@@ -569,9 +578,11 @@ impl Walk<'_> {
     /// where the step found it (an archive's one member), made beside
     /// what an earlier step makes there (two archives of one name
     /// extracted into one folder), or as the answer says where something
-    /// is there, with a file's choices. Made there already, it is done.
-    /// What is there is never put in the trash when it is, or holds, what
-    /// the step reads (`Made::inputs`): the step's check says so instead.
+    /// is there: a folder's choices for a folder onto a folder where the
+    /// step says what it makes item by item, else a file's. Made there
+    /// already, it is done. What is there is never put in the trash when
+    /// it is, or holds, what the step reads (`Made::inputs`): the step's
+    /// check says so instead.
     fn make(&mut self, step: usize, op: &dyn Operation, made: &Made) {
         let target = &made.target;
         let named = target
@@ -589,6 +600,12 @@ impl Walk<'_> {
             return self.push(op.clone_box());
         }
         let (verb, done) = made.words;
+        let there = Side::of(target);
+        // A folder onto a folder is merged where the step says all it
+        // makes.
+        let tree = (made.folder && there.folder)
+            .then(|| op.made_tree(self.ctx))
+            .flatten();
         // What comes is what the step makes, not what it reads (the
         // archive extracted, the first file compressed): a folder or a
         // file, of the size the step foresees if it does, as new as the
@@ -597,18 +614,24 @@ impl Walk<'_> {
         let clash = Clash {
             step,
             inside: None,
-            act: Act::Make { verb, done },
+            act: Act::Make {
+                verb,
+                done,
+                merges: tree.is_some(),
+            },
             source: Side {
                 path: made.from.clone(),
                 folder: made.folder,
                 size: made.size,
                 modified: newest(&made.inputs, self.ctx),
             },
-            there: Side::of(target),
+            there,
         };
         let choice = self.answer.choice(&clash);
         let newer = matches!((clash.source.modified, clash.there.modified),
             (Some(source), Some(there)) if source > there);
+        let folders = clash.folders();
+        let index = self.clashes.len();
         self.clashes.push(clash);
         self.changed = true;
         match choice {
@@ -621,7 +644,123 @@ impl Walk<'_> {
                 }
                 self.push(op.clone_box());
             }
+            // A folder's choices are a folder's that says what it holds.
+            Choice::Merge if folders => match &tree {
+                Some(tree) => self.merge_made(step, op, made, tree, index),
+                None => self.make_beside(op, made),
+            },
             Choice::Merge | Choice::KeepBoth => self.make_beside(op, made),
+        }
+    }
+
+    /// What `op` makes merged into the folder there under its name, as a
+    /// copy's folder is (`merge`): what is not there placed whole, what is
+    /// there the same left as it is ([`MadeTree::sames`], one walk), a
+    /// folder there merged in turn, and anything else there asked about
+    /// with its kind's choices, a folder's onto a folder, a file's
+    /// otherwise. What is replaced goes first (never what the step reads,
+    /// or what holds it: the step's check says its name is taken); then
+    /// the step, placing what it places ([`Placing`]), kept beside under
+    /// the first name free (`photo (2).jpg`, as what a step makes is).
+    fn merge_made(
+        &mut self,
+        step: usize,
+        op: &dyn Operation,
+        made: &Made,
+        tree: &MadeTree,
+        index: usize,
+    ) {
+        let target = &made.target;
+        let (verb, done) = made.words;
+        let same = tree.sames(target, self.ctx.cancel_token());
+        let children = tree.children();
+        let none: &[&Path] = &[];
+        let items = |folder: &Path| -> Vec<&Path> {
+            let mut items = children.get(folder).map_or(none, Vec::as_slice).to_vec();
+            // Taken from the end: the first name first.
+            items.reverse();
+            items
+        };
+        let mut placing = Vec::new();
+        let mut aside = Vec::new();
+        // The names given to items kept beside, which the next are not.
+        let mut taken: HashSet<PathBuf> = HashSet::new();
+        // Depth first, in their names' order: a folder's clashes right
+        // after it, as the dialog lists them.
+        let mut walk = vec![(index, items(Path::new("")))];
+        while let Some(top) = walk.last_mut() {
+            let inside = top.0;
+            let Some(path) = top.1.pop() else {
+                walk.pop();
+                continue;
+            };
+            if same.contains(path) {
+                continue;
+            }
+            let there = target.join(path);
+            if !self.ctx.exists(&there) {
+                placing.push(Placing::same(path));
+                continue;
+            }
+            let item = tree.get(path);
+            let folder = item == Some(&MadeItem::Folder);
+            let (size, modified) = match item {
+                Some(MadeItem::File { size, modified }) => (*size, *modified),
+                _ => (None, None),
+            };
+            let clash = Clash {
+                step,
+                inside: Some(inside),
+                act: Act::Make {
+                    verb,
+                    done,
+                    merges: true,
+                },
+                source: Side {
+                    path: made.from.join(path),
+                    folder,
+                    size,
+                    modified,
+                },
+                there: Side::of(&there),
+            };
+            let choice = self.answer.choice(&clash);
+            let newer = matches!((clash.source.modified, clash.there.modified),
+                (Some(source), Some(there)) if source > there);
+            let folders = clash.folders();
+            let at = self.clashes.len();
+            self.clashes.push(clash);
+            match choice {
+                Choice::Skip => {}
+                Choice::ReplaceIfNewer if !newer => {}
+                Choice::Replace | Choice::ReplaceIfNewer => {
+                    let holds_input = made.inputs.iter().any(|input| input.starts_with(&there));
+                    if !holds_input && let Some(entry) = EntryRef::from_path(&there) {
+                        aside.push(put_aside(entry));
+                    }
+                    placing.push(Placing::same(path));
+                }
+                Choice::Merge if folders => walk.push((at, items(path))),
+                Choice::Merge | Choice::KeepBoth => {
+                    let dir = there.parent().unwrap_or(target);
+                    let name = kept_name(path.file_name().unwrap_or_default(), "", folder, |n| {
+                        let at = dir.join(n);
+                        taken.contains(&at) || self.ctx.exists(&at)
+                    });
+                    taken.insert(dir.join(&name));
+                    placing.push(Placing {
+                        from: path.to_path_buf(),
+                        to: path.with_file_name(name),
+                    });
+                }
+            }
+        }
+        for step in aside {
+            self.push(step);
+        }
+        match op.merged(placing) {
+            Some(merged) => self.push(merged),
+            None => self.make_beside(op, made),
         }
     }
 

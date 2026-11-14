@@ -1,7 +1,9 @@
 # ADR-059: Archives are made of what skwir hands the helper
 
 Status: accepted, 2026-10-13. Revises ADR-048 (attributes put back,
-passwords asked, a name taken asked about). Built.
+passwords asked, a name taken asked about). Built. Decision 6 amended
+2026-11-14: an extraction's folder is merged into the folder there, as a
+copy's is.
 
 ## Context
 
@@ -96,9 +98,10 @@ to copy and move across (Shift+F5, Shift+F6), none to extract across.
    - Replace if newer compares what is there with the latest change
      among what the step reads, a file deep in a folder as well as the
      folder.
-   - It is never merged: an extraction merged into a folder would need
-     each file it placed undone apart, and the dialog's Merge is a
-     copy's. The dialog's button says the step's verb (Extract, Compress).
+   - ~~It is never merged.~~ **Amended 2026-11-14:** a folder it makes
+     onto a folder there is merged into it, as a copy's folder is (see
+     Amendments). The dialog's button says the step's verb (Extract,
+     Compress).
    - An extraction kept beside places the archive's single member under
      the new name. A file's name keeps its extension last
      (`report (2).pdf` of `report.pdf.zip`): the step reads the archive's
@@ -165,3 +168,64 @@ to copy and move across (Shift+F5, Shift+F6), none to extract across.
 - On Windows the helper runs unsandboxed, as it does to extract (ADR-039);
   macOS and Windows compile it, untried (ADR-035): the Mac's quarantine
   and the Windows temporary folder above are compiled, never run.
+
+## Amendments
+
+### 2026-11-14: an extraction merges into its folder, as a copy does
+
+An archive extracted, a few of its files removed, then extracted again,
+was asked about with a file's choices: Keep both (a second whole copy,
+`photos (2)`), Replace (the folder to the trash, with what the user kept
+and changed in it), Skip. None gave back what was removed. Copies already
+merge (ADR-054); Windows' Extract All, 7-Zip, File Roller and `unzip`
+write into the folder there and ask about the files that are there.
+macOS's Archive Utility and GNOME Files make `photos 2` and never ask;
+Ark writes in without asking, which its users report as a bug. The
+user's choice: merge as a copy does, asked.
+
+- **A folder onto a folder takes a folder's choices** (`Clash::folders`,
+  `Act::Make { merges }`): Merge, Keep both, Skip; Enter merges, as for a
+  copy. Replace is not offered for a folder onto a folder, as for a copy.
+  Only where the step says all it makes (`Operation::made_tree`): an
+  archive whose whole listing (`Bounds::WHOLE`, 64 000 members) is cut
+  short, or that a member would leave, keeps a file's choices. A file it
+  makes (an archive of one file) keeps a file's choices.
+- **Settled as a copy's merge is** (`clash::Walk::merge_made`), from the
+  archive's listing compared with the folder there (`op::MadeTree`):
+  - What is there the same is left as it is, unasked: a folder holding
+    the same items and nothing else, a file of its size and time (to two
+    seconds, a FAT drive's), a link saying the same, a hard link to its
+    first name. One walk tells them all (`MadeTree::sames`): each item is
+    read once, nothing under a folder that is not there.
+  - What is not there is placed whole.
+  - A folder there that differs is merged in turn (its row under its
+    folder's in the dialog); a file there that differs takes a file's
+    choices: kept beside (`photo (2).jpg`, no word, as what a step makes
+    is), replaced through the trash, replaced if newer (the member's time
+    against the file's), or skipped. What is, or holds, what the step
+    reads is never replaced: the step's check refuses its name.
+  - The answers are the plan: the Trash steps for what is replaced, then
+    the extraction, which carries where each item it places goes
+    (`Extract::merge`, `op::Placing`, each path only names: what a plan
+    from elsewhere says that would leave the folder is refused).
+- **Extracted once, placed item by item.** The archive is extracted
+  whole into its staging folder, as before (a `.tar.gz` can only be read
+  from its start), and only what was chosen is placed
+  (`Staging::place_within`: a folder the archive made read-only is opened
+  for the move, its permissions given back). Its room is checked against
+  all it extracts, which the staging folder holds. One that cannot be
+  placed takes those placed before back into the staging folder.
+- **Undone item by item.** Its undo is each item it placed, to the trash
+  (`op::Steps`, several steps as one, which the executor journals as each,
+  `each_step`): never the folder, never what the user kept. Where the
+  volume keeps no trash, one `archive_unmake` takes them back together
+  while each is as made, and Redo extracts them again together.
+- Checked again, each item placed and still the same is done; all of
+  them, the step is done ("already extracted into photos").
+- An agent's `on_conflict` follows: `folders` says what becomes of the
+  folder there (`merge` by default), `files` of each file in it that
+  differs. Where `files: replace` replaced the folder whole, it now
+  merges into it and replaces what differs.
+- Placing a read-only folder an archive holds alone moved it between
+  folders, which Unix refuses (its `..` is written): such an archive
+  could not be extracted. `place_within` places it.

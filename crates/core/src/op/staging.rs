@@ -122,6 +122,39 @@ impl Staging {
         sys::rename_noreplace(made, target)
     }
 
+    /// Put `made`, anywhere in what this folder holds, at `target`, never
+    /// over what is there: an item of a folder made here (an archive's
+    /// member, merged into a folder there). Taking a name out of a folder
+    /// needs that folder open to its owner, and moving a folder to another
+    /// needs the folder itself open (Unix: its `..` is written): what an
+    /// archive made read-only is opened for the move, the folder it leaves
+    /// staying so (this folder goes whole), the one it moves getting its
+    /// own permissions back once placed.
+    ///
+    /// # Errors
+    /// When `target` is taken, or the move fails.
+    pub fn place_within(&self, made: &Path, target: &Path) -> io::Result<()> {
+        debug_assert!(made.starts_with(self.path()), "made in the staging folder");
+        let open = |path: &Path| -> io::Result<Option<std::fs::Permissions>> {
+            let meta = std::fs::symlink_metadata(path)?;
+            if !meta.is_dir() || sys::open_to_owner(&meta.permissions()) {
+                return Ok(None);
+            }
+            std::fs::set_permissions(path, sys::opened_to_owner(&meta.permissions()))?;
+            Ok(Some(meta.permissions()))
+        };
+        if let Some(parent) = made.parent().filter(|parent| *parent != self.path()) {
+            open(parent)?;
+        }
+        let own = open(made)?;
+        let placed = sys::rename_noreplace(made, target);
+        if let Some(own) = own {
+            let back = if placed.is_ok() { target } else { made };
+            std::fs::set_permissions(back, own)?;
+        }
+        placed
+    }
+
     /// Prepare this empty directory itself and publish it beside its
     /// staging name. A read-only directory cannot move between parents on
     /// Unix (updating `..` needs write access), but can be renamed within

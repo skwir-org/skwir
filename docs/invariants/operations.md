@@ -602,7 +602,16 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   or made, ADR-059) says so (`Operation::makes`, `made_as`) and is
   settled as a copy is, with a file's choices: kept beside under a number
   (`photos (2).zip`, `clash::kept_name` with no word), what is there
-  replaced through the trash, or skipped. It is never merged. A plan
+  replaced through the trash, or skipped. A folder it makes onto a
+  folder there takes a folder's choices and is merged as a copy's is
+  (ADR-059 amended 2026-11-14), only where the step says all it makes,
+  item by item (`Operation::made_tree`, an `op::MadeTree`; else a file's
+  choices): what is there the same left (`MadeTree::sames`, one walk),
+  what is not placed whole, a folder that differs merged in turn, a file
+  that differs asked. The step then carries where each item goes
+  (`Operation::merged`, `op::Placing`, names only), and its undo is each
+  item it placed (`op::Steps`, journaled as each step: never the folder
+  there, never what was in it). A plan
   with such a step is settled even with no copy in it
   (`clash::takes_names`). What is there is never trashed when it is, or
   holds, what the step reads (`Made::inputs`): the step's check refuses

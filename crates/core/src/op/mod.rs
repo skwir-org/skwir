@@ -14,6 +14,7 @@ mod context;
 mod entry_ref;
 mod executor;
 mod listed;
+pub mod made;
 mod order;
 mod pace;
 #[cfg(target_os = "linux")]
@@ -26,6 +27,7 @@ pub mod records;
 pub mod room;
 mod speed;
 pub mod staging;
+mod steps;
 mod sys;
 pub mod transfer;
 #[cfg(target_os = "linux")]
@@ -57,8 +59,10 @@ pub use executor::{
     PlanObserver, Progress, Reader, RunKind, RunningPlan, SecretAsker, Since, Transfer, Verdict,
     Waiting, WaitsFor, counts_as_action,
 };
+pub use made::{MadeItem, MadeTree, Placing};
 pub use order::{RenameOrderError, RenameRequest, order_renames};
 pub use staging::Staging;
+pub use steps::{Steps, each as each_step};
 /// The trash folders of the user's on this machine's own volumes, which
 /// the trash place lists: no network mount's (`trash_list`).
 #[cfg(target_os = "linux")]
@@ -694,8 +698,9 @@ pub trait Operation: Send + Sync + fmt::Debug {
     }
     /// What it makes, new, under a name of its own ([`Made`]): an archive
     /// extracted, one made. A name taken there is settled as a copy's is
-    /// (`clash`), with a file's choices: what is made is never merged.
-    /// `None` for any other step. May read what it is made of, where that
+    /// (`clash`): with a file's choices, or a folder's onto a folder there
+    /// where the step says what it makes item by item (`made_tree`), which
+    /// it is then merged into (`merged`). `None` for any other step. May read what it is made of, where that
     /// says its name (an archive's one member): on the plan's thread.
     fn makes(&self, ctx: &StepContext) -> Option<Made> {
         let _ = ctx;
@@ -713,6 +718,23 @@ pub trait Operation: Send + Sync + fmt::Debug {
     /// in the step so that what is checked is what is applied.
     fn made_as(&self, name: std::ffi::OsString) -> Option<Box<dyn Operation>> {
         let _ = name;
+        None
+    }
+    /// What it makes, item by item, where it makes a folder that a folder
+    /// there under its name may be merged into ([`MadeTree`]: an archive's
+    /// members, as its listing says them). `None` where it cannot say all
+    /// of it (a listing cut short): the name taken is then asked about
+    /// with a file's choices. May read: on the plan's thread.
+    fn made_tree(&self, ctx: &StepContext) -> Option<MadeTree> {
+        let _ = ctx;
+        None
+    }
+    /// The same step merged into the folder there under its name: it puts
+    /// there only what `placing` says, each item where it says
+    /// ([`Placing`]), as settling the names found them (ADR-054). `None`
+    /// for a step that cannot be merged.
+    fn merged(&self, placing: Vec<Placing>) -> Option<Box<dyn Operation>> {
+        let _ = placing;
         None
     }
     /// The steps it is once what it reads is read ([`unfold`]): a notes
@@ -832,6 +854,16 @@ pub trait Effect: Send + Sync + fmt::Debug {
         let _ = name;
         None
     }
+    /// `Operation::made_tree`.
+    fn made_tree(&self, ctx: &StepContext) -> Option<MadeTree> {
+        let _ = ctx;
+        None
+    }
+    /// `Operation::merged`.
+    fn merged(&self, placing: Vec<Placing>) -> Option<Box<dyn Operation>> {
+        let _ = placing;
+        None
+    }
     /// `Operation::footprint`.
     fn footprint(&self, volumes: &footprint::Volumes) -> Option<footprint::Footprint> {
         let _ = volumes;
@@ -892,6 +924,12 @@ impl<T: Kind> Operation for T {
     fn made_as(&self, name: std::ffi::OsString) -> Option<Box<dyn Operation>> {
         Effect::made_as(self, name)
     }
+    fn made_tree(&self, ctx: &StepContext) -> Option<MadeTree> {
+        Effect::made_tree(self, ctx)
+    }
+    fn merged(&self, placing: Vec<Placing>) -> Option<Box<dyn Operation>> {
+        Effect::merged(self, placing)
+    }
     fn footprint(&self, volumes: &footprint::Volumes) -> Option<footprint::Footprint> {
         Effect::footprint(self, volumes)
     }
@@ -943,6 +981,15 @@ impl OpRegistry {
     }
 
     pub fn build(&self, data: &OpData) -> anyhow::Result<Box<dyn Operation>> {
+        // Several steps as one, each built as its kind says.
+        if data.kind == steps::KIND {
+            let each: Vec<OpData> = serde_json::from_value(data.args.clone())?;
+            let built = each
+                .iter()
+                .map(|step| self.build(step))
+                .collect::<anyhow::Result<Vec<_>>>()?;
+            return Steps::of(built).ok_or_else(|| anyhow::anyhow!("`steps` lists no step"));
+        }
         let d = self
             .kinds
             .read()

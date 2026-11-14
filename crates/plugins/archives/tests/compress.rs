@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use serde_json::json;
 use skwir_core::app::{App, AppConfig, SecretQuestion};
 use skwir_core::command::{Invocation, Outcome};
-use skwir_core::op::clash::{Act, Answer, FileChoice, Policy};
+use skwir_core::op::clash::{Act, Answer, FileChoice, FolderChoice, Policy};
 use skwir_core::op::{ExecEvent, Plan};
 use skwir_platform::archive::{self, Format};
 
@@ -584,7 +584,7 @@ fn a_password_is_asked_twice_to_make_an_archive_and_once_to_extract_it() {
 }
 
 #[test]
-fn an_extraction_onto_a_name_taken_asks_and_keeps_both_or_replaces() {
+fn an_extraction_onto_its_folder_there_keeps_both_or_merges() {
     if !with_archive_worker() {
         return;
     }
@@ -647,6 +647,8 @@ fn an_extraction_onto_a_name_taken_asks_and_keeps_both_or_replaces() {
         )
     };
 
+    // The folder there is asked about as a copy's is: merged, both kept,
+    // or skipped. Kept beside, its one folder unwrapped.
     let kept = whole(&app, extract(), |app| {
         let question = clashes_asked(app);
         assert_eq!(question.clashes.len(), 1);
@@ -655,20 +657,25 @@ fn an_extraction_onto_a_name_taken_asks_and_keeps_both_or_replaces() {
             clash.act,
             Act::Make {
                 verb: "Extract",
-                done: "extracted"
+                done: "extracted",
+                merges: true,
             }
         );
-        assert!(!clash.folders(), "what is made is never merged");
+        assert!(clash.folders(), "merged as a copy's folder is");
         assert_eq!(clash.there.path, dest.join("project-1.0"));
         // What comes is the folder it makes, not the archive it reads: no
-        // size yet, as new as the archive.
+        // size, as new as the archive.
         assert!(clash.source.folder, "{:?}", clash.source);
         assert_eq!(clash.source.size, None);
         assert_eq!(
             clash.source.modified,
             std::fs::metadata(&archive).unwrap().modified().ok()
         );
-        assert!(app.answer_clashes(question.id, Some(Answer::all(Policy::default()))));
+        let both = Answer::all(Policy {
+            folders: FolderChoice::KeepBoth,
+            ..Policy::default()
+        });
+        assert!(app.answer_clashes(question.id, Some(both)));
     });
     assert!(matches!(kept, ExecEvent::Finished { error: None, .. }));
     assert_eq!(
@@ -677,28 +684,36 @@ fn an_extraction_onto_a_name_taken_asks_and_keeps_both_or_replaces() {
         "kept beside, its one folder unwrapped"
     );
     assert!(dest.join("project-1.0/mine.txt").is_file());
-
-    // Replaced: what was there goes to the trash, which Wine's shell
-    // does not.
-    if skwir_core::system::under_wine("trashing through the shell") {
-        return;
-    }
     std::fs::remove_dir_all(dest.join("project-1.0 (2)")).unwrap();
-    let replaced = whole(&app, extract(), |app| {
+
+    // Merged, as Enter does: what is missing is extracted into it, what
+    // is there stays, nothing asked of what is in it.
+    let merged = whole(&app, extract(), |app| {
         let question = clashes_asked(app);
-        let replace = Answer::all(Policy {
-            files: FileChoice::Replace,
-            ..Policy::default()
-        });
-        assert!(app.answer_clashes(question.id, Some(replace)));
+        assert_eq!(question.clashes.len(), 1, "{:?}", question.clashes);
+        assert!(app.answer_clashes(question.id, Some(Answer::default())));
     });
-    assert!(
-        matches!(replaced, ExecEvent::Finished { error: None, .. }),
-        "{replaced:?}"
+    assert!(matches!(merged, ExecEvent::Finished { error: None, .. }));
+    assert_eq!(
+        std::fs::read_to_string(dest.join("project-1.0/README")).unwrap(),
+        "read me"
     );
-    assert!(dest.join("project-1.0/README").is_file());
-    assert!(!dest.join("project-1.0/mine.txt").exists());
+    assert!(dest.join("project-1.0/mine.txt").is_file());
     assert!(!dest.join("v1.0").exists(), "no folder around it");
+    assert!(!dest.join("project-1.0 (2)").exists());
+
+    // Merged again: what it holds of the archive's is there the same, and
+    // nothing else is placed.
+    let again = whole(&app, extract(), |app| {
+        let question = clashes_asked(app);
+        assert_eq!(question.clashes.len(), 1, "only the folder");
+        assert!(app.answer_clashes(question.id, Some(Answer::default())));
+    });
+    assert!(matches!(again, ExecEvent::Finished { error: None, .. }));
+    assert_eq!(
+        std::fs::read_dir(dest.join("project-1.0")).unwrap().count(),
+        2
+    );
 }
 
 #[test]
@@ -1049,17 +1064,23 @@ fn replace_never_puts_in_the_trash_what_it_reads() {
     assert!(error.contains("is among what it compresses"), "{error}");
     assert_eq!(std::fs::read(&old).unwrap(), before, "never trashed");
 
-    // A folder holding the archive extracted under its name.
+    // A folder holding the archive extracted under its name, merged into:
+    // the archive's own name in it is never replaced, and the check says
+    // so before anything is done.
     let x = tmp.path().join("x");
     let photos = x.join("photos");
     std::fs::create_dir_all(&photos).unwrap();
     std::fs::write(photos.join("pic.txt"), "pic").unwrap();
-    applied(
-        &app,
-        &plan_of(&app, "archive.compress", &json!({ "entries": [photos] })),
-    );
     let inside = photos.join("photos.zip");
-    std::fs::rename(x.join("photos.zip"), &inside).unwrap();
+    // Made twice, the second holding the first under its own name.
+    for _ in 0..2 {
+        applied(
+            &app,
+            &plan_of(&app, "archive.compress", &json!({ "entries": [photos] })),
+        );
+        std::fs::rename(x.join("photos.zip"), &inside).unwrap();
+    }
+    let before = std::fs::read(&inside).unwrap();
     std::fs::write(photos.join("pic.txt"), "pic, since").unwrap();
     let ended = whole(
         &app,
@@ -1070,6 +1091,22 @@ fn replace_never_puts_in_the_trash_what_it_reads() {
         ),
         |app| {
             let question = clashes_asked(app);
+            // The folder, then what differs in it: the file changed since
+            // and the archive's own name.
+            let there: Vec<_> = question
+                .clashes
+                .iter()
+                .map(|c| c.there.path.clone())
+                .collect();
+            assert_eq!(
+                there,
+                [
+                    photos.clone(),
+                    photos.join("photos.zip"),
+                    photos.join("pic.txt")
+                ]
+            );
+            assert_eq!(question.clashes[1].inside, Some(0));
             let replace = Answer::all(Policy {
                 files: FileChoice::Replace,
                 ..Policy::default()
@@ -1081,8 +1118,8 @@ fn replace_never_puts_in_the_trash_what_it_reads() {
         panic!("{ended:?}")
     };
     let error = error.expect("refused");
-    assert!(error.contains("holds “photos.zip”"), "{error}");
-    assert!(inside.is_file(), "never trashed");
+    assert!(error.contains("“photos.zip” is already there"), "{error}");
+    assert_eq!(std::fs::read(&inside).unwrap(), before, "never trashed");
     assert_eq!(
         std::fs::read_to_string(photos.join("pic.txt")).unwrap(),
         "pic, since"

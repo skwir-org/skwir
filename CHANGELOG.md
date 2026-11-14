@@ -27,6 +27,13 @@
 - **A paused film comes back fitted**: a small film paused in the dock,
   shown again in the panel, was drawn at its own size until it played;
   it fills the panel as before.
+- **Extracting into the folder there merges**: an archive extracted again
+  where its folder is (a few files removed from it since) was offered only
+  a second whole copy, replacing the folder, or skipping. Its folder is
+  now merged into as a copy's is: what was removed comes back, what is
+  there the same stays, a file changed since is asked about, and Undo
+  takes back only what it placed. An archive holding one read-only folder
+  is extracted again, which it could not be.
 - **The player's speed is one row**, as the menus' other settings are: its
   name, then its values, Left and Right walking them. Its headings and
   the slideshow's and the timeline's choices are drawn as every menu's.

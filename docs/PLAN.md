@@ -1666,9 +1666,11 @@ above; each with the design its fixer proposed):
   (MoltenVK, 7.4 MB), dav1d linked into the helper (5.1 MB), GStreamer
   built by us.
 - Archives: 7z and RAR decryption (libarchive has none), passwords for
-  agents, Merge for an extraction onto a folder (2026-10-13); a Mac's
-  `__MACOSX` beside an archive's one folder still makes a folder around
-  them (2026-10-15).
+  agents (2026-10-13); a Mac's `__MACOSX` beside an archive's one folder
+  still makes a folder around them (2026-10-15). An extraction merged
+  into its folder (ADR-059 amended 2026-11-14) extracts the whole archive
+  into its staging folder however little it places (the helper takes no
+  list of members); the dialog gives no time for a folder it makes.
 - Text documents (2026-10-03, ADR-030): `.fodt`, presentations and
   spreadsheets as text, find beyond the part shown, links to bookmarks in
   another part.
