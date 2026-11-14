@@ -69,7 +69,9 @@ struct Snapshot {
 /// places plugin publishes what it finds at once and the volumes `lsblk`
 /// lists from a worker, and re-enabled it shows at once those it measured
 /// last, so a snapshot taken while that worker runs depends on when it
-/// ends.
+/// ends. Work on a thread of a plugin's own is waited for by nothing here:
+/// what it registers is registered at once too, as the remote plugin
+/// publishes what it knows before its servers are read on theirs.
 fn snapshot(app: &App) -> Snapshot {
     // A remote's lane may wait for good on a server gone (a mount of the
     // machine's whose server stopped answering): not what is compared.

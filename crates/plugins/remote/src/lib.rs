@@ -1854,6 +1854,10 @@ impl Plugin for RemotePlugin {
                 },
             )
             .shows();
+        // What is known already is in the sidebar at once (Nearby, and the
+        // mounts and servers read before it was turned off): the refresh
+        // that reads the servers again runs on a thread of its own (AR-11).
+        self.remotes.publish(app);
         self.remotes.refresh(app);
     }
 
