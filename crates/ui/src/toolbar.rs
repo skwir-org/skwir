@@ -978,6 +978,23 @@ pub struct Popup {
     scroll: ScrollHandle,
     /// The submenu open beside one of its rows, if any.
     pub sub: Submenu,
+    /// Opened by the wheel over its button and not used since (`Passing`).
+    pub passing: Option<Passing>,
+}
+
+/// A popup the wheel opened over its button to show what it turns (a
+/// player's volume over its speaker), not used since: it holds no
+/// keyboard (what had it keeps it, a field being typed in), and it closes
+/// once the pointer has been off the button and off it for a moment. A
+/// press in it, or the keyboard reaching it, makes it a popup as one a
+/// click opened (`Popup::take_keyboard`). It is the popup's: whatever
+/// closes the popup ends it, its close on its way too.
+#[derive(Default)]
+pub struct Passing {
+    /// Whether the pointer is over its button, over the popup.
+    pub over: (bool, bool),
+    /// Its close, on its way while the pointer is off both.
+    pub leaving: Option<gpui::Task<()>>,
 }
 
 /// A popup's submenu, open beside its row (`Button::opens_beside`) as a
@@ -1255,8 +1272,42 @@ impl Popup {
             previous,
             scroll: ScrollHandle::new(),
             sub: Submenu::default(),
+            passing: None,
         }
     }
+
+    /// A popup the wheel opened over its button, the pointer on it
+    /// (`Passing`): the keyboard stays where it is, so it has nothing to
+    /// give back until it takes it.
+    pub fn passing(kind: &'static str, cx: &mut Context<Shell>) -> Self {
+        Self {
+            kind,
+            focus: cx.focus_handle().tab_stop(false),
+            previous: crate::modal::FocusReturn::none(),
+            scroll: ScrollHandle::new(),
+            sub: Submenu::default(),
+            passing: Some(Passing {
+                over: (true, false),
+                leaving: None,
+            }),
+        }
+    }
+
+    /// A passing popup used: it takes the keyboard from what had it, to
+    /// give back when it closes, as a popup a click opened does. Whether
+    /// it was passing; the keyboard already inside it (Tab reached it) is
+    /// left where it is.
+    pub fn take_keyboard(&mut self, window: &mut Window, cx: &mut gpui::App) -> bool {
+        if self.passing.take().is_none() {
+            return false;
+        }
+        if !self.focus.contains_focused(window, cx) {
+            self.previous = crate::modal::FocusReturn::capture(window, cx);
+            window.focus(&self.focus, cx);
+        }
+        true
+    }
+
     pub fn restore(self, window: &mut Window, cx: &mut gpui::App) {
         self.previous.restore_if_any(window, cx);
     }

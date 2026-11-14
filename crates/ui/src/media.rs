@@ -1016,27 +1016,20 @@ pub enum VolumeOf {
 }
 
 /// The volume's slider, the panel's popup's or the dock's (one is open at
-/// a time).
+/// a time). Whether a popup the wheel opened is passing is the popup's
+/// (`toolbar::Passing`).
 #[derive(Default)]
 pub struct Volume {
     /// Its keyboard, given as its popup opens, in the `volume` place: Up and
     /// Down step it (`ui.volume_step`), Escape closes the popup.
     pub focus: Option<gpui::FocusHandle>,
     /// Pressed and not yet let go: the moves are followed over the window.
+    /// A popup opening forgets it: a press its slider saw is no new one's.
     pub held: bool,
     /// The wheel's turn under way, over a speaker or the slider: a mouse's
     /// notch is a step, a touchpad's slide goes a step at 60 px
     /// (`reader_scroll::Wheeled`).
     pub turn: crate::reader_scroll::WheelTurn,
-    /// Opened by the wheel over the speaker and not used since: it closes
-    /// once the pointer has been off the speaker and the popup for
-    /// `VOLUME_LINGER`. A press in it or its keys make it a popup as one a
-    /// click opened.
-    pub passing: bool,
-    /// Whether the pointer is over the speaker, over the popup.
-    pub over: (bool, bool),
-    /// The passing popup's close, on its way while the pointer is away.
-    pub leaving: Option<gpui::Task<()>>,
 }
 
 /// How long a volume popup the wheel opened stays once the pointer has
@@ -1128,11 +1121,6 @@ pub(crate) fn volume_control(
         .items_center()
         .gap_1()
         .on_scroll(wheel)
-        // Used, a popup the wheel opened stays as one a click opened.
-        .capture_any_mouse_down(cx.listener(|this, _, _, _| {
-            this.player.volume.passing = false;
-            this.player.volume.leaving = None;
-        }))
         .child(
             div()
                 .text_body()
@@ -1165,33 +1153,69 @@ pub(crate) fn volume_control(
 /// The upright slider's height, at 100 % (`sizes::sized`).
 const VOLUME_HEIGHT: f32 = 120.;
 
+/// A player's volume popup (`popup`, closed by `close`): its control
+/// (`volume_control`) and what makes one the wheel opened used, a press
+/// anywhere in it (`toolbar::Passing`), and what follows the pointer onto
+/// and off it.
+pub(crate) fn volume_panel(
+    popup: &crate::toolbar::Popup,
+    close: &'static str,
+    of: VolumeOf,
+    state: &Playback,
+    mute: Button,
+    shell: &Shell,
+    theme: &Theme,
+    cx: &mut Context<Shell>,
+) -> gpui::Stateful<gpui::Div> {
+    crate::toolbar::popup_panel(popup, close, theme, cx)
+        .w_auto()
+        .items_center()
+        .when(shell.a11y, |d| d.aria_label("Volume"))
+        .on_hover(cx.listener(move |this, over: &bool, window, cx| {
+            this.volume_over(of, true, *over, window, cx);
+        }))
+        // Before what is pressed takes the keyboard: what had it is what
+        // the popup gives it back to.
+        .capture_any_mouse_down(cx.listener(move |this, _, window, cx| {
+            this.volume_used(of, window, cx);
+        }))
+        .child(volume_control(
+            match of {
+                VolumeOf::Panel => "preview-volume",
+                VolumeOf::Dock => "dock-volume-slider",
+            },
+            of,
+            state,
+            mute,
+            shell,
+            theme,
+            cx,
+        ))
+}
+
 /// The panel's volume popup.
 fn volume_popup(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let popup = shell.preview.menu.as_ref()?;
     let state = &shell.preview.media.state;
+    let mute = control(
+        "preview-volume-mute",
+        speaker_icon(state),
+        if state.muted { "Unmute" } else { "Mute" },
+        "mute",
+        serde_json::Value::Null,
+    );
     Some(
-        crate::toolbar::popup_panel(popup, "ui.preview_menu", theme, cx)
-            .w_auto()
-            .items_center()
-            .on_hover(cx.listener(|this, over: &bool, window, cx| {
-                this.volume_over(true, *over, window, cx);
-            }))
-            .child(volume_control(
-                "preview-volume",
-                VolumeOf::Panel,
-                state,
-                control(
-                    "preview-volume-mute",
-                    speaker_icon(state),
-                    if state.muted { "Unmute" } else { "Mute" },
-                    "mute",
-                    serde_json::Value::Null,
-                ),
-                shell,
-                theme,
-                cx,
-            ))
-            .into_any_element(),
+        volume_panel(
+            popup,
+            "ui.preview_menu",
+            VolumeOf::Panel,
+            state,
+            mute,
+            shell,
+            theme,
+            cx,
+        )
+        .into_any_element(),
     )
 }
 
@@ -1246,24 +1270,21 @@ impl Shell {
     /// `ui.volume_step`: Up and Down on a volume's slider: the volume of the
     /// player whose popup is open, the dock's or the panel's.
     pub fn volume_step(&mut self, delta: f64, window: &mut Window, cx: &mut Context<Self>) {
-        // Used, a popup the wheel opened stays as one a click opened.
-        self.player.volume.passing = false;
-        self.player.volume.leaving = None;
-        let of = if self
-            .toolbar_menu
-            .as_ref()
-            .is_some_and(|menu| menu.kind == crate::dock::VOLUME)
-        {
+        let of = if self.volume_open(VolumeOf::Dock) {
             VolumeOf::Dock
         } else {
             VolumeOf::Panel
         };
+        // Keyed into, a popup the wheel opened stays as one a click opened.
+        if let Some(popup) = self.volume_popup_mut(of) {
+            popup.take_keyboard(window, cx);
+        }
         self.step_volume(of, delta, window, cx);
     }
 
     /// The wheel over a speaker or a volume's slider: up is louder. Over a
-    /// speaker whose popup is closed, it opens it to show the level, as
-    /// passing (`Volume::passing`).
+    /// speaker whose popup is closed, it opens it to show the level,
+    /// passing (`toolbar::Passing`).
     pub(crate) fn volume_wheel(
         &mut self,
         of: VolumeOf,
@@ -1277,29 +1298,39 @@ impl Shell {
         let turn = self.player.volume.turn.turn(wheeled, false);
         if turn != 0 {
             if !self.volume_open(of) {
-                match of {
-                    VolumeOf::Panel => self.run(
-                        "ui.preview_menu",
-                        serde_json::json!({ "kind": VOLUME_POPUP }),
-                        window,
-                        cx,
-                    ),
-                    VolumeOf::Dock => self.run(
-                        "ui.toolbar_menu",
-                        serde_json::json!({ "kind": crate::dock::VOLUME }),
-                        window,
-                        cx,
-                    ),
-                }
-                let opened = self.volume_open(of);
-                let volume = &mut self.player.volume;
-                volume.passing = opened;
-                // The pointer is on the speaker, the popup not yet under it.
-                volume.over = (true, false);
+                self.open_volume_passing(of, window, cx);
             }
             self.step_volume(of, -f64::from(turn) * VOLUME_STEP, window, cx);
         }
         cx.stop_propagation();
+    }
+
+    /// `of`'s volume popup opened by the wheel over its speaker, passing
+    /// (`toolbar::Passing`): the keyboard stays where it was, a field
+    /// being typed in too, until a press in it or a key uses it.
+    fn open_volume_passing(&mut self, of: VolumeOf, window: &mut Window, cx: &mut Context<Self>) {
+        let key = match of {
+            VolumeOf::Panel => format!("preview {VOLUME_POPUP}"),
+            VolumeOf::Dock => crate::dock::VOLUME.to_owned(),
+        };
+        if !self.toggle_popup(&key, &serde_json::Value::Null, window, cx) {
+            return;
+        }
+        self.player.volume.held = false;
+        match of {
+            VolumeOf::Panel => {
+                // The player's bar is the side of what is shown, never the
+                // bar of a container's view kept above it (`toolbar`
+                // reads `active_popup(shell, false)`): the wheel gave no
+                // side the keyboard to say which.
+                self.preview.menu_parked = false;
+                self.preview.menu = Some(crate::toolbar::Popup::passing(VOLUME_POPUP, cx));
+            }
+            VolumeOf::Dock => {
+                self.toolbar_menu = Some(crate::toolbar::Popup::passing(crate::dock::VOLUME, cx));
+            }
+        }
+        cx.notify();
     }
 
     /// Whether `of`'s volume popup is open.
@@ -1317,48 +1348,101 @@ impl Shell {
         }
     }
 
-    /// The pointer onto or off a speaker (`popup` false) or a volume popup:
-    /// a passing popup closes once it has been off both `VOLUME_LINGER`.
+    /// `of`'s volume popup, while it is open.
+    fn volume_popup_mut(&mut self, of: VolumeOf) -> Option<&mut crate::toolbar::Popup> {
+        match of {
+            VolumeOf::Panel => self
+                .preview
+                .menu
+                .as_mut()
+                .filter(|menu| menu.kind == VOLUME_POPUP),
+            VolumeOf::Dock => self
+                .toolbar_menu
+                .as_mut()
+                .filter(|menu| menu.kind == crate::dock::VOLUME),
+        }
+    }
+
+    /// The pointer onto or off `of`'s speaker (`popup` false) or its
+    /// volume popup: a passing popup closes once it has been off both
+    /// `VOLUME_LINGER`. Its close is the popup's own, gone with it.
     pub(crate) fn volume_over(
         &mut self,
+        of: VolumeOf,
         popup: bool,
         over: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let volume = &mut self.player.volume;
+        let Some(passing) = self
+            .volume_popup_mut(of)
+            .and_then(|popup| popup.passing.as_mut())
+        else {
+            return;
+        };
         if popup {
-            volume.over.1 = over;
+            passing.over.1 = over;
         } else {
-            volume.over.0 = over;
+            passing.over.0 = over;
         }
-        if volume.over.0 || volume.over.1 || !volume.passing {
-            volume.leaving = None;
+        if passing.over.0 || passing.over.1 {
+            passing.leaving = None;
             return;
         }
-        volume.leaving = Some(cx.spawn_in(window, async move |this, cx| {
+        passing.leaving = Some(cx.spawn_in(window, async move |this, cx| {
             cx.background_executor().timer(VOLUME_LINGER).await;
-            let _ = this.update_in(cx, |this, window, cx| {
-                let volume = &mut this.player.volume;
-                if volume.passing && !volume.over.0 && !volume.over.1 {
-                    volume.passing = false;
-                    this.close_popup(window, cx);
-                    cx.notify();
-                }
-            });
+            let _ = this.update_in(cx, |this, window, cx| this.volume_left(of, window, cx));
         }));
     }
 
-    /// The volume's slider given the keyboard, as its popup opens, the
-    /// popup as one a click opened (the wheel marks it passing after).
+    /// The pointer off `of`'s passing popup and its speaker long enough:
+    /// that popup closes, if it is still open and still passing.
+    fn volume_left(&mut self, of: VolumeOf, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(popup) = self.volume_popup_mut(of) else {
+            return;
+        };
+        let Some(passing) = popup.passing.as_mut() else {
+            return;
+        };
+        // This very close, which ends as it runs.
+        if let Some(leaving) = passing.leaving.take() {
+            leaving.detach();
+        }
+        if passing.over.0 || passing.over.1 {
+            return;
+        }
+        // The keyboard reached it meanwhile (Tab): used, it stays.
+        if popup.focus.contains_focused(window, cx) {
+            popup.passing = None;
+            return;
+        }
+        let popup = match of {
+            VolumeOf::Panel => self.preview.menu.take(),
+            VolumeOf::Dock => self.toolbar_menu.take(),
+        };
+        if let Some(popup) = popup {
+            popup.restore(window, cx);
+        }
+        cx.notify();
+    }
+
+    /// A press in `of`'s volume popup: one the wheel opened takes the
+    /// keyboard as a click's does, its slider given it.
+    fn volume_used(&mut self, of: VolumeOf, window: &mut Window, cx: &mut Context<Self>) {
+        if self
+            .volume_popup_mut(of)
+            .is_some_and(|popup| popup.take_keyboard(window, cx))
+        {
+            self.focus_volume(window, cx);
+        }
+    }
+
+    /// The volume's slider given the keyboard, as its popup opens (a
+    /// click's) or is used (one the wheel opened).
     pub(crate) fn focus_volume(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let volume = &mut self.player.volume;
-        volume.passing = false;
-        volume.leaving = None;
-        volume.over = (false, false);
-        let focus = self
-            .player
-            .volume
+        volume.held = false;
+        let focus = volume
             .focus
             .get_or_insert_with(|| cx.focus_handle())
             .clone();
@@ -1526,7 +1610,7 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
         })),
     );
     // The speaker opens the volume; the wheel over it moves the volume,
-    // the popup opened to show it (`Volume::passing`).
+    // the popup opened to show it (`toolbar::Passing`).
     bar.push(
         Item::button(
             Slot::View,
@@ -1538,7 +1622,7 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
             this.volume_wheel(VolumeOf::Panel, event, window, cx);
         }))
         .hovered(Rc::new(|this, over, window, cx| {
-            this.volume_over(false, over, window, cx);
+            this.volume_over(VolumeOf::Panel, false, over, window, cx);
         })),
     );
     bar.popups.push((VOLUME_POPUP, Rc::new(volume_popup)));

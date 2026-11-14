@@ -219,9 +219,14 @@ binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
   (`VOLUME_STEP`: a wheel's notch, a high-resolution wheel's parts once
   they make one, a touchpad's 60 px, `reader_scroll::Wheeled`),
   and over a speaker whose popup is closed opens it to show the level,
-  passing: it closes once the pointer has been off the speaker and the
-  popup `VOLUME_LINGER`, unless a press in it or its keys used it
-  (`Volume::passing`). M mutes from anywhere in the player. The speaker
+  passing (`toolbar::Passing`): it holds no keyboard, what had it keeps
+  it (a field being typed in), and it closes once the pointer has been
+  off the speaker and the popup `VOLUME_LINGER`. A press in it, or the
+  keyboard reaching it, uses it: its slider takes the keyboard, given
+  back when it closes, as a click's popup does. Passing is the popup's
+  own, its close on its way too: whatever closes the popup ends both, and
+  that close closes that popup alone, never one opened since. M mutes from
+  anywhere in the player. The speaker
   says how loud (`speaker_icon`): crossed out when muted, else no wave at
   nothing, one below half, two from half. Where the bar or the dock leaves the
   speaker out, More's Volume row opens it, above More. More lists no

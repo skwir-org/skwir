@@ -462,7 +462,7 @@ fn transport(
                         this.volume_wheel(crate::media::VolumeOf::Dock, event, window, cx);
                     }))
                     .on_hover(cx.listener(|this, over: &bool, window, cx| {
-                        this.volume_over(false, *over, window, cx);
+                        this.volume_over(crate::media::VolumeOf::Dock, false, *over, window, cx);
                     }))
                     .child(speaker.render(shell, cx)),
             )
@@ -536,21 +536,16 @@ fn menu(
         .filter(|menu| [MENU, VOLUME].contains(&menu.kind))?;
     let state = &pinned.state;
     if popup.kind == VOLUME {
-        let panel = toolbar::popup_panel(popup, "ui.toolbar_menu", theme, cx)
-            .w_auto()
-            .items_center()
-            .on_hover(cx.listener(|this, over: &bool, window, cx| {
-                this.volume_over(true, *over, window, cx);
-            }))
-            .child(crate::media::volume_control(
-                "dock-volume-slider",
-                crate::media::VolumeOf::Dock,
-                state,
-                mute("dock-volume-mute", state),
-                shell,
-                theme,
-                cx,
-            ));
+        let panel = crate::media::volume_panel(
+            popup,
+            "ui.toolbar_menu",
+            crate::media::VolumeOf::Dock,
+            state,
+            mute("dock-volume-mute", state),
+            shell,
+            theme,
+            cx,
+        );
         return Some(anchor.popup_above_for(chosen, vec![panel.into_any_element()]));
     }
     let send = |id: String, title: String, action: &str, value: serde_json::Value| {

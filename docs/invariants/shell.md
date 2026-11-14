@@ -200,7 +200,10 @@ Views are in [views.md](views.md); what locations decide, in
   deferred (its dropdowns are) and stays the shell root's last overlay
   child.
 - **Popups own the keyboard:** a menu or popover takes focus on open,
-  returns it on close, and has its own key context (`menu.rs`).
+  returns it on close, and has its own key context (`menu.rs`). One the
+  wheel opened over its button to show what it turns (a player's volume)
+  takes none until a press in it or the keyboard uses it
+  (`toolbar::Passing`, the popup's own state, gone with it).
 - **A press cancels a tooltip waiting to show** (gpui patch 0038): what
   the press opens is never covered by the tooltip of what was pressed.
   A tooltip already shown goes at the press, as upstream has it.

@@ -35,6 +35,11 @@ impl FocusReturn {
         FocusReturn(window.focused(cx))
     }
 
+    /// Nothing to give back: what had the keyboard kept it.
+    pub fn none() -> Self {
+        FocusReturn(None)
+    }
+
     /// Focus what had it, if anything did.
     pub fn restore_if_any(self, window: &mut Window, cx: &mut gpui::App) {
         if let Some(previous) = self.0 {
