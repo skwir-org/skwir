@@ -2138,12 +2138,12 @@ impl Shell {
                 self.player_request(request, window, cx);
             }
         }
-        // The dock's More goes with the dock: it steers the pin from there.
+        // The dock's popups go with the dock: they steer the pin from there.
         if !self.dock_shown()
             && self
                 .toolbar_menu
                 .as_ref()
-                .is_some_and(|menu| menu.kind == crate::dock::MENU)
+                .is_some_and(|menu| crate::dock::owns(menu.kind))
         {
             self.close_popup(window, cx);
             cx.notify();

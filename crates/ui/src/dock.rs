@@ -265,7 +265,7 @@ pub fn render(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Option<AnyE
         .toolbar_menu
         .as_ref()
         .map(|menu| menu.kind)
-        .filter(|kind| [MENU, VOLUME].contains(kind));
+        .filter(|kind| owns(kind));
     let anchor = PopoverAnchor::default();
     let chosen = Chosen::default();
     let transport = div().flex_none().child(AdaptiveRow {
@@ -341,6 +341,13 @@ pub const MENU: &str = "player";
 /// The dock's volume (`ui.toolbar_menu`'s `kind`): above its speaker, or
 /// above More when the transport's form left the speaker out.
 pub const VOLUME: &str = "player volume";
+
+/// Whether a toolbar popup of this `kind` is the dock's: drawn by the
+/// dock alone, it goes with the dock (`Shell::sync_player`), or nothing
+/// would draw it while it held the keyboard.
+pub(crate) fn owns(kind: &str) -> bool {
+    [MENU, VOLUME].contains(&kind)
+}
 
 /// What a form of the transport keeps as buttons; More has the rest.
 #[derive(Clone, Copy)]
@@ -530,10 +537,7 @@ fn menu(
     theme: &Theme,
     cx: &mut Context<Shell>,
 ) -> Option<AnyElement> {
-    let popup = shell
-        .toolbar_menu
-        .as_ref()
-        .filter(|menu| [MENU, VOLUME].contains(&menu.kind))?;
+    let popup = shell.toolbar_menu.as_ref().filter(|menu| owns(menu.kind))?;
     let state = &pinned.state;
     if popup.kind == VOLUME {
         let panel = crate::media::volume_panel(
