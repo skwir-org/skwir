@@ -418,7 +418,18 @@ Left:
 - Windows' terminal (ConPTY through alacritty): compiled, never run. Who
   has the terminal and where the shell is are **(u)** there, so the pane and
   the shell do not follow each other (a shell's own report, OSC 9;9 or 7,
-  would say where it is).
+  would say where it is). Its shell also keeps the folder it stands in
+  from being removed or moved there (ADR-136). Planned, with the user
+  (2026-11-14), for when it can be tried on Windows: where the shell is,
+  read from its process (`NtQueryInformationProcess`, its parameters'
+  current directory, as Process Explorer and psutil read it); whether it
+  waits at its prompt, by its having no child process (a command the
+  shell runs itself counts as waiting, and what is typed then waits for
+  it). With both, the pane and the shell follow each other, and the
+  terminal keeps its folder through `fs::kept_open`: a plan taking it,
+  or a folder above, has a waiting shell `cd` to the nearest folder the
+  plan leaves; with a program running there, nothing is typed and the
+  plan fails as it would for any program holding the folder.
 - Programs off `PATH` (ADR-041), compiled only: on macOS Homebrew's and
   MacPorts' folders are searched after `PATH` (`os_path::find_program`; an
   application started from the Finder has only the system's folders);

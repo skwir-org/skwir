@@ -1040,8 +1040,9 @@ sshfs's `.fuse_hidden` is from its documentation, not seen); Windows
 compiled only, its moves let go of and taken up again untried, and so
 the document engines', the archive helper's and `MBTiles`' letting go
 (tested on Linux); the terminal's shell still keeps the folder it stands
-in on Windows (only ending it would let go); the pin does not follow its
-folder moved by another program.
+in on Windows, left for the Windows terminal work, whose plan
+`docs/PORTING.md` (step H) gives; the pin does not follow its folder
+moved by another program.
 
 **Where a copy lands** (ADR-135, amended 2026-11-13): built on Linux in
 every view of files, the follow-ups the user kept and the limits found
