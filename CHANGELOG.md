@@ -19,6 +19,10 @@
   with Linux's own video decoders (VA-API, NVIDIA's). It no longer carries
   Ubuntu's 1.20 plugins beside it, nor GStreamer's network sources,
   tracker and chiptune music, MIDI, MXF, DV or RealMedia.
+- **The volume is a slider**: the speaker in a film's or a song's bar, and
+  in the dock, opens it above itself, its level, an upright slider and
+  Mute; Up and Down step it, as the wheel over the speaker does. More no
+  longer lists five volume steps, nor the time where the bar shows it.
 - **A model's stored picture fits the panel**: the picture a slicer stores
   in a 3MF, shown before the model is turned in 3D, was as wide as the
   panel, and a tall one ran past its foot. It is shown as pictures are,

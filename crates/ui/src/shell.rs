@@ -3304,6 +3304,10 @@ impl Shell {
                 let delta = args.get("delta").and_then(serde_json::Value::as_f64);
                 self.player_volume_by(delta.unwrap_or(0.), window, cx);
             }
+            "volume_step" => {
+                let delta = args.get("delta").and_then(serde_json::Value::as_f64);
+                self.volume_step(delta.unwrap_or(0.), window, cx);
+            }
             "player" => {
                 let request = args.get("request").cloned().unwrap_or_default();
                 match serde_json::from_value(request) {

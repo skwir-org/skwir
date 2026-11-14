@@ -519,14 +519,59 @@ pub(crate) fn along(bounds: gpui::Bounds<gpui::Pixels>, x: gpui::Pixels) -> f32 
     ((f32::from(x) - start) / length).clamp(0., 1.)
 }
 
+/// Where `y` is up a track standing in `bounds`, from 0 (its foot) to 1
+/// (its top), the knob's centre inside as `along` keeps it.
+pub(crate) fn up(bounds: gpui::Bounds<gpui::Pixels>, y: gpui::Pixels) -> f32 {
+    let foot = f32::from(bounds.origin.y) + f32::from(bounds.size.height) - KNOB / 2.;
+    let length = f32::from(bounds.size.height) - KNOB;
+    if length <= 0. {
+        return 0.;
+    }
+    ((foot - f32::from(y)) / length).clamp(0., 1.)
+}
+
+/// Which way a slider's track runs.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Axis {
+    /// Left to right, as wide as its owner makes it.
+    Across,
+    /// Foot to top, as tall as its owner makes it: a volume's.
+    Upright,
+}
+
 /// A slider at `at` (0 to 1): a track filled up to its knob. A press on it
 /// tells `Press`, then each move `Drag` and the release `Release`, where
 /// the pointer is along it, whatever its owner makes of that (a value's
 /// step, a time). `held`: its owner was told a press and no release, so
 /// the moves are followed over the whole window, not over the slider
-/// alone. It is a slider to assistive technology; its owner names it,
-/// says its value, takes its keys and gives it a focus if it has one.
+/// alone. Every release outside it is told, a press elsewhere's too: its
+/// owner ignores a move or a release it never saw the press of. It is a
+/// slider to assistive technology; its owner names it, says its value,
+/// takes its keys and gives it a focus if it has one.
 pub fn slider(
+    id: impl Into<SharedString>,
+    at: f32,
+    held: bool,
+    theme: &Theme,
+    on_slide: OnSlide,
+) -> Stateful<Div> {
+    slider_on(Axis::Across, id, at, held, theme, on_slide)
+}
+
+/// [`slider`] standing up, filled from its foot: as tall as its owner
+/// makes it, its top 1.
+pub fn upright_slider(
+    id: impl Into<SharedString>,
+    at: f32,
+    held: bool,
+    theme: &Theme,
+    on_slide: OnSlide,
+) -> Stateful<Div> {
+    slider_on(Axis::Upright, id, at, held, theme, on_slide)
+}
+
+fn slider_on(
+    axis: Axis,
     id: impl Into<SharedString>,
     at: f32,
     held: bool,
@@ -538,14 +583,11 @@ pub fn slider(
     let tell = |slide: Slide| {
         let (bounds, on_slide) = (bounds.clone(), on_slide.clone());
         move |position: gpui::Point<gpui::Pixels>, window: &mut gpui::Window, cx: &mut gpui::App| {
-            on_slide(
-                &Slid {
-                    slide,
-                    at: along(bounds.get(), position.x),
-                },
-                window,
-                cx,
-            );
+            let at = match axis {
+                Axis::Across => along(bounds.get(), position.x),
+                Axis::Upright => up(bounds.get(), position.y),
+            };
+            on_slide(&Slid { slide, at }, window, cx);
         }
     };
     let (press, release, release_out, drag) = (
@@ -556,12 +598,54 @@ pub fn slider(
     );
     let measured = bounds.clone();
     let accent = theme.accent;
+    // The track and its fill, the knob at `at` on them.
+    let track = div().relative().rounded_full().bg(theme.border);
+    let fill = div().absolute().rounded_full().bg(theme.accent);
+    let knob = div()
+        .absolute()
+        .size(px(KNOB))
+        .rounded_full()
+        .bg(theme.accent);
+    let (holder, track, fill, knob) = match axis {
+        Axis::Across => (
+            div()
+                .absolute()
+                .top_0()
+                .bottom_0()
+                .left(px(KNOB / 2.))
+                .right(px(KNOB / 2.))
+                .flex()
+                .items_center(),
+            track.w_full().h(px(TRACK)),
+            fill.top_0().left_0().h_full().w(gpui::relative(at)),
+            knob.top(px((TRACK - KNOB) / 2.))
+                .left(gpui::relative(at))
+                .ml(px(-KNOB / 2.)),
+        ),
+        Axis::Upright => (
+            div()
+                .absolute()
+                .left_0()
+                .right_0()
+                .top(px(KNOB / 2.))
+                .bottom(px(KNOB / 2.))
+                .flex()
+                .justify_center(),
+            track.h_full().w(px(TRACK)),
+            fill.bottom_0().left_0().w_full().h(gpui::relative(at)),
+            knob.left(px((TRACK - KNOB) / 2.))
+                .bottom(gpui::relative(at))
+                .mb(px(-KNOB / 2.)),
+        ),
+    };
     div()
         .id(id.into())
         .role(gpui::Role::Slider)
         .relative()
-        .h(sized(HEIGHT))
-        .min_w(px(KNOB * 3.))
+        .map(|d| match axis {
+            Axis::Across => d.h(sized(HEIGHT)).min_w(px(KNOB * 3.)),
+            Axis::Upright => d.w(sized(HEIGHT)).min_h(px(KNOB * 3.)),
+        })
         .rounded_md()
         .border_1()
         .border_color(gpui::transparent_black())
@@ -590,44 +674,7 @@ pub fn slider(
             .absolute()
             .size_full(),
         )
-        .child(
-            div()
-                .absolute()
-                .top_0()
-                .bottom_0()
-                .left(px(KNOB / 2.))
-                .right(px(KNOB / 2.))
-                .flex()
-                .items_center()
-                .child(
-                    div()
-                        .relative()
-                        .w_full()
-                        .h(px(TRACK))
-                        .rounded_full()
-                        .bg(theme.border)
-                        .child(
-                            div()
-                                .absolute()
-                                .top_0()
-                                .left_0()
-                                .h_full()
-                                .w(gpui::relative(at))
-                                .rounded_full()
-                                .bg(theme.accent),
-                        )
-                        .child(
-                            div()
-                                .absolute()
-                                .top(px((TRACK - KNOB) / 2.))
-                                .left(gpui::relative(at))
-                                .ml(px(-KNOB / 2.))
-                                .size(px(KNOB))
-                                .rounded_full()
-                                .bg(theme.accent),
-                        ),
-                ),
-        )
+        .child(holder.child(track.child(fill).child(knob)))
         .on_mouse_down(
             gpui::MouseButton::Left,
             move |event: &gpui::MouseDownEvent, window, cx| {
@@ -694,7 +741,7 @@ pub fn noted(name: &str, color: gpui::Hsla, size: f32, words: impl IntoElement) 
 
 #[cfg(test)]
 mod tests {
-    use super::{KNOB, along, knob};
+    use super::{KNOB, along, knob, up};
     use gpui::{Bounds, point, px, size};
 
     /// On a light accent a dark look's knob is what is drawn on the accent,
@@ -726,5 +773,18 @@ mod tests {
         // A slider with no room for its knob is at its start.
         let narrow = Bounds::new(point(px(0.), px(0.)), size(px(KNOB), px(28.)));
         assert_eq!(along(narrow, px(5.)), 0.);
+    }
+
+    /// Standing up, it is read from its foot: higher is more.
+    #[test]
+    fn an_upright_slider_is_read_from_its_foot_up() {
+        let bounds = Bounds::new(point(px(0.), px(50.)), size(px(28.), px(120.)));
+        let foot = 50. + 120. - KNOB / 2.;
+        let length = 120. - KNOB;
+        assert_eq!(up(bounds, px(foot)), 0.);
+        assert_eq!(up(bounds, px(foot - length)), 1.);
+        assert!((up(bounds, px(foot - length * 0.75)) - 0.75).abs() < 1e-6);
+        assert_eq!(up(bounds, px(900.)), 0.);
+        assert_eq!(up(bounds, px(0.)), 1.);
     }
 }

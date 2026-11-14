@@ -264,7 +264,8 @@ pub fn render(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Option<AnyE
     let open = shell
         .toolbar_menu
         .as_ref()
-        .is_some_and(|menu| menu.kind == MENU);
+        .map(|menu| menu.kind)
+        .filter(|kind| [MENU, VOLUME].contains(kind));
     let anchor = PopoverAnchor::default();
     let chosen = Chosen::default();
     let transport = div().flex_none().child(AdaptiveRow {
@@ -337,19 +338,23 @@ pub fn render(shell: &Shell, limit: f32, cx: &mut Context<Shell>) -> Option<AnyE
 /// The dock's More (`ui.toolbar_menu`'s `kind`): what the panel's player
 /// has that the transport has no button for.
 pub const MENU: &str = "player";
+/// The dock's volume (`ui.toolbar_menu`'s `kind`): above its speaker, or
+/// above More when the transport's form left the speaker out.
+pub const VOLUME: &str = "player volume";
 
 /// What a form of the transport keeps as buttons; More has the rest.
 #[derive(Clone, Copy)]
 struct Kept {
     /// Previous, Next and the times either side of the seek bar.
     steps: bool,
+    /// The speaker, which opens the volume.
     mute: bool,
     /// A film's: music has nothing to show on the whole screen.
     fullscreen: bool,
 }
 
 /// The transport's forms, richest first, each giving More one thing more
-/// as the panel's bar gives them up: Mute, then Fullscreen, then the steps
+/// as the panel's bar gives them up: the speaker, then Fullscreen, then the steps
 /// and the times, so a panel at its narrowest keeps Play, the seek bar,
 /// More and the close button.
 const FORMS: [Kept; 4] = [
@@ -382,7 +387,7 @@ fn transport(
     pinned: &crate::player::Pinned,
     kept: Kept,
     anchor: &PopoverAnchor,
-    open: bool,
+    open: Option<&str>,
     theme: &Theme,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
@@ -445,7 +450,18 @@ fn transport(
             d.child(time(crate::media::duration(state), true))
         })
         .when(kept.mute, |d| {
-            d.child(mute("dock-mute", state).render(shell, cx))
+            let speaker =
+                crate::media::volume_button("dock-volume", state, "ui.toolbar_menu", VOLUME)
+                    .anchor_if(anchor, open == Some(VOLUME))
+                    .active(open == Some(VOLUME));
+            d.child(
+                div()
+                    .flex_none()
+                    .on_scroll(cx.listener(|this, event, window, cx| {
+                        this.volume_wheel(crate::media::VolumeOf::Dock, event, window, cx);
+                    }))
+                    .child(speaker.render(shell, cx)),
+            )
         })
         .when(kept.fullscreen && pinned.video, |d| {
             d.child(fullscreen("dock-fullscreen").render(shell, cx))
@@ -453,8 +469,10 @@ fn transport(
         .child(
             Button::new("dock-more", "more", "More", "ui.toolbar_menu")
                 .args(serde_json::json!({ "kind": MENU }))
-                .anchor_if(anchor, true)
-                .active(open)
+                // More's popup, and the volume when this form left the
+                // speaker out (its row in More opened it).
+                .anchor_if(anchor, open != Some(VOLUME) || !kept.mute)
+                .active(open == Some(MENU))
                 .render(shell, cx),
         )
         .child(
@@ -495,10 +513,11 @@ fn fullscreen(id: &'static str) -> Button {
 }
 
 /// The dock's More, above its button (the dock is at the window's foot):
-/// what the transport left out, what follows a track, and the volume, the
-/// speed and a film's tracks, each a request to the pinned player as the
-/// transport's buttons are. One panel per form of the transport, the one
-/// drawn chosen in the same frame.
+/// what the transport left out, what follows a track, the speed and a
+/// film's tracks, each a request to the pinned player as the transport's
+/// buttons are. One panel per form of the transport, the one drawn chosen
+/// in the same frame. Or the volume, above the speaker, or above More when
+/// the form left the speaker out (`media::volume_control`).
 fn menu(
     shell: &Shell,
     pinned: &crate::player::Pinned,
@@ -510,8 +529,23 @@ fn menu(
     let popup = shell
         .toolbar_menu
         .as_ref()
-        .filter(|menu| menu.kind == MENU)?;
+        .filter(|menu| [MENU, VOLUME].contains(&menu.kind))?;
     let state = &pinned.state;
+    if popup.kind == VOLUME {
+        let panel = toolbar::popup_panel(popup, "ui.toolbar_menu", theme, cx)
+            .w_auto()
+            .items_center()
+            .child(crate::media::volume_control(
+                "dock-volume-slider",
+                crate::media::VolumeOf::Dock,
+                state,
+                mute("dock-volume-mute", state),
+                shell,
+                theme,
+                cx,
+            ));
+        return Some(anchor.popup_above_for(chosen, vec![panel.into_any_element()]));
+    }
     let send = |id: String, title: String, action: &str, value: serde_json::Value| {
         let mut request = serde_json::Map::new();
         request.insert(action.to_owned(), value);
@@ -533,7 +567,12 @@ fn menu(
                 left.push(step("dock-menu-next", 1, shell));
             }
             if !kept.mute {
-                left.push(mute("dock-menu-mute", state));
+                left.push(crate::media::volume_button(
+                    "dock-menu-volume",
+                    state,
+                    "ui.toolbar_menu",
+                    VOLUME,
+                ));
             }
             if !kept.fullscreen && pinned.video {
                 left.push(fullscreen("dock-menu-fullscreen"));

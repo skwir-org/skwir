@@ -973,6 +973,258 @@ fn control(
     Button::new(id, icon.to_owned(), title, "ui.media_control").args(args)
 }
 
+/// The volume's popup (`ui.preview_menu` of this kind): above the panel's
+/// speaker, or above More when the bar left the speaker out.
+pub const VOLUME_POPUP: &str = "volume";
+
+/// How far Up, Down and a notch of the wheel move a volume.
+pub const VOLUME_STEP: f64 = 0.05;
+
+/// Which player a volume control steers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VolumeOf {
+    /// The panel's (and the whole screen's, which is the panel's).
+    Panel,
+    /// The pinned one, in the dock.
+    Dock,
+}
+
+/// The volume's slider, the panel's popup's or the dock's (one is open at
+/// a time).
+#[derive(Default)]
+pub struct Volume {
+    /// Its keyboard, given as its popup opens, in the `volume` place: Up and
+    /// Down step it (`ui.volume_step`), Escape closes the popup.
+    pub focus: Option<gpui::FocusHandle>,
+    /// Pressed and not yet let go: the moves are followed over the window.
+    pub held: bool,
+    /// The wheel's turn under way, over a speaker or the slider: a mouse's
+    /// notch is a step, a touchpad's slide goes a step at 60 px.
+    pub turn: crate::reader_scroll::WheelTurn,
+}
+
+/// A player's speaker button: it opens the player's volume (`kind`, through
+/// `command`), its icon silent when muted or at nothing, its name the level
+/// (More's row says "Volume").
+pub(crate) fn volume_button(
+    id: &'static str,
+    state: &Playback,
+    command: &'static str,
+    kind: &'static str,
+) -> Button {
+    let silent = state.muted || state.volume <= 0.;
+    let level = if state.muted {
+        "muted".to_owned()
+    } else {
+        percent(state.volume)
+    };
+    Button::new(
+        id,
+        if silent { "muted" } else { "volume" },
+        format!("Volume · {level}"),
+        command,
+    )
+    .args(serde_json::json!({ "kind": kind }))
+}
+
+fn percent(volume: f64) -> String {
+    format!("{:.0}%", (volume * 100.).round())
+}
+
+/// What a player's volume popup holds, top to bottom: the level, an
+/// upright slider (`controls::upright_slider`) whose press, moves and
+/// release set the volume of `of` as the pointer goes, and `mute`, the
+/// player's Mute, at its foot. The wheel over it steps the volume. The
+/// slider is a slider of the volume in percent to assistive technology.
+pub(crate) fn volume_control(
+    id: &'static str,
+    of: VolumeOf,
+    state: &Playback,
+    mute: Button,
+    shell: &Shell,
+    theme: &Theme,
+    cx: &mut Context<Shell>,
+) -> AnyElement {
+    use crate::controls::{Slid, Slide};
+    let volume = &shell.player.volume;
+    let level = if state.muted {
+        "Muted".to_owned()
+    } else {
+        percent(state.volume)
+    };
+    let slid = cx.listener(move |this, slid: &Slid, window, cx| {
+        // A move or a release it never saw the press of is not its own:
+        // the slider tells every release outside it (a press on Mute).
+        let held = this.player.volume.held;
+        match slid.slide {
+            Slide::Press => this.player.volume.held = true,
+            Slide::Drag | Slide::Release if !held => return,
+            Slide::Release => this.player.volume.held = false,
+            Slide::Drag => {}
+        }
+        this.set_volume(of, f64::from(slid.at), window, cx);
+    });
+    let wheel = cx.listener(move |this, event: &gpui::ScrollEvent, window, cx| {
+        this.volume_wheel(of, event, window, cx);
+    });
+    let figures = gpui::FontFeatures(std::sync::Arc::new(vec![("tnum".into(), 1)]));
+    div()
+        .flex()
+        .flex_col()
+        .items_center()
+        .gap_1()
+        .on_scroll(wheel)
+        .child(
+            div()
+                .text_body()
+                .font_features(figures)
+                .when(state.muted, |d| d.text_color(theme.text_muted))
+                .child(level.clone()),
+        )
+        .child(
+            crate::controls::upright_slider(
+                id,
+                state.volume as f32,
+                volume.held,
+                theme,
+                Rc::new(slid),
+            )
+            .h(crate::sizes::sized(VOLUME_HEIGHT))
+            .when_some(volume.focus.as_ref(), InteractiveElement::track_focus)
+            .key_context(crate::keymap::VOLUME)
+            .aria_label("Volume")
+            .aria_numeric_value((state.volume * 100.).round())
+            .aria_min_numeric_value(0.)
+            .aria_max_numeric_value(100.)
+            .aria_value(level),
+        )
+        // Muting leaves the popup open, its level still there to set.
+        .child(mute.active(state.muted).keeps_open().render(shell, cx))
+        .into_any_element()
+}
+
+/// The upright slider's height, at 100 % (`sizes::sized`).
+const VOLUME_HEIGHT: f32 = 120.;
+
+/// The panel's volume popup.
+fn volume_popup(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<AnyElement> {
+    let popup = shell.preview.menu.as_ref()?;
+    let state = &shell.preview.media.state;
+    Some(
+        crate::toolbar::popup_panel(popup, "ui.preview_menu", theme, cx)
+            .w_auto()
+            .items_center()
+            .child(volume_control(
+                "preview-volume",
+                VolumeOf::Panel,
+                state,
+                control(
+                    "preview-volume-mute",
+                    if state.muted { "muted" } else { "volume" },
+                    if state.muted { "Unmute" } else { "Mute" },
+                    "mute",
+                    serde_json::Value::Null,
+                ),
+                shell,
+                theme,
+                cx,
+            ))
+            .into_any_element(),
+    )
+}
+
+impl Shell {
+    /// The volume of `of`'s player set to `volume` (0 to 1, where the
+    /// control stands): shown at once, its player told.
+    pub(crate) fn set_volume(
+        &mut self,
+        of: VolumeOf,
+        volume: f64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let volume = volume.clamp(0., 1.);
+        match of {
+            VolumeOf::Panel => {
+                self.preview.media.state.volume = volume;
+                self.media_send(Control::Volume(volume), cx);
+            }
+            VolumeOf::Dock => {
+                if let Some(pinned) = &mut self.player.pinned {
+                    pinned.state.volume = volume;
+                }
+                self.player_request(
+                    skwir_core::playing::PlayerRequest::Volume(volume),
+                    window,
+                    cx,
+                );
+            }
+        }
+        cx.notify();
+    }
+
+    /// `of`'s volume moved by `delta`.
+    fn step_volume(
+        &mut self,
+        of: VolumeOf,
+        delta: f64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let now = match of {
+            VolumeOf::Panel => self.preview.media.state.volume,
+            VolumeOf::Dock => match &self.player.pinned {
+                Some(pinned) => pinned.state.volume,
+                None => return,
+            },
+        };
+        self.set_volume(of, now + delta, window, cx);
+    }
+
+    /// `ui.volume_step`: Up and Down on a volume's slider: the volume of the
+    /// player whose popup is open, the dock's or the panel's.
+    pub fn volume_step(&mut self, delta: f64, window: &mut Window, cx: &mut Context<Self>) {
+        let of = if self
+            .toolbar_menu
+            .as_ref()
+            .is_some_and(|menu| menu.kind == crate::dock::VOLUME)
+        {
+            VolumeOf::Dock
+        } else {
+            VolumeOf::Panel
+        };
+        self.step_volume(of, delta, window, cx);
+    }
+
+    /// The wheel over a speaker or a volume's slider: up is louder.
+    pub(crate) fn volume_wheel(
+        &mut self,
+        of: VolumeOf,
+        event: &gpui::ScrollEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let lines = matches!(event.delta, gpui::ScrollDelta::Lines(_));
+        let delta = f32::from(event.delta.pixel_delta(window.line_height()).y);
+        let turn = self.player.volume.turn.turn(delta, lines, false);
+        if turn != 0 {
+            self.step_volume(of, -f64::from(turn) * VOLUME_STEP, window, cx);
+        }
+        cx.stop_propagation();
+    }
+
+    /// The volume's slider given the keyboard, as its popup opens.
+    pub(crate) fn focus_volume(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let focus = self
+            .player
+            .volume
+            .focus
+            .get_or_insert_with(|| cx.focus_handle())
+            .clone();
+        window.focus(&focus, cx);
+    }
+}
+
 /// A phase of dragging a seek bar's knob, with the bar's fraction under the
 /// pointer. Whoever owns the player decides what a phase does, and ignores
 /// a move or a release it never saw the press of.
@@ -1108,25 +1360,43 @@ pub fn toolbar(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElem
         .fills(),
     );
     let muted = theme.text_muted;
-    bar.push(Item::widget(Slot::Navigate, 0, move |shell, _| {
-        div()
-            .text_body()
-            .flex_none()
-            .text_color(muted)
-            .child(duration(&shell.preview.media.state))
-            .into_any_element()
-    }));
-    bar.push(Item::button(
-        Slot::View,
-        0,
-        control(
-            "video-mute",
-            if state.muted { "muted" } else { "volume" },
-            if state.muted { "Unmute" } else { "Mute" },
-            "mute",
-            serde_json::Value::Null,
-        ),
-    ));
+    bar.push(
+        Item::widget(Slot::Navigate, 0, move |shell, _| {
+            div()
+                .text_body()
+                .flex_none()
+                .text_color(muted)
+                .child(duration(&shell.preview.media.state))
+                .into_any_element()
+        })
+        // The first the bar leaves out: then More says where it is, of
+        // what (the position goes next), and only then.
+        .in_more(Rc::new(|shell, _| {
+            let media = &shell.preview.media;
+            div()
+                .px_2()
+                .text_body()
+                .child(format!(
+                    "{} / {}",
+                    time(media.scrub.unwrap_or(media.state.position)),
+                    duration(&media.state)
+                ))
+                .into_any_element()
+        })),
+    );
+    // The speaker opens the volume; the wheel over it moves the volume.
+    bar.push(
+        Item::button(
+            Slot::View,
+            0,
+            volume_button("video-volume", state, "ui.preview_menu", VOLUME_POPUP),
+        )
+        .opens(VOLUME_POPUP)
+        .wheel(Rc::new(|this, event, window, cx| {
+            this.volume_wheel(VolumeOf::Panel, event, window, cx);
+        })),
+    );
+    bar.popups.push((VOLUME_POPUP, Rc::new(volume_popup)));
     // What follows the track: in the row while it has room, in More after.
     let mode = shell.prefs.player.continue_with;
     bar.push(
@@ -1248,10 +1518,6 @@ fn settings(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Vec<AnyEle
             shell.prefs.player.autoplay,
         ),
         crate::preview_bar::separator(theme).into_any_element(),
-        div()
-            .text_body()
-            .child(format!("{} / {}", time(state.position), duration(state)))
-            .into_any_element(),
     ];
     let send =
         |id: String, title: String, action: &str, value| control(id, "", title, action, value);
@@ -1259,8 +1525,9 @@ fn settings(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Vec<AnyEle
     rows
 }
 
-/// The volume, the speed and a film's tracks, as rows of a player's menu
-/// reaching it through `send`: the panel's More and the dock's.
+/// The speed and a film's tracks, as rows of a player's menu reaching it
+/// through `send`: the panel's More and the dock's. The volume is the
+/// speaker's popup (`volume_control`).
 pub(crate) fn playback_rows(
     state: &Playback,
     send: Send,
@@ -1275,24 +1542,7 @@ pub(crate) fn playback_rows(
             .child(title)
             .into_any_element()
     };
-    let mut rows = vec![heading("Volume")];
-    let mut row = div().flex().gap_1();
-    for value in [0., 0.25, 0.5, 0.75, 1.] {
-        let label = format!("{:.0}%", value * 100.);
-        row = row.child(
-            send(
-                format!("volume-{label}"),
-                label.clone(),
-                "volume",
-                value.into(),
-            )
-            .label(label)
-            .active((state.volume - value).abs() < 0.01)
-            .render(shell, cx),
-        );
-    }
-    rows.push(row.into_any_element());
-    rows.push(heading("Playback speed"));
+    let mut rows = vec![heading("Playback speed")];
     let mut row = div().flex().gap_1();
     for value in [0.5, 1., 1.25, 1.5, 2.] {
         let label = format!("{value}×");

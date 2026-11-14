@@ -112,6 +112,9 @@ pub const INSPECTOR: &str = "Inspector";
 pub const TEXT: &str = "PreviewText";
 /// What the preview plays.
 pub const MEDIA: &str = "MediaPlayer";
+/// A player's volume, its slider in the speaker's popup
+/// (`media::volume_control`): Up and Down step it.
+pub const VOLUME: &str = "VolumeSlider";
 /// The preview on the whole screen (`fullscreen.rs`).
 pub const FULLSCREEN: &str = "Fullscreen";
 /// A picture on the whole screen, which plays as a slideshow.
@@ -775,6 +778,14 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
         "ui.media_control",
         r#"{"action":"volume_by","value":-0.05}"#,
         Some("media"),
+    ),
+    // A volume's slider, in a speaker's popup: the panel's or the dock's.
+    ("up", "ui.volume_step", r#"{"delta":0.05}"#, Some("volume")),
+    (
+        "down",
+        "ui.volume_step",
+        r#"{"delta":-0.05}"#,
+        Some("volume"),
     ),
     // The dock steers the pinned player through the same requests the
     // desktop's media keys send.
@@ -1446,6 +1457,7 @@ pub(crate) const PLACES: &[Place] = &[
     place("map", MAP, "Map preview"),
     place("model", MODEL, "3D model preview"),
     place("media", MEDIA, "Media player"),
+    place("volume", VOLUME, "Volume"),
     place("fullscreen", FULLSCREEN, "Preview on the whole screen"),
     place("slideshow", SLIDESHOW, "Picture on the whole screen"),
     place("player", PLAYER, "Pinned player"),

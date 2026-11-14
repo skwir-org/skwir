@@ -84,8 +84,12 @@ pub enum Slot {
 }
 
 /// A piece of a row that is not a command button: a page field, a time, a
-/// seek bar. It is built once per variant and never appears in the menu.
+/// seek bar. It is built once per variant, and appears in More only as the
+/// row it gives for a variant that leaves it out (`Item::in_more`).
 pub type Widget = Rc<dyn Fn(&Shell, &mut Context<Shell>) -> AnyElement>;
+
+/// What the wheel over an item does (`Item::wheel`).
+pub type Wheel = Rc<dyn Fn(&mut Shell, &gpui::ScrollEvent, &mut gpui::Window, &mut Context<Shell>)>;
 
 // A bar's few tools, made for one frame and drawn at once: boxing each
 // button would allocate more than the widgets' room costs.
@@ -104,6 +108,10 @@ pub struct Item {
     opens: Option<&'static str>,
     /// Takes the row's spare width itself, so the bar adds no spacer.
     fills: bool,
+    /// A widget's row of More, for a variant that leaves the widget out.
+    more: Option<Widget>,
+    /// What the wheel over it does.
+    wheel: Option<Wheel>,
 }
 
 impl Item {
@@ -114,6 +122,8 @@ impl Item {
             tool: Tool::Button(button),
             opens: None,
             fills: false,
+            more: None,
+            wheel: None,
         }
     }
 
@@ -128,6 +138,8 @@ impl Item {
             tool: Tool::Widget(Rc::new(widget)),
             opens: None,
             fills: false,
+            more: None,
+            wheel: None,
         }
     }
 
@@ -139,6 +151,8 @@ impl Item {
             tool: Tool::Button(button),
             opens: None,
             fills: false,
+            more: None,
+            wheel: None,
         }
         .never()
     }
@@ -159,6 +173,19 @@ impl Item {
 
     pub fn fills(mut self) -> Self {
         self.fills = true;
+        self
+    }
+
+    /// A widget's row of More, for a variant that leaves it out: what it
+    /// shows is then there (the player's time), and only then.
+    pub fn in_more(mut self, row: Widget) -> Self {
+        self.more = Some(row);
+        self
+    }
+
+    /// What the wheel over it does (the speaker's volume).
+    pub fn wheel(mut self, wheel: Wheel) -> Self {
+        self.wheel = Some(wheel);
         self
     }
 }
@@ -604,10 +631,9 @@ fn has_more(bar: &Bar, mode: usize) -> bool {
     bar.always
         || bar.settings.is_some()
         || !bar.otherwise.is_empty()
-        || bar
-            .items
-            .iter()
-            .any(|item| !item.shown(mode) && matches!(item.tool, Tool::Button(_)))
+        || bar.items.iter().any(|item| {
+            !item.shown(mode) && (matches!(item.tool, Tool::Button(_)) || item.more.is_some())
+        })
 }
 
 /// What is about the entry (`Shell::preview_entry_items`, asked as More
@@ -715,7 +741,7 @@ fn without_buttons(
         .into_iter()
         .filter_map(|item| match &item.tool {
             Tool::Button(button) => Some(menu_row(button.clone(), shell, cx)),
-            Tool::Widget(_) => None,
+            Tool::Widget(_) => item.more.as_ref().map(|row| row(shell, cx)),
         })
         .collect()
 }
@@ -755,11 +781,21 @@ fn row(
             Tool::Button(button) => {
                 let here = item.opens.is_some() && item.opens == active;
                 anchored |= here;
-                button
+                let button = button
                     .clone()
                     .anchor_if(anchor, here)
                     .render(shell, cx)
-                    .into_any_element()
+                    .into_any_element();
+                match item.wheel.clone() {
+                    Some(wheel) => div()
+                        .flex_none()
+                        .on_scroll(cx.listener(move |this, event, window, cx| {
+                            wheel(this, event, window, cx);
+                        }))
+                        .child(button)
+                        .into_any_element(),
+                    None => button,
+                }
             }
             Tool::Widget(widget) => widget(shell, cx),
         });

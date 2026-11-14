@@ -2258,6 +2258,7 @@ impl Shell {
             Some("unit") => "unit",
             Some(crate::map_preview::BACKGROUND_POPUP) => crate::map_preview::BACKGROUND_POPUP,
             Some(crate::media::CONTINUE_POPUP) => crate::media::CONTINUE_POPUP,
+            Some(crate::media::VOLUME_POPUP) => crate::media::VOLUME_POPUP,
             Some(crate::fullscreen::SLIDESHOW_POPUP) => crate::fullscreen::SLIDESHOW_POPUP,
             _ => "preview",
         };
@@ -2283,6 +2284,9 @@ impl Shell {
                     .collect();
             }
             self.preview.menu = Some(popup);
+            if kind == crate::media::VOLUME_POPUP {
+                self.focus_volume(window, cx);
+            }
         }
         cx.notify();
     }

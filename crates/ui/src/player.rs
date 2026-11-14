@@ -400,6 +400,9 @@ pub struct PlayerState {
     /// panel shows the pinned film.
     pub fullscreen_wanted: bool,
     pub focus: Option<gpui::FocusHandle>,
+    /// The volume's slider, the panel's popup's or the dock's
+    /// (`media::volume_control`).
+    pub volume: crate::media::Volume,
     /// Whether anything was published, to say once that nothing plays.
     published: bool,
     /// The previewed track that has actually played. Selecting a song is not
@@ -488,6 +491,7 @@ impl Default for PlayerState {
             flash: None,
             fullscreen_wanted: false,
             focus: None,
+            volume: crate::media::Volume::default(),
             opening: None,
             covering: None,
             marked: None,

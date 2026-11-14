@@ -741,6 +741,7 @@ const SHOWS: &[&str] = &[
     "ui.slideshow_pace",
     "ui.player",
     "ui.player_volume",
+    "ui.volume_step",
     "ui.map_pan",
     "ui.map_point",
     "ui.model_turn",
@@ -1013,6 +1014,8 @@ const KEY_FORMS: &[(&str, &str, &str)] = &[
         r#"{"delta":-0.05}"#,
         "Player: volume down",
     ),
+    ("ui.volume_step", r#"{"delta":0.05}"#, "Volume: up"),
+    ("ui.volume_step", r#"{"delta":-0.05}"#, "Volume: down"),
     // The arrows over what a preview shows.
     ("ui.preview_scroll", r#"{"to":"up"}"#, "Preview: scroll up"),
     (
@@ -1323,6 +1326,7 @@ fn repeats_of(name: &str) -> Option<Repeats> {
         | "ui.media_step"
         | "ui.fullscreen_step"
         | "ui.player_volume"
+        | "ui.volume_step"
         | "ui.map_pan"
         | "ui.map_point"
         | "ui.model_turn"
@@ -2682,6 +2686,13 @@ pub fn declare_all(app: &App) {
         "ui.player_volume",
         "Player: volume",
         "Change the pinned player's volume",
+    );
+    declare::<Amount>(
+        app,
+        Topic::Player,
+        "ui.volume_step",
+        "Volume: step",
+        "Step the volume of the player whose volume popup is open",
     );
     // The map.
     declare::<Pan>(

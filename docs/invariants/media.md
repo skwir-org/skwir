@@ -210,6 +210,17 @@ binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
   then the pointer over the whole window while held, and the release,
   wherever it is, seeks there (`media::scrub`). Its keys are the
   player's (Left and Right seek), not its own.
+- The volume is the speaker's popup, the panel's and the dock's alike
+  (`media::volume_control`): its level, an upright slider
+  (`controls::upright_slider`, nothing at its foot) and Mute at its foot,
+  which leaves the popup open. A click on the speaker opens it, the
+  slider given the keyboard (the `volume` place: Up and Down step it,
+  `ui.volume_step`); the wheel over the speaker or the slider steps it
+  (`VOLUME_STEP`, a mouse's notch or a touchpad's 60 px, `WheelTurn`); M
+  mutes from anywhere in the player. Where the bar or the dock leaves the
+  speaker out, More's Volume row opens it, above More. More lists no
+  volume steps, and says the time only where the bar left the duration
+  out (`preview_bar::Item::in_more`).
 - A click on the picture (`media::clickable`: film, audio figure, fullscreen
   canvas) toggles playback. Overlays on the film, such as the controls bar,
   must occlude it, or a click on their buttons also plays or pauses.
