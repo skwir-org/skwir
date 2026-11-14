@@ -20,9 +20,10 @@
 //! baseline, `gap` past the formula, for the caller to set at the end of
 //! the line. Equations are not numbered by themselves (MathJax's default,
 //! which Jupyter keeps): a number is the one a `\tag` writes;
-//! its glyphs are outlines, nothing that could read a file or a URL. A
-//! batch it cannot read is an exit status of 1 and a reason on standard
-//! error. Pure Rust (RaTeX: KaTeX's TeX, its layout and its fonts), nothing
+//! its glyphs are outlines, nothing that could read a file or a URL. The
+//! answer holds `OUTPUT` at most: a drawing that would take it past is
+//! refused, as one past the batch's `DEADLINE` is. A batch it cannot read
+//! is an exit status of 1 and a reason on standard error. Pure Rust (RaTeX: KaTeX's TeX, its layout and its fonts), nothing
 //! written.
 use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
@@ -37,6 +38,11 @@ const FORMULA: usize = 16 * 1024;
 /// How long a batch may take; what is left is refused, and the caller has
 /// a deadline of its own.
 const DEADLINE: Duration = Duration::from_secs(5);
+/// What a batch's answer holds at most, its drawings' JSON together: each
+/// that would take it past is refused, the others kept. Well within what
+/// the caller reads of a helper's answer (`limits::HELPER_OUTPUT`, 33 MiB),
+/// which it would otherwise refuse whole.
+const OUTPUT: usize = 24 * 1024 * 1024;
 /// How far the drawing reaches past the formula's box, in ems.
 const PADDING: f64 = 0.25;
 /// The SVG's user units per em.
@@ -53,12 +59,6 @@ struct Formula {
     /// Set apart on a line of its own (`$$…$$`), or in a sentence (`$…$`).
     #[serde(default)]
     display: bool,
-}
-
-#[derive(Serialize)]
-struct Answer {
-    padding: f64,
-    formulas: Vec<Typeset>,
 }
 
 #[derive(Serialize)]
@@ -208,29 +208,46 @@ fn run() -> Result<(), String> {
     }
     // A formula the typesetter fails on is refused alone, the others kept.
     std::panic::set_hook(Box::new(|_| {}));
-    let started = Instant::now();
-    let formulas = batch
-        .formulas
-        .iter()
-        .map(|formula| {
-            let typeset = if started.elapsed() > DEADLINE {
-                Err("the page's formulas took too long".to_owned())
-            } else {
-                std::panic::catch_unwind(|| typeset(formula))
-                    .unwrap_or_else(|_| Err("the formula could not be typeset".to_owned()))
-            };
-            typeset.unwrap_or_else(|error| Typeset::Refused { error })
-        })
-        .collect();
-    let answer = Answer {
-        padding: PADDING,
-        formulas,
-    };
-    let json = serde_json::to_vec(&answer).map_err(|error| error.to_string())?;
+    let out = answer(&batch.formulas, OUTPUT)?;
     std::io::stdout()
         .lock()
-        .write_all(&json)
+        .write_all(&out)
         .map_err(|error| format!("writing the formulas: {error}"))
+}
+
+/// The answer to `formulas` (see the top), written as it goes, its
+/// drawings' JSON together `output` at most: one that would take it past
+/// is refused, the others kept.
+fn answer(formulas: &[Formula], output: usize) -> Result<Vec<u8>, String> {
+    let started = Instant::now();
+    let mut out = b"{\"padding\":".to_vec();
+    out.extend_from_slice(&json(&PADDING)?);
+    out.extend_from_slice(b",\"formulas\":[");
+    for (n, formula) in formulas.iter().enumerate() {
+        let typeset = if started.elapsed() > DEADLINE {
+            Err("the page's formulas took too long".to_owned())
+        } else {
+            std::panic::catch_unwind(|| typeset(formula))
+                .unwrap_or_else(|_| Err("the formula could not be typeset".to_owned()))
+        };
+        let typeset = typeset.unwrap_or_else(|error| Typeset::Refused { error });
+        let mut item = json(&typeset)?;
+        if out.len() + item.len() + 2 > output {
+            item = json(&Typeset::Refused {
+                error: "the page's formulas are too large to answer".to_owned(),
+            })?;
+        }
+        if n > 0 {
+            out.push(b',');
+        }
+        out.extend_from_slice(&item);
+    }
+    out.extend_from_slice(b"]}");
+    Ok(out)
+}
+
+fn json(value: &impl Serialize) -> Result<Vec<u8>, String> {
+    serde_json::to_vec(value).map_err(|error| error.to_string())
 }
 
 fn typeset(formula: &Formula) -> Result<Typeset, String> {
@@ -288,4 +305,40 @@ fn typeset(formula: &Formula) -> Result<Typeset, String> {
         svg: svg(&list),
         tag,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An answer stays within its bound: a drawing that would take it past
+    /// is refused, and those after it that fit are kept.
+    #[test]
+    fn a_drawing_past_the_answer_s_bound_is_refused_alone() {
+        let formula = |tex: &str| Formula {
+            tex: tex.to_owned(),
+            display: false,
+        };
+        let formulas = [formula("x"), formula(r"\int\int\int\int"), formula("y")];
+        let whole = answer(&formulas, usize::MAX).unwrap();
+        let read = |out: &[u8]| -> Vec<serde_json::Value> {
+            let answer: serde_json::Value = serde_json::from_slice(out).unwrap();
+            answer["formulas"].as_array().unwrap().clone()
+        };
+        let all = read(&whole);
+        assert!(all.iter().all(|typeset| typeset["svg"].is_string()));
+        let size = |typeset: &serde_json::Value| typeset.to_string().len();
+        // Room for the first and the last, not the integrals.
+        let bound = whole.len() - size(&all[1]) + 64;
+        let out = answer(&formulas, bound).unwrap();
+        assert!(out.len() <= bound, "{} past {bound}", out.len());
+        let kept = read(&out);
+        assert_eq!(kept.len(), 3, "each answered, in order");
+        assert!(kept[0]["svg"].is_string());
+        assert_eq!(
+            kept[1]["error"].as_str(),
+            Some("the page's formulas are too large to answer")
+        );
+        assert!(kept[2]["svg"].is_string(), "the next that fits is kept");
+    }
 }

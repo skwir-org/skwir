@@ -22,8 +22,9 @@ pub mod mathml;
 pub const FORMULAS: usize = 2048;
 /// A formula handed over at most; the helper refuses more.
 pub const FORMULA: usize = 16 * 1024;
-/// All a batch's TeX handed over at most, within the helper's input.
-const BATCH: usize = 768 * 1024;
+/// What the helper reads of a batch at most (`skwir-math-worker`'s
+/// `INPUT`): its JSON, as it is handed over.
+const INPUT: usize = 1024 * 1024;
 /// A formula's em to the text's, as KaTeX sets them: Computer Modern's
 /// letters are smaller than most text faces' at one size.
 const SCALE: f32 = 1.21;
@@ -78,70 +79,83 @@ fn id_of(svg: &[u8]) -> u64 {
 }
 
 /// Each formula's drawing, in order: `None` for one that cannot be typeset
-/// or that the batch's bounds leave out (past `FORMULAS`, or the batch's
-/// TeX), each saying its TeX. An error when the helper is missing or fails
-/// as a whole.
+/// or that the batch's bounds leave out (past `FORMULAS`, longer than
+/// `FORMULA`, or past the helper's input), each saying its TeX. An error
+/// when the helper is missing or fails as a whole; its answer is bounded
+/// by the helper itself, a formula at a time.
 pub fn typeset(formulas: &[Formula], cancel: &CancelToken) -> anyhow::Result<Vec<Option<Drawing>>> {
-    let mut asked = Vec::new();
-    let mut size = 0;
-    for formula in formulas.iter().take(FORMULAS) {
-        size += formula.tex.len();
-        if formula.tex.len() > FORMULA || size > BATCH {
-            break;
-        }
-        asked.push(formula);
+    let asked = batch(formulas)?;
+    let mut drawn = vec![None; formulas.len()];
+    if asked.is_empty() {
+        return Ok(drawn);
     }
-    let mut drawn = Vec::with_capacity(formulas.len());
-    if !asked.is_empty() {
-        let worker = WORKER.require("typeset formulas")?;
-        let answer = typeset_by(&worker, &asked, cancel)
-            .map_err(|error| crate::process::explain(&worker, cancel, error))?;
-        anyhow::ensure!(
-            answer.formulas.len() == asked.len(),
-            "The formulas came back {} for {}",
-            answer.formulas.len(),
-            asked.len()
-        );
-        drawn.extend(
-            answer
-                .formulas
-                .into_iter()
-                .zip(&asked)
-                .map(|(typeset, formula)| {
-                    let svg = typeset.svg?.into_bytes();
-                    let (ascent, descent) = (typeset.height? * SCALE, typeset.depth? * SCALE);
-                    let margin = answer.padding * SCALE;
-                    let tag = typeset.tag.map(|number| {
-                        let svg = number.svg.into_bytes();
-                        Arc::new(Tag {
-                            gap: number.gap * SCALE,
-                            drawing: Drawing {
-                                width: number.width * SCALE,
-                                ascent,
-                                descent,
-                                margin,
-                                id: id_of(&svg),
-                                svg: Arc::from(svg),
-                                text: String::new(),
-                                tag: None,
-                            },
-                        })
-                    });
-                    Some(Drawing {
-                        width: typeset.width? * SCALE,
-                        ascent,
-                        descent,
-                        margin,
-                        id: id_of(&svg),
-                        svg: Arc::from(svg),
-                        text: formula.tex.clone(),
-                        tag,
-                    })
-                }),
-        );
+    let worker = WORKER.require("typeset formulas")?;
+    let batch: Vec<&Formula> = asked.iter().map(|&k| &formulas[k]).collect();
+    let answer = typeset_by(&worker, &batch, cancel)
+        .map_err(|error| crate::process::explain(&worker, cancel, error))?;
+    anyhow::ensure!(
+        answer.formulas.len() == asked.len(),
+        "The formulas came back {} for {}",
+        answer.formulas.len(),
+        asked.len()
+    );
+    let margin = answer.padding * SCALE;
+    for (typeset, k) in answer.formulas.into_iter().zip(asked) {
+        drawn[k] = drawing_of(typeset, margin, &formulas[k]);
     }
-    drawn.resize(formulas.len(), None);
     Ok(drawn)
+}
+
+/// Which of `formulas` a batch asks for, within its bounds: measured as the
+/// helper reads it, each formula's JSON (its backslashes and line breaks
+/// escaped) and a comma between, within its input. One that does not fit
+/// is left out, and those after it still asked.
+fn batch(formulas: &[Formula]) -> anyhow::Result<Vec<usize>> {
+    let mut asked = Vec::new();
+    let mut size = r#"{"formulas":[]}"#.len();
+    for (k, formula) in formulas.iter().enumerate().take(FORMULAS) {
+        if formula.tex.len() > FORMULA {
+            continue;
+        }
+        let json = serde_json::to_string(formula)?.len() + 1;
+        if size + json <= INPUT {
+            size += json;
+            asked.push(k);
+        }
+    }
+    Ok(asked)
+}
+
+/// The drawing the helper answered for `formula`, if it drew one.
+fn drawing_of(typeset: Typeset, margin: f32, formula: &Formula) -> Option<Drawing> {
+    let svg = typeset.svg?.into_bytes();
+    let (ascent, descent) = (typeset.height? * SCALE, typeset.depth? * SCALE);
+    let tag = typeset.tag.map(|number| {
+        let svg = number.svg.into_bytes();
+        Arc::new(Tag {
+            gap: number.gap * SCALE,
+            drawing: Drawing {
+                width: number.width * SCALE,
+                ascent,
+                descent,
+                margin,
+                id: id_of(&svg),
+                svg: Arc::from(svg),
+                text: String::new(),
+                tag: None,
+            },
+        })
+    });
+    Some(Drawing {
+        width: typeset.width? * SCALE,
+        ascent,
+        descent,
+        margin,
+        id: id_of(&svg),
+        svg: Arc::from(svg),
+        text: formula.tex.clone(),
+        tag,
+    })
 }
 
 /// [`typeset`], by the helper at `worker`.
@@ -326,6 +340,26 @@ impl Pending {
 mod tests {
     use super::*;
     use skwir_core::inspection::Run;
+
+    /// A batch is bounded by what the helper reads, its JSON: TeX that is
+    /// backslashes escaped to twice its length is measured so; a formula
+    /// too long is left out, the next still asked.
+    #[test]
+    fn a_batch_is_what_the_helper_reads() {
+        let formula = |tex: String| Formula {
+            tex,
+            display: false,
+        };
+        let mut formulas: Vec<Formula> = (0..400).map(|_| formula("\\".repeat(1500))).collect();
+        formulas.insert(1, formula("x".repeat(FORMULA + 1)));
+        let asked = batch(&formulas).unwrap();
+        assert_eq!(asked[..2], [0, 2], "the long one left out, not the rest");
+        let refs: Vec<&Formula> = asked.iter().map(|&k| &formulas[k]).collect();
+        let input = serde_json::to_vec(&serde_json::json!({ "formulas": refs })).unwrap();
+        assert!(input.len() <= INPUT, "{} past {INPUT}", input.len());
+        assert!(input.len() > INPUT - 4000, "as many as fit");
+        assert!(asked.len() < 400);
+    }
 
     /// A formula that is not drawn shows as it was written, as code, and
     /// one on a line of its own as the code block of its TeX; one the page
