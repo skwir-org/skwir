@@ -12,7 +12,9 @@ use skwir_core::{
     CancelToken,
     fs::kept_open::{KeptOpen, keep_open},
     location::Waker,
-    media::{Control, Frame, MAX_MESSAGE, MediaSession, PIXELS_FILE, Reply, Request, Update},
+    media::{
+        Control, Frame, MAX_MESSAGE, MediaSession, PIXELS_FILE, Playback, Reply, Request, Update,
+    },
     op::PlanId,
 };
 use std::{
@@ -44,7 +46,12 @@ pub fn worker_path() -> Option<PathBuf> {
 
 struct Shared {
     update: Mutex<Update>,
+    /// The latest control's, which the worker gives back with what it
+    /// reports from the moment it carried it out.
     generation: AtomicU64,
+    /// What the controls asked since made stale of what the worker
+    /// reports (`Asked`); taken after `update`.
+    asked: Mutex<Asked>,
     wake: Waker,
     /// Buffers of frames the window drew and gave back
     /// (`MediaSession::recycle`): the next frames are read into them, not
@@ -55,6 +62,70 @@ struct Shared {
 /// Frame buffers a session keeps for its next frames: the one drawn, the
 /// one taken, the one read.
 const SPARES: usize = 2;
+
+/// What is stale of what the worker reports, by the generation of the
+/// control that made it so: a seek its frames and its state (the place
+/// in the track); a pause, a rate or a track chosen its state; a volume
+/// or a mute only that in the state, which a state from before it is
+/// given as asked, its frames and the rest of it shown on: a slider
+/// dragged sends one with every move, and dropping what came between
+/// froze the picture and the time while it moved. Asking for frames or
+/// none makes nothing stale.
+#[derive(Default)]
+struct Asked {
+    frames_from: u64,
+    state_from: u64,
+    volume: Option<(u64, f64)>,
+    mute: Option<(u64, bool)>,
+}
+
+impl Asked {
+    /// `command`, sent as `generation`, makes stale what it changes; a
+    /// state not taken yet, from before it, is given what it asked.
+    fn control(&mut self, command: Control, generation: u64, update: &mut Update) {
+        match command {
+            Control::Seek(_) => {
+                self.frames_from = generation;
+                self.state_from = generation;
+                update.frame = None;
+                update.state = None;
+            }
+            Control::Play(_) | Control::Rate(_) | Control::Audio(_) | Control::Subtitle(_) => {
+                self.state_from = generation;
+                update.state = None;
+            }
+            Control::Volume(volume) => self.volume = Some((generation, volume)),
+            Control::Mute(muted) => self.mute = Some((generation, muted)),
+            Control::Frames(_) => {}
+        }
+        if let Some(state) = &mut update.state {
+            self.give(generation.saturating_sub(1), state);
+        }
+    }
+
+    /// A state the worker reported as `generation`, with what was asked
+    /// since put in: none where it is stale.
+    fn state(&self, generation: u64, mut state: Playback) -> Option<Playback> {
+        if generation < self.state_from {
+            return None;
+        }
+        self.give(generation, &mut state);
+        Some(state)
+    }
+
+    fn give(&self, generation: u64, state: &mut Playback) {
+        if let Some((at, volume)) = self.volume
+            && generation < at
+        {
+            state.volume = volume;
+        }
+        if let Some((at, muted)) = self.mute
+            && generation < at
+        {
+            state.muted = muted;
+        }
+    }
+}
 
 impl Shared {
     fn recycle(&self, bgra: Vec<u8>) {
@@ -68,11 +139,14 @@ impl Shared {
         self.spares.lock().pop()
     }
 
-    fn state(&self, generation: u64, state: skwir_core::media::Playback) {
+    fn state(&self, generation: u64, state: Playback) {
         let mut update = self.update.lock();
-        if generation != self.generation.load(Ordering::Acquire) {
+        if generation > self.generation.load(Ordering::Acquire) {
             return;
         }
+        let Some(state) = self.asked.lock().state(generation, state) else {
+            return;
+        };
         let empty = update.is_empty();
         update.state = Some(state);
         drop(update);
@@ -93,7 +167,9 @@ impl Shared {
     /// A control the worker declined. Stale generations are dropped like state.
     fn notice(&self, generation: u64, message: String) {
         let mut update = self.update.lock();
-        if generation != self.generation.load(Ordering::Acquire) {
+        if generation > self.generation.load(Ordering::Acquire)
+            || generation < self.asked.lock().state_from
+        {
             return;
         }
         let empty = update.is_empty();
@@ -107,7 +183,9 @@ impl Shared {
     /// rejected frame, or the one it superseded before the UI took it.
     fn frame(&self, generation: u64, frame: Frame) -> Vec<u8> {
         let mut update = self.update.lock();
-        if generation != self.generation.load(Ordering::Acquire) {
+        if generation > self.generation.load(Ordering::Acquire)
+            || generation < self.asked.lock().frames_from
+        {
             return frame.bgra;
         }
         let empty = update.is_empty();
@@ -153,8 +231,10 @@ impl MediaSession for WorkerSession {
             })
             .context("video controls busy or session closed")?;
         self.shared.generation.store(generation, Ordering::Release);
-        update.frame = None;
-        update.state = None;
+        self.shared
+            .asked
+            .lock()
+            .control(command, generation, &mut update);
         Ok(())
     }
     fn play_next(&self, path: Option<PathBuf>) -> anyhow::Result<()> {
@@ -207,6 +287,7 @@ impl WorkerSession {
         let shared = Arc::new(Shared {
             update: Mutex::new(Update::default()),
             generation: AtomicU64::new(0),
+            asked: Mutex::default(),
             wake,
             spares: Mutex::default(),
         });
@@ -641,8 +722,11 @@ mod tests {
     #[test]
     fn a_plan_taking_the_file_played_ends_the_session_first() {
         for handed in [false, true] {
+            // Handed over by itself, as playbin asks at a track's end: the
+            // file queued and not handed is un-queued instead (below), so a
+            // plan that came before the word would take nothing here.
             let (root, source, worker) = fixture(
-                "printf '%s\\n' '\"Ready\"'\nIFS= read -r line\ncat \"$1.handing\"\nwhile IFS= read -r line; do :; done\n",
+                "printf '%s\\n' '\"Ready\"'\ncat \"$1.handing\"\nwhile IFS= read -r line; do :; done\n",
             );
             let next = root.path().join("the next one's.ogg");
             let handing = if handed {
@@ -660,7 +744,6 @@ mod tests {
             .unwrap()
             .unwrap();
             let pid = std::fs::read_to_string(format!("{}.pid", source.display())).unwrap();
-            session.play_next(Some(next.clone())).unwrap();
             let taken = if handed { next } else { source.clone() };
             let plan = PlanId(41);
             until(|| {
@@ -871,6 +954,7 @@ mod tests {
         let shared = Shared {
             update: Mutex::new(Update::default()),
             generation: AtomicU64::new(0),
+            asked: Mutex::default(),
             wake: Arc::new(|| {}),
             spares: Mutex::default(),
         };
@@ -904,11 +988,82 @@ mod tests {
         assert_eq!(shared.spare(), Some(vec![5; 4]));
         assert!(shared.spare().is_none(), "at most SPARES kept");
     }
+    /// A volume dragged sends a control with every move: what the worker
+    /// reports meanwhile is shown on, its frames and its time, the volume
+    /// in it as asked until the worker has carried that out. A pause makes
+    /// its state stale, not its frames; a seek both.
+    #[test]
+    fn a_volume_dragged_keeps_frames_and_time_coming() {
+        let shared = Arc::new(Shared {
+            update: Mutex::new(Update::default()),
+            generation: AtomicU64::new(0),
+            asked: Mutex::default(),
+            wake: Arc::new(|| {}),
+            spares: Mutex::default(),
+        });
+        let (commands, _rx) = crossbeam_channel::bounded(16);
+        let session = WorkerSession {
+            shared: shared.clone(),
+            commands,
+            lifetime: CancelToken::new(),
+        };
+        let frame = |value: u8| Frame {
+            width: 1,
+            height: 1,
+            bgra: vec![value; 4],
+        };
+        let at = |position: f64, volume: f64| Playback {
+            position,
+            volume,
+            ..Playback::default()
+        };
+        shared.frame(0, frame(1));
+        session.control(Control::Volume(0.5)).unwrap();
+        shared.state(0, at(1., 0.2));
+        session.control(Control::Volume(0.6)).unwrap();
+        let update = session.take_update();
+        assert_eq!(update.frame.unwrap().bgra, vec![1; 4], "the frame kept");
+        let state = update.state.unwrap();
+        assert!(
+            (state.position - 1.).abs() < f64::EPSILON,
+            "the time goes on"
+        );
+        assert!((state.volume - 0.6).abs() < f64::EPSILON, "as asked");
+        shared.frame(1, frame(2));
+        shared.state(1, at(2., 0.5));
+        session.control(Control::Mute(true)).unwrap();
+        let update = session.take_update();
+        assert_eq!(update.frame.unwrap().bgra, vec![2; 4]);
+        let state = update.state.unwrap();
+        assert!((state.volume - 0.6).abs() < f64::EPSILON && state.muted);
+        // Carried out: what the worker reports is shown as it says.
+        shared.state(3, at(3., 0.4));
+        let state = session.take_update().state.unwrap();
+        assert!((state.volume - 0.4).abs() < f64::EPSILON && !state.muted);
+
+        session.control(Control::Play(false)).unwrap();
+        shared.state(3, at(3.5, 0.4));
+        shared.frame(3, frame(3));
+        let update = session.take_update();
+        assert!(update.state.is_none(), "the state before a pause is stale");
+        assert_eq!(update.frame.unwrap().bgra, vec![3; 4], "its frames are not");
+        session.control(Control::Seek(9.)).unwrap();
+        shared.state(4, at(4., 0.4));
+        shared.frame(4, frame(4));
+        assert!(
+            session.take_update().is_empty(),
+            "nothing from before a seek"
+        );
+        shared.frame(5, frame(5));
+        assert_eq!(session.take_update().frame.unwrap().bgra, vec![5; 4]);
+    }
+
     #[test]
     fn latest_frame_is_bounded_and_controls_reject_stale_frames() {
         let shared = Arc::new(Shared {
             update: Mutex::new(Update::default()),
             generation: AtomicU64::new(0),
+            asked: Mutex::default(),
             wake: Arc::new(|| {}),
             spares: Mutex::default(),
         });

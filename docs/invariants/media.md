@@ -118,8 +118,12 @@ binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
 
 ## Generations, seeking and errors
 
-- Position updates carry command generations. After enqueueing a control,
-  discard queued and late older state; reject old generations.
+- Position updates carry command generations. A control makes stale only
+  what it changes of what the worker reports (`Asked`): a seek its frames
+  and its state, queued and late; a pause, a rate or a track chosen its
+  state; a volume or a mute neither, a state from before it given the
+  volume asked (a slider dragged sends one with every move, and must not
+  freeze the picture or the time); asking for frames or none nothing.
 - Seek intent stays visible until GStreamer finishes its asynchronous
   preroll. A timeout or position tolerance is not a seek acknowledgment.
 - A control the worker cannot carry out gets `Rejected` with its
