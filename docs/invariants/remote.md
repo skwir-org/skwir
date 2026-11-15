@@ -570,7 +570,10 @@ ADR-077 (which revises ADR-021).
   and each link on the way in its own folder, as writers replace a file
   and a link re-pointed names another, NixOS's `/etc/static` at a
   switch; a folder on a volume mounted read-only is not watched, nothing
-  there being replaced: the Nix store). The way is walked where the
+  there being replaced: the Nix store; it is kept with its device, and
+  a change of the table that finds one on another device, its volume
+  mounted again in its place, as NixOS mounts `/etc` anew as an overlay
+  at a switch, reads the servers again: `sources::remounted`). The way is walked where the
   servers were read, and watched once the plugin's lock is let go of
   (watching resolves a path), the newest read's alone; each folder is
   watched anew at each read: one removed and made again is another.

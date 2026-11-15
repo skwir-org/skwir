@@ -1131,6 +1131,21 @@ impl Remotes {
             if fresher && let Some(app) = weak.upgrade() {
                 this.mounts_told(&app);
             }
+            // A read-only volume the way to where the servers are read
+            // goes through, mounted again in its place (NixOS's `/etc` as
+            // an overlay, at a switch): its links name other files, and no
+            // watch there told it (`sources::remounted`).
+            if !servers && asked == Asked::Told {
+                let sources = this.state.lock().sources.clone();
+                let fixed = sources
+                    .map(|sources| sources.lock().fixed())
+                    .unwrap_or_default();
+                if sources::remounted(&fixed)
+                    && let Some(app) = weak.upgrade()
+                {
+                    this.sources_told(&app);
+                }
+            }
             // A later whole refresh reads the servers: not this one.
             let servers = servers && this.state.lock().servers_generation == servers_at;
             if !newest && !servers {

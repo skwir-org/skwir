@@ -207,7 +207,9 @@ followed the files the servers are read from, nor the table of mounts.
   folder), and each link on the way there in its own folder (a dotfile
   manager's; NixOS's `/etc/fstab`, through `/etc/static`, which a
   switch re-points), but no folder on a volume mounted read-only (the
-  Nix store: nothing there is replaced, what leads there is). A
+  Nix store: nothing there is replaced, what leads there is; such a
+  volume mounted again in its place, as NixOS's `/etc` overlay is at a
+  switch, is told by the table, and the servers read again). A
   change by any program settles (400 ms, at most 2 s while changes go
   on), then the servers are read
   again, which follows what they then name.

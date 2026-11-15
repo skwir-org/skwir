@@ -42,6 +42,9 @@ pub struct Sources {
     /// The read of the servers whose `Followed` is followed: an older
     /// one, ending after, never takes its place.
     at: u64,
+    /// The folders on a volume mounted read-only, left unwatched, each
+    /// with its device (`Followed::fixed`).
+    fixed: Vec<(PathBuf, Option<u64>)>,
 }
 
 impl Sources {
@@ -63,6 +66,7 @@ impl Sources {
             watched: HashSet::new(),
             misses: false,
             at: 0,
+            fixed: Vec::new(),
         })
     }
 
@@ -81,7 +85,9 @@ impl Sources {
             every,
             folders,
             unwatched,
+            fixed,
         } = followed;
+        self.fixed = fixed;
         // What counts first: what is told from the folders watched next
         // is weighed by it.
         *self.followed.lock() = every;
@@ -112,6 +118,12 @@ impl Sources {
         self.misses
     }
 
+    /// The folders left unwatched on a volume mounted read-only, each with
+    /// its device: [`remounted`] tells whether one was mounted again.
+    pub fn fixed(&self) -> Vec<(PathBuf, Option<u64>)> {
+        self.fixed.clone()
+    }
+
     /// The folders watched now: what a test asks.
     #[cfg(all(test, unix))]
     fn watched(&self) -> Vec<PathBuf> {
@@ -131,6 +143,11 @@ pub struct Followed {
     /// Whether a source is on a remote, left unwatched
     /// (`Sources::misses`).
     unwatched: bool,
+    /// The folders left unwatched on a volume mounted read-only, each with
+    /// its device: nothing there is replaced, but the volume may be
+    /// mounted again in its place (NixOS's `/etc` as an overlay, mounted
+    /// anew at each switch), which the table tells ([`remounted`]).
+    fixed: Vec<(PathBuf, Option<u64>)>,
 }
 
 impl Followed {
@@ -173,15 +190,23 @@ impl Followed {
                 Source::File(path) | Source::Folder(path) => path,
             })
         });
-        let folders = here
+        let (fixed, folders): (HashSet<PathBuf>, HashSet<PathBuf>) = here
             .into_iter()
             .filter_map(folder_of)
-            .filter(|folder| !read_only(folder))
+            .partition(|folder| read_only(folder));
+        let mut fixed: Vec<(PathBuf, Option<u64>)> = fixed
+            .into_iter()
+            .map(|folder| {
+                let device = device_of(&folder);
+                (folder, device)
+            })
             .collect();
+        fixed.sort();
         Followed {
             unwatched: !remotes.is_empty(),
             every,
             folders,
+            fixed,
         }
     }
 }
@@ -234,6 +259,21 @@ fn take_ahead(at: &mut PathBuf, ahead: &mut Vec<Option<OsString>>, path: &Path) 
         *at = root;
     }
     ahead.extend(parts.into_iter().rev());
+}
+
+/// The device `folder` is on, as a stat says.
+fn device_of(folder: &Path) -> Option<u64> {
+    skwir_core::fs::stat::id_of(folder).map(|id| id.dev)
+}
+
+/// Whether a folder of `fixed` (`Sources::fixed`) is on another device
+/// than it was: its volume, read-only, mounted again in its place, what it
+/// holds may name other files. A stat each, of this machine's folders
+/// (what is on a remote is never followed): on the reading thread.
+pub fn remounted(fixed: &[(PathBuf, Option<u64>)]) -> bool {
+    fixed
+        .iter()
+        .any(|(folder, device)| device_of(folder) != *device)
 }
 
 /// The folder to watch for `source`: a file's folder, a folder itself,
@@ -363,6 +403,18 @@ mod tests {
                 .every
                 .contains(&Source::File(root.join("etc").join("static")))
         );
+        // The store's folders are kept with their device: a volume mounted
+        // read-only may be mounted again in its place (NixOS's `/etc` as
+        // an overlay), which the table tells.
+        let fixed = followed.fixed;
+        assert_eq!(
+            fixed.iter().map(|(folder, _)| folder).collect::<Vec<_>>(),
+            [&store, &store.join("first-etc").join("etc")]
+        );
+        assert!(!super::remounted(&fixed), "as it was");
+        let mut moved = fixed.clone();
+        moved[1].1 = moved[1].1.map(|device| device ^ 1);
+        assert!(super::remounted(&moved), "another device there now");
     }
 
     /// NixOS's switch re-points `/etc/static`: told, though nothing in
