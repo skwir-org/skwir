@@ -204,7 +204,10 @@ followed the files the servers are read from, nor the table of mounts.
   one never without the other, and the plugin follows that while it is
   enabled (`sources`): the folder holding a file, or the nearest folder
   above that is there while it is not (`rclone config` making its
-  folder), and the folder a link leads into (a dotfile manager's). A
+  folder), and each link on the way there in its own folder (a dotfile
+  manager's; NixOS's `/etc/fstab`, through `/etc/static`, which a
+  switch re-points), but no folder on a volume mounted read-only (the
+  Nix store: nothing there is replaced, what leads there is). A
   change by any program settles (400 ms), then the servers are read
   again, which follows what they then name.
 - **The table of mounts is followed** (`reach::follow`, ADR-077

@@ -557,11 +557,16 @@ ADR-077 (which revises ADR-021).
   they are read from. A reader of servers says where it read
   (`connector::Named`: rclone's configuration where rclone placed it,
   Dolphin's `user-places.xbel`, fstab; `servers::sources`: KDE's network
-  folders), and the plugin watches that (`sources`: a file's folder, or
-  the nearest folder above that is there while it is not, and the
-  folder a link leads into, as writers replace a file); once a change
-  settles (400 ms) the servers are read again, which follows what they
-  then name. What the system told is shown only where the section
+  folders), and the plugin watches the way there (`sources`: a file's
+  folder, or the nearest folder above that is there while it is not,
+  and each link on the way in its own folder, as writers replace a file
+  and a link re-pointed names another, NixOS's `/etc/static` at a
+  switch; a folder on a volume mounted read-only is not watched, nothing
+  there being replaced: the Nix store). The way is walked where the
+  servers were read, not under the plugin's lock, and each folder is
+  watched anew at each read: one removed and made again is another.
+  Once a change settles (400 ms) the servers are read again, which
+  follows what they then name. What the system told is shown only where the section
   changed (`Asked::Told`), and asks no server: a container's mounts cost
   a read in memory, an unchanged rclone configuration no run of rclone.
   A mount come since is asked whether it answers and how full it is only

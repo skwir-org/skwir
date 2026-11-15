@@ -4,7 +4,8 @@
 
 - **The sidebar follows what other programs change**: the Network
   section shows at once a remote added or removed with `rclone config`,
-  a network folder or a place added in Dolphin, an entry of fstab, and a
+  a network folder or a place added in Dolphin, an entry of fstab
+  (NixOS's too, as a switch changes it), and a
   folder mounted or unmounted by any program (`sshfs`, `rclone mount`,
   `mount`), where it waited for a refresh or the next start; the drives
   show a volume mounted anywhere, not only under `/run/media`. A server

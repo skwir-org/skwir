@@ -1098,6 +1098,9 @@ impl Remotes {
             });
             drop(app);
             let (listed, from) = listed.unzip();
+            // The way to where they were read, walked here: what the lock
+            // below holds is only the watching.
+            let from = from.map(sources::Followed::of);
             // Whether each server is near, for its thumbnails. What
             // names no server is never looked up (`Address::server_name`:
             // a device, near, its name a serial; a remote of rclone's

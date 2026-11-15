@@ -1087,9 +1087,10 @@ closes an item removes its line; work that leaves one adds it here.
 table (kqueue's `EVFILT_FS`) is compiled only, and Windows' (the folders
 programs mount in) compiled only, neither run; Dolphin's places are
 followed only where kio-fuse is installed (KIO's connector reads them),
-untried in a window here (no kio-fuse on a test's bus); a file reached
-through a link to a folder (NixOS's `/etc/fstab`, through `/etc/static`)
-is read again only as a window comes to the front.
+untried in a window here (no kio-fuse on a test's bus); a file on a
+volume mounted read-only and changed by mounting it again (NixOS's
+`/etc` made an overlay, `system.etc.overlay.mutable = false`) is not
+watched, read again only as a window comes to the front.
 
 **A field says what it takes** (ADR-137, 2026-11-14): built on Linux
 and tried in a window there (the bulk rename's three references by F1

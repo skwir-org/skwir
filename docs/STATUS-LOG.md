@@ -17921,3 +17921,39 @@ options (ADR-086 and ADR-077 amended).
 - Not run: release-check, a11y-check, bench-check; macOS's and Windows'
   following compiled, never run; Dolphin's places (`user-places.xbel`)
   not tried in a window (KIO's connector needs kio-fuse on the bus).
+
+## 2026-11-15: The way to a server's file followed link by link
+
+On the user's question whether the NixOS gap the entry above left was
+worth closing. `/etc/fstab` here is a link to `/etc/static/fstab`,
+`/etc/static` a link to a generation's `etc` in the store, whose `fstab`
+is a link to the file in the store. `sources` followed a link to its
+end at once: it watched `/etc` and the end's folder, `/nix/store` itself
+(every path a build adds or a collection removes handed to its handler
+and turned away), and counted no change of `/etc/static`, which is all a
+switch changes (`setup-etc.pl`'s `atomicSymlink`: a link made beside it,
+renamed onto it). A folder watched, removed and made again within the
+settle was not watched again either: notify lets go of the watch of a
+folder removed, and `Sources` still counted it watched.
+
+- **The way walked** (`Followed::of`, `way_to`): part by part, each link
+  met where it is and its target taken from there, at most 40 (Linux's
+  `MAXSYMLINKS`). Each link counts, watched in its own folder, and the
+  end; a folder on a volume mounted read-only (`fs::volume::read_only`)
+  is not watched. The walk runs where the servers were read, before the
+  plugin's lock, which held `canonicalize` and `is_dir` before;
+  `Sources::follow` only watches, and asks every folder again at each
+  read.
+- **Tests**: `the_way_to_a_file_goes_link_by_link` (a tree laid out as
+  NixOS's, a part not there, a loop of links),
+  `what_is_read_only_is_not_watched`, `a_link_re_pointed_on_the_way_is_told`
+  (`etc/static` re-pointed as `atomicSymlink` does),
+  `a_folder_made_again_is_watched_again`. The last two fail with the
+  links left out and each folder asked only once.
+- **On this machine** (a test of the moment, removed): the way to
+  `/etc/fstab` is `/etc/fstab`, `/etc/static`, the generation's `fstab`
+  and the store's file; `/etc` alone is watched.
+- Checked: the remote crate's tests (152), the binary's
+  `plugins_toggle`, `remote_folders` and `remote_configs` (59, at once,
+  21 s), clippy on the crate, native and for Windows and macOS. Not run:
+  a switch itself (root's), a window.

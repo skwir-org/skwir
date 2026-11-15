@@ -1,26 +1,34 @@
 //! Where the Network section's servers are read, followed (ADR-086,
 //! amended 2026-11-15): rclone's configuration, Dolphin's places, KDE's
 //! network folders, fstab. Each reader says where it read
-//! (`connector::Named`), and what it names is watched: its folder, or the
-//! nearest folder above that is there while it is not (`rclone config`
-//! making `~/.config/rclone`), and the folder a link leads into (a dotfile
-//! manager's), as writers replace a file rather than write into it. A
-//! change, by any program, settles, then the servers are read again,
-//! which follows what they then name.
+//! (`connector::Named`), and the way to what it names is watched
+//! (`Followed::of`): its folder, or the nearest folder above that is there
+//! while it is not (`rclone config` making `~/.config/rclone`), and each
+//! link on the way, in its own folder: writers replace a file rather than
+//! write into it, and a link re-pointed (NixOS's `/etc/static`, a dotfile
+//! manager's) names another file at the same path. A change, by any
+//! program, settles, then the servers are read again, which follows what
+//! they then name.
 
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::ffi::OsString;
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
 use parking_lot::Mutex;
-use skwir_core::fs::Settled;
+use skwir_core::fs::{Settled, volume};
+use skwir_core::os_path;
 
 use crate::connector::Source;
 
 /// How long changes are let settle before the servers are read again: an
 /// editor saving, a tool writing several files.
 const SETTLE: Duration = Duration::from_millis(400);
+
+/// How many links a way follows at most, as Linux does (`MAXSYMLINKS`):
+/// a loop of links ends there.
+const MAX_LINKS: usize = 40;
 
 /// The sources followed, and the folders watched for them.
 pub struct Sources {
@@ -50,37 +58,31 @@ impl Sources {
         })
     }
 
-    /// Follow `sources` from now on, and what no longer is no more.
-    pub fn follow(&mut self, sources: Vec<Source>) {
-        let mut every: Vec<Source> = Vec::new();
-        for source in sources {
-            // A link: the file it leads to is replaced, in its own folder.
-            if let Source::File(file) = &source
-                && let Ok(target) = skwir_core::os_path::canonical(file)
-                && target != *file
-            {
-                every.push(Source::File(target));
-            }
-            every.push(source);
-        }
-        every.sort();
-        every.dedup();
-        let wanted: HashSet<PathBuf> = every.iter().filter_map(folder_of).collect();
+    /// Follow `followed` from now on, and what no longer is no more. Each
+    /// folder is asked again, one watched before too: a folder removed
+    /// and made again is another, which the watcher let go of with the
+    /// first.
+    pub fn follow(&mut self, followed: Followed) {
+        let Followed { every, folders } = followed;
+        // What counts first: what is told from the folders watched next
+        // is weighed by it.
+        *self.followed.lock() = every;
         for gone in self
             .watched
-            .difference(&wanted)
+            .difference(&folders)
             .cloned()
             .collect::<Vec<_>>()
         {
             self.watcher.unwatch(&gone);
             self.watched.remove(&gone);
         }
-        for folder in wanted {
-            if !self.watched.contains(&folder) && self.watcher.watch(&folder) {
+        for folder in folders {
+            if self.watcher.watch(&folder) {
                 self.watched.insert(folder);
+            } else {
+                self.watched.remove(&folder);
             }
         }
-        *self.followed.lock() = every;
     }
 
     /// The folders watched now: what a test asks.
@@ -90,6 +92,95 @@ impl Sources {
         watched.sort();
         watched
     }
+}
+
+/// What is followed for some sources: the links on the way to each and
+/// where its way ends, and the folders watched for them. Found where the
+/// servers were read, as it reads the folders on the way; `Sources::follow`
+/// only watches.
+pub struct Followed {
+    every: Vec<Source>,
+    folders: HashSet<PathBuf>,
+}
+
+impl Followed {
+    /// What `sources` lead through and to. I/O: the reading thread's.
+    pub fn of(sources: Vec<Source>) -> Self {
+        Self::with(sources, |folder| volume::read_only(folder) == Some(true))
+    }
+
+    /// [`Followed::of`], a folder `read_only` says is on a volume mounted
+    /// read-only left unwatched: nothing there is replaced (the Nix
+    /// store), what leads into it is re-pointed.
+    fn with(sources: Vec<Source>, read_only: impl Fn(&Path) -> bool) -> Self {
+        let mut every: Vec<Source> = Vec::new();
+        for source in sources {
+            let (links, end) = match &source {
+                Source::File(path) | Source::Folder(path) => way_to(path),
+            };
+            every.extend(links.into_iter().map(Source::File));
+            every.push(match source {
+                Source::File(_) => Source::File(end),
+                Source::Folder(_) => Source::Folder(end),
+            });
+        }
+        every.sort();
+        every.dedup();
+        let folders = every
+            .iter()
+            .filter_map(folder_of)
+            .filter(|folder| !read_only(folder))
+            .collect();
+        Followed { every, folders }
+    }
+}
+
+/// The way to `path`: each link met, where it is (in a folder reached
+/// without a link), and where the way ends, `path` itself where no link
+/// is on it. A part not there ends nothing: what follows it is named as
+/// written. Every folder these name is reached without a link, so no two
+/// name one folder.
+fn way_to(path: &Path) -> (Vec<PathBuf>, PathBuf) {
+    let mut links = Vec::new();
+    let mut at = PathBuf::new();
+    let mut ahead = Vec::new();
+    take_ahead(&mut at, &mut ahead, path);
+    while let Some(part) = ahead.pop() {
+        let Some(name) = part else {
+            at.pop();
+            continue;
+        };
+        let next = at.join(&name);
+        if links.len() < MAX_LINKS
+            && std::fs::symlink_metadata(&next).is_ok_and(|meta| meta.file_type().is_symlink())
+            && let Ok(target) = std::fs::read_link(&next)
+        {
+            links.push(next);
+            take_ahead(&mut at, &mut ahead, &os_path::plain(target));
+        } else {
+            at = next;
+        }
+    }
+    (links, at)
+}
+
+/// Put `path`'s parts ahead, its first on top (`None` for `..`): a path
+/// from a root goes from there, another from where the way is.
+fn take_ahead(at: &mut PathBuf, ahead: &mut Vec<Option<OsString>>, path: &Path) {
+    let mut root = PathBuf::new();
+    let mut parts = Vec::new();
+    for part in path.components() {
+        match part {
+            Component::Prefix(_) | Component::RootDir => root.push(part),
+            Component::CurDir => {}
+            Component::ParentDir => parts.push(None),
+            Component::Normal(name) => parts.push(Some(name.to_owned())),
+        }
+    }
+    if !root.as_os_str().is_empty() {
+        *at = root;
+    }
+    ahead.extend(parts.into_iter().rev());
 }
 
 /// The folder to watch for `source`: a file's folder, a folder itself,
@@ -119,6 +210,158 @@ mod tests {
     use std::path::Path;
 
     use super::{Source, concerns, folder_of};
+
+    /// Waits until the watcher tells, then lets the burst pass: one call a
+    /// burst.
+    #[cfg(unix)]
+    fn told_on(rx: &crossbeam_channel::Receiver<()>, what: &str) {
+        use std::time::Duration;
+        rx.recv_timeout(Duration::from_secs(10))
+            .unwrap_or_else(|_| panic!("{what} was not told"));
+        while rx.recv_timeout(Duration::from_millis(600)).is_ok() {}
+    }
+
+    /// A tree laid out as NixOS lays out `/etc`, under `root`:
+    /// `etc/fstab` a link to `etc/static/fstab`, `etc/static` a link
+    /// (relative) to a generation's `etc` in the store, its `fstab` a
+    /// link to the file in the store. `generation` names it; its file
+    /// says `content`. The link `etc/static` is made, or re-pointed, as
+    /// NixOS's activation does: beside it, then renamed onto it.
+    #[cfg(unix)]
+    fn nixos_like(root: &Path, generation: &str, content: &str) -> std::path::PathBuf {
+        use std::os::unix::fs::symlink;
+        let store = root.join("store");
+        let file = store.join(format!("{generation}-fstab"));
+        let etc_of = store.join(format!("{generation}-etc")).join("etc");
+        std::fs::create_dir_all(&etc_of).unwrap();
+        std::fs::write(&file, content).unwrap();
+        symlink(&file, etc_of.join("fstab")).unwrap();
+        let etc = root.join("etc");
+        std::fs::create_dir_all(&etc).unwrap();
+        let beside = etc.join("static.tmp");
+        symlink(format!("../store/{generation}-etc/etc"), &beside).unwrap();
+        std::fs::rename(&beside, etc.join("static")).unwrap();
+        let fstab = etc.join("fstab");
+        if std::fs::symlink_metadata(&fstab).is_err() {
+            symlink(etc.join("static").join("fstab"), &fstab).unwrap();
+        }
+        fstab
+    }
+
+    /// The way to a file goes link by link, each where it is: NixOS's
+    /// `/etc/fstab` through `/etc/static` into the store. A part not
+    /// there ends nothing; a loop of links ends.
+    #[cfg(unix)]
+    #[test]
+    fn the_way_to_a_file_goes_link_by_link() {
+        use super::{MAX_LINKS, way_to};
+        let dir = tempfile::tempdir().unwrap();
+        let root = skwir_core::os_path::canonical(dir.path()).unwrap();
+        let fstab = nixos_like(&root, "first", "nas:/share /mnt/nas nfs noauto 0 0\n");
+        let etc = root.join("etc");
+        let generation = root.join("store").join("first-etc").join("etc");
+        let file = root.join("store").join("first-fstab");
+        assert_eq!(
+            way_to(&fstab),
+            (
+                vec![fstab.clone(), etc.join("static"), generation.join("fstab")],
+                file.clone()
+            )
+        );
+        assert_eq!(way_to(&file), (vec![], file.clone()), "no link: itself");
+        assert_eq!(
+            way_to(&etc.join("static").join("gone").join("fstab")),
+            (
+                vec![etc.join("static")],
+                generation.join("gone").join("fstab")
+            ),
+            "what is not there is named as written"
+        );
+        std::os::unix::fs::symlink("loop-b", root.join("loop-a")).unwrap();
+        std::os::unix::fs::symlink("loop-a", root.join("loop-b")).unwrap();
+        assert_eq!(way_to(&root.join("loop-a")).0.len(), MAX_LINKS);
+    }
+
+    /// Every link on the way counts, and a folder on a volume mounted
+    /// read-only is not watched: on NixOS, `/etc` alone.
+    #[cfg(unix)]
+    #[test]
+    fn what_is_read_only_is_not_watched() {
+        use super::Followed;
+        let dir = tempfile::tempdir().unwrap();
+        let root = skwir_core::os_path::canonical(dir.path()).unwrap();
+        let fstab = nixos_like(&root, "first", "");
+        let store = root.join("store");
+        let followed = Followed::with(vec![Source::File(fstab)], |folder| {
+            folder.starts_with(&store)
+        });
+        assert_eq!(
+            followed.folders.into_iter().collect::<Vec<_>>(),
+            [root.join("etc")]
+        );
+        assert!(
+            followed
+                .every
+                .contains(&Source::File(root.join("etc").join("static")))
+        );
+    }
+
+    /// NixOS's switch re-points `/etc/static`: told, though nothing in
+    /// the store is watched.
+    #[cfg(unix)]
+    #[test]
+    fn a_link_re_pointed_on_the_way_is_told() {
+        use super::{Followed, Sources};
+        use std::time::Duration;
+        let dir = tempfile::tempdir().unwrap();
+        let root = skwir_core::os_path::canonical(dir.path()).unwrap();
+        let fstab = nixos_like(&root, "first", "");
+        let store = root.join("store");
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let mut sources = Sources::start(move || tx.send(()).is_ok()).unwrap();
+        let follow = |sources: &mut Sources| {
+            sources.follow(Followed::with(
+                vec![Source::File(fstab.clone())],
+                |folder| folder.starts_with(&store),
+            ));
+        };
+        follow(&mut sources);
+        assert_eq!(sources.watched(), [root.join("etc")]);
+        // Beside it: nothing.
+        std::fs::write(root.join("etc").join("hosts"), "").unwrap();
+        assert!(rx.recv_timeout(Duration::from_millis(900)).is_err());
+        nixos_like(&root, "second", "nas:/share /mnt/nas nfs noauto 0 0\n");
+        told_on(&rx, "/etc/static re-pointed");
+        follow(&mut sources);
+        assert_eq!(sources.watched(), [root.join("etc")]);
+    }
+
+    /// A folder watched, removed and made again before the servers are
+    /// read: watched again, though it was before.
+    #[cfg(unix)]
+    #[test]
+    fn a_folder_made_again_is_watched_again() {
+        use super::{Followed, Sources};
+        let dir = tempfile::tempdir().unwrap();
+        let root = skwir_core::os_path::canonical(dir.path()).unwrap();
+        let rclone = root.join("rclone");
+        let config = rclone.join("rclone.conf");
+        std::fs::create_dir(&rclone).unwrap();
+        std::fs::write(&config, "[nas]\ntype = sftp\n").unwrap();
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let mut sources = Sources::start(move || tx.send(()).is_ok()).unwrap();
+        let follow = |sources: &mut Sources| {
+            sources.follow(Followed::of(vec![Source::File(config.clone())]));
+        };
+        follow(&mut sources);
+        assert_eq!(sources.watched(), std::slice::from_ref(&rclone));
+        std::fs::remove_dir_all(&rclone).unwrap();
+        std::fs::create_dir(&rclone).unwrap();
+        told_on(&rx, "rclone's folder removed");
+        follow(&mut sources);
+        std::fs::write(&config, "[box]\ntype = box\n").unwrap();
+        told_on(&rx, "a file written in the folder made again");
+    }
 
     /// A file's folder is watched, else the nearest above that is there;
     /// a folder itself.
@@ -188,30 +431,26 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_change_by_another_program_is_told() {
-        use super::Sources;
+        use super::{Followed, Sources};
         use std::time::{Duration, Instant};
-        let root = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let root = skwir_core::os_path::canonical(dir.path()).unwrap();
         let (tx, rx) = crossbeam_channel::unbounded();
         let mut sources = Sources::start(move || tx.send(()).is_ok()).unwrap();
-        let told = |what: &str| {
-            rx.recv_timeout(Duration::from_secs(10))
-                .unwrap_or_else(|_| panic!("{what} was not told"));
-            // One call a burst.
-            while rx.recv_timeout(Duration::from_millis(600)).is_ok() {}
-        };
-        let config = root.path().join("rclone").join("rclone.conf");
-        let network = root.path().join("remoteview");
+        let told = |what: &str| told_on(&rx, what);
+        let config = root.join("rclone").join("rclone.conf");
+        let network = root.join("remoteview");
         let follow = |sources: &mut Sources| {
-            sources.follow(vec![
+            sources.follow(Followed::of(vec![
                 Source::File(config.clone()),
                 Source::Folder(network.clone()),
-            ]);
+            ]));
         };
         follow(&mut sources);
-        assert_eq!(sources.watched(), [root.path().to_path_buf()]);
+        assert_eq!(sources.watched(), std::slice::from_ref(&root));
 
         // Beside them: nothing.
-        std::fs::write(root.path().join("recently-used.xbel"), "x").unwrap();
+        std::fs::write(root.join("recently-used.xbel"), "x").unwrap();
         assert!(rx.recv_timeout(Duration::from_millis(900)).is_err());
 
         // `rclone config` makes its folder, then its file.
@@ -222,10 +461,7 @@ mod tests {
         follow(&mut sources);
         assert_eq!(
             sources.watched(),
-            [
-                root.path().to_path_buf(),
-                config.parent().unwrap().to_path_buf()
-            ]
+            [root.clone(), config.parent().unwrap().to_path_buf()]
         );
         // Written again as rclone writes it: beside it, then in its place.
         let beside = config.with_extension("conf.new");
@@ -242,12 +478,12 @@ mod tests {
         told("a network folder removed");
 
         // A file kept elsewhere, linked to: its target replaced.
-        let dotfiles = root.path().join("dotfiles");
+        let dotfiles = root.join("dotfiles");
         std::fs::create_dir(&dotfiles).unwrap();
-        let places = root.path().join("user-places.xbel");
+        let places = root.join("user-places.xbel");
         std::fs::write(dotfiles.join("user-places.xbel"), "<xbel/>").unwrap();
         std::os::unix::fs::symlink(dotfiles.join("user-places.xbel"), &places).unwrap();
-        sources.follow(vec![Source::File(places)]);
+        sources.follow(Followed::of(vec![Source::File(places)]));
         let deadline = Instant::now() + Duration::from_secs(1);
         while rx.recv_timeout(Duration::from_millis(600)).is_ok() {
             assert!(Instant::now() < deadline);
