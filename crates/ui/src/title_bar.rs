@@ -543,30 +543,38 @@ pub fn bar(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                 &shell.window_press,
                 true,
             ))
-            .children(start)
-            // The title, in the middle of the bar whatever its ends hold:
-            // cut where they leave it no room.
+            // The title in the middle of the bar, its ends as wide as each
+            // other while there is room; where there is less, an end keeps
+            // the room its buttons take (no end narrower than they are), the
+            // title beside it, cut where none is left. As a desktop's header
+            // bar: nothing measured, whatever the ends hold (Windows' three
+            // captions, a desktop's layout with several on a side).
             .child(
                 div()
-                    .absolute()
-                    .top_0()
-                    .bottom_0()
-                    .left(sized(96.))
-                    .right(sized(96.))
+                    .flex_1()
+                    .h_full()
                     .flex()
                     .items_center()
-                    .justify_center()
-                    .child(
-                        div()
-                            .min_w_0()
-                            .truncate()
-                            .text_color(color)
-                            .when(above, |d| d.font_weight(gpui::FontWeight::SEMIBOLD))
-                            .child(title),
-                    ),
+                    .justify_start()
+                    .children(start),
             )
-            .child(div().flex_1())
-            .children(end)
+            .child(
+                div()
+                    .min_w_0()
+                    .truncate()
+                    .text_color(color)
+                    .when(above, |d| d.font_weight(gpui::FontWeight::SEMIBOLD))
+                    .child(title),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .h_full()
+                    .flex()
+                    .items_center()
+                    .justify_end()
+                    .children(end),
+            )
             .into_any_element(),
     )
 }
