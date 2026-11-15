@@ -80,8 +80,7 @@ pub const CARDS_KEY: &str = "ui.cards";
 /// as before.
 pub const CARDS_DEFAULT: bool = true;
 /// Where the window's title and its buttons are (ADR-138,
-/// `title_bar::TitleBar`): the free desktops' only, where a compositor may
-/// leave the title bar to the application.
+/// `title_bar::TitleBar`), on every system.
 pub const TITLE_BAR_KEY: &str = "ui.title_bar";
 /// The least opacity a ground takes: below it, text over a light
 /// background behind a dark look would no longer read.
@@ -519,9 +518,6 @@ static TITLE_BAR_SAID: std::sync::Mutex<TitleBarSaid> = std::sync::Mutex::new(Ti
 /// refusal means here, when either changed (a window answered:
 /// `title_bar::automatic_now`, `title_bar::refusal`).
 pub(crate) fn show_title_bar(app: &App, now: Option<&'static str>, here: Option<&'static str>) {
-    if !cfg!(target_os = "linux") {
-        return;
-    }
     let said = {
         let mut said = TITLE_BAR_SAID
             .lock()
@@ -1499,9 +1495,7 @@ pub(crate) fn list_icon_themes(app: &Arc<App>) {
 pub fn declare(app: &App) {
     app.settings.declare(theme_spec());
     app.settings.declare(cards_spec());
-    // The free desktops' compositors may leave the title bar to skwir;
-    // macOS and Windows draw theirs.
-    if cfg!(target_os = "linux") {
+    {
         let said = *TITLE_BAR_SAID
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);

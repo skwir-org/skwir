@@ -1612,6 +1612,61 @@ impl PlatformWindow for MacWindow {
         state.move_traffic_light();
     }
 
+    /// The application's decorations: a transparent title bar its content
+    /// runs under, the traffic lights kept (`set_traffic_light_position`);
+    /// the system's: the title bar as AppKit draws it. On an open window
+    /// too, AppKit asked once the window is not locked.
+    fn request_decorations(&self, decorations: gpui::WindowDecorations) {
+        let transparent = decorations == gpui::WindowDecorations::Client;
+        let mut this = self.0.lock();
+        if this.transparent_titlebar == transparent {
+            return;
+        }
+        this.transparent_titlebar = transparent;
+        let window = this.native_window;
+        let closed = this.closed.clone();
+        let state = self.0.clone();
+        this.foreground_executor
+            .spawn(async move {
+                if_window_not_closed(closed, || unsafe {
+                    let mask: NSWindowStyleMask = msg_send![window, styleMask];
+                    let mask = if transparent {
+                        mask | NSWindowStyleMask::FullSizeContentView
+                    } else {
+                        mask & !NSWindowStyleMask::FullSizeContentView
+                    };
+                    let _: () = msg_send![window, setStyleMask: mask];
+                    let _: () = msg_send![
+                        window,
+                        setTitlebarAppearsTransparent: Bool::new(transparent)
+                    ];
+                    let visibility = if transparent {
+                        NSWindowTitleVisibility::Hidden
+                    } else {
+                        NSWindowTitleVisibility::Visible
+                    };
+                    let _: () = msg_send![window, setTitleVisibility: visibility];
+                    let mut state = state.lock();
+                    if transparent {
+                        state.move_traffic_light();
+                    } else {
+                        state.restore_traffic_light();
+                    }
+                })
+            })
+            .detach();
+    }
+
+    fn window_decorations(&self) -> gpui::Decorations {
+        if self.0.lock().transparent_titlebar {
+            gpui::Decorations::Client {
+                tiling: gpui::Tiling::default(),
+            }
+        } else {
+            gpui::Decorations::Server
+        }
+    }
+
     fn scale_factor(&self) -> f32 {
         self.0.as_ref().lock().scale_factor()
     }

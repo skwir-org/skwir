@@ -2133,8 +2133,16 @@ impl Window {
             Box::new(move || {
                 handle
                     .update(&mut cx, |_, window, _cx| {
+                        // A drag area where nothing is over it: a button within it
+                        // keeps its press. A button where the mouse is over it.
                         for (area, hitbox) in &window.rendered_frame.window_control_hitboxes {
-                            if window.mouse_hit_test.ids.contains(&hitbox.id) {
+                            let hit = match area {
+                                WindowControlArea::Drag => {
+                                    window.mouse_hit_test.ids.first() == Some(&hitbox.id)
+                                }
+                                _ => window.mouse_hit_test.ids.contains(&hitbox.id),
+                            };
+                            if hit {
                                 return Some(*area);
                             }
                         }

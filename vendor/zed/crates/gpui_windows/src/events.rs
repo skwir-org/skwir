@@ -767,7 +767,7 @@ impl WindowsWindowInner {
         wparam: WPARAM,
         lparam: LPARAM,
     ) -> Option<isize> {
-        if !self.hide_title_bar || self.state.is_fullscreen() || wparam.0 == 0 {
+        if !self.hide_title_bar.get() || self.state.is_fullscreen() || wparam.0 == 0 {
             return None;
         }
 
@@ -851,7 +851,7 @@ impl WindowsWindowInner {
     }
 
     fn handle_create_msg(&self, handle: HWND) -> Option<isize> {
-        if self.hide_title_bar {
+        if self.hide_title_bar.get() {
             notify_frame_changed(handle);
             Some(0)
         } else {
@@ -979,7 +979,7 @@ impl WindowsWindowInner {
             None
         };
 
-        if !self.hide_title_bar {
+        if !self.hide_title_bar.get() {
             // If the OS draws the title bar, we don't need to handle hit test messages.
             return drag_area;
         }
@@ -1801,7 +1801,7 @@ fn get_frame_thicknessy(dpi: u32) -> i32 {
     resize_frame_thickness + padding_thickness
 }
 
-fn notify_frame_changed(handle: HWND) {
+pub(crate) fn notify_frame_changed(handle: HWND) {
     unsafe {
         SetWindowPos(
             handle,

@@ -7,14 +7,19 @@
 //!
 //! As a title bar does on every desktop: pressed and moved, the window
 //! moves; pressed twice, it is maximized or restored (`zooms`); the right
-//! button opens the system's menu for the window, where it has one.
+//! button opens the system's menu for the window, where it has one. On
+//! Windows the system does all three: the region is told to it as a
+//! caption (`WindowControlArea::Drag`, where it is frontmost: gpui patch
+//! 0066), so it also snaps the window to the screen's edges. On macOS the
+//! press itself starts the move (`AppKit` drags from a press), and a double
+//! click does what the system's settings say (`titlebar_double_click`).
 
 use std::cell::Cell;
 use std::rc::Rc;
 
 use gpui::{
     HitboxBehavior, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Styled,
-    canvas,
+    WindowControlArea, canvas,
 };
 
 /// The press that moves the window once the pointer moves, one a window:
@@ -32,6 +37,14 @@ pub fn area(press: &Press, zooms: bool) -> impl IntoElement + use<> {
     canvas(
         |bounds, window, _| window.insert_hitbox(bounds, HitboxBehavior::Normal),
         move |_, hitbox, window, _| {
+            if cfg!(target_os = "windows") {
+                // Beside the tabs a double click opens one: Windows would
+                // maximize the window too, so that strip is no caption.
+                if zooms {
+                    window.insert_window_control_hitbox(WindowControlArea::Drag, hitbox);
+                }
+                return;
+            }
             let armed = press.clone();
             window.on_mouse_event(move |event: &MouseDownEvent, phase, window, _| {
                 if !phase.bubble() || !hitbox.is_frontmost(window) {
@@ -40,8 +53,13 @@ pub fn area(press: &Press, zooms: bool) -> impl IntoElement + use<> {
                 match event.button {
                     MouseButton::Left if zooms && event.click_count == 2 => {
                         armed.set(false);
-                        window.zoom_window();
+                        if cfg!(target_os = "macos") {
+                            window.titlebar_double_click();
+                        } else {
+                            window.zoom_window();
+                        }
                     }
+                    MouseButton::Left if cfg!(target_os = "macos") => window.start_window_move(),
                     MouseButton::Left => armed.set(true),
                     MouseButton::Right if window.window_controls().window_menu => {
                         window.show_window_menu(event.position);

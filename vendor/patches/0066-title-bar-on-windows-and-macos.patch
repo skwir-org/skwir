@@ -1,0 +1,191 @@
+0066 title-bar-on-windows-and-macos: An open window's title bar hidden on Windows or made transparent on macOS as decorations are requested (request_decorations, window_decorations); Windows' zoom restores a maximized window; a drag area counts in Windows' hit test where it is frontmost
+
+diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
+index e38696c..5dcb047 100644
+--- a/crates/gpui/src/window.rs
++++ b/crates/gpui/src/window.rs
+@@ -2133,8 +2133,16 @@ impl Window {
+             Box::new(move || {
+                 handle
+                     .update(&mut cx, |_, window, _cx| {
++                        // A drag area where nothing is over it: a button within it
++                        // keeps its press. A button where the mouse is over it.
+                         for (area, hitbox) in &window.rendered_frame.window_control_hitboxes {
+-                            if window.mouse_hit_test.ids.contains(&hitbox.id) {
++                            let hit = match area {
++                                WindowControlArea::Drag => {
++                                    window.mouse_hit_test.ids.first() == Some(&hitbox.id)
++                                }
++                                _ => window.mouse_hit_test.ids.contains(&hitbox.id),
++                            };
++                            if hit {
+                                 return Some(*area);
+                             }
+                         }
+diff --git a/crates/gpui_macos/src/window.rs b/crates/gpui_macos/src/window.rs
+index 2c1c897..77be8b0 100644
+--- a/crates/gpui_macos/src/window.rs
++++ b/crates/gpui_macos/src/window.rs
+@@ -1612,6 +1612,61 @@ impl PlatformWindow for MacWindow {
+         state.move_traffic_light();
+     }
+ 
++    /// The application's decorations: a transparent title bar its content
++    /// runs under, the traffic lights kept (`set_traffic_light_position`);
++    /// the system's: the title bar as AppKit draws it. On an open window
++    /// too, AppKit asked once the window is not locked.
++    fn request_decorations(&self, decorations: gpui::WindowDecorations) {
++        let transparent = decorations == gpui::WindowDecorations::Client;
++        let mut this = self.0.lock();
++        if this.transparent_titlebar == transparent {
++            return;
++        }
++        this.transparent_titlebar = transparent;
++        let window = this.native_window;
++        let closed = this.closed.clone();
++        let state = self.0.clone();
++        this.foreground_executor
++            .spawn(async move {
++                if_window_not_closed(closed, || unsafe {
++                    let mask: NSWindowStyleMask = msg_send![window, styleMask];
++                    let mask = if transparent {
++                        mask | NSWindowStyleMask::FullSizeContentView
++                    } else {
++                        mask & !NSWindowStyleMask::FullSizeContentView
++                    };
++                    let _: () = msg_send![window, setStyleMask: mask];
++                    let _: () = msg_send![
++                        window,
++                        setTitlebarAppearsTransparent: Bool::new(transparent)
++                    ];
++                    let visibility = if transparent {
++                        NSWindowTitleVisibility::Hidden
++                    } else {
++                        NSWindowTitleVisibility::Visible
++                    };
++                    let _: () = msg_send![window, setTitleVisibility: visibility];
++                    let mut state = state.lock();
++                    if transparent {
++                        state.move_traffic_light();
++                    } else {
++                        state.restore_traffic_light();
++                    }
++                })
++            })
++            .detach();
++    }
++
++    fn window_decorations(&self) -> gpui::Decorations {
++        if self.0.lock().transparent_titlebar {
++            gpui::Decorations::Client {
++                tiling: gpui::Tiling::default(),
++            }
++        } else {
++            gpui::Decorations::Server
++        }
++    }
++
+     fn scale_factor(&self) -> f32 {
+         self.0.as_ref().lock().scale_factor()
+     }
+diff --git a/crates/gpui_windows/src/events.rs b/crates/gpui_windows/src/events.rs
+index 08f91bd..227cb20 100644
+--- a/crates/gpui_windows/src/events.rs
++++ b/crates/gpui_windows/src/events.rs
+@@ -767,7 +767,7 @@ impl WindowsWindowInner {
+         wparam: WPARAM,
+         lparam: LPARAM,
+     ) -> Option<isize> {
+-        if !self.hide_title_bar || self.state.is_fullscreen() || wparam.0 == 0 {
++        if !self.hide_title_bar.get() || self.state.is_fullscreen() || wparam.0 == 0 {
+             return None;
+         }
+ 
+@@ -851,7 +851,7 @@ impl WindowsWindowInner {
+     }
+ 
+     fn handle_create_msg(&self, handle: HWND) -> Option<isize> {
+-        if self.hide_title_bar {
++        if self.hide_title_bar.get() {
+             notify_frame_changed(handle);
+             Some(0)
+         } else {
+@@ -979,7 +979,7 @@ impl WindowsWindowInner {
+             None
+         };
+ 
+-        if !self.hide_title_bar {
++        if !self.hide_title_bar.get() {
+             // If the OS draws the title bar, we don't need to handle hit test messages.
+             return drag_area;
+         }
+@@ -1801,7 +1801,7 @@ fn get_frame_thicknessy(dpi: u32) -> i32 {
+     resize_frame_thickness + padding_thickness
+ }
+ 
+-fn notify_frame_changed(handle: HWND) {
++pub(crate) fn notify_frame_changed(handle: HWND) {
+     unsafe {
+         SetWindowPos(
+             handle,
+diff --git a/crates/gpui_windows/src/window.rs b/crates/gpui_windows/src/window.rs
+index d726e13..3264669 100644
+--- a/crates/gpui_windows/src/window.rs
++++ b/crates/gpui_windows/src/window.rs
+@@ -102,7 +102,8 @@ pub(crate) struct WindowsWindowInner {
+     pub(crate) state: WindowsWindowState,
+     system_settings: WindowsSystemSettings,
+     pub(crate) handle: AnyWindowHandle,
+-    pub(crate) hide_title_bar: bool,
++    /// The title bar hidden, the application drawing its own (`request_decorations`).
++    pub(crate) hide_title_bar: Cell<bool>,
+     pub(crate) is_movable: bool,
+     pub(crate) is_resizable: bool,
+     pub(crate) is_minimizable: bool,
+@@ -292,7 +293,7 @@ impl WindowsWindowInner {
+             drop_target_helper: context.drop_target_helper.clone(),
+             state,
+             handle: context.handle,
+-            hide_title_bar: context.hide_title_bar,
++            hide_title_bar: Cell::new(context.hide_title_bar),
+             is_movable: context.is_movable,
+             is_resizable: context.is_resizable,
+             is_minimizable: context.is_minimizable,
+@@ -658,6 +659,25 @@ impl Drop for WindowsWindow {
+ }
+ 
+ impl PlatformWindow for WindowsWindow {
++    /// The application's decorations hide the system's title bar (its
++    /// frame, shadow and edges kept), on an open window too.
++    fn request_decorations(&self, decorations: gpui::WindowDecorations) {
++        let hide = decorations == gpui::WindowDecorations::Client;
++        if self.0.hide_title_bar.replace(hide) != hide {
++            crate::events::notify_frame_changed(self.0.hwnd);
++        }
++    }
++
++    fn window_decorations(&self) -> gpui::Decorations {
++        if self.0.hide_title_bar.get() {
++            gpui::Decorations::Client {
++                tiling: gpui::Tiling::default(),
++            }
++        } else {
++            gpui::Decorations::Server
++        }
++    }
++
+     fn bounds(&self) -> Bounds<Pixels> {
+         self.state.bounds()
+     }
+@@ -972,7 +992,10 @@ impl PlatformWindow for WindowsWindow {
+ 
+     fn zoom(&self) {
+         unsafe {
+-            if IsWindowVisible(self.0.hwnd).as_bool() {
++            // Maximized, it is restored, as on the other platforms.
++            if IsWindowVisible(self.0.hwnd).as_bool() && self.state.is_maximized() {
++                ShowWindowAsync(self.0.hwnd, SW_NORMAL).ok().log_err();
++            } else if IsWindowVisible(self.0.hwnd).as_bool() {
+                 ShowWindowAsync(self.0.hwnd, SW_MAXIMIZE).ok().log_err();
+             } else if let Some(mut status) = self.state.initial_placement.take() {
+                 status.state = WindowOpenState::Maximized;

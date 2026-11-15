@@ -566,6 +566,10 @@ pub struct Shell {
     /// The press on the title bar's empty parts that moves the window once
     /// the pointer moves (`elements::window_drag`).
     pub(crate) window_press: crate::elements::window_drag::Press,
+    /// Where macOS's traffic lights were last put (`title_bar::lights`):
+    /// told again only when that moves.
+    #[cfg(target_os = "macos")]
+    lights_at: Option<gpui::Point<gpui::Pixels>>,
     /// Where the window's cards are this frame (`Theme::cards`): written
     /// as they are laid out, the frame painted around them
     /// (`elements::frame`).
@@ -927,6 +931,8 @@ impl Shell {
             sidebar_drawn: 0.,
             title_bar: crate::title_bar::Frame::default(),
             window_press: crate::elements::window_drag::Press::default(),
+            #[cfg(target_os = "macos")]
+            lights_at: None,
             frame_cards: crate::elements::frame::Cards::default(),
             drawn_raised: None,
             strip_holes: crate::elements::ground::Holes::default(),
@@ -4675,6 +4681,18 @@ impl Render for Shell {
             .observe(f32::from(viewport.width), f32::from(viewport.height));
         let (stacked, bottom) = (self.layout.stacked(), self.layout.bottom());
         let theme = cx.global::<Theme>().clone();
+        // macOS's traffic lights in the middle of skwir's first row, while
+        // it draws the title bar (ADR-138).
+        #[cfg(target_os = "macos")]
+        if let Some(at) = crate::title_bar::lights(
+            &self.title_bar,
+            self.frame_inset(&theme, window).top,
+            window,
+        ) && self.lights_at != Some(at)
+        {
+            window.set_traffic_light_position(at);
+            self.lights_at = Some(at);
+        }
         // The window's own width is known before layout, unlike an element's.
         // Below it the panes keep the room: places stay reachable through the
         // address bar, the palette and Jump.

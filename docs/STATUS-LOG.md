@@ -18094,3 +18094,32 @@ Desktop was not taken: GNOME is a desktop that draws no title bar, and
 macOS and Windows say system. ADR-138 amended. Checked: the `title_bar`
 tests and the UI suite.
 
+## 2026-11-15: The title bar on macOS and Windows (ADR-138 amended)
+
+`ui.title_bar` on every system (decision 8), the window made as it asks
+(`TitlebarOptions::appears_transparent` with the decorations) and changed
+on an open window.
+
+- **gpui patch 0066**: `request_decorations` and `window_decorations` on
+  Windows (the hidden title bar, a `Cell`, the frame recomputed) and macOS
+  (the transparent title bar, AppKit asked on the foreground executor,
+  the lights moved or put back); Windows' `zoom` restores; a drag area
+  counts in Windows' hit test where it is frontmost, a caption button
+  where the mouse is over it.
+- **Skwir**: `title_bar::DRAWS_FRAME` (the free desktops alone draw
+  skwir's margin, shadow, corners and edges); the layout by system
+  (`platform_layout`: the desktop's, Windows' three at the end, none on
+  macOS); Windows' caption buttons (`caption`: 46 px, the theme's hover,
+  `Theme::caption_close` and `on_caption_close` for Close, Windows'
+  red, no click of skwir's: Windows presses them); macOS's lights
+  (`lights`, placed by the shell when their place moves, `LIGHTS_ROOM`
+  left at the row's start); the drag area told to Windows as caption
+  (not beside the tabs, whose double click opens one), on macOS moving
+  at the press, its double click the system's.
+- Checked: clippy on the UI for `x86_64-pc-windows-gnu` (cargo-zigbuild)
+  and `aarch64-apple-darwin` (macos.sh's environment); Linux: clippy, the
+  UI tests (710), the binary's settings, keymap and plugin tests; the top
+  row on headless sway unchanged. Not run: macOS, Windows (a gpui window
+  cannot be drawn under Wine: no Direct Manipulation, no DirectWrite font
+  sets).
+

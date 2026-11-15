@@ -6,12 +6,13 @@ edges; they asked for a setting choosing the title bar above, on its own
 row, or in skwir's top row, working on every desktop, GNOME's Wayland
 included, and chose the default recommended below, the desktop's way;
 they declined dragging the window from the address field's empty end,
-which edits the path). Built on Linux; macOS and Windows keep the
-system's title bar for now (Consequences). Amended the same day, the user
+which edits the path). Built on Linux; compiled and linted for macOS
+and Windows (decision 8), never run there. Amended the same day, the user
 finding no controls in any mode on Hyprland and the bar shown a moment
 before going: decisions 2 and 7; and the values named for whose bar
 it is and how it looks (1), the user finding Above no name for the
-system's bar.
+system's bar. Amended again the same day, the user asking for macOS and
+Windows: decision 8.
 
 ## Context
 
@@ -101,6 +102,22 @@ system's bar.
    disabled: the settings have no unavailable choice, and none can be
    known before it is asked.
 
+8. **macOS and Windows** (amended): the setting on every system. Asked
+   for none, macOS's title bar is made transparent, the content under it,
+   its traffic lights the system's, put in the middle of skwir's first row
+   (`title_bar::lights`) with room left for them at its start; Windows'
+   is hidden, its frame, shadow and edges kept, and skwir draws Windows'
+   caption buttons (minimize, maximize, close, square, Close red under the
+   pointer: `Theme::caption_close`), told to Windows as such
+   (`WindowControlArea`), which presses them itself and shows Snap Layouts
+   over Maximize; the empty parts are told to it as caption, so it moves,
+   snaps and maximizes the window and opens its menu; beside the tabs,
+   where a double click opens a tab, they are not. Skwir draws its own
+   frame on the free desktops alone (`DRAWS_FRAME`). The window is made
+   as the setting asks and changed on an open window (gpui patch 0066).
+   macOS's double click does what its settings say
+   (`titlebar_double_click`), and a press there starts the move at once.
+
 ## Consequences
 
 - On GNOME, skwir's window has its buttons, moves and sizes as GNOME's
@@ -118,12 +135,9 @@ system's bar.
   GNOME's Mutter itself and its portal's button layout (the reporter's
   Fedora 45 confirms), KWin, X11 with a compositor, the right button's
   menu, double-click.
-- **macOS and Windows**: the setting is not declared there; the system's
-  title bar stays. gpui sets their title bar when a window opens
-  (`TitlebarOptions::appears_transparent`, Windows' `hide_title_bar`):
-  Windows' needs its caption buttons told to the system
-  (`WindowControlArea`, for Snap Layouts) and a patch to switch an open
-  window; macOS keeps its traffic lights, moved. Both wait in
-  `docs/PORTING.md`.
+- **macOS and Windows** (decision 8) are compiled and linted only: a gpui
+  window cannot be drawn under Wine, and no Mac is at hand. Not seen: the
+  lights' place, the caption buttons, Snap Layouts, a switch on an open
+  window (macOS's style mask changed after it opened).
 - Popups keep 8 px from the viewport's edges, not the body's: one near
   an edge may lie up to 4 px over the margin.

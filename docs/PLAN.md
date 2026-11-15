@@ -1086,7 +1086,9 @@ closes an item removes its line; work that leaves one adds it here.
 2026-11-15): built on Linux and tried on headless Weston (which, as
 GNOME's Mutter, draws no title bar) and headless sway. Left: Mutter itself
 and the button layout its portal gives (the reporter's Fedora 45), KWin
-with the application's frame, X11 with a compositor, Hyprland itself
+with the application's frame, X11 with a compositor, macOS and Windows
+(built 2026-11-15, compiled and linted only: no gpui window under Wine,
+no Mac), Hyprland itself
 (its refusal tried as sway's `border pixel`), the right button's window
 menu and a double click (never pressed in a test); no choice is disabled
 where it does nothing (the settings have no unavailable choice), its
@@ -1096,6 +1098,7 @@ Windows keep the system's title bar, `ui.title_bar` not declared there
 Layouts, macOS's traffic lights moved, an open window switched by a gpui
 patch); popups keep 8 px from the viewport's edges, not the body's, so
 one may lie up to 4 px over the margin.
+macOS and Windows: `docs/PORTING.md`'s title bar line.
 
 **The sidebar follows what other programs change** (ADR-086 amended,
 2026-11-15): built and tried on Linux. Left: macOS's following of the

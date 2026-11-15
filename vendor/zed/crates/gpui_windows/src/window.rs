@@ -102,7 +102,8 @@ pub(crate) struct WindowsWindowInner {
     pub(crate) state: WindowsWindowState,
     system_settings: WindowsSystemSettings,
     pub(crate) handle: AnyWindowHandle,
-    pub(crate) hide_title_bar: bool,
+    /// The title bar hidden, the application drawing its own (`request_decorations`).
+    pub(crate) hide_title_bar: Cell<bool>,
     pub(crate) is_movable: bool,
     pub(crate) is_resizable: bool,
     pub(crate) is_minimizable: bool,
@@ -292,7 +293,7 @@ impl WindowsWindowInner {
             drop_target_helper: context.drop_target_helper.clone(),
             state,
             handle: context.handle,
-            hide_title_bar: context.hide_title_bar,
+            hide_title_bar: Cell::new(context.hide_title_bar),
             is_movable: context.is_movable,
             is_resizable: context.is_resizable,
             is_minimizable: context.is_minimizable,
@@ -658,6 +659,25 @@ impl Drop for WindowsWindow {
 }
 
 impl PlatformWindow for WindowsWindow {
+    /// The application's decorations hide the system's title bar (its
+    /// frame, shadow and edges kept), on an open window too.
+    fn request_decorations(&self, decorations: gpui::WindowDecorations) {
+        let hide = decorations == gpui::WindowDecorations::Client;
+        if self.0.hide_title_bar.replace(hide) != hide {
+            crate::events::notify_frame_changed(self.0.hwnd);
+        }
+    }
+
+    fn window_decorations(&self) -> gpui::Decorations {
+        if self.0.hide_title_bar.get() {
+            gpui::Decorations::Client {
+                tiling: gpui::Tiling::default(),
+            }
+        } else {
+            gpui::Decorations::Server
+        }
+    }
+
     fn bounds(&self) -> Bounds<Pixels> {
         self.state.bounds()
     }
@@ -972,7 +992,10 @@ impl PlatformWindow for WindowsWindow {
 
     fn zoom(&self) {
         unsafe {
-            if IsWindowVisible(self.0.hwnd).as_bool() {
+            // Maximized, it is restored, as on the other platforms.
+            if IsWindowVisible(self.0.hwnd).as_bool() && self.state.is_maximized() {
+                ShowWindowAsync(self.0.hwnd, SW_NORMAL).ok().log_err();
+            } else if IsWindowVisible(self.0.hwnd).as_bool() {
                 ShowWindowAsync(self.0.hwnd, SW_MAXIMIZE).ok().log_err();
             } else if let Some(mut status) = self.state.initial_placement.take() {
                 status.state = WindowOpenState::Maximized;

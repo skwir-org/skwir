@@ -123,6 +123,14 @@ new. Intel Macs have no build yet.
    lints and tests on `macos-latest`. It does not block merging until it
    passes.
 
+13. **The title bar** (try). Settings › Appearance › Title bar: Compact
+   and In the top row make the title bar transparent and put the traffic
+   lights in skwir's first row, in its middle, with room before the
+   sidebar's button; System gives macOS's back, on the open window too.
+   Dragging the row's empty parts moves the window, a double click does
+   what System Settings say (zoom or minimize). Say where the lights sit
+   and whether anything overlaps them (ADR-138).
+
 ## Windows
 
 A build to try is made on Linux (ADR-074) and offered on each release's
@@ -187,6 +195,13 @@ window: everything below is new.
    Windows. Signing needs a
    code-signing certificate: the project decides that with you.
 12. **CI** (code). The `native` job runs on `windows-latest` too.
+
+13. **The title bar** (try). Settings › Appearance › Title bar: Compact
+   and In the top row hide Windows' title bar and draw its three buttons at
+   the end of skwir's row; Maximize under the pointer shows Snap Layouts,
+   Close turns red; dragging the row's empty parts moves and snaps the
+   window, a double click maximizes it, the right button opens its menu;
+   System gives Windows' bar back, on the open window too (ADR-138).
 
 ## When a system is ready
 

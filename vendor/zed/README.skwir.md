@@ -98,6 +98,7 @@ carry: the script takes it from the Inter release Skwir's packages pin
 | `0063-hitbox-is-frontmost` | A hitbox says whether it is the frontmost one under the mouse (`Hitbox::is_frontmost`): the empty parts of a title bar the application draws move the window, a button over them keeping its press | — |
 | `0064-rounded-masks-meet-at-corners` | Two rounded content masks with a corner at the same point meet there along the larger arc (`ContentMask::intersect`): a card at a window's corner is rounded as the window is | — |
 | `0065-decorations-as-answered` | A Wayland window keeps its decorations until the compositor answers a request, and says while it waits (`Window::decorations_pending`): a compositor that keeps its own (Hyprland's) no longer shows those asked for a frame | — |
+| `0066-title-bar-on-windows-and-macos` | An open window's title bar hidden on Windows, made transparent on macOS, as decorations are requested and said (`request_decorations`, `window_decorations`); Windows' `zoom` restores a maximized window; a drag area counts in Windows' hit test where it is frontmost | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
 
@@ -1228,3 +1229,29 @@ kept in sway's frame (`border pixel`), then switched both ways on the open
 window; a first version holding the state's borrow across the redraw
 panicked at the window's opening, found there. Not checked: Hyprland
 itself; no test (gpui's tests have no compositor to answer).
+
+### 0066: The title bar on Windows and macOS
+
+Skwir draws its title bar where the user asks (ADR-138), on an open window
+too. gpui set Windows' hidden title bar and macOS's transparent one when a
+window opened (`TitlebarOptions::appears_transparent`) and said
+`Decorations::Server` whatever they were.
+
+- **Asked and said alike everywhere**: `request_decorations(Client)` hides
+  Windows' title bar (`hide_title_bar`, a `Cell` now, the frame recomputed
+  by `notify_frame_changed`) or makes macOS's transparent (the content
+  under it, the title hidden, AppKit asked on the foreground executor as
+  `toggle_fullscreen` is, the traffic lights moved or put back);
+  `Server` gives the system's back. `window_decorations` says which.
+- **Windows' `zoom`** restores a maximized window, as Wayland's and
+  macOS's do.
+- **A drag area where it is frontmost**: the hit test answered a
+  `WindowControlArea::Drag` wherever the mouse was within it, a button
+  over it included, which then never got its press. A drag area now
+  counts where no hitbox is over it (as 0063's `is_frontmost`); a
+  button's area (Close, Max, Min) where the mouse is over it.
+
+Checked: clippy for Windows (`x86_64-pc-windows-gnu`) and macOS
+(`aarch64-apple-darwin`, in `tools/package/macos.sh`'s environment) on
+Skwir's UI. Not run: a gpui window cannot be drawn under Wine, and no Mac
+is at hand.

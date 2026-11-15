@@ -29,7 +29,7 @@
 
 use gpui::{
     AnyElement, App, Context, CursorStyle, Decorations, MouseButton, ResizeEdge, Tiling, Window,
-    WindowButton, WindowDecorations, div, prelude::*, px,
+    WindowButton, WindowControlArea, WindowDecorations, div, prelude::*, px,
 };
 
 use crate::shell::Shell;
@@ -50,6 +50,21 @@ const RADIUS_REMS: f32 = crate::elements::frame::RADIUS_REMS;
 /// How tall the bar of skwir's own is above the window (`Drawn::System`),
 /// as a desktop's title bar.
 const ABOVE_HEIGHT: f32 = 38.;
+
+/// Whether skwir draws the window's frame (margin, shadow, corners,
+/// edges) while it draws its title bar: on the free desktops, whose
+/// compositor then draws none. Windows keeps its frame with the title bar
+/// hidden, macOS with the title bar transparent.
+const DRAWS_FRAME: bool = cfg!(any(target_os = "linux", target_os = "freebsd"));
+
+/// Where macOS's traffic lights are, from the window's left edge, and the
+/// room left for them at the start of the row that holds them: three
+/// lights of 14 px, 6 px apart, and a gap after.
+const LIGHTS_X: f32 = 14.;
+const LIGHTS_ROOM: f32 = LIGHTS_X + 3. * 14. + 2. * 6. + 8.;
+
+/// How wide a Windows caption button is, as Windows draws its own.
+const CAPTION_WIDTH: f32 = 46.;
 
 /// How tall the band of skwir's own is on the frame (`Drawn::Compact`): its
 /// buttons and a line of text.
@@ -181,14 +196,15 @@ impl Frame {
         if drawn == Drawn::None {
             return Self::default();
         }
-        let framed = matches!(decorations, Decorations::Client { .. }) && !fullscreen;
+        let framed =
+            DRAWS_FRAME && matches!(decorations, Decorations::Client { .. }) && !fullscreen;
         let controls = window.window_controls();
         let offered = |button: &WindowButton| match button {
             WindowButton::Close => true,
             WindowButton::Maximize => controls.maximize,
             WindowButton::Minimize => controls.minimize,
         };
-        let layout = cx.button_layout().unwrap_or_else(default_layout);
+        let layout = platform_layout(cx);
         let side = |buttons: &[Option<WindowButton>]| {
             buttons.iter().flatten().copied().filter(offered).collect()
         };
@@ -236,7 +252,8 @@ fn margin(framed: bool, tiling: Tiling) -> gpui::Edges<f32> {
 /// alone: skwir draws its frame exactly where the system draws none and
 /// the window is not fullscreen (`Frame::framed`).
 pub fn body(window: &Window) -> gpui::Bounds<gpui::Pixels> {
-    let framed = matches!(window.window_decorations(), Decorations::Client { .. })
+    let framed = DRAWS_FRAME
+        && matches!(window.window_decorations(), Decorations::Client { .. })
         && !window.is_fullscreen();
     let margin = margin(framed, window.tiling());
     let viewport = window.viewport_size();
@@ -249,15 +266,47 @@ pub fn body(window: &Window) -> gpui::Bounds<gpui::Pixels> {
     )
 }
 
-/// Where no desktop says (macOS and Windows draw their own; a desktop that
-/// names no layout): Close alone at the end, as GNOME has it.
-fn default_layout() -> gpui::WindowButtonLayout {
-    let mut right = [None; gpui::MAX_BUTTONS_PER_SIDE];
-    right[0] = Some(WindowButton::Close);
-    gpui::WindowButtonLayout {
-        left: [None; gpui::MAX_BUTTONS_PER_SIDE],
-        right,
+/// The buttons skwir draws, by system: the free desktop's layout (Close
+/// alone at the end where it names none, as GNOME has it); Windows'
+/// minimize, maximize and close at the end; none on macOS, whose traffic
+/// lights are the system's, moved into skwir's row (`lights`).
+fn platform_layout(cx: &App) -> gpui::WindowButtonLayout {
+    let none = [None; gpui::MAX_BUTTONS_PER_SIDE];
+    if cfg!(target_os = "macos") {
+        return gpui::WindowButtonLayout {
+            left: none,
+            right: none,
+        };
     }
+    if cfg!(target_os = "windows") {
+        return gpui::WindowButtonLayout {
+            left: none,
+            right: [
+                Some(WindowButton::Minimize),
+                Some(WindowButton::Maximize),
+                Some(WindowButton::Close),
+            ],
+        };
+    }
+    cx.button_layout().unwrap_or_else(|| {
+        let mut right = none;
+        right[0] = Some(WindowButton::Close);
+        gpui::WindowButtonLayout { left: none, right }
+    })
+}
+
+/// Where macOS's traffic lights go while skwir draws its title bar: in
+/// the middle of its first row, the frame's gutter above it where the
+/// cards hang below one (`gutter`). `None` elsewhere.
+#[cfg(target_os = "macos")]
+pub fn lights(frame: &Frame, gutter: f32, window: &Window) -> Option<gpui::Point<gpui::Pixels>> {
+    let (top, height) = match frame.drawn {
+        Drawn::TopRow => (gutter, crate::address::PANE_ROW_HEIGHT),
+        Drawn::Compact => (0., ROW_HEIGHT),
+        Drawn::System | Drawn::None => return None,
+    };
+    let height = f32::from(sized(height).to_pixels(window.rem_size()));
+    Some(gpui::point(px(LIGHTS_X), px(top + (height - 14.) / 2.)))
 }
 
 /// Which end of the top row.
@@ -291,12 +340,34 @@ pub fn top_row_drag(shell: &Shell, zooms: bool) -> Option<impl IntoElement + use
 /// puts none there.
 fn buttons(shell: &Shell, end: End, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let frame = &shell.title_bar;
+    // macOS's traffic lights are the system's, moved into the row's start
+    // (`lights`): their room is left there.
+    if cfg!(target_os = "macos") {
+        return (end == End::Start && frame.drawn != Drawn::None)
+            .then(|| div().flex_none().w(px(LIGHTS_ROOM - 6.)).into_any_element());
+    }
     let listed = match end {
         End::Start => &frame.start,
         End::End => &frame.end,
     };
     if listed.is_empty() {
         return None;
+    }
+    if cfg!(target_os = "windows") {
+        let theme = cx.global::<Theme>().clone();
+        return Some(
+            div()
+                .flex_none()
+                .h_full()
+                .flex()
+                .ml(sized(4.))
+                .children(
+                    listed
+                        .iter()
+                        .map(|button| caption(shell, *button, frame.maximized, &theme)),
+                )
+                .into_any_element(),
+        );
     }
     let buttons: Vec<AnyElement> = listed
         .iter()
@@ -344,6 +415,63 @@ fn button_element(
         .control()
         .no_stop()
         .render(shell, cx)
+        .into_any_element()
+}
+
+/// A Windows caption button: as Windows draws its own, square, the width
+/// of a caption's, Close red under the pointer. Windows presses it: told
+/// what it is (`WindowControlArea`), it shows Snap Layouts over Maximize
+/// and minimizes, maximizes or closes the window itself, as for its own
+/// buttons; a click of skwir's would act twice.
+fn caption(shell: &Shell, button: WindowButton, maximized: bool, theme: &Theme) -> AnyElement {
+    let (id, icon, label, area) = match button {
+        WindowButton::Close => ("caption-close", "close", "Close", WindowControlArea::Close),
+        WindowButton::Minimize => (
+            "caption-minimize",
+            "minus",
+            "Minimize",
+            WindowControlArea::Min,
+        ),
+        WindowButton::Maximize if maximized => (
+            "caption-maximize",
+            "window-restore",
+            "Restore",
+            WindowControlArea::Max,
+        ),
+        WindowButton::Maximize => (
+            "caption-maximize",
+            "window-maximize",
+            "Maximize",
+            WindowControlArea::Max,
+        ),
+    };
+    let close = button == WindowButton::Close;
+    let (close_ground, on_close, hover) =
+        (theme.caption_close, theme.on_caption_close, theme.hover);
+    div()
+        .id(id)
+        .role(gpui::Role::Button)
+        .when(shell.a11y, |d| d.aria_label(label))
+        .window_control_area(area)
+        .flex_none()
+        .w(px(CAPTION_WIDTH))
+        .h_full()
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_color(theme.text)
+        .hover(move |s| {
+            if close {
+                s.bg(close_ground).text_color(on_close)
+            } else {
+                s.bg(hover)
+            }
+        })
+        .child(
+            gpui::svg()
+                .path(format!("toolbar/{icon}.svg"))
+                .size(px(14.)),
+        )
         .into_any_element()
 }
 

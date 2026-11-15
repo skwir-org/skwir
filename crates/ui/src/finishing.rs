@@ -1319,25 +1319,26 @@ fn open_window(
         placed: opening.asked,
     };
     // The system's title bar, or none for skwir's own (ADR-138): what
-    // `ui.title_bar` says, asked again as it moves (`Shell::sync`).
-    let decorations = cfg!(target_os = "linux").then(|| {
-        crate::title_bar::TitleBar::read(
-            app.settings
-                .get::<String>(crate::settings::TITLE_BAR_KEY)
-                .as_deref(),
-        )
-        .asks()
-    });
+    // `ui.title_bar` says, asked again as it moves (`Shell::sync`). On
+    // macOS and Windows the window is made so (its title bar transparent,
+    // or hidden), as asking once it is open would show the other a moment.
+    let asks = crate::title_bar::TitleBar::read(
+        app.settings
+            .get::<String>(crate::settings::TITLE_BAR_KEY)
+            .as_deref(),
+    )
+    .asks();
     let opened = cx.open_window(
         gpui::WindowOptions {
             window_bounds: Some(opening.bounds),
             display_id: opening.display,
             titlebar: Some(gpui::TitlebarOptions {
                 title: Some("skwir".into()),
+                appears_transparent: asks == gpui::WindowDecorations::Client,
                 ..Default::default()
             }),
             app_id: Some(skwir_core::APP_ID.into()),
-            window_decorations: decorations,
+            window_decorations: Some(asks),
             ..Default::default()
         },
         |window, cx| cx.new(|cx| Shell::new(app, id, start, keymap, work, window, cx)),
