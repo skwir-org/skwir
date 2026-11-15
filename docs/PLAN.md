@@ -1082,6 +1082,18 @@ Gathered on 2026-10-20 from the notes of this plan and of
 may have covered one: check the source before starting it. Work that
 closes an item removes its line; work that leaves one adds it here.
 
+**The title bar where the user wants it** (ADR-138, issue #11,
+2026-11-15): built on Linux and tried on headless Weston (which, as
+GNOME's Mutter, draws no title bar) and headless sway. Left: Mutter itself
+and the button layout its portal gives (the reporter's Fedora 45), KWin
+with the application's frame, X11 with a compositor, the right button's
+window menu and a double click (never pressed in a test); macOS and
+Windows keep the system's title bar, `ui.title_bar` not declared there
+(`docs/PORTING.md`: Windows' caption buttons told to the system for Snap
+Layouts, macOS's traffic lights moved, an open window switched by a gpui
+patch); popups keep 8 px from the viewport's edges, not the body's, so
+one may lie up to 4 px over the margin.
+
 **The sidebar follows what other programs change** (ADR-086 amended,
 2026-11-15): built and tried on Linux. Left: macOS's following of the
 table (kqueue's `EVFILT_FS`) is compiled only, and Windows' (the folders

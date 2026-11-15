@@ -26,6 +26,7 @@ pub mod rem;
 pub mod rows;
 pub mod scrollbar;
 pub mod terminal;
+pub mod window_drag;
 pub mod zoom_wheel;
 
 /// The id of an element showing `what`, the same from one frame to the

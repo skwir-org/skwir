@@ -446,6 +446,14 @@ Left:
 
 ## 10–15. The rest
 
+- **The title bar** (ADR-138): `ui.title_bar` is declared on the free
+  desktops only; macOS and Windows keep the system's. Windows' would hide
+  its title bar (`TitlebarOptions::appears_transparent`, gpui's
+  `hide_title_bar`) and tell the system its caption buttons
+  (`WindowControlArea`, so Snap Layouts shows over Maximize); macOS's
+  would keep its traffic lights, moved (`traffic_light_position`). gpui
+  sets both when a window opens: switching an open window needs a patch.
+
 - **Media keys** (step I): `plugins/mpris` is registered on the free
   desktops only. A Mac's Now Playing and Windows' media controls (SMTC) are
   not written (`skwir_core::playing` is the seam).

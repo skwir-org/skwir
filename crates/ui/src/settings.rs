@@ -79,6 +79,10 @@ pub const CARDS_KEY: &str = "ui.cards";
 /// Cards by default since 2026-11-07; off, the window is apart by lines,
 /// as before.
 pub const CARDS_DEFAULT: bool = true;
+/// Where the window's title and its buttons are (ADR-138,
+/// `title_bar::TitleBar`): the free desktops' only, where a compositor may
+/// leave the title bar to the application.
+pub const TITLE_BAR_KEY: &str = "ui.title_bar";
 /// The least opacity a ground takes: below it, text over a light
 /// background behind a dark look would no longer read.
 pub const OPACITY_LEAST: i64 = 50;
@@ -476,6 +480,40 @@ fn cards_spec() -> SettingSpec {
     )
     // A detail of the look now that it is the default, under More
     // settings (ADR-072); shown there unfolded once it is changed.
+}
+
+/// `ui.title_bar` (ADR-138), saying what Automatic comes to once a window
+/// knows whether the system draws its title bar (`show_title_bar`).
+fn title_bar_spec(now: &str) -> SettingSpec {
+    SettingSpec::choice(
+        TITLE_BAR_KEY,
+        "Title bar",
+        "Where the window's title and its buttons are. Above: the system's title bar, or one like it where the system draws none (GNOME). On a row of its own: a slim bar of skwir's, its title in the middle. In the top row: the buttons at the ends of skwir's top row, whose empty parts move the window, as GNOME's applications have it. Automatic is the system's title bar where it draws one, the top row where it does not. Where the system keeps its own title bar, skwir draws no other.",
+        "auto",
+        &crate::title_bar::TitleBar::VALUES,
+    )
+    .now(now)
+}
+
+/// What `ui.title_bar`'s Automatic comes to, last said.
+static TITLE_BAR_NOW: std::sync::Mutex<&str> = std::sync::Mutex::new("");
+
+/// Say beside `ui.title_bar` what its Automatic comes to, when that
+/// changed (a window answered, `title_bar::automatic_now`).
+pub(crate) fn show_title_bar(app: &App, now: &'static str) {
+    if !cfg!(target_os = "linux") {
+        return;
+    }
+    {
+        let mut said = TITLE_BAR_NOW
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if *said == now {
+            return;
+        }
+        *said = now;
+    }
+    app.settings.declare(title_bar_spec(now));
 }
 
 /// The theme's look: Automatic (the desktop's preference, saying the look
@@ -1438,6 +1476,14 @@ pub(crate) fn list_icon_themes(app: &Arc<App>) {
 pub fn declare(app: &App) {
     app.settings.declare(theme_spec());
     app.settings.declare(cards_spec());
+    // The free desktops' compositors may leave the title bar to skwir;
+    // macOS and Windows draw theirs.
+    if cfg!(target_os = "linux") {
+        let now = *TITLE_BAR_NOW
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        app.settings.declare(title_bar_spec(now));
+    }
     // 0.3.0's Desktop colors switch, read for the fonts, then the colors.
     if skwir_platform::desktop_style::FONTS {
         crate::desktop_style::keep_own_fonts(&app.settings);

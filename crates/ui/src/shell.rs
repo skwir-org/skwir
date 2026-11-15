@@ -359,6 +359,8 @@ pub struct Preferences {
     pub notify_desktop: bool,
     /// `ui.keep_awake`: the computer kept awake while an action runs.
     pub keep_awake: bool,
+    /// `ui.title_bar`: where the window's title and buttons are (ADR-138).
+    pub title_bar: crate::title_bar::TitleBar,
 }
 
 impl Default for Preferences {
@@ -382,6 +384,7 @@ impl Default for Preferences {
             player: crate::player::PlayerPrefs::default(),
             notify_desktop: true,
             keep_awake: true,
+            title_bar: crate::title_bar::TitleBar::Automatic,
         }
     }
 }
@@ -556,6 +559,13 @@ pub struct Shell {
     /// (`sidebar_drawn_width`; 0 when it is not): drawn, its header holds
     /// the window's toggle and More (`corner_at`).
     pub(crate) sidebar_drawn: f32,
+    /// What skwir draws of the window's title bar this frame (ADR-138),
+    /// read before anything is built: the rows that hold the window's
+    /// tools hold its buttons too while they are in the top row.
+    pub(crate) title_bar: crate::title_bar::Frame,
+    /// The press on the title bar's empty parts that moves the window once
+    /// the pointer moves (`elements::window_drag`).
+    pub(crate) window_press: crate::elements::window_drag::Press,
     /// Where the window's cards are this frame (`Theme::cards`): written
     /// as they are laid out, the frame painted around them
     /// (`elements::frame`).
@@ -694,7 +704,7 @@ pub struct Shell {
     pub(crate) draws_meshes: bool,
     /// What the window's title was last set from: the active pane's
     /// location's title.
-    title: gpui::SharedString,
+    pub(crate) title: gpui::SharedString,
     /// What of Skwir's the system's clipboard may hold (ADR-062).
     pub(crate) clipboard_holds: crate::clipboard::Held,
     _subscriptions: Vec<Subscription>,
@@ -915,6 +925,8 @@ impl Shell {
             dismissed: None,
             held: None,
             sidebar_drawn: 0.,
+            title_bar: crate::title_bar::Frame::default(),
+            window_press: crate::elements::window_drag::Press::default(),
             frame_cards: crate::elements::frame::Cards::default(),
             drawn_raised: None,
             strip_holes: crate::elements::ground::Holes::default(),
@@ -3780,6 +3792,8 @@ impl Shell {
                 self.close_window(window, cx);
                 window.remove_window();
             }
+            "maximize_window" => window.zoom_window(),
+            "minimize_window" => window.minimize_window(),
             // Declared (`commands.rs`) but carried out nowhere: a mistake
             // the test of the declarations catches.
             other => self.set_status(format!("ui.{other} is not carried out here"), true, cx),
@@ -3987,6 +4001,18 @@ impl Shell {
                 .settings
                 .get::<bool>(crate::settings::KEEP_AWAKE_KEY)
                 .unwrap_or(true);
+            // The system asked again for its title bar, or for none, as the
+            // setting moves (the window opened asking, `finishing::open`).
+            let title_bar = crate::title_bar::TitleBar::read(
+                self.app
+                    .settings
+                    .get::<String>(crate::settings::TITLE_BAR_KEY)
+                    .as_deref(),
+            );
+            if title_bar != self.prefs.title_bar {
+                self.prefs.title_bar = title_bar;
+                window.request_decorations(title_bar.asks());
+            }
             self.prefs.drag_image = crate::dragicon::Layout::read(
                 self.app
                     .settings
@@ -4601,6 +4627,15 @@ impl Render for Shell {
         self.a11y = window.is_a11y_active();
         self.draws_meshes = turns_models(window);
         self.sync(window, cx);
+        // What of the title bar skwir draws, read before anything is
+        // built: the rows that hold the window's tools hold its buttons
+        // (ADR-138).
+        self.title_bar = crate::title_bar::Frame::of(self.prefs.title_bar, window, cx);
+        if let Some(now) =
+            crate::title_bar::automatic_now(self.prefs.title_bar, window.window_decorations())
+        {
+            crate::settings::show_title_bar(&self.app, now);
+        }
         // One frame of map tiles per window frame, whatever maps it draws:
         // what the last frame's maps asked for is kept, the rest cancelled
         // (`TileStore::end_frame`), and this frame's maps ask anew.
@@ -4627,8 +4662,9 @@ impl Render for Shell {
             (panes, std::mem::replace(&mut self.pane, drawn))
         });
         // Like the sidebar below, the arrangement follows the window's own
-        // size, known before layout; decide it before anything is built.
-        let viewport = window.viewport_size();
+        // size, known before layout; decide it before anything is built:
+        // within its margin while skwir draws its frame (`title_bar`).
+        let viewport = crate::title_bar::body(window).size;
         self.layout
             .observe(f32::from(viewport.width), f32::from(viewport.height));
         let (stacked, bottom) = (self.layout.stacked(), self.layout.bottom());
@@ -4691,6 +4727,13 @@ impl Render for Shell {
                     .justify_center()
                     .child(answer)
             });
+        // Skwir's own title bar: above the window, or on its frame above its
+        // areas (`framed`); in the top row, its buttons are the rows'.
+        let title_bar = crate::title_bar::bar(self, cx);
+        let (above, band) = match self.title_bar.drawn {
+            crate::title_bar::Drawn::Above => (title_bar, None),
+            _ => (None, title_bar),
+        };
         let sequence = crate::sequence::render(self, cx);
         let shortcuts = crate::shortcuts::render(self, window, cx);
         let about = crate::about::render(self, cx);
@@ -4744,10 +4787,12 @@ impl Render for Shell {
             // ground once (`Theme::window_bg`, `window_bar`), so what is
             // behind the window shows through as much as they let it.
             .text_color(theme.text)
+            .children(above)
             .child(
                 self.framed(
                     &theme,
                     window,
+                    band,
                     div()
                         .flex()
                         .flex_row()
@@ -4811,7 +4856,8 @@ impl Render for Shell {
             self.presented = Some(std::mem::replace(&mut self.panes, current));
             self.pane = pane;
         }
-        self.resize_hook(root, cx)
+        let root = self.resize_hook(root, cx).into_any_element();
+        crate::title_bar::framed(&self.title_bar, &theme, window, root)
     }
 }
 
@@ -4839,17 +4885,49 @@ impl Shell {
 
     /// The window's areas as they are drawn: as cards (`Theme::cards`,
     /// ADR-123), on the frame, a gutter above them (`frame_inset`); else as
-    /// they are.
-    fn framed(&self, theme: &Theme, window: &Window, areas: gpui::Div) -> gpui::AnyElement {
+    /// they are. `band`: skwir's title bar on a row of its own, above them
+    /// (ADR-138); while skwir draws the title bar, the gutter moves the
+    /// window too.
+    fn framed(
+        &self,
+        theme: &Theme,
+        window: &Window,
+        band: Option<gpui::AnyElement>,
+        areas: gpui::Div,
+    ) -> gpui::AnyElement {
+        let with_band = |areas: gpui::Div| match band {
+            Some(band) => div()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_h_0()
+                .w_full()
+                .child(band)
+                .child(areas),
+            None => areas,
+        };
         if !theme.cards {
-            return areas.into_any_element();
+            return with_band(areas).into_any_element();
         }
         let inset = self.frame_inset(theme, window);
+        let gutter = (self.title_bar.drawn != crate::title_bar::Drawn::None && inset.top > 0.)
+            .then(|| {
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .right_0()
+                    .h(px(inset.top))
+                    .child(crate::elements::window_drag::area(&self.window_press, true))
+            });
         let areas = areas
+            .relative()
+            .children(gutter)
             .pt(px(inset.top))
             .pr(px(inset.right))
             .pb(px(inset.bottom))
             .pl(px(inset.left));
+        let areas = with_band(areas);
         crate::elements::frame::frame(
             &self.frame_cards,
             theme.window_frame(),

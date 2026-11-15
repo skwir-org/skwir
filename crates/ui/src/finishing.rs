@@ -1318,6 +1318,16 @@ fn open_window(
         first_frame,
         placed: opening.asked,
     };
+    // The system's title bar, or none for skwir's own (ADR-138): what
+    // `ui.title_bar` says, asked again as it moves (`Shell::sync`).
+    let decorations = cfg!(target_os = "linux").then(|| {
+        crate::title_bar::TitleBar::read(
+            app.settings
+                .get::<String>(crate::settings::TITLE_BAR_KEY)
+                .as_deref(),
+        )
+        .asks()
+    });
     let opened = cx.open_window(
         gpui::WindowOptions {
             window_bounds: Some(opening.bounds),
@@ -1327,6 +1337,7 @@ fn open_window(
                 ..Default::default()
             }),
             app_id: Some(skwir_core::APP_ID.into()),
+            window_decorations: decorations,
             ..Default::default()
         },
         |window, cx| cx.new(|cx| Shell::new(app, id, start, keymap, work, window, cx)),

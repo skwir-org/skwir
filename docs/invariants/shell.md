@@ -328,7 +328,26 @@ Views are in [views.md](views.md); what locations decide, in
 ## The top of the window
 
 No window row: each area owns its top, so a one-tab window has one row
-of bars, split or not.
+of bars, split or not. The one exception is the title bar on a row of
+its own, which the user asks for (`ui.title_bar`, below).
+
+- **The title bar** (ADR-138, `title_bar.rs`): the system's wherever it
+  draws one, and then skwir draws none of its own, whatever
+  `ui.title_bar` says (never two). Where it draws none (GNOME, Weston),
+  skwir's, where the setting says: above the window, on a row of its
+  own on the frame, or in the top row (Automatic's), the window's
+  buttons then at the ends of what holds the window's tools there, after
+  Split, Properties and Preview and before the sidebar's toggle and
+  More (`title_bar::top_row_buttons`, beside `corner_at` and
+  `toggles_at`). The buttons are the desktop's layout's, those the
+  compositor offers. The empty parts of a row holding them, of the bar
+  and of the frame's gutter move the window: one element under what the
+  row holds (`elements::window_drag`), acting where nothing else is
+  under the pointer; a part of a row that takes a press (a button, the
+  address field, which a click beside the trail edits, a tab) keeps it.
+  What is sized or placed by the window's size reads its body within
+  the margin skwir's frame leaves (`title_bar::body`), never
+  `viewport_size`.
 
 - **Sidebar header** (`address::sidebar_header`): the sidebar toggle and
   More (everything without a button). Without a sidebar they start the

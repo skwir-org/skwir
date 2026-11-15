@@ -17992,3 +17992,59 @@ hidden files are on); ADR-028 still placed it in General.
   binary's `keymap_titles` (the command's title is its own) and
   `plugins_toggle`. Not run: release-check, check-cross (nothing behind
   a system's `cfg`).
+
+## 2026-11-15: The title bar where the user wants it
+
+Issue #11: on Fedora 45's GNOME (Wayland) skwir's window had no buttons,
+could not be moved nor sized by its edges. Mutter implements no
+`xdg-decoration`: gpui fell back to the application's frame
+(`WindowDecorations::Client`) and skwir drew none. The user asked for a
+setting placing the title bar above, on a row of its own or in skwir's
+top row, on every desktop, and chose the desktop's way as Automatic
+(ADR-138).
+
+- **`ui.title_bar`** (Appearance, Linux only): Automatic, Above, On a
+  row of its own, In the top row. The window opens asking the system for
+  its frame or none (`TitleBar::asks`, `finishing::open_window`) and asks
+  again as the setting moves (`Shell::sync`, `request_decorations`).
+  What skwir draws is decided once a frame from what the system answered
+  (`title_bar::drawn`): nothing where it draws its own.
+- **The buttons** (`title_bar::top_row_buttons`): at the ends of the rows
+  `corner_at` and `toggles_at` name (sidebar header, tab strip, pane row
+  as a notch or not, preview bar), from the desktop's layout and the
+  compositor's controls; `Button::control` (round, `Theme::control`,
+  `control_hover`); commands `ui.maximize_window`, `ui.minimize_window`
+  beside `ui.close_window`; two icons drawn for the set
+  (`window-maximize`, `window-restore`).
+- **Moving** (`elements::window_drag`): a canvas under what a row holds,
+  armed by a press where its hitbox is frontmost (gpui patch 0063),
+  moving the window at the first motion; double click maximizes (not
+  beside the tabs, which opens one); the right button, the window's menu.
+  Under the sidebar header, the pane row holding the window's tools, the
+  strip (twice: beside the tabs, around the window's tools), the preview
+  bar, the frame's gutter, the bars of its own.
+- **The frame** (`title_bar::framed`): a 12 px margin on the edges not
+  tiled (`set_client_inset`), resize strips and corners there, the body
+  rounded as a card and clipped to it, `Theme::window_shadow`. A card's
+  square corner at the window's drew over the rounded one: gpui patch
+  0064 rounds a corner two masks share by the larger arc.
+  `title_bar::body` is the window's room: the arrangement, the sidebar's,
+  preview's and dock's limits and edges, the terminal's, the settings
+  dialog's width, a tooltip's.
+- **Tests**: `title_bar` (what is drawn by setting and answer, never two,
+  what is asked, Automatic's note, the margin by tiling); gpui's
+  `a_hitbox_is_frontmost_where_nothing_is_over_it`,
+  `rounded_masks_meet_at_a_corner_along_the_larger_arc` (`just
+  gpui-check gpui`, window tests 176 passed); UI 709 passed.
+- **In a window**: headless Weston (`--fake-seat`, pixman, lavapipe): each
+  value as cards, the top row with lines; four rounded corners and the
+  shadow. Headless sway with the window floating: Automatic left the bar
+  to sway (`border normal`), the top row got `csd` with Close alone (sway
+  offers no minimize or maximize), switched both ways by writing the
+  setting on the open window; a press beside the sidebar's toggle moved
+  the window by the drag less its first motion (100,100 → 180,160 for
+  100,75), a press on Split split the panes without moving it, Close
+  closed the window and the process ended.
+- Not checked: Mutter, KWin, X11, the window menu, a double click, a
+  resize by the margin, macOS and Windows (not declared there).
+

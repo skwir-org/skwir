@@ -110,6 +110,7 @@ pub mod text_view;
 pub mod theme;
 pub mod thumbs;
 pub mod timeline;
+mod title_bar;
 pub mod toast;
 pub mod toolbar;
 pub mod trail;

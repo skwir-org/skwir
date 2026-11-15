@@ -95,6 +95,8 @@ carry: the script takes it from the Inter release Skwir's packages pin
 | `0060-inline-boxes` | A line holds boxes its caller draws (`RunPosition::Inline`): each character of an inline run is one, as wide as it says, never shaped or painted; `TextLayout::inline_boxes` says where each was drawn; a box taller than its text grows the row it is set in, and that row alone (`LineRows`); `StyledText::with_said` gives what such a text says to assistive technology | — |
 | `0061-text-narrows-to-its-widest-word` | A text's minimum content width is its widest word (CSS's), so beside others in a row it narrows and wraps rather than running past them; Zed's was its whole line, which no row could shrink. A layout a text keeps answers another width only where it is the same there. A tooltip and what a drag shows are laid out as wide as their words (`AvailableSpace::max_size`) | — |
 | `0062-drop-svg` | An SVG given as bytes (`paint_svg`'s `data`) is kept in the atlas at each size it was drawn at until its caller lets it go (`Window::drop_svg`, `App::drop_svg` for every window, as `drop_image`): a page's formulas leave with the page | — |
+| `0063-hitbox-is-frontmost` | A hitbox says whether it is the frontmost one under the mouse (`Hitbox::is_frontmost`): the empty parts of a title bar the application draws move the window, a button over them keeping its press | — |
+| `0064-rounded-masks-meet-at-corners` | Two rounded content masks with a corner at the same point meet there along the larger arc (`ContentMask::intersect`): a card at a window's corner is rounded as the window is | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
 
@@ -1177,3 +1179,33 @@ nothing; a first rule, which laid such texts out twice again, cost 6 to
 and
 `window::tests::what_is_laid_out_on_its_own_keeps_its_words_on_a_line`
 (it fails at `min_size`, for a tooltip and for a drag).
+
+### 0063: A hitbox frontmost under the mouse
+
+A title bar the application draws moves the window from its empty parts
+only: a press on a button over it is the button's. `Hitbox::is_hovered`
+holds there too, a button not occluding (an occluding one would hide the
+root's own listeners under it, as Skwir's press counting).
+`Hitbox::is_frontmost`: no hitbox inserted after it contains the mouse,
+and no other has captured the pointer. Skwir's `elements::window_drag`
+asks it (ADR-138).
+
+Checked: `just gpui-check gpui`
+(`a_hitbox_is_frontmost_where_nothing_is_over_it`); in a window on headless
+sway, a press on Split split the panes without moving the window, one beside
+it moved the window.
+
+### 0064: Rounded masks meet at a corner
+
+0053's intersection of two rounded masks keeps the smaller rounded
+rectangle whole: a card on a window's edge, square there (`frame::card`),
+inside the window's rounded mask (where Skwir draws the window's frame,
+ADR-138), drew its square corner over the window's rounded one. Where the
+two rectangles have a corner at the same point (within half a pixel), the
+kept one is rounded there by the larger radius: exactly the two shapes'
+intersection at that corner.
+
+Checked: `just gpui-check gpui`
+(`rounded_masks_meet_at_a_corner_along_the_larger_arc`); on headless Weston,
+the files card at the window's bottom-right corner rounded with it. Not
+checked: Windows and macOS (the change is in gpui's shared code).

@@ -80,7 +80,7 @@ impl Shell {
             self.preview_panel_height()
                 .min(self.preview_height_limit(window))
         } else {
-            f32::from(window.viewport_size().height)
+            f32::from(crate::title_bar::body(window).size.height)
         };
         (panel - PANEL_KEEP).max(COMPACT)
     }
@@ -93,7 +93,7 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         // The panel reaches the window's foot, at the right or the bottom.
-        let bottom = f32::from(window.viewport_size().height);
+        let bottom = f32::from(crate::title_bar::body(window).bottom());
         // As a card, the pointer in the middle of the gutter above it.
         let y = f32::from(ev.event.position.y) + crate::terminal::half_gutter(cx);
         self.player.height = (bottom - y).clamp(COMPACT, self.dock_height_limit(window));

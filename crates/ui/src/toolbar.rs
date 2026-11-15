@@ -117,6 +117,8 @@ pub fn asset(path: &str) -> Option<&'static [u8]> {
         "folder",
         "tab-new",
         "window-new",
+        "window-maximize",
+        "window-restore",
         "terminal",
         "lock",
         "archive",
@@ -147,7 +149,7 @@ impl Render for Tip {
             .sizes
             .scale(crate::sizes::Part::Interface)
             .f(TIP_MAX)
-            .min(f32::from(window.viewport_size().width) - 16.)
+            .min(f32::from(crate::title_bar::body(window).size.width) - 16.)
             .max(1.);
         div()
             .font_family(theme.font.clone())
@@ -260,6 +262,9 @@ enum Shape {
     /// (`MenuPart::Heading`): the name in a heading's words, a switch at
     /// its end, the whole of it pressed.
     Switch,
+    /// One of the window's buttons skwir draws (`title_bar`): round, on a
+    /// ground of its own, as a desktop's are.
+    Control,
 }
 impl Button {
     pub fn new(
@@ -318,6 +323,11 @@ impl Button {
     }
     /// One value of a setting on a popup's row (`MenuPart::Choice`); the
     /// popup stays open once it is chosen, for another.
+    /// One of the window's buttons (`title_bar`): round, on its ground.
+    pub fn control(mut self) -> Self {
+        self.shape = Shape::Control;
+        self
+    }
     pub fn segment(mut self) -> Self {
         self.shape = Shape::Segment;
         self.keeps_open = true;
@@ -442,6 +452,7 @@ impl Button {
         let menu = self.shape == Shape::MenuRow;
         let (segment, tiled) = (self.shape == Shape::Segment, self.shape == Shape::Tile);
         let switch = self.shape == Shape::Switch;
+        let control = self.shape == Shape::Control;
         // A value of a setting, filled when chosen rather than highlighted.
         let value = segment || tiled;
         let now = self.now && !self.active;
@@ -519,6 +530,8 @@ impl Button {
         let glyph = |svg: gpui::Svg| {
             svg.text_color(if on_term {
                 theme.accent_text
+            } else if control {
+                theme.text
             } else {
                 theme.text_muted
             })
@@ -589,6 +602,15 @@ impl Button {
                     .text_color(theme.text_muted)
             })
             .when(segment, |d| d.h(sized(22.)).min_w(px(26.)).gap(sized(4.)))
+            // Round, its icon in its middle (`title_bar`).
+            .when(control, |d| {
+                d.size(sized(24.))
+                    .min_w(sized(24.))
+                    .px_0()
+                    .rounded_full()
+                    .bg(theme.control)
+                    .text_color(theme.text)
+            })
             .when(tiled, |d| {
                 d.h(sized(52.))
                     .w_full()
@@ -610,7 +632,11 @@ impl Button {
             .when_some(tint, |d, (fill, edge, _, _)| {
                 d.bg(fill).border_color(edge).text_color(theme.text)
             })
-            .when(enabled && !menu && !switch, |d| {
+            .when(enabled && control, |d| {
+                d.hover(|s| s.bg(theme.control_hover))
+                    .focus(|s| s.border_color(theme.accent))
+            })
+            .when(enabled && !menu && !switch && !control, |d| {
                 d.cursor_pointer()
                     .when(!(value && active), |d| {
                         d.hover(|s| match tint {

@@ -621,6 +621,10 @@ fn row(
         .role(gpui::Role::TabList)
         .aria_label("Tabs")
         .when(shell.a11y, |d| d.aria_size_of_set(labels.len()))
+        // Beside the tabs, the window moves while its buttons are in the
+        // top row; a double click there opens a tab, as it does without.
+        .relative()
+        .children(crate::title_bar::top_row_drag(shell, false))
         .flex_1()
         .h_full()
         .min_w_0()
@@ -672,6 +676,7 @@ fn row(
     // double click on one opens no tab.
     let toggles = toggles.map(|labeled| {
         let [split, properties, preview] = crate::address::panel_toggles(shell, labeled, cx);
+        let buttons = crate::title_bar::top_row_buttons(shell, crate::title_bar::End::End, cx);
         div()
             .flex_none()
             .h_full()
@@ -682,11 +687,13 @@ fn row(
             .child(split)
             .child(properties)
             .child(preview)
+            .children(buttons)
     });
     // The sidebar's toggle and More start the strip while the sidebar is
     // not drawn, on the row its header would share; beside the tabs too.
     let corner = (shell.corner_at() == crate::shell::CornerAt::Strip).then(|| {
         let [toggle, more] = crate::address::corner(shell, cx);
+        let buttons = crate::title_bar::top_row_buttons(shell, crate::title_bar::End::Start, cx);
         div()
             .flex_none()
             .h_full()
@@ -694,10 +701,17 @@ fn row(
             .items_center()
             .gap(sized(2.))
             .px(sized(6.))
+            .children(buttons)
             .child(toggle)
             .child(more)
     });
-    let line = div().flex().children(corner).child(strip);
+    // Around the window's tools there, the window moves too.
+    let line = div()
+        .relative()
+        .flex()
+        .children(crate::title_bar::top_row_drag(shell, true))
+        .children(corner)
+        .child(strip);
     match toggles {
         Some(toggles) => line.size_full().child(toggles).into_any_element(),
         None => grounded(

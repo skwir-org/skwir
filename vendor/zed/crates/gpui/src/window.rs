@@ -885,6 +885,17 @@ impl Hitbox {
     pub fn should_handle_scroll(&self, window: &Window) -> bool {
         self.id.should_handle_scroll(window)
     }
+
+    /// Checks whether this hitbox is the frontmost one containing the mouse: no hitbox inserted
+    /// after it (an element painted over it) contains the mouse.
+    ///
+    /// `is_hovered` also holds under a child that does not occlude, such as a button. A region
+    /// that acts only where nothing else is under the mouse asks this instead: the empty parts of
+    /// a title bar the application draws, a press on which moves the window.
+    pub fn is_frontmost(&self, window: &Window) -> bool {
+        window.captured_hitbox.is_none_or(|captured| captured == self.id)
+            && window.mouse_hit_test.ids.first() == Some(&self.id)
+    }
 }
 
 /// How the hitbox affects mouse behavior.
@@ -2339,22 +2350,45 @@ impl ContentMask<Pixels> {
 
     /// Intersect the content mask with the given content mask. Of two rounded masks, the one with
     /// the smaller rounded rectangle is kept (the one inside the other, where one is): a mask holds
-    /// one rounded rectangle.
+    /// one rounded rectangle. At a corner both rectangles have, it is rounded by the larger
+    /// of their radii there.
     pub fn intersect(&self, other: &Self) -> Self {
         let bounds = self.bounds.intersect(&other.bounds);
         let area =
             |mask: &Self| mask.rounded_bounds.size.width.0 * mask.rounded_bounds.size.height.0;
-        let rounded = match (self.is_rounded(), other.is_rounded()) {
+        let (rounded, beside) = match (self.is_rounded(), other.is_rounded()) {
             (false, false) => return ContentMask::new(bounds),
-            (true, false) => self,
-            (false, true) => other,
-            (true, true) if area(self) <= area(other) => self,
-            (true, true) => other,
+            (true, false) => (self, None),
+            (false, true) => (other, None),
+            (true, true) if area(self) <= area(other) => (self, Some(other)),
+            (true, true) => (other, Some(self)),
         };
+        // Where the other's rectangle has a corner at the same point, the two meet there along
+        // the larger arc: a rounded mask inside another, at its corner (a card at a window's).
+        let mut corner_radii = rounded.corner_radii;
+        if let Some(beside) = beside {
+            let (kept, other) = (rounded.rounded_bounds, beside.rounded_bounds);
+            let at = |a: Point<Pixels>, b: Point<Pixels>| {
+                (a.x - b.x).abs() < px(0.5) && (a.y - b.y).abs() < px(0.5)
+            };
+            let radii = beside.corner_radii;
+            if at(kept.origin, other.origin) {
+                corner_radii.top_left = corner_radii.top_left.max(radii.top_left);
+            }
+            if at(kept.top_right(), other.top_right()) {
+                corner_radii.top_right = corner_radii.top_right.max(radii.top_right);
+            }
+            if at(kept.bottom_left(), other.bottom_left()) {
+                corner_radii.bottom_left = corner_radii.bottom_left.max(radii.bottom_left);
+            }
+            if at(kept.bottom_right(), other.bottom_right()) {
+                corner_radii.bottom_right = corner_radii.bottom_right.max(radii.bottom_right);
+            }
+        }
         ContentMask {
             bounds,
             rounded_bounds: rounded.rounded_bounds,
-            corner_radii: rounded.corner_radii,
+            corner_radii,
         }
     }
 }
@@ -9347,6 +9381,80 @@ mod tests {
             .unwrap();
         let (rounded, snapped) = seen.get().expect("painted");
         assert_eq!(rounded, snapped);
+    }
+
+    /// SKWIR: a hitbox is frontmost where no hitbox painted over it contains
+    /// the mouse (0063): under a button that does not occlude, the region
+    /// behind is hovered but not frontmost.
+    #[gpui::test]
+    fn a_hitbox_is_frontmost_where_nothing_is_over_it(cx: &mut TestAppContext) {
+        struct View(Rc<RefCell<Option<(crate::Hitbox, crate::Hitbox)>>>);
+
+        impl Render for View {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let seen = self.0.clone();
+                canvas(
+                    |bounds, window, _| {
+                        let behind = window.insert_hitbox(bounds, crate::HitboxBehavior::Normal);
+                        let over = window.insert_hitbox(
+                            Bounds::new(bounds.origin, size(px(20.), px(20.))),
+                            crate::HitboxBehavior::Normal,
+                        );
+                        (behind, over)
+                    },
+                    move |_, hitboxes, _, _| *seen.borrow_mut() = Some(hitboxes),
+                )
+                .size_full()
+            }
+        }
+
+        let seen = Rc::new(RefCell::new(None));
+        let window: AnyWindowHandle = cx
+            .add_window({
+                let seen = seen.clone();
+                move |_, _| View(seen)
+            })
+            .into();
+        cx.update_window(window, |_, window, cx| {
+            window.draw(cx).clear(cx);
+            let (behind, over) = seen.borrow().clone().expect("painted");
+            window.simulate_mouse_move(point(px(10.), px(10.)), cx);
+            assert!(over.is_frontmost(window));
+            assert!(behind.is_hovered(window) && !behind.is_frontmost(window));
+            window.simulate_mouse_move(point(px(50.), px(50.)), cx);
+            assert!(behind.is_frontmost(window) && !over.is_frontmost(window));
+        })
+        .unwrap();
+    }
+
+    /// SKWIR: a rounded mask inside another, at its corner, is rounded there
+    /// as the other is (0064): a card on a window's edge, square there,
+    /// meets the window's rounded corner along its arc.
+    #[test]
+    fn rounded_masks_meet_at_a_corner_along_the_larger_arc() {
+        let window = Bounds::new(point(px(0.), px(0.)), size(px(200.), px(100.)));
+        let card = Bounds::new(point(px(50.), px(20.)), size(px(150.), px(80.)));
+        let window = ContentMask {
+            bounds: window,
+            rounded_bounds: window,
+            corner_radii: crate::Corners::all(px(12.)),
+        };
+        let card = ContentMask {
+            bounds: card,
+            rounded_bounds: card,
+            corner_radii: crate::Corners {
+                top_left: px(10.),
+                top_right: px(10.),
+                bottom_left: px(10.),
+                bottom_right: px(0.),
+            },
+        };
+        let met = card.intersect(&window);
+        assert_eq!(met.rounded_bounds, card.rounded_bounds);
+        assert_eq!(met.corner_radii.bottom_right, px(12.), "the corner both have");
+        assert_eq!(met.corner_radii.top_right, px(10.), "a corner on an edge only");
+        assert_eq!(met.corner_radii.top_left, px(10.));
+        assert_eq!(window.intersect(&card), met, "either way round");
     }
 
     /// SKWIR: files dropped from another application on a window last used

@@ -2443,6 +2443,18 @@ pub fn declare_all(app: &App) {
         "Close window",
         "Close this window and its tabs, which Reopen closed tab brings back; the last window closes as its close button does, what runs going on without it",
     );
+    none(
+        Topic::Tabs,
+        "ui.maximize_window",
+        "Maximize window",
+        "Maximize this window, or give it back the size it had when it is maximized",
+    );
+    none(
+        Topic::Tabs,
+        "ui.minimize_window",
+        "Minimize window",
+        "Hide this window until it is chosen again",
+    );
     // The preview.
     none(
         Topic::View,

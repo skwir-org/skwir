@@ -1152,9 +1152,12 @@ pub fn panel_toggles(shell: &Shell, labeled: bool, cx: &mut Context<Shell>) -> [
 pub fn sidebar_header(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
     let theme = cx.global::<Theme>().clone();
     let [toggle, more] = corner(shell, cx);
+    let buttons = crate::title_bar::top_row_buttons(shell, crate::title_bar::End::Start, cx);
     div()
         .id("sidebar-header")
         .tab_group()
+        .relative()
+        .children(crate::title_bar::top_row_drag(shell, true))
         .flex_none()
         .h(sized(PANE_ROW_HEIGHT))
         .flex()
@@ -1166,6 +1169,7 @@ pub fn sidebar_header(shell: &Shell, cx: &mut Context<Shell>) -> AnyElement {
         .when(theme.lines(), |d| {
             d.border_b_1().border_r_1().border_color(theme.border)
         })
+        .children(buttons)
         .child(toggle)
         .child(div().flex_1())
         .child(more)
@@ -1354,6 +1358,11 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
         .id(("pane-address", shell.pane.0 as usize))
         .tab_group()
         .relative()
+        // Its empty parts move the window while the window's buttons are
+        // in the top row and this row holds the window's tools.
+        .when(row.ends.corner || row.ends.toggles, |d| {
+            d.children(crate::title_bar::top_row_drag(shell, true))
+        })
         .when(!notched, |d| d.px(sized(6.)))
         .w_full()
         .flex_none()
@@ -1771,10 +1780,16 @@ fn pane_row(
     let mut start = None;
     if row.ends.corner {
         let [toggle, more] = corner(shell, cx);
+        let buttons = crate::title_bar::top_row_buttons(shell, crate::title_bar::End::Start, cx);
         if notched {
-            start = Some(on_frame(shell, &theme, [toggle, more]));
+            start = Some(on_frame(
+                shell,
+                &theme,
+                buttons.into_iter().chain([toggle, more]),
+            ));
         } else {
             line = line
+                .children(buttons)
                 .child(toggle)
                 .child(more)
                 .child(toolbar::separator(&theme));
@@ -1824,14 +1839,20 @@ fn pane_row(
     let mut end = None;
     if row.ends.toggles {
         let [split, properties, preview] = panel_toggles(shell, labeled, cx);
+        let buttons = crate::title_bar::top_row_buttons(shell, crate::title_bar::End::End, cx);
         if notched {
-            end = Some(on_frame(shell, &theme, [split, properties, preview]));
+            end = Some(on_frame(
+                shell,
+                &theme,
+                [split, properties, preview].into_iter().chain(buttons),
+            ));
         } else {
             line = line
                 .child(toolbar::separator(&theme))
                 .child(split)
                 .child(properties)
-                .child(preview);
+                .child(preview)
+                .children(buttons);
         }
     }
     if !notched {
@@ -1887,7 +1908,11 @@ fn notched(theme: &Theme, ends: Ends) -> bool {
 
 /// The window's buttons a pane's row holds, on the frame in a notch of its
 /// card (`frame::notch`), the band's fillet beside them.
-fn on_frame<const N: usize>(shell: &Shell, theme: &Theme, buttons: [AnyElement; N]) -> AnyElement {
+fn on_frame(
+    shell: &Shell,
+    theme: &Theme,
+    buttons: impl IntoIterator<Item = AnyElement>,
+) -> AnyElement {
     crate::elements::frame::notch(
         &shell.frame_cards,
         theme.bar_ground(shell.lowered()),

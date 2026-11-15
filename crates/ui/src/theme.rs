@@ -87,9 +87,12 @@
 //! - radius: `rounded_sm` inside controls (segments, menu rows, key caps),
 //!   `rounded_md` for controls and rows, `rounded_lg` for panels (menus,
 //!   toasts, cards, dialogs), `rounded_xl` for the window's own cards
-//!   (`elements::frame`), `rounded_full` for pills.
+//!   (`elements::frame`) and the window's corners where skwir draws its
+//!   frame (`title_bar`), `rounded_full` for pills and the window's
+//!   buttons.
 //! - elevation: `shadow_md` for menus and popovers, `shadow_lg` for toasts
-//!   and dialogs; nothing else casts a shadow.
+//!   and dialogs, `window_shadow` for the window where skwir draws its
+//!   frame (`title_bar`, within its margin); nothing else casts a shadow.
 //! - fonts: `font` for the interface, `reading_font` for the running text
 //!   of what is read, `code_font` for what is read a character at a time
 //!   (`fonts.rs`, ADR-073), resolved with the look; what is drawn names
@@ -173,6 +176,11 @@ pub struct Theme {
     /// by as much (`color::overlay`). Where it must hide what is under
     /// it, it is laid on its ground (`bg.blend(hover)`).
     pub hover: Hsla,
+    /// The ground of a window's button skwir draws (`title_bar`), round as
+    /// a desktop's are, translucent as `hover` is; `control_hover` under
+    /// the pointer.
+    pub control: Hsla,
+    pub control_hover: Hsla,
     pub border: Hsla,
     pub text: Hsla,
     pub text_muted: Hsla,
@@ -629,6 +637,8 @@ struct Steps {
     zebra: Step,
     code_bg: Step,
     hover: Step,
+    control: Step,
+    control_hover: Step,
     map_grid: Step,
     block_rest: Step,
     border: Step,
@@ -641,6 +651,8 @@ const LIGHT: Steps = Steps {
     zebra: Step::new(0.021, 0.01),
     code_bg: Step::new(0.036, 0.015),
     hover: Step::new(0.05, 0.065),
+    control: Step::new(0.085, 0.),
+    control_hover: Step::new(0.13, 0.),
     map_grid: Step::new(0.081, 0.),
     block_rest: Step::new(0.121, 0.),
     border: Step::new(0.138, 0.),
@@ -653,6 +665,8 @@ const DARK: Steps = Steps {
     zebra: Step::new(0.031, 0.),
     code_bg: Step::new(0.078, 0.057),
     hover: Step::new(0.105, 0.114),
+    control: Step::new(0.12, 0.),
+    control_hover: Step::new(0.18, 0.),
     map_grid: Step::new(0.084, 0.),
     block_rest: Step::new(0.153, 0.),
     border: Step::new(0.164, 0.),
@@ -910,6 +924,8 @@ impl Theme {
         let zebra = base.zebra.unwrap_or_else(|| step(steps.zebra));
         let code_bg = step(steps.code_bg);
         let hover = color::overlay(bg, step(steps.hover));
+        let control = color::overlay(bg, step(steps.control));
+        let control_hover = color::overlay(bg, step(steps.control_hover));
         let term = accent.opacity(0.18);
         let border = base.border.unwrap_or_else(|| step(steps.border));
         let border = match contrast {
@@ -966,6 +982,8 @@ impl Theme {
             code_bg,
             zebra,
             hover,
+            control,
+            control_hover,
             border,
             text,
             text_muted,
@@ -1073,6 +1091,23 @@ impl Theme {
     /// `frame` where it is the window's own ground, at the chrome's
     /// opacity: painted once around the cards (`elements::frame`), the
     /// sidebar and the tabs on it painting none of their own.
+    /// The window's shadow where skwir draws its frame (`title_bar`):
+    /// within its margin (`title_bar::MARGIN`), as a desktop's window
+    /// casts one, fainter while another window is the one used.
+    pub fn window_shadow(&self, active: bool) -> Vec<gpui::BoxShadow> {
+        let depth = match (self.is_dark, active) {
+            (false, true) => 0.22,
+            (false, false) => 0.12,
+            (true, true) => 0.45,
+            (true, false) => 0.3,
+        };
+        vec![
+            gpui::BoxShadow::new(gpui::px(0.), gpui::px(2.), gpui::black().opacity(depth))
+                .blur_radius(gpui::px(8.))
+                .spread_radius(gpui::px(1.)),
+        ]
+    }
+
     pub fn window_frame(&self) -> Hsla {
         self.frame.opacity(self.opacity.interface)
     }

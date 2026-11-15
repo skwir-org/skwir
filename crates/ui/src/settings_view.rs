@@ -65,7 +65,7 @@ pub(crate) const PAGES_MENU: &str = "pages";
 /// as the main window's sidebar's is (`Shell::sidebar_fits`).
 pub(crate) fn lists_pages(window: &Window) -> bool {
     lists_pages_at(
-        f32::from(window.viewport_size().width),
+        f32::from(crate::title_bar::body(window).size.width),
         crate::sizes::Scale::of(window),
     )
 }

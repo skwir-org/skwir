@@ -6080,7 +6080,7 @@ impl Shell {
     /// the sidebar do not need. The window's width is known before layout.
     pub fn preview_width_limit(&self, window: &Window) -> f32 {
         let sidebar = self.sidebar_drawn_width(window);
-        let window = f32::from(window.viewport_size().width);
+        let window = f32::from(crate::title_bar::body(window).size.width);
         max_width(window, self.panes_across(), sidebar)
     }
 
@@ -6102,7 +6102,7 @@ impl Shell {
 
     pub fn preview_height_limit(&self, window: &Window) -> f32 {
         let scale = crate::sizes::Scale::of(window);
-        let window = f32::from(window.viewport_size().height);
+        let window = f32::from(crate::title_bar::body(window).size.height);
         max_height(window, self.panes_down(), scale)
     }
 
@@ -6137,8 +6137,8 @@ impl Shell {
         // As a card, its right edge is the frame's, the pointer in the
         // middle of the gutter at its left.
         let theme = cx.global::<Theme>().clone();
-        let total =
-            f32::from(window.viewport_size().width) - self.frame_inset(&theme, window).right;
+        let total = f32::from(crate::title_bar::body(window).right())
+            - self.frame_inset(&theme, window).right;
         let x = f32::from(ev.event.position.x) + crate::terminal::half_gutter(cx);
         self.preview.width = (total - x).clamp(MIN_WIDTH, self.preview_width_limit(window));
         cx.notify();
@@ -6153,8 +6153,8 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         let theme = cx.global::<Theme>().clone();
-        let bottom =
-            f32::from(window.viewport_size().height) - self.frame_inset(&theme, window).bottom;
+        let bottom = f32::from(crate::title_bar::body(window).bottom())
+            - self.frame_inset(&theme, window).bottom;
         let y = f32::from(ev.event.position.y) + crate::terminal::half_gutter(cx);
         self.preview.height =
             Some((bottom - y).clamp(MIN_HEIGHT, self.preview_height_limit(window)));
@@ -7773,6 +7773,8 @@ pub fn render_panel(
             .map(|labeled| {
                 let [split, properties, preview] =
                     crate::address::panel_toggles(shell, labeled, cx);
+                let buttons =
+                    crate::title_bar::top_row_buttons(shell, crate::title_bar::End::End, cx);
                 div()
                     .size_full()
                     .flex()
@@ -7782,12 +7784,17 @@ pub fn render_panel(
                     .child(split)
                     .child(properties)
                     .child(preview)
+                    .children(buttons)
                     .into_any_element()
             })
             .collect();
         div()
             .id("preview-header")
             .tab_group()
+            // Its empty parts move the window while its buttons are in the
+            // top row.
+            .relative()
+            .children(crate::title_bar::top_row_drag(shell, true))
             .flex_none()
             .w_full()
             // As tall as a pane's row at every text size (ADR-117).

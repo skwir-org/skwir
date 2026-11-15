@@ -1544,7 +1544,8 @@ impl Shell {
     /// Whether the sidebar is drawn: not put away, and the window has room
     /// for it beside the panes (its width is known before layout).
     pub fn sidebar_shown(&self, window: &gpui::Window) -> bool {
-        !self.sidebar_hidden && self.sidebar_fits(f32::from(window.viewport_size().width))
+        !self.sidebar_hidden
+            && self.sidebar_fits(f32::from(crate::title_bar::body(window).size.width))
     }
 
     /// How wide the sidebar is drawn: as dragged, at the interface's text
@@ -1563,21 +1564,22 @@ impl Shell {
     fn sidebar_width_limit(&self, window: &gpui::Window) -> f32 {
         let preview = self.preview.panel_open() && !self.layout.bottom();
         max_width(
-            f32::from(window.viewport_size().width),
+            f32::from(crate::title_bar::body(window).size.width),
             self.panes_across(),
             preview,
         )
     }
 
     /// The sidebar's edge follows the pointer: the sidebar starts at the
-    /// window's left edge, so the pointer's x is its width.
+    /// window's left edge (its body's, within the margin of a frame skwir
+    /// draws), so the pointer's x from there is its width.
     pub fn on_sidebar_drag(
         &mut self,
         ev: &gpui::DragMoveEvent<SidebarResize>,
         window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) {
-        let x = f32::from(ev.event.position.x);
+        let x = f32::from(ev.event.position.x - crate::title_bar::body(window).left());
         let drawn = x.clamp(MIN_WIDTH, self.sidebar_width_limit(window));
         self.sidebar_width = crate::sizes::Scale::of(window).at_100(drawn);
         cx.notify();
@@ -1811,7 +1813,7 @@ impl Shell {
             return;
         }
         if !self.sidebar_shown(window) {
-            if !self.sidebar_fits(f32::from(window.viewport_size().width)) {
+            if !self.sidebar_fits(f32::from(crate::title_bar::body(window).size.width)) {
                 self.set_status("The window is too narrow for the sidebar", false, cx);
                 return;
             }

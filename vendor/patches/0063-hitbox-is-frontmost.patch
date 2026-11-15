@@ -1,0 +1,75 @@
+0063 hitbox-is-frontmost: A hitbox says whether it is the frontmost one under the mouse (Hitbox::is_frontmost)
+
+diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
+index 39b796c..ec0203b 100644
+--- a/crates/gpui/src/window.rs
++++ b/crates/gpui/src/window.rs
+@@ -885,6 +885,17 @@ impl Hitbox {
+     pub fn should_handle_scroll(&self, window: &Window) -> bool {
+         self.id.should_handle_scroll(window)
+     }
++
++    /// Checks whether this hitbox is the frontmost one containing the mouse: no hitbox inserted
++    /// after it (an element painted over it) contains the mouse.
++    ///
++    /// `is_hovered` also holds under a child that does not occlude, such as a button. A region
++    /// that acts only where nothing else is under the mouse asks this instead: the empty parts of
++    /// a title bar the application draws, a press on which moves the window.
++    pub fn is_frontmost(&self, window: &Window) -> bool {
++        window.captured_hitbox.is_none_or(|captured| captured == self.id)
++            && window.mouse_hit_test.ids.first() == Some(&self.id)
++    }
+ }
+ 
+ /// How the hitbox affects mouse behavior.
+@@ -9349,6 +9360,50 @@ mod tests {
+         assert_eq!(rounded, snapped);
+     }
+ 
++    /// SKWIR: a hitbox is frontmost where no hitbox painted over it contains
++    /// the mouse (0063): under a button that does not occlude, the region
++    /// behind is hovered but not frontmost.
++    #[gpui::test]
++    fn a_hitbox_is_frontmost_where_nothing_is_over_it(cx: &mut TestAppContext) {
++        struct View(Rc<RefCell<Option<(crate::Hitbox, crate::Hitbox)>>>);
++
++        impl Render for View {
++            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
++                let seen = self.0.clone();
++                canvas(
++                    |bounds, window, _| {
++                        let behind = window.insert_hitbox(bounds, crate::HitboxBehavior::Normal);
++                        let over = window.insert_hitbox(
++                            Bounds::new(bounds.origin, size(px(20.), px(20.))),
++                            crate::HitboxBehavior::Normal,
++                        );
++                        (behind, over)
++                    },
++                    move |_, hitboxes, _, _| *seen.borrow_mut() = Some(hitboxes),
++                )
++                .size_full()
++            }
++        }
++
++        let seen = Rc::new(RefCell::new(None));
++        let window: AnyWindowHandle = cx
++            .add_window({
++                let seen = seen.clone();
++                move |_, _| View(seen)
++            })
++            .into();
++        cx.update_window(window, |_, window, cx| {
++            window.draw(cx).clear(cx);
++            let (behind, over) = seen.borrow().clone().expect("painted");
++            window.simulate_mouse_move(point(px(10.), px(10.)), cx);
++            assert!(over.is_frontmost(window));
++            assert!(behind.is_hovered(window) && !behind.is_frontmost(window));
++            window.simulate_mouse_move(point(px(50.), px(50.)), cx);
++            assert!(behind.is_frontmost(window) && !over.is_frontmost(window));
++        })
++        .unwrap();
++    }
++
+     /// SKWIR: files dropped from another application on a window last used
+     /// by keyboard land where they are dropped: the drag coming in is the
+     /// pointer's, so what is under it counts as hovered.
