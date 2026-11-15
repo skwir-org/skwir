@@ -1,14 +1,14 @@
 //! The window's title bar (ADR-138): the system's where it draws one, else
 //! skwir's, where the setting says (`ui.title_bar`): above the window as
-//! the system's would be, on a row of its own on the frame, or in the top
+//! the system's would be (System), a compact one on the frame, or in the top
 //! row, its buttons at the ends of what holds the window's own tools
 //! (`Shell::corner_at`, `Shell::toggles_at`).
 //!
 //! What skwir asks of the system follows the setting: the system's bar
-//! for Automatic and Above, none for the other two. What it draws follows
+//! for Automatic and System, none for the other two. What it draws follows
 //! the answer (`window.window_decorations()`), never shown before it comes
 //! (`Window::decorations_pending`): where the system frames the window,
-//! Automatic and Above draw nothing of skwir's. A Wayland compositor that
+//! Automatic and System draw nothing of skwir's. A Wayland compositor that
 //! keeps its frame though asked for none (Hyprland's: borders, no title
 //! bar; Wayland cannot say whether a frame has one) gets skwir's bar
 //! inside it for the two values that ask for skwir's; an X11 window
@@ -47,11 +47,11 @@ pub const MARGIN: f32 = 12.;
 /// they round.
 const RADIUS_REMS: f32 = crate::elements::frame::RADIUS_REMS;
 
-/// How tall the bar of skwir's own is above the window (`Drawn::Above`),
+/// How tall the bar of skwir's own is above the window (`Drawn::System`),
 /// as a desktop's title bar.
 const ABOVE_HEIGHT: f32 = 38.;
 
-/// How tall the band of skwir's own is on the frame (`Drawn::Row`): its
+/// How tall the band of skwir's own is on the frame (`Drawn::Compact`): its
 /// buttons and a line of text.
 const ROW_HEIGHT: f32 = 32.;
 
@@ -61,10 +61,10 @@ pub enum TitleBar {
     /// The system's where it draws one, else the top row.
     #[default]
     Automatic,
-    /// Above the window: the system's, else one of skwir's like it.
-    Above,
-    /// On a row of skwir's own, on the frame above its areas.
-    Row,
+    /// The system's, else one of skwir's like it, above the window.
+    System,
+    /// Skwir's own, slim, on the frame above its areas.
+    Compact,
     /// In the top row: the buttons at its ends, its empty parts moving
     /// the window.
     TopRow,
@@ -73,16 +73,16 @@ pub enum TitleBar {
 impl TitleBar {
     pub const VALUES: [(&'static str, &'static str); 4] = [
         ("auto", "Automatic"),
-        ("above", "Above"),
-        ("row", "On a row of its own"),
+        ("system", "System"),
+        ("compact", "Compact"),
         ("top_row", "In the top row"),
     ];
 
     /// The setting's value read, Automatic for none or one unknown.
     pub fn read(value: Option<&str>) -> Self {
         match value {
-            Some("above") => Self::Above,
-            Some("row") => Self::Row,
+            Some("system") => Self::System,
+            Some("compact") => Self::Compact,
             Some("top_row") => Self::TopRow,
             _ => Self::Automatic,
         }
@@ -92,8 +92,8 @@ impl TitleBar {
     /// may be: Automatic takes it where there is one), else none.
     pub fn asks(self) -> WindowDecorations {
         match self {
-            Self::Automatic | Self::Above => WindowDecorations::Server,
-            Self::Row | Self::TopRow => WindowDecorations::Client,
+            Self::Automatic | Self::System => WindowDecorations::Server,
+            Self::Compact | Self::TopRow => WindowDecorations::Client,
         }
     }
 }
@@ -105,9 +105,9 @@ pub enum Drawn {
     #[default]
     None,
     /// A bar above the window, as the system's would be.
-    Above,
-    /// A band on the frame above the window's areas.
-    Row,
+    System,
+    /// A slim band on the frame above the window's areas.
+    Compact,
     /// The buttons at the ends of the top row.
     TopRow,
 }
@@ -121,12 +121,12 @@ pub fn drawn(setting: TitleBar, decorations: Decorations, fullscreen: bool, x11:
     }
     match (decorations, setting) {
         (Decorations::Client { .. }, TitleBar::Automatic | TitleBar::TopRow) => Drawn::TopRow,
-        (Decorations::Client { .. }, TitleBar::Above) => Drawn::Above,
-        (Decorations::Client { .. }, TitleBar::Row) => Drawn::Row,
+        (Decorations::Client { .. }, TitleBar::System) => Drawn::System,
+        (Decorations::Client { .. }, TitleBar::Compact) => Drawn::Compact,
         // Asked for none, the compositor kept its frame: skwir's bar
         // inside it, but where it is a window manager's with its title bar.
         (Decorations::Server, TitleBar::TopRow) if !x11 => Drawn::TopRow,
-        (Decorations::Server, TitleBar::Row) if !x11 => Drawn::Row,
+        (Decorations::Server, TitleBar::Compact) if !x11 => Drawn::Compact,
         (Decorations::Server, _) => Drawn::None,
     }
 }
@@ -138,9 +138,9 @@ pub fn refusal(asked: TitleBar, decorations: Decorations, x11: bool) -> Option<&
         return None;
     }
     Some(if x11 {
-        "Here the window manager draws the title bar and no compositor runs: On a row of its own and In the top row need one, and skwir draws no bar of its own."
+        "Here the window manager draws the title bar and no compositor runs: Compact and In the top row need one, and skwir draws no bar of its own."
     } else {
-        "Here the desktop keeps its own frame around windows, whatever skwir asks: On a row of its own and In the top row draw skwir's bar inside it, its corners, shadow and edges the desktop's. Should the desktop draw a title bar too, choose Automatic."
+        "Here the desktop keeps its own frame around windows, whatever skwir asks: Compact and In the top row draw skwir's bar inside it, its corners, shadow and edges the desktop's. Should the desktop draw a title bar too, choose Automatic."
     })
 }
 
@@ -150,7 +150,7 @@ pub fn refusal(asked: TitleBar, decorations: Decorations, x11: bool) -> Option<&
 /// gave none says nothing of what it does when asked.
 pub fn automatic_now(asked: TitleBar, decorations: Decorations) -> Option<&'static str> {
     match (asked.asks(), decorations) {
-        (_, Decorations::Server) => Some("above"),
+        (_, Decorations::Server) => Some("system"),
         (WindowDecorations::Server, Decorations::Client { .. }) => Some("top_row"),
         (WindowDecorations::Client, Decorations::Client { .. }) => None,
     }
@@ -347,17 +347,17 @@ fn button_element(
         .into_any_element()
 }
 
-/// The bar of skwir's own: above the window (`Drawn::Above`), on its own
+/// The bar of skwir's own: above the window (`Drawn::System`), on its own
 /// ground with a line under it, as a desktop's; or on the frame
-/// (`Drawn::Row`). The window's title in its middle, its buttons at its
+/// (`Drawn::Compact`). The window's title in its middle, its buttons at its
 /// ends, the rest of it moving the window.
 pub fn bar(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let drawn = shell.title_bar.drawn;
-    if !matches!(drawn, Drawn::Above | Drawn::Row) {
+    if !matches!(drawn, Drawn::System | Drawn::Compact) {
         return None;
     }
     let theme = cx.global::<Theme>().clone();
-    let above = drawn == Drawn::Above;
+    let above = drawn == Drawn::System;
     let start = buttons(shell, End::Start, cx);
     let end = buttons(shell, End::End, cx);
     let title = if shell.title.is_empty() {
@@ -579,7 +579,7 @@ mod tests {
         },
     };
 
-    /// Where the system keeps its frame, Automatic and Above draw nothing of
+    /// Where the system keeps its frame, Automatic and System draw nothing of
     /// skwir's; the two that ask for skwir's draw it inside a Wayland
     /// compositor's frame (Hyprland's has no title bar), never inside an X11
     /// window manager's, which has one.
@@ -588,13 +588,16 @@ mod tests {
         let server = Decorations::Server;
         for x11 in [false, true] {
             assert_eq!(drawn(TitleBar::Automatic, server, false, x11), Drawn::None);
-            assert_eq!(drawn(TitleBar::Above, server, false, x11), Drawn::None);
+            assert_eq!(drawn(TitleBar::System, server, false, x11), Drawn::None);
         }
         assert_eq!(drawn(TitleBar::TopRow, server, false, false), Drawn::TopRow);
-        assert_eq!(drawn(TitleBar::Row, server, false, false), Drawn::Row);
+        assert_eq!(
+            drawn(TitleBar::Compact, server, false, false),
+            Drawn::Compact
+        );
         assert_eq!(drawn(TitleBar::TopRow, server, false, true), Drawn::None);
-        assert_eq!(drawn(TitleBar::Row, server, false, true), Drawn::None);
-        assert_eq!(drawn(TitleBar::Row, server, true, false), Drawn::None);
+        assert_eq!(drawn(TitleBar::Compact, server, false, true), Drawn::None);
+        assert_eq!(drawn(TitleBar::Compact, server, true, false), Drawn::None);
     }
 
     /// A refusal is said where the system kept its frame though asked for
@@ -605,10 +608,10 @@ mod tests {
             refusal(TitleBar::Automatic, Decorations::Server, false),
             None
         );
-        assert_eq!(refusal(TitleBar::Row, CLIENT, false), None, "granted");
+        assert_eq!(refusal(TitleBar::Compact, CLIENT, false), None, "granted");
         let wayland = refusal(TitleBar::TopRow, Decorations::Server, false).unwrap();
         assert!(wayland.contains("inside it"), "{wayland}");
-        let x11 = refusal(TitleBar::Row, Decorations::Server, true).unwrap();
+        let x11 = refusal(TitleBar::Compact, Decorations::Server, true).unwrap();
         assert!(x11.contains("no compositor"), "{x11}");
     }
 
@@ -620,11 +623,14 @@ mod tests {
             drawn(TitleBar::Automatic, CLIENT, false, false),
             Drawn::TopRow
         );
-        assert_eq!(drawn(TitleBar::Above, CLIENT, false, false), Drawn::Above);
-        assert_eq!(drawn(TitleBar::Row, CLIENT, false, false), Drawn::Row);
+        assert_eq!(drawn(TitleBar::System, CLIENT, false, false), Drawn::System);
+        assert_eq!(
+            drawn(TitleBar::Compact, CLIENT, false, false),
+            Drawn::Compact
+        );
         assert_eq!(drawn(TitleBar::TopRow, CLIENT, false, false), Drawn::TopRow);
         assert_eq!(
-            drawn(TitleBar::Row, CLIENT, true, false),
+            drawn(TitleBar::Compact, CLIENT, true, false),
             Drawn::None,
             "fullscreen"
         );
@@ -634,8 +640,8 @@ mod tests {
     #[test]
     fn what_is_asked() {
         assert_eq!(TitleBar::Automatic.asks(), WindowDecorations::Server);
-        assert_eq!(TitleBar::Above.asks(), WindowDecorations::Server);
-        assert_eq!(TitleBar::Row.asks(), WindowDecorations::Client);
+        assert_eq!(TitleBar::System.asks(), WindowDecorations::Server);
+        assert_eq!(TitleBar::Compact.asks(), WindowDecorations::Client);
         assert_eq!(TitleBar::TopRow.asks(), WindowDecorations::Client);
         assert_eq!(TitleBar::read(Some("sideways")), TitleBar::Automatic);
         for (value, _) in TitleBar::VALUES {
@@ -649,14 +655,14 @@ mod tests {
     fn automatic_is_said_where_known() {
         assert_eq!(
             automatic_now(TitleBar::Automatic, Decorations::Server),
-            Some("above")
+            Some("system")
         );
         assert_eq!(automatic_now(TitleBar::Automatic, CLIENT), Some("top_row"));
         assert_eq!(
-            automatic_now(TitleBar::Row, Decorations::Server),
-            Some("above")
+            automatic_now(TitleBar::Compact, Decorations::Server),
+            Some("system")
         );
-        assert_eq!(automatic_now(TitleBar::Row, CLIENT), None);
+        assert_eq!(automatic_now(TitleBar::Compact, CLIENT), None);
     }
 
     /// The margin is on the edges that meet nothing.

@@ -18082,3 +18082,15 @@ set the decorations asked at once and drew them before the answer.
   maximize and fullscreen, not minimize nor the window menu), the moment
   between request and answer (one frame, not caught by a capture).
 
+## 2026-11-15: The title bar's values named for whose bar it is
+
+`ui.title_bar`'s Above and On a row of its own were both rows above the
+window: named by place, they did not tell which. The user asked whether
+Above should be System or Desktop. Now Automatic, System (`system`: the
+system's title bar, or one of skwir's like it where it draws none),
+Compact (`compact`: skwir's slim bar on its frame), In the top row; the
+stored values renamed too, unreleased, an old one read as Automatic.
+Desktop was not taken: GNOME is a desktop that draws no title bar, and
+macOS and Windows say system. ADR-138 amended. Checked: the `title_bar`
+tests and the UI suite.
+

@@ -486,7 +486,7 @@ fn cards_spec() -> SettingSpec {
 /// knows whether the system draws its title bar, and what a refusal of the
 /// system's means here once one was seen (`show_title_bar`).
 fn title_bar_spec(said: TitleBarSaid) -> SettingSpec {
-    let mut description = "Where the window's title and its buttons are. Above: the system's title bar, or one like it where the system draws none (GNOME). On a row of its own: a slim bar of skwir's, its title in the middle. In the top row: the buttons at the ends of skwir's top row, whose empty parts move the window, as GNOME's applications have it. Automatic is the system's title bar where it draws one, the top row where it does not.".to_owned();
+    let mut description = "Where the window's title and its buttons are. System: the system's title bar, or one of skwir's like it where the system draws none (GNOME). Compact: a slim bar of skwir's on its frame, its title in the middle. In the top row: the buttons at the ends of skwir's top row, whose empty parts move the window, as GNOME's applications have it. Automatic is the system's title bar where it draws one, the top row where it does not.".to_owned();
     if let Some(here) = said.here {
         description.push(' ');
         description.push_str(here);

@@ -328,18 +328,19 @@ Views are in [views.md](views.md); what locations decide, in
 ## The top of the window
 
 No window row: each area owns its top, so a one-tab window has one row
-of bars, split or not. The one exception is the title bar on a row of
-its own, which the user asks for (`ui.title_bar`, below).
+of bars, split or not. The one exception is skwir's title bar as its own
+row, which the user asks for (`ui.title_bar`'s System where the system
+draws none, Compact; below).
 
 - **The title bar** (ADR-138, `title_bar.rs`): the system's wherever it
-  frames the window, skwir drawing none for Automatic and Above; asked
+  frames the window, skwir drawing none for Automatic and System; asked
   for no frame and keeping its own, a Wayland compositor gets skwir's bar
   inside it for the values that ask for skwir's (Hyprland frames without
   a title bar), an X11 window manager none (its frame has one). What is
   drawn is never ahead of the compositor's answer
   (`Window::decorations_pending`). Where it draws none (GNOME, Weston),
-  skwir's, where the setting says: above the window, on a row of its
-  own on the frame, or in the top row (Automatic's), the window's
+  skwir's, where the setting says: above the window (System), a slim
+  band on the frame (Compact), or in the top row (Automatic's), the window's
   buttons then at the ends of what holds the window's tools there, after
   Split, Properties and Preview and before the sidebar's toggle and
   More (`title_bar::top_row_buttons`, beside `corner_at` and

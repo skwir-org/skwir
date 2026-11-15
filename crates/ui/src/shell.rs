@@ -4737,7 +4737,7 @@ impl Render for Shell {
         // areas (`framed`); in the top row, its buttons are the rows'.
         let title_bar = crate::title_bar::bar(self, cx);
         let (above, band) = match self.title_bar.drawn {
-            crate::title_bar::Drawn::Above => (title_bar, None),
+            crate::title_bar::Drawn::System => (title_bar, None),
             _ => (None, title_bar),
         };
         let sequence = crate::sequence::render(self, cx);
@@ -4891,7 +4891,7 @@ impl Shell {
 
     /// The window's areas as they are drawn: as cards (`Theme::cards`,
     /// ADR-123), on the frame, a gutter above them (`frame_inset`); else as
-    /// they are. `band`: skwir's title bar on a row of its own, above them
+    /// they are. `band`: skwir's compact title bar, above them
     /// (ADR-138); while skwir draws the title bar, the gutter moves the
     /// window too.
     fn framed(

@@ -9,7 +9,9 @@ they declined dragging the window from the address field's empty end,
 which edits the path). Built on Linux; macOS and Windows keep the
 system's title bar for now (Consequences). Amended the same day, the user
 finding no controls in any mode on Hyprland and the bar shown a moment
-before going: decisions 2 and 7.
+before going: decisions 2 and 7; and the values named for whose bar
+it is and how it looks (1), the user finding Above no name for the
+system's bar.
 
 ## Context
 
@@ -35,24 +37,26 @@ before going: decisions 2 and 7.
 ## Decision
 
 1. **`ui.title_bar`**, on the Appearance page, the free desktops' only:
-   Automatic, Above, On a row of its own, In the top row. What the
-   system is asked for follows it: its frame for Automatic and Above,
+   Automatic, System, Compact, In the top row (named for whose bar it is
+   and how it looks, amended: first Above and On a row of its own, both
+   rows above the window). What the
+   system is asked for follows it: its frame for Automatic and System,
    none for the other two (`TitleBar::asks`), asked again as the
    setting moves, on the open window (`Window::request_decorations`).
 2. **What skwir draws follows what the system answered**
-   (`title_bar::drawn`): where it frames the window, Automatic and Above
+   (`title_bar::drawn`): where it frames the window, Automatic and System
    draw nothing of skwir's. Asked for no frame, a system may keep its own
    (amended): an X11 window manager does where no compositor runs (gpui
    falls back to it), with its title bar, and skwir draws none; a Wayland
    compositor does whatever is asked (Hyprland: borders, no title bar),
    and Wayland cannot say whether its frame has a title bar, so the two
-   values that ask for skwir's (On a row of its own, In the top row) draw
+   values that ask for skwir's (Compact, In the top row) draw
    it inside that frame, without skwir's margin, shadow, corners or
    edges; should that frame have a title bar too (Hyprland's hyprbars),
    Automatic gives the one. Where it draws none,
-   the setting says which of skwir's: Above, a bar like a desktop's above
+   the setting says which of skwir's: System, a bar like a desktop's above
    the window (its own ground, a line under it, the title in its middle);
-   On a row of its own, a slim band on the frame above the areas; In the
+   Compact, a slim band on the frame above the areas; In the
    top row, the window's buttons at the ends of the row that holds the
    window's tools there. Fullscreen, nothing.
 3. **Automatic is the desktop's way**: the system's title bar where it
@@ -103,7 +107,7 @@ before going: decisions 2 and 7.
   own applications do, in Automatic. On KDE, sway, Hyprland, X11, macOS
   and Windows, Automatic changes nothing.
 - The top of the window has a row of its own when the user asks for one
-  (Above, On a row of its own): `shell.md`'s "no window row" holds for
+  (System where skwir draws it, Compact): `shell.md`'s "no window row" holds for
   the rest.
 - **Checked** on headless Weston (no `xdg-decoration`, as Mutter): each
   value drawn, as cards and with lines, the corners rounded, the
