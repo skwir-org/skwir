@@ -1244,6 +1244,17 @@ window opened (`TitlebarOptions::appears_transparent`) and said
   under it, the title hidden, AppKit asked on the foreground executor as
   `toggle_fullscreen` is, the traffic lights moved or put back);
   `Server` gives the system's back. `window_decorations` says which.
+- **Changed after the update that asks**: Windows' frame is recomputed on
+  the foreground executor, as `resize` moves the window: recomputed at
+  once, it sent `WM_SIZE` while the window was being updated, whose
+  report of the new size could not borrow the app and was lost, the
+  window drawn at its old size. `Window::request_decorations` reads the
+  window's size again before the next frame, for any platform that
+  changes it at once.
+- **The traffic lights moved only over a transparent title bar**:
+  `move_traffic_light` runs at every resize, title and occlusion change,
+  and moved them to the position given even after the system's title bar
+  came back, into or below it.
 - **Windows' `zoom`** restores a maximized window, as Wayland's and
   macOS's do.
 - **Tiled as the system's are**: the application's decorations of a

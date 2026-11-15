@@ -660,11 +660,18 @@ impl Drop for WindowsWindow {
 
 impl PlatformWindow for WindowsWindow {
     /// The application's decorations hide the system's title bar (its
-    /// frame, shadow and edges kept), on an open window too.
+    /// frame, shadow and edges kept), on an open window too. Said at once;
+    /// the frame changed on the foreground executor, as `resize` is: done
+    /// here, it would send `WM_SIZE` while the window is being updated, when
+    /// the new size could not reach it.
     fn request_decorations(&self, decorations: gpui::WindowDecorations) {
         let hide = decorations == gpui::WindowDecorations::Client;
         if self.0.hide_title_bar.replace(hide) != hide {
-            crate::events::notify_frame_changed(self.0.hwnd);
+            let hwnd = self.0.hwnd;
+            self.0
+                .executor
+                .spawn(async move { crate::events::notify_frame_changed(hwnd) })
+                .detach();
         }
     }
 

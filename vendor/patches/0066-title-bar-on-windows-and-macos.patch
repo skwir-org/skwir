@@ -1,7 +1,7 @@
 0066 title-bar-on-windows-and-macos: An open window's title bar hidden on Windows or made transparent on macOS as decorations are requested (request_decorations, window_decorations); Windows' zoom restores a maximized window; a drag area counts in Windows' hit test where it is frontmost
 
 diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
-index e38696c..5dcb047 100644
+index af8d5fd..c958b4d 100644
 --- a/crates/gpui/src/window.rs
 +++ b/crates/gpui/src/window.rs
 @@ -2135,8 +2135,16 @@ impl Window {
@@ -22,11 +22,39 @@ index e38696c..5dcb047 100644
                                  return Some(*area);
                              }
                          }
+@@ -2615,8 +2623,13 @@ impl Window {
+     }
+ 
+     /// request a certain window decoration (Wayland)
++    ///
++    /// The window's size is read again before the next frame: a platform that gives up or
++    /// takes back its frame at once (Windows' title bar) may tell the new size while the window
++    /// is being updated, which that report cannot reach.
+     pub fn request_decorations(&self, decorations: WindowDecorations) {
+         self.platform_window.request_decorations(decorations);
++        self.on_next_frame(|window, cx| window.bounds_changed(cx));
+     }
+ 
+     /// Whether the decorations last requested wait for the compositor's answer (Wayland): until
 diff --git a/crates/gpui_macos/src/window.rs b/crates/gpui_macos/src/window.rs
-index 2c1c897..e7dc5c2 100644
+index 2c1c897..a87a554 100644
 --- a/crates/gpui_macos/src/window.rs
 +++ b/crates/gpui_macos/src/window.rs
-@@ -1612,6 +1612,67 @@ impl PlatformWindow for MacWindow {
+@@ -698,7 +698,12 @@ struct MacWindowState {
+ 
+ impl MacWindowState {
+     fn move_traffic_light(&mut self) {
+-        if let Some(traffic_light_position) = self.traffic_light_position {
++        // Only over a title bar made transparent: the system's own keeps
++        // them where AppKit puts them (`request_decorations`), whatever
++        // moved them while it was transparent.
++        if let Some(traffic_light_position) = self.traffic_light_position
++            && self.transparent_titlebar
++        {
+             if self.is_fullscreen() && !self.is_exiting_fullscreen {
+                 self.restore_traffic_light();
+                 return;
+@@ -1612,6 +1617,67 @@ impl PlatformWindow for MacWindow {
          state.move_traffic_light();
      }
  
@@ -135,7 +163,7 @@ index 08f91bd..227cb20 100644
          SetWindowPos(
              handle,
 diff --git a/crates/gpui_windows/src/window.rs b/crates/gpui_windows/src/window.rs
-index d726e13..2935097 100644
+index d726e13..26746b3 100644
 --- a/crates/gpui_windows/src/window.rs
 +++ b/crates/gpui_windows/src/window.rs
 @@ -102,7 +102,8 @@ pub(crate) struct WindowsWindowInner {
@@ -157,16 +185,23 @@ index d726e13..2935097 100644
              is_movable: context.is_movable,
              is_resizable: context.is_resizable,
              is_minimizable: context.is_minimizable,
-@@ -658,6 +659,31 @@ impl Drop for WindowsWindow {
+@@ -658,6 +659,38 @@ impl Drop for WindowsWindow {
  }
  
  impl PlatformWindow for WindowsWindow {
 +    /// The application's decorations hide the system's title bar (its
-+    /// frame, shadow and edges kept), on an open window too.
++    /// frame, shadow and edges kept), on an open window too. Said at once;
++    /// the frame changed on the foreground executor, as `resize` is: done
++    /// here, it would send `WM_SIZE` while the window is being updated, when
++    /// the new size could not reach it.
 +    fn request_decorations(&self, decorations: gpui::WindowDecorations) {
 +        let hide = decorations == gpui::WindowDecorations::Client;
 +        if self.0.hide_title_bar.replace(hide) != hide {
-+            crate::events::notify_frame_changed(self.0.hwnd);
++            let hwnd = self.0.hwnd;
++            self.0
++                .executor
++                .spawn(async move { crate::events::notify_frame_changed(hwnd) })
++                .detach();
 +        }
 +    }
 +
@@ -189,7 +224,7 @@ index d726e13..2935097 100644
      fn bounds(&self) -> Bounds<Pixels> {
          self.state.bounds()
      }
-@@ -972,7 +998,10 @@ impl PlatformWindow for WindowsWindow {
+@@ -972,7 +1005,10 @@ impl PlatformWindow for WindowsWindow {
  
      fn zoom(&self) {
          unsafe {

@@ -2623,8 +2623,13 @@ impl Window {
     }
 
     /// request a certain window decoration (Wayland)
+    ///
+    /// The window's size is read again before the next frame: a platform that gives up or
+    /// takes back its frame at once (Windows' title bar) may tell the new size while the window
+    /// is being updated, which that report cannot reach.
     pub fn request_decorations(&self, decorations: WindowDecorations) {
         self.platform_window.request_decorations(decorations);
+        self.on_next_frame(|window, cx| window.bounds_changed(cx));
     }
 
     /// Whether the decorations last requested wait for the compositor's answer (Wayland): until

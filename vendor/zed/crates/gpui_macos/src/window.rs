@@ -698,7 +698,12 @@ struct MacWindowState {
 
 impl MacWindowState {
     fn move_traffic_light(&mut self) {
-        if let Some(traffic_light_position) = self.traffic_light_position {
+        // Only over a title bar made transparent: the system's own keeps
+        // them where AppKit puts them (`request_decorations`), whatever
+        // moved them while it was transparent.
+        if let Some(traffic_light_position) = self.traffic_light_position
+            && self.transparent_titlebar
+        {
             if self.is_fullscreen() && !self.is_exiting_fullscreen {
                 self.restore_traffic_light();
                 return;

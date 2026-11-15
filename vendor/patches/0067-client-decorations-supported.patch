@@ -18,10 +18,10 @@ index 2aa4096..09c51a3 100644
      fn start_window_move(&self) {}
      fn can_start_external_drag(&self) -> bool {
 diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
-index 5dcb047..2030f12 100644
+index c958b4d..70dcaf4 100644
 --- a/crates/gpui/src/window.rs
 +++ b/crates/gpui/src/window.rs
-@@ -2634,6 +2634,13 @@ impl Window {
+@@ -2639,6 +2639,13 @@ impl Window {
          self.platform_window.decorations_pending()
      }
  
