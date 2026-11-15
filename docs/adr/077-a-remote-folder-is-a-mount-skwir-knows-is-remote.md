@@ -219,5 +219,8 @@ Revises ADR-021: its direction kept, its steps decided.
   mount another program made or let go of, the places plugin a volume
   mounted anywhere (it watched `/run/media/<user>` alone). Reading the
   table touches no mount: a FUSE mount's unique number (`statx` of its
-  point) is asked once a file there needs it, never at each read, which
-  every process following the table makes as a mount comes or goes.
+  point) is asked of that mount alone once a file there needs it, never
+  at a read, which every process following the table makes as a mount
+  comes or goes; what reads proved of a mount, and a refusal of its
+  attributes, are known by its point and device as the table lists
+  them, and let go of once it lists them no more.

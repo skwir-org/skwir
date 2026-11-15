@@ -331,10 +331,30 @@ pub const FAST: f64 = 10_000_000.;
 /// the two, it stays as it was proved.
 pub const SLOW: f64 = 5_000_000.;
 
-/// What reads proved of each mount this session, fast or not: by its
-/// point and its number (`mount_of`), so a mount made again is unknown
-/// again. Kept in memory alone, as the plugin's word on it is.
-static PROVED: Mutex<Option<std::collections::HashMap<(PathBuf, u64), bool>>> = Mutex::new(None);
+/// What a mount is known by while the table lists it: its point and its
+/// device, as the table says them ([`key_of_mount`]), nothing asked of the
+/// mount. What is known of it is let go of once a read of the table lists
+/// it no more ([`forget_unmounted`]; at once where the table is followed,
+/// [`follow`]), so a mount made again there is another.
+type MountKey = (PathBuf, u64);
+
+/// What `remote` is known by ([`MountKey`]): its point, and its device or,
+/// a bridge's folder (which tells none), the bridge's.
+fn key_of_mount(table: &Table, remote: &Remote) -> MountKey {
+    let device = remote.device.or_else(|| {
+        table
+            .remotes
+            .iter()
+            .find(|r| remote.point.starts_with(&r.point))
+            .and_then(|r| r.device)
+    });
+    (remote.point.clone(), device.unwrap_or(0))
+}
+
+/// What reads proved of each mount this session, fast or not, by what it
+/// is known by ([`MountKey`]): a mount made again is unknown again. Kept in
+/// memory alone, as the plugin's word on it is.
+static PROVED: Mutex<Option<std::collections::HashMap<MountKey, bool>>> = Mutex::new(None);
 
 /// Told each time what reads proved of a mount changed ([`proved_fast`]).
 static PROVED_CHANGED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -353,7 +373,7 @@ pub fn note_read(src: &Path, into: &Path, bytes: u64, took: Duration) {
     };
     #[allow(clippy::cast_precision_loss)] // A speed, not a count.
     let speed = bytes as f64 / took.as_secs_f64();
-    let key = (remote.point.clone(), mount_of(remote.device.unwrap_or(0)));
+    let key = key_of_mount(&table(), &remote);
     let mut proved = PROVED.lock();
     let proved = proved.get_or_insert_with(Default::default);
     let was = proved.get(&key).copied();
@@ -375,7 +395,7 @@ pub fn note_read(src: &Path, into: &Path, bytes: u64, took: Duration) {
 /// Whether reads of `remote` this session proved it fast ([`note_read`]);
 /// `None` before enough was read.
 pub fn proved_fast(remote: &Remote) -> Option<bool> {
-    let key = (remote.point.clone(), mount_of(remote.device.unwrap_or(0)));
+    let key = key_of_mount(&table(), remote);
     PROVED.lock().as_ref()?.get(&key).copied()
 }
 
@@ -385,10 +405,11 @@ pub fn proved_changed() -> u64 {
     PROVED_CHANGED.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-/// The FUSE mounts that refused extended attributes, each by the point
-/// the refusal was asked under (a bridge's folder: GVfs's `afc:host=…`)
-/// and the number of the FUSE mount that answered (`mount_of`, a bridge's
-/// own), so a mount made again is asked again. A FUSE program's refusal
+/// The FUSE mounts that refused extended attributes, each by what it is
+/// known by ([`MountKey`]: the point the refusal was asked under, a bridge's
+/// folder such as GVfs's `afc:host=…`, and the device of the FUSE mount
+/// that answered, a bridge's own), so a mount made again is asked again.
+/// A FUSE program's refusal
 /// holds for every file of its connection, and some still reach the
 /// server first (GVfs's bridge looks each file up on an iPhone, a USB
 /// round trip): asked once a mount, never again for each file a listing
@@ -397,33 +418,21 @@ pub fn proved_changed() -> u64 {
 /// of when the table lists that mount no more (`forget_unmounted`) or a
 /// write there succeeds (`note_accepted_attributes`). In memory alone,
 /// as what reads proved is; a refused mount or two, never a list of files.
-static REFUSES_ATTRIBUTES: RwLock<Vec<(PathBuf, u64)>> = RwLock::new(Vec::new());
+static REFUSES_ATTRIBUTES: RwLock<Vec<MountKey>> = RwLock::new(Vec::new());
 
 /// How many refusals [`REFUSES_ATTRIBUTES`] holds: a read where it holds
 /// none asks nothing of the table and takes no lock.
 static REFUSALS: AtomicUsize = AtomicUsize::new(0);
 
-/// What a refusal of `path`'s extended attributes is remembered by: its
-/// FUSE remote's point and the number of its FUSE mount; `None` on this
-/// machine's volumes and a kernel's share.
-fn refusing_mount(path: &Path) -> Option<(PathBuf, u64)> {
+/// What a refusal of `path`'s extended attributes is remembered by: what
+/// its FUSE remote is known by ([`MountKey`]); `None` on this machine's
+/// volumes and a kernel's share.
+fn refusing_mount(path: &Path) -> Option<MountKey> {
     let remote = of(path)?;
     if remote.by_kernel() {
         return None;
     }
-    let table = table();
-    // A bridge's folder tells no device: the bridge's mount does.
-    let device = remote.device.or_else(|| {
-        table
-            .remotes
-            .iter()
-            .find(|r| path.starts_with(&r.point))
-            .and_then(|r| r.device)
-    });
-    Some((
-        remote.point.clone(),
-        device.map_or(0, |d| number_in(&table, d)),
-    ))
+    Some(key_of_mount(&table(), &remote))
 }
 
 /// Reading an extended attribute of `path` was refused as the volume
@@ -474,27 +483,28 @@ pub fn refuses_attributes(path: &Path) -> bool {
     remembered.is_some_and(|key| refusing_mount(path) == Some(key))
 }
 
-/// Let go of the refusals of mounts `table` lists no more: a mount made
-/// again, even at the same point with the same number, is asked again.
+/// Let go of what is known of the mounts `table` lists no more (what
+/// reads proved, the refusals): a mount made again at the same point, once
+/// a read saw it gone, is another. From the table alone: no mount is
+/// asked anything.
 fn forget_unmounted(table: &Table) {
-    if REFUSALS.load(Ordering::Acquire) == 0 {
-        return;
-    }
-    let mounted = |point: &Path, number: u64| {
-        let listed = |r: &Arc<Remote>| {
-            !r.by_kernel()
-                && point.starts_with(&r.point)
-                && r.device.map_or(0, |d| number_in(table, d)) == number
-        };
+    let mounted = |(point, device): &MountKey| {
+        let listed =
+            |r: &Arc<Remote>| point.starts_with(&r.point) && r.device.unwrap_or(0) == *device;
         #[cfg(test)]
         if pretended().iter().any(&listed) {
             return true;
         }
         table.remotes.iter().any(listed)
     };
-    let mut refused = REFUSES_ATTRIBUTES.write();
-    refused.retain(|(point, number)| mounted(point, *number));
-    REFUSALS.store(refused.len(), Ordering::Release);
+    if REFUSALS.load(Ordering::Acquire) > 0 {
+        let mut refused = REFUSES_ATTRIBUTES.write();
+        refused.retain(&mounted);
+        REFUSALS.store(refused.len(), Ordering::Release);
+    }
+    if let Some(proved) = PROVED.lock().as_mut() {
+        proved.retain(|known, _| mounted(known));
+    }
 }
 
 /// The lane of work on `path`: its remote's, the shared one elsewhere.
@@ -549,12 +559,7 @@ fn number_in(table: &Table, device: u64) -> u64 {
     if rustix::fs::major(device) != 0 {
         return 0;
     }
-    table
-        .made_up
-        .get()
-        .iter()
-        .find(|(of, _)| *of == device)
-        .map_or(0, |&(_, number)| number)
+    table.made_up.number(device)
 }
 
 /// The number a test says `device`'s mount has ([`pretend_made_up`]).
@@ -671,10 +676,12 @@ pub fn follow(
     *FOLLOWED.get_or_init(imp::follow)
 }
 
-/// The system said the table changed: it is read again, and every
+/// The system said the table changed: it is read again, what is known of
+/// a mount it lists no more let go of ([`forget_unmounted`]), and every
 /// follower whose lifetime goes on told.
 fn told() {
     changed();
+    drop(table());
     let followers: Vec<Arc<dyn Fn() + Send + Sync>> = {
         let mut followers = FOLLOWERS.lock();
         followers.retain(|(lifetime, _)| !lifetime.is_cancelled());
@@ -748,32 +755,31 @@ fn table() -> Arc<Table> {
 
 static TABLE: Mutex<Option<(Instant, Arc<Table>)>> = Mutex::new(None);
 
-/// The devices whose inode numbers are made up, each with its mount's
-/// number ([`mount_of`]): worked out the first time one is asked, never by
-/// a read of the table alone. Asking a FUSE mount its unique number holds
-/// the mount for that moment, and every process following the table reads
-/// it as a mount comes or goes ([`follow`]): a program letting go of its
-/// mount just then was refused, the mount busy.
+/// The FUSE mounts of the table, whose programs make their files' inode
+/// numbers up, each with its mount's number ([`mount_of`]), worked out
+/// the first time its own device is asked: never by a read of the table,
+/// nor for another mount than the one asked. Asking a FUSE mount its
+/// unique number holds the mount for that moment, and every process
+/// following the table reads it as a mount comes or goes ([`follow`]): a
+/// program letting go of its mount just then was refused, the mount busy.
 #[derive(Default)]
 struct MadeUp {
-    numbers: std::sync::OnceLock<Vec<(u64, u64)>>,
-    /// What they are worked out from: the table's mounts.
     #[cfg(target_os = "linux")]
-    mounts: Vec<crate::fs::volume::Mounted>,
+    mounts: Vec<imp::Numbered>,
 }
 
 impl MadeUp {
-    fn get(&self) -> &[(u64, u64)] {
-        self.numbers.get_or_init(|| {
-            #[cfg(target_os = "linux")]
-            {
-                imp::made_up(&self.mounts, imp::unique)
-            }
-            #[cfg(not(target_os = "linux"))]
-            {
-                Vec::new()
-            }
-        })
+    /// The number of the mount `device`'s files are on, 0 where no FUSE
+    /// mount of the table is on it: asks that mount alone, once.
+    // Only Linux's table holds the mounts it numbers.
+    #[cfg_attr(not(target_os = "linux"), allow(clippy::unused_self))]
+    fn number(&self, device: u64) -> u64 {
+        #[cfg(target_os = "linux")]
+        if let Some(mount) = self.mounts.iter().find(|m| m.device == device) {
+            return mount.number(imp::unique);
+        }
+        let _ = device;
+        0
     }
 }
 
@@ -993,20 +999,19 @@ mod imp {
         })
     }
 
-    /// The table: its network mounts, its mounts for the numbers made up
-    /// (worked out when asked, `MadeUp`), its points. Reads procfs alone.
+    /// The table: its network mounts, its FUSE mounts for the numbers made
+    /// up (each worked out when its device is asked, `MadeUp`), its points.
+    /// Reads procfs alone.
     pub(super) fn read() -> (Vec<Remote>, super::MadeUp, Vec<std::path::PathBuf>) {
         let Ok(text) = std::fs::read("/proc/self/mountinfo") else {
             return (Vec::new(), super::MadeUp::default(), Vec::new());
         };
         let mounts = crate::fs::volume::mountinfo(&text);
         let points = mounts.iter().map(|m| m.point.clone()).collect();
-        let remotes = remotes(&mounts);
         (
-            remotes,
+            remotes(&mounts),
             super::MadeUp {
-                numbers: std::sync::OnceLock::new(),
-                mounts,
+                mounts: made_up(&mounts),
             },
             points,
         )
@@ -1026,15 +1031,45 @@ mod imp {
             .collect()
     }
 
-    /// Each FUSE mount's device and its number: `unique`'s for its point,
-    /// else the table's. `fuseblk` (ntfs-3g) keeps its volume's numbers.
-    /// A point below another FUSE mount or a network's is not asked: its
-    /// path would be looked up through that mount's program or server,
-    /// which may not answer.
-    pub(super) fn made_up(
-        mounts: &[Mounted],
-        unique: impl Fn(&Path) -> Option<u64>,
-    ) -> Vec<(u64, u64)> {
+    /// A FUSE mount of the table by its device, its number worked out the
+    /// first time it is asked ([`Numbered::number`]).
+    pub(super) struct Numbered {
+        pub(super) device: u64,
+        point: std::path::PathBuf,
+        /// Whether its point may be asked: not below another FUSE mount
+        /// or a network's, whose program or server would look it up.
+        asked: bool,
+        /// Its number in the table.
+        id: Option<u64>,
+        number: std::sync::OnceLock<u64>,
+    }
+
+    impl Numbered {
+        /// Its number: `unique`'s for its point, else the table's; 0 for
+        /// neither. Asked once.
+        pub(super) fn number(&self, unique: impl FnOnce(&Path) -> Option<u64>) -> u64 {
+            *self.number.get_or_init(|| {
+                self.asked
+                    .then(|| unique(&self.point))
+                    .flatten()
+                    .or(self.id)
+                    .map_or(0, |number| number.max(1))
+            })
+        }
+
+        /// Whether its number was asked already: what a test asks.
+        #[cfg(test)]
+        pub(super) fn asked_yet(&self) -> bool {
+            self.number.get().is_some()
+        }
+    }
+
+    /// The FUSE mounts of `mounts`, nothing asked of them yet.
+    /// `fuseblk` (ntfs-3g) keeps its volume's numbers. A point below
+    /// another FUSE mount or a network's is never asked: its path would be
+    /// looked up through that mount's program or server, which may not
+    /// answer.
+    pub(super) fn made_up(mounts: &[Mounted]) -> Vec<Numbered> {
         let fuse = |fstype: &str| fstype == "fuse" || fstype.starts_with("fuse.");
         let held: Vec<&Path> = mounts
             .iter()
@@ -1048,8 +1083,13 @@ mod imp {
                 let below = held
                     .iter()
                     .any(|point| *point != m.point && m.point.starts_with(point));
-                let number = (!below).then(|| unique(&m.point)).flatten().or(m.id)?;
-                Some((m.device?, number.max(1)))
+                Some(Numbered {
+                    device: m.device?,
+                    point: m.point.clone(),
+                    asked: !below,
+                    id: m.id,
+                    number: std::sync::OnceLock::new(),
+                })
             })
             .collect()
     }
@@ -1402,17 +1442,102 @@ mod tests {
         assert!(rx.recv_timeout(Duration::from_millis(600)).is_err());
     }
 
-    /// Reading the table asks no mount anything: the numbers a FUSE mount
-    /// is asked for are worked out once one is asked of it ([`mount_of`]).
-    /// Every process following the table reads it as a mount comes or
-    /// goes; a mount asked then is busy for the program letting go of it.
+    /// Reading the table asks no mount anything: the number a FUSE mount
+    /// is asked for is worked out once its own device is asked
+    /// ([`mount_of`]), and what is known of a mount (what reads proved, a
+    /// refusal) is known by what the table holds, its point and device,
+    /// and let go of from the table alone. Every process following the
+    /// table reads it as a mount comes or goes; a mount asked then is busy
+    /// for the program letting go of it.
     #[cfg(target_os = "linux")]
     #[test]
     fn reading_the_table_asks_no_mount() {
-        let table = super::Table::read();
-        assert!(table.made_up.numbers.get().is_none(), "nothing asked yet");
-        let _ = super::number_in(&table, rustix::fs::makedev(0, 1));
-        assert!(table.made_up.numbers.get().is_some(), "asked when needed");
+        let read = Table::read();
+        assert!(
+            read.made_up.mounts.iter().all(|m| !m.asked_yet()),
+            "nothing asked yet"
+        );
+        let text =
+            b"36 25 0:88 / /run/user/1000/gvfs rw shared:922 - fuse.gvfsd-fuse gvfsd-fuse rw\n\
+37 25 0:98 / /home/me/srv rw shared:9 - fuse.sshfs me@host:/ rw\n\
+39 25 0:91 / /mnt/nas rw shared:11 - nfs4 nas:/export rw\n";
+        let of_text = |text: &[u8]| {
+            let mounts = crate::fs::volume::mountinfo(text);
+            let mut remotes: Vec<Arc<Remote>> =
+                imp::remotes(&mounts).into_iter().map(Arc::new).collect();
+            remotes.sort_by_key(|r| std::cmp::Reverse(r.point.as_os_str().len()));
+            Table {
+                remotes,
+                made_up: MadeUp {
+                    mounts: imp::made_up(&mounts),
+                },
+                points: Vec::new(),
+            }
+        };
+        let table = of_text(text);
+        let dev = |minor| rustix::fs::makedev(0, minor);
+        let sshfs = table.of(Path::new("/home/me/srv/l'été.jpg")).unwrap();
+        let phone = table
+            .of(Path::new("/run/user/1000/gvfs/mtp:host=Phone/DCIM"))
+            .unwrap();
+        let nfs = table.of(Path::new("/mnt/nas/a")).unwrap();
+        let (sshfs, phone, nfs): (MountKey, MountKey, MountKey) = (
+            key_of_mount(&table, &sshfs),
+            key_of_mount(&table, &phone),
+            key_of_mount(&table, &nfs),
+        );
+        assert_eq!(sshfs, (PathBuf::from("/home/me/srv"), dev(98)));
+        assert_eq!(
+            phone,
+            (PathBuf::from("/run/user/1000/gvfs/mtp:host=Phone"), dev(88)),
+            "a bridge's folder by the bridge's device"
+        );
+        REFUSES_ATTRIBUTES
+            .write()
+            .extend([sshfs.clone(), phone.clone()]);
+        REFUSALS.store(2, Ordering::Release);
+        PROVED
+            .lock()
+            .get_or_insert_with(Default::default)
+            .extend([(nfs.clone(), true), (sshfs.clone(), false)]);
+        forget_unmounted(&table);
+        assert_eq!(REFUSALS.load(Ordering::Acquire), 2, "all still mounted");
+        assert_eq!(
+            PROVED.lock().as_ref().map(std::collections::HashMap::len),
+            Some(2)
+        );
+        // sshfs let go of, and mounted again at its point on another device.
+        let since = of_text(
+            b"36 25 0:88 / /run/user/1000/gvfs rw shared:922 - fuse.gvfsd-fuse gvfsd-fuse rw\n\
+40 25 0:99 / /home/me/srv rw shared:9 - fuse.sshfs me@host:/ rw\n",
+        );
+        forget_unmounted(&since);
+        assert_eq!(*REFUSES_ATTRIBUTES.read(), [phone]);
+        assert!(
+            PROVED
+                .lock()
+                .as_ref()
+                .is_some_and(std::collections::HashMap::is_empty)
+        );
+        assert!(
+            table
+                .made_up
+                .mounts
+                .iter()
+                .chain(&since.made_up.mounts)
+                .all(|m| !m.asked_yet()),
+            "no mount asked"
+        );
+        assert_eq!(number_in(&since, dev(98)), 0, "no mount on it now");
+        assert!(since.made_up.mounts.iter().all(|m| !m.asked_yet()));
+        let _ = number_in(&since, dev(99));
+        let asked: Vec<bool> = since
+            .made_up
+            .mounts
+            .iter()
+            .map(imp::Numbered::asked_yet)
+            .collect();
+        assert_eq!(asked, [false, true], "the mount asked alone");
     }
 
     /// [`a_mount_made_or_let_go_of_is_told`], run as root in a user and
@@ -1519,8 +1644,9 @@ mod tests {
         assert_eq!(REFUSALS.load(Ordering::Acquire), 0);
     }
 
-    /// A FUSE mount made again is asked again: its refusal is kept by the
-    /// mount's number, and let go of once the table lists it no more.
+    /// A FUSE mount made again is asked again: its refusal is kept by what
+    /// the table knows it by, its point and device, and let go of once the
+    /// table lists it no more.
     #[cfg(target_os = "linux")]
     #[test]
     fn a_mount_made_again_is_asked_again() {
@@ -1529,11 +1655,11 @@ mod tests {
         // A FUSE mount's device is no disk's: major 0.
         let device = rustix::fs::makedev(0, 77);
         pretend_mount(point, "fuse.sshfs", Some(device));
-        pretend_made_up(device, 7);
         assert!(crate::fs::xattr::get(&file, "user.xdg.tags").is_err());
         assert!(refuses_attributes(&file));
-        // Let go of and mounted again at the same point: another number.
-        pretend_made_up(device, 8);
+        // Let go of and mounted again at the same point: another device.
+        PRETENDED_REMOTES.lock().clear();
+        pretend_mount(point, "fuse.sshfs", Some(rustix::fs::makedev(0, 78)));
         assert!(!refuses_attributes(&file), "a mount made again is asked");
         changed();
         assert!(of(Path::new("/example/elsewhere")).is_none());
@@ -1739,10 +1865,16 @@ mod tests {
 42 25 259:2 / / rw shared:1 - btrfs /dev/nvme0n1p2 rw\n";
         let mounts = crate::fs::volume::mountinfo(text);
         let asked = parking_lot::Mutex::new(Vec::new());
-        let made_up = imp::made_up(&mounts, |point| {
-            asked.lock().push(point.to_path_buf());
-            (point != Path::new("/home/me/srv")).then_some(1 << 40)
-        });
+        let made_up: Vec<(u64, u64)> = imp::made_up(&mounts)
+            .iter()
+            .map(|m| {
+                let number = m.number(|point| {
+                    asked.lock().push(point.to_path_buf());
+                    (point != Path::new("/home/me/srv")).then_some(1 << 40)
+                });
+                (m.device, number)
+            })
+            .collect();
         let dev = |minor| rustix::fs::makedev(0, minor);
         assert_eq!(
             made_up,

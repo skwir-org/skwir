@@ -27,11 +27,17 @@ ADR-077 (which revises ADR-021).
   as a window comes to the front. A follower starts work and never waits
   for it. Tested in a user and mount namespace of the test's own
   (`the_table_is_followed`), never by mounting in the session's.
-- **Reading the table touches no mount**: the numbers made up (a FUSE
-  mount's unique number, `statx` of its point) are worked out the first
-  time one is asked (`reach::mount_of`, `MadeUp`), by what reads that
-  mount's files anyway, never at each read, which every process
-  following the table makes as a mount comes or goes.
+- **Reading the table touches no mount**: a FUSE mount's number (its
+  unique number, `statx` of its point) is worked out the first time its
+  own device is asked (`reach::mount_of`, `MadeUp`), by what reads that
+  mount's files anyway, never at a read of the table, which every
+  process following the table makes as a mount comes or goes, nor for
+  another mount. What is known of a mount (what reads proved, a refusal
+  of attributes) is known by what the table holds, its point and device
+  (`reach::MountKey`), and let go of once a read of the table lists it no
+  more: at once where the table is followed, so a mount let go of and
+  made again is another; one made again at once, within one settled
+  change, is taken as the one before.
 - A path reached through a link into a remote is told by its folder's
   device once opened (`reach::of_device`): the folder listing takes its
   lane from it.
@@ -103,7 +109,8 @@ ADR-077 (which revises ADR-021).
   a file whole before any part of it, kio-fuse over WebDAV, FTP and NFS:
   `Connector::reads_whole`; Small files elsewhere once copies down this
   session proved the server fast: `fs::reach::note_read`, 10 MB/s over
-  4 MiB or more, slow again under 5, by the mount, in memory; a preview
+  4 MiB or more, slow again under 5, by the mount (its point and
+  device), in memory; a preview
   is not counted, as it reads what it shows, not the file);
   Never where no plugin knows the remote. Ask it before
   reading anything. A remote's thumbnails are made in its lane, one
@@ -139,10 +146,10 @@ ADR-077 (which revises ADR-021).
   sshfs, rclone, GVfs's bridge, which on an iPhone looks each file up
   first) are not asked of it again while it stays mounted
   (`reach::refuses_attributes`): the kernel answers so for every file of
-  one FUSE connection. It is remembered by its point and the number of
-  the FUSE mount (`mount_of`; a bridge's folder by the bridge's), and
-  let go of once the table lists that mount no more, so a mount made
-  again is asked again. Every read through `fs::xattr` answers as the
+  one FUSE connection. It is remembered by its point and the device of
+  the FUSE mount, as the table lists them (`reach::MountKey`; a bridge's
+  folder by the bridge's), and let go of once the table lists that mount
+  no more, so a mount made again is asked again. Every read through `fs::xattr` answers as the
   first did, so a listing's tags or a lens of them cost no request a
   file. A kernel's share (NFS, SMB) is asked each time: its server may
   keep attributes in one folder and not another. Writes are tried each
