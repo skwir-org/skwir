@@ -44,7 +44,11 @@ one, and every view's field holds the same component (2, 7).
    as it is written, what it means, what it gives for what the field is
    about (the first file's), and what choosing it writes: put where the
    caret is (`inserts`), or written whole in the fields a recipe names
-   (`fills`). The signs of a regular expression, which two plugins read
+   (`fills`). A part (a placeholder, a sign, a clause's letter) is put at
+   the caret; a whole value (a mode in digits, an exclusion's example)
+   is written in place of what its field holds (`Item::whole_in`), never
+   beside what is typed (`6` and `755` would make `6755`). The signs of
+   a regular expression, which two plugins read
    with one crate, are said once there (`regex_pattern`).
 2. **A field that says what it takes has a `?` inside its frame at its
    end** (first a [?] after the field), as a form's list button

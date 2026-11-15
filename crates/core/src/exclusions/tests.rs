@@ -1130,11 +1130,15 @@ fn the_fields_reference_is_what_the_rules_read() {
     let pattern = reference("pattern").unwrap();
     let mut read = 0;
     for (g, _, item) in pattern.items() {
-        // The signs alone, and the regex's, are parts of one.
+        // The signs alone, and the regex's, are parts of one, put where
+        // the caret is; an example is written whole in place of what the
+        // field holds (`foo` and `~/VMs` would make `foo~/VMs`).
         if pattern.groups[g].title.starts_with("Signs") || pattern.groups[g].title == "Pattern" {
+            assert!(item.fills.is_empty(), "{} is a part", item.written);
             continue;
         }
-        let text = item.inserts.as_deref().unwrap();
+        let text = &item.fills["pattern"];
+        assert_eq!(*text, item.written);
         assert!(
             Pattern::of(text).is_ok(),
             "{text}: {:?}",
@@ -1146,9 +1150,11 @@ fn the_fields_reference_is_what_the_rules_read() {
     assert_eq!(Written::of("~/Projects/**/target"), Written::PathGlob);
     assert_eq!(Written::of("cmake-build-*"), Written::NameGlob);
     for (_, _, item) in reference("beside").unwrap().items() {
+        assert_eq!(item.fills.get("beside"), Some(&item.written));
         assert!(NameMatch::of(&item.written).is_ok(), "{}", item.written);
     }
     for (_, _, item) in reference("holding").unwrap().items() {
+        assert_eq!(item.fills.get("holding"), Some(&item.written));
         let holding = Matcher::Holding(item.written.clone());
         assert!(holding.check().is_ok(), "{}", item.written);
         assert!(

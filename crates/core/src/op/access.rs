@@ -504,22 +504,25 @@ fn letters_said(letters: &str, folders: bool) -> String {
 }
 
 /// What a mode is written as, for Properties' Access to show beside its
-/// field: digits, then the symbolic clauses.
+/// field (`set_access`'s `mode`): whole modes in digits, each written in
+/// place of what the field holds, then the parts of symbolic clauses,
+/// each put where the caret is.
 pub fn reference() -> crate::reference::Reference {
     use crate::reference::{Group, Item, Reference};
+    let whole = |mode: &str, says: &str| Item::new(mode, says).whole_in("mode");
     Reference::new("Access")
         .group(
             Group::new("Digits: owner, group, others")
-                .item(Item::new(
+                .item(whole(
                     "644",
                     "The owner reads and writes; the group and others read",
                 ))
-                .item(Item::new(
+                .item(whole(
                     "755",
                     "Everyone reads and runs; the owner writes too",
                 ))
-                .item(Item::new("600", "The owner alone reads and writes"))
-                .item(Item::new("700", "The owner alone reads, writes and runs"))
+                .item(whole("600", "The owner alone reads and writes"))
+                .item(whole("700", "The owner alone reads, writes and runs"))
                 .note("Each digit adds 4 to read, 2 to write and 1 to run (to open a folder)."),
         )
         .group(
@@ -1375,7 +1378,9 @@ mod tests {
         assert!(said("", Some(0o644), false).is_err());
     }
 
-    /// Each mode the reference offers whole is one `set_access` takes.
+    /// Each mode the reference offers whole is one `set_access` takes,
+    /// written in place of what the field holds; a clause's parts are put
+    /// where the caret is.
     #[test]
     fn the_reference_s_digits_are_modes() {
         let reference = reference();
@@ -1383,6 +1388,12 @@ mod tests {
         assert!(!digits.items.is_empty());
         for item in &digits.items {
             assert!(Mode::parse(&item.written).is_ok(), "{}", item.written);
+            assert_eq!(item.fills.get("mode"), Some(&item.written), "written whole");
+        }
+        for group in &reference.groups[1..] {
+            for item in &group.items {
+                assert!(item.fills.is_empty(), "{} is a part", item.written);
+            }
         }
         assert_eq!(mode_text(0o2775), "rwxrwsr-x (2775)");
         assert_eq!(mode_text(0o100_644), "rw-r--r-- (644)");

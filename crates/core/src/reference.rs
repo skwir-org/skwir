@@ -284,6 +284,15 @@ impl Item {
         self.fills.insert(field.into(), text.into());
         self
     }
+
+    /// A whole value (a mode, a path): choosing it writes it as it is
+    /// written in place of all the field `field` holds, never beside what
+    /// is typed there (`6` and `755` would make `6755`).
+    #[must_use]
+    pub fn whole_in(self, field: impl Into<String>) -> Self {
+        let written = self.written.clone();
+        self.fills(field, written)
+    }
 }
 
 /// The signs of a regular expression, as the `regex` crate reads them

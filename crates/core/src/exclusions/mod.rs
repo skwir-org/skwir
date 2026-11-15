@@ -1406,28 +1406,28 @@ enum Pattern {
 /// [`NameMatch::of`] read what is typed.
 pub fn reference(field: &str) -> Option<crate::reference::Reference> {
     use crate::reference::{Group, Item, Reference};
+    // An example is a whole value, written in place of what the field
+    // holds; a sign is a part, put where the caret is.
+    let whole = |written: &str, says: &str| Item::new(written, says).whole_in(field);
     Some(match field {
         "pattern" => Reference::new("Name or path")
             .group(
                 Group::new("By name, anywhere")
-                    .item(Item::new("node_modules", "Any so named"))
-                    .item(Item::new("*.egg-info", "Any named like it"))
-                    .item(Item::new("cmake-build-*", "Any whose name starts so")),
+                    .item(whole("node_modules", "Any so named"))
+                    .item(whole("*.egg-info", "Any named like it"))
+                    .item(whole("cmake-build-*", "Any whose name starts so")),
             )
             .group(
                 Group::new("By path")
-                    .item(Item::new("~/VMs", "One, from your home"))
-                    .item(Item::new(WHOLE_PATH, "One, from the root"))
-                    .item(Item::new("$CARGO_HOME/registry", "From a variable"))
-                    .item(Item::new(
+                    .item(whole("~/VMs", "One, from your home"))
+                    .item(whole(WHOLE_PATH, "One, from the root"))
+                    .item(whole("$CARGO_HOME/registry", "From a variable"))
+                    .item(whole(
                         "${XDG_CACHE_HOME:-~/.cache}/thumbnails",
                         "From a variable, or what stands for it unset",
                     ))
-                    .item(Item::new(
-                        "~/.var/app/*/cache",
-                        "Those whose path is like it",
-                    ))
-                    .item(Item::new("~/Projects/**/target", "At any depth below"))
+                    .item(whole("~/.var/app/*/cache", "Those whose path is like it"))
+                    .item(whole("~/Projects/**/target", "At any depth below"))
                     .note(format!(
                         "A path starts at ~, a variable or a root ({WHOLE_PATH}); anything else \
                          is a name."
@@ -1441,7 +1441,7 @@ pub fn reference(field: &str) -> Option<crate::reference::Reference> {
                     .item(Item::new("[ab]", "One of these"))
                     .item(Item::new("{a,b}", "Either")),
             )
-            .group(Group::new("Over the whole path").item(Item::new(
+            .group(Group::new("Over the whole path").item(whole(
                 r"regex:^~/Archive/\d{4}$",
                 "A regular expression, ~ for home",
             )))
@@ -1451,17 +1451,17 @@ pub fn reference(field: &str) -> Option<crate::reference::Reference> {
             ),
         "beside" => Reference::new("Only beside").group(
             Group::new("A name beside it")
-                .item(Item::new(
+                .item(whole(
                     "Cargo.toml",
                     "Only where a file or folder so named is beside it",
                 ))
-                .item(Item::new("*.csproj", "Only beside one named like it"))
+                .item(whole("*.csproj", "Only beside one named like it"))
                 .note("A name or a name's pattern, never a path."),
         ),
         "holding" => Reference::new("Holding").group(
             Group::new("A file it holds")
-                .item(Item::new(".nosearch", "Any folder holding a file so named"))
-                .item(Item::new("CACHEDIR.TAG", "A cache's own mark (signed)"))
+                .item(whole(".nosearch", "Any folder holding a file so named"))
+                .item(whole("CACHEDIR.TAG", "A cache's own mark (signed)"))
                 .note("A file's name: the folder holding it is excluded, wherever it is."),
         ),
         _ => return None,
