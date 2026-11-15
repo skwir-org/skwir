@@ -1882,7 +1882,12 @@ impl Shell {
 
     /// Up or Down in the dropdown (`ui.list_move`). On the selected token,
     /// Down lists the scopes.
-    pub fn omnibox_move(&mut self, mv: crate::modal::ListMove, cx: &mut Context<Self>) {
+    pub fn omnibox_move(
+        &mut self,
+        mv: crate::modal::ListMove,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let count = self.suggestions().len();
         let Some(omni) = self.ui_mut().omni.as_mut() else {
             return;
@@ -1902,9 +1907,25 @@ impl Shell {
             };
             omni.highlighted = Some(at);
             omni.chosen = true;
-            if let Some(row) = omni.highlighted {
-                omni.reveal(row);
-            }
+            omni.reveal(at);
+            // The rows passed over were counted as one row each until
+            // drawn (a heading, a note are taller): once the frame has drawn
+            // and measured those around it, the row is revealed again,
+            // where it really ends.
+            let pane = self.pane;
+            cx.on_next_frame(window, move |shell, _, cx| {
+                shell.with_pane(pane, |shell| {
+                    if let Some(omni) = shell
+                        .ui()
+                        .omni
+                        .as_ref()
+                        .filter(|o| o.highlighted == Some(at))
+                    {
+                        omni.reveal(at);
+                        cx.notify();
+                    }
+                });
+            });
             self.show_rest(cx);
             cx.notify();
         }

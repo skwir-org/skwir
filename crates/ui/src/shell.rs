@@ -3308,7 +3308,7 @@ impl Shell {
                 } else if self.settings.is_some() {
                     self.settings_command("settings_list_move", args, window, cx);
                 } else {
-                    self.omnibox_move(mv, cx);
+                    self.omnibox_move(mv, window, cx);
                 }
             }
             "rename_prompt" => {
