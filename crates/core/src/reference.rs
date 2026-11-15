@@ -62,9 +62,33 @@ pub struct Group {
     pub notes: Vec<String>,
 }
 
-/// One thing the field reads.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+/// One thing the field reads. As data ([`ItemData`]), an item puts what
+/// is written unless it says otherwise: what a plugin or an agent writes
+/// as `{ written, says }` is taken as it reads.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "ItemData", into = "ItemData")]
 pub struct Item {
+    /// As it is written: `{n:03}`, `\d`, `kind:`.
+    pub written: String,
+    /// What it means, in words.
+    pub says: String,
+    /// What it gives for what the field is about (the first file's), when
+    /// that is known.
+    pub gives: Option<String>,
+    /// What choosing it puts where the field's caret is (over what is
+    /// selected there); `None`, with no `fills`: an item only read.
+    pub inserts: Option<String>,
+    /// What choosing it writes whole in fields named by their key (a
+    /// recipe: a pattern and its replacement), in place of `inserts`.
+    pub fills: BTreeMap<String, String>,
+}
+
+/// An item as data says it (a command's answer, `ui.ask`'s
+/// `reference`): what it puts at the caret only where that is not what
+/// is written, and an item only read said so (`read_only`).
+#[derive(Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[schemars(rename = "Item")]
+pub struct ItemData {
     /// As it is written: `{n:03}`, `\d`, `kind:`.
     pub written: String,
     /// What it means, in words.
@@ -74,13 +98,57 @@ pub struct Item {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gives: Option<String>,
     /// What choosing it puts where the field's caret is (over what is
-    /// selected there); `None`, with no `fills`: an item only read.
+    /// selected there), where that is not `written` (`(…)` puts `()`);
+    /// unsaid, `written` itself.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inserts: Option<String>,
     /// What choosing it writes whole in fields named by their key (a
-    /// recipe: a pattern and its replacement), in place of `inserts`.
+    /// recipe: a pattern and its replacement), in place of putting
+    /// anything at the caret.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub fills: BTreeMap<String, String>,
+    /// Choosing it writes nothing: an item only read.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub read_only: bool,
+}
+
+impl From<ItemData> for Item {
+    fn from(data: ItemData) -> Item {
+        let inserts = (!data.read_only && data.fills.is_empty())
+            .then(|| data.inserts.unwrap_or_else(|| data.written.clone()));
+        Item {
+            written: data.written,
+            says: data.says,
+            gives: data.gives,
+            inserts,
+            fills: data.fills,
+        }
+    }
+}
+
+impl From<Item> for ItemData {
+    fn from(item: Item) -> ItemData {
+        let read_only = item.inserts.is_none() && item.fills.is_empty();
+        let inserts = item.inserts.filter(|inserts| *inserts != item.written);
+        ItemData {
+            written: item.written,
+            says: item.says,
+            gives: item.gives,
+            inserts,
+            fills: item.fills,
+            read_only,
+        }
+    }
+}
+
+impl schemars::JsonSchema for Item {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        ItemData::schema_name()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        ItemData::json_schema(generator)
+    }
 }
 
 impl Reference {
@@ -479,5 +547,39 @@ mod tests {
             serde_json::from_value::<Reference>(json).unwrap(),
             reference
         );
+    }
+
+    /// As data, an item puts what is written unless it says otherwise:
+    /// one written by hand as `{ written, says }` is taken as it reads,
+    /// and only one said read-only puts nothing.
+    #[test]
+    fn an_item_as_data_puts_what_is_written() {
+        let read = |json: serde_json::Value| serde_json::from_value::<Item>(json).unwrap();
+        let plain = read(serde_json::json!({ "written": "{name}", "says": "The name" }));
+        assert_eq!(plain, Item::new("{name}", "The name"));
+        assert_eq!(plain.inserts.as_deref(), Some("{name}"));
+        let only_read = read(serde_json::json!({ "written": "x", "says": "y", "read_only": true }));
+        assert_eq!(only_read, Item::new("x", "y").read_only());
+        assert_eq!(only_read.inserts, None);
+        let put = read(serde_json::json!({ "written": "(…)", "says": "A group", "inserts": "()" }));
+        assert_eq!(put.inserts.as_deref(), Some("()"));
+        let recipe =
+            read(serde_json::json!({ "written": "a", "says": "b", "fills": { "regex": "a" } }));
+        assert_eq!(recipe.inserts, None);
+        // Written back, what goes without saying is left unsaid.
+        let json = serde_json::to_value(Item::new("{n}", "The counter")).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({ "written": "{n}", "says": "The counter" })
+        );
+        let json = serde_json::to_value(Item::new("x", "y").read_only()).unwrap();
+        assert_eq!(json["read_only"], true);
+        for item in [plain, only_read, put, recipe] {
+            let json = serde_json::to_value(&item).unwrap();
+            assert_eq!(serde_json::from_value::<Item>(json).unwrap(), item);
+        }
+        // Its schema is the data's, as an agent reads it.
+        let schema = schemars::schema_for!(Item);
+        assert!(schema.as_value()["properties"]["read_only"].is_object());
     }
 }

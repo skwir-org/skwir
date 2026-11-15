@@ -47,11 +47,13 @@ one, and every view's field holds the same component (2, 7).
    (`fills`). A part (a placeholder, a sign, a clause's letter) is put at
    the caret; a whole value (a mode in digits, an exclusion's example)
    is written in place of what its field holds (`Item::whole_in`), never
-   beside what is typed (`6` and `755` would make `6755`). The signs of
-   a regular expression, which two plugins and the exclusions read with
-   one crate, are said once there (`regex_pattern`), each reader saying
-   what its start is and what a group's match is for after it (a
-   replacement's `$1`).
+   beside what is typed (`6` and `755` would make `6755`). As data, an
+   item puts what is written unless it says otherwise (`inserts`, or
+   `read_only` for one only read): what a plugin or an agent writes as
+   `{ written, says }` reads as it is. The signs of a regular expression,
+   which two plugins and the exclusions read with one crate, are said
+   once there (`regex_pattern`), each reader saying what its start is
+   and what a group's match is for after it (a replacement's `$1`).
 2. **A field that says what it takes has a `?` inside its frame at its
    end** (first a [?] after the field), as a form's list button
    (`inner_chevron`) and the address's own buttons are: what is about
