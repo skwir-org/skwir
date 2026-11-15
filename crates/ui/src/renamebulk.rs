@@ -6,7 +6,8 @@
 //! with each preview, opened from the `?` inside the field at its end or
 //! F1 in it, and what goes on with a part begun offered under the field
 //! as it is typed (`reference.rs`). It opens on `{full}`, which leaves
-//! every name as it is.
+//! every name as it is. The case is a row of its values side by side, a
+//! dropdown where they do not fit (`case_control`).
 
 use std::ops::Range;
 use std::rc::Rc;
@@ -23,13 +24,22 @@ use skwir_core::workspace::PaneId;
 
 use crate::controls::{self, ButtonStyle};
 use crate::elements::clip::clipped_marked;
+use crate::elements::popover::PopoverAnchor;
 use crate::input::{InputEvent, TextInput};
 use crate::keymap;
 use crate::modal::{self, FocusReturn};
 use crate::shell::Shell;
 use crate::theme::Theme;
 
-pub const CASES: [&str; 5] = ["none", "lower", "upper", "title", "sentence"];
+/// The cases a rename gives names: the value the plugin knows, and the
+/// label, written as the case leaves a name. The first asks for none.
+pub const CASES: [(&str, &str); 5] = [
+    ("none", "Unchanged"),
+    ("lower", "lowercase"),
+    ("upper", "UPPERCASE"),
+    ("title", "Title Case"),
+    ("sentence", "Sentence case"),
+];
 /// Each field: the key the plugin knows it by, its label, and what it
 /// shows while empty.
 const FIELDS: [(&str, &str, &str); 4] = [
@@ -76,7 +86,13 @@ pub struct BulkState {
     pane: PaneId,
     selected: Vec<EntryId>,
     pub inputs: Vec<Entity<TextInput>>,
+    /// The case chosen (`CASES`), the keyboard of its row, and, where the
+    /// row gives way to a dropdown, whether its list is open and where it
+    /// hangs from.
     pub case: usize,
+    case_focus: gpui::FocusHandle,
+    case_open: bool,
+    case_anchor: PopoverAnchor,
     pub focused: usize,
     /// The first names the preview shows (`SHOWN`), and how many renames
     /// there are in all.
@@ -115,13 +131,17 @@ impl BulkState {
         self.current && self.error.is_none() && self.renamed == 0
     }
 
-    /// What Tab walks: its fields, then Cancel and Rename.
+    /// What Tab walks: its fields, the case, then Cancel and Rename.
     pub(crate) fn walk(&self, cx: &gpui::App) -> Vec<gpui::FocusHandle> {
         use gpui::Focusable as _;
         self.inputs
             .iter()
             .map(|input| input.read(cx).focus_handle(cx))
-            .chain([self.cancel_focus.clone(), self.apply_focus.clone()])
+            .chain([
+                self.case_focus.clone(),
+                self.cancel_focus.clone(),
+                self.apply_focus.clone(),
+            ])
             .collect()
     }
 }
@@ -237,6 +257,9 @@ impl Shell {
             selected,
             inputs,
             case: 0,
+            case_focus: cx.focus_handle(),
+            case_open: false,
+            case_anchor: PopoverAnchor::default(),
             focused: 0,
             preview: Vec::new(),
             helps: std::array::from_fn(|i| FieldHelp::new(FIELDS[i].0, None)),
@@ -271,6 +294,7 @@ impl Shell {
     /// may have moved it); a field reached has its text selected.
     pub fn bulk_focus_next(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(b) = &mut self.bulk else { return };
+        b.case_open = false;
         let walk = b.walk(cx);
         if !walk.iter().any(|h| h.is_focused(window)) {
             b.inputs[b.focused].update(cx, |i, cx| i.focus(window, cx));
@@ -283,10 +307,34 @@ impl Shell {
         cx.notify();
     }
 
-    pub fn bulk_cycle_case(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// `ui.rename_bulk_case`: the case `delta` steps from the one chosen,
+    /// stopping at the ends (the arrows on its row); without one, the next,
+    /// round the last (Ctrl+K from any of its fields, Space on the row).
+    pub fn bulk_case(&mut self, delta: Option<isize>, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(b) = &self.bulk else { return };
+        let next = match delta {
+            None => (b.case + 1) % CASES.len(),
+            Some(delta) => b.case.saturating_add_signed(delta).min(CASES.len() - 1),
+        };
+        self.bulk_choose_case(next, window, cx);
+    }
+
+    /// Give names case `case`: the preview is asked again if it changed.
+    fn bulk_choose_case(&mut self, case: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(b) = &mut self.bulk else { return };
+        if b.case == case {
+            cx.notify();
+            return;
+        }
+        b.case = case;
+        self.bulk_refresh(window, cx);
+    }
+
+    /// Open or close the case's list, where the row is a dropdown.
+    fn bulk_case_list(&mut self, open: bool, cx: &mut Context<Self>) {
         if let Some(b) = &mut self.bulk {
-            b.case = (b.case + 1) % CASES.len();
-            self.bulk_refresh(window, cx);
+            b.case_open = open;
+            cx.notify();
         }
     }
 
@@ -425,10 +473,9 @@ fn spec_of(texts: &[String; 4], case: usize, pane: PaneId) -> serde_json::Value 
         }
     };
     let start: u64 = start.trim().parse().unwrap_or(1);
-    let case = if case == 0 {
-        serde_json::Value::Null
-    } else {
-        serde_json::Value::String(CASES[case].into())
+    let case = match CASES.get(case) {
+        Some(&(value, _)) if case > 0 => serde_json::Value::String(value.into()),
+        _ => serde_json::Value::Null,
     };
     serde_json::json!({
         "template": opt(template.trim()),
@@ -439,6 +486,112 @@ fn spec_of(texts: &[String; 4], case: usize, pane: PaneId) -> serde_json::Value 
         "pane": pane,
     })
 }
+
+/// The case names are given: its values side by side, each written as
+/// it leaves a name; where they do not fit, a dropdown (`adaptive::Fit`).
+/// One stop for Tab, a radio group to a screen reader: the arrows step it
+/// (`ui.rename_bulk_case`), Space gives the next case on the row and opens
+/// the dropdown's list, Enter renames as from a field. Its key from any
+/// field is said in the footer, with the dialog's other keys.
+fn case_control(b: &BulkState, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
+    crate::elements::adaptive::Fit {
+        variants: vec![case_segments(b, theme, cx), case_dropdown(b, theme, cx)],
+        cuts: false,
+        start: true,
+    }
+    .into_any_element()
+}
+
+/// The case's values as segments, the one chosen filled.
+fn case_segments(b: &BulkState, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
+    // Space and Enter reach the focused row as a keyboard click; the
+    // pointer's clicks belong to its segments.
+    let keyboard = cx.listener(|this, event: &gpui::ClickEvent, window, cx| {
+        if let gpui::ClickEvent::Keyboard(key) = event {
+            match key.button {
+                gpui::KeyboardButton::Space => this.bulk_case(None, window, cx),
+                gpui::KeyboardButton::Enter => this.bulk_apply(window, cx),
+            }
+        }
+    });
+    let mut frame = controls::segmented("bulk-case", &b.case_focus, theme)
+        .aria_label("Case")
+        .key_context(keymap::BULK_CASE)
+        .on_click(keyboard);
+    for (at, &(_, label)) in CASES.iter().enumerate() {
+        let focus = b.case_focus.clone();
+        frame = frame.child(
+            controls::segment(format!("bulk-case-{at}"), label, at == b.case, theme).on_click(
+                cx.listener(move |this, _, window, cx| {
+                    window.focus(&focus, cx);
+                    this.bulk_choose_case(at, window, cx);
+                }),
+            ),
+        );
+    }
+    frame.into_any_element()
+}
+
+/// The case as a dropdown: its value, and the list of them a press or
+/// Space opens, Escape, a press outside or a value taken closes.
+fn case_dropdown(b: &BulkState, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
+    let open = b.case_open;
+    let control = controls::dropdown("bulk-case", CASES[b.case].1, &b.case_focus, theme)
+        .aria_label("Case")
+        .aria_expanded(open)
+        .key_context(keymap::BULK_CASE)
+        .child(b.case_anchor.marker())
+        .on_click(cx.listener(
+            move |this, event: &gpui::ClickEvent, window, cx| match event {
+                gpui::ClickEvent::Keyboard(key)
+                    if key.button == gpui::KeyboardButton::Enter && !open =>
+                {
+                    this.bulk_apply(window, cx);
+                }
+                _ => this.bulk_case_list(!open, cx),
+            },
+        ))
+        .on_key_down(cx.listener(move |this, event: &gpui::KeyDownEvent, _, cx| {
+            let key = &event.keystroke;
+            if open && key.key == "escape" && !key.modifiers.modified() {
+                cx.stop_propagation();
+                this.bulk_case_list(false, cx);
+            }
+        }));
+    if !open {
+        return control.into_any_element();
+    }
+    let mut list = controls::dropdown_list("bulk-case-list", theme)
+        .on_mouse_down_out(cx.listener(|this, _, _, cx| this.bulk_case_list(false, cx)));
+    for (at, &(_, label)) in CASES.iter().enumerate() {
+        let focus = b.case_focus.clone();
+        list = list.child(
+            controls::dropdown_row(format!("bulk-case-row-{at}"), at == b.case, theme)
+                .child(label)
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    window.focus(&focus, cx);
+                    this.bulk_case_list(false, cx);
+                    this.bulk_choose_case(at, window, cx);
+                })),
+        );
+    }
+    // Over the dialog, under the lists of its fields (`reference.rs`).
+    let width = theme
+        .sizes
+        .scale(crate::sizes::Part::Interface)
+        .px(CASE_LIST_WIDTH);
+    control
+        .child(
+            b.case_anchor
+                .popup_under(CASE_LIST_PRIORITY, width, list.into_any_element()),
+        )
+        .into_any_element()
+}
+
+/// How wide the case's list is at 100 %, and where it is drawn among
+/// deferred draws: over the dialog (`modal::modal`'s 4).
+const CASE_LIST_WIDTH: f32 = 180.;
+const CASE_LIST_PRIORITY: usize = 5;
 
 pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let b = shell.bulk.as_ref()?;
@@ -494,28 +647,13 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
             .gap_2()
             .child(
                 div()
+                    .flex_none()
                     .w(sized(100.))
                     .text_body()
                     .text_color(theme.text_muted)
                     .child("Case"),
             )
-            .child(
-                div()
-                    .id("bulk-case")
-                    .px_2()
-                    .py_1()
-                    .rounded_md()
-                    .border_1()
-                    .border_color(theme.border)
-                    .cursor_pointer()
-                    .on_click(cx.listener(|this, _, window, cx| this.bulk_cycle_case(window, cx)))
-                    .child(
-                        match shell.keys_for("ui.rename_bulk_case", &serde_json::Value::Null) {
-                            Some(keys) => format!("{}  ({keys} cycles)", CASES[b.case]),
-                            None => CASES[b.case].to_owned(),
-                        },
-                    ),
-            ),
+            .child(case_control(b, &theme, cx)),
     );
     // The renames scroll under a scrollbar; how many more there are is
     // said below them, never cut off with the rows the box cannot hold.
@@ -613,12 +751,7 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
         .children(unchanged)
         .children(more)
         .child(modal::footer(
-            match shell.keys_for("ui.field_reference", &serde_json::Value::Null) {
-                Some(keys) => format!(
-                    "Tab switches fields · {keys} says what one takes · Enter renames (undoable) · Escape cancels"
-                ),
-                None => "Tab switches fields · Enter renames (undoable) · Escape cancels".to_owned(),
-            },
+            footer_hint(shell),
             [
                 modal::pressed(
                     controls::button(
@@ -649,6 +782,22 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
             &theme,
         ));
     Some(modal::modal(panel, 60., 4, Shell::close_bulk, &theme, cx))
+}
+
+/// The dialog's keys, as the keymap binds them: those it has no key for
+/// are left out.
+fn footer_hint(shell: &Shell) -> String {
+    let none = serde_json::Value::Null;
+    let mut said = vec!["Tab switches fields".to_owned()];
+    if let Some(keys) = shell.keys_for("ui.rename_bulk_case", &none) {
+        said.push(format!("{keys} changes case"));
+    }
+    if let Some(keys) = shell.keys_for("ui.field_reference", &none) {
+        said.push(format!("{keys} says what one takes"));
+    }
+    said.push("Enter renames (undoable)".to_owned());
+    said.push("Escape cancels".to_owned());
+    said.join(" · ")
 }
 
 #[cfg(test)]

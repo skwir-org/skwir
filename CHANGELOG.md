@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Rename Several's case is in sight**: its five choices stand side by
+  side, each written as it leaves a name (Unchanged, lowercase, UPPERCASE,
+  Title Case, Sentence case), as the Print dialog's and Settings' choices
+  do, where one button went through them unseen. `Tab` reaches it, the
+  arrows step it, a screen reader hears it, and `Ctrl+K` still gives the
+  next from any field; in a narrow window it is a dropdown.
 - **Fields say what they take.** In Rename Several, the `?` inside the
   template, the regex and the replacement, or `F1` in one, lists what it
   takes: each placeholder with what it gives the first file, date

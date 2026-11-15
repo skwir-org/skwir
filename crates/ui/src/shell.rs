@@ -3079,7 +3079,13 @@ impl Shell {
             "rename_bulk_prompt" => self.open_bulk(window, cx),
             "rename_bulk_next" => self.bulk_focus_next(1, window, cx),
             "rename_bulk_prev" => self.bulk_focus_next(-1, window, cx),
-            "rename_bulk_case" => self.bulk_cycle_case(window, cx),
+            "rename_bulk_case" => {
+                let delta = args
+                    .get("delta")
+                    .and_then(serde_json::Value::as_i64)
+                    .and_then(|d| isize::try_from(d).ok());
+                self.bulk_case(delta, window, cx);
+            }
             "review_apply" => self.review_apply(cx),
             "review_choose" => {
                 let delta = args

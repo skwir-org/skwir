@@ -461,6 +461,53 @@ pub fn dropdown_with(
         .child(icon("chevron", theme.text_muted, 14.))
 }
 
+/// The list a [`dropdown`] opens, on the window's ground over what is
+/// under it, its rows [`dropdown_row`]s: Settings' and a dialog's alike.
+/// Its caller hangs it from the dropdown (`PopoverAnchor`) and closes it
+/// on a press outside.
+pub fn dropdown_list(id: impl Into<SharedString>, theme: &Theme) -> Stateful<Div> {
+    div()
+        .id(id.into())
+        .min_w(sized(150.))
+        .min_h_0()
+        .overflow_y_scroll()
+        .p_1()
+        .flex()
+        .flex_col()
+        .rounded_md()
+        .border_1()
+        .border_color(theme.border)
+        .bg(theme.bg)
+        .text_color(theme.text)
+        .text_body()
+        .font_family(theme.font.clone())
+        .shadow_lg()
+        .occlude()
+}
+
+/// A row of a [`dropdown_list`]: a check where it is the value chosen,
+/// then what its caller puts in it (a picture, its label), on one line.
+pub fn dropdown_row(id: impl Into<SharedString>, selected: bool, theme: &Theme) -> Stateful<Div> {
+    let hover = theme.hover;
+    div()
+        .id(id.into())
+        .min_h(sized(26.))
+        .px_2()
+        .flex()
+        .items_center()
+        .gap_2()
+        .rounded_sm()
+        .whitespace_nowrap()
+        .cursor_pointer()
+        .hover(move |s| s.bg(hover))
+        .child(
+            div()
+                .flex_none()
+                .w(px(14.))
+                .when(selected, |d| d.child(glyph("check", theme.accent, 14.))),
+        )
+}
+
 /// One key of a shortcut, drawn as a key cap.
 pub fn keycap(label: impl Into<SharedString>, theme: &Theme) -> Div {
     div()

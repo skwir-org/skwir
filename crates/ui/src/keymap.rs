@@ -99,6 +99,9 @@ pub const TERMINAL: &str = "Terminal";
 /// clears, F-keys drive a file manager). `install` shadows them.
 const TERMINAL_PASSTHROUGH: [&str; 2] = ["ui.terminal", "ui.palette"];
 pub const BULK: &str = "BulkRename";
+/// The case of the bulk rename, its values side by side or a dropdown:
+/// the arrows step it (`renamebulk::case_control`).
+pub const BULK_CASE: &str = "BulkCase";
 /// The files of an archive or a message, as its preview lists them: the
 /// arrows walk them and the member reached is previewed (`members.rs`).
 pub const MEMBERS: &str = "PreviewMembers";
@@ -522,6 +525,32 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
         "ui.review_choose",
         r#"{"delta":1}"#,
         Some("review"),
+    ),
+    // The case of the bulk rename: a row of its values, which the arrows
+    // step as a form's row and a setting's do.
+    (
+        "left",
+        "ui.rename_bulk_case",
+        r#"{"delta":-1}"#,
+        Some("bulk_case"),
+    ),
+    (
+        "up",
+        "ui.rename_bulk_case",
+        r#"{"delta":-1}"#,
+        Some("bulk_case"),
+    ),
+    (
+        "right",
+        "ui.rename_bulk_case",
+        r#"{"delta":1}"#,
+        Some("bulk_case"),
+    ),
+    (
+        "down",
+        "ui.rename_bulk_case",
+        r#"{"delta":1}"#,
+        Some("bulk_case"),
     ),
     ("left", "ui.cursor", r#"{"to":"left"}"#, Some("pane")),
     ("right", "ui.cursor", r#"{"to":"right"}"#, Some("pane")),
@@ -1501,6 +1530,7 @@ pub(crate) const PLACES: &[Place] = &[
     inside("form", FORM, "Forms"),
     inside("tag_editor", TAG_EDITOR, "Tag editor"),
     inside("bulk", BULK, "Bulk rename"),
+    inside("bulk_case", BULK_CASE, "Bulk rename"),
     inside("review", REVIEW, "Plan review"),
     inside("confirm", CONFIRM, "Confirmation dialogs"),
     inside("menu", MENU, "Context menu"),

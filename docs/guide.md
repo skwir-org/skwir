@@ -364,8 +364,11 @@ configuration names is run, and nothing is written to it.
 - **Rename** with `F2`. With several files selected, `F2` (or `Ctrl+F2`)
   renames them together from a template, a regex and case rules, with a
   preview of every new name, what the regex matched and what it put
-  there tinted (`Tab` moves between fields, `Ctrl+K` changes case). It
-  starts from `{full}`, the names as they are. As you type `{` in the
+  there tinted (`Tab` moves between fields). The case is a row of its
+  choices, each written as it leaves a name (lowercase, UPPERCASE, Title
+  Case…): click one, or step them with the arrows; `Ctrl+K` gives the
+  next from any field. It starts from `{full}`, the names as they are.
+  As you type `{` in the
   template, `\` in the regex or `$` in the replacement, the field lists
   what can go on from there: `Tab` takes the first, `↑` `↓` choose
   another (then `Tab` or `Enter`), `Escape` puts the list away. The `?`

@@ -879,6 +879,8 @@ const KEY_FORMS: &[(&str, &str, &str)] = &[
         "A page down the list",
     ),
     ("ui.review_choose", r#"{"delta":-1}"#, "Previous choice"),
+    ("ui.rename_bulk_case", r#"{"delta":-1}"#, "Previous case"),
+    ("ui.rename_bulk_case", r#"{"delta":1}"#, "Next case"),
     // What a field offers as it is typed (ADR-137).
     (
         "ui.field_complete",
@@ -1395,6 +1397,9 @@ fn repeats_of(name: &str) -> Option<Repeats> {
         // What a field offers: held, the arrows walk it; taking one is
         // once a press.
         "ui.field_complete" => |args| args.get("step").is_some(),
+        // The case of a bulk rename: held, the arrows step it; its key
+        // round the cases is once a press.
+        "ui.rename_bulk_case" => |args| args.get("delta").is_some(),
         // Pick, then the next: held, it picks a run of files.
         "ui.cursor_pick" => {
             |args| args.get("advance").and_then(serde_json::Value::as_bool) != Some(false)
@@ -1834,11 +1839,12 @@ pub fn declare_all(app: &App) {
         "Previous field",
         "Go to the previous field of Rename several",
     );
-    none(
+    declare::<Delta>(
+        app,
         Topic::Files,
         "ui.rename_bulk_case",
         "Change case",
-        "Cycle the case Rename several gives names",
+        "The next case Rename several gives names, round the last; with a delta, that many steps along them, stopping at the ends",
     );
     declare::<TagsPrompt>(
         app,

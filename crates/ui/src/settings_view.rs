@@ -1104,26 +1104,9 @@ impl SettingsView {
                 element = element.child(row.anchor.popup(panel));
             }
         } else if open {
-            let hover = theme.hover;
             // Its choices scroll in the height the popover leaves them
             // under the row; a long list narrows instead (`long_choices`).
-            let mut panel = div()
-                .id(SharedString::from(format!("choices-{key}")))
-                .min_w(sized(150.))
-                .min_h_0()
-                .overflow_y_scroll()
-                .p_1()
-                .flex()
-                .flex_col()
-                .rounded_md()
-                .border_1()
-                .border_color(theme.border)
-                .bg(theme.bg)
-                .text_color(theme.text)
-                .text_body()
-                .font_family(theme.font.clone())
-                .shadow_lg()
-                .occlude()
+            let mut panel = controls::dropdown_list(format!("choices-{key}"), theme)
                 .on_mouse_down_out(cx.listener(|this, _, _, cx| {
                     this.dropdown = None;
                     cx.notify();
@@ -1149,19 +1132,8 @@ impl SettingsView {
                     .map(|chosen| swatch(&chosen, SWATCH_ROW));
                 let key = key.clone();
                 panel = panel.child(
-                    div()
-                        .id(SharedString::from(format!("choice-{key}-{choice}")))
-                        .min_h(sized(if picture.is_some() { PICTURED_ROW } else { 26. }))
-                        .px_2()
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .rounded_sm()
-                        .cursor_pointer()
-                        .hover(move |s| s.bg(hover))
-                        .child(div().w(px(14.)).when(selected, |d| {
-                            d.child(controls::glyph("check", theme.accent, 14.))
-                        }))
+                    controls::dropdown_row(format!("choice-{key}-{choice}"), selected, theme)
+                        .when(picture.is_some(), |d| d.min_h(sized(PICTURED_ROW)))
                         .children(picture)
                         .child(label)
                         .on_click(cx.listener(move |this, _, _, cx| {

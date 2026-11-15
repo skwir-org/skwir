@@ -1505,6 +1505,16 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   `modal::Pressed` controls; a press on one
   leaves the keyboard in the field; Escape that nothing in the dialog
   answered cancels it (`modal::modal`).
+- **A few choices are in sight side by side**, in every dialog:
+  segments (`controls::segmented`), one stop for Tab and a radio group
+  to a screen reader, as a form's `Kind::Row`, a setting's choice and
+  the bulk rename's Case are; never a button that cycles through values
+  it hides. Where they do not fit beside their label, a dropdown
+  (`elements::adaptive::Fit`), its list a `controls::dropdown_list`. The
+  arrows step the choice, Space gives the next, Enter answers the dialog
+  as from a field. A value is written as it leaves what it changes where
+  it can be (the bulk rename's lowercase, UPPERCASE), as a text size's
+  choice is written at its size.
 - **A form is described, never drawn, by its plugin** (`skwir_core::form`,
   `form.rs`, ADR-086): fields of text, numbers, secrets, switches,
   choices, picks, and rows of a few choices side by side (`Kind::Row`: a
