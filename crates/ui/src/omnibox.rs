@@ -1532,6 +1532,7 @@ impl Shell {
             let asked = ask.clone();
             let stop = cancel.child();
             let worker_stop = stop.clone();
+            let superseded = stop.clone();
             let answered = (ask.text.clone(), ask.scope.clone());
             self.off_thread_until(
                 lane,
@@ -1542,11 +1543,15 @@ impl Shell {
                     let Some(omni) = shell.pane_ui_mut(pane).and_then(|ui| ui.omni.as_mut()) else {
                         return;
                     };
-                    // Asked for a text since moved on: the next answer is
-                    // what counts.
-                    if omni.asked.as_ref().is_none_or(|(a, _)| {
-                        (a.text.as_str(), &a.scope) != (&*answered.0, &answered.1)
-                    }) {
+                    // Asked for a text since moved on, or asked anew for
+                    // it (F1 asking what the field takes of the same text,
+                    // `answer_reference_switch`): the next answer is what
+                    // counts, though this one was sent before it stopped.
+                    if superseded.is_cancelled()
+                        || omni.asked.as_ref().is_none_or(|(a, _)| {
+                            (a.text.as_str(), &a.scope) != (&*answered.0, &answered.1)
+                        })
+                    {
                         return;
                     }
                     omni.waiting.retain(|source| *source != id);
