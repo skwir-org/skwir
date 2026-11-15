@@ -1065,11 +1065,13 @@ pub fn render_prompt(
                     cx,
                 ),
                 modal::pressed(
-                    // What is typed is no answer: said, not offered.
+                    // What is typed is no answer: said, not offered, its
+                    // icon kept so Cancel stays where it is.
                     if refused {
-                        controls::inert_button(
+                        controls::inert_button_with(
                             "prompt-accept",
                             p.accept.clone(),
+                            Some("check"),
                             &p.accept_focus,
                             &theme,
                         )
