@@ -137,6 +137,48 @@ struct Describe {
     /// said: answered once it is, unless it is no answer. A key since
     /// forgets it.
     answering: bool,
+    /// That answer has waited `work::SHOWN_AFTER`: the line under the
+    /// field says it is being worked out (`WORKING_OUT`).
+    waited: bool,
+    /// What makes `waited` true once that time is up; dropped, nothing.
+    wait: Option<gpui::Task<()>>,
+}
+
+/// What the line under a question's field says while its answer waits for
+/// what the text comes to (`Describe::waited`).
+const WORKING_OUT: &str = "Working out what this does…";
+
+/// How many lines what a question's text comes to takes under the field
+/// at most: the rest is said when pointed at.
+const SAID_LINES: usize = 3;
+
+/// How much of what a describe says is kept, in bytes: a command's error
+/// may name every file it is about, which no line under a field shows,
+/// nor a tooltip, and laying it out at each frame would cost.
+const SAID_MOST: usize = 2048;
+
+/// `text`, at most `SAID_MOST` bytes of it, cut at a character and said
+/// to be cut.
+fn said_bounded(mut text: String) -> String {
+    if text.len() > SAID_MOST {
+        let mut end = SAID_MOST;
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        text.truncate(end);
+        text.push('…');
+    }
+    text
+}
+
+impl Describe {
+    /// What was typed moved on, or was said: an answer that waited for it
+    /// is forgotten, or goes on, and the line no longer says it waits.
+    fn stop_waiting(&mut self) -> bool {
+        self.waited = false;
+        self.wait = None;
+        std::mem::take(&mut self.answering)
+    }
 }
 
 /// The prompt's Remember switch (a server's password, ADR-082; a volume's
@@ -473,6 +515,8 @@ impl Shell {
                 asked: Latest::default(),
                 said: None,
                 answering: false,
+                waited: false,
+                wait: None,
             })
         });
         let ask = Ask {
@@ -615,7 +659,7 @@ impl Shell {
             return;
         };
         let text = prompt.input.read(cx).text().trim().to_owned();
-        describe.answering = false;
+        describe.stop_waiting();
         let (name, args, field, agent) = (
             Arc::clone(&describe.name),
             Arc::clone(&describe.args),
@@ -643,13 +687,14 @@ impl Shell {
                     worker.dispatch(&invocation)
                 };
                 let said = match said {
-                    Ok(Outcome::Value(v)) => Ok(v
-                        .get("says")
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or_default()
-                        .to_owned()),
+                    Ok(Outcome::Value(v)) => Ok(said_bounded(
+                        v.get("says")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or_default()
+                            .to_owned(),
+                    )),
                     Ok(_) => Ok(String::new()),
-                    Err(e) => Err(format!("{e:#}")),
+                    Err(e) => Err(said_bounded(format!("{e:#}"))),
                 };
                 (text, said)
             },
@@ -666,7 +711,7 @@ impl Shell {
             return;
         };
         describe.said = Some(said);
-        let answering = std::mem::take(&mut describe.answering);
+        let answering = describe.stop_waiting();
         cx.notify();
         if answering {
             self.prompt_answer(window, cx);
@@ -693,9 +738,39 @@ impl Shell {
         }
     }
 
+    /// An answer waits for what its text comes to: once it has waited
+    /// `work::SHOWN_AFTER`, the line under the field says so (and a screen
+    /// reader hears it once), Cancel and Escape answering still; it waits
+    /// for as long as it takes.
+    fn prompt_wait_said(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(describe) = self.prompt.as_mut().and_then(|p| p.describe.as_mut()) else {
+            return;
+        };
+        if !describe.answering || describe.wait.is_some() {
+            return;
+        }
+        describe.wait = Some(cx.spawn_in(window, async move |this, cx| {
+            cx.background_executor()
+                .timer(crate::work::SHOWN_AFTER)
+                .await;
+            let _ = this.update(cx, |shell, cx| {
+                if let Some(describe) = shell
+                    .prompt
+                    .as_mut()
+                    .and_then(|p| p.describe.as_mut())
+                    .filter(|d| d.answering)
+                {
+                    describe.waited = true;
+                    cx.notify();
+                }
+            });
+        }));
+    }
+
     /// Answer the prompt with its text: Enter, or its button.
     fn prompt_answer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.prompt_waits(cx) {
+            self.prompt_wait_said(window, cx);
             return;
         }
         let Some(prompt) = self.prompt.as_mut() else {
@@ -854,6 +929,9 @@ pub fn render_prompt(
     let text = p.input.read(cx).text().trim().to_owned();
     let said = p.describe.as_ref().and_then(|d| d.said.as_ref());
     let refused = answering(said, &text) == Answering::Refused;
+    // An answer that waits for its text to be said says so, in place of
+    // what was said of the text before.
+    let waited = p.describe.as_ref().is_some_and(|d| d.answering && d.waited);
     let frame = div()
         .h(sized(30.))
         .px_2()
@@ -884,7 +962,17 @@ pub fn render_prompt(
         .gap_2()
         .child(div().text_title().child(p.title.clone()))
         .child(frame)
-        .children(said.and_then(|(of, said)| {
+        .children(waited.then(|| {
+            div()
+                .id("prompt-said")
+                .role(gpui::Role::Status)
+                .aria_live(gpui::Live::Polite)
+                .when(shell.a11y, |d| d.aria_label(WORKING_OUT))
+                .text_body()
+                .text_color(theme.text_muted)
+                .child(WORKING_OUT)
+        }))
+        .children(said.filter(|_| !waited).and_then(|(of, said)| {
             let (says, color) = match said {
                 Ok(says) => (says, theme.text_muted),
                 Err(why) if refused => (why, theme.error),
@@ -892,15 +980,21 @@ pub fn render_prompt(
             };
             // Heard as it is said of the text typed (a polite status).
             let heard = shell.a11y && *of == text;
+            // A few lines at most, the rest said when pointed at.
             (!says.is_empty()).then(|| {
-                div()
-                    .id("prompt-said")
-                    .role(gpui::Role::Status)
-                    .aria_live(gpui::Live::Polite)
-                    .when(heard, |d| d.aria_label(says.clone()))
-                    .text_body()
-                    .text_color(color)
-                    .child(says.clone())
+                crate::elements::clip::clipped(
+                    div()
+                        .id("prompt-said")
+                        .role(gpui::Role::Status)
+                        .aria_live(gpui::Live::Polite)
+                        .when(heard, |d| d.aria_label(says.clone()))
+                        .text_body()
+                        .text_color(color)
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .line_clamp(SAID_LINES),
+                    says.clone(),
+                )
             })
         }))
         .children(
@@ -1092,7 +1186,7 @@ mod tests {
     use skwir_core::op::EntryRef;
     use skwir_core::workspace::PaneId;
 
-    use super::{Answering, answering, asked_about};
+    use super::{Answering, SAID_MOST, answering, asked_about, said_bounded};
 
     fn selected() -> Vec<EntryRef> {
         vec![EntryRef::new(
@@ -1127,6 +1221,19 @@ mod tests {
             answering(Some(&said("u+", false)), "u+"),
             Answering::Refused
         );
+    }
+
+    /// What a describe says is kept to a few lines' worth, cut at a
+    /// character and said to be cut: an error naming thousands of files
+    /// is not laid out whole under the field.
+    #[test]
+    fn what_is_said_of_a_text_is_bounded() {
+        assert_eq!(said_bounded("rw-r--r--".to_owned()), "rw-r--r--");
+        let long = "é".repeat(SAID_MOST);
+        let cut = said_bounded(long);
+        assert!(cut.len() <= SAID_MOST + '…'.len_utf8());
+        assert!(cut.ends_with('…'));
+        assert!(cut.trim_end_matches('…').chars().all(|c| c == 'é'));
     }
 
     /// Rename asks about the file selected when it opens: the answer names

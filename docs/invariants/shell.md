@@ -1583,7 +1583,10 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   the text is the one it was said of, holding the answer back (Enter
   refused, the answer's button inert, disabled for a screen reader). An
   answer given before the text was said waits for it, and goes on once
-  it is unless it is no answer; a key since forgets it. Its `reference`
+  it is unless it is no answer; a key since forgets it. Waiting longer
+  than the start notice's 0.3 s (`work::SHOWN_AFTER`), the line under the
+  field says so ("Working out what this does…", heard once), for as long
+  as it takes: no timeout, Cancel and Escape answering meanwhile. Its `reference`
   gives the field a `?` and F1, as a dialog's (above, Popups and focus).
 - **A question names what it is about when asked.** `ui.ask` fills the
   asked command's `pane`, `entries` (the selection) and `in` (the folder
