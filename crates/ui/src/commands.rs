@@ -795,6 +795,9 @@ const SHOWS: &[&str] = &[
     "ui.map_view_fit",
     "ui.map_view_spread",
     "ui.map_view_search_area",
+    // The window's own state, as its buttons change it (ADR-138).
+    "ui.maximize_window",
+    "ui.minimize_window",
 ];
 
 /// The window's commands an agent's call runs only once the user allows
@@ -2930,6 +2933,8 @@ mod tests {
             assert_eq!(effect(answer), Effect::UserOnly, "{answer}");
         }
         assert_eq!(effect("ui.cursor"), Effect::Shows);
+        assert_eq!(effect("ui.maximize_window"), Effect::Shows);
+        assert_eq!(effect("ui.minimize_window"), Effect::Shows);
         assert_eq!(effect("ui.open_url"), Effect::Acts);
     }
 
