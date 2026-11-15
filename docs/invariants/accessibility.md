@@ -38,8 +38,9 @@ like `AGENTS.md`.
   cursor's item whatever has the focus.
 - **A picker's field keeps the keyboard; its highlighted option is said
   as focused** (`aria_active_descendant_for`, patch 0030): the palette,
-  Jump, Choose, the tag editor and the address's suggestions build their
-  lists with `modal::options` and `modal::option`. The address's is said
+  Jump, Choose, the tag editor, the address's suggestions and the list
+  under a field that says what it takes (`reference::FieldHelp`,
+  ADR-137) build their lists with `modal::options` and `modal::option`. The address's is said
   once the arrows reach it: while a path is typed, the field reads back
   its text and caret. A field typed in and a list beside it are the
   web's combobox: a reader hears the option the keys reach, and echoes
@@ -172,6 +173,7 @@ like `AGENTS.md`.
 | an empty or failed pane | group, described by its placeholder | the location |
 | sidebar | tree: groups, then their places (selected: the one shown) | "Sidebar"; a place described by its space or state |
 | address field, prompts, settings fields | entry (password text for a secret) | its label, else its placeholder |
+| what a field takes (`reference::FieldHelp`, ADR-137): its `?`, the list under it, a question's line saying what is typed comes to | the `?` a button, expanded while everything shows; the list a list box beside the field, its rows options, the row lit the field's active descendant (none lit in everything shown before the arrows move); the line a status, polite, while it is said of the text; the answer's button disabled while what is typed is no answer | the `?` "What it takes", with its keys; the list the reference's title ("Template", "Access"); each row as written, what it means, what it gives ("{n:03}, the number, three digits, 001"); the line what it says |
 | the trail | navigation of links in reading order, the last selected; buttons for its menus | "Path"; each place; a menu by its tooltip |
 | palette, Jump, Choose, tag editor | dialog: field, list box beside it | the dialog's; "Commands", "Places", "Choices", "Tags" |
 | context menu, toolbar popups, history menus | menu of menu items | "Context menu"; each item its title |

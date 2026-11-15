@@ -216,35 +216,40 @@ enum Dialog {
     Category(CategoryDialog),
 }
 
-/// Add a folder, or edit one of the user's.
 /// The entry dialog's fields that say what they take (ADR-137), by the
 /// keys `exclusions::reference` knows them by.
 const HELPED: [&str; 3] = ["pattern", "beside", "holding"];
 
-/// The entry dialog's fields' help (ADR-137).
+/// The entry dialog's fields' help (ADR-137), each known by its input.
 impl crate::reference::Helps for SettingsView {
     fn help_of(
         &mut self,
-        key: &str,
+        field: gpui::EntityId,
     ) -> Option<(&mut crate::reference::FieldHelp, Entity<TextInput>)> {
         let Some(Dialog::Entry(dialog)) = &mut self.exclusions.dialog else {
             return None;
         };
         let dialog = &mut **dialog;
-        let at = dialog.helps.iter().position(|help| help.key == key)?;
-        let input = [&dialog.pattern, &dialog.beside, &dialog.holding][at].clone();
+        let inputs = [&dialog.pattern, &dialog.beside, &dialog.holding];
+        let at = inputs.iter().position(|input| input.entity_id() == field)?;
+        let input = inputs[at].clone();
         Some((&mut dialog.helps[at], input))
     }
 
-    fn field_of(&self, key: &str) -> Option<Entity<TextInput>> {
+    fn field_of(&self, field: gpui::EntityId, key: &str) -> Option<Entity<TextInput>> {
         let Some(Dialog::Entry(dialog)) = &self.exclusions.dialog else {
             return None;
         };
+        let inputs = [&dialog.pattern, &dialog.beside, &dialog.holding];
+        if !inputs.iter().any(|input| input.entity_id() == field) {
+            return None;
+        }
         let at = HELPED.iter().position(|named| *named == key)?;
-        Some([&dialog.pattern, &dialog.beside, &dialog.holding][at].clone())
+        Some(inputs[at].clone())
     }
 }
 
+/// Add a folder, or edit one of the user's.
 struct EntryDialog {
     /// The entry edited; `None` adds one.
     editing: Option<String>,
@@ -1751,34 +1756,32 @@ impl SettingsView {
         let mut subscriptions = Vec::new();
         // What a field lists (ADR-137) takes Enter the arrows chose a row
         // for, and Escape first.
-        for (input, key) in [
-            (&folder, Some(HELPED[0])),
-            (&beside, Some(HELPED[1])),
-            (&holding, Some(HELPED[2])),
-            (&what, None),
+        for (input, helped) in [
+            (&folder, true),
+            (&beside, true),
+            (&holding, true),
+            (&what, false),
         ] {
             subscriptions.push(cx.subscribe_in(
                 input,
                 window,
-                move |this, _, event: &InputEvent, window, cx| {
-                    match event {
-                        InputEvent::Changed => {
-                            this.judge_entry_dialog(cx);
-                            cx.notify();
+                move |this, input, event: &InputEvent, window, cx| match event {
+                    InputEvent::Changed => {
+                        this.judge_entry_dialog(cx);
+                        cx.notify();
+                    }
+                    InputEvent::Submit => {
+                        if !(helped
+                            && crate::reference::on_submit(this, input.entity_id(), window, cx))
+                        {
+                            this.accept_entry_dialog(window, cx);
                         }
-                        InputEvent::Submit => {
-                            if !key.is_some_and(|key| {
-                                crate::reference::on_submit(this, key, window, cx)
-                            }) {
-                                this.accept_entry_dialog(window, cx);
-                            }
-                        }
-                        InputEvent::Cancel => {
-                            if !key.is_some_and(|key| {
-                                crate::reference::on_cancel(this, key, window, cx)
-                            }) {
-                                this.close_exclusion_dialog(window, cx);
-                            }
+                    }
+                    InputEvent::Cancel => {
+                        if !(helped
+                            && crate::reference::on_cancel(this, input.entity_id(), window, cx))
+                        {
+                            this.close_exclusion_dialog(window, cx);
                         }
                     }
                 },

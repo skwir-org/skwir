@@ -127,22 +127,32 @@ impl BulkState {
 }
 
 /// The fields of the shell's dialogs that say what they take (ADR-137):
-/// a question's, else the bulk rename's.
+/// a question's, the bulk rename's, each known by its input, so a question
+/// open over the bulk rename never answers for its fields, whatever its
+/// field is named.
 impl crate::reference::Helps for Shell {
-    fn help_of(&mut self, key: &str) -> Option<(&mut FieldHelp, Entity<TextInput>)> {
-        if self.prompt.as_ref().is_some_and(|p| p.helps(key)) {
-            return self.prompt.as_mut().and_then(|p| p.help_of(key));
+    fn help_of(&mut self, field: gpui::EntityId) -> Option<(&mut FieldHelp, Entity<TextInput>)> {
+        if self.prompt.as_ref().is_some_and(|p| p.helps(field)) {
+            return self.prompt.as_mut().and_then(|p| p.help_of(field));
         }
         let b = self.bulk.as_mut()?;
-        let at = b.helps.iter().position(|help| help.key == key)?;
-        Some((&mut b.helps[at], b.inputs[at].clone()))
+        let at = b
+            .inputs
+            .iter()
+            .position(|input| input.entity_id() == field)?;
+        let input = b.inputs[at].clone();
+        Some((b.helps.get_mut(at)?, input))
     }
 
-    fn field_of(&self, key: &str) -> Option<Entity<TextInput>> {
-        if let Some(p) = self.prompt.as_ref().filter(|p| p.helps(key)) {
-            return Some(p.input.clone());
+    fn field_of(&self, field: gpui::EntityId, key: &str) -> Option<Entity<TextInput>> {
+        // A question has one field.
+        if let Some(p) = self.prompt.as_ref().filter(|p| p.helps(field)) {
+            return p.names(key).then(|| p.input.clone());
         }
         let b = self.bulk.as_ref()?;
+        if !b.inputs.iter().any(|input| input.entity_id() == field) {
+            return None;
+        }
         let at = FIELDS.iter().position(|(named, ..)| *named == key)?;
         b.inputs.get(at).cloned()
     }
@@ -187,7 +197,7 @@ impl Shell {
         };
         let mut inputs = Vec::new();
         let mut subs = Vec::new();
-        for (i, &(key, label, placeholder)) in FIELDS.iter().enumerate() {
+        for (i, &(_, label, placeholder)) in FIELDS.iter().enumerate() {
             let input = cx.new(|cx| {
                 let mut input = TextInput::new(placeholder, cx);
                 input.set_label(label);
@@ -203,16 +213,16 @@ impl Shell {
             subs.push(cx.subscribe_in(
                 &input,
                 window,
-                move |this, _, ev: &InputEvent, window, cx| match ev {
+                move |this, input, ev: &InputEvent, window, cx| match ev {
                     // What the field lists takes Enter the arrows chose
                     // a row for, and Escape first (ADR-137).
                     InputEvent::Submit => {
-                        if !crate::reference::on_submit(this, key, window, cx) {
+                        if !crate::reference::on_submit(this, input.entity_id(), window, cx) {
                             this.bulk_apply(window, cx);
                         }
                     }
                     InputEvent::Cancel => {
-                        if !crate::reference::on_cancel(this, key, window, cx) {
+                        if !crate::reference::on_cancel(this, input.entity_id(), window, cx) {
                             this.close_bulk(window, cx);
                         }
                     }

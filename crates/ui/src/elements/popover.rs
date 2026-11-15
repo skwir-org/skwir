@@ -100,6 +100,63 @@ impl PopoverAnchor {
         .into_any_element()
     }
 
+    /// `panel` under the anchor's left edge, `width` wide but never wider
+    /// than the window (moved left to stay in it), at most as tall as the
+    /// window: above the anchor where the window's foot leaves too little
+    /// under it and its top enough, else as low as it fits. The list under
+    /// a field (`reference::FieldHelp`, ADR-137), which must not cover the
+    /// field it is typed in. Drawn at `priority` among deferred draws.
+    pub fn popup_under(&self, priority: usize, width: Pixels, panel: AnyElement) -> AnyElement {
+        let anchor = self.0.clone();
+        gpui::deferred(
+            canvas(
+                move |_, window, cx| {
+                    let bounds = anchor.get()?;
+                    let viewport = window.viewport_size();
+                    let width = width.min(viewport.width - MARGIN * 2.).max(px(0.));
+                    let room = (viewport.height - MARGIN * 2.).max(px(120.));
+                    let mut popup = gpui::div()
+                        .w(width)
+                        .max_h(room)
+                        .flex()
+                        .flex_col()
+                        .child(panel)
+                        .into_any_element();
+                    let laid = popup.layout_as_root(
+                        size(AvailableSpace::Definite(width), AvailableSpace::MaxContent),
+                        window,
+                        cx,
+                    );
+                    let gap = px(6.);
+                    let left = bounds
+                        .left()
+                        .min(viewport.width - MARGIN - width)
+                        .max(px(0.));
+                    let under = bounds.bottom() + gap;
+                    let over = bounds.top() - gap - laid.height;
+                    let top = if under + laid.height <= viewport.height - MARGIN {
+                        under
+                    } else if over >= MARGIN {
+                        over
+                    } else {
+                        (viewport.height - MARGIN - laid.height).max(px(0.))
+                    };
+                    popup.prepaint_at(gpui::point(left, top), window, cx);
+                    Some(popup)
+                },
+                |_, popup, window, cx| {
+                    if let Some(mut popup) = popup {
+                        popup.paint(window, cx);
+                    }
+                },
+            )
+            .absolute()
+            .size(px(0.)),
+        )
+        .with_priority(priority)
+        .into_any_element()
+    }
+
     /// A popup whose content depends on the variant an adaptive row chose:
     /// `panels[variant]`, or the last one. The choice is read in the deferred
     /// prepaint, after the row made it in this same frame, so a menu can hold

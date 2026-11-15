@@ -248,7 +248,8 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     // In a field that says what it takes: that, its keys one F1 further
     // (ADR-137).
     ("f1", "ui.field_reference", Some("reference")),
-    // What a field offers as it is typed: Tab takes the row lit.
+    // What a field offers as it is typed, or the row the arrows lit in
+    // its list: Tab takes it; else Tab goes on to the next control.
     ("tab", "ui.field_complete", Some("offers")),
     // GNOME's key for the shortcuts window. GPUI leaves out the Shift a
     // symbol took, so Ctrl+Shift+/ (or wherever `?` is) arrives as `ctrl-?`.
@@ -334,10 +335,10 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
 
 /// Builtin bindings that carry arguments (`keys, command, args json, when`).
 const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
-    // What a field offers as it is typed: the arrows move its highlight,
-    // the keyboard staying in the field (ADR-137).
-    ("down", "ui.field_complete", r#"{"step":1}"#, Some("offers")),
-    ("up", "ui.field_complete", r#"{"step":-1}"#, Some("offers")),
+    // The list under a field (ADR-137): the arrows move its highlight,
+    // the keyboard staying in the field.
+    ("down", "ui.field_complete", r#"{"step":1}"#, Some("lists")),
+    ("up", "ui.field_complete", r#"{"step":-1}"#, Some("lists")),
     // A popup's submenu, open beside its row: the arrows walk its rows,
     // Home and End reach its ends, Left and Escape go back to its row
     // (`ui.toolbar_submenu`), as a context menu's do.
@@ -1593,7 +1594,8 @@ pub(crate) fn condition(flag: &str) -> String {
         "completes" => "while what is typed can be completed",
         "labelling" => "while links are labelled",
         "reference" => "in a field that says what it takes",
-        "offers" => "while a field offers what goes on with its text",
+        "lists" => "while a field's list shows",
+        "offers" => "while a field offers a row to take",
         other => other,
     }
     .to_owned()

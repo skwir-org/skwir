@@ -473,7 +473,13 @@ pub const PICKER_ROWS: usize = 14;
 
 /// A picker's list as assistive technology hears it: a list box named
 /// `name`, of `count` options, beside the field that keeps the keyboard.
-pub fn options(id: &'static str, name: &'static str, count: usize, a11y: bool) -> Stateful<Div> {
+pub fn options(
+    id: impl Into<gpui::ElementId>,
+    name: impl Into<gpui::SharedString>,
+    count: usize,
+    a11y: bool,
+) -> Stateful<Div> {
+    let name = name.into();
     div()
         .id(id)
         .role(gpui::Role::ListBox)

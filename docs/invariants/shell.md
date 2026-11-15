@@ -224,24 +224,36 @@ Views are in [views.md](views.md); what locations decide, in
   its key context, a plain `?` inside it at its end (`question`, the
   address's too: what is about a field's content lives in it), and the
   list under it. The frame answers what its keys run itself
-  (`ui.field_reference`, `ui.field_complete`, its view's `Helps`); the
-  field's Enter and Escape go to `on_submit` and `on_cancel` first. The
-  `?` acts on the press and gives the keyboard to its field; it is no
-  Tab stop.
+  (`ui.field_reference`, `ui.field_complete`, its view's `Helps`, which
+  finds a field's help by its input, `EntityId`, never by a name two
+  dialogs open at once may share; a recipe fills the fields its own
+  dialog names); the field's Enter and Escape go to `on_submit` and
+  `on_cancel` first. The `?` acts on the press and gives the keyboard to
+  its field; it is no Tab stop. Its commands are the user's hand: an
+  agent's call is refused (`Effect::UserOnly`).
 - **The list under the field is the one way it says it**, as the
-  address's card: on the window's ground, never a popup over the dialog.
-  The `?` or F1 shows everything the field takes, each group under its
-  title with its notes; as the field is typed, a part begun by one of
-  its reference's `starts` shows the items going on with it
-  (`Reference::offered`; the window knows no language). The keyboard
-  stays in the field, `offers` in its key context while the list shows:
-  Up and Down move the highlight from the first row (the row lit kept in
-  view), Tab takes the row lit, Enter only one the arrows chose (the
-  field's Enter else answers its dialog), Escape puts the list away for
-  that text and caret before it closes anything. A row taken writes its
-  part where the caret is, over the part typed (`TextInput::put`, an
-  edit), or fills the fields its recipe names; a press takes a row
-  without the keyboard leaving the field.
+  address's card: on the window's ground, drawn over the dialog under
+  the field (`PopoverAnchor::popup_under`: never wider than the window,
+  above the field where the window's foot leaves too little), never a
+  menu on the chrome's ground. The `?` or F1 shows everything the field
+  takes, each group under its title with its notes; as the field is
+  typed, a part begun by one of its reference's `starts` shows the items
+  going on with it (`Reference::offered`; the window knows no language).
+  The keyboard stays in the field, `lists` in its key context while the
+  list shows: Up and Down move the highlight (the row lit kept in view;
+  in everything shown no row is lit before they move, Down lighting the
+  first, Up the last). While a row is lit (the first of what goes on
+  with a part typed, or one the arrows chose) `offers` is in it too, and
+  Tab takes that row; else Tab goes on to the next control. Enter takes
+  only a row the arrows chose (the field's Enter else answers its
+  dialog), Escape puts the list away for that text and caret before it
+  closes anything. A row taken writes its part where the caret is, over
+  the part typed (`TextInput::put`, an edit), or fills the fields its
+  recipe names; a press takes a row without the keyboard leaving the
+  field. A screen reader hears a combobox: the list a list box named by
+  the reference's title, each row an option named by what it shows, the
+  row lit the field's active descendant (`modal::options`,
+  `modal::option`).
 - **A popup over a dialog walks its own rows** (`ui.toolbar_next` asks
   `walk_dialog` only outside a popup).
 - **One popup at a time,** all through `Shell::toggle_popup` (Activity

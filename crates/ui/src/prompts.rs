@@ -243,17 +243,26 @@ fn asked_about(
 }
 
 impl PromptState {
-    /// The help of its field when it is the one `key` names, and the field.
-    pub(crate) fn help_of(&mut self, key: &str) -> Option<(&mut FieldHelp, Entity<TextInput>)> {
+    /// The help of its field when it is `field`, and the field.
+    pub(crate) fn help_of(
+        &mut self,
+        field: gpui::EntityId,
+    ) -> Option<(&mut FieldHelp, Entity<TextInput>)> {
         let input = self.input.clone();
         self.help
             .as_mut()
-            .filter(|help| help.key == key)
+            .filter(|_| input.entity_id() == field)
             .map(|help| (help, input))
     }
 
-    /// Whether its field is the one `key` names.
-    pub(crate) fn helps(&self, key: &str) -> bool {
+    /// Whether `field` is its field, one that says what it takes.
+    pub(crate) fn helps(&self, field: gpui::EntityId) -> bool {
+        self.help.is_some() && self.input.entity_id() == field
+    }
+
+    /// Whether its field, one that says what it takes, is named `key`:
+    /// what a recipe of its own fills.
+    pub(crate) fn names(&self, key: &str) -> bool {
         self.help.as_ref().is_some_and(|help| help.key == key)
     }
 
@@ -538,23 +547,19 @@ impl Shell {
             .filter(|said| !said.is_empty())
             .zip(ask.as_ref())
             .map(|(said, ask)| FieldHelp::new(ask.field.clone(), Some(Rc::new(said))));
-        let key = help.as_ref().map(|help| help.key.clone());
+        let helped = help.is_some();
         let sub = cx.subscribe_in(
             &input,
             window,
             move |this, input, ev: &InputEvent, window, cx| match ev {
                 InputEvent::Submit => {
-                    if !key
-                        .as_ref()
-                        .is_some_and(|key| crate::reference::on_submit(this, key, window, cx))
+                    if !(helped && crate::reference::on_submit(this, input.entity_id(), window, cx))
                     {
                         this.prompt_answer(window, cx);
                     }
                 }
                 InputEvent::Cancel => {
-                    if !key
-                        .as_ref()
-                        .is_some_and(|key| crate::reference::on_cancel(this, key, window, cx))
+                    if !(helped && crate::reference::on_cancel(this, input.entity_id(), window, cx))
                     {
                         this.prompt_cancel(window, cx);
                     }
@@ -879,13 +884,24 @@ pub fn render_prompt(
         .gap_2()
         .child(div().text_title().child(p.title.clone()))
         .child(frame)
-        .children(said.and_then(|(_, said)| {
+        .children(said.and_then(|(of, said)| {
             let (says, color) = match said {
                 Ok(says) => (says, theme.text_muted),
                 Err(why) if refused => (why, theme.error),
                 Err(why) => (why, theme.text_muted),
             };
-            (!says.is_empty()).then(|| div().text_body().text_color(color).child(says.clone()))
+            // Heard as it is said of the text typed (a polite status).
+            let heard = shell.a11y && *of == text;
+            (!says.is_empty()).then(|| {
+                div()
+                    .id("prompt-said")
+                    .role(gpui::Role::Status)
+                    .aria_live(gpui::Live::Polite)
+                    .when(heard, |d| d.aria_label(says.clone()))
+                    .text_body()
+                    .text_color(color)
+                    .child(says.clone())
+            })
         }))
         .children(
             p.note

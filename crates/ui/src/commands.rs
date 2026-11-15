@@ -654,8 +654,6 @@ use args::{
 /// The window's commands an agent may run (ADR-044): they change only
 /// what the window shows, or open a prompt the user answers.
 const SHOWS: &[&str] = &[
-    "ui.field_reference",
-    "ui.field_complete",
     "ui.cursor",
     "ui.cursor_pick",
     "ui.cursor_toggle",
@@ -2906,6 +2904,10 @@ mod tests {
             "ui.move_other",
             "ui.give_other",
             "ui.settings_adjust",
+            // What a field the user types in takes, written there by its
+            // keys (ADR-137): the user's hand.
+            "ui.field_reference",
+            "ui.field_complete",
         ] {
             assert_eq!(effect(answer), Effect::UserOnly, "{answer}");
         }
