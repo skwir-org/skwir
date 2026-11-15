@@ -377,8 +377,11 @@ configuration names is run, and nothing is written to it.
   one and it is written where the cursor is.
 - **Run a command** on the selection: Open With › Run Command…. What you
   type runs in a terminal, in the folder holding the files, with their
-  paths after it, each one argument; the line under the field shows what
-  will run as you type, and `?` or `F1` lists examples.
+  paths after it, each one argument, or only where it names them
+  (`"$@"`, `$1`…, `$argv` in fish); the line under the field shows what
+  will run as you type, and `?` or `F1` lists examples. On the folder's
+  background, Open Folder With › Run Command… runs it in the folder,
+  with no paths. On Linux only, for now.
 - **Edit as text.** `Ctrl+E` opens the folder's names in your editor
   (`$VISUAL` or `$EDITOR`). What you rename, move or delete there comes
   back as a plan.

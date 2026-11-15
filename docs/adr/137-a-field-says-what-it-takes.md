@@ -119,9 +119,15 @@ one, and every view's field holds the same component (2, 7).
    core (`exclusions::reference`, each example read as the rules read
    it), beside the line saying what the entry means. **Run Command…**
    says its examples and how the paths are given (the shell plugin's
-   `reference`), and, as the command is typed, the line that runs with
-   the selected paths after it and the folder it runs in
-   (`shell.run.describe`); an empty command is held back.
+   `reference`), and, as the command is typed, the line that runs, with
+   the selected paths whole as its shell is given them, quoted as it
+   reads them (fish's own way in fish), after it or only where it names
+   them (`"$@"`, `$1`…, `$argv`), and the folder it runs in
+   (`shell.run.describe`): what is said and what runs are made by one
+   `Line`. An empty command is held back. On a folder's background it
+   runs in the folder shown, with no paths (`shell.run_here.describe`);
+   where no terminal runs a command yet (macOS, Windows), both say so and
+   the menu has no Run Command….
 
 ## Consequences
 
@@ -133,4 +139,5 @@ one, and every view's field holds the same component (2, 7).
 - What the reference gives is worked out at each preview (three commands
   beside it, each reading the first selected item alone).
 - Left: Access's words on Windows (the read-only attribute) compiled,
-  not tried there; Run Command… on Windows (no terminal yet).
+  not tried there; Run Command… on macOS and Windows (not available
+  yet).
