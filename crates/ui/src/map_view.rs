@@ -639,16 +639,18 @@ impl PaneView for MapView {
             }),
             thumb: Rc::new(move |id, _, cx| {
                 weak.update(cx, |shell, _| {
-                    shell.with_pane(pane, |shell| match shell.thumb(id, ThumbSize::Normal) {
-                        // Its frame is the map's paper: a picture on a map
-                        // is a photo, seldom one that lets it through.
-                        ThumbView::Ready(thumb) => Some(thumb.image),
-                        ThumbView::Pending => {
-                            shell.request_hydrate([id]);
-                            None
-                        }
-                        ThumbView::Unavailable => None,
-                    })
+                    shell
+                        .with_pane(pane, |shell| match shell.thumb(id, ThumbSize::Normal) {
+                            // Its frame is the map's paper: a picture on a map
+                            // is a photo, seldom one that lets it through.
+                            ThumbView::Ready(thumb) => Some(thumb.image),
+                            ThumbView::Pending => {
+                                shell.request_hydrate([id]);
+                                None
+                            }
+                            ThumbView::Unavailable => None,
+                        })
+                        .flatten()
                 })
                 .ok()
                 .flatten()

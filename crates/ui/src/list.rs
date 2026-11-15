@@ -2352,7 +2352,9 @@ impl Shell {
             // heading's (ADR-131, 1).
             .capture_action(
                 cx.listener(move |this, action: &keymap::RunCommand, window, cx| {
-                    if this.with_pane(pane, |this| this.heading_command(&action.name, window, cx)) {
+                    if this.with_pane(pane, |this| this.heading_command(&action.name, window, cx))
+                        == Some(true)
+                    {
                         cx.stop_propagation();
                     }
                 }),
@@ -2366,7 +2368,9 @@ impl Shell {
                             && ev.keystroke.key == "space"
                             && ev.keystroke.modifiers.number_of_modifiers() == 0
                     });
-                    if space && this.with_pane(pane, |this| this.type_space(window, cx)) {
+                    if space
+                        && this.with_pane(pane, |this| this.type_space(window, cx)) == Some(true)
+                    {
                         cx.stop_propagation();
                     }
                 }),

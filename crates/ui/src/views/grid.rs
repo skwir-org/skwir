@@ -1175,9 +1175,13 @@ impl PaneView for GridView {
         // what arrives among the tiles (ADR-135).
         let rows = shell.ui().list.rows.clone();
         self.keep_top(shell, &rows);
-        if let Some(among) = self.among.take() {
-            let tiles: Rc<[usize]> = among.ixs.iter().map(|ix| rows.tile_of(*ix)).collect();
-            self.scroll.reveal_among(tiles, among.then);
+        if let Some((ixs, then)) = self
+            .among
+            .take()
+            .and_then(|among| among.placed(&shell.ui().list))
+        {
+            let tiles: Rc<[usize]> = ixs.iter().map(|ix| rows.tile_of(*ix)).collect();
+            self.scroll.reveal_among(tiles, then);
         }
         self.drawn = rows.clone();
         self.drawn_order = std::sync::Arc::clone(&shell.ui().list.sorted);
@@ -1253,6 +1257,7 @@ impl PaneView for GridView {
                     this.icons.request(&app);
                     cells
                 })
+                .unwrap_or_default()
             },
         );
         let grid = uniform_grid(
@@ -1318,7 +1323,7 @@ impl PaneView for GridView {
         self.scroll.scroll_to_item_middle(self.drawn.tile_of(ix));
     }
 
-    fn reveal_among(&mut self, among: crate::view::Among) {
+    fn reveal_among(&mut self, among: crate::view::Among, _: &crate::list::ListState) {
         self.among = Some(among);
     }
 
@@ -1473,6 +1478,7 @@ impl PaneView for GridView {
 
     fn reset(&mut self) {
         self.folds_at = None;
+        self.among = None;
         self.scroll.scroll_to_item_strict(0);
     }
 }

@@ -202,11 +202,17 @@ impl PaneUi {
 /// A pending "show me these": the pane they belong to, the names to look
 /// for (the file a link leads to; what a plan put in the folder shown;
 /// what it renamed there), and when to stop waiting for a listing that
-/// never brings them.
+/// never brings them: then it goes, never acting late.
 struct Reveal {
     pane: PaneId,
     names: Vec<std::ffi::OsString>,
     until: Instant,
+    /// The location the pane showed as it began (`Pane::shown_lifetime`):
+    /// shown elsewhere since, or the pane gone, it goes (`Shell::wait_reveal`).
+    lifetime: skwir_core::CancelToken,
+    /// What was left of its wait while it cannot look (its tab not shown,
+    /// its folder held back whole, ADR-120): that time does not count.
+    paused: Option<std::time::Duration>,
     /// The listing and its names when last looked through: looked through
     /// again only once they change, not at every sync while it waits.
     looked: Option<(u64, u64)>,
@@ -221,6 +227,13 @@ struct Reveal {
     /// its Undo stays.
     plan: Option<skwir_core::op::PlanId>,
     answer: Option<u64>,
+}
+
+/// What a pending reveal does now (`Reveal::due`).
+enum Due {
+    Looks,
+    Waits,
+    Goes,
 }
 
 /// What a pending reveal does with what it finds.
@@ -240,12 +253,35 @@ impl Reveal {
             pane,
             names,
             until: Instant::now() + std::time::Duration::from_secs(10),
+            lifetime: skwir_core::CancelToken::new(),
+            paused: None,
             looked: None,
             selected: None,
             how: Revealing::Select,
             plan: None,
             answer: None,
         }
+    }
+
+    /// Whether it looks now (`Due::Looks`), waits (`able` false: its tab
+    /// not shown, its folder held back whole; the time it waits so does
+    /// not count), or goes: its location left, its time over.
+    fn due(&mut self, able: bool, now: Instant) -> Due {
+        if self.lifetime.is_cancelled() {
+            return Due::Goes;
+        }
+        if !able {
+            self.paused
+                .get_or_insert_with(|| self.until.saturating_duration_since(now));
+            return Due::Waits;
+        }
+        if let Some(left) = self.paused.take() {
+            self.until = now + left;
+        }
+        if self.until < now {
+            return Due::Goes;
+        }
+        Due::Looks
     }
 
     /// What plan `plan` put or renamed.
@@ -1375,6 +1411,17 @@ impl Shell {
         self.tabs_listed() && !(self.sidebar_lists_tabs() && self.sidebar_drawn > 0.)
     }
 
+    /// The UI of pane `id` where this window presents it: of the tab
+    /// shown, or of the tab left while it is still drawn; `None` for one of
+    /// a tab not shown (`hidden`), another window's, or one gone. Never
+    /// another pane's, as `ui` falls back to for a stale active pane.
+    pub fn presented_ui(&self, id: PaneId) -> Option<&PaneUi> {
+        self.panes
+            .iter()
+            .chain(self.presented.iter().flatten())
+            .find(|p| p.id == id)
+    }
+
     /// The UI of pane `id`, wherever it is: drawn, held, or dormant.
     pub fn pane_ui_mut(&mut self, id: PaneId) -> Option<&mut PaneUi> {
         self.panes
@@ -1396,15 +1443,20 @@ impl Shell {
     }
 
     /// Run `f` with `pane` as the pane commands act on (processors run at
-    /// layout time, after `render_pane` restored the active pane).
-    pub fn with_pane<R>(&mut self, pane: PaneId, f: impl FnOnce(&mut Self) -> R) -> R {
+    /// layout time, after `render_pane` restored the active pane). `None`,
+    /// nothing run, for a pane this window does not present
+    /// (`presented_ui`): one of a tab not shown, another window's, one
+    /// gone. What `f` reads as the pane's (`ui`, a view) is never another
+    /// pane's.
+    pub fn with_pane<R>(&mut self, pane: PaneId, f: impl FnOnce(&mut Self) -> R) -> Option<R> {
+        self.presented_ui(pane)?;
         let saved = self.pane;
         let chose = self.chosen_pane.replace(pane);
         self.pane = pane;
         let r = f(self);
         self.pane = saved;
         self.chosen_pane = chose;
-        r
+        Some(r)
     }
 
     /// Where the parts of the chrome around the panes (the strip's, the
@@ -1625,7 +1677,10 @@ impl Shell {
                 if let (Some(mark), true) = (at.mark.clone(), name.is_some()) {
                     this.wait_for_mark(pane, path.clone(), mark, cx);
                 }
-                this.reveal = name.map(|name| Reveal::new(pane, vec![name]));
+                match name {
+                    Some(name) => this.wait_reveal(Reveal::new(pane, vec![name])),
+                    None => this.reveal = None,
+                }
                 cx.notify();
             },
             window,
@@ -1638,6 +1693,33 @@ impl Shell {
     /// listing has it: those listed so far, then all once all are, unless
     /// something else was selected in between.
     fn take_reveal(&mut self, cx: &mut Context<Self>) {
+        let Some(pane) = self.reveal.as_ref().map(|reveal| reveal.pane) else {
+            return;
+        };
+        // Its tab not shown, or its folder held back whole (ADR-120): it
+        // waits, that time not counted, and looks once its tab shows again.
+        // Its pane in no tab of this window, its location left, its time
+        // over: it goes, never acting late.
+        let presented = self.presented_ui(pane).is_some();
+        let kept = presented || self.hidden.contains_key(&pane);
+        let held = self
+            .app
+            .workspace
+            .read()
+            .pane(pane)
+            .is_none_or(|p| p.listing.is_held());
+        let due = match self.reveal.as_mut() {
+            Some(reveal) if kept => reveal.due(presented && !held, Instant::now()),
+            _ => Due::Goes,
+        };
+        match due {
+            Due::Looks => {}
+            Due::Waits => return,
+            Due::Goes => {
+                self.reveal = None;
+                return;
+            }
+        }
         let Some(reveal) = self.reveal.as_ref() else {
             return;
         };
@@ -1732,6 +1814,22 @@ impl Shell {
             }
         });
         cx.notify();
+    }
+
+    /// Wait for `reveal` in its pane, bound to the location the pane shows
+    /// now (`Pane::shown_lifetime`, which its tab's sleep does not end):
+    /// shown elsewhere since, it goes (`Reveal::due`).
+    fn wait_reveal(&mut self, mut reveal: Reveal) {
+        let lifetime = self
+            .app
+            .workspace
+            .read()
+            .pane(reveal.pane)
+            .map(skwir_core::workspace::Pane::shown_lifetime);
+        self.reveal = lifetime.map(|lifetime| {
+            reveal.lifetime = lifetime;
+            reveal
+        });
     }
 
     /// `plan`, asked by the user with `args`, and the folders the panes
@@ -1860,7 +1958,7 @@ impl Shell {
         };
         let names = in_folder(placed);
         if !names.is_empty() {
-            self.reveal = Some(Reveal::new(shown.pane, names).of(plan));
+            self.wait_reveal(Reveal::new(shown.pane, names).of(plan));
             return;
         }
         // What it renamed is followed in the pane it was asked from alone:
@@ -1875,7 +1973,7 @@ impl Shell {
             .read()
             .pane(shown.pane)
             .map(|p| p.selection.chosen());
-        self.reveal = Some(Reveal::renamed(shown.pane, names, chosen).of(plan));
+        self.wait_reveal(Reveal::renamed(shown.pane, names, chosen).of(plan));
     }
 
     /// The answer of plan `plan` was said, in the toast now shown: what its
@@ -1890,9 +1988,10 @@ impl Shell {
     /// Follow what a rename the user asked moved (`made`), once the
     /// listing has its names: shown as `Pane::show_renamed` has it (a
     /// hidden name shows hidden files; one the filter leaves out is said),
-    /// then, once the order drawn has them, the view brings the first into
-    /// its middle unless one of them is wholly in view, the cursor going
-    /// there (`PaneView::reveal_among`). A selection chosen meanwhile wins.
+    /// then, once the order drawn has those the pane still shows, the view
+    /// brings the first into its middle unless one of them is wholly in
+    /// view, the cursor going there (`PaneView::reveal_among`), placed in
+    /// the order as the view draws it. A selection chosen meanwhile wins.
     fn take_renamed(&mut self, cx: &mut Context<Self>) {
         if self
             .reveal
@@ -1908,51 +2007,48 @@ impl Shell {
         let Revealing::Follow(Some(shown)) = &reveal.how else {
             return;
         };
-        let (pane, chosen, late) = (reveal.pane, reveal.selected, reveal.until < Instant::now());
-        let shown = shown.clone();
-        let still = self
+        let (pane, chosen, lifetime) = (reveal.pane, reveal.selected, reveal.lifetime.clone());
+        // Those the pane still shows (one gone since is not waited for),
+        // unless another selection was chosen since.
+        let ids: Vec<skwir_core::EntryId> = self
             .app
             .workspace
             .read()
             .pane(pane)
-            .is_some_and(|p| Some(p.selection.chosen()) == chosen);
-        if !still || shown.is_empty() {
+            .filter(|p| Some(p.selection.chosen()) == chosen)
+            .map(|p| {
+                let holds = p.shown_test();
+                shown.iter().copied().filter(|id| holds(*id)).collect()
+            })
+            .unwrap_or_default();
+        if ids.is_empty() {
             self.reveal = None;
             return;
         }
-        // Their places in the order drawn, which a rename sorts again and
-        // hidden files turned on fill with what they show.
-        let mut placed: Vec<(usize, skwir_core::EntryId)> = self.with_pane(pane, |shell| {
-            let list = &shell.ui().list;
-            shown
-                .iter()
-                .filter_map(|id| list.index_of(*id).map(|ix| (ix, *id)))
-                .collect()
-        });
-        if placed.len() < shown.len() && !late {
+        // The order drawn, which a rename sorts again and hidden files
+        // turned on fill with what they show, has them all only once it
+        // is made again: until then it waits.
+        let Some(ui) = self.presented_ui(pane) else {
+            return;
+        };
+        if ids.iter().any(|id| ui.list.index_of(*id).is_none()) {
             return;
         }
         self.reveal = None;
-        placed.sort_unstable_by_key(|(ix, _)| *ix);
-        let Some(&(_, first)) = placed.first() else {
-            return;
-        };
         let shell = cx.weak_entity();
-        let then = crate::view::Then::new(move |_, cx| {
-            let _ = shell.update(cx, |shell, cx| shell.cursor_onto(pane, first, chosen, cx));
+        let among = crate::view::Among::new(ids, move |first, _, cx| {
+            let _ = shell.update(cx, |shell, cx| {
+                shell.cursor_onto(pane, first, chosen, &lifetime, cx);
+            });
         });
-        let among = crate::view::Among {
-            ixs: placed.into_iter().map(|(ix, _)| ix).collect(),
-            then,
-        };
         self.with_pane(pane, |shell| {
-            shell.with_view(|view, _| view.reveal_among(among));
+            shell.with_view(|view, shell| view.reveal_among(among, &shell.ui().list));
         });
         cx.notify();
     }
 
-    /// `take_renamed`'s first step: once the listing has the names, or the
-    /// wait is over, the pane shows what it can of them
+    /// `take_renamed`'s first step: once the listing has the names, the
+    /// pane shows what it can of them
     /// (`Pane::show_renamed`) and the window says what it turned on and
     /// what is still left out. Whether that is done.
     fn show_renamed(&mut self, cx: &mut Context<Self>) -> bool {
@@ -1965,7 +2061,6 @@ impl Shell {
             let Some(reveal) = self.reveal.as_mut() else {
                 return false;
             };
-            let late = reveal.until < Instant::now();
             let ws = self.app.workspace.read();
             match ws.pane(reveal.pane) {
                 None => Found::Gone,
@@ -1977,16 +2072,10 @@ impl Shell {
                     Found::Gone
                 }
                 // A folder held back whole (ADR-120) holds no names yet.
-                Some(pane) if pane.listing.is_held() => {
-                    if late {
-                        Found::Gone
-                    } else {
-                        Found::Waits
-                    }
-                }
+                Some(pane) if pane.listing.is_held() => Found::Waits,
                 Some(pane) => {
                     let names = (pane.listing.id(), pane.listing.names_version());
-                    if reveal.looked == Some(names) && !late {
+                    if reveal.looked == Some(names) {
                         Found::Waits
                     } else {
                         reveal.looked = Some(names);
@@ -1995,10 +2084,10 @@ impl Shell {
                             .iter()
                             .filter_map(|name| pane.listing.find_by_name(name).map(|e| e.id))
                             .collect();
-                        if ids.len() < reveal.names.len() && !late {
+                        // All of them, or nothing: what is not listed by
+                        // its time goes unfollowed, never late.
+                        if ids.len() < reveal.names.len() {
                             Found::Waits
-                        } else if ids.is_empty() {
-                            Found::Gone
                         } else {
                             Found::Listed(ids)
                         }
@@ -2052,15 +2141,20 @@ impl Shell {
     }
 
     /// The cursor onto `id` in `pane`, what a rename brought into view,
-    /// unless another selection was chosen since (`chosen`): the keys go on
-    /// from what is shown.
+    /// unless another selection was chosen since (`chosen`) or the pane
+    /// shows another location (`lifetime`): the keys go on from what is
+    /// shown.
     fn cursor_onto(
         &mut self,
         pane: PaneId,
         id: skwir_core::EntryId,
         chosen: Option<u64>,
+        lifetime: &skwir_core::CancelToken,
         cx: &mut Context<Self>,
     ) {
+        if lifetime.is_cancelled() {
+            return;
+        }
         {
             let mut ws = self.app.workspace.write();
             if let Some(p) = ws.pane_mut(pane)
@@ -5103,6 +5197,31 @@ fn renamed_said(unhid: Option<String>, left_out: &[String], filtered: bool) -> O
 
 #[cfg(test)]
 mod tests {
+    /// A reveal waits ten seconds at most, never acting after; the time
+    /// it cannot look (its tab not shown, its folder held back whole) does
+    /// not count; its location left, it goes.
+    #[test]
+    fn a_reveal_waits_its_time_but_not_while_it_cannot_look() {
+        use super::{Due, Reveal};
+        use skwir_core::workspace::PaneId;
+        use std::time::{Duration, Instant};
+        let secs = Duration::from_secs;
+        let now = Instant::now();
+        let mut reveal = Reveal::new(PaneId(1), vec!["l'été.txt".into()]);
+        reveal.until = now + secs(10);
+        assert!(matches!(reveal.due(true, now), Due::Looks));
+        // Its tab hidden at 4 s, for a minute: six seconds are left.
+        assert!(matches!(reveal.due(false, now + secs(4)), Due::Waits));
+        assert!(matches!(reveal.due(false, now + secs(60)), Due::Waits));
+        let back = now + secs(64);
+        assert!(matches!(reveal.due(true, back), Due::Looks));
+        assert!(matches!(reveal.due(true, back + secs(5)), Due::Looks));
+        assert!(matches!(reveal.due(true, back + secs(7)), Due::Goes));
+        let mut left = Reveal::new(PaneId(1), Vec::new());
+        left.lifetime.cancel();
+        assert!(matches!(left.due(true, Instant::now()), Due::Goes));
+    }
+
     /// A rename is followed to the name it ends at: a bulk rename's cycle
     /// through a temporary name ends at the names asked, never at the
     /// temporary one; a swap's two names are both renamed entries'.

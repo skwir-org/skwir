@@ -854,11 +854,15 @@ impl PaneView for ColumnsView {
         };
         // What a rename moved, among the rows as they are now; no column
         // pins a heading.
-        let reveal = self.among.take().map(|among| {
-            let at: Vec<usize> = among.ixs.iter().map(|ix| rows.row_of(*ix)).collect();
-            let height = row_height(shell.row_zoom, files_scale(&theme));
-            crate::views::list::reveal_rows(at, height, 0., self.scroll.clone(), among.then)
-        });
+        let reveal = self
+            .among
+            .take()
+            .and_then(|among| among.placed(&shell.ui().list))
+            .map(|(ixs, then)| {
+                let at: Vec<usize> = ixs.iter().map(|ix| rows.row_of(*ix)).collect();
+                let height = row_height(shell.row_zoom, files_scale(&theme));
+                crate::views::list::reveal_rows(at, height, 0., self.scroll.clone(), then)
+            });
         let last = uniform_list(
             "column-last",
             rows.len(),
@@ -895,6 +899,7 @@ impl PaneView for ColumnsView {
                         })
                         .collect::<Vec<_>>()
                 })
+                .unwrap_or_default()
             }),
         )
         .track_scroll(&self.scroll)
@@ -989,7 +994,7 @@ impl PaneView for ColumnsView {
             .scroll_to_item(self.last_rows.row_of(ix), ScrollStrategy::Center);
     }
 
-    fn reveal_among(&mut self, among: crate::view::Among) {
+    fn reveal_among(&mut self, among: crate::view::Among, _: &crate::list::ListState) {
         self.among = Some(among);
     }
 
@@ -1060,6 +1065,7 @@ impl PaneView for ColumnsView {
     }
 
     fn reset(&mut self) {
+        self.among = None;
         self.scroll.scroll_to_item_strict(0, ScrollStrategy::Top);
     }
 }

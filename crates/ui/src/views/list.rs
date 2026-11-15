@@ -1577,11 +1577,15 @@ impl PaneView for ListView {
         self.scroll_as_asked(&rows);
         // What a rename moved, among the rows as they are now: a row
         // under the pinned heading is hidden.
-        let reveal = self.among.take().map(|among| {
-            let pinned = if rows.grouped() { height } else { 0. };
-            let at: Vec<usize> = among.ixs.iter().map(|ix| rows.row_of(*ix)).collect();
-            reveal_rows(at, height, pinned, self.scroll.clone(), among.then)
-        });
+        let reveal = self
+            .among
+            .take()
+            .and_then(|among| among.placed(&shell.ui().list))
+            .map(|(ixs, then)| {
+                let pinned = if rows.grouped() { height } else { 0. };
+                let at: Vec<usize> = ixs.iter().map(|ix| rows.row_of(*ix)).collect();
+                reveal_rows(at, height, pinned, self.scroll.clone(), then)
+            });
         self.drawn = rows.clone();
         self.drawn_order = std::sync::Arc::clone(&shell.ui().list.sorted);
         let drawn = rows.clone();
@@ -1605,6 +1609,7 @@ impl PaneView for ListView {
                         grouped_row_elements(this, &theme, range, &drawn, given, tree, cx)
                     }
                 })
+                .unwrap_or_default()
             }),
         )
         .track_scroll(&self.scroll)
@@ -1664,7 +1669,7 @@ impl PaneView for ListView {
         self.asked = Some(Asked::Middle(ix));
     }
 
-    fn reveal_among(&mut self, among: crate::view::Among) {
+    fn reveal_among(&mut self, among: crate::view::Among, _: &crate::list::ListState) {
         self.among = Some(among);
     }
 
@@ -1757,6 +1762,7 @@ impl PaneView for ListView {
 
     fn reset(&mut self) {
         self.asked = None;
+        self.among = None;
         self.folds_at = None;
         self.scroll.scroll_to_item_strict(0, ScrollStrategy::Top);
     }

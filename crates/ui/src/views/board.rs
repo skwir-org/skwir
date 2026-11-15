@@ -454,6 +454,7 @@ fn column(
                     })
                     .collect::<Vec<_>>()
             })
+            .unwrap_or_default()
         }),
     )
     .track_scroll(&scroll)

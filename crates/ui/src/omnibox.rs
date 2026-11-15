@@ -3729,7 +3729,9 @@ pub fn dropdown(
     let list = gpui::list(
         omni.list.0.clone(),
         cx.processor(move |shell: &mut Shell, ix: usize, _, cx| {
-            shell.with_pane(pane, |shell| draw_piece(shell, ix, &said, cx))
+            shell
+                .with_pane(pane, |shell| draw_piece(shell, ix, &said, cx))
+                .unwrap_or_else(|| gpui::Empty.into_any_element())
         }),
     )
     .with_sizing_behavior(gpui::ListSizingBehavior::Infer)

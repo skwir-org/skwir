@@ -166,7 +166,14 @@ around the views is in [shell.md](shell.md).
   extracted, what was restored. Selected as it is listed, all of it once
   all is; in the pane it was asked from first. Not when the pane shows
   another location by then, or a selection was chosen meanwhile, even
-  between two names listed: that one wins. A selection that only followed
+  between two names listed: that one wins. What waits for its names is
+  bound to the location the pane shows (`Pane::shown_lifetime`, which
+  its tab's sleep does not end) and waits ten seconds at most, never
+  acting after (`Reveal::due`); the time its tab is not shown, or its
+  folder is held back whole (ADR-120), does not count, and it looks once
+  the tab shows again. What it reads of the pane's UI is that pane's or
+  nothing (`Shell::presented_ui`, `with_pane`: `None` for a pane not
+  presented, never another's). A selection that only followed
   its entries (renamed, gone, no longer shown) was not chosen
   (`Selection::chosen`, not `revision`). Where it went is told by the
   executor (`Change::placed`), never read from the plan on the window's
@@ -713,8 +720,10 @@ around the views is in [shell.md](shell.md).
   to the middle unless it is wholly in view (`scroll_to_middle`), as near
   the middle as the order's ends let it be, so what is around it shows.
   A view that cannot falls back on `scroll_to`.
-- **What a rename moved** (`PaneView::reveal_among`) is decided in the
-  view's prepaint, with the rows of the order as it is then: nothing
+- **What a rename moved** (`PaneView::reveal_among`) is placed as the
+  view draws, its entries found in the order as it is then
+  (`Among::placed`: entries, never indices taken before), and decided in
+  the view's prepaint; a view reset (another location) lets it go: nothing
   moves while one of them is wholly in view, else the first comes to the
   middle and the cursor follows in the next frame (`view::Then`). Over a
   `uniform_list` (the list, the columns' last column), a canvas drawn

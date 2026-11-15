@@ -64,12 +64,43 @@ pub struct Weighs {
 }
 
 /// What a rename of the user's moved, for a view to bring into view
-/// (`PaneView::reveal_among`): indices of the pane's order, ascending.
+/// (`PaneView::reveal_among`): the entries, placed in the order as the view
+/// draws it (`Among::placed`), never as it was when asked.
 pub struct Among {
-    pub ixs: Vec<usize>,
-    /// What runs once the view brought the first into view: the cursor
-    /// goes there.
-    pub then: Then,
+    ids: Vec<skwir_core::EntryId>,
+    /// What runs once the view brought the first into view, told which:
+    /// the cursor goes there.
+    then: Box<dyn FnOnce(skwir_core::EntryId, &mut Window, &mut gpui::App)>,
+}
+
+impl Among {
+    pub fn new(
+        ids: Vec<skwir_core::EntryId>,
+        then: impl FnOnce(skwir_core::EntryId, &mut Window, &mut gpui::App) + 'static,
+    ) -> Self {
+        Among {
+            ids,
+            then: Box::new(then),
+        }
+    }
+
+    /// Its entries' places in `list`'s order, ascending (one it no longer
+    /// holds left out), and what runs once the first is brought into view.
+    /// `None` when the order holds none of them.
+    pub fn placed(self, list: &crate::list::ListState) -> Option<(Vec<usize>, Then)> {
+        let mut placed: Vec<(usize, skwir_core::EntryId)> = self
+            .ids
+            .iter()
+            .filter_map(|id| list.index_of(*id).map(|ix| (ix, *id)))
+            .collect();
+        placed.sort_unstable_by_key(|(ix, _)| *ix);
+        let &(_, first) = placed.first()?;
+        let then = self.then;
+        Some((
+            placed.into_iter().map(|(ix, _)| ix).collect(),
+            Then::new(move |window, cx| then(first, window, cx)),
+        ))
+    }
 }
 
 /// What runs once a view did as it was asked, which it learns in prepaint:
@@ -122,12 +153,14 @@ pub trait PaneView {
     /// Bring the first of `among` into the middle of the view unless one
     /// of them is wholly in view (then nothing moves), and run its `then`
     /// if it did: what a rename of the user's moved (`Shell::take_renamed`).
-    /// Decided in prepaint, with the rows of the order as it is then. A
-    /// view that cannot tell what it shows brings the first into the
-    /// middle (`scroll_to_middle`) and runs nothing.
-    fn reveal_among(&mut self, among: Among) {
-        if let Some(&first) = among.ixs.first() {
-            self.scroll_to_middle(first);
+    /// Placed and decided as the view draws (`Among::placed` in `render`,
+    /// the check in prepaint), with the rows of the order as it is then;
+    /// `reset` lets it go. A view that cannot tell what it shows brings
+    /// the first, in `list`'s order now, into the middle
+    /// (`scroll_to_middle`) and runs nothing.
+    fn reveal_among(&mut self, among: Among, list: &crate::list::ListState) {
+        if let Some((ixs, _)) = among.placed(list) {
+            self.scroll_to_middle(ixs[0]);
         }
     }
     /// Where the view is scrolled: the index of the item at the top (the

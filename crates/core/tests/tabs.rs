@@ -81,6 +81,9 @@ fn a_tab_not_shown_lets_go_of_its_listing_and_gets_its_selection_back() {
         .pane(first)
         .unwrap()
         .location_lifetime();
+    // What waits for the tab to show its location again (a reveal) lives
+    // through its sleep, and ends once the pane shows another.
+    let shown_lifetime = app.workspace.read().pane(first).unwrap().shown_lifetime();
 
     run(&app, "tab.new", serde_json::json!({}));
     let second = active(&app);
@@ -93,6 +96,7 @@ fn a_tab_not_shown_lets_go_of_its_listing_and_gets_its_selection_back() {
     // The tab left keeps where it was, and nothing else.
     assert!(is_dormant(&app, first));
     assert!(lifetime.is_cancelled(), "work tied to the pane stops");
+    assert!(!shown_lifetime.is_cancelled(), "not what waits for it");
     assert_eq!(
         location_of(&app, first),
         Some(Location::from_path(dir.path()))
@@ -107,6 +111,9 @@ fn a_tab_not_shown_lets_go_of_its_listing_and_gets_its_selection_back() {
         "the selection comes back by identity once the listing is complete"
     );
     assert!(is_dormant(&app, second));
+    assert!(!shown_lifetime.is_cancelled());
+    navigate(&app, &dir.path().join("second folder"));
+    assert!(shown_lifetime.is_cancelled(), "another location shown");
 }
 
 /// What a pane keeps while its tab sleeps comes back with it: the folders

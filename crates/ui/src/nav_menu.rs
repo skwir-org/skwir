@@ -501,7 +501,9 @@ pub fn panel(shell: &Shell, pane: PaneId, cx: &mut Context<Shell>) -> Option<Any
         menu.rows.len(),
         cx.processor(
             move |shell: &mut Shell, range: std::ops::Range<usize>, _, cx| {
-                shell.with_pane(pane, |shell| rows(shell, range, cx))
+                shell
+                    .with_pane(pane, |shell| rows(shell, range, cx))
+                    .unwrap_or_default()
             },
         ),
     )

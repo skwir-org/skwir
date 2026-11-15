@@ -1075,6 +1075,10 @@ pub struct Pane {
     pub id: PaneId,
     pub open: Option<Arc<dyn OpenLocation>>,
     location_lifetime: CancelToken,
+    /// The location shown as such, through its tab's sleep (`suspend`,
+    /// `reopen`, which `location_lifetime` ends): see
+    /// [`Pane::shown_lifetime`].
+    shown_lifetime: CancelToken,
     /// What the pane's switch said when a location that follows it was
     /// opened (`LocationProvider::follows_hidden`); none for any other.
     listed_hidden: Option<bool>,
@@ -2127,6 +2131,7 @@ impl Pane {
             id,
             open: None,
             location_lifetime: CancelToken::new(),
+            shown_lifetime: CancelToken::new(),
             listed_hidden: None,
             listing: Listing::default(),
             kept: Vec::new(),
@@ -2342,6 +2347,15 @@ impl Pane {
         self.location_lifetime.child()
     }
 
+    /// Work that waits on the location the pane shows through its tab's
+    /// sleep, which ends `location_lifetime` (`suspend`): it stops once
+    /// the pane shows another location (`replace_open`) or closes. What
+    /// waits for the tab to be shown again to show what it found (a
+    /// reveal, `Shell::wait_reveal`) lives by it.
+    pub fn shown_lifetime(&self) -> CancelToken {
+        self.shown_lifetime.child()
+    }
+
     /// Show `open` with `listing` (a new one, or a kept one going on as it
     /// was), and the lens as it takes it (`lensed`, ADR-107). The location
     /// shown before waits in `left` for the view to keep it or let it go
@@ -2354,6 +2368,8 @@ impl Pane {
     ) {
         self.location_lifetime.cancel();
         self.location_lifetime = CancelToken::new();
+        self.shown_lifetime.cancel();
+        self.shown_lifetime = CancelToken::new();
         let old_listing = std::mem::replace(&mut self.listing, listing);
         self.drawn_left = None;
         // The folder left keeps the order it was shown in, if it remembers
@@ -5529,6 +5545,7 @@ impl Pane {
 impl Drop for Pane {
     fn drop(&mut self) {
         self.location_lifetime.cancel();
+        self.shown_lifetime.cancel();
         self.leading.cancel.cancel();
         self.found.cancel.cancel();
         if let Some(open) = &self.open {
