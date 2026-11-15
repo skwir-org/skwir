@@ -299,16 +299,7 @@ struct Snapshot {
 
 impl Snapshot {
     fn of(row: &Row, view: &SettingsView) -> Self {
-        // What Automatic tries, as the probes found its owner's
-        // requirements (`SettingSpec::tries`).
-        let spec = if row.spec.constraints.tries.is_empty() {
-            row.spec.clone()
-        } else {
-            let owner = row.spec.owner().to_owned();
-            row.spec
-                .clone()
-                .with_found(|name| view.found.contains(&(owner.clone(), name.to_owned())))
-        };
+        let spec = view.spec_shown(&row.spec);
         Snapshot {
             label: row.spec.title.clone().into(),
             spec,
@@ -999,6 +990,13 @@ impl SettingsView {
         let current = choices.iter().position(|choice| *choice == row.value);
         let cycle_key = key.clone();
         let cycle = choices.clone();
+        let unavailable: Vec<String> = row
+            .spec
+            .constraints
+            .unavailable
+            .iter()
+            .map(|u| u.choice.clone())
+            .collect();
         let mut frame = self
             .named(
                 controls::segmented(format!("choice-{key}"), focus, theme),
@@ -1009,8 +1007,14 @@ impl SettingsView {
             // click; mouse clicks belong to the segments.
             .on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
                 if matches!(event, ClickEvent::Keyboard(_)) && !cycle.is_empty() {
-                    let next = current.map_or(0, |index| (index + 1) % cycle.len());
-                    this.change(&cycle_key, cycle[next].clone(), cx);
+                    // The next that does something here, round again.
+                    let from = current.unwrap_or(cycle.len() - 1);
+                    let next = (1..=cycle.len())
+                        .map(|step| (from + step) % cycle.len())
+                        .find(|at| !unavailable.contains(&cycle[*at]));
+                    if let Some(next) = next {
+                        this.change(&cycle_key, cycle[next].clone(), cx);
+                    }
                 }
             }));
         // While Automatic (the default) is chosen, what it comes to now is
@@ -1038,10 +1042,24 @@ impl SettingsView {
             } else {
                 segment
             };
-            frame = frame.child(segment.on_click(cx.listener(move |this, _, window, cx| {
-                window.focus(&focus, cx);
-                this.change(&key, choice.clone(), cx);
-            })));
+            // One that does nothing here is dimmed, says why, and is never
+            // chosen (`SettingConstraints::unavailable`).
+            frame = frame.child(match row.spec.unavailable_why(&choice) {
+                Some(why) => {
+                    let why: SharedString = why.to_owned().into();
+                    let tip = why.clone();
+                    segment
+                        .opacity(0.45)
+                        .cursor_default()
+                        .aria_disabled(true)
+                        .aria_description(why)
+                        .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), cx))
+                }
+                None => segment.on_click(cx.listener(move |this, _, window, cx| {
+                    window.focus(&focus, cx);
+                    this.change(&key, choice.clone(), cx);
+                })),
+            });
         }
         frame.into_any_element()
     }
@@ -1131,16 +1149,39 @@ impl SettingsView {
                     .swatch_of(&choice)
                     .map(|chosen| swatch(&chosen, SWATCH_ROW));
                 let key = key.clone();
-                panel = panel.child(
+                // One that does nothing here is offered dimmed with why,
+                // never chosen (`SettingConstraints::unavailable`).
+                let why = row.spec.unavailable_why(&choice).map(str::to_owned);
+                let line =
                     controls::dropdown_row(format!("choice-{key}-{choice}"), selected, theme)
                         .when(picture.is_some(), |d| d.min_h(sized(PICTURED_ROW)))
-                        .children(picture)
+                        .children(picture);
+                panel = panel.child(match why {
+                    Some(why) => line
+                        .cursor_default()
+                        .aria_disabled(true)
+                        .aria_description(why.clone())
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .py_1()
+                                .child(div().text_color(theme.text_muted).child(label))
+                                .child(
+                                    div()
+                                        .text_small()
+                                        .text_color(theme.text_muted)
+                                        .whitespace_normal()
+                                        .child(why),
+                                ),
+                        ),
+                    None => line
                         .child(label)
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.dropdown = None;
                             this.change(&key, choice.clone(), cx);
                         })),
-                );
+                });
             }
             element = element.child(row.anchor.popup(panel));
         }
@@ -1374,6 +1415,20 @@ impl SettingsView {
         }
         if let Some(error) = error {
             texts = texts.child(Self::error_line(error, theme));
+        }
+        // A value that does nothing here (set in the file, by an agent, a
+        // tool gone since) is kept, and says so.
+        if let Some(why) = row.spec.unavailable_why(&row.value) {
+            texts = texts.child(
+                controls::noted(
+                    "warning",
+                    theme.warning,
+                    13.,
+                    format!("Does nothing here. {why}."),
+                )
+                .text_body()
+                .text_color(theme.text_muted),
+            );
         }
         // Left of the control, so controls stay aligned on the right edge,
         // in a slot every row keeps (`revert_slot`).

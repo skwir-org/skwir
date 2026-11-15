@@ -18123,3 +18123,45 @@ on an open window.
   cannot be drawn under Wine: no Direct Manipulation, no DirectWrite font
   sets).
 
+## 2026-11-15: Choices that do nothing here; Windows maximized
+
+The user asked for a reusable way to mark a setting's choices that cannot
+work here, and for the gap above Windows' caption buttons in a maximized
+window as cards.
+
+- **Core** (`SettingConstraints::unavailable`, `Unavailable`): a choice
+  and why. `SettingSpec::unavailable` (its owner's word),
+  `SettingSpec::needs` (the requirement of a choice Automatic does not
+  try: the documents plugin's MuPDF), `with_missing` (the choices whose
+  requirement the probe found missing), `unavailable_why`, `step_choice`
+  (the arrows among those that do something, ends kept). A value among
+  them still parses and saves; `settings.apply` still answers the save's
+  id (its tests read it so); the constraints serialize them for agents.
+- **The dialog** (`SettingsView::spec_shown`, one place for what the
+  probe found, read by a row and by the arrows): a list's row dimmed,
+  why under its name in Small, no click; a segment dimmed, why in its
+  tooltip, no click, the keyboard cycle passing it; both said disabled
+  with why to a screen reader; a row whose value does nothing here says
+  "Does nothing here. <why>." under its text, the value kept.
+- **The title bar**: gpui patch 0067 (`client_decorations_supported`,
+  X11's compositor read as the window is made); Compact and In the top
+  row unavailable where it is false; the X11 refusal note gone, said
+  before anything is asked.
+- **Windows maximized**: patch 0066 amended: Windows' (and macOS's
+  fullscreen) application decorations say every edge tiled when
+  maximized or fullscreen, which takes the gutter away
+  (`Shell::frame_inset`); the caption buttons take back the row's end
+  padding (`-sized(6.)`), so the window's corner is Close's.
+- **Tests**: core `a_choice_that_does_nothing_here_says_why_and_is_stepped_over`
+  (owner's and missing requirements, `needs`, stepping, parsing, the
+  JSON an agent reads); the UI suite; the binary's settings, keymap and
+  plugin tests; the series 0066 then 0067 reproduces the vendored files.
+- **In a window** (Xvfb :93, no window manager, so no compositor): the
+  title bar's list offered Compact and In the top row dimmed with why;
+  the document engine's PDFium dimmed (the PDFium library not installed
+  for the test), its tooltip "skwir-pdf-worker not found: PDF reading
+  with PDFium", Automatic's outline on Poppler, a click on it changing
+  nothing; `top_row` written in the file kept and said to do nothing.
+- Not checked: Windows' caption buttons in a maximized window (compiled
+  only); a long list's choices (none declares any).
+

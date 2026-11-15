@@ -4646,6 +4646,7 @@ impl Render for Shell {
                 &self.app,
                 crate::title_bar::automatic_now(asked, decorations),
                 crate::title_bar::refusal(asked, decorations, crate::title_bar::is_x11(cx)),
+                window.client_decorations_supported(),
             );
         }
         // One frame of map tiles per window frame, whatever maps it draws:

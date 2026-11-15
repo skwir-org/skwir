@@ -490,14 +490,20 @@ fn title_bar_spec(said: TitleBarSaid) -> SettingSpec {
         description.push(' ');
         description.push_str(here);
     }
-    SettingSpec::choice(
+    let unsupported = crate::title_bar::UNSUPPORTED;
+    let spec = SettingSpec::choice(
         TITLE_BAR_KEY,
         "Title bar",
         &description,
         "auto",
         &crate::title_bar::TitleBar::VALUES,
     )
-    .now(said.now)
+    .now(said.now);
+    if said.supported {
+        spec
+    } else {
+        spec.unavailable(&[("compact", unsupported), ("top_row", unsupported)])
+    }
 }
 
 /// What `ui.title_bar` says beside itself, last said: what Automatic comes
@@ -507,17 +513,26 @@ fn title_bar_spec(said: TitleBarSaid) -> SettingSpec {
 struct TitleBarSaid {
     now: &'static str,
     here: Option<&'static str>,
+    /// Whether skwir's own can be had here
+    /// (`Window::client_decorations_supported`).
+    supported: bool,
 }
 
 static TITLE_BAR_SAID: std::sync::Mutex<TitleBarSaid> = std::sync::Mutex::new(TitleBarSaid {
     now: "",
     here: None,
+    supported: true,
 });
 
 /// Say beside `ui.title_bar` what its Automatic comes to and what a
 /// refusal means here, when either changed (a window answered:
 /// `title_bar::automatic_now`, `title_bar::refusal`).
-pub(crate) fn show_title_bar(app: &App, now: Option<&'static str>, here: Option<&'static str>) {
+pub(crate) fn show_title_bar(
+    app: &App,
+    now: Option<&'static str>,
+    here: Option<&'static str>,
+    supported: bool,
+) {
     let said = {
         let mut said = TITLE_BAR_SAID
             .lock()
@@ -525,6 +540,7 @@ pub(crate) fn show_title_bar(app: &App, now: Option<&'static str>, here: Option<
         let next = TitleBarSaid {
             now: now.unwrap_or(said.now),
             here: here.or(said.here),
+            supported,
         };
         if *said == next {
             return;
@@ -3466,22 +3482,39 @@ impl SettingsView {
         self.narrowed = None;
     }
 
+    /// A setting as the dialog shows it: what its Automatic tries, as the
+    /// probes found its owner's requirements (`SettingSpec::with_found`),
+    /// and the choices whose requirement they found missing, unavailable
+    /// (`SettingSpec::with_missing`).
+    pub(crate) fn spec_shown(&self, spec: &SettingSpec) -> SettingSpec {
+        if spec.constraints.tries.is_empty() && spec.constraints.needs.is_empty() {
+            return spec.clone();
+        }
+        let owner = spec.owner().to_owned();
+        let spec = spec
+            .clone()
+            .with_found(|name| self.found.contains(&(owner.clone(), name.to_owned())));
+        match &self.requirements {
+            Some(statuses) => spec.with_missing(|name| {
+                statuses
+                    .iter()
+                    .find(|s| s.plugin == owner && s.name == name && !s.found)
+                    .map(|s| format!("{} not found: {}", s.name, s.purpose))
+            }),
+            None => spec,
+        }
+    }
+
     pub(crate) fn adjust_key(&mut self, key: &str, delta: i64, cx: &mut Context<Self>) {
         let Some(row) = self.row(key) else { return };
         let text = match row.spec.kind {
             SettingKind::Toggle => (delta > 0).to_string(),
+            // Among the choices that do something here.
             SettingKind::Choice => {
-                let choices = &row.spec.constraints.choices;
-                let Some(len) = i64::try_from(choices.len()).ok().filter(|len| *len > 0) else {
+                if row.spec.constraints.choices.is_empty() {
                     return;
-                };
-                let current = choices
-                    .iter()
-                    .position(|choice| *choice == row.value)
-                    .and_then(|index| i64::try_from(index).ok())
-                    .unwrap_or(0);
-                let next = (current + delta).clamp(0, len - 1);
-                choices[usize::try_from(next).unwrap_or(0)].clone()
+                }
+                self.spec_shown(&row.spec).step_choice(&row.value, delta)
             }
             SettingKind::Integer => {
                 let shown = row

@@ -1657,10 +1657,16 @@ impl PlatformWindow for MacWindow {
             .detach();
     }
 
+    /// Fullscreen, the application's decorations meet the screen's edges,
+    /// as `tiling` says of the system's.
     fn window_decorations(&self) -> gpui::Decorations {
         if self.0.lock().transparent_titlebar {
             gpui::Decorations::Client {
-                tiling: gpui::Tiling::default(),
+                tiling: if self.is_fullscreen() {
+                    gpui::Tiling::tiled()
+                } else {
+                    gpui::Tiling::default()
+                },
             }
         } else {
             gpui::Decorations::Server

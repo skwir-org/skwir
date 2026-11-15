@@ -99,6 +99,7 @@ carry: the script takes it from the Inter release Skwir's packages pin
 | `0064-rounded-masks-meet-at-corners` | Two rounded content masks with a corner at the same point meet there along the larger arc (`ContentMask::intersect`): a card at a window's corner is rounded as the window is | — |
 | `0065-decorations-as-answered` | A Wayland window keeps its decorations until the compositor answers a request, and says while it waits (`Window::decorations_pending`): a compositor that keeps its own (Hyprland's) no longer shows those asked for a frame | — |
 | `0066-title-bar-on-windows-and-macos` | An open window's title bar hidden on Windows, made transparent on macOS, as decorations are requested and said (`request_decorations`, `window_decorations`); Windows' `zoom` restores a maximized window; a drag area counts in Windows' hit test where it is frontmost | — |
+| `0067-client-decorations-supported` | A window says whether the application's decorations can be had before they are asked for (`Window::client_decorations_supported`): not where X11 runs no compositor | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
 
@@ -1245,6 +1246,11 @@ window opened (`TitlebarOptions::appears_transparent`) and said
   `Server` gives the system's back. `window_decorations` says which.
 - **Windows' `zoom`** restores a maximized window, as Wayland's and
   macOS's do.
+- **Tiled as the system's are**: the application's decorations of a
+  maximized or fullscreen window (Windows; fullscreen on macOS) say every
+  edge tiled, as the default `tiling` says of the system's: an
+  application's frame leaves no room above its top row there, where the
+  screen's corner is Close's (amended the same day).
 - **A drag area where it is frontmost**: the hit test answered a
   `WindowControlArea::Drag` wherever the mouse was within it, a button
   over it included, which then never got its press. A drag area now
@@ -1255,3 +1261,18 @@ Checked: clippy for Windows (`x86_64-pc-windows-gnu`) and macOS
 (`aarch64-apple-darwin`, in `tools/package/macos.sh`'s environment) on
 Skwir's UI. Not run: a gpui window cannot be drawn under Wine, and no Mac
 is at hand.
+
+### 0067: Client decorations supported
+
+Where X11 runs no compositor, gpui falls back to the window manager's
+frame whatever the application asks (`request_decorations`), which an
+application learned only once it asked. gpui knows before: the
+compositor's selection is read as the window is made
+(`client_side_decorations_supported`). `PlatformWindow` and `Window`
+`client_decorations_supported` say it: X11's flag; true elsewhere (a
+Wayland compositor answers only once asked). Skwir offers its title bar's
+two values as choices that do nothing there (ADR-138).
+
+Checked: on Xvfb with no window manager, Settings › Appearance › Title
+bar offered Compact and In the top row dimmed with why, and a value set
+in the file was kept and said to do nothing there.

@@ -63,6 +63,23 @@ the reasoning.
   starts a helper. A record's own choice,
   whose labels its owner writes, says it the same way: "Automatic
   (bat)" (a language's grammar, `language_records`).
+- **A choice that does nothing here** says so as it is offered
+  (`SettingConstraints::unavailable`, each with why): its owner declares
+  what it knows (`SettingSpec::unavailable`: `ui.title_bar`'s two values
+  where X11 runs no compositor), declared again as it changes; a choice
+  that needs a requirement (`tries`, or `needs` for one Automatic does
+  not try: MuPDF) is unavailable where the dialog's probe found it
+  missing (`SettingsView::spec_shown`, `SettingSpec::with_missing`, its
+  why the Plugins page's words). The dialog offers it dimmed with why (a
+  list's row, under its name; a segment's tooltip), never chosen by a
+  click, a cycle or the arrows (`SettingSpec::step_choice`), said
+  disabled to a screen reader. A value among them set otherwise (the
+  file, an agent, a tool gone since) is kept, never refused nor
+  rewritten (a synced file serves other machines), and its row says it
+  "does nothing here". An agent reads them with the setting; the
+  answer of `settings.apply` stays its save's id. Never probe to say it:
+  only the dialog's probe and the owner's knowledge. A long list (fonts,
+  icon themes) has none yet.
 - **A choice of looks** (Colors from's palettes) gives each value a
   swatch (`SettingSpec::swatches`, the colors of a miniature window, as
   data): the dialog draws it in miniature before each value's name, in

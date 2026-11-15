@@ -149,15 +149,23 @@ pub fn drawn(setting: TitleBar, decorations: Decorations, fullscreen: bool, x11:
 /// What a refusal means here, said beside the setting: asked for no frame,
 /// the system kept its own.
 pub fn refusal(asked: TitleBar, decorations: Decorations, x11: bool) -> Option<&'static str> {
-    if asked.asks() != WindowDecorations::Client || !matches!(decorations, Decorations::Server) {
+    // On X11 the window manager keeps its frame where no compositor runs,
+    // said before anything is asked (`UNSUPPORTED`).
+    if x11
+        || asked.asks() != WindowDecorations::Client
+        || !matches!(decorations, Decorations::Server)
+    {
         return None;
     }
-    Some(if x11 {
-        "Here the window manager draws the title bar and no compositor runs: Compact and In the top row need one, and skwir draws no bar of its own."
-    } else {
-        "Here the desktop keeps its own frame around windows, whatever skwir asks: Compact and In the top row draw skwir's bar inside it, its corners, shadow and edges the desktop's. Should the desktop draw a title bar too, choose Automatic."
-    })
+    Some(
+        "Here the desktop keeps its own frame around windows, whatever skwir asks: Compact and In the top row draw skwir's bar inside it, its corners, shadow and edges the desktop's. Should the desktop draw a title bar too, choose Automatic.",
+    )
 }
+
+/// Why Compact and In the top row do nothing where the application's
+/// decorations cannot be had (`Window::client_decorations_supported`: X11
+/// with no compositor), said as they are offered.
+pub const UNSUPPORTED: &str = "No compositor runs: the window manager draws the title bar";
 
 /// What Automatic comes to, said beside the setting (`.now`): above where
 /// the system drew its bar when asked, the top row where it drew none.
@@ -355,12 +363,16 @@ fn buttons(shell: &Shell, end: End, cx: &mut Context<Shell>) -> Option<AnyElemen
     }
     if cfg!(target_os = "windows") {
         let theme = cx.global::<Theme>().clone();
+        // Flush with the window's edge, as Windows' own: the end of the row
+        // holding them gives up its padding to them, so the window's corner
+        // is Close's (maximized, its top meets the screen's: `tiling`).
         return Some(
             div()
                 .flex_none()
                 .h_full()
                 .flex()
                 .ml(sized(4.))
+                .mr(-sized(6.))
                 .children(
                     listed
                         .iter()
@@ -739,8 +751,11 @@ mod tests {
         assert_eq!(refusal(TitleBar::Compact, CLIENT, false), None, "granted");
         let wayland = refusal(TitleBar::TopRow, Decorations::Server, false).unwrap();
         assert!(wayland.contains("inside it"), "{wayland}");
-        let x11 = refusal(TitleBar::Compact, Decorations::Server, true).unwrap();
-        assert!(x11.contains("no compositor"), "{x11}");
+        assert_eq!(
+            refusal(TitleBar::Compact, Decorations::Server, true),
+            None,
+            "X11's said as the choices are offered"
+        );
     }
 
     /// Where it draws none, the setting says which of skwir's: Automatic

@@ -452,6 +452,64 @@ fn builders_describe_controls_and_the_schema_serializes_for_agents() {
     assert_eq!(json["title"], "Budget");
 }
 
+/// A choice that does nothing here says why, from its owner or from a
+/// requirement found missing; stepping passes over it; a value among them
+/// is still a value (it may serve elsewhere), and an agent reads them.
+#[test]
+fn a_choice_that_does_nothing_here_says_why_and_is_stepped_over() {
+    let spec = SettingSpec::choice(
+        "sample.engine",
+        "Engine",
+        "d",
+        "auto",
+        &[
+            ("auto", "Automatic"),
+            ("fast", "Fast"),
+            ("slow", "Slow"),
+            ("other", "Other"),
+            ("chosen", "Chosen"),
+        ],
+    )
+    .tries(&[("fast", "fast-helper"), ("slow", "slow-helper")])
+    .needs(&[("chosen", "chosen-helper")])
+    .unavailable(&[("other", "Not on this system")])
+    .with_missing(|name| {
+        (name == "fast-helper" || name == "chosen-helper").then(|| format!("{name} not found"))
+    });
+    assert_eq!(spec.unavailable_why("other"), Some("Not on this system"));
+    assert_eq!(spec.unavailable_why("fast"), Some("fast-helper not found"));
+    assert_eq!(spec.unavailable_why("slow"), None);
+    assert_eq!(
+        spec.unavailable_why("chosen"),
+        Some("chosen-helper not found"),
+        "a choice Automatic does not try needs its helper too"
+    );
+    assert_eq!(spec.unavailable_why("auto"), None);
+    // Said once, the owner's word first.
+    let again = spec.clone().unavailable(&[("other", "Something else")]);
+    assert_eq!(again.unavailable_why("other"), Some("Not on this system"));
+    // Stepping goes from one that does something to the next that does,
+    // and stays at an end.
+    assert_eq!(spec.step_choice("auto", 1), "slow");
+    assert_eq!(spec.step_choice("slow", 1), "slow");
+    assert_eq!(spec.step_choice("slow", -1), "auto");
+    assert_eq!(spec.step_choice("auto", -1), "auto");
+    assert_eq!(
+        spec.step_choice("fast", 1),
+        "slow",
+        "from one that does nothing"
+    );
+    // Still a value: the file, an agent, another machine may hold it.
+    assert!(spec.parse("other").is_ok());
+    // An agent reads them with the setting.
+    let json = serde_json::to_value(&spec).unwrap();
+    assert_eq!(json["constraints"]["unavailable"][0]["choice"], "other");
+    assert_eq!(
+        json["constraints"]["unavailable"][1]["why"],
+        "fast-helper not found"
+    );
+}
+
 #[test]
 fn the_revision_advances_on_declare_apply_and_undeclare_only() {
     let (_tmp, app, _) = fixture(None);

@@ -1415,6 +1415,12 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn decorations_pending(&self) -> bool {
         false
     }
+    /// Whether the application's decorations can be had here, before they are asked for: not
+    /// where X11 runs no compositor, the window manager keeping its frame (a Wayland compositor
+    /// says only once asked).
+    fn client_decorations_supported(&self) -> bool {
+        true
+    }
     fn show_window_menu(&self, _position: Point<Pixels>) {}
     fn start_window_move(&self) {}
     fn can_start_external_drag(&self) -> bool {

@@ -2632,6 +2632,13 @@ impl Window {
         self.platform_window.decorations_pending()
     }
 
+    /// Whether the application's decorations can be had here, before they are asked for: not
+    /// where X11 runs no compositor, its window manager keeping its frame. A Wayland compositor
+    /// says only once asked ([`Window::window_decorations`]).
+    pub fn client_decorations_supported(&self) -> bool {
+        self.platform_window.client_decorations_supported()
+    }
+
     /// Set the exclusive zone for a layer-shell surface: how much screen space it
     /// reserves so other surfaces avoid occluding it (e.g. a panel reserving space).
     /// Positive values reserve that distance from the anchored edge, 0 lets the

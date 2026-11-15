@@ -2014,6 +2014,10 @@ impl PlatformWindow for X11Window {
         }
     }
 
+    fn client_decorations_supported(&self) -> bool {
+        self.0.state.borrow().client_side_decorations_supported
+    }
+
     fn request_decorations(&self, mut decorations: gpui::WindowDecorations) {
         let mut state = self.0.state.borrow_mut();
 

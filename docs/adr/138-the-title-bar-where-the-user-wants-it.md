@@ -7,7 +7,8 @@ row, or in skwir's top row, working on every desktop, GNOME's Wayland
 included, and chose the default recommended below, the desktop's way;
 they declined dragging the window from the address field's empty end,
 which edits the path). Built on Linux; compiled and linted for macOS
-and Windows (decision 8), never run there. Amended the same day, the user
+and Windows (decision 8), never run there. Amended once more the same
+day: decision 9 (X11's choices unavailable, Windows maximized). Amended the same day, the user
 finding no controls in any mode on Hyprland and the bar shown a moment
 before going: decisions 2 and 7; and the values named for whose bar
 it is and how it looks (1), the user finding Above no name for the
@@ -117,6 +118,17 @@ Windows: decision 8.
    as the setting asks and changed on an open window (gpui patch 0066).
    macOS's double click does what its settings say
    (`titlebar_double_click`), and a press there starts the move at once.
+
+9. **Said before asked where it can be** (amended): where X11 runs no
+   compositor, gpui knows before anything is asked that the application's
+   decorations cannot be had (`Window::client_decorations_supported`,
+   gpui patch 0067): Compact and In the top row are offered as choices
+   that do nothing here, with why (`settings.md`, "A choice that does
+   nothing here"), the refusal note kept for Wayland. And on Windows, a
+   maximized window's decorations meet the screen's edges
+   (`Decorations::Client`'s tiling, gpui patch 0066 amended): no gutter
+   above the cards, the caption buttons flush with the window's top and
+   right edges, the corner Close's.
 
 ## Consequences
 

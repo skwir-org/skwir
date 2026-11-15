@@ -364,6 +364,18 @@ pub struct SettingConstraints {
     /// (`SettingSpec::with_found`). Empty for a choice that says `now`
     /// itself.
     pub tries: Vec<Tried>,
+    /// The requirement a choice needs where Automatic does not try it
+    /// (`SettingSpec::needs`: an engine used only when chosen), so that a
+    /// missing one says the choice does nothing, as for those it tries.
+    pub needs: Vec<Tried>,
+    /// The choices that do nothing here and now, each with why
+    /// (`SettingSpec::unavailable`): their owner says so, or the dialog
+    /// found missing the requirement one tries (`SettingSpec::with_missing`).
+    /// Offered dimmed with why, never chosen from the dialog; a value
+    /// among them set otherwise (the file, an agent, a tool gone since) is
+    /// kept, not refused: it may serve elsewhere, the file another
+    /// machine's too, and its row says it does nothing here.
+    pub unavailable: Vec<Unavailable>,
     /// What each choice looks like, parallel to `choices` (empty: none
     /// does): the dialog draws it in miniature before the value's name, in
     /// the list and on the control (`ui.colors_from`'s palettes). The
@@ -392,6 +404,14 @@ pub struct Swatch {
     pub error: u32,
     /// Whether it is a dark look.
     pub dark: bool,
+}
+
+/// A choice that does nothing here and now, and why
+/// ([`SettingConstraints::unavailable`]).
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct Unavailable {
+    pub choice: String,
+    pub why: String,
 }
 
 /// A choice Automatic tries ([`SettingConstraints::tries`]) and the
@@ -635,6 +655,92 @@ impl SettingSpec {
             })
             .collect();
         self
+    }
+
+    /// Say that `choices` do nothing here and now, each with why, as its
+    /// owner knows (`SettingConstraints::unavailable`).
+    #[must_use]
+    pub fn unavailable(mut self, choices: &[(&str, &str)]) -> Self {
+        for (choice, why) in choices {
+            self.mark_unavailable(choice, why);
+        }
+        self
+    }
+
+    /// The requirement each of `choices` needs, where Automatic does not
+    /// try it (`SettingConstraints::needs`).
+    #[must_use]
+    pub fn needs(mut self, choices: &[(&str, &str)]) -> Self {
+        self.constraints
+            .needs
+            .extend(choices.iter().map(|(choice, requires)| Tried {
+                choice: (*choice).to_owned(),
+                requires: (*requires).to_owned(),
+            }));
+        self
+    }
+
+    /// The choices whose requirement is missing, as the dialog probed them
+    /// (`missing`: why, by the requirement's name), those Automatic tries
+    /// and those that need one (`needs`), said unavailable.
+    #[must_use]
+    pub fn with_missing(mut self, missing: impl Fn(&str) -> Option<String>) -> Self {
+        let tried = self.constraints.tries.iter().chain(&self.constraints.needs);
+        for tried in tried.cloned().collect::<Vec<_>>() {
+            if let Some(why) = missing(&tried.requires) {
+                self.mark_unavailable(&tried.choice, &why);
+            }
+        }
+        self
+    }
+
+    fn mark_unavailable(&mut self, choice: &str, why: &str) {
+        let unavailable = &mut self.constraints.unavailable;
+        if !unavailable.iter().any(|u| u.choice == choice) {
+            unavailable.push(Unavailable {
+                choice: choice.to_owned(),
+                why: why.to_owned(),
+            });
+        }
+    }
+
+    /// Why `choice` does nothing here and now, where it does nothing.
+    pub fn unavailable_why(&self, choice: &str) -> Option<&str> {
+        self.constraints
+            .unavailable
+            .iter()
+            .find(|u| u.choice == choice)
+            .map(|u| u.why.as_str())
+    }
+
+    /// The choice `delta` steps from `from` among those that do something
+    /// here, the ends kept: `from` itself where none does that way.
+    pub fn step_choice(&self, from: &str, delta: i64) -> String {
+        let choices = &self.constraints.choices;
+        let Some(start) = choices.iter().position(|c| c == from) else {
+            return choices
+                .iter()
+                .find(|c| self.unavailable_why(c).is_none())
+                .cloned()
+                .unwrap_or_else(|| from.to_owned());
+        };
+        let (mut at, mut left, mut last) = (start, delta.unsigned_abs(), start);
+        while left > 0 {
+            let next = if delta > 0 {
+                at.checked_add(1)
+            } else {
+                at.checked_sub(1)
+            };
+            let Some(next) = next.filter(|n| *n < choices.len()) else {
+                break;
+            };
+            at = next;
+            if self.unavailable_why(&choices[at]).is_none() {
+                last = at;
+                left -= 1;
+            }
+        }
+        choices[last].clone()
     }
 
     /// The setting saying what Automatic gives as `found` answers for each

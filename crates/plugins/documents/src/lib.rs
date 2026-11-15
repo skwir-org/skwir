@@ -133,7 +133,7 @@ impl Plugin for PreviewPlugin {
     }
     fn register(&self, app: &App) {
         use skwir_core::settings::SettingSpec;
-        use skwir_platform::document::{AUTO, worker};
+        use skwir_platform::document::{AUTO, Engine, worker};
         // What Automatic gives, once the settings probed each engine.
         let tries = AUTO.map(|engine| (engine.key(), worker(engine).executable));
         app.settings.declare(
@@ -150,6 +150,8 @@ impl Plugin for PreviewPlugin {
                 ],
             )
             .tries(&tries)
+            // Used only when chosen, it needs its helper all the same.
+            .needs(&[("mupdf", worker(Engine::Mupdf).executable)])
             .page(skwir_core::settings::page::READING)
             .section("Documents"),
         );
