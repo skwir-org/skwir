@@ -966,21 +966,11 @@ impl PlacesPlugin {
     /// table that leaves the volumes as they were (a container's mounts, a
     /// remote's) none.
     fn watch(&self, app: &App) {
+        // Not where the table holds no volume (Windows: the folders
+        // programs mount in, rclone's): its Devices are its drives.
+        #[cfg(not(windows))]
         if let Some(lifetime) = self.places.0.lock().lifetime.clone() {
-            let (places, weak) = (self.places.clone(), app.weak());
-            let seen = Mutex::new(skwir_platform::places::mounts());
-            skwir_core::fs::reach::follow(&lifetime, move || {
-                let now = skwir_platform::places::mounts();
-                let changed = {
-                    let mut seen = seen.lock();
-                    let changed = *seen != now;
-                    *seen = now;
-                    changed
-                };
-                if changed && let Some(app) = weak.upgrade() {
-                    places.populate(&app);
-                }
-            });
+            self.follow_mounts(app, &lifetime);
         }
         // The bookmarks' folder holds other settings: only the file counts
         // (writers replace it, so its name is among the event's paths).
@@ -1005,6 +995,53 @@ impl PlacesPlugin {
         watcher.watch(std::path::Path::new("/dev/disk/by-uuid"));
         *self.watcher.0.lock() = Some(watcher);
         self.watcher.watch_bookmarks();
+    }
+}
+
+#[cfg(not(windows))]
+impl PlacesPlugin {
+    /// Follow the table of mounts (`reach::follow`): each change told
+    /// reads the volumes on a worker, never on the table's own thread,
+    /// which tells every follower in turn, and publishes them where they
+    /// changed. What they were is read on a worker too, never where the
+    /// plugin is registered.
+    fn follow_mounts(&self, app: &App, lifetime: &CancelToken) {
+        type Seen = Arc<Mutex<Option<Vec<skwir_platform::places::Mount>>>>;
+        let seen: Seen = Arc::default();
+        let read = |places: Places, seen: Seen, weak: std::sync::Weak<App>, first: bool| {
+            move || {
+                let now = skwir_platform::places::mounts();
+                let changed = {
+                    let mut seen = seen.lock();
+                    if first && seen.is_some() {
+                        return;
+                    }
+                    let changed = !first && seen.as_ref() != Some(&now);
+                    *seen = Some(now);
+                    changed
+                };
+                if changed && let Some(app) = weak.upgrade() {
+                    places.populate(&app);
+                }
+            }
+        };
+        app.scheduler.spawn(
+            Priority::Background,
+            "places-mounts",
+            lifetime.child(),
+            read(self.places.clone(), Arc::clone(&seen), app.weak(), true),
+        );
+        let (places, weak, jobs) = (self.places.clone(), app.weak(), lifetime.clone());
+        skwir_core::fs::reach::follow(lifetime, move || {
+            if let Some(app) = weak.upgrade() {
+                app.scheduler.spawn(
+                    Priority::Background,
+                    "places-mounts",
+                    jobs.child(),
+                    read(places.clone(), Arc::clone(&seen), app.weak(), false),
+                );
+            }
+        });
     }
 }
 
