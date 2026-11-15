@@ -377,6 +377,23 @@ enum Row {
 }
 
 impl Row {
+    /// A row that only says something: it runs, writes and searches
+    /// nothing and is no error (a reference's note, ADR-137; the tags past
+    /// those offered). The arrows pass over it, and Enter, Tab and a press
+    /// take nothing from it; one without an icon is drawn as a note.
+    fn says_only(&self) -> bool {
+        matches!(self, Row::Source(s) if s.run.is_none()
+            && s.alt.is_none()
+            && s.completion.is_none()
+            && s.scope.is_none()
+            && !s.error)
+    }
+
+    /// A row drawn as a note: it says only, with no icon of its own.
+    fn is_note(&self) -> bool {
+        self.says_only() && matches!(self, Row::Source(s) if s.icon.is_none())
+    }
+
     /// What Tab writes, for a completion.
     fn completion(&self) -> Option<&str> {
         match self {
@@ -636,6 +653,36 @@ fn scope_glyph(app: &skwir_core::App, scope: &Location) -> &'static str {
 }
 
 /// Whether a move goes down the list (Down, Page Down, End).
+/// The row the arrows land on: `mv` from `from` among `rows` (nothing
+/// highlighted yet: Down reaches the first, Up the last), passing over the
+/// rows that only say something (`Row::says_only`) on the way the keys
+/// went, round the ends as a step goes; a page, the first or the last
+/// turns back at an end. `None` where every row only says.
+fn landing(rows: &[Row], from: Option<usize>, mv: crate::modal::ListMove) -> Option<usize> {
+    use crate::modal::ListMove;
+    let count = rows.len();
+    if count == 0 {
+        return None;
+    }
+    let at = match from {
+        Some(at) => mv.from(at, count),
+        None if forward(mv) => 0,
+        None => count - 1,
+    };
+    let takes = |i: &usize| !rows[*i].says_only();
+    let down = match mv {
+        ListMove::By(delta) | ListMove::Page(delta) => delta >= 0,
+        ListMove::First => true,
+        ListMove::Last => false,
+    };
+    match (mv, down) {
+        (ListMove::By(_), true) => (0..count).map(|k| (at + k) % count).find(takes),
+        (ListMove::By(_), false) => (0..count).map(|k| (at + count - k) % count).find(takes),
+        (_, true) => (at..count).chain((0..at).rev()).find(takes),
+        (_, false) => (0..=at).rev().chain(at + 1..count).find(takes),
+    }
+}
+
 fn forward(mv: crate::modal::ListMove) -> bool {
     use crate::modal::ListMove;
     match mv {
@@ -1850,12 +1897,10 @@ impl Shell {
             return;
         }
         if count > 0 {
-            omni.highlighted = Some(match omni.highlighted {
-                Some(at) => mv.from(at, count),
-                // Nothing highlighted yet: Down reaches the first, Up the last.
-                None if forward(mv) => 0,
-                None => count - 1,
-            });
+            let Some(at) = landing(&omni.rows, omni.highlighted, mv) else {
+                return;
+            };
+            omni.highlighted = Some(at);
             omni.chosen = true;
             if let Some(row) = omni.highlighted {
                 omni.reveal(row);
@@ -2105,8 +2150,10 @@ impl Shell {
         } else {
             highlighted.and_then(|i| rows.get(i)).cloned()
         };
-        // A scope chosen, or a row that only writes text, keeps the field.
+        // A scope chosen, or a row that only writes text, keeps the field;
+        // one that only says something takes nothing.
         match &chosen {
+            Some(row) if row.says_only() => return,
             Some(Row::Help { example, .. }) => {
                 let example = example.clone();
                 let address = self.ui().address.clone();
@@ -3462,10 +3509,16 @@ fn draw_piece(shell: &Shell, ix: usize, text: &str, cx: &mut Context<Shell>) -> 
         });
         // Drawn in the selection's ink while highlighted (`Chosen`).
         let muted = theme.text_muted;
+        // A row that only says something takes no press: the field keeps
+        // the keyboard, and nothing is chosen.
+        let takes = !row.says_only();
         let click = cx.listener(
             move |this: &mut Shell, _: &gpui::MouseDownEvent, window, cx| {
                 cx.stop_propagation();
                 window.prevent_default();
+                if !takes {
+                    return;
+                }
                 this.activate_pane(pane, cx);
                 if let Some(omni) = this.ui_mut().omni.as_mut() {
                     omni.highlighted = Some(i);
@@ -3541,6 +3594,24 @@ fn draw_piece(shell: &Shell, ix: usize, text: &str, cx: &mut Context<Shell>) -> 
             strip = Some(strip_div.child(button));
             continue;
         }
+        // A note (a reference's, ADR-137): said under its group's heading,
+        // muted and whole, never a row to take.
+        if row.is_note() {
+            line = Some(
+                div()
+                    .id(crate::elements::known_by("omnibox-note", (&d.title, i)))
+                    .w_full()
+                    .px_2()
+                    .pb_1()
+                    .text_small()
+                    .text_color(muted)
+                    .whitespace_normal()
+                    .on_mouse_down(gpui::MouseButton::Left, click)
+                    .child(d.title.clone())
+                    .into_any_element(),
+            );
+            continue;
+        }
         let keys = if highlighted {
             Some(keys_of(shell, row))
         } else {
@@ -3567,9 +3638,9 @@ fn draw_piece(shell: &Shell, ix: usize, text: &str, cx: &mut Context<Shell>) -> 
             .items_center()
             .gap(sized(10.))
             .rounded_md()
-            .cursor_pointer()
+            .when(takes, gpui::Styled::cursor_pointer)
             .when(highlighted, |r| r.chosen(&theme))
-            .when(!highlighted, |r| r.hover(move |s| s.bg(hover)))
+            .when(!highlighted && takes, |r| r.hover(move |s| s.bg(hover)))
             .when(error && !highlighted, |r| r.text_color(theme.error))
             // The field keeps the keyboard: the row acts on the press,
             // before anything under it could take the focus.
@@ -3764,8 +3835,8 @@ pub fn dropdown(
 #[cfg(test)]
 mod tests {
     use super::{
-        Answer, Location, Omni, Piece, Row, Section, Suggestion, pieces, rest_after, scheme_of,
-        scheme_start,
+        Answer, Location, Omni, Piece, Row, Section, Suggestion, landing, pieces, rest_after,
+        scheme_of, scheme_start,
     };
 
     #[test]
@@ -3865,5 +3936,44 @@ mod tests {
                 piece(2..3, Some("Values"), false),
             ]
         );
+    }
+
+    /// The arrows pass over a row that only says something (a
+    /// reference's note, ADR-137): a step goes round the ends to the next
+    /// row that does, a page or an end turns back; nothing is lit where
+    /// every row only says.
+    #[test]
+    fn the_arrows_pass_over_what_only_says() {
+        use crate::modal::ListMove;
+        let term = |title: &str| {
+            let mut row = Suggestion::new(Section::Syntax, title).heading("Terms");
+            row.completion = Some(title.to_owned());
+            Row::Source(Box::new(row))
+        };
+        let note = |title: &str| {
+            Row::Source(Box::new(
+                Suggestion::new(Section::Syntax, title).heading("Terms"),
+            ))
+        };
+        let rows = vec![
+            term("kind:"),
+            term("size:"),
+            note("Terms go together as AND"),
+            term("-"),
+            note("A quote keeps a word as written"),
+        ];
+        assert!(rows[2].says_only() && rows[2].is_note());
+        assert!(!rows[0].says_only());
+        assert_eq!(landing(&rows, Some(1), ListMove::By(1)), Some(3));
+        assert_eq!(landing(&rows, Some(3), ListMove::By(1)), Some(0));
+        assert_eq!(landing(&rows, Some(0), ListMove::By(-1)), Some(3));
+        assert_eq!(landing(&rows, Some(3), ListMove::By(-1)), Some(1));
+        assert_eq!(landing(&rows, None, ListMove::By(1)), Some(0));
+        assert_eq!(landing(&rows, None, ListMove::By(-1)), Some(3));
+        assert_eq!(landing(&rows, Some(0), ListMove::Last), Some(3));
+        assert_eq!(landing(&rows, Some(3), ListMove::Page(1)), Some(3));
+        assert_eq!(landing(&rows, Some(3), ListMove::First), Some(0));
+        let notes = vec![note("one"), note("two")];
+        assert_eq!(landing(&notes, None, ListMove::By(1)), None);
     }
 }

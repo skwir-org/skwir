@@ -663,10 +663,16 @@ of bars, split or not.
   then the query plugin's whole reference (`query.reference`): its terms,
   how they go together, values, names, contents and a pattern's signs,
   each group under its heading (`Suggestion::heading`, which `pieces`
-  titles as a section). Enter or Tab writes the row's part where the
-  caret is, apart from the words beside it (a pattern's sign as it is),
-  in place of a lone `?`; the shell's own rows write how they start
-  (`~/`, a scheme, `@`, `>`), never the example. F1 and the `?` keep the
+  titles as a section), each group's notes after its rows. Enter or Tab
+  writes the row's part where the caret is, apart from the words beside
+  it, past the word, quoted value or `/…/` the caret stands in, joining
+  a `-` or `(` that begins it (a pattern's sign as it is), in place of a
+  lone `?`; the shell's own rows write how they start (`~/`, a scheme,
+  `@`, `>`), never the example. A row that only says something (a note:
+  it runs, writes and searches nothing, `Row::says_only`) is passed over
+  by the arrows, and Enter, Tab and a press take nothing from it; one
+  with no icon is drawn as a note, muted and whole under its heading.
+  F1 and the `?` keep the
   text and the keyboard in the field (`Omni::reference`): leaving it
   would end what is typed. The `?` stands at the end of the frame seen
   around the field: the card's while the card shows (it may be wider
