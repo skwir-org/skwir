@@ -3821,7 +3821,6 @@ pub struct TargetsArgs {
     pub pane: Option<PaneId>,
 }
 
-/// `set_access`: who may use the entries.
 /// What `set_access.describe` says the words of.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct AccessSaidArgs {
@@ -3835,8 +3834,13 @@ pub struct AccessSaidArgs {
     /// opening it.
     #[serde(default)]
     pub folders: bool,
+    /// Every item is a file. Neither said: files and folders, each said
+    /// where they come to different bits (`X`, a folder's set-ID bits).
+    #[serde(default)]
+    pub files: bool,
 }
 
+/// `set_access`: who may use the entries.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct AccessArgs {
     /// The mode, as chmod takes it: `644`, `u+x`, `go-w`, `a=rX` (`X`:
@@ -4902,9 +4906,10 @@ mod builtin {
             Topic::Files,
             "set_access.describe",
             "Say what a mode does",
-            "Say in words what `mode` (as chmod takes it) makes of items whose mode is `current` (all sharing it; else what each clause does to each), `folders` when they all are; an error for what is no mode, as `set_access` refuses it",
+            "Say in words what `mode` (as chmod takes it) makes of items whose mode is `current` (all sharing it, a number; else what each clause does to each), `folders` or `files` when they all are one (else both, said apart where they differ); an error for what is no mode, as `set_access` refuses it",
             |a, _| {
-                let says = op::access::said(&a.mode, a.current, a.folders)?;
+                let kinds = op::access::Kinds::of(a.folders, a.files);
+                let says = op::access::said(&a.mode, a.current, kinds)?;
                 Ok(Outcome::Value(serde_json::json!({ "says": says })))
             },
         )

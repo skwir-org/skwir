@@ -1252,9 +1252,7 @@ pub fn access_rows(
     if editable {
         // What a mode is written as, and what the one typed comes to for
         // them, said as it is typed (ADR-137).
-        let mut describe = serde_json::json!({
-            "folders": subjects.iter().all(|s| s.folder),
-        });
+        let mut describe = serde_json::json!({ "folders": folders, "files": files });
         if let Some(mode) = mode {
             describe["current"] = (mode & 0o7777).into();
         }

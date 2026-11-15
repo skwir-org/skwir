@@ -223,34 +223,43 @@ impl Mode {
 }
 
 impl Clause {
-    fn apply(&self, mut bits: u32, folder: bool) -> u32 {
+    /// The classes it is about (`u`, `g`, `o` as 4, 2, 1; none named is
+    /// all), and their rwx bits.
+    fn classes(&self) -> (u8, u32) {
         let who = if self.who == 0 {
             USER | GROUP | OTHERS
         } else {
             self.who
         };
-        // The rwx bits of the classes this clause is about.
-        let classes: u32 = [(USER, 0o700), (GROUP, 0o070), (OTHERS, 0o007)]
+        let classes = [(USER, 0o700), (GROUP, 0o070), (OTHERS, 0o007)]
             .iter()
             .filter(|(class, _)| who & class != 0)
             .map(|(_, mask)| mask)
             .sum();
-        for (op, perms) in &self.actions {
-            let mut given = 0;
-            match perms {
-                Perms::Copy(from) => {
-                    let shift = match *from {
-                        USER => 6,
-                        GROUP => 3,
-                        _ => 0,
-                    };
-                    let rwx = (bits >> shift) & 0o7;
-                    given = (rwx << 6 | rwx << 3 | rwx) & classes;
-                }
-                Perms::Letters(letters) => {
-                    let runs = bits & 0o111 != 0;
-                    for letter in letters.chars() {
-                        given |= match letter {
+        (who, classes)
+    }
+
+    /// What one of its actions gives, or takes, of an item whose bits are
+    /// `bits` now (a folder when `folder`): what its letters or its copy
+    /// name for its classes, but what the umask leaves out. What `apply`
+    /// changes and what `said` says.
+    fn given(&self, perms: &Perms, bits: u32, folder: bool) -> u32 {
+        let (who, classes) = self.classes();
+        let given = match perms {
+            Perms::Copy(from) => {
+                let shift = match *from {
+                    USER => 6,
+                    GROUP => 3,
+                    _ => 0,
+                };
+                let rwx = (bits >> shift) & 0o7;
+                (rwx << 6 | rwx << 3 | rwx) & classes
+            }
+            Perms::Letters(letters) => {
+                let runs = bits & 0o111 != 0;
+                letters.chars().fold(0, |given, letter| {
+                    given
+                        | match letter {
                             'r' => 0o444 & classes,
                             'w' => 0o222 & classes,
                             'x' => 0o111 & classes,
@@ -261,13 +270,19 @@ impl Clause {
                             }
                             't' if who & OTHERS != 0 => STICKY,
                             _ => 0,
-                        };
-                    }
-                }
+                        }
+                })
             }
-            // No class named: what the umask holds is left out, whichever
-            // the action (the umask holds no special bit).
-            given &= !self.umask;
+        };
+        // No class named: what the umask holds is left out, whichever the
+        // action (the umask holds no special bit).
+        given & !self.umask
+    }
+
+    fn apply(&self, mut bits: u32, folder: bool) -> u32 {
+        let (who, classes) = self.classes();
+        for (op, perms) in &self.actions {
+            let given = self.given(perms, bits, folder);
             match op {
                 '+' => bits |= given,
                 '-' => bits &= !given,
@@ -292,28 +307,84 @@ impl Clause {
 
 // ------------------------------------------------------------------ said
 
+/// What the items a mode is said for are: files, folders (whose bits
+/// read as listing, changing and opening them), or both.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kinds {
+    Files,
+    Folders,
+    Both,
+}
+
+impl Kinds {
+    /// Of items every one a folder (`folders`), every one a file
+    /// (`files`); both when neither is said.
+    pub fn of(folders: bool, files: bool) -> Kinds {
+        match (folders, files) {
+            (true, false) => Kinds::Folders,
+            (false, true) => Kinds::Files,
+            _ => Kinds::Both,
+        }
+    }
+
+    /// Whether each is a folder, for each kind there is.
+    fn each(self) -> &'static [bool] {
+        match self {
+            Kinds::Files => &[false],
+            Kinds::Folders => &[true],
+            Kinds::Both => &[false, true],
+        }
+    }
+}
+
 /// What `text` makes of the items asked about, in words, as the field is
 /// typed (Properties' Access, through `ui.ask`'s `describe`): the bits it
 /// comes to and who may do what, for items whose mode is `current` (all
-/// of them share it), else what each clause does to each. `folders`:
-/// every item is a folder, whose bits read as listing, changing and
-/// opening it.
+/// of them share it), files and folders apart where they come to
+/// different bits; else what each clause does to each, from what `apply`
+/// gives (`o+s` gives nothing).
 ///
 /// # Errors
 /// What is not a mode, as [`Mode::parse`] says it.
-pub fn said(text: &str, current: Option<u32>, folders: bool) -> anyhow::Result<String> {
+pub fn said(text: &str, current: Option<u32>, kinds: Kinds) -> anyhow::Result<String> {
     let mode = Mode::parse(text)?;
     if cfg!(windows) {
-        return Ok(said_on_windows(&mode, current, folders));
+        return Ok(said_on_windows(&mode, current, kinds == Kinds::Folders));
     }
     Ok(match (&mode, current) {
         (Mode::Octal { .. }, _) | (Mode::Symbolic(_), Some(_)) => {
-            let bits = mode.apply(current.unwrap_or(0), folders) & 0o7777;
-            format!("{}: {}", mode_text(bits), who_may(bits, folders))
+            let of = |folder: bool| mode.apply(current.unwrap_or(0), folder) & 0o7777;
+            let said = |folder: bool| {
+                format!("{}: {}", mode_text(of(folder)), who_may(of(folder), folder))
+            };
+            let mut said = match kinds {
+                Kinds::Files => said(false),
+                Kinds::Folders => said(true),
+                Kinds::Both if of(false) == of(true) => said(false),
+                Kinds::Both => format!("files {}; folders {}", said(false), said(true)),
+            };
+            // A folder keeps the set-ID bits it has unless a fifth digit
+            // says otherwise: unknown here, where they differ.
+            if let (
+                Mode::Octal {
+                    bits,
+                    leading_zero: false,
+                },
+                None,
+            ) = (&mode, current)
+                && kinds != Kinds::Files
+                && bits & (SETUID | SETGID) != SETUID | SETGID
+            {
+                said = format!(
+                    "{said}; a folder keeps the set-ID bits it has (0{:04o} clears them)",
+                    bits & 0o7777
+                );
+            }
+            said
         }
         (Mode::Symbolic(clauses), None) => clauses
             .iter()
-            .map(|clause| clause.said(folders))
+            .map(|clause| clause.said(kinds))
             .collect::<Vec<_>>()
             .join("; "),
     })
@@ -437,63 +508,85 @@ fn and(words: &[&str]) -> String {
 }
 
 impl Clause {
-    /// What it does to each item, whatever its mode.
-    fn said(&self, folders: bool) -> String {
+    /// What it does to each item, whatever its mode: what its classes
+    /// may do then, and what its set-ID and sticky letters do, as
+    /// [`Clause::given`] gives them (none where its classes take none:
+    /// `o+s`, `u+t`).
+    fn said(&self, kinds: Kinds) -> String {
         let who = match self.who {
-            0 => "everyone (but what the umask leaves out)",
-            USER => "the owner",
-            GROUP => "the group",
-            OTHERS => "others",
-            w if w == USER | GROUP => "the owner and the group",
-            w if w == USER | OTHERS => "the owner and others",
-            w if w == GROUP | OTHERS => "the group and others",
-            _ => "everyone",
+            0 if self.umask != 0 => format!(
+                "everyone but what the umask ({:03o}) leaves out",
+                self.umask
+            ),
+            0 => "everyone".to_owned(),
+            USER => "the owner".to_owned(),
+            GROUP => "the group".to_owned(),
+            OTHERS => "others".to_owned(),
+            w if w == USER | GROUP => "the owner and the group".to_owned(),
+            w if w == USER | OTHERS => "the owner and others".to_owned(),
+            w if w == GROUP | OTHERS => "the group and others".to_owned(),
+            _ => "everyone".to_owned(),
         };
-        let actions: Vec<String> = self
-            .actions
-            .iter()
-            .map(|(op, perms)| {
-                let what = match perms {
-                    Perms::Copy(class) => format!(
-                        "what {} may",
-                        match *class {
-                            USER => "the owner",
-                            GROUP => "the group",
-                            _ => "others",
-                        }
-                    ),
-                    Perms::Letters(letters) => letters_said(letters, folders),
-                };
-                match (op, what.is_empty()) {
-                    ('=', true) => "may not use it".to_owned(),
-                    (_, true) => "keeps what it may".to_owned(),
-                    ('+', false) => format!("may also {what}"),
-                    ('-', false) => format!("may no longer {what}"),
-                    (_, false) => format!("may only {what}"),
-                }
-            })
-            .collect();
-        format!(
-            "{who} {}",
-            and(&actions.iter().map(String::as_str).collect::<Vec<_>>())
-        )
+        let mut may = Vec::new();
+        let mut specials = Vec::new();
+        for (op, perms) in &self.actions {
+            let what = match perms {
+                Perms::Copy(class) => format!(
+                    "what {} may",
+                    match *class {
+                        USER => "the owner",
+                        GROUP => "the group",
+                        _ => "others",
+                    }
+                ),
+                Perms::Letters(letters) => letters_said(letters, kinds),
+            };
+            match (op, what.is_empty()) {
+                ('=', true) => may.push("may not use it".to_owned()),
+                (_, true) => {}
+                ('+', false) => may.push(format!("may also {what}")),
+                ('-', false) => may.push(format!("may no longer {what}")),
+                (_, false) => may.push(format!("may only {what}")),
+            }
+            if let Perms::Letters(_) = perms {
+                let special = kinds
+                    .each()
+                    .iter()
+                    .fold(0, |bits, folder| bits | self.given(perms, 0, *folder))
+                    & (SETUID | SETGID | STICKY);
+                specials.extend(specials_said(special, *op == '-', kinds));
+            }
+        }
+        let mut said = Vec::new();
+        if !may.is_empty() || specials.is_empty() {
+            said.push(if may.is_empty() {
+                format!("nothing changes for {who}")
+            } else {
+                format!(
+                    "{who} {}",
+                    and(&may.iter().map(String::as_str).collect::<Vec<_>>())
+                )
+            });
+        }
+        said.extend(specials.into_iter().map(str::to_owned));
+        said.join("; ")
     }
 }
 
-/// What `letters` let one do.
-fn letters_said(letters: &str, folders: bool) -> String {
+/// What `letters`' read, write and run let one do; the set-ID and
+/// sticky letters are said apart ([`specials_said`]).
+fn letters_said(letters: &str, kinds: Kinds) -> String {
     let mut words = Vec::new();
     for letter in letters.chars() {
-        let word = match (letter, folders) {
-            ('r', false) => "read",
-            ('r', true) => "list it",
-            ('w', false) => "write",
-            ('w', true) => "change what it holds",
-            ('x', false) => "run it",
-            ('x' | 'X', true) => "open it",
-            ('X', false) => "run it where someone may already",
-            ('s', _) => "run as its owner or group (set-ID)",
-            ('t', _) => "keep others from removing what it holds (sticky)",
+        let word = match (letter, kinds) {
+            ('r', Kinds::Folders) => "list it",
+            ('r', _) => "read",
+            ('w', Kinds::Folders) => "change what it holds",
+            ('w', _) => "write",
+            ('x' | 'X', Kinds::Folders) => "open it",
+            ('x', _) => "run it",
+            ('X', Kinds::Files) => "run it where someone may already",
+            ('X', Kinds::Both) => "open it, a file where someone may already run it",
             _ => continue,
         };
         if !words.contains(&word) {
@@ -501,6 +594,82 @@ fn letters_said(letters: &str, folders: bool) -> String {
         }
     }
     and(&words)
+}
+
+/// What the set-ID and sticky bits `special` do, given (`taken`: taken
+/// away) for `kinds`: a file's set-ID runs it as its owner or group, a
+/// folder's group passes on, a folder's sticky bit keeps what it holds to
+/// their owners; a bit the kind ignores (a folder's set-user-ID, a file's
+/// sticky bit) is said so, for one kind alone.
+fn specials_said(special: u32, taken: bool, kinds: Kinds) -> Vec<&'static str> {
+    use Kinds::{Both, Files, Folders};
+    // Each bit, for each kind: what it does given, and taken away.
+    const SAID: [(u32, Kinds, &str, &str); 10] = [
+        (
+            SETUID,
+            Files,
+            "it runs as its owner",
+            "it no longer runs as its owner",
+        ),
+        (
+            SETUID,
+            Both,
+            "a file runs as its owner",
+            "a file no longer runs as its owner",
+        ),
+        (
+            SETUID,
+            Folders,
+            "it keeps a set-user-ID bit, which a folder ignores",
+            "its set-user-ID bit, which a folder ignores, goes",
+        ),
+        (
+            SETGID,
+            Files,
+            "it runs as its group",
+            "it no longer runs as its group",
+        ),
+        (
+            SETGID,
+            Both,
+            "a file runs as its group",
+            "a file no longer runs as its group",
+        ),
+        (
+            SETGID,
+            Folders,
+            "what is made in it takes its group",
+            "what is made in it no longer takes its group",
+        ),
+        (
+            SETGID,
+            Both,
+            "what is made in a folder takes its group",
+            "what is made in a folder no longer takes its group",
+        ),
+        (
+            STICKY,
+            Files,
+            "it keeps a sticky bit, which a file ignores",
+            "its sticky bit, which a file ignores, goes",
+        ),
+        (
+            STICKY,
+            Folders,
+            "only their owners may remove what it holds",
+            "whoever may change it may remove what it holds",
+        ),
+        (
+            STICKY,
+            Both,
+            "only their owners may remove what a folder holds",
+            "whoever may change a folder may remove what it holds",
+        ),
+    ];
+    SAID.iter()
+        .filter(|(bit, of, ..)| special & bit != 0 && *of == kinds)
+        .map(|(_, _, given, gone)| if taken { *gone } else { *given })
+        .collect()
 }
 
 /// What a mode is written as, for Properties' Access to show beside its
@@ -1346,36 +1515,109 @@ mod tests {
     #[cfg(not(windows))]
     #[test]
     fn a_mode_is_said_as_it_is_typed() {
+        use Kinds::{Files, Folders};
         assert_eq!(
-            said("644", None, false).unwrap(),
+            said("644", None, Files).unwrap(),
             "rw-r--r-- (644): the owner may read and write, the group and others may read"
         );
         assert_eq!(
-            said("u+x", Some(0o100_644), false).unwrap(),
+            said("u+x", Some(0o100_644), Files).unwrap(),
             "rwxr--r-- (744): the owner may read, write and run it, the group and others may read"
         );
         assert_eq!(
-            said("750", None, true).unwrap(),
+            said("750", None, Folders).unwrap(),
             "rwxr-x--- (750): the owner may list it, change what it holds and open it, \
-             the group may list it and open it, others may not use it"
+             the group may list it and open it, others may not use it; \
+             a folder keeps the set-ID bits it has (00750 clears them)"
         );
-        assert_eq!(said("a=r", None, false).unwrap(), "everyone may only read");
+        assert_eq!(said("a=r", None, Files).unwrap(), "everyone may only read");
         assert_eq!(
-            said("u+x,go-w", None, false).unwrap(),
+            said("u+x,go-w", None, Files).unwrap(),
             "the owner may also run it; the group and others may no longer write"
         );
-        assert_eq!(said("o=", None, false).unwrap(), "others may not use it");
+        assert_eq!(said("o=", None, Files).unwrap(), "others may not use it");
         assert_eq!(
-            said("1777", None, true).unwrap(),
+            said("1777", None, Folders).unwrap(),
             "rwxrwxrwt (1777): everyone may list it, change what it holds and open it; \
-             only their owners may remove what it holds"
+             only their owners may remove what it holds; \
+             a folder keeps the set-ID bits it has (01777 clears them)"
         );
         assert_eq!(
-            said("777", None, false).unwrap().split(':').next(),
+            said("777", None, Files).unwrap().split(':').next(),
             Some("rwxrwxrwx (777)")
         );
-        assert!(said("u+q", None, false).is_err());
-        assert!(said("", Some(0o644), false).is_err());
+        assert!(said("u+q", None, Files).is_err());
+        assert!(said("", Some(0o644), Files).is_err());
+        // A fifth digit clears a folder's set-ID bits: nothing is kept.
+        assert!(!said("00755", None, Folders).unwrap().contains("keeps"));
+        assert!(!said("755", None, Files).unwrap().contains("keeps"));
+        // Shared, the mode a folder keeps is the one said.
+        assert!(
+            said("755", Some(0o2775), Folders)
+                .unwrap()
+                .starts_with("rwxr-sr-x (2755)")
+        );
+    }
+
+    /// What a clause is said to do is what `apply` gives: a set-ID or
+    /// sticky letter its classes take nothing from says nothing, the
+    /// umask is named only where it leaves something out, and files and
+    /// folders are said apart where they come to different bits.
+    #[cfg(not(windows))]
+    #[test]
+    fn a_clause_is_said_as_apply_gives_it() {
+        use Kinds::{Both, Files, Folders};
+        assert_eq!(
+            said("o+s", None, Files).unwrap(),
+            "nothing changes for others"
+        );
+        assert_eq!(
+            said("u+t", None, Folders).unwrap(),
+            "nothing changes for the owner"
+        );
+        assert_eq!(Mode::parse("o+s").unwrap().apply(0o644, false), 0o644);
+        assert_eq!(Mode::parse("u+t").unwrap().apply(0o755, true), 0o755);
+        assert_eq!(
+            said("g+s", None, Folders).unwrap(),
+            "what is made in it takes its group"
+        );
+        assert_eq!(said("u+s", None, Files).unwrap(), "it runs as its owner");
+        assert_eq!(
+            said("u+s", None, Folders).unwrap(),
+            "it keeps a set-user-ID bit, which a folder ignores"
+        );
+        assert_eq!(
+            said("u=s", None, Files).unwrap(),
+            "the owner may not use it; it runs as its owner"
+        );
+        assert_eq!(
+            said("o-t", None, Folders).unwrap(),
+            "whoever may change it may remove what it holds"
+        );
+        let clause = |text: &str, umask: u32| {
+            let Mode::Symbolic(clauses) = Mode::parse_with(text, Some(umask)).unwrap() else {
+                unreachable!()
+            };
+            clauses[0].said(Files)
+        };
+        assert_eq!(
+            clause("+w", 0o022),
+            "everyone but what the umask (022) leaves out may also write"
+        );
+        assert_eq!(clause("+w", 0), "everyone may also write");
+        // Files and folders that share a mode, apart where `X` makes them
+        // differ, together where it does not.
+        let mixed = said("u+X", Some(0o644), Both).unwrap();
+        assert!(mixed.starts_with("files rw-r--r-- (644): "), "{mixed}");
+        assert!(mixed.contains("; folders rwxr--r-- (744): "), "{mixed}");
+        assert!(
+            said("u+x", Some(0o644), Both)
+                .unwrap()
+                .starts_with("rwxr--r-- (744): ")
+        );
+        assert_eq!(Kinds::of(true, false), Folders);
+        assert_eq!(Kinds::of(false, true), Files);
+        assert_eq!(Kinds::of(false, false), Both);
     }
 
     /// Each mode the reference offers whole is one `set_access` takes,
