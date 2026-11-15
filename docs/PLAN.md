@@ -1055,12 +1055,41 @@ for them fixed: the three reviewers fixed their own at once in one tree,
 in part (in What is left, below).
 Checks in `docs/STATUS-LOG.md` (2026-11-15).
 
+## The sidebar follows what other programs change (2026-11-15)
+
+Reported by the user (Dolphin follows): the Network section kept what
+it showed while another program changed it, until a refresh or the next
+start. Built, with the two options the user took: every reader of
+servers says where it read them (`connector::Named`,
+`servers::sources`), which the remote plugin watches (`sources`); the
+table of mounts is followed by the core (`reach::follow`, ADR-077
+amended), the drives too (the places plugin watched `/run/media/<user>`
+alone); what is told is shown only where it changed; what no watch
+tells is read again as a window comes to the front; KDE is told what
+Skwir changes in its network folders as its own Add Network Folder tells
+it (ADR-086 amended). The remote tests, every app now following the
+others' mounts, found four faults, fixed: a refresh asked lost to a
+later told read, GVfs's bridge listed on shared workers while held,
+fresh mounts asked as their program let go, and S3 bucket names
+resolved as hosts (since before: the system's name service stalled
+seconds for every program). Checks in `docs/STATUS-LOG.md`
+(2026-11-15).
+
 ## What is left
 
 Gathered on 2026-10-20 from the notes of this plan and of
 `docs/STATUS-LOG.md`, each as recorded on the date it gives. Later work
 may have covered one: check the source before starting it. Work that
 closes an item removes its line; work that leaves one adds it here.
+
+**The sidebar follows what other programs change** (ADR-086 amended,
+2026-11-15): built and tried on Linux. Left: macOS's following of the
+table (kqueue's `EVFILT_FS`) is compiled only, and Windows' (the folders
+programs mount in) compiled only, neither run; Dolphin's places are
+followed only where kio-fuse is installed (KIO's connector reads them),
+untried in a window here (no kio-fuse on a test's bus); a file reached
+through a link to a folder (NixOS's `/etc/fstab`, through `/etc/static`)
+is read again only as a window comes to the front.
 
 **A field says what it takes** (ADR-137, 2026-11-14): built on Linux
 and tried in a window there (the bulk rename's three references by F1

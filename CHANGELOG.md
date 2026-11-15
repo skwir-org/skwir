@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **The sidebar follows what other programs change**: the Network
+  section shows at once a remote added or removed with `rclone config`,
+  a network folder or a place added in Dolphin, an entry of fstab, and a
+  folder mounted or unmounted by any program (`sshfs`, `rclone mount`,
+  `mount`), where it waited for a refresh or the next start; the drives
+  show a volume mounted anywhere, not only under `/run/media`. A server
+  you add to KDE's network folders, or edit or remove there, shows at
+  once in a Dolphin showing Network, as one Dolphin adds does.
+- **An S3 bucket's name is no longer looked up on the network**: Skwir
+  sent it to the name resolvers as a server's to tell whether it was
+  near, which waited and held the system's name service meanwhile, for
+  every program on the machine.
 - **The view follows what you rename**: a file whose new name sorts it
   out of sight comes to the middle of the view, selected, the cursor on
   it; renaming several, the first of them does, unless one is still in

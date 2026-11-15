@@ -957,11 +957,31 @@ fn attach(
 }
 
 impl PlacesPlugin {
-    /// Republish when a volume appears, disappears, or is mounted by anyone:
-    /// udev keeps `/dev/disk/by-uuid` and udisks keeps `/run/media/<user>`;
-    /// and when the bookmarks change, from here or another file manager.
-    /// Bursts collapse into one refresh (`fs::Settled`).
+    /// Republish when a volume appears or disappears (udev keeps
+    /// `/dev/disk/by-uuid`), is mounted or let go of by anyone, wherever
+    /// (the table of mounts followed, `reach::follow`: udisks's
+    /// `/run/media/<user>` and `/media/<user>`, fstab's `/mnt`); and when the
+    /// bookmarks change, from here or another file manager. Bursts
+    /// collapse into one refresh (`fs::Settled`), and a change of the
+    /// table that leaves the volumes as they were (a container's mounts, a
+    /// remote's) none.
     fn watch(&self, app: &App) {
+        if let Some(lifetime) = self.places.0.lock().lifetime.clone() {
+            let (places, weak) = (self.places.clone(), app.weak());
+            let seen = Mutex::new(skwir_platform::places::mounts());
+            skwir_core::fs::reach::follow(&lifetime, move || {
+                let now = skwir_platform::places::mounts();
+                let changed = {
+                    let mut seen = seen.lock();
+                    let changed = *seen != now;
+                    *seen = now;
+                    changed
+                };
+                if changed && let Some(app) = weak.upgrade() {
+                    places.populate(&app);
+                }
+            });
+        }
         // The bookmarks' folder holds other settings: only the file counts
         // (writers replace it, so its name is among the event's paths).
         let settings = skwir_platform::places::bookmarks_folders();
@@ -981,14 +1001,8 @@ impl PlacesPlugin {
         else {
             return;
         };
-        let mut folders = vec![PathBuf::from("/dev/disk/by-uuid")];
-        if let Some(user) = std::env::var_os("USER") {
-            folders.push(std::path::Path::new("/run/media").join(user));
-        }
-        for folder in folders {
-            // A folder that does not exist yet is simply not watched.
-            watcher.watch(&folder);
-        }
+        // A folder that does not exist yet is simply not watched.
+        watcher.watch(std::path::Path::new("/dev/disk/by-uuid"));
         *self.watcher.0.lock() = Some(watcher);
         self.watcher.watch_bookmarks();
     }

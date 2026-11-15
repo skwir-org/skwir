@@ -185,3 +185,58 @@ frame). What a run knows was kept in memory only.
   chose not to leave in the clear, nor where the environment names
   remotes of its own (`RCLONE_CONFIG_NAS_TYPE`), which no file's stamp
   tells of. Those are asked at each start, as before.
+
+### 2026-11-15: what the Network section shows is followed, whoever changes it
+
+The user saw the Network section stay as it was while another program
+changed what it lists, where Dolphin's sidebar follows. Tried in a
+window of its own: a remote added by `rclone config create` from a
+terminal, a network folder written as KDE's Add Network Folder writes
+one, and a folder mounted with `rclone mount`, none shown after 6 s, and
+the mount, unmounted, still shown; all three shown at once on Refresh
+remote folders. The section was read at a start, after an action of
+Skwir's, on that refresh, and on GVfs's and kmtpd's signals: nothing
+followed the files the servers are read from, nor the table of mounts.
+
+- **A reader of servers says where it read them** (`connector::Named`:
+  rclone's configuration where rclone placed it, Dolphin's
+  `user-places.xbel`, fstab; `servers::sources`: KDE's network folders),
+  one never without the other, and the plugin follows that while it is
+  enabled (`sources`): the folder holding a file, or the nearest folder
+  above that is there while it is not (`rclone config` making its
+  folder), and the folder a link leads into (a dotfile manager's). A
+  change by any program settles (400 ms), then the servers are read
+  again, which follows what they then name.
+- **The table of mounts is followed** (`reach::follow`, ADR-077
+  amended): a mount made or let go of by any program is read again.
+- **What the system tells is shown only where the section changed**,
+  and asks no server: a container's mounts cost a read in memory, an
+  unchanged rclone configuration no run of rclone (its stamp,
+  2026-11-09). A mount come since is asked whether it answers and how
+  full it is only while someone looks, else as the window comes back;
+  no bridge (GVfs's, kio-fuse's) is listed, a change of the table never
+  changing what one holds. A refresh asked that a told read took the
+  place of hands it what it owed (all shown, the mounts known asked).
+- **What names no server is never looked up** (`Address::server_name`:
+  a device, a remote of rclone's, an S3 bucket). Found by the remote
+  tests, run at once in one table of mounts, every test's app now
+  following the others' mounts: an S3 bucket's name was resolved as a
+  host (a single label, LLMNR and mDNS waited on), holding a worker of
+  the system's name service each time, and a user's name took up to ten
+  seconds to look up for every program on the machine (`rclone serve`
+  starting in ten seconds, a test's question late). The code before had
+  it too, each app looking a bucket up once (stalls of seven seconds);
+  with the fix, none over 71 ms.
+- **What no watch tells is read again as a window comes to the front**
+  (`Plugin::on_looked_at`): a folder kio-fuse holds more of, a share
+  another program connected, a file that could not be watched.
+- **KDE is told what Skwir changes in its network folders** as KDE's own
+  Add Network Folder (`knetattach`) tells it: `KDirNotify`'s
+  `FilesAdded` of `remote:/` on the session bus, after an entry is
+  written, changed or removed. KIO's watcher of that folder says the same
+  for any change, but runs in `kded6`, which only Plasma starts: outside
+  it, an open Dolphin showing Network lists it again on that signal
+  alone.
+- Not followed: Skwir's own list, the plugin's data, changed through
+  Skwir; servers a tool's environment names (`RCLONE_CONFIG_NAS_TYPE`),
+  which no file tells of.

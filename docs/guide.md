@@ -480,7 +480,12 @@ it knows is remote.
   (by your system's service manager, for a server that asks nothing at
   login), **Set Up Key Login…** (an SFTP server: your key put there
   once, over one login), Sign In Again…, Test, Edit and Remove.
-  Settings › Network lists every server with the same actions.
+  Settings › Network lists every server with the same actions. The
+  section follows what other programs change, with no refresh: a remote
+  `rclone config` adds, a network folder Dolphin adds, a place in
+  Dolphin's sidebar, a folder mounted or unmounted from a terminal. What
+  you add to KDE's network folders here shows at once in a Dolphin
+  showing Network.
 - **Nearby**, at the end of the Network section, lists the servers your
   network announces (a NAS, a Mac, a Windows PC), found by Avahi and wsdd
   while you look at it, and only then. A server's menu adds it.

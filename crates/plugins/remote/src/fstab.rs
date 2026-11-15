@@ -95,8 +95,11 @@ pub fn address_of(fstype: &str, source: &str) -> Option<Address> {
     }
 }
 
+/// The system's table of file systems to mount.
+const FSTAB: &str = "/etc/fstab";
+
 fn read_fstab() -> String {
-    std::fs::read_to_string("/etc/fstab").unwrap_or_default()
+    std::fs::read_to_string(FSTAB).unwrap_or_default()
 }
 
 pub struct Fstab;
@@ -199,8 +202,8 @@ impl Connector for Fstab {
         }
     }
 
-    fn servers(&self, _cancel: &CancelToken) -> Vec<Server> {
-        entries(&read_fstab())
+    fn servers(&self, _cancel: &CancelToken) -> crate::connector::Named {
+        let servers = entries(&read_fstab())
             .into_iter()
             .filter(|e| e.users)
             .filter_map(|e| {
@@ -214,7 +217,11 @@ impl Connector for Fstab {
                     kept: crate::servers::Kept::Tool("in the system's fstab"),
                 })
             })
-            .collect()
+            .collect();
+        crate::connector::Named {
+            servers,
+            from: vec![crate::connector::Source::File(PathBuf::from(FSTAB))],
+        }
     }
 }
 

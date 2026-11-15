@@ -421,15 +421,19 @@ impl Connector for Kio {
         }
     }
 
-    fn servers(&self, _cancel: &CancelToken) -> Vec<Server> {
+    fn servers(&self, _cancel: &CancelToken) -> crate::connector::Named {
         let Some(data) = skwir_core::xdg::data_home() else {
-            return Vec::new();
+            return crate::connector::Named::default();
         };
         // KDE's places (Dolphin's sidebar), the remote ones. KDE's network
         // folders are servers kept (`servers`), read whatever opens them.
-        std::fs::read_to_string(data.join("user-places.xbel"))
-            .map(|xml| kde_places(&xml))
-            .unwrap_or_default()
+        let file = data.join("user-places.xbel");
+        crate::connector::Named {
+            servers: std::fs::read_to_string(&file)
+                .map(|xml| kde_places(&xml))
+                .unwrap_or_default(),
+            from: vec![crate::connector::Source::File(file)],
+        }
     }
 
     fn reads_whole(&self, remote: &Remote) -> bool {

@@ -462,6 +462,23 @@ impl Address {
     }
 
     /// The host without the brackets an IPv6 literal is written in.
+    /// The name of the server to look up on the network, to tell whether
+    /// it is near (`nas.local`, `example.com`, `192.168.1.2`): `None` where
+    /// the address names none. A device is on this machine (ADR-096); a
+    /// remote of rclone's configuration (`rclone://gdrive/`) and an S3
+    /// bucket (`s3://photos/`) are names, not hosts: looked up, they went
+    /// to the network's resolvers for nothing, a single-label name waiting
+    /// on each, and the system's name service waited with them for every
+    /// program on the machine (each process that follows the mounts
+    /// asking at once, a user's name took ten seconds to look up).
+    pub fn server_name(&self) -> Option<&str> {
+        match self.scheme {
+            Scheme::Rclone | Scheme::S3 => None,
+            scheme if scheme.device().is_some() => None,
+            _ => Some(self.bare_host()),
+        }
+    }
+
     pub fn bare_host(&self) -> &str {
         self.host
             .strip_prefix('[')
@@ -850,6 +867,34 @@ mod tests {
             "gphoto2://[usb 1]/",
         ] {
             assert!(Address::parse(text).is_err(), "{text}");
+        }
+    }
+
+    /// A server's name is looked up to tell whether it is near; a device,
+    /// a remote of rclone's configuration and an S3 bucket name none, and
+    /// are never sent to the network's resolvers.
+    #[test]
+    fn only_a_server_s_name_is_looked_up() {
+        let name = |text: &str| {
+            Address::parse(text)
+                .unwrap()
+                .server_name()
+                .map(str::to_owned)
+        };
+        assert_eq!(
+            name("sftp://me@nas.local:2222/srv").as_deref(),
+            Some("nas.local")
+        );
+        assert_eq!(name("smb://[fe80::1]/share").as_deref(), Some("fe80::1"));
+        assert_eq!(name("dav://127.0.0.1:8080/").as_deref(), Some("127.0.0.1"));
+        for text in [
+            "s3://bucket-one/",
+            "s3://work@photos/2024",
+            "rclone://gdrive/Photos",
+            "mtp://Example_Phone/",
+            "gphoto2://[usb:001,004]/",
+        ] {
+            assert_eq!(name(text), None, "{text}");
         }
     }
 

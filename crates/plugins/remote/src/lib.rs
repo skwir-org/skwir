@@ -50,6 +50,7 @@ mod runs;
 pub mod servers;
 pub mod servers_form;
 pub mod sftp;
+mod sources;
 mod ssh_mount;
 pub mod sshfs;
 pub mod system_shares;
@@ -170,11 +171,23 @@ struct State {
     /// The read of the servers the tools know under way, cancelled by the
     /// next: a tool is waited for as long as it takes (a machine under
     /// load), never cut off by a time and its answer lost, and one that
-    /// never answers is let go of when the servers are read again.
+    /// never answers is let go of when the servers are read again. `None`
+    /// once it ended.
     servers_reading: Option<CancelToken>,
+    /// Where the servers were read, followed while the plugin is enabled
+    /// (`sources`).
+    sources: Option<sources::Sources>,
     /// The refreshes asked, whole and of the mounts alone
-    /// (`Remotes::refreshes`).
+    /// (`Remotes::refreshes`): not what the system told.
     refreshes: (u64, u64),
+    /// What each bridge held when last listed (`Bridges::Kept`), by its
+    /// point.
+    bridged: HashMap<PathBuf, Vec<Arc<Remote>>>,
+    /// What a whole refresh owes, of the mounts and of the servers (all
+    /// shown, every mount asked whether it answers), until the newest read
+    /// ends: a read told by the system that began after it takes its
+    /// place, and its due with it, its own read dropped as older.
+    whole_owed: (bool, bool),
     /// The mounts as last read (`Remotes::mounted`): what every publish
     /// shows, whoever asks for it.
     mounted: Arc<Vec<Mounted>>,
@@ -191,20 +204,77 @@ struct State {
 
 impl State {
     /// Whether each mount's server is near, where its name says so (an
-    /// address, `nas.local`); a name to resolve is found out after. A
-    /// device is no server: its name is never looked up.
+    /// address, `nas.local`); a name to resolve is found out after. What
+    /// names no server (a device, a bucket) is never looked up
+    /// (`Address::server_name`).
     fn note_said(&mut self) {
         let mounted = Arc::clone(&self.mounted);
         for m in mounted.iter() {
-            if let Some(address) = &m.recognised.address
-                && address.scheme.device().is_none()
-                && !self.local.contains_key(&address.host)
-                && let Some(near) = lan::said(&address.host)
+            if let Some(host) = m.recognised.address.as_ref().and_then(Address::server_name)
+                && !self.local.contains_key(host)
+                && let Some(near) = lan::said(host)
             {
-                self.local.insert(address.host.clone(), Some(near));
+                self.local.insert(host.to_owned(), Some(near));
             }
         }
     }
+}
+
+/// How a read of the mounts takes what the bridges (GVfs's, kio-fuse's)
+/// hold.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Bridges {
+    /// Each listed: GVfs said its mounts changed, the window came back, a
+    /// refresh asked. Its program answers from memory, but waits while
+    /// all it has waits on a server that stopped (Samba stopped under
+    /// GVfs): what lists it waits too.
+    Listed,
+    /// As last listed, a bridge new to the table listed: a change of the
+    /// table, which every process following it hears, never changes what
+    /// a bridge holds, and reading it never waits on one.
+    Kept,
+}
+
+/// Why the remotes are read again.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Asked {
+    /// By the user, after an action of Skwir's, or a device said: all of
+    /// it shown again, every mount asked whether it answers.
+    Whole,
+    /// Told that something changed outside Skwir (the table of mounts, a
+    /// file the servers are read from) or the window come back: shown
+    /// only where what it shows changed, only a mount come since asked
+    /// whether it answers, and that only while someone looks (asked
+    /// otherwise as the window comes back). A system busy mounting what is
+    /// no remote (a container starting) costs a read in memory.
+    Told,
+}
+
+/// A read of the servers under way (`State::servers_reading`), no longer
+/// once it ends, unless a later one began.
+struct ServersRead {
+    state: Arc<Mutex<State>>,
+    at: u64,
+}
+
+impl Drop for ServersRead {
+    fn drop(&mut self) {
+        let mut state = self.state.lock();
+        if state.servers_generation == self.at {
+            state.servers_reading = None;
+        }
+    }
+}
+
+/// Whether `before` and `now` show the same mounts: each by its point,
+/// type and source, the tool that knows it and what that tool said of it.
+fn same_mounts(before: &[Mounted], now: &[Mounted]) -> bool {
+    before.len() == now.len()
+        && before.iter().zip(now).all(|(a, b)| {
+            a.remote == b.remote
+                && a.recognised == b.recognised
+                && a.connector.as_ref().map(|c| c.id()) == b.connector.as_ref().map(|c| c.id())
+        })
 }
 
 /// What the plugin keeps: its connectors and what it found.
@@ -268,9 +338,9 @@ impl Remotes {
     /// The cache Automatic chooses for `top`'s server, and why
     /// (`options::automatic`, ADR-102): by its kind, as rclone's
     /// configuration last said, and whether its server is on the local
-    /// network (a remote of rclone's configuration is named, not
-    /// addressed: not asked). May resolve a name for a moment: on a
-    /// worker.
+    /// network (what names no server, a remote of rclone's configuration
+    /// or an S3 bucket, is not asked: `Address::server_name`). May
+    /// resolve a name for a moment: on a worker.
     pub fn automatic_cache(&self, top: &Address) -> (&'static str, &'static str) {
         let (kind, noted) = {
             let state = self.state.lock();
@@ -279,12 +349,14 @@ impl Remotes {
                 .iter()
                 .find(|server| server.address.top() == *top)
                 .map(|server| server.kind.clone());
-            (kind, state.local.get(top.bare_host()).copied().flatten())
+            let noted = top
+                .server_name()
+                .and_then(|host| state.local.get(host).copied().flatten());
+            (kind, noted)
         };
-        let near = match top.scheme {
-            Scheme::Rclone => None,
-            _ => noted.or_else(|| lan::local(top.bare_host())),
-        };
+        let near = top
+            .server_name()
+            .and_then(|host| noted.or_else(|| lan::local(host)));
         options::automatic(kind.as_deref(), near)
     }
 
@@ -595,17 +667,48 @@ impl Remotes {
     /// a bridge's (GVfs's, kio-fuse's) one by one. Lists the bridges, which
     /// answer from memory: on a worker.
     fn mounted(&self) -> Vec<Mounted> {
-        let offered: Vec<Offered> = self
-            .state
-            .lock()
-            .devices
-            .values()
-            .flatten()
-            .cloned()
-            .collect();
-        reach::all()
+        self.mounted_with(Bridges::Listed)
+    }
+
+    /// [`Remotes::mounted`], what the bridges hold listed or as last
+    /// listed (`bridges`).
+    fn mounted_with(&self, bridges: Bridges) -> Vec<Mounted> {
+        let (offered, kept): (Vec<Offered>, HashMap<PathBuf, Vec<Arc<Remote>>>) = {
+            let state = self.state.lock();
+            (
+                state.devices.values().flatten().cloned().collect(),
+                state.bridged.clone(),
+            )
+        };
+        let table = reach::all();
+        let mut listed: HashMap<PathBuf, Vec<Arc<Remote>>> = HashMap::new();
+        let held: Vec<Arc<Remote>> = table
             .iter()
-            .flat_map(reach::bridged)
+            .flat_map(|remote| {
+                if !reach::is_bridge(remote) {
+                    return vec![Arc::clone(remote)];
+                }
+                if let (Bridges::Kept, Some(held)) = (bridges, kept.get(&remote.point)) {
+                    return held.clone();
+                }
+                let held = reach::bridged(remote);
+                listed.insert(remote.point.clone(), held.clone());
+                held
+            })
+            .collect();
+        {
+            let mut state = self.state.lock();
+            state.bridged.extend(listed);
+            let bridges: std::collections::HashSet<&Path> = table
+                .iter()
+                .filter(|r| reach::is_bridge(r))
+                .map(|r| r.point.as_path())
+                .collect();
+            state
+                .bridged
+                .retain(|point, _| bridges.contains(point.as_path()));
+        }
+        held.into_iter()
             .filter_map(|remote| {
                 let known = self.connectors.iter().find_map(|c| {
                     let mut recognised = c.recognises(&remote)?;
@@ -830,7 +933,7 @@ impl Remotes {
     /// is near take longer, and are published after, unless a later
     /// refresh began meanwhile: the mounts never wait on them.
     fn refresh(&self, app: &App) {
-        self.read_again(app, true);
+        self.read_again(app, true, Asked::Whole, Bridges::Listed);
     }
 
     /// Read again what is mounted, and publish it, without the servers the
@@ -839,45 +942,88 @@ impl Remotes {
     /// program started).
     #[cfg(target_os = "linux")]
     fn refresh_mounts(&self, app: &App) {
-        self.read_again(app, false);
+        self.read_again(app, false, Asked::Whole, Bridges::Listed);
+    }
+
+    /// The system's table of mounts changed (`reach::follow`), whoever
+    /// mounted or let go: what is mounted is read again, and shown where
+    /// it changed.
+    fn mounts_told(&self, app: &App) {
+        self.read_again(app, false, Asked::Told, Bridges::Kept);
+    }
+
+    /// A file the servers are read from changed (`sources`), whoever
+    /// wrote it: the servers are read again, and shown where they changed.
+    fn sources_told(&self, app: &App) {
+        self.read_again(app, true, Asked::Told, Bridges::Kept);
+    }
+
+    /// The window came to the front: what no watch tells is read again
+    /// (a folder kio-fuse holds more of, a share another program
+    /// connected, a source that could not be watched), shown where it
+    /// changed; the servers too, unless a read of them is under way.
+    fn looked_at(&self, app: &App) {
+        let reading = self.state.lock().servers_reading.is_some();
+        self.read_again(app, !reading, Asked::Told, Bridges::Listed);
     }
 
     /// [`Remotes::refresh`], the servers read again where `servers`, else
     /// [`Remotes::refresh_mounts`]. Each kind of read stores only while no
     /// later one of its kind began: a read of the mounts alone never drops
     /// the servers a whole refresh reads.
-    fn read_again(&self, app: &App, servers: bool) {
+    fn read_again(&self, app: &App, servers: bool, asked: Asked, bridges: Bridges) {
         let Some(lifetime) = self.lifetime() else {
             return;
         };
         let (mounts_at, servers_at, reading) = {
             let mut state = self.state.lock();
             state.mounts_generation += 1;
+            // Owed by whichever read is the newest once it ends: a later
+            // one, told, takes its place.
+            if asked == Asked::Whole {
+                state.whole_owed.0 = true;
+                state.whole_owed.1 |= servers;
+            }
             let reading = if servers {
                 state.servers_generation += 1;
-                state.refreshes.0 += 1;
+                if asked == Asked::Whole {
+                    state.refreshes.0 += 1;
+                }
                 let reading = lifetime.child();
                 if let Some(before) = state.servers_reading.replace(reading.clone()) {
                     before.cancel();
                 }
                 reading
             } else {
-                state.refreshes.1 += 1;
+                if asked == Asked::Whole {
+                    state.refreshes.1 += 1;
+                }
                 lifetime.clone()
             };
             (state.mounts_generation, state.servers_generation, reading)
         };
+        // The read of the servers under way no longer once this one ends,
+        // unless a later one began.
+        let ends = servers.then(|| ServersRead {
+            state: Arc::clone(&self.state),
+            at: servers_at,
+        });
         let this = self.clone();
         let weak = app.weak();
         let token = lifetime.clone();
         let refresh = move || {
+            let _ends = ends;
             if lifetime.is_cancelled() {
                 return;
             }
-            let mounted = Arc::new(this.mounted());
-            let newest = {
+            let mounted = Arc::new(this.mounted_with(bridges));
+            let (newest, before, whole) = {
                 let mut state = this.state.lock();
                 let newest = state.mounts_generation == mounts_at;
+                let before = Arc::clone(&state.mounted);
+                // What a whole refresh this one took the place of owed.
+                let whole =
+                    newest && (std::mem::take(&mut state.whole_owed.0) || asked == Asked::Whole);
                 if newest {
                     state.mounted = Arc::clone(&mounted);
                     state.note_said();
@@ -891,7 +1037,7 @@ impl Remotes {
                         .features
                         .retain(|point, _| mounted.iter().any(|m| m.remote.point == *point));
                 }
-                newest
+                (newest, before, whole)
             };
             // A later whole refresh reads the servers: not this one.
             let servers = servers && this.state.lock().servers_generation == servers_at;
@@ -901,63 +1047,94 @@ impl Remotes {
             let Some(app) = weak.upgrade() else {
                 return;
             };
-            if newest {
+            // Told: shown where it changed. A mount come since is asked
+            // whether it answers only while someone looks: asking costs its
+            // server a request, and holds the mount a moment, just as the
+            // program that made it may let go of it again (a connection
+            // refused, tried again); the window coming back asks each mount
+            // (`Known::looked_at`). A refresh asked asks every mount; one
+            // a told read took the place of, those it knew.
+            let changed = !same_mounts(&before, &mounted);
+            if newest && (whole || changed) {
                 this.publish(&app);
-                this.ask_alive(&app, mounted.iter(), &lifetime);
+                if asked == Asked::Whole {
+                    this.ask_alive(&app, mounted.iter(), &lifetime);
+                } else {
+                    let known: std::collections::HashSet<&Path> =
+                        before.iter().map(|m| m.remote.point.as_path()).collect();
+                    let looked_at = app.looked_at();
+                    this.ask_alive(
+                        &app,
+                        mounted.iter().filter(|m| {
+                            if known.contains(m.remote.point.as_path()) {
+                                whole
+                            } else {
+                                looked_at
+                            }
+                        }),
+                        &lifetime,
+                    );
+                }
             }
             // The servers kept (Skwir's list, KDE's network folders),
             // then the tools' that are not those: read again where
-            // asked, else as last read.
+            // asked, else as last read; and where they were read, which is
+            // followed from then on.
             let listed = servers.then(|| {
                 let mut listed = servers::listed(&app);
+                let mut from = servers::sources();
                 for connector in this.connectors.iter() {
                     if connector.unavailable().is_none() {
-                        for server in connector.servers(&reading) {
+                        let named = connector.servers(&reading);
+                        from.extend(named.from);
+                        for server in named.servers {
                             if !listed.iter().any(|s| s.address == server.address) {
                                 listed.push(server);
                             }
                         }
                     }
                 }
-                listed
+                (listed, from)
             });
             drop(app);
-            // Whether each server is near, for its thumbnails. A
-            // device is near, its name (a serial) never looked up. A
-            // remote of rclone's configuration is named, not addressed
-            // (as `automatic_cache` has it): its name is no host, and
-            // looked up it went to the network's resolvers and took
-            // the whole wait (`lan::RESOLVING`), one after another,
-            // before the servers were published. What is known of a
-            // host stays known.
+            let (listed, from) = listed.unzip();
+            // Whether each server is near, for its thumbnails. What
+            // names no server is never looked up (`Address::server_name`:
+            // a device, near, its name a serial; a remote of rclone's
+            // configuration, an S3 bucket, names not hosts): looked up,
+            // each went to the network's resolvers and took the whole wait
+            // (`lan::RESOLVING`), one after another, before the servers
+            // were published. What is known of a host stays known.
             let known = this.state.lock().local.clone();
             let near: Vec<(String, Option<bool>)> = mounted
                 .iter()
-                .filter_map(|m| m.recognised.address.as_ref())
-                .filter(|a| {
-                    a.scheme.device().is_none()
-                        && a.scheme != Scheme::Rclone
-                        && !known.contains_key(&a.host)
-                })
-                .map(|a| (a.host.clone(), lan::local(&a.host)))
+                .filter_map(|m| m.recognised.address.as_ref()?.server_name())
+                .filter(|host| !known.contains_key(*host))
+                .map(|host| (host.to_owned(), lan::local(host)))
                 .collect();
-            // Which of them connect at login: their manager's files.
-            let kept = listed
-                .clone()
-                .unwrap_or_else(|| this.state.lock().servers.clone());
-            let at_login = this.login_manager().map_or_else(
-                |_| std::collections::HashSet::new(),
-                |manager| {
-                    manager.installed_of(
-                        mounted
-                            .iter()
-                            .filter_map(|m| m.recognised.address.clone())
-                            .chain(kept.iter().map(|s| s.address.clone()))
-                            .filter_map(|a| configure::login_id(&a)),
-                    )
-                },
-            );
-            {
+            // Which of them connect at login: their manager's files (on
+            // Windows its program, run), asked again where what is listed
+            // may have changed: not for what the system told that changed
+            // nothing here.
+            let at_login = (whole || servers || changed).then(|| {
+                let kept = listed
+                    .clone()
+                    .unwrap_or_else(|| this.state.lock().servers.clone());
+                this.login_manager().map_or_else(
+                    |_| std::collections::HashSet::new(),
+                    |manager| {
+                        manager.installed_of(
+                            mounted
+                                .iter()
+                                .filter_map(|m| m.recognised.address.clone())
+                                .chain(kept.iter().map(|s| s.address.clone()))
+                                .filter_map(|a| configure::login_id(&a)),
+                        )
+                    },
+                )
+            });
+            let found = !near.is_empty();
+            let shown = {
                 let mut state = this.state.lock();
                 for (host, near) in near {
                     state.local.entry(host).or_insert(near);
@@ -970,22 +1147,32 @@ impl Remotes {
                 if !newest {
                     return;
                 }
+                if let (Some(from), Some(sources)) = (from, state.sources.as_mut()) {
+                    sources.follow(from);
+                }
+                let whole = whole
+                    || (servers
+                        && (std::mem::take(&mut state.whole_owed.1) || asked == Asked::Whole));
                 let listed = listed.unwrap_or_else(|| state.servers.clone());
-                if state.servers != listed || state.at_login != at_login {
+                let at_login = at_login.unwrap_or_else(|| state.at_login.clone());
+                let kept_changed = state.servers != listed || state.at_login != at_login;
+                if kept_changed {
                     this.records.changed();
                 }
                 state.servers = listed;
                 state.at_login = at_login;
-            }
-            if let Some(app) = weak.upgrade() {
+                whole || kept_changed || found
+            };
+            if shown && let Some(app) = weak.upgrade() {
                 this.publish(&app);
             }
         };
-        if servers {
+        if servers || (asked == Asked::Told && bridges == Bridges::Listed) {
             // A tool asked its servers is waited for as long as it takes,
-            // until the next read of them cancels it (`Connector::servers`):
-            // on a thread of its own, never holding one of the workers every
-            // folder shares meanwhile.
+            // until the next read of them cancels it (`Connector::servers`),
+            // and a bridge listed as the window comes back may wait on its
+            // program: on a thread of its own, never holding one of the
+            // workers every folder shares meanwhile.
             if let Err(error) = std::thread::Builder::new()
                 .name("skwir-remote-servers".into())
                 .spawn(refresh)
@@ -1149,7 +1336,9 @@ impl Remotes {
             let near = if m.recognised.device.is_some() {
                 Some(true)
             } else {
-                address.and_then(|a| state.local.get(&a.host).copied().flatten())
+                address
+                    .and_then(Address::server_name)
+                    .and_then(|host| state.local.get(host).copied().flatten())
             };
             let whole = m
                 .connector
@@ -1605,6 +1794,12 @@ impl Plugin for RemotePlugin {
             lifetime.cancel();
         }
         state.devices.clear();
+        // Its watcher's thread ends with it.
+        state.sources = None;
+    }
+
+    fn on_looked_at(&self, app: &App) {
+        self.remotes.looked_at(app);
     }
 
     fn register(&self, app: &App) {
@@ -1647,6 +1842,29 @@ impl Plugin for RemotePlugin {
             .replace(app.lifetime().child())
         {
             previous.cancel();
+        }
+        // What the Network section shows is followed, whoever changes it
+        // (ADR-077, ADR-086, amended 2026-11-15): the table of mounts, and
+        // the files the servers are read from, once read.
+        if let Some(lifetime) = self.remotes.lifetime() {
+            let (remotes, weak) = (self.remotes.clone(), app.weak());
+            reach::follow(&lifetime, move || {
+                if let Some(app) = weak.upgrade() {
+                    remotes.mounts_told(&app);
+                }
+            });
+            let (remotes, weak) = (self.remotes.clone(), app.weak());
+            let sources = sources::Sources::start(move || {
+                let Some(app) = weak.upgrade() else {
+                    return false;
+                };
+                if lifetime.is_cancelled() {
+                    return false;
+                }
+                remotes.sources_told(&app);
+                true
+            });
+            self.remotes.state.lock().sources = sources;
         }
         app.settings.declare(
             SettingSpec::text(
@@ -2490,6 +2708,111 @@ mod tests {
         fn disconnect(&self, _: &Remote, _: &Recognised, _: &CancelToken) -> anyhow::Result<()> {
             Ok(())
         }
+    }
+
+    /// A tool whose servers are the addresses its file holds, a line each:
+    /// a configuration another program changes.
+    struct Configured(PathBuf);
+
+    impl Connector for Configured {
+        fn id(&self) -> &'static str {
+            "configured"
+        }
+        fn title(&self) -> &'static str {
+            "configured"
+        }
+        fn schemes(&self) -> &'static [Scheme] {
+            &[Scheme::Sftp]
+        }
+        fn unavailable(&self) -> Option<String> {
+            None
+        }
+        fn connect(
+            &self,
+            _: &Address,
+            _: &Arc<dyn Ask>,
+            _: &CancelToken,
+        ) -> anyhow::Result<Connected> {
+            anyhow::bail!("connects nothing")
+        }
+        fn recognises(&self, _: &Remote) -> Option<Recognised> {
+            None
+        }
+        fn disconnect(&self, _: &Remote, _: &Recognised, _: &CancelToken) -> anyhow::Result<()> {
+            Ok(())
+        }
+        fn servers(&self, _: &CancelToken) -> connector::Named {
+            let servers = std::fs::read_to_string(&self.0)
+                .unwrap_or_default()
+                .lines()
+                .filter_map(|line| Address::parse(line).ok())
+                .map(|address| connector::Server {
+                    label: address.label(),
+                    address,
+                    kind: String::new(),
+                    kept: servers::Kept::Tool("in the test's file"),
+                })
+                .collect();
+            connector::Named {
+                servers,
+                from: vec![connector::Source::File(self.0.clone())],
+            }
+        }
+    }
+
+    /// The servers a tool's configuration names are read again once
+    /// another program changes it, its folder made after it was first
+    /// read: never only at a start or a refresh asked. None is asked.
+    #[test]
+    fn servers_another_program_changes_are_read_again() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = App::new(skwir_core::app::AppConfig::ephemeral(
+            tmp.path().join("app"),
+        ))
+        .unwrap();
+        let file = tmp.path().join("its configuration").join("servers");
+        let remotes = Remotes::with(vec![
+            Arc::new(Configured(file.clone())) as Arc<dyn Connector>
+        ]);
+        app.plugins
+            .add(Arc::new(RemotePlugin::with(remotes.clone())), &app);
+        let until = |what: &str, done: &dyn Fn() -> bool| {
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            while !done() {
+                assert!(std::time::Instant::now() < deadline, "{what}");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        };
+        until("the first read ended", &|| {
+            remotes.state.lock().servers_reading.is_none()
+        });
+        let before = remotes.refreshes();
+        let listed = |address: &str| {
+            let address = Address::parse(address).unwrap();
+            remotes
+                .state
+                .lock()
+                .servers
+                .iter()
+                .any(|s| s.address == address)
+        };
+        std::fs::create_dir(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, "sftp://me@example.com/\n").unwrap();
+        until("the file made was read", &|| {
+            listed("sftp://me@example.com/")
+        });
+        // Written again as tools write: beside it, then in its place.
+        let beside = file.with_extension("new");
+        std::fs::write(&beside, "sftp://me@example.com/\nsftp://it's@nas.local/\n").unwrap();
+        std::fs::rename(&beside, &file).unwrap();
+        until("the file replaced was read", &|| {
+            listed("sftp://it's@nas.local/")
+        });
+        std::fs::write(&file, "sftp://it's@nas.local/\n").unwrap();
+        until("a server removed is gone", &|| {
+            !listed("sftp://me@example.com/")
+        });
+        assert_eq!(remotes.refreshes(), before, "no refresh was asked");
     }
 
     /// What an address names below a mount is the mount's: never a folder

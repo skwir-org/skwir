@@ -17813,3 +17813,111 @@ name showing hidden files, a name the filter leaves out said.
   release-check, a11y-check, check-cross, bench-check; the board, a
   rename in a search or in a folder opened in place (not followed: their
   names are not in the folder shown).
+
+## 2026-11-15: The sidebar follows what other programs change
+
+Reported by the user: the Network section kept what it showed while
+another program changed it, where Dolphin's sidebar follows. Tried
+first, in a window of its own on Xvfb (fixture XDG folders, a bus of its
+own): a remote added by `rclone config create`, a network folder written
+in `remoteview` by hand, a folder mounted with `rclone mount` from a
+terminal: none shown after 6 s; unmounted, the mount still shown; all
+three shown at once by Refresh remote folders. Nothing followed the
+files the servers are read from, nor the table of mounts (GVfs's and
+kmtpd's bus signals alone were). The user chose all four steps and both
+options (ADR-086 and ADR-077 amended).
+
+- **Sources followed**: `Connector::servers` returns `connector::Named`
+  (servers and where they were read: rclone's file where rclone placed
+  it, `user-places.xbel`, `/etc/fstab`), `servers::sources` names KDE's
+  network folders, and the plugin's `sources::Sources` watches each
+  (`fs::Settled`, 400 ms): a file's folder or the nearest one above that
+  is there, a link's target's folder, a folder's own files. Read again,
+  the servers say what is followed next.
+- **The table of mounts followed** (`reach::follow`): one thread for
+  every follower; Linux polls `/proc/self/mountinfo` held open for
+  `POLLPRI` (the kernel marks it at any mount or unmount of the
+  namespace), macOS waits on kqueue's `EVFILT_FS` (`VQ_MOUNT`,
+  `VQ_UNMOUNT`), Windows watches the folders programs mount in; a burst
+  settles 250 ms into one call. The remote plugin reads its mounts again,
+  the places plugin its volumes (where they changed: its watch of
+  `/run/media/<user>` is gone, `/dev/disk/by-uuid` kept).
+- **Told, shown where it changed** (`Asked::Told`): a told refresh
+  publishes only where the mounts, the servers, what connects at login or
+  a host's nearness changed, asks only a mount come since whether it
+  answers, and is not counted in `Remotes::refreshes`.
+- **The window come back** (`Plugin::on_looked_at` → `looked_at`): the
+  mounts, and the servers unless a read of them is under way.
+- **KDE told** (`servers::tell_kde_on`): KDE's Add Network Folder
+  (`knetattach`, plasma-desktop) writes `remoteview/<name>.desktop`, then
+  `KDirNotify::emitFilesAdded(QUrl("remote:/"))`; KIO's
+  `remotedirnotify` kded module says the same for any change of the
+  folder, a removal too, but runs in `kded6`, not running in the user's
+  Hyprland session (`kiod6` alone). After an entry written, changed or
+  removed, Skwir sends `org.kde.KDirNotify` `FilesAdded("remote:/")` from
+  `/` on the session bus, on a thread of its own.
+- **Tests**: core `the_table_is_followed` (a tmpfs mounted and let go of
+  in a user and mount namespace of the test's own, each told once, the
+  table read again by then); remote `sources::tests` (the nearest
+  folder, what counts, a file made after its folder, replaced by a
+  rename, a folder's file removed, a link's target replaced),
+  `servers_another_program_changes_are_read_again` (a tool's file made,
+  replaced, shortened; no refresh asked), `network_folders`
+  (`kde_is_told_as_its_own_add_network_folder_tells_it`, on a bus of the
+  test's own: path, interface, member, argument, no destination).
+- **In a window** (the same fixture, Dolphin 26.08 on the test's bus
+  showing Network beside it): `rclone config create gamma` and a
+  network folder written by hand shown within 2.5 s without a refresh;
+  Dolphin did not show the hand-written one (no signal: kded6 absent);
+  `skwir cmd remote.keep_as_server` kept a server in KDE's folders,
+  Dolphin listing it and the hand-written one at once; removing it
+  (`remote.remove_server`, confirmed) took it out of both; `rclone
+  mount` from a terminal shown in 2.5 s (the window had the keyboard:
+  its space too), gone 1.5 s after
+  `fusermount3 -u`; `rclone config delete gamma` gone; a FAT image's
+  loop device (udisks) shown unmounted, then mounted with its eject and
+  space, unmounted, gone once detached. Idle: `skwir-mounts` and
+  `skwir-remote-sources` asleep (no CPU over 10 s).
+- **What the binary's remote tests found.** `plugins_toggle`,
+  `remote_folders` and `remote_configs` (59 tests, at once in one table
+  of mounts, every test's app now following the others' mounts) failed
+  now and then where the code before passed: compared run for run with
+  the commit before, built in a worktree, alternating, the machine
+  otherwise idle (0 of 17 runs failing before, 4 of 12 after). Each
+  cause found was a fault, fixed where it lay:
+  - a refresh asked lost to a told read begun after it (the newest read
+    stores): nothing shown, no mount asked, an rclone mount's features
+    never read (`what_rclone_says_a_storage_can_do_shapes_its_mount` 6
+    s to 27 s). The told read now takes what it owed (`whole_owed`).
+  - told reads listed GVfs's bridge, on workers every folder shares,
+    while a test held GVfs on a stopped Samba: a dozen tests stalled
+    30 s at once. A told read keeps what each bridge held
+    (`Bridges::Kept`); the window's return lists them on a thread of
+    its own.
+  - a mount asked at once by every app as it came, busy when the test
+    that made it let go of it (`fusermount3`: "Device or resource
+    busy"). Asked only while someone looks; a refresh owed asks the
+    mounts known. Reading the table no longer `statx`es every FUSE
+    mount point either (`MadeUp`, asked when a file needs it).
+  - S3 bucket names resolved as hosts (`lan::local("bucket-one")`):
+    timed `getent passwd` every 0.2 s during runs, the system's
+    nsncd stalled 7.3–8.8 s per run before the change (each app looking
+    a bucket up once), 10.0 s with it (every app at every mount), and
+    `rclone serve` waited on it to start (strace: two 5 s polls of
+    `/var/run/nscd/socket`). Narrowed by switches, one follower off at a
+    time, then each part of the told read. Now `Address::server_name`:
+    no stall over 71 ms in three runs, all 59 passing (19–22 s, the
+    commit before 21–30 s, one of its three failing).
+- **Checks**: rustfmt per file; clippy `-D warnings` on skwir-core,
+  skwir-plugin-remote and skwir-plugin-places, native and for Windows and
+  macOS (cargo-zigbuild); their tests; the binary's `plugins_toggle`,
+  `remote_folders`, `remote_configs` alone: 59 passed, twice (14.1 s,
+  18.1 s); core, remote and places: 1,000 passed. Run again in a window
+  with the final build: a mount from a terminal while the window had no
+  keyboard shown at once without its space (its server not asked), the
+  space once the window took the keyboard; gone once unmounted; a remote
+  added and deleted with `rclone config`; a loop device mounted and let
+  go of by udisks in the drives.
+- Not run: release-check, a11y-check, bench-check; macOS's and Windows'
+  following compiled, never run; Dolphin's places (`user-places.xbel`)
+  not tried in a window (KIO's connector needs kio-fuse on the bus).

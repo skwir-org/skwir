@@ -551,6 +551,7 @@ fn number_in(table: &Table, device: u64) -> u64 {
     }
     table
         .made_up
+        .get()
         .iter()
         .find(|(of, _)| *of == device)
         .map_or(0, |&(_, number)| number)
@@ -599,6 +600,9 @@ pub fn mounts_in(folder: PathBuf, fstype: &str) {
         folders.push((folder, fstype.to_owned()));
     }
     drop(folders);
+    // Followed from now on, where the table is followed ([`follow`]).
+    #[cfg(windows)]
+    imp::watch_new();
     changed();
 }
 
@@ -637,6 +641,96 @@ pub fn changed() {
     *TABLE.lock() = None;
 }
 
+/// How long the table is let settle once the system said it changed,
+/// before its followers are told: a burst (a program mounting several, a
+/// container starting) makes one call.
+const SETTLE: Duration = Duration::from_millis(250);
+
+/// What follows the table ([`follow`]): each one's lifetime and call.
+type Follower = (crate::cancel::CancelToken, Arc<dyn Fn() + Send + Sync>);
+
+static FOLLOWERS: Mutex<Vec<Follower>> = Mutex::new(Vec::new());
+
+/// Whether the system tells the table's changes, once first asked
+/// ([`follow`]).
+static FOLLOWED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+/// Follow the table: `told` runs once a change of it settles, a mount
+/// made or let go of by any program, until `lifetime` ends; the table is
+/// read again by then ([`changed`]). On the table's own thread, one for
+/// every follower: `told` starts work and never waits for it. Whether
+/// this system tells: Linux (the kernel marks `/proc/self/mountinfo`
+/// changed), macOS (kqueue's file system events), Windows (the folders
+/// programs mount in, [`mounts_in`]); elsewhere nothing is told, and what
+/// shows mounts asks again when a window comes to the front.
+pub fn follow(
+    lifetime: &crate::cancel::CancelToken,
+    told: impl Fn() + Send + Sync + 'static,
+) -> bool {
+    FOLLOWERS.lock().push((lifetime.clone(), Arc::new(told)));
+    *FOLLOWED.get_or_init(imp::follow)
+}
+
+/// The system said the table changed: it is read again, and every
+/// follower whose lifetime goes on told.
+fn told() {
+    changed();
+    let followers: Vec<Arc<dyn Fn() + Send + Sync>> = {
+        let mut followers = FOLLOWERS.lock();
+        followers.retain(|(lifetime, _)| !lifetime.is_cancelled());
+        followers.iter().map(|(_, told)| Arc::clone(told)).collect()
+    };
+    for told in followers {
+        told();
+    }
+}
+
+/// What a wait on the system's word that the table changed ended with.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Heard {
+    Changed,
+    /// Nothing said within the wait.
+    Quiet,
+    /// The system refused the wait: nothing is followed any more.
+    Failed,
+}
+
+/// Wait on `heard` for as long as it takes, then for the rest of a burst,
+/// and tell the followers ([`told`]): on a thread of its own, until the
+/// system refuses a wait. Whether the thread started.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn follow_with(heard: impl Fn(Option<Duration>) -> Heard + Send + 'static) -> bool {
+    std::thread::Builder::new()
+        .name("skwir-mounts".into())
+        .spawn(move || {
+            loop {
+                match heard(None) {
+                    Heard::Changed => {}
+                    Heard::Quiet => continue,
+                    Heard::Failed => return,
+                }
+                let mut ended = false;
+                loop {
+                    match heard(Some(SETTLE)) {
+                        Heard::Changed => {}
+                        Heard::Quiet => break,
+                        Heard::Failed => {
+                            ended = true;
+                            break;
+                        }
+                    }
+                }
+                told();
+                crate::scheduler::release_now();
+                if ended {
+                    return;
+                }
+            }
+        })
+        .is_ok()
+}
+
 /// The table as last read, read again when stale.
 fn table() -> Arc<Table> {
     let mut held = TABLE.lock();
@@ -654,6 +748,35 @@ fn table() -> Arc<Table> {
 
 static TABLE: Mutex<Option<(Instant, Arc<Table>)>> = Mutex::new(None);
 
+/// The devices whose inode numbers are made up, each with its mount's
+/// number ([`mount_of`]): worked out the first time one is asked, never by
+/// a read of the table alone. Asking a FUSE mount its unique number holds
+/// the mount for that moment, and every process following the table reads
+/// it as a mount comes or goes ([`follow`]): a program letting go of its
+/// mount just then was refused, the mount busy.
+#[derive(Default)]
+struct MadeUp {
+    numbers: std::sync::OnceLock<Vec<(u64, u64)>>,
+    /// What they are worked out from: the table's mounts.
+    #[cfg(target_os = "linux")]
+    mounts: Vec<crate::fs::volume::Mounted>,
+}
+
+impl MadeUp {
+    fn get(&self) -> &[(u64, u64)] {
+        self.numbers.get_or_init(|| {
+            #[cfg(target_os = "linux")]
+            {
+                imp::made_up(&self.mounts, imp::unique)
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                Vec::new()
+            }
+        })
+    }
+}
+
 /// The network mounts, deepest point first, the devices whose inode
 /// numbers are made up, each with its mount's number ([`mount_of`]), and
 /// every mount's point, deepest first ([`volume_of`]), where the system
@@ -661,7 +784,7 @@ static TABLE: Mutex<Option<(Instant, Arc<Table>)>> = Mutex::new(None);
 #[derive(Default)]
 struct Table {
     remotes: Vec<Arc<Remote>>,
-    made_up: Vec<(u64, u64)>,
+    made_up: MadeUp,
     // Windows lists no table: its volumes are told by a path's drive or
     // share (`volume_of`), and its list stays empty, never read.
     #[cfg_attr(windows, allow(dead_code))]
@@ -721,6 +844,12 @@ fn bridge_depth(remote: &Remote) -> Option<usize> {
         .iter()
         .find(|(fstype, _)| *fstype == remote.fstype)
         .map(|(_, depth)| *depth)
+}
+
+/// Whether `remote` is a bridge ([`BRIDGES`]): one mount of the table
+/// holding many, listed by [`bridged`].
+pub fn is_bridge(remote: &Remote) -> bool {
+    bridge_depth(remote).is_some()
 }
 
 /// The mounts the bridge `remote` holds ([`BRIDGES`]), each a remote of
@@ -834,13 +963,53 @@ mod imp {
     use super::Remote;
     use crate::fs::volume::Mounted;
 
-    pub(super) fn read() -> (Vec<Remote>, Vec<(u64, u64)>, Vec<std::path::PathBuf>) {
+    /// Follow the table ([`super::follow`]): the kernel marks
+    /// `/proc/self/mountinfo` held open (`POLLPRI`) once a mount of this
+    /// namespace was made or let go of since it was last asked, and wakes
+    /// nothing otherwise.
+    pub(super) fn follow() -> bool {
+        use super::Heard;
+        use rustix::event::{PollFd, PollFlags, Timespec};
+        let Ok(table) = std::fs::File::open("/proc/self/mountinfo") else {
+            return false;
+        };
+        super::follow_with(move |within| {
+            let timeout = within.and_then(|wait| Timespec::try_from(wait).ok());
+            let mut asked = [PollFd::new(&table, PollFlags::PRI)];
+            match rustix::event::poll(&mut asked, timeout.as_ref()) {
+                Ok(0) | Err(rustix::io::Errno::INTR) => Heard::Quiet,
+                Ok(_) => {
+                    let said = asked[0].revents();
+                    if said.intersects(PollFlags::PRI | PollFlags::ERR) {
+                        Heard::Changed
+                    } else if said.is_empty() {
+                        Heard::Quiet
+                    } else {
+                        Heard::Failed
+                    }
+                }
+                Err(_) => Heard::Failed,
+            }
+        })
+    }
+
+    /// The table: its network mounts, its mounts for the numbers made up
+    /// (worked out when asked, `MadeUp`), its points. Reads procfs alone.
+    pub(super) fn read() -> (Vec<Remote>, super::MadeUp, Vec<std::path::PathBuf>) {
         let Ok(text) = std::fs::read("/proc/self/mountinfo") else {
-            return (Vec::new(), Vec::new(), Vec::new());
+            return (Vec::new(), super::MadeUp::default(), Vec::new());
         };
         let mounts = crate::fs::volume::mountinfo(&text);
         let points = mounts.iter().map(|m| m.point.clone()).collect();
-        (remotes(&mounts), made_up(&mounts, unique), points)
+        let remotes = remotes(&mounts);
+        (
+            remotes,
+            super::MadeUp {
+                numbers: std::sync::OnceLock::new(),
+                mounts,
+            },
+            points,
+        )
     }
 
     /// The network mounts of `mounts`.
@@ -909,11 +1078,101 @@ mod imp {
 
     use super::Remote;
 
+    /// `VQ_MOUNT` and `VQ_UNMOUNT` (`sys/mount.h`), which the libc crate
+    /// lacks: what a file system event says of a mount made or let go of.
+    const VQ_MOUNT: u32 = 0x0008;
+    const VQ_UNMOUNT: u32 = 0x0010;
+
+    /// Follow the table ([`super::follow`]): kqueue's file system filter
+    /// (`EVFILT_FS`) says a mount was made or let go of, and wakes nothing
+    /// otherwise.
+    pub(super) fn follow() -> bool {
+        use super::Heard;
+        // SAFETY: a new queue, the thread's below alone, or closed here.
+        #[allow(unsafe_code)]
+        let queue = unsafe { libc::kqueue() };
+        if queue < 0 {
+            return false;
+        }
+        let asked = libc::kevent {
+            ident: 0,
+            filter: libc::EVFILT_FS,
+            flags: libc::EV_ADD | libc::EV_CLEAR,
+            fflags: 0,
+            data: 0,
+            udata: std::ptr::null_mut(),
+        };
+        // SAFETY: one change read from `asked`; no event asked back.
+        #[allow(unsafe_code)]
+        let added = unsafe {
+            libc::kevent(
+                queue,
+                &raw const asked,
+                1,
+                std::ptr::null_mut(),
+                0,
+                std::ptr::null(),
+            )
+        };
+        let close = || {
+            // SAFETY: the queue made above, closed once.
+            #[allow(unsafe_code)]
+            unsafe {
+                libc::close(queue);
+            }
+        };
+        if added < 0 {
+            close();
+            return false;
+        }
+        let followed = super::follow_with(move |within| {
+            let timeout = within.map(|wait| libc::timespec {
+                tv_sec: libc::time_t::try_from(wait.as_secs()).unwrap_or(libc::time_t::MAX),
+                tv_nsec: libc::c_long::from(wait.subsec_nanos()),
+            });
+            // SAFETY: plain data, all zeros a valid value; filled by the call.
+            #[allow(unsafe_code)]
+            let mut said: libc::kevent = unsafe { std::mem::zeroed() };
+            // SAFETY: room for one event in `said`; the time, where given,
+            // lives across the call.
+            #[allow(unsafe_code)]
+            let got = unsafe {
+                libc::kevent(
+                    queue,
+                    std::ptr::null(),
+                    0,
+                    &raw mut said,
+                    1,
+                    timeout
+                        .as_ref()
+                        .map_or(std::ptr::null(), std::ptr::from_ref),
+                )
+            };
+            match got {
+                0 => Heard::Quiet,
+                got if got < 0 => {
+                    if std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {
+                        Heard::Quiet
+                    } else {
+                        Heard::Failed
+                    }
+                }
+                _ if said.fflags & (VQ_MOUNT | VQ_UNMOUNT) != 0 => Heard::Changed,
+                // Another of its words (a volume short of room).
+                _ => Heard::Quiet,
+            }
+        });
+        if !followed {
+            close();
+        }
+        followed
+    }
+
     /// macOS's mounts that are not local (`MNT_LOCAL` unset), and every
     /// mount's point; no device is told whose numbers are made up.
-    pub(super) fn read() -> (Vec<Remote>, Vec<(u64, u64)>, Vec<std::path::PathBuf>) {
+    pub(super) fn read() -> (Vec<Remote>, super::MadeUp, Vec<std::path::PathBuf>) {
         let (remotes, points) = mounts();
-        (remotes, Vec::new(), points)
+        (remotes, super::MadeUp::default(), points)
     }
 
     /// macOS's mounts that are not local (`MNT_LOCAL` unset), and every
@@ -973,10 +1232,50 @@ mod imp {
 
     use super::Remote;
 
+    /// What follows the folders programs mount in, once the table is
+    /// followed, and those it follows. Taken before `MOUNT_FOLDERS`.
+    static WATCHER: parking_lot::Mutex<Option<(crate::fs::Settled, Vec<std::path::PathBuf>)>> =
+        parking_lot::Mutex::new(None);
+
+    /// Follow the table ([`super::follow`]): the table is the folders
+    /// programs mount in ([`super::mounts_in`]), a mount made there or let
+    /// go of a folder of theirs come or gone.
+    pub(super) fn follow() -> bool {
+        let Some(watcher) = crate::fs::Settled::start(
+            "skwir-mounts",
+            super::SETTLE,
+            |_| true,
+            || {
+                super::told();
+                true
+            },
+        ) else {
+            return false;
+        };
+        *WATCHER.lock() = Some((watcher, Vec::new()));
+        watch_new();
+        true
+    }
+
+    /// Follow the folders programs mount in that are not followed yet,
+    /// where the table is followed: after one is said, and once followed,
+    /// whichever comes last.
+    pub(super) fn watch_new() {
+        let mut held = WATCHER.lock();
+        let Some((watcher, followed)) = held.as_mut() else {
+            return;
+        };
+        for (folder, _) in super::MOUNT_FOLDERS.lock().iter() {
+            if !followed.contains(folder) && watcher.watch(folder) {
+                followed.push(folder.clone());
+            }
+        }
+    }
+
     /// Windows lists no table: a path is told by its own form
     /// ([`share_of`]), and a program's mounts in a folder it said by their
     /// being mount points there ([`super::mounts_in`]).
-    pub(super) fn read() -> (Vec<Remote>, Vec<(u64, u64)>, Vec<std::path::PathBuf>) {
+    pub(super) fn read() -> (Vec<Remote>, super::MadeUp, Vec<std::path::PathBuf>) {
         use std::os::windows::fs::MetadataExt;
         /// `FILE_ATTRIBUTE_REPARSE_POINT`: what a folder a file system is
         /// mounted on is.
@@ -1001,7 +1300,7 @@ mod imp {
                 }
             }
         }
-        (remotes, Vec::new(), Vec::new())
+        (remotes, super::MadeUp::default(), Vec::new())
     }
 
     /// The share holding `path`: a UNC path's (`\\server\share`), or a
@@ -1051,13 +1350,106 @@ mod imp {
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 mod imp {
-    pub(super) fn read() -> (Vec<super::Remote>, Vec<(u64, u64)>, Vec<std::path::PathBuf>) {
-        (Vec::new(), Vec::new(), Vec::new())
+    /// Nothing tells the table's changes here.
+    pub(super) fn follow() -> bool {
+        false
+    }
+
+    pub(super) fn read() -> (Vec<super::Remote>, super::MadeUp, Vec<std::path::PathBuf>) {
+        (Vec::new(), super::MadeUp::default(), Vec::new())
     }
 }
 
 #[cfg(test)]
 mod tests {
+    /// A mount made and let go of by another program is told, once each,
+    /// and the table read again by then. Run in a mount namespace of the
+    /// test's own (`the_table_is_followed`), where it mounts as root: it
+    /// does nothing anywhere else.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_mount_made_or_let_go_of_is_told() {
+        use std::process::Command;
+        use std::time::Duration;
+        if std::env::var_os("SKWIR_TEST_IN_NAMESPACE").is_none() {
+            return;
+        }
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let lifetime = crate::cancel::CancelToken::new();
+        assert!(super::follow(&lifetime, move || {
+            let _ = tx.send(());
+        }));
+        let point = tempfile::tempdir().unwrap();
+        let point = point.path().join("a mount's point");
+        std::fs::create_dir(&point).unwrap();
+        // Read before: kept until told.
+        assert_ne!(super::volume_of(&point).as_deref(), Some(point.as_path()));
+        let mounted = Command::new("mount")
+            .args(["-t", "tmpfs", "skwir-test"])
+            .arg(&point)
+            .status()
+            .unwrap();
+        assert!(mounted.success());
+        rx.recv_timeout(Duration::from_secs(10))
+            .expect("the mount was told");
+        assert_eq!(super::volume_of(&point).as_deref(), Some(point.as_path()));
+        let let_go = Command::new("umount").arg(&point).status().unwrap();
+        assert!(let_go.success());
+        rx.recv_timeout(Duration::from_secs(10))
+            .expect("letting go of it was told");
+        assert_ne!(super::volume_of(&point).as_deref(), Some(point.as_path()));
+        // A burst is one call: nothing more was told.
+        assert!(rx.recv_timeout(Duration::from_millis(600)).is_err());
+    }
+
+    /// Reading the table asks no mount anything: the numbers a FUSE mount
+    /// is asked for are worked out once one is asked of it ([`mount_of`]).
+    /// Every process following the table reads it as a mount comes or
+    /// goes; a mount asked then is busy for the program letting go of it.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn reading_the_table_asks_no_mount() {
+        let table = super::Table::read();
+        assert!(table.made_up.numbers.get().is_none(), "nothing asked yet");
+        let _ = super::number_in(&table, rustix::fs::makedev(0, 1));
+        assert!(table.made_up.numbers.get().is_some(), "asked when needed");
+    }
+
+    /// [`a_mount_made_or_let_go_of_is_told`], run as root in a user and
+    /// mount namespace of its own: the mounts it makes are seen there
+    /// alone. Skipped where user namespaces are not allowed.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_table_is_followed() {
+        if std::env::var_os("SKWIR_TEST_IN_NAMESPACE").is_some() {
+            return;
+        }
+        let Ok(test) = std::env::current_exe() else {
+            return;
+        };
+        let ran = std::process::Command::new("unshare")
+            .args(["-r", "-m", "--propagation", "private"])
+            .arg(&test)
+            .args([
+                "--exact",
+                "fs::reach::tests::a_mount_made_or_let_go_of_is_told",
+            ])
+            .env("SKWIR_TEST_IN_NAMESPACE", "1")
+            .output();
+        let Ok(ran) = ran else {
+            eprintln!("skipped: unshare is not installed");
+            return;
+        };
+        let said = String::from_utf8_lossy(&ran.stderr);
+        if !ran.status.success() && said.contains("unshare failed") {
+            eprintln!("skipped: user namespaces are not allowed here: {said}");
+            return;
+        }
+        let out = String::from_utf8_lossy(&ran.stdout);
+        assert!(ran.status.success(), "{out}\n{said}");
+        assert!(out.contains("1 passed"), "it ran: {out}");
+    }
+
     /// A path's volume is the deepest mount above it, told by its text
     /// alone from the table in memory: nothing is read of the path.
     #[cfg(target_os = "linux")]
@@ -1249,7 +1641,7 @@ mod tests {
                 .into_iter()
                 .map(Arc::new)
                 .collect(),
-            made_up: Vec::new(),
+            made_up: MadeUp::default(),
             points: Vec::new(),
         };
         assert_eq!(table.remotes.len(), 2);
@@ -1279,7 +1671,7 @@ mod tests {
                 .into_iter()
                 .map(Arc::new)
                 .collect(),
-            made_up: Vec::new(),
+            made_up: MadeUp::default(),
             points: Vec::new(),
         };
         let root = Path::new("/run/user/1000/kio-fuse-AbCdEf");

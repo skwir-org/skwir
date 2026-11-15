@@ -534,19 +534,29 @@ impl Connector for Rclone {
         }
     }
 
-    fn servers(&self, cancel: &CancelToken) -> Vec<Server> {
+    fn servers(&self, cancel: &CancelToken) -> crate::connector::Named {
         let Some(rclone) = skwir_core::os_path::find_program("rclone") else {
-            return Vec::new();
+            return crate::connector::Named::default();
         };
         let key = (rclone.clone(), self.config.clone());
-        servers_listed(
+        let servers = servers_listed(
             &key,
             || crate::rclone_config::config_file(&rclone, self, cancel).ok(),
             || self.listed(&rclone, cancel),
             // The user's own: what a start reads. One a test or a form
             // names is listed when it asks.
             self.config.is_none().then(recalled_slot).flatten().as_ref(),
-        )
+        );
+        // Its file, where rclone placed it: one not made yet is followed
+        // too, `rclone config` making it.
+        let file = with_listed(&key, |listed| listed.file.clone());
+        crate::connector::Named {
+            servers,
+            from: file
+                .map(crate::connector::Source::File)
+                .into_iter()
+                .collect(),
+        }
     }
 }
 

@@ -1325,6 +1325,13 @@ of bars, split or not.
   installed, else the desktop's, changed only through
   `IconCache::set_theme`. On macOS and Windows the name maps to a system
   icon (`system_icons::for_name`).
+- **Followed, whoever changes it.** What a group shows of what other
+  programs change is followed by its plugin, never asked for by a
+  refresh: volumes by `/dev/disk/by-uuid` (plugged, unplugged) and the
+  table of mounts (`reach::follow`: mounted or let go of anywhere,
+  udisks's `/run/media` and `/media`, fstab's `/mnt`), bookmarks by
+  their file, the Network section as `remote.md` says. A change of the
+  table that leaves a group as it was publishes nothing.
 - **Place fields:** `space` (filled by a worker: asking a volume can
   block), `eject`, `unavailable` (dims the row; the reason is its
   tooltip), `busy` ("Unlocking…": a still hourglass, nothing to click

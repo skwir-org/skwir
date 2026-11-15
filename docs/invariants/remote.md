@@ -13,9 +13,25 @@ ADR-077 (which revises ADR-021).
   no file-system protocol and stores no credential.
 - Whether a path is remote is `skwir_core::fs::reach` (`of`, `lane`,
   `of_device`): the system's mount table, read again when older than a
-  second and at once after a mount made or let go of here
-  (`reach::changed`). Never decide it by reading the path: a lookup is in
-  memory, from any thread. Never `canonicalize` a path to classify it.
+  second, at once after a mount made or let go of here
+  (`reach::changed`), and once the system says another program changed
+  it (`reach::follow`). Never decide it by reading the path: a lookup is
+  in memory, from any thread. Never `canonicalize` a path to classify it.
+- **The table is followed**, never polled (`reach::follow`, one thread
+  for every follower, each until its lifetime ends): on Linux the kernel
+  marks `/proc/self/mountinfo` held open (`POLLPRI`) at any mount or
+  unmount of the namespace, on macOS kqueue's file system filter
+  (`EVFILT_FS`) says one, on Windows the folders programs mount in
+  (`reach::mounts_in`) are watched; a burst settles (250 ms) into one
+  call. Elsewhere nothing is told, and what shows mounts reads them again
+  as a window comes to the front. A follower starts work and never waits
+  for it. Tested in a user and mount namespace of the test's own
+  (`the_table_is_followed`), never by mounting in the session's.
+- **Reading the table touches no mount**: the numbers made up (a FUSE
+  mount's unique number, `statx` of its point) are worked out the first
+  time one is asked (`reach::mount_of`, `MadeUp`), by what reads that
+  mount's files anyway, never at each read, which every process
+  following the table makes as a mount comes or goes.
 - A path reached through a link into a remote is told by its folder's
   device once opened (`reach::of_device`): the folder listing takes its
   lane from it.
@@ -535,6 +551,55 @@ ADR-077 (which revises ADR-021).
   A remote folder bookmarked stays a bookmark until Keep as Server
   (its place's menu, a `place` menu source) makes it a server and takes
   its bookmark out.
+- **What the Network section shows is followed, whoever changes it**
+  (ADR-086, amended 2026-11-15), as Dolphin's sidebar follows its own:
+  its mounts by the table (`reach::follow`), its servers by the files
+  they are read from. A reader of servers says where it read
+  (`connector::Named`: rclone's configuration where rclone placed it,
+  Dolphin's `user-places.xbel`, fstab; `servers::sources`: KDE's network
+  folders), and the plugin watches that (`sources`: a file's folder, or
+  the nearest folder above that is there while it is not, and the
+  folder a link leads into, as writers replace a file); once a change
+  settles (400 ms) the servers are read again, which follows what they
+  then name. What the system told is shown only where the section
+  changed (`Asked::Told`), and asks no server: a container's mounts cost
+  a read in memory, an unchanged rclone configuration no run of rclone.
+  A mount come since is asked whether it answers and how full it is only
+  while someone looks (`App::looked_at`), else as the window comes back
+  (`Known::looked_at`): asked at once, it was busy for the program that
+  made it, letting go of it again (a connection refused, tried again).
+  No bridge (GVfs's, kio-fuse's) is listed for it: a change of the table
+  never changes what a bridge holds, kept as last listed
+  (`Bridges::Kept`), a bridge new to the table listed. Its program waits
+  while all it has waits on a server that stopped (Samba stopped under
+  GVfs), and what lists it waits too, on workers every folder shares.
+  GVfs's signals and a refresh asked list them; the window coming back
+  too, on a thread of its own.
+- **What names no server is never looked up** (`Address::server_name`):
+  a device, a remote of rclone's configuration, an S3 bucket. A bucket's
+  name sent to the resolvers waited on each (LLMNR and mDNS for a single
+  label) and held a worker of the system's name service (nscd)
+  meanwhile: every process following the mounts asking at once, a
+  user's name took ten seconds to look up anywhere on the machine, and
+  programs starting (rclone, ssh) waited with it.
+- **A whole refresh is never lost to a later read** (`whole_owed`): the
+  newest read stores, and one the system told that began after a
+  refresh asked shows all and asks the mounts known as that refresh
+  would have (an rclone mount's features among them), its own read
+  dropped as older. What no watch tells (a folder
+  kio-fuse holds more of, a share another program connected, a source
+  that could not be watched) is read again as a window comes to the
+  front (`Plugin::on_looked_at`), the servers unless a read of them is
+  under way. A refresh asked counts in `Remotes::refreshes`; what the
+  system told does not.
+- **KDE is told what Skwir changes in its network folders** as KDE's
+  own Add Network Folder (`knetattach`) tells it: `org.kde.KDirNotify`'s
+  `FilesAdded` of `remote:/` on the session bus, after an entry written,
+  changed or removed (`servers::tell_kde_on`, on a thread of its own,
+  never waited for). KIO's watcher of the folder (`remotedirnotify`) says
+  the same for any change, but runs in `kded6`, which runs in Plasma
+  alone: elsewhere an open Dolphin showing Network lists it again only
+  on that signal.
 - Settings' list of servers (`remote.servers`) is every server the
   Network section knows, as `remote.server_records` answers from memory:
   each line says where it is kept, and does what its menu does

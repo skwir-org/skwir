@@ -14,7 +14,7 @@ use skwir_core::app::App;
 use skwir_core::settings::SettingSpec;
 
 use crate::address::{Address, Scheme};
-use crate::connector::Server;
+use crate::connector::{Server, Source};
 
 /// Skwir's own list of servers: each one's name and address.
 pub const LIST: &str = "remote.kept_servers";
@@ -161,6 +161,7 @@ pub fn add(app: &App, name: &str, address: &Address) -> anyhow::Result<Kept> {
             })?;
             std::fs::create_dir_all(&folder)?;
             write_entry(&free_name(&folder, name), name, address)?;
+            tell_kde();
         }
         Kept::Skwir | Kept::Tool(_) => {
             let mut all = own(app);
@@ -194,7 +195,9 @@ pub fn change(app: &App, old: &Address, name: &str, new: &Address) -> anyhow::Re
         return keep_own(app, &all);
     }
     let file = kde_file_of(old).ok_or_else(|| anyhow::anyhow!("no server is kept at {old}"))?;
-    write_entry(&file, name, new)
+    write_entry(&file, name, new)?;
+    tell_kde();
+    Ok(())
 }
 
 /// Forget the server kept at `address`, where it is kept.
@@ -211,6 +214,7 @@ pub fn remove(app: &App, address: &Address) -> anyhow::Result<()> {
     let file =
         kde_file_of(address).ok_or_else(|| anyhow::anyhow!("no server is kept at {address}"))?;
     std::fs::remove_file(&file)?;
+    tell_kde();
     Ok(())
 }
 
@@ -239,6 +243,53 @@ fn server(label: String, address: Address, kept: Kept) -> Server {
 /// KDE's network folders: `$XDG_DATA_HOME/remoteview`.
 fn kde_folder() -> Option<PathBuf> {
     skwir_core::xdg::data_home().map(|data| data.join("remoteview"))
+}
+
+/// Where the servers kept by their address are read, followed
+/// (`connector::Source`): KDE's network folders, which Dolphin's Add
+/// Network Folder writes too. Skwir's own list is the plugin's data,
+/// changed through Skwir.
+pub fn sources() -> Vec<Source> {
+    kde_folder().map(Source::Folder).into_iter().collect()
+}
+
+/// What KDE's programs are told once its network folders changed:
+/// `KDirNotify`'s `FilesAdded` of `remote:/`, as KDE's own Add Network
+/// Folder (`knetattach`) says it, and KIO's watcher of the folder
+/// (`remotedirnotify`, in `kded6`, not running outside Plasma) says it
+/// for any change, a removal too. An open Dolphin showing Network lists
+/// it again. Sent on `bus`.
+///
+/// # Errors
+/// When the bus refused the signal.
+#[cfg(target_os = "linux")]
+pub fn tell_kde_on(bus: &zbus::blocking::Connection) -> zbus::Result<()> {
+    bus.emit_signal(
+        None::<&str>,
+        "/",
+        "org.kde.KDirNotify",
+        "FilesAdded",
+        &("remote:/",),
+    )
+}
+
+/// [`tell_kde_on`] the session's bus, on a thread of its own: never
+/// waited for, and nothing said where no session bus is.
+fn tell_kde() {
+    #[cfg(target_os = "linux")]
+    {
+        let told = std::thread::Builder::new()
+            .name("skwir-tell-kde".into())
+            .spawn(|| {
+                if let Err(error) = skwir_platform::bus::session().and_then(|bus| tell_kde_on(&bus))
+                {
+                    tracing::debug!("KDE was not told its network folders changed: {error}");
+                }
+            });
+        if let Err(error) = told {
+            tracing::debug!("KDE was not told its network folders changed: {error}");
+        }
+    }
 }
 
 /// The desktop entry of KDE's network folders that links to `address`.

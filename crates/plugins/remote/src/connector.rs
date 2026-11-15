@@ -117,6 +117,26 @@ pub struct Server {
     pub kept: crate::servers::Kept,
 }
 
+/// Where servers were read: what the plugin follows while it is enabled,
+/// a change there, by any program, reading them again (ADR-086, amended
+/// 2026-11-15).
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Source {
+    /// A file: rclone's configuration, Dolphin's places, fstab.
+    File(PathBuf),
+    /// A folder whose files are read: KDE's network folders.
+    Folder(PathBuf),
+}
+
+/// The servers a tool's configuration names (`Connector::servers`), and
+/// where they were read: one never comes without the other, so that what
+/// the Network section lists is followed.
+#[derive(Clone, Debug, Default)]
+pub struct Named {
+    pub servers: Vec<Server>,
+    pub from: Vec<Source>,
+}
+
 /// An installed tool that mounts remotes.
 pub trait Connector: Send + Sync {
     /// Its name in settings and messages: `sshfs`, `gvfs`, `rclone`.
@@ -217,13 +237,13 @@ pub trait Connector: Send + Sync {
     fn bus_env(&self) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
         Vec::new()
     }
-    /// The servers its configuration names. Reads files and may start the
-    /// tool: on a worker. A tool it starts is waited for until `cancel`,
-    /// which the next read of the servers cancels, never cut off by a time
-    /// (on a machine under load, its answer would be lost until asked
-    /// again).
-    fn servers(&self, _cancel: &CancelToken) -> Vec<Server> {
-        Vec::new()
+    /// The servers its configuration names, and the files they were read
+    /// from, followed. Reads files and may start the tool: on a worker. A
+    /// tool it starts is waited for until `cancel`, which the next read of
+    /// the servers cancels, never cut off by a time (on a machine under
+    /// load, its answer would be lost until asked again).
+    fn servers(&self, _cancel: &CancelToken) -> Named {
+        Named::default()
     }
     /// What copies many files at once between this machine and a mount it
     /// made (ADR-078), where its tool has a way: sshfs's, rsync through

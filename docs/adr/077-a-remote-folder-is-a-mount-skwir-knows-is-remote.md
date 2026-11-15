@@ -211,3 +211,13 @@ Revises ADR-021: its direction kept, its steps decided.
   iPhone) has an address of its own, opened by GVfs alone, and what
   GVfs's volume monitors offer is listed among the devices before it is
   mounted, mounted once opened.
+- 2026-11-15 (ADR-086 amended): the table is followed, never polled
+  (`reach::follow`): Linux's `/proc/self/mountinfo` held open and marked
+  by the kernel (`POLLPRI`) at any mount or unmount, macOS's kqueue file
+  system filter, Windows' folders programs mount in; a burst settles
+  into one call, the table read again by then. The remote plugin shows a
+  mount another program made or let go of, the places plugin a volume
+  mounted anywhere (it watched `/run/media/<user>` alone). Reading the
+  table touches no mount: a FUSE mount's unique number (`statx` of its
+  point) is asked once a file there needs it, never at each read, which
+  every process following the table makes as a mount comes or goes.
