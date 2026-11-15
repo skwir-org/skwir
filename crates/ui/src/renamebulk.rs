@@ -104,9 +104,15 @@ pub struct BulkState {
 
 impl BulkState {
     /// Only what the preview showed applies, and only if it showed no
-    /// error.
+    /// error and a name that changes: while none does, Rename is inert and
+    /// the preview says so.
     fn applies(&self) -> bool {
-        self.current && self.error.is_none()
+        self.current && self.error.is_none() && self.renamed > 0
+    }
+
+    /// The preview is the latest change's, and no name changes.
+    fn changes_nothing(&self) -> bool {
+        self.current && self.error.is_none() && self.renamed == 0
     }
 
     /// What Tab walks: its fields, then Cancel and Rename.
@@ -147,28 +153,8 @@ impl Shell {
         let Some(b) = &self.bulk else {
             return serde_json::json!({});
         };
-        let text = |i: usize| b.inputs[i].read(cx).text().trim().to_owned();
-        let opt = |s: String| {
-            if s.is_empty() {
-                serde_json::Value::Null
-            } else {
-                serde_json::Value::String(s)
-            }
-        };
-        let start: u64 = text(3).parse().unwrap_or(1);
-        let case = if b.case == 0 {
-            serde_json::Value::Null
-        } else {
-            serde_json::Value::String(CASES[b.case].into())
-        };
-        serde_json::json!({
-            "template": opt(text(0)),
-            "regex": opt(text(1)),
-            "replacement": opt(text(2)),
-            "case": case,
-            "start": start,
-            "pane": b.pane,
-        })
+        let texts: [String; 4] = std::array::from_fn(|i| b.inputs[i].read(cx).text().to_string());
+        spec_of(&texts, b.case, b.pane)
     }
 
     /// Whether the pane it was opened for still selects what it did: the
@@ -414,6 +400,36 @@ impl Shell {
     }
 }
 
+/// The rename the fields ask (`FIELDS`' texts, the case chosen) for the
+/// pane it was opened for. The template and the start are read without
+/// what is around them; the regex and the replacement as typed, a space
+/// being something a pattern matches or a match becomes (a recipe's
+/// underscores to spaces). Empty, a field asks nothing.
+fn spec_of(texts: &[String; 4], case: usize, pane: PaneId) -> serde_json::Value {
+    let [template, regex, replacement, start] = texts;
+    let opt = |s: &str| {
+        if s.is_empty() {
+            serde_json::Value::Null
+        } else {
+            serde_json::Value::String(s.to_owned())
+        }
+    };
+    let start: u64 = start.trim().parse().unwrap_or(1);
+    let case = if case == 0 {
+        serde_json::Value::Null
+    } else {
+        serde_json::Value::String(CASES[case].into())
+    };
+    serde_json::json!({
+        "template": opt(template.trim()),
+        "regex": opt(regex),
+        "replacement": opt(replacement),
+        "case": case,
+        "start": start,
+        "pane": pane,
+    })
+}
+
 pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let b = shell.bulk.as_ref()?;
     let theme = cx.global::<Theme>().clone();
@@ -554,6 +570,13 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
                 "rename-preview-scrollbar",
                 crate::elements::scrollbar::Scrolls::Offset(b.scroll.clone()),
             ));
+    // Nothing to rename is said where the renames would be.
+    let unchanged = b.changes_nothing().then(|| {
+        div()
+            .text_body()
+            .text_color(theme.text_muted)
+            .child("No name changes")
+    });
     let more = (b.renamed > b.preview.len()).then(|| {
         div()
             .text_small()
@@ -577,6 +600,7 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
                 .map(|e| div().text_body().text_color(theme.error).child(e)),
         )
         .child(list)
+        .children(unchanged)
         .children(more)
         .child(modal::footer(
             match shell.keys_for("ui.field_reference", &serde_json::Value::Null) {
@@ -615,4 +639,29 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
             &theme,
         ));
     Some(modal::modal(panel, 60., 4, Shell::close_bulk, &theme, cx))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The regex and the replacement are taken as typed: a recipe's
+    /// replacement that is a space turns underscores into spaces, never
+    /// takes them away; the template and the start without what is around
+    /// them; an empty field asks nothing.
+    #[test]
+    fn the_fields_ask_what_is_typed() {
+        let texts = |t: [&str; 4]| t.map(str::to_owned);
+        let pane = PaneId(1);
+        let spec = spec_of(&texts([" {full} ", "_", " ", " 7 "]), 2, pane);
+        assert_eq!(spec["template"], "{full}");
+        assert_eq!(spec["regex"], "_");
+        assert_eq!(spec["replacement"], " ");
+        assert_eq!(spec["start"], 7);
+        assert_eq!(spec["case"], "upper");
+        let spec = spec_of(&texts(["", "", "", "x"]), 0, pane);
+        assert!(spec["template"].is_null() && spec["regex"].is_null());
+        assert!(spec["replacement"].is_null() && spec["case"].is_null());
+        assert_eq!(spec["start"], 1);
+    }
 }
