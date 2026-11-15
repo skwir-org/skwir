@@ -672,8 +672,15 @@ pub fn follow(
     lifetime: &crate::cancel::CancelToken,
     told: impl Fn() + Send + Sync + 'static,
 ) -> bool {
-    FOLLOWERS.lock().push((lifetime.clone(), Arc::new(told)));
-    *FOLLOWED.get_or_init(imp::follow)
+    let followed = *FOLLOWED.get_or_init(imp::follow);
+    if followed {
+        // Those whose lifetime ended let go of here too: a plugin turned
+        // off and on again, the table unchanged meanwhile.
+        let mut followers = FOLLOWERS.lock();
+        followers.retain(|(lifetime, _)| !lifetime.is_cancelled());
+        followers.push((lifetime.clone(), Arc::new(told)));
+    }
+    followed
 }
 
 /// The system said the table changed: it is read again, what is known of
@@ -1443,6 +1450,20 @@ mod tests {
         assert_ne!(super::volume_of(&point).as_deref(), Some(point.as_path()));
         // A burst is one call: nothing more was told.
         assert!(rx.recv_timeout(Duration::from_millis(600)).is_err());
+    }
+
+    /// A follower whose lifetime ended is let go of as another follows,
+    /// the table unchanged meanwhile: a plugin turned off and on again
+    /// leaves nothing behind it.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_follower_whose_lifetime_ended_is_let_go_of() {
+        let gone = crate::cancel::CancelToken::new();
+        assert!(super::follow(&gone, || {}));
+        gone.cancel();
+        let kept = crate::cancel::CancelToken::new();
+        assert!(super::follow(&kept, || {}));
+        assert_eq!(super::FOLLOWERS.lock().len(), 1);
     }
 
     /// Reading the table asks no mount anything: the number a FUSE mount
