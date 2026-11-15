@@ -6,10 +6,10 @@
 //! under `?` and F1 (`Typed::Help`), each row writing its part where the
 //! caret is, in place of a lone `?`.
 
-use skwir_core::reference::{Group, Item, Reference};
+use skwir_core::reference::{Group, Item, Reference, floor_boundary};
 use skwir_core::suggest::{Ask, Section, Suggestion};
 
-use crate::assist;
+use crate::{assist, lang};
 
 /// How a group's part is written where the caret is: a term, apart from
 /// the words beside it; or a part of a term (a sign inside `/…/`), as it
@@ -38,17 +38,54 @@ fn groups() -> Vec<(Group, Written)> {
         .item(Item::new("-", "Not this: -draft, -#tag, -kind:image"))
         .item(Item::new("( )", "Together: (a OR b) c").inserting("("))
         .item(Item::new("\"…\"", "As written: \"two words\", \"OR\", \"#3\"").inserting("\""));
+    // What the parser reads, said from its own tables.
+    let units: Vec<String> = lang::SIZE_UNITS
+        .iter()
+        .filter(|(_, bytes)| *bytes > 1)
+        .map(|(unit, _)| unit.to_string())
+        .collect();
+    let periods: Vec<&str> = lang::NAMED_PERIODS
+        .iter()
+        .map(|(name, ..)| *name)
+        .filter(|name| *name != "today")
+        .collect();
+    let durations: Vec<String> = lang::DURATION_UNITS
+        .iter()
+        .map(|(unit, counts)| format!("{unit} {counts}"))
+        .collect();
+    let flags: Vec<String> = lang::REGEX_FLAGS
+        .iter()
+        .map(|(flag, _, means)| format!("{flag}: {means}"))
+        .collect();
     let values = Group::new("Values")
-        .item(Item::new("size>10M", "More than 10 MiB: k, M, G, each 1024"))
+        .item(Item::new(
+            "size>10M",
+            format!(
+                "More than 10 MiB: {}, each 1024 times the one before",
+                units.join(", ")
+            ),
+        ))
         .item(Item::new("size:1M..100M", "From one to the other, both in"))
-        .item(Item::new("rating>=3", "At least (> < >= <=); rating:0 unrated"))
+        .item(Item::new(
+            "rating>=3",
+            "At least (> < >= <=); rating:0 unrated",
+        ))
         .item(Item::new(
             "modified:today",
-            "A period: yesterday, this-week, last-week, this-month, last-month, this-year, last-year",
+            format!("A period: {}", periods.join(", ")),
         ))
-        .item(Item::new("modified:2026-05", "A year, a month or a day: 2026, 2026-05-14"))
-        .item(Item::new("modified:2026-01..2026-03", "From one to the other, both whole"))
-        .item(Item::new("modified<7d", "Within the last 7 days: h, d, w, mo, y"))
+        .item(Item::new(
+            "modified:2026-05",
+            "A year, a month or a day: 2026, 2026-05-14",
+        ))
+        .item(Item::new(
+            "modified:2026-01..2026-03",
+            "From one to the other, both whole",
+        ))
+        .item(Item::new(
+            "modified<7d",
+            format!("Within the last 7 days: {}", durations.join(", ")),
+        ))
         .item(Item::new("modified>1y", "Longer ago than a year"));
     let names = Group::new("Names")
         .item(Item::new("report", "Names holding it, capitals or not"))
@@ -64,12 +101,13 @@ fn groups() -> Vec<(Group, Written)> {
             "content:/to.?do/",
             "Files holding what a pattern matches",
         ))
+        .item(Item::new("content:/todo/i", flags.join("; ")));
+    let pattern = skwir_core::reference::regex_pattern()
         .item(Item::new(
-            "content:/todo/i",
-            "i: capitals or not; c: told apart",
-        ));
-    let pattern =
-        skwir_core::reference::regex_pattern().note("^ and $ are the start and the end of a line.");
+            r"\/",
+            "A slash itself: one alone ends the pattern",
+        ))
+        .note("^ and $ are the start and the end of a line.");
     vec![
         (terms, Written::Term),
         (together, Written::Term),
@@ -91,18 +129,18 @@ pub fn reference() -> Reference {
 }
 
 /// `ask`'s text with `part` written where its caret is: a term apart from
-/// the words around it, a part of one as it is; a lone `?` is the text
-/// replaced.
+/// the words around it, past the word (the quoted value, the regex) the
+/// caret stands in, joined to a `-` or a `(` that begins it; a part of
+/// one as it is; a lone `?` is the text replaced.
 fn put(ask: &Ask, part: &str, written: Written) -> String {
     let text = ask.text.as_str();
     if text.trim() == "?" {
         return part.to_owned();
     }
-    let caret = ask.caret.min(text.len());
-    let caret = (0..=caret)
-        .rev()
-        .find(|at| text.is_char_boundary(*at))
-        .unwrap_or(0);
+    let (caret, joins) = match written {
+        Written::Term => assist::term_place(text, ask.caret),
+        Written::Part => (floor_boundary(text, ask.caret), true),
+    };
     let (before, mut after) = text.split_at(caret);
     // A part ending in its space takes the place of the one after it.
     if part.ends_with(' ') {
@@ -110,11 +148,7 @@ fn put(ask: &Ask, part: &str, written: Written) -> String {
     }
     let mut out = String::with_capacity(text.len() + part.len() + 2);
     out.push_str(before);
-    if written == Written::Term
-        && !before.is_empty()
-        && !before.ends_with(char::is_whitespace)
-        && !before.ends_with('(')
-    {
+    if !joins && !before.is_empty() && !before.ends_with(char::is_whitespace) {
         out.push(' ');
     }
     out.push_str(part);
@@ -131,9 +165,11 @@ fn put(ask: &Ask, part: &str, written: Written) -> String {
 }
 
 /// The address field's rows for `?` and F1: every part a search takes,
-/// under its group's heading, each writing itself where the caret is.
+/// under its group's heading, each writing itself where the caret is,
+/// then the group's notes, rows that write and run nothing.
 pub fn rows(ask: &Ask) -> Vec<Suggestion> {
     let mut rows = Vec::new();
+    let rank = |rows: &Vec<Suggestion>| i32::try_from(rows.len()).unwrap_or(i32::MAX);
     for (group, written) in groups() {
         for item in group.items {
             let Some(part) = item.inserts.as_deref() else {
@@ -142,9 +178,15 @@ pub fn rows(ask: &Ask) -> Vec<Suggestion> {
             let mut row = Suggestion::new(Section::Syntax, item.written.clone())
                 .detail(item.says.clone())
                 .heading(group.title.clone())
-                .rank(i32::try_from(rows.len()).unwrap_or(i32::MAX));
+                .rank(rank(&rows));
             row.typed = true;
             row.completion = Some(put(ask, part, written));
+            rows.push(row);
+        }
+        for note in group.notes {
+            let row = Suggestion::new(Section::Syntax, note)
+                .heading(group.title.clone())
+                .rank(rank(&rows));
             rows.push(row);
         }
     }
@@ -192,6 +234,33 @@ mod tests {
         assert_eq!(put(&ask("", 0), "size>10M", Written::Term), "size>10M");
         // A caret inside a character is taken back to its start.
         assert_eq!(put(&ask("é", 1), "x", Written::Part), "xé");
+        // A term goes past the word, the quoted value or the regex the
+        // caret stands in, never within it.
+        assert_eq!(
+            put(&ask(r#"name:"a b""#, 9), "kind:", Written::Term),
+            r#"name:"a b" kind:"#
+        );
+        assert_eq!(
+            put(&ask("report", 3), "size>10M", Written::Term),
+            "report size>10M"
+        );
+        assert_eq!(
+            put(&ask("content:/a b/ x", 10), "kind:", Written::Term),
+            "content:/a b/ kind: x"
+        );
+        assert_eq!(
+            put(&ask("a OR b", 3), "kind:", Written::Term),
+            "a OR kind: b"
+        );
+        // A `-` or a `(` begun takes the term it begins.
+        assert_eq!(put(&ask("-", 1), "kind:", Written::Term), "-kind:");
+        assert_eq!(put(&ask("a -", 3), "#", Written::Term), "a -#");
+        assert_eq!(put(&ask("a-", 2), "kind:", Written::Term), "a- kind:");
+        // Each result reads: a term written whole is one the parser takes.
+        let read = put(&ask(r#"name:"a b""#, 9), "size>10M", Written::Term);
+        assert!(crate::lang::parse(&read).is_ok(), "{read}");
+        let read = put(&ask("-", 1), "kind:image", Written::Term);
+        assert!(crate::lang::parse(&read).is_ok(), "{read}");
     }
 
     /// Every term the reference offers whole is one the parser reads, and
@@ -238,13 +307,58 @@ mod tests {
                 "{key} is not said"
             );
         }
-        // Each row writes something, under its group.
+        // Each item's row writes something, each note's nothing, each
+        // under its group.
         let rows = rows(&ask("?", 1));
-        assert_eq!(rows.len(), said.items().count());
+        let notes: usize = said.groups.iter().map(|g| g.notes.len()).sum();
+        assert!(notes >= 2);
+        assert_eq!(rows.len(), said.items().count() + notes);
+        assert!(rows.iter().all(|r| r.heading.is_some()));
+        assert_eq!(
+            rows.iter().filter(|r| r.completion.is_some()).count(),
+            said.items().count()
+        );
+        let inert: Vec<&Suggestion> = rows.iter().filter(|r| r.completion.is_none()).collect();
+        assert!(inert.iter().all(|r| r.run.is_none() && !r.typed));
         assert!(
-            rows.iter()
-                .all(|r| r.completion.is_some() && r.heading.is_some())
+            inert
+                .iter()
+                .any(|r| r.title.contains("start and the end of a line"))
         );
         assert_eq!(rows[0].completion.as_deref(), Some("kind:"));
+    }
+
+    /// What the reference says of values is the parser's own tables, each
+    /// read back: every period named, size unit, duration unit and regex
+    /// flag it lists is one a search reads, and a slash written itself
+    /// stays in the pattern.
+    #[test]
+    fn the_values_said_are_the_parser_s() {
+        let parses = |text: &str| assert!(crate::lang::parse(text).is_ok(), "{text}");
+        for (name, ..) in lang::NAMED_PERIODS {
+            parses(&format!("modified:{name}"));
+        }
+        for (unit, _) in lang::SIZE_UNITS {
+            parses(&format!("size>1{unit}"));
+            parses(&format!("size>1{}", unit.to_ascii_lowercase()));
+        }
+        for (unit, _) in lang::DURATION_UNITS {
+            parses(&format!("modified<3{unit}"));
+        }
+        for (flag, ..) in lang::REGEX_FLAGS {
+            parses(&format!("content:/a/{flag}"));
+        }
+        parses(r"content:/a\/b/");
+        let said = reference();
+        let says = |written: &str| {
+            said.items()
+                .find(|(_, _, item)| item.written == written)
+                .map(|(_, _, item)| item.says.clone())
+                .unwrap_or_default()
+        };
+        assert!(says("modified:today").contains("last-year"));
+        assert!(says("size>10M").contains('T'));
+        assert!(says("modified<7d").contains("mo months"));
+        assert!(says("content:/todo/i").contains("c: capitals told apart"));
     }
 }

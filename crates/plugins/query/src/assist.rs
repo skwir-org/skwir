@@ -19,6 +19,7 @@ use serde::Serialize;
 use skwir_core::app::App;
 use skwir_core::command::{Invocation, Outcome};
 use skwir_core::metadata::tag_leaf;
+use skwir_core::reference::floor_boundary;
 use skwir_core::workspace::PaneId;
 use skwir_platform::mime::Kind;
 
@@ -167,16 +168,6 @@ const fn key(
         example,
         option,
     }
-}
-
-/// The terms a search takes, the most asked first: each key as written
-/// before its value (`kind:`), its icon and examples of values.
-/// What `?` in the address field lists.
-pub fn terms() -> Vec<(String, &'static str, &'static str)> {
-    KEYS.iter()
-        .filter(|k| !k.option)
-        .map(|k| (format!("{}:", k.name), k.icon, k.example))
-        .collect()
 }
 
 /// Every key, as the reference says it: written before its value
@@ -366,6 +357,29 @@ fn compared(word: &str) -> Option<(&'static str, &'static str)> {
             .find(|op| rest.starts_with(op))
             .map(|op| (*k, op))
     })
+}
+
+/// Where a whole term goes that is written at `caret` (the reference's
+/// rows, ADR-137): past the end of the word, the quoted or `/…/` value or
+/// the operator the caret stands inside, never within it; and whether a
+/// term written there joins what is before it, as a `-` or a `(` that
+/// begins a term (`-kind:image`), rather than standing apart.
+pub(crate) fn term_place(text: &str, caret: usize) -> (usize, bool) {
+    let caret = floor_boundary(text, caret);
+    let lexemes = lex(text);
+    let inside = lexemes.iter().find_map(|l| {
+        let range = match l {
+            Lexeme::Operator(range) | Lexeme::Word(WordLex { range, .. }) => range,
+        };
+        (range.start < caret && caret < range.end).then_some(range.end)
+    });
+    let at = inside.unwrap_or(caret);
+    let before = &text[..at];
+    let joins = before.ends_with('(')
+        || before
+            .strip_suffix('-')
+            .is_some_and(|rest| rest.is_empty() || rest.ends_with(is_break));
+    (at, joins)
 }
 
 /// The word that ends at `caret`, if one does.
@@ -777,15 +791,6 @@ fn capitalized(word: &str) -> String {
     cs.next()
         .map(|c| c.to_uppercase().chain(cs).collect())
         .unwrap_or_default()
-}
-
-/// `caret` moved back to the start of the character it falls in.
-fn floor_boundary(text: &str, caret: usize) -> usize {
-    let mut at = caret.min(text.len());
-    while !text.is_char_boundary(at) {
-        at -= 1;
-    }
-    at
 }
 
 // ---------------------------------------------------------------- interpret

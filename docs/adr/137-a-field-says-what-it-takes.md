@@ -87,8 +87,12 @@ one, and every view's field holds the same component (2, 7).
    the text kept; the query plugin answers its whole reference
    (`query.reference`), under its groups' headings (`Suggestion::heading`),
    each row writing its part where the caret is (a term apart from the
-   words beside it, a sign of a pattern as it is, in place of a lone
-   `?`). A key, or Escape, goes back to what the text goes on with, as
+   words beside it, past the word, the quoted value or the `/…/` the
+   caret stands in and joined to a `-` or a `(` that begins it, as the
+   parser splits the text; a sign of a pattern as it is; in place of a
+   lone `?`), each group's notes after its rows, writing nothing. What
+   it says of values (periods, units, flags) is the parser's own tables.
+   A key, or Escape, goes back to what the text goes on with, as
    the `?` pressed again does; F1 again shows the keys.
 5. **A question says what is typed comes to** (`ui.ask`'s `describe`): a
    command run on a worker with the text as its field, its `says` under

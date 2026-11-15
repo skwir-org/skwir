@@ -911,18 +911,28 @@ fn parse_content(v: &str, quoted: bool, cs: bool) -> Result<ContentPat, ParseErr
     }
     let mut case_sensitive = cs;
     for flag in flags.chars() {
-        case_sensitive = match flag {
-            'i' => false,
-            'c' => true,
-            _ => {
-                return Err(ParseError(format!(
-                    "content: unknown regex flag `{flag}` (i ignores case, c matches it; quote text that starts with /)"
-                )));
-            }
+        let Some((_, sensitive, _)) = REGEX_FLAGS.iter().find(|(f, ..)| *f == flag) else {
+            let flags: Vec<String> = REGEX_FLAGS
+                .iter()
+                .map(|(flag, _, means)| format!("{flag}: {means}"))
+                .collect();
+            return Err(ParseError(format!(
+                "content: unknown regex flag `{flag}` ({}; quote text that starts with /)",
+                flags.join(", ")
+            )));
         };
+        case_sensitive = *sensitive;
     }
     ContentPat::regex(&pattern, case_sensitive)
 }
+
+/// What may follow a `content:/…/` regex: each flag, whether capitals
+/// are then told apart, and what it means; without one, `case:` decides.
+/// What [`parse_content`] reads, and what the reference says (ADR-137).
+pub const REGEX_FLAGS: [(char, bool, &str); 2] = [
+    ('i', false, "capitals or not"),
+    ('c', true, "capitals told apart"),
+];
 
 fn split_cmp(rest: &str) -> Result<(&str, &str), ParseError> {
     for op in [">=", "<=", ">", "<", "=", ":"] {
@@ -933,16 +943,28 @@ fn split_cmp(rest: &str) -> Result<(&str, &str), ParseError> {
     Err(ParseError(format!("expected a comparison after `{rest}`")))
 }
 
+/// What a size may end with, capitals or not, and what it counts: each
+/// 1024 times the one before (`b`, bytes, said or not). What
+/// [`parse_bytes`] reads, and what the reference says (ADR-137).
+pub const SIZE_UNITS: [(char, u64); 5] = [
+    ('k', 1 << 10),
+    ('M', 1 << 20),
+    ('G', 1 << 30),
+    ('T', 1 << 40),
+    ('B', 1),
+];
+
 /// `10M`, `1k`, `512`, `1.5G`.
 pub fn parse_bytes(s: &str) -> Result<u64, ParseError> {
     let s = s.trim();
-    let (num, mult) = match s.chars().last() {
-        Some('k' | 'K') => (&s[..s.len() - 1], 1u64 << 10),
-        Some('m' | 'M') => (&s[..s.len() - 1], 1u64 << 20),
-        Some('g' | 'G') => (&s[..s.len() - 1], 1u64 << 30),
-        Some('t' | 'T') => (&s[..s.len() - 1], 1u64 << 40),
-        Some('b' | 'B') => (&s[..s.len() - 1], 1),
-        _ => (s, 1),
+    let unit = s.chars().last().and_then(|last| {
+        SIZE_UNITS
+            .iter()
+            .find(|(unit, _)| unit.eq_ignore_ascii_case(&last))
+    });
+    let (num, mult) = match unit {
+        Some((_, mult)) => (&s[..s.len() - 1], *mult),
+        None => (s, 1),
     };
     let n: f64 = num
         .parse()
@@ -1051,18 +1073,24 @@ fn parse_date(s: &str, cal: &Calendar) -> Option<Days> {
 
 /// A period named from `today` (`today`, `this-week`, `last-month`), and
 /// the day it next means another period: when the one holding today ends.
+/// The periods named from now: each name, its period, and whether it is
+/// the one before (`last-week`) rather than the one holding today. What
+/// [`named_period`] reads, and what the reference says (ADR-137).
+pub const NAMED_PERIODS: [(&str, Period, bool); 8] = [
+    ("today", Period::Day, false),
+    ("yesterday", Period::Day, true),
+    ("this-week", Period::Week, false),
+    ("last-week", Period::Week, true),
+    ("this-month", Period::Month, false),
+    ("last-month", Period::Month, true),
+    ("this-year", Period::Year, false),
+    ("last-year", Period::Year, true),
+];
+
 fn named_period(s: &str, today: i64, cal: &Calendar) -> Option<(Days, i64)> {
-    let (period, last) = match s.to_ascii_lowercase().as_str() {
-        "today" => (Period::Day, false),
-        "yesterday" => (Period::Day, true),
-        "this-week" => (Period::Week, false),
-        "last-week" => (Period::Week, true),
-        "this-month" => (Period::Month, false),
-        "last-month" => (Period::Month, true),
-        "this-year" => (Period::Year, false),
-        "last-year" => (Period::Year, true),
-        _ => return None,
-    };
+    let (_, period, last) = *NAMED_PERIODS
+        .iter()
+        .find(|(name, ..)| name.eq_ignore_ascii_case(s))?;
     let days = if last {
         period.before(today, cal)
     } else {
@@ -1078,6 +1106,18 @@ enum TimeLit {
     /// means another (named periods only).
     Period(Days, Option<i64>),
 }
+
+/// The units a duration back from now is written in (`7d`, `2h30m`), as
+/// the calendar reads them (`Calendar::ago`), and what each counts: what
+/// the reference says (ADR-137), each read back by a test.
+pub const DURATION_UNITS: [(&str, &str); 6] = [
+    ("m", "minutes"),
+    ("h", "hours"),
+    ("d", "days"),
+    ("w", "weeks"),
+    ("mo", "months"),
+    ("y", "years"),
+];
 
 fn parse_time_lit(s: &str, now: SystemTime, cal: &Calendar) -> Result<TimeLit, ParseError> {
     if let Some(days) = parse_date(s, cal) {
