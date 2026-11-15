@@ -243,13 +243,22 @@ fn way_to(path: &Path, remote: impl Fn(&Path) -> bool) -> (Vec<PathBuf>, PathBuf
 }
 
 /// Put `path`'s parts ahead, its first on top (`None` for `..`): a path
-/// from a root goes from there, another from where the way is.
+/// from a root goes from there, another from where the way is. A root
+/// without a drive (Windows' `\dir`) is the drive's of where the way is.
 fn take_ahead(at: &mut PathBuf, ahead: &mut Vec<Option<OsString>>, path: &Path) {
     let mut root = PathBuf::new();
     let mut parts = Vec::new();
     for part in path.components() {
         match part {
-            Component::Prefix(_) | Component::RootDir => root.push(part),
+            Component::Prefix(_) => root.push(part),
+            Component::RootDir => {
+                if root.as_os_str().is_empty()
+                    && let Some(drive @ Component::Prefix(_)) = at.components().next()
+                {
+                    root.push(drive);
+                }
+                root.push(part);
+            }
             Component::CurDir => {}
             Component::ParentDir => parts.push(None),
             Component::Normal(name) => parts.push(Some(name.to_owned())),
@@ -525,6 +534,18 @@ mod tests {
         );
         assert!(sources.misses(), "an older read's never in its place");
         assert_eq!(sources.watched(), std::slice::from_ref(&here));
+    }
+
+    /// A link to a path from the root without a drive (`\dir\file`)
+    /// leads to that drive's: where the way is.
+    #[cfg(windows)]
+    #[test]
+    fn a_root_without_a_drive_is_the_drive_of_where_the_way_is() {
+        let mut at = std::path::PathBuf::from(r"D:\Users\me");
+        let mut ahead = Vec::new();
+        super::take_ahead(&mut at, &mut ahead, Path::new(r"\dotfiles\rclone.conf"));
+        assert_eq!(at, Path::new(r"D:\"));
+        assert_eq!(ahead, [Some("rclone.conf".into()), Some("dotfiles".into())]);
     }
 
     /// A file's folder is watched, else the nearest above that is there;
