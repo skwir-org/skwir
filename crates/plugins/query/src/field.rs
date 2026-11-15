@@ -283,7 +283,8 @@ fn typed(app: &App, ask: &Ask, offers: &assist::TagOffers) -> Answer {
         rows.push(row);
     }
     // Tags past those offered are counted, not made: typing more of a
-    // name narrows them. Enter waits on the row, which says so.
+    // name narrows them. The row only says so (it runs and writes
+    // nothing): the window's arrows pass over it, and Enter takes nothing.
     if completed.more > 0 {
         let more = completed.more;
         let row = Suggestion::new(Section::Complete, format!("{more} more tags"))
