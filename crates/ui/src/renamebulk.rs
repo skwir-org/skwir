@@ -2,12 +2,14 @@
 //! preview from `rename_bulk.preview`, where the regex matched in each old
 //! name and what it put in the new one tinted; Enter or Rename applies
 //! `rename_bulk`. The template, the regex and the replacement each say
-//! what they take (ADR-137): the plugin's `rename_bulk.reference`, asked
-//! with each preview, opened from the `?` inside the field at its end or
-//! F1 in it, and what goes on with a part begun offered under the field
-//! as it is typed (`reference.rs`). It opens on `{full}`, which leaves
-//! every name as it is. The case is a row of its values side by side, a
-//! dropdown where they do not fit (`case_control`).
+//! what they take (ADR-137): the plugin's `rename_bulk.reference`, the
+//! template's asked with each preview, the regex's and the replacement's
+//! once for the first name (`kept_for`), opened from the `?` inside the
+//! field at its end or F1 in it, and what goes on with a part begun
+//! offered under the field as it is typed (`reference.rs`). It opens on
+//! `{full}`, which leaves every name as it is. The case is a row of its
+//! values side by side, a dropdown where they do not fit
+//! (`case_control`).
 
 use std::ops::Range;
 use std::rc::Rc;
@@ -100,6 +102,11 @@ pub struct BulkState {
     /// What the template, the regex and the replacement take, as the
     /// plugin said it with the latest preview (`reference.rs`).
     helps: [FieldHelp; SAID],
+    /// The first name the regex's and the replacement's references were
+    /// said for: they read it alone (what the recipes make of it), so
+    /// they are asked again only when it changes, never at each key. Kept
+    /// with the dialog, gone with it.
+    kept_for: Option<String>,
     renamed: usize,
     pub error: Option<String>,
     /// Advances with each change; only the latest preview is shown, and
@@ -263,6 +270,7 @@ impl Shell {
             focused: 0,
             preview: Vec::new(),
             helps: std::array::from_fn(|i| FieldHelp::new(FIELDS[i].0, None)),
+            kept_for: None,
             renamed: 0,
             error: None,
             asked: 0,
@@ -358,26 +366,13 @@ impl Shell {
             before.cancel();
         }
         let app = std::sync::Arc::clone(&self.app);
+        let kept_for = b.kept_for.clone();
         self.off_thread_until(
             self.pane_lane(pane),
             "rename-bulk-preview",
             cancel,
             move || {
-                // What each field takes, given the first item as the rename
-                // stands; one the plugin could not say keeps the last.
-                let references: [Option<Reference>; SAID] = std::array::from_fn(|i| {
-                    let mut asked = said.clone();
-                    asked["field"] = FIELDS[i].0.into();
-                    match app.dispatch(&Invocation::with_args("rename_bulk.reference", &asked)) {
-                        Ok(Outcome::Value(v)) => serde_json::from_value(v).ok(),
-                        Ok(_) => None,
-                        Err(e) => {
-                            tracing::warn!("rename_bulk.reference ({}): {e:#}", FIELDS[i].0);
-                            None
-                        }
-                    }
-                });
-                let (shown, count, error) =
+                let (shown, count, error, first) =
                     match app.dispatch(&Invocation::with_args("rename_bulk.preview", &spec)) {
                         Ok(Outcome::Value(v)) => {
                             let shown = v["renames"]
@@ -397,15 +392,39 @@ impl Shell {
                                 .as_u64()
                                 .and_then(|n| usize::try_from(n).ok())
                                 .unwrap_or_default();
-                            (shown, count, None)
+                            let first = v["first"].as_str().map(str::to_owned);
+                            (shown, count, None, first)
                         }
-                        Ok(_) => (Vec::new(), 0, None),
-                        Err(e) => (Vec::new(), 0, Some(format!("{e:#}"))),
+                        Ok(_) => (Vec::new(), 0, None, None),
+                        Err(e) => (Vec::new(), 0, Some(format!("{e:#}")), None),
                     };
-                (shown, count, error, references)
+                // What each field takes, given the first item as the rename
+                // stands; one the plugin could not say keeps the last. The
+                // regex's and the replacement's read the first name alone:
+                // asked again only for another one.
+                let again = asks_again(first.as_deref(), kept_for.as_deref());
+                let references: [Option<Reference>; SAID] = std::array::from_fn(|i| {
+                    if i > 0 && !again {
+                        return None;
+                    }
+                    let mut asked = said.clone();
+                    asked["field"] = FIELDS[i].0.into();
+                    match app.dispatch(&Invocation::with_args("rename_bulk.reference", &asked)) {
+                        Ok(Outcome::Value(v)) => serde_json::from_value(v).ok(),
+                        Ok(_) => None,
+                        Err(e) => {
+                            tracing::warn!("rename_bulk.reference ({}): {e:#}", FIELDS[i].0);
+                            None
+                        }
+                    }
+                });
+                let kept = (again && references[1..].iter().all(Option::is_some))
+                    .then_some(first)
+                    .flatten();
+                (shown, count, error, references, kept)
             },
             move |this, result, _, cx| {
-                let (preview, renamed, error, references) = result;
+                let (preview, renamed, error, references, kept) = result;
                 let Some(b) = this.bulk.as_mut().filter(|b| b.asked == asked) else {
                     return;
                 };
@@ -418,6 +437,9 @@ impl Shell {
                     if let Some(said) = said {
                         help.reference = Some(Rc::new(said));
                     }
+                }
+                if kept.is_some() {
+                    b.kept_for = kept;
                 }
                 cx.notify();
             },
@@ -452,6 +474,18 @@ impl Shell {
         b.error = Some("The selection changed since this opened: open it again".into());
         b.current = true;
         cx.notify();
+    }
+}
+
+/// Whether the references that read the first name alone (the regex's,
+/// the replacement's) are asked again: for another first name than the
+/// one they were said for, or while none was (a preview that failed asks
+/// them each time, as before it knew).
+fn asks_again(first: Option<&str>, kept_for: Option<&str>) -> bool {
+    match (first, kept_for) {
+        (Some(first), Some(kept)) => first != kept,
+        (_, None) => true,
+        (None, Some(_)) => false,
     }
 }
 
@@ -849,6 +883,18 @@ mod tests {
         assert!(spec["template"].is_null() && spec["regex"].is_null());
         assert!(spec["replacement"].is_null() && spec["case"].is_null());
         assert_eq!(spec["start"], 1);
+    }
+
+    /// The regex's and the replacement's references, which read the first
+    /// name alone, are asked once for it while the dialog is open, and
+    /// again for another; until one was kept, at each change.
+    #[test]
+    fn what_reads_the_first_name_alone_is_asked_once_for_it() {
+        assert!(asks_again(Some("a.txt"), None), "none kept yet");
+        assert!(!asks_again(Some("a.txt"), Some("a.txt")), "kept for it");
+        assert!(asks_again(Some("b.txt"), Some("a.txt")), "another name");
+        assert!(!asks_again(None, Some("a.txt")), "no preview: kept");
+        assert!(asks_again(None, None));
     }
 
     /// The arrows step the case and stop at its ends; Ctrl+K and Space

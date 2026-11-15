@@ -156,8 +156,11 @@ one, and every view's field holds the same component (2, 7).
   window draws.
 - A plugin's question gets a reference and live words by passing them;
   no dialog draws one of its own.
-- What the reference gives is worked out at each preview (three commands
-  beside it, each reading the first selected item alone).
+- What the reference gives is worked out with the preview, each reading
+  the first selected item alone: the template's at each change; the
+  regex's and the replacement's, which read the first name alone, once
+  for it while the dialog is open (the preview's `first`), kept with the
+  dialog and never longer.
 - Left: Access on Windows, which Properties does not offer while
   Windows' entries carry no mode (PORTING): there the read-only
   attribute's words (`set_access.describe`) reach only an agent,

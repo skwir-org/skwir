@@ -112,6 +112,9 @@ pub struct BulkRename {
     pub preview: Vec<Change>,
     /// Beside each of `preview`'s renames.
     pub marks: Vec<Marks>,
+    /// The first item's name, renamed or not: what the recipes of the
+    /// reference work on (`recipes`), the same at every key while it is.
+    pub first: Option<OsString>,
 }
 
 /// Where the regex matched in an old name, and what it put in the new
@@ -511,6 +514,7 @@ pub fn plan_bulk_rename_in(
         })
         .collect();
     Ok(BulkRename {
+        first: items.first().map(|item| item.name.clone()),
         plan: Plan::with_steps(
             format!("rename {} items", preview.len()),
             steps
@@ -709,7 +713,10 @@ struct ReferenceArgs {
 /// what it gives `first` (the first item renamed) under `spec` as it
 /// stands, and the recipes that fill the regex and its replacement.
 /// Each field offers, as it is typed, what goes on with a part begun by
-/// these: a placeholder, a sign, a group's.
+/// these: a placeholder, a sign, a group's. The template's reads the
+/// rename as it stands; the regex's and the replacement's, `first`'s name
+/// alone, so the dialog asks them again only when it changes (the
+/// preview's `first`).
 pub fn reference(field: Field, first: Option<&Item>, spec: &RenameSpec) -> Reference {
     match field {
         Field::Template => template_reference(first, spec)
@@ -920,7 +927,7 @@ impl Plugin for RenameBulkPlugin {
             |a, app| Ok(Outcome::Plan(plan_bulk(app, a)?.plan)),
         )
         .plans();
-        app.commands.register::<PreviewArgs, _>(ID, Topic::Files, "rename_bulk.preview", "Preview bulk rename", "Return the old → new names a bulk rename would produce (`renames`, the first `limit` of them when given; each with where the regex `matched` in the old name and what it `put` in the new one, byte ranges) and how many there are (`count`)", |a, app| {
+        app.commands.register::<PreviewArgs, _>(ID, Topic::Files, "rename_bulk.preview", "Preview bulk rename", "Return the old → new names a bulk rename would produce (`renames`, the first `limit` of them when given; each with where the regex `matched` in the old name and what it `put` in the new one, byte ranges), how many there are (`count`), and the first item's name (`first`), which the regex's and the replacement's references work on alone", |a, app| {
             let r = plan_bulk(app, a.args)?;
             // Display names for the dialog; the plan itself is lossless.
             let renames: Vec<(&Path, &Path)> = r
@@ -949,7 +956,8 @@ impl Plugin for RenameBulkPlugin {
                     Some(said)
                 })
                 .collect();
-            Ok(Outcome::Value(serde_json::json!({ "renames": shown, "count": renames.len() })))
+            let first = r.first.as_ref().map(|name| name.to_string_lossy());
+            Ok(Outcome::Value(serde_json::json!({ "renames": shown, "count": renames.len(), "first": first })))
         })
         .data();
         app.commands.register::<ReferenceArgs, _>(ID, Topic::Files, "rename_bulk.reference", "Say what a bulk rename's field takes", "Return what `field` (template, regex, replacement) takes: its placeholders or signs, each with what it gives the first of the entries given or selected under the rename as given, and recipes filling the regex and its replacement", |a, app| {
@@ -1615,6 +1623,9 @@ mod tests {
         };
         assert_eq!(v["renames"].as_array().map(Vec::len), Some(1));
         assert_eq!(v["count"], 2);
+        // The first name, which the regex's and the replacement's
+        // references work on alone: kept while it is (the dialog).
+        assert_eq!(v["first"], "x1.txt");
         // Where the regex matched, and what it put.
         let Outcome::Value(v) = app
             .dispatch(&Invocation::with_args(
