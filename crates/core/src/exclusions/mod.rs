@@ -1417,7 +1417,7 @@ pub fn reference(field: &str) -> Option<crate::reference::Reference> {
             .group(
                 Group::new("By path")
                     .item(Item::new("~/VMs", "One, from your home"))
-                    .item(Item::new("/srv/cache", "One, from the root"))
+                    .item(Item::new(WHOLE_PATH, "One, from the root"))
                     .item(Item::new("$CARGO_HOME/registry", "From a variable"))
                     .item(Item::new(
                         "${XDG_CACHE_HOME:-~/.cache}/thumbnails",
@@ -1428,7 +1428,10 @@ pub fn reference(field: &str) -> Option<crate::reference::Reference> {
                         "Those whose path is like it",
                     ))
                     .item(Item::new("~/Projects/**/target", "At any depth below"))
-                    .note("A path starts at ~, a variable or /; anything else is a name."),
+                    .note(format!(
+                        "A path starts at ~, a variable or a root ({WHOLE_PATH}); anything else \
+                         is a name."
+                    )),
             )
             .group(
                 Group::new("Signs of a name or a path")
@@ -1464,6 +1467,15 @@ pub fn reference(field: &str) -> Option<crate::reference::Reference> {
         _ => return None,
     })
 }
+
+/// A whole path as this system writes one, for what says how a path is
+/// written (the field's reference, the words refusing one that starts
+/// nowhere): on Windows a path from `/` names no drive, and starts
+/// nowhere.
+#[cfg(windows)]
+const WHOLE_PATH: &str = "C:/srv/cache";
+#[cfg(not(windows))]
+const WHOLE_PATH: &str = "/srv/cache";
 
 /// The prefix that says the rest is a regular expression.
 const REGEX: &str = "regex:";
@@ -1605,7 +1617,8 @@ impl Pattern {
                 // Set on another computer, or later.
                 Start::Variable { .. } => Ok(Pattern::Unset),
                 Start::Home | Start::Nothing => Err(format!(
-                    "{text}: a path starts with ~, a variable ($CARGO_HOME) or is whole (/srv/cache)"
+                    "{text}: a path starts with ~, a variable ($CARGO_HOME) or is whole \
+                     ({WHOLE_PATH})"
                 )),
             };
         };

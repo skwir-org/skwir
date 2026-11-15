@@ -1149,7 +1149,27 @@ fn the_fields_reference_is_what_the_rules_read() {
         assert!(NameMatch::of(&item.written).is_ok(), "{}", item.written);
     }
     for (_, _, item) in reference("holding").unwrap().items() {
-        assert!(!item.written.contains(['/', '*']), "{}", item.written);
+        let holding = Matcher::Holding(item.written.clone());
+        assert!(holding.check().is_ok(), "{}", item.written);
+        assert!(
+            !item.written.contains('*'),
+            "{}: a name, no glob",
+            item.written
+        );
     }
     assert!(reference("what").is_none());
+}
+
+/// The whole path a reference and a refusal give as an example is one
+/// this system reads as whole: on Windows a path from `/` names no drive.
+#[test]
+fn the_whole_path_said_is_whole_here() {
+    assert!(matches!(Pattern::of(WHOLE_PATH), Ok(Pattern::Path(_))));
+    let refused = Pattern::of("rel/x").err().unwrap_or_default();
+    assert!(refused.contains(WHOLE_PATH), "{refused}");
+    let said = reference("pattern").unwrap();
+    assert!(said.items().any(|(_, _, item)| item.written == WHOLE_PATH));
+    if cfg!(windows) {
+        assert!(Pattern::of("/srv/cache").is_err(), "no drive");
+    }
 }
