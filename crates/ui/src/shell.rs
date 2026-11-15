@@ -1805,6 +1805,8 @@ impl Shell {
                 pane.selection.chosen()
             })
         };
+        // The answer it joins, read before a reveal done lets go of it.
+        let answer = self.reveal.as_ref().and_then(|reveal| reveal.answer);
         match self.reveal.as_mut() {
             Some(reveal) if !whole && reveal.until >= Instant::now() => {
                 reveal.looked = Some(looked);
@@ -1813,12 +1815,14 @@ impl Shell {
             _ => self.reveal = None,
         }
         if let Some(name) = hidden {
-            let answer = self.reveal.as_ref().and_then(|reveal| reveal.answer);
-            self.say_with(
+            let joined = self.say_with(
                 answer,
                 format!("Hidden files are shown, “{name}” among them"),
                 cx,
             );
+            if let Some(reveal) = self.reveal.as_mut() {
+                reveal.answer = joined.or(reveal.answer);
+            }
         }
         self.with_pane(pane, |shell| {
             if let Some(index) = shell.cursor_index() {
@@ -2192,7 +2196,10 @@ impl Shell {
         };
         if let Some(said) = said {
             let answer = self.reveal.as_ref().and_then(|reveal| reveal.answer);
-            self.say_with(answer, said, cx);
+            let joined = self.say_with(answer, said, cx);
+            if let Some(reveal) = self.reveal.as_mut() {
+                reveal.answer = joined.or(reveal.answer);
+            }
         }
         if let Some(reveal) = self.reveal.as_mut() {
             reveal.selected = Some(chosen);

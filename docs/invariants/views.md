@@ -186,7 +186,8 @@ around the views is in [shell.md](shell.md).
   (`finishing::ran`): two quick Ctrl+Z are each followed as it runs, an
   agent's or a script's undo never.
   What it says (hidden files turned on) joins the plan's answer, whose
-  Undo stays (`Shell::say_with`) (`Shell::made`).
+  Undo stays, said again whole as a toast of its own: timed for what it
+  says now, and heard (`Shell::say_with`) (`Shell::made`).
 - **What the user renames is followed into view.** A rename keeps its
   entry, and its selection, through the listing; where its new name
   sorts it, the view follows it, in the pane it was asked from alone

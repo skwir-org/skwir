@@ -154,6 +154,20 @@ impl ToastState {
         (self.generation, self.timed.then_some(seconds))
     }
 
+    /// The toast of generation `answer`, while it is the one shown, saying
+    /// `said` after what it says, its actions kept (`Shell::say_with`).
+    fn joined(&self, answer: Option<u64>, said: &str) -> Option<Toast> {
+        let toast = self
+            .current
+            .as_ref()
+            .filter(|_| answer == Some(self.generation))?;
+        let text = toast.text.trim_end_matches('.');
+        Some(Toast {
+            text: format!("{text}. {said}"),
+            ..toast.clone()
+        })
+    }
+
     /// The current one is drawn: its generation and how many seconds it
     /// stays, when its time begins now.
     fn drawn(&mut self) -> Option<(u64, u64)> {
@@ -496,18 +510,25 @@ impl Shell {
         self.toasts.generation
     }
 
-    /// Say `said` in the toast of generation `answer` (a plan's answer,
+    /// Say `said` with the toast of generation `answer` (a plan's answer,
     /// whose Undo stays) while it is still the one shown, after what it
-    /// says; else in a toast of its own.
-    pub(crate) fn say_with(&mut self, answer: Option<u64>, said: String, cx: &mut Context<Self>) {
-        if answer == Some(self.toasts.generation)
-            && let Some(toast) = self.toasts.current.as_mut()
-        {
-            let text = toast.text.trim_end_matches('.');
-            toast.text = format!("{text}. {said}");
-            cx.notify();
+    /// says: said again, whole, as a toast of its own generation, so its
+    /// time is counted for what it says now, from now, and a screen reader
+    /// hears it (a new live region, never a text changed in place); else in
+    /// a toast of its own. The generation of the toast that now says it,
+    /// joined: what else joins it names that one.
+    pub(crate) fn say_with(
+        &mut self,
+        answer: Option<u64>,
+        said: String,
+        cx: &mut Context<Self>,
+    ) -> Option<u64> {
+        if let Some(joined) = self.toasts.joined(answer, &said) {
+            self.show_toast(joined, cx);
+            Some(self.toasts.generation)
         } else {
             self.set_status(said, false, cx);
+            None
         }
     }
 
@@ -1920,6 +1941,36 @@ mod tests {
         assert!(toasts.over(shown));
         assert!(toasts.current.is_none());
         assert_eq!(toasts.drawn(), None, "nothing to time");
+    }
+
+    /// What a reveal says joins the answer still shown, its Undo kept, and
+    /// is said again whole: a new toast, timed for what it says now (a
+    /// screen reader hears a new live region). Another toast shown since,
+    /// it joins nothing.
+    #[test]
+    fn what_joins_an_answer_is_said_again_with_it() {
+        let mut toasts = ToastState::default();
+        let answer = Toast {
+            text: "Renamed “l'été.txt” to “.l'été.txt”.".into(),
+            tone: Tone::Success,
+            actions: vec![Action {
+                label: "Undo".into(),
+                command: "undo".into(),
+                args: serde_json::json!({ "plan": 7 }),
+            }],
+        };
+        let (shown, _) = toasts.say(answer, false);
+        let note = "Hidden files are shown, “.l'été.txt” among them";
+        let joined = toasts.joined(Some(shown), note).expect("still shown");
+        assert_eq!(
+            joined.text,
+            "Renamed “l'été.txt” to “.l'été.txt”. Hidden files are shown, “.l'été.txt” among them"
+        );
+        assert_eq!(joined.actions.len(), 1, "its Undo stays");
+        let (again, timed) = toasts.say(joined.clone(), false);
+        assert_ne!(again, shown, "said again, as a toast of its own");
+        assert_eq!(timed, Some(shown_for(&joined)));
+        assert!(toasts.joined(Some(shown), note).is_none(), "replaced since");
     }
 
     /// The one thing a plan made new is shown with Show: the folder it is
