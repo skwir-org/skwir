@@ -1499,7 +1499,12 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   row has the keyboard as one: Up and Down, or Space, change its choice,
   Enter answers the form as from a field.
 - **A question says what is typed comes to** (ADR-137): `ui.ask`'s
-  `describe` (`{ command, args? }`) runs on a worker with the text as
+  `describe` (`{ command, args? }`) runs before anyone answers, so it
+  only answers: a data command (`CommandSpec::data`), any other refused
+  where `ui.ask` is dispatched (an agent's, a script's) and where the
+  question opens (`prompts::describe_refused`); an agent's question runs
+  it as the agent's call (`describe.agent`, set where the agent's call is
+  dispatched). It runs on a worker with the text as
   its field at each change, an older answer dropped; its `says` is a
   line under the field, its error that line in the error's color and the
   field's frame too, holding the answer back (Enter refused, the answer's

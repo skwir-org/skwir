@@ -567,14 +567,15 @@ mod args {
         /// A line under the field: what the answer may be.
         #[serde(default)]
         note: Option<String>,
-        /// What the field takes (ADR-137), opened from a [?] at its end
+        /// What the field takes (ADR-137), opened from the `?` inside it
         /// or F1: its groups of items, each as written, what it means, what
         /// it gives, and what choosing it writes.
         #[serde(default)]
         reference: Option<skwir_core::reference::Reference>,
-        /// What says, as it is typed, what the text comes to: run on a
-        /// worker with the text as its `field`; its `says` is shown under
-        /// the field, its error there too, holding the answer back.
+        /// What says, as it is typed, what the text comes to: a command
+        /// that only answers (a data command; any other is refused), run
+        /// on a worker with the text as its `field`; its `says` is shown
+        /// under the field, its error there too, holding the answer back.
         #[serde(default)]
         describe: Option<AskDescribe>,
         /// What runs with the answer.
@@ -592,6 +593,10 @@ mod args {
         command: String,
         #[serde(default)]
         args: Option<serde_json::Value>,
+        /// It runs as an agent's call (`permissions::as_agent`): set where
+        /// an agent asks the question, whatever the agent said.
+        #[serde(default)]
+        agent: bool,
     }
 
     /// Which group `ui.select_group` selects, and how.
@@ -1546,13 +1551,26 @@ fn declare<A: DeserializeOwned + JsonSchema + 'static>(
         name,
         title,
         description,
-        move |args, app| {
+        move |mut args, app| {
             // An agent's call runs here (`permissions::as_agent`), before
             // the window, which runs what it is handed as the user's.
-            if skwir_core::permissions::agent_call().is_some()
-                && let Some(instead) = reaches_out(name, &args)
-            {
+            let agent = skwir_core::permissions::agent_call().is_some();
+            if agent && let Some(instead) = reaches_out(name, &args) {
                 anyhow::bail!("for an agent, {name} {instead}");
+            }
+            // What a question runs as it is typed, before anyone answers,
+            // only answers (ADR-137); an agent's runs as the agent's.
+            if name == "ui.ask" {
+                if let Some(refused) = crate::prompts::describe_refused(app, &args) {
+                    anyhow::bail!(refused);
+                }
+                if agent
+                    && let Some(describe) = args
+                        .get_mut("describe")
+                        .and_then(serde_json::Value::as_object_mut)
+                {
+                    describe.insert("agent".into(), true.into());
+                }
             }
             app.request_front(Invocation {
                 name: name.into(),
@@ -2944,6 +2962,55 @@ mod tests {
         let address = serde_json::json!({"action": "link", "target": "https://example.org/"});
         app.dispatch(&inspect(address)).unwrap();
         assert_eq!(app.take_front_requests().len(), 1);
+    }
+
+    /// What a question says as it is typed runs before anyone answers:
+    /// only a command that answers is taken (ADR-137), whoever asks, and an
+    /// agent's question says it as the agent's call.
+    #[test]
+    fn a_question_says_what_is_typed_comes_to_only_by_a_command_that_answers() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = skwir_core::App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        super::declare_all(&app);
+        let ask = |describe: &str| {
+            Invocation::with_args(
+                "ui.ask",
+                &serde_json::json!({
+                    "title": "Access",
+                    "command": "set_access",
+                    "field": "mode",
+                    "describe": { "command": describe, "args": { "folders": false } },
+                }),
+            )
+        };
+        let as_agent = |inv: &Invocation| {
+            skwir_core::permissions::as_agent(app.privacy(), || app.dispatch(inv))
+        };
+        // One that acts (a plan, the window), or none known: refused, the
+        // agent's and the user's alike, and nothing reaches the window.
+        for acting in ["set_access", "ui.cursor", "no.such.command"] {
+            let error = as_agent(&ask(acting)).expect_err(acting);
+            assert!(error.to_string().contains(acting), "{acting}: {error}");
+            app.dispatch(&ask(acting)).expect_err(acting);
+        }
+        assert!(app.take_front_requests().is_empty());
+        // One that answers: the agent's says it as the agent's call, even
+        // where the agent said otherwise; the user's as the user's.
+        as_agent(&ask("set_access.describe")).unwrap();
+        let mut forged = ask("set_access.describe");
+        forged.args["describe"]["agent"] = false.into();
+        as_agent(&forged).unwrap();
+        app.dispatch(&ask("set_access.describe")).unwrap();
+        let asked = app.take_front_requests();
+        let agent: Vec<bool> = asked
+            .iter()
+            .map(|inv| inv.args["describe"]["agent"].as_bool().unwrap_or(false))
+            .collect();
+        assert_eq!(agent, [true, true, false]);
+        // What reaches the window is what the window takes.
+        for inv in &asked {
+            app.commands.check(inv).unwrap();
+        }
     }
 
     /// What the shell's keys run and the palette offers is declared, with

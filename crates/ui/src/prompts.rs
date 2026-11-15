@@ -86,8 +86,9 @@ struct Prompted {
     keeping: Option<String>,
     /// What the field takes (ADR-137).
     reference: Option<Reference>,
-    /// What says what the text comes to as it is typed.
-    describe: Option<Invocation>,
+    /// What says what the text comes to as it is typed, and whether it
+    /// runs as an agent's call.
+    describe: Option<(Invocation, bool)>,
 }
 
 /// The prompt's Remember switch (a server's password, ADR-082; a volume's
@@ -111,8 +112,9 @@ pub struct PromptState {
     /// F1 and the list under it (`reference.rs`).
     help: Option<FieldHelp>,
     /// What says what the text comes to as it is typed: `ui.ask`'s
-    /// `describe`, run with the text as its field, on a worker.
-    describe: Option<Invocation>,
+    /// `describe`, run with the text as its field, on a worker; true, as
+    /// an agent's call (the agent asked the question).
+    describe: Option<(Invocation, bool)>,
     /// Its latest answer, for which text: what it comes to, or why it is
     /// no answer, which holds the answer back.
     described: Option<(String, Result<String, String>)>,
@@ -141,6 +143,26 @@ pub struct ConfirmState {
     other: FocusHandle,
     accept: FocusHandle,
     back: FocusReturn,
+}
+
+/// Why `ui.ask`'s `describe` in `args` is refused, if it is: it runs as
+/// the text is typed, before anyone answers, so it only answers (a data
+/// command, `CommandSpec::data`), never one that acts (ADR-137). Asked
+/// where `ui.ask` is dispatched (an agent's, a script's) and where the
+/// question opens (a menu's).
+pub(crate) fn describe_refused(app: &skwir_core::App, args: &serde_json::Value) -> Option<String> {
+    let describe = args.get("describe").filter(|d| !d.is_null())?;
+    let Some(name) = describe.get("command").and_then(serde_json::Value::as_str) else {
+        return Some("ui.ask's describe names no command".to_owned());
+    };
+    match app.commands.get(name) {
+        Some(spec) if spec.data => None,
+        Some(_) => Some(format!(
+            "ui.ask's describe runs as the text is typed, before it is answered: \
+             {name} does more than answer"
+        )),
+        None => Some(format!("ui.ask's describe names no command known: {name}")),
+    }
 }
 
 /// Name in `args` what a question is about as it is asked (AGENTS.md,
@@ -323,6 +345,10 @@ impl Shell {
             self.set_status("ui.ask needs a command and a field", true, cx);
             return;
         };
+        if let Some(refused) = describe_refused(&self.app, args) {
+            self.set_status(refused, true, cx);
+            return;
+        }
         let select = args
             .get("select")
             .and_then(|s| serde_json::from_value::<[usize; 2]>(s.clone()).ok())
@@ -385,7 +411,11 @@ impl Shell {
                     || app.pane_dir(pane).ok(),
                 );
             }
-            Some(said)
+            let agent = describe
+                .get("agent")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            Some((said, agent))
         });
         let ask = Ask {
             command,
@@ -525,7 +555,8 @@ impl Shell {
         let Some(prompt) = self.prompt.as_mut() else {
             return;
         };
-        let (Some(describe), Some(ask)) = (prompt.describe.clone(), prompt.ask.as_ref()) else {
+        let (Some((describe, agent)), Some(ask)) = (prompt.describe.clone(), prompt.ask.as_ref())
+        else {
             return;
         };
         let text = prompt.input.read(cx).text().trim().to_owned();
@@ -542,7 +573,12 @@ impl Shell {
             self.pane_lane(self.pane),
             "prompt-describe",
             self.app.lifetime().child(),
-            move || match app.dispatch(&invocation) {
+            // An agent's question says it as the agent's call would.
+            move || match if agent {
+                skwir_core::permissions::as_agent(app.privacy(), || app.dispatch(&invocation))
+            } else {
+                app.dispatch(&invocation)
+            } {
                 Ok(Outcome::Value(v)) => Ok(v
                     .get("says")
                     .and_then(serde_json::Value::as_str)
