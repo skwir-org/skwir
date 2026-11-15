@@ -152,11 +152,15 @@ fn put(ask: &Ask, part: &str, written: Written) -> String {
         out.push(' ');
     }
     out.push_str(part);
+    // Apart from the word after it too: a key written before a word
+    // waits for its own value, and never takes that word for it
+    // (`kind:report`); only what begins a term (`-`, `(`, a quote) joins
+    // what follows.
     if written == Written::Term
         && !after.is_empty()
         && !after.starts_with(char::is_whitespace)
         && !after.starts_with(')')
-        && !part.ends_with([':', '(', '"', ' ', '-'])
+        && !part.ends_with(['(', '"', ' ', '-'])
     {
         out.push(' ');
     }
@@ -225,7 +229,18 @@ mod tests {
             "report kind:"
         );
         assert_eq!(put(&ask("a b", 1), "OR ", Written::Term), "a OR b");
-        assert_eq!(put(&ask("(a", 1), "kind:", Written::Term), "(kind:a");
+        assert_eq!(put(&ask("(a", 1), "kind:", Written::Term), "(kind: a");
+        // A key written before a word stands apart from it, never taking
+        // it for its value.
+        assert_eq!(
+            put(&ask("report", 0), "kind:", Written::Term),
+            "kind: report"
+        );
+        assert_eq!(
+            put(&ask("a report", 2), "size>10M", Written::Term),
+            "a size>10M report"
+        );
+        assert_eq!(put(&ask("report", 0), "-", Written::Term), "-report");
         assert_eq!(put(&ask("a b", 2), "-", Written::Term), "a -b");
         assert_eq!(
             put(&ask("content:/ab/", 10), r"\d", Written::Part),
