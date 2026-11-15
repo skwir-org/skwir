@@ -249,35 +249,8 @@ fn given_up_on_before_it_mounted_it_leaves_nothing_running() {
 /// again there. Skipped where user namespaces are not allowed.
 #[test]
 fn as_root_in_a_user_namespace_too() {
-    if std::env::var_os("SKWIR_TEST_IN_NAMESPACE").is_some() || !fuse() {
+    if skwir_core::testing::in_namespace() || !fuse() {
         return;
     }
-    let Ok(test) = std::env::current_exe() else {
-        return;
-    };
-    let ran = Command::new("unshare")
-        .args(["-r", "-m", "--propagation", "private"])
-        .arg(&test)
-        .args(["--exact", "a_phone_kmtpd_holds_is_a_folder_until_unplugged"])
-        .env("SKWIR_TEST_IN_NAMESPACE", "1")
-        .output();
-    let Ok(ran) = ran else {
-        eprintln!("skipped: unshare is not installed");
-        return;
-    };
-    let said = String::from_utf8_lossy(&ran.stderr);
-    if !ran.status.success() && said.contains("unshare failed") {
-        eprintln!("skipped: user namespaces are not allowed here: {said}");
-        return;
-    }
-    assert!(
-        ran.status.success(),
-        "{}\n{said}",
-        String::from_utf8_lossy(&ran.stdout)
-    );
-    assert!(
-        String::from_utf8_lossy(&ran.stdout).contains("1 passed"),
-        "it ran: {}",
-        String::from_utf8_lossy(&ran.stdout)
-    );
+    skwir_core::testing::as_root_in_a_namespace("a_phone_kmtpd_holds_is_a_folder_until_unplugged");
 }

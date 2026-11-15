@@ -1421,7 +1421,7 @@ mod tests {
     fn a_mount_made_or_let_go_of_is_told() {
         use std::process::Command;
         use std::time::Duration;
-        if std::env::var_os("SKWIR_TEST_IN_NAMESPACE").is_none() {
+        if !crate::testing::in_namespace() {
             return;
         }
         let (tx, rx) = crossbeam_channel::unbounded();
@@ -1570,33 +1570,11 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn the_table_is_followed() {
-        if std::env::var_os("SKWIR_TEST_IN_NAMESPACE").is_some() {
-            return;
-        }
-        let Ok(test) = std::env::current_exe() else {
-            return;
-        };
-        let ran = std::process::Command::new("unshare")
-            .args(["-r", "-m", "--propagation", "private"])
-            .arg(&test)
-            .args([
-                "--exact",
+        if !crate::testing::in_namespace() {
+            crate::testing::as_root_in_a_namespace(
                 "fs::reach::tests::a_mount_made_or_let_go_of_is_told",
-            ])
-            .env("SKWIR_TEST_IN_NAMESPACE", "1")
-            .output();
-        let Ok(ran) = ran else {
-            eprintln!("skipped: unshare is not installed");
-            return;
-        };
-        let said = String::from_utf8_lossy(&ran.stderr);
-        if !ran.status.success() && said.contains("unshare failed") {
-            eprintln!("skipped: user namespaces are not allowed here: {said}");
-            return;
+            );
         }
-        let out = String::from_utf8_lossy(&ran.stdout);
-        assert!(ran.status.success(), "{out}\n{said}");
-        assert!(out.contains("1 passed"), "it ran: {out}");
     }
 
     /// A path's volume is the deepest mount above it, told by its text

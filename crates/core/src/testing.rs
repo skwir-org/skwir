@@ -152,6 +152,64 @@ fn prune_ports(folder: &std::path::Path) {
     let _ = folder;
 }
 
+/// What a test run again by [`as_root_in_a_namespace`] finds set.
+#[cfg(target_os = "linux")]
+const IN_NAMESPACE: &str = "SKWIR_TEST_IN_NAMESPACE";
+
+/// Whether this test runs where [`as_root_in_a_namespace`] runs it: a
+/// test meant for there does nothing elsewhere, and the one that runs it
+/// does nothing there.
+#[cfg(target_os = "linux")]
+pub fn in_namespace() -> bool {
+    std::env::var_os(IN_NAMESPACE).is_some()
+}
+
+/// Runs `test`, a test of this test program, again as root of a user
+/// namespace of its own with mounts of its own (`unshare -r -m`, kept
+/// private), where [`in_namespace`] holds, and fails where it fails or
+/// does not run. Skipped, saying so, where this system makes no such
+/// namespace: no `unshare`, a namespace refused (a kernel's setting), or
+/// one made whose user cannot be mapped
+/// (`kernel.apparmor_restrict_unprivileged_userns`, GitHub's Ubuntu
+/// runners). That
+/// is asked of a namespace running `true`, never read from what the
+/// test's own run says: a failure of the test is never taken for the
+/// system's refusal, and no refusal for the test's failure.
+///
+/// # Panics
+/// Where the test fails there, or does not run.
+#[cfg(target_os = "linux")]
+pub fn as_root_in_a_namespace(test: &str) {
+    use std::process::Command;
+    const UNSHARE: [&str; 4] = ["-r", "-m", "--propagation", "private"];
+    match Command::new("unshare").args(UNSHARE).arg("true").output() {
+        Err(error) => {
+            eprintln!("skipped: unshare cannot be run ({error})");
+            return;
+        }
+        Ok(tried) if !tried.status.success() => {
+            eprintln!(
+                "skipped: no user namespace is made here: {}",
+                String::from_utf8_lossy(&tried.stderr).trim()
+            );
+            return;
+        }
+        Ok(_) => {}
+    }
+    let program = std::env::current_exe().expect("the test's own program");
+    let ran = Command::new("unshare")
+        .args(UNSHARE)
+        .arg(program)
+        .args(["--exact", test])
+        .env(IN_NAMESPACE, "1")
+        .output()
+        .expect("unshare, which ran a moment ago");
+    let out = String::from_utf8_lossy(&ran.stdout);
+    let said = String::from_utf8_lossy(&ran.stderr);
+    assert!(ran.status.success(), "{out}\n{said}");
+    assert!(out.contains("1 passed"), "{test} ran: {out}");
+}
+
 #[cfg(test)]
 mod tests {
     use super::{free_port, ports_folder};
