@@ -4,7 +4,7 @@ diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
 index e38696c..5dcb047 100644
 --- a/crates/gpui/src/window.rs
 +++ b/crates/gpui/src/window.rs
-@@ -2133,8 +2133,16 @@ impl Window {
+@@ -2135,8 +2135,16 @@ impl Window {
              Box::new(move || {
                  handle
                      .update(&mut cx, |_, window, _cx| {

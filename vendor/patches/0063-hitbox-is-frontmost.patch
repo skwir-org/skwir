@@ -4,7 +4,7 @@ diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
 index 39b796c..ec0203b 100644
 --- a/crates/gpui/src/window.rs
 +++ b/crates/gpui/src/window.rs
-@@ -885,6 +885,17 @@ impl Hitbox {
+@@ -885,6 +885,19 @@ impl Hitbox {
      pub fn should_handle_scroll(&self, window: &Window) -> bool {
          self.id.should_handle_scroll(window)
      }
@@ -16,13 +16,15 @@ index 39b796c..ec0203b 100644
 +    /// that acts only where nothing else is under the mouse asks this instead: the empty parts of
 +    /// a title bar the application draws, a press on which moves the window.
 +    pub fn is_frontmost(&self, window: &Window) -> bool {
-+        window.captured_hitbox.is_none_or(|captured| captured == self.id)
++        window
++            .captured_hitbox
++            .is_none_or(|captured| captured == self.id)
 +            && window.mouse_hit_test.ids.first() == Some(&self.id)
 +    }
  }
  
  /// How the hitbox affects mouse behavior.
-@@ -9349,6 +9360,50 @@ mod tests {
+@@ -9349,6 +9362,50 @@ mod tests {
          assert_eq!(rounded, snapped);
      }
  

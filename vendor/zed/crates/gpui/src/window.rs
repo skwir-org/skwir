@@ -893,7 +893,9 @@ impl Hitbox {
     /// that acts only where nothing else is under the mouse asks this instead: the empty parts of
     /// a title bar the application draws, a press on which moves the window.
     pub fn is_frontmost(&self, window: &Window) -> bool {
-        window.captured_hitbox.is_none_or(|captured| captured == self.id)
+        window
+            .captured_hitbox
+            .is_none_or(|captured| captured == self.id)
             && window.mouse_hit_test.ids.first() == Some(&self.id)
     }
 }
@@ -9473,8 +9475,16 @@ mod tests {
         };
         let met = card.intersect(&window);
         assert_eq!(met.rounded_bounds, card.rounded_bounds);
-        assert_eq!(met.corner_radii.bottom_right, px(12.), "the corner both have");
-        assert_eq!(met.corner_radii.top_right, px(10.), "a corner on an edge only");
+        assert_eq!(
+            met.corner_radii.bottom_right,
+            px(12.),
+            "the corner both have"
+        );
+        assert_eq!(
+            met.corner_radii.top_right,
+            px(10.),
+            "a corner on an edge only"
+        );
         assert_eq!(met.corner_radii.top_left, px(10.));
         assert_eq!(window.intersect(&card), met, "either way round");
     }

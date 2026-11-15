@@ -4,7 +4,7 @@ diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
 index ec0203b..b368e47 100644
 --- a/crates/gpui/src/window.rs
 +++ b/crates/gpui/src/window.rs
-@@ -2350,22 +2350,45 @@ impl ContentMask<Pixels> {
+@@ -2352,22 +2352,45 @@ impl ContentMask<Pixels> {
  
      /// Intersect the content mask with the given content mask. Of two rounded masks, the one with
      /// the smaller rounded rectangle is kept (the one inside the other, where one is): a mask holds
@@ -57,7 +57,7 @@ index ec0203b..b368e47 100644
          }
      }
  }
-@@ -9404,6 +9427,36 @@ mod tests {
+@@ -9406,6 +9429,44 @@ mod tests {
          .unwrap();
      }
  
@@ -85,8 +85,16 @@ index ec0203b..b368e47 100644
 +        };
 +        let met = card.intersect(&window);
 +        assert_eq!(met.rounded_bounds, card.rounded_bounds);
-+        assert_eq!(met.corner_radii.bottom_right, px(12.), "the corner both have");
-+        assert_eq!(met.corner_radii.top_right, px(10.), "a corner on an edge only");
++        assert_eq!(
++            met.corner_radii.bottom_right,
++            px(12.),
++            "the corner both have"
++        );
++        assert_eq!(
++            met.corner_radii.top_right,
++            px(10.),
++            "a corner on an edge only"
++        );
 +        assert_eq!(met.corner_radii.top_left, px(10.));
 +        assert_eq!(window.intersect(&card), met, "either way round");
 +    }

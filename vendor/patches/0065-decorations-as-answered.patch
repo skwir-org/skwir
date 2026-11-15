@@ -20,7 +20,7 @@ diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
 index b368e47..e38696c 100644
 --- a/crates/gpui/src/window.rs
 +++ b/crates/gpui/src/window.rs
-@@ -2617,6 +2617,13 @@ impl Window {
+@@ -2619,6 +2619,13 @@ impl Window {
          self.platform_window.request_decorations(decorations);
      }
  
