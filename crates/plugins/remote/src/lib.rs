@@ -176,7 +176,9 @@ struct State {
     servers_reading: Option<CancelToken>,
     /// Where the servers were read, followed while the plugin is enabled
     /// (`sources`).
-    sources: Option<sources::Sources>,
+    /// Behind a lock of their own: watching resolves each folder's path,
+    /// never while this state's lock is held (`Sources::follow`).
+    sources: Option<Arc<Mutex<sources::Sources>>>,
     /// The refreshes asked, whole and of the mounts alone
     /// (`Remotes::refreshes`): not what the system told.
     refreshes: (u64, u64),
@@ -1036,7 +1038,10 @@ impl Remotes {
             state.looking = true;
             state.looked = Some(std::time::Instant::now());
             state.servers_reading.is_none()
-                && state.sources.as_ref().is_none_or(sources::Sources::misses)
+                && state
+                    .sources
+                    .as_ref()
+                    .is_none_or(|sources| sources.lock().misses())
         };
         self.read_again(app, servers, Asked::Told, Bridges::Listed, true);
     }
@@ -1227,7 +1232,7 @@ impl Remotes {
                 (at_login, ids)
             });
             let found = !near.is_empty();
-            let shown = {
+            let (shown, follow) = {
                 let mut state = this.state.lock();
                 for (host, near) in near {
                     state.local.entry(host).or_insert(near);
@@ -1240,9 +1245,8 @@ impl Remotes {
                 if !newest {
                     return;
                 }
-                if let (Some(from), Some(sources)) = (from, state.sources.as_mut()) {
-                    sources.follow(from);
-                }
+                // Followed once this lock is let go of (`Sources::follow`).
+                let follow = from.zip(state.sources.clone());
                 let whole = whole
                     || (servers
                         && (std::mem::take(&mut state.whole_owed.1) || asked == Asked::Whole));
@@ -1256,8 +1260,11 @@ impl Remotes {
                 state.servers = listed;
                 state.at_login = at_login;
                 state.login_ids = ids;
-                whole || kept_changed || found
+                (whole || kept_changed || found, follow)
             };
+            if let Some((from, sources)) = follow {
+                sources.lock().follow(from, servers_at);
+            }
             if shown && let Some(app) = weak.upgrade() {
                 this.publish(&app);
             }
@@ -1960,7 +1967,8 @@ impl Plugin for RemotePlugin {
                 remotes.sources_told(&app);
                 true
             });
-            self.remotes.state.lock().sources = sources;
+            self.remotes.state.lock().sources =
+                sources.map(|sources| Arc::new(Mutex::new(sources)));
         }
         app.settings.declare(
             SettingSpec::text(

@@ -17,7 +17,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use parking_lot::Mutex;
-use skwir_core::fs::{Settled, volume};
+use skwir_core::fs::{Settled, reach, volume};
 use skwir_core::os_path;
 
 use crate::connector::Source;
@@ -39,6 +39,9 @@ pub struct Sources {
     /// Whether a folder followed could not be watched: what it holds is
     /// read again as a window comes to the front (`Sources::misses`).
     misses: bool,
+    /// The read of the servers whose `Followed` is followed: an older
+    /// one, ending after, never takes its place.
+    at: u64,
 }
 
 impl Sources {
@@ -59,15 +62,26 @@ impl Sources {
             followed,
             watched: HashSet::new(),
             misses: false,
+            at: 0,
         })
     }
 
-    /// Follow `followed` from now on, and what no longer is no more. Each
-    /// folder is asked again, one watched before too: a folder removed
-    /// and made again is another, which the watcher let go of with the
-    /// first.
-    pub fn follow(&mut self, followed: Followed) {
-        let Followed { every, folders } = followed;
+    /// Follow `followed`, found by the read of the servers `at`, from now
+    /// on, and what no longer is no more; nothing where a later read's is
+    /// followed already. Each folder is asked again, one watched before
+    /// too: a folder removed and made again is another, which the watcher
+    /// let go of with the first. Watching resolves each folder's path: never
+    /// under a lock another thread waits on.
+    pub fn follow(&mut self, followed: Followed, at: u64) {
+        if at < self.at {
+            return;
+        }
+        self.at = at;
+        let Followed {
+            every,
+            folders,
+            unwatched,
+        } = followed;
         // What counts first: what is told from the folders watched next
         // is weighed by it.
         *self.followed.lock() = every;
@@ -80,7 +94,7 @@ impl Sources {
             self.watcher.unwatch(&gone);
             self.watched.remove(&gone);
         }
-        self.misses = false;
+        self.misses = unwatched;
         for folder in folders {
             if self.watcher.watch(&folder) {
                 self.watched.insert(folder);
@@ -92,8 +106,8 @@ impl Sources {
     }
 
     /// Whether a folder followed could not be watched (the system's
-    /// watches all taken): the servers are read again as a window comes to
-    /// the front, no change there told.
+    /// watches all taken, a remote's, `Followed::of`): the servers are read
+    /// again as a window comes to the front, no change there told.
     pub fn misses(&self) -> bool {
         self.misses
     }
@@ -114,22 +128,37 @@ impl Sources {
 pub struct Followed {
     every: Vec<Source>,
     folders: HashSet<PathBuf>,
+    /// Whether a source is on a remote, left unwatched
+    /// (`Sources::misses`).
+    unwatched: bool,
 }
 
 impl Followed {
-    /// What `sources` lead through and to. I/O: the reading thread's.
+    /// What `sources` lead through and to. I/O: the reading thread's, and
+    /// none on a remote (asked of the table in memory, `reach::of`): a
+    /// server that stopped answering would hold the walk, and a watch
+    /// there never hears what other machines change.
     pub fn of(sources: Vec<Source>) -> Self {
-        Self::with(sources, |folder| volume::read_only(folder) == Some(true))
+        Self::with(
+            sources,
+            |folder| volume::read_only(folder) == Some(true),
+            |path| reach::of(path).is_some(),
+        )
     }
 
     /// [`Followed::of`], a folder `read_only` says is on a volume mounted
-    /// read-only left unwatched: nothing there is replaced (the Nix
-    /// store), what leads into it is re-pointed.
-    fn with(sources: Vec<Source>, read_only: impl Fn(&Path) -> bool) -> Self {
+    /// read-only left unwatched (nothing there is replaced, the Nix
+    /// store: what leads into it is re-pointed), and what `remote` says
+    /// is on a remote neither walked nor watched.
+    fn with(
+        sources: Vec<Source>,
+        read_only: impl Fn(&Path) -> bool,
+        remote: impl Fn(&Path) -> bool,
+    ) -> Self {
         let mut every: Vec<Source> = Vec::new();
         for source in sources {
             let (links, end) = match &source {
-                Source::File(path) | Source::Folder(path) => way_to(path),
+                Source::File(path) | Source::Folder(path) => way_to(path, &remote),
             };
             every.extend(links.into_iter().map(Source::File));
             every.push(match source {
@@ -139,21 +168,31 @@ impl Followed {
         }
         every.sort();
         every.dedup();
-        let folders = every
-            .iter()
+        let (remotes, here): (Vec<&Source>, Vec<&Source>) = every.iter().partition(|source| {
+            remote(match source {
+                Source::File(path) | Source::Folder(path) => path,
+            })
+        });
+        let folders = here
+            .into_iter()
             .filter_map(folder_of)
             .filter(|folder| !read_only(folder))
             .collect();
-        Followed { every, folders }
+        Followed {
+            unwatched: !remotes.is_empty(),
+            every,
+            folders,
+        }
     }
 }
 
 /// The way to `path`: each link met, where it is (in a folder reached
 /// without a link), and where the way ends, `path` itself where no link
 /// is on it. A part not there ends nothing: what follows it is named as
-/// written. Every folder these name is reached without a link, so no two
-/// name one folder.
-fn way_to(path: &Path) -> (Vec<PathBuf>, PathBuf) {
+/// written; nor a part `remote` says is on a remote, which is never read.
+/// Every folder these name is reached without a link, so no two name one
+/// folder.
+fn way_to(path: &Path, remote: impl Fn(&Path) -> bool) -> (Vec<PathBuf>, PathBuf) {
     let mut links = Vec::new();
     let mut at = PathBuf::new();
     let mut ahead = Vec::new();
@@ -165,6 +204,7 @@ fn way_to(path: &Path) -> (Vec<PathBuf>, PathBuf) {
         };
         let next = at.join(&name);
         if links.len() < MAX_LINKS
+            && !remote(&next)
             && std::fs::symlink_metadata(&next).is_ok_and(|meta| meta.file_type().is_symlink())
             && let Ok(target) = std::fs::read_link(&next)
         {
@@ -275,15 +315,19 @@ mod tests {
         let generation = root.join("store").join("first-etc").join("etc");
         let file = root.join("store").join("first-fstab");
         assert_eq!(
-            way_to(&fstab),
+            way_to(&fstab, |_| false),
             (
                 vec![fstab.clone(), etc.join("static"), generation.join("fstab")],
                 file.clone()
             )
         );
-        assert_eq!(way_to(&file), (vec![], file.clone()), "no link: itself");
         assert_eq!(
-            way_to(&etc.join("static").join("gone").join("fstab")),
+            way_to(&file, |_| false),
+            (vec![], file.clone()),
+            "no link: itself"
+        );
+        assert_eq!(
+            way_to(&etc.join("static").join("gone").join("fstab"), |_| false),
             (
                 vec![etc.join("static")],
                 generation.join("gone").join("fstab")
@@ -292,7 +336,7 @@ mod tests {
         );
         std::os::unix::fs::symlink("loop-b", root.join("loop-a")).unwrap();
         std::os::unix::fs::symlink("loop-a", root.join("loop-b")).unwrap();
-        assert_eq!(way_to(&root.join("loop-a")).0.len(), MAX_LINKS);
+        assert_eq!(way_to(&root.join("loop-a"), |_| false).0.len(), MAX_LINKS);
     }
 
     /// Every link on the way counts, and a folder on a volume mounted
@@ -305,9 +349,11 @@ mod tests {
         let root = skwir_core::os_path::canonical(dir.path()).unwrap();
         let fstab = nixos_like(&root, "first", "");
         let store = root.join("store");
-        let followed = Followed::with(vec![Source::File(fstab)], |folder| {
-            folder.starts_with(&store)
-        });
+        let followed = Followed::with(
+            vec![Source::File(fstab)],
+            |folder| folder.starts_with(&store),
+            |_| false,
+        );
         assert_eq!(
             followed.folders.into_iter().collect::<Vec<_>>(),
             [root.join("etc")]
@@ -333,10 +379,14 @@ mod tests {
         let (tx, rx) = crossbeam_channel::unbounded();
         let mut sources = Sources::start(move || tx.send(()).is_ok()).unwrap();
         let follow = |sources: &mut Sources| {
-            sources.follow(Followed::with(
-                vec![Source::File(fstab.clone())],
-                |folder| folder.starts_with(&store),
-            ));
+            sources.follow(
+                Followed::with(
+                    vec![Source::File(fstab.clone())],
+                    |folder| folder.starts_with(&store),
+                    |_| false,
+                ),
+                1,
+            );
         };
         follow(&mut sources);
         assert_eq!(sources.watched(), [root.join("etc")]);
@@ -364,7 +414,7 @@ mod tests {
         let (tx, rx) = crossbeam_channel::unbounded();
         let mut sources = Sources::start(move || tx.send(()).is_ok()).unwrap();
         let follow = |sources: &mut Sources| {
-            sources.follow(Followed::of(vec![Source::File(config.clone())]));
+            sources.follow(Followed::of(vec![Source::File(config.clone())]), 1);
         };
         follow(&mut sources);
         assert_eq!(sources.watched(), std::slice::from_ref(&rclone));
@@ -374,6 +424,55 @@ mod tests {
         follow(&mut sources);
         std::fs::write(&config, "[box]\ntype = box\n").unwrap();
         told_on(&rx, "a file written in the folder made again");
+    }
+
+    /// What is on a remote is neither walked nor watched: its links are
+    /// not read (a server that stopped answering would hold the walk) and
+    /// it counts as missed, read again as a window comes to the front.
+    /// What an older read found never takes the place of a later's.
+    #[cfg(unix)]
+    #[test]
+    fn what_is_on_a_remote_is_neither_walked_nor_watched() {
+        use super::{Followed, Sources};
+        let dir = tempfile::tempdir().unwrap();
+        let root = skwir_core::os_path::canonical(dir.path()).unwrap();
+        let served = root.join("served");
+        let here = root.join("here");
+        std::fs::create_dir_all(served.join("rclone's")).unwrap();
+        std::fs::create_dir_all(&here).unwrap();
+        std::os::unix::fs::symlink(&here, served.join("link")).unwrap();
+        let on_remote = |path: &Path| path.starts_with(&served);
+        let followed = Followed::with(
+            vec![
+                Source::File(served.join("link").join("rclone.conf")),
+                Source::File(here.join("user-places.xbel")),
+            ],
+            |_| false,
+            on_remote,
+        );
+        assert!(followed.unwatched);
+        assert!(
+            followed
+                .every
+                .contains(&Source::File(served.join("link").join("rclone.conf"))),
+            "its link not read"
+        );
+        assert_eq!(
+            followed.folders.iter().collect::<Vec<_>>(),
+            [&here],
+            "nothing on the remote watched"
+        );
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        let mut sources = Sources::start(move || tx.send(()).is_ok()).unwrap();
+        sources.follow(followed, 2);
+        assert!(sources.misses());
+        assert_eq!(sources.watched(), std::slice::from_ref(&here));
+        sources.follow(
+            Followed::with(vec![Source::File(root.join("older"))], |_| false, |_| false),
+            1,
+        );
+        assert!(sources.misses(), "an older read's never in its place");
+        assert_eq!(sources.watched(), std::slice::from_ref(&here));
     }
 
     /// A file's folder is watched, else the nearest above that is there;
@@ -454,10 +553,13 @@ mod tests {
         let config = root.join("rclone").join("rclone.conf");
         let network = root.join("remoteview");
         let follow = |sources: &mut Sources| {
-            sources.follow(Followed::of(vec![
-                Source::File(config.clone()),
-                Source::Folder(network.clone()),
-            ]));
+            sources.follow(
+                Followed::of(vec![
+                    Source::File(config.clone()),
+                    Source::Folder(network.clone()),
+                ]),
+                1,
+            );
         };
         follow(&mut sources);
         assert_eq!(sources.watched(), std::slice::from_ref(&root));
@@ -496,7 +598,7 @@ mod tests {
         let places = root.join("user-places.xbel");
         std::fs::write(dotfiles.join("user-places.xbel"), "<xbel/>").unwrap();
         std::os::unix::fs::symlink(dotfiles.join("user-places.xbel"), &places).unwrap();
-        sources.follow(Followed::of(vec![Source::File(places)]));
+        sources.follow(Followed::of(vec![Source::File(places)]), 2);
         let deadline = Instant::now() + Duration::from_secs(1);
         while rx.recv_timeout(Duration::from_millis(600)).is_ok() {
             assert!(Instant::now() < deadline);

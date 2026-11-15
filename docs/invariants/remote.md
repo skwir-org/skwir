@@ -571,8 +571,13 @@ ADR-077 (which revises ADR-021).
   and a link re-pointed names another, NixOS's `/etc/static` at a
   switch; a folder on a volume mounted read-only is not watched, nothing
   there being replaced: the Nix store). The way is walked where the
-  servers were read, not under the plugin's lock, and each folder is
+  servers were read, and watched once the plugin's lock is let go of
+  (watching resolves a path), the newest read's alone; each folder is
   watched anew at each read: one removed and made again is another.
+  What is on a remote (asked of the table in memory, `reach::of`) is
+  neither walked nor watched: a server that stopped answering would
+  hold the walk, and a watch there hears nothing other machines change;
+  it is read again as a window comes to the front (`Sources::misses`).
   Once a change settles (400 ms, at most 2 s while changes go on) the
   servers are read again, which
   follows what they then name. What the system told is shown only where the section
