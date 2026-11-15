@@ -102,6 +102,9 @@ pub struct ColumnsView {
     /// What arrives in each column beside it, keyed once for its order
     /// (ADR-135): placed again by a search as the order changes.
     side_keys: HashMap<Location, crate::list::ArrivingKeys<SideKeying>>,
+    /// What a rename moved in the pane's folder, brought into view in the
+    /// last column as it draws (`PaneView::reveal_among`).
+    among: Option<crate::view::Among>,
 }
 
 /// What the keys of what arrives in a column beside the pane's hold for:
@@ -849,6 +852,13 @@ impl PaneView for ColumnsView {
                 rows
             }
         };
+        // What a rename moved, among the rows as they are now; no column
+        // pins a heading.
+        let reveal = self.among.take().map(|among| {
+            let at: Vec<usize> = among.ixs.iter().map(|ix| rows.row_of(*ix)).collect();
+            let height = row_height(shell.row_zoom, files_scale(&theme));
+            crate::views::list::reveal_rows(at, height, 0., self.scroll.clone(), among.then)
+        });
         let last = uniform_list(
             "column-last",
             rows.len(),
@@ -903,6 +913,8 @@ impl PaneView for ColumnsView {
             .flex_none()
             .border_r_1()
             .border_color(theme.border)
+            // Before the list: it scrolls as this asks, in this frame.
+            .children(reveal)
             .child(last)
             .child(
                 crate::elements::scrollbar::vertical(
@@ -975,6 +987,10 @@ impl PaneView for ColumnsView {
     fn scroll_to_middle(&mut self, ix: usize) {
         self.scroll
             .scroll_to_item(self.last_rows.row_of(ix), ScrollStrategy::Center);
+    }
+
+    fn reveal_among(&mut self, among: crate::view::Among) {
+        self.among = Some(among);
     }
 
     fn kept_locations(&self, shown: Option<&Location>, trail: Option<&Trail>) -> Vec<Location> {

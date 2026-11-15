@@ -265,6 +265,9 @@ pub struct GridView {
     /// top (`GridView::keep_top`).
     drawn_order: std::sync::Arc<[EntryId]>,
     folds_at: Option<u64>,
+    /// What a rename moved, made tiles of the rows as they are when it
+    /// draws (`PaneView::reveal_among`).
+    among: Option<crate::view::Among>,
 }
 
 /// Whether the lines counted for `last` (an order and a zoom) are not
@@ -1172,6 +1175,10 @@ impl PaneView for GridView {
         // what arrives among the tiles (ADR-135).
         let rows = shell.ui().list.rows.clone();
         self.keep_top(shell, &rows);
+        if let Some(among) = self.among.take() {
+            let tiles: Rc<[usize]> = among.ixs.iter().map(|ix| rows.tile_of(*ix)).collect();
+            self.scroll.reveal_among(tiles, among.then);
+        }
         self.drawn = rows.clone();
         self.drawn_order = std::sync::Arc::clone(&shell.ui().list.sorted);
         let count = rows.tiles();
@@ -1309,6 +1316,10 @@ impl PaneView for GridView {
 
     fn scroll_to_middle(&mut self, ix: usize) {
         self.scroll.scroll_to_item_middle(self.drawn.tile_of(ix));
+    }
+
+    fn reveal_among(&mut self, among: crate::view::Among) {
+        self.among = Some(among);
     }
 
     /// The entry at the top: what arrives there told by the entry after it.

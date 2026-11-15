@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **The view follows what you rename**: a file whose new name sorts it
+  out of sight comes to the middle of the view, selected, the cursor on
+  it; renaming several, the first of them does, unless one is still in
+  view, where the view stays. Undo and Redo of a rename follow it back.
+  A new name starting with a dot shows hidden files (as for what you
+  make), and one the filter leaves out is said, under the Renamed
+  message, whose Undo stays. Undo and Redo also select what they put back
+  in the folder shown, as what a plan makes is.
 - **A dropdown closes on a second click**: in Settings, clicking an open
   dropdown (or a narrow window's page menu) to close it opened it again.
 - **Rename Several's case is in sight**: its five choices stand side by

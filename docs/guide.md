@@ -381,7 +381,11 @@ configuration names is run, and nothing is written to it.
   `Tab` or `Enter`, or a click: a placeholder or a sign is written where
   the cursor is, a recipe fills the regex and the replacement both
   (`Ctrl+Z` in a field takes back what was written there). While nothing
-  is chosen, `Tab` still moves between fields.
+  is chosen, `Tab` still moves between fields. Where a new name sorts a
+  file elsewhere, the view follows it: unless one of the renamed files
+  is still in view, the first comes to the middle with the cursor on it,
+  and so does what Undo renames back. A name starting with a dot shows
+  hidden files; one the filter leaves out is said, the filter kept.
 - **Run a command** on the selection: Open With › Run Command…. What you
   type runs in a terminal, in the folder holding the files, with their
   paths after it, each one argument, or only where it names them

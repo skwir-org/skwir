@@ -82,6 +82,9 @@ pub struct Selection {
     /// Stamped from one process-wide counter whenever the items change, so
     /// two selections never share a nonzero stamp; 0 is an untouched one.
     revision: u64,
+    /// Stamped as `revision` is, but only when a selection is chosen: see
+    /// [`Selection::chosen`].
+    chosen: u64,
 }
 
 /// A range held while the cursor moves (yazi's visual mode): what lies
@@ -114,7 +117,24 @@ impl Selection {
         self.revision
     }
 
+    /// Changes whenever someone chose another selection (a click, a key, a
+    /// command), not when it only followed its entries (renamed, gone, no
+    /// longer shown: `rekey`, `retain`). What waits on the selection as it
+    /// was (what a plan made or renamed, shown once listed) gives way to a
+    /// choice, never to a follow.
+    pub fn chosen(&self) -> u64 {
+        self.chosen
+    }
+
+    /// The items changed by a choice.
     fn touch(&mut self) {
+        self.followed();
+        self.chosen = self.revision;
+    }
+
+    /// The items changed by following what they are (a rename, an entry
+    /// gone or no longer shown), no one choosing.
+    fn followed(&mut self) {
         self.revision = SELECTION_REVISION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
@@ -449,7 +469,7 @@ impl Selection {
         let now = |id: EntryId| ends.get(&id).copied().unwrap_or(id);
         if self.items.iter().any(|id| now(*id) != *id) {
             self.items = self.items.iter().map(|id| now(*id)).collect();
-            self.touch();
+            self.followed();
         }
         self.anchor = self.anchor.map(now);
         self.cursor = self.cursor.map(now);
@@ -470,7 +490,7 @@ impl Selection {
         let before = self.items.len();
         self.items.retain(|id| holds(*id));
         if self.items.len() != before {
-            self.touch();
+            self.followed();
         }
         if self.anchor.is_some_and(|a| !holds(a)) {
             self.anchor = self.items.first().copied();
@@ -529,7 +549,7 @@ impl Selection {
         let Some(near) = near else { return };
         self.cursor = Some(near);
         if had && self.items.is_empty() && !way(near) {
-            self.touch();
+            self.followed();
             self.items.insert(near);
             self.anchor = Some(near);
         }
@@ -986,6 +1006,19 @@ fn groups_within(
         Some(spans.get(span).and_then(|s| s.group.clone()))
     });
     (!lost).then_some(groups)
+}
+
+/// What [`Pane::show_renamed`] found of entries the user renamed.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ShownRenamed {
+    /// The first of them a hidden name took out of sight, where hidden
+    /// files were hidden: they are shown now.
+    pub unhid: Option<EntryId>,
+    /// Those the pane shows, for the view to bring into view.
+    pub shown: Vec<EntryId>,
+    /// Those it does not show still: the filter or a folded group leaves
+    /// them out.
+    pub left_out: Vec<EntryId>,
 }
 
 /// How a name waiting to be selected is selected once listed
@@ -3515,6 +3548,42 @@ impl Pane {
         }
         self.selection.set(ids.iter().copied());
         unhide
+    }
+
+    /// Show entries the user just renamed (`ids`, under the names they
+    /// have now), once the pane followed them (`follow_renamed`): a hidden
+    /// name the rename gave turns hidden files on, as
+    /// for what is made (`select_revealed`), and those the rename took out
+    /// of the selection are selected again, where it holds nothing but
+    /// what was renamed; those the filter or a folded group leaves out stay
+    /// out, never selected unseen. The window says what was turned on and
+    /// what is still not shown, and brings the rest into view.
+    pub fn show_renamed(&mut self, ids: &[EntryId]) -> ShownRenamed {
+        let hidden: Vec<EntryId> = ids
+            .iter()
+            .copied()
+            .filter(|id| self.listing.get(*id).is_some_and(crate::Entry::is_hidden))
+            .collect();
+        let unhid = (!self.sort.show_hidden && !hidden.is_empty()).then(|| hidden[0]);
+        if unhid.is_some() {
+            self.set_show_hidden(true);
+            let renamed: crate::hashing::Set<EntryId> = ids.iter().copied().collect();
+            if self.selection.iter().all(|id| renamed.contains(&id)) {
+                let back: Vec<EntryId> = hidden
+                    .into_iter()
+                    .filter(|id| !self.selection.contains(*id) && self.is_shown(*id))
+                    .collect();
+                if !back.is_empty() {
+                    self.selection.change(&back, &[]);
+                }
+            }
+        }
+        let (shown, left_out) = ids.iter().copied().partition(|id| self.is_shown(*id));
+        ShownRenamed {
+            unhid,
+            shown,
+            left_out,
+        }
     }
 
     /// Whether listing events are waiting to be applied, the kept
@@ -6501,6 +6570,78 @@ mod tests {
             at: 0,
         }));
         p.set_filter(Some("ÉTÉ"), None);
+        assert!(p.selection.is_empty());
+    }
+
+    /// A selection that only followed its entries (renamed, no longer
+    /// shown) was not chosen: what waits on the selection as it was (a
+    /// plan's end) still acts; one chosen since wins.
+    #[test]
+    fn a_selection_followed_is_not_chosen() {
+        let id = |ino| EntryId {
+            file: crate::FileId::new(1, ino),
+            at: 0,
+        };
+        let mut sel = Selection::default();
+        sel.set([id(1), id(2)]);
+        let (revision, chosen) = (sel.revision(), sel.chosen());
+        sel.rekey(&[(id(1), id(3))]);
+        sel.retain(|id| id.file.ino != 2);
+        assert_ne!(sel.revision(), revision, "what is selected changed");
+        assert_eq!(sel.chosen(), chosen, "no one chose");
+        sel.add(id(4));
+        assert_ne!(sel.chosen(), chosen);
+    }
+
+    /// A rename to a dot name, which took the file out of sight and out of
+    /// the selection, shows hidden files and selects it again, as for what
+    /// is made; one the filter leaves out stays out, said; a selection
+    /// holding more than what was renamed is left as it is.
+    #[test]
+    fn a_rename_out_of_sight_is_shown_again_unless_filtered() {
+        use crate::entry::EntryKind;
+        use crate::location::ListingEvent;
+        let id = |ino| EntryId {
+            file: crate::FileId::new(1, ino),
+            at: 0,
+        };
+        let file = |ino, name: &str| Entry::new(id(ino), name, EntryKind::File);
+        let mut p = Pane::new(PaneId(1));
+        p.listing.apply(ListingEvent::Added(vec![
+            file(1, "l'été.txt"),
+            file(2, "notes .md"),
+            file(3, "Œuvre.png"),
+        ]));
+        p.selection.set([id(1)]);
+        p.listing
+            .apply(ListingEvent::Updated(vec![file(1, ".l'été.txt")]));
+        p.retain_shown();
+        assert!(p.selection.is_empty(), "out of sight, out of the selection");
+        let shown = p.show_renamed(&[id(1)]);
+        assert_eq!(shown.unhid, Some(id(1)));
+        assert!(p.sort.show_hidden);
+        assert_eq!(items(&p.selection), [1]);
+        assert_eq!((shown.shown, shown.left_out), (vec![id(1)], vec![]));
+
+        // Hidden files hidden again; the selection holds another file too.
+        p.set_show_hidden(false);
+        p.selection.set([id(2), id(3)]);
+        p.listing
+            .apply(ListingEvent::Updated(vec![file(3, ".Œuvre.png")]));
+        p.retain_shown();
+        let shown = p.show_renamed(&[id(3)]);
+        assert_eq!(shown.unhid, Some(id(3)));
+        assert_eq!(items(&p.selection), [2], "a selection of more is left");
+
+        // Renamed past the filter: left out, still unselected.
+        p.selection.set([id(2)]);
+        p.set_filter(Some("notes"), None);
+        p.listing
+            .apply(ListingEvent::Updated(vec![file(2, "draft .md")]));
+        p.retain_shown();
+        let shown = p.show_renamed(&[id(2)]);
+        assert_eq!(shown.unhid, None);
+        assert_eq!((shown.shown, shown.left_out), (vec![], vec![id(2)]));
         assert!(p.selection.is_empty());
     }
 

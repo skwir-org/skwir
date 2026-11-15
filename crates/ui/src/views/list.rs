@@ -506,6 +506,9 @@ pub struct ListView {
     /// view draws, with the rows as they are then: the order and its
     /// headings can change between the asking and the drawing.
     asked: Option<Asked>,
+    /// What a rename moved, brought into view as it draws
+    /// (`PaneView::reveal_among`).
+    among: Option<crate::view::Among>,
 }
 
 /// A scroll asked of the list by position (`ListView::asked`).
@@ -531,6 +534,7 @@ impl Default for ListView {
             drawn_order: std::sync::Arc::from([]),
             folds_at: None,
             asked: None,
+            among: None,
         }
     }
 }
@@ -582,6 +586,61 @@ impl ListView {
             None => {}
         }
     }
+}
+
+/// Over a `uniform_list` of rows `height` tall, drawn before it so it
+/// prepaints first: with the list's own bounds and the offset it starts
+/// from, the first of `rows` is brought into the middle unless one of them
+/// is wholly in view (`PaneView::reveal_among`), a scroll the list carries
+/// out in this same frame; `then` runs if it moved. The list and the
+/// columns' last column draw it.
+pub(crate) fn reveal_rows(
+    rows: Vec<usize>,
+    height: f32,
+    pinned: f32,
+    scroll: UniformListScrollHandle,
+    then: crate::view::Then,
+) -> AnyElement {
+    gpui::canvas(
+        move |bounds, window, _| {
+            let viewport = f32::from(bounds.size.height);
+            // Not laid out yet: nothing to tell what is in view by.
+            if viewport <= 0. {
+                return;
+            }
+            let top = -f32::from(scroll.0.borrow().base_handle.offset().y);
+            if let Some(first) = first_out_of_view(&rows, height, pinned, top, viewport) {
+                scroll.scroll_to_item(first, ScrollStrategy::Center);
+                then.next_frame(window);
+            }
+        },
+        |_, (), _, _| {},
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
+    .into_any_element()
+}
+
+/// The first of `rows` when none of them is wholly in view: rows `height`
+/// tall, the view `viewport` tall from `top`, its first `pinned` pixels
+/// under a heading.
+fn first_out_of_view(
+    rows: &[usize],
+    height: f32,
+    pinned: f32,
+    top: f32,
+    viewport: f32,
+) -> Option<usize> {
+    let whole = |row: usize| {
+        let at = row as f32 * height;
+        at >= top + pinned && at + height <= top + viewport
+    };
+    if rows.iter().any(|row| whole(*row)) {
+        return None;
+    }
+    rows.iter().min().copied()
 }
 
 /// Everything a row needs, collected under the workspace lock: what every
@@ -1516,6 +1575,13 @@ impl PaneView for ListView {
             self.folds_at = folds;
         }
         self.scroll_as_asked(&rows);
+        // What a rename moved, among the rows as they are now: a row
+        // under the pinned heading is hidden.
+        let reveal = self.among.take().map(|among| {
+            let pinned = if rows.grouped() { height } else { 0. };
+            let at: Vec<usize> = among.ixs.iter().map(|ix| rows.row_of(*ix)).collect();
+            reveal_rows(at, height, pinned, self.scroll.clone(), among.then)
+        });
         self.drawn = rows.clone();
         self.drawn_order = std::sync::Arc::clone(&shell.ui().list.sorted);
         let drawn = rows.clone();
@@ -1575,6 +1641,8 @@ impl PaneView for ListView {
                     .flex_1()
                     .min_h_0()
                     .w_full()
+                    // Before the list: it scrolls as this asks, in this frame.
+                    .children(reveal)
                     .child(list)
                     .child(marquee)
                     .child(zoom_wheel::overlay(Zoomed::View(pane), cx))
@@ -1594,6 +1662,10 @@ impl PaneView for ListView {
 
     fn scroll_to_middle(&mut self, ix: usize) {
         self.asked = Some(Asked::Middle(ix));
+    }
+
+    fn reveal_among(&mut self, among: crate::view::Among) {
+        self.among = Some(among);
     }
 
     /// The entry at the top, a heading there told by a distance above it.
@@ -1780,8 +1852,28 @@ impl ListView {
 
 #[cfg(test)]
 mod tests {
-    use super::{DEFAULT_ROW_ZOOM, ROW_HEIGHT, ROW_ZOOMS, row_anchor, row_height, row_offset};
+    use super::{
+        DEFAULT_ROW_ZOOM, ROW_HEIGHT, ROW_ZOOMS, first_out_of_view, row_anchor, row_height,
+        row_offset,
+    };
     use crate::sizes::Scale;
+
+    /// What a rename moved is brought into view only when none of it is
+    /// wholly in view; then the first. A row cut at an edge, or under a
+    /// pinned heading, is not in view.
+    #[test]
+    fn a_rename_brings_the_first_in_only_when_none_is_in_view() {
+        let (h, viewport) = (20., 200.);
+        // Rows 10 to 19 are in view from 200 px down.
+        assert_eq!(first_out_of_view(&[3, 15, 40], h, 0., 200., viewport), None);
+        assert_eq!(first_out_of_view(&[3, 40], h, 0., 200., viewport), Some(3));
+        // Row 9 is cut at the top, row 20 at the bottom, 5 px into it.
+        assert_eq!(first_out_of_view(&[9, 20], h, 0., 205., viewport), Some(9));
+        // Under a pinned heading the first row is hidden.
+        assert_eq!(first_out_of_view(&[10], h, h, 200., viewport), Some(10));
+        assert_eq!(first_out_of_view(&[11], h, h, 200., viewport), None);
+        assert_eq!(first_out_of_view(&[], h, 0., 0., viewport), None);
+    }
 
     #[test]
     fn a_scroll_position_comes_back_to_the_pixel() {

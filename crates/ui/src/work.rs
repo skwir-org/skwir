@@ -255,6 +255,9 @@ impl Watched {
 /// What the window does with an event taken in.
 pub(crate) enum Taken {
     Nothing,
+    /// An undo or a redo began: the window that asked for one shows what
+    /// it puts back as it shows what a plan makes (`Shell::replays`).
+    Replays(PlanId),
     /// A step was made: the window shows what it made (`Shell::made_step`).
     Step(skwir_core::op::Progress),
     /// A plan its server stopped waits for it to answer again.
@@ -520,7 +523,11 @@ impl Work {
                 }
                 self.running
                     .push(Running::started(plan, title, run, total, items, going_on));
-                Taken::Nothing
+                if run == RunKind::Apply {
+                    Taken::Nothing
+                } else {
+                    Taken::Replays(plan)
+                }
             }
             ExecEvent::GoesOn { plan, next, .. } => {
                 self.going_on.insert(next);

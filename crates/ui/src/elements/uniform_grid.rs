@@ -504,6 +504,36 @@ pub mod math {
             -target.clamp(0.0, max_scroll)
         }
 
+        /// Whether item `ix`'s row is wholly in view at offset `current`,
+        /// below a pinned heading.
+        pub fn shows_whole(&self, ix: usize, viewport_h: f32, current: f32) -> bool {
+            if self.rows() == 0 {
+                return false;
+            }
+            let row = self.line_of(ix).min(self.rows() - 1);
+            let (top, bottom) = (self.tops[row], self.tops[row + 1]);
+            let scroll_top = -current;
+            top >= scroll_top + self.heading && bottom <= scroll_top + viewport_h
+        }
+
+        /// The first of `items` when none of them is wholly in view at
+        /// offset `current`: what a rename moved, brought into view only
+        /// then (`PaneView::reveal_among`).
+        pub fn first_out_of_view(
+            &self,
+            items: &[usize],
+            viewport_h: f32,
+            current: f32,
+        ) -> Option<usize> {
+            if items
+                .iter()
+                .any(|ix| self.shows_whole(*ix, viewport_h, current))
+            {
+                return None;
+            }
+            items.iter().min().copied()
+        }
+
         /// Offset that shows item `ix`'s row where `place` says, or the
         /// current offset when the row is already fully visible and
         /// `place` is not `Top`. Clamped to the content. Under a pinned
@@ -523,9 +553,8 @@ pub mod math {
             let (top, bottom) = (self.tops[row], self.tops[row + 1]);
             let scroll_top = -current;
             let pinned = self.heading;
-            let visible = top >= scroll_top + pinned && bottom <= scroll_top + viewport_h;
             let max_scroll = (content_h - viewport_h).max(0.0);
-            if place != Place::Top && visible {
+            if place != Place::Top && self.shows_whole(ix, viewport_h, current) {
                 return current;
             }
             let target = match place {
@@ -643,10 +672,13 @@ pub struct GridLayout {
 }
 
 /// A scroll asked for before the next prepaint, which has the real rows.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 enum Deferred {
     /// Bring an item's row into view where `place` says.
     Item { ix: usize, place: math::Place },
+    /// Bring the first of `items` into the middle unless one of them is
+    /// wholly in view (`GridScrollState::then` runs if it moved).
+    Among { items: Rc<[usize]> },
     /// Put an item's row at the top, `within` pixels scrolled into it.
     Anchor { ix: usize, within: f32 },
     /// Bring the heading of a group drawn (`Slots::offset_for_heading`)
@@ -658,6 +690,8 @@ enum Deferred {
 pub struct GridScrollState {
     pub base_handle: ScrollHandle,
     deferred: Option<Deferred>,
+    /// What runs once `Deferred::Among` moved the view.
+    then: Option<crate::view::Then>,
     layout: GridLayout,
     /// What `layout.slots` was built from: rebuilt only when this changes.
     built_from: Option<Built>,
@@ -715,6 +749,15 @@ impl UniformGridScrollHandle {
             group,
             at_top: true,
         });
+    }
+
+    /// Bring the first of `items` into the middle unless one of them is
+    /// wholly in view, and run `then` if it moved
+    /// (`PaneView::reveal_among`).
+    pub fn reveal_among(&self, items: Rc<[usize]>, then: crate::view::Then) {
+        let mut state = self.0.borrow_mut();
+        state.deferred = Some(Deferred::Among { items });
+        state.then = Some(then);
     }
 
     /// Put item `ix`'s row in the middle, unless it is wholly in view.
@@ -899,13 +942,17 @@ impl Element for UniformGrid {
             groups.as_ref().map(|g| (g.rows.key(), g.height.to_bits())),
         );
         // The rows before this frame, to find again what was at the top.
-        let (deferred, before) = match &self.scroll_handle {
+        let (deferred, then, before) = match &self.scroll_handle {
             Some(h) => {
                 let mut s = h.0.borrow_mut();
                 let changed = s.built_from.is_some() && s.built_from != Some(built_from);
-                (s.deferred.take(), changed.then(|| s.layout.slots.clone()))
+                (
+                    s.deferred.take(),
+                    s.then.take(),
+                    changed.then(|| s.layout.slots.clone()),
+                )
             }
-            None => (None, None),
+            None => (None, None, None),
         };
         let reuse = self
             .scroll_handle
@@ -956,6 +1003,21 @@ impl Element for UniformGrid {
                     }
                     Some(Deferred::Heading { group, at_top }) => {
                         y = slots.offset_for_heading(group, at_top, viewport_h, content_h, y);
+                    }
+                    Some(Deferred::Among { items }) => {
+                        if let Some(first) = slots.first_out_of_view(&items, viewport_h, y) {
+                            let first = first.min(item_count.saturating_sub(1));
+                            y = slots.offset_for_item(
+                                first,
+                                viewport_h,
+                                content_h,
+                                y,
+                                math::Place::Middle,
+                            );
+                            if let Some(then) = then {
+                                then.next_frame(window);
+                            }
+                        }
                     }
                     None => {}
                 }
@@ -1393,5 +1455,20 @@ mod tests {
         // Near the ends: as near the middle as they let it.
         assert!((at(0, -900.) - 0.).abs() < 1e-6);
         assert!((at(99, 0.) - -2100.).abs() < 1e-6);
+    }
+
+    /// What a rename moved is brought into view only when none of it is
+    /// wholly in view: then the first, whichever came first in the asking.
+    #[test]
+    fn a_rename_brings_the_first_tile_in_only_when_none_is_in_view() {
+        // viewport 400, 4 columns, 100 items -> 25 rows of 100: rows 0 to 3
+        // (items 0 to 15) wholly in view at the top.
+        let slots = Slots::new(Columns::fit(448., 100., 12., 40.), 0., 100, |_| 100.);
+        let first = |items: &[usize], current| slots.first_out_of_view(items, 400., current);
+        assert_eq!(first(&[60, 7, 90], 0.), None, "one is in view");
+        assert_eq!(first(&[90, 60], 0.), Some(60));
+        // Row 4 (items 16 to 19) cut at the bottom 50 px down.
+        assert_eq!(first(&[18], -50.), Some(18));
+        assert_eq!(first(&[], 0.), None);
     }
 }

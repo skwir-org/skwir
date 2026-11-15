@@ -480,6 +480,26 @@ impl Shell {
         .detach();
     }
 
+    /// The toast shown now, by its generation.
+    pub(crate) fn toast_shown(&self) -> u64 {
+        self.toasts.generation
+    }
+
+    /// Say `said` in the toast of generation `answer` (a plan's answer,
+    /// whose Undo stays) while it is still the one shown, after what it
+    /// says; else in a toast of its own.
+    pub(crate) fn say_with(&mut self, answer: Option<u64>, said: String, cx: &mut Context<Self>) {
+        if answer == Some(self.toasts.generation)
+            && let Some(toast) = self.toasts.current.as_mut()
+        {
+            let text = toast.text.trim_end_matches('.');
+            toast.text = format!("{text}. {said}");
+            cx.notify();
+        } else {
+            self.set_status(said, false, cx);
+        }
+    }
+
     pub fn dismiss_toast(&mut self, cx: &mut Context<Self>) {
         self.toasts.current = None;
         self.toasts.generation += 1;
@@ -497,6 +517,7 @@ impl Shell {
         for taken in taken {
             match taken {
                 Taken::Nothing => {}
+                Taken::Replays(plan) => self.replays(plan),
                 Taken::Step(progress) => self.made_step(&progress),
                 // Its toast says it goes on by itself, while it is the
                 // one shown (its Retry names the plan).
@@ -521,6 +542,7 @@ impl Shell {
                     if let Some(answer) = answer {
                         self.forget_earlier_rows();
                         self.show_toast(answer, cx);
+                        self.answered(plan);
                     }
                 }
             }

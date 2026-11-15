@@ -567,6 +567,7 @@ fn deliver(cx: &mut App) {
                 crate::work::Taken::Nothing => continue,
                 crate::work::Taken::Step(progress) => progress.plan,
                 crate::work::Taken::WaitsForServer(plan)
+                | crate::work::Taken::Replays(plan)
                 | crate::work::Taken::Ended { plan, .. } => *plan,
             };
             let window = if matches!(taken, crate::work::Taken::Ended { .. }) {

@@ -63,6 +63,37 @@ pub struct Weighs {
     pub selected: Option<u64>,
 }
 
+/// What a rename of the user's moved, for a view to bring into view
+/// (`PaneView::reveal_among`): indices of the pane's order, ascending.
+pub struct Among {
+    pub ixs: Vec<usize>,
+    /// What runs once the view brought the first into view: the cursor
+    /// goes there.
+    pub then: Then,
+}
+
+/// What runs once a view did as it was asked, which it learns in prepaint:
+/// in the next frame (`Window::on_next_frame`), the frame being drawn
+/// taking no change.
+pub struct Then(Box<dyn FnOnce(&mut Window, &mut gpui::App)>);
+
+impl Then {
+    pub fn new(then: impl FnOnce(&mut Window, &mut gpui::App) + 'static) -> Self {
+        Then(Box::new(then))
+    }
+
+    /// Run it in the next frame.
+    pub fn next_frame(self, window: &mut Window) {
+        window.on_next_frame(self.0);
+    }
+}
+
+impl std::fmt::Debug for Then {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Then")
+    }
+}
+
 /// A way to render the active pane's listing.
 pub trait PaneView {
     fn id(&self) -> &'static str;
@@ -87,6 +118,17 @@ pub trait PaneView {
     /// view.
     fn scroll_to_middle(&mut self, ix: usize) {
         self.scroll_to(ix);
+    }
+    /// Bring the first of `among` into the middle of the view unless one
+    /// of them is wholly in view (then nothing moves), and run its `then`
+    /// if it did: what a rename of the user's moved (`Shell::take_renamed`).
+    /// Decided in prepaint, with the rows of the order as it is then. A
+    /// view that cannot tell what it shows brings the first into the
+    /// middle (`scroll_to_middle`) and runs nothing.
+    fn reveal_among(&mut self, among: Among) {
+        if let Some(&first) = among.ixs.first() {
+            self.scroll_to_middle(first);
+        }
     }
     /// Where the view is scrolled: the index of the item at the top (the
     /// first of its row) and how many pixels into it the view begins.

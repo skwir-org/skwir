@@ -2,7 +2,7 @@
 //! routes every command, and wakes only when the core signals new events.
 
 use crate::sizes::TextSizes;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -200,8 +200,9 @@ impl PaneUi {
 }
 
 /// A pending "show me these": the pane they belong to, the names to look
-/// for (the file a link leads to; what a plan put in the folder shown),
-/// and when to stop waiting for a listing that never brings them.
+/// for (the file a link leads to; what a plan put in the folder shown;
+/// what it renamed there), and when to stop waiting for a listing that
+/// never brings them.
 struct Reveal {
     pane: PaneId,
     names: Vec<std::ffi::OsString>,
@@ -209,10 +210,28 @@ struct Reveal {
     /// The listing and its names when last looked through: looked through
     /// again only once they change, not at every sync while it waits.
     looked: Option<(u64, u64)>,
-    /// The selection it made of those listed so far, while the others are
-    /// waited for (what a paste put, listed as the watcher tells it): a
-    /// selection made since wins.
+    /// The selection as it chose it (`Selection::chosen`): of those listed
+    /// so far, while the others are waited for (what a paste put, listed
+    /// as the watcher tells it), or as a rename left it. A selection
+    /// chosen since wins; one that only followed its entries does not.
     selected: Option<u64>,
+    how: Revealing,
+    /// The plan whose end it shows, and the toast that said its answer
+    /// (`Shell::answered`), which what it says joins rather than replaces:
+    /// its Undo stays.
+    plan: Option<skwir_core::op::PlanId>,
+    answer: Option<u64>,
+}
+
+/// What a pending reveal does with what it finds.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Revealing {
+    /// Selects it: the file a link leads to, what a plan put.
+    Select,
+    /// Follows it: what a rename moved (`Shell::take_renamed`). Once the
+    /// pane showed what it can of it (`Pane::show_renamed`), those it
+    /// shows, brought into view once the order drawn has them.
+    Follow(Option<Vec<skwir_core::EntryId>>),
 }
 
 impl Reveal {
@@ -223,6 +242,25 @@ impl Reveal {
             until: Instant::now() + std::time::Duration::from_secs(10),
             looked: None,
             selected: None,
+            how: Revealing::Select,
+            plan: None,
+            answer: None,
+        }
+    }
+
+    /// What plan `plan` put or renamed.
+    fn of(mut self, plan: skwir_core::op::PlanId) -> Self {
+        self.plan = Some(plan);
+        self
+    }
+
+    /// What a rename moved in `pane`, renamed `names`, the selection as
+    /// the rename left it chosen `chosen`.
+    fn renamed(pane: PaneId, names: Vec<std::ffi::OsString>, chosen: Option<u64>) -> Self {
+        Self {
+            selected: chosen,
+            how: Revealing::Follow(None),
+            ..Self::new(pane, names)
         }
     }
 }
@@ -239,11 +277,15 @@ struct Making {
     /// What its steps put in those folders, as the executor told each
     /// (`Shell::made_step`): what it did where its steps are its items.
     placed: Vec<std::path::PathBuf>,
+    /// The renames and swaps of names its steps made in those folders, in
+    /// the order told: followed to the names they end at (`renamed_to`).
+    renamed: Vec<skwir_core::op::Change>,
 }
 
-/// A pane as a plan found it: the folder it showed, and its selection
-/// (`Selection::revision`). Shown elsewhere by the plan's end, or selected
-/// otherwise meanwhile, it is left as it is.
+/// A pane as a plan found it: the folder it showed, and its selection as
+/// chosen (`Selection::chosen`). Shown elsewhere by the plan's end, or
+/// another selection chosen meanwhile, it is left as it is; a selection
+/// that followed its entries renamed is still the one it found.
 struct Shown {
     pane: PaneId,
     folder: std::path::PathBuf,
@@ -612,6 +654,10 @@ pub struct Shell {
     /// The latest plan the user asked, what it puts in a folder shown to
     /// select once it is done.
     making: Option<Making>,
+    /// An undo or a redo the user asked, with its arguments, until its run
+    /// begins: which plan it takes back is known only then
+    /// (`Shell::replays`).
+    replaying: Option<serde_json::Value>,
     /// The window's commands asked from elsewhere (an agent, a script)
     /// that the dialog open would take instead (`Shell::takes_now`),
     /// oldest first: they run once it closes.
@@ -911,6 +957,7 @@ impl Shell {
             reveal: None,
             reveal_asked: 0,
             making: None,
+            replaying: None,
             front_waiting: VecDeque::new(),
             links: crate::links::LinkState::default(),
             stored_session: None,
@@ -1576,6 +1623,9 @@ impl Shell {
         let Some(reveal) = self.reveal.as_ref() else {
             return;
         };
+        if reveal.how != Revealing::Select {
+            return self.take_renamed(cx);
+        }
         let (found, looked) = {
             let ws = self.app.workspace.read();
             let Some(pane) = ws.pane(reveal.pane) else {
@@ -1583,7 +1633,7 @@ impl Shell {
             };
             if reveal
                 .selected
-                .is_some_and(|ours| ours != pane.selection.revision())
+                .is_some_and(|ours| ours != pane.selection.chosen())
             {
                 self.reveal = None;
                 return;
@@ -1640,7 +1690,7 @@ impl Shell {
             let mut ws = self.app.workspace.write();
             ws.pane_mut(pane).map(|pane| {
                 pane.select_revealed(&ids);
-                pane.selection.revision()
+                pane.selection.chosen()
             })
         };
         match self.reveal.as_mut() {
@@ -1651,9 +1701,10 @@ impl Shell {
             _ => self.reveal = None,
         }
         if let Some(name) = hidden {
-            self.set_status(
+            let answer = self.reveal.as_ref().and_then(|reveal| reveal.answer);
+            self.say_with(
+                answer,
                 format!("Hidden files are shown, “{name}” among them"),
-                false,
                 cx,
             );
         }
@@ -1685,7 +1736,7 @@ impl Shell {
                     pane: ui.id,
                     folder: location.path()?,
                     location: location.clone(),
-                    selection: pane.selection.revision(),
+                    selection: pane.selection.chosen(),
                 })
             })
             .collect();
@@ -1694,7 +1745,17 @@ impl Shell {
             asked,
             shown,
             placed: Vec::new(),
+            renamed: Vec::new(),
         })
+    }
+
+    /// An undo or a redo began (`work::Taken::Replays`): the one this
+    /// window asked for last is the user's plan, what it puts back or
+    /// renames shown as what a plan makes (`made`).
+    pub(crate) fn replays(&mut self, plan: skwir_core::op::PlanId) {
+        if let Some(args) = self.replaying.take() {
+            self.making = self.making(plan, &args);
+        }
     }
 
     /// A step of the plan asked last ended (`ExecEvent::Step`), as it was
@@ -1704,14 +1765,27 @@ impl Shell {
         let Some(making) = self.making.as_mut().filter(|m| m.plan == progress.plan) else {
             return;
         };
-        if progress.error.is_none()
-            && let Some(path) = progress.change.placed()
-            && making
+        if progress.error.is_some() {
+            return;
+        }
+        let shown = |path: &std::path::Path| {
+            making
                 .shown
                 .iter()
                 .any(|shown| path.parent() == Some(shown.folder.as_path()))
+        };
+        if let Some(path) = progress.change.placed()
+            && shown(path)
         {
             making.placed.push(path.to_path_buf());
+        }
+        // A rename leaves its entry where it was, under another name: what
+        // it moved is followed (`take_renamed`).
+        if let skwir_core::op::Change::Rename { to, .. }
+        | skwir_core::op::Change::Swap { b: to, .. } = &progress.change
+            && shown(to)
+        {
+            making.renamed.push(progress.change.clone());
         }
     }
 
@@ -1735,17 +1809,18 @@ impl Shell {
             return;
         }
         let placed = items.map_or(&making.placed, |items| &items.placed);
+        let renamed = renamed_to(&making.renamed);
         let pane = {
             let ws = self.app.workspace.read();
             let still = |shown: &&Shown| {
                 ws.pane(shown.pane).is_some_and(|p| {
-                    p.location() == Some(&shown.location)
-                        && p.selection.revision() == shown.selection
+                    p.location() == Some(&shown.location) && p.selection.chosen() == shown.selection
                 })
             };
             let holds = |shown: &&Shown| {
                 placed
                     .iter()
+                    .chain(&renamed)
                     .any(|path| path.parent() == Some(shown.folder.as_path()))
             };
             let candidates: Vec<&Shown> = making.shown.iter().filter(still).filter(holds).collect();
@@ -1758,12 +1833,222 @@ impl Shell {
         let Some(shown) = pane else {
             return;
         };
-        let names: Vec<std::ffi::OsString> = placed
-            .iter()
-            .filter(|path| path.parent() == Some(shown.folder.as_path()))
-            .filter_map(|path| path.file_name().map(ToOwned::to_owned))
-            .collect();
-        self.reveal = Some(Reveal::new(shown.pane, names));
+        let in_folder = |paths: &[std::path::PathBuf]| -> Vec<std::ffi::OsString> {
+            paths
+                .iter()
+                .filter(|path| path.parent() == Some(shown.folder.as_path()))
+                .filter_map(|path| path.file_name().map(ToOwned::to_owned))
+                .collect()
+        };
+        let names = in_folder(placed);
+        if !names.is_empty() {
+            self.reveal = Some(Reveal::new(shown.pane, names).of(plan));
+            return;
+        }
+        // What it renamed is followed in the pane it was asked from alone:
+        // another showing the folder keeps its place.
+        let names = in_folder(&renamed);
+        if shown.pane != making.asked || names.is_empty() {
+            return;
+        }
+        let chosen = self
+            .app
+            .workspace
+            .read()
+            .pane(shown.pane)
+            .map(|p| p.selection.chosen());
+        self.reveal = Some(Reveal::renamed(shown.pane, names, chosen).of(plan));
+    }
+
+    /// The answer of plan `plan` was said, in the toast now shown: what its
+    /// reveal says joins it (`say_with`).
+    pub(crate) fn answered(&mut self, plan: skwir_core::op::PlanId) {
+        let shown = self.toast_shown();
+        if let Some(reveal) = self.reveal.as_mut().filter(|r| r.plan == Some(plan)) {
+            reveal.answer = Some(shown);
+        }
+    }
+
+    /// Follow what a rename the user asked moved (`made`), once the
+    /// listing has its names: shown as `Pane::show_renamed` has it (a
+    /// hidden name shows hidden files; one the filter leaves out is said),
+    /// then, once the order drawn has them, the view brings the first into
+    /// its middle unless one of them is wholly in view, the cursor going
+    /// there (`PaneView::reveal_among`). A selection chosen meanwhile wins.
+    fn take_renamed(&mut self, cx: &mut Context<Self>) {
+        if self
+            .reveal
+            .as_ref()
+            .is_some_and(|reveal| reveal.how == Revealing::Follow(None))
+            && !self.show_renamed(cx)
+        {
+            return;
+        }
+        let Some(reveal) = self.reveal.as_ref() else {
+            return;
+        };
+        let Revealing::Follow(Some(shown)) = &reveal.how else {
+            return;
+        };
+        let (pane, chosen, late) = (reveal.pane, reveal.selected, reveal.until < Instant::now());
+        let shown = shown.clone();
+        let still = self
+            .app
+            .workspace
+            .read()
+            .pane(pane)
+            .is_some_and(|p| Some(p.selection.chosen()) == chosen);
+        if !still || shown.is_empty() {
+            self.reveal = None;
+            return;
+        }
+        // Their places in the order drawn, which a rename sorts again and
+        // hidden files turned on fill with what they show.
+        let mut placed: Vec<(usize, skwir_core::EntryId)> = self.with_pane(pane, |shell| {
+            let list = &shell.ui().list;
+            shown
+                .iter()
+                .filter_map(|id| list.index_of(*id).map(|ix| (ix, *id)))
+                .collect()
+        });
+        if placed.len() < shown.len() && !late {
+            return;
+        }
+        self.reveal = None;
+        placed.sort_unstable_by_key(|(ix, _)| *ix);
+        let Some(&(_, first)) = placed.first() else {
+            return;
+        };
+        let shell = cx.weak_entity();
+        let then = crate::view::Then::new(move |_, cx| {
+            let _ = shell.update(cx, |shell, cx| shell.cursor_onto(pane, first, chosen, cx));
+        });
+        let among = crate::view::Among {
+            ixs: placed.into_iter().map(|(ix, _)| ix).collect(),
+            then,
+        };
+        self.with_pane(pane, |shell| {
+            shell.with_view(|view, _| view.reveal_among(among));
+        });
+        cx.notify();
+    }
+
+    /// `take_renamed`'s first step: once the listing has the names, or the
+    /// wait is over, the pane shows what it can of them
+    /// (`Pane::show_renamed`) and the window says what it turned on and
+    /// what is still left out. Whether that is done.
+    fn show_renamed(&mut self, cx: &mut Context<Self>) -> bool {
+        enum Found {
+            Waits,
+            Gone,
+            Listed(Vec<skwir_core::EntryId>),
+        }
+        let found = {
+            let Some(reveal) = self.reveal.as_mut() else {
+                return false;
+            };
+            let late = reveal.until < Instant::now();
+            let ws = self.app.workspace.read();
+            match ws.pane(reveal.pane) {
+                None => Found::Gone,
+                Some(pane)
+                    if reveal
+                        .selected
+                        .is_some_and(|ours| ours != pane.selection.chosen()) =>
+                {
+                    Found::Gone
+                }
+                // A folder held back whole (ADR-120) holds no names yet.
+                Some(pane) if pane.listing.is_held() => {
+                    if late {
+                        Found::Gone
+                    } else {
+                        Found::Waits
+                    }
+                }
+                Some(pane) => {
+                    let names = (pane.listing.id(), pane.listing.names_version());
+                    if reveal.looked == Some(names) && !late {
+                        Found::Waits
+                    } else {
+                        reveal.looked = Some(names);
+                        let ids: Vec<skwir_core::EntryId> = reveal
+                            .names
+                            .iter()
+                            .filter_map(|name| pane.listing.find_by_name(name).map(|e| e.id))
+                            .collect();
+                        if ids.len() < reveal.names.len() && !late {
+                            Found::Waits
+                        } else if ids.is_empty() {
+                            Found::Gone
+                        } else {
+                            Found::Listed(ids)
+                        }
+                    }
+                }
+            }
+        };
+        let ids = match found {
+            Found::Waits => return false,
+            Found::Gone => {
+                self.reveal = None;
+                return false;
+            }
+            Found::Listed(ids) => ids,
+        };
+        let Some(pane) = self.reveal.as_ref().map(|reveal| reveal.pane) else {
+            return false;
+        };
+        let (shown, chosen, said) = {
+            let mut ws = self.app.workspace.write();
+            let Some(pane) = ws.pane_mut(pane) else {
+                return false;
+            };
+            let shown = pane.show_renamed(&ids);
+            let name = |id: &skwir_core::EntryId| {
+                pane.listing
+                    .get(*id)
+                    .map(|e| e.name_str().into_owned())
+                    .unwrap_or_default()
+            };
+            let said = renamed_said(
+                shown.unhid.as_ref().map(name),
+                &shown.left_out.iter().map(name).collect::<Vec<_>>(),
+                pane.is_filtered(),
+            );
+            (shown.shown, pane.selection.chosen(), said)
+        };
+        if let Some(said) = said {
+            let answer = self.reveal.as_ref().and_then(|reveal| reveal.answer);
+            self.say_with(answer, said, cx);
+        }
+        if let Some(reveal) = self.reveal.as_mut() {
+            reveal.selected = Some(chosen);
+            reveal.how = Revealing::Follow(Some(shown));
+        }
+        true
+    }
+
+    /// The cursor onto `id` in `pane`, what a rename brought into view,
+    /// unless another selection was chosen since (`chosen`): the keys go on
+    /// from what is shown.
+    fn cursor_onto(
+        &mut self,
+        pane: PaneId,
+        id: skwir_core::EntryId,
+        chosen: Option<u64>,
+        cx: &mut Context<Self>,
+    ) {
+        {
+            let mut ws = self.app.workspace.write();
+            if let Some(p) = ws.pane_mut(pane)
+                && Some(p.selection.chosen()) == chosen
+                && p.is_shown(id)
+            {
+                p.selection.cursor = Some(id);
+            }
+        }
+        cx.notify();
     }
 
     /// Make `id` the active pane (workspace and shell agree).
@@ -2536,6 +2821,11 @@ impl Shell {
             args,
         };
         match self.app.dispatch(&inv) {
+            // An undo or a redo runs when its turn comes: what it puts back
+            // is shown once its run begins (`replays`).
+            Ok(Outcome::Done) if matches!(name, "undo" | "redo") => {
+                self.replaying = Some(inv.args.clone());
+            }
             Ok(Outcome::Done | Outcome::Value(_)) => {}
             Ok(Outcome::Clipboard { text, said }) => {
                 cx.write_to_clipboard(ClipboardItem::new_string(text));
@@ -4647,8 +4937,116 @@ fn in_toolbar_popup(window: &Window) -> bool {
         .any(|context| context.contains("ToolbarPopup"))
 }
 
+/// The names the renames and swaps of `changes` (in the order told) end
+/// at: each entry followed through the names it took on the way, as a
+/// bulk rename's cycle passes through a temporary name; in the order they
+/// were first given.
+fn renamed_to(changes: &[skwir_core::op::Change]) -> Vec<std::path::PathBuf> {
+    use skwir_core::op::Change;
+    use std::path::{Path, PathBuf};
+    let mut now: HashSet<&Path> = HashSet::new();
+    let mut told: Vec<&Path> = Vec::new();
+    for change in changes {
+        match change {
+            Change::Rename { from, to } => {
+                now.remove(from.as_path());
+                now.insert(to);
+                told.push(to);
+            }
+            // Each entry stands where the other stood: both names are
+            // renamed entries'.
+            Change::Swap { a, b } => {
+                now.insert(a);
+                now.insert(b);
+                told.extend([a.as_path(), b.as_path()]);
+            }
+            _ => {}
+        }
+    }
+    let mut given: HashSet<&Path> = HashSet::new();
+    told.into_iter()
+        .filter(|path| now.contains(path) && given.insert(path))
+        .map(PathBuf::from)
+        .collect()
+}
+
+/// What the window says of renamed entries it shows otherwise than they
+/// were: hidden files turned on for `unhid`, and those still `left_out`,
+/// by the filter where the pane is `filtered`.
+fn renamed_said(unhid: Option<String>, left_out: &[String], filtered: bool) -> Option<String> {
+    let mut said = Vec::new();
+    if let Some(name) = unhid {
+        said.push(format!("Hidden files are shown, “{name}” among them"));
+    }
+    match (left_out, filtered) {
+        ([], _) => {}
+        ([one], true) => said.push(format!("“{one}” is renamed, but the filter leaves it out")),
+        ([one], false) => said.push(format!("“{one}” is renamed, but not shown here")),
+        (many, true) => said.push(format!(
+            "{} are left out by the filter",
+            crate::format::count(many.len(), "renamed item")
+        )),
+        (many, false) => said.push(format!(
+            "{} are not shown here",
+            crate::format::count(many.len(), "renamed item")
+        )),
+    }
+    (!said.is_empty()).then(|| said.join(". "))
+}
+
 #[cfg(test)]
 mod tests {
+    /// A rename is followed to the name it ends at: a bulk rename's cycle
+    /// through a temporary name ends at the names asked, never at the
+    /// temporary one; a swap's two names are both renamed entries'.
+    #[test]
+    fn renames_are_followed_to_the_names_they_end_at() {
+        use skwir_core::op::Change;
+        use std::path::PathBuf;
+        let at = |name: &str| PathBuf::from("/example").join(name);
+        let rename = |from: &str, to: &str| Change::Rename {
+            from: at(from),
+            to: at(to),
+        };
+        // a and b swapped through a temporary name, then c renamed twice.
+        let changes = [
+            rename("a", ".skwir-rename-1"),
+            rename("b", "a"),
+            rename(".skwir-rename-1", "b"),
+            rename("c's notes", "C's Notes"),
+            rename("C's Notes", "c’s notes"),
+        ];
+        assert_eq!(
+            super::renamed_to(&changes),
+            [at("a"), at("b"), at("c’s notes")]
+        );
+        let swap = Change::Swap {
+            a: at("Été"),
+            b: at("winter"),
+        };
+        assert_eq!(super::renamed_to(&[swap]), [at("Été"), at("winter")]);
+    }
+
+    /// What a rename moved out of sight is said: hidden files turned on,
+    /// and what the filter (or else something) still leaves out.
+    #[test]
+    fn what_a_rename_moved_out_of_sight_is_said() {
+        let names = |names: &[&str]| names.iter().map(|n| (*n).to_owned()).collect::<Vec<_>>();
+        assert_eq!(super::renamed_said(None, &[], true), None);
+        assert_eq!(
+            super::renamed_said(Some(".l'été".into()), &[], false).as_deref(),
+            Some("Hidden files are shown, “.l'été” among them")
+        );
+        assert_eq!(
+            super::renamed_said(None, &names(&["draft"]), true).as_deref(),
+            Some("“draft” is renamed, but the filter leaves it out")
+        );
+        assert_eq!(
+            super::renamed_said(Some(".a".into()), &names(&["b", "c"]), false).as_deref(),
+            Some("Hidden files are shown, “.a” among them. 2 renamed items are not shown here")
+        );
+    }
+
     /// A lens is shown over the pane's own view (ADR-132): from a folder
     /// that remembers the list, a pane whose own is the grid goes to Usage
     /// and back to the list, and its own is still the grid; a view of the

@@ -17759,3 +17759,57 @@ other choices, "a switch with multiple options" as Print… has.
   change, compiled). The row's commit (185164fe) checked alone in a
   worktree: `cargo fmt --check` and clippy on skwir-ui. Not run:
   release-check, a11y-check, check-cross.
+
+## 2026-11-15: The view follows what is renamed
+
+The user asked that a file renamed out of view be brought back into it,
+and for several, the first of them; they chose the rule proposed: the
+first comes to the middle with the cursor only when none of them is
+still in view, in the pane renamed from, Undo and Redo included, a dot
+name showing hidden files, a name the filter leaves out said.
+
+- **Renames are told and followed** (`Shell::made_step`, `made`,
+  `take_renamed`): the window kept what a plan put (`Change::placed`) and
+  left renames to the listing, which kept the selection but never the
+  view. A plan's renames and swaps in a folder shown are kept and
+  followed to the names they end at (`renamed_to`: a bulk rename's cycle
+  through `.skwir-rename-N` ends at the names asked). Once the listing
+  has them, the pane shows them (`Pane::show_renamed`): a hidden name
+  turns hidden files on and selects it again where the selection holds
+  nothing else; one the filter or a folded group leaves out stays out.
+  Once the order drawn has them, the view is asked (`PaneView::
+  reveal_among`).
+- **Decided in prepaint**: the list and the columns' last column draw a
+  canvas before their `uniform_list`, which checks the renamed rows with
+  the list's bounds and asks the scroll the list carries out in that frame
+  (`list::reveal_rows`); the grid's element does it with its rows
+  (`Deferred::Among`, `Slots::first_out_of_view`). Moved, the cursor goes
+  to the first in the next frame (`view::Then`, `Shell::cursor_onto`),
+  unless a selection was chosen meanwhile. The board centres the first.
+- **A selection followed is not chosen** (`Selection::chosen`): a rename
+  re-keys the selection, which moved its `revision`, so "a selection made
+  meanwhile wins" would have cancelled every rename's reveal, and a
+  paste's reveal when a selected file was renamed elsewhere. `rekey`,
+  `retain` and `retain_near` now move `revision` alone; what waits on the
+  selection reads `chosen`.
+- **Undo and Redo are the user's plans** (`work::Taken::Replays`,
+  `Shell::replays`): which plan an undo takes back is known only when its
+  run begins; the run an undo or redo from the window starts is followed
+  as a plan asked is, so it also selects what it puts back (a file out of
+  the Trash).
+- **The note joins the answer** (`Shell::answered`, `say_with`): "Hidden
+  files are shown…" replaced the plan's "Renamed … [Undo]" (and a
+  paste's); it is now said after it, in the same toast.
+- **Checks**: rustfmt and clippy (`-D warnings`) on skwir-core and
+  skwir-ui; their tests, 1,538 passed, new ones for `chosen`,
+  `show_renamed`, the in-view checks of the list and the grid,
+  `renamed_to` and the notes. In a window on Xvfb (300 files): a single
+  rename sorted to the end (list, grid, columns), its Undo (list, grid),
+  a rename that stays in view (nothing moved), a bulk rename of six to
+  the top (view to the top, cursor on the first), a bulk rename of six of
+  which three stay in view (nothing moved, cursor kept), a dot name
+  (hidden files shown, said with Undo), a name past a filter (said, the
+  filter kept), Undo of a move to the Trash (the file selected). Not run:
+  release-check, a11y-check, check-cross, bench-check; the board, a
+  rename in a search or in a folder opened in place (not followed: their
+  names are not in the folder shown).

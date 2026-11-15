@@ -165,13 +165,30 @@ around the views is in [shell.md](shell.md).
   other pane's folder for Shift+F5 and a drop on it), an archive made or
   extracted, what was restored. Selected as it is listed, all of it once
   all is; in the pane it was asked from first. Not when the pane shows
-  another location by then, or a selection was made meanwhile, even
-  between two names listed: that one wins. Where it went is told by the
+  another location by then, or a selection was chosen meanwhile, even
+  between two names listed: that one wins. A selection that only followed
+  its entries (renamed, gone, no longer shown) was not chosen
+  (`Selection::chosen`, not `revision`). Where it went is told by the
   executor (`Change::placed`), never read from the plan on the window's
   thread: a name taken settled (`photos (copy)`), and a folder merged
-  into as itself, though its steps fill it (`Items::placed`). A rename
-  keeps its entry, and its selection, through the listing
-  (`Shell::made`).
+  into as itself, though its steps fill it (`Items::placed`). An undo or
+  a redo the user asked is such a plan too: which one it takes back is
+  known once its run begins (`work::Taken::Replays`, `Shell::replays`).
+  What it says (hidden files turned on) joins the plan's answer, whose
+  Undo stays (`Shell::say_with`) (`Shell::made`).
+- **What the user renames is followed into view.** A rename keeps its
+  entry, and its selection, through the listing; where its new name
+  sorts it, the view follows it, in the pane it was asked from alone
+  (another showing the folder keeps its place), once listed and in the
+  order drawn (`Shell::take_renamed`): its first, in the order, is
+  brought into the middle unless one of what it renamed is wholly in view,
+  and the cursor goes there (`PaneView::reveal_among`). A rename, a bulk
+  rename, and their undo and redo alike: each entry is followed through
+  the names it took on the way, never to a cycle's temporary one
+  (`renamed_to`). A name that hides it turns hidden files on and selects
+  it again, as for what is made; one the filter or a folded group leaves
+  out stays out, never selected unseen, and is said
+  (`Pane::show_renamed`). A selection chosen meanwhile wins.
 - Scheme moves say `follow` (`ui.cursor`, `step: follow`): they move a
   following selection and leave a picked one. `pick` is yazi's mark. A
   sweep (`select_sweep`) holds a range while the cursor moves (`sweep` in
@@ -694,6 +711,15 @@ around the views is in [shell.md](shell.md).
   to the middle unless it is wholly in view (`scroll_to_middle`), as near
   the middle as the order's ends let it be, so what is around it shows.
   A view that cannot falls back on `scroll_to`.
+- **What a rename moved** (`PaneView::reveal_among`) is decided in the
+  view's prepaint, with the rows of the order as it is then: nothing
+  moves while one of them is wholly in view, else the first comes to the
+  middle and the cursor follows in the next frame (`view::Then`). Over a
+  `uniform_list` (the list, the columns' last column), a canvas drawn
+  before the list makes the check with the list's bounds and asks the
+  scroll the list carries out in the same frame (`list::reveal_rows`);
+  the grid asks its own element (`Deferred::Among`). The board brings the
+  first into the middle.
 - Every scrolling view has a scrollbar (`elements/scrollbar.rs`) on its
   right edge, and on its bottom edge when it scrolls sideways
   (`scrollbar::horizontal`). The view hands it the handle it scrolls with;
