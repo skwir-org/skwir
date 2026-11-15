@@ -321,13 +321,13 @@ impl Button {
         let name = title.split(" · ").next().unwrap_or(&title).to_owned();
         self.label(name).menu()
     }
-    /// One value of a setting on a popup's row (`MenuPart::Choice`); the
-    /// popup stays open once it is chosen, for another.
     /// One of the window's buttons (`title_bar`): round, on its ground.
     pub fn control(mut self) -> Self {
         self.shape = Shape::Control;
         self
     }
+    /// One value of a setting on a popup's row (`MenuPart::Choice`); the
+    /// popup stays open once it is chosen, for another.
     pub fn segment(mut self) -> Self {
         self.shape = Shape::Segment;
         self.keeps_open = true;

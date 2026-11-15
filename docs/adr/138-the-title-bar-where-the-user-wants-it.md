@@ -38,7 +38,8 @@ Windows: decision 8.
 
 ## Decision
 
-1. **`ui.title_bar`**, on the Appearance page, the free desktops' only:
+1. **`ui.title_bar`**, on the Appearance page, on every system
+   (decision 8, amended: first the free desktops' only):
    Automatic, System, Compact, In the top row (named for whose bar it is
    and how it looks, amended: first Above and On a row of its own, both
    rows above the window). What the
@@ -108,8 +109,9 @@ Windows: decision 8.
    said beside the setting once seen,
    for the run (`title_bar::refusal`): the bar drawn inside the desktop's
    frame, or none where a window manager keeps its title bar. No choice is
-   disabled: the settings have no unavailable choice, and none can be
-   known before it is asked.
+   disabled where an answer is known only once asked (Wayland); where it
+   is known before, the choices that do nothing are said so (decision 9,
+   amended: first none was, the settings having no unavailable choice).
 
 8. **macOS and Windows** (amended): the setting on every system. Asked
    for none, macOS's title bar is made transparent, the content under it,

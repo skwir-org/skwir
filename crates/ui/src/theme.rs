@@ -1100,9 +1100,6 @@ impl Theme {
         self.bar.opacity(self.opacity.interface)
     }
 
-    /// `frame` where it is the window's own ground, at the chrome's
-    /// opacity: painted once around the cards (`elements::frame`), the
-    /// sidebar and the tabs on it painting none of their own.
     /// The window's shadow where skwir draws its frame (`title_bar`):
     /// within its margin (`title_bar::MARGIN`), as a desktop's window
     /// casts one, fainter while another window is the one used.
@@ -1120,6 +1117,9 @@ impl Theme {
         ]
     }
 
+    /// `frame` where it is the window's own ground, at the chrome's
+    /// opacity: painted once around the cards (`elements::frame`), the
+    /// sidebar and the tabs on it painting none of their own.
     pub fn window_frame(&self) -> Hsla {
         self.frame.opacity(self.opacity.interface)
     }
