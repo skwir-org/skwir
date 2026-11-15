@@ -70,10 +70,13 @@ Windows: decision 8.
    gpui's minimize, maximize, close where none is read), only those the
    compositor offers (`Window::window_controls`: sway offers neither
    minimize nor maximize). Round, on a ground of their own
-   (`Theme::control`, `control_hover`), as GNOME's; Maximize says Restore
-   while the window is maximized. Each runs a command
-   (`ui.close_window`, `ui.maximize_window`, `ui.minimize_window`), which
-   the palette and agents have too; not a stop of the keyboard's.
+   (`Theme::control`, `control_hover`), as GNOME's; Maximize window says
+   Restore window while the window is maximized, each named for the
+   window as a screen reader hears it, never a bare Close. Each runs a
+   command (`ui.close_window`, `ui.maximize_window`,
+   `ui.minimize_window`), which the palette and agents have too, and a
+   screen reader's press runs it (Windows' captions too, which Windows
+   presses for the pointer); not a stop of the keyboard's.
 5. **The empty parts move the window**: of the bar, of the rows that hold
    the window's buttons, and the frame's gutter above the cards. One
    element under what a row holds (`elements::window_drag`) acts only

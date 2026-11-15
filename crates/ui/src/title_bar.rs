@@ -386,7 +386,7 @@ fn buttons(shell: &Shell, end: End, cx: &mut Context<Shell>) -> Option<AnyElemen
                 .children(
                     listed
                         .iter()
-                        .map(|button| caption(shell, *button, frame.maximized, &theme)),
+                        .map(|button| caption(shell, *button, frame.maximized, &theme, cx)),
                 )
                 .into_any_element(),
         );
@@ -414,22 +414,13 @@ fn button_element(
     maximized: bool,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
-    let (id, icon, title, command) = match button {
-        WindowButton::Close => ("window-close", "close", "Close", "ui.close_window"),
-        WindowButton::Minimize => ("window-minimize", "minus", "Minimize", "ui.minimize_window"),
-        WindowButton::Maximize if maximized => (
-            "window-maximize",
-            "window-restore",
-            "Restore",
-            "ui.maximize_window",
-        ),
-        WindowButton::Maximize => (
-            "window-maximize",
-            "window-maximize",
-            "Maximize",
-            "ui.maximize_window",
-        ),
+    let (id, icon) = match button {
+        WindowButton::Close => ("window-close", "close"),
+        WindowButton::Minimize => ("window-minimize", "minus"),
+        WindowButton::Maximize if maximized => ("window-maximize", "window-restore"),
+        WindowButton::Maximize => ("window-maximize", "window-maximize"),
     };
+    let (title, command) = named(button, maximized);
     // Not a stop of the keyboard's: the window's own keys do what they do
     // (Ctrl+Shift+W, the desktop's), as no desktop's title bar is tabbed
     // through.
@@ -440,33 +431,46 @@ fn button_element(
         .into_any_element()
 }
 
+/// What a window's button is called, said and shown alike (a screen
+/// reader hears the window's, not another Close), and the command it runs.
+fn named(button: WindowButton, maximized: bool) -> (&'static str, &'static str) {
+    match button {
+        WindowButton::Close => ("Close window", "ui.close_window"),
+        WindowButton::Minimize => ("Minimize window", "ui.minimize_window"),
+        WindowButton::Maximize if maximized => ("Restore window", "ui.maximize_window"),
+        WindowButton::Maximize => ("Maximize window", "ui.maximize_window"),
+    }
+}
+
 /// A Windows caption button: as Windows draws its own, square, the width
 /// of a caption's, Close red under the pointer. Windows presses it: told
 /// what it is (`WindowControlArea`), it shows Snap Layouts over Maximize
 /// and minimizes, maximizes or closes the window itself, as for its own
-/// buttons; a click of skwir's would act twice.
-fn caption(shell: &Shell, button: WindowButton, maximized: bool, theme: &Theme) -> AnyElement {
-    let (id, icon, label, area) = match button {
-        WindowButton::Close => ("caption-close", "close", "Close", WindowControlArea::Close),
-        WindowButton::Minimize => (
-            "caption-minimize",
-            "minus",
-            "Minimize",
-            WindowControlArea::Min,
-        ),
-        WindowButton::Maximize if maximized => (
-            "caption-maximize",
-            "window-restore",
-            "Restore",
-            WindowControlArea::Max,
-        ),
+/// buttons; a click of skwir's would act twice. A screen reader's press,
+/// which Windows never sees, runs its command.
+fn caption(
+    shell: &Shell,
+    button: WindowButton,
+    maximized: bool,
+    theme: &Theme,
+    cx: &mut Context<Shell>,
+) -> AnyElement {
+    let (id, icon, area) = match button {
+        WindowButton::Close => ("caption-close", "close", WindowControlArea::Close),
+        WindowButton::Minimize => ("caption-minimize", "minus", WindowControlArea::Min),
+        WindowButton::Maximize if maximized => {
+            ("caption-maximize", "window-restore", WindowControlArea::Max)
+        }
         WindowButton::Maximize => (
             "caption-maximize",
             "window-maximize",
-            "Maximize",
             WindowControlArea::Max,
         ),
     };
+    let (label, command) = named(button, maximized);
+    let press = cx.listener(move |shell, _: &(), window, cx| {
+        shell.run(command, serde_json::json!({}), window, cx);
+    });
     let close = button == WindowButton::Close;
     let (close_ground, on_close, hover) =
         (theme.caption_close, theme.on_caption_close, theme.hover);
@@ -474,6 +478,9 @@ fn caption(shell: &Shell, button: WindowButton, maximized: bool, theme: &Theme) 
         .id(id)
         .role(gpui::Role::Button)
         .when(shell.a11y, |d| d.aria_label(label))
+        .on_a11y_action(gpui::AccessibleAction::Click, move |_, window, cx| {
+            press(&(), window, cx);
+        })
         .window_control_area(area)
         .flex_none()
         .w(px(CAPTION_WIDTH))
