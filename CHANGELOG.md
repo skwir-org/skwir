@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **The title bar where you want it** (#11): on GNOME, whose compositor
+  draws no title bar, the window had no buttons and could not be moved
+  or sized by its edges. Settings › Appearance › Title bar now chooses:
+  Automatic, the desktop's way (its title bar where it draws one, the
+  window's buttons in Skwir's top row where it does not, as GNOME's
+  applications have them), System, Compact or In the top row. The
+  buttons are the desktop's, in its order; the empty parts of the top
+  rows move the window, and a double click there maximizes or restores
+  it (beside the tabs it opens a tab). A choice that does nothing on this desktop
+  is shown dimmed, saying why. Built for macOS and Windows too, not yet
+  tried there.
 - **A folder of notes files says so**: a folder holding only the files
   other programs keep notes in (TagSpaces' `.ts`, a Mac's `._` files,
   XMP sidecars) said "Only hidden files here", and Show hidden files
@@ -44,7 +55,8 @@
   formats, recipes for common renames (spaces to underscores, what is in
   brackets taken away, two parts swapped) and a pattern's and a
   replacement's signs; a placeholder or a sign chosen is written where
-  the cursor is, a recipe fills the regex and the replacement. As you
+  the cursor is, a recipe fills the regex and the replacement, one
+  `Ctrl+Z` taking it back from both. As you
   type `{`, `\` or `$` there, the field lists what can go on from there,
   `Tab` taking the first. The preview tints what the regex matched and what it
   put there. The dialog starts from the names as they are (it started
@@ -157,6 +169,25 @@
   refused rather than built for every file; Rename waits while no name
   changes; and its preview of many files no longer holds the window back
   at each key.
+- **What changes files is worked out beside the window**: Delete, a
+  paste, Rename Several's Rename and every command that changes files
+  were worked out on the window's thread, which stood still while a
+  plan listed a folder or waited on a server, or named 100,000 files
+  anew. They are now worked out aside, on what was selected when you
+  asked; past 0.3 s a notice says so, with Cancel (or `Escape`). Moving
+  and selecting go on meanwhile, what changes files waits its turn, and
+  closing the window never waits.
+- **Rename Several's names made one** are said by the first three and
+  how many more, where the error listed every one of them.
+- **What a paste or a new folder selects** is never in another tab's
+  pane, nor selected once its wait is over; the note that hidden files
+  were turned on for it joins the paste's message, whose Undo stays,
+  where it replaced it. The player, fullscreen and the preview no longer
+  move the cursor of a pane in a tab not shown.
+- **Undo and Redo answer in the window they were asked from**, where
+  their message went to the window in front.
+- **The address card's row reached by the arrows shows whole**: Up from
+  its first row brought the last into view half under the card's foot.
 
 ## 0.5.0 (2026-11-14)
 

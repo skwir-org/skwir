@@ -18165,3 +18165,141 @@ window as cards.
 - Not checked: Windows' caption buttons in a maximized window (compiled
   only); a long list's choices (none declares any).
 
+
+## 2026-11-15: ADR-137's leftovers; review fixes of what came after
+
+The user asked for the points the morning's review of ADR-137 left in
+PLAN, and for a review of the commits another session made after it
+(2cd9ebaa..558d049e, 11 commits), with what it found fixed. `just prune`
+first (5.2 → 26 GB free). Three reviewers read one area each (no
+builds): the title bar (TB, 11 findings), the sidebar following other
+programs (RM, 12), renames followed into view, the companions' note and
+a list's own button (RN, 8); the fixer of the bulk rename's last round
+reviewed its cases side by side (RB3, 5). None high. Each then fixed its
+own, five at once in one tree (the last round's fixers of the bulk
+rename and of the questions taking ADR-137's points), each owning its
+files, builds one at a time in capped scopes, each step handed over as a
+patch of its own hunks and committed as it came: a65c293c..0d39f3bd, 41
+commits (a65c293c, bea3f83d and 0d39f3bd mine). The commits between were not built
+one by one.
+
+- **CI** (`a65c293c`): `cargo fmt --all --check` refused two spots of
+  gpui's window.rs written by hand in patches 0063 and 0064. Formatted;
+  the patches carry the formatted lines, the hunks after them in
+  0063..0067 moved by the two lines, and the series reproduces the file
+  byte for byte, without offsets (reversed last to first, applied again,
+  `cmp`). Every later commit touching vendor/zed was checked so
+  (`fix3/series-head.sh` on HEAD's files and patches).
+- **Plans off the window's thread** (PLAN, `81dea658`, `57e955bb`): every
+  command the window runs that answers a plan (`Effect::Plans`) is made
+  on a worker of its pane's lane (`shell/planning.rs`), as the key found
+  what it acts on: `App::asked` (the pane, its selection's ids in order,
+  its cursor, the location shown) taken on the window's thread, the
+  plan made under it (`app::as_asked`, a thread-local beside
+  `as_agent`), every accessor answering from it (`pane_or_active`,
+  `targets`, `selected_refs`, `pane_dir`; `app::chosen`,
+  `app::asked_or_active` under the workspace's guard; the trash, shelf
+  and bulk rename plugins read through them; commands.md's rule). While
+  it is made, what only shows (`Shows`, `Reads`, `UserOnly`) runs at
+  once, what acts (`Plans`, `Acts`, Undo, Redo) waits in order, each
+  with what its own key found (`planning::turn`): Ctrl+A then Delete
+  behind a plan deletes what Ctrl+A selected. Past 0.3 s a toast says
+  what is worked out, by the command's title, with Cancel (Escape in the
+  window, `ui.plan_cancel` while `planning`); Close Window, Quit and the
+  last tab's close let the plan go and go. Tests: six plan commands
+  under a snapshot unlike the live selection act on the snapshot's
+  files (`plans_as_asked`), the order, the window's end, a plan let go
+  (its answer forgotten). In a window (Xvfb, debug build): Shift+Delete
+  on 100,000 selected planned in 255 ms on a worker; Right at once
+  behind a bulk rename's 1.1 s plan, which acted on all 100,000; the
+  notice at 0.9 s of a 2.4 s plan. Not seen: Cancel letting a plan go.
+- **The bulk rename** (PLAN, `38acfea4`, `ea50d481`, `6688838f`;
+  `6d392374`): a recipe's fill is one step of both fields' histories
+  (`TextInput::replace_all_together`): Ctrl+Z in either takes it back in
+  both, Redo puts both back. The regex's and the replacement's
+  references (the recipes, what they make of the first name) are asked
+  once per first name the preview says, while the dialog is open: in a
+  debug build, 11.7–12.4 ms of a worker's time a key before, 1.6–1.8 ms
+  after (200 dispatches of each, three runs). Rename inert is said so to
+  a screen reader (`controls::inert_button_with`, its icon kept, so the
+  footer keeps its width). The case's list closes once its row is drawn
+  whole; F1 says its arrows apart; a test holds the window's cases to
+  the plugin's schema. Two names made one are said by three and how
+  many more (`bea3f83d`: 30,000 listed before). In a window: "No name
+  changes" with Rename inert, a case chosen, the dropdown in a narrow
+  window, a recipe from the list and its one Ctrl+Z.
+- **Questions** (PLAN, `5fd5d906`, `8412ccbe`): Enter waiting for what
+  a question's text comes to says "Working out what this does…" past
+  0.3 s, heard once; what a describe says is kept to 2 KiB and three
+  lines. The answer's button keeps its icon while inert. The address
+  card's row reached by Up from the first came half under its foot: rows
+  not drawn yet counted one row high; revealed again on the next frame
+  (`2893f855`, older than ADR-137). Seen in a window: the list above its
+  field in a short window, Enter waiting, the card's row.
+- **The title bar** (TB, `70eb39d2`..`21af8fd8`): Windows' frame changed
+  on the foreground executor and `Window::request_decorations` reads the
+  size again on every system (the resize a switch caused was lost on
+  Windows); macOS moves its lights only over a transparent bar; no
+  second press of a double click moves the window; Wayland's wait ends
+  at the surface configure that follows the request, and only what the
+  decorations decide waits for it (`Frame::answered`), the first sync
+  asking nothing again; `ui.maximize_window`/`ui.minimize_window`
+  for agents; Windows moves from beside the tabs (gpui 0068,
+  `WindowControlArea::DragOnly`, its double click the row's); Compact's
+  title clear of the buttons (three flex columns); corners resize only
+  within the margin (`grips`, tested); X11's reason names both causes;
+  the buttons named for the window, pressed by a screen reader. On
+  headless sway: the title centred and cut before Close, a press inside
+  a corner moving the window, the wait not stuck. Windows and macOS
+  compiled and linted only.
+- **The sidebar following** (RM, `c155b327`..`208ae510`): what is proved
+  of a mount is known by the table's point and device (`MountKey`), let
+  go of once unlisted, a FUSE number worked out per device: a read of
+  the table asks no mount (tested). The read as a window comes back is
+  one at a time, once in ten seconds, the servers read again only where
+  a source could not be watched; at-login asked only when the listed
+  set changes. A bridge's listing never lost to a later read; every
+  bridge read on its own thread; Devices' volumes read on a worker; a
+  burst told at least every 2 s (`watch::SETTLED_WITHIN`); sources on a
+  remote neither walked nor watched, watched outside the plugin's lock;
+  a read-only folder's volume mounted anew reads the servers again; a
+  mount come unseen asked as a window comes back; followers pruned at
+  once; a Windows root-relative link keeps its drive (passed under
+  Wine). The binary's remote and places tests: 66 passed together.
+- **Renames followed** (RN, `70e2d84a`..`16eb2565`): a file renamed to a
+  dot name selected again, not its neighbour; a pane's UI found among
+  those presented or not at all (`Shell::presented_ui`, `with_pane`
+  answering None: a hidden tab's pane was read and scrolled through the
+  first's, the player's and preview's cursor moves too); a reveal bound
+  to the location shown (`Pane::shown_lifetime`), within its ten seconds
+  or dropped, its entries placed at render (`Among`); undo and redo
+  followed by the run ids the executor hands out, every one told an end
+  (a run that never begins told Finished alone); a plan's end selects
+  what it put or renamed as no choice (`Selection::select_followed`),
+  so two quick Ctrl+Z each select their own; the note joined to a plan's
+  message said again whole, its Undo kept; shell.md says once how a
+  second click closes a popup. An executor test that read a run's state
+  before it settled now waits for it. In a window (Xvfb): a dot name
+  selected alone and Delete trashing it, its neighbour kept; two quick
+  Ctrl+Z, the second's file selected with the cursor.
+- **Left** (PLAN): Cancel of a slow plan seen in a window, the worker's
+  hand-back tested; the bulk dialog's Enter on 100,000 timed in a
+  release build; X11's compositor followed live; Wayland's early end of
+  a wait; the table's 2 s ceiling and a bridge's lost listing tested
+  for real; a remount at one point within a settle; one rule for a
+  popup's second click; a follow with no view height; screen readers on
+  the new buttons, rows and notes.
+- **Checks** (HEAD 16eb2565, before the docs and 0d39f3bd): `cargo fmt
+  --all --check` and `just lint` green; `just test` 3,665 passed (32
+  skipped); `just check-windows` and `just check-macos` green; under Wine
+  the remote, places and bulk rename plugins' tests, 144 passed and 2
+  failed, both since before this round: the order of the remote tools
+  off Linux expected without kmtpd's (stale since 1daac32a; fixed,
+  0d39f3bd, passed under Wine) and an rclone cache folder named
+  `:webdav{…}`, which Windows refuses (in PLAN); `just a11y-check`
+  passed, its F2 rename going through the plan made on a worker. The
+  fixers ran their crates' clippy (native, and for Windows and macOS
+  where they touched code behind `cfg` or gpui's backends) and tests at
+  each step, `tools/gpui/check.py gpui` (142) for the gpui patches. Not
+  run: release-check, bench-check, the whole `just test-windows`, a
+  real Windows or Mac.

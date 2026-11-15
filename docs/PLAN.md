@@ -1075,6 +1075,37 @@ resolved as hosts (since before: the system's name service stalled
 seconds for every program). Checks in `docs/STATUS-LOG.md`
 (2026-11-15).
 
+## Review fixes and ADR-137's leftovers (2026-11-15, afternoon)
+
+The user asked for the points the morning's review left (above) and a
+review of what came after (2cd9ebaa..558d049e, 11 commits: the bulk
+rename's cases side by side, a list's own button, renames followed into
+view, the sidebar following other programs, a folder of only companion
+files, ADR-138's title bar). Done, 41 commits (a65c293c..0d39f3bd, not
+pushed):
+- ADR-137's leftovers: every plan the window asks for is worked out on a
+  worker, as the key found what it acts on (`shell/planning.rs`,
+  `App::asked`), what shows going on meanwhile and what acts waiting its
+  turn, a notice with Cancel past 0.3 s; one Ctrl+Z for both fields a
+  recipe filled (`TextInput::replace_all_together`); the recipes asked
+  once per first name; Enter waiting for a question's words says so; the
+  address card's row reached by Up shown whole (older than ADR-137);
+  "No name changes" seen in a window, Rename said inert.
+- The review: 36 findings, none high: TB 11 (the title bar: Windows'
+  resize lost on a switch, macOS's lights, a double click that moved,
+  Wayland waiting for good, Windows' strip that moved nothing), RM 12
+  (the sidebar: a read of the table that asked every FUSE mount, a read
+  per focus without bound, a bridge's listing lost), RN 8 (renames
+  followed: a dot name leaving its neighbour selected, another tab's pane
+  scrolled, an undo of the user's taken from an agent's), RB3 5 (the
+  cases side by side), and two the fixing found: a question whose words
+  listed 30,000 names, and an undo's file left out of the selection the
+  cursor was on. All fixed.
+- CI's `cargo fmt --all --check` refused two spots of gpui's window.rs
+  that patches 0063 and 0064 wrote by hand: formatted, the series kept
+  reproducing vendor/zed.
+Checks in `docs/STATUS-LOG.md` (2026-11-15, afternoon).
+
 ## What is left
 
 Gathered on 2026-10-20 from the notes of this plan and of
@@ -1090,12 +1121,16 @@ with the application's frame, X11 with a compositor, macOS and Windows
 (built 2026-11-15, compiled and linted only: no gpui window under Wine,
 no Mac), Hyprland itself
 (its refusal tried as sway's `border pixel`), the right button's window
-menu and a double click (never pressed in a test); macOS and
-Windows keep the system's title bar, `ui.title_bar` not declared there
-(`docs/PORTING.md`: Windows' caption buttons told to the system for Snap
-Layouts, macOS's traffic lights moved, an open window switched by a gpui
-patch); popups keep 8 px from the viewport's edges, not the body's, so
-one may lie up to 4 px over the margin.
+menu and a double click (never pressed in a test); on X11 whether a
+compositor runs is read once as skwir starts (following
+`_NET_WM_CM_S<n>`'s owner in gpui's X11 client would tell it live); on
+Wayland a configure the compositor sent
+before it read a request ends the wait for its answer early, one frame
+at worst showing what it had (`wl_display.sync` would tell); the
+window's buttons not heard with a screen reader (`a11y-check` runs with
+no compositor, where skwir draws none); popups keep 8 px from the
+viewport's edges, not the body's, so one may lie up to 4 px over the
+margin.
 macOS and Windows: `docs/PORTING.md`'s title bar line.
 
 **The sidebar follows what other programs change** (ADR-086 amended,
@@ -1104,9 +1139,14 @@ table (kqueue's `EVFILT_FS`) is compiled only, and Windows' (the folders
 programs mount in) compiled only, neither run; Dolphin's places are
 followed only where kio-fuse is installed (KIO's connector reads them),
 untried in a window here (no kio-fuse on a test's bus); a file on a
-volume mounted read-only and changed by mounting it again (NixOS's
-`/etc` made an overlay, `system.etc.overlay.mutable = false`) is not
-watched, read again only as a window comes to the front.
+volume mounted read-only (NixOS's `/etc` made an overlay,
+`system.etc.overlay.mutable = false`) is not watched, read again when
+that volume is mounted anew, untried with a real overlay; a mount let go
+of and made again at one point on one device within one settled change
+is taken as the one before (Linux 6.8's `statmount` could tell them
+apart without asking the mount); the table's 2 s ceiling on a burst is
+tested on files' watcher only, and the bridge's lost listing on the
+state's rule only, with no GVfs mounted.
 
 **A field says what it takes** (ADR-137, 2026-11-14): built on Linux
 and tried in a window there (the bulk rename's three references by F1
@@ -1329,25 +1369,33 @@ dav1d is gst-plugins-rs's now: a Rust plugin, cargo-c and a newer dav1d
 than Jammy's); base keeps Ubuntu's features beside ADR-076's set (CD
 audio, visualizations, Xv, which the player does not use).
 
-**From the review of ADR-137** (2026-11-15):
-- Enter in Rename Several still plans every rename on the window's
-  thread (no I/O, the workspace held only for a moment since aef37f38):
-  planning a plan command on a worker and applying it on its return
-  wants a worker form of `carry_out` for every plan command the window
-  runs.
-- One Ctrl+Z takes back what a recipe wrote in one field, not in both
-  it filled: a step linked across two inputs' histories.
-- The bulk rename's recipes are compiled again at each key (about
-  sixteen small patterns, on a worker, unmeasured); kept for the
-  program's life they would cost memory after the dialog closes.
-- Enter waiting for a question's words to be said shows no sign of it: a
-  slow data command from a plugin from outside holds Enter until Cancel.
-- Not seen in a window: the list standing above its field where the
-  window's foot leaves too little; an address answer arriving after F1
-  (UI-6); Enter waiting on a slow answer; Rename Several's "No name
-  changes" and its Rename inert. Seen once on Xvfb, not chased and
-  believed older: the card's last row coming into view half under the
-  footer after Up from the first.
+**From the review of ADR-137** (2026-11-15, what its leftovers' work
+left):
+- Cancel or Escape letting a slow plan go is held by a test of the
+  window's state, never seen in a window, and a worker's answer handed
+  back to the window (`off_thread_until`) by no test: the UI crate has
+  no gpui window to test in.
+- Rename Several's Rename on 100,000 files left the dialog drawn about
+  0.3 s in a debug build; what it does on the window's thread is linear
+  (the selection looked up, `App::asked` copying its ids): time it in a
+  release build. The references' costs per key were measured in a debug
+  build only (12 ms before, 1.7 ms after).
+- Not seen in a window: an address answer arriving after F1 (UI-6),
+  three tries never meeting it; the case row and the inert Rename heard
+  by a screen reader.
+
+**From the review of 2026-11-15** (afternoon):
+- A toolbar's popup and a list hung from its button close on a second
+  click by two means (shell.md says why); one would need every popup to
+  know its opener.
+- A view with no height yet drops a rename's follow (`reveal_rows`).
+- Not seen in a window: a reveal waiting while its tab is hidden; the
+  note joined to a plan's message heard by a screen reader.
+- Under Wine, `uploads::tests::what_was_written_is_unsent_while_rclone_s_record_says_so`
+  fails, since before: its fixture names rclone's cache folder
+  `:webdav{…}`, which Windows refuses. Whether rclone writes that name
+  otherwise there (its encoder's `：`) and the plugin looks for it so is
+  not known: rclone's queue on Windows, untried.
 
 **From the review since 0.5.0** (2026-11-14):
 - Not seen in a window: the pin's two words told in either order, another
