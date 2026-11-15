@@ -1,6 +1,46 @@
 # Changes
 
-## Unreleased
+## 0.5.1 (2026-11-15)
+
+Skwir 0.5.1 plays films on in the AppImage, puts the title bar where you want
+it, and has fields say what they take. The player follows the file it plays,
+and what changes files is worked out beside the window, which no longer waits
+for it.
+
+[Installation instructions](README.md#installing)
+
+- **Films play on in the AppImage and the tarball**, 0.5.0's known issue: no
+  longer stopped on one frame after a pause and a seek. Their GStreamer is
+  1.28.8 throughout, and they decode video on Intel and AMD graphics.
+- **The title bar where you want it** (#11): on GNOME the window has its
+  buttons and moves and sizes by its edges; Settings › Appearance › Title bar
+  puts it where you like.
+- **Fields say what they take**: `?` or `F1` in Rename Several's fields, the
+  address, Properties' Access and Settings › Exclusions lists what goes there;
+  Rename Several offers what can go on as you type, and Run Command… shows the
+  line that will run.
+- **The player follows the file it plays**: renamed or moved, it plays on;
+  deleted, it ends as at its end; a deletion is no longer refused for a file
+  it or a preview holds open.
+- **What changes files is worked out beside the window**: Delete, a paste or
+  Rename Several on a slow server or 100,000 files no longer hold the window;
+  past 0.3 s a notice offers Cancel.
+- **What you rename is followed into view**, and what you are on stays where
+  it was as the split or a panel opens or closes.
+- **The sidebar follows other programs**: a remote added with `rclone config`,
+  a place added in Dolphin, an fstab entry, a folder mounted anywhere.
+- **Extracting into its folder merges**, as a copy does.
+- **The volume is a slider** that opens from the speaker.
+
+**Changed from 0.5.0**: Rename Several starts from the names with their
+extensions, its case choices side by side; the next film opens once one has
+played to its end, with a short gap; More no longer lists volume steps.
+
+**Windows and macOS builds to try** come with this release too. They are made
+on Linux and have never run on either system: please [try them and tell us what
+happens](docs/HELP-WANTED.md). Skwir itself is for Linux, as in 0.5.0.
+
+### All changes
 
 - **The title bar where you want it** (#11): on GNOME, whose compositor
   draws no title bar, the window had no buttons and could not be moved
@@ -41,6 +81,14 @@
   make), and one the filter leaves out is said, under the Renamed
   message, whose Undo stays. Undo and Redo also select what they put back
   in the folder shown, as what a plan makes is.
+- **What you are on stays in view as a view changes size**: opening or
+  closing the split, a panel beside or under the files, or the window
+  resized kept what was at the top of the view, so the files selected
+  could go out of sight (a grid of six columns becoming three). The file
+  the cursor is on, or else the first selected one in view, now stays as
+  far down the view as it was, whole, in every view, the Board's row of
+  columns too; opening the split and closing it again gives the view back
+  as it was.
 - **A dropdown closes on a second click**: in Settings, clicking an open
   dropdown (or a narrow window's page menu) to close it opened it again.
 - **Rename Several's case is in sight**: its five choices stand side by

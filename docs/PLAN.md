@@ -31,12 +31,12 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
 6. **Agent-ready:** commands are data, plans before apply, stable
    identity (ADR-049), metadata with provenance.
 
-## Current status (2026-11-14)
+## Current status (2026-11-15)
 
 - **Where:** named Skwir (skwir.org, application id `org.skwir.skwir`),
-  version 0.5.0, released 2026-11-14 on GitHub and the AUR's three
-  bases; 0.4.0 was released 2026-11-10, 0.3.1 2026-11-05, 0.3.0
-  2026-11-03, 0.2.0 2026-10-20, 0.1.0
+  version 0.5.1, released 2026-11-15 on GitHub and the AUR's three
+  bases; 0.5.0 was released 2026-11-14, 0.4.0 2026-11-10, 0.3.1
+  2026-11-05, 0.3.0 2026-11-03, 0.2.0 2026-10-20, 0.1.0
   [released](#release-01-linux) 2026-10-13. Phases 0 to 4, 5a and 6 pass their gates. Maps and Notes
   everywhere are built, their gates not closed, as is much that no phase
   planned ([Built beyond the plan](#built-beyond-the-plan)).
