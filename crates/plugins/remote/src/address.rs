@@ -461,7 +461,6 @@ impl Address {
         uri
     }
 
-    /// The host without the brackets an IPv6 literal is written in.
     /// The name of the server to look up on the network, to tell whether
     /// it is near (`nas.local`, `example.com`, `192.168.1.2`): `None` where
     /// the address names none. A device is on this machine (ADR-096); a
@@ -479,6 +478,7 @@ impl Address {
         }
     }
 
+    /// The host without the brackets an IPv6 literal is written in.
     pub fn bare_host(&self) -> &str {
         self.host
             .strip_prefix('[')
